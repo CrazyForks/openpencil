@@ -1,29 +1,40 @@
 /**
  * Normalize a Pencil.dev .pen document into OpenPencil's internal format.
  *
- * Handles format normalization ONLY — does NOT resolve $variable references:
+ * Handles:
  * - fill type: "color" → "solid"
  * - fill shorthand string "#hex" → [{ type: "solid", color }]
  * - gradient type: "gradient" → "linear_gradient" / "radial_gradient"
  * - gradient stops { color, position } → { offset, color }
+ * - $variable references → resolved values (first/default theme)
  * - sizing "fit_content(N)" / "fill_container(N)" → fallback number
- * - padding array normalization
- *
- * Variable resolution is handled separately by `resolve-variables.ts` at
- * canvas render time, preserving $variable bindings in the document.
  */
 
 import type { PenDocument, PenNode } from '@/types/pen'
-import type { PenFill, PenStroke, GradientStop } from '@/types/styles'
+import type { PenFill, PenStroke, PenEffect, GradientStop } from '@/types/styles'
+import type { VariableDefinition } from '@/types/variables'
+
+type Vars = Record<string, VariableDefinition>
+
+// Module-level default theme map, set per normalizePenDocument call
+let _defaultTheme: Record<string, string> = {}
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
 export function normalizePenDocument(doc: PenDocument): PenDocument {
+  const vars: Vars = doc.variables ?? {}
+  // Build default theme: first entry of each theme collection
+  _defaultTheme = {}
+  if (doc.themes) {
+    for (const [key, values] of Object.entries(doc.themes)) {
+      if (values.length > 0) _defaultTheme[key] = values[0]
+    }
+  }
   return {
     ...doc,
-    children: doc.children.map((n) => normalizeNode(n)),
+    children: doc.children.map((n) => normalizeNode(n, vars)),
   }
 }
 
@@ -31,35 +42,44 @@ export function normalizePenDocument(doc: PenDocument): PenDocument {
 // Node normalizer (recursive)
 // ---------------------------------------------------------------------------
 
-function normalizeNode(node: PenNode): PenNode {
+function normalizeNode(node: PenNode, vars: Vars): PenNode {
   const out: Record<string, unknown> = { ...node }
 
   // fill
   if ('fill' in out && out.fill !== undefined) {
-    out.fill = normalizeFills(out.fill)
+    out.fill = normalizeFills(out.fill, vars)
   }
 
   // stroke
   if ('stroke' in out && out.stroke != null) {
-    out.stroke = normalizeStroke(out.stroke as Record<string, unknown>)
+    out.stroke = normalizeStroke(out.stroke as Record<string, unknown>, vars)
   }
 
-  // effects — pass through (no format changes needed)
+  // effects
+  if ('effects' in out && Array.isArray(out.effects)) {
+    out.effects = normalizeEffects(out.effects as Record<string, unknown>[], vars)
+  }
 
   // sizing
   if ('width' in out) out.width = normalizeSizing(out.width)
   if ('height' in out) out.height = normalizeSizing(out.height)
 
-  // gap — pass through ($variable strings preserved)
+  // gap / padding may be variable refs
+  if ('gap' in out) out.gap = resolveNumeric(out.gap, vars)
+  if ('padding' in out) out.padding = normalizePadding(out.padding, vars)
 
-  // padding — normalize array format only (not variable resolution)
-  if ('padding' in out) out.padding = normalizePadding(out.padding)
+  // opacity
+  if ('opacity' in out) out.opacity = resolveNumeric(out.opacity, vars) ?? 1
 
-  // opacity — pass through ($variable strings preserved)
+  // text content — resolve variable in content if it's a $ref
+  if (out.type === 'text' && typeof out.content === 'string' && (out.content as string).startsWith('$')) {
+    const resolved = resolveVar(out.content as string, vars)
+    if (typeof resolved === 'string') out.content = resolved
+  }
 
   // children
   if ('children' in out && Array.isArray(out.children)) {
-    out.children = (out.children as PenNode[]).map((c) => normalizeNode(c))
+    out.children = (out.children as PenNode[]).map((c) => normalizeNode(c, vars))
   }
 
   return out as unknown as PenNode
@@ -69,22 +89,23 @@ function normalizeNode(node: PenNode): PenNode {
 // Fill normalization
 // ---------------------------------------------------------------------------
 
-function normalizeFills(raw: unknown): PenFill[] {
+function normalizeFills(raw: unknown, vars: Vars): PenFill[] {
   if (!raw) return []
 
-  // String shorthand: "#hex" or "$variable" → solid fill
+  // String shorthand: "#hex" or "$variable"
   if (typeof raw === 'string') {
-    return [{ type: 'solid', color: raw }]
+    const color = resolveColor(raw, vars)
+    return color ? [{ type: 'solid', color }] : []
   }
 
   // Array of fills
   if (Array.isArray(raw)) {
-    return raw.map((f) => normalizeSingleFill(f)).filter(Boolean) as PenFill[]
+    return raw.map((f) => normalizeSingleFill(f, vars)).filter(Boolean) as PenFill[]
   }
 
   // Single fill object
   if (typeof raw === 'object') {
-    const f = normalizeSingleFill(raw as Record<string, unknown>)
+    const f = normalizeSingleFill(raw as Record<string, unknown>, vars)
     return f ? [f] : []
   }
 
@@ -93,6 +114,7 @@ function normalizeFills(raw: unknown): PenFill[] {
 
 function normalizeSingleFill(
   raw: Record<string, unknown>,
+  vars: Vars,
 ): PenFill | null {
   if (!raw || typeof raw !== 'object') return null
   const t = raw.type as string | undefined
@@ -101,14 +123,14 @@ function normalizeSingleFill(
   if (t === 'color' || t === 'solid') {
     return {
       type: 'solid',
-      color: typeof raw.color === 'string' ? raw.color : '#000000',
+      color: resolveColor(raw.color, vars) ?? '#000000',
     }
   }
 
   // Pencil "gradient" → split by gradientType
   if (t === 'gradient') {
     const gt = (raw.gradientType as string) ?? 'linear'
-    const stops = normalizeGradientStops(raw.colors as unknown[])
+    const stops = normalizeGradientStops(raw.colors as unknown[], vars)
 
     if (gt === 'radial') {
       const center = raw.center as Record<string, unknown> | undefined
@@ -132,9 +154,9 @@ function normalizeSingleFill(
   if (t === 'linear_gradient' || t === 'radial_gradient') {
     const stops =
       'stops' in raw
-        ? normalizeGradientStops(raw.stops as unknown[])
+        ? normalizeGradientStops(raw.stops as unknown[], vars)
         : 'colors' in raw
-          ? normalizeGradientStops(raw.colors as unknown[])
+          ? normalizeGradientStops(raw.colors as unknown[], vars)
           : []
     return { ...(raw as unknown as PenFill), stops } as PenFill
   }
@@ -146,7 +168,7 @@ function normalizeSingleFill(
   if ('color' in raw) {
     return {
       type: 'solid',
-      color: typeof raw.color === 'string' ? raw.color : '#000000',
+      color: resolveColor(raw.color, vars) ?? '#000000',
     }
   }
 
@@ -155,6 +177,7 @@ function normalizeSingleFill(
 
 function normalizeGradientStops(
   raw: unknown[] | undefined,
+  vars: Vars,
 ): GradientStop[] {
   if (!Array.isArray(raw)) return []
   return raw.map((s: unknown) => {
@@ -166,7 +189,7 @@ function normalizeGradientStops(
           : typeof stop.position === 'number'
             ? stop.position
             : 0,
-      color: typeof stop.color === 'string' ? stop.color : '#000000',
+      color: resolveColor(stop.color, vars) ?? '#000000',
     }
   })
 }
@@ -177,31 +200,49 @@ function normalizeGradientStops(
 
 function normalizeStroke(
   raw: Record<string, unknown>,
+  vars: Vars,
 ): PenStroke | undefined {
   if (!raw) return undefined
   const out = { ...raw }
 
   // Normalize fill inside stroke
   if ('fill' in out) {
-    out.fill = normalizeFills(out.fill)
+    out.fill = normalizeFills(out.fill, vars)
   }
 
   // Pencil may use "color" directly on stroke
   if ('color' in out && typeof out.color === 'string') {
-    out.fill = [{ type: 'solid', color: out.color as string }]
+    out.fill = [{ type: 'solid', color: resolveColor(out.color, vars) ?? '#000000' }]
     delete out.color
   }
 
-  // Thickness: leave $variable strings as-is, normalise plain number strings
+  // Normalize thickness variable ref
   if (typeof out.thickness === 'string') {
-    const str = out.thickness as string
-    if (!str.startsWith('$')) {
-      const num = parseFloat(str)
-      out.thickness = isNaN(num) ? 1 : num
-    }
+    out.thickness = resolveNumeric(out.thickness, vars) ?? 1
   }
 
   return out as unknown as PenStroke
+}
+
+// ---------------------------------------------------------------------------
+// Effects normalization
+// ---------------------------------------------------------------------------
+
+function normalizeEffects(
+  raw: Record<string, unknown>[],
+  vars: Vars,
+): PenEffect[] {
+  return raw.map((e) => {
+    const out = { ...e }
+    if (typeof out.color === 'string') {
+      out.color = resolveColor(out.color, vars) ?? '#000000'
+    }
+    if (typeof out.blur === 'string') out.blur = resolveNumeric(out.blur, vars) ?? 0
+    if (typeof out.offsetX === 'string') out.offsetX = resolveNumeric(out.offsetX, vars) ?? 0
+    if (typeof out.offsetY === 'string') out.offsetY = resolveNumeric(out.offsetY, vars) ?? 0
+    if (typeof out.spread === 'string') out.spread = resolveNumeric(out.spread, vars) ?? 0
+    return out as unknown as PenEffect
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -211,9 +252,6 @@ function normalizeStroke(
 function normalizeSizing(value: unknown): number | string {
   if (typeof value === 'number') return value
   if (typeof value !== 'string') return 0
-
-  // $variable — pass through
-  if (value.startsWith('$')) return value
 
   // fill_container must always resolve dynamically from parent dimensions
   if (value.startsWith('fill_container')) return 'fill_container'
@@ -232,23 +270,64 @@ function normalizeSizing(value: unknown): number | string {
 
 function normalizePadding(
   value: unknown,
-): number | [number, number] | [number, number, number, number] | string | undefined {
+  vars: Vars,
+): number | [number, number] | [number, number, number, number] | undefined {
   if (typeof value === 'number') return value
-  if (typeof value === 'string') {
-    // $variable — pass through
-    if (value.startsWith('$')) return value
-    const num = parseFloat(value)
-    return isNaN(num) ? 0 : num
-  }
+  if (typeof value === 'string') return (resolveNumeric(value, vars) as number) ?? 0
   if (Array.isArray(value)) {
-    return value.map((v) => {
-      if (typeof v === 'number') return v
-      if (typeof v === 'string') {
-        const num = parseFloat(v)
-        return isNaN(num) ? 0 : num
-      }
-      return 0
-    }) as [number, number] | [number, number, number, number]
+    return value.map((v) =>
+      typeof v === 'number' ? v : (resolveNumeric(v, vars) as number) ?? 0,
+    ) as [number, number] | [number, number, number, number]
+  }
+  return undefined
+}
+
+// ---------------------------------------------------------------------------
+// Variable resolution
+// ---------------------------------------------------------------------------
+
+function resolveVar(ref: string, vars: Vars): unknown {
+  if (!ref.startsWith('$')) return ref
+  const name = ref.slice(1)
+  const def = vars[name]
+  if (!def) return ref
+
+  const val = def.value
+  if (Array.isArray(val)) {
+    // Try to find value matching the default theme (first entry per collection)
+    if (Object.keys(_defaultTheme).length > 0) {
+      const matching = val.find((v) => {
+        if (!v.theme) return false
+        return Object.entries(_defaultTheme).every(
+          ([key, expected]) => v.theme?.[key] === expected,
+        )
+      })
+      if (matching) return matching.value
+    }
+    // Fallback to first value
+    return val[0]?.value ?? ref
+  }
+  return val
+}
+
+function resolveColor(raw: unknown, vars: Vars): string | null {
+  if (typeof raw !== 'string') return null
+  if (raw.startsWith('$')) {
+    const resolved = resolveVar(raw, vars)
+    return typeof resolved === 'string' ? resolved : '#000000'
+  }
+  return raw
+}
+
+function resolveNumeric(raw: unknown, vars: Vars): number | undefined {
+  if (typeof raw === 'number') return raw
+  if (typeof raw === 'string') {
+    if (raw.startsWith('$')) {
+      const resolved = resolveVar(raw, vars)
+      return typeof resolved === 'number' ? resolved : undefined
+    }
+    const num = parseFloat(raw)
+    return isNaN(num) ? undefined : num
   }
   return undefined
 }

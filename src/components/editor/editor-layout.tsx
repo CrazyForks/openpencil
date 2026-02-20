@@ -7,7 +7,6 @@ import LayerPanel from '@/components/panels/layer-panel'
 import PropertyPanel from '@/components/panels/property-panel'
 import AIChatPanel, { AIChatMinimizedBar } from '@/components/panels/ai-chat-panel'
 import CodePanel from '@/components/panels/code-panel'
-import VariablesPanel from '@/components/panels/variables-panel'
 import ExportDialog from '@/components/shared/export-dialog'
 import SaveDialog from '@/components/shared/save-dialog'
 import AgentSettingsDialog from '@/components/shared/agent-settings-dialog'
@@ -22,7 +21,6 @@ export default function EditorLayout() {
   const toggleMinimize = useAIStore((s) => s.toggleMinimize)
   const hasSelection = useCanvasStore((s) => s.selection.activeId !== null)
   const layerPanelOpen = useCanvasStore((s) => s.layerPanelOpen)
-  const variablesPanelOpen = useCanvasStore((s) => s.variablesPanelOpen)
   const saveDialogOpen = useDocumentStore((s) => s.saveDialogOpen)
   const closeSaveDialog = useCallback(() => {
     useDocumentStore.getState().setSaveDialogOpen(false)
@@ -63,13 +61,6 @@ export default function EditorLayout() {
         return
       }
 
-      // Cmd+Shift+V: toggle variables panel
-      if (isMod && e.shiftKey && e.key.toLowerCase() === 'v') {
-        e.preventDefault()
-        useCanvasStore.getState().toggleVariablesPanel()
-        return
-      }
-
       // Cmd+,: open agent settings
       if (isMod && e.key === ',') {
         e.preventDefault()
@@ -104,9 +95,6 @@ export default function EditorLayout() {
                 <FabricCanvas />
               </Suspense>
               <Toolbar />
-
-              {/* Floating variables panel — anchored to the right of the toolbar */}
-              {variablesPanelOpen && <VariablesPanel />}
 
               {/* Bottom bar: minimized AI (left) + zoom controls (right) */}
               <div className="absolute bottom-2 left-2 right-2 z-10 flex items-center justify-between pointer-events-none">

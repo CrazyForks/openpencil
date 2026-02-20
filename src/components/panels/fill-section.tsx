@@ -3,10 +3,8 @@ import ColorPicker from '@/components/shared/color-picker'
 import NumberInput from '@/components/shared/number-input'
 import DropdownSelect from '@/components/shared/dropdown-select'
 import SectionHeader from '@/components/shared/section-header'
-import VariablePicker from '@/components/shared/variable-picker'
 import { Button } from '@/components/ui/button'
 import { Plus, X } from 'lucide-react'
-import { isVariableRef } from '@/variables/resolve-variables'
 import type { PenNode } from '@/types/pen'
 import type { PenFill, GradientStop } from '@/types/styles'
 
@@ -168,23 +166,7 @@ export default function FillSection({
       )}
 
       {fillType === 'solid' && (
-        <div className="flex items-center gap-1">
-          <div className="flex-1">
-            {isVariableRef(currentColor) ? (
-              <div className="h-6 flex items-center px-2 bg-secondary rounded text-[11px] font-mono text-muted-foreground">
-                {currentColor}
-              </div>
-            ) : (
-              <ColorPicker value={currentColor} onChange={handleColorChange} />
-            )}
-          </div>
-          <VariablePicker
-            type="color"
-            currentValue={currentColor}
-            onBind={(ref) => onUpdate({ fill: [{ type: 'solid', color: ref }] } as Partial<PenNode>)}
-            onUnbind={(val) => onUpdate({ fill: [{ type: 'solid', color: String(val) }] } as Partial<PenNode>)}
-          />
-        </div>
+        <ColorPicker value={currentColor} onChange={handleColorChange} />
       )}
 
       {(fillType === 'linear_gradient' ||

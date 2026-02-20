@@ -4,7 +4,6 @@ import { useCanvasStore } from '@/stores/canvas-store'
 import { useDocumentStore } from '@/stores/document-store'
 import type { PenNode } from '@/types/pen'
 import { getCanvasBackground, SELECTION_BLUE, MIN_ZOOM, MAX_ZOOM } from './canvas-constants'
-import { setupRotationCursorHandler } from './canvas-controls'
 
 const FIT_PADDING = 64
 
@@ -121,7 +120,6 @@ export function useFabricCanvas(
     canvas.selectionLineWidth = 1
 
     useCanvasStore.getState().setFabricCanvas(canvas)
-    setupRotationCursorHandler(canvas)
     canvas.requestRenderAll()
 
     // Center viewport on the default frame after a tick (sync needs to run first)

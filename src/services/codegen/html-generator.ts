@@ -1,19 +1,9 @@
 import type { PenDocument, PenNode, ContainerProps, TextNode } from '@/types/pen'
 import type { PenFill, PenStroke, PenEffect, ShadowEffect } from '@/types/styles'
-import { isVariableRef } from '@/variables/resolve-variables'
-import { variableNameToCSS, generateCSSVariables } from '@/services/codegen/css-variables-generator'
 
 /**
  * Converts PenDocument nodes to HTML + CSS.
- * $variable references are output as var(--name) CSS custom properties.
  */
-
-function varOrLiteral(value: string): string {
-  if (isVariableRef(value)) {
-    return `var(${variableNameToCSS(value.slice(1))})`
-  }
-  return value
-}
 
 let classCounter = 0
 
@@ -34,15 +24,15 @@ function fillToCSS(fills: PenFill[] | undefined): Record<string, string> {
   if (!fills || fills.length === 0) return {}
   const fill = fills[0]
   if (fill.type === 'solid') {
-    return { background: varOrLiteral(fill.color) }
+    return { background: fill.color }
   }
   if (fill.type === 'linear_gradient') {
     const angle = fill.angle ?? 180
-    const stops = fill.stops.map((s) => `${varOrLiteral(s.color)} ${Math.round(s.offset * 100)}%`).join(', ')
+    const stops = fill.stops.map((s) => `${s.color} ${Math.round(s.offset * 100)}%`).join(', ')
     return { background: `linear-gradient(${angle}deg, ${stops})` }
   }
   if (fill.type === 'radial_gradient') {
-    const stops = fill.stops.map((s) => `${varOrLiteral(s.color)} ${Math.round(s.offset * 100)}%`).join(', ')
+    const stops = fill.stops.map((s) => `${s.color} ${Math.round(s.offset * 100)}%`).join(', ')
     return { background: `radial-gradient(circle, ${stops})` }
   }
   return {}
@@ -51,19 +41,15 @@ function fillToCSS(fills: PenFill[] | undefined): Record<string, string> {
 function strokeToCSS(stroke: PenStroke | undefined): Record<string, string> {
   if (!stroke) return {}
   const css: Record<string, string> = {}
-  if (typeof stroke.thickness === 'string' && isVariableRef(stroke.thickness)) {
-    css['border-width'] = varOrLiteral(stroke.thickness)
-  } else {
-    const thickness = typeof stroke.thickness === 'number'
-      ? stroke.thickness
-      : stroke.thickness[0]
-    css['border-width'] = `${thickness}px`
-  }
+  const thickness = typeof stroke.thickness === 'number'
+    ? stroke.thickness
+    : stroke.thickness[0]
+  css['border-width'] = `${thickness}px`
   css['border-style'] = 'solid'
   if (stroke.fill && stroke.fill.length > 0) {
     const sf = stroke.fill[0]
     if (sf.type === 'solid') {
-      css['border-color'] = varOrLiteral(sf.color)
+      css['border-color'] = sf.color
     }
   }
   return css
@@ -104,17 +90,11 @@ function layoutToCSS(node: ContainerProps): Record<string, string> {
     css.display = 'flex'
     css['flex-direction'] = 'row'
   }
-  if (node.gap !== undefined) {
-    if (typeof node.gap === 'string' && isVariableRef(node.gap)) {
-      css.gap = varOrLiteral(node.gap)
-    } else if (typeof node.gap === 'number') {
-      css.gap = `${node.gap}px`
-    }
+  if (node.gap !== undefined && typeof node.gap === 'number') {
+    css.gap = `${node.gap}px`
   }
   if (node.padding !== undefined) {
-    if (typeof node.padding === 'string' && isVariableRef(node.padding)) {
-      css.padding = varOrLiteral(node.padding)
-    } else if (typeof node.padding === 'number') {
+    if (typeof node.padding === 'number') {
       css.padding = `${node.padding}px`
     } else if (Array.isArray(node.padding)) {
       css.padding = node.padding.map((p) => `${p}px`).join(' ')
@@ -175,12 +155,8 @@ function generateNodeHTML(
   }
 
   // Opacity
-  if (node.opacity !== undefined && node.opacity !== 1) {
-    if (typeof node.opacity === 'string' && isVariableRef(node.opacity)) {
-      css.opacity = varOrLiteral(node.opacity)
-    } else if (typeof node.opacity === 'number') {
-      css.opacity = String(node.opacity)
-    }
+  if (node.opacity !== undefined && node.opacity !== 1 && typeof node.opacity === 'number') {
+    css.opacity = String(node.opacity)
   }
 
   // Rotation
@@ -231,7 +207,7 @@ function generateNodeHTML(
       if (typeof node.height === 'number') css.height = `${node.height}px`
       if (node.fill) {
         const fill = node.fill[0]
-        if (fill?.type === 'solid') css.color = varOrLiteral(fill.color)
+        if (fill?.type === 'solid') css.color = fill.color
       }
       if (node.fontSize) css['font-size'] = `${node.fontSize}px`
       if (node.fontWeight) css['font-weight'] = String(node.fontWeight)
@@ -264,7 +240,7 @@ function generateNodeHTML(
         css['border-top-style'] = 'solid'
         if (node.stroke.fill && node.stroke.fill.length > 0) {
           const sf = node.stroke.fill[0]
-          if (sf.type === 'solid') css['border-top-color'] = varOrLiteral(sf.color)
+          if (sf.type === 'solid') css['border-top-color'] = sf.color
         }
       }
       const className = nextClassName(node.name?.replace(/\s+/g, '-').toLowerCase() ?? 'line')
@@ -282,7 +258,7 @@ function generateNodeHTML(
       if (node.type === 'path') {
         const w = typeof node.width === 'number' ? node.width : 100
         const h = typeof node.height === 'number' ? node.height : 100
-        const fillColor = node.fill?.[0]?.type === 'solid' ? varOrLiteral(node.fill[0].color) : 'currentColor'
+        const fillColor = node.fill?.[0]?.type === 'solid' ? node.fill[0].color : 'currentColor'
         return `${pad}<svg class="${className}" viewBox="0 0 ${w} ${h}">\n${pad}  <path d="${node.d}" fill="${fillColor}" />\n${pad}</svg>`
       }
       return `${pad}<div class="${className}"></div>`
@@ -346,12 +322,5 @@ export function generateHTMLCode(nodes: PenNode[]): { html: string; css: string 
 }
 
 export function generateHTMLFromDocument(doc: PenDocument): { html: string; css: string } {
-  const result = generateHTMLCode(doc.children)
-  const varsCSS = doc.variables && Object.keys(doc.variables).length > 0
-    ? generateCSSVariables(doc)
-    : ''
-  return {
-    html: result.html,
-    css: varsCSS ? `${varsCSS}\n${result.css}` : result.css,
-  }
+  return generateHTMLCode(doc.children)
 }

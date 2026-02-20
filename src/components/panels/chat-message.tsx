@@ -65,7 +65,7 @@ function ActionSteps({ steps }: { steps: string[] }) {
   if (steps.length === 0) return null
   
   return (
-    <div className="flex flex-col gap-1 w-full">
+    <div className="flex flex-col gap-2 my-1 w-full">
       {steps.map((step, i) => {
         const title = parseStepTitle(step)
         const content = parseStepContent(step)
@@ -110,7 +110,7 @@ function ActionStepItem({
 
   // Pencil-like style: Rounded pill/card with subtle border
   return (
-    <div className="group">
+    <div className="group mb-1.5 last:mb-0">
       <button 
         onClick={() => setIsOpen(!isOpen)}
         className={cn(
@@ -460,7 +460,7 @@ function DesignJsonBlock({
   }
 
   return (
-    <div className="group mt-0.5 w-full">
+    <div className="group my-1.5 first:mt-0 last:mb-0 w-full">
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
@@ -563,7 +563,7 @@ export default function ChatMessage({
   }
 
   return (
-    <div className={cn('flex', isUser ? 'justify-end' : 'justify-start mt-2')}>
+    <div className={cn('flex', isUser ? 'justify-end' : 'justify-start')}>
       {isUser ? (
         <div className="max-w-[85%] rounded-lg px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap bg-primary text-primary-foreground rounded-br-sm">
           {content}
@@ -581,7 +581,7 @@ export default function ChatMessage({
               </span>
             </div>
           ) : (
-            <div className="whitespace-pre-wrap">
+            <div className="whitespace-pre-wrap mb-2">
               {parseMarkdown(displayContent, onApplyDesign, isApplied, isStreaming && !isEmpty)}
             </div>
           )}

@@ -206,16 +206,8 @@ function useChatHandlers() {
         } else {
             // --- CHAT MODE ---
             chatHistory.push({ role: 'user', content: fullUserMessage })
-            let chatThinking = false
             for await (const chunk of streamChat(CHAT_SYSTEM_PROMPT, chatHistory, model)) {
-               if (chunk.type === 'thinking') {
-                 // Show a brief thinking indicator so the UI isn't stuck on empty
-                 if (!chatThinking && !accumulated) {
-                   chatThinking = true
-                   updateLastMessage('*Thinking...*')
-                 }
-               } else if (chunk.type === 'text') {
-                 chatThinking = false
+               if (chunk.type === 'text') {
                  accumulated += chunk.content
                  updateLastMessage(accumulated)
                } else if (chunk.type === 'error') {

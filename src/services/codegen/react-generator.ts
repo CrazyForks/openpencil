@@ -1,20 +1,9 @@
 import type { PenDocument, PenNode, ContainerProps, TextNode } from '@/types/pen'
 import type { PenFill, PenStroke, PenEffect, ShadowEffect } from '@/types/styles'
-import { isVariableRef } from '@/variables/resolve-variables'
-import { variableNameToCSS } from '@/services/codegen/css-variables-generator'
 
 /**
  * Converts PenDocument nodes to React + Tailwind code.
- * $variable references are output as var(--name) CSS custom properties.
  */
-
-/** Convert a `$variable` ref to `var(--name)`, or return the raw value. */
-function varOrLiteral(value: string): string {
-  if (isVariableRef(value)) {
-    return `var(${variableNameToCSS(value.slice(1))})`
-  }
-  return value
-}
 
 function indent(depth: number): string {
   return '  '.repeat(depth)
@@ -24,7 +13,7 @@ function fillToTailwind(fills: PenFill[] | undefined): string[] {
   if (!fills || fills.length === 0) return []
   const fill = fills[0]
   if (fill.type === 'solid') {
-    return [`bg-[${varOrLiteral(fill.color)}]`]
+    return [`bg-[${fill.color}]`]
   }
   return []
 }
@@ -33,7 +22,7 @@ function fillToTextColor(fills: PenFill[] | undefined): string[] {
   if (!fills || fills.length === 0) return []
   const fill = fills[0]
   if (fill.type === 'solid') {
-    return [`text-[${varOrLiteral(fill.color)}]`]
+    return [`text-[${fill.color}]`]
   }
   return []
 }
@@ -41,18 +30,14 @@ function fillToTextColor(fills: PenFill[] | undefined): string[] {
 function strokeToTailwind(stroke: PenStroke | undefined): string[] {
   if (!stroke) return []
   const classes: string[] = []
-  if (typeof stroke.thickness === 'string' && isVariableRef(stroke.thickness)) {
-    classes.push('border', `border-[${varOrLiteral(stroke.thickness)}]`)
-  } else {
-    const thickness = typeof stroke.thickness === 'number'
-      ? stroke.thickness
-      : stroke.thickness[0]
-    classes.push('border', `border-[${thickness}px]`)
-  }
+  const thickness = typeof stroke.thickness === 'number'
+    ? stroke.thickness
+    : stroke.thickness[0]
+  classes.push('border', `border-[${thickness}px]`)
   if (stroke.fill && stroke.fill.length > 0) {
     const sf = stroke.fill[0]
     if (sf.type === 'solid') {
-      classes.push(`border-[${varOrLiteral(sf.color)}]`)
+      classes.push(`border-[${sf.color}]`)
     }
   }
   return classes
@@ -92,17 +77,11 @@ function layoutToTailwind(node: ContainerProps): string[] {
   } else if (node.layout === 'horizontal') {
     classes.push('flex', 'flex-row')
   }
-  if (node.gap !== undefined) {
-    if (typeof node.gap === 'string' && isVariableRef(node.gap)) {
-      classes.push(`gap-[${varOrLiteral(node.gap)}]`)
-    } else if (typeof node.gap === 'number' && node.gap > 0) {
-      classes.push(`gap-[${node.gap}px]`)
-    }
+  if (node.gap !== undefined && typeof node.gap === 'number' && node.gap > 0) {
+    classes.push(`gap-[${node.gap}px]`)
   }
   if (node.padding !== undefined) {
-    if (typeof node.padding === 'string' && isVariableRef(node.padding)) {
-      classes.push(`p-[${varOrLiteral(node.padding)}]`)
-    } else if (typeof node.padding === 'number') {
+    if (typeof node.padding === 'number') {
       classes.push(`p-[${node.padding}px]`)
     } else if (Array.isArray(node.padding)) {
       if (node.padding.length === 2) {
@@ -150,9 +129,6 @@ function sizeToTailwind(
 
 function opacityToTailwind(opacity: number | string | undefined): string[] {
   if (opacity === undefined || opacity === 1) return []
-  if (typeof opacity === 'string' && isVariableRef(opacity)) {
-    return [`opacity-[${varOrLiteral(opacity)}]`]
-  }
   if (typeof opacity === 'number') {
     const pct = Math.round(opacity * 100)
     return [`opacity-[${pct}%]`]
@@ -269,16 +245,12 @@ function generateNodeJSX(node: PenNode, depth: number): string {
       if (node.stroke) {
         const thickness = typeof node.stroke.thickness === 'number'
           ? node.stroke.thickness
-          : typeof node.stroke.thickness === 'string' ? node.stroke.thickness : node.stroke.thickness[0]
-        if (typeof thickness === 'string' && isVariableRef(thickness)) {
-          classes.push(`border-t-[${varOrLiteral(thickness)}]`)
-        } else {
-          classes.push(`border-t-[${thickness}px]`)
-        }
+          : node.stroke.thickness[0]
+        classes.push(`border-t-[${thickness}px]`)
         if (node.stroke.fill && node.stroke.fill.length > 0) {
           const sf = node.stroke.fill[0]
           if (sf.type === 'solid') {
-            classes.push(`border-[${varOrLiteral(sf.color)}]`)
+            classes.push(`border-[${sf.color}]`)
           }
         }
       }
@@ -292,7 +264,7 @@ function generateNodeJSX(node: PenNode, depth: number): string {
       if (node.type === 'path') {
         const w = typeof node.width === 'number' ? node.width : 100
         const h = typeof node.height === 'number' ? node.height : 100
-        const fillColor = node.fill?.[0]?.type === 'solid' ? varOrLiteral(node.fill[0].color) : 'currentColor'
+        const fillColor = node.fill?.[0]?.type === 'solid' ? node.fill[0].color : 'currentColor'
         return `${pad}<svg className="${classes.join(' ')}" viewBox="0 0 ${w} ${h}">\n${pad}  <path d="${node.d}" fill="${fillColor}" />\n${pad}</svg>`
       }
       classes.push(...fillToTailwind(node.fill))
@@ -355,5 +327,5 @@ ${childrenJSX}
 }
 
 export function generateReactFromDocument(doc: PenDocument): string {
-  return generateReactCode(doc.children, 'GeneratedDesign')
+  return generateReactCode(doc.children)
 }

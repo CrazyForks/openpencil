@@ -61,13 +61,6 @@ export function useKeyboardShortcuts() {
         if (prev) {
           useDocumentStore.getState().applyHistoryState(prev)
         }
-        // Deselect so Fabric re-renders objects at their restored dimensions
-        useCanvasStore.getState().clearSelection()
-        const canvas = useCanvasStore.getState().fabricCanvas
-        if (canvas) {
-          canvas.discardActiveObject()
-          canvas.requestRenderAll()
-        }
         return
       }
 
@@ -78,12 +71,6 @@ export function useKeyboardShortcuts() {
         const next = useHistoryStore.getState().redo(currentDoc)
         if (next) {
           useDocumentStore.getState().applyHistoryState(next)
-        }
-        useCanvasStore.getState().clearSelection()
-        const canvas = useCanvasStore.getState().fabricCanvas
-        if (canvas) {
-          canvas.discardActiveObject()
-          canvas.requestRenderAll()
         }
         return
       }
@@ -297,7 +284,9 @@ export function useKeyboardShortcuts() {
             useDocumentStore.getState().removeNode(id)
           }
           if (selectedIds.length > 1) {
-            useHistoryStore.getState().endBatch()
+            useHistoryStore
+              .getState()
+              .endBatch(useDocumentStore.getState().document)
           }
           useCanvasStore.getState().clearSelection()
           const canvas = useCanvasStore.getState().fabricCanvas
@@ -348,7 +337,9 @@ export function useKeyboardShortcuts() {
           useDocumentStore.getState().reorderNode(id, 'down')
         }
         if (selectedIds.length > 1) {
-          useHistoryStore.getState().endBatch()
+          useHistoryStore
+            .getState()
+            .endBatch(useDocumentStore.getState().document)
         }
         return
       }
@@ -366,7 +357,9 @@ export function useKeyboardShortcuts() {
           useDocumentStore.getState().reorderNode(id, 'up')
         }
         if (selectedIds.length > 1) {
-          useHistoryStore.getState().endBatch()
+          useHistoryStore
+            .getState()
+            .endBatch(useDocumentStore.getState().document)
         }
         return
       }
@@ -396,7 +389,9 @@ export function useKeyboardShortcuts() {
           useDocumentStore.getState().updateNode(id, updates)
         }
         if (selectedIds.length > 1) {
-          useHistoryStore.getState().endBatch()
+          useHistoryStore
+            .getState()
+            .endBatch(useDocumentStore.getState().document)
         }
         return
       }
