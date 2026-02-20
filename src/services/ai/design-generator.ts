@@ -171,11 +171,20 @@ export async function generateDesign(
     useHistoryStore.getState().startBatch(useDocumentStore.getState().document)
   }
 
+  let isThinking = false
+
   try {
   for await (const chunk of streamChat(DESIGN_GENERATOR_PROMPT, [
     { role: 'user', content: userMessage },
   ], undefined, DESIGN_STREAM_TIMEOUTS)) {
-    if (chunk.type === 'text') {
+    if (chunk.type === 'thinking') {
+      // Show a "Thinking" step so the UI isn't stuck on the empty indicator
+      if (!isThinking && !fullResponse) {
+        isThinking = true
+        callbacks?.onTextUpdate?.('<step title="Thinking">Analyzing your design request...</step>')
+      }
+    } else if (chunk.type === 'text') {
+      isThinking = false
       fullResponse += chunk.content
       if (callbacks?.onTextUpdate) {
         callbacks.onTextUpdate(fullResponse)
@@ -265,7 +274,9 @@ export async function generateDesignModification(
   for await (const chunk of streamChat(DESIGN_MODIFIER_PROMPT, [
     { role: 'user', content: userMessage },
   ], undefined, DESIGN_STREAM_TIMEOUTS)) {
-    if (chunk.type === 'text') {
+    if (chunk.type === 'thinking') {
+      // Ignore thinking chunks for modification — caller already shows progress
+    } else if (chunk.type === 'text') {
       fullResponse += chunk.content
     } else if (chunk.type === 'error') {
       streamError = chunk.content
@@ -527,7 +538,8 @@ function sanitizeScreenFrameBounds(node: PenNode): void {
 
 function isScreenFrame(node: PenNode): boolean {
   if (node.type !== 'frame') return false
-  if (typeof node.width !== 'number' || typeof node.height !== 'number') return false
+  if (!('width' in node) || typeof node.width !== 'number') return false
+  if (!('height' in node) || typeof node.height !== 'number') return false
   const w = node.width
   const h = node.height
   const isMobileLike = w >= 320 && w <= 480 && h >= 640
@@ -538,10 +550,13 @@ function isScreenFrame(node: PenNode): boolean {
 function clampChildrenIntoScreen(frame: PenNode): void {
   if (!('children' in frame) || !Array.isArray(frame.children)) return
   if ('layout' in frame && frame.layout && frame.layout !== 'none') return
-  if (typeof frame.width !== 'number' || typeof frame.height !== 'number') return
+  if (!('width' in frame) || typeof frame.width !== 'number') return
+  if (!('height' in frame) || typeof frame.height !== 'number') return
 
-  const maxBleedX = frame.width * 0.1
-  const maxBleedY = frame.height * 0.1
+  const frameW = frame.width
+  const frameH = frame.height
+  const maxBleedX = frameW * 0.1
+  const maxBleedY = frameH * 0.1
 
   for (const child of frame.children) {
     const childWidth = 'width' in child && typeof child.width === 'number' ? child.width : null
@@ -556,9 +571,9 @@ function clampChildrenIntoScreen(frame: PenNode): void {
     }
 
     const minX = -maxBleedX
-    const maxX = frame.width - childWidth + maxBleedX
+    const maxX = frameW - childWidth + maxBleedX
     const minY = -maxBleedY
-    const maxY = frame.height - childHeight + maxBleedY
+    const maxY = frameH - childHeight + maxBleedY
 
     child.x = clamp(child.x, minX, maxX)
     child.y = clamp(child.y, minY, maxY)

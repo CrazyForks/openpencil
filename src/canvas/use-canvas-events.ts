@@ -4,7 +4,7 @@ import { useCanvasStore } from '@/stores/canvas-store'
 import { useDocumentStore, generateId } from '@/stores/document-store'
 import { useHistoryStore } from '@/stores/history-store'
 import { useAIStore } from '@/stores/ai-store'
-import type { PenNode } from '@/types/pen'
+import type { PenDocument, PenNode } from '@/types/pen'
 import type { ToolType } from '@/types/canvas'
 import {
   DEFAULT_FILL,
@@ -445,6 +445,13 @@ export function useCanvasEvents() {
       upperEl.addEventListener('pointerup', onPointerUp)
       upperEl.addEventListener('dblclick', onDoubleClick)
 
+      // --- Drag session setup (layout reorder + parent-child propagation) ---
+      // We capture the document snapshot here (before any modification) so that
+      // `object:modified` can use it as the undo base state.  History batching
+      // lives in `object:modified` — NOT here — so that click-to-select without
+      // modification never creates a no-op undo entry.
+      let preModificationDoc: PenDocument | null = null
+
       // --- History batching for drag/resize/rotate ---
       let transformBatchActive = false
       let pendingBatchCloseRaf: number | null = null
@@ -465,10 +472,16 @@ export function useCanvasEvents() {
         }
 
         clipPathsCleared = false
+        preModificationDoc = null
         const tool = useCanvasStore.getState().activeTool
         if (tool !== 'select') return
         const target = opt.target as FabricObjectWithPenId | null
         if (!target?.penNodeId) return
+
+
+        // Snapshot the document BEFORE any drag/resize/rotate begins.
+        // structuredClone ensures we have a deep copy unaffected by later mutations.
+        preModificationDoc = structuredClone(useDocumentStore.getState().document)
         useHistoryStore
           .getState()
           .startBatch(useDocumentStore.getState().document)
@@ -501,6 +514,7 @@ export function useCanvasEvents() {
         // commit and cleanup.  In Fabric.js v7 mouse:up can fire before
         // object:modified, which would clear the session prematurely.
         endParentDrag()
+
         // Defer batch close one frame so object:modified can run first.
         if (transformBatchActive) {
           if (pendingBatchCloseRaf !== null) {
@@ -657,7 +671,11 @@ export function useCanvasEvents() {
         }
       })
 
-      // Final sync: reset scale to 1 and bake into width/height
+      // Final sync: reset scale to 1 and bake into width/height.
+      // History batching lives here (not in mouse:down/mouse:up) so that
+      // click-to-select without modification never creates a no-op undo
+      // entry.  We use the pre-modification snapshot captured in mouse:down
+      // as the batch base to guarantee a correct undo point.
       canvas.on('object:modified', (opt) => {
         if (pendingBatchCloseRaf !== null) {
           cancelAnimationFrame(pendingBatchCloseRaf)
@@ -667,6 +685,19 @@ export function useCanvasEvents() {
         clearGuides()
         const target = opt.target
 
+        // Use the snapshot from mouse:down if available; otherwise fall back
+        // to the current document (e.g. programmatic modifications).
+        const baseDoc = preModificationDoc ?? useDocumentStore.getState().document
+        preModificationDoc = null
+
+        // Open a history batch for this modification when no outer batch
+        // (e.g. AI generation) is active.
+        const needsBatch = useHistoryStore.getState().batchDepth === 0
+        if (needsBatch) {
+          useHistoryStore.getState().startBatch(baseDoc)
+        }
+
+        try {
         // Single object -- bake scale and sync
         const asPen = target as FabricObjectWithPenId
         if (asPen.penNodeId) {
@@ -759,6 +790,12 @@ export function useCanvasEvents() {
         // Safety cleanup: clear any leftover drag-into session that wasn't
         // committed (e.g. cursor left the container on the final move frame).
         cancelDragInto()
+
+        } finally {
+          if (needsBatch) {
+            useHistoryStore.getState().endBatch()
+          }
+        }
 
         // Force re-sync so clip paths (which use absolute coordinates) are
         // recomputed from the new node positions.  Without this, children of
