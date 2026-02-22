@@ -2,10 +2,7 @@
     "name": "openpencil",
     "version": "0.0.1",
     "description": "Open-source vector design tool with Design-as-Code philosophy",
-    "author": {
-        "name": "ZSeven-W",
-        "email": "xkayshen@gmail.com"
-    },
+    "author": "ZSeven-W",
     "private": true,
     "type": "module",
     "main": "electron-dist/main.cjs",
