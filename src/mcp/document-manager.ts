@@ -95,10 +95,9 @@ function validate(doc: unknown): doc is PenDocument {
 
 /** Read and parse a .op / .pen file, returning a PenDocument. Uses cache. */
 export async function openDocument(filePath: string): Promise<PenDocument> {
-  // Live canvas mode: fetch from running Electron/dev server
+  // Live canvas mode: always re-fetch from running Electron/dev server
+  // to pick up user edits made in the UI since the last MCP call.
   if (filePath === LIVE_CANVAS_PATH) {
-    const cached = cache.get(LIVE_CANVAS_PATH)
-    if (cached) return cached.doc
     const doc = await fetchLiveDocument()
     cache.set(LIVE_CANVAS_PATH, { doc, mtime: Date.now() })
     return doc
