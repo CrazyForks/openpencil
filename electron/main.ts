@@ -1,25 +1,34 @@
 import {
   app,
   BrowserWindow,
-  Menu,
   ipcMain,
   dialog,
   type BrowserWindowConstructorOptions,
 } from 'electron'
-import { autoUpdater } from 'electron-updater'
-import { GitHubProvider } from 'electron-updater/out/providers/GitHubProvider'
 import { execSync } from 'node:child_process'
 import { fork, type ChildProcess } from 'node:child_process'
 import { createServer } from 'node:net'
-import { join, resolve, extname } from 'node:path'
+import { join, resolve, extname, sep } from 'node:path'
 import { homedir } from 'node:os'
 import { readFile, writeFile, mkdir, unlink } from 'node:fs/promises'
+
+import { buildAppMenu } from './app-menu'
+import {
+  setupAutoUpdater,
+  broadcastUpdaterState,
+  getUpdaterState,
+  setUpdaterState,
+  checkForAppUpdates,
+  clearUpdateTimer,
+  startUpdateTimer,
+  quitAndInstall,
+  getAutoUpdateEnabled,
+  setAutoUpdateEnabled,
+} from './auto-updater'
 
 let mainWindow: BrowserWindow | null = null
 let nitroProcess: ChildProcess | null = null
 let serverPort = 0
-let autoUpdateEnabled = true
-let updateCheckTimer: ReturnType<typeof setInterval> | null = null
 let pendingFilePath: string | null = null
 
 const isDev = !app.isPackaged
@@ -29,165 +38,35 @@ const isDev = !app.isPackaged
 // Linux: ~/.config/OpenPencil/
 const SETTINGS_PATH = join(app.getPath('userData'), 'settings.json')
 
-type UpdaterStatus =
-  | 'disabled'
-  | 'idle'
-  | 'checking'
-  | 'available'
-  | 'downloading'
-  | 'downloaded'
-  | 'not-available'
-  | 'error'
-
-interface UpdaterState {
-  status: UpdaterStatus
-  currentVersion: string
-  latestVersion?: string
-  downloadProgress?: number
-  releaseDate?: string
-  error?: string
-}
-
-let updaterState: UpdaterState = {
-  status: isDev ? 'disabled' : 'idle',
-  currentVersion: app.getVersion(),
-}
-
-const MacGitHubUpdateProvider = class {
-  constructor(options: unknown, updater: unknown, runtimeOptions: unknown) {
-    const provider = new (GitHubProvider as any)(options, updater, runtimeOptions) as any
-    if (process.platform === 'darwin') {
-      provider.getDefaultChannelName = () =>
-        process.arch === 'arm64' ? 'latest-mac-arm64' : 'latest-mac'
-      provider.getCustomChannelName = (channel: string) => channel
-    }
-    return provider
-  }
-}
-
-let lastUpdateCheckAt = 0
-
-function broadcastUpdaterState(): void {
-  for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) {
-      win.webContents.send('updater:state', updaterState)
-    }
-  }
-}
-
-function setUpdaterState(next: Partial<UpdaterState>): void {
-  updaterState = {
-    ...updaterState,
-    ...next,
-    currentVersion: app.getVersion(),
-  }
-  broadcastUpdaterState()
-}
-
-async function checkForAppUpdates(force = false): Promise<void> {
-  if (isDev) return
-
-  const now = Date.now()
-  if (!force && now - lastUpdateCheckAt < 60 * 1000) {
-    return
-  }
-  lastUpdateCheckAt = now
-
-  try {
-    await autoUpdater.checkForUpdates()
-  } catch (err) {
-    const error = err instanceof Error ? err.message : String(err)
-    setUpdaterState({ status: 'error', error })
-  }
-}
-
-function setupAutoUpdater(): void {
-  if (isDev) return
-
-  if (process.platform === 'darwin') {
-    autoUpdater.setFeedURL({
-      provider: 'custom',
-      updateProvider: MacGitHubUpdateProvider as any,
-      owner: 'ZSeven-W',
-      repo: 'openpencil',
-      releaseType: 'release',
-    } as any)
-  }
-
-  autoUpdater.autoDownload = true
-  autoUpdater.autoInstallOnAppQuit = true
-  autoUpdater.allowPrerelease = true
-
-  autoUpdater.on('checking-for-update', () => {
-    setUpdaterState({ status: 'checking', error: undefined, downloadProgress: undefined })
-  })
-
-  autoUpdater.on('update-available', (info) => {
-    setUpdaterState({
-      status: 'available',
-      latestVersion: info.version,
-      releaseDate: info.releaseDate,
-      error: undefined,
-    })
-  })
-
-  autoUpdater.on('download-progress', (progress) => {
-    setUpdaterState({
-      status: 'downloading',
-      downloadProgress: Math.round(progress.percent),
-      error: undefined,
-    })
-  })
-
-  autoUpdater.on('update-downloaded', (info) => {
-    setUpdaterState({
-      status: 'downloaded',
-      latestVersion: info.version,
-      releaseDate: info.releaseDate,
-      downloadProgress: 100,
-      error: undefined,
-    })
-  })
-
-  autoUpdater.on('update-not-available', (info) => {
-    setUpdaterState({
-      status: 'not-available',
-      latestVersion: info.version,
-      downloadProgress: undefined,
-      error: undefined,
-    })
-  })
-
-  autoUpdater.on('error', (err) => {
-    setUpdaterState({
-      status: 'error',
-      error: err?.message ?? String(err),
-    })
-  })
-
-  if (autoUpdateEnabled) {
-    // Delay first check until app startup work is done.
-    setTimeout(() => {
-      void checkForAppUpdates(true)
-    }, 5000)
-
-    // Poll for new versions while app is running.
-    updateCheckTimer = setInterval(() => {
-      void checkForAppUpdates(false)
-    }, 60 * 60 * 1000)
-    updateCheckTimer.unref()
-  }
-}
-
 // ---------------------------------------------------------------------------
-// Fix PATH for macOS GUI apps (Finder doesn't inherit shell PATH)
+// Fix PATH for GUI apps (shell PATH not inherited)
 // ---------------------------------------------------------------------------
 
 function fixPath(): void {
+  if (process.platform === 'win32') {
+    // Windows GUI apps inherit PATH from the system, but common tool install
+    // dirs (npm global, scoop, cargo, etc.) may be missing in packaged apps.
+    const home = homedir()
+    const extraDirs = [
+      join(home, 'AppData', 'Roaming', 'npm'),          // npm global
+      join(home, 'AppData', 'Local', 'Programs', 'Microsoft VS Code', 'bin'), // VS Code CLI
+      join(home, '.cargo', 'bin'),                        // Rust/cargo
+      join(home, 'scoop', 'shims'),                       // scoop
+      join(home, '.bun', 'bin'),                          // bun
+    ]
+    const current = process.env.PATH || ''
+    const existing = new Set(current.split(';').map((p) => p.toLowerCase()))
+    const additions = extraDirs.filter((d) => !existing.has(d.toLowerCase()))
+    if (additions.length > 0) {
+      process.env.PATH = [...additions, current].join(';')
+    }
+    return
+  }
+
   if (process.platform !== 'darwin' && process.platform !== 'linux') return
 
   try {
-    const shell = process.env.SHELL || '/bin/zsh'
+    const shell = process.env.SHELL || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash')
     const shellPath = execSync(`${shell} -ilc 'echo -n "$PATH"'`, {
       encoding: 'utf-8',
       timeout: 5000,
@@ -199,12 +78,26 @@ function fixPath(): void {
         .join(':')
     }
   } catch {
-    // Packaged app may not have a login shell — ignore
+    // Packaged app may not have a login shell — add common tool dirs as fallback
+    const home = homedir()
+    const fallbackDirs = [
+      join(home, '.local', 'bin'),
+      join(home, '.cargo', 'bin'),
+      join(home, '.bun', 'bin'),
+      '/usr/local/bin',
+      '/opt/homebrew/bin',
+    ]
+    const current = process.env.PATH || ''
+    const existing = new Set(current.split(':'))
+    const additions = fallbackDirs.filter((d) => !existing.has(d))
+    if (additions.length > 0) {
+      process.env.PATH = [...additions, current].join(':')
+    }
   }
 }
 
 // ---------------------------------------------------------------------------
-// App settings (~/.openpencil/settings.json)
+// App settings
 // ---------------------------------------------------------------------------
 
 interface AppSettings {
@@ -326,10 +219,28 @@ async function startNitroServer(): Promise<number> {
         console.error(`Nitro exited with code ${code}`)
       }
       nitroProcess = null
+      // Auto-restart Nitro server if it crashes while app is running
+      if (code !== 0 && code !== null && mainWindow && !mainWindow.isDestroyed()) {
+        console.log('[nitro] Restarting server after crash...')
+        startNitroServer()
+          .then((newPort) => {
+            serverPort = newPort
+            writePortFile(newPort)
+            console.log(`[nitro] Restarted on port ${newPort}`)
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.loadURL(`http://127.0.0.1:${newPort}/editor`)
+            }
+          })
+          .catch((err) => {
+            console.error('[nitro] Failed to restart:', err)
+          })
+      }
     })
 
-    // Fallback: if no stdout "ready" message comes, wait then resolve anyway
-    setTimeout(() => resolve(port), 3000)
+    // Fallback: if no stdout "ready" message comes, wait then resolve anyway.
+    // Use longer timeout on Windows (slower process creation).
+    const fallbackMs = process.platform === 'win32' ? 6000 : 3000
+    setTimeout(() => resolve(port), fallbackMs)
   })
 }
 
@@ -337,12 +248,20 @@ async function startNitroServer(): Promise<number> {
 // Linux window-controls side detection
 // ---------------------------------------------------------------------------
 
+/** Cached result for Linux controls side detection. */
+let cachedLinuxControlsSide: 'left' | 'right' | null = null
+
 /**
  * Detect whether Linux DE places window controls on the left or right.
- * Uses gsettings (GNOME/Cinnamon/MATE) as primary check, defaults to right
- * for KDE/XFCE and when detection fails.
+ * Uses gsettings (GNOME/Cinnamon/MATE) as primary check, checks XDG_CURRENT_DESKTOP
+ * for known right-side DEs, then defaults to right. Result is cached.
  */
 function getLinuxControlsSide(): 'left' | 'right' {
+  if (cachedLinuxControlsSide) return cachedLinuxControlsSide
+
+  let result: 'left' | 'right' = 'right'
+
+  // Try gsettings (works for GNOME, Cinnamon, MATE, Budgie)
   try {
     const layout = execSync(
       'gsettings get org.gnome.desktop.wm.preferences button-layout',
@@ -350,21 +269,28 @@ function getLinuxControlsSide(): 'left' | 'right' {
     )
       .trim()
       .replace(/'/g, '')
-    // Format: "close,minimize,maximize:" → left, ":minimize,maximize,close" → right
     const colonIndex = layout.indexOf(':')
-    if (colonIndex < 0) return 'right'
-    const beforeColon = layout.slice(0, colonIndex)
-    if (
-      beforeColon.includes('close') ||
-      beforeColon.includes('minimize') ||
-      beforeColon.includes('maximize')
-    ) {
-      return 'left'
+    if (colonIndex >= 0) {
+      const beforeColon = layout.slice(0, colonIndex)
+      if (
+        beforeColon.includes('close') ||
+        beforeColon.includes('minimize') ||
+        beforeColon.includes('maximize')
+      ) {
+        result = 'left'
+      }
     }
-    return 'right'
   } catch {
-    return 'right'
+    // gsettings not available — check desktop environment
+    const desktop = (process.env.XDG_CURRENT_DESKTOP || '').toLowerCase()
+    // KDE, XFCE, LXQt default to right. elementary OS defaults to left.
+    if (desktop.includes('pantheon')) {
+      result = 'left'
+    }
   }
+
+  cachedLinuxControlsSide = result
+  return result
 }
 
 // ---------------------------------------------------------------------------
@@ -384,8 +310,8 @@ function createWindow(): void {
     ...(isWinOrLinux
       ? {
           titleBarOverlay: {
-            // Windows supports transparent overlay; Linux needs solid color
-            color: process.platform === 'win32' ? 'rgba(0,0,0,0)' : '#111',
+            // Windows supports transparent overlay; Linux uses solid color (updated via theme:set IPC)
+            color: process.platform === 'win32' ? 'rgba(0,0,0,0)' : '#1a1a1a',
             symbolColor: '#d4d4d8',
             height: 36,
           },
@@ -476,7 +402,7 @@ function createWindow(): void {
 }
 
 // ---------------------------------------------------------------------------
-// IPC: native file dialogs
+// IPC: native file dialogs & updater
 // ---------------------------------------------------------------------------
 
 function setupIPC(): void {
@@ -522,7 +448,7 @@ function setupIPC(): void {
       // Directory allowlist: only allow writes under user home or OS temp
       const allowedRoots = [app.getPath('home'), app.getPath('temp')]
       const inAllowedDir = allowedRoots.some(
-        (root) => resolved === root || resolved.startsWith(root + '/') || resolved.startsWith(root + '\\'),
+        (root) => resolved === root || resolved.startsWith(root + sep),
       )
       if (!inAllowedDir) {
         throw new Error('File path must be within the user home or temp directory')
@@ -571,169 +497,27 @@ function setupIPC(): void {
     },
   )
 
-  ipcMain.handle('updater:getState', () => updaterState)
-
+  ipcMain.handle('updater:getState', () => getUpdaterState())
   ipcMain.handle('updater:checkForUpdates', async () => {
     await checkForAppUpdates(true)
-    return updaterState
+    return getUpdaterState()
   })
-
-  ipcMain.handle('updater:quitAndInstall', () => {
-    if (!isDev && updaterState.status === 'downloaded') {
-      autoUpdater.quitAndInstall()
-      return true
-    }
-    return false
-  })
-
-  ipcMain.handle('updater:getAutoCheck', () => autoUpdateEnabled)
+  ipcMain.handle('updater:quitAndInstall', () => quitAndInstall())
+  ipcMain.handle('updater:getAutoCheck', () => getAutoUpdateEnabled())
 
   ipcMain.handle('updater:setAutoCheck', async (_event, enabled: boolean) => {
-    autoUpdateEnabled = enabled
+    setAutoUpdateEnabled(enabled)
     await writeAppSettings({ autoUpdate: enabled })
 
     if (enabled) {
-      // Start polling if not already running
-      if (!updateCheckTimer) {
-        updateCheckTimer = setInterval(() => {
-          void checkForAppUpdates(false)
-        }, 60 * 60 * 1000)
-        updateCheckTimer.unref()
-      }
+      startUpdateTimer()
       setUpdaterState({ status: 'idle' })
     } else {
-      // Stop polling
-      if (updateCheckTimer) {
-        clearInterval(updateCheckTimer)
-        updateCheckTimer = null
-      }
+      clearUpdateTimer()
       setUpdaterState({ status: 'disabled' })
     }
     return enabled
   })
-}
-
-// ---------------------------------------------------------------------------
-// Application menu
-// ---------------------------------------------------------------------------
-
-function sendMenuAction(action: string): void {
-  const win = BrowserWindow.getFocusedWindow() ?? mainWindow
-  win?.webContents.send('menu:action', action)
-}
-
-function buildAppMenu(): void {
-  const isMac = process.platform === 'darwin'
-
-  const template: Electron.MenuItemConstructorOptions[] = [
-    // macOS app menu
-    ...(isMac
-      ? [
-          {
-            label: app.name,
-            submenu: [
-              { role: 'about' as const },
-              { type: 'separator' as const },
-              { role: 'services' as const },
-              { type: 'separator' as const },
-              { role: 'hide' as const },
-              { role: 'hideOthers' as const },
-              { role: 'unhide' as const },
-              { type: 'separator' as const },
-              { role: 'quit' as const },
-            ],
-          },
-        ]
-      : []),
-
-    // File menu
-    {
-      label: 'File',
-      submenu: [
-        {
-          label: 'New',
-          accelerator: 'CmdOrCtrl+N',
-          click: () => sendMenuAction('new'),
-        },
-        {
-          label: 'Open\u2026',
-          accelerator: 'CmdOrCtrl+O',
-          click: () => sendMenuAction('open'),
-        },
-        { type: 'separator' },
-        {
-          label: 'Save',
-          accelerator: 'CmdOrCtrl+S',
-          click: () => sendMenuAction('save'),
-        },
-        { type: 'separator' },
-        {
-          label: 'Import Figma\u2026',
-          accelerator: 'CmdOrCtrl+Shift+F',
-          click: () => sendMenuAction('import-figma'),
-        },
-        ...(!isMac
-          ? [{ type: 'separator' as const }, { role: 'quit' as const }]
-          : []),
-      ],
-    },
-
-    // Edit menu (role-based for native text input support)
-    {
-      label: 'Edit',
-      submenu: [
-        {
-          label: 'Undo',
-          accelerator: 'CmdOrCtrl+Z',
-          click: () => sendMenuAction('undo'),
-        },
-        {
-          label: 'Redo',
-          accelerator: 'CmdOrCtrl+Shift+Z',
-          click: () => sendMenuAction('redo'),
-        },
-        { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
-        ...(isMac ? [{ role: 'pasteAndMatchStyle' as const }] : []),
-        { role: 'selectAll' },
-      ],
-    },
-
-    // View menu
-    {
-      label: 'View',
-      submenu: [
-        { role: 'reload' },
-        { role: 'forceReload' },
-        { role: 'toggleDevTools' },
-        { type: 'separator' },
-        { role: 'resetZoom' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
-        { type: 'separator' },
-        { role: 'togglefullscreen' },
-      ],
-    },
-
-    // Window menu
-    {
-      label: 'Window',
-      submenu: [
-        { role: 'minimize' },
-        { role: 'zoom' },
-        ...(isMac
-          ? [
-              { type: 'separator' as const },
-              { role: 'front' as const },
-            ]
-          : [{ role: 'close' as const }]),
-      ],
-    },
-  ]
-
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
 // ---------------------------------------------------------------------------
@@ -743,7 +527,10 @@ function buildAppMenu(): void {
 /** Extract .op file path from command-line arguments. */
 function getFilePathFromArgs(args: string[]): string | null {
   for (const arg of args) {
-    if (arg.endsWith('.op') || arg.endsWith('.pen')) {
+    // Skip flags and the Electron binary/script path
+    if (arg.startsWith('-') || arg.startsWith('--')) continue
+    const ext = extname(arg).toLowerCase()
+    if (ext === '.op' || ext === '.pen') {
       return arg
     }
   }
@@ -804,6 +591,10 @@ app.on('ready', async () => {
       await writePortFile(serverPort)
     } catch (err) {
       console.error('Failed to start Nitro server:', err)
+      dialog.showErrorBox(
+        'OpenPencil',
+        `Failed to start the application server.\n\n${err instanceof Error ? err.message : String(err)}\n\nThe application will now quit.`,
+      )
       app.quit()
       return
     }
@@ -823,8 +614,9 @@ app.on('ready', async () => {
 
   if (!isDev) {
     const settings = await readAppSettings()
-    autoUpdateEnabled = settings.autoUpdate !== false
-    if (autoUpdateEnabled) {
+    const autoUpdate = settings.autoUpdate !== false
+    setAutoUpdateEnabled(autoUpdate)
+    if (autoUpdate) {
       setupAutoUpdater()
     } else {
       setUpdaterState({ status: 'disabled' })
@@ -845,9 +637,32 @@ app.on('activate', () => {
 })
 
 app.on('before-quit', async () => {
+  clearUpdateTimer()
   await cleanupPortFile()
-  if (nitroProcess) {
-    nitroProcess.kill()
-    nitroProcess = null
-  }
+  killNitroProcess()
 })
+
+/** Platform-aware Nitro process termination. */
+function killNitroProcess(): void {
+  if (!nitroProcess) return
+  if (process.platform === 'win32') {
+    // SIGTERM is unreliable on Windows; use taskkill for proper tree-kill
+    try {
+      const pid = nitroProcess.pid
+      if (pid) {
+        execSync(`taskkill /pid ${pid} /T /F`, { stdio: 'ignore' })
+      }
+    } catch { /* process may have already exited */ }
+  } else {
+    nitroProcess.kill('SIGTERM')
+  }
+  nitroProcess = null
+}
+
+// Ensure child process cleanup on unexpected termination (Linux/macOS signals)
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+  process.on(signal, () => {
+    killNitroProcess()
+    cleanupPortFile().finally(() => process.exit(0))
+  })
+}

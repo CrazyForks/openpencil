@@ -7,7 +7,7 @@
  * 4. Launch Electron pointing at the dev server
  */
 
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, execSync, type ChildProcess } from 'node:child_process'
 import { build } from 'esbuild'
 import { join } from 'node:path'
 
@@ -75,7 +75,14 @@ async function main(): Promise<void> {
 
   // Ensure cleanup on exit
   const cleanup = () => {
-    vite.kill()
+    if (process.platform === 'win32' && vite.pid) {
+      // SIGTERM is unreliable on Windows; use taskkill for proper tree-kill
+      try {
+        execSync(`taskkill /pid ${vite.pid} /T /F`, { stdio: 'ignore' })
+      } catch { /* ignore */ }
+    } else {
+      vite.kill()
+    }
     process.exit()
   }
   process.on('SIGINT', cleanup)
@@ -99,7 +106,13 @@ async function main(): Promise<void> {
   }) as ChildProcess
 
   electron.on('exit', () => {
-    vite.kill()
+    if (process.platform === 'win32' && vite.pid) {
+      try {
+        execSync(`taskkill /pid ${vite.pid} /T /F`, { stdio: 'ignore' })
+      } catch { /* ignore */ }
+    } else {
+      vite.kill()
+    }
     process.exit()
   })
 }
