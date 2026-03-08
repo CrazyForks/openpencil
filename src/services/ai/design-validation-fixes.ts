@@ -59,7 +59,7 @@ export interface ValidationResult {
 // Safe fix constants
 // ---------------------------------------------------------------------------
 
-export const SAFE_FIX_PROPERTIES: Record<string, 'number' | 'sizing' | 'number_or_array' | 'enum_align' | 'enum_justify' | 'enum_text_align' | 'color' | 'font_weight'> = {
+export const SAFE_FIX_PROPERTIES: Record<string, 'number' | 'sizing' | 'number_or_array' | 'enum_align' | 'enum_justify' | 'enum_text_align' | 'color' | 'font_weight' | 'enum_text_growth'> = {
   width: 'sizing',
   height: 'sizing',
   padding: 'number_or_array',
@@ -74,6 +74,7 @@ export const SAFE_FIX_PROPERTIES: Record<string, 'number' | 'sizing' | 'number_o
   strokeColor: 'color',
   strokeWidth: 'number',
   textAlign: 'enum_text_align',
+  textGrowth: 'enum_text_growth',
   alignItems: 'enum_align',
   justifyContent: 'enum_justify',
 }
@@ -84,6 +85,7 @@ const VALID_JUSTIFY = new Set(['start', 'center', 'end', 'space_between', 'space
 const VALID_HEX_COLOR = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/
 const VALID_FONT_WEIGHTS = new Set([100, 200, 300, 400, 500, 600, 700, 800, 900])
 const VALID_TEXT_ALIGN = new Set(['left', 'center', 'right'])
+const VALID_TEXT_GROWTH = new Set(['auto', 'fixed-width', 'fixed-width-height'])
 
 // ---------------------------------------------------------------------------
 // Validation helpers
@@ -110,6 +112,8 @@ export function isValidFixValue(property: string, value: unknown): boolean {
       return typeof value === 'number' && VALID_FONT_WEIGHTS.has(value)
     case 'enum_text_align':
       return typeof value === 'string' && VALID_TEXT_ALIGN.has(value)
+    case 'enum_text_growth':
+      return typeof value === 'string' && VALID_TEXT_GROWTH.has(value)
     default:
       return false
   }

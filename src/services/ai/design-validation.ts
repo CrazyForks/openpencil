@@ -66,8 +66,14 @@ Allowed property fixes (update existing node):
 - strokeColor: "#hex" (border/stroke color)
 - strokeWidth: number (border/stroke width)
 - textAlign: "left" | "center" | "right" (text horizontal alignment within its box)
+- textGrowth: "auto" | "fixed-width" | "fixed-width-height" (text wrapping mode — "fixed-width" = wrap text and auto-size height)
 - alignItems: "start" | "center" | "end"
 - justifyContent: "start" | "center" | "end" | "space_between"
+
+TEXT CLIPPING DETECTION:
+- If a text node has an explicit pixel height (h=22, h=30 etc.) AND its content appears visually clipped or overlapping siblings, the fix is: set textGrowth="fixed-width" and height="fit_content". This lets the engine auto-calculate the correct height.
+- Text nodes should almost NEVER have explicit pixel heights. The node tree shows textGrowth and lineHeight values — use these to diagnose text issues.
+- Button text clipped at bottom: check if the parent frame's padding leaves enough space for the text height (fontSize × lineHeight). Fix the parent's padding or height, not the text's fontSize.
 
 Structural fixes (add or remove nodes — use sparingly, only for clear structural issues):
 - Add child: {"action":"addChild","parentId":"real-parent-id","index":0,"node":{"type":"path","name":"KeyIcon","width":18,"height":18}}
@@ -127,6 +133,8 @@ function buildNodeTreeDump(rootId: string): string {
     if (node.type === 'text') {
       if ('fontSize' in node && node.fontSize) props.push(`fontSize=${node.fontSize}`)
       if ('fontWeight' in node && node.fontWeight) props.push(`fontWeight=${node.fontWeight}`)
+      if ('lineHeight' in node && node.lineHeight) props.push(`lineHeight=${node.lineHeight}`)
+      if ('textGrowth' in node && node.textGrowth) props.push(`textGrowth=${node.textGrowth}`)
       if ('textAlign' in node && node.textAlign) props.push(`textAlign=${node.textAlign}`)
       if ('content' in node) {
         const content = (node as { content?: string }).content ?? ''

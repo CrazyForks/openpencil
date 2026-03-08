@@ -149,18 +149,33 @@ export function insertStreamingNode(
     // - horizontal layout: short labels should hug content to avoid squeezing siblings
     if (node.type === 'text') {
       const parentLayout = ('layout' in parentNode ? parentNode.layout : undefined)
+      const content = ('content' in node ? (node.content as string) ?? '' : '')
+      const isLongText = content.length > 15
+
       if (parentLayout === 'vertical') {
-        if (typeof node.width === 'number') node.width = 'fill_container'
-        if (!node.textGrowth) node.textGrowth = 'fixed-width'
+        // Only force fill_container + fixed-width on LONG text that needs wrapping.
+        // Short labels/titles/numbers should hug content width (auto).
+        if (isLongText) {
+          if (typeof node.width === 'number') node.width = 'fill_container'
+          if (!node.textGrowth) node.textGrowth = 'fixed-width'
+        } else {
+          // Short text in vertical layout: fix pixel width but don't force wrapping
+          if (typeof node.width === 'number') node.width = 'fill_container'
+        }
       } else if (parentLayout === 'horizontal') {
-        if (typeof node.width === 'string' && node.width.startsWith('fill_container')) {
+        if (typeof node.width === 'string' && node.width.startsWith('fill_container') && !isLongText) {
           node.width = 'fit_content'
         }
-        if (!node.textGrowth || node.textGrowth === 'fixed-width' || node.textGrowth === 'fixed-width-height') {
+        if (!isLongText && (!node.textGrowth || node.textGrowth === 'fixed-width' || node.textGrowth === 'fixed-width-height')) {
           node.textGrowth = 'auto'
         }
-      } else if (!node.textGrowth) {
-        node.textGrowth = 'fixed-width'
+      }
+      // Respect AI's explicit textGrowth setting; don't override if already set.
+
+      // Strip explicit pixel height on text nodes — always let the engine auto-size.
+      // AI models often output height values that cause text clipping/overlap.
+      if (typeof node.height === 'number' && node.textGrowth !== 'fixed-width-height') {
+        delete (node as { height?: unknown }).height
       }
       // Default lineHeight based on text role (heading vs body)
       if (!node.lineHeight) {
