@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { PenDocument } from '../types/pen'
 import { sanitizeObject } from './utils/sanitize'
+import { PORT_FILE_DIR_NAME, PORT_FILE_NAME } from '@/constants/app'
 
 const cache = new Map<string, { doc: PenDocument; mtime: number }>()
 
@@ -16,7 +17,7 @@ export function resolveDocPath(filePath?: string): string {
   return resolve(filePath)
 }
 
-const PORT_FILE_PATH = join(homedir(), '.openpencil', '.port')
+const PORT_FILE_PATH = join(homedir(), PORT_FILE_DIR_NAME, PORT_FILE_NAME)
 
 // ---------------------------------------------------------------------------
 // Sync URL discovery

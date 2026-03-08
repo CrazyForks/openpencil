@@ -1,6 +1,7 @@
 import { app, BrowserWindow } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import { GitHubProvider } from 'electron-updater/out/providers/GitHubProvider'
+import { GITHUB_OWNER, GITHUB_REPO } from './constants'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -137,16 +138,16 @@ export function setupAutoUpdater(): void {
     autoUpdater.setFeedURL({
       provider: 'custom',
       updateProvider: MacGitHubUpdateProvider as any,
-      owner: 'ZSeven-W',
-      repo: 'openpencil',
+      owner: GITHUB_OWNER,
+      repo: GITHUB_REPO,
       releaseType: 'release',
     } as any)
   } else {
     // Windows/Linux: use standard GitHub provider (reads from electron-builder.yml publish config)
     autoUpdater.setFeedURL({
       provider: 'github',
-      owner: 'ZSeven-W',
-      repo: 'openpencil',
+      owner: GITHUB_OWNER,
+      repo: GITHUB_REPO,
       releaseType: 'release',
     })
   }

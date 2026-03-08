@@ -12,6 +12,7 @@ import { build } from 'esbuild'
 import { join } from 'node:path'
 
 const ROOT = join(import.meta.dirname, '..')
+const VITE_DEV_PORT = 3000
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -89,8 +90,8 @@ async function main(): Promise<void> {
   process.on('SIGTERM', cleanup)
 
   // 2. Wait for Vite to be ready
-  console.log('[electron-dev] Waiting for Vite on port 3000...')
-  await waitForServer('http://localhost:3000')
+  console.log(`[electron-dev] Waiting for Vite on port ${VITE_DEV_PORT}...`)
+  await waitForServer(`http://localhost:${VITE_DEV_PORT}`)
   console.log('[electron-dev] Vite is ready')
 
   // 3. Compile Electron files

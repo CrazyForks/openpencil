@@ -6,6 +6,7 @@ import type {
   MCPTransportMode,
   GroupedModel,
 } from '@/types/agent-settings'
+import { MCP_DEFAULT_PORT } from '@/constants/app'
 
 const STORAGE_KEY = 'openpencil-agent-settings'
 
@@ -80,7 +81,7 @@ export const useAgentSettingsStore = create<AgentSettingsState>((set, get) => ({
   providers: { ...DEFAULT_PROVIDERS },
   mcpIntegrations: [...DEFAULT_MCP_INTEGRATIONS],
   mcpTransportMode: 'stdio',
-  mcpHttpPort: 3100,
+  mcpHttpPort: MCP_DEFAULT_PORT,
   dialogOpen: false,
   isHydrated: false,
   mcpServerRunning: false,

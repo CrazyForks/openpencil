@@ -35,6 +35,7 @@ import {
 } from './tools/pages'
 import { handleBatchDesign } from './tools/batch-design'
 import { buildDesignPrompt } from './tools/design-prompt'
+import { MCP_DEFAULT_PORT } from '@/constants/app'
 
 // --- Tool definitions (shared across all Server instances) ---
 
@@ -662,11 +663,11 @@ function parseArgs(): { stdio: boolean; http: boolean; port: number } {
   const hasHttp = args.includes('--http')
   const hasStdio = args.includes('--stdio')
   const portIdx = args.indexOf('--port')
-  const port = portIdx !== -1 ? parseInt(args[portIdx + 1], 10) : 3100
+  const port = portIdx !== -1 ? parseInt(args[portIdx + 1], 10) : MCP_DEFAULT_PORT
 
-  if (hasHttp && hasStdio) return { stdio: true, http: true, port: isNaN(port) ? 3100 : port }
-  if (hasHttp) return { stdio: false, http: true, port: isNaN(port) ? 3100 : port }
-  return { stdio: true, http: false, port: 3100 }
+  if (hasHttp && hasStdio) return { stdio: true, http: true, port: isNaN(port) ? MCP_DEFAULT_PORT : port }
+  if (hasHttp) return { stdio: false, http: true, port: isNaN(port) ? MCP_DEFAULT_PORT : port }
+  return { stdio: true, http: false, port: MCP_DEFAULT_PORT }
 }
 
 async function main() {

@@ -14,6 +14,23 @@ import { readFile, writeFile, mkdir, unlink } from 'node:fs/promises'
 
 import { buildAppMenu } from './app-menu'
 import {
+  PORT_FILE_DIR_NAME,
+  PORT_FILE_NAME,
+  VITE_DEV_PORT,
+  WINDOW_WIDTH,
+  WINDOW_HEIGHT,
+  WINDOW_MIN_WIDTH,
+  WINDOW_MIN_HEIGHT,
+  TITLEBAR_OVERLAY_HEIGHT,
+  MACOS_TRAFFIC_LIGHT_POSITION,
+  MACOS_TRAFFIC_LIGHT_PAD,
+  WIN_CONTROLS_PAD,
+  LINUX_CONTROLS_PAD,
+  NITRO_HOST,
+  NITRO_FALLBACK_TIMEOUT_WIN,
+  NITRO_FALLBACK_TIMEOUT_DEFAULT,
+} from './constants'
+import {
   setupAutoUpdater,
   broadcastUpdaterState,
   getUpdaterState,
@@ -124,8 +141,8 @@ async function writeAppSettings(patch: Partial<AppSettings>): Promise<void> {
 // Port file for MCP sync discovery (~/.openpencil/.port)
 // ---------------------------------------------------------------------------
 
-const PORT_FILE_DIR = join(homedir(), '.openpencil')
-const PORT_FILE_PATH = join(PORT_FILE_DIR, '.port')
+const PORT_FILE_DIR = join(homedir(), PORT_FILE_DIR_NAME)
+const PORT_FILE_PATH = join(PORT_FILE_DIR, PORT_FILE_NAME)
 
 async function writePortFile(port: number): Promise<void> {
   try {
@@ -155,7 +172,7 @@ async function cleanupPortFile(): Promise<void> {
 function getFreePorts(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = createServer()
-    server.listen(0, '127.0.0.1', () => {
+    server.listen(0, NITRO_HOST, () => {
       const addr = server.address()
       if (addr && typeof addr === 'object') {
         const { port } = addr
@@ -189,9 +206,9 @@ async function startNitroServer(): Promise<number> {
     const child = fork(entry, [], {
       env: {
         ...process.env,
-        HOST: '127.0.0.1',
+        HOST: NITRO_HOST,
         PORT: String(port),
-        NITRO_HOST: '127.0.0.1',
+        NITRO_HOST: NITRO_HOST,
         NITRO_PORT: String(port),
         ELECTRON_RESOURCES_PATH: process.resourcesPath,
       },
@@ -228,7 +245,7 @@ async function startNitroServer(): Promise<number> {
             writePortFile(newPort)
             console.log(`[nitro] Restarted on port ${newPort}`)
             if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.loadURL(`http://127.0.0.1:${newPort}/editor`)
+              mainWindow.loadURL(`http://${NITRO_HOST}:${newPort}/editor`)
             }
           })
           .catch((err) => {
@@ -239,7 +256,7 @@ async function startNitroServer(): Promise<number> {
 
     // Fallback: if no stdout "ready" message comes, wait then resolve anyway.
     // Use longer timeout on Windows (slower process creation).
-    const fallbackMs = process.platform === 'win32' ? 6000 : 3000
+    const fallbackMs = process.platform === 'win32' ? NITRO_FALLBACK_TIMEOUT_WIN : NITRO_FALLBACK_TIMEOUT_DEFAULT
     setTimeout(() => resolve(port), fallbackMs)
   })
 }
@@ -301,10 +318,10 @@ function createWindow(): void {
   const isWinOrLinux = process.platform === 'win32' || process.platform === 'linux'
 
   const windowOptions: BrowserWindowConstructorOptions = {
-    width: 1440,
-    height: 900,
-    minWidth: 1024,
-    minHeight: 600,
+    width: WINDOW_WIDTH,
+    height: WINDOW_HEIGHT,
+    minWidth: WINDOW_MIN_WIDTH,
+    minHeight: WINDOW_MIN_HEIGHT,
     title: 'OpenPencil',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
     ...(isWinOrLinux
@@ -313,7 +330,7 @@ function createWindow(): void {
             // Windows supports transparent overlay; Linux uses solid color (updated via theme:set IPC)
             color: process.platform === 'win32' ? 'rgba(0,0,0,0)' : '#1a1a1a',
             symbolColor: '#d4d4d8',
-            height: 36,
+            height: TITLEBAR_OVERLAY_HEIGHT,
           },
         }
       : {}),
@@ -328,7 +345,7 @@ function createWindow(): void {
   }
 
   if (process.platform === 'darwin') {
-    windowOptions.trafficLightPosition = { x: 16, y: 11 }
+    windowOptions.trafficLightPosition = MACOS_TRAFFIC_LIGHT_POSITION
   }
 
   // Start hidden to avoid visual flash before CSS injection
@@ -343,32 +360,32 @@ function createWindow(): void {
   }
 
   const url = isDev
-    ? 'http://localhost:3000/editor'
-    : `http://127.0.0.1:${serverPort}/editor`
+    ? `http://localhost:${VITE_DEV_PORT}/editor`
+    : `http://${NITRO_HOST}:${serverPort}/editor`
 
   // Inject traffic-light padding CSS then show window (no flash)
   mainWindow.webContents.on('did-finish-load', async () => {
     if (!mainWindow) return
     if (process.platform === 'darwin') {
       await mainWindow.webContents.insertCSS(
-        '.electron-traffic-light-pad { margin-left: 74px; }' +
+        `.electron-traffic-light-pad { margin-left: ${MACOS_TRAFFIC_LIGHT_PAD}px; }` +
         '.electron-fullscreen .electron-traffic-light-pad { margin-left: 0; }',
       )
     }
     if (process.platform === 'win32') {
       await mainWindow.webContents.insertCSS(
-        '.electron-win-controls-pad { margin-right: 140px; }',
+        `.electron-win-controls-pad { margin-right: ${WIN_CONTROLS_PAD}px; }`,
       )
     }
     if (process.platform === 'linux') {
       const side = getLinuxControlsSide()
       if (side === 'left') {
         await mainWindow.webContents.insertCSS(
-          '.electron-traffic-light-pad { margin-left: 140px; }',
+          `.electron-traffic-light-pad { margin-left: ${LINUX_CONTROLS_PAD}px; }`,
         )
       } else {
         await mainWindow.webContents.insertCSS(
-          '.electron-win-controls-pad { margin-right: 140px; }',
+          `.electron-win-controls-pad { margin-right: ${LINUX_CONTROLS_PAD}px; }`,
         )
       }
     }
@@ -600,7 +617,7 @@ app.on('ready', async () => {
     }
   } else {
     // Dev mode: Vite dev server runs on port 3000
-    await writePortFile(3000)
+    await writePortFile(VITE_DEV_PORT)
   }
 
   createWindow()
