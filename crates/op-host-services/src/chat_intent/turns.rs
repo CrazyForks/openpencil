@@ -51,7 +51,9 @@ pub(super) const MODIFY_RETRY_REMINDER: &str =
 pub(super) struct ModifyTurnParse {
     full_response: String,
     nodes: Vec<crate::chat_canvas_tools::DesignModificationOp>,
+    parse_diagnostic: Option<String>,
     stream_error: Option<String>,
+    retryable_completion: bool,
 }
 
 pub(super) fn applied_modify_nodes_json(
@@ -73,6 +75,7 @@ pub(super) fn stream_and_parse_modify_turn(
 ) -> ModifyTurnParse {
     let mut full_response = String::new();
     let mut stream_error: Option<String> = None;
+    let mut retryable_completion = false;
     for delta in provider.send(request) {
         match delta {
             ChatDelta::TextDelta(s) => full_response.push_str(&s),
@@ -83,22 +86,50 @@ pub(super) fn stream_and_parse_modify_turn(
                 stream_error = Some(msg);
                 break;
             }
-            ChatDelta::Done { .. } => break,
+            ChatDelta::Done { stop_reason } => {
+                retryable_completion = stop_reason == StopReason::EndTurn;
+                break;
+            }
         }
     }
 
     // TS order: parse first; a stream error only surfaces when no
     // nodes could be extracted (design-generator.ts:158-165).
-    let nodes = parse_modify_nodes(&full_response);
+    let parsed = parse_modify_response(&full_response);
     ModifyTurnParse {
         full_response,
-        nodes,
+        nodes: parsed.nodes,
+        parse_diagnostic: parsed.diagnostic,
         stream_error,
+        retryable_completion,
     }
 }
 
-pub(super) fn with_modify_retry_reminder(mut request: ChatRequest) -> ChatRequest {
+pub(super) fn bounded_feedback(text: &str, max_chars: usize) -> String {
+    let mut chars = text.chars();
+    let mut bounded = chars.by_ref().take(max_chars).collect::<String>();
+    if chars.next().is_some() {
+        bounded.push_str("...");
+    }
+    bounded
+}
+
+pub(super) fn with_modify_retry_feedback(
+    mut request: ChatRequest,
+    failed: &ModifyTurnParse,
+) -> ChatRequest {
     request.system_prompt.push_str(MODIFY_RETRY_REMINDER);
+    let diagnostic = failed
+        .stream_error
+        .as_deref()
+        .or(failed.parse_diagnostic.as_deref())
+        .unwrap_or("no applicable nodes were extracted");
+    request.user_message.push_str(
+        "\n\nRETRY FEEDBACK:\nThe previous response produced no applicable edit. Rewrite the requested modification as valid I(parent, node) JavaScript.\nParser feedback: ",
+    );
+    request
+        .user_message
+        .push_str(&bounded_feedback(diagnostic, 500));
     request
 }
 
@@ -220,14 +251,19 @@ pub fn run_modify_turn(
     }
 
     let mut parsed = stream_and_parse_modify_turn(provider, request.clone());
-    if parsed.nodes.is_empty() {
-        parsed = stream_and_parse_modify_turn(provider, with_modify_retry_reminder(request));
+    let mut retried = false;
+    if parsed.nodes.is_empty() && parsed.stream_error.is_none() && parsed.retryable_completion {
+        retried = true;
+        let retry_request = with_modify_retry_feedback(request, &parsed);
+        parsed = stream_and_parse_modify_turn(provider, retry_request);
     }
 
     let ModifyTurnParse {
         full_response,
         nodes,
+        parse_diagnostic: _,
         stream_error,
+        retryable_completion: _,
     } = parsed;
     if !nodes.is_empty() {
         let args = serde_json::json!({
@@ -264,8 +300,11 @@ pub fn run_modify_turn(
 
     let message = if let Some(err) = stream_error {
         err
+    } else if retried {
+        "The model did not return an applicable edit after one automatic retry. Name the element and the exact change, or retry the previous instruction."
+            .to_string()
     } else {
-        "The model returned a description instead of an applyable edit. Try rephrasing (e.g. name the element to add) or run it again."
+        "The model did not return an applicable edit. Name the element and the exact change, or retry the previous instruction."
             .to_string()
     };
     let _ = chat_tx.send(ChatDelta::Error(message));

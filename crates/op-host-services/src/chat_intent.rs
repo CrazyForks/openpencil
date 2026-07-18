@@ -44,7 +44,9 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use op_ai::chat_provider::{ChatDelta, ChatProvider, ChatRequest, ChatToolExecutor, StopReason};
+use op_ai::chat_provider::{
+    ChatDelta, ChatHistoryRole, ChatProvider, ChatRequest, ChatToolExecutor, StopReason,
+};
 use op_editor_core::pen_node_ext::PenNodeExt;
 use op_editor_core::EditorState;
 use op_orchestrator::{AbortFlag, AppendContext, DesignRequest};
@@ -71,6 +73,45 @@ pub enum DesignIntent {
     New,
     Modify,
     Chat,
+}
+
+const RETRY_PHRASES: &[&str] = &[
+    "retry",
+    "try again",
+    "run it again",
+    "please try again",
+    "vuelve a intentar",
+    "intenta de nuevo",
+    "reintenta",
+    "otra vez",
+];
+
+fn is_retry_phrase(text: &str) -> bool {
+    let normalized = text
+        .trim()
+        .trim_matches(|c: char| !c.is_alphanumeric())
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    RETRY_PHRASES.contains(&normalized.as_str())
+}
+
+/// Resolve a short retry utterance to the most recent actionable user request.
+/// The transcript remains unchanged; callers use this only as the effective
+/// instruction sent to stateless design/modify providers.
+pub fn resolve_retry_instruction(user_text: &str, history: &[(ChatHistoryRole, String)]) -> String {
+    if !is_retry_phrase(user_text) {
+        return user_text.to_string();
+    }
+    history
+        .iter()
+        .rev()
+        .find_map(|(role, text)| {
+            (*role == ChatHistoryRole::User && !text.trim().is_empty() && !is_retry_phrase(text))
+                .then(|| text.clone())
+        })
+        .unwrap_or_else(|| user_text.to_string())
 }
 
 /// TS `CLASSIFY_PROMPT` — verbatim.

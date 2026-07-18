@@ -205,30 +205,66 @@ pub(super) fn strip_base64_data_uris(value: &mut serde_json::Value) {
     }
 }
 
+pub(super) struct ModifyNodeParse {
+    pub(super) nodes: Vec<crate::chat_canvas_tools::DesignModificationOp>,
+    pub(super) diagnostic: Option<String>,
+}
+
+pub(super) fn parse_modify_response(full_response: &str) -> ModifyNodeParse {
+    if full_response.trim().is_empty() {
+        return ModifyNodeParse {
+            nodes: Vec::new(),
+            diagnostic: Some("the model returned no text".into()),
+        };
+    }
+
+    let script = op_mcp::script_runner::run_script_to_program(full_response);
+    let nodes: Vec<crate::chat_canvas_tools::DesignModificationOp> = script
+        .as_ref()
+        .ok()
+        .map(|program| op_mcp::parse_program_objects(program).into_iter().collect())
+        .unwrap_or_default();
+    if !nodes.is_empty() {
+        return ModifyNodeParse {
+            nodes,
+            diagnostic: None,
+        };
+    }
+
+    match op_orchestrator::parse::parse_nodes(full_response) {
+        Ok(nodes) if !nodes.is_empty() => ModifyNodeParse {
+            nodes: nodes
+                .into_iter()
+                .map(|node| {
+                    (
+                        "null".to_string(),
+                        serde_json::to_value(node).unwrap_or(serde_json::Value::Null),
+                    )
+                })
+                .collect(),
+            diagnostic: None,
+        },
+        parsed => {
+            let script_detail = match script {
+                Ok(_) => "response contained no I(...) operations".to_string(),
+                Err(_) => "response was not valid modification JavaScript".to_string(),
+            };
+            let node_detail = match parsed {
+                Ok(_) => "node response contained no nodes".to_string(),
+                Err(_) => "response was not valid node JSON".to_string(),
+            };
+            ModifyNodeParse {
+                nodes: Vec::new(),
+                diagnostic: Some(format!("{script_detail}; {node_detail}")),
+            }
+        }
+    }
+}
+
 pub(crate) fn parse_modify_nodes(
     full_response: &str,
 ) -> Vec<crate::chat_canvas_tools::DesignModificationOp> {
-    let nodes = op_mcp::script_runner::run_script_to_program(full_response)
-        .ok()
-        .map(|program| {
-            op_mcp::parse_program_objects(&program)
-                .into_iter()
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    if !nodes.is_empty() {
-        return nodes;
-    }
-    op_orchestrator::parse::parse_nodes(full_response)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|node| {
-            (
-                "null".to_string(),
-                serde_json::to_value(node).unwrap_or(serde_json::Value::Null),
-            )
-        })
-        .collect()
+    parse_modify_response(full_response).nodes
 }
 
 /// Build a modification plan for explicitly selected Frames. Direct mutation

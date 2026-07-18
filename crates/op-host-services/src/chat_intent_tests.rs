@@ -88,6 +88,50 @@ fn classification_tag_parsing_matches_ts() {
     assert_eq!(parse_classified(""), DesignIntent::New);
 }
 
+#[test]
+fn retry_instruction_replays_the_last_user_request() {
+    let history = vec![
+        (
+            ChatHistoryRole::User,
+            "invert the activity list and remove notifications".into(),
+        ),
+        (
+            ChatHistoryRole::Assistant,
+            "error: no applicable edit was returned".into(),
+        ),
+        (ChatHistoryRole::User, "retry".into()),
+        (
+            ChatHistoryRole::Assistant,
+            "error: no applicable edit was returned".into(),
+        ),
+    ];
+
+    for retry in [
+        "vuelve a intentar",
+        "Intenta de nuevo!",
+        "retry",
+        "try again",
+    ] {
+        assert_eq!(
+            resolve_retry_instruction(retry, &history),
+            "invert the activity list and remove notifications"
+        );
+    }
+}
+
+#[test]
+fn retry_instruction_without_prior_user_request_stays_unchanged() {
+    let history = vec![(ChatHistoryRole::Assistant, "How can I help?".into())];
+    assert_eq!(
+        resolve_retry_instruction("vuelve a intentar", &history),
+        "vuelve a intentar"
+    );
+    assert_eq!(
+        resolve_retry_instruction("make the button red", &history),
+        "make the button red"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Scripted provider
 // ---------------------------------------------------------------------------
@@ -152,6 +196,27 @@ impl ScriptedSequence {
     fn text(responses: &[&str]) -> Self {
         Self {
             responses: Mutex::new(responses.iter().map(|s| scripted_text_deltas(s)).collect()),
+            requests: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn error(message: &str) -> Self {
+        Self {
+            responses: Mutex::new(VecDeque::from([vec![
+                ChatDelta::Error(message.into()),
+                ChatDelta::Done {
+                    stop_reason: StopReason::Aborted,
+                },
+            ]])),
+            requests: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn aborted() -> Self {
+        Self {
+            responses: Mutex::new(VecDeque::from([vec![ChatDelta::Done {
+                stop_reason: StopReason::Aborted,
+            }]])),
             requests: Mutex::new(Vec::new()),
         }
     }
