@@ -372,6 +372,52 @@ fn layout_none_with_missing_coordinates_or_wrong_painter_order_is_fixed_preinser
 }
 
 #[test]
+fn unnamed_partial_arc_pairs_infer_larger_sweep_as_track_and_reorder_preinsert() {
+    for progress_sweep in [200, 185] {
+        let mut nodes: Vec<PenNode> = serde_json::from_value(json!([{
+            "type": "frame",
+            "id": format!("ring-{progress_sweep}"),
+            "width": 64,
+            "height": 64,
+            "layout": "none",
+            "children": [
+                {"type":"ellipse","id":format!("large-{progress_sweep}"),
+                 "x":0,"y":0,"width":64,"height":64,"innerRadius":0.72,
+                 "startAngle":135,"sweepAngle":270},
+                {"type":"ellipse","id":format!("small-{progress_sweep}"),
+                 "x":0,"y":0,"width":64,"height":64,"innerRadius":0.72,
+                 "startAngle":135,"sweepAngle":progress_sweep},
+                {"type":"frame","id":format!("centre-{progress_sweep}"),
+                 "x":0,"y":0,"width":64,"height":64,"layout":"horizontal"}
+            ]
+        }]))
+        .expect("valid unnamed partial ring");
+
+        assert!(has_radial_issue(&check_generated_nodes(&nodes, 390.0)));
+        assert!(auto_fix_fixable_issues(&mut nodes, 390.0));
+
+        let repaired = serde_json::to_value(&nodes).expect("serialize repaired ring");
+        let ring = find_id(&repaired, &format!("ring-{progress_sweep}")).expect("ring");
+        let order: Vec<&str> = ring["children"]
+            .as_array()
+            .expect("ring children")
+            .iter()
+            .filter_map(|child| child.get("id").and_then(Value::as_str))
+            .collect();
+        assert_eq!(
+            order,
+            [
+                format!("centre-{progress_sweep}"),
+                format!("small-{progress_sweep}"),
+                format!("large-{progress_sweep}"),
+            ],
+            "{progress_sweep}° progress must paint above the inferred 270° track"
+        );
+        assert!(!check_generated_nodes(&nodes, 390.0).has_fatal());
+    }
+}
+
+#[test]
 fn unmeasurable_nested_centre_content_is_retried_instead_of_clipped() {
     let mut ring = fixed_ring(Some("horizontal"));
     ring["children"][2] = json!({

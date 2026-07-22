@@ -8,6 +8,8 @@ use crate::types::DocSink;
 
 #[path = "radial_repair_force_center.rs"]
 mod radial_repair_force_center;
+#[path = "radial_repair_partial_pair.rs"]
+mod radial_repair_partial_pair;
 
 #[derive(Clone, Copy)]
 struct Rect {
@@ -301,6 +303,12 @@ fn radial_layers(v: &Value) -> Option<RadialLayers> {
             None => return None,
         }
     }
+    if let Some((progress_index, track_index)) =
+        radial_repair_partial_pair::infer_unnamed_partial_pair(v, kids, &progress, &tracks)
+    {
+        progress = vec![progress_index];
+        tracks = vec![track_index];
+    }
     let track_progress_pair = !progress.is_empty() && !tracks.is_empty();
     let segmented_donut = tracks.is_empty() && segmented_arcs_cover_ring(kids, &progress);
     if !track_progress_pair && !segmented_donut {
@@ -549,6 +557,11 @@ fn radial_stack_repair(v: &Value, rects: &HashMap<String, Rect>) -> Option<Vec<E
             value: LayoutPropValue::Keyword("start".to_string()),
         },
     ];
+    cmds.extend(radial_repair_partial_pair::canonical_reorder_commands(
+        id,
+        kids,
+        &layer_order,
+    ));
     if fix_parent_width {
         cmds.push(update_size(id, Some(max_arc), None));
     }

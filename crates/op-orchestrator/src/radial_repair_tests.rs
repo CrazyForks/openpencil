@@ -36,3 +36,47 @@ fn layout_none_repair_centres_against_resolved_child_size() {
         "position must use the final 47px layout height without rewriting the authored size"
     );
 }
+
+#[test]
+fn late_repair_reorders_unnamed_partial_pairs_to_canonical_painter_order() {
+    for progress_sweep in [200, 185] {
+        let ring_id = format!("ring-{progress_sweep}");
+        let ring: jian_ops_schema::node::PenNode = serde_json::from_value(json!({
+            "type":"frame","id":ring_id,"width":64,"height":64,"layout":"none",
+            "children":[
+                {"type":"ellipse","id":format!("large-{progress_sweep}"),
+                 "x":0,"y":0,"width":64,"height":64,"innerRadius":0.72,
+                 "startAngle":135,"sweepAngle":270},
+                {"type":"ellipse","id":format!("small-{progress_sweep}"),
+                 "x":0,"y":0,"width":64,"height":64,"innerRadius":0.72,
+                 "startAngle":135,"sweepAngle":progress_sweep},
+                {"type":"frame","id":format!("centre-{progress_sweep}"),
+                 "x":0,"y":0,"width":64,"height":64,"layout":"horizontal"}
+            ]
+        }))
+        .expect("valid unnamed partial ring");
+        let mut state = EditorState::new();
+        state.active_children_mut().clear();
+        state.active_children_mut().push(ring);
+        let mut sink = crate::loop_finalize::StateDocSink { state: &mut state };
+
+        assert!(repair_radial_stacks(&mut sink, &ring_id));
+
+        let repaired = serde_json::to_value(&sink.state.active_children()[0])
+            .expect("serialize repaired ring");
+        let order: Vec<&str> = repaired["children"]
+            .as_array()
+            .expect("ring children")
+            .iter()
+            .filter_map(|child| child.get("id").and_then(Value::as_str))
+            .collect();
+        assert_eq!(
+            order,
+            [
+                format!("centre-{progress_sweep}"),
+                format!("small-{progress_sweep}"),
+                format!("large-{progress_sweep}"),
+            ]
+        );
+    }
+}
