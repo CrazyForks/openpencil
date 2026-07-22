@@ -110,6 +110,44 @@ fn design_session_drains_progress_and_command_requests() {
 }
 
 #[test]
+fn design_session_drains_progress_queued_after_done_before_finishing() {
+    let (delta_tx, delta_rx) = mpsc::channel::<DesignDelta>();
+    let (_cmd_tx, cmd_rx) = mpsc::channel::<DesignCmdReq>();
+    let mut session = DesignSession::from_channels(delta_rx, cmd_rx);
+
+    delta_tx
+        .send(DesignDelta::Progress(Progress::ValidationStarted))
+        .expect("validation started");
+    delta_tx
+        .send(DesignDelta::Done(Ok(RunSummary {
+            root_frame_id: "root".into(),
+            subtasks: Vec::new(),
+            total_nodes: 0,
+            unfilled_screens: Vec::new(),
+        })))
+        .expect("done");
+    delta_tx
+        .send(DesignDelta::Progress(Progress::ValidationDone {
+            total_applied: 0,
+        }))
+        .expect("validation done");
+
+    let poll = session.poll_progress();
+
+    assert!(poll.finished);
+    assert!(poll.summary.is_some());
+    assert_eq!(poll.progress.len(), 2);
+    assert!(matches!(
+        poll.progress.first(),
+        Some(Progress::ValidationStarted)
+    ));
+    assert!(matches!(
+        poll.progress.get(1),
+        Some(Progress::ValidationDone { total_applied: 0 })
+    ));
+}
+
+#[test]
 fn design_session_preserves_worker_scoped_progress_context() {
     let (delta_tx, delta_rx) = mpsc::channel::<DesignDelta>();
     let (_cmd_tx, cmd_rx) = mpsc::channel::<DesignCmdReq>();

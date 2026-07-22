@@ -119,25 +119,29 @@ pub fn run_design_worker<L: LlmClient + Send>(
         vision,
         system_prompt,
     };
-    let delta_tx_for_progress = delta_tx.clone();
-    let mut on_progress = move |p: Progress| {
-        let _ = delta_tx_for_progress.send(DesignDelta::Progress(p));
+    let summary = {
+        // Keep progress and completion on one sender handle so the worker's
+        // terminal event cannot overtake its final queued progress update.
+        let mut on_progress = |p: Progress| {
+            let _ = delta_tx.send(DesignDelta::Progress(p));
+        };
+        shared_runtime().block_on(async {
+            let mut request = request;
+            maybe_generate_design_md_for_follow_on_screen(&llm, &mut request, &mut sink, &abort)
+                .await;
+            Orchestrator::new()
+                .with_indicator_epoch(indicator_epoch)
+                .run(
+                    request,
+                    &mut sink,
+                    &llm,
+                    &mut on_progress,
+                    &abort,
+                    &providers,
+                )
+                .await
+        })
     };
-    let summary = shared_runtime().block_on(async {
-        let mut request = request;
-        maybe_generate_design_md_for_follow_on_screen(&llm, &mut request, &mut sink, &abort).await;
-        Orchestrator::new()
-            .with_indicator_epoch(indicator_epoch)
-            .run(
-                request,
-                &mut sink,
-                &llm,
-                &mut on_progress,
-                &abort,
-                &providers,
-            )
-            .await
-    });
     let _ = delta_tx.send(DesignDelta::Done(summary));
 }
 

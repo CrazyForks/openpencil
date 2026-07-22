@@ -118,7 +118,10 @@ impl DesignSession {
                 Ok(DesignDelta::Done(r)) => {
                     self.finished = true;
                     summary = Some(r);
-                    break;
+                    // A terminal event must not hide progress that is already
+                    // queued behind it. The desktop clears the session as soon
+                    // as `finished` is true, so drain the ready queue fully in
+                    // this same poll.
                 }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
