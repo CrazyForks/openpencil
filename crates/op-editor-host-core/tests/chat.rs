@@ -322,6 +322,66 @@ fn chat_history_from_transcript_skips_blank_messages() {
 }
 
 #[test]
+fn chat_history_folds_multi_screen_worker_projections_into_one_assistant_turn() {
+    let mut primary = ChatMessage::assistant("The design is complete.");
+    primary.design_worker_screen = Some("Explore".into());
+    primary.activities.push(ChatActivity {
+        id: "explore-feed".into(),
+        title: "Explore feed".into(),
+        detail: None,
+        status: ChatActivityStatus::Done,
+        content_offset: Some(0),
+    });
+    primary.completion = Some(ChatCompletion {
+        succeeded: 2,
+        failed: 0,
+        nodes: 24,
+    });
+
+    let mut worker = ChatMessage::assistant("Profile is ready.");
+    worker.design_worker_group = Some(1);
+    worker.design_worker_screen = Some("Profile".into());
+    worker.agent_name = Some("Mochi".into());
+    worker.activities.push(ChatActivity {
+        id: "profile-body".into(),
+        title: "Profile body".into(),
+        detail: None,
+        status: ChatActivityStatus::Done,
+        content_offset: Some(0),
+    });
+    let messages = vec![
+        ChatMessage::user("design two screens"),
+        primary,
+        worker,
+        ChatMessage::user("make both denser"),
+        ChatMessage::assistant_streaming(),
+    ];
+
+    let history = chat_history_from_transcript(&messages);
+
+    assert_eq!(history.len(), 2);
+    assert_eq!(
+        history[0],
+        (ChatHistoryRole::User, "design two screens".into())
+    );
+    assert_eq!(history[1].0, ChatHistoryRole::Assistant);
+    let assistant = &history[1].1;
+    assert!(assistant.contains("Screen Explore"), "{assistant}");
+    assert!(assistant.contains("Explore feed"), "{assistant}");
+    assert!(assistant.contains("Screen Profile"), "{assistant}");
+    assert!(assistant.contains("Profile body"), "{assistant}");
+    assert!(assistant.contains("2 succeeded, 0 failed"), "{assistant}");
+    assert_eq!(
+        history
+            .iter()
+            .filter(|(role, _)| *role == ChatHistoryRole::Assistant)
+            .count(),
+        1,
+        "primary + worker projections are one provider assistant turn"
+    );
+}
+
+#[test]
 fn chat_history_preserves_structured_design_completion_for_follow_up() {
     let mut completed = ChatMessage::assistant("");
     completed.activities.push(ChatActivity {

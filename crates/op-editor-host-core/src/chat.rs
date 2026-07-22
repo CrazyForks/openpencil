@@ -219,6 +219,12 @@ pub fn apply_poll_to_message_with(message: &mut ChatMessage, poll: &ChatPoll, de
 
 /// Map the chat transcript into `(role, text)` history pairs for the in-flight
 /// turn, excluding the current user message and trailing streaming assistant.
+///
+/// Classic-orchestrator worker bubbles are a presentation projection of the
+/// primary assistant turn, not additional provider turns. Fold every adjacent
+/// worker projection into the preceding assistant history entry so a
+/// multi-screen result keeps its screen/activity context without producing a
+/// run of consecutive `Assistant` messages on the next follow-up.
 pub fn chat_history_from_transcript(messages: &[ChatMessage]) -> Vec<(ChatHistoryRole, String)> {
     let mut end = messages.len();
     if end > 0 && messages[end - 1].role == ChatRole::Assistant && messages[end - 1].streaming {
@@ -227,27 +233,58 @@ pub fn chat_history_from_transcript(messages: &[ChatMessage]) -> Vec<(ChatHistor
     if end > 0 && messages[end - 1].role == ChatRole::User {
         end -= 1;
     }
-    messages[..end]
-        .iter()
-        .filter_map(|m| {
-            let role = match m.role {
-                ChatRole::User => ChatHistoryRole::User,
-                ChatRole::Assistant => ChatHistoryRole::Assistant,
-            };
-            history_content(m).map(|content| (role, content))
-        })
-        .collect()
+    let mut history: Vec<(ChatHistoryRole, String)> = Vec::new();
+    // Index of the most recent assistant projection since the last user
+    // message. Worker bubbles append there; crossing a user boundary clears
+    // the target so projections from separate turns can never be combined.
+    let mut assistant_target: Option<usize> = None;
+
+    for message in &messages[..end] {
+        match message.role {
+            ChatRole::User => {
+                assistant_target = None;
+                if let Some(content) = history_content(message) {
+                    history.push((ChatHistoryRole::User, content));
+                }
+            }
+            ChatRole::Assistant if message.design_worker_group.is_some() => {
+                let Some(projection) = design_history_projection(message) else {
+                    continue;
+                };
+                if let Some(index) = assistant_target {
+                    append_history_projection(&mut history[index].1, &projection);
+                } else {
+                    // Defensive orphan handling: a worker projection without
+                    // its primary still represents the one assistant response
+                    // for this user turn. Keep it rather than dropping useful
+                    // screen context, while still emitting only one entry.
+                    history.push((ChatHistoryRole::Assistant, projection));
+                    assistant_target = Some(history.len() - 1);
+                }
+            }
+            ChatRole::Assistant => {
+                let content = if message.design_worker_screen.is_some() {
+                    design_history_projection(message)
+                } else {
+                    history_content(message)
+                };
+                if let Some(content) = content {
+                    history.push((ChatHistoryRole::Assistant, content));
+                    assistant_target = Some(history.len() - 1);
+                }
+            }
+        }
+    }
+
+    history
 }
 
-/// Keep structured design completions in provider history even when the UI
-/// intentionally carries their status outside the visible message content.
+/// Keep structured design completions and activity titles in provider history
+/// even when the UI intentionally carries them outside visible prose.
 fn history_content(message: &ChatMessage) -> Option<String> {
     let completion = (message.role == ChatRole::Assistant)
         .then_some(message.completion)
         .flatten();
-    if message.content.trim().is_empty() && completion.is_none() {
-        return None;
-    }
     let mut text = message.content.clone();
     if let Some(completion) = completion {
         if !text.trim().is_empty() {
@@ -266,11 +303,42 @@ fn history_content(message: &ChatMessage) -> Option<String> {
         .filter(|title| !title.is_empty())
         .collect();
     if !sections.is_empty() {
-        text.push_str(" Sections: ");
+        if !text.trim().is_empty() {
+            text.push(' ');
+        }
+        text.push_str("Sections: ");
         text.push_str(&sections.join("; "));
         text.push('.');
     }
-    Some(text)
+    (!text.trim().is_empty()).then_some(text)
+}
+
+/// Add an explicit screen label to a primary/worker projection. Worker prose
+/// currently contains a localized "Designing …" line, but the structured
+/// label is the stable source of truth and must survive even when prose is
+/// empty or changes wording.
+fn design_history_projection(message: &ChatMessage) -> Option<String> {
+    let content = history_content(message);
+    let screen = message
+        .design_worker_screen
+        .as_deref()
+        .map(str::trim)
+        .filter(|screen| !screen.is_empty());
+    match (screen, content) {
+        (Some(screen), Some(content)) => Some(format!("Screen {screen}: {content}")),
+        (Some(screen), None) => Some(format!("Screen {screen}.")),
+        (None, content) => content,
+    }
+}
+
+fn append_history_projection(target: &mut String, projection: &str) {
+    if projection.trim().is_empty() {
+        return;
+    }
+    if !target.trim().is_empty() {
+        target.push_str("\n\n");
+    }
+    target.push_str(projection);
 }
 
 fn tool_call_defaults_open(call: &ChatToolCall) -> bool {
