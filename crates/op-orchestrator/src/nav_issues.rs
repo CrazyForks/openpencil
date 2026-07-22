@@ -25,7 +25,7 @@ use jian_ops_schema::node::PenNode;
 use op_editor_core::{EditorState, PenNodeExt};
 
 use crate::wire_screen_navigation::{
-    collect_nav_containers, first_text_content, labels_match, node_has_events,
+    collect_nav_parts, first_text_content, labels_match, subtree_has_events,
 };
 
 /// A top-level `Frame` already carrying an authored `screen` route.
@@ -79,14 +79,14 @@ pub fn scan_nav_issues(state: &EditorState) -> Vec<String> {
 
     let mut issues = Vec::new();
     for screen in &screens {
-        let mut nav_containers = Vec::new();
-        collect_nav_containers(screen.node, &mut nav_containers);
-        for nav in nav_containers {
-            let Some(items) = nav.children() else {
+        let mut navs = Vec::new();
+        collect_nav_parts(screen.node, &mut navs);
+        for nav in navs {
+            let Some(items) = nav.tab_row.children() else {
                 continue;
             };
             for item in items {
-                if node_has_events(item) {
+                if subtree_has_events(item) {
                     continue;
                 }
                 let Some(label) = first_text_content(item) else {

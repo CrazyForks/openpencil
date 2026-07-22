@@ -23,6 +23,17 @@ fn find_by_id<'a>(nodes: &'a [PenNode], id: &str) -> Option<&'a PenNode> {
     None
 }
 
+fn collect_event_node_ids(nodes: &[PenNode], ids: &mut Vec<String>) {
+    for node in nodes {
+        if node_has_events(node) {
+            ids.push(node.id_str().to_string());
+        }
+        if let Some(children) = node.children() {
+            collect_event_node_ids(children, ids);
+        }
+    }
+}
+
 fn frame_screen(node: &PenNode) -> Option<&str> {
     match node {
         PenNode::Frame(f) => f.screen.as_deref(),
@@ -303,6 +314,146 @@ fn bottom_nav_tabs_wire_to_matching_screens_including_self() {
         node_events_json(profile_tab_in_profile).unwrap()["onTap"][0]["replace"],
         serde_json::json!(format!("\"{profile_path}\""))
     );
+}
+
+/// Real generated mobile navs commonly use a surface wrapper around the
+/// actual four-item tab row. Both layers may carry a nav role, but only the
+/// four tab-item frames are interactive targets. The inner row's first text
+/// descendant (`Trips`) must not make the row itself look like a Trips tab.
+fn nested_four_tab_bottom_nav_doc() -> &'static str {
+    r#"{"version":"1.0","children":[
+        {"type":"frame","id":"trips","name":"Trips","width":390,"height":844,
+         "layout":"vertical","children":[
+            {"type":"frame","id":"nav-shell","name":"Bottom Navigation Surface","role":"bottom-tab-bar",
+             "width":"fill_container","height":84,"layout":"vertical","children":[
+                {"type":"frame","id":"tabs-row","name":"Bottom Tab Row","role":"bottom-tab-bar",
+                 "width":"fill_container","height":72,"layout":"horizontal","children":[
+                    {"type":"frame","id":"tab-trips","name":"Trips Tab","width":80,"height":56,
+                     "children":[{"type":"text","id":"label-trips","content":"Trips"}]},
+                    {"type":"frame","id":"tab-explore","name":"Explore Tab","width":80,"height":56,
+                     "children":[{"type":"text","id":"label-explore","content":"Explore"}]},
+                    {"type":"frame","id":"tab-saved","name":"Saved Tab","width":80,"height":56,
+                     "children":[{"type":"text","id":"label-saved","content":"Saved"}]},
+                    {"type":"frame","id":"tab-profile","name":"Profile Tab","width":80,"height":56,
+                     "children":[{"type":"text","id":"label-profile","content":"Profile"}]}
+                 ]}
+             ]}
+         ]},
+        {"type":"frame","id":"explore","name":"Explore","width":390,"height":844,
+         "layout":"vertical","children":[]},
+        {"type":"frame","id":"saved","name":"Saved","width":390,"height":844,
+         "layout":"vertical","children":[]},
+        {"type":"frame","id":"profile","name":"Profile","width":390,"height":844,
+         "layout":"vertical","children":[]}
+    ]}"#
+}
+
+#[test]
+fn nested_bottom_nav_wires_only_real_tab_items() {
+    let mut state = state_from_json(nested_four_tab_bottom_nav_doc());
+    run_pass(&mut state);
+
+    let inner_row = find_by_id(state.active_children(), "tabs-row").unwrap();
+    assert!(
+        node_events_json(inner_row).is_none(),
+        "the inner tab-row wrapper must not inherit the first tab's Trips navigation"
+    );
+
+    let mut event_node_ids = Vec::new();
+    collect_event_node_ids(state.active_children(), &mut event_node_ids);
+    event_node_ids.sort();
+    assert_eq!(
+        event_node_ids,
+        vec!["tab-explore", "tab-profile", "tab-saved", "tab-trips"],
+        "only the four real tab-item frames should receive navigation events"
+    );
+}
+
+#[test]
+fn explicit_tab_row_beats_a_larger_labeled_content_group() {
+    let mut state = state_from_json(
+        r#"{"version":"1.0","children":[
+          {"type":"frame","id":"trips","name":"Trips","width":390,"height":844,"children":[
+            {"type":"frame","id":"nav-shell","name":"Bottom Navigation","role":"bottom-tab-bar","children":[
+              {"type":"frame","id":"tabs-row","name":"Tab Bar","role":"tab-row","children":[
+                {"type":"frame","id":"tab-trips","children":[{"type":"text","id":"t1","content":"Trips"}]},
+                {"type":"frame","id":"tab-explore","children":[{"type":"text","id":"t2","content":"Explore"}]},
+                {"type":"frame","id":"tab-saved","children":[{"type":"text","id":"t3","content":"Saved"}]},
+                {"type":"frame","id":"tab-profile","children":[{"type":"text","id":"t4","content":"Profile"}]}
+              ]},
+              {"type":"frame","id":"larger-content-list","name":"Recommendations","children":[
+                {"type":"frame","id":"card-trips","children":[{"type":"text","id":"c1","content":"Trips"}]},
+                {"type":"frame","id":"card-explore","children":[{"type":"text","id":"c2","content":"Explore"}]},
+                {"type":"frame","id":"card-saved","children":[{"type":"text","id":"c3","content":"Saved"}]},
+                {"type":"frame","id":"card-profile","children":[{"type":"text","id":"c4","content":"Profile"}]},
+                {"type":"frame","id":"card-settings","children":[{"type":"text","id":"c5","content":"Settings"}]}
+              ]}
+            ]}
+          ]},
+          {"type":"frame","id":"explore","name":"Explore","width":390,"height":844,"children":[]},
+          {"type":"frame","id":"saved","name":"Saved","width":390,"height":844,"children":[]},
+          {"type":"frame","id":"profile","name":"Profile","width":390,"height":844,"children":[]}
+        ]}"#,
+    );
+    run_pass(&mut state);
+
+    let mut event_node_ids = Vec::new();
+    collect_event_node_ids(state.active_children(), &mut event_node_ids);
+    event_node_ids.sort();
+    assert_eq!(
+        event_node_ids,
+        vec!["tab-explore", "tab-profile", "tab-saved", "tab-trips"]
+    );
+}
+
+#[test]
+fn descendant_authored_tab_event_prevents_a_duplicate_root_binding() {
+    let mut state = state_from_json(
+        r#"{"version":"1.0","children":[
+          {"type":"frame","id":"trips","name":"Trips","width":390,"height":844,"children":[
+            {"type":"frame","id":"nav","role":"bottom-tab-bar","children":[
+              {"type":"frame","id":"tab-trips","children":[
+                {"type":"icon_font","id":"trips-action","iconFontName":"luggage","events":{"onTap":[{"replace":"\"/\""}]}},
+                {"type":"text","id":"trips-label","content":"Trips"}
+              ]},
+              {"type":"frame","id":"tab-explore","children":[{"type":"text","id":"e-label","content":"Explore"}]},
+              {"type":"frame","id":"tab-saved","children":[{"type":"text","id":"s-label","content":"Saved"}]},
+              {"type":"frame","id":"tab-profile","children":[{"type":"text","id":"p-label","content":"Profile"}]}
+            ]}
+          ]},
+          {"type":"frame","id":"explore","name":"Explore","width":390,"height":844,"children":[]},
+          {"type":"frame","id":"saved","name":"Saved","width":390,"height":844,"children":[]},
+          {"type":"frame","id":"profile","name":"Profile","width":390,"height":844,"children":[]}
+        ]}"#,
+    );
+    run_pass(&mut state);
+
+    assert!(node_events_json(find_by_id(state.active_children(), "tab-trips").unwrap()).is_none());
+    assert!(
+        node_events_json(find_by_id(state.active_children(), "trips-action").unwrap()).is_some()
+    );
+    assert!(
+        node_events_json(find_by_id(state.active_children(), "tab-explore").unwrap()).is_some()
+    );
+}
+
+#[test]
+fn public_nav_collector_keeps_icon_only_nav_visible_for_audits() {
+    let state = state_from_json(
+        r#"{"version":"1.0","children":[
+          {"type":"frame","id":"root","children":[
+            {"type":"frame","id":"icon-only-nav","role":"bottom-tab-bar","children":[
+              {"type":"icon_font","id":"i1","iconFontName":"home"},
+              {"type":"icon_font","id":"i2","iconFontName":"search"}
+            ]}
+          ]}
+        ]}"#,
+    );
+    let root = find_by_id(state.active_children(), "root").unwrap();
+    let mut navs = Vec::new();
+    collect_nav_containers(root, &mut navs);
+    assert_eq!(navs.len(), 1);
+    assert_eq!(navs[0].id_str(), "icon-only-nav");
 }
 
 #[test]

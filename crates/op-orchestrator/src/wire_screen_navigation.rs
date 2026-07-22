@@ -83,6 +83,20 @@ pub(crate) struct ScreenCandidate {
     pub(crate) existing_path: Option<String>,
 }
 
+/// One shared-navigation surface and the actual row of interactive tab
+/// items inside it. Generated mobile chrome commonly nests a horizontal
+/// tab row inside a full-width surface wrapper; callers that replace shared
+/// chrome need the outer `surface`, while callers that inspect labels or
+/// bind events must use `tab_row`.
+pub(crate) struct NavParts<'a> {
+    pub(crate) surface: &'a PenNode,
+    pub(crate) tab_row: &'a PenNode,
+    /// Child-index path from `surface` to `tab_row` (empty when the surface
+    /// itself directly owns the tabs). The unifier reuses this path on an
+    /// owned clone so active-state retargeting cannot drift from selection.
+    pub(crate) tab_row_path: Vec<usize>,
+}
+
 /// Entry point: mark screen-shaped top-level frames with a `screen` route
 /// path and wire each screen's bottom-nav / sidebar-nav tabs + header back
 /// buttons to `events.onTap` navigation actions. No-ops when the document
@@ -277,14 +291,14 @@ fn wire_nav_tabs(
         ) else {
             continue;
         };
-        let mut nav_containers = Vec::new();
-        collect_nav_containers(root, &mut nav_containers);
-        for nav in nav_containers {
-            let Some(items) = nav.children() else {
+        let mut navs = Vec::new();
+        collect_nav_parts(root, &mut navs);
+        for nav in navs {
+            let Some(items) = nav.tab_row.children() else {
                 continue;
             };
             for item in items {
-                if node_has_events(item) {
+                if subtree_has_events(item) {
                     continue;
                 }
                 let Some(label) = first_text_content(item) else {
@@ -310,21 +324,138 @@ fn wire_nav_tabs(
     }
 }
 
-/// `pub` (not just module-private) so both the read-only `navIssues` echo
-/// scan (`nav_issues.rs`, in-crate) and `op-smoke`'s `audit_rubric`
-/// (cross-crate — op-smoke already depends on `op-orchestrator`) can reuse
-/// the exact same nav-container detection this pass uses to WRITE — every
-/// consumer that asks "is this a nav container" must agree with the pass
-/// that actually binds the tabs inside one, or the rubric's
-/// `navBoundTabs`/`navTotalTabs` columns would silently drift from what
-/// Track A really wired.
+/// Collect outer shared-nav surfaces together with their actual tab rows.
+/// Once a matching outer surface is found its nested nav-shaped descendants
+/// are consumed as part of the same [`NavParts`] instead of being reported
+/// as duplicate navs.
+pub(crate) fn collect_nav_parts<'a>(node: &'a PenNode, out: &mut Vec<NavParts<'a>>) {
+    if is_nav_container(node) {
+        if let Some(tab_row_path) = best_tab_row_path(node) {
+            if let Some(tab_row) = node_at_path(node, &tab_row_path) {
+                out.push(NavParts {
+                    surface: node,
+                    tab_row,
+                    tab_row_path,
+                });
+                return;
+            }
+        }
+    }
+    for child in node.children().into_iter().flatten() {
+        collect_nav_parts(child, out);
+    }
+}
+
+/// `pub` because `op-smoke`'s cross-crate audit reuses nav detection. A
+/// confidently identified nested nav returns its actual tab row, never both
+/// wrapper and row. Shapes that cannot be label-bound (icon-only, one item,
+/// repeated labels) fall back to the authored nav surface so audits retain
+/// their historical visibility even though writers safely abstain.
 pub fn collect_nav_containers<'a>(node: &'a PenNode, out: &mut Vec<&'a PenNode>) {
     if is_nav_container(node) {
-        out.push(node);
+        if let Some(tab_row) = best_tab_row_path(node).and_then(|path| node_at_path(node, &path)) {
+            out.push(tab_row);
+        } else {
+            // Preserve this public collector's historical visibility for
+            // icon-only, single-item, repeated-label, or otherwise
+            // non-bindable navs. Writers abstain without a confident row,
+            // but audit callers should still see the authored nav surface.
+            out.push(node);
+        }
+        return;
     }
     for child in node.children().into_iter().flatten() {
         collect_nav_containers(child, out);
     }
+}
+
+fn best_tab_row_path(surface: &PenNode) -> Option<Vec<usize>> {
+    #[derive(Clone)]
+    struct Candidate {
+        path: Vec<usize>,
+        score: (bool, usize, usize),
+    }
+
+    fn visit(
+        node: &PenNode,
+        path: &mut Vec<usize>,
+        best: &mut Option<Candidate>,
+        ambiguous: &mut bool,
+    ) {
+        if let Some(children) = node.children() {
+            let labels: Option<Vec<String>> = if children.len() >= 2 {
+                children
+                    .iter()
+                    .map(|child| {
+                        if child.children().is_some_and(|nested| !nested.is_empty()) {
+                            first_text_content(child)
+                                .map(str::trim)
+                                .filter(|label| !label.is_empty())
+                                .map(str::to_lowercase)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            } else {
+                None
+            };
+            if let Some(labels) = labels {
+                let distinct = labels.iter().collect::<BTreeSet<_>>().len();
+                if distinct == labels.len() {
+                    let role = node.base().role.as_deref().unwrap_or("");
+                    let identity = identity_haystack(node);
+                    let explicitly_tab_shaped = matches!(
+                        role,
+                        "tab-row" | "tab-bar" | "bottom-tab-bar" | "nav" | "sidebar"
+                    ) || identity.contains("tab row")
+                        || identity.contains("tab-row")
+                        || identity.contains("tab bar")
+                        || identity.contains("tab-bar");
+                    let candidate = Candidate {
+                        path: path.clone(),
+                        // Explicit tab identity outranks raw item count: a
+                        // five-card content list nested in a nav/sidebar
+                        // must not steal selection from a four-item tab row.
+                        score: (explicitly_tab_shaped, labels.len(), path.len()),
+                    };
+                    match best {
+                        Some(current) if candidate.score > current.score => {
+                            *best = Some(candidate);
+                            *ambiguous = false;
+                        }
+                        Some(current) if candidate.score == current.score => {
+                            *ambiguous = true;
+                        }
+                        None => *best = Some(candidate),
+                        _ => {}
+                    }
+                }
+            }
+
+            for (index, child) in children.iter().enumerate() {
+                path.push(index);
+                visit(child, path, best, ambiguous);
+                path.pop();
+            }
+        }
+    }
+
+    let mut best = None;
+    let mut ambiguous = false;
+    visit(surface, &mut Vec::new(), &mut best, &mut ambiguous);
+    if ambiguous {
+        None
+    } else {
+        best.map(|candidate| candidate.path)
+    }
+}
+
+fn node_at_path<'a>(mut node: &'a PenNode, path: &[usize]) -> Option<&'a PenNode> {
+    for &index in path {
+        node = node.children()?.get(index)?;
+    }
+    Some(node)
 }
 
 fn is_nav_container(node: &PenNode) -> bool {
@@ -545,6 +676,18 @@ pub fn node_has_events(node: &PenNode) -> bool {
         .ok()
         .and_then(|v| v.get("events").cloned())
         .is_some()
+}
+
+/// Whether `node` or any descendant already owns an authored interaction.
+/// A nav tab whose inner icon/button carries the action is already bound;
+/// adding a second event to the tab root would double-dispatch the tap.
+pub fn subtree_has_events(node: &PenNode) -> bool {
+    node_has_events(node)
+        || node
+            .children()
+            .into_iter()
+            .flatten()
+            .any(subtree_has_events)
 }
 
 /// Build the `events.onTap` navigate patch JSON. `path` must already be a

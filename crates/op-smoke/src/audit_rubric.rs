@@ -33,7 +33,7 @@ use std::collections::BTreeMap;
 
 use jian_ops_schema::node::PenNode;
 use op_editor_core::{EditorState, PenNodeExt};
-use op_orchestrator::wire_screen_navigation::{collect_nav_containers, node_has_events};
+use op_orchestrator::wire_screen_navigation::{collect_nav_containers, subtree_has_events};
 use op_orchestrator::RunSummary;
 use serde_json::{json, Value};
 
@@ -165,7 +165,7 @@ fn interactivity_report(nodes: &[PenNode]) -> Value {
         for nav in nav_containers {
             for item in nav.children().into_iter().flatten() {
                 nav_total_tabs += 1;
-                if node_has_events(item) {
+                if subtree_has_events(item) {
                     nav_bound_tabs += 1;
                 }
             }
