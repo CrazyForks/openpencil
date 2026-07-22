@@ -33,17 +33,13 @@
 //!
 //! ## Active-tab idempotency gap (0718-1-k3-1 postmortem, D)
 //!
-//! [`labels_already_unified`] only compares the tab LABEL set — it says
-//! nothing about which tab is active. A model that draws every screen's nav
-//! byte-for-byte identical (measured: three screens, one nav, one active
-//! tab baked into all three) short-circuits `resolve_target` into `None`
-//! before `retarget_active_tab` ever runs, so the wrong tab reads active on
-//! every non-reference screen. [`active_tab_is_correct`] is the missing
-//! second half of the idempotency check: labels matching is necessary but
-//! not sufficient. When it disagrees, [`SyncTarget::RetargetActiveOnly`]
-//! fixes just the active styling in place — no full nav replacement, so any
-//! other authored drift on that screen's own nav (icons, ids) survives
-//! untouched.
+//! An earlier idempotency gate compared only tab LABELS, so equal labels hid
+//! independently redrawn glyphs and wrappers. [`navs_already_unified`] now
+//! compares ordered text/icon/event identity plus the complete outer chrome after
+//! normalizing both navs to one active tab. [`active_tab_is_correct`] remains
+//! the second half of the gate: when complete shared identity matches but
+//! the active destination does not, [`SyncTarget::RetargetActiveOnly`] moves
+//! only active styling on the target's otherwise-identical chrome.
 //!
 //! ## Detail-page Inject exemption (0718-1-k3-1 postmortem, product decision)
 //!
@@ -76,9 +72,11 @@ use jian_ops_schema::node::{PenNode, TextContent};
 use op_editor_core::{EditorCommand, NodeId, PenNodeExt};
 
 use crate::types::DocSink;
+#[cfg(test)]
+use crate::wire_screen_navigation::collect_nav_containers;
 use crate::wire_screen_navigation::{
-    collect_nav_containers, collect_screen_candidates, first_text_content, labels_match,
-    normalize_label, screen_has_back_control_in_header, ScreenCandidate,
+    collect_nav_parts, collect_screen_candidates, first_text_content, labels_match,
+    screen_has_back_control_in_header, NavParts, ScreenCandidate,
 };
 
 /// What a non-reference screen needs, resolved read-only before any
@@ -90,12 +88,27 @@ enum SyncTarget {
     /// This screen has NO nav at all, but the reference nav declares a tab
     /// for it — append a fresh clone as its last child (`InsertSubtree`).
     Inject,
-    /// Labels already match the reference, but the ACTIVE tab doesn't sit
-    /// on this screen's own tab (the D bug — see the module doc). Carries
-    /// the TARGET's own live nav id + an owned clone of it (not the
+    /// Full shared identity already matches the reference, but the ACTIVE
+    /// tab doesn't sit on this screen's own tab (the D bug — see the module
+    /// doc). Carries the TARGET's own live nav id + an owned clone of it (not the
     /// reference's), so the in-place fix only ever moves active styling —
-    /// any other authored drift on this screen's own nav survives.
-    RetargetActiveOnly(String, Box<PenNode>),
+    /// the target's already-matching outer chrome and actual-row path.
+    RetargetActiveOnly {
+        surface_id: String,
+        tab_row_path: Vec<usize>,
+        own_surface: Box<PenNode>,
+    },
+}
+
+/// Authoritative shared chrome captured from the document-order first
+/// screen that owns a real tab row. `surface` is the complete outer chrome
+/// copied on drift; `tab_row_path` locates the interactive row inside that
+/// owned clone; `tab_row` is kept separately for read-only identity checks.
+struct ReferenceNav {
+    surface: PenNode,
+    tab_row_path: Vec<usize>,
+    tab_row: PenNode,
+    canonical_label: String,
 }
 
 /// Entry point. No-ops when fewer than 2 screen-shaped top-level frames
@@ -129,8 +142,8 @@ pub fn unify_shared_nav(sink: &mut dyn DocSink) {
 
         match target {
             SyncTarget::Replace(target_nav_id) => {
-                let mut clone = reference_nav.clone();
-                retarget_active_tab(&mut clone, &screen.name);
+                let mut clone = reference_nav.surface.clone();
+                retarget_active_tab_at_path(&mut clone, &reference_nav.tab_row_path, &screen.name);
                 stamp_chrome_role(&mut clone);
                 // `ReplaceSubtree` remaps every id in `clone` (root AND
                 // descendants) to fresh, non-colliding ids on apply
@@ -145,8 +158,8 @@ pub fn unify_shared_nav(sink: &mut dyn DocSink) {
                 });
             }
             SyncTarget::Inject => {
-                let mut clone = reference_nav.clone();
-                retarget_active_tab(&mut clone, &screen.name);
+                let mut clone = reference_nav.surface.clone();
+                retarget_active_tab_at_path(&mut clone, &reference_nav.tab_row_path, &screen.name);
                 stamp_chrome_role(&mut clone);
                 // `InsertSubtree` APPENDS to the target parent's children
                 // (`cmd_insert_subtree`'s `slot.extend(nodes)`), so the
@@ -164,16 +177,18 @@ pub fn unify_shared_nav(sink: &mut dyn DocSink) {
                     page_id: None,
                 });
             }
-            SyncTarget::RetargetActiveOnly(target_nav_id, mut own_nav) => {
+            SyncTarget::RetargetActiveOnly {
+                surface_id,
+                tab_row_path,
+                mut own_surface,
+            } => {
                 // Mutate the TARGET's own live nav (captured read-only in
-                // `resolve_target`), not a reference clone — labels already
-                // matched, so a full replace would silently overwrite any
-                // authored drift beyond the active indicator this screen's
-                // own nav carries (icon glyphs, ids, extra chrome).
-                retarget_active_tab(&mut own_nav, &screen.name);
+                // `resolve_target`), not a reference clone — complete shared
+                // identity already matched, so only active placement differs.
+                retarget_active_tab_at_path(&mut own_surface, &tab_row_path, &screen.name);
                 sink.apply(EditorCommand::ReplaceSubtree {
-                    node_id: NodeId::new(target_nav_id),
-                    node: own_nav,
+                    node_id: NodeId::new(surface_id),
+                    node: own_surface,
                     drop_children: true,
                     page_id: None,
                 });
@@ -190,27 +205,28 @@ pub fn unify_shared_nav(sink: &mut dyn DocSink) {
 fn resolve_target(
     sink: &dyn DocSink,
     screen: &ScreenCandidate,
-    reference_nav: &PenNode,
+    reference_nav: &ReferenceNav,
 ) -> Option<SyncTarget> {
     let root = op_editor_core::walkers::find_node(
         sink.state().active_children(),
         &NodeId::new(screen.id.clone()),
     )?;
     let mut navs = Vec::new();
-    collect_nav_containers(root, &mut navs);
+    collect_nav_parts(root, &mut navs);
     match navs.into_iter().next() {
         Some(target_nav) => {
-            if !labels_already_unified(target_nav, reference_nav) {
-                Some(SyncTarget::Replace(target_nav.id_str().to_string()))
-            } else if active_tab_is_correct(target_nav, &screen.name) {
-                None // truly idempotent: labels match AND active tab is right.
+            if !navs_already_unified(&target_nav, reference_nav) {
+                Some(SyncTarget::Replace(target_nav.surface.id_str().to_string()))
+            } else if active_tab_is_correct(target_nav.tab_row, &screen.name) {
+                None // truly idempotent: shared identity + active tab are right.
             } else {
-                // Labels match but the active tab is wrong (the D bug) —
-                // fix in place rather than a full replace.
-                Some(SyncTarget::RetargetActiveOnly(
-                    target_nav.id_str().to_string(),
-                    Box::new(target_nav.clone()),
-                ))
+                // Shared identity matches but the active tab is wrong (the
+                // D bug) — fix in place rather than a full replace.
+                Some(SyncTarget::RetargetActiveOnly {
+                    surface_id: target_nav.surface.id_str().to_string(),
+                    tab_row_path: target_nav.tab_row_path,
+                    own_surface: Box::new(target_nav.surface.clone()),
+                })
             }
         }
         None => {
@@ -220,6 +236,7 @@ fn resolve_target(
             // matching tab (a standalone detail page, say) is never forced
             // to grow chrome it never asked for.
             let eligible = reference_nav
+                .tab_row
                 .children()
                 .is_some_and(|tabs| find_tab_index_for_screen(tabs, &screen.name).is_some());
             if !eligible {
@@ -245,33 +262,105 @@ fn resolve_target(
 fn find_reference_nav(
     sink: &dyn DocSink,
     screens: &[ScreenCandidate],
-) -> Option<(String, PenNode)> {
+) -> Option<(String, ReferenceNav)> {
     for screen in screens {
         let root = op_editor_core::walkers::find_node(
             sink.state().active_children(),
             &NodeId::new(screen.id.clone()),
         )?;
         let mut navs = Vec::new();
-        collect_nav_containers(root, &mut navs);
+        collect_nav_parts(root, &mut navs);
         if let Some(nav) = navs.into_iter().next() {
-            return Some((screen.id.clone(), nav.clone()));
+            let canonical_label = nav
+                .tab_row
+                .children()
+                .and_then(|tabs| tabs.first())
+                .and_then(first_text_content)
+                .unwrap_or_default()
+                .to_string();
+            return Some((
+                screen.id.clone(),
+                ReferenceNav {
+                    surface: nav.surface.clone(),
+                    tab_row_path: nav.tab_row_path,
+                    tab_row: nav.tab_row.clone(),
+                    canonical_label,
+                },
+            ));
         }
     }
     None
 }
 
-/// Whether `target`'s nav already carries the SAME tab-label set (in order)
-/// as `reference` — the idempotency gate. Active-tab correctness is
-/// deliberately NOT part of this check (see the module doc): once the label
-/// set matches, the screen is considered "already unified" even if a prior
-/// run's active-tab detection degraded (see [`retarget_active_tab`]).
-fn labels_already_unified(target: &PenNode, reference: &PenNode) -> bool {
-    nav_label_set(target) == nav_label_set(reference)
+/// Whether a target already carries the reference nav's complete shared
+/// identity. Ordered label/icon/event content must match, and the full outer
+/// surface must have the same style/structure after both navs are
+/// normalized to the same active tab. That normalization makes each
+/// screen's legitimate active destination irrelevant while still catching
+/// glyph, icon-size, padding, divider, wrapper, or inactive-style drift.
+fn navs_already_unified(target: &NavParts<'_>, reference: &ReferenceNav) -> bool {
+    canonical_nav_identity(
+        target.surface,
+        &target.tab_row_path,
+        &reference.canonical_label,
+    ) == canonical_nav_identity(
+        &reference.surface,
+        &reference.tab_row_path,
+        &reference.canonical_label,
+    )
+}
+
+fn tab_content_identity(nav: &PenNode) -> Vec<ContentSnapshot> {
+    nav.children()
+        .into_iter()
+        .flatten()
+        .map(snapshot_content)
+        .collect()
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct CanonicalNavIdentity {
+    tabs: Vec<ContentSnapshot>,
+    style: String,
+}
+
+fn canonical_nav_identity(
+    surface: &PenNode,
+    tab_row_path: &[usize],
+    canonical_label: &str,
+) -> CanonicalNavIdentity {
+    let mut normalized = surface.clone();
+    retarget_active_tab_at_path(&mut normalized, tab_row_path, canonical_label);
+    // Replace/Inject clones are stamped even when a name-matched authored
+    // reference has no role. Canonicalize the read-only fingerprints the
+    // same way, otherwise that legitimate clone would compare unequal to
+    // its roleless reference forever and churn ids on every cleanup run.
+    stamp_chrome_role(&mut normalized);
+    let tabs = node_at_path_mut(&mut normalized, tab_row_path)
+        .map(|tab_row| tab_content_identity(tab_row))
+        .unwrap_or_default();
+    CanonicalNavIdentity {
+        tabs,
+        style: style_fingerprint(&normalized),
+    }
+}
+
+fn retarget_active_tab_at_path(nav: &mut PenNode, tab_row_path: &[usize], screen_name: &str) {
+    if let Some(tab_row) = node_at_path_mut(nav, tab_row_path) {
+        retarget_active_tab(tab_row, screen_name);
+    }
+}
+
+fn node_at_path_mut<'a>(mut node: &'a mut PenNode, path: &[usize]) -> Option<&'a mut PenNode> {
+    for &index in path {
+        node = node.children_mut()?.get_mut(index)?;
+    }
+    Some(node)
 }
 
 /// Whether `nav`'s currently-active tab already sits on the tab matching
 /// `screen_name` — the other half of the idempotency check
-/// [`labels_already_unified`] deliberately leaves out (see the module doc's
+/// [`navs_already_unified`] deliberately leaves out (see the module doc's
 /// "Active-tab idempotency gap" section). Mirrors [`retarget_active_tab`]'s
 /// own degrade conditions exactly (same helpers, same order) so a `false`
 /// here reliably means `retarget_active_tab` will find a confident swap to
@@ -291,15 +380,6 @@ fn active_tab_is_correct(nav: &PenNode, screen_name: &str) -> bool {
         return true; // no tab matches this screen — nothing to fix.
     };
     active_idx == target_idx
-}
-
-fn nav_label_set(nav: &PenNode) -> Vec<String> {
-    nav.children()
-        .into_iter()
-        .flatten()
-        .filter_map(first_text_content)
-        .map(normalize_label)
-        .collect()
 }
 
 /// Move the "active" tab styling from wherever the reference nav had it onto
@@ -403,6 +483,11 @@ fn blank_content_fields(value: &mut serde_json::Value) {
     };
     map.remove("id");
     map.remove("name");
+    // Events belong to each semantic tab position (Trips, Explore, ...),
+    // not to its active/inactive visual treatment. Keeping them here would
+    // make four correctly wired tabs look like four different styles and
+    // break majority-based active-state detection.
+    map.remove("events");
     if map.get("type").and_then(serde_json::Value::as_str) == Some("text") {
         map.insert(
             "content".to_string(),
@@ -445,35 +530,83 @@ fn find_active_by_fingerprint(fingerprints: &[String]) -> Option<usize> {
 }
 
 /// Swap the WHOLE nodes at `a`/`b` (carrying styling — fills, extra
-/// indicator children, everything), then restore each POSITION's own
-/// original content (text / icon glyph, in document order) so the tab at
-/// position `a` still reads as whatever it always represented, just with
-/// the OTHER position's styling now attached.
+/// indicator children, everything), then restore each POSITION's semantic
+/// identity (name, events, text, icon glyph) so the tab at position `a`
+/// still represents the same destination, just with the OTHER position's
+/// styling now attached.
 fn swap_tab_style(children: &mut [PenNode], a: usize, b: usize) {
-    let content_a = snapshot_content(&children[a]);
-    let content_b = snapshot_content(&children[b]);
+    let position_a = snapshot_tab_position(&children[a]);
+    let position_b = snapshot_tab_position(&children[b]);
     children.swap(a, b);
-    restore_content(&mut children[a], &content_a);
-    restore_content(&mut children[b], &content_b);
+    restore_tab_position(&mut children[a], &position_a);
+    restore_tab_position(&mut children[b], &position_b);
 }
 
 /// A tab's content identity: every `Text` node's plain string and every
 /// `IconFont` node's glyph name, in document (depth-first) order.
+#[derive(Debug, PartialEq, Eq)]
 struct ContentSnapshot {
     texts: Vec<String>,
     icon_names: Vec<String>,
+    events: Vec<serde_json::Value>,
+}
+
+/// Semantic identity anchored to one tab position. Active styling is moved
+/// by swapping whole nodes, but these fields must stay with the destination
+/// represented by that position.
+struct TabPositionSnapshot {
+    nodes: Vec<NodePositionSnapshot>,
+    content: ContentSnapshot,
+}
+
+struct NodePositionSnapshot {
+    path: Vec<usize>,
+    name: Option<String>,
+    events: Option<jian_ops_schema::events::EventHandlers>,
+}
+
+fn snapshot_tab_position(node: &PenNode) -> TabPositionSnapshot {
+    let mut nodes = Vec::new();
+    collect_position_metadata(node, &mut Vec::new(), &mut nodes);
+    TabPositionSnapshot {
+        nodes,
+        content: snapshot_content(node),
+    }
+}
+
+fn collect_position_metadata(
+    node: &PenNode,
+    path: &mut Vec<usize>,
+    out: &mut Vec<NodePositionSnapshot>,
+) {
+    out.push(NodePositionSnapshot {
+        path: path.clone(),
+        name: node.base().name.clone(),
+        events: node.events().cloned(),
+    });
+    for (index, child) in node.children().into_iter().flatten().enumerate() {
+        path.push(index);
+        collect_position_metadata(child, path, out);
+        path.pop();
+    }
 }
 
 fn snapshot_content(node: &PenNode) -> ContentSnapshot {
     let mut snapshot = ContentSnapshot {
         texts: Vec::new(),
         icon_names: Vec::new(),
+        events: Vec::new(),
     };
     collect_content(node, &mut snapshot);
     snapshot
 }
 
 fn collect_content(node: &PenNode, out: &mut ContentSnapshot) {
+    if let Some(events) = node.events() {
+        if let Ok(value) = serde_json::to_value(events) {
+            out.events.push(value);
+        }
+    }
     match node {
         PenNode::Text(t) => {
             if let TextContent::Plain(s) = &t.content {
@@ -499,6 +632,53 @@ fn restore_content(node: &mut PenNode, snapshot: &ContentSnapshot) {
     restore_content_walk(node, &mut texts, &mut icons);
 }
 
+fn restore_tab_position(node: &mut PenNode, snapshot: &TabPositionSnapshot) {
+    clear_position_metadata(node);
+    for original in &snapshot.nodes {
+        if let Some(target) = node_at_path_mut(node, &original.path) {
+            target.base_mut().name.clone_from(&original.name);
+            set_events(target, original.events.clone());
+        }
+    }
+    restore_content(node, &snapshot.content);
+}
+
+fn clear_position_metadata(node: &mut PenNode) {
+    node.base_mut().name = None;
+    set_events(node, None);
+    if node.children().is_some() {
+        for child in node.children_mut().into_iter().flatten() {
+            clear_position_metadata(child);
+        }
+    }
+}
+
+fn set_events(node: &mut PenNode, events: Option<jian_ops_schema::events::EventHandlers>) {
+    match node {
+        PenNode::Frame(n) => n.events = events,
+        PenNode::Group(n) => n.events = events,
+        PenNode::Rectangle(n) => n.events = events,
+        PenNode::Ellipse(n) => n.events = events,
+        PenNode::Line(n) => n.events = events,
+        PenNode::Polygon(n) => n.events = events,
+        PenNode::Path(n) => n.events = events,
+        PenNode::Text(n) => n.events = events,
+        PenNode::TextInput(n) => n.events = events,
+        PenNode::Image(n) => n.events = events,
+        PenNode::IconFont(n) => n.events = events,
+        PenNode::TextArea(n) => n.events = events,
+        PenNode::Select(n) => n.events = events,
+        PenNode::Switch(n) => n.events = events,
+        PenNode::Checkbox(n) => n.events = events,
+        PenNode::Slider(n) => n.events = events,
+        PenNode::RadioGroup(n) => n.events = events,
+        PenNode::NumberInput(n) => n.events = events,
+        PenNode::Progress(n) => n.events = events,
+        PenNode::Tabs(n) => n.events = events,
+        PenNode::Ref(n) => n.events = events,
+    }
+}
+
 fn restore_content_walk<'a>(
     node: &mut PenNode,
     texts: &mut std::slice::Iter<'a, String>,
@@ -519,8 +699,14 @@ fn restore_content_walk<'a>(
         }
         _ => {}
     }
-    for child in node.children_mut().into_iter().flatten() {
-        restore_content_walk(child, texts, icons);
+    // `children_mut()` materializes an empty `children: []` on container
+    // variants. Only borrow it when children already exist; active-style
+    // normalization must not change optional-child structure merely by
+    // traversing a leaf rectangle such as an active indicator.
+    if node.children().is_some() {
+        for child in node.children_mut().into_iter().flatten() {
+            restore_content_walk(child, texts, icons);
+        }
     }
 }
 

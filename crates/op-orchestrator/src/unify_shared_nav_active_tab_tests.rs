@@ -11,7 +11,7 @@ use super::*;
 
 // ---------------------------------------------------------------------
 // D: active-tab idempotency gap (0718-1-k3-1 postmortem).
-// `labels_already_unified` only compares the tab LABEL set — a model that
+// The old label-only idempotency gate let a model that
 // draws every screen's nav byte-for-byte identical (same active tab baked
 // into all of them) used to short-circuit `resolve_target` into `None`
 // before `retarget_active_tab` ever ran. These tests exercise the new
@@ -39,7 +39,7 @@ fn two_screen_doc_identical_nav(active_index_on_library: usize) -> serde_json::V
 fn labels_match_but_active_wrong_only_retargets_active_styling_in_place() {
     // Library's own nav bakes "Home" (index 0) active — wrong for the
     // Library screen, but same label set as the reference, so the OLD
-    // `labels_already_unified`-only gate would have skipped it entirely.
+    // label-only gate would have skipped it entirely.
     let mut state = state_from(two_screen_doc_identical_nav(0));
     run_pass(&mut state);
 
@@ -89,7 +89,7 @@ fn drifted_labels_still_take_the_replace_path_with_correct_active_tab() {
     // Regression against the D fix: a genuinely drifted label set (the
     // pre-existing `two_screen_drifted_doc` fixture) can ONLY reach
     // `resolve_target`'s `Replace` arm by construction — `RetargetActiveOnly`
-    // is reachable only when `labels_already_unified` is already true — so
+    // is reachable only when complete shared identity already matches — so
     // this fixture alone proves the Replace path, no id inspection needed.
     let mut state = state_from(two_screen_drifted_doc());
     run_pass(&mut state);
@@ -134,7 +134,7 @@ fn inject_path_still_activates_the_correct_tab_after_the_retarget_active_only_ad
 /// shape): three screens, every one authored the SAME nav byte-for-byte
 /// (the first tab baked active on ALL three — the real file's "Trips" tab
 /// lighting up on Trips/Destination/Saved alike). Before this fix,
-/// `labels_already_unified` alone read every screen as already-unified, so
+/// the old label-only identity gate read every screen as already-unified, so
 /// `retarget_active_tab` never ran on any of them.
 #[test]
 fn three_screen_byte_identical_nav_regression_each_screen_ends_up_with_its_own_active_tab() {
@@ -180,6 +180,368 @@ fn three_screen_byte_identical_nav_regression_each_screen_ends_up_with_its_own_a
             );
         }
     }
+}
+
+// ---------------------------------------------------------------------
+// Nested outer -> inner bottom-nav regression (0722-1-gem postmortem).
+// The real generated shape wraps the tab row in a full-width outer chrome
+// surface (divider/background/padding). Both layers are nav-shaped, so the
+// old pre-order `.next()` lookup selected the OUTER node for comparison.
+// That node's direct children are divider + inner row, not tabs: labels
+// therefore collapsed to the first nested label and glyph/metric drift was
+// mistaken for an already-unified nav.
+// ---------------------------------------------------------------------
+
+fn nested_nav_tab_json(
+    id_prefix: &str,
+    label: &str,
+    icon: &str,
+    icon_size: f64,
+    route: &str,
+    active: bool,
+) -> serde_json::Value {
+    let color = if active { ACTIVE } else { INACTIVE };
+    let mut children = vec![
+        serde_json::json!({
+            "type": "icon_font", "id": format!("{id_prefix}-icon"),
+            "iconFontName": icon, "width": icon_size, "height": icon_size,
+            "fill": [{"type":"solid", "color": color}]
+        }),
+        serde_json::json!({
+            "type": "text", "id": format!("{id_prefix}-label"), "content": label,
+            "fontSize": 12, "fill": [{"type":"solid", "color": color}]
+        }),
+    ];
+    if active {
+        children.push(serde_json::json!({
+            "type": "ellipse", "id": format!("{id_prefix}-indicator"),
+            "width": 4, "height": 4, "fill": [{"type":"solid", "color": color}]
+        }));
+    }
+    serde_json::json!({
+        "type": "frame", "id": format!("{id_prefix}-tab"),
+        "width": "fill_container", "height": 56, "layout": "vertical",
+        "padding": [4, 0],
+        "events": {"onTap": [{"replace": format!("\"{route}\"")}]},
+        "children": children
+    })
+}
+
+struct NestedNavStyle<'a> {
+    icon_size: f64,
+    outer_height: f64,
+    outer_padding: [f64; 4],
+    outer_fill: &'a str,
+    divider_fill: &'a str,
+    inner_padding: [f64; 4],
+    inner_gap: f64,
+}
+
+fn nested_nav_json(
+    id_prefix: &str,
+    active_label: &str,
+    icons: [&str; 4],
+    routes: [&str; 4],
+    style: NestedNavStyle<'_>,
+) -> serde_json::Value {
+    let labels = ["Trips", "Explore", "Saved", "Profile"];
+    let tabs = labels
+        .iter()
+        .zip(icons)
+        .zip(routes)
+        .enumerate()
+        .map(|(index, ((label, icon), route))| {
+            nested_nav_tab_json(
+                &format!("{id_prefix}-{index}"),
+                label,
+                icon,
+                style.icon_size,
+                route,
+                *label == active_label,
+            )
+        })
+        .collect::<Vec<_>>();
+    serde_json::json!({
+        "type": "frame", "id": format!("{id_prefix}-outer"),
+        "name": "Bottom Navigation Bar", "role": "bottom-tab-bar",
+        "width": "fill_container", "height": style.outer_height, "layout": "vertical",
+        "padding": style.outer_padding,
+        "fill": [{"type":"solid", "color": style.outer_fill}],
+        "children": [
+            {
+                "type": "rectangle", "id": format!("{id_prefix}-divider"),
+                "name": "Nav Divider", "width": "fill_container", "height": 1,
+                "fill": [{"type":"solid", "color": style.divider_fill}]
+            },
+            {
+                "type": "frame", "id": format!("{id_prefix}-inner"),
+                "name": "Tab Bar", "role": "tab-row", "width": "fill_container",
+                "height": 64, "layout": "horizontal", "gap": style.inner_gap,
+                "padding": style.inner_padding, "children": tabs
+            }
+        ]
+    })
+}
+
+fn two_screen_nested_nav_chrome_drift_doc() -> serde_json::Value {
+    serde_json::json!({
+        "version": "1.0",
+        "children": [
+            screen_json(
+                "trips",
+                "Trips",
+                nested_nav_json(
+                    "reference",
+                    "Trips",
+                    ["luggage", "compass", "bookmark", "user"],
+                    ["/", "/explore", "/saved", "/profile"],
+                    NestedNavStyle {
+                        icon_size: 22.0,
+                        outer_height: 88.0,
+                        outer_padding: [8.0, 16.0, 8.0, 16.0],
+                        outer_fill: "#FFFDFC",
+                        divider_fill: "#E7E2DE",
+                        inner_padding: [0.0, 4.0, 0.0, 4.0],
+                        inner_gap: 8.0,
+                    },
+                ),
+            ),
+            // Labels and active destination are already correct, but this
+            // independently redrawn nav drifted in glyphs AND full-surface
+            // geometry. A label-only idempotency gate must not preserve it.
+            screen_json(
+                "saved",
+                "Saved",
+                nested_nav_json(
+                    "drifted",
+                    "Saved",
+                    ["compass", "search", "heart", "user"],
+                    [
+                        "/target-trips",
+                        "/target-explore",
+                        "/target-saved",
+                        "/target-profile",
+                    ],
+                    NestedNavStyle {
+                        icon_size: 20.0,
+                        outer_height: 76.0,
+                        outer_padding: [0.0, 24.0, 0.0, 24.0],
+                        outer_fill: "#F4F4F5",
+                        divider_fill: "#FF00AA",
+                        inner_padding: [0.0, 12.0, 0.0, 12.0],
+                        inner_gap: 20.0,
+                    },
+                ),
+            ),
+        ]
+    })
+}
+
+fn first_icon_name(node: &PenNode) -> Option<&str> {
+    if let PenNode::IconFont(icon) = node {
+        return Some(icon.icon_font_name.as_str());
+    }
+    node.children()?.iter().find_map(first_icon_name)
+}
+
+fn assert_saved_nested_nav_matches_reference(state: &op_editor_core::EditorState) {
+    let saved_root = find_by_id(state.active_children(), "saved").expect("Saved screen");
+    let outer = saved_root
+        .children()
+        .and_then(|children| children.first())
+        .expect("Saved keeps one complete outer nav surface");
+    let outer_json = serde_json::to_value(outer).expect("outer nav serializes");
+    assert_eq!(outer_json["height"], serde_json::json!(88.0));
+    assert_eq!(outer_json["fill"][0]["color"], serde_json::json!("#FFFDFC"));
+    assert_eq!(
+        outer_json["padding"],
+        serde_json::json!([8.0, 16.0, 8.0, 16.0]),
+        "outer surface padding must come from the reference nav, not just the tab row"
+    );
+
+    let outer_children = outer.children().expect("divider + inner tab row");
+    assert_eq!(outer_children.len(), 2, "copy the complete outer chrome");
+    let divider_json = serde_json::to_value(&outer_children[0]).expect("divider serializes");
+    assert_eq!(divider_json["height"], serde_json::json!(1.0));
+    assert_eq!(
+        divider_json["fill"][0]["color"],
+        serde_json::json!("#E7E2DE")
+    );
+
+    let inner = &outer_children[1];
+    assert_eq!(
+        labels_of(inner),
+        vec!["Trips", "Explore", "Saved", "Profile"]
+    );
+    let inner_json = serde_json::to_value(inner).expect("inner tab row serializes");
+    assert_eq!(
+        inner_json["padding"],
+        serde_json::json!([0.0, 4.0, 0.0, 4.0])
+    );
+    assert_eq!(inner_json["gap"], serde_json::json!(8.0));
+
+    let tabs = inner.children().expect("four tabs");
+    let icons = tabs
+        .iter()
+        .map(|tab| first_icon_name(tab).expect("tab icon"))
+        .collect::<Vec<_>>();
+    assert_eq!(icons, vec!["luggage", "compass", "bookmark", "user"]);
+    for tab in tabs {
+        let icon = tab
+            .children()
+            .and_then(|children| children.first())
+            .expect("icon is first tab child");
+        let icon_json = serde_json::to_value(icon).expect("icon serializes");
+        assert_eq!(icon_json["width"], serde_json::json!(22.0));
+        assert_eq!(icon_json["height"], serde_json::json!(22.0));
+    }
+    assert_eq!(first_fill(&tabs[0]).as_deref(), Some(INACTIVE));
+    assert_eq!(
+        first_fill(&tabs[2]).as_deref(),
+        Some(ACTIVE),
+        "the cloned reference chrome must retarget active styling to Saved"
+    );
+}
+
+#[test]
+fn nested_nav_same_labels_but_glyph_size_and_padding_drift_replaces_complete_outer_chrome() {
+    let mut state = state_from(two_screen_nested_nav_chrome_drift_doc());
+    run_pass(&mut state);
+    assert_saved_nested_nav_matches_reference(&state);
+}
+
+#[test]
+fn nested_nav_complete_outer_sync_is_idempotent_on_second_run() {
+    let mut state = state_from(two_screen_nested_nav_chrome_drift_doc());
+    run_pass(&mut state);
+    assert_saved_nested_nav_matches_reference(&state);
+    let once = serde_json::to_string(state.active_children()).expect("first pass snapshot");
+    run_pass(&mut state);
+    let twice = serde_json::to_string(state.active_children()).expect("second pass snapshot");
+    assert_eq!(once, twice, "nested nav sync must be a second-run no-op");
+}
+
+#[test]
+fn nested_nav_retarget_preserves_reference_route_at_each_label_position() {
+    // Every reference tab is already wired to a distinct destination. The
+    // target's independently-authored routes deliberately disagree, so a
+    // passing result proves both halves of the contract: the complete nav
+    // came from the reference, and moving active styling from Trips to
+    // Saved did NOT move each tab's event along with that styling.
+    let mut state = state_from(two_screen_nested_nav_chrome_drift_doc());
+    run_pass(&mut state);
+
+    let saved_root = find_by_id(state.active_children(), "saved").expect("Saved screen");
+    let outer = saved_root
+        .children()
+        .and_then(|children| children.first())
+        .expect("complete outer nav");
+    let inner = outer
+        .children()
+        .and_then(|children| children.get(1))
+        .expect("inner tab row after divider");
+    let tabs = inner.children().expect("four tabs");
+    assert_eq!(
+        labels_of(inner),
+        vec!["Trips", "Explore", "Saved", "Profile"]
+    );
+
+    let routes = tabs
+        .iter()
+        .map(|tab| {
+            serde_json::to_value(tab).expect("tab serializes")["events"]["onTap"][0]["replace"]
+                .as_str()
+                .expect("replace route is a string literal")
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        routes,
+        vec!["\"/\"", "\"/explore\"", "\"/saved\"", "\"/profile\""],
+        "routes belong to label positions; active-style retargeting must not swap them"
+    );
+    assert_eq!(first_fill(&tabs[0]).as_deref(), Some(INACTIVE));
+    assert_eq!(first_fill(&tabs[2]).as_deref(), Some(ACTIVE));
+}
+
+#[test]
+fn route_only_drift_still_adopts_reference_routes() {
+    let style = || NestedNavStyle {
+        icon_size: 22.0,
+        outer_height: 88.0,
+        outer_padding: [8.0, 16.0, 8.0, 16.0],
+        outer_fill: "#FFFDFC",
+        divider_fill: "#E7E2DE",
+        inner_padding: [0.0, 4.0, 0.0, 4.0],
+        inner_gap: 8.0,
+    };
+    let doc = serde_json::json!({
+        "version": "1.0",
+        "children": [
+            screen_json("trips", "Trips", nested_nav_json(
+                "reference", "Trips", ["luggage", "compass", "bookmark", "user"],
+                ["/", "/explore", "/saved", "/profile"], style(),
+            )),
+            screen_json("saved", "Saved", nested_nav_json(
+                "target", "Saved", ["luggage", "compass", "bookmark", "user"],
+                ["/wrong-1", "/wrong-2", "/wrong-3", "/wrong-4"], style(),
+            )),
+        ]
+    });
+    let mut state = state_from(doc);
+    run_pass(&mut state);
+
+    let saved = find_by_id(state.active_children(), "saved").unwrap();
+    let tabs = saved.children().unwrap()[0].children().unwrap()[1]
+        .children()
+        .unwrap();
+    let routes = tabs
+        .iter()
+        .map(|tab| serde_json::to_value(tab).unwrap()["events"]["onTap"][0]["replace"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        serde_json::Value::Array(routes),
+        serde_json::json!(["\"/\"", "\"/explore\"", "\"/saved\"", "\"/profile\""])
+    );
+}
+
+#[test]
+fn active_retarget_preserves_descendant_routes_by_tab_position() {
+    let mut nav_json = nested_nav_json(
+        "reference",
+        "Trips",
+        ["luggage", "compass", "bookmark", "user"],
+        ["/", "/explore", "/saved", "/profile"],
+        NestedNavStyle {
+            icon_size: 22.0,
+            outer_height: 88.0,
+            outer_padding: [8.0, 16.0, 8.0, 16.0],
+            outer_fill: "#FFFDFC",
+            divider_fill: "#E7E2DE",
+            inner_padding: [0.0, 4.0, 0.0, 4.0],
+            inner_gap: 8.0,
+        },
+    );
+    for tab in nav_json["children"][1]["children"].as_array_mut().unwrap() {
+        let events = tab.as_object_mut().unwrap().remove("events").unwrap();
+        tab["children"][0]["events"] = events;
+    }
+    let mut nav: PenNode = serde_json::from_value(nav_json).unwrap();
+    retarget_active_tab_at_path(&mut nav, &[1], "Saved");
+
+    let tabs = nav.children().unwrap()[1].children().unwrap();
+    let routes = tabs
+        .iter()
+        .map(|tab| {
+            serde_json::to_value(&tab.children().unwrap()[0]).unwrap()["events"]["onTap"][0]
+                ["replace"]
+                .clone()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        serde_json::Value::Array(routes),
+        serde_json::json!(["\"/\"", "\"/explore\"", "\"/saved\"", "\"/profile\""])
+    );
 }
 
 // ---------------------------------------------------------------------
@@ -351,6 +713,20 @@ fn injected_nav_clone_gets_the_chrome_role_stamped() {
         "an injected clone must carry role:\"bottom-tab-bar\" even though \
          the authored reference has none, so unfilled_screens' CHROME_ROLES \
          check recognizes it as chrome, not model-authored content"
+    );
+}
+
+#[test]
+fn roleless_reference_with_stamped_clone_is_idempotent_on_second_run() {
+    let mut state = state_from(home_plus_empty_library_doc());
+    run_pass(&mut state);
+    let once = serde_json::to_string(state.active_children()).expect("first pass snapshot");
+
+    run_pass(&mut state);
+    let twice = serde_json::to_string(state.active_children()).expect("second pass snapshot");
+    assert_eq!(
+        once, twice,
+        "the stamped clone must compare equal to its roleless reference after canonicalization"
     );
 }
 
