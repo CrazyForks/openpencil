@@ -3,12 +3,13 @@
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError};
 
 use op_editor_core::{EditorCommand, EditorState};
-use op_orchestrator::{DocSink, OrchestratorError, Progress, RunSummary};
+use op_orchestrator::{AbortFlag, DocSink, OrchestratorError, Progress, RunSummary};
 
 /// One in-flight design turn.
 pub struct DesignSession {
     delta_rx: Receiver<DesignDelta>,
     cmd_rx: Receiver<DesignCmdReq>,
+    abort: AbortFlag,
     finished: bool,
     indicator_epoch: u64,
 }
@@ -20,13 +21,21 @@ impl Drop for DesignSession {
             // overlay clears itself once the last one lands.
             op_editor_core::agent_indicators::finish_if_epoch(self.indicator_epoch);
         } else {
+            // Dropping the UI-side receiver must also stop the orchestrator
+            // and any concurrent screen-group LLM calls that share this flag.
+            // Closing the channels alone only prevents later UI delivery; it
+            // does not ask an in-flight provider request to return early.
+            self.abort.set();
             // Aborted / discarded mid-run: tear the overlay down at once.
             op_editor_core::agent_indicators::end_if_epoch(self.indicator_epoch);
         }
     }
 }
 
-/// Progress / completion events emitted by the worker.
+/// Progress / completion events emitted by the worker. A progress value may be
+/// [`Progress::WorkerScoped`]; the transport deliberately forwards that
+/// screen-group envelope intact instead of flattening it into the primary
+/// design stream.
 pub enum DesignDelta {
     Progress(Progress),
     Done(Result<RunSummary, OrchestratorError>),
@@ -68,12 +77,35 @@ impl DesignSession {
         cmd_rx: Receiver<DesignCmdReq>,
         indicator_epoch: u64,
     ) -> Self {
+        Self::from_channels_with_epoch_and_abort(
+            delta_rx,
+            cmd_rx,
+            indicator_epoch,
+            AbortFlag::new(),
+        )
+    }
+
+    /// Build a session that shares its cancellation flag with the worker.
+    /// Production launchers use this constructor; channel-only tests can keep
+    /// using [`Self::from_channels`] unchanged.
+    pub fn from_channels_with_epoch_and_abort(
+        delta_rx: Receiver<DesignDelta>,
+        cmd_rx: Receiver<DesignCmdReq>,
+        indicator_epoch: u64,
+        abort: AbortFlag,
+    ) -> Self {
         Self {
             delta_rx,
             cmd_rx,
+            abort,
             finished: false,
             indicator_epoch,
         }
+    }
+
+    /// Explicitly request cancellation before the session is dropped.
+    pub fn abort(&self) {
+        self.abort.set();
     }
 
     /// Drain every progress delta ready right now. Non-blocking.

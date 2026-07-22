@@ -11,12 +11,14 @@ use op_ai::chat_history::{trim_chat_history, DEFAULT_MAX_CHARS, DEFAULT_MAX_MESS
 use op_ai::chat_provider::{ChatDelta, ChatProvider, ChatRequest, CliName};
 use op_editor_core::EditorState;
 use op_host_native::WidgetHostNative;
-use op_orchestrator::{classify_intent, Intent};
+use op_orchestrator::{classify_intent, AbortFlag, Intent};
 
 use crate::chat_acp::AcpProvider;
 use op_editor_host_core::design::DesignSession;
 use op_host_services::chat_builtin_http::ConfiguredBuiltinProvider;
-use op_host_services::chat_canvas_tools::{chat_tool_channel, chat_tool_defs, ChatToolRequest};
+use op_host_services::chat_canvas_tools::{
+    chat_tool_channel, chat_tool_defs_for_write_scope, ChatToolRequest,
+};
 use op_host_services::chat_claude::ClaudeCodeProvider;
 use op_host_services::chat_copilot::CopilotProvider;
 use op_host_services::chat_http_server::OpenCodeProvider;
@@ -314,6 +316,7 @@ fn launch_direct_modify_turn(
     else {
         return false;
     };
+    let target_frame_ids = plan.target_frame_ids;
     let request = ChatRequest {
         system_prompt: plan.system_prompt,
         user_message: plan.user_message,
@@ -339,6 +342,7 @@ fn launch_direct_modify_turn(
                 request,
                 &chat_tx,
                 &executor,
+                target_frame_ids,
             );
         })
         .expect("spawn op-chat-modify thread");
@@ -437,12 +441,14 @@ fn launch_cli_standard_turn(
     let (delta_tx, delta_rx) = mpsc::channel();
     let (cmd_tx, cmd_rx) = mpsc::channel();
     let indicator_epoch = op_editor_core::agent_indicators::begin();
+    let design_abort = AbortFlag::new();
     super::finalize_design_session_if_needed(host, current_chat, "teardown-backstop");
     *current_chat = Some(ChatSession::from_channels(chat_rx, Some(tool_rx)));
-    *current_design = Some(DesignSession::from_channels_with_epoch(
+    *current_design = Some(DesignSession::from_channels_with_epoch_and_abort(
         delta_rx,
         cmd_rx,
         indicator_epoch,
+        design_abort.clone(),
     ));
 
     let plan = op_host_services::chat_intent::CliTurnPlan {
@@ -456,6 +462,7 @@ fn launch_cli_standard_turn(
         design_request,
         initial_state,
         indicator_epoch,
+        abort: design_abort,
         model,
     };
     thread::Builder::new()
@@ -515,6 +522,7 @@ pub fn drain_stop_request(
     host: &mut WidgetHostNative,
     current_chat: &mut Option<ChatSession>,
     current_design: &mut Option<DesignSession>,
+    running_tab: Option<usize>,
 ) -> bool {
     if !std::mem::take(&mut host.editor_state_mut().chat.pending_stop_chat) {
         return false;
@@ -522,6 +530,10 @@ pub fn drain_stop_request(
     // Finalize-lifecycle invariant (0718-1-k3-1 postmortem) — see
     // `drain_new_chat_request`'s matching comment above.
     super::finalize_design_session_if_needed(host, current_chat, "teardown-backstop");
+    if let Some(session) = current_design.as_ref() {
+        session.abort();
+        crate::design_session::stop_design_transcript(host, running_tab);
+    }
     *current_chat = None;
     *current_design = None;
     if let Some(epoch) = op_editor_core::agent_indicators::active_epoch() {
@@ -727,7 +739,11 @@ pub(crate) fn builtin_provider_with_tools(
         .find(|agent| agent.id == id && agent.ready())?;
     let provider = ConfiguredBuiltinProvider::from_builtin_agent(config)?;
     let (executor, tool_rx) = chat_tool_channel();
-    let provider = provider.with_canvas_tools(chat_tool_defs(), Arc::new(executor));
+    let has_frame_scope = op_host_services::chat_intent::has_selected_frame_target(state);
+    let provider = provider.with_canvas_tools(
+        chat_tool_defs_for_write_scope(has_frame_scope),
+        Arc::new(executor),
+    );
     Some((Box::new(provider), tool_rx))
 }
 

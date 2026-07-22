@@ -99,6 +99,13 @@ fn canvas_has_mobile_screen_root(state: &op_editor_core::EditorState) -> bool {
     })
 }
 
+/// Mobile-root seeding must use the same canvas-aware signal as loop routing.
+/// A continuation prompt can omit every mobile keyword while the existing
+/// canvas still proves that the next root belongs to the same mobile app.
+fn root_seed_mobile_for_turn(state: &op_editor_core::EditorState, prompt: &str) -> bool {
+    canvas_has_mobile_screen_root(state) || root_seed_prompt_is_mobile(prompt)
+}
+
 /// Pure predicate for the design-agent-loop gate.
 ///
 /// Routing has three states: a truthy env value or the Settings experimental
@@ -255,7 +262,7 @@ pub(super) fn launch_design_loop_turn(
     // empty design (see `design_turn_thinking_mode`). Resolved before the
     // `&mut` borrow below.
     let thinking = design_turn_thinking_mode(host);
-    let root_seed_mobile = root_seed_prompt_is_mobile(&user_text);
+    let root_seed_mobile = root_seed_mobile_for_turn(host.editor_state(), &user_text);
     let agent_team_size = host.editor_state().chat.agent_team_size;
     let chat = &mut host.editor_state_mut().chat;
     let effort = chat.effort_level;
@@ -477,6 +484,25 @@ mod tests {
             .active_children_mut()
             .push(mobile_screen_frame("home", 1440.0));
         assert!(!canvas_has_mobile_screen_root(&state));
+    }
+
+    #[test]
+    fn mobile_continuation_keeps_mobile_root_seed_without_prompt_keywords() {
+        let mut state = op_editor_core::EditorState::new();
+        state.active_children_mut().clear();
+        state
+            .active_children_mut()
+            .push(mobile_screen_frame("home", 390.0));
+
+        assert!(root_seed_mobile_for_turn(&state, "继续生成剩余界面"));
+    }
+
+    #[test]
+    fn empty_canvas_continuation_does_not_invent_mobile_root_seed() {
+        let mut state = op_editor_core::EditorState::new();
+        state.active_children_mut().clear();
+
+        assert!(!root_seed_mobile_for_turn(&state, "继续生成剩余界面"));
     }
 
     // ── E-lite: team-size system-prompt fact ────────────────────────

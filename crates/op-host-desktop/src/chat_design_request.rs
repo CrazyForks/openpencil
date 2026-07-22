@@ -84,6 +84,55 @@ mod tests {
     }
 
     #[test]
+    fn listed_follow_on_screens_keep_x2_request_out_of_append_mode() {
+        let mut state = EditorState::new();
+        state.active_children_mut().clear();
+        for (id, name) in [("home", "Home"), ("trips", "Trips"), ("saved", "Saved")] {
+            state.active_children_mut().push(
+                serde_json::from_value(serde_json::json!({
+                    "type": "frame",
+                    "id": id,
+                    "name": name,
+                    "width": 375,
+                    "height": 812,
+                    "children": [{
+                        "type": "frame",
+                        "id": format!("{id}-content"),
+                        "name": "Content",
+                        "width": 375,
+                        "height": 700,
+                        "children": []
+                    }]
+                }))
+                .expect("screen fixture"),
+            );
+        }
+        state.chat.agent_team_size = 2;
+        for prompt in [
+            "继续完成 explore/profile界面",
+            "Continue generating the explore/profile interface",
+        ] {
+            let append_context =
+                op_host_services::chat_intent::detect_append_intent(&state, prompt);
+            let req = build_design_request(prompt.into(), &state, append_context);
+
+            assert!(
+                req.append_context.is_none(),
+                "the continuation must create sibling roots instead of targeting Home: {prompt}"
+            );
+            assert_eq!(req.concurrency, 2, "the x2 setting must survive routing");
+            assert!(
+                op_host_services::chat_intent::should_auto_generate_design_md(
+                    &state,
+                    prompt,
+                    req.append_context.as_ref(),
+                ),
+                "follow-on screens must extract the existing canvas design system first: {prompt}"
+            );
+        }
+    }
+
+    #[test]
     fn selected_builtin_agent_model_reaches_the_orchestrator() {
         let mut state = EditorState::new();
         state

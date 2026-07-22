@@ -696,10 +696,12 @@ impl DesktopApp {
     /// Drain a Stop request — aborts the in-flight worker and clears the tab
     /// binding so a later pump can't target a finished run.
     pub(crate) fn drain_stop_chat(&mut self) -> bool {
+        let running_tab = self.chat_running_tab;
         let drained = chat_session::drain_stop_request(
             &mut self.host,
             &mut self.current_chat,
             &mut self.current_design,
+            running_tab,
         );
         if drained {
             crate::sub_agent_session::abort_all(&mut self.sub_agents, &mut self.active_sub_agent);

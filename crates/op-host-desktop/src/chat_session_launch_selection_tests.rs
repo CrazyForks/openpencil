@@ -93,12 +93,27 @@ fn selection_does_not_hijack_whole_new_screen_or_chat() {
 }
 
 #[test]
-fn no_selection_modify_keyword_behavior_is_unchanged() {
+fn selection_does_not_launch_direct_modify_for_listed_follow_on_screens() {
+    let state = state_with_selected_card();
+
+    for prompt in [
+        "继续完成 explore/profile界面",
+        "Continue generating the explore/profile interface",
+    ] {
+        assert!(
+            !should_launch_direct_modify(&state, prompt),
+            "listed sibling interfaces must reach the new-design pipeline: {prompt}"
+        );
+    }
+}
+
+#[test]
+fn no_selection_never_launches_direct_modify() {
     let mut state = state_with_selected_card();
     state.clear_selection();
 
     assert!(
-        should_launch_direct_modify(&state, "修改成饺子"),
-        "explicit modify wording should still launch direct modify without a selection"
+        !should_launch_direct_modify(&state, "修改成饺子"),
+        "modify wording alone must not authorize writing into an existing frame"
     );
 }

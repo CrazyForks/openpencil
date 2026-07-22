@@ -33,10 +33,11 @@
 //!   meaningful) — `run.rs` takes the untouched sequential path whenever this
 //!   returns `1`, so single-screen / single-group plans are a byte-identical
 //!   regression lock.
-//! - [`BufferDocSink`] — a per-worker buffering [`DocSink`] that collects
-//!   applied [`EditorCommand`]s without touching the real document, so N
-//!   worker futures can run concurrently on a single task with no shared
-//!   `&mut` (each worker owns its buffer, moved in and out).
+//! - [`BufferDocSink`] — an isolated buffering [`DocSink`] that collects
+//!   applied [`EditorCommand`]s without touching the real document. The
+//!   screen-group executor creates one fresh buffer per subtask, and only a
+//!   successful subtask may release that buffer to the single real-sink
+//!   writer.
 //! - [`run_subtask_retry_ladder`] — the 3-attempt tier-gated retry ladder,
 //!   extracted from `run.rs`'s sequential loop so BOTH the sequential path
 //!   and each screen-group worker share the IDENTICAL retry semantics —
@@ -49,15 +50,17 @@
 //!   `effective_concurrency`. A `tokio::select!` loop polls the progress
 //!   channel and the worker set TOGETHER (visibility fix, 2026-07-17): each
 //!   `Progress` event reaches the caller the moment it's sent, and each
-//!   group's buffered commands replay into the REAL sink the instant that
-//!   group finishes — in COMPLETION order, not plan order (safe: every
-//!   group's root is a disjoint pre-scaffolded subtree).
+//!   successful subtask's buffered commands replay atomically into the REAL
+//!   sink as soon as that subtask finishes. Replay follows subtask completion
+//!   order, can interleave across disjoint screen roots, and still has exactly
+//!   one real-document writer.
 
+use crate::agent_identity::AgentIdentity;
 use crate::model_profile::ModelTier;
 use crate::plan::{OrchestratorPlan, Subtask};
 use crate::retry::{is_non_retryable, is_self_check_rejection};
 use crate::screen_groups::ScreenGroup;
-use crate::subagent::{apply_command_with_reveal, reveal_now_millis, run_subtask_with_reveal_at};
+use crate::subagent::{reveal_now_millis, run_subtask_with_reveal_at};
 use crate::types::{
     AbortFlag, DesignRequest, DocSink, GeometryEchoBudget, LlmClient, Progress, SubtaskOutcome,
 };
@@ -66,6 +69,10 @@ use futures::StreamExt;
 use op_editor_core::{EditorCommand, EditorState};
 use std::sync::Arc;
 use tokio::sync::{mpsc, Semaphore};
+
+#[path = "concurrent_replay.rs"]
+mod replay;
+use replay::{apply_worker_event, run_screen_group_worker, WorkerSignal};
 
 /// Clamps a raw concurrency value to the valid range `[1, 6]`.
 ///
@@ -92,25 +99,20 @@ pub(crate) fn effective_concurrency(concurrency: u32, group_count: usize) -> u32
 
 // ── BufferDocSink ─────────────────────────────────────────────────────────────
 
-/// A per-worker buffering [`DocSink`] that collects every applied
+/// An isolated buffering [`DocSink`] that collects every applied
 /// [`EditorCommand`] into an in-memory `Vec` without touching the real document.
 ///
-/// **Design choice (spec §5 implementer note):** the buffer is still a plain
-/// command collector; it does not re-execute worker commands locally. The
-/// pre-spawn snapshot is read-only context for generation post-processing
-/// such as design-variable colour binding. Snapshotting the state ONCE
-/// before the concurrent phase (rather than after each buffered command)
-/// means a later subtask in the SAME group does not see an EARLIER
-/// subtask's buffered output — an inherited limitation from the
-/// pre-`aca0d3a0` design, not a new one: cross-subtask "does the canvas
-/// already have X" context was never live within one buffered worker, only
-/// across the (still fully sequential) plan-order loop in the single-root
-/// path.
+/// The snapshot is immutable for one subtask, so that subtask never observes
+/// its own uncommitted commands. After an atomic real-sink commit, the
+/// screen-group worker mirrors the same batch into its group-local snapshot;
+/// the next same-group subtask therefore sees committed predecessors without
+/// absorbing race-dependent sibling-group state.
 ///
-/// After all workers finish the caller replays `commands` into the real
-/// `DocSink` in a deterministic order (serialized replay).
+/// The screen-group executor gives each subtask a fresh instance. A failed
+/// subtask drops the instance unopened; a successful one transfers its
+/// commands to the executor for serialized replay into the real `DocSink`.
 pub(crate) struct BufferDocSink {
-    /// Snapshot of `EditorState` taken before the concurrent phase.
+    /// Group-local `EditorState` snapshot taken before this buffered subtask.
     /// Returned by `state()` unchanged for read-only generation context.
     snapshot: EditorState,
     /// All `EditorCommand`s collected via `apply()` calls.
@@ -120,7 +122,7 @@ pub(crate) struct BufferDocSink {
 }
 
 impl BufferDocSink {
-    /// Create a new buffer sink from a pre-concurrent state snapshot.
+    /// Create a new buffer sink from one immutable subtask snapshot.
     pub(crate) fn new(snapshot: EditorState) -> Self {
         Self {
             snapshot,
@@ -379,7 +381,7 @@ pub(crate) async fn run_subtask_retry_ladder(
 /// - `outcome.node_count == 0` — nothing landed, nothing to check;
 /// - `outcome.inserted_root_ids` is empty — the concurrent screen-group
 ///   path's [`BufferDocSink`] never surfaces real ids (its `state()` is a
-///   frozen pre-phase snapshot that never reflects its own buffered
+///   frozen per-subtask snapshot that never reflects its own uncommitted
 ///   inserts — see that type's doc), so there is nothing live to lay out
 ///   or address for a replace. Geometry echo is therefore SEQUENTIAL-PATH
 ///   ONLY today; a buffered worker's subtasks fall back to the
@@ -467,105 +469,7 @@ async fn maybe_geometry_echo(
     retried
 }
 
-// ── Screen-group worker + concurrent executor ───────────────────────────────
-
-/// One screen-group worker's collected results: its private command buffer
-/// (replayed into the real sink after every worker finishes) plus
-/// `(plan_index, outcome, is_zero)` for each subtask it ran, in `indices`
-/// order.
-struct WorkerResult {
-    buffer: BufferDocSink,
-    outcomes: Vec<(usize, SubtaskOutcome, bool)>,
-    /// `true` when `abort` fired before this worker reached the end of its
-    /// group (some of the group's subtasks never ran).
-    aborted: bool,
-}
-
-/// Runs one screen group's subtasks SEQUENTIALLY (via the SAME
-/// [`run_subtask_retry_ladder`] the single-group path uses), writing into its
-/// own private `buffer` — never the real document — so sibling workers
-/// driven by [`join_all`] can run genuinely concurrently with no shared
-/// `&mut` state: each worker future owns its buffer, moved in and returned in
-/// [`WorkerResult`].
-///
-/// A shared `semaphore` caps the number of subtask LLM calls in flight
-/// across ALL groups at once (RAII permit drop releases the slot when a
-/// call completes).
-#[allow(clippy::too_many_arguments)]
-async fn run_screen_group_worker(
-    group: &ScreenGroup,
-    plan: &OrchestratorPlan,
-    request: &DesignRequest,
-    llm: &dyn LlmClient,
-    abort: &AbortFlag,
-    tier: ModelTier,
-    mut buffer: BufferDocSink,
-    semaphore: Arc<Semaphore>,
-    geometry_echo_budget: &GeometryEchoBudget,
-    progress_tx: mpsc::UnboundedSender<Progress>,
-) -> WorkerResult {
-    let mut outcomes = Vec::with_capacity(group.indices.len());
-    let mut aborted = false;
-    for &idx in &group.indices {
-        if abort.is_set() {
-            aborted = true;
-            break;
-        }
-        let subtask = &plan.subtasks[idx];
-
-        // Acquire a permit before the LLM call; RAII drop releases it when
-        // this iteration's block ends (= the sequential ladder's own await
-        // chain completing for this subtask).
-        let _permit = semaphore
-            .acquire()
-            .await
-            .expect("semaphore should not be closed");
-
-        let ptx = progress_tx.clone();
-        let mut emit = move |p: Progress| {
-            let _ = ptx.send(p);
-        };
-        // `agent_indicator_epoch: None` — see `run_subtask_retry_ladder`'s
-        // doc: this writes into `buffer`, not the real document yet. The
-        // geometry_echo step inside the ladder is a guaranteed no-op here
-        // too, for the same reason (`buffer.state()` never reflects its
-        // own buffered inserts, so `inserted_root_ids` comes back empty) —
-        // the budget is still threaded through for when that limitation
-        // lifts, not because it's spent here.
-        let outcome = run_subtask_retry_ladder(
-            subtask,
-            plan,
-            request,
-            llm,
-            &mut buffer,
-            abort,
-            tier,
-            None,
-            geometry_echo_budget,
-            &mut emit,
-        )
-        .await;
-
-        let is_zero = outcome.node_count == 0;
-        let _ = progress_tx.send(if is_zero {
-            Progress::SubtaskFailed {
-                id: subtask.id.clone(),
-                error: outcome.error.clone().unwrap_or_default(),
-            }
-        } else {
-            Progress::SubtaskDone {
-                id: subtask.id.clone(),
-                node_count: outcome.node_count,
-            }
-        });
-        outcomes.push((idx, outcome, is_zero));
-    }
-    WorkerResult {
-        buffer,
-        outcomes,
-        aborted,
-    }
-}
+// ── Screen-group concurrent executor ────────────────────────────────────────
 
 /// Result of the concurrent screen-group phase, in the same shape `run.rs`'s
 /// sequential loop produces locally — so the downstream salvage /
@@ -586,7 +490,7 @@ pub(crate) struct ConcurrentPhaseResult {
 /// Drives one worker future per screen group on a [`FuturesUnordered`] —
 /// genuine concurrency (LLM calls from different groups overlap in
 /// wall-clock time) with no `tokio::spawn`/extra `Send` bounds and no shared
-/// `&mut` (each worker owns its own [`BufferDocSink`]). A shared
+/// `&mut` (each worker owns one fresh [`BufferDocSink`] per subtask). A shared
 /// [`Semaphore`] caps in-flight subtask LLM calls at `effective_concurrency`.
 ///
 /// **Visibility (three-piece fix, 2026-07-17)** — the earlier `join_all`
@@ -598,12 +502,12 @@ pub(crate) struct ConcurrentPhaseResult {
 /// polling the progress channel and the `FuturesUnordered` TOGETHER:
 /// - Every `Progress` event reaches `on_progress` the moment its worker
 ///   sends it — mid-run, not after `join_all` resolves.
-/// - Each group's buffered commands replay into the REAL `sink` the INSTANT
-///   that group's worker finishes — whichever group wins the LLM race first,
-///   not plan order. This is safe because every group's root was already
-///   scaffolded (fixed id + position) before this phase started (see
-///   `run_screen_groups::insert_screen_group_roots`), so replaying group B's
-///   content before group A's never collides — they're disjoint subtrees.
+/// - Each successful subtask's buffered commands replay into the REAL `sink`
+///   the instant that subtask settles, without waiting for the rest of its
+///   group. A failed subtask drops its unopened buffer. This is safe because
+///   every group's root was already scaffolded (fixed id + position) before
+///   this phase started (see `run_screen_groups::insert_screen_group_roots`),
+///   so subtask replays from sibling groups target disjoint subtrees.
 ///
 /// The REAL indicator epoch is applied only at replay time — see
 /// `run_subtask_retry_ladder`'s doc for why buffered/worker-phase inserts
@@ -615,6 +519,7 @@ pub(crate) struct ConcurrentPhaseResult {
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_screen_groups_concurrent(
     groups: &[ScreenGroup],
+    group_identities: &[AgentIdentity],
     plan: &OrchestratorPlan,
     request: &DesignRequest,
     llm: &dyn LlmClient,
@@ -626,6 +531,11 @@ pub(crate) async fn run_screen_groups_concurrent(
     geometry_echo_budget: &GeometryEchoBudget,
     on_progress: &mut dyn FnMut(Progress),
 ) -> ConcurrentPhaseResult {
+    assert_eq!(
+        groups.len(),
+        group_identities.len(),
+        "every concurrent screen group must have one stable identity"
+    );
     // Item 4: a fact-line up front makes ⚡Nx's effect legible instead of
     // silent — before this, nothing distinguished a concurrent run from a
     // sequential one in the progress panel until content started landing.
@@ -633,67 +543,102 @@ pub(crate) async fn run_screen_groups_concurrent(
         group_count: groups.len(),
         workers: effective_concurrency,
     });
+    // Publish the complete checklist for each screen before any worker can
+    // finish. The desktop can now create stable per-agent bubbles without
+    // guessing group ownership from interleaved subtask events.
+    for (group_idx, (group, identity)) in groups.iter().zip(group_identities).enumerate() {
+        let subtasks = group
+            .indices
+            .iter()
+            .map(|&idx| {
+                let subtask = &plan.subtasks[idx];
+                (subtask.id.clone(), subtask.label.clone())
+            })
+            .collect();
+        on_progress(Progress::worker_scoped(
+            group_idx,
+            group.screen.clone(),
+            identity.clone(),
+            Progress::Planned { subtasks },
+        ));
+    }
 
     let snapshot = sink.state().clone();
     let semaphore = Arc::new(Semaphore::new(effective_concurrency as usize));
-    let (progress_tx, mut progress_rx) = mpsc::unbounded_channel::<Progress>();
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<WorkerSignal>();
 
     // Build one worker future per screen group, each future OWNS its own
-    // `BufferDocSink` (moved in) — no shared `&mut`. Tagged with its plan
-    // group index so the caller knows which group finished.
+    // group-local snapshot and constructs a fresh `BufferDocSink` per subtask —
+    // no shared `&mut`. Successful commits update only that group's mirror, so
+    // later same-group prompts see prior sections without absorbing sibling
+    // completion order. Tagged with its group index for completion accounting.
     let mut worker_futures: FuturesUnordered<_> = groups
         .iter()
         .enumerate()
         .map(|(g_idx, group)| {
             let fut = run_screen_group_worker(
+                g_idx,
                 group,
                 plan,
                 request,
                 llm,
                 abort,
                 tier,
-                BufferDocSink::new(snapshot.clone()),
+                snapshot.clone(),
                 Arc::clone(&semaphore),
                 geometry_echo_budget,
-                progress_tx.clone(),
+                event_tx.clone(),
             );
             async move { (g_idx, fut.await) }
         })
         .collect();
     // Drop the master sender so the channel closes once every worker (and
-    // thus every clone) has finished — `progress_rx.recv()` then observes
+    // thus every clone) has finished — `event_rx.recv()` then observes
     // `None` instead of hanging forever.
-    drop(progress_tx);
+    drop(event_tx);
 
     let mut per_subtask: Vec<Option<(SubtaskOutcome, bool)>> = vec![None; plan.subtasks.len()];
     let mut aborted_mid = abort.is_set();
     let mut remaining = groups.len();
-    // Poll the progress channel and the worker set TOGETHER so a progress
-    // event reaches `on_progress` as soon as it's sent, and a finished
-    // group replays into `sink` as soon as it completes — never held back
-    // waiting for its siblings.
+    // Poll the event channel and worker set TOGETHER. This loop is the ONE
+    // real-document writer: it drains one successful subtask atomically,
+    // then acks that worker so the same group may proceed to its next subtask.
     while remaining > 0 {
         tokio::select! {
-            Some(event) = progress_rx.recv() => {
-                on_progress(event);
+            Some(event) = event_rx.recv() => {
+                apply_worker_event(
+                    event,
+                    groups,
+                    group_identities,
+                    plan,
+                    sink,
+                    agent_indicator_epoch,
+                    &mut per_subtask,
+                    on_progress,
+                );
             }
             Some((_g_idx, result)) = worker_futures.next() => {
                 remaining -= 1;
                 aborted_mid |= result.aborted;
-                for cmd in result.buffer.commands {
-                    apply_command_with_reveal(sink, cmd, agent_indicator_epoch, reveal_now_millis());
-                }
-                for (plan_idx, outcome, is_zero) in result.outcomes {
-                    per_subtask[plan_idx] = Some((outcome, is_zero));
-                }
             }
         }
     }
-    // A progress event and the LAST worker's completion can both be ready
-    // in the same poll — `select!` only picks one branch per iteration, so
-    // drain whatever's left in the (now-closing) channel after the loop.
-    while let Ok(event) = progress_rx.try_recv() {
-        on_progress(event);
+    // An ordinary progress event and the LAST worker's completion can both be
+    // ready in the same poll — drain whatever remains after the worker loop.
+    // A SubtaskSettled event cannot normally remain here because its worker
+    // waits for the event's ack before it can finish, but handling it keeps the
+    // invariant fail-safe if worker shutdown changes later.
+    while let Ok(event) = event_rx.try_recv() {
+        apply_worker_event(
+            event,
+            groups,
+            group_identities,
+            plan,
+            sink,
+            agent_indicator_epoch,
+            &mut per_subtask,
+            on_progress,
+        );
     }
 
     let mut outcomes = Vec::new();

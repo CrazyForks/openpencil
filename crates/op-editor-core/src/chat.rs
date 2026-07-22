@@ -238,6 +238,13 @@ pub struct ChatMessage {
     pub action_step_expanded_overrides: Vec<Option<bool>>,
     /// True while this (assistant) message's turn streams in.
     pub streaming: bool,
+    /// Screen-group id for a classic-orchestrator worker bubble. `None` marks
+    /// the primary turn message. Worker bubbles are presentation-only; their
+    /// screen/activity context is folded into the primary provider-history
+    /// entry so one design turn never becomes consecutive assistant messages.
+    pub design_worker_group: Option<u32>,
+    /// Human-readable screen label paired with [`Self::design_worker_group`].
+    pub design_worker_screen: Option<String>,
     /// The turn's original `op_orchestrator::types::DesignRequest`,
     /// `serde_json`-encoded, captured once at launch — the manual retry
     /// entry point needs it to re-run a failed subtask with the same
@@ -270,6 +277,8 @@ impl ChatMessage {
             design_block_expanded_overrides: Vec::new(),
             action_step_expanded_overrides: Vec::new(),
             streaming: false,
+            design_worker_group: None,
+            design_worker_screen: None,
             design_request_json_for_retry: None,
             failed_subtasks: Vec::new(),
         }
@@ -294,6 +303,8 @@ impl ChatMessage {
             design_block_expanded_overrides: Vec::new(),
             action_step_expanded_overrides: Vec::new(),
             streaming: false,
+            design_worker_group: None,
+            design_worker_screen: None,
             design_request_json_for_retry: None,
             failed_subtasks: Vec::new(),
         }

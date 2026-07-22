@@ -12,7 +12,7 @@
 //! - UI event loop also drains `DesignDelta` via [`pump_progress`] and
 //!   renders typed activity in the trailing assistant message.
 
-use op_editor_core::{ChatActivity, ChatActivityStatus, ChatCompletion, ChatMessage, Locale};
+use op_editor_core::{ChatActivity, ChatActivityStatus, ChatMessage, Locale};
 use op_editor_host_core::design::{DesignCmdAck, DesignCmdOp};
 // Re-export so `crate::design_session::DesignSession` (the DesktopApp
 // field type in main.rs) resolves with zero churn.
@@ -21,6 +21,9 @@ use op_host_native::WidgetHostNative;
 use op_orchestrator::Progress;
 
 use op_host_services::design_session::fit_design_viewport_to_content;
+
+#[path = "design_session_workers.rs"]
+mod workers;
 
 /// Drain every pending apply request from the in-flight design
 /// session and execute it against the real `EditorState`. Each
@@ -96,9 +99,8 @@ pub fn pump_progress(
     let mut changed = false;
     if !poll.progress.is_empty() {
         let chat = host.editor_state_mut().chat.run_tab_mut(running_tab);
-        if let Some(msg) = chat.messages.last_mut() {
-            changed |= apply_progress(msg, &poll.progress, locale);
-        }
+        changed |=
+            workers::apply_progress_to_transcript(&mut chat.messages, &poll.progress, locale);
         if changed {
             let _ = crate::design_loop_indicator::ensure_design_session_transcript_identity(
                 host.editor_state_mut(),
@@ -108,73 +110,39 @@ pub fn pump_progress(
     }
     if let Some(summary) = &poll.summary {
         let chat = host.editor_state_mut().chat.run_tab_mut(running_tab);
-        if let Some(msg) = chat.messages.last_mut() {
-            match summary {
-                Ok(s) => {
-                    let ok = s.subtasks.iter().filter(|o| o.error.is_none()).count();
-                    let failed = s.subtasks.len() - ok;
-                    for activity in &mut msg.activities {
-                        if matches!(
-                            activity.status,
-                            ChatActivityStatus::Pending | ChatActivityStatus::Running
-                        ) {
-                            activity.status = ChatActivityStatus::Done;
-                        }
-                    }
-                    msg.completion = Some(ChatCompletion {
-                        succeeded: count_u32(ok),
-                        failed: count_u32(failed),
-                        nodes: count_u32(s.total_nodes),
-                    });
-                    append_completion_narration(msg, ok, failed, locale);
-                    // Persist every zero-node failure's spec (failed-subtask
-                    // remediation, manual layer) so the row's "Retry" icon
-                    // has something to replay. JSON-encoded — `ChatMessage`
-                    // (op-editor-core) cannot depend on op-orchestrator's
-                    // concrete `Subtask` type (wrong dependency direction).
-                    for outcome in &s.subtasks {
-                        if let Some(subtask) = &outcome.subtask {
-                            if let Ok(subtask_json) = serde_json::to_string(subtask) {
-                                msg.failed_subtasks
-                                    .push(op_editor_core::PendingSubtaskRetry {
-                                        subtask_id: outcome.id.clone(),
-                                        subtask_json,
-                                    });
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    for activity in &mut msg.activities {
-                        if matches!(
-                            activity.status,
-                            ChatActivityStatus::Pending | ChatActivityStatus::Running
-                        ) {
-                            activity.status = ChatActivityStatus::Error;
-                        }
-                    }
-                    let raw = e.to_string();
-                    msg.content = match friendly_quota_error(&raw) {
-                        Some(friendly) => {
-                            // Raw provider JSON stays available in the
-                            // collapsible thinking block for debugging.
-                            msg.thinking.push_str("\n\n");
-                            msg.thinking.push_str(&raw);
-                            friendly
-                        }
-                        None => format!("error: {raw}"),
-                    };
-                }
+        changed |= match summary {
+            Ok(summary) => workers::finish_design_success(&mut chat.messages, summary, locale),
+            Err(error) => {
+                workers::finish_design_error(&mut chat.messages, &error.to_string(), locale)
             }
-            msg.streaming = false;
-            changed = true;
-        }
+        };
+    } else if poll.finished {
+        // A disconnected worker without a terminal `Done` must not leave any
+        // worker persona (or the primary bubble) animating forever.
+        let chat = host.editor_state_mut().chat.run_tab_mut(running_tab);
+        changed |= workers::finish_disconnected_design_messages(&mut chat.messages, locale);
     }
     if changed {
         host.mark_editor_state_dirty();
     }
     if poll.finished {
         *current = None;
+    }
+    changed
+}
+
+/// Finalize transcript rows for an explicit Stop before the design session is
+/// dropped. The widget already cleared every `streaming` bit, so worker
+/// metadata and active activities — not streaming state — identify the turn.
+pub(crate) fn stop_design_transcript(
+    host: &mut WidgetHostNative,
+    running_tab: Option<usize>,
+) -> bool {
+    let locale = host.editor_state().editor_ui.locale;
+    let chat = host.editor_state_mut().chat.run_tab_mut(running_tab);
+    let changed = workers::stop_design_messages(&mut chat.messages, locale);
+    if changed {
+        host.mark_editor_state_dirty();
     }
     changed
 }
@@ -267,6 +235,12 @@ pub fn launch_subtask_retry_if_pending(
         subtask,
         initial_state,
     ));
+    // Reuse the exact message that owns the failed activity row. This also
+    // makes a non-primary worker bubble the explicit target for the retry's
+    // unscoped SubtaskStarted/Done/Failed events until its channel closes.
+    if let Some(message) = host.editor_state_mut().chat.messages.get_mut(msg_idx) {
+        message.streaming = true;
+    }
     host.mark_editor_state_dirty();
     true
 }
@@ -369,6 +343,14 @@ fn apply_progress(msg: &mut ChatMessage, progress: &[Progress], locale: Locale) 
                 &format!(
                     "• {group_count} screen groups · sequential (parallel setting: {requested_workers})"
                 ),
+            ),
+            // Top-level routing normally consumes this envelope before
+            // `apply_progress` sees it. Recursively unwrapping here keeps the
+            // adapter safe for direct callers and nested worker envelopes.
+            Progress::WorkerScoped(worker) => apply_progress(
+                msg,
+                std::slice::from_ref(worker.event.as_ref()),
+                locale,
             ),
             Progress::CleanupDone => {
                 let mut event_changed = append_narration(
@@ -568,6 +550,10 @@ fn count_u32(count: usize) -> u32 {
 #[cfg(test)]
 #[path = "design_session_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "design_session_worker_tests.rs"]
+mod worker_tests;
 
 /// Render a provider quota-exhaustion error (HTTP 429 with an
 /// `AccountQuotaExceeded`-style body) as one human sentence instead of

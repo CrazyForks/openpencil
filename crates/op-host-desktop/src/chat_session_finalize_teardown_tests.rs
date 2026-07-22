@@ -82,7 +82,7 @@ fn drain_stop_request_runs_the_teardown_backstop_before_dropping_the_session() {
     let mut current_design = None;
     host.editor_state_mut().chat.pending_stop_chat = true;
 
-    let drained = drain_stop_request(&mut host, &mut current_chat, &mut current_design);
+    let drained = drain_stop_request(&mut host, &mut current_chat, &mut current_design, None);
 
     assert!(drained);
     assert!(current_chat.is_none(), "Stop must still drop the session");

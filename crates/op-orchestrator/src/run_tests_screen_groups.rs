@@ -44,6 +44,13 @@ fn req_with_concurrency(concurrency: u32) -> DesignRequest {
     }
 }
 
+fn progress_event(progress: &Progress) -> &Progress {
+    match progress {
+        Progress::WorkerScoped(worker) => progress_event(worker.event.as_ref()),
+        event => event,
+    }
+}
+
 const MULTI_SCREEN_PLAN_JSON: &str = r##"{
   "rootFrame": { "id": "root", "name": "App", "width": 390, "height": 844,
                  "layout": "vertical", "gap": 0,
@@ -265,13 +272,13 @@ fn three_screen_groups_run_concurrently_and_land_correct_content() {
     // (Started paired with Done/Failed), regardless of interleaving order.
     for id in ["search-body", "library-body", "premium-body"] {
         assert!(
-            progress
-                .iter()
-                .any(|p| matches!(p, Progress::SubtaskStarted { id: i, .. } if i == id)),
+            progress.iter().any(
+                |p| matches!(progress_event(p), Progress::SubtaskStarted { id: i, .. } if i == id)
+            ),
             "{id} must report SubtaskStarted"
         );
         assert!(
-            progress.iter().any(|p| matches!(p,
+            progress.iter().any(|p| matches!(progress_event(p),
                 Progress::SubtaskDone { id: i, .. } | Progress::SubtaskFailed { id: i, .. }
                     if i == id)),
             "{id} must report a terminal Done/Failed"
@@ -304,12 +311,13 @@ fn one_group_failure_does_not_take_down_the_others() {
         }),
     ]);
     let mut sink = VecDocSink::new();
+    let mut progress = Vec::new();
 
     let summary = futures::executor::block_on(Orchestrator::new().run(
         req_with_concurrency(3),
         &mut sink,
         &llm,
-        &mut |_| {},
+        &mut |event| progress.push(event),
         &AbortFlag::new(),
         &stub_providers(),
     ))
@@ -366,6 +374,34 @@ fn one_group_failure_does_not_take_down_the_others() {
         summary.subtasks.iter().filter(|o| o.node_count > 0).count(),
         2,
         "the other two subtasks succeed"
+    );
+    assert!(
+        progress.iter().any(|event| {
+            matches!(
+                event,
+                Progress::WorkerScoped(worker)
+                    if worker.group_idx == 1
+                        && worker.screen == "Library"
+                        && matches!(worker.event.as_ref(), Progress::SubtaskRetry {
+                            id,
+                            attempt: 4,
+                            ..
+                        } if id == "library-body")
+            )
+        }),
+        "salvage retry must remain on Library's worker transcript"
+    );
+    assert!(
+        progress.iter().any(|event| {
+            matches!(
+                event,
+                Progress::WorkerScoped(worker)
+                    if worker.group_idx == 1
+                        && matches!(worker.event.as_ref(), Progress::SubtaskFailed { id, .. }
+                            if id == "library-body")
+            )
+        }),
+        "salvage terminal failure must remain on Library's worker transcript"
     );
 }
 
@@ -439,17 +475,29 @@ fn concurrency_one_keeps_the_sequential_path_even_with_multiple_groups() {
 /// `InsertSubtree` commands — proves REPLAY order (which command actually
 /// landed in the real sink first), independent of plan order.
 fn insert_marker_order(applied: &[EditorCommand], markers: &[&str]) -> Vec<String> {
-    let mut order = Vec::new();
-    for cmd in applied {
-        if let EditorCommand::InsertSubtree { nodes, .. } = cmd {
-            for marker in markers {
-                if nodes.iter().any(|n| contains_text(n, marker))
-                    && !order.contains(&marker.to_string())
-                {
-                    order.push(marker.to_string());
+    fn visit(cmd: &EditorCommand, markers: &[&str], order: &mut Vec<String>) {
+        match cmd {
+            EditorCommand::InsertSubtree { nodes, .. } => {
+                for marker in markers {
+                    if nodes.iter().any(|n| contains_text(n, marker))
+                        && !order.contains(&marker.to_string())
+                    {
+                        order.push(marker.to_string());
+                    }
                 }
             }
+            EditorCommand::Batch { commands } => {
+                for command in commands {
+                    visit(command, markers, order);
+                }
+            }
+            _ => {}
         }
+    }
+
+    let mut order = Vec::new();
+    for cmd in applied {
+        visit(cmd, markers, &mut order);
     }
     order
 }
@@ -528,7 +576,7 @@ fn progress_is_delivered_while_slower_siblings_are_still_running() {
         &mut sink,
         &*llm,
         &mut |p| {
-            if matches!(&p, Progress::SubtaskDone { id, .. } if id == "library-body") {
+            if matches!(progress_event(&p), Progress::SubtaskDone { id, .. } if id == "library-body") {
                 finished_at_library_done = Some(llm_for_progress.finished());
             }
         },
@@ -941,3 +989,6 @@ fn single_screen_run_never_announces_the_sequential_diagnostic() {
         "single-group plans must never announce: {single_progress:?}"
     );
 }
+
+#[path = "run_tests_screen_groups_atomic_replay.rs"]
+mod atomic_replay;

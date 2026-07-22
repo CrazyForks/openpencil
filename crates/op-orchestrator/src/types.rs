@@ -393,6 +393,15 @@ pub enum Progress {
         group_count: usize,
         requested_workers: u32,
     },
+    /// Progress emitted by one screen-group agent in the concurrent classic
+    /// orchestrator path. The boxed inner event keeps the recursive enum
+    /// finite-sized while preserving the ordinary [`Progress`] vocabulary for
+    /// subtask lifecycle updates.
+    ///
+    /// `group_idx` identifies the screen group, not a semaphore worker slot:
+    /// three screen groups running with a concurrency limit of two still have
+    /// three stable identities and three independent progress streams.
+    WorkerScoped(WorkerEvent),
     CleanupDone,
     // ── S3c: Vision-validation progress variants ─────────────────────────────
     /// 视觉校验阶段开始(pre-validation 将在此之后立即运行)。
@@ -450,6 +459,32 @@ pub enum Progress {
         /// Human-readable reason for the fallback.
         reason: String,
     },
+}
+
+/// Stable context attached to one screen group's progress events.
+#[derive(Debug, Clone)]
+pub struct WorkerEvent {
+    pub group_idx: usize,
+    pub screen: String,
+    pub identity: crate::agent_identity::AgentIdentity,
+    pub event: Box<Progress>,
+}
+
+impl Progress {
+    /// Wrap an ordinary progress event with its screen-group identity.
+    pub fn worker_scoped(
+        group_idx: usize,
+        screen: impl Into<String>,
+        identity: crate::agent_identity::AgentIdentity,
+        event: Progress,
+    ) -> Self {
+        Self::WorkerScoped(WorkerEvent {
+            group_idx,
+            screen: screen.into(),
+            identity,
+            event: Box::new(event),
+        })
+    }
 }
 
 /// A one-line summary of an included skill, surfaced to the chat UI via
@@ -920,6 +955,35 @@ mod tests {
             assert_eq!(id, "body");
             assert_eq!(nodes_so_far, 12);
         }
+    }
+
+    #[test]
+    fn worker_scoped_progress_keeps_group_identity_and_boxed_event() {
+        let identity = crate::agent_identity::AgentIdentity {
+            color: "#5B8DEF".into(),
+            name: "Pixel".into(),
+        };
+        let progress = Progress::worker_scoped(
+            2,
+            "Saved",
+            identity.clone(),
+            Progress::SubtaskNodes {
+                id: "saved-grid".into(),
+                nodes_so_far: 8,
+            },
+        );
+
+        let Progress::WorkerScoped(worker) = progress else {
+            panic!("expected worker-scoped progress");
+        };
+        assert_eq!(worker.group_idx, 2);
+        assert_eq!(worker.screen, "Saved");
+        assert_eq!(worker.identity, identity);
+        assert!(matches!(
+            worker.event.as_ref(),
+            Progress::SubtaskNodes { id, nodes_so_far }
+                if id == "saved-grid" && *nodes_so_far == 8
+        ));
     }
 
     /// `VisualRefProvider` trait is `Send + Sync`.

@@ -223,7 +223,8 @@ fn drain_stop_request_drops_session_without_clearing_transcript() {
     assert!(drain_stop_request(
         &mut host,
         &mut current,
-        &mut current_design
+        &mut current_design,
+        None,
     ));
 
     assert!(current.is_none());

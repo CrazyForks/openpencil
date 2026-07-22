@@ -1,4 +1,5 @@
-use super::register_new_node_reveals;
+use super::{apply_command_with_reveal, register_new_node_reveals};
+use op_editor_core::{EditorCommand, NodeId, PenNodeExt};
 use std::collections::HashSet;
 
 // ── F2: inserted_root_ids ──────────────────────────────────────────────────────
@@ -54,6 +55,43 @@ fn f2_subtask() -> Subtask {
         existing_section_labels: None,
         retry_feedback: None,
     }
+}
+
+#[test]
+fn atomic_batch_insert_still_registers_node_reveals() {
+    let _guard = crate::agent_indicator_test_support::lock();
+    let epoch = op_editor_core::agent_indicators::begin();
+    let node = serde_json::from_value(serde_json::json!({
+        "type": "frame",
+        "id": "batch-section",
+        "name": "Batch Section",
+        "width": 390,
+        "height": 200
+    }))
+    .expect("fixture parses");
+    let mut sink = VecDocSink::new();
+
+    assert!(apply_command_with_reveal(
+        &mut sink,
+        EditorCommand::Batch {
+            commands: vec![EditorCommand::InsertSubtree {
+                nodes: vec![node],
+                parent_id: NodeId::NONE,
+                page_id: None,
+            }],
+        },
+        Some(epoch),
+        1_000,
+    ));
+
+    let inserted_id = sink.state.active_children()[0].id_str().to_string();
+    assert!(
+        op_editor_core::agent_indicators::snapshot_at(1_000)
+            .reveals
+            .contains_key(&inserted_id),
+        "wrapping InsertSubtree in an atomic Batch must not hide its reveal"
+    );
+    op_editor_core::agent_indicators::end_if_epoch(epoch);
 }
 
 #[test]

@@ -50,6 +50,8 @@ pub fn start<L: LlmClient + Send + 'static>(
     let (cmd_tx, cmd_rx) = mpsc::channel::<DesignCmdReq>();
 
     let indicator_epoch = op_editor_core::agent_indicators::begin();
+    let abort = AbortFlag::new();
+    let worker_abort = abort.clone();
 
     thread::Builder::new()
         .name("op-design-turn".into())
@@ -61,17 +63,19 @@ pub fn start<L: LlmClient + Send + 'static>(
                 delta_tx,
                 cmd_tx,
                 indicator_epoch,
+                worker_abort,
                 vision_provider,
             )
         })
         .expect("spawn op-design-turn thread");
 
-    DesignSession::from_channels_with_epoch(delta_rx, cmd_rx, indicator_epoch)
+    DesignSession::from_channels_with_epoch_and_abort(delta_rx, cmd_rx, indicator_epoch, abort)
 }
 
 /// One full design turn against a `RemoteDocSink` — the body of
 /// [`start`]'s worker thread, callable directly by the CLI intent
 /// router's worker (which already runs off the UI thread).
+#[allow(clippy::too_many_arguments)]
 pub fn run_design_worker<L: LlmClient + Send>(
     llm: L,
     request: DesignRequest,
@@ -79,10 +83,10 @@ pub fn run_design_worker<L: LlmClient + Send>(
     delta_tx: Sender<DesignDelta>,
     cmd_tx: Sender<DesignCmdReq>,
     indicator_epoch: u64,
+    abort: AbortFlag,
     vision_provider: Option<Arc<dyn ChatProvider>>,
 ) {
     let mut sink = RemoteDocSink::new(cmd_tx, initial_state);
-    let abort = AbortFlag::new();
     let pre_validator = LintPreValidator;
 
     // ── Class-C vision-validation provider selection (Track-1 Step 3) ──────────
@@ -161,6 +165,8 @@ pub fn start_subtask_retry<L: LlmClient + Send + 'static>(
     let (cmd_tx, cmd_rx) = mpsc::channel::<DesignCmdReq>();
 
     let indicator_epoch = op_editor_core::agent_indicators::begin();
+    let abort = AbortFlag::new();
+    let worker_abort = abort.clone();
 
     thread::Builder::new()
         .name("op-subtask-retry".into())
@@ -173,14 +179,16 @@ pub fn start_subtask_retry<L: LlmClient + Send + 'static>(
                 delta_tx,
                 cmd_tx,
                 indicator_epoch,
+                worker_abort,
             )
         })
         .expect("spawn op-subtask-retry thread");
 
-    DesignSession::from_channels_with_epoch(delta_rx, cmd_rx, indicator_epoch)
+    DesignSession::from_channels_with_epoch_and_abort(delta_rx, cmd_rx, indicator_epoch, abort)
 }
 
 /// Body of [`start_subtask_retry`]'s worker thread.
+#[allow(clippy::too_many_arguments)]
 fn run_subtask_retry_worker<L: LlmClient + Send>(
     llm: L,
     request: DesignRequest,
@@ -189,9 +197,9 @@ fn run_subtask_retry_worker<L: LlmClient + Send>(
     delta_tx: Sender<DesignDelta>,
     cmd_tx: Sender<DesignCmdReq>,
     indicator_epoch: u64,
+    abort: AbortFlag,
 ) {
     let mut sink = RemoteDocSink::new(cmd_tx, initial_state);
-    let abort = AbortFlag::new();
     let _ = delta_tx.send(DesignDelta::Progress(Progress::SubtaskStarted {
         id: subtask.id.clone(),
         label: subtask.label.clone(),

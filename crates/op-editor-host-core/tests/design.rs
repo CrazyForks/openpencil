@@ -5,7 +5,7 @@ use op_editor_core::{EditorCommand, EditorState};
 use op_editor_host_core::design::{
     DesignCmdAck, DesignCmdOp, DesignCmdReq, DesignDelta, DesignSession, RemoteDocSink,
 };
-use op_orchestrator::{DocSink, Progress, RunSummary, SubtaskOutcome};
+use op_orchestrator::{AbortFlag, DocSink, Progress, RunSummary, SubtaskOutcome};
 
 #[test]
 fn remote_doc_sink_returns_false_when_ui_channel_closed() {
@@ -107,4 +107,86 @@ fn design_session_drains_progress_and_command_requests() {
 
     let reqs = session.drain_cmd_requests();
     assert_eq!(reqs.len(), 1);
+}
+
+#[test]
+fn design_session_preserves_worker_scoped_progress_context() {
+    let (delta_tx, delta_rx) = mpsc::channel::<DesignDelta>();
+    let (_cmd_tx, cmd_rx) = mpsc::channel::<DesignCmdReq>();
+    let mut session = DesignSession::from_channels(delta_rx, cmd_rx);
+    let identity = op_orchestrator::agent_identity::AgentIdentity {
+        color: "#4ECDC4".into(),
+        name: "Mochi".into(),
+    };
+    delta_tx
+        .send(DesignDelta::Progress(Progress::worker_scoped(
+            2,
+            "Profile",
+            identity.clone(),
+            Progress::SubtaskStarted {
+                id: "profile-body".into(),
+                label: "Profile body".into(),
+            },
+        )))
+        .expect("worker progress send");
+
+    let poll = session.poll_progress();
+
+    assert_eq!(poll.progress.len(), 1);
+    let Progress::WorkerScoped(worker) = &poll.progress[0] else {
+        panic!("worker envelope must survive the design transport");
+    };
+    assert_eq!(worker.group_idx, 2);
+    assert_eq!(worker.screen, "Profile");
+    assert_eq!(worker.identity, identity);
+    assert!(matches!(
+        worker.event.as_ref(),
+        Progress::SubtaskStarted { id, .. } if id == "profile-body"
+    ));
+}
+
+#[test]
+fn dropping_unfinished_design_session_sets_shared_abort_flag() {
+    let (_delta_tx, delta_rx) = mpsc::channel::<DesignDelta>();
+    let (_cmd_tx, cmd_rx) = mpsc::channel::<DesignCmdReq>();
+    let abort = AbortFlag::new();
+    let session =
+        DesignSession::from_channels_with_epoch_and_abort(delta_rx, cmd_rx, 0, abort.clone());
+
+    assert!(!abort.is_set());
+    drop(session);
+    assert!(abort.is_set());
+}
+
+#[test]
+fn explicit_design_session_abort_sets_shared_flag() {
+    let (_delta_tx, delta_rx) = mpsc::channel::<DesignDelta>();
+    let (_cmd_tx, cmd_rx) = mpsc::channel::<DesignCmdReq>();
+    let abort = AbortFlag::new();
+    let session =
+        DesignSession::from_channels_with_epoch_and_abort(delta_rx, cmd_rx, 0, abort.clone());
+
+    session.abort();
+    assert!(abort.is_set());
+}
+
+#[test]
+fn dropping_naturally_finished_design_session_does_not_abort_worker() {
+    let (delta_tx, delta_rx) = mpsc::channel::<DesignDelta>();
+    let (_cmd_tx, cmd_rx) = mpsc::channel::<DesignCmdReq>();
+    let abort = AbortFlag::new();
+    let mut session =
+        DesignSession::from_channels_with_epoch_and_abort(delta_rx, cmd_rx, 0, abort.clone());
+    delta_tx
+        .send(DesignDelta::Done(Ok(RunSummary {
+            root_frame_id: "root".into(),
+            subtasks: Vec::new(),
+            total_nodes: 0,
+            unfilled_screens: Vec::new(),
+        })))
+        .expect("done");
+
+    assert!(session.poll_progress().finished);
+    drop(session);
+    assert!(!abort.is_set());
 }

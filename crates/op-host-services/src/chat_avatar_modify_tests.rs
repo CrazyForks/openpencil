@@ -70,7 +70,7 @@ fn apply_modification_replaces_avatar_image_fill_without_adding_border() {
         }),
     )];
 
-    let (count, mutated) = apply_design_modification(&mut state, &nodes);
+    let (count, mutated) = apply_design_modification(&mut state, &nodes, &["page-1".to_string()]);
 
     assert_eq!(count, 1);
     assert!(mutated);

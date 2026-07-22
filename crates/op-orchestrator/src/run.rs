@@ -12,9 +12,10 @@
 //!
 //! **屏组间并发(item D-lite,同日跟进)**:`effective_concurrency` =
 //! `min(clamp(request.concurrency), groups.len())`;>1 时阶段 3 走
-//! `concurrent::run_screen_groups_concurrent`(每屏一个 worker,`join_all`
-//! 驱动,组内仍是原 3 次重试梯;组间通过各自的 `BufferDocSink` 隔离,跑完后
-//! 按 plan 序 replay 进真实 sink),=1(单组 / 单屏 / append 模式)原样走本文件
+//! `concurrent::run_screen_groups_concurrent`(每屏一个 worker,
+//! `FuturesUnordered` 驱动,组内仍是原 3 次重试梯;每个 subtask 通过独立
+//! `BufferDocSink` 隔离,成功后按完成顺序以原子 Batch replay 进真实 sink),
+//! =1(单组 / 单屏 / append 模式)原样走本文件
 //! 未改动的顺序循环 —— 字节级回归锁。`agent_team_size` → `request.concurrency`
 //! 至此才真正对经典路径生效;`spawn_agents` 扇出(`spawn_concurrent.rs`)是另
 //! 一条独立消费方,不受此影响。
@@ -63,6 +64,28 @@ fn detect_reusable_empty_frame(state: &EditorState) -> Option<String> {
 const FOLLOW_ON_ROOT_GAP: f64 = 80.0;
 const DEFAULT_ROOT_X: f64 = 80.0;
 const DEFAULT_ROOT_Y: f64 = 40.0;
+
+/// Keep late lifecycle events (notably the phase-4.4 salvage pass) attached
+/// to the same screen-group persona that owned the subtask during concurrent
+/// generation. Sequential runs have no group identities and stay unscoped.
+fn scope_progress_for_subtask(
+    groups: &[crate::screen_groups::ScreenGroup],
+    identities: &[crate::agent_identity::AgentIdentity],
+    subtask_index: usize,
+    event: Progress,
+) -> Progress {
+    let Some((group_idx, group)) = groups
+        .iter()
+        .enumerate()
+        .find(|(_, group)| group.indices.contains(&subtask_index))
+    else {
+        return event;
+    };
+    let Some(identity) = identities.get(group_idx) else {
+        return event;
+    };
+    Progress::worker_scoped(group_idx, group.screen.clone(), identity.clone(), event)
+}
 
 /// Find the id of a direct child of `parent_id` whose name matches `name`.
 /// Used to re-resolve the pre-built two-column scaffold's column ids after the
@@ -282,16 +305,21 @@ impl Orchestrator {
             Vec::new()
         };
 
-        let (root_ids, scaffold_baselines): (Vec<String>, Vec<usize>) = if append_result
-            .skip_root_insertion
-        {
+        let (root_ids, scaffold_baselines, created_scaffold_root_ids): (
+            Vec<String>,
+            Vec<usize>,
+            Vec<String>,
+        ) = if append_result.skip_root_insertion {
             let target_id = plan.root_frame.id.clone();
             for subtask in &mut plan.subtasks {
                 subtask.parent_frame_id = Some(target_id.clone());
             }
             let baseline = descendant_count(sink.state(), &target_id);
             on_progress(Progress::ScaffoldDone);
-            (vec![target_id], vec![baseline])
+            // Append mode targets a user-owned frame that existed before this
+            // run. It participates in zero-content accounting, but it is NEVER
+            // a disposable scaffold owned by the orchestrator.
+            (vec![target_id], vec![baseline], Vec::new())
         } else {
             let effective_is_mobile = norm.is_mobile && !append_result.skip_status_bar;
 
@@ -307,7 +335,8 @@ impl Orchestrator {
                 ) {
                     Ok((ids, baselines)) => {
                         on_progress(Progress::ScaffoldDone);
-                        (ids, baselines)
+                        let created = ids.clone();
+                        (ids, baselines, created)
                     }
                     Err(e) => {
                         rollback(sink, &var_snapshot);
@@ -322,6 +351,7 @@ impl Orchestrator {
                 // root — which the host would otherwise clear + re-add, the visible
                 // "delete then re-draw" flash the user flagged.
                 let reuse_id = detect_reusable_empty_frame(sink.state());
+                let reused_existing_frame = reuse_id.is_some();
                 let (insert_x, insert_y) =
                     next_root_insert_position(sink.state(), plan.root_frame.width);
                 let scaffold_cmds = match reuse_id.as_deref() {
@@ -403,7 +433,12 @@ impl Orchestrator {
                 // why (dual-cursor-identity fix, 2026-07-17).
                 let baseline = descendant_count(sink.state(), &rid);
                 on_progress(Progress::ScaffoldDone);
-                (vec![rid], vec![baseline])
+                let created = if reused_existing_frame {
+                    Vec::new()
+                } else {
+                    vec![rid.clone()]
+                };
+                (vec![rid], vec![baseline], created)
             }
         };
 
@@ -444,6 +479,7 @@ impl Orchestrator {
             // that distinction matters against `aca0d3a0`'s data verdict).
             let result = crate::concurrent::run_screen_groups_concurrent(
                 &groups,
+                &group_identities,
                 &plan,
                 &request,
                 llm,
@@ -578,11 +614,16 @@ impl Orchestrator {
                     break;
                 }
                 let subtask = &plan.subtasks[subtask_index];
-                on_progress(Progress::SubtaskRetry {
-                    id: subtask.id.clone(),
-                    attempt: 4,
-                    reason: "salvage pass after transient failures".into(),
-                });
+                on_progress(scope_progress_for_subtask(
+                    &groups,
+                    &group_identities,
+                    subtask_index,
+                    Progress::SubtaskRetry {
+                        id: subtask.id.clone(),
+                        attempt: 4,
+                        reason: "salvage pass after transient failures".into(),
+                    },
+                ));
                 let outcome = run_subtask_with_reveal_at(
                     subtask,
                     &plan,
@@ -598,18 +639,28 @@ impl Orchestrator {
                 )
                 .await;
                 if outcome.node_count > 0 {
-                    on_progress(Progress::SubtaskDone {
-                        id: subtask.id.clone(),
-                        node_count: outcome.node_count,
-                    });
+                    on_progress(scope_progress_for_subtask(
+                        &groups,
+                        &group_identities,
+                        subtask_index,
+                        Progress::SubtaskDone {
+                            id: subtask.id.clone(),
+                            node_count: outcome.node_count,
+                        },
+                    ));
                     outcomes[outcome_index] = outcome;
                 } else {
-                    on_progress(Progress::SubtaskFailed {
-                        id: subtask.id.clone(),
-                        error: outcome
-                            .error
-                            .unwrap_or_else(|| "salvage attempt still empty".into()),
-                    });
+                    on_progress(scope_progress_for_subtask(
+                        &groups,
+                        &group_identities,
+                        subtask_index,
+                        Progress::SubtaskFailed {
+                            id: subtask.id.clone(),
+                            error: outcome
+                                .error
+                                .unwrap_or_else(|| "salvage attempt still empty".into()),
+                        },
+                    ));
                 }
             }
             zero_node_failure = outcomes.iter().any(|o| o.node_count == 0);
@@ -638,9 +689,11 @@ impl Orchestrator {
             .sum::<usize>()
             == 0;
         if zero_content {
-            // 错误路径才移除空 scaffold root(s);abort / 正常零内容只回滚变量。
+            // 错误路径才移除本轮真正新建的空 scaffold root(s);
+            // append 目标和复用的既有空 frame 都是用户节点，绝不能删除。
+            // abort / 正常零内容仍然只回滚变量。
             if zero_node_failure {
-                for id in &root_ids {
+                for id in &created_scaffold_root_ids {
                     sink.apply(EditorCommand::DeleteNode {
                         node_id: NodeId::new(id.clone()),
                         page_id: None,

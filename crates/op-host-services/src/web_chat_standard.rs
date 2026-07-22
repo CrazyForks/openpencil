@@ -360,6 +360,7 @@ fn stream_modify_route<W: Write>(
     hub: &SseHub,
 ) -> std::io::Result<()> {
     write_delta_event(out, STANDARD_MODIFY_STEP)?;
+    let target_frame_ids = plan.target_frame_ids;
     let request = ChatRequest {
         system_prompt: plan.system_prompt,
         user_message: plan.user_message,
@@ -385,8 +386,11 @@ fn stream_modify_route<W: Write>(
         write_delta_event(out, &format!("\n{full_response}"))?;
         let (applied, version) = {
             let mut guard = state.lock().unwrap_or_else(|p| p.into_inner());
-            let (count, mutated) =
-                crate::chat_canvas_tools::apply_design_modification(&mut guard.editor, &nodes);
+            let (count, mutated) = crate::chat_canvas_tools::apply_design_modification(
+                &mut guard.editor,
+                &nodes,
+                &target_frame_ids,
+            );
             let version = if mutated {
                 guard.version += 1;
                 Some(guard.version)
@@ -678,6 +682,15 @@ fn progress_label(p: &Progress) -> String {
         } => format!(
             "• {group_count} screen groups · sequential (parallel setting: {requested_workers})"
         ),
+        Progress::WorkerScoped(worker) => {
+            let detail = progress_label(worker.event.as_ref());
+            format!(
+                "• {} · {} — {}",
+                worker.identity.name,
+                worker.screen,
+                detail.trim_start_matches("• ")
+            )
+        }
         Progress::CleanupDone => "• Cleanup done".into(),
         Progress::ValidationStarted => "• Validation started".into(),
         Progress::ValidationPreCheckDone { applied, .. } => {

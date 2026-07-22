@@ -315,6 +315,133 @@ fn run_zero_node_subtask_preserves_failure_context() {
 }
 
 #[test]
+fn append_all_failed_preserves_existing_target_and_rolls_back_run_state() {
+    let llm = ScriptedLlm::new(vec![
+        ScriptResponse::Text(MOBILE_PLAN_JSON.into()),
+        // A non-retryable failure stops the normal ladder after attempt 1.
+        ScriptResponse::Fail(crate::types::LlmError {
+            message: "content blocked by policy".into(),
+            aborted: false,
+        }),
+        // The end-of-run salvage pass still makes one final attempt.
+        ScriptResponse::Fail(crate::types::LlmError {
+            message: "content blocked by policy".into(),
+            aborted: false,
+        }),
+    ]);
+    let mut sink = VecDocSink::new();
+    sink.state.active_children_mut().clear();
+    let target: jian_ops_schema::node::PenNode = serde_json::from_value(serde_json::json!({
+        "type": "frame",
+        "id": "existing-target",
+        "name": "Existing Screen",
+        "x": 80.0,
+        "y": 40.0,
+        "width": 390.0,
+        "height": 844.0,
+        "layout": "vertical",
+        "children": [{
+            "type": "frame",
+            "id": "sentinel-section",
+            "name": "Do Not Delete",
+            "width": 390.0,
+            "height": 120.0,
+            "children": [{
+                "type": "text",
+                "id": "sentinel-copy",
+                "name": "Sentinel Copy",
+                "content": "existing content must remain byte-for-byte unchanged",
+                "fontSize": 18.0
+            }]
+        }]
+    }))
+    .expect("valid existing append target");
+    sink.state.active_children_mut().push(target);
+
+    let target_before = serde_json::to_value(&sink.state.active_children()[0])
+        .expect("serialize target before append run");
+    assert!(sink.state.doc.variables.is_none());
+    assert!(sink.state.doc.themes.is_none());
+
+    let mut request = req();
+    request.prompt = "继续生成这个页面的下一部分".into();
+    request.validation_enabled = false;
+    request.append_context = Some(crate::types::AppendContext {
+        target_parent_id: "existing-target".into(),
+        target_width: 390.0,
+        existing_section_labels: vec!["Do Not Delete".into()],
+        is_mobile: true,
+    });
+
+    let result = futures::executor::block_on(Orchestrator::new().run(
+        request,
+        &mut sink,
+        &llm,
+        &mut |_| {},
+        &AbortFlag::new(),
+        &stub_providers(),
+    ));
+
+    assert!(
+        matches!(result, Err(OrchestratorError::AllFailed(_))),
+        "all failed append run must retain the concrete failure: {result:?}"
+    );
+    let target_after = sink
+        .state
+        .active_children()
+        .iter()
+        .find(|node| node.id_str() == "existing-target")
+        .expect("the pre-existing append target must survive an all-failed run");
+    assert_eq!(
+        serde_json::to_value(target_after).expect("serialize target after append run"),
+        target_before,
+        "target and sentinel content must remain byte-for-byte unchanged"
+    );
+    assert!(
+        !sink.applied.iter().any(|command| matches!(
+            command,
+            EditorCommand::DeleteNode { node_id, .. }
+                if node_id.as_str() == "existing-target"
+        )),
+        "append failure must never issue DeleteNode for a user-owned target"
+    );
+    assert!(
+        sink.applied
+            .iter()
+            .any(|command| matches!(command, EditorCommand::MergeThemePreset { .. })),
+        "the run must actually seed variables before rollback is tested"
+    );
+    assert!(
+        sink.applied
+            .iter()
+            .any(|command| matches!(command, EditorCommand::DeleteVariable { .. })),
+        "failed run must issue variable rollback commands"
+    );
+    assert!(
+        sink.state
+            .doc
+            .variables
+            .as_ref()
+            .map(|variables| variables.is_empty())
+            .unwrap_or(true),
+        "semantic variables seeded for the failed run must be rolled back"
+    );
+    assert!(
+        sink.state
+            .doc
+            .themes
+            .as_ref()
+            .map(|themes| themes.is_empty())
+            .unwrap_or(true),
+        "theme axes seeded for the failed run must be rolled back"
+    );
+    assert_eq!(
+        sink.batch_depth, 0,
+        "undo batch must be balanced on failure"
+    );
+}
+
+#[test]
 fn run_planning_failure_uses_fallback_plan() {
     // 规划吐垃圾 → fallback plan;subtask 正常 → 成功。
     let llm = ScriptedLlm::new(vec![

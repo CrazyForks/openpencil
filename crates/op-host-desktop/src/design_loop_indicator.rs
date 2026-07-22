@@ -257,10 +257,11 @@ pub(super) fn ensure_design_session_transcript_identity(
     running_tab: Option<usize>,
 ) -> Option<(String, String)> {
     let chat = state.chat.run_tab_mut(running_tab);
-    let message =
-        chat.messages.iter_mut().rev().find(|message| {
-            message.role == op_editor_core::ChatRole::Assistant && message.streaming
-        })?;
+    let message = chat.messages.iter_mut().rev().find(|message| {
+        message.role == op_editor_core::ChatRole::Assistant
+            && message.streaming
+            && message.design_worker_group.is_none()
+    })?;
     if message.activities.is_empty() {
         return None;
     }
@@ -632,6 +633,53 @@ mod tests {
                 name: "Pixel".into(),
             })
         );
+    }
+
+    #[test]
+    fn design_session_identity_ignores_appended_worker_bubbles() {
+        let _guard = lock_agent_indicators();
+        agent_indicators::clear();
+        let mut state = make_state();
+        let mut primary = op_editor_core::ChatMessage::assistant_streaming();
+        primary.activities.push(op_editor_core::ChatActivity {
+            id: "__planning".into(),
+            title: "Planning the design".into(),
+            detail: None,
+            status: op_editor_core::ChatActivityStatus::Running,
+            content_offset: None,
+        });
+        state.chat.messages.push(primary);
+        let mut worker = op_editor_core::ChatMessage::assistant_streaming();
+        worker.design_worker_group = Some(1);
+        worker.design_worker_screen = Some("Profile".into());
+        worker.agent_name = Some("Mochi".into());
+        worker.agent_color = Some("#4ECDC4".into());
+        worker.activities.push(op_editor_core::ChatActivity {
+            id: "profile-body".into(),
+            title: "Profile body".into(),
+            detail: None,
+            status: op_editor_core::ChatActivityStatus::Running,
+            content_offset: None,
+        });
+        state.chat.messages.push(worker);
+        let (_session, epoch) = design_session_with_epoch();
+        agent_indicators::confirm_cursor_agent(epoch, "#FF6B6B", "Fern");
+
+        let identity = ensure_design_session_transcript_identity(&mut state, None)
+            .expect("primary design identity");
+
+        assert_eq!(identity, ("Fern".into(), "#FF6B6B".into()));
+        assert_eq!(state.chat.messages[0].agent_name.as_deref(), Some("Fern"));
+        assert_eq!(state.chat.messages[1].agent_name.as_deref(), Some("Mochi"));
+        assert_eq!(
+            agent_indicators::snapshot().cursor_agent,
+            Some(agent_indicators::AgentTag {
+                color: "#FF6B6B".into(),
+                name: "Fern".into(),
+            }),
+            "the worker bubble must not replace the canonical cursor persona"
+        );
+        agent_indicators::end_if_epoch(epoch);
     }
 
     #[test]

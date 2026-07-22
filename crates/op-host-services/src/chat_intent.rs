@@ -47,11 +47,15 @@ use std::time::{Duration, Instant};
 use op_ai::chat_provider::{ChatDelta, ChatProvider, ChatRequest, ChatToolExecutor, StopReason};
 use op_editor_core::pen_node_ext::PenNodeExt;
 use op_editor_core::EditorState;
-use op_orchestrator::{AppendContext, DesignRequest};
+use op_orchestrator::{AbortFlag, AppendContext, DesignRequest};
 
 use crate::chat_canvas_tools::UiChatToolExecutor;
 use crate::chat_provider_llm::ChatProviderLlmClient;
 use crate::design_session::{run_design_worker, DesignCmdReq, DesignDelta};
+
+#[path = "chat_intent_screen_sets.rs"]
+mod screen_sets;
+use screen_sets::requests_listed_whole_screens;
 
 /// Internal host-op name the modify worker sends over the chat tool
 /// channel; intercepted by `chat_session::drain_tool_requests` (never
@@ -456,6 +460,13 @@ const EXISTING_SCREEN_CTX_CJK: &[&str] = &["这个", "这一", "当前", "现有
 /// CJK requires a creation verb on a page noun; English keys on the determiner
 /// nearest the page noun (see [`english_requests_new_screen`]).
 pub fn requests_new_whole_screen(prompt: &str) -> bool {
+    // A continuation can name several sibling screens with one shared
+    // whole-screen noun ("完成 explore/profile界面"). This is stronger than the generic
+    // section/current-screen heuristics below, but deliberately requires an
+    // explicit target list so "继续完成这个界面" remains an in-place edit.
+    if requests_listed_whole_screens(prompt) {
+        return true;
+    }
     if is_section_add_request(prompt) {
         return false;
     }
@@ -481,6 +492,9 @@ pub fn requests_new_whole_screen(prompt: &str) -> bool {
 /// whole-screen design prompt into the modify path (measured: a travel-app
 /// design with a node selected routed to modify → M3 flat-JSONL → empty).
 pub fn has_new_screen_creation_signal(prompt: &str) -> bool {
+    if requests_listed_whole_screens(prompt) {
+        return true;
+    }
     let cjk_page = ["页面", "页", "屏幕", "屏"]
         .iter()
         .any(|k| prompt.contains(k));
@@ -610,11 +624,10 @@ fn pick_content_root(page: &PenNode) -> (&PenNode, Vec<String>) {
     (page, content_frames.iter().map(|n| node_label(n)).collect())
 }
 
-/// TS `detectAppendIntent` against the live editor state. The active
-/// page frame is the first `Frame` among the active page's children
-/// (TS `pickActivePageFrame` fallback branch — the Rust shell's
-/// active page is always a real page entry, never a frame-as-page
-/// alias).
+/// Detect append intent against the live editor state. Append is a targeted
+/// mutation, so continuation wording alone never chooses an arbitrary canvas
+/// frame. Exactly one selected Frame is required; callers otherwise stay on
+/// the new-design/chat route.
 pub fn detect_append_intent(state: &EditorState, prompt: &str) -> Option<AppendContext> {
     if prompt.trim().is_empty() {
         return None;
@@ -630,7 +643,13 @@ pub fn detect_append_intent(state: &EditorState, prompt: &str) -> Option<AppendC
         return None;
     }
 
-    let page_frame = state.active_children().iter().find(|n| is_frame(n))?;
+    let [selected_id] = state.selection.set.as_slice() else {
+        return None;
+    };
+    let page_frame = op_editor_core::walkers::find_node(state.active_children(), selected_id)?;
+    if !is_frame(page_frame) {
+        return None;
+    }
     let page_has_content = page_frame
         .children()
         .is_some_and(|kids| kids.iter().any(|c| is_frame(c) && !is_status_bar_like(c)));
@@ -734,6 +753,8 @@ pub struct ModifyPlan {
     pub user_message: String,
     /// Maintenance skills (+ design-md style policy) system prompt.
     pub system_prompt: String,
+    /// Immutable write scope captured when the turn starts.
+    pub target_frame_ids: Vec<String>,
 }
 
 fn strip_base64_data_uris(value: &mut serde_json::Value) {
@@ -781,31 +802,37 @@ pub(crate) fn parse_modify_nodes(
         .collect()
 }
 
-/// Build the modification plan: target selection per
-/// `ai-chat-handlers.ts:709-719` (selected nodes, else last frame of
-/// the page, else last page child), then the
-/// `generateDesignModification` message/prompt assembly. `None` when
-/// the page has no usable target (the caller degrades to `new`).
-pub fn build_modify_plan(state: &EditorState, instruction: &str) -> Option<ModifyPlan> {
+/// Build a modification plan for explicitly selected Frames. Direct mutation
+/// is never inferred from the last canvas node: when selection is empty,
+/// stale, or includes a non-Frame, the caller must degrade to a non-modifying
+/// route.
+fn selected_frame_ids(state: &EditorState) -> Option<Vec<String>> {
     let children = state.active_children();
-    let mut targets: Vec<&PenNode> = Vec::new();
-    if !state.selection.set.is_empty() {
-        for id in &state.selection.set {
-            if let Some(node) = op_editor_core::walkers::find_node(children, id) {
-                targets.push(node);
-            }
-        }
-    } else {
-        let frames: Vec<&PenNode> = children.iter().filter(|n| is_frame(n)).collect();
-        if let Some(last_frame) = frames.last() {
-            targets.push(last_frame);
-        } else if let Some(last) = children.last() {
-            targets.push(last);
-        }
-    }
-    if targets.is_empty() && children.is_empty() {
+    if state.selection.set.is_empty() {
         return None;
     }
+    let mut ids = Vec::with_capacity(state.selection.set.len());
+    for id in &state.selection.set {
+        let node = op_editor_core::walkers::find_node(children, id)?;
+        if !is_frame(node) {
+            return None;
+        }
+        ids.push(node.id_str().to_string());
+    }
+    Some(ids)
+}
+
+pub fn has_selected_frame_target(state: &EditorState) -> bool {
+    selected_frame_ids(state).is_some()
+}
+
+pub fn build_modify_plan(state: &EditorState, instruction: &str) -> Option<ModifyPlan> {
+    let children = state.active_children();
+    let target_frame_ids = selected_frame_ids(state)?;
+    let targets = target_frame_ids
+        .iter()
+        .map(|id| op_editor_core::walkers::find_node(children, &op_editor_core::NodeId::new(id)))
+        .collect::<Option<Vec<_>>>()?;
 
     let mut context = serde_json::to_value(&targets).ok()?;
     strip_base64_data_uris(&mut context);
@@ -844,6 +871,7 @@ pub fn build_modify_plan(state: &EditorState, instruction: &str) -> Option<Modif
     Some(ModifyPlan {
         user_message,
         system_prompt,
+        target_frame_ids,
     })
 }
 
@@ -878,6 +906,9 @@ pub struct CliTurnPlan {
     /// `DesignSession::drop` clears that same run when Done / Stop /
     /// New Chat retires the session.
     pub indicator_epoch: u64,
+    /// Shared with the parked `DesignSession` so Stop / New Chat can cancel
+    /// the design route even while its concurrent screen workers are active.
+    pub abort: AbortFlag,
     pub model: Option<String>,
 }
 
@@ -971,12 +1002,20 @@ pub fn run_cli_turn(
     delta_tx: Sender<DesignDelta>,
     cmd_tx: Sender<DesignCmdReq>,
 ) {
+    let modify_target_frame_ids = selected_frame_ids(&plan.initial_state).unwrap_or_default();
     let classified = classify_intent_for_standard_route(
         plan.classify_provider.as_ref(),
         &plan.initial_state,
         &plan.user_text,
         plan.model.clone(),
     );
+    // Stop / New Chat may arrive while the classifier LLM is in flight. The
+    // provider call itself has its own bounded timeout, but once it returns we
+    // must not launch a fresh chat, modify, or concurrent design run for the
+    // discarded session.
+    if plan.abort.is_set() {
+        return;
+    }
     let modify_request = plan.modify_request;
     let intent = resolve_route(
         classified,
@@ -999,7 +1038,13 @@ pub fn run_cli_turn(
             drop(delta_tx);
             drop(cmd_tx);
             let request = modify_request.expect("checked above");
-            run_modify_turn(plan.design_provider.as_ref(), request, &chat_tx, &executor);
+            run_modify_turn(
+                plan.design_provider.as_ref(),
+                request,
+                &chat_tx,
+                &executor,
+                modify_target_frame_ids,
+            );
         }
         DesignIntent::New => {
             // Hold the chat channel open for the duration so the
@@ -1020,6 +1065,7 @@ pub fn run_cli_turn(
                 delta_tx,
                 cmd_tx,
                 plan.indicator_epoch,
+                plan.abort,
                 Some(provider_arc),
             );
         }
@@ -1034,6 +1080,7 @@ pub fn run_modify_turn(
     request: ChatRequest,
     chat_tx: &Sender<ChatDelta>,
     executor: &UiChatToolExecutor,
+    target_frame_ids: Vec<String>,
 ) {
     if chat_tx
         .send(ChatDelta::TextDelta(MODIFY_STEP.to_string()))
@@ -1055,6 +1102,7 @@ pub fn run_modify_turn(
     if !nodes.is_empty() {
         let args = serde_json::json!({
             "nodes": &nodes,
+            "targetFrameIds": target_frame_ids,
         });
         let result = executor.execute(APPLY_MODIFICATION_OP, &args.to_string());
         let applied = serde_json::from_str::<serde_json::Value>(&result.content)

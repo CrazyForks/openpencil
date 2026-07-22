@@ -103,3 +103,46 @@ fn selection_does_not_hijack_english_section_heavy_new_design() {
         "a section-heavy new-design prompt must not be hijacked to modify by a selection"
     );
 }
+
+#[test]
+fn selection_does_not_hijack_listed_follow_on_screens() {
+    let provider = Scripted;
+    let state = state_with_selected_card();
+    for prompt in [
+        "继续完成 explore/profile界面",
+        "Continue generating the explore/profile interface",
+    ] {
+        assert!(
+            requests_new_whole_screen(prompt),
+            "an explicit list of sibling interfaces is a whole-screen request: {prompt}"
+        );
+        assert!(
+            detect_append_intent(&state, prompt).is_none(),
+            "listed sibling interfaces must not append into the first existing frame: {prompt}"
+        );
+        assert_eq!(
+            classify_intent_for_standard_route(&provider, &state, prompt, None),
+            DesignIntent::New,
+            "a stale selection must not turn a multi-screen continuation into modify: {prompt}"
+        );
+        assert!(
+            should_auto_generate_design_md(&state, prompt, None),
+            "follow-on screens should inherit the existing canvas design system: {prompt}"
+        );
+    }
+}
+
+#[test]
+fn ambiguous_current_interface_completion_is_not_a_new_screen() {
+    for prompt in [
+        "继续完成这个界面",
+        "继续完成当前界面的推荐区块",
+        "继续完成 profile 界面的 header",
+        "继续完成 explore/profile 界面之间的跳转",
+    ] {
+        assert!(
+            !requests_new_whole_screen(prompt),
+            "current-screen or subobject work must stay in-place: {prompt}"
+        );
+    }
+}

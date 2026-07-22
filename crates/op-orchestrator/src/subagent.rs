@@ -367,7 +367,15 @@ pub(crate) fn apply_command_with_reveal(
     indicator_epoch: Option<u64>,
     reveal_started_ms: u64,
 ) -> bool {
-    if !matches!(cmd, EditorCommand::InsertSubtree { .. }) {
+    fn inserts_subtree(cmd: &EditorCommand) -> bool {
+        match cmd {
+            EditorCommand::InsertSubtree { .. } => true,
+            EditorCommand::Batch { commands } => commands.iter().any(inserts_subtree),
+            _ => false,
+        }
+    }
+
+    if !inserts_subtree(&cmd) {
         return sink.apply(cmd);
     }
     let ids_before = indicator_epoch.map(|_| collect_active_node_ids(sink.state()));

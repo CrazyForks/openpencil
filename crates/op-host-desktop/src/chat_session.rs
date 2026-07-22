@@ -315,8 +315,15 @@ fn execute_tool_requests(
             let nodes = op_host_services::chat_canvas_tools::parse_design_modification_ops_arg(
                 &req.args_json,
             );
-            let (count, mutated) =
-                op_host_services::chat_canvas_tools::apply_design_modification(state, &nodes);
+            let target_frame_ids =
+                op_host_services::chat_canvas_tools::parse_design_modification_target_frame_ids_arg(
+                    &req.args_json,
+                );
+            let (count, mutated) = op_host_services::chat_canvas_tools::apply_design_modification(
+                state,
+                &nodes,
+                &target_frame_ids,
+            );
             if mutated {
                 changed = true;
             }

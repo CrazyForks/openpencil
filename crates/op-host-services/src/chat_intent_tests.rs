@@ -9,7 +9,9 @@ use op_editor_core::EditorState;
 use op_orchestrator::DesignRequest;
 
 use super::*;
-use crate::chat_canvas_tools::{apply_design_modification, chat_tool_channel};
+use crate::chat_canvas_tools::{
+    apply_design_modification, chat_tool_channel, DesignModificationOp,
+};
 
 // ---------------------------------------------------------------------------
 // Keyword + tag classification
@@ -289,6 +291,12 @@ fn state_with_page() -> EditorState {
     state
 }
 
+fn state_with_selected_page() -> EditorState {
+    let mut state = state_with_page();
+    state.set_single_selection(op_editor_core::NodeId::new("page-1"));
+    state
+}
+
 fn count_node_id(nodes: &[PenNode], id: &str) -> usize {
     nodes
         .iter()
@@ -306,6 +314,14 @@ fn modify_op(parent: &str, node: serde_json::Value) -> (String, serde_json::Valu
     (parent.to_string(), node)
 }
 
+fn apply_modify_ops_to_frame(
+    state: &mut EditorState,
+    nodes: &[DesignModificationOp],
+    frame_id: &str,
+) -> (usize, bool) {
+    apply_design_modification(state, nodes, &[frame_id.to_string()])
+}
+
 fn modification_pairs_from_args(args_json: &str) -> Vec<(String, serde_json::Value)> {
     let value = serde_json::from_str::<serde_json::Value>(args_json).expect("valid apply args");
     serde_json::from_value(value.get("nodes").cloned().expect("nodes array"))
@@ -318,14 +334,14 @@ fn modification_pairs_from_args(args_json: &str) -> Vec<(String, serde_json::Val
 
 #[test]
 fn append_intent_requires_a_keyword() {
-    let state = state_with_page();
+    let state = state_with_selected_page();
     assert!(detect_append_intent(&state, "make a dashboard").is_none());
     assert!(detect_append_intent(&state, "").is_none());
 }
 
 #[test]
 fn append_intent_detects_and_filters_status_bar() {
-    let state = state_with_page();
+    let state = state_with_selected_page();
     let ctx = detect_append_intent(&state, "continue with a pricing section").expect("append");
     assert_eq!(ctx.target_parent_id, "page-1");
     assert_eq!(ctx.target_width, 375.0);
@@ -358,6 +374,7 @@ fn append_intent_prefers_a_content_named_root() {
             ),
         ],
     ));
+    state.set_single_selection(op_editor_core::NodeId::new("page-1"));
     let ctx = detect_append_intent(&state, "also add a testimonials section").expect("append");
     assert_eq!(ctx.target_parent_id, "content-1");
     assert_eq!(ctx.target_width, 1100.0);
@@ -370,7 +387,7 @@ fn append_intent_prefers_a_content_named_root() {
 
 #[test]
 fn append_intent_vetoed_by_new_screen_phrases() {
-    let state = state_with_page();
+    let state = state_with_selected_page();
     assert!(
         detect_append_intent(&state, "continue, but on a new page").is_none(),
         "new-screen phrasing suppresses append mode"
@@ -380,7 +397,7 @@ fn append_intent_vetoed_by_new_screen_phrases() {
 
 #[test]
 fn append_intent_vetoed_by_named_follow_on_pages() {
-    let state = state_with_page();
+    let state = state_with_selected_page();
     assert!(
         detect_append_intent(&state, "继续画出发现页").is_none(),
         "a named app page is a new sibling screen, not an appended section"
@@ -397,7 +414,7 @@ fn append_intent_vetoed_by_named_follow_on_pages() {
 
 #[test]
 fn append_intent_vetoed_by_whole_screen_draw_requests() {
-    let state = state_with_page();
+    let state = state_with_selected_page();
     // Mixed-language "search 页面" (English noun + Chinese 页面) is NOT in the
     // named-screen vocabulary, yet drawing a whole page must become a new
     // sibling frame to the right, not rows appended below (user report).
@@ -418,7 +435,7 @@ fn append_intent_vetoed_by_whole_screen_draw_requests() {
 
 #[test]
 fn append_intent_keeps_section_add_even_with_page_context() {
-    let state = state_with_page();
+    let state = state_with_selected_page();
     // The page word is mere context; the unit added is a section, so this
     // still appends into the current screen.
     assert!(
@@ -521,6 +538,7 @@ fn append_intent_needs_existing_content() {
         375.0,
         vec![frame("sb", "status_bar", 375.0, vec![])],
     ));
+    state.set_single_selection(op_editor_core::NodeId::new("page-1"));
     assert!(detect_append_intent(&state, "continue the design").is_none());
     // No page frame at all.
     let mut empty = EditorState::new();
@@ -530,9 +548,51 @@ fn append_intent_needs_existing_content() {
 
 #[test]
 fn append_intent_matches_cjk_phrases() {
-    let state = state_with_page();
+    let state = state_with_selected_page();
     assert!(detect_append_intent(&state, "再加一个定价区块").is_some());
     assert!(detect_append_intent(&state, "接着补充内容").is_some());
+}
+
+#[test]
+fn append_intent_requires_one_selected_frame_and_uses_that_frame() {
+    let mut state = EditorState::new();
+    state.active_children_mut().clear();
+    state.active_children_mut().push(frame(
+        "first",
+        "First",
+        375.0,
+        vec![frame("first-hero", "Hero", 375.0, vec![])],
+    ));
+    state.active_children_mut().push(frame(
+        "second",
+        "Second",
+        1200.0,
+        vec![frame("second-section", "Second Section", 1200.0, vec![])],
+    ));
+    state
+        .active_children_mut()
+        .push(rect("loose", "Loose Rectangle"));
+
+    assert!(
+        detect_append_intent(&state, "continue the design").is_none(),
+        "continue alone must not authorize writing into an existing frame"
+    );
+
+    state.set_single_selection(op_editor_core::NodeId::new("loose"));
+    assert!(
+        detect_append_intent(&state, "continue the design").is_none(),
+        "a non-frame selection must not authorize append mode"
+    );
+
+    state.set_single_selection(op_editor_core::NodeId::new("second"));
+    let ctx = detect_append_intent(&state, "continue the design").expect("selected frame");
+    assert_eq!(ctx.target_parent_id, "second");
+    assert_eq!(ctx.target_width, 1200.0);
+    assert_eq!(
+        ctx.existing_section_labels,
+        vec!["Second Section".to_string()]
+    );
+    assert!(!ctx.is_mobile);
 }
 
 #[test]
@@ -639,6 +699,7 @@ fn modify_plan_targets_selection_when_present() {
     state.selection.set = vec![op_editor_core::NodeId::new("page-1")];
     state.selection.anchor = op_editor_core::NodeId::new("page-1");
     let plan = build_modify_plan(&state, "make it red").expect("plan");
+    assert_eq!(plan.target_frame_ids, vec!["page-1".to_string()]);
     assert!(plan.user_message.starts_with("CONTEXT NODES:\n"));
     assert!(plan.user_message.contains("\"id\":\"page-1\""));
     assert!(plan.user_message.contains("\n\nINSTRUCTION:\nmake it red"));
@@ -675,6 +736,7 @@ fn modify_plan_strips_base64_data_uris_from_context_nodes() {
             image_fill_rect,
         ],
     ));
+    state.set_single_selection(op_editor_core::NodeId::new("page-1"));
 
     let plan = build_modify_plan(&state, "make it warmer").expect("plan");
     let context_json = plan
@@ -717,8 +779,7 @@ fn modify_plan_strips_base64_data_uris_from_context_nodes() {
 }
 
 #[test]
-fn modify_plan_falls_back_to_last_frame_then_last_child() {
-    // No selection → last top-level frame.
+fn modify_plan_requires_a_selected_frame() {
     let mut state = EditorState::new();
     state.active_children_mut().clear();
     state
@@ -728,21 +789,29 @@ fn modify_plan_falls_back_to_last_frame_then_last_child() {
         .active_children_mut()
         .push(frame("f2", "Two", 375.0, vec![]));
     state.active_children_mut().push(rect("r1", "Loose"));
-    let plan = build_modify_plan(&state, "tweak").expect("plan");
+
+    assert!(
+        build_modify_plan(&state, "tweak").is_none(),
+        "no selection must never fall back to an arbitrary existing node"
+    );
+
+    state.set_single_selection(op_editor_core::NodeId::new("r1"));
+    assert!(
+        build_modify_plan(&state, "tweak").is_none(),
+        "a non-frame selection must not authorize direct modification"
+    );
+
+    state.set_single_selection(op_editor_core::NodeId::new("f2"));
+    let plan = build_modify_plan(&state, "tweak").expect("selected frame plan");
+    assert_eq!(plan.target_frame_ids, vec!["f2".to_string()]);
     assert!(plan.user_message.contains("\"id\":\"f2\""));
     assert!(!plan.user_message.contains("\"id\":\"f1\""));
-
-    // No frames at all → last child.
-    let mut state = EditorState::new();
-    state.active_children_mut().clear();
-    state.active_children_mut().push(rect("r1", "Only"));
-    let plan = build_modify_plan(&state, "tweak").expect("plan");
-    assert!(plan.user_message.contains("\"id\":\"r1\""));
 }
 
 #[test]
 fn modify_plan_appends_variable_context() {
     let mut state = state_with_page();
+    state.set_single_selection(op_editor_core::NodeId::new("page-1"));
     seed_variables(&mut state);
     let plan = build_modify_plan(&state, "recolor with variables").expect("plan");
     assert!(plan.user_message.contains("DOCUMENT VARIABLES"));
@@ -764,6 +833,96 @@ fn modify_plan_is_none_for_an_empty_page() {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn apply_modification_is_confined_to_the_captured_frame_scope() {
+    use op_editor_core::{walkers::find_node, NodeId};
+
+    let mut state = EditorState::new();
+    state.active_children_mut().clear();
+    state.active_children_mut().push(frame(
+        "first",
+        "First",
+        375.0,
+        vec![rect("first-card", "First Card")],
+    ));
+    state.active_children_mut().push(frame(
+        "second",
+        "Second",
+        375.0,
+        vec![rect("second-card", "Second Card")],
+    ));
+    let nodes = vec![
+        modify_op(
+            "null",
+            serde_json::json!({
+                "id": "first-card",
+                "type": "rectangle",
+                "name": "Must Not Change"
+            }),
+        ),
+        modify_op(
+            "first",
+            serde_json::json!({
+                "type": "text",
+                "name": "Must Not Append",
+                "content": "wrong frame"
+            }),
+        ),
+        modify_op(
+            "null",
+            serde_json::json!({
+                "type": "text",
+                "name": "Scoped Addition",
+                "content": "selected frame"
+            }),
+        ),
+    ];
+
+    assert_eq!(
+        apply_design_modification(&mut state, &nodes, &[]),
+        (0, false),
+        "an empty scope must reject the whole modification"
+    );
+    let (count, mutated) = apply_design_modification(&mut state, &nodes, &["second".to_string()]);
+    assert_eq!(count, 1, "only the in-scope implicit insert may apply");
+    assert!(mutated);
+    assert_eq!(
+        find_node(state.active_children(), &NodeId::new("first-card"))
+            .and_then(|node| node.base().name.as_deref()),
+        Some("First Card")
+    );
+    let first = find_node(state.active_children(), &NodeId::new("first")).unwrap();
+    assert!(!first
+        .children()
+        .unwrap()
+        .iter()
+        .any(|node| node.base().name.as_deref() == Some("Must Not Append")));
+    let second = find_node(state.active_children(), &NodeId::new("second")).unwrap();
+    assert!(second
+        .children()
+        .unwrap()
+        .iter()
+        .any(|node| node.base().name.as_deref() == Some("Scoped Addition")));
+
+    let ambiguous = vec![modify_op(
+        "null",
+        serde_json::json!({
+            "type": "text",
+            "name": "Ambiguous Addition",
+            "content": "no implicit parent"
+        }),
+    )];
+    assert_eq!(
+        apply_design_modification(
+            &mut state,
+            &ambiguous,
+            &["first".to_string(), "second".to_string()]
+        ),
+        (0, false),
+        "multiple selected Frames require an explicit parent"
+    );
+}
+
+#[test]
 fn apply_modification_replaces_existing_and_inserts_unknown_top_level() {
     let mut state = state_with_page();
     let nodes = vec![
@@ -779,7 +938,7 @@ fn apply_modification_replaces_existing_and_inserts_unknown_top_level() {
                 "children": []
             }),
         ),
-        // Unknown id → insert under the primary frame (canonical
+        // Unknown id → insert under the captured target frame (canonical
         // TextNode carries `content`).
         modify_op(
             "null",
@@ -791,7 +950,7 @@ fn apply_modification_replaces_existing_and_inserts_unknown_top_level() {
             }),
         ),
     ];
-    let (count, mutated) = apply_design_modification(&mut state, &nodes);
+    let (count, mutated) = apply_modify_ops_to_frame(&mut state, &nodes, "page-1");
     assert_eq!(count, 2, "replace existing plus insert unknown top-level");
     assert!(mutated);
     let doc = serde_json::to_string(&state.doc).unwrap();
@@ -816,7 +975,7 @@ fn apply_modification_replaces_existing_and_inserts_unknown_top_level() {
     assert!(
         kids.iter()
             .any(|k| k.base().name.as_deref().is_some_and(|n| n == "New Caption")),
-        "implied-new node parents to the active page's primary frame"
+        "implied-new node parents to the captured target frame"
     );
 }
 
@@ -848,7 +1007,7 @@ fn apply_modification_adds_under_declared_existing_parent_without_touching_sibli
         }),
     )];
 
-    let (count, mutated) = apply_design_modification(&mut state, &nodes);
+    let (count, mutated) = apply_modify_ops_to_frame(&mut state, &nodes, "n217");
 
     assert_eq!(count, 1);
     assert!(mutated);
@@ -864,7 +1023,116 @@ fn apply_modification_adds_under_declared_existing_parent_without_touching_sibli
 }
 
 #[test]
-fn apply_modification_inserts_idless_null_parent_under_primary_frame() {
+fn apply_modification_anchors_added_mobile_status_bar_first() {
+    use op_editor_core::{walkers::find_node, NodeId};
+
+    let root: PenNode = serde_json::from_value(serde_json::json!({
+        "type": "frame",
+        "id": "search",
+        "name": "Waveform — Search",
+        "width": 390,
+        "height": "fit_content",
+        "layout": "vertical",
+        "children": [
+            {"type":"frame","id":"header","name":"Header","width":"fill_container","height":118},
+            {"type":"frame","id":"tabs","name":"Tab Bar","width":"fill_container","height":82}
+        ]
+    }))
+    .expect("mobile root");
+    let mut state = EditorState::new();
+    state.active_children_mut().clear();
+    state.active_children_mut().push(root);
+    let root_before = find_node(state.active_children(), &NodeId::new("search")).unwrap();
+    let children_before = root_before.children().unwrap();
+    let header_before = serde_json::to_value(&children_before[0]).unwrap();
+    let tabs_before = serde_json::to_value(&children_before[1]).unwrap();
+    let nodes = vec![modify_op(
+        "search",
+        serde_json::json!({
+            "type": "frame",
+            "name": "Status Bar",
+            "width": "fill_container",
+            "height": "fit_content",
+            "layout": "horizontal",
+            "children": []
+        }),
+    )];
+
+    let (count, mutated) = apply_modify_ops_to_frame(&mut state, &nodes, "search");
+
+    assert_eq!(count, 1);
+    assert!(mutated);
+    let root = find_node(state.active_children(), &NodeId::new("search")).unwrap();
+    let children = root.children().unwrap();
+    assert_eq!(children.len(), 3);
+    assert_eq!(children[0].base().name.as_deref(), Some("Status Bar"));
+    assert_eq!(children[0].base().role.as_deref(), Some("status-bar"));
+    assert_eq!(serde_json::to_value(&children[1]).unwrap(), header_before);
+    assert_eq!(serde_json::to_value(&children[2]).unwrap(), tabs_before);
+}
+
+#[test]
+fn apply_modification_reuses_appended_mobile_status_bar_instead_of_duplicating_it() {
+    use op_editor_core::{walkers::find_node, NodeId};
+
+    let root: PenNode = serde_json::from_value(serde_json::json!({
+        "type": "frame",
+        "id": "search",
+        "name": "Waveform — Search",
+        "width": 390,
+        "height": "fit_content",
+        "layout": "vertical",
+        "children": [
+            {"type":"frame","id":"header","name":"Header","width":"fill_container","height":118},
+            {"type":"frame","id":"tabs","name":"Tab Bar","width":"fill_container","height":82},
+            {
+                "type":"frame","id":"n458","name":"Status Bar",
+                "width":"fill_container","height":"fit_content","layout":"horizontal",
+                "children":[{"type":"text","id":"n459","content":"9:41"}]
+            }
+        ]
+    }))
+    .expect("mobile root");
+    let mut state = EditorState::new();
+    state.active_children_mut().clear();
+    state.active_children_mut().push(root);
+    let old_bar = serde_json::to_value(
+        find_node(state.active_children(), &NodeId::new("n458")).expect("existing status bar"),
+    )
+    .unwrap();
+    let nodes = vec![modify_op(
+        "search",
+        serde_json::json!({
+            "type": "frame",
+            "name": "状态栏",
+            "width": "fill_container",
+            "height": 44,
+            "children": []
+        }),
+    )];
+
+    let (count, mutated) = apply_modify_ops_to_frame(&mut state, &nodes, "search");
+
+    assert_eq!(count, 1);
+    assert!(mutated);
+    let root = find_node(state.active_children(), &NodeId::new("search")).unwrap();
+    let children = root.children().unwrap();
+    assert_eq!(
+        children.len(),
+        3,
+        "must reuse the existing bar, not add a duplicate"
+    );
+    assert_eq!(children[0].id_str(), "n458");
+    assert_eq!(children[0].base().role.as_deref(), Some("status-bar"));
+    let mut expected = old_bar;
+    expected["role"] = serde_json::Value::String("status-bar".into());
+    assert_eq!(serde_json::to_value(&children[0]).unwrap(), expected);
+    assert_eq!(children[1].id_str(), "header");
+    assert_eq!(children[2].id_str(), "tabs");
+}
+
+#[test]
+fn apply_modification_inserts_idless_null_parent_under_selected_frame() {
     let mut state = state_with_page();
     let nodes = vec![modify_op(
         "null",
@@ -875,7 +1143,7 @@ fn apply_modification_inserts_idless_null_parent_under_primary_frame() {
         }),
     )];
 
-    let (count, mutated) = apply_design_modification(&mut state, &nodes);
+    let (count, mutated) = apply_modify_ops_to_frame(&mut state, &nodes, "page-1");
 
     assert_eq!(count, 1);
     assert!(mutated);
@@ -888,7 +1156,7 @@ fn apply_modification_inserts_idless_null_parent_under_primary_frame() {
     assert!(
         kids.iter()
             .any(|k| k.base().name.as_deref().is_some_and(|n| n == "Loose Label")),
-        "idless null-parent node inserts under the active page primary frame"
+        "idless null-parent node inserts under the captured target frame"
     );
 }
 
@@ -932,16 +1200,26 @@ fn run_modify_turn_with_apply(
     let (chat_tx, chat_rx) = mpsc::channel();
     let (executor, tool_rx) = chat_tool_channel();
     let worker = std::thread::spawn(move || {
-        run_modify_turn(&provider, ChatRequest::default(), &chat_tx, &executor);
+        run_modify_turn(
+            &provider,
+            ChatRequest::default(),
+            &chat_tx,
+            &executor,
+            vec!["page-1".to_string()],
+        );
     });
 
     let req = tool_rx
         .recv_timeout(Duration::from_secs(10))
         .expect("modify route forwards the apply op");
     assert_eq!(req.name, APPLY_MODIFICATION_OP);
+    assert_eq!(
+        crate::chat_canvas_tools::parse_design_modification_target_frame_ids_arg(&req.args_json),
+        vec!["page-1".to_string()]
+    );
     let nodes = modification_pairs_from_args(&req.args_json);
     let mut state = state_with_page();
-    let (count, mutated) = apply_design_modification(&mut state, &nodes);
+    let (count, mutated) = apply_modify_ops_to_frame(&mut state, &nodes, "page-1");
     assert_eq!(count, 1);
     assert!(mutated);
     req.ack
@@ -968,7 +1246,13 @@ fn run_modify_turn_with_sequence_apply(
     let (executor, tool_rx) = chat_tool_channel();
     let worker_provider = Arc::clone(&provider);
     let worker = std::thread::spawn(move || {
-        run_modify_turn(worker_provider.as_ref(), request, &chat_tx, &executor);
+        run_modify_turn(
+            worker_provider.as_ref(),
+            request,
+            &chat_tx,
+            &executor,
+            vec!["page-1".to_string()],
+        );
     });
 
     let req = tool_rx
@@ -977,7 +1261,7 @@ fn run_modify_turn_with_sequence_apply(
     assert_eq!(req.name, APPLY_MODIFICATION_OP);
     let nodes = modification_pairs_from_args(&req.args_json);
     let mut state = state_with_page();
-    let (count, mutated) = apply_design_modification(&mut state, &nodes);
+    let (count, mutated) = apply_modify_ops_to_frame(&mut state, &nodes, "page-1");
     assert_eq!(count, 1);
     assert!(mutated);
     req.ack
@@ -1131,7 +1415,13 @@ fn run_modify_turn_retries_prose_once_then_surfaces_friendly_recovery_error() {
     let (chat_tx, chat_rx) = mpsc::channel();
     let (executor, tool_rx) = chat_tool_channel();
 
-    run_modify_turn(provider.as_ref(), request.clone(), &chat_tx, &executor);
+    run_modify_turn(
+        provider.as_ref(),
+        request.clone(),
+        &chat_tx,
+        &executor,
+        vec!["page-1".to_string()],
+    );
 
     assert!(
         tool_rx.try_recv().is_err(),
@@ -1226,7 +1516,13 @@ fn run_modify_turn_prose_response_surfaces_friendly_recovery_error() {
     let (chat_tx, chat_rx) = mpsc::channel();
     let (executor, tool_rx) = chat_tool_channel();
 
-    run_modify_turn(&provider, ChatRequest::default(), &chat_tx, &executor);
+    run_modify_turn(
+        &provider,
+        ChatRequest::default(),
+        &chat_tx,
+        &executor,
+        vec!["page-1".to_string()],
+    );
 
     assert!(
         tool_rx.try_recv().is_err(),
@@ -1258,6 +1554,7 @@ fn cli_turn_chat_route_streams_provider_deltas() {
         design_request: test_design_request(),
         initial_state: EditorState::new(),
         indicator_epoch: 0,
+        abort: AbortFlag::new(),
         model: None,
     };
     let (chat_tx, chat_rx) = mpsc::channel();
@@ -1296,8 +1593,9 @@ fn cli_turn_modify_route_applies_nodes_and_marks_applied() {
         chat_request: ChatRequest::default(),
         modify_request: Some(ChatRequest::default()),
         design_request: test_design_request(),
-        initial_state: EditorState::new(),
+        initial_state: state_with_selected_page(),
         indicator_epoch: 0,
+        abort: AbortFlag::new(),
         model: None,
     };
     let (chat_tx, chat_rx) = mpsc::channel();
@@ -1314,7 +1612,7 @@ fn cli_turn_modify_route_applies_nodes_and_marks_applied() {
     assert_eq!(req.name, APPLY_MODIFICATION_OP);
     let nodes = modification_pairs_from_args(&req.args_json);
     let mut state = state_with_page();
-    let (count, mutated) = apply_design_modification(&mut state, &nodes);
+    let (count, mutated) = apply_modify_ops_to_frame(&mut state, &nodes, "page-1");
     assert_eq!(count, 1);
     assert!(mutated);
     req.ack
@@ -1361,8 +1659,9 @@ fn cli_turn_modify_keyword_overrides_new_classifier_reply() {
         chat_request: ChatRequest::default(),
         modify_request: Some(ChatRequest::default()),
         design_request: test_design_request(),
-        initial_state: EditorState::new(),
+        initial_state: state_with_selected_page(),
         indicator_epoch: 0,
+        abort: AbortFlag::new(),
         model: None,
     };
     let (chat_tx, chat_rx) = mpsc::channel();
@@ -1408,6 +1707,7 @@ fn cli_turn_modify_parse_failure_surfaces_friendly_recovery_error() {
         design_request: test_design_request(),
         initial_state: EditorState::new(),
         indicator_epoch: 0,
+        abort: AbortFlag::new(),
         model: None,
     };
     let (chat_tx, chat_rx) = mpsc::channel();

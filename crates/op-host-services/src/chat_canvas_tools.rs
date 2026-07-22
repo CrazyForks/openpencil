@@ -16,14 +16,13 @@
 //! event loop drains requests each frame (`chat_session::pump`) and
 //! executes via [`execute_chat_tool`] against the canonical state.
 
+use crate::chat_modify_sanitize::sanitize_modify_replacement;
+use crate::chat_tool_result::{rolled_back_transaction_message, structured_error_result};
 use op_ai::chat_provider::{ChatToolDef, ChatToolResult};
 use op_editor_core::{EditorState, PenNodeExt};
 pub use op_editor_host_core::chat::{chat_tool_channel, ChatToolRequest, UiChatToolExecutor};
 use op_mcp::{ToolRegistry, ToolResponse};
 use std::collections::HashSet;
-
-use crate::chat_modify_sanitize::sanitize_modify_replacement;
-use crate::chat_tool_result::{rolled_back_transaction_message, structured_error_result};
 
 /// TS `maxTurns` for the chat agent loop (`ai-chat-handlers.ts:254`).
 pub const MAX_TOOL_TURNS: usize = 20;
@@ -101,6 +100,16 @@ pub fn chat_tool_defs() -> Vec<ChatToolDef> {
             r#"{"type":"object","properties":{"nodeId":{"type":"string","description":"Node ID to delete"}},"required":["nodeId"]}"#,
         ),
     ]
+}
+
+/// Plain chat may inspect the canvas without a selection, but mutating CRUD
+/// tools are only advertised when the turn has an explicit Frame write scope.
+pub fn chat_tool_defs_for_write_scope(has_frame_scope: bool) -> Vec<ChatToolDef> {
+    let mut defs = chat_tool_defs();
+    if !has_frame_scope {
+        defs.retain(|tool| tool.level == "read");
+    }
+    defs
 }
 
 /// Execute one chat tool call against the live editor state. Returns
@@ -217,13 +226,12 @@ fn error_result(message: String) -> ChatToolResult {
     }
 }
 
-/// Apply a DESIGN_MODIFY result to the live document. Top-level nodes
-/// whose `id` already exists replace that whole subtree; unknown or
-/// id-less nodes insert as new top-level elements under the active
-/// page's primary frame (TS `getActivePagePrimaryFrameId`,
-/// design-canvas-ops.ts:86-94). Inserts and replacements dispatch
-/// through MCP tool validation before applying commands. Returns
-/// `(applied_count, mutated)`.
+/// Apply a DESIGN_MODIFY result inside the Frames selected when the turn
+/// started. Existing nodes may only be replaced inside those subtrees;
+/// explicit parents must also be in scope. Unknown or id-less nodes can use
+/// an implicit parent only when exactly one target Frame was captured.
+/// Inserts and replacements dispatch through MCP tool validation before
+/// applying commands. Returns `(applied_count, mutated)`.
 ///
 /// Documented divergence: TS wraps the loop in one history batch;
 /// here every node is its own undo step — the same granularity the
@@ -232,23 +240,74 @@ fn error_result(message: String) -> ChatToolResult {
 pub fn apply_design_modification(
     state: &mut EditorState,
     nodes: &[DesignModificationOp],
+    target_frame_ids: &[String],
 ) -> (usize, bool) {
+    if !valid_modify_scope(state, target_frame_ids) {
+        return (0, false);
+    }
+    let implicit_parent = (target_frame_ids.len() == 1).then(|| target_frame_ids[0].as_str());
     let mut count = 0usize;
     let mut mutated = false;
     for (parent, node) in nodes {
         let id = node.get("id").and_then(|v| v.as_str());
-        let parent_exists = parent != "null" && node_exists(state, parent);
-        let (applied, did_mutate) = if parent_exists {
+        let explicit_parent = parent != "null";
+        let parent_in_scope = explicit_parent
+            && node_exists(state, parent)
+            && node_is_in_modify_scope(state, target_frame_ids, parent);
+        let existing_id = id.filter(|id| node_exists(state, id));
+        let (applied, did_mutate) = if parent_in_scope {
             insert_modify_subtree(state, node, Some(parent.as_str()))
-        } else if parent == "null" && id.is_some_and(|id| node_exists(state, id)) {
-            replace_modify_subtree(state, node, id.expect("checked above"))
+        } else if explicit_parent {
+            (0, false)
+        } else if let Some(existing_id) = existing_id {
+            if node_is_in_modify_scope(state, target_frame_ids, existing_id) {
+                replace_modify_subtree(state, node, existing_id)
+            } else {
+                (0, false)
+            }
+        } else if let Some(parent) = implicit_parent {
+            insert_modify_subtree(state, node, Some(parent))
         } else {
-            insert_modify_subtree(state, node, None)
+            (0, false)
         };
         count += applied;
         mutated |= did_mutate;
     }
     (count, mutated)
+}
+
+fn valid_modify_scope(state: &EditorState, target_frame_ids: &[String]) -> bool {
+    !target_frame_ids.is_empty()
+        && target_frame_ids.iter().all(|id| {
+            op_editor_core::walkers::find_node(
+                state.active_children(),
+                &op_editor_core::NodeId::new(id),
+            )
+            .is_some_and(|node| matches!(node, jian_ops_schema::node::PenNode::Frame(_)))
+        })
+}
+
+fn subtree_contains_id(node: &jian_ops_schema::node::PenNode, target_id: &str) -> bool {
+    node.id_str() == target_id
+        || node.children().is_some_and(|children| {
+            children
+                .iter()
+                .any(|child| subtree_contains_id(child, target_id))
+        })
+}
+
+fn node_is_in_modify_scope(
+    state: &EditorState,
+    target_frame_ids: &[String],
+    node_id: &str,
+) -> bool {
+    target_frame_ids.iter().any(|frame_id| {
+        op_editor_core::walkers::find_node(
+            state.active_children(),
+            &op_editor_core::NodeId::new(frame_id),
+        )
+        .is_some_and(|frame| subtree_contains_id(frame, node_id))
+    })
 }
 
 pub fn parse_design_modification_ops_arg(args_json: &str) -> Vec<DesignModificationOp> {
@@ -270,6 +329,14 @@ pub fn parse_design_modification_ops_arg(args_json: &str) -> Vec<DesignModificat
             })
             .unwrap_or_default()
     })
+}
+
+pub fn parse_design_modification_target_frame_ids_arg(args_json: &str) -> Vec<String> {
+    serde_json::from_str::<serde_json::Value>(args_json)
+        .ok()
+        .and_then(|args| args.get("targetFrameIds").cloned())
+        .and_then(|ids| serde_json::from_value(ids).ok())
+        .unwrap_or_default()
 }
 
 fn replace_modify_subtree(
@@ -433,15 +500,90 @@ fn insert_modify_subtree(
     node: &serde_json::Value,
     parent_id: Option<&str>,
 ) -> (usize, bool) {
-    let mut args = serde_json::json!({ "data": node });
-    if let Some(parent) = parent_id
-        .map(str::to_string)
-        .or_else(|| primary_frame_id(state))
+    // Direct Modify's `I(parent, node)` protocol is append-only. Mobile
+    // status bars have a structural first-child contract, so repair that one
+    // unambiguous case here while leaving every ordinary ADD append-only.
+    let status_bar_parent = parent_id
+        .filter(|parent| is_mobile_vertical_root(state, parent))
+        .filter(|_| status_bar_like_json(node));
+    let existing_status_bar = status_bar_parent.and_then(|parent| {
+        op_editor_core::walkers::find_node(
+            state.active_children(),
+            &op_editor_core::NodeId::new(parent),
+        )
+        .and_then(|root| root.children())
+        .and_then(|children| {
+            children
+                .iter()
+                .enumerate()
+                .find(|(_, child)| status_bar_like_node(child))
+                .map(|(index, child)| {
+                    (
+                        child.id_str().to_string(),
+                        index,
+                        child.base().role.as_deref() != Some("status-bar"),
+                    )
+                })
+        })
+    });
+    if let (Some(parent), Some((node_id, index, role_missing))) =
+        (status_bar_parent, existing_status_bar)
     {
-        args["parent"] = serde_json::Value::String(parent);
+        let mut mutated = false;
+        if role_missing {
+            mutated |= state.apply(op_editor_core::EditorCommand::PatchNodeData {
+                node_id: op_editor_core::NodeId::new(node_id.clone()),
+                patch_json: r#"{"role":"status-bar"}"#.to_string(),
+                page_id: None,
+            });
+        }
+        if index > 0 {
+            mutated |= state.apply(op_editor_core::EditorCommand::MoveNode {
+                node_id: op_editor_core::NodeId::new(node_id),
+                target_parent: op_editor_core::NodeId::new(parent),
+                page_id: None,
+                index: Some(0),
+            });
+        }
+        return (1, mutated);
     }
-    let (result, mutated) = execute_chat_tool(state, "insert_node", &args.to_string());
+    let mut incoming = node.clone();
+    if status_bar_parent.is_some() {
+        if let Some(object) = incoming.as_object_mut() {
+            object.insert(
+                "role".into(),
+                serde_json::Value::String("status-bar".into()),
+            );
+        }
+    }
+    let Some(parent) = parent_id else {
+        return (0, false);
+    };
+    let mut args = serde_json::json!({ "data": incoming });
+    args["parent"] = serde_json::Value::String(parent.to_string());
+    let (result, mut mutated) = execute_chat_tool(state, "insert_node", &args.to_string());
     if !result.is_error {
+        if let Some(parent) = status_bar_parent {
+            let inserted_status_bar = op_editor_core::walkers::find_node(
+                state.active_children(),
+                &op_editor_core::NodeId::new(parent),
+            )
+            .and_then(|root| root.children())
+            .and_then(|children| {
+                children
+                    .iter()
+                    .find(|child| status_bar_like_node(child))
+                    .map(|child| child.id_str().to_string())
+            });
+            if let Some(node_id) = inserted_status_bar {
+                mutated |= state.apply(op_editor_core::EditorCommand::MoveNode {
+                    node_id: op_editor_core::NodeId::new(node_id),
+                    target_parent: op_editor_core::NodeId::new(parent),
+                    page_id: None,
+                    index: Some(0),
+                });
+            }
+        }
         return (1, mutated);
     }
     eprintln!(
@@ -451,19 +593,51 @@ fn insert_modify_subtree(
     (0, mutated)
 }
 
+fn is_mobile_vertical_root(state: &EditorState, id: &str) -> bool {
+    state.active_children().iter().any(|node| {
+        node.id_str() == id
+            && node
+                .width_px()
+                .is_some_and(|width| (300.0..=480.0).contains(&width))
+            && matches!(
+                node,
+                jian_ops_schema::node::PenNode::Frame(frame)
+                    if frame.container.layout
+                        == Some(jian_ops_schema::node::container::LayoutMode::Vertical)
+            )
+    })
+}
+
+fn status_bar_like_json(node: &serde_json::Value) -> bool {
+    node.get("role").and_then(serde_json::Value::as_str) == Some("status-bar")
+        || ["name", "id"].iter().any(|key| {
+            node.get(*key)
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(status_bar_like_text)
+        })
+}
+
+fn status_bar_like_node(node: &jian_ops_schema::node::PenNode) -> bool {
+    node.base().role.as_deref() == Some("status-bar")
+        || node
+            .base()
+            .name
+            .as_deref()
+            .is_some_and(status_bar_like_text)
+        || status_bar_like_text(node.id_str())
+}
+
+fn status_bar_like_text(text: &str) -> bool {
+    let normalized = text.trim().to_ascii_lowercase().replace(['_', '-'], " ");
+    normalized.contains("status bar")
+        || normalized.contains("statusbar")
+        || normalized.contains("状态栏")
+        || normalized.contains("系统栏")
+}
+
 fn node_exists(state: &EditorState, id: &str) -> bool {
     op_editor_core::walkers::find_node(state.active_children(), &op_editor_core::NodeId::new(id))
         .is_some()
-}
-
-fn primary_frame_id(state: &EditorState) -> Option<String> {
-    use op_editor_core::PenNodeExt;
-
-    state
-        .active_children()
-        .iter()
-        .find(|n| matches!(n, jian_ops_schema::node::PenNode::Frame(_)))
-        .map(|n| n.id_str().to_string())
 }
 
 /// Build a registry carrying only the requested chat tool — the same
@@ -520,6 +694,19 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&d.input_schema_json)
                 .unwrap_or_else(|e| panic!("schema for {} unparseable: {e}", d.name));
         }
+    }
+
+    #[test]
+    fn chat_without_a_frame_scope_only_advertises_read_tools() {
+        let read_only = chat_tool_defs_for_write_scope(false);
+        assert_eq!(
+            read_only
+                .iter()
+                .map(|tool| tool.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["batch_get", "snapshot_layout", "get_selection"]
+        );
+        assert_eq!(chat_tool_defs_for_write_scope(true), chat_tool_defs());
     }
 
     #[test]
@@ -691,7 +878,7 @@ mod tests {
                 ]
             }),
         )];
-        let (count, mutated) = apply_design_modification(&mut state, &nodes);
+        let (count, mutated) = apply_design_modification(&mut state, &nodes, &["n217".to_string()]);
 
         assert_eq!(count, 1);
         assert!(mutated);

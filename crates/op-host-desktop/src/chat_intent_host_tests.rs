@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 
 use op_ai::chat_provider::{ChatDelta, ChatProvider, ChatRequest, StopReason};
 use op_editor_core::EditorState;
-use op_orchestrator::DesignRequest;
+use op_orchestrator::{AbortFlag, DesignRequest};
 
 use op_editor_host_core::design::DesignSession;
 use op_host_native::WidgetHostNative;
@@ -163,6 +163,7 @@ fn cli_new_design_clears_agent_frame_indicators_after_done() {
         .unwrap_or_else(|e| e.into_inner());
     op_editor_core::agent_indicators::clear();
     let indicator_epoch = op_editor_core::agent_indicators::begin();
+    let abort = AbortFlag::new();
     let plan = CliTurnPlan {
         user_text: "design a login page".into(),
         page_children_empty: true,
@@ -177,16 +178,18 @@ fn cli_new_design_clears_agent_frame_indicators_after_done() {
         design_request: test_design_request(),
         initial_state: EditorState::new(),
         indicator_epoch,
+        abort: abort.clone(),
         model: None,
     };
     let (chat_tx, _chat_rx) = mpsc::channel();
     let (executor, _tool_rx) = chat_tool_channel();
     let (delta_tx, delta_rx) = mpsc::channel();
     let (cmd_tx, cmd_rx) = mpsc::channel();
-    let mut current = Some(DesignSession::from_channels_with_epoch(
+    let mut current = Some(DesignSession::from_channels_with_epoch_and_abort(
         delta_rx,
         cmd_rx,
         indicator_epoch,
+        abort,
     ));
     let mut host = WidgetHostNative::new();
     host.editor_state_mut()
@@ -251,6 +254,7 @@ fn cli_new_design_populates_frame_indicators_the_canvas_scan_gates_on() {
         .unwrap_or_else(|e| e.into_inner());
     op_editor_core::agent_indicators::clear();
     let indicator_epoch = op_editor_core::agent_indicators::begin();
+    let abort = AbortFlag::new();
     let plan = CliTurnPlan {
         user_text: "design a login page".into(),
         page_children_empty: true,
@@ -265,16 +269,18 @@ fn cli_new_design_populates_frame_indicators_the_canvas_scan_gates_on() {
         design_request: test_design_request(),
         initial_state: EditorState::new(),
         indicator_epoch,
+        abort: abort.clone(),
         model: None,
     };
     let (chat_tx, _chat_rx) = mpsc::channel();
     let (executor, _tool_rx) = chat_tool_channel();
     let (delta_tx, delta_rx) = mpsc::channel();
     let (cmd_tx, cmd_rx) = mpsc::channel();
-    let mut current = Some(DesignSession::from_channels_with_epoch(
+    let mut current = Some(DesignSession::from_channels_with_epoch_and_abort(
         delta_rx,
         cmd_rx,
         indicator_epoch,
+        abort,
     ));
     let mut host = WidgetHostNative::new();
     host.editor_state_mut()
