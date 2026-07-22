@@ -55,12 +55,26 @@ pub fn descendant_count(state: &EditorState, root_id: &str) -> usize {
         .unwrap_or(0)
 }
 
-/// 名称 / id 命中即视为"状态栏"节点。
+/// Explicit status-bar role or an English/Chinese name/id match identifies
+/// status-bar chrome. The role path keeps generated/custom-named bars stable;
+/// Chinese aliases cover direct local edits such as "顶部状态栏".
 pub(crate) fn is_status_bar(node: &PenNode) -> bool {
+    if node
+        .base()
+        .role
+        .as_deref()
+        .is_some_and(|role| role.eq_ignore_ascii_case("status-bar"))
+    {
+        return true;
+    }
     let name = node.base().name.as_deref().unwrap_or("").to_lowercase();
     let id = node.id_str().to_lowercase();
     let hay = format!("{id} {name}");
-    hay.contains("status bar") || hay.contains("status-bar") || hay.contains("statusbar")
+    hay.contains("status bar")
+        || hay.contains("status-bar")
+        || hay.contains("statusbar")
+        || hay.contains("状态栏")
+        || hay.contains("系统栏")
 }
 
 /// Pass ①:移动端重复状态栏去重。scaffold 注入了一个固定状态栏,

@@ -14,6 +14,17 @@ fn status_bar_json(id: &str) -> serde_json::Value {
     })
 }
 
+fn tagged_status_bar_json(id: &str) -> serde_json::Value {
+    let mut bar = status_bar_json(id);
+    bar.as_object_mut()
+        .expect("status bar fixture is an object")
+        .insert(
+            "role".to_string(),
+            serde_json::Value::String("status-bar".to_string()),
+        );
+    bar
+}
+
 fn body_json(id: &str) -> serde_json::Value {
     serde_json::json!({ "type": "text", "id": format!("{id}-body"), "content": "Body", "fontSize": 16 })
 }
@@ -24,6 +35,27 @@ fn screen_json(id: &str, name: &str, children: Vec<serde_json::Value>) -> serde_
     serde_json::json!({
         "type": "frame", "id": id, "name": name, "width": 390, "height": 844,
         "layout": "vertical", "children": children
+    })
+}
+
+fn fit_content_screen_json(
+    id: &str,
+    name: &str,
+    children: Vec<serde_json::Value>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "type": "frame", "id": id, "name": name, "width": 390,
+        "height": "fit_content", "layout": "vertical", "children": children
+    })
+}
+
+fn section_json(id: &str, name: &str, height: f64) -> serde_json::Value {
+    serde_json::json!({
+        "type": "frame", "id": id, "name": name,
+        "width": "fill_container", "height": height,
+        "children": [
+            { "type": "text", "id": format!("{id}-label"), "content": name, "fontSize": 16 }
+        ]
     })
 }
 
@@ -49,6 +81,33 @@ fn find_by_id<'a>(nodes: &'a [PenNode], id: &str) -> Option<&'a PenNode> {
         }
     }
     None
+}
+
+#[test]
+fn status_bar_detection_accepts_role_and_chinese_names() {
+    for (id, name, role) in [
+        ("chrome", "Custom Chrome", Some("status-bar")),
+        ("top", "顶部状态栏", None),
+        ("system", "系统栏", None),
+    ] {
+        let node: PenNode = serde_json::from_value(serde_json::json!({
+            "type": "frame",
+            "id": id,
+            "name": name,
+            "role": role,
+            "width": "fill_container",
+            "height": 44
+        }))
+        .expect("valid status-bar fixture");
+        assert!(is_status_bar(&node), "must recognize {name:?} / {role:?}");
+    }
+
+    let ordinary: PenNode = serde_json::from_value(serde_json::json!({
+        "type": "frame", "id": "header", "name": "Page Header",
+        "width": "fill_container", "height": 44
+    }))
+    .expect("valid ordinary fixture");
+    assert!(!is_status_bar(&ordinary));
 }
 
 fn two_screen_doc(home_has_status_bar: bool, library_has_status_bar: bool) -> serde_json::Value {
@@ -88,8 +147,15 @@ fn missing_status_bar_screen_gets_reference_injected_as_first_child() {
 }
 
 #[test]
-fn screen_with_own_status_bar_is_left_untouched() {
-    let mut state = state_from(two_screen_doc(true, true));
+fn correctly_placed_tagged_status_bar_is_left_untouched() {
+    let doc = serde_json::json!({
+        "version": "1.0",
+        "children": [
+            screen_json("home", "Home", vec![tagged_status_bar_json("home-status"), body_json("home")]),
+            screen_json("library", "Library", vec![tagged_status_bar_json("library-status"), body_json("library")]),
+        ]
+    });
+    let mut state = state_from(doc);
     let before = serde_json::to_string(
         find_by_id(state.active_children(), "library")
             .unwrap()
@@ -107,7 +173,7 @@ fn screen_with_own_status_bar_is_left_untouched() {
     .unwrap();
     assert_eq!(
         before, after,
-        "a screen that already carries its own status bar must be untouched"
+        "a correctly placed, tagged status bar must be untouched"
     );
 }
 
@@ -213,17 +279,110 @@ fn injected_status_bar_clone_gets_the_chrome_role_stamped() {
 }
 
 #[test]
-fn authored_reference_status_bar_role_is_never_touched() {
+fn authored_reference_status_bar_gets_missing_chrome_role_only() {
     let mut state = state_from(two_screen_doc(true, false));
+    let before_children = find_by_id(state.active_children(), "home-status")
+        .unwrap()
+        .children()
+        .cloned();
     run_pass(&mut state);
 
     let home_root = find_by_id(state.active_children(), "home").unwrap();
     let reference = find_by_id(home_root.children().unwrap(), "home-status").unwrap();
     assert_eq!(
-        reference.base().role,
-        None,
-        "role-stamping must only ever touch the CLONE — the authored \
-         reference screen's own status bar must be left exactly as authored"
+        reference.base().role.as_deref(),
+        Some("status-bar"),
+        "the authored reference is chrome too, so its missing role must be stamped"
+    );
+    assert_eq!(
+        before_children,
+        reference.children().cloned(),
+        "role stamping must preserve the authored reference subtree"
+    );
+}
+
+#[test]
+fn fit_content_mobile_root_missing_status_bar_gets_reference_clone_first() {
+    let doc = serde_json::json!({
+        "version": "1.0",
+        "children": [
+            fit_content_screen_json(
+                "home",
+                "Waveform — Home",
+                vec![tagged_status_bar_json("home-status"), section_json("home-body", "Home Body", 700.0)],
+            ),
+            fit_content_screen_json(
+                "search",
+                "Waveform — Search",
+                vec![
+                    section_json("search-header", "Header", 120.0),
+                    section_json("search-content", "Content", 620.0),
+                    section_json("search-tabs", "Tab Bar", 82.0),
+                ],
+            ),
+        ]
+    });
+    let mut state = state_from(doc);
+
+    run_pass(&mut state);
+
+    let search = find_by_id(state.active_children(), "search").unwrap();
+    let children = search.children().unwrap();
+    assert!(is_status_bar(&children[0]));
+    assert_eq!(children[0].base().role.as_deref(), Some("status-bar"));
+    assert_eq!(children.len(), 4, "all original Search sections remain");
+    assert_eq!(children[1].id_str(), "search-header");
+    assert_eq!(children[2].id_str(), "search-content");
+    assert_eq!(children[3].id_str(), "search-tabs");
+}
+
+/// 0720-2-qw regression: Search was a 390px-wide `fit_content` root and the
+/// user's selected-frame insertion appended `n458` after Header/content/nav.
+/// Finalize must reuse that exact subtree, move it to index 0, and add only the
+/// missing chrome role.
+#[test]
+fn fit_content_mobile_root_moves_existing_last_status_bar_to_first_in_place() {
+    let doc = serde_json::json!({
+        "version": "1.0",
+        "children": [
+            fit_content_screen_json(
+                "home",
+                "Waveform — Home",
+                vec![tagged_status_bar_json("home-status"), section_json("home-body", "Home Body", 700.0)],
+            ),
+            fit_content_screen_json(
+                "search",
+                "Waveform — Search",
+                vec![
+                    section_json("n149", "Header", 120.0),
+                    section_json("n161", "Content", 620.0),
+                    section_json("n184", "Tab Bar", 82.0),
+                    status_bar_json("n458"),
+                ],
+            ),
+        ]
+    });
+    let mut state = state_from(doc);
+    let before_status_children = find_by_id(state.active_children(), "n458")
+        .unwrap()
+        .children()
+        .cloned();
+
+    run_pass(&mut state);
+
+    let search = find_by_id(state.active_children(), "search").unwrap();
+    let children = search.children().unwrap();
+    let ids: Vec<&str> = children.iter().map(PenNodeExt::id_str).collect();
+    assert_eq!(ids, ["n458", "n149", "n161", "n184"]);
+    assert_eq!(
+        children[0].base().role.as_deref(),
+        Some("status-bar"),
+        "the existing roleless bar must be marked as chrome"
+    );
+    assert_eq!(
+        before_status_children,
+        children[0].children().cloned(),
+        "the existing n458 subtree must be moved, not redrawn or replaced"
     );
 }
 
