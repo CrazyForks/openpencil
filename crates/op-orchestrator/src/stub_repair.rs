@@ -74,10 +74,51 @@ fn is_empty_decorated_stub(v: &Value, resolved_size: Option<(f64, f64)>) -> bool
         && v.get("x").is_none()
         && v.get("y").is_none()
         && children(v).is_empty()
+        // A frame whose paint is an image is already meaningful content.
+        // Compact avatar/photo frames are commonly authored this way, with
+        // no child image node, so treating them as empty stubs destroys the
+        // asset before the later avatar-repair pass can inspect it.
+        && !is_meaningful_media_leaf(v)
         && has_visible_paint(v)
         && (padding_positive(v) || numeric(v, "cornerRadius").is_some_and(|r| r > 0.0))
         && width.is_some_and(|w| w > 0.0 && w < 80.0)
         && height.is_some_and(|h| h > 0.0 && h < 60.0)
+}
+
+fn is_meaningful_media_leaf(v: &Value) -> bool {
+    has_image_fill(v) || has_avatar_semantics(v)
+}
+
+fn has_image_fill(v: &Value) -> bool {
+    match v.get("fill") {
+        Some(Value::Array(fills)) => fills.iter().any(is_image_paint),
+        Some(fill) => is_image_paint(fill),
+        None => false,
+    }
+}
+
+fn has_avatar_semantics(v: &Value) -> bool {
+    let role = v.get("role").and_then(Value::as_str).unwrap_or_default();
+    if matches!(
+        role.to_ascii_lowercase().as_str(),
+        "avatar" | "user-avatar" | "profile-avatar" | "profile-photo"
+    ) {
+        return true;
+    }
+
+    let name = v
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    name.contains("avatar") || name.contains("profile photo") || name.contains("user photo")
+}
+
+fn is_image_paint(paint: &Value) -> bool {
+    paint
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| kind.eq_ignore_ascii_case("image"))
 }
 
 fn resolved_sizes(state: &op_editor_core::EditorState) -> HashMap<String, (f64, f64)> {

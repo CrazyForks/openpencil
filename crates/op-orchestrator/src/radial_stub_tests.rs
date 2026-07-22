@@ -272,6 +272,37 @@ fn cleanup_deletes_only_empty_decorated_small_frame_stubs() {
 }
 
 #[test]
+fn cleanup_preserves_image_filled_avatar_leaf_in_header() {
+    let mut sink = insert_root(json!({
+        "type":"frame","id":"root","name":"Root","width":390,"height":160,"layout":"vertical","children":[
+            {"type":"frame","id":"top-bar","name":"Top Bar","width":"fill_container","height":52,
+             "layout":"horizontal","justifyContent":"space_between","children":[
+                {"type":"text","id":"title","name":"Title","content":"Hearth"},
+                {"type":"frame","id":"avatar","name":"User Portrait","width":40,"height":40,
+                 "cornerRadius":20,"fill":[{"type":"image","url":"data:image/png;base64,AAAA","mode":"crop"}],"children":[]},
+                {"type":"frame","id":"avatar-fallback","name":"Profile Avatar","role":"avatar","width":36,"height":36,
+                 "cornerRadius":18,"fill":[{"type":"solid","color":"#334155"}],"children":[]}
+             ]}
+        ]
+    }));
+
+    run_cleanup(&mut sink);
+
+    let root = active_root_json(&sink);
+    let top_bar = find_by_name(&root, "Top Bar").expect("top bar survives");
+    assert_eq!(
+        top_bar
+            .get("children")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(3),
+        "cleanup must not delete compact image-filled or semantic avatar leaves"
+    );
+    assert!(find_by_name(&root, "User Portrait").is_some());
+    assert!(find_by_name(&root, "Profile Avatar").is_some());
+}
+
+#[test]
 fn geometry_diagnostics_reports_empty_decorated_frame_stub() {
     let sink = insert_root(json!({
         "type":"frame","id":"root","name":"Root","width":390,"height":160,"layout":"vertical","children":[
