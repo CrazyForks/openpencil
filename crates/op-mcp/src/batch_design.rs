@@ -996,6 +996,16 @@ fn normalize_padding(value: &mut serde_json::Value) {
     if let Some(items) = value.as_array() {
         if items.len() == 1 {
             *value = items[0].clone();
+        } else if items.len() == 3 {
+            // CSS shorthand: top, horizontal, bottom. The canonical schema
+            // accepts scalar, 2-side, or 4-side padding; expand the standard
+            // 3-value form models commonly emit before deserialization.
+            *value = serde_json::json!([
+                items[0].clone(),
+                items[1].clone(),
+                items[2].clone(),
+                items[1].clone()
+            ]);
         }
     }
 }

@@ -388,11 +388,7 @@ fn execute_assign(op: &str, binding: &str, args: &str, ctx: &mut ProgramCtx) -> 
 fn execute_insert(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<(), String> {
     let comma = find_top_level_char(args, ',').ok_or("Insert requires parent and node data")?;
     let parent_raw = args[..comma].trim();
-    let parent = if parent_raw == "null" {
-        None
-    } else {
-        Some(resolve_ref(parent_raw, &ctx.bindings))
-    };
+    let parent = resolve_parent_ref(parent_raw, &ctx.bindings);
     let mut node = parse_node_json(&args[comma + 1..], ctx.post_process)?;
     delete_superseded_draft(binding, parent.as_deref(), &node, ctx);
 
@@ -513,11 +509,7 @@ fn execute_copy(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<(), S
         .first()
         .map(|(_, new)| new.clone())
         .ok_or("Copy produced no node")?;
-    let parent = if parent_raw == "null" {
-        None
-    } else {
-        Some(resolve_ref(parent_raw, &ctx.bindings))
-    };
+    let parent = resolve_parent_ref(parent_raw, &ctx.bindings);
     ctx.emit(
         EditorCommand::InsertAuthoredSubtree {
             nodes,
@@ -548,12 +540,11 @@ fn execute_kit_instantiate(binding: &str, args: &str, ctx: &mut ProgramCtx) -> R
     let kit_component_id = parse_string_arg(parts[0].trim(), "K() kitComponentId")?;
     let (kit_id, component_id) = resolve_kit_component_id(&kit_component_id, &ctx.sim)?;
     let parent_raw = parts[1].trim();
-    let parent = if matches!(parent_raw, "null" | "undefined") {
-        NodeId::NONE
-    } else {
-        let resolved = resolve_ref(parent_raw, &ctx.bindings);
-        NodeId::new(lookup_id(&resolved, &ctx.alias))
-    };
+    let resolved_parent = resolve_parent_ref(parent_raw, &ctx.bindings);
+    let parent = resolved_parent
+        .as_deref()
+        .map(|resolved| NodeId::new(lookup_id(resolved, &ctx.alias)))
+        .unwrap_or(NodeId::NONE);
     let overrides_json = match parts.get(2) {
         None => None,
         Some(raw) => {
@@ -886,11 +877,7 @@ fn execute_move(args: &str, ctx: &mut ProgramCtx) -> Result<String, String> {
         return Err(format!("Move target not found: {node_id}"));
     }
     let parent_raw = parts[1].trim();
-    let parent = if matches!(parent_raw, "null" | "undefined") {
-        None
-    } else {
-        Some(resolve_ref(parent_raw, &ctx.bindings))
-    };
+    let parent = resolve_parent_ref(parent_raw, &ctx.bindings);
     let index = match parts.get(2) {
         None => None,
         Some(raw) => Some(
@@ -1182,6 +1169,21 @@ fn replace_single_quote_delimiters(s: &str) -> String {
 }
 
 // --- Reference + path resolution --------------------------------------
+
+/// Resolve an operation parent while honoring the document-root spellings
+/// advertised by the design-agent protocol. Bare `document` / `root` are
+/// sentinels only when no same-named binding exists; quoted values remain
+/// ordinary node ids.
+fn resolve_parent_ref(raw: &str, bindings: &BTreeMap<String, String>) -> Option<String> {
+    let trimmed = raw.trim();
+    if matches!(trimmed, "null" | "undefined")
+        || (matches!(trimmed, "document" | "root") && !bindings.contains_key(trimmed))
+    {
+        None
+    } else {
+        Some(resolve_ref(trimmed, bindings))
+    }
+}
 
 /// TS `resolveRef` — strip one leading + one trailing double quote,
 /// then look the cleaned token up in the binding table.

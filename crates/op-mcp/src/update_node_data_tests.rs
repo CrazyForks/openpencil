@@ -53,3 +53,25 @@ fn update_node_data_with_sizing_keyword_emits_patch_command_and_applies() {
     let value = serde_json::to_value(node).expect("updated node json");
     assert_eq!(value["height"], "fit_content");
 }
+
+#[test]
+fn update_node_data_with_token_fill_emits_patch_command_and_preserves_token() {
+    let mut state = sample();
+    let mut args = BTreeMap::new();
+    args.insert("nodeId".into(), "n10".into());
+    args.insert(
+        "data".into(),
+        r##"{"fill":[{"type":"solid","color":"$--primary"}]}"##.into(),
+    );
+
+    let ToolOutcome::OkWithCommand(_, command @ EditorCommand::PatchNodeData { .. }) =
+        update_node_snapshot().call(&args)
+    else {
+        panic!("expected PatchNodeData command for canonical token fill");
+    };
+    assert!(state.apply(command), "token fill patch must apply");
+    let node = op_editor_core::walkers::find_node(state.active_children(), &NodeId::new("n10"))
+        .expect("updated frame");
+    let value = serde_json::to_value(node).expect("updated node json");
+    assert_eq!(value["fill"][0]["color"], "$--primary");
+}

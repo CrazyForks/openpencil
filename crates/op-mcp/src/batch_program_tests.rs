@@ -90,6 +90,79 @@ fn subtree_contains_text(node: &jian_ops_schema::node::PenNode, expected: &str) 
 }
 
 #[test]
+fn bare_document_and_root_parent_aliases_insert_at_document_root() {
+    let mut state = op_editor_core::EditorState::new();
+    state.active_children_mut().clear();
+    let program = r#"root=I(document, {"type":"frame","name":"Search","width":390,"height":844,"layout":"vertical"})
+I(root, {"type":"text","name":"Title","content":"Find your sound"})
+second=I(root, {"type":"frame","name":"Nested"})
+screen=I(root, {"type":"frame","name":"Nested Again"})"#;
+
+    let (envelope, cmd) = call_operations(&state, program);
+
+    assert!(envelope.get("errors").is_none(), "{envelope}");
+    assert!(state.apply(cmd.expect("root-alias program emits a command")));
+    assert_eq!(state.active_children().len(), 1);
+    let children = state.active_children()[0]
+        .children()
+        .expect("root frame children");
+    assert_eq!(children.len(), 3);
+
+    let (second_envelope, second_cmd) = call_operations(
+        &state,
+        r#"other=I(root, {"type":"frame","name":"Second Root","width":390,"height":844})"#,
+    );
+    assert!(second_envelope.get("errors").is_none(), "{second_envelope}");
+    assert!(state.apply(second_cmd.expect("bare root alias emits a command")));
+    assert_eq!(state.active_children().len(), 2);
+}
+
+#[test]
+fn quoted_root_remains_a_literal_existing_node_id() {
+    let mut state = state_with(vec![frame(
+        "root",
+        "Literal Root",
+        0.0,
+        0.0,
+        320.0,
+        240.0,
+        vec![],
+    )]);
+
+    let (envelope, cmd) = call_operations(
+        &state,
+        r#"child=I("root", {"type":"text","name":"Child","content":"Nested"})"#,
+    );
+
+    assert!(envelope.get("errors").is_none(), "{envelope}");
+    assert!(state.apply(cmd.expect("literal-parent insert emits a command")));
+    assert_eq!(state.active_children().len(), 1);
+    assert_eq!(
+        state.active_children()[0]
+            .children()
+            .map(|children| children.len()),
+        Some(1)
+    );
+}
+
+#[test]
+fn three_value_padding_update_expands_css_shorthand() {
+    let mut state = sample();
+
+    let (envelope, cmd) = call_operations(
+        &state,
+        "U(\"n10\", {\"x\":48})\nU(\"n10\", {\"padding\":[1,2,3]})",
+    );
+
+    assert!(envelope.get("errors").is_none(), "{envelope}");
+    assert!(state.apply(cmd.expect("padding update emits a command")));
+    let root = op_editor_core::walkers::find_node(state.active_children(), &NodeId::new("n10"))
+        .expect("updated frame");
+    let json = serde_json::to_value(root).expect("frame json");
+    assert_eq!(json["padding"], serde_json::json!([1.0, 2.0, 3.0, 2.0]));
+}
+
+#[test]
 fn mixed_program_executes_all_ops_with_shared_bindings_and_slash_paths() {
     let mut state = sample();
     let program = r##"card=I("n10", {"type":"frame","name":"Card","width":200,"height":120,"children":[{"type":"text","id":"title","name":"Title","content":"Hi","width":100,"height":24}]})
