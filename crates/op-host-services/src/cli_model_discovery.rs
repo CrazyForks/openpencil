@@ -18,9 +18,8 @@ use crate::model_discovery::resolve_cli;
 const MODEL_QUERY_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_COMMAND_OUTPUT_BYTES: usize = 1024 * 1024;
 
-/// Query the installed Antigravity catalog. `agy models` currently prints a
-/// human list of display names (the exact strings accepted by `--model`), so
-/// parsing preserves spaces and parenthesized effort levels verbatim.
+/// Query the installed Antigravity catalog. `agy models` may print display
+/// names or kebab-case model IDs; both are accepted verbatim by `--model`.
 pub fn query_antigravity_models() -> Result<Vec<ModelEntry>, String> {
     let exe = resolve_cli("agy").ok_or_else(|| "Antigravity CLI not found".to_string())?;
     let output = command_output(CliName::Antigravity, &exe, &["models"], MODEL_QUERY_TIMEOUT)
@@ -54,9 +53,8 @@ pub fn antigravity_default_model() -> Vec<ModelEntry> {
     )]
 }
 
-/// Parse `agy models`. Official examples are bullet lists such as
-/// `Gemini 3.5 Flash (High)` and `Claude Opus 4.6 (Thinking)`; accept JSON
-/// catalogs too so the integration survives a future machine-readable mode.
+/// Parse `agy models`. Accept display names, kebab-case IDs, and JSON catalogs
+/// so the integration survives CLI output-format changes.
 pub fn parse_antigravity_models(raw: &str) -> Vec<ModelEntry> {
     let mut names = BTreeSet::new();
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) {
@@ -170,7 +168,9 @@ fn looks_like_antigravity_model(value: &str) -> bool {
     !is_catalog_diagnostic(&lower)
         && [
             "gemini ",
+            "gemini-",
             "claude ",
+            "claude-",
             "gpt-",
             "gpt ",
             "gemma ",
@@ -698,6 +698,15 @@ mod tests {
             ]
         );
         assert!(models.iter().all(|model| model.value == model.display_name));
+    }
+
+    #[test]
+    fn parses_antigravity_v1_1_5_slug_catalog() {
+        let text = "gemini-3.6-flash-high\ngemini-3.6-flash-medium\ngemini-3.6-flash-low\ngemini-3.5-flash-high\ngemini-3.5-flash-medium\ngemini-3.5-flash-low\ngemini-3.1-pro-high\ngemini-3.1-pro-low\nclaude-sonnet-4-6\nclaude-opus-4-6-thinking\ngpt-oss-120b-medium";
+        let models = parse_antigravity_models(text);
+        assert_eq!(models.len(), 11);
+        assert!(models.iter().any(|m| m.value == "gemini-3.6-flash-high"));
+        assert!(models.iter().any(|m| m.value == "claude-opus-4-6-thinking"));
     }
 
     #[test]
