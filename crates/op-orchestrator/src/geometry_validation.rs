@@ -78,6 +78,57 @@ fn layout_str(v: &Value) -> Option<&str> {
     v.get("layout").and_then(Value::as_str)
 }
 
+/// Is this node an authored horizontal-scroll VIEWPORT rather than an ordinary
+/// clipped horizontal card? Protecting every `horizontal + clipContent` subtree
+/// is too broad: a media card can clip its cover while still containing a real
+/// text/layout overflow that geometry should repair.
+///
+/// Require all three signals:
+/// - semantic intent (`scroll` / `viewport` / `rail` / `carousel`),
+/// - the canonical viewport → one horizontal lane structure,
+/// - resolved proof that the lane's direct items exceed the viewport.
+fn is_intentional_horizontal_scroller(v: &Value, rects: &HashMap<String, Rect>) -> bool {
+    if layout_str(v) != Some("horizontal")
+        || v.get("clipContent").and_then(Value::as_bool) != Some(true)
+    {
+        return false;
+    }
+    let [lane] = children(v) else {
+        return false;
+    };
+    if layout_str(lane) != Some("horizontal") || children(lane).len() < 2 {
+        return false;
+    }
+    if !has_scroller_semantics(v) && !has_scroller_semantics(lane) {
+        return false;
+    }
+    let Some(viewport) = v
+        .get("id")
+        .and_then(Value::as_str)
+        .and_then(|id| rects.get(id))
+    else {
+        return false;
+    };
+    let viewport_right = viewport.x + viewport.w;
+    children(lane).iter().any(|item| {
+        item.get("id")
+            .and_then(Value::as_str)
+            .and_then(|id| rects.get(id))
+            .is_some_and(|item_rect| item_rect.x + item_rect.w > viewport_right + TEXT_OVERFLOW_EPS)
+    })
+}
+
+fn has_scroller_semantics(v: &Value) -> bool {
+    ["name", "role"].iter().any(|key| {
+        v.get(*key).and_then(Value::as_str).is_some_and(|value| {
+            let value = value.to_ascii_lowercase();
+            ["scroll", "viewport", "rail", "carousel"]
+                .iter()
+                .any(|token| value.contains(token))
+        })
+    })
+}
+
 /// A cell's fixed (numeric) width, or `None` when it is a keyword sizing
 /// (`fill_container` / `fit_content`).
 fn fixed_width(v: &Value) -> Option<f64> {
@@ -280,6 +331,17 @@ fn collect_text_overflow_fixes(
     rects: &HashMap<String, Rect>,
     cmds: &mut Vec<EditorCommand>,
 ) {
+    collect_text_overflow_fixes_with_context(v, rects, cmds, false);
+}
+
+fn collect_text_overflow_fixes_with_context(
+    v: &Value,
+    rects: &HashMap<String, Rect>,
+    cmds: &mut Vec<EditorCommand>,
+    protected_scroller_lane: bool,
+) {
+    let starts_scroller = is_intentional_horizontal_scroller(v, rects);
+    let protect_current = protected_scroller_lane || starts_scroller;
     // Only meaningful in a FLEX parent: under `layout: none` children are
     // absolutely positioned, so "wider than the parent" is not an overflow to
     // repair (and `width: fill_container` means nothing there).
@@ -289,7 +351,7 @@ fn collect_text_overflow_fixes(
         .and_then(Value::as_str)
         .and_then(|id| rects.get(id))
         .map(|r| (r.x, r.w))
-        .filter(|_| flex_parent)
+        .filter(|_| flex_parent && !protect_current)
     {
         let pill_parent = crate::chip_repair::is_pill_chip(v);
         for c in children(v) {
@@ -354,7 +416,7 @@ fn collect_text_overflow_fixes(
         }
     }
     for c in children(v) {
-        collect_text_overflow_fixes(c, rects, cmds);
+        collect_text_overflow_fixes_with_context(c, rects, cmds, starts_scroller);
     }
 }
 
@@ -426,8 +488,19 @@ fn collect_frame_overflow_fixes(
     rects: &HashMap<String, Rect>,
     cmds: &mut Vec<EditorCommand>,
 ) {
+    collect_frame_overflow_fixes_with_context(v, rects, cmds, false);
+}
+
+fn collect_frame_overflow_fixes_with_context(
+    v: &Value,
+    rects: &HashMap<String, Rect>,
+    cmds: &mut Vec<EditorCommand>,
+    protected_scroller_lane: bool,
+) {
+    let starts_scroller = is_intentional_horizontal_scroller(v, rects);
+    let protect_current = protected_scroller_lane || starts_scroller;
     let clips = v.get("clipContent").and_then(Value::as_bool) == Some(true);
-    if matches!(layout_str(v), Some("vertical" | "horizontal")) && !clips {
+    if matches!(layout_str(v), Some("vertical" | "horizontal")) && !clips && !protect_current {
         if let Some((parent_x, pw)) = v
             .get("id")
             .and_then(Value::as_str)
@@ -486,7 +559,7 @@ fn collect_frame_overflow_fixes(
         }
     }
     for c in children(v) {
-        collect_frame_overflow_fixes(c, rects, cmds);
+        collect_frame_overflow_fixes_with_context(c, rects, cmds, starts_scroller);
     }
 }
 
@@ -699,8 +772,20 @@ fn collect_row_overfull_fixes(
     cmds: &mut Vec<EditorCommand>,
     in_table: bool,
 ) {
+    collect_row_overfull_fixes_with_context(v, rects, cmds, in_table, false);
+}
+
+fn collect_row_overfull_fixes_with_context(
+    v: &Value,
+    rects: &HashMap<String, Rect>,
+    cmds: &mut Vec<EditorCommand>,
+    in_table: bool,
+    protected_scroller_lane: bool,
+) {
+    let starts_scroller = is_intentional_horizontal_scroller(v, rects);
+    let protect_current = protected_scroller_lane || starts_scroller;
     let clips = v.get("clipContent").and_then(Value::as_bool) == Some(true);
-    if layout_str(v) == Some("horizontal") && !clips && !in_table {
+    if layout_str(v) == Some("horizontal") && !clips && !in_table && !protect_current {
         if let Some(row) = v
             .get("id")
             .and_then(Value::as_str)
@@ -778,7 +863,7 @@ fn collect_row_overfull_fixes(
     }
     let table = is_table_shape(v);
     for c in children(v) {
-        collect_row_overfull_fixes(c, rects, cmds, table);
+        collect_row_overfull_fixes_with_context(c, rects, cmds, table, starts_scroller);
     }
 }
 

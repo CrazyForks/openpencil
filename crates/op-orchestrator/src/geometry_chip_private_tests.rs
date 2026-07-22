@@ -239,3 +239,233 @@ fn mixed_overfull_row_does_not_get_chip_clip_exemption() {
         "mixed row must not get pill-row clipping: {cmds:?}"
     );
 }
+
+fn category_pill(id: &str, label: &str) -> serde_json::Value {
+    json!({
+        "type":"frame",
+        "id":id,
+        "name":format!("Category Pill {label}"),
+        "width":"fit_content",
+        "height":"fit_content",
+        "layout":"horizontal",
+        "gap":8,
+        "padding":[8,16],
+        "cornerRadius":8,
+        "children":[
+            {
+                "type":"rectangle",
+                "id":format!("{id}-icon"),
+                "name":format!("{label} Icon"),
+                "width":16,
+                "height":16
+            },
+            {
+                "type":"text",
+                "id":format!("{id}-label"),
+                "name":format!("{label} Label"),
+                "content":label,
+                "width":"fit_content",
+                "height":"fit_content",
+                "textGrowth":"auto",
+                "fontSize":14
+            }
+        ]
+    })
+}
+
+fn value_by_id<'a>(value: &'a serde_json::Value, id: &str) -> Option<&'a serde_json::Value> {
+    if value.get("id").and_then(serde_json::Value::as_str) == Some(id) {
+        return Some(value);
+    }
+    value
+        .get("children")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|children| children.iter().find_map(|child| value_by_id(child, id)))
+}
+
+#[test]
+fn clipped_horizontal_category_scroller_preserves_hug_pills_across_geometry_passes() {
+    use crate::test_support::VecDocSink;
+    use crate::types::DocSink;
+    use jian_ops_schema::node::PenNode;
+    use op_editor_core::PenNodeExt;
+
+    let pills = vec![
+        category_pill("stays", "Stays"),
+        category_pill("experiences", "Experiences"),
+        category_pill("dining", "Dining"),
+        category_pill("nature", "Nature"),
+        category_pill("hidden-gems", "Hidden Gems"),
+    ];
+    let root: PenNode = serde_json::from_value(json!({
+        "type":"frame",
+        "id":"root",
+        "name":"Explore",
+        "width":375,
+        "height":844,
+        "layout":"vertical",
+        "children":[{
+            "type":"frame",
+            "id":"viewport",
+            "name":"Category Rail Scroll Wrapper",
+            "width":"fill_container",
+            "height":"fit_content",
+            "layout":"horizontal",
+            "clipContent":true,
+            "children":[{
+                "type":"frame",
+                "id":"rail",
+                "name":"Category Rail Inner",
+                "width":"fill_container",
+                "height":"fit_content",
+                "layout":"horizontal",
+                "gap":12,
+                "padding":[4,24],
+                "justifyContent":"space_between",
+                "alignItems":"center",
+                "clipContent":false,
+                "children":pills
+            }]
+        }]
+    }))
+    .expect("valid category scroller fixture");
+
+    let mut sink = VecDocSink::new();
+    assert!(sink.apply(EditorCommand::InsertAuthoredSubtree {
+        nodes: vec![root],
+        parent_id: NodeId::NONE,
+        page_id: None,
+    }));
+
+    // Prove this is a real regression fixture, not merely a scroller-shaped
+    // tree: the resolved tail pill lies past the fill-width inner rail and the
+    // five rigid pills are collectively overfull. Without inherited scroller
+    // context, frame-overflow and row-overfull both have evidence to mutate it.
+    let before = resolved_rects(sink.state());
+    let rail_rect = before.get("rail").expect("rail resolves");
+    let tail_rect = before.get("hidden-gems").expect("tail pill resolves");
+    assert!(tail_rect.x + tail_rect.w > rail_rect.x + rail_rect.w + TEXT_OVERFLOW_EPS);
+    let pill_widths: f64 = ["stays", "experiences", "dining", "nature", "hidden-gems"]
+        .iter()
+        .map(|id| before.get(*id).expect("pill resolves").w)
+        .sum();
+    assert!(pill_widths + 4.0 * 12.0 > rail_rect.w - 48.0 + ROW_OVERFULL_EPS);
+
+    for pass in 1..=3 {
+        assert_eq!(
+            geometry_validate_and_fix(&mut sink, "root"),
+            0,
+            "intentional scroller must remain untouched on pass {pass}"
+        );
+    }
+
+    let root = sink
+        .state()
+        .active_children()
+        .iter()
+        .find(|node| node.id_str() == "root")
+        .expect("root remains present");
+    let value = serde_json::to_value(root).expect("root serializes");
+    assert_eq!(
+        value_by_id(&value, "rail").unwrap()["width"],
+        "fill_container"
+    );
+    assert_eq!(
+        value_by_id(&value, "rail").unwrap()["justifyContent"],
+        "space_between"
+    );
+    for id in ["stays", "experiences", "dining", "nature", "hidden-gems"] {
+        assert_eq!(
+            value_by_id(&value, id).unwrap()["width"],
+            "fit_content",
+            "{id} must not be flexified"
+        );
+        let label = value_by_id(&value, &format!("{id}-label")).unwrap();
+        assert_eq!(
+            label["width"], "fit_content",
+            "{id} label must keep hug width"
+        );
+        assert_eq!(
+            label["textGrowth"], "auto",
+            "{id} label must stay single-line"
+        );
+    }
+}
+
+#[test]
+fn ordinary_vertical_clip_does_not_suppress_text_overflow_repair() {
+    let tree = json!({
+        "type":"frame","id":"clip","width":100,"height":100,
+        "layout":"vertical","clipContent":true,"children":[{
+            "type":"frame","id":"card","width":48,"height":90,"layout":"vertical",
+            "children":[{
+                "type":"text","id":"copy","content":"Long text",
+                "width":"fit_content","textGrowth":"auto"
+            }]
+        }]
+    });
+    let rects = rects(&[
+        ("clip", 0.0, 0.0, 100.0, 100.0),
+        ("card", 0.0, 0.0, 48.0, 90.0),
+        ("copy", 0.0, 0.0, 140.0, 18.0),
+    ]);
+    let mut cmds = Vec::new();
+
+    collect_text_overflow_fixes(&tree, &rects, &mut cmds);
+
+    assert!(cmds.iter().any(|cmd| matches!(
+        cmd,
+        EditorCommand::SetNodeLayoutProp { node_id, property, value: LayoutPropValue::Keyword(k) }
+            if node_id.as_str() == "copy" && property == "width" && k == "fill_container"
+    )));
+}
+
+#[test]
+fn ordinary_horizontal_clipped_card_still_repairs_inner_overflows() {
+    let tree = json!({
+        "type":"frame","id":"card","name":"Media Card","width":120,"height":100,
+        "layout":"horizontal","clipContent":true,"children":[{
+            "type":"frame","id":"content","name":"Card Content","width":"fill_container",
+            "height":"fit_content","layout":"horizontal","gap":8,"children":[
+                {
+                    "type":"frame","id":"visual","name":"Visual","width":"fit_content",
+                    "height":40,"children":[]
+                },
+                {
+                    "type":"text","id":"copy","name":"Copy","content":"Long card copy",
+                    "width":"fit_content","textGrowth":"auto"
+                }
+            ]
+        }]
+    });
+    let rects = rects(&[
+        ("card", 0.0, 0.0, 120.0, 100.0),
+        ("content", 0.0, 0.0, 120.0, 40.0),
+        ("visual", 0.0, 0.0, 140.0, 40.0),
+        ("copy", 148.0, 0.0, 140.0, 18.0),
+    ]);
+
+    let mut text_cmds = Vec::new();
+    collect_text_overflow_fixes(&tree, &rects, &mut text_cmds);
+    assert!(text_cmds.iter().any(|cmd| matches!(
+        cmd,
+        EditorCommand::SetNodeLayoutProp { node_id, property, value: LayoutPropValue::Keyword(k) }
+            if node_id.as_str() == "copy" && property == "width" && k == "fill_container"
+    )));
+
+    let mut frame_cmds = Vec::new();
+    collect_frame_overflow_fixes(&tree, &rects, &mut frame_cmds);
+    assert!(frame_cmds.iter().any(|cmd| matches!(
+        cmd,
+        EditorCommand::SetNodeLayoutProp { node_id, property, value: LayoutPropValue::Keyword(k) }
+            if node_id.as_str() == "visual" && property == "width" && k == "fill_container"
+    )));
+
+    let mut row_cmds = Vec::new();
+    collect_row_overfull_fixes(&tree, &rects, &mut row_cmds, false);
+    assert!(row_cmds.iter().any(|cmd| matches!(
+        cmd,
+        EditorCommand::SetNodeLayoutProp { node_id, property, value: LayoutPropValue::Keyword(k) }
+            if node_id.as_str() == "visual" && property == "width" && k == "fill_container"
+    )));
+}
