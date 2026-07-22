@@ -147,6 +147,80 @@ fn semantic_nav_pins_even_when_narrow() {
 }
 
 #[test]
+fn authored_bottom_tab_role_pins_when_short_page_leaves_device_slack() {
+    let doc = load(
+        r##"{
+        "version": "1.1",
+        "formatVersion": "1.1",
+        "id": "short-app",
+        "app": { "name": "Short App", "version": "1", "id": "short-app" },
+        "pages": [
+            { "id": "canvas", "name": "Canvas", "children": [
+                { "type": "frame", "id": "screen", "screen": "/scenes",
+                  "x": 0, "y": 0, "width": 375, "height": 816,
+                  "fill": [{"type":"solid","color":"#0b0c10"}],
+                  "children": [
+                    { "type": "rectangle", "id": "content", "x": 0, "y": 0,
+                      "width": 375, "height": 710,
+                      "fill": [{"type":"solid","color":"#111111"}] },
+                    { "type": "frame", "id": "nav", "name": "Bottom Navigation Bar",
+                      "role": "bottom-tab-bar", "x": 0, "y": 726,
+                      "width": 375, "height": 80,
+                      "fill": [{"type":"solid","color":"#171717"}] }
+                  ] }
+            ] }
+        ]
+    }"##,
+    );
+
+    let session = enter(&doc);
+    assert!(
+        session.pinned_nav_candidate(false).is_none(),
+        "authored bottom-tab role remains phone-only"
+    );
+    let (id, rect) = session
+        .pinned_nav_candidate(true)
+        .expect("bottom-tab role should pin despite the root's 10px trailing slack");
+    assert_eq!(id, "nav");
+    assert!((rect.origin.y - 726.0).abs() < 0.5);
+    assert!((rect.size.y - 80.0).abs() < 0.5);
+}
+
+#[test]
+fn authored_bottom_tab_role_pins_even_when_flex_layout_overflows_root() {
+    let doc = load(
+        r##"{
+        "version": "1.1",
+        "formatVersion": "1.1",
+        "id": "overflow-app",
+        "app": { "name": "Overflow App", "version": "1", "id": "overflow-app" },
+        "pages": [
+            { "id": "canvas", "name": "Canvas", "children": [
+                { "type": "frame", "id": "screen", "screen": "/settings",
+                  "x": 0, "y": 0, "width": 375, "height": 812,
+                  "fill": [{"type":"solid","color":"#0b0c10"}],
+                  "children": [
+                    { "type": "rectangle", "id": "content", "x": 0, "y": 0,
+                      "width": 375, "height": 820,
+                      "fill": [{"type":"solid","color":"#111111"}] },
+                    { "type": "frame", "id": "nav", "name": "Bottom Navigation Bar",
+                      "role": "bottom-tab-bar", "x": 0, "y": 841,
+                      "width": 375, "height": 80,
+                      "fill": [{"type":"solid","color":"#171717"}] }
+                  ] }
+            ] }
+        ]
+    }"##,
+    );
+
+    let session = enter(&doc);
+    let (id, _) = session
+        .pinned_nav_candidate(true)
+        .expect("canonical bottom-tab role should pin independent of authored y");
+    assert_eq!(id, "nav");
+}
+
+#[test]
 fn top_nav_with_semantic_role_does_not_pin() {
     let doc = load(
         r##"{

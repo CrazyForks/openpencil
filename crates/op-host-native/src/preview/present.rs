@@ -6,6 +6,7 @@
 
 use super::PreviewSession;
 
+use op_editor_core::PenNodeExt;
 use op_editor_ui::layout_scene::SceneNode;
 use op_editor_ui::widgets::{
     paint_scene_page_with, paint_scene_subtree, PaintCx, PaintSceneOptions,
@@ -66,12 +67,22 @@ impl PreviewSession {
         let bottom_gap =
             |node: &SceneNode| root_bottom - (node.bounds.origin.y + node.bounds.size.y);
 
+        // `role="bottom-tab-bar"` is OpenPencil's canonical authored
+        // contract. Once a direct child carries it, App Mode owns its
+        // placement: pin it even when a short/overflowing flex layout left
+        // the authored y away from the root's bottom edge.
+        for child in &root.children {
+            if valid(child) && self.node_has_bottom_tab_role(&child.id) {
+                return Some((child.id.clone(), child.bounds));
+            }
+        }
+
         for child in &root.children {
             if !valid(child) {
                 continue;
             }
             let gap = bottom_gap(child);
-            if (-1.0..=40.0).contains(&gap) && self.node_is_semantic_nav(&child.id) {
+            if (-1.0..=40.0).contains(&gap) && self.node_has_nav_semantics(&child.id) {
                 return Some((child.id.clone(), child.bounds));
             }
         }
@@ -119,18 +130,19 @@ impl PreviewSession {
         None
     }
 
-    /// Join a scene id to its runtime schema node to inspect semantics.
-    fn node_is_semantic_nav(&self, id: &str) -> bool {
-        let Some(document) = self.runtime.document.as_ref() else {
-            return false;
-        };
-        let Some(key) = document.tree.by_id.get(id).copied() else {
-            return false;
-        };
-        let Some(node) = document.tree.nodes.get(key) else {
-            return false;
-        };
-        node_semantics_role_is_nav(&node.schema)
+    fn schema_node(&self, id: &str) -> Option<&jian_ops_schema::node::PenNode> {
+        let document = self.runtime.document.as_ref()?;
+        let key = document.tree.by_id.get(id).copied()?;
+        let node = document.tree.nodes.get(key)?;
+        Some(&node.schema)
+    }
+
+    fn node_has_bottom_tab_role(&self, id: &str) -> bool {
+        self.schema_node(id).is_some_and(node_role_is_bottom_nav)
+    }
+
+    fn node_has_nav_semantics(&self, id: &str) -> bool {
+        self.schema_node(id).is_some_and(node_semantics_role_is_nav)
     }
 
     /// Paint the framed root in a scrolled pass, then paint an optional
@@ -265,6 +277,10 @@ fn subtree_contains(node: &SceneNode, id: &str) -> bool {
             .children
             .iter()
             .any(|child| subtree_contains(child, id))
+}
+
+fn node_role_is_bottom_nav(node: &jian_ops_schema::node::PenNode) -> bool {
+    node.base().role.as_deref() == Some("bottom-tab-bar")
 }
 
 fn node_semantics_role_is_nav(node: &jian_ops_schema::node::PenNode) -> bool {

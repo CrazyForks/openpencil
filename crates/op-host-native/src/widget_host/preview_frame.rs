@@ -192,8 +192,16 @@ pub(crate) fn compute_frame_geometry(
         frame.origin.x + (frame.size.x - root_scene.size.x * fit) / 2.0 - root_scene.origin.x * fit,
         frame.origin.y - root_scene.origin.y * fit,
     );
-    let content_h = root_scene.size.y;
-    let root_bottom = root_scene.origin.y + root_scene.size.y;
+    // A generated flex root may retain its authored height even when its
+    // bottom tab bar resolves below that edge. Track the effective scene
+    // extent so the pinned-nav scroll range can still expose every item
+    // before the bar.
+    let content_h = nav_scene.map_or(root_scene.size.y, |nav| {
+        root_scene
+            .size
+            .y
+            .max(nav.origin.y + nav.size.y - root_scene.origin.y)
+    });
     let pinned = nav_scene.map(|nav| {
         let strip = Rect {
             origin: Point2D::new(
@@ -225,9 +233,10 @@ pub(crate) fn compute_frame_geometry(
     let (nav_top, viewport_h) = match &pinned {
         Some(pinned) => {
             let nav_h = pinned.node_scene.size.y;
-            let nav_bottom = pinned.node_scene.origin.y + nav_h;
-            let gap = (root_bottom - nav_bottom).max(0.0);
-            (content_h - nav_h - gap, frame_h - nav_h - status_h)
+            (
+                (pinned.node_scene.origin.y - root_scene.origin.y).max(0.0),
+                frame_h - nav_h - status_h,
+            )
         }
         None => (content_h, frame_h - status_h),
     };

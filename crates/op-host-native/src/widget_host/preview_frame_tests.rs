@@ -2,7 +2,7 @@
 
 #![cfg(all(test, not(target_os = "windows")))]
 
-use super::WidgetHostNative;
+use super::{preview_frame::scroll_max, WidgetHostNative};
 use op_editor_core::{EditorState, PreviewDeviceKind};
 use std::sync::{LazyLock, Mutex, MutexGuard};
 
@@ -52,6 +52,33 @@ fn narrow_semantic_nav_doc() -> jian_ops_schema::PenDocument {
     )
 }
 
+fn short_authored_bottom_tab_app_doc() -> jian_ops_schema::PenDocument {
+    load(
+        r##"{
+            "version": "1.1",
+            "formatVersion": "1.1",
+            "id": "short-app",
+            "app": { "name": "Short App", "version": "1", "id": "short-app" },
+            "pages": [{
+                "id": "canvas", "name": "Canvas", "children": [{
+                    "type": "frame", "id": "screen", "screen": "/",
+                    "x": 0, "y": 0, "width": 375, "height": 816,
+                    "fill": [{"type":"solid","color":"#0b0c10"}],
+                    "children": [
+                        { "type": "rectangle", "id": "content", "x": 0, "y": 0,
+                          "width": 375, "height": 710,
+                          "fill": [{"type":"solid","color":"#111111"}] },
+                        { "type": "frame", "id": "nav", "name": "Bottom Navigation Bar",
+                          "role": "bottom-tab-bar", "x": 0, "y": 726,
+                          "width": 375, "height": 80,
+                          "fill": [{"type":"solid","color":"#171717"}] }
+                    ]
+                }]
+            }]
+        }"##,
+    )
+}
+
 fn host_with_doc(doc: jian_ops_schema::PenDocument) -> WidgetHostNative {
     let mut host = WidgetHostNative::new();
     let imported = EditorState::from_document(doc);
@@ -70,6 +97,27 @@ fn enter_preview_infers_and_writes_back_kind() {
     );
     host.exit_preview();
     assert_eq!(host.editor_state.editor_ui.preview_device, None);
+}
+
+#[test]
+fn app_preview_pins_short_authored_bottom_tab_to_device_bottom() {
+    let _guard = test_lock();
+    let mut host = host_with_doc(short_authored_bottom_tab_app_doc());
+    host.last_viewport_w = 800.0;
+    host.last_viewport_h = 900.0;
+    host.enter_preview((800.0, 900.0));
+
+    let frame = host
+        .preview_device_frame
+        .as_ref()
+        .expect("app preview device frame");
+    let pinned = frame.pinned.as_ref().expect("authored bottom tab pinned");
+    let strip_bottom = pinned.strip.origin.y + pinned.strip.size.y;
+    let device_bottom = frame.frame.origin.y + frame.frame.size.y;
+
+    assert_eq!(pinned.node_id, "nav");
+    assert!((strip_bottom - device_bottom).abs() < 0.5);
+    assert_eq!(scroll_max(frame), 0.0, "short app screen must not scroll");
 }
 
 #[test]

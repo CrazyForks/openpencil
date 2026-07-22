@@ -101,6 +101,39 @@ fn scroll_max_uses_nav_top() {
 }
 
 #[test]
+fn short_page_nav_strip_is_flush_with_device_bottom() {
+    let frame = compute_frame_geometry(
+        PreviewDeviceKind::Phone,
+        rect(0.0, 0.0, 2000.0, 2000.0),
+        rect(0.0, 0.0, 375.0, 816.0),
+        Some(rect(0.0, 726.0, 375.0, 80.0)),
+        None,
+    );
+    let nav = frame.pinned.as_ref().expect("nav geometry");
+    let nav_bottom = nav.strip.origin.y + nav.strip.size.y;
+    let device_bottom = frame.frame.origin.y + frame.frame.size.y;
+
+    assert!((nav_bottom - device_bottom).abs() < 0.5);
+    assert_eq!(scroll_max(&frame), 0.0, "short content must not scroll");
+}
+
+#[test]
+fn overflowing_nav_uses_its_actual_top_for_scroll_extent() {
+    let frame = compute_frame_geometry(
+        PreviewDeviceKind::Phone,
+        rect(0.0, 0.0, 2000.0, 2000.0),
+        rect(0.0, 0.0, 375.0, 812.0),
+        Some(rect(0.0, 841.0, 375.0, 80.0)),
+        None,
+    );
+
+    assert!((frame.content_h - 921.0).abs() < 0.5);
+    assert!((frame.nav_top - 841.0).abs() < 0.5);
+    assert!((frame.viewport_h - 764.0).abs() < 0.5);
+    assert!((scroll_max(&frame) - 77.0).abs() < 0.5);
+}
+
+#[test]
 fn floating_nav_gap_is_dead_space() {
     let frame = compute_frame_geometry(
         PreviewDeviceKind::Phone,
