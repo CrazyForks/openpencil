@@ -445,15 +445,14 @@ OpenPencil 免費且開源,開發完全由覺得它好用的人們贊助 —— 
 
 **認可社群：[LINUX DO](https://linux.do/)**
 
-## Star History
+## 第三方 Fork 與致謝
 
-<a href="https://star-history.com/#ZSeven-W/openpencil&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=ZSeven-W/openpencil&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=ZSeven-W/openpencil&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=ZSeven-W/openpencil&type=Date" width="100%" />
- </picture>
-</a>
+感謝上游維護者的工作，OpenPencil 得以在此基礎上建構。以下副本僅為滿足 OpenPencil 特定的整合需求而維護：
+
+- **[casement](https://github.com/ZSeven-W/casement)** — fork 自 **[winit](https://github.com/rust-windowing/winit)**。
+- **[anthropic-agent-sdk](./vendor/anthropic-agent-sdk)** — 自 **[bartolli/anthropic-agent-sdk](https://github.com/bartolli/anthropic-agent-sdk)** 引入存放庫，並作為本地 fork 維護。
+
+各專案仍適用其各自的上游授權條款。
 
 ## 安全評估
 

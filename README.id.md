@@ -445,15 +445,14 @@ Terima kasih kepada **[MrQyun](https://github.com/mrqyun)** — ingin nama Anda 
 
 **Komunitas yang diakui: [LINUX DO](https://linux.do/)**
 
-## Star History
+## Library pihak ketiga hasil fork
 
-<a href="https://star-history.com/#ZSeven-W/openpencil&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=ZSeven-W/openpencil&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=ZSeven-W/openpencil&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=ZSeven-W/openpencil&type=Date" width="100%" />
- </picture>
-</a>
+Kami berterima kasih kepada para pengelola upstream yang karyanya menjadi fondasi OpenPencil. Salinan ini dipelihara hanya untuk kebutuhan integrasi khusus OpenPencil:
+
+- **[casement](https://github.com/ZSeven-W/casement)** — fork dari **[winit](https://github.com/rust-windowing/winit)**.
+- **[anthropic-agent-sdk](./vendor/anthropic-agent-sdk)** — di-vendor dari **[bartolli/anthropic-agent-sdk](https://github.com/bartolli/anthropic-agent-sdk)** dan dipelihara sebagai fork lokal.
+
+Setiap proyek tetap tunduk pada lisensi upstream masing-masing.
 
 ## Penilaian
 

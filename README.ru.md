@@ -445,15 +445,14 @@ OpenPencil бесплатен и open source. Разработка финанс�
 
 **Признанное сообщество: [LINUX DO](https://linux.do/)**
 
-## Star History
+## Форки сторонних библиотек
 
-<a href="https://star-history.com/#ZSeven-W/openpencil&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=ZSeven-W/openpencil&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=ZSeven-W/openpencil&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=ZSeven-W/openpencil&type=Date" width="100%" />
- </picture>
-</a>
+Мы благодарим сопровождающих upstream-проектов, на чьих разработках основан OpenPencil. Эти копии поддерживаются только для специфических потребностей интеграции OpenPencil:
+
+- **[casement](https://github.com/ZSeven-W/casement)** — форк **[winit](https://github.com/rust-windowing/winit)**.
+- **[anthropic-agent-sdk](./vendor/anthropic-agent-sdk)** — включена в репозиторий из **[bartolli/anthropic-agent-sdk](https://github.com/bartolli/anthropic-agent-sdk)** и поддерживается как локальный форк.
+
+К каждому проекту по-прежнему применяются условия его исходной лицензии.
 
 ## Оценки
 

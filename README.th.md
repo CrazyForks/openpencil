@@ -445,15 +445,14 @@ OpenPencil เป็นซอฟต์แวร์ฟรีและโอเพ
 
 **ชุมชนที่ได้รับการยอมรับ: [LINUX DO](https://linux.do/)**
 
-## Star History
+## ไลบรารีจากบุคคลที่สามที่เรา fork
 
-<a href="https://star-history.com/#ZSeven-W/openpencil&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=ZSeven-W/openpencil&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=ZSeven-W/openpencil&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=ZSeven-W/openpencil&type=Date" width="100%" />
- </picture>
-</a>
+ขอขอบคุณผู้ดูแลโครงการต้นทางซึ่งผลงานของพวกเขาเป็นรากฐานของ OpenPencil สำเนาเหล่านี้ได้รับการดูแลเฉพาะเพื่อรองรับความต้องการด้านการผสานรวมของ OpenPencil เท่านั้น:
+
+- **[casement](https://github.com/ZSeven-W/casement)** — fork มาจาก **[winit](https://github.com/rust-windowing/winit)**
+- **[anthropic-agent-sdk](./vendor/anthropic-agent-sdk)** — นำโค้ดมาจาก **[bartolli/anthropic-agent-sdk](https://github.com/bartolli/anthropic-agent-sdk)** และดูแลในรูปแบบ local fork
+
+แต่ละโครงการยังคงอยู่ภายใต้สัญญาอนุญาตของโครงการต้นทาง
 
 ## การประเมิน
 

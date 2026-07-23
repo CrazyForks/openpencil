@@ -445,15 +445,14 @@ OpenPencil मुफ़्त और ओपन-सोर्स है। इस�
 
 **मान्यता प्राप्त समुदाय: [LINUX DO](https://linux.do/)**
 
-## Star History
+## फ़ोर्क की गई तृतीय-पक्ष लाइब्रेरी
 
-<a href="https://star-history.com/#ZSeven-W/openpencil&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=ZSeven-W/openpencil&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=ZSeven-W/openpencil&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=ZSeven-W/openpencil&type=Date" width="100%" />
- </picture>
-</a>
+जिन अपस्ट्रीम मेंटेनरों के काम पर OpenPencil आधारित है, हम उनके आभारी हैं। ये प्रतियाँ केवल OpenPencil की विशिष्ट इंटीग्रेशन आवश्यकताओं के लिए मेंटेन की जाती हैं:
+
+- **[casement](https://github.com/ZSeven-W/casement)** — **[winit](https://github.com/rust-windowing/winit)** से फ़ोर्क।
+- **[anthropic-agent-sdk](./vendor/anthropic-agent-sdk)** — **[bartolli/anthropic-agent-sdk](https://github.com/bartolli/anthropic-agent-sdk)** से वेंडर की गई और लोकल फ़ोर्क के रूप में मेंटेन की गई।
+
+हर प्रोजेक्ट पर उसका संबंधित अपस्ट्रीम लाइसेंस लागू रहता है।
 
 ## मूल्यांकन
 

@@ -445,15 +445,14 @@ OpenPencil ücretsiz ve açık kaynaklıdır. Geliştirme, onu faydalı bulanlar
 
 **Tanınan topluluk: [LINUX DO](https://linux.do/)**
 
-## Star History
+## Forklanan üçüncü taraf kütüphaneleri
 
-<a href="https://star-history.com/#ZSeven-W/openpencil&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=ZSeven-W/openpencil&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=ZSeven-W/openpencil&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=ZSeven-W/openpencil&type=Date" width="100%" />
- </picture>
-</a>
+OpenPencil'in temelini oluşturan çalışmaları sunan upstream bakımcılarına teşekkür ederiz. Bu kopyalar yalnızca OpenPencil'e özgü entegrasyon gereksinimleri için korunmaktadır:
+
+- **[casement](https://github.com/ZSeven-W/casement)** — **[winit](https://github.com/rust-windowing/winit)** fork'u.
+- **[anthropic-agent-sdk](./vendor/anthropic-agent-sdk)** — **[bartolli/anthropic-agent-sdk](https://github.com/bartolli/anthropic-agent-sdk)** kaynağından depoya alınmış ve yerel bir fork olarak korunmaktadır.
+
+Her proje, kendi upstream lisansının koşullarına tabi olmaya devam eder.
 
 ## Değerlendirmeler
 

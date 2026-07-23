@@ -445,15 +445,14 @@ Cảm ơn **[MrQyun](https://github.com/mrqyun)** — muốn tên mình xuất h
 
 **Cộng đồng được công nhận: [LINUX DO](https://linux.do/)**
 
-## Star History
+## Các thư viện bên thứ ba được fork
 
-<a href="https://star-history.com/#ZSeven-W/openpencil&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=ZSeven-W/openpencil&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=ZSeven-W/openpencil&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=ZSeven-W/openpencil&type=Date" width="100%" />
- </picture>
-</a>
+Chúng tôi cảm ơn các nhà bảo trì upstream có công việc làm nền tảng cho OpenPencil. Các bản sao này chỉ được duy trì để đáp ứng nhu cầu tích hợp riêng của OpenPencil:
+
+- **[casement](https://github.com/ZSeven-W/casement)** — được fork từ **[winit](https://github.com/rust-windowing/winit)**.
+- **[anthropic-agent-sdk](./vendor/anthropic-agent-sdk)** — được vendor từ **[bartolli/anthropic-agent-sdk](https://github.com/bartolli/anthropic-agent-sdk)** và duy trì dưới dạng fork cục bộ.
+
+Mỗi dự án vẫn tuân theo giấy phép upstream tương ứng.
 
 ## Đánh giá
 

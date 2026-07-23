@@ -445,15 +445,14 @@ OpenPencil은 무료이며 오픈소스입니다. 개발은 이 도구를 유용
 
 **인정 커뮤니티: [LINUX DO](https://linux.do/)**
 
-## Star History
+## 포크한 서드파티 라이브러리
 
-<a href="https://star-history.com/#ZSeven-W/openpencil&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=ZSeven-W/openpencil&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=ZSeven-W/openpencil&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=ZSeven-W/openpencil&type=Date" width="100%" />
- </picture>
-</a>
+OpenPencil의 기반이 되는 작업을 제공한 업스트림 관리자분들께 감사드립니다. 아래 사본은 OpenPencil 전용 통합 요구 사항을 위해서만 유지 관리합니다:
+
+- **[casement](https://github.com/ZSeven-W/casement)** — **[winit](https://github.com/rust-windowing/winit)**에서 포크.
+- **[anthropic-agent-sdk](./vendor/anthropic-agent-sdk)** — **[bartolli/anthropic-agent-sdk](https://github.com/bartolli/anthropic-agent-sdk)**에서 벤더링하여 로컬 포크로 유지 관리.
+
+각 프로젝트에는 해당 업스트림 라이선스가 계속 적용됩니다.
 
 ## 보안 평가
 

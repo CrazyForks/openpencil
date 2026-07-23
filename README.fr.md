@@ -445,15 +445,14 @@ Merci à **[MrQyun](https://github.com/mrqyun)** — vous voulez voir votre nom 
 
 **Communauté reconnue : [LINUX DO](https://linux.do/)**
 
-## Star History
+## Bibliothèques tierces dérivées
 
-<a href="https://star-history.com/#ZSeven-W/openpencil&Date">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=ZSeven-W/openpencil&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=ZSeven-W/openpencil&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=ZSeven-W/openpencil&type=Date" width="100%" />
- </picture>
-</a>
+Nous remercions les mainteneurs des projets en amont sur lesquels repose OpenPencil. Ces copies ne sont maintenues que pour répondre aux besoins d’intégration propres à OpenPencil :
+
+- **[casement](https://github.com/ZSeven-W/casement)** — un fork de **[winit](https://github.com/rust-windowing/winit)**.
+- **[anthropic-agent-sdk](./vendor/anthropic-agent-sdk)** — intégrée à partir de **[bartolli/anthropic-agent-sdk](https://github.com/bartolli/anthropic-agent-sdk)** et maintenue comme fork local.
+
+Chaque projet reste soumis à sa licence en amont respective.
 
 ## Évaluations
 
