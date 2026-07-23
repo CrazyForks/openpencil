@@ -78,6 +78,7 @@ pub(crate) enum ScriptResponse {
 pub(crate) struct ScriptedLlm {
     responses: Mutex<VecDeque<ScriptResponse>>,
     system_prompts: Mutex<Vec<String>>,
+    user_prompts: Mutex<Vec<String>>,
 }
 
 impl ScriptedLlm {
@@ -85,6 +86,7 @@ impl ScriptedLlm {
         Self {
             responses: Mutex::new(responses.into()),
             system_prompts: Mutex::new(Vec::new()),
+            user_prompts: Mutex::new(Vec::new()),
         }
     }
 
@@ -92,11 +94,16 @@ impl ScriptedLlm {
     pub(crate) fn system_prompts(&self) -> Vec<String> {
         self.system_prompts.lock().unwrap().clone()
     }
+
+    pub(crate) fn user_prompts(&self) -> Vec<String> {
+        self.user_prompts.lock().unwrap().clone()
+    }
 }
 
 impl LlmClient for ScriptedLlm {
     fn call(&self, req: CallRequest) -> BoxStream<'static, Result<LlmChunk, LlmError>> {
         self.system_prompts.lock().unwrap().push(req.system_prompt);
+        self.user_prompts.lock().unwrap().push(req.user_prompt);
         let next = self.responses.lock().unwrap().pop_front();
         let items: Vec<Result<LlmChunk, LlmError>> = match next {
             Some(ScriptResponse::Text(t)) => vec![Ok(LlmChunk::Text(t))],

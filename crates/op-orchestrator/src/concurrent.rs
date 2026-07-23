@@ -295,6 +295,25 @@ pub(crate) async fn run_subtask_retry_ladder(
     };
 
     let outcome_after2 = outcome2.as_ref().unwrap_or(&outcome1);
+    let attempt3_subtask = if outcome_after2
+        .error
+        .as_deref()
+        .is_some_and(is_self_check_rejection)
+    {
+        Subtask {
+            retry_feedback: outcome_after2
+                .error
+                .clone()
+                .map(crate::plan::RetryFeedback::SelfCheck),
+            ..subtask.clone()
+        }
+    } else if attempt2_subtask.retry_feedback.is_some() {
+        // A transient attempt-2 parse/transport failure must not erase the
+        // actionable self-check feedback learned on attempt 1.
+        attempt2_subtask.clone()
+    } else {
+        subtask.clone()
+    };
 
     // Attempt 3 — minimal skills (last-ditch fallback).
     let outcome3 = if retryable(outcome_after2) {
@@ -313,7 +332,7 @@ pub(crate) async fn run_subtask_retry_ladder(
         });
         Some(
             run_subtask_with_reveal_at(
-                subtask,
+                &attempt3_subtask,
                 plan,
                 request,
                 llm,

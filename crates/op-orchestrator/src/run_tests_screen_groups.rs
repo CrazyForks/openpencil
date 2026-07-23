@@ -286,11 +286,11 @@ fn three_screen_groups_run_concurrently_and_land_correct_content() {
     }
 }
 
-/// One screen group's subtask fails ALL attempts (main ladder + the
-/// end-of-run salvage retry) while the other two groups succeed — the
-/// failure must stay ISOLATED to its own root; it must never abort or empty
-/// out its siblings' content, and its own (now-empty) scaffold root must
-/// still survive (only an ALL-roots-empty run deletes scaffolding).
+/// One screen group's subtask hits a terminal policy failure while the other
+/// two groups succeed — the failure must stay ISOLATED to its own root; it
+/// must never abort or empty out its siblings' content, and its own (now-empty)
+/// scaffold root must still survive (only an ALL-roots-empty run deletes
+/// scaffolding).
 #[test]
 fn one_group_failure_does_not_take_down_the_others() {
     let llm = ScriptedLlm::new(vec![
@@ -303,12 +303,6 @@ fn one_group_failure_does_not_take_down_the_others() {
             aborted: false,
         }),
         ScriptResponse::Text(node_json("p")),
-        // The end-of-run salvage pass retries every zero-node subtask
-        // regardless of why it failed — one more slot, kept failing.
-        ScriptResponse::Fail(LlmError {
-            message: "content blocked by policy".into(),
-            aborted: false,
-        }),
     ]);
     let mut sink = VecDocSink::new();
     let mut progress = Vec::new();
@@ -376,20 +370,17 @@ fn one_group_failure_does_not_take_down_the_others() {
         "the other two subtasks succeed"
     );
     assert!(
-        progress.iter().any(|event| {
+        !progress.iter().any(|event| {
             matches!(
-                event,
-                Progress::WorkerScoped(worker)
-                    if worker.group_idx == 1
-                        && worker.screen == "Library"
-                        && matches!(worker.event.as_ref(), Progress::SubtaskRetry {
-                            id,
-                            attempt: 4,
-                            ..
-                        } if id == "library-body")
+                progress_event(event),
+                Progress::SubtaskRetry {
+                    id,
+                    attempt: 4,
+                    ..
+                } if id == "library-body"
             )
         }),
-        "salvage retry must remain on Library's worker transcript"
+        "a non-retryable policy failure must not enter the salvage pass"
     );
     assert!(
         progress.iter().any(|event| {
@@ -401,7 +392,7 @@ fn one_group_failure_does_not_take_down_the_others() {
                             if id == "library-body")
             )
         }),
-        "salvage terminal failure must remain on Library's worker transcript"
+        "the terminal policy failure must remain on Library's worker transcript"
     );
 }
 

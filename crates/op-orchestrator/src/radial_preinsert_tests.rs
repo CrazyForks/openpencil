@@ -278,19 +278,12 @@ fn non_square_wrapper_and_padded_wrapper_are_now_centred_instead_of_retried() {
 
 #[test]
 fn explicit_but_unrepairable_radial_shapes_are_rejected_without_guessing() {
-    let cases = [
-        {
-            let mut ring = fixed_ring(Some("horizontal"));
-            ring["width"] = json!("fill_container");
-            ring
-        },
-        {
-            let mut ring = fixed_ring(Some("horizontal"));
-            ring["children"][1]["width"] = json!(60);
-            ring["children"][1]["height"] = json!(60);
-            ring
-        },
-    ];
+    let cases = [{
+        let mut ring = fixed_ring(Some("horizontal"));
+        ring["children"][1]["width"] = json!(60);
+        ring["children"][1]["height"] = json!(60);
+        ring
+    }];
 
     for (index, ring) in cases.into_iter().enumerate() {
         let mut nodes: Vec<PenNode> =
@@ -437,7 +430,7 @@ fn unmeasurable_nested_centre_content_is_retried_instead_of_clipped() {
 }
 
 #[test]
-fn multiple_direct_centre_labels_are_fatal_instead_of_escaping_detection() {
+fn multiple_direct_centre_labels_are_grouped_before_insert() {
     let mut ring = fixed_ring(Some("horizontal"));
     let track = ring["children"][0].clone();
     let progress = ring["children"][1].clone();
@@ -450,7 +443,17 @@ fn multiple_direct_centre_labels_are_fatal_instead_of_escaping_detection() {
     let mut nodes: Vec<PenNode> = serde_json::from_value(json!([ring])).expect("valid ring");
 
     assert!(has_radial_issue(&check_generated_nodes(&nodes, 390.0)));
-    assert!(!auto_fix_fixable_issues(&mut nodes, 390.0));
+    assert!(auto_fix_fixable_issues(&mut nodes, 390.0));
+    let repaired = serde_json::to_value(&nodes).expect("serialize repaired ring");
+    let ring = find_id(&repaired, "ring").expect("ring");
+    let order: Vec<&str> = ring["children"]
+        .as_array()
+        .expect("ring children")
+        .iter()
+        .filter_map(|child| child.get("id").and_then(Value::as_str))
+        .collect();
+    assert_eq!(order, ["ring__radial-centre", "progress", "track"]);
+    assert!(!check_generated_nodes(&nodes, 390.0).has_fatal());
 }
 
 #[test]

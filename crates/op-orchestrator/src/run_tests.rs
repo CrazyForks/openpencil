@@ -821,14 +821,13 @@ fn subtask_non_retryable_error_preserves_failure_context() {
     use crate::types::LlmError;
     let llm = ScriptedLlm::new(vec![
         // planning
-        ScriptResponse::Text(PLAN_JSON.into()),
+        ScriptResponse::Text(MOBILE_PLAN_JSON.into()),
         // subtask hero — attempt 1: HTTP 401 (non-retryable)
         ScriptResponse::Fail(LlmError {
             message: "HTTP 401 Unauthorized".into(),
             aborted: false,
         }),
-        // This response should NOT be consumed — the first error is
-        // non-retryable.
+        // No fallback response: the non-retryable error must end this subtask.
     ]);
     let mut sink = VecDocSink::new();
     let mut on_progress = |_p: Progress| {};
@@ -846,6 +845,7 @@ fn subtask_non_retryable_error_preserves_failure_context() {
         }
         other => panic!("expected auth context in AllFailed, got {other:?}"),
     }
+    assert_eq!(llm.user_prompts().len(), 2);
     assert_eq!(sink.batch_depth, 0);
 }
 

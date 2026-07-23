@@ -10,6 +10,8 @@ use crate::types::DocSink;
 mod radial_repair_force_center;
 #[path = "radial_repair_partial_pair.rs"]
 mod radial_repair_partial_pair;
+#[path = "radial_repair_preinsert_normalize.rs"]
+mod radial_repair_preinsert_normalize;
 
 #[derive(Clone, Copy)]
 struct Rect {
@@ -109,7 +111,8 @@ pub(crate) fn repair_authored_radial_stacks(value: &mut Value) -> bool {
 }
 
 fn repair_authored_radial_node(node: &mut Value) -> bool {
-    let mut changed = match authored_radial_patch(node) {
+    let mut changed = radial_repair_preinsert_normalize::normalize_extended_radial_stack(node);
+    changed |= match authored_radial_patch(node) {
         Some(patch) => apply_authored_radial_patch(node, patch),
         None => radial_repair_force_center::force_concentric_radial_stack(node),
     };

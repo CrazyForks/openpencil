@@ -67,6 +67,7 @@ pub mod role_infer;
 pub(crate) mod role_layout_post_pass;
 pub mod role_post_pass;
 pub mod run;
+mod run_salvage_feedback;
 pub mod scaffold;
 pub mod screen_groups;
 pub(crate) mod section_shell_fill_repair;
@@ -98,9 +99,13 @@ mod mobile_content_rail_tests;
 #[cfg(test)]
 mod prompt_resolved_style_tests;
 #[cfg(test)]
+mod radial_extended_preinsert_tests;
+#[cfg(test)]
 mod radial_preinsert_tests;
 #[cfg(test)]
 mod radial_stub_tests;
+#[cfg(test)]
+mod run_retry_feedback_tests;
 #[cfg(test)]
 mod sidebar_archetype_tests;
 #[cfg(test)]

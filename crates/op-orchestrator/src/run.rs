@@ -597,23 +597,22 @@ impl Orchestrator {
         // provider" → 侧栏子任务整段消失,设计**无侧栏出厂**且无可见信号)。
         // 其余 subtask 跑完后隔了几十秒再给每个失败者最后一次完整尝试 ——
         // 瞬时故障此时多已恢复;仍失败的维持 SubtaskFailed,不再重试。
-        //
-        // 保底策略(2026-07-17 修订,失败-subtask 补救方案自动层第一步):
-        // 此前这里复用 attempt-1 的设置(reduced_complexity=false,
-        // minimal_skills=false)——但 attempt 1-3 已经把全/降/minimal 三档都
-        // 试过仍失败,原样重复 attempt-1 是信息量最低的选择:对瞬时故障(网络
-        // 抖动、供应商偶发空回复)没有差别,但对确定性失败(self-check 拒绝、
-        // 解析失败)必然原样重现。改成 attempt-3 的 minimal_skills 设置——
-        // 缩小技能集后的 script-gen 协议是"保底"路径,给瞬时故障同样的恢复
-        // 窗口,同时让 CORRECTNESS 类失败更可能至少拿到非零内容而不是重复
-        // 落空。预算上限不变:仍是每 subtask 最多 1 次 salvage 尝试。
+        // Reuse attempt 3's minimal skill tier and persisted subtask feedback.
+        // This keeps deterministic self-check guidance while still giving
+        // transient provider failures one final recovery window.
         if !salvage.is_empty() && !abort.is_set() {
             for (subtask_index, outcome_index) in salvage {
                 if abort.is_set() {
                     aborted_mid = true;
                     break;
                 }
-                let subtask = &plan.subtasks[subtask_index];
+                if !crate::run_salvage_feedback::should_salvage(outcomes.get(outcome_index)) {
+                    continue;
+                }
+                let subtask = crate::run_salvage_feedback::subtask_for_salvage(
+                    outcomes.get(outcome_index),
+                    &plan.subtasks[subtask_index],
+                );
                 on_progress(scope_progress_for_subtask(
                     &groups,
                     &group_identities,
@@ -624,8 +623,8 @@ impl Orchestrator {
                         reason: "salvage pass after transient failures".into(),
                     },
                 ));
-                let outcome = run_subtask_with_reveal_at(
-                    subtask,
+                let mut outcome = run_subtask_with_reveal_at(
+                    &subtask,
                     &plan,
                     &request,
                     llm,
@@ -650,17 +649,17 @@ impl Orchestrator {
                     ));
                     outcomes[outcome_index] = outcome;
                 } else {
+                    let error = crate::run_salvage_feedback::finalize_failed_salvage(&mut outcome);
                     on_progress(scope_progress_for_subtask(
                         &groups,
                         &group_identities,
                         subtask_index,
                         Progress::SubtaskFailed {
                             id: subtask.id.clone(),
-                            error: outcome
-                                .error
-                                .unwrap_or_else(|| "salvage attempt still empty".into()),
+                            error,
                         },
                     ));
+                    outcomes[outcome_index] = outcome;
                 }
             }
             zero_node_failure = outcomes.iter().any(|o| o.node_count == 0);

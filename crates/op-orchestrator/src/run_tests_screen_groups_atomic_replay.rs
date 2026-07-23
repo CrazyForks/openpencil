@@ -70,8 +70,7 @@ fn failed_subtask_does_not_replay_or_duplicate_prior_group_buffer() {
         ScriptResponse::Text(node_json("s1")),
         ScriptResponse::Text(node_json("l1")),
         ScriptResponse::Fail(blocked()),
-        // End-of-run salvage retries the failed Search Two once.
-        ScriptResponse::Fail(blocked()),
+        // The policy failure is non-retryable and must skip salvage.
     ]);
     let mut sink = VecDocSink::new();
 
