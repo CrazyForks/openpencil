@@ -10,11 +10,19 @@ use crate::dashboard_columns::{
 use crate::plan::{OrchestratorPlan, Region, Subtask};
 use crate::types::DesignRequest;
 
+#[path = "plan_home_intent.rs"]
+mod plan_home_intent;
+use plan_home_intent::plan_is_app_home_screen;
+
 // multiscreen-fanout-break fix (item A) — screen-grouping tests, split out
 // to keep this file's inline `mod tests` from crossing the 800-line cap.
 #[cfg(test)]
 #[path = "plan_normalize_screen_groups_tests.rs"]
 mod tests_screen_groups;
+
+#[cfg(test)]
+#[path = "plan_normalize_nav_tests.rs"]
+mod tests_nav;
 
 /// 规范化产出的派生信息。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,12 +67,7 @@ fn strip_status_bar_fragments(text: &str) -> Option<String> {
 
 fn prompt_requests_bottom_nav(prompt: &str) -> bool {
     let hay = prompt.to_lowercase();
-    let negated = hay.contains("no bottom nav")
-        || hay.contains("without bottom nav")
-        || hay.contains("without bottom navigation")
-        || hay.contains("不要底部导航")
-        || hay.contains("不需要底部导航");
-    if negated {
+    if prompt_forbids_bottom_nav(prompt) {
         return false;
     }
     hay.contains("bottom nav")
@@ -75,6 +78,15 @@ fn prompt_requests_bottom_nav(prompt: &str) -> bool {
         || hay.contains("tabbar")
         || hay.contains("底部导航")
         || hay.contains("底栏")
+}
+
+fn prompt_forbids_bottom_nav(prompt: &str) -> bool {
+    let hay = prompt.to_lowercase();
+    hay.contains("no bottom nav")
+        || hay.contains("without bottom nav")
+        || hay.contains("without bottom navigation")
+        || hay.contains("不要底部导航")
+        || hay.contains("不需要底部导航")
 }
 
 fn is_bottom_nav_subtask(st: &Subtask) -> bool {
@@ -95,6 +107,10 @@ fn is_bottom_nav_subtask(st: &Subtask) -> bool {
 }
 
 fn ensure_requested_bottom_nav_subtask(plan: &mut OrchestratorPlan, req: &DesignRequest) {
+    if prompt_forbids_bottom_nav(&req.prompt) {
+        plan.subtasks.retain(|st| !is_bottom_nav_subtask(st));
+        return;
+    }
     if plan.subtasks.iter().any(is_bottom_nav_subtask) {
         return;
     }
@@ -127,25 +143,6 @@ fn ensure_requested_bottom_nav_subtask(plan: &mut OrchestratorPlan, req: &Design
         existing_section_labels: None,
         retry_feedback: None,
     });
-}
-
-/// A multi-section mobile plan whose root frame is named like an app
-/// home/main/feed screen — the shape whose bottom tab bar is mandatory.
-fn plan_is_app_home_screen(plan: &OrchestratorPlan) -> bool {
-    if plan.subtasks.len() < 3 {
-        return false;
-    }
-    let name = plan.root_frame.name.to_lowercase();
-    [
-        "home",
-        "main screen",
-        "feed",
-        "discover",
-        "browse",
-        "dashboard",
-    ]
-    .iter()
-    .any(|k| name.contains(k))
 }
 
 /// 就地规范化 `plan`:
