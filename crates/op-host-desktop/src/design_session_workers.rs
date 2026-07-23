@@ -175,8 +175,17 @@ fn primary_design_message_index(messages: &[ChatMessage]) -> Option<usize> {
         .skip(current_design_turn_start(messages))
         .find(|(_, message)| {
             message.role == ChatRole::Assistant
-                && message.streaming
                 && message.design_worker_group.is_none()
+                // The CLI-standard router parks a companion ChatSession beside
+                // the real DesignSession. At terminal time that chat channel
+                // can disconnect first and clear `streaming` before the design
+                // pump drains ValidationDone + RunSummary. Once typed design
+                // activities exist they are the durable ownership marker; the
+                // launch-time request marker also covers a fast run whose first
+                // progress batch arrives after that disconnect.
+                && (message.streaming
+                    || !message.activities.is_empty()
+                    || message.design_request_json_for_retry.is_some())
         })
         .map(|(index, _)| index)
 }
@@ -218,7 +227,13 @@ fn current_design_message_indices(messages: &[ChatMessage]) -> Vec<usize> {
         .iter()
         .enumerate()
         .skip(current_design_turn_start(messages))
-        .filter(|(_, message)| message.role == ChatRole::Assistant && message.streaming)
+        .filter(|(_, message)| {
+            message.role == ChatRole::Assistant
+                && (message.streaming
+                    || message.design_worker_group.is_some()
+                    || !message.activities.is_empty()
+                    || message.design_request_json_for_retry.is_some())
+        })
         .map(|(index, _)| index)
         .collect();
     if !current.is_empty() {
@@ -228,6 +243,36 @@ fn current_design_message_indices(messages: &[ChatMessage]) -> Vec<usize> {
     // Manual retry can reopen a failed activity in an older turn. When the
     // latest user turn has no streaming bubble, fall back to the globally
     // streaming design/activity bubble so its disconnect can close that row.
+    messages
+        .iter()
+        .enumerate()
+        .filter(|(_, message)| {
+            message.role == ChatRole::Assistant
+                && message.streaming
+                && (message.design_worker_group.is_some() || !message.activities.is_empty())
+        })
+        .map(|(index, _)| index)
+        .collect()
+}
+
+fn current_owned_design_message_indices(messages: &[ChatMessage]) -> Vec<usize> {
+    // Do not use `design_request_json_for_retry` here: CLI-standard stashes it
+    // before classifying the turn, so ordinary Chat and Modify bubbles have it
+    // while their deliberately-unused DesignSession disconnects.
+    let current: Vec<_> = messages
+        .iter()
+        .enumerate()
+        .skip(current_design_turn_start(messages))
+        .filter(|(_, message)| {
+            message.role == ChatRole::Assistant
+                && (message.design_worker_group.is_some() || !message.activities.is_empty())
+        })
+        .map(|(index, _)| index)
+        .collect();
+    if !current.is_empty() {
+        return current;
+    }
+
     messages
         .iter()
         .enumerate()
@@ -413,7 +458,11 @@ pub(super) fn finish_disconnected_design_messages(
     messages: &mut [ChatMessage],
     locale: Locale,
 ) -> bool {
-    let indices = current_design_message_indices(messages);
+    // Unlike an explicit Done payload, a bare disconnect can come from the
+    // unused DesignSession parked beside an ordinary CLI chat request. Require
+    // durable design ownership here so that channel cannot terminate the real
+    // plain-chat bubble.
+    let indices = current_owned_design_message_indices(messages);
     for &index in &indices {
         let had_active_activity = messages[index].activities.iter().any(|activity| {
             matches!(

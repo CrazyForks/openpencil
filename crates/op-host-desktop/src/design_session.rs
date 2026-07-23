@@ -555,6 +555,10 @@ mod tests;
 #[path = "design_session_worker_tests.rs"]
 mod worker_tests;
 
+#[cfg(test)]
+#[path = "design_session_terminal_tests.rs"]
+mod terminal_tests;
+
 /// Render a provider quota-exhaustion error (HTTP 429 with an
 /// `AccountQuotaExceeded`-style body) as one human sentence instead of
 /// raw JSON. Extracts the reset timestamp when the provider names one
