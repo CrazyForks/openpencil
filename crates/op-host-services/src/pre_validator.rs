@@ -43,7 +43,11 @@
 //! If a future detector emits a stroke with non-solid fills or per-side
 //! thickness, extend the translation or report a gap.
 
-use op_design_lint::plan::{PlannedAction, PlannedFix};
+use jian_ops_schema::node::{container::LayoutMode, PenNode};
+use op_design_lint::{
+    plan::{PlannedAction, PlannedFix},
+    IssueCategory,
+};
 use op_editor_core::{EditorCommand, EditorState, NodeId};
 use op_orchestrator::{DocSink, PreValidationResult, PreValidator};
 
@@ -90,6 +94,9 @@ impl PreValidator for LintPreValidator {
 }
 
 fn should_skip_scroller_layout_fix(fix: &PlannedFix, state: &EditorState) -> bool {
+    if is_safe_leading_scroller_rail_fix(fix, state) {
+        return false;
+    }
     matches!(
         fix.action,
         PlannedAction::SetPadding(_) | PlannedAction::SetHeightFitContent
@@ -97,6 +104,52 @@ fn should_skip_scroller_layout_fix(fix: &PlannedFix, state: &EditorState) -> boo
         state,
         &NodeId::new(fix.node_id.clone()),
     )
+}
+
+fn is_safe_leading_scroller_rail_fix(fix: &PlannedFix, state: &EditorState) -> bool {
+    if fix.category != IssueCategory::EdgeSectionPadding {
+        return false;
+    }
+    let PlannedAction::SetPadding(value) = &fix.action else {
+        return false;
+    };
+    let Some(values) = value.as_array() else {
+        return false;
+    };
+    let [top, right, bottom, left] = values.as_slice() else {
+        return false;
+    };
+    if top.as_f64().is_none()
+        || bottom.as_f64().is_none()
+        || right
+            .as_f64()
+            .is_none_or(|right| right.abs() > f64::EPSILON)
+        || left
+            .as_f64()
+            .is_none_or(|left| !(16.0..=28.0).contains(&left))
+    {
+        return false;
+    }
+    op_editor_core::walkers::find_node(state.active_children(), &NodeId::new(fix.node_id.clone()))
+        .is_some_and(is_intentional_horizontal_scroller_node)
+}
+
+fn is_intentional_horizontal_scroller_node(node: &PenNode) -> bool {
+    match node {
+        PenNode::Frame(node) => {
+            node.container.layout == Some(LayoutMode::Horizontal)
+                && node.container.clip_content == Some(true)
+        }
+        PenNode::Group(node) => {
+            node.container.layout == Some(LayoutMode::Horizontal)
+                && node.container.clip_content == Some(true)
+        }
+        PenNode::Rectangle(node) => {
+            node.container.layout == Some(LayoutMode::Horizontal)
+                && node.container.clip_content == Some(true)
+        }
+        _ => false,
+    }
 }
 
 /// Translate one `PlannedFix` into the `EditorCommand`(s) needed to apply it.
@@ -452,7 +505,7 @@ mod tests {
     }
 
     #[test]
-    fn pre_validation_preserves_scroller_but_repairs_regular_sibling() {
+    fn pre_validation_repairs_scroller_leading_edge_and_regular_sibling() {
         let doc: jian_ops_schema::PenDocument = serde_json::from_str(
             r##"{
                 "version":"1.0",
@@ -491,8 +544,8 @@ mod tests {
         let result = LintPreValidator.run_pre_validation_fixes(&mut sink);
 
         assert_eq!(
-            result.total, 1,
-            "the scroller must be protected while its regular sibling gets a page rail"
+            result.total, 2,
+            "the scroller gets only its safe leading rail and the regular sibling gets a symmetric rail"
         );
         let root = op_editor_core::walkers::find_node(
             sink.state().active_children(),
@@ -509,6 +562,15 @@ mod tests {
         assert_eq!(
             serde_json::to_value(summary).unwrap()["padding"],
             serde_json::json!([0.0, 24.0, 0.0, 24.0])
+        );
+        let viewport = op_editor_core::walkers::find_node(
+            sink.state().active_children(),
+            &op_editor_core::NodeId::new("viewport"),
+        )
+        .expect("viewport exists");
+        assert_eq!(
+            serde_json::to_value(viewport).unwrap()["padding"],
+            serde_json::json!([0.0, 0.0, 0.0, 24.0])
         );
         let label = op_editor_core::walkers::find_node(
             sink.state().active_children(),
@@ -566,7 +628,7 @@ mod tests {
 
         let result = LintPreValidator.run_pre_validation_fixes(&mut sink);
 
-        assert_eq!(result.total, 1);
+        assert_eq!(result.total, 2);
         let header = op_editor_core::walkers::find_node(
             sink.state().active_children(),
             &op_editor_core::NodeId::new("hourly-header"),
@@ -581,6 +643,104 @@ mod tests {
             &op_editor_core::NodeId::new("hourly-scroll"),
         )
         .expect("scroller exists");
-        assert!(serde_json::to_value(scroller).unwrap()["padding"].is_null());
+        assert_eq!(
+            serde_json::to_value(scroller).unwrap()["padding"],
+            serde_json::json!([0.0, 0.0, 0.0, 24.0])
+        );
+    }
+
+    #[test]
+    fn pre_validation_repairs_fit_content_mobile_screen_sections() {
+        let doc: jian_ops_schema::PenDocument = serde_json::from_str(
+            r##"{
+                "version":"1.0",
+                "children":[{
+                    "type":"frame","id":"root","width":390,"height":"fit_content","layout":"vertical",
+                    "children":[
+                        {"type":"frame","id":"status","role":"status-bar","height":44},
+                        {
+                            "type":"frame","id":"unpadded","children":[{
+                                "type":"text","id":"title","content":"Title"
+                            }]
+                        },
+                        {
+                            "type":"frame","id":"established","padding":[0,24],"children":[{
+                                "type":"text","id":"body","content":"Body"
+                            }]
+                        },
+                        {"type":"frame","id":"nav","role":"bottom-tab-bar","height":72}
+                    ]
+                }]
+            }"##,
+        )
+        .expect("fit-content mobile fixture");
+        let mut sink = TestSink::from_doc(doc);
+
+        let result = LintPreValidator.run_pre_validation_fixes(&mut sink);
+
+        assert_eq!(result.total, 1);
+        let unpadded = op_editor_core::walkers::find_node(
+            sink.state().active_children(),
+            &op_editor_core::NodeId::new("unpadded"),
+        )
+        .expect("unpadded section exists");
+        assert_eq!(
+            serde_json::to_value(unpadded).unwrap()["padding"],
+            serde_json::json!([0.0, 24.0, 0.0, 24.0])
+        );
+    }
+
+    #[test]
+    fn pre_validation_preserves_media_overlay_and_repairs_image_scroller() {
+        let doc: jian_ops_schema::PenDocument = serde_json::from_str(
+            r##"{
+                "version":"1.0",
+                "children":[{
+                    "type":"frame","id":"root","width":375,"height":812,"layout":"vertical",
+                    "children":[
+                        {
+                            "type":"frame","id":"media-overlay","width":"fill_container","layout":"none",
+                            "children":[
+                                {"type":"image","id":"cover","width":"fill_container","height":240,"src":"cover.png"},
+                                {"type":"text","id":"overlay-copy","content":"Featured story"}
+                            ]
+                        },
+                        {
+                            "type":"frame","id":"image-scroller","width":"fill_container",
+                            "layout":"horizontal","clipContent":true,
+                            "children":[
+                                {"type":"image","id":"image-a","width":120,"height":90,"src":"a.png"},
+                                {"type":"image","id":"image-b","width":120,"height":90,"src":"b.png"}
+                            ]
+                        },
+                        {
+                            "type":"frame","id":"body","padding":[0,24],
+                            "children":[{"type":"text","id":"body-copy","content":"Body"}]
+                        }
+                    ]
+                }]
+            }"##,
+        )
+        .expect("media overlay and image scroller fixture");
+        let mut sink = TestSink::from_doc(doc);
+
+        let result = LintPreValidator.run_pre_validation_fixes(&mut sink);
+
+        assert_eq!(result.total, 1);
+        let overlay = op_editor_core::walkers::find_node(
+            sink.state().active_children(),
+            &op_editor_core::NodeId::new("media-overlay"),
+        )
+        .expect("overlay exists");
+        assert!(serde_json::to_value(overlay).unwrap()["padding"].is_null());
+        let scroller = op_editor_core::walkers::find_node(
+            sink.state().active_children(),
+            &op_editor_core::NodeId::new("image-scroller"),
+        )
+        .expect("image scroller exists");
+        assert_eq!(
+            serde_json::to_value(scroller).unwrap()["padding"],
+            serde_json::json!([0.0, 0.0, 0.0, 24.0])
+        );
     }
 }

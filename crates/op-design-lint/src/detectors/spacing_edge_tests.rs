@@ -205,7 +205,7 @@ fn skips_non_mobile_root_and_non_content_section() {
 }
 
 #[test]
-fn scroller_section_targets_transparent_header_only() {
+fn scroller_section_targets_transparent_header_and_viewport_leading_edge() {
     let root = node(json!({
         "type": "frame", "id": "root",
         "width": 375, "height": 812, "layout": "vertical",
@@ -237,16 +237,19 @@ fn scroller_section_targets_transparent_header_only() {
 
     let issues = detect_edge_section_padding(&root);
 
-    assert_eq!(issues.len(), 1);
+    assert_eq!(issues.len(), 2);
     assert_eq!(issues[0].node_id, "hourly-header");
     assert_eq!(issues[0].suggested_value, json!([0, 24, 0, 24]));
     assert!(issues[0]
         .reason
         .contains("without changing clipped scroll geometry"));
+    assert_eq!(issues[1].node_id, "hourly-scroll");
+    assert_eq!(issues[1].suggested_value, json!([0, 0, 0, 24]));
+    assert!(issues[1].reason.contains("trailing edge flush"));
 }
 
 #[test]
-fn scroller_section_skips_filled_header_and_scroller_geometry() {
+fn scroller_section_skips_filled_header_but_repairs_viewport_leading_edge() {
     let root = node(json!({
         "type": "frame", "id": "root",
         "width": 375, "height": 812, "layout": "vertical",
@@ -273,7 +276,10 @@ fn scroller_section_skips_filled_header_and_scroller_geometry() {
         ]
     }));
 
-    assert!(detect_edge_section_padding(&root).is_empty());
+    let issues = detect_edge_section_padding(&root);
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].node_id, "hourly-scroll");
+    assert_eq!(issues[0].suggested_value, json!([0, 0, 0, 24]));
 }
 
 #[test]
@@ -291,6 +297,98 @@ fn ignores_padding_expression_instead_of_clobbering_design_token() {
                 "children": [{"type": "text", "id": "forecast-title", "content": "7-Day"}]
             }
         ]
+    }));
+
+    assert!(detect_edge_section_padding(&root).is_empty());
+}
+
+#[test]
+fn root_direct_scroller_gets_leading_only_rail() {
+    let root = node(json!({
+        "type": "frame", "id": "root",
+        "width": 375, "height": 812, "layout": "vertical",
+        "children": [
+            {
+                "type": "frame", "id": "viewport",
+                "layout": "horizontal", "clipContent": true,
+                "children": [
+                    {"type":"image","id":"image-a","width":120,"height":90,"src":"a.png"},
+                    {"type":"image","id":"image-b","width":120,"height":90,"src":"b.png"}
+                ]
+            },
+            {
+                "type": "frame", "id": "body", "padding": [0,24],
+                "children": [{"type": "text", "id": "body-title", "content": "Body"}]
+            }
+        ]
+    }));
+
+    let issues = detect_edge_section_padding(&root);
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].node_id, "viewport");
+    assert_eq!(issues[0].suggested_value, json!([0, 0, 0, 24]));
+}
+
+#[test]
+fn fit_content_mobile_screen_is_checked() {
+    let root = node(json!({
+        "type": "frame", "id": "root",
+        "width": 390, "height": "fit_content", "layout": "vertical",
+        "children": [
+            {"type":"frame","id":"status","role":"status-bar","height":44},
+            {
+                "type":"frame","id":"unpadded",
+                "children":[{"type":"text","id":"title","content":"Title"}]
+            },
+            {
+                "type":"frame","id":"established","padding":[0,24],
+                "children":[{"type":"text","id":"body","content":"Body"}]
+            },
+            {"type":"frame","id":"nav","role":"bottom-tab-bar","height":72}
+        ]
+    }));
+
+    let issues = detect_edge_section_padding(&root);
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].node_id, "unpadded");
+    assert_eq!(issues[0].suggested_value, json!([0, 24, 0, 24]));
+}
+
+#[test]
+fn transparent_full_bleed_media_overlay_is_not_inset() {
+    let root = node(json!({
+        "type":"frame","id":"root","width":375,"height":812,"layout":"vertical",
+        "children":[
+            {
+                "type":"frame","id":"media-overlay","width":"fill_container","layout":"none",
+                "children":[
+                    {"type":"image","id":"cover","width":"fill_container","height":240,"src":"cover.png"},
+                    {"type":"text","id":"overlay","content":"Featured story"}
+                ]
+            },
+            {
+                "type":"frame","id":"body","padding":[0,24],
+                "children":[{"type":"text","id":"body-title","content":"Body"}]
+            }
+        ]
+    }));
+
+    assert!(detect_edge_section_padding(&root).is_empty());
+}
+
+#[test]
+fn nested_fit_content_component_without_mobile_chrome_is_not_a_screen() {
+    let root = node(json!({
+        "type":"frame","id":"desktop-root","width":1200,"height":900,"layout":"vertical",
+        "children":[{
+            "type":"frame","id":"component","width":375,"height":"fit_content","layout":"vertical",
+            "children":[
+                {"type":"frame","id":"row-a","children":[{"type":"text","id":"a","content":"A"}]},
+                {"type":"frame","id":"row-b","children":[{"type":"text","id":"b","content":"B"}]},
+                {"type":"frame","id":"row-c","children":[{"type":"text","id":"c","content":"C"}]},
+                {"type":"frame","id":"row-d","padding":[0,24],"children":[{"type":"text","id":"d","content":"D"}]}
+            ]
+        }]
     }));
 
     assert!(detect_edge_section_padding(&root).is_empty());

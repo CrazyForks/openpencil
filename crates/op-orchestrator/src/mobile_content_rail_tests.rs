@@ -87,7 +87,7 @@ fn clipped_scroller_repairs_header_and_leading_edge_only() {
                                            "children":[text("card-t","Kyoto")]}]}]}
              ]},
             {"type":"frame","id":"body","padding":[0,20],"children":[text("body-t","Body")]},
-            {"type":"frame","id":"nav","role":"bottom-tab-bar","height":72}
+            {"type":"frame","id":"nav","role":"bottom-navigation-bar","height":72}
         ]
     }));
 
@@ -102,6 +102,58 @@ fn clipped_scroller_repairs_header_and_leading_edge_only() {
         node_json(&sink, "viewport")["padding"],
         json!([0.0, 0.0, 0.0, 20.0])
     );
+}
+
+#[test]
+fn root_direct_scroller_gets_leading_rail_without_trailing_inset() {
+    let mut sink = insert(json!({
+        "type":"frame","id":"root","width":375,"height":812,"layout":"vertical",
+        "children":[
+            {"type":"frame","id":"status","role":"status-bar","height":44},
+            {"type":"frame","id":"viewport","width":"fill_container","layout":"horizontal",
+             "clipContent":true,"children":[
+                {"type":"frame","id":"row","width":"fit_content","layout":"horizontal",
+                 "children":[
+                    {"type":"image","id":"image-a","width":120,"height":90,"src":"a.png"},
+                    {"type":"image","id":"image-b","width":120,"height":90,"src":"b.png"}
+                 ]}
+             ]},
+            {"type":"frame","id":"body","padding":[0,24],"children":[text("body-t","Body")]},
+            {"type":"frame","id":"nav","role":"bottom-tab-bar","height":72}
+        ]
+    }));
+
+    repair_mobile_content_rails_for_all_roots(&mut sink);
+
+    assert_eq!(
+        node_json(&sink, "viewport")["padding"],
+        json!([0.0, 0.0, 0.0, 24.0])
+    );
+}
+
+#[test]
+fn deeper_scroller_is_not_closed_by_symmetric_ancestor_padding() {
+    let mut sink = insert(json!({
+        "type":"frame","id":"root","width":375,"height":812,"layout":"vertical",
+        "children":[
+            {"type":"frame","id":"status","role":"status-bar","height":44},
+            {"type":"frame","id":"section","width":"fill_container","layout":"vertical",
+             "children":[
+                {"type":"frame","id":"body-wrapper","width":"fill_container","layout":"vertical",
+                 "children":[
+                    {"type":"frame","id":"viewport","width":"fill_container","layout":"horizontal",
+                     "clipContent":true,"children":[text("item","Item")]}
+                 ]}
+             ]},
+            {"type":"frame","id":"body","padding":[0,24],"children":[text("body-t","Body")]},
+            {"type":"frame","id":"nav","role":"bottom-tab-bar","height":72}
+        ]
+    }));
+
+    repair_mobile_content_rails_for_all_roots(&mut sink);
+
+    assert!(node_json(&sink, "section").get("padding").is_none());
+    assert!(node_json(&sink, "viewport").get("padding").is_none());
 }
 
 #[test]
@@ -142,6 +194,125 @@ fn full_bleed_surface_existing_root_rail_and_desktop_are_untouched() {
     assert!(
         token_rail.applied.is_empty(),
         "variable-owned root padding must never be overwritten"
+    );
+}
+
+#[test]
+fn full_bleed_role_and_media_overlay_wrapper_are_untouched() {
+    let mut sink = insert(json!({
+        "type":"frame","id":"root","width":375,"height":812,"layout":"vertical",
+        "children":[
+            {"type":"frame","id":"hero-role","role":"hero","width":"fill_container",
+             "children":[text("hero-role-t","Welcome")]},
+            {"type":"frame","id":"media-overlay","width":"fill_container","layout":"none",
+             "children":[
+                {"type":"image","id":"cover","width":"fill_container","height":240,"src":"cover.png"},
+                text("overlay","Featured story")
+             ]},
+            {"type":"frame","id":"body","padding":[0,24],"children":[text("body-t","Body")]},
+            {"type":"frame","id":"nav","role":"bottom-tab-bar","height":72}
+        ]
+    }));
+
+    repair_mobile_content_rails_for_all_roots(&mut sink);
+
+    assert!(node_json(&sink, "hero-role").get("padding").is_none());
+    assert!(node_json(&sink, "media-overlay").get("padding").is_none());
+    assert!(node_json(&sink, "nav").get("padding").is_none());
+}
+
+#[test]
+fn edge_spanning_rounded_card_gets_a_transparent_rail_wrapper() {
+    let mut sink = insert(json!({
+        "type":"frame","id":"root","width":375,"height":812,"layout":"vertical",
+        "children":[
+            {"type":"frame","id":"status","role":"status-bar","height":44},
+            {"type":"frame","id":"direct-card","name":"Weather Card","role":"card",
+             "width":"fill_container","layout":"vertical","padding":16,"cornerRadius":20,
+             "fill":[{"type":"solid","color":"#181818"}],"children":[
+                {"type":"image","id":"cover","width":"fill_container","height":160,"src":"cover.png"},
+                text("card-t","68°")
+             ]},
+            {"type":"frame","id":"body","padding":[0,24],"children":[text("body-t","Body")]},
+            {"type":"frame","id":"nav","role":"bottom-tab-bar","height":72}
+        ]
+    }));
+
+    repair_mobile_content_rails_for_all_roots(&mut sink);
+
+    let root = sink.state.active_children().first().expect("root");
+    assert_eq!(
+        root.children()
+            .expect("root children")
+            .iter()
+            .map(PenNodeExt::id_str)
+            .collect::<Vec<_>>(),
+        vec!["status", "direct-card__content_rail", "body", "nav"]
+    );
+    let wrapper = node_json(&sink, "direct-card__content_rail");
+    assert_eq!(wrapper["padding"], json!([0.0, 24.0, 0.0, 24.0]));
+    assert_eq!(
+        wrapper["children"][0]["id"], "direct-card",
+        "the surfaced card moves under the rail owner"
+    );
+    assert_eq!(node_json(&sink, "direct-card")["padding"], json!(16.0));
+
+    sink.applied.clear();
+    repair_mobile_content_rails_for_all_roots(&mut sink);
+    assert!(sink.applied.is_empty(), "surface wrapping is idempotent");
+}
+
+#[test]
+fn absolute_surfaced_card_is_not_reparented_into_a_flow_wrapper() {
+    let mut sink = insert(json!({
+        "type":"frame","id":"root","width":375,"height":812,"layout":"vertical",
+        "children":[
+            {"type":"frame","id":"status","role":"status-bar","height":44},
+            {"type":"frame","id":"absolute-card","name":"Floating Card","role":"card",
+             "x":0,"y":120,"width":"fill_container","height":180,"cornerRadius":20,
+             "fill":[{"type":"solid","color":"#181818"}],"children":[text("card-t","Floating")]},
+            {"type":"frame","id":"body","padding":[0,24],"children":[text("body-t","Body")]},
+            {"type":"frame","id":"nav","role":"bottom-tab-bar","height":72}
+        ]
+    }));
+
+    repair_mobile_content_rails_for_all_roots(&mut sink);
+
+    let root = sink.state.active_children().first().expect("root");
+    assert_eq!(
+        root.children()
+            .expect("root children")
+            .iter()
+            .map(PenNodeExt::id_str)
+            .collect::<Vec<_>>(),
+        vec!["status", "absolute-card", "body", "nav"]
+    );
+    assert!(node_json(&sink, "absolute-card").get("padding").is_none());
+}
+
+#[test]
+fn empty_rounded_decorative_surface_remains_full_bleed() {
+    let mut sink = insert(json!({
+        "type":"frame","id":"root","width":375,"height":812,"layout":"vertical",
+        "children":[
+            {"type":"frame","id":"status","role":"status-bar","height":44},
+            {"type":"frame","id":"decorative-surface","width":"fill_container","height":180,
+             "cornerRadius":24,"fill":[{"type":"solid","color":"#181818"}],"children":[]},
+            {"type":"frame","id":"body","padding":[0,24],"children":[text("body-t","Body")]},
+            {"type":"frame","id":"nav","role":"bottom-tab-bar","height":72}
+        ]
+    }));
+
+    repair_mobile_content_rails_for_all_roots(&mut sink);
+
+    let root = sink.state.active_children().first().expect("root");
+    assert_eq!(
+        root.children()
+            .expect("root children")
+            .iter()
+            .map(PenNodeExt::id_str)
+            .collect::<Vec<_>>(),
+        vec!["status", "decorative-surface", "body", "nav"]
     );
 }
 

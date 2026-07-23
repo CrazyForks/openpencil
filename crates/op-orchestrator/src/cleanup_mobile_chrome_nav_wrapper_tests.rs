@@ -388,6 +388,176 @@ fn ambiguous_mixed_wrapper_with_two_nav_rows_is_not_split() {
     assert!(find_node(shell, "tabbar-b").is_some());
 }
 
+#[test]
+fn non_trailing_structural_top_tabs_are_not_promoted_as_bottom_nav() {
+    let mut sink = VecDocSink::new();
+    let tree: PenNode = serde_json::from_value(json!({
+        "type": "frame",
+        "id": "root",
+        "name": "Mobile App",
+        "width": 375,
+        "height": 812,
+        "layout": "vertical",
+        "children": [{
+            "type": "frame",
+            "id": "mixed-shell",
+            "name": "Bottom Navigation Bar",
+            "role": "bottom-tab-bar",
+            "width": "fill_container",
+            "height": "fit_content",
+            "layout": "vertical",
+            "children": [
+                {
+                    "type": "frame",
+                    "id": "top-tabs",
+                    "name": "Header Tabs",
+                    "width": "fill_container",
+                    "height": 56,
+                    "layout": "horizontal",
+                    "children": [
+                        tab("home", "Home", "home"),
+                        tab("search", "Search", "search"),
+                        tab("profile", "Profile", "user")
+                    ]
+                },
+                {
+                    "type": "frame",
+                    "id": "business-content",
+                    "name": "Business Content",
+                    "width": "fill_container",
+                    "height": 300,
+                    "children": [{
+                        "type": "text",
+                        "id": "copy",
+                        "content": "Dashboard content",
+                        "width": "fit_content",
+                        "height": "fit_content"
+                    }]
+                }
+            ]
+        }]
+    }))
+    .expect("top tabs fixture");
+    sink.state.apply(EditorCommand::InsertAuthoredSubtree {
+        nodes: vec![tree],
+        parent_id: NodeId::NONE,
+        page_id: None,
+    });
+    sink.applied.clear();
+
+    crate::cleanup::repair_mobile_structural_chrome_for_all_roots(&mut sink);
+
+    let root = sink.state.active_children().first().expect("root");
+    let root_children = root.children().expect("root children");
+    assert_eq!(root_children.len(), 1);
+    assert_eq!(root_children[0].id_str(), "mixed-shell");
+    assert_eq!(root_children[0].base().role.as_deref(), None);
+    assert_eq!(
+        root_children[0].base().name.as_deref(),
+        Some("App Content"),
+        "the mislabeled outer shell must be demoted instead of collapsed into nav chrome"
+    );
+    assert!(
+        find_node(&root_children[0], "top-tabs").is_some(),
+        "a non-trailing structural header row must stay inside its authored shell"
+    );
+    let shell_json = serde_json::to_value(&root_children[0]).expect("shell serializes");
+    assert_eq!(shell_json["width"], json!("fill_container"));
+    assert_eq!(shell_json["height"], json!("fit_content"));
+    assert_eq!(shell_json["layout"], json!("vertical"));
+    assert!(shell_json["padding"].is_null());
+    let top_tabs = find_node(&root_children[0], "top-tabs").expect("top tabs survive");
+    let top_tabs_json = serde_json::to_value(top_tabs).expect("top tabs serialize");
+    assert_eq!(top_tabs_json["width"], json!("fill_container"));
+    assert_eq!(top_tabs_json["height"], json!(56.0));
+    assert_eq!(top_tabs_json["layout"], json!("horizontal"));
+    assert!(top_tabs_json["padding"].is_null());
+}
+
+#[test]
+fn explicit_horizontal_text_only_bottom_nav_is_not_demoted() {
+    let mut sink = VecDocSink::new();
+    let tree: PenNode = serde_json::from_value(json!({
+        "type":"frame","id":"root","width":375,"height":812,"layout":"vertical",
+        "children":[
+            {"type":"frame","id":"content","height":700},
+            {
+                "type":"frame","id":"nav","name":"Tab Bar","role":"bottom-tab-bar",
+                "width":"fill_container","height":72,"layout":"horizontal",
+                "children":[
+                    {"type":"frame","id":"home-tab","children":[
+                        {"type":"text","id":"home-label","content":"Home"}
+                    ]},
+                    {"type":"frame","id":"saved-tab","children":[
+                        {"type":"text","id":"saved-label","content":"Saved"}
+                    ]}
+                ]
+            }
+        ]
+    }))
+    .expect("explicit text-only nav fixture");
+    sink.state.apply(EditorCommand::InsertAuthoredSubtree {
+        nodes: vec![tree],
+        parent_id: NodeId::NONE,
+        page_id: None,
+    });
+    sink.applied.clear();
+
+    crate::cleanup::repair_mobile_structural_chrome_for_all_roots(&mut sink);
+
+    let root = sink.state.active_children().first().expect("root");
+    let nav = find_node(root, "nav").expect("nav survives");
+    assert_eq!(nav.base().role.as_deref(), Some("bottom-tab-bar"));
+    assert_eq!(nav.base().name.as_deref(), Some("Tab Bar"));
+    let nav_json = serde_json::to_value(nav).expect("nav serializes");
+    assert_eq!(nav_json["width"], json!(375.0));
+    assert_eq!(nav_json["height"], json!(72.0));
+    assert_eq!(nav_json["layout"], json!("horizontal"));
+}
+
+#[test]
+fn explicit_bottom_nav_with_missing_layout_is_repaired_not_demoted() {
+    let mut sink = VecDocSink::new();
+    let tree: PenNode = serde_json::from_value(json!({
+        "type":"frame","id":"root","width":375,"height":812,"layout":"vertical",
+        "children":[
+            {"type":"frame","id":"content","height":700},
+            {
+                "type":"frame","id":"nav","name":"Tab Bar","role":"bottom-tab-bar",
+                "width":"fill_container","height":"fit_content",
+                "children":[
+                    {"type":"frame","id":"home-tab","role":"tab","children":[
+                        {"type":"text","id":"home-label","content":"Home"}
+                    ]},
+                    {"type":"frame","id":"saved-tab","role":"tab","children":[
+                        {"type":"text","id":"saved-label","content":"Saved"}
+                    ]},
+                    {"type":"frame","id":"profile-tab","role":"tab","children":[
+                        {"type":"text","id":"profile-label","content":"Profile"}
+                    ]}
+                ]
+            }
+        ]
+    }))
+    .expect("explicit missing-layout nav fixture");
+    sink.state.apply(EditorCommand::InsertAuthoredSubtree {
+        nodes: vec![tree],
+        parent_id: NodeId::NONE,
+        page_id: None,
+    });
+    sink.applied.clear();
+
+    crate::cleanup::repair_mobile_structural_chrome_for_all_roots(&mut sink);
+
+    let root = sink.state.active_children().first().expect("root");
+    let nav = find_node(root, "nav").expect("nav survives");
+    assert_eq!(nav.base().role.as_deref(), Some("bottom-tab-bar"));
+    let nav_json = serde_json::to_value(nav).expect("nav serializes");
+    assert_eq!(nav_json["width"], json!(375.0));
+    assert_eq!(nav_json["height"], json!(72.0));
+    assert_eq!(nav_json["layout"], json!("horizontal"));
+}
+
 fn tab(id: &str, label: &str, icon: &str) -> serde_json::Value {
     json!({
         "type": "frame",

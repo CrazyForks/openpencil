@@ -70,6 +70,12 @@ pub(crate) fn repair_mobile_structural_chrome_for_all_roots(sink: &mut dyn DocSi
 }
 
 pub(crate) fn repair_mobile_structural_chrome(sink: &mut dyn DocSink, root_id: &str) {
+    // Models occasionally tag a whole content shell as bottom-tab-bar even
+    // though it contains business sections and no legal nested bottom row.
+    // Remove that stale semantic marker before any chrome sizing runs; leaving
+    // it in place would collapse the whole shell to the canonical 72px nav.
+    demote_mislabeled_bottom_nav_shells(sink, root_id);
+
     // Some model turns incorrectly tag a large late-page content shell as the
     // bottom nav, then append the real tab row inside it after unrelated
     // alerts/cards. Split only that unambiguous mixed shell first so the normal
@@ -137,6 +143,68 @@ pub(crate) fn repair_mobile_structural_chrome(sink: &mut dyn DocSink, root_id: &
             patch_json: r#"{"fill":null,"stroke":null,"effects":null,"cornerRadius":0,"width":"fill_container","height":"fill_container","layout":"vertical","gap":4,"padding":[4,0],"justifyContent":"center","alignItems":"center"}"#.to_string(),
             page_id: None,
         });
+    }
+}
+
+fn demote_mislabeled_bottom_nav_shells(sink: &mut dyn DocSink, root_id: &str) {
+    let shell_ids = {
+        let Some(root) = super::find_root(sink.state(), root_id) else {
+            return;
+        };
+        if !super::is_mobile_root(root) {
+            return;
+        }
+        root.children()
+            .into_iter()
+            .flatten()
+            .filter(|child| is_mislabeled_bottom_nav_shell(child))
+            .map(|child| NodeId::new(child.id_str().to_string()))
+            .collect::<Vec<_>>()
+    };
+    for node_id in shell_ids {
+        sink.apply(EditorCommand::PatchNodeData {
+            node_id,
+            patch_json: r#"{"role":null,"name":"App Content"}"#.to_string(),
+            page_id: None,
+        });
+    }
+}
+
+fn is_mislabeled_bottom_nav_shell(shell: &PenNode) -> bool {
+    if !is_bottom_nav_surface(shell, false)
+        || is_structural_bottom_nav_row(shell)
+        || has_horizontal_layout(shell)
+        || has_explicit_nav_item_children(shell)
+    {
+        return false;
+    }
+    let Some(children) = shell.children() else {
+        return false;
+    };
+    if children.len() < 2 {
+        return false;
+    }
+    let last_index = children.len().saturating_sub(1);
+    let has_legal_nested_nav = children
+        .iter()
+        .enumerate()
+        .any(|(index, child)| is_bottom_nav_surface(child, index == last_index));
+    !has_legal_nested_nav && children.iter().any(is_substantial_non_nav_business_sibling)
+}
+
+fn has_explicit_nav_item_children(node: &PenNode) -> bool {
+    node.children().is_some_and(|children| {
+        (3..=5).contains(&children.len()) && children.iter().all(is_bottom_nav_item)
+    })
+}
+
+fn has_horizontal_layout(node: &PenNode) -> bool {
+    use jian_ops_schema::node::container::LayoutMode;
+    match node {
+        PenNode::Frame(node) => node.container.layout == Some(LayoutMode::Horizontal),
+        PenNode::Group(node) => node.container.layout == Some(LayoutMode::Horizontal),
+        PenNode::Rectangle(node) => node.container.layout == Some(LayoutMode::Horizontal),
+        _ => false,
     }
 }
 
@@ -217,9 +285,12 @@ fn mixed_bottom_nav_shell_candidate(
         return None;
     }
     let children = shell.children()?;
+    let last_index = children.len().saturating_sub(1);
     let nested_navs: Vec<&PenNode> = children
         .iter()
-        .filter(|child| is_bottom_nav_surface(child, true))
+        .enumerate()
+        .filter(|(index, child)| is_bottom_nav_surface(child, *index == last_index))
+        .map(|(_, child)| child)
         .collect();
     let [nav] = nested_navs.as_slice() else {
         return None;
@@ -444,10 +515,11 @@ fn nested_bottom_nav_surface(node: &PenNode, allow_structural: bool) -> Option<&
     if children.len() < 2 {
         return None;
     }
-    children.iter().find(|child| {
-        child.is_container()
-            && (is_bottom_nav_surface(child, allow_structural)
-                || is_structural_bottom_nav_row(child))
+    let last_index = children.len().saturating_sub(1);
+    children.iter().enumerate().find_map(|(index, child)| {
+        (child.is_container()
+            && is_bottom_nav_surface(child, allow_structural && index == last_index))
+        .then_some(child)
     })
 }
 

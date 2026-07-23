@@ -2,15 +2,16 @@
 //! `pen-ai-skills/src/diagnostics/detectors-spacing.ts`.
 //!
 //! Two aesthetic detectors share a "mobile-page shape" filter — a `frame`
-//! whose width is 320–480, whose height is `>= 568` and `>= width * 1.5`,
-//! with a `layout` set and `>= 2` children:
+//! whose width is 320–480 and whose numeric height is phone-like, or whose
+//! `fit_content` height carries explicit screen structure, with a `layout`
+//! set and `>= 2` children:
 //! - `detect_edge_section_padding` — root has 0 h-padding and one or more
 //!   direct content sections glue text / icons to the screen edge.
 //! - `detect_stacked_horizontal_padding` — root and a content section both
 //!   carry h-padding, producing a doubled gutter.
 
 use jian_ops_schema::node::{container::LayoutMode, Padding, PenNode};
-use jian_ops_schema::sizing::SizingBehavior;
+use jian_ops_schema::sizing::{SizingBehavior, SizingKeyword};
 use serde_json::Value;
 
 use crate::issue::{FixProperty, Issue, IssueCategory, IssueSeverity};
@@ -117,9 +118,57 @@ fn is_image_only_section(node: &PenNode) -> bool {
     })
 }
 
-fn is_full_bleed_section(node: &PenNode) -> bool {
+fn is_full_bleed_section(node: &PenNode, root_width: f64) -> bool {
     let child_role = role(node).unwrap_or("").to_lowercase();
-    FULL_BLEED_ROLES.contains(&child_role.as_str()) || is_image_only_section(node)
+    FULL_BLEED_ROLES.contains(&child_role.as_str())
+        || is_image_only_section(node)
+        || has_transparent_full_bleed_media_child(node, root_width)
+}
+
+fn has_transparent_full_bleed_media_child(node: &PenNode, root_width: f64) -> bool {
+    is_transparent_container(node)
+        && children(node).iter().any(|child| {
+            let child_role = role(child).unwrap_or("").trim().to_ascii_lowercase();
+            let role_is_media = matches!(
+                child_role.as_str(),
+                "hero" | "banner" | "cover" | "media" | "image-placeholder"
+            );
+            let image_like = matches!(node_kind(child), NodeKind::Image)
+                || serde_json::to_value(child)
+                    .ok()
+                    .and_then(|value| value.get("fill").cloned())
+                    .and_then(|fill| fill.as_array().cloned())
+                    .is_some_and(|fills| {
+                        fills
+                            .iter()
+                            .any(|fill| fill.get("type").and_then(Value::as_str) == Some("image"))
+                    });
+            (role_is_media || image_like) && node_spans_width(child, root_width)
+        })
+}
+
+fn node_spans_width(node: &PenNode, root_width: f64) -> bool {
+    node_width(node).is_some_and(|width| {
+        matches!(width, SizingBehavior::Keyword(SizingKeyword::FillContainer))
+            || matches!(width, SizingBehavior::Number(width) if *width >= root_width - 1.0)
+    })
+}
+
+fn node_width(node: &PenNode) -> Option<&SizingBehavior> {
+    match node {
+        PenNode::Frame(node) => node.container.width.as_ref(),
+        PenNode::Group(node) => node.container.width.as_ref(),
+        PenNode::Rectangle(node) => node.container.width.as_ref(),
+        PenNode::Image(node) => node.width.as_ref(),
+        _ => None,
+    }
+}
+
+fn numeric_width(node: &PenNode) -> Option<f64> {
+    match node_width(node) {
+        Some(SizingBehavior::Number(width)) => Some(*width),
+        _ => None,
+    }
 }
 
 fn has_concrete_zero_horizontal_padding(node: &PenNode) -> bool {
@@ -154,18 +203,32 @@ fn contains_intentional_horizontal_scroller(node: &PenNode) -> bool {
 }
 
 fn is_transparent_container(node: &PenNode) -> bool {
-    matches!(
+    if !matches!(
         node_kind(node),
         NodeKind::Frame | NodeKind::Group | NodeKind::Rectangle
-    ) && node_fills(node).is_none_or(Vec::is_empty)
-        && !has_stroke(node)
+    ) || node_fills(node).is_some_and(|fills| !fills.is_empty())
+        || has_stroke(node)
+    {
+        return false;
+    }
+    serde_json::to_value(node).ok().is_some_and(|value| {
+        let has_effects = value
+            .get("effects")
+            .and_then(Value::as_array)
+            .is_some_and(|effects| !effects.is_empty());
+        let has_radius = value
+            .get("cornerRadius")
+            .and_then(Value::as_f64)
+            .is_some_and(|radius| radius > 0.0);
+        !has_effects && !has_radius
+    })
 }
 
-fn infer_mobile_section_rail(kids: &[PenNode]) -> f64 {
+fn infer_mobile_section_rail(kids: &[PenNode], root_width: f64) -> f64 {
     let candidates: Vec<f64> = kids
         .iter()
         .filter(|child| matches!(node_kind(child), NodeKind::Frame))
-        .filter(|child| !is_full_bleed_section(child))
+        .filter(|child| !is_full_bleed_section(child, root_width))
         .filter_map(|child| {
             let left = get_padding_left(child);
             let right = get_padding_right(child);
@@ -203,6 +266,15 @@ fn suggested_symmetric_padding(node: &PenNode, rail: f64) -> Value {
     ])
 }
 
+fn suggested_leading_padding(node: &PenNode, rail: f64) -> Value {
+    Value::Array(vec![
+        json_number(get_padding_top(node)),
+        json_number(0.0),
+        json_number(get_padding_bottom(node)),
+        json_number(rail),
+    ])
+}
+
 fn push_edge_section_issue(node: &PenNode, rail: f64, reason: String, issues: &mut Vec<Issue>) {
     issues.push(Issue {
         node_id: node_id(node).to_string(),
@@ -215,26 +287,63 @@ fn push_edge_section_issue(node: &PenNode, rail: f64, reason: String, issues: &m
     });
 }
 
+fn push_scroller_leading_issue(node: &PenNode, rail: f64, issues: &mut Vec<Issue>) {
+    issues.push(Issue {
+        node_id: node_id(node).to_string(),
+        category: IssueCategory::EdgeSectionPadding,
+        severity: IssueSeverity::Warning,
+        property: FixProperty::Padding,
+        current_value: raw_padding_value(padding(node)),
+        suggested_value: suggested_leading_padding(node, rail),
+        reason: format!(
+            "mobile scroller viewport has 0 leading padding; apply a {}px leading rail while keeping the trailing edge flush",
+            fmt_num(rail)
+        ),
+    });
+}
+
 /// True when a node looks like a real mobile device frame — the shared shape
 /// filter for both detectors (`detectors-spacing.ts:117-124` / `230-237`).
 ///
-/// `frame` kind, width 320–480, height `>= 568` (iPhone SE 1st gen, the
-/// shortest production phone) and `>= width * 1.5` (aspect-ratio guard
-/// against accidentally tall components like a side drawer). Width / height
-/// are jian `SizingBehavior`; only the `Number` variant counts — a
-/// `fit_content` / `fill_container` / `$ref` size is correctly NOT a
-/// mobile-page dimension (T0 audit DS⁴).
-fn looks_like_mobile_page(node: &PenNode) -> bool {
+/// Numeric roots must be at least 568px tall and 1.5× their width. A final
+/// `fit_content` root also counts when it has screen structure (four or more
+/// direct sections, or explicit status/bottom chrome); generation intentionally
+/// converts ordinary completed mobile pages from a numeric construction seed
+/// to this hugging height.
+fn looks_like_mobile_page(node: &PenNode, depth: usize) -> bool {
     let PenNode::Frame(frame) = node else {
         return false;
     };
     let Some(SizingBehavior::Number(width)) = frame.container.width else {
         return false;
     };
-    let Some(SizingBehavior::Number(height)) = frame.container.height else {
+    if !(320.0..=480.0).contains(&width) {
         return false;
-    };
-    (320.0..=480.0).contains(&width) && height >= 568.0 && height >= width * 1.5
+    }
+    match frame.container.height.as_ref() {
+        Some(SizingBehavior::Number(height)) => *height >= 568.0 && *height >= width * 1.5,
+        None | Some(SizingBehavior::Keyword(SizingKeyword::FitContent)) => {
+            let kids = children(node);
+            (depth == 0 && kids.len() >= 4) || kids.iter().any(is_mobile_screen_chrome)
+        }
+        _ => false,
+    }
+}
+
+fn is_mobile_screen_chrome(node: &PenNode) -> bool {
+    matches!(
+        role(node)
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "status-bar"
+            | "bottom-tab-bar"
+            | "bottom-nav"
+            | "bottom-navigation-bar"
+            | "tab-bar"
+            | "tabbar"
+    )
 }
 
 /// Port of `detectEdgeSectionPadding` (`detectors-spacing.ts:100-197`).
@@ -253,28 +362,39 @@ fn looks_like_mobile_page(node: &PenNode) -> bool {
 /// they agree on a value in the 16–28px mobile range; otherwise the current
 /// 24px mobile rail policy is used. Existing vertical padding is preserved.
 ///
-/// A section that directly owns an intentional clipped horizontal scroller is
-/// not itself targeted because host pre-validation protects scroller ancestry.
-/// Instead, transparent direct header siblings are targeted. This aligns the
-/// visible header without rewriting authored scroll geometry.
+/// A section that directly owns an intentional clipped horizontal scroller
+/// keeps its full-width section geometry. Transparent direct header siblings
+/// get a symmetric rail, while the clipped viewport gets a leading-only rail
+/// so its trailing edge remains flush.
 pub fn detect_edge_section_padding(root: &PenNode) -> Vec<Issue> {
     let mut issues = Vec::new();
-    walk_edge_section_padding(root, &mut issues);
+    walk_edge_section_padding(root, 0, &mut issues);
     issues
 }
 
-fn walk_edge_section_padding(node: &PenNode, issues: &mut Vec<Issue>) {
+fn walk_edge_section_padding(node: &PenNode, depth: usize, issues: &mut Vec<Issue>) {
     let kids = children(node);
     // A mobile root: page-shaped, `layout` set, `>= 2` children.
-    let is_mobile_root = looks_like_mobile_page(node) && has_layout(node) && kids.len() >= 2;
+    let is_mobile_root = looks_like_mobile_page(node, depth) && has_layout(node) && kids.len() >= 2;
 
     if is_mobile_root && has_concrete_zero_horizontal_padding(node) {
-        let rail = infer_mobile_section_rail(kids);
+        let root_width = numeric_width(node).unwrap_or_default();
+        let rail = infer_mobile_section_rail(kids, root_width);
         for child in kids {
             if !matches!(node_kind(child), NodeKind::Frame) {
                 continue;
             }
-            if is_full_bleed_section(child) {
+
+            // Horizontal viewports own an asymmetric rail even when their
+            // contents are image-only and therefore have no text/icon nodes.
+            if is_intentional_horizontal_scroller(child) {
+                if has_concrete_zero_horizontal_padding(child) {
+                    push_scroller_leading_issue(child, rail, issues);
+                }
+                continue;
+            }
+
+            if is_full_bleed_section(child, root_width) {
                 continue;
             }
             // Padding a surfaced root-direct card changes its interior but
@@ -288,10 +408,6 @@ fn walk_edge_section_padding(node: &PenNode, issues: &mut Vec<Issue>) {
             if !has_concrete_zero_horizontal_padding(child) {
                 continue;
             }
-            if !has_text_or_icon_descendant(child) {
-                continue;
-            }
-
             let direct_scroller = children(child)
                 .iter()
                 .any(is_intentional_horizontal_scroller);
@@ -312,9 +428,20 @@ fn walk_edge_section_padding(node: &PenNode, issues: &mut Vec<Issue>) {
                         issues,
                     );
                 }
+                for viewport in children(child)
+                    .iter()
+                    .filter(|viewport| is_intentional_horizontal_scroller(viewport))
+                {
+                    if has_concrete_zero_horizontal_padding(viewport) {
+                        push_scroller_leading_issue(viewport, rail, issues);
+                    }
+                }
                 continue;
             }
             if contains_intentional_horizontal_scroller(child) {
+                continue;
+            }
+            if !has_text_or_icon_descendant(child) {
                 continue;
             }
 
@@ -331,7 +458,7 @@ fn walk_edge_section_padding(node: &PenNode, issues: &mut Vec<Issue>) {
     }
 
     for child in kids {
-        walk_edge_section_padding(child, issues);
+        walk_edge_section_padding(child, depth + 1, issues);
     }
 }
 
@@ -364,22 +491,22 @@ fn has_layout(node: &PenNode) -> bool {
 /// surfaced for the user / agent to decide; `suggested_value` is `null`.
 pub fn detect_stacked_horizontal_padding(root: &PenNode) -> Vec<Issue> {
     let mut issues = Vec::new();
-    walk_stacked_horizontal_padding(root, &mut issues);
+    walk_stacked_horizontal_padding(root, 0, &mut issues);
     issues
 }
 
-fn walk_stacked_horizontal_padding(node: &PenNode, issues: &mut Vec<Issue>) {
+fn walk_stacked_horizontal_padding(node: &PenNode, depth: usize, issues: &mut Vec<Issue>) {
     let kids = children(node);
-    if looks_like_mobile_page(node) && kids.len() >= 2 {
+    if looks_like_mobile_page(node, depth) && kids.len() >= 2 {
         let root_l = get_padding_left(node);
         let root_r = get_padding_right(node);
+        let root_width = numeric_width(node).unwrap_or_default();
         if root_l > 0.0 || root_r > 0.0 {
             for child in kids {
                 if !matches!(node_kind(child), NodeKind::Frame) {
                     continue;
                 }
-                let child_role = role(child).unwrap_or("").to_lowercase();
-                if FULL_BLEED_ROLES.contains(&child_role.as_str()) {
+                if is_full_bleed_section(child, root_width) {
                     continue;
                 }
                 let child_l = get_padding_left(child);
@@ -409,7 +536,7 @@ fn walk_stacked_horizontal_padding(node: &PenNode, issues: &mut Vec<Issue>) {
     }
 
     for child in kids {
-        walk_stacked_horizontal_padding(child, issues);
+        walk_stacked_horizontal_padding(child, depth + 1, issues);
     }
 }
 

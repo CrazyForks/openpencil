@@ -3,8 +3,9 @@
 //! Generated mobile screens commonly mix full-width chrome with individually
 //! padded content sections. A root-level gutter cannot represent that shape:
 //! it would inset status/navigation chrome and destroy intentional horizontal
-//! scrollers. This pass therefore repairs only transparent root-direct content
-//! sections, and gives clipped horizontal scrollers a leading rail while
+//! scrollers. This pass repairs transparent root-direct content sections,
+//! wraps unambiguously edge-spanning rounded/stroked cards in a transparent
+//! rail owner, and gives clipped horizontal scrollers a leading rail while
 //! keeping their trailing edge flush.
 
 use crate::types::DocSink;
@@ -12,9 +13,9 @@ use jian_ops_schema::node::{
     container::{ContainerProps, LayoutMode},
     Padding, PenNode,
 };
-use jian_ops_schema::sizing::SizingBehavior;
+use jian_ops_schema::sizing::{SizingBehavior, SizingKeyword};
 use op_editor_core::{EditorCommand, LayoutPropValue, NodeId, PenNodeExt};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 const DEFAULT_MOBILE_RAIL: f64 = 24.0;
 const MIN_MOBILE_WIDTH: f64 = 320.0;
@@ -46,18 +47,61 @@ pub(crate) fn repair_mobile_content_rails(sink: &mut dyn DocSink, root_id: &str)
     };
 
     for repair in repairs {
-        sink.apply(EditorCommand::SetNodeLayoutProp {
-            node_id: NodeId::new(repair.node_id),
-            property: "padding".to_string(),
-            value: LayoutPropValue::NumberArray(repair.padding),
-        });
+        match repair {
+            RailRepair::SetPadding { node_id, padding } => {
+                sink.apply(EditorCommand::SetNodeLayoutProp {
+                    node_id: NodeId::new(node_id),
+                    property: "padding".to_string(),
+                    value: LayoutPropValue::NumberArray(padding),
+                });
+            }
+            RailRepair::WrapSurface {
+                surface_id,
+                wrapper,
+                original_index,
+            } => {
+                let wrapper_id = NodeId::new(wrapper.id_str().to_string());
+                if !sink.apply(EditorCommand::InsertAuthoredSubtree {
+                    nodes: vec![*wrapper],
+                    parent_id: NodeId::new(root_id.to_string()),
+                    page_id: None,
+                }) {
+                    continue;
+                }
+                if !sink.apply(EditorCommand::MoveNode {
+                    node_id: NodeId::new(surface_id),
+                    target_parent: wrapper_id.clone(),
+                    page_id: None,
+                    index: None,
+                }) {
+                    sink.apply(EditorCommand::DeleteNode {
+                        node_id: wrapper_id,
+                        page_id: None,
+                    });
+                    continue;
+                }
+                sink.apply(EditorCommand::MoveNode {
+                    node_id: wrapper_id,
+                    target_parent: NodeId::new(root_id.to_string()),
+                    page_id: None,
+                    index: Some(original_index),
+                });
+            }
+        }
     }
 }
 
-#[derive(Debug, PartialEq)]
-struct RailRepair {
-    node_id: String,
-    padding: Vec<f64>,
+#[derive(Debug)]
+enum RailRepair {
+    SetPadding {
+        node_id: String,
+        padding: Vec<f64>,
+    },
+    WrapSurface {
+        surface_id: String,
+        wrapper: Box<PenNode>,
+        original_index: usize,
+    },
 }
 
 fn collect_repairs(root: &PenNode) -> Vec<RailRepair> {
@@ -70,14 +114,49 @@ fn collect_repairs(root: &PenNode) -> Vec<RailRepair> {
     let Some(sections) = root.children() else {
         return Vec::new();
     };
+    let root_width = root.width_px().unwrap_or_default();
     let rail = infer_content_rail(sections);
     let mut repairs = Vec::new();
+    let mut known_ids = HashSet::new();
+    collect_node_ids(root, &mut known_ids);
 
-    for section in sections {
-        if !is_repairable_content_section(section)
+    for (index, section) in sections.iter().enumerate() {
+        if !section.is_container()
+            || is_mobile_chrome(section)
+            || is_intentional_full_bleed_role(section)
             || has_expression_padding(section)
-            || horizontal_padding(section).is_some_and(nonzero_pair)
         {
+            continue;
+        }
+
+        // A root-direct horizontal viewport owns its own asymmetric rail,
+        // including image-only carousels that have no text/icon descendants.
+        if is_clipped_horizontal_scroller(section) {
+            if horizontal_padding(section).is_none_or(|pair| !nonzero_pair(pair)) {
+                repairs.push(RailRepair::SetPadding {
+                    node_id: section.id_str().to_string(),
+                    padding: padding_with_leading_rail(section, rail),
+                });
+            }
+            continue;
+        }
+
+        // A root-direct surfaced card needs an OUTER rail owner; padding the
+        // card itself would inset only its contents while leaving the border
+        // glued to the viewport. Prefer this structural repair even when the
+        // card contains a full-width cover image. Authored absolute-positioned
+        // surfaces are deliberately excluded by the predicate below.
+        if !is_transparent_surface(section) {
+            if has_surface_content_descendant(section)
+                && is_edge_spanning_insettable_surface(section, root_width)
+            {
+                let wrapper_id = unique_wrapper_id(section.id_str(), &mut known_ids);
+                repairs.push(RailRepair::WrapSurface {
+                    surface_id: section.id_str().to_string(),
+                    wrapper: Box::new(content_rail_wrapper(&wrapper_id, section, rail)),
+                    original_index: index,
+                });
+            }
             continue;
         }
 
@@ -87,36 +166,54 @@ fn collect_repairs(root: &PenNode) -> Vec<RailRepair> {
             .flatten()
             .filter(|child| is_clipped_horizontal_scroller(child))
             .collect();
-        if scrollers.is_empty() {
-            repairs.push(RailRepair {
-                node_id: section.id_str().to_string(),
-                padding: padding_with_horizontal_rail(section, rail),
-            });
+        if !scrollers.is_empty() {
+            // A horizontal rail needs a flush trailing edge so the last card
+            // can scroll offscreen. Keep the section full-width, inset its
+            // short header siblings, and add only a leading inset to each
+            // viewport.
+            for child in section.children().into_iter().flatten() {
+                if is_clipped_horizontal_scroller(child) {
+                    if !has_expression_padding(child)
+                        && horizontal_padding(child).is_none_or(|pair| !nonzero_pair(pair))
+                    {
+                        repairs.push(RailRepair::SetPadding {
+                            node_id: child.id_str().to_string(),
+                            padding: padding_with_leading_rail(child, rail),
+                        });
+                    }
+                } else if is_scroller_header(child)
+                    && !has_expression_padding(child)
+                    && horizontal_padding(child).is_none_or(|pair| !nonzero_pair(pair))
+                {
+                    repairs.push(RailRepair::SetPadding {
+                        node_id: child.id_str().to_string(),
+                        padding: padding_with_horizontal_rail(child, rail),
+                    });
+                }
+            }
             continue;
         }
 
-        // A horizontal rail needs a flush trailing edge so the last card can
-        // scroll offscreen. Keep the section full-width, inset its short
-        // header siblings, and add only a leading inset to each viewport.
-        for child in section.children().into_iter().flatten() {
-            if is_clipped_horizontal_scroller(child) {
-                if !has_expression_padding(child)
-                    && horizontal_padding(child).is_none_or(|pair| !nonzero_pair(pair))
-                {
-                    repairs.push(RailRepair {
-                        node_id: child.id_str().to_string(),
-                        padding: padding_with_leading_rail(child, rail),
-                    });
-                }
-            } else if is_scroller_header(child)
-                && !has_expression_padding(child)
-                && horizontal_padding(child).is_none_or(|pair| !nonzero_pair(pair))
-            {
-                repairs.push(RailRepair {
-                    node_id: child.id_str().to_string(),
-                    padding: padding_with_horizontal_rail(child, rail),
-                });
-            }
+        // A deeper scroller has no unambiguous direct header/viewport owner.
+        // Leave it untouched rather than putting a symmetric rail on an
+        // ancestor and silently closing its intentional trailing edge.
+        if contains_clipped_horizontal_scroller(section) {
+            continue;
+        }
+
+        // Transparent media-overlay owners are intentional full bleed. This
+        // must stay aligned with the design-lint detector so pre-validation
+        // cannot undo the cleanup decision on the next pipeline stage.
+        if has_full_bleed_media_child(section, root_width) || !has_text_or_icon_descendant(section)
+        {
+            continue;
+        }
+
+        if horizontal_padding(section).is_none_or(|pair| !nonzero_pair(pair)) {
+            repairs.push(RailRepair::SetPadding {
+                node_id: section.id_str().to_string(),
+                padding: padding_with_horizontal_rail(section, rail),
+            });
         }
     }
 
@@ -148,7 +245,10 @@ fn looks_like_mobile_screen(root: &PenNode) -> bool {
 fn infer_content_rail(sections: &[PenNode]) -> f64 {
     let mut counts: BTreeMap<i64, usize> = BTreeMap::new();
     for section in sections {
-        if is_mobile_chrome(section) {
+        if is_mobile_chrome(section)
+            || is_intentional_full_bleed_role(section)
+            || !is_transparent_surface(section)
+        {
             continue;
         }
         let Some((left, right)) = horizontal_padding(section) else {
@@ -166,13 +266,6 @@ fn infer_content_rail(sections: &[PenNode]) -> f64 {
         .unwrap_or(DEFAULT_MOBILE_RAIL)
 }
 
-fn is_repairable_content_section(node: &PenNode) -> bool {
-    node.is_container()
-        && !is_mobile_chrome(node)
-        && is_transparent_surface(node)
-        && has_text_or_icon_descendant(node)
-}
-
 fn is_mobile_chrome(node: &PenNode) -> bool {
     let role = node
         .base()
@@ -183,7 +276,12 @@ fn is_mobile_chrome(node: &PenNode) -> bool {
         .to_ascii_lowercase();
     if matches!(
         role.as_str(),
-        "status-bar" | "bottom-tab-bar" | "bottom-nav" | "tab-bar" | "tabbar"
+        "status-bar"
+            | "bottom-tab-bar"
+            | "bottom-nav"
+            | "bottom-navigation-bar"
+            | "tab-bar"
+            | "tabbar"
     ) {
         return true;
     }
@@ -197,6 +295,19 @@ fn is_mobile_chrome(node: &PenNode) -> bool {
         || name.contains("bottom navigation")
         || name.contains("bottom nav")
         || name.contains("bottom tab")
+}
+
+fn is_intentional_full_bleed_role(node: &PenNode) -> bool {
+    matches!(
+        node.base()
+            .role
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "hero" | "banner" | "cover" | "header" | "top-nav" | "navbar"
+    )
 }
 
 fn is_transparent_surface(node: &PenNode) -> bool {
@@ -219,6 +330,91 @@ fn is_transparent_surface(node: &PenNode) -> bool {
     !has_fill && !has_stroke && !has_effects && !has_radius
 }
 
+fn is_edge_spanning_insettable_surface(node: &PenNode, root_width: f64) -> bool {
+    let Some(props) = container_props(node) else {
+        return false;
+    };
+    if has_authored_position(node) {
+        return false;
+    }
+    let spans_width = matches!(
+        props.width.as_ref(),
+        Some(SizingBehavior::Keyword(SizingKeyword::FillContainer))
+    ) || matches!(
+        props.width.as_ref(),
+        Some(SizingBehavior::Number(width)) if *width >= root_width - 1.0
+    );
+    if !spans_width {
+        return false;
+    }
+    let Ok(value) = serde_json::to_value(node) else {
+        return false;
+    };
+    let has_stroke = value.get("stroke").is_some_and(|stroke| !stroke.is_null());
+    let has_effects = value
+        .get("effects")
+        .and_then(|effects| effects.as_array())
+        .is_some_and(|effects| !effects.is_empty());
+    let has_radius = value
+        .get("cornerRadius")
+        .and_then(|radius| radius.as_f64())
+        .is_some_and(|radius| radius > 0.0);
+    has_stroke || has_effects || has_radius
+}
+
+fn has_authored_position(node: &PenNode) -> bool {
+    serde_json::to_value(node).ok().is_some_and(|value| {
+        value.get("x").is_some_and(|x| !x.is_null()) || value.get("y").is_some_and(|y| !y.is_null())
+    })
+}
+
+fn has_full_bleed_media_child(node: &PenNode, root_width: f64) -> bool {
+    node.children().is_some_and(|children| {
+        children.iter().any(|child| {
+            let role_is_media = matches!(
+                child
+                    .base()
+                    .role
+                    .as_deref()
+                    .unwrap_or("")
+                    .trim()
+                    .to_ascii_lowercase()
+                    .as_str(),
+                "hero" | "banner" | "cover" | "media" | "image-placeholder"
+            );
+            let image_like = matches!(child, PenNode::Image(_))
+                || serde_json::to_value(child)
+                    .ok()
+                    .and_then(|value| value.get("fill").cloned())
+                    .and_then(|fill| fill.as_array().cloned())
+                    .is_some_and(|fills| {
+                        fills.iter().any(|fill| {
+                            fill.get("type").and_then(|kind| kind.as_str()) == Some("image")
+                        })
+                    });
+            (role_is_media || image_like) && node_spans_width(child, root_width)
+        })
+    })
+}
+
+fn node_spans_width(node: &PenNode, root_width: f64) -> bool {
+    container_props(node)
+        .and_then(|props| props.width.as_ref())
+        .is_some_and(|width| {
+            matches!(width, SizingBehavior::Keyword(SizingKeyword::FillContainer))
+                || matches!(width, SizingBehavior::Number(width) if *width >= root_width - 1.0)
+        })
+        || matches!(node, PenNode::Image(image) if {
+            matches!(
+                image.width.as_ref(),
+                Some(SizingBehavior::Keyword(SizingKeyword::FillContainer))
+            ) || matches!(
+                image.width.as_ref(),
+                Some(SizingBehavior::Number(width)) if *width >= root_width - 1.0
+            )
+        })
+}
+
 fn has_text_or_icon_descendant(node: &PenNode) -> bool {
     matches!(node, PenNode::Text(_) | PenNode::IconFont(_))
         || node
@@ -226,10 +422,26 @@ fn has_text_or_icon_descendant(node: &PenNode) -> bool {
             .is_some_and(|children| children.iter().any(has_text_or_icon_descendant))
 }
 
+fn has_surface_content_descendant(node: &PenNode) -> bool {
+    matches!(
+        node,
+        PenNode::Text(_) | PenNode::IconFont(_) | PenNode::Image(_)
+    ) || node
+        .children()
+        .is_some_and(|children| children.iter().any(has_surface_content_descendant))
+}
+
 fn is_clipped_horizontal_scroller(node: &PenNode) -> bool {
     container_props(node).is_some_and(|props| {
         props.layout == Some(LayoutMode::Horizontal) && props.clip_content == Some(true)
     })
+}
+
+fn contains_clipped_horizontal_scroller(node: &PenNode) -> bool {
+    is_clipped_horizontal_scroller(node)
+        || node
+            .children()
+            .is_some_and(|children| children.iter().any(contains_clipped_horizontal_scroller))
 }
 
 fn is_scroller_header(node: &PenNode) -> bool {
@@ -303,4 +515,38 @@ fn padding_with_leading_rail(node: &PenNode, rail: f64) -> Vec<f64> {
     let (top, bottom) = vertical_padding(node);
     let right = horizontal_padding(node).map_or(0.0, |(_, right)| right);
     vec![top, right, bottom, rail]
+}
+
+fn collect_node_ids(node: &PenNode, ids: &mut HashSet<String>) {
+    ids.insert(node.id_str().to_string());
+    for child in node.children().into_iter().flatten() {
+        collect_node_ids(child, ids);
+    }
+}
+
+fn unique_wrapper_id(surface_id: &str, known_ids: &mut HashSet<String>) -> String {
+    let base = format!("{surface_id}__content_rail");
+    let mut candidate = base.clone();
+    let mut suffix = 2usize;
+    while known_ids.contains(&candidate) {
+        candidate = format!("{base}_{suffix}");
+        suffix += 1;
+    }
+    known_ids.insert(candidate.clone());
+    candidate
+}
+
+fn content_rail_wrapper(id: &str, surface: &PenNode, rail: f64) -> PenNode {
+    let name = surface.base().name.as_deref().unwrap_or("Content");
+    serde_json::from_value(serde_json::json!({
+        "type": "frame",
+        "id": id,
+        "name": format!("{name} Content Rail"),
+        "width": "fill_container",
+        "height": "fit_content",
+        "layout": "vertical",
+        "padding": [0, rail, 0, rail],
+        "children": []
+    }))
+    .expect("content rail wrapper is valid PenNode")
 }
