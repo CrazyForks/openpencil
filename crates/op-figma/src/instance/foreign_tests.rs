@@ -103,6 +103,38 @@ fn secondary_session_anchors_to_validated_subtree() {
     assert_ne!(header.figma.get_bool("visible"), Some(false));
 }
 
+/// Modern component-property swaps may carry only nested INSTANCE heads in a
+/// foreign virtual session. Two independently typed heads uniquely anchor the
+/// sibling family even when the payload contains no text evidence.
+#[test]
+fn pure_instance_swap_heads_anchor_foreign_session() {
+    let instance = |name: &str, lid: u32| {
+        let mut node = sized_leaf(name, lid, 16.0, 16.0, 0.0);
+        node.figma.set("type", FigValue::Str("INSTANCE".into()));
+        node
+    };
+    let sym = symbol_root(vec![instance("first", 10), instance("second", 11)]);
+    let group = foreign_session::ForeignGroup {
+        session: 30,
+        pks: vec![
+            foreign_session::ForeignPk {
+                pk: "30:71".into(),
+                demands_text: false,
+                demands_instance: true,
+            },
+            foreign_session::ForeignPk {
+                pk: "30:72".into(),
+                demands_text: false,
+                demands_instance: true,
+            },
+        ],
+    };
+
+    let mapped = foreign_session::resolve_group(&group, &sym).expect("unique instance anchor");
+    assert_eq!(mapped.get("30:71").map(String::as_str), Some("1:10"));
+    assert_eq!(mapped.get("30:72").map(String::as_str), Some("1:11"));
+}
+
 /// Breadcrumb regression shape (Test.fig Top Nav): a foreign group's
 /// text demands ALL validate under a wrong lid-order anchor, but the
 /// group also carries a nested-path HEAD pk — which that anchor maps

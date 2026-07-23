@@ -33,9 +33,24 @@ pub(crate) fn convert_fig_json(body: &str) -> Result<String, String> {
     let bytes = decode_b64(&req.bytes_b64)?;
     let import = op_figma::parse_fig_binary(&bytes, &req.name, op_figma::FigLayoutMode::Preserve)
         .map_err(|e| format!("parse {}: {e:?}", req.name))?;
-    let mut doc = serde_json::to_value(&import.document).map_err(|e| e.to_string())?;
-    jian_ops_schema::image_table::externalize_images(&mut doc);
-    Ok(serde_json::json!({ "ok": true, "doc": doc, "warnings": import.warnings }).to_string())
+    let thumbnails = jian_ops_schema::image_thumbs::capture_snapshot();
+    let mut response = Vec::new();
+    response.extend_from_slice(br#"{"ok":true,"doc":"#);
+    jian_ops_schema::image_table::write_document_with_extension(
+        &mut response,
+        &import.document,
+        &thumbnails,
+        "editorMeta",
+        &op_pen_loader::EditorMeta {
+            active_page_index: 0,
+            preserve_authored_geometry: true,
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    response.extend_from_slice(br#", "warnings":"#);
+    serde_json::to_writer(&mut response, &import.warnings).map_err(|error| error.to_string())?;
+    response.push(b'}');
+    String::from_utf8(response).map_err(|error| error.to_string())
 }
 
 // Happy-path coverage: op-figma's only fig-kiwi fixture builder

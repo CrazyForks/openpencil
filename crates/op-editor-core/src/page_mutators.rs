@@ -29,6 +29,7 @@ fn make_page(id: String, name: String, children: Vec<PenNode>) -> PenPage {
         id,
         name,
         children,
+        background_color: None,
         state: None,
         lifecycle: None,
     }
@@ -76,6 +77,48 @@ impl EditorState {
         }
         self.ui.active_page_index = idx;
         self.clear_selection();
+        true
+    }
+
+    /// Authored infinite-canvas background of the active explicit page.
+    /// Legacy single-page documents have no page metadata and report `None`
+    /// until the first background write promotes them losslessly.
+    pub fn active_page_background_color(&self) -> Option<&str> {
+        let pages = self.doc.pages.as_ref()?;
+        if pages.is_empty() {
+            return None;
+        }
+        pages
+            .get(self.ui.active_page_index.min(pages.len() - 1))
+            .and_then(|page| page.background_color.as_deref())
+    }
+
+    /// Set or clear the active page's infinite-canvas background. A non-empty
+    /// write on a legacy `pages: None` (or legal `Some([])`) document promotes
+    /// root children into one explicit page within this single mutation.
+    /// `None` and blank strings both mean the old omitted/default state.
+    pub fn set_active_page_background_color(&mut self, color: Option<String>) -> bool {
+        let color = color.and_then(|color| {
+            let color = color.trim();
+            (!color.is_empty()).then(|| color.to_string())
+        });
+        let needs_page = self.doc.pages.as_ref().is_none_or(|pages| pages.is_empty());
+        if needs_page {
+            if color.is_none() {
+                return false;
+            }
+            self.ensure_pages();
+        }
+        let pages = self
+            .doc
+            .pages
+            .as_mut()
+            .expect("ensure_pages initialized pages");
+        let index = self.ui.active_page_index.min(pages.len() - 1);
+        if pages[index].background_color == color {
+            return false;
+        }
+        pages[index].background_color = color;
         true
     }
 
@@ -243,7 +286,14 @@ impl EditorState {
             .map(|c| walkers::deep_clone_with_new_ids(c, &mut next_id, &mut taken))
             .collect();
         let clone_name = custom_name.unwrap_or_else(|| format!("{} copy", source.name));
-        let clone = make_page(new_page_id.into(), clone_name, new_children);
+        let clone = PenPage {
+            id: new_page_id.into(),
+            name: clone_name,
+            children: new_children,
+            background_color: source.background_color.clone(),
+            state: source.state.clone(),
+            lifecycle: source.lifecycle.clone(),
+        };
         let new_index = idx + 1;
         self.doc.pages.as_mut().unwrap().insert(new_index, clone);
         self.ui.active_page_index = new_index;

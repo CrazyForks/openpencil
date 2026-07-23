@@ -194,6 +194,7 @@ pub fn build_leaf_node(
             anchors: Some(Vec::new()),
             closed: None,
             fill_rule: None,
+            mask: None,
             width: Some(w),
             height: Some(h),
             fill: None,

@@ -72,6 +72,20 @@ impl EditorState {
             return false;
         }
         match focus {
+            PropertyFocus::PageBackgroundHex => return false,
+            PropertyFocus::ImageTileScale => {
+                return self.set_selected_image_tile_scale(value);
+            }
+            PropertyFocus::Opacity => {
+                if !value.is_finite() {
+                    return false;
+                }
+                return self.cmd_set_node_layout_prop(
+                    &sel,
+                    "opacity",
+                    &crate::LayoutPropValue::Number((value.clamp(0.0, 100.0) / 100.0) as f64),
+                );
+            }
             PropertyFocus::PositionR => {
                 let wrote = self.cmd_set_node_corner_radius(&sel, value);
                 if wrote {
@@ -345,6 +359,7 @@ impl EditorState {
             | PropertyFocus::WidgetMin
             | PropertyFocus::WidgetMax
             | PropertyFocus::WidgetStep
+            | PropertyFocus::ImageTileScale
             | PropertyFocus::PaddingTop
             | PropertyFocus::PaddingRight
             | PropertyFocus::PaddingBottom
@@ -352,16 +367,17 @@ impl EditorState {
             | PropertyFocus::StrokeTopWidth
             | PropertyFocus::StrokeRightWidth
             | PropertyFocus::StrokeBottomWidth
-            | PropertyFocus::StrokeLeftWidth => {
+            | PropertyFocus::StrokeLeftWidth
+            | PropertyFocus::Opacity => {
                 unreachable!("shape-specific properties handled before node borrow")
             }
-            // StrokeWidth handled in the first match (before the node
-            // borrow). Opacity / FillHex / StrokeHex are applied by the
-            // host commit path, not this numeric commit. The widget
+            // StrokeWidth and Opacity are handled in the first match (before
+            // the node borrow). FillHex / StrokeHex are applied by the host
+            // commit path, not this numeric commit. The widget
             // TEXT focuses (placeholder / value / label) are likewise
             // committed via the host commit path's string arm, not this
             // numeric one.
-            PropertyFocus::Opacity
+            PropertyFocus::PageBackgroundHex
             | PropertyFocus::FillHex(_)
             | PropertyFocus::StrokeHex
             | PropertyFocus::WidgetPlaceholder
@@ -656,6 +672,14 @@ impl EditorState {
         } else {
             crate::fills::set_primary_image_fill_mode(node, mode)
         }
+    }
+
+    /// Set TILE scale on a primary image fill. Unlike mode/adjustments, this
+    /// deliberately does not fall back to a standalone Image node because its
+    /// schema has no tileScale property.
+    pub fn set_selected_image_tile_scale(&mut self, value: f32) -> bool {
+        self.with_selected_node(|node| crate::fills::set_primary_image_tile_scale(node, value))
+            .unwrap_or(false)
     }
 
     pub fn set_selected_image_adjustment(

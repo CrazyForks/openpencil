@@ -8,13 +8,15 @@
 use crate::theme::Theme;
 use crate::widgets::editor_state_ext::theme_for;
 use crate::widgets::{LayoutBox, LayoutCx, PaintCx, Widget, WidgetId};
-use crate::{Point2D, Rect};
+use crate::{Point2D, Rect, TextLayout};
 pub use jian_widgets::components::select::SelectHit;
 use jian_widgets::components::select::{Select, SelectItem, SelectState};
 use jian_widgets::Tokens;
 use op_editor_core::editor_ui_state::{EditorUiState, Locale};
 
 pub const IMPORT_MENU_WIDTH: f32 = 200.0;
+const SHORTCUT_FONT_SIZE: f32 = 11.0;
+const SHORTCUT_PAD_RIGHT: f32 = 12.0;
 
 /// What the user picked in the dropdown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +55,14 @@ impl ImportMenuChoice {
             self.fallback_label()
         } else {
             translated
+        }
+    }
+
+    /// Keyboard chord shown at the trailing edge of the launcher row.
+    pub const fn shortcut_label(self) -> &'static str {
+        match self {
+            ImportMenuChoice::Figma => "⌘⇧F",
+            ImportMenuChoice::Html => "⌘⇧H",
         }
     }
 }
@@ -131,6 +141,33 @@ impl ImportMenu {
             viewport,
             &tokens_from_theme(&self.theme),
         );
+
+        if !self.state.open {
+            return;
+        }
+        let popup = self.popup_rect(anchor, viewport);
+        let row_h = self.row_height();
+        cx.backend.save();
+        cx.backend.clip_rect(popup);
+        for (index, choice) in ImportMenuChoice::ALL.iter().enumerate() {
+            let shortcut = choice.shortcut_label();
+            let width = cx.backend.measure_text(shortcut, SHORTCUT_FONT_SIZE);
+            let layout = TextLayout::single_run(
+                shortcut,
+                "system-ui",
+                SHORTCUT_FONT_SIZE,
+                self.theme.muted_foreground.to_jian(),
+                Point2D::ZERO,
+            );
+            cx.backend.draw_text(
+                &layout,
+                Point2D::new(
+                    popup.origin.x + popup.size.x - SHORTCUT_PAD_RIGHT - width,
+                    popup.origin.y + row_h * (index as f32 + 0.5) + 4.0,
+                ),
+            );
+        }
+        cx.backend.restore();
     }
 
     fn items(&self) -> Vec<SelectItem<'static>> {
@@ -271,5 +308,11 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn rows_expose_their_documented_shortcuts() {
+        assert_eq!(ImportMenuChoice::Figma.shortcut_label(), "⌘⇧F");
+        assert_eq!(ImportMenuChoice::Html.shortcut_label(), "⌘⇧H");
     }
 }

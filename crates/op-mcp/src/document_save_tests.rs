@@ -8,7 +8,9 @@ use super::{save_document_snapshot, McpTool, ToolErrorCode, ToolOutcome};
 
 #[test]
 fn save_document_writes_current_pen_document_to_target_path() {
-    let state = sample();
+    let mut state = sample();
+    state.ui.active_page_index = 3;
+    state.editor_ui.preserve_authored_geometry = true;
     let dir = temp_dir("save-document");
     std::fs::create_dir_all(&dir).expect("temp dir");
     let out_path = dir.join("copy.op");
@@ -26,6 +28,8 @@ fn save_document_writes_current_pen_document_to_target_path() {
                     .expect("saved document json");
             assert_eq!(saved["version"], state.doc.version);
             assert!(saved["children"].is_array() || saved["pages"].is_array());
+            assert_eq!(saved["editorMeta"]["activePageIndex"], 3);
+            assert_eq!(saved["editorMeta"]["preserveAuthoredGeometry"], true);
         }
         other => panic!("expected save ok, got {other:?}"),
     }

@@ -31,6 +31,14 @@ use crate::{Color, Point2D, Rect};
 use jian_scene::path_geometry::flatten_path_points;
 use std::collections::{HashMap, HashSet};
 
+#[path = "canvas_viewport_paint_mask.rs"]
+mod mask;
+use mask::paint_child_siblings;
+
+#[path = "canvas_viewport_layer_bounds.rs"]
+mod layer_bounds;
+use layer_bounds::{node_composite_layer_bounds, sibling_mask_layer_bounds};
+
 /// Paint every `Effect::DropShadow` on `node` as a blurred shape
 /// behind its fill. The shadow corner radius matches the node
 /// kind — `corner_radius` for Frame / Rect, min-half for an
@@ -328,6 +336,13 @@ struct PaintNodeOptions<'a, 'generation> {
     /// only the on-deck shell gets the active radar (see
     /// `canvas_generation_scan::GenerationPaintSets::queued`).
     queued_shell_ids: Option<&'generation HashSet<String>>,
+    /// True while rendering a deferred mask source. Editor-only animation and
+    /// image placeholder art must not contribute coverage to the mask.
+    mask_source: bool,
+    /// The deferred mask root is already being used as a DstIn/luminance
+    /// source, so its own node-level blend must not composite again. Exact id
+    /// matching suppresses only that root; blended descendants still render.
+    suppress_node_composite_id: Option<&'a str>,
 }
 
 use super::canvas_overlay_transform::OverlayTransform;
@@ -499,8 +514,53 @@ pub(crate) fn paint_node_with_options_hiding<'a>(
         generating_descendant_ids,
         generation_accent,
         queued_shell_ids,
+        mask_source: false,
+        suppress_node_composite_id: None,
     };
     paint_node_inner(cx, node, &options, &mut Vec::new(), false)
+}
+
+/// Paint a topmost-first sibling list with the same mask semantics used by
+/// nested containers. Keeping page roots on this path is essential because a
+/// Figma mask may legally be a direct child of the canvas.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn paint_scene_nodes_with_options_hiding<'a>(
+    cx: &mut PaintCx<'_>,
+    nodes: &'a [SceneNode],
+    viewport_origin: Point2D,
+    zoom: f32,
+    edit_caret: Option<EditCaret>,
+    cull: Rect,
+    reveals: Option<RevealSchedule<'a>>,
+    hovered: Option<&'a str>,
+    selected: Option<&'a str>,
+    pen: Option<&'a str>,
+    hidden: Option<&'a str>,
+    now_ms: u64,
+    generating_descendant_ids: Option<&HashSet<String>>,
+    generation_accent: Option<Color>,
+    queued_shell_ids: Option<&HashSet<String>>,
+) -> PaintNodeHits<'a> {
+    let options = PaintNodeOptions {
+        viewport_origin,
+        zoom,
+        edit_caret,
+        cull,
+        reveals,
+        hovered,
+        selected,
+        pen,
+        hidden,
+        now_ms,
+        generating_descendant_ids,
+        generation_accent,
+        queued_shell_ids,
+        mask_source: false,
+        suppress_node_composite_id: None,
+    };
+    let mut hits = PaintNodeHits::default();
+    paint_child_siblings(cx, nodes, &options, &mut Vec::new(), false, &mut hits);
+    hits
 }
 
 /// Paint a resolved scene page's node tree with the editor viewport
@@ -526,20 +586,23 @@ pub fn paint_scene_page(
     zoom: f32,
     cull: Rect,
 ) {
-    for child in page.children.iter().rev() {
-        paint_node_with_options(
-            cx,
-            child,
-            viewport_origin,
-            zoom,
-            None,
-            cull,
-            None,
-            None,
-            None,
-            None,
-        );
-    }
+    let _ = paint_scene_nodes_with_options_hiding(
+        cx,
+        &page.children,
+        viewport_origin,
+        zoom,
+        None,
+        cull,
+        None,
+        None,
+        None,
+        None,
+        None,
+        0,
+        None,
+        None,
+        None,
+    );
 }
 
 fn paint_node_inner<'a>(
@@ -698,6 +761,36 @@ fn paint_node_inner<'a>(
         false
     };
 
+    // Apply local group opacity and node-level blend together after the node's
+    // own paint and descendants have assembled. Mask roots suppress authored
+    // blend against the mask-source layer, but still need a Normal layer when
+    // local group opacity must be applied once.
+    let suppress_node_blend = options.suppress_node_composite_id == Some(node.id.as_str());
+    let node_composite_mode = if suppress_node_blend {
+        crate::ImageBlendMode::Normal
+    } else {
+        node.blend_mode
+    };
+    let node_composite_opacity = if node.composite_opacity.is_finite() {
+        node.composite_opacity.clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    let node_composite_pushed =
+        node_composite_mode != crate::ImageBlendMode::Normal || node_composite_opacity < 1.0;
+    if node_composite_pushed {
+        let bounds = node_composite_layer_bounds(
+            node,
+            options.viewport_origin,
+            options.zoom,
+            options.cull,
+            options.hidden,
+            transforms,
+        );
+        cx.backend
+            .push_composite_layer(bounds, node_composite_opacity, node_composite_mode);
+    }
+
     // Gaussian layer blur (Figma "Layer blur"): capture the node's
     // whole rendered output — shadows, fill, stroke, children — into
     // an offscreen layer and blur it on the matching `restore`. The
@@ -737,7 +830,7 @@ fn paint_node_inner<'a>(
             if paint_fill_layers_then_stroke(cx, node, world_rect, zoom) {
                 // painted
             } else if let Some(src) = node.image_src.as_deref() {
-                paint_image_node(cx, node, world_rect, zoom, src, true);
+                paint_image_node(cx, node, world_rect, zoom, src, !options.mask_source);
             } else {
                 paint_fill_then_stroke(cx, node, world_rect, zoom, node.fill);
             }
@@ -778,10 +871,14 @@ fn paint_node_inner<'a>(
                 }
             }
             let clipped = push_clip_content(cx, node, world_rect, zoom);
-            for child in node.children.iter().rev() {
-                let child_hover = paint_node_inner(cx, child, options, transforms, is_hovered);
-                hits.merge_missing(child_hover);
-            }
+            paint_child_siblings(
+                cx,
+                &node.children,
+                options,
+                transforms,
+                is_hovered,
+                &mut hits,
+            );
             if clipped {
                 cx.backend.restore();
             }
@@ -798,10 +895,14 @@ fn paint_node_inner<'a>(
             // (Frame / Group / Rectangle all carry it) — honour it on
             // every recursing container branch, not just Frame.
             let clipped = push_clip_content(cx, node, world_rect, zoom);
-            for child in node.children.iter().rev() {
-                let child_hover = paint_node_inner(cx, child, options, transforms, is_hovered);
-                hits.merge_missing(child_hover);
-            }
+            paint_child_siblings(
+                cx,
+                &node.children,
+                options,
+                transforms,
+                is_hovered,
+                &mut hits,
+            );
             if clipped {
                 cx.backend.restore();
             }
@@ -820,7 +921,7 @@ fn paint_node_inner<'a>(
                     // `src` is carried, paint the bitmap; the grey `fill`
                     // remains as the placeholder visible while the decoder
                     // is missing the bytes (corrupt URL / unsupported codec).
-                    paint_image_node(cx, node, world_rect, zoom, src, true);
+                    paint_image_node(cx, node, world_rect, zoom, src, !options.mask_source);
                 } else {
                     paint_fill_then_stroke(cx, node, world_rect, zoom, node.fill);
                 }
@@ -834,10 +935,14 @@ fn paint_node_inner<'a>(
             // the rectangle's fill (measured: a travel page's 7 photos
             // all rendered as blank cards).
             let clipped = push_clip_content(cx, node, world_rect, zoom);
-            for child in node.children.iter().rev() {
-                let child_hover = paint_node_inner(cx, child, options, transforms, is_hovered);
-                hits.merge_missing(child_hover);
-            }
+            paint_child_siblings(
+                cx,
+                &node.children,
+                options,
+                transforms,
+                is_hovered,
+                &mut hits,
+            );
             if clipped {
                 cx.backend.restore();
             }
@@ -850,7 +955,7 @@ fn paint_node_inner<'a>(
                 // ellipse silhouette via skia's `clip_oval`-style
                 // approximation (no native clip_oval on the trait, so
                 // fall back to the rect-clip path the painter has).
-                paint_image_node(cx, node, world_rect, zoom, src, true);
+                paint_image_node(cx, node, world_rect, zoom, src, !options.mask_source);
                 if let Some(stroke) = node.stroke {
                     cx.backend
                         .stroke_oval(world_rect, stroke.color, stroke.width * zoom);
@@ -881,7 +986,7 @@ fn paint_node_inner<'a>(
                 // by the stroke. A perfect clip-to-polygon path lands when
                 // `RenderBackend` grows a polygon-clip primitive.
                 if let Some(src) = node.image_src.as_deref() {
-                    paint_image_node(cx, node, world_rect, zoom, src, true);
+                    paint_image_node(cx, node, world_rect, zoom, src, !options.mask_source);
                 } else if let Some(fill) = node.fill {
                     cx.backend.fill_polygon(&pts, fill);
                 }
@@ -912,6 +1017,9 @@ fn paint_node_inner<'a>(
             if let Some(d) = node.svg_path.as_deref() {
                 paint_svg_path_node(cx, node, world_rect, zoom, d);
                 if blur_sigma.is_some() {
+                    cx.backend.restore();
+                }
+                if node_composite_pushed {
                     cx.backend.restore();
                 }
                 if background_blur_pushed {
@@ -1001,6 +1109,9 @@ fn paint_node_inner<'a>(
     }
 
     if blur_sigma.is_some() {
+        cx.backend.restore();
+    }
+    if node_composite_pushed {
         cx.backend.restore();
     }
     if background_blur_pushed {
@@ -1111,3 +1222,7 @@ mod stroke_align_tests;
 #[cfg(test)]
 #[path = "canvas_viewport_layered_shape_tests.rs"]
 mod layered_shape_tests;
+
+#[cfg(test)]
+#[path = "canvas_viewport_node_blend_tests.rs"]
+mod node_blend_tests;

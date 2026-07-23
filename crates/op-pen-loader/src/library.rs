@@ -80,7 +80,11 @@ pub fn merge_library_src_into_state(
     //    role/cleanup passes are unaffected, preserves the active page index,
     //    keeps master ids verbatim so refs resolve, and dedups by id so a
     //    re-import is idempotent.
-    let masters: Vec<_> = library.components.iter().map(|c| c.root.clone()).collect();
+    let masters: Vec<_> = library
+        .components
+        .iter()
+        .filter_map(|component| library.resolved_root(&lib_doc, &component.id).cloned())
+        .collect();
     report.masters_added = state.append_components_page_masters(masters);
 
     // 2. Merge the library's variables (only new names) so master `$--token`
@@ -110,6 +114,10 @@ pub fn merge_library_src_into_state(
     //    generator's available-components manifest sees the new masters now.
     state.components = ComponentLibrary::from_document(&state.doc);
     report.component_count = state.components.len();
+
+    if report.masters_added > 0 || report.variables_added > 0 || report.themes_added > 0 {
+        state.mark_document_changed();
+    }
 
     Ok(report)
 }
@@ -209,6 +217,18 @@ mod tests {
         // The runtime registry sees them too.
         assert_eq!(state.components.len(), 120);
         assert!(state.components.find_by_name("Component 7").is_some());
+        let id = op_editor_core::NodeId::new("lib-comp-7");
+        let canonical = components_page_children(&state)
+            .iter()
+            .find(|node| node.id_str() == id.as_str())
+            .expect("canonical merged master");
+        assert!(std::ptr::eq(
+            state
+                .components
+                .resolved_root(&state.doc, &id)
+                .expect("document-backed master"),
+            canonical,
+        ));
     }
 
     #[test]

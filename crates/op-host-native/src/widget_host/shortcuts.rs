@@ -2,7 +2,7 @@
 //! `input.rs` to stay under the 800-line cap.
 
 use super::WidgetHostNative;
-use op_editor_core::ReorderDirection;
+use op_editor_core::{figma_import_state::ImportSource, ReorderDirection};
 
 impl WidgetHostNative {
     /// True when a non-chat text surface owns keyboard input. Plain-string
@@ -425,9 +425,65 @@ impl WidgetHostNative {
 
     /// Cmd+Shift+F — open the Figma import modal.
     pub fn apply_open_figma_import(&mut self) -> bool {
-        self.commit_variable_row_focus_if_any();
+        self.apply_open_import(ImportSource::Figma)
+    }
+
+    /// Cmd+Shift+H — open the HTML import modal.
+    pub fn apply_open_html_import(&mut self) -> bool {
+        self.apply_open_import(ImportSource::Html)
+    }
+
+    fn apply_open_import(&mut self, source: ImportSource) -> bool {
+        // Keep the chord owned by the editor while an import is running, but
+        // do not mutate the source/modal or disturb the focused input. An
+        // existing higher modal must also keep ownership: opening the import
+        // modal underneath it would look like a no-op, then surface later when
+        // the original modal closes.
+        let ui = &self.editor_state.editor_ui;
+        if ui.figma_import_in_progress
+            || !ui.figma_import_pages.is_empty()
+            || ui.export_dialog_open
+            || ui.login_modal_open
+            || ui.agent_settings_open
+            || (ui.missing_fonts_modal_open
+                && ui
+                    .missing_fonts_prompt
+                    .as_ref()
+                    .is_some_and(|prompt| !prompt.entries.is_empty()))
+            || self.settings_focus_active()
+            || self.git_commit_focus_active()
+            || self.git_remote_focus_active()
+            || self.git_https_focus_active()
+            || self.git_author_focus_active()
+            || self.git_branch_create_focus_active()
+            || self.git_clone_input_active()
+        {
+            return true;
+        }
+
+        // The import modal covers every editor text surface. Commit canvas /
+        // layer editing, then reuse the canonical chrome-input blur path so a
+        // hidden property, chat, or model-picker input cannot keep receiving
+        // keyboard/IME events behind the scrim.
+        let _ = self.editor_state.rename_commit();
+        let _ = self.editor_state.text_edit_commit();
+        self.editor_state.color_picker_blur_hex();
+        self.editor_state.color_picker_blur_rgb();
+        let _ = self.editor_state.close_color_picker();
+        self.blur_text_inputs_on_blank_press();
         self.close_image_popovers_for_higher_overlay();
-        self.editor_state.editor_ui.figma_import_open = true;
+        self.close_import_menu();
+        let ui = &mut self.editor_state.editor_ui;
+        ui.close_font_picker();
+        ui.close_icon_picker();
+        ui.component_browser_open = false;
+        ui.component_browser_kit_picker_open = false;
+        ui.component_browser_confirm_delete_kit = None;
+        ui.component_browser_hover = None;
+        ui.ime_preedit = None;
+        ui.import_source = source;
+        ui.figma_import_open = true;
+        ui.figma_import_hover = None;
         self.mark_dirty();
         true
     }
@@ -453,16 +509,23 @@ impl WidgetHostNative {
     /// Cmd+, — open / close the floating agent-settings modal.
     pub fn apply_toggle_agent_settings(&mut self) -> bool {
         self.commit_variable_row_focus_if_any();
-        self.editor_state.editor_ui.agent_settings_open =
-            !self.editor_state.editor_ui.agent_settings_open;
-        if self.editor_state.editor_ui.agent_settings_open {
+        let opening = !self.editor_state.editor_ui.agent_settings_open;
+        if opening {
+            self.editor_state.editor_ui.agent_settings_open = true;
             // The settings modal is now topmost. Do not leave a property-panel
             // image input alive underneath it or text/IME would keep routing
             // to an invisible query field.
             self.close_image_popovers_for_higher_overlay();
             self.editor_state.chat.blur_input(self.now_ms);
         } else {
-            self.editor_state.editor_ui.agent_settings_drag = None;
+            // Cmd+, closes through the same commit/defocus path as the modal's
+            // close button. Leaving `focus` set after hiding the modal makes
+            // the desktop shortcut router treat an invisible field as owner.
+            self.commit_settings_focus_if_any();
+            let ui = &mut self.editor_state.editor_ui;
+            ui.agent_settings_open = false;
+            ui.agent_settings_drag = None;
+            ui.ime_preedit = None;
         }
         self.mark_dirty();
         true

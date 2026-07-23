@@ -5,6 +5,7 @@ use crate::layout_scene::{
 };
 use crate::{Color, Point2D, Rect, TextLayout};
 use jian_ops_schema::node::{ContainerProps, FrameNode, PenNode, PenNodeBase, RectangleNode};
+use jian_ops_schema::page::PenPage;
 use jian_ops_schema::sizing::SizingBehavior;
 use std::collections::HashMap;
 
@@ -49,6 +50,7 @@ struct RecordingBackend {
     text_colors: Vec<jian_core::scene::Color>,
     text_positions: Vec<Point2D>,
     fill_rects: Vec<Rect>,
+    fill_colors: Vec<Color>,
     dots: usize,
     mesh_fills: usize,
     shader_fills: usize,
@@ -67,8 +69,9 @@ struct RecordingBackend {
 impl crate::RenderBackend for RecordingBackend {
     fn begin_frame(&mut self) {}
     fn end_frame(&mut self) {}
-    fn fill_rect(&mut self, rect: Rect, _: Color) {
+    fn fill_rect(&mut self, rect: Rect, color: Color) {
         self.fill_rects.push(rect);
+        self.fill_colors.push(color);
         self.rects += 1;
         self.ops.push(Op::Fill);
     }
@@ -643,6 +646,39 @@ fn empty_scene_paints_canvas_background_and_grid_only() {
     assert!(backend.rects >= 1, "canvas bg + grid dots");
     assert_eq!(backend.strokes, 0);
     assert_eq!(backend.text, 0);
+}
+
+#[test]
+fn authored_page_background_fills_canvas_and_suppresses_grid() {
+    let mut state = sample_state();
+    state.doc.pages = Some(vec![PenPage {
+        id: "page-1".into(),
+        name: "Page 1".into(),
+        children: Vec::new(),
+        background_color: Some("#d7e4f380".into()),
+        state: None,
+        lifecycle: None,
+    }]);
+    let scene = LayoutScene::default();
+    let viewport = CanvasViewport::from_editor(&state, &scene);
+    let expected = Color {
+        r: 215.0 / 255.0,
+        g: 228.0 / 255.0,
+        b: 243.0 / 255.0,
+        a: 128.0 / 255.0,
+    };
+    assert_eq!(viewport.canvas_background, expected);
+    assert!(!viewport.show_grid);
+
+    let mut backend = RecordingBackend::default();
+    {
+        let mut cx = PaintCx {
+            backend: &mut backend,
+        };
+        viewport.paint(&mut cx, Rect::xywh(0.0, 0.0, 100.0, 100.0));
+    }
+    assert_eq!(backend.fill_colors.first(), Some(&expected));
+    assert_eq!(backend.dots, 0);
 }
 
 #[test]

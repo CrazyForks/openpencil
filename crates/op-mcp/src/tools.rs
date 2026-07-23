@@ -635,13 +635,14 @@ pub fn get_component_snapshot(state: &EditorState) -> GetComponent {
             .components
             .components
             .iter()
-            .map(|c| {
-                (
+            .filter_map(|c| {
+                let root = state.components.resolved_root(&state.doc, &c.id)?;
+                Some((
                     c.id.as_str().to_string(),
                     c.name.clone(),
-                    kind_label(&c.root).to_string(),
-                    count_subtree(&c.root),
-                )
+                    kind_label(root).to_string(),
+                    count_subtree(root),
+                ))
             })
             .collect(),
     }

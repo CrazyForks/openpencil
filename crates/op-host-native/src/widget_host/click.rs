@@ -10,12 +10,42 @@
 use super::helpers::{TOOLBAR_INSET_X, TOOLBAR_INSET_Y};
 use super::WidgetHostNative;
 use op_editor_ui::widgets::{
-    AIChatHit, AIChatPlaceholder, LayerPanel, LayoutCx, Toolbar, Widget, TOOLBAR_WIDTH,
-    TOP_BAR_HEIGHT,
+    AIChatHit, AIChatPlaceholder, LayoutCx, Toolbar, Widget, TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
 };
 use op_editor_ui::{Point2D, Rect};
 
 impl WidgetHostNative {
+    /// Route a press inside the model picker before lower rail/panel widgets.
+    /// The picker can extend outside the chat rect, so checking only the
+    /// panel's normal slot lets the underlying Property/Layer panel consume
+    /// the visible popup. The action itself stays centralized in
+    /// [`Self::apply_click`], which reuses `AIChatPlaceholder::hit_test`.
+    pub(in crate::widget_host) fn apply_chat_model_picker_overlay_press(
+        &mut self,
+        x: f32,
+        y: f32,
+        viewport_width: f32,
+        viewport_height: f32,
+    ) -> bool {
+        if !self.editor_state.editor_ui.chat_model_picker.open {
+            return false;
+        }
+        let Some(chat_rect) = self.ai_chat_rect(viewport_width, viewport_height) else {
+            self.editor_state.editor_ui.close_chat_model_picker();
+            self.mark_dirty();
+            return true;
+        };
+        let over_picker = AIChatPlaceholder::from_editor(&self.editor_state)
+            .model_picker_bounds(chat_rect)
+            .is_some_and(|picker| picker.contains(Point2D::new(x, y)));
+        if !over_picker {
+            return false;
+        }
+        let handled = self.apply_click(x, y, viewport_width, viewport_height);
+        debug_assert!(handled, "a visible model-picker press must be handled");
+        true
+    }
+
     /// Layer drag release → reorder_before/after/into.
     pub(in crate::widget_host) fn commit_layer_drag(
         &mut self,
@@ -188,6 +218,7 @@ impl WidgetHostNative {
                     }
                     AIChatHit::ToggleCollapse => {
                         self.editor_state.chat.toggle_collapsed();
+                        self.editor_state.editor_ui.close_chat_model_picker();
                         self.mark_dirty();
                         return true;
                     }
@@ -228,6 +259,10 @@ impl WidgetHostNative {
                                 .editor_ui
                                 .chat_model_picker_input
                                 .touch(self.now_ms);
+                            // Opening can be painted before the deferred cursor-move
+                            // queue runs. Clear covered hover state now so the first
+                            // picker frame never carries a stale canvas/panel wash.
+                            self.clear_hover_below_chat_model_picker();
                         }
                         self.mark_dirty();
                         return true;
@@ -465,7 +500,7 @@ impl WidgetHostNative {
                 (viewport_height - TOP_BAR_HEIGHT).max(0.0),
             ),
         };
-        let panel = LayerPanel::from_editor(&self.editor_state);
+        let panel = self.layer_panel();
         if let Some(hit) = panel.hit_test(layer_rect, Point2D::new(x, y)) {
             use op_editor_core::ui_draft::LayerContextTarget;
             use op_editor_ui::widgets::LayerPanelHit as H;
@@ -502,12 +537,18 @@ impl WidgetHostNative {
             }
             match hit {
                 H::Page(idx) => {
+                    let page_changed = idx != self.editor_state.ui.active_page_index;
                     let _ = self.editor_state.set_active_page(idx);
                     self.editor_state.clear_selection();
-                    // Land centered on the new page's content instead
-                    // of keeping the previous page's pan/zoom.
-                    self.zoom_to_fit(self.last_viewport_w, self.last_viewport_h);
-                    self.mark_dirty();
+                    if page_changed {
+                        // Land centered on the new page's content instead
+                        // of keeping the previous page's pan/zoom.
+                        self.fit_active_page_after_switch(viewport_width, viewport_height);
+                    } else {
+                        // Clicking the already-active page may clear selection,
+                        // but must preserve the user's current canvas view.
+                        self.mark_dirty();
+                    }
                     return true;
                 }
                 H::Layer(node_id) => {
@@ -541,8 +582,9 @@ impl WidgetHostNative {
                 H::AddPage => {
                     // TS addPage pushes history before the insert
                     // (document-store-pages.ts:19-49).
-                    self.with_doc_history(|s| s.add_page().is_some());
-                    self.mark_dirty();
+                    if self.with_doc_history(|s| s.add_page().is_some()) {
+                        self.fit_active_page_after_switch(viewport_width, viewport_height);
+                    }
                     return true;
                 }
                 H::DeletePage(idx) => {
@@ -550,8 +592,14 @@ impl WidgetHostNative {
                     // last-page guard (document-store-pages.ts:51-63)
                     // — `with_doc_history` skips the push when the
                     // guard rejects the delete.
-                    self.with_doc_history(|s| s.remove_page(idx));
-                    self.mark_dirty();
+                    let deleting_active = idx == self.editor_state.ui.active_page_index;
+                    if self.with_doc_history(|s| s.remove_page(idx)) {
+                        if deleting_active {
+                            self.fit_active_page_after_switch(viewport_width, viewport_height);
+                        } else {
+                            self.mark_dirty();
+                        }
+                    }
                     return true;
                 }
             }

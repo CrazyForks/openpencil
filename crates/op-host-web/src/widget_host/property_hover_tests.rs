@@ -108,6 +108,62 @@ fn locale_dropdown_hover_clears_property_panel_hover_underlay() {
 }
 
 #[test]
+fn effect_add_menu_hover_clears_overlapped_property_action_hover() {
+    let mut host = WidgetHost::new();
+    let doc = jian_ops_schema::load_str(
+        r##"{ "version":"1.0.0", "children":[
+            {"type":"rectangle","id":"hover-overlap","x":40,"y":40,
+             "width":180,"height":120,
+             "fill":[{"type":"solid","color":"#BDC7D9"}]}
+        ]}"##,
+    )
+    .expect("fixture JSON parses")
+    .value;
+    host.editor_state = EditorState::from_document(doc);
+    host.editor_state
+        .set_single_selection(op_editor_core::NodeId::new("hover-overlap"));
+    host.mark_dirty();
+    host.last_viewport_w = 1200.0;
+    host.last_viewport_h = 800.0;
+
+    let rect = property_rect(&host);
+    let base_panel = PropertyPanel::for_selection(&host.editor_state).expect("property panel");
+    host.editor_state.editor_ui.toggle_effect_add_picker();
+    let popup_panel = PropertyPanel::for_selection(&host.editor_state).expect("property panel");
+
+    // The Effects popup drops over the Interactions section in this layout.
+    // Resolve the painted popup once, then walk its short centre line to find
+    // row 1 without baking private row metrics into the host test.
+    let menu = popup_panel
+        .effect_add_menu_rect(rect)
+        .expect("effect menu bounds");
+    let mut overlap = None;
+    'popup: for dy in 0..menu.size.y.ceil() as i32 {
+        for dx in 0..menu.size.x.ceil() as i32 {
+            let point = Point2D::new(
+                menu.origin.x + dx as f32 + 0.5,
+                menu.origin.y + dy as f32 + 0.5,
+            );
+            if popup_panel.effect_add_menu_row_at(rect, point) == Some(1) {
+                if let Some(action_hover) = base_panel.action_hover_index(rect, point) {
+                    overlap = Some((point, action_hover));
+                    break 'popup;
+                }
+            }
+        }
+    }
+    let (point, stale_action_hover) = overlap.expect("effect menu overlaps a property action");
+    host.editor_state.editor_ui.property_action_hover = Some(stale_action_hover);
+
+    assert!(host.apply_cursor_move(point.x, point.y));
+    assert_eq!(host.editor_state.editor_ui.effect_add_menu_hover, Some(1));
+    assert_eq!(
+        host.editor_state.editor_ui.property_action_hover, None,
+        "the popup must clear the inspector action hover beneath it"
+    );
+}
+
+#[test]
 fn codegen_hover_tracks_idle_generate_button() {
     let mut host = WidgetHost::new();
     host.editor_state = EditorState::sample();

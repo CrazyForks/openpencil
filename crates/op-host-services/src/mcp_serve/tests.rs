@@ -562,6 +562,25 @@ fn load_editor_state_accepts_ts_future_version_files() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+#[test]
+fn file_backed_loader_restores_embedded_authored_geometry_mode() {
+    let (dir, primary_path, _) = temp_doc_paths("preserve-geometry-load");
+    std::fs::write(
+        &primary_path,
+        r#"{
+          "version":"1.0.0",
+          "children":[],
+          "editorMeta":{"preserveAuthoredGeometry":true}
+        }"#,
+    )
+    .expect("write preserve metadata doc");
+
+    let state = load_editor_state(&primary_path).expect("file-backed state loads");
+
+    assert!(state.editor_ui.preserve_authored_geometry);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 fn assert_response_file_path_matches(response: &str, expected: &std::path::Path) {
     let tool_text = crate::mcp_serve::tool_text(response);
     let result: serde_json::Value = serde_json::from_str(&tool_text).expect("tool result JSON");
@@ -670,6 +689,17 @@ fn process_message_writes_document_to_ts_file_path_arg() {
     let alternate_text = std::fs::read_to_string(&alternate_path).expect("alternate doc");
     assert!(!primary_text.contains("FromFilePath"), "{primary_text}");
     assert!(alternate_text.contains("FromFilePath"), "{alternate_text}");
+    assert!(
+        alternate_text.contains("editorMeta"),
+        "MCP writes use the canonical desktop serializer"
+    );
+    let reloaded = crate::doc_io::load_editor_state(&alternate_path, op_editor_core::Locale::EnUs)
+        .expect("MCP output reloads through the product loader");
+    assert!(reloaded
+        .doc
+        .pages
+        .as_ref()
+        .is_some_and(|pages| pages.iter().any(|page| page.name == "FromFilePath")));
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -795,6 +825,78 @@ fn parse_document_sync_body_mirrors_ts_validation() {
         r#"{"document":{"version":"1.0","pages":[{"id":"p1","name":"P","children":[]}]}}"#
     )
     .is_ok());
+
+    let request = parse_document_sync_request(
+        r#"{"document":{"version":"1.0","children":[]},"baseVersion":7,"activePageIndex":3,"preserveAuthoredGeometry":true,"metadataOnly":true}"#,
+    )
+    .expect("metadata-aware request");
+    assert_eq!(request.base_version, Some(7));
+    assert_eq!(request.active_page_index, Some(3));
+    assert_eq!(request.preserve_authored_geometry, Some(true));
+    assert!(request.metadata_only);
+}
+
+#[test]
+fn document_sync_document_json_borrows_the_request_slice() {
+    let body = r#"{ "document" : { "version": "1.0", "children": [ ] }, "baseVersion": 9 }"#;
+    let expected = r#"{ "version": "1.0", "children": [ ] }"#;
+
+    let request = parse_document_sync_request(body).expect("borrowed document request");
+
+    assert_eq!(request.document_json, expected);
+    assert_eq!(request.base_version, Some(9));
+    let body_range = body.as_ptr() as usize..body.as_ptr() as usize + body.len();
+    assert!(body_range.contains(&(request.document_json.as_ptr() as usize)));
+}
+
+#[test]
+fn document_sync_metadata_overrides_nested_fields_independently() {
+    let embedded = op_pen_loader::EditorMeta {
+        active_page_index: 5,
+        preserve_authored_geometry: true,
+    };
+
+    let page_override = parse_document_sync_request(
+        r#"{"document":{"version":"1.0","children":[]},"activePageIndex":2}"#,
+    )
+    .expect("active-page override");
+    assert_eq!(
+        page_override.resolved_editor_meta(Some(embedded)),
+        op_pen_loader::EditorMeta {
+            active_page_index: 2,
+            preserve_authored_geometry: true,
+        }
+    );
+
+    let geometry_override = parse_document_sync_request(
+        r#"{"document":{"version":"1.0","children":[]},"preserveAuthoredGeometry":false}"#,
+    )
+    .expect("geometry override");
+    assert_eq!(
+        geometry_override.resolved_editor_meta(Some(embedded)),
+        op_pen_loader::EditorMeta {
+            active_page_index: 5,
+            preserve_authored_geometry: false,
+        }
+    );
+
+    let legacy = parse_document_sync_request(r#"{"document":{"version":"1.0","children":[]}}"#)
+        .expect("legacy wrapper");
+    assert_eq!(legacy.resolved_editor_meta(Some(embedded)), embedded);
+    assert_eq!(legacy.resolved_editor_meta(None), Default::default());
+
+    let nested = parse_document_sync_request(
+        r#"{"document":{"version":"1.0","children":[],"editorMeta":{"activePageIndex":5,"preserveAuthoredGeometry":true}},"activePageIndex":2}"#,
+    )
+    .expect("nested metadata request");
+    assert_eq!(nested.embedded_editor_meta, Some(embedded));
+    assert_eq!(
+        nested.resolved_editor_meta(nested.embedded_editor_meta),
+        op_pen_loader::EditorMeta {
+            active_page_index: 2,
+            preserve_authored_geometry: true,
+        }
+    );
 }
 
 #[test]

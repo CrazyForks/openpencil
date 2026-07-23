@@ -10,6 +10,7 @@ mod boolean_fallback;
 mod clipboard;
 mod color;
 mod common;
+mod component_props;
 mod container;
 mod converters;
 mod corner_geometry;
@@ -17,9 +18,14 @@ mod figma_types;
 mod image_resolver;
 mod instance;
 mod kiwi;
+mod layout_positioning;
 mod mappers;
+mod mask;
 mod node_build;
 mod node_mapper;
+mod page_mapper;
+mod prepared;
+mod text_cache;
 mod text_mapper;
 mod tree;
 mod vector_decoder;
@@ -42,9 +48,9 @@ pub use node_mapper::{
     figma_all_pages_to_pen_document, figma_node_changes_to_pen_nodes, figma_to_pen_document,
     get_figma_pages, FigmaClipboardResult, FigmaImportResult, FigmaPageInfo,
 };
+pub use prepared::{prepare_fig_binary, PreparedFig};
 
 use common::FigLayoutMode as LayoutMode;
-use image_resolver::resolve_image_blobs_with;
 pub use image_resolver::ImageTransform;
 use jian_ops_schema::document::PenDocument;
 use jian_ops_schema::node::{
@@ -127,24 +133,7 @@ pub fn parse_fig_binary_with_images(
     layout_mode: FigLayoutMode,
     image_transform: Option<&ImageTransform<'_>>,
 ) -> Result<FigImport, FigParseError> {
-    if detect_kind(bytes) != FigFileKind::Binary {
-        return Err(FigParseError::UnknownFormat);
-    }
-    let decoded =
-        figma_types::parse_fig_file(bytes).map_err(|e| FigParseError::Binary(e.to_string()))?;
-    let image_files = decoded.image_files.clone();
-    let result = figma_all_pages_to_pen_document(decoded, file_name, layout_mode);
-    let mut document = result.document;
-    resolve_image_blobs_with(
-        &mut document,
-        &result.image_blobs,
-        &image_files,
-        image_transform,
-    );
-    Ok(FigImport {
-        document,
-        warnings: result.warnings,
-    })
+    prepare_fig_binary(bytes, file_name, layout_mode)?.into_all_pages_with_images(image_transform)
 }
 
 /// Convert a `.fig` byte stream to a `ParsedFigStub`. For clipboard
@@ -492,6 +481,7 @@ fn build_node(variant: FigmaNodeVariant, base: PenNodeBase) -> PenNode {
             anchors: None,
             closed: None,
             fill_rule: None,
+            mask: None,
             width: None,
             height: None,
             fill: None,
@@ -557,6 +547,8 @@ pub enum FigParseError {
     UnknownFormat,
     /// Binary `.fig` parsing failed — carries the underlying reason.
     Binary(String),
+    /// A prepared file was asked to convert a page it does not have.
+    PageOutOfBounds { index: usize, page_count: usize },
 }
 
 impl std::fmt::Display for FigParseError {
@@ -564,6 +556,12 @@ impl std::fmt::Display for FigParseError {
         match self {
             FigParseError::UnknownFormat => write!(f, "unrecognised .fig format"),
             FigParseError::Binary(e) => write!(f, "{e}"),
+            FigParseError::PageOutOfBounds { index, page_count } => {
+                write!(
+                    f,
+                    "Figma page index {index} is out of bounds (page count: {page_count})"
+                )
+            }
         }
     }
 }

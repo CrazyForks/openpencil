@@ -439,6 +439,7 @@ mod tests {
             id: "p1".into(),
             name: "Page 1".into(),
             children: nodes,
+            background_color: None,
             state: None,
             lifecycle: None,
         }]);

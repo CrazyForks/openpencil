@@ -3,7 +3,7 @@
 //! agent-settings modal press dispatcher.
 
 use super::WidgetHostNative;
-use op_editor_ui::util::format_panel_number;
+use op_editor_ui::util::{format_panel_number, format_panel_number_roundtrip};
 use op_editor_ui::Point2D;
 
 fn create_initial_size_for_tool(tool: op_editor_core::Tool) -> (f64, f64) {
@@ -794,9 +794,10 @@ pub(in crate::widget_host) fn property_focus_initial(
     focus: op_editor_core::PropertyFocus,
     panel: &op_editor_ui::widgets::PropertyPanel,
 ) -> String {
-    use super::helpers::color_to_hex;
+    use super::helpers::{color_to_hex, color_to_hex_with_alpha};
     use op_editor_core::PropertyFocus as F;
     match focus {
+        F::PageBackgroundHex => panel.page_background.clone().unwrap_or_default(),
         F::PositionX => panel.snapshot.x.to_string(),
         F::PositionY => panel.snapshot.y.to_string(),
         F::SizeW => panel.snapshot.width.to_string(),
@@ -832,7 +833,7 @@ pub(in crate::widget_host) fn property_focus_initial(
             .get(index)
             .map(|effect| format_panel_number(effect.blur))
             .unwrap_or_else(|| "0".to_string()),
-        F::Opacity => "100".to_string(),
+        F::Opacity => format_panel_number(panel.snapshot.opacity_percent),
         F::PolygonSides => panel.snapshot.polygon_sides.unwrap_or(3).to_string(),
         F::EllipseStart => format_panel_number(
             panel
@@ -942,13 +943,20 @@ pub(in crate::widget_host) fn property_focus_initial(
                 .unwrap_or(panel.snapshot.fill_opacity);
             ((opacity * 100.0).round() as i32).to_string()
         }
+        F::ImageTileScale => panel
+            .snapshot
+            .image_fill
+            .as_ref()
+            .and_then(|image| image.tile_scale)
+            .map(format_panel_number_roundtrip)
+            .unwrap_or_else(|| "1".to_string()),
         F::FillHex(index) => panel
             .snapshot
             .fills
             .get(index)
             .map(|f| f.color)
             .or(panel.snapshot.fill)
-            .map(color_to_hex)
+            .map(color_to_hex_with_alpha)
             .unwrap_or_else(|| "#FFFFFF".to_string()),
         // Seed the SAME color the stroke swatch paints (the real stroke
         // when set, else the slate placeholder) so clicking the hex input

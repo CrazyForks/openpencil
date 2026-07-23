@@ -139,6 +139,8 @@ pub(super) fn paint_image_fill_layer(
         src_id,
         fit,
         transform,
+        original_size,
+        tile_scale,
         adjustments,
         opacity,
         ..
@@ -153,6 +155,8 @@ pub(super) fn paint_image_fill_layer(
     image.image_src_id = *src_id;
     image.image_fit = *fit;
     image.image_transform = *transform;
+    image.image_original_size = *original_size;
+    image.image_tile_scale = *tile_scale;
     image.image_adjustments = *adjustments;
     image.image_blend_mode = ImageBlendMode::Normal;
     image.opacity = *opacity;
@@ -439,6 +443,8 @@ mod tests {
                 src_id: 42,
                 fit: Default::default(),
                 transform: None,
+                original_size: None,
+                tile_scale: 1.0,
                 adjustments: Default::default(),
                 opacity: 1.0,
                 blend_mode: ImageBlendMode::Normal,

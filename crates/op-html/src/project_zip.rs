@@ -4,6 +4,7 @@ use std::io::{Cursor, Read, Seek, SeekFrom};
 
 use zip::{CompressionMethod, ZipArchive};
 
+use crate::html_encoding::decode_html_bytes;
 use crate::project::{
     import_html_entry_with_fetcher, is_html_path, is_ignored_metadata_path,
     normalize_relative_path, select_html_entry_index, strip_common_root_paths,
@@ -91,8 +92,7 @@ pub fn import_html_zip_reader_with_transform<R: Read + Seek>(
     let entry = &manifest.entries[manifest.html_entry];
     let entry_path = entry.relative_path.clone();
     let html_bytes = read_entry(&mut archive, entry.archive_index)?;
-    let html = std::str::from_utf8(&html_bytes)
-        .map_err(|_| HtmlProjectError::HtmlIsNotUtf8(entry_path.clone()))?;
+    let html = decode_html_bytes(&html_bytes);
 
     let resources: HashMap<String, usize> = manifest
         .entries
@@ -106,7 +106,7 @@ pub fn import_html_zip_reader_with_transform<R: Read + Seek>(
         read_entry(&mut archive.borrow_mut(), index).ok()
     };
     Ok(import_html_entry_with_fetcher(
-        html,
+        &html,
         &entry_path,
         manifest.html_entry_count,
         options,
@@ -395,6 +395,17 @@ mod tests {
             json.matches("data:image/png;base64,").count() >= 2,
             "{json}"
         );
+    }
+
+    #[test]
+    fn imports_a_non_utf8_html_entry() {
+        let mut html = b"<meta charset=gbk><p>".to_vec();
+        html.extend_from_slice(b"\xC4\xE3\xBA\xC3");
+        html.extend_from_slice(b"</p>");
+        let bytes = archive(&[("index.html", &html, CompressionMethod::Deflated)]);
+        let imported = import_html_zip(&bytes, &HtmlImportOptions::default()).unwrap();
+        let json = serde_json::to_string(&imported.nodes).unwrap();
+        assert!(json.contains("你好"), "{json}");
     }
 
     #[test]

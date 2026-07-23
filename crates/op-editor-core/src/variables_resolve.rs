@@ -507,10 +507,12 @@ pub fn resolve_node_for_canvas(node: &mut PenNode, vars: Option<&Vars>, theme: &
     changed
 }
 
-/// True when any `$token` exists anywhere `resolve_node_for_canvas`
-/// would look — the scene builder's early-out so token-free documents
-/// (the common case) skip the resolution pass's full-tree clone.
-pub fn document_has_tokens(doc: &PenDocument) -> bool {
+/// True when a canvas-root list contains any `$token` that
+/// [`resolve_node_for_canvas`] would resolve.
+///
+/// This page-scoped detector lets render hosts prepare only the active page
+/// instead of scanning and cloning every inactive page on a page switch.
+pub fn roots_have_tokens(nodes: &[PenNode]) -> bool {
     fn fill_has_token(fill: &PenFill) -> bool {
         match fill {
             PenFill::Solid(body) => is_variable_ref(&body.color),
@@ -573,10 +575,28 @@ pub fn document_has_tokens(doc: &PenDocument) -> bool {
         crate::pen_node_ext::PenNodeExt::children(node)
             .is_some_and(|children| children.iter().any(node_has_token))
     }
+    nodes.iter().any(node_has_token)
+}
+
+/// True when any `$token` exists anywhere `resolve_node_for_canvas`
+/// would look — the scene builder's early-out so token-free documents
+/// (the common case) skip the resolution pass's full-tree clone.
+pub fn document_has_tokens(doc: &PenDocument) -> bool {
     doc.pages
         .as_ref()
-        .is_some_and(|pages| pages.iter().any(|p| p.children.iter().any(node_has_token)))
-        || doc.children.iter().any(node_has_token)
+        .is_some_and(|pages| pages.iter().any(|p| roots_have_tokens(&p.children)))
+        || roots_have_tokens(&doc.children)
+}
+
+/// Resolve `$token`s in one canvas-root list against the variable and theme
+/// metadata in the whole document. Unlike [`resolve_document_for_canvas`],
+/// this does not clone or walk inactive pages.
+pub fn resolve_roots_for_canvas(nodes: &mut [PenNode], doc: &PenDocument, active: &Theme) {
+    let theme = effective_theme(doc, active);
+    let vars = doc.variables.as_ref();
+    for node in nodes {
+        resolve_node_for_canvas(node, vars, &theme);
+    }
 }
 
 /// Clone `doc` with every `$variable` reference resolved against the

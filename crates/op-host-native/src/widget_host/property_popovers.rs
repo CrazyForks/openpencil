@@ -30,14 +30,40 @@ impl WidgetHostNative {
                     (viewport_height - TOP_BAR_HEIGHT).max(0.0),
                 ),
             };
-            if let Some(action) = panel.hit_test_action(property_rect, Point2D::new(x, y)) {
-                self.apply_property_action(action);
-                return true;
-            }
-            if panel.image_fill_popover_contains(property_rect, Point2D::new(x, y)) {
+            let point = Point2D::new(x, y);
+            if panel.image_fill_popover_contains(property_rect, point) {
+                // Tile scale is a real text input inside the floating popup.
+                // It must win before the popup's Pick/Mode actions and before
+                // any inspector/body target covered underneath it.
+                if let Some(focus) = panel.image_fill_popover_input_at(property_rect, point) {
+                    self.commit_property_focus_if_any();
+                    self.refresh_layout_scene();
+                    let initial = PropertyPanel::for_selection_with_scene(
+                        &self.editor_state,
+                        &self.layout_scene,
+                    )
+                    .as_ref()
+                    .map(|next| super::press_helpers::property_focus_initial(focus, next))
+                    .unwrap_or_default();
+                    let ui = &mut self.editor_state.ui;
+                    ui.property_focus = Some(focus);
+                    ui.property_input.set_text(initial.clone());
+                    ui.property_input.touch(self.now_ms);
+                    ui.property_input_draft = initial;
+                    ui.property_caret_pos = ui.property_input.caret();
+                    ui.property_caret_anchor_ms = self.now_ms;
+                    ui.property_draft_select_all = false;
+                    self.editor_state.chat.focused = false;
+                    self.mark_dirty();
+                    return true;
+                }
+                if let Some(action) = panel.hit_test_action(property_rect, point) {
+                    self.apply_property_action(action);
+                }
                 return true;
             }
         }
+        self.commit_image_tile_scale_focus_if_any();
         self.editor_state.editor_ui.image_fill_popover_open = false;
         self.mark_dirty();
         true
@@ -201,16 +227,16 @@ impl WidgetHostNative {
         &mut self,
         x: f32,
         y: f32,
+        panel: Option<&op_editor_ui::widgets::PropertyPanel>,
     ) -> bool {
-        use op_editor_ui::widgets::{PropertyPanel, PropertyPanelAction as A, TOP_BAR_HEIGHT};
+        use op_editor_ui::widgets::{PropertyPanelAction as A, TOP_BAR_HEIGHT};
         use op_editor_ui::{Point2D, Rect};
         if !self.editor_state.editor_ui.padding_mode_popover_open
             && !self.editor_state.editor_ui.stroke_mode_popover_open
         {
             return false;
         }
-        self.refresh_layout_scene();
-        let new_hover = PropertyPanel::for_selection(&self.editor_state).and_then(|panel| {
+        let new_hover = panel.and_then(|panel| {
             let property_rect = Rect {
                 origin: Point2D::new(
                     self.last_viewport_w - self.editor_state.editor_ui.property_panel_width,
@@ -262,14 +288,14 @@ impl WidgetHostNative {
         &mut self,
         x: f32,
         y: f32,
+        panel: Option<&op_editor_ui::widgets::PropertyPanel>,
     ) -> bool {
-        use op_editor_ui::widgets::{PropertyPanel, PropertyPanelAction as A, TOP_BAR_HEIGHT};
+        use op_editor_ui::widgets::{PropertyPanelAction as A, TOP_BAR_HEIGHT};
         use op_editor_ui::{Point2D, Rect};
         if !self.editor_state.editor_ui.font_weight_picker_open {
             return false;
         }
-        self.refresh_layout_scene();
-        let new_hover = PropertyPanel::for_selection(&self.editor_state).and_then(|panel| {
+        let new_hover = panel.and_then(|panel| {
             let property_rect = Rect {
                 origin: Point2D::new(
                     self.last_viewport_w - self.editor_state.editor_ui.property_panel_width,

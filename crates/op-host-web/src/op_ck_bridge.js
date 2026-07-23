@@ -107,6 +107,56 @@ export function opCkResolveRegisteredTypeface(family, importedTypefaces, systemT
   return null;
 }
 
+const opCkClampUnit = (value, fallback = 0) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(0, Math.min(1, number)) : fallback;
+};
+
+// Build the row-major vertex lattice consumed by CanvasKit.MakeVertices.
+// Kept pure + exported so the geometry/index contract can run under Node
+// without booting a WebGL surface. CanvasKit indices are u16, so grids larger
+// than 65,535 vertices take the same visible first-colour fallback as malformed
+// grids instead of wrapping indices and drawing corrupt triangles.
+export function opCkBuildMeshGradientData(x, y, w, h, rows, cols, colors) {
+  rows = Math.trunc(Number(rows));
+  cols = Math.trunc(Number(cols));
+  const vertexCount = rows * cols;
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(w) || !Number.isFinite(h)
+      || rows < 2 || cols < 2 || !Number.isSafeInteger(vertexCount)
+      || vertexCount > 0xffff || colors.length !== vertexCount * 4) {
+    return null;
+  }
+
+  const positions = new Float32Array(vertexCount * 2);
+  const rgba = new Float32Array(vertexCount * 4);
+  for (let row = 0; row < rows; row++) {
+    for (let colIndex = 0; colIndex < cols; colIndex++) {
+      const vertex = row * cols + colIndex;
+      positions[vertex * 2] = x + (colIndex / (cols - 1)) * w;
+      positions[vertex * 2 + 1] = y + (row / (rows - 1)) * h;
+      const colorOffset = vertex * 4;
+      rgba[colorOffset] = opCkClampUnit(colors[colorOffset]);
+      rgba[colorOffset + 1] = opCkClampUnit(colors[colorOffset + 1]);
+      rgba[colorOffset + 2] = opCkClampUnit(colors[colorOffset + 2]);
+      rgba[colorOffset + 3] = opCkClampUnit(colors[colorOffset + 3]);
+    }
+  }
+
+  const indices = new Uint16Array((rows - 1) * (cols - 1) * 6);
+  let index = 0;
+  for (let row = 0; row < rows - 1; row++) {
+    for (let colIndex = 0; colIndex < cols - 1; colIndex++) {
+      const topLeft = row * cols + colIndex;
+      const topRight = topLeft + 1;
+      const bottomLeft = (row + 1) * cols + colIndex;
+      const bottomRight = bottomLeft + 1;
+      indices.set([topLeft, topRight, bottomLeft, topRight, bottomRight, bottomLeft], index);
+      index += 6;
+    }
+  }
+  return { positions, rgba, indices };
+}
+
 // Initialise CanvasKit on `canvasId`. Returns a bridge object the Rust backend
 // drives. Text is rasterized with browser/system fonts by default; the Rust
 // side can additionally register Local Font Access faces through
@@ -426,13 +476,26 @@ export async function opCkInit(canvasId) {
     return entry.width;
   };
   const shaderPaint = (shader) => { const p = new CK.Paint(); p.setAntiAlias(true); setPaintStyle(p, CK.PaintStyle.Fill); p.setShader(shader); return p; };
-  const firstStopColor = (stops, opacity) => stops.length >= 5 ? col(stops[1], stops[2], stops[3], stops[4] * opacity) : col(0, 0, 0, 0);
+  const firstStopColor = (stops, opacity) => stops.length >= 5
+    ? col(
+      opCkClampUnit(stops[1]),
+      opCkClampUnit(stops[2]),
+      opCkClampUnit(stops[3]),
+      opCkClampUnit(stops[4]) * opCkClampUnit(opacity),
+    )
+    : col(0, 0, 0, 0);
   const gradientStops = (stops, opacity) => {
     const colors = [];
     const offsets = [];
+    const alpha = opCkClampUnit(opacity);
     for (let i = 0; i + 4 < stops.length; i += 5) {
-      offsets.push(stops[i]);
-      colors.push(col(stops[i + 1], stops[i + 2], stops[i + 3], stops[i + 4] * opacity));
+      offsets.push(opCkClampUnit(stops[i]));
+      colors.push(col(
+        opCkClampUnit(stops[i + 1]),
+        opCkClampUnit(stops[i + 2]),
+        opCkClampUnit(stops[i + 3]),
+        opCkClampUnit(stops[i + 4]) * alpha,
+      ));
     }
     return { colors, offsets };
   };
@@ -443,6 +506,118 @@ export async function opCkInit(canvasId) {
     const dx = Math.cos(rad) * w / 2;
     const dy = Math.sin(rad) * h / 2;
     return { start: [cx - dx, cy - dy], end: [cx + dx, cy + dy] };
+  };
+  const uniformRRect = (x, y, w, h, radius) => CK.RRectXY(
+    CK.LTRBRect(x, y, x + w, y + h),
+    Math.max(0, radius),
+    Math.max(0, radius),
+  );
+  const perCornerRRect = (x, y, w, h, topLeft, topRight, bottomRight, bottomLeft) => Float32Array.of(
+    x, y, x + w, y + h,
+    Math.max(0, topLeft), Math.max(0, topLeft),
+    Math.max(0, topRight), Math.max(0, topRight),
+    Math.max(0, bottomRight), Math.max(0, bottomRight),
+    Math.max(0, bottomLeft), Math.max(0, bottomLeft),
+  );
+  const drawGradientRRect = (rrect, shader, fallbackColor) => {
+    if (!shader) {
+      canvas.drawRRect(rrect, fillPaint(...fallbackColor));
+      return;
+    }
+    const paint = shaderPaint(shader);
+    try {
+      canvas.drawRRect(rrect, paint);
+    } finally {
+      paint.delete();
+      if (shader.delete) shader.delete();
+    }
+  };
+  const makeLinearGradient = (x, y, w, h, stops, angleDeg, opacity) => {
+    const gradient = gradientStops(stops, opacity);
+    if (!gradient.colors.length) return null;
+    const points = linearGradientPoints(x, y, w, h, angleDeg);
+    try {
+      // Flag 1 requests interpolation in premultiplied colour space, matching
+      // the native Skia backend and avoiding halos around transparent stops.
+      return CK.Shader.MakeLinearGradient(
+        points.start,
+        points.end,
+        gradient.colors,
+        gradient.offsets,
+        CK.TileMode.Clamp,
+        null,
+        1,
+      );
+    } catch (_error) {
+      return null;
+    }
+  };
+  const makeRadialGradient = (x, y, w, h, stops, cxFrac, cyFrac, radiusFrac, opacity) => {
+    const gradient = gradientStops(stops, opacity);
+    if (!gradient.colors.length) return null;
+    const center = [
+      x + w * opCkClampUnit(cxFrac),
+      y + h * opCkClampUnit(cyFrac),
+    ];
+    const radius = Math.max(0.01, Math.max(w, h) * opCkClampUnit(radiusFrac));
+    try {
+      return CK.Shader.MakeRadialGradient(
+        center,
+        radius,
+        gradient.colors,
+        gradient.offsets,
+        CK.TileMode.Clamp,
+        null,
+        1,
+      );
+    } catch (_error) {
+      return null;
+    }
+  };
+  const drawMeshGradientRRect = (rrect, x, y, w, h, rows, cols, colors, opacity) => {
+    const alpha = opCkClampUnit(opacity);
+    const fallback = colors.length >= 4
+      ? [
+        opCkClampUnit(colors[0]),
+        opCkClampUnit(colors[1]),
+        opCkClampUnit(colors[2]),
+        opCkClampUnit(colors[3]) * alpha,
+      ]
+      : [0, 0, 0, 0];
+    const mesh = opCkBuildMeshGradientData(x, y, w, h, rows, cols, colors);
+    if (!mesh || typeof CK.MakeVertices !== 'function') {
+      canvas.drawRRect(rrect, fillPaint(...fallback));
+      return;
+    }
+
+    let vertices = null;
+    try {
+      vertices = CK.MakeVertices(
+        CK.VertexMode.Triangles,
+        mesh.positions,
+        null,
+        mesh.rgba,
+        mesh.indices,
+        true,
+      );
+    } catch (_error) {
+      vertices = null;
+    }
+    if (!vertices) {
+      canvas.drawRRect(rrect, fillPaint(...fallback));
+      return;
+    }
+
+    const paint = allocFillPaint(1, 1, 1, alpha);
+    canvas.save();
+    try {
+      canvas.clipRRect(rrect, CK.ClipOp.Intersect, true);
+      canvas.drawVertices(vertices, CK.BlendMode.Modulate, paint);
+    } finally {
+      canvas.restore();
+      paint.delete();
+      vertices.delete();
+    }
   };
   const fontCovers = (entry, text) => {
     if (!entry || !entry.tf || !text) return false;
@@ -716,6 +891,11 @@ export async function opCkInit(canvasId) {
     CK.BlendMode.Saturation,
     CK.BlendMode.Color,
     CK.BlendMode.Luminosity,
+    CK.BlendMode.SoftLight,
+    CK.BlendMode.ColorDodge,
+    CK.BlendMode.ColorBurn,
+    CK.BlendMode.HardLight,
+    CK.BlendMode.Exclusion,
   ][blendMode] || CK.BlendMode.SrcOver;
 
   const drawImageRectLinear = (image, src, dst, paint) => {
@@ -749,6 +929,52 @@ export async function opCkInit(canvasId) {
     fillRoundRectPerCorner(x, y, w, h, tl, tr, br, bl, r, g, b, a) {
       const rr = Float32Array.of(x, y, x + w, y + h, tl, tl, tr, tr, br, br, bl, bl);
       const p = fillPaint(r, g, b, a); canvas.drawRRect(rr, p);
+    },
+    fillRoundRectLinearGradient(x, y, w, h, radius, stops, angleDeg, opacity) {
+      if (stops.length < 5) return;
+      drawGradientRRect(
+        uniformRRect(x, y, w, h, radius),
+        makeLinearGradient(x, y, w, h, stops, angleDeg, opacity),
+        firstStopColor(stops, opacity),
+      );
+    },
+    fillRoundRectLinearGradientPerCorner(x, y, w, h, tl, tr, br, bl, stops, angleDeg, opacity) {
+      if (stops.length < 5) return;
+      drawGradientRRect(
+        perCornerRRect(x, y, w, h, tl, tr, br, bl),
+        makeLinearGradient(x, y, w, h, stops, angleDeg, opacity),
+        firstStopColor(stops, opacity),
+      );
+    },
+    fillRoundRectRadialGradient(x, y, w, h, radius, stops, cxFrac, cyFrac, radiusFrac, opacity) {
+      if (stops.length < 5) return;
+      drawGradientRRect(
+        uniformRRect(x, y, w, h, radius),
+        makeRadialGradient(x, y, w, h, stops, cxFrac, cyFrac, radiusFrac, opacity),
+        firstStopColor(stops, opacity),
+      );
+    },
+    fillRoundRectRadialGradientPerCorner(x, y, w, h, tl, tr, br, bl, stops, cxFrac, cyFrac, radiusFrac, opacity) {
+      if (stops.length < 5) return;
+      drawGradientRRect(
+        perCornerRRect(x, y, w, h, tl, tr, br, bl),
+        makeRadialGradient(x, y, w, h, stops, cxFrac, cyFrac, radiusFrac, opacity),
+        firstStopColor(stops, opacity),
+      );
+    },
+    fillRoundRectMeshGradient(x, y, w, h, radius, rows, cols, colors, opacity) {
+      if (colors.length < 4) return;
+      drawMeshGradientRRect(
+        uniformRRect(x, y, w, h, radius),
+        x, y, w, h, rows, cols, colors, opacity,
+      );
+    },
+    fillRoundRectMeshGradientPerCorner(x, y, w, h, tl, tr, br, bl, rows, cols, colors, opacity) {
+      if (colors.length < 4) return;
+      drawMeshGradientRRect(
+        perCornerRRect(x, y, w, h, tl, tr, br, bl),
+        x, y, w, h, rows, cols, colors, opacity,
+      );
     },
     strokeRoundRect(x, y, w, h, rad, r, g, b, a, sw) { const p = strokePaint(r, g, b, a, sw); canvas.drawRRect(CK.RRectXY(CK.LTRBRect(x, y, x + w, y + h), rad, rad), p); },
     strokeRoundRectPerCorner(x, y, w, h, tl, tr, br, bl, r, g, b, a, sw) {
@@ -794,10 +1020,8 @@ export async function opCkInit(canvasId) {
       const path = cachedSvgPath(d); if (!path) return;
       if (evenOdd) path.setFillType(CK.FillType.EvenOdd);
       fitPathToRect(path, x, y, w, h);
-      const gs = gradientStops(stops, opacity);
-      if (!gs.colors.length) { path.delete(); return; }
-      const points = linearGradientPoints(x, y, w, h, angleDeg);
-      const shader = CK.Shader.MakeLinearGradient(points.start, points.end, gs.colors, gs.offsets, CK.TileMode.Clamp);
+      if (stops.length < 5) { path.delete(); return; }
+      const shader = makeLinearGradient(x, y, w, h, stops, angleDeg, opacity);
       if (shader) {
         // shaderPaint always allocates fresh (one-off effect, excluded from
         // the shared cache) — this instance owns its own delete.
@@ -815,11 +1039,8 @@ export async function opCkInit(canvasId) {
       const path = cachedSvgPath(d); if (!path) return;
       if (evenOdd) path.setFillType(CK.FillType.EvenOdd);
       fitPathToRect(path, x, y, w, h);
-      const gs = gradientStops(stops, opacity);
-      if (!gs.colors.length) { path.delete(); return; }
-      const center = [x + w * Math.max(0, Math.min(1, cxFrac)), y + h * Math.max(0, Math.min(1, cyFrac))];
-      const radius = Math.max(0.01, Math.max(w, h) * Math.max(0, Math.min(1, radiusFrac)));
-      const shader = CK.Shader.MakeRadialGradient(center, radius, gs.colors, gs.offsets, CK.TileMode.Clamp);
+      if (stops.length < 5) { path.delete(); return; }
+      const shader = makeRadialGradient(x, y, w, h, stops, cxFrac, cyFrac, radiusFrac, opacity);
       if (shader) {
         // shaderPaint always allocates fresh (one-off effect, excluded from
         // the shared cache) — this instance owns its own delete.
@@ -882,7 +1103,7 @@ export async function opCkInit(canvasId) {
       imageCaches.drawThumbnailCover(canvas, imageIdLo, imageIdHi, jpeg, x, y, w, h);
     },
 
-    drawImageWithOptions(imageIdLo, imageIdHi, x, y, w, h, mode, transform, adjustments, opacity, cornerRadius, blendMode) {
+    drawImageWithOptions(imageIdLo, imageIdHi, x, y, w, h, mode, transform, adjustments, opacity, cornerRadius, blendMode, originalWidth, originalHeight, tileScale) {
       const image = imageCaches.fullImage(imageIdLo, imageIdHi);
       if (!image || !(w > 0) || !(h > 0)) return;
       const imageW = image.width();
@@ -905,7 +1126,7 @@ export async function opCkInit(canvasId) {
         canvas.clipRRect(CK.RRectXY(dst, cornerRadius, cornerRadius), CK.ClipOp.Intersect, true);
       }
       let shader = null;
-      const local = figmaImageLocalMatrix(x, y, w, h, imageW, imageH, transform);
+      const local = mode === 3 ? null : figmaImageLocalMatrix(x, y, w, h, imageW, imageH, transform);
       if (local) {
         canvas.clipRect(dst, CK.ClipOp.Intersect, true);
         const tileMode = typeof CK.TileMode.Decal !== 'undefined' ? CK.TileMode.Decal : CK.TileMode.Clamp;
@@ -923,14 +1144,35 @@ export async function opCkInit(canvasId) {
           drawImageRectLinear(image, src, CK.LTRBRect(x + (w - dw) / 2, y + (h - dh) / 2, x + (w + dw) / 2, y + (h + dh) / 2), paint);
         } else if (mode === 3) {
           canvas.clipRect(dst, CK.ClipOp.Intersect, true);
-          let startX = x + (w - imageW) / 2;
-          let startY = y + (h - imageH) / 2;
-          while (startX > x) startX -= imageW;
-          while (startY > y) startY -= imageH;
-          for (let iy = startY; iy < y + h; iy += imageH) {
-            for (let ix = startX; ix < x + w; ix += imageW) {
-              drawImageRectLinear(image, src, CK.LTRBRect(ix, iy, ix + imageW, iy + imageH), paint);
+          const sourceW = Number.isFinite(originalWidth) && originalWidth > 0 ? originalWidth : imageW;
+          const sourceH = Number.isFinite(originalHeight) && originalHeight > 0 ? originalHeight : imageH;
+          const authoredTileScale = Number.isFinite(tileScale) && tileScale > 0 ? tileScale : 1.0;
+          const maxRepeatsPerAxis = 128;
+          const safeTileScale = Math.max(
+            authoredTileScale,
+            1 / sourceW,
+            1 / sourceH,
+            Math.abs(w) / (sourceW * maxRepeatsPerAxis),
+            Math.abs(h) / (sourceH * maxRepeatsPerAxis),
+          );
+          const tileW = sourceW * safeTileScale;
+          const tileH = sourceH * safeTileScale;
+          const centeredX = x + (w - tileW) / 2;
+          const centeredY = y + (h - tileH) / 2;
+          const startX = centeredX - Math.max(0, Math.ceil((centeredX - x) / tileW)) * tileW;
+          const startY = centeredY - Math.max(0, Math.ceil((centeredY - y) / tileH)) * tileH;
+          let iy = startY;
+          while (iy < y + h) {
+            let ix = startX;
+            while (ix < x + w) {
+              drawImageRectLinear(image, src, CK.LTRBRect(ix, iy, ix + tileW, iy + tileH), paint);
+              const nextX = ix + tileW;
+              if (!(nextX > ix)) break;
+              ix = nextX;
             }
+            const nextY = iy + tileH;
+            if (!(nextY > iy)) break;
+            iy = nextY;
           }
         } else if (mode === 0 || mode === 2) {
           const scale = Math.max(w / imageW, h / imageH);
@@ -1183,6 +1425,17 @@ export async function opCkInit(canvasId) {
       paint.setBlendMode(blendModeForCode(blendMode));
       canvas.saveLayer(paint, CK.LTRBRect(x, y, x + w, y + h));
       paint.delete();
+    },
+    pushMaskSourceLayer(luminance) {
+      const paint = new CK.Paint();
+      paint.setBlendMode(CK.BlendMode.DstIn);
+      const luma = luminance && CK.ColorFilter && CK.ColorFilter.MakeLuma
+        ? CK.ColorFilter.MakeLuma()
+        : null;
+      if (luma) paint.setColorFilter(luma);
+      canvas.saveLayer(paint);
+      paint.delete();
+      if (luma && luma.delete) luma.delete();
     },
     pushBlendLayer(blendMode) {
       if (!blendMode) {

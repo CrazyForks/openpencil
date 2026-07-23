@@ -115,6 +115,15 @@ pub fn format_panel_number(value: f32) -> String {
     }
 }
 
+/// Format an authored `f32` for an editable input without losing precision.
+///
+/// Rust's display form is the shortest decimal that parses back to the same
+/// floating-point value. Use this for schema values where merely focusing and
+/// blurring the input must not quantize the authored value.
+pub fn format_panel_number_roundtrip(value: f32) -> String {
+    value.to_string()
+}
+
 /// Resize `start` by `(dx, dy)` document px in the direction `handle`
 /// controls. Negative widths/heights are clamped to 1 px so the bounds never
 /// collapse to zero or invert — the user sees a thin sliver instead. Mirrors
@@ -283,6 +292,14 @@ mod tests {
     fn panel_number_drops_trailing_zero() {
         assert_eq!(format_panel_number(12.0), "12");
         assert_eq!(format_panel_number(12.50), "12.50");
+    }
+
+    #[test]
+    fn roundtrip_panel_number_preserves_authored_f32() {
+        let value = 0.38618907_f32;
+        let formatted = format_panel_number_roundtrip(value);
+        assert_eq!(formatted, "0.38618907");
+        assert_eq!(formatted.parse::<f32>().unwrap().to_bits(), value.to_bits());
     }
 
     #[test]

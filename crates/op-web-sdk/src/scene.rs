@@ -1,7 +1,6 @@
 // Paint-only LayoutScene builder for Viewer.
-// Delegates to op_pen_loader::pen_document_to_layout_scene which runs
-// jian-core's taffy flex layout pass (using the estimate measure backend
-// when the skia-measure feature is disabled, which is the case here).
+// Delegates to op-pen-loader, selecting either jian-core's taffy flex pass or
+// the authored-geometry path embedded by Preserve-mode Figma imports.
 use crate::Viewer;
 use std::collections::BTreeMap;
 
@@ -15,11 +14,14 @@ impl Viewer {
         };
         // v1: pass an empty active-theme map (default theme axis).
         let active_theme: BTreeMap<String, String> = BTreeMap::new();
-        self.scene = Some(op_pen_loader::pen_document_to_layout_scene(
-            doc,
-            &active_theme,
-            self.active_page,
-        ));
+        self.scene = Some(
+            op_pen_loader::pen_document_to_layout_scene_with_geometry_mode(
+                doc,
+                &active_theme,
+                self.active_page,
+                self.preserve_authored_geometry,
+            ),
+        );
     }
 
     /// Return a reference to the cached layout scene, or `None` if no

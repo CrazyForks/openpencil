@@ -3,10 +3,12 @@
 use std::cell::RefCell;
 
 use op_editor_core::PenDocument;
+use op_pen_loader::EditorMeta;
 
 /// A typed document carrying a schema-owned pending thumbnail seed.
 pub(crate) struct ParsedDocumentJson {
     document: Option<PenDocument>,
+    editor_meta: Option<EditorMeta>,
 }
 
 impl Drop for ParsedDocumentJson {
@@ -21,6 +23,7 @@ impl Drop for ParsedDocumentJson {
 /// table payload. Thumbnail publication is deferred until the caller replaces
 /// the live host document through [`with_borrowed_parsed_document`].
 pub(crate) fn parse_document_json(json: &str) -> Result<ParsedDocumentJson, serde_json::Error> {
+    let editor_meta = op_pen_loader::extract_editor_meta(json);
     let mut raw: serde_json::Value = serde_json::from_str(json)?;
     let pending_thumbs = jian_ops_schema::image_thumbs::take_pending_from_document(&mut raw);
     let table = jian_ops_schema::image_table::take_image_table(&mut raw);
@@ -30,6 +33,7 @@ pub(crate) fn parse_document_json(json: &str) -> Result<ParsedDocumentJson, serd
     jian_ops_schema::image_thumbs::attach_to_document(&mut document, pending_thumbs);
     Ok(ParsedDocumentJson {
         document: Some(document),
+        editor_meta,
     })
 }
 
@@ -41,7 +45,7 @@ pub(crate) fn parse_document_json(json: &str) -> Result<ParsedDocumentJson, serd
 pub(crate) fn with_borrowed_parsed_document<T, R>(
     host: &RefCell<T>,
     mut parsed: ParsedDocumentJson,
-    replace: impl FnOnce(&mut T, PenDocument) -> R,
+    replace: impl FnOnce(&mut T, PenDocument, Option<EditorMeta>) -> R,
 ) -> Option<R> {
     let Ok(mut host) = host.try_borrow_mut() else {
         if let Some(document) = parsed.document.as_ref() {
@@ -53,14 +57,17 @@ pub(crate) fn with_borrowed_parsed_document<T, R>(
         .document
         .take()
         .expect("parsed document is consumed at most once");
-    Some(replace(&mut host, document))
+    Some(replace(&mut host, document, parsed.editor_meta))
 }
 
 /// Convert live inline document JSON to the compact on-disk form. Invalid
 /// input passes through unchanged so snapshot error handling stays unchanged.
-pub(crate) fn externalize_for_disk(doc_json: &str) -> String {
+pub(crate) fn externalize_for_disk(doc_json: &str, editor_meta: EditorMeta) -> String {
     match serde_json::from_str::<serde_json::Value>(doc_json) {
         Ok(mut value) => {
+            if let Some(document) = value.as_object_mut() {
+                document.insert("editorMeta".to_string(), serde_json::json!(editor_meta));
+            }
             jian_ops_schema::image_table::externalize_images(&mut value);
             value.to_string()
         }
@@ -96,15 +103,18 @@ mod tests {
         );
 
         let host = RefCell::new(op_editor_core::EditorState::new());
-        assert!(with_borrowed_parsed_document(&host, parsed, |state, doc| {
-            state.replace_document(doc);
-            assert_eq!(
-                &*jian_ops_schema::image_thumbs::thumb_for(paint_id)
-                    .expect("replacement activates before repaint callback"),
-                &[0xff, 0xd8, 0xff, 0xd9]
-            );
-        })
-        .is_some());
+        assert!(
+            with_borrowed_parsed_document(&host, parsed, |state, doc, meta| {
+                assert_eq!(meta, None, "legacy documents carry no editor metadata");
+                state.replace_document(doc);
+                assert_eq!(
+                    &*jian_ops_schema::image_thumbs::thumb_for(paint_id)
+                        .expect("replacement activates before repaint callback"),
+                    &[0xff, 0xd8, 0xff, 0xd9]
+                );
+            })
+            .is_some()
+        );
 
         assert_eq!(
             &*jian_ops_schema::image_thumbs::thumb_for(paint_id).expect("seeded thumbnail"),
@@ -125,7 +135,7 @@ mod tests {
         let host = RefCell::new(());
         let held = host.borrow_mut();
 
-        assert!(with_borrowed_parsed_document(&host, parsed, |_, _| {
+        assert!(with_borrowed_parsed_document(&host, parsed, |_, _, _meta| {
             panic!("replacement must not run while the host is borrowed")
         })
         .is_none());
@@ -161,6 +171,40 @@ mod tests {
         assert!(
             jian_ops_schema::image_thumbs::thumb_for(new_id).is_none(),
             "a rejected web document must not publish its thumbnail table"
+        );
+    }
+
+    #[test]
+    fn bridge_parse_and_serialize_round_trip_editor_meta() {
+        let json = r#"{
+          "version":"0.8.0",
+          "pages":[
+            {"id":"one","name":"One","children":[]},
+            {"id":"two","name":"Two","children":[]}
+          ],
+          "children":[],
+          "editorMeta":{"activePageIndex":1,"preserveAuthoredGeometry":true}
+        }"#;
+        let parsed = parse_document_json(json).expect("valid bridge document");
+        let host = RefCell::new(op_editor_core::EditorState::new());
+
+        with_borrowed_parsed_document(&host, parsed, |state, doc, meta| {
+            state.replace_document(doc);
+            op_pen_loader::apply_editor_meta(state, meta.expect("embedded metadata"));
+        })
+        .expect("host replacement");
+
+        let serialized = serde_json::to_string(&host.borrow().doc).expect("serialize bridge doc");
+        assert_eq!(op_pen_loader::extract_editor_meta(&serialized), None);
+        let meta = EditorMeta {
+            active_page_index: 1,
+            preserve_authored_geometry: true,
+        };
+        let disk = externalize_for_disk(&serialized, meta);
+        assert_eq!(
+            op_pen_loader::extract_editor_meta(&disk),
+            Some(meta),
+            "snapshot externalization must preserve reopen metadata"
         );
     }
 }

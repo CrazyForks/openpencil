@@ -77,6 +77,16 @@ pub struct NodeSnapshot {
     pub y: i32,
     pub width: i32,
     pub height: i32,
+    /// Complete-node opacity as the percentage shown in the Layer section.
+    /// An absent or expression-backed value falls back to the schema default.
+    pub opacity_percent: f32,
+    /// Complete-node blend applied after the node subtree renders.
+    /// `None` is the canonical Normal/source-over default.
+    pub blend_mode: Option<jian_ops_schema::style::BlendMode>,
+    /// Canonical sibling-mask mode. For a legacy Path with
+    /// `mask: true` and no shared value this is surfaced as Alpha so
+    /// the panel reflects the effective renderer behaviour.
+    pub mask_type: Option<jian_ops_schema::node::base::MaskType>,
     /// Rotation in degrees (clockwise positive).
     pub rotation_deg: f32,
     /// Uniform corner radius in doc-px.
@@ -343,6 +353,8 @@ pub struct FillSummary {
     /// This fill's opacity in `[0.0, 1.0]` — the head row's `%` input
     /// paints `opacity * 100`.
     pub opacity: f32,
+    /// Per-paint compositing. `None` is the canonical Normal default.
+    pub blend_mode: Option<jian_ops_schema::style::BlendMode>,
     /// Bound colour-variable name, when this fill's colour follows a
     /// `$ref`. `None` for a literal colour. Only meaningful for the
     /// primary (index 0) fill today (the variable subsystem keys off
@@ -521,6 +533,9 @@ impl NodeSnapshot {
             y: 0,
             width: 0,
             height: 0,
+            opacity_percent: 100.0,
+            blend_mode: None,
+            mask_type: None,
             rotation_deg: 0.0,
             corner_radius: 0.0,
             corner_radii: [0.0; 4],
@@ -587,6 +602,9 @@ impl NodeSnapshot {
             y: bounds.y.round() as i32,
             width: bounds.w.round() as i32,
             height: bounds.h.round() as i32,
+            opacity_percent: 100.0,
+            blend_mode: None,
+            mask_type: None,
             rotation_deg: 0.0,
             corner_radius: 0.0,
             corner_radii: [0.0; 4],
@@ -687,6 +705,9 @@ impl NodeSnapshot {
             y: bounds.y.round() as i32,
             width: bounds.w.round() as i32,
             height: bounds.h.round() as i32,
+            opacity_percent: node_opacity_percent(node),
+            blend_mode: op_editor_core::node_blend_mode(node),
+            mask_type: op_editor_core::node_mask_type(node),
             // `base.rotation` is stored in degrees by the canonical
             // schema; the snapshot's `rotation_deg` wants degrees.
             rotation_deg: base.rotation.unwrap_or(0.0) as f32,
@@ -738,6 +759,17 @@ impl NodeSnapshot {
             kind_variant: kind,
             is_instance: false,
             is_reusable: matches!(node, PenNode::Frame(f) if f.reusable == Some(true)),
+        }
+    }
+}
+
+fn node_opacity_percent(node: &PenNode) -> f32 {
+    match node.base().opacity.as_ref() {
+        Some(NumberOrExpression::Number(value)) if value.is_finite() => {
+            (value.clamp(0.0, 1.0) * 100.0) as f32
+        }
+        Some(NumberOrExpression::Expression(_)) | None | Some(NumberOrExpression::Number(_)) => {
+            100.0
         }
     }
 }
@@ -1195,7 +1227,8 @@ fn fills_of(node: &PenNode) -> Vec<FillSummary> {
     };
     fills
         .iter()
-        .map(|fill| {
+        .enumerate()
+        .map(|(index, fill)| {
             let fill_type = op_editor_core::fills::fill_type_of(fill);
             let (hex, opacity) = match fill {
                 PenFill::Solid(b) => (Some(b.color.as_str()), b.opacity.unwrap_or(1.0)),
@@ -1230,6 +1263,7 @@ fn fills_of(node: &PenNode) -> Vec<FillSummary> {
                 fill_type,
                 color: hex.and_then(color_from_hex).unwrap_or(Color::WHITE),
                 opacity,
+                blend_mode: op_editor_core::fill_blend_mode_at(node, index),
                 variable_ref: None,
             }
         })

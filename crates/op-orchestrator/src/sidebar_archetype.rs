@@ -340,9 +340,9 @@ fn apply_repairs(sink: &mut dyn DocSink, repairs: Repairs) -> bool {
 }
 
 fn resolved_widths(state: &EditorState) -> HashMap<String, f64> {
-    let scene = op_pen_loader::editor_state_to_layout_scene(state);
+    let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
     let mut out = HashMap::new();
-    for page in &scene.pages {
+    if let Some(page) = scene.active_page() {
         collect_widths(&page.children, &mut out);
     }
     out

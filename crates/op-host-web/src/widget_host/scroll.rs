@@ -3,7 +3,7 @@
 //! Mirrors the native host's `widget_host/scroll.rs`.
 
 use op_editor_ui::util::scroll_by_max;
-use op_editor_ui::widgets::{LayerPanel, PropertyPanel, TOP_BAR_HEIGHT};
+use op_editor_ui::widgets::{PropertyPanel, TOP_BAR_HEIGHT};
 use op_editor_ui::{Point2D, Rect};
 
 use super::WidgetHost;
@@ -180,6 +180,11 @@ impl WidgetHost {
             origin: Point2D::new(viewport_width - pw, TOP_BAR_HEIGHT),
             size: Point2D::new(pw, (viewport_height - TOP_BAR_HEIGHT).max(0.0)),
         };
+        if self.editor_state.editor_ui.compositing_picker.open
+            && panel.compositing_picker_contains(property_rect, Point2D::new(x, y))
+        {
+            return true;
+        }
         // A wheel over the open font-family picker scrolls ITS list,
         // not the panel behind it (mirrors the native host).
         if self.editor_state.editor_ui.font_picker.open
@@ -266,7 +271,7 @@ impl WidgetHost {
         if !(rect).contains(Point2D::new(x, y)) {
             return false;
         }
-        let r = LayerPanel::from_editor(&self.editor_state).regions(rect);
+        let r = self.layer_panel().regions(rect);
         let mut changed = false;
         if y >= r.layers_rows_top {
             if delta_y != 0.0
@@ -325,7 +330,7 @@ impl WidgetHost {
             return false;
         }
         let rect = self.layer_panel_rect(viewport_height);
-        let panel = LayerPanel::from_editor(&self.editor_state);
+        let panel = self.layer_panel();
         let Some(next) = panel.layers_offset_revealing(rect, &selected) else {
             return false;
         };

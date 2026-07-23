@@ -206,10 +206,12 @@ impl DesktopApp {
                         // Snapshot the document so the post-pull reload
                         // can detect edits made *during* the async
                         // pull — those the confirm above did not cover.
-                        self.git_pull_doc_baseline =
-                            Some(op_host_services::doc_io::document_fingerprint(
-                                self.host.editor_state(),
-                            ));
+                        let state = self.host.editor_state();
+                        self.git_pull_doc_baseline = Some((
+                            self.host.document_epoch(),
+                            state.document_generation(),
+                            state.document_revision(),
+                        ));
                         self.host.editor_state_mut().editor_ui.git_panel.pulling = true;
                     }
                 }
@@ -289,7 +291,10 @@ impl DesktopApp {
                     // commit box, so typing lands in the name/email fields.
                     panel.defocus_commit_input(0);
                     panel.commit_no_changes = false;
-                } else if !message.is_empty() {
+                } else if !message.is_empty() && self.finish_background_saves() {
+                    // A milestone performs its own synchronous save before staging.
+                    // Drain any UI-requested save first so an older background
+                    // snapshot cannot rename over the milestone afterward.
                     match self.git_session.tracked_file().map(|p| p.to_path_buf()) {
                         Some(path) => {
                             match op_host_services::doc_io::save_to_path(

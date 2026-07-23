@@ -29,7 +29,7 @@ use vector_decoder::decode_figma_vector_path;
 
 fn keys(v: &FigValue) -> Vec<String> {
     match v {
-        FigValue::Object(pairs) => pairs.iter().map(|(k, _)| k.clone()).collect(),
+        FigValue::Object(pairs) => pairs.iter().map(|(k, _)| k.to_string()).collect(),
         _ => Vec::new(),
     }
 }

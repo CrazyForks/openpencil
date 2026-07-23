@@ -370,6 +370,8 @@ pub struct CanvasViewport<'a> {
     pub(super) text_edit_input: TextInputState,
     /// Background fill outside any Frame.
     pub canvas_background: Color,
+    /// Authored Figma page backgrounds replace the editor grid.
+    pub(super) show_grid: bool,
     pub theme: Theme,
     /// Host ms clock — text-edit caret blink.
     pub now_ms: u64,
@@ -399,6 +401,8 @@ impl<'a> CanvasViewport<'a> {
     /// refreshing on `editor_state_dirty`.
     pub fn from_editor(state: &EditorState, scene: &'a LayoutScene) -> Self {
         let theme = theme_for(&state.editor_ui);
+        let (canvas_background, show_grid) =
+            super::canvas_viewport_background::resolve(state, theme.canvas_surface);
         let viewport = DocViewport {
             pan_x: state.viewport.pan_x,
             pan_y: state.viewport.pan_y,
@@ -436,7 +440,8 @@ impl<'a> CanvasViewport<'a> {
                 .as_ref()
                 .map(|id| id.as_str().to_string()),
             text_edit_input: state.ui.text_edit_input.clone(),
-            canvas_background: theme.canvas_surface,
+            canvas_background,
+            show_grid,
             theme,
             now_ms: 0,
             hovered: state
@@ -481,6 +486,7 @@ impl<'a> CanvasViewport<'a> {
             text_editing: None,
             text_edit_input: Default::default(),
             canvas_background,
+            show_grid: true,
             theme,
             now_ms: 0,
             hovered: None,
@@ -644,7 +650,9 @@ impl<'a> Widget for CanvasViewport<'a> {
 
         // 2. Dotted grid — canvas-local, scales with pan/zoom.
         let viewport = &self.viewport;
-        super::canvas_viewport_grid::paint_grid(cx, rect, viewport, &self.theme);
+        if self.show_grid {
+            super::canvas_viewport_grid::paint_grid(cx, rect, viewport, &self.theme);
+        }
         let indicators = op_editor_core::agent_indicators::snapshot_at_if_active(self.now_ms);
         let selection_chrome_visible = !self.node_drag_active;
         let show_handles = selection_chrome_visible && self.selected_set.len() == 1;
@@ -750,28 +758,26 @@ impl<'a> Widget for CanvasViewport<'a> {
                 cx.backend
                     .draw_text(&label, Point2D::new(ghost.origin.x, ghost.origin.y - 6.0));
             }
-            for child in page.children.iter().rev() {
-                let child_hits = super::canvas_viewport_paint::paint_node_with_options_hiding(
-                    cx,
-                    child,
-                    viewport_origin,
-                    viewport.zoom,
-                    edit_caret.clone(),
-                    cull,
-                    reveal_schedule,
-                    hovered_lookup,
-                    selected_lookup,
-                    self.pen_in_progress.as_deref(),
-                    hidden_drag_node,
-                    self.now_ms,
-                    generation_sets.as_ref().map(|sets| &sets.scan),
-                    generation_sets
-                        .as_ref()
-                        .map(|_| super::canvas_generation_scan::SKELETON_BLUE),
-                    generation_sets.as_ref().map(|sets| &sets.queued),
-                );
-                paint_hits.merge_missing(child_hits);
-            }
+            let child_hits = super::canvas_viewport_paint::paint_scene_nodes_with_options_hiding(
+                cx,
+                &page.children,
+                viewport_origin,
+                viewport.zoom,
+                edit_caret.clone(),
+                cull,
+                reveal_schedule,
+                hovered_lookup,
+                selected_lookup,
+                self.pen_in_progress.as_deref(),
+                hidden_drag_node,
+                self.now_ms,
+                generation_sets.as_ref().map(|sets| &sets.scan),
+                generation_sets
+                    .as_ref()
+                    .map(|_| super::canvas_generation_scan::SKELETON_BLUE),
+                generation_sets.as_ref().map(|sets| &sets.queued),
+            );
+            paint_hits.merge_missing(child_hits);
             if let Some(overlay) = self.node_drag_overlay.as_ref() {
                 if let Some(node) = page.find(overlay.node_id.as_str()) {
                     let mut floating = node.clone();

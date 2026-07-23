@@ -29,6 +29,14 @@ fn font_import_forces_layout_scene_rebuild_without_editor_dirty() {
         "scene should be settled (not dirty) after the initial refresh"
     );
     let generation_before = host.layout_scene_font_generation;
+    let transition_bounds = host
+        .layout_scene
+        .content_bounds()
+        .expect("starter scene has content");
+    host.start_layout_transition_from_bounds(
+        &op_editor_core::NodeId::new("font-rebuild-probe"),
+        transition_bounds,
+    );
 
     // Import a font: bumps the global generation but does NOT dirty
     // editor_state — exactly the case the gate must catch.
@@ -52,6 +60,10 @@ fn font_import_forces_layout_scene_rebuild_without_editor_dirty() {
         host.layout_scene_font_generation,
         jian_skia::font_generation(),
         "recorded scene generation must match the current global generation"
+    );
+    assert!(
+        host.layout_transition.is_some(),
+        "a same-page font rebuild must not clear its layout transition"
     );
 
     // Clean up so the family doesn't leak into sibling tests in this binary.

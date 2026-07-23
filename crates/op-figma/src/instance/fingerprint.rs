@@ -41,7 +41,7 @@ fn any_key(entry: Option<&FigValue>, keys: &[&str]) -> bool {
     };
     pairs
         .iter()
-        .any(|(k, v)| keys.contains(&k.as_str()) && !matches!(v, FigValue::Null))
+        .any(|(k, v)| keys.contains(&k.as_ref()) && !matches!(v, FigValue::Null))
 }
 
 pub(super) fn demands_text(e: &VirtualEntry) -> bool {

@@ -403,7 +403,7 @@ pub fn decode_figma_vector_path(
     let sy = node.get_f64(INSTANCE_GEOMETRY_SCALE_Y).unwrap_or(1.0);
     Some(DecodedVectorPath {
         d: scale_command_path(&path_parts.join(" "), sx, sy),
-        fill_rule: fill_geometry_rule(node),
+        fill_rule: geometry_fill_rule(geometries),
         // A geometry stream is already the paint-specific shape Figma
         // selected (fillGeometry or expanded strokeGeometry).
         allows_fill: true,
@@ -411,8 +411,8 @@ pub fn decode_figma_vector_path(
     })
 }
 
-fn fill_geometry_rule(node: &FigValue) -> Option<PathFillRule> {
-    node.get_array("fillGeometry")?
+fn geometry_fill_rule(geometries: &[FigValue]) -> Option<PathFillRule> {
+    geometries
         .iter()
         .filter_map(|geometry| geometry.get_str("windingRule"))
         .any(|rule| rule.eq_ignore_ascii_case("ODD"))

@@ -280,6 +280,25 @@ fn set_node_layout_prop_writes_container_layout_fields() {
 }
 
 #[test]
+fn undo_layout_mutation_restores_preserve_geometry() {
+    let mut s = state_with(vec![rect("n1", "r", 0.0, 0.0, 10.0, 10.0)]);
+    s.editor_ui.preserve_authored_geometry = true;
+    s.commit_history();
+
+    assert!(s.apply(EditorCommand::SetNodeLayoutProp {
+        node_id: id("n1"),
+        property: "gap".into(),
+        value: LayoutPropValue::Number(12.0),
+    }));
+    assert!(!s.editor_ui.preserve_authored_geometry);
+
+    assert!(s.undo());
+    assert!(s.editor_ui.preserve_authored_geometry);
+    assert!(s.redo());
+    assert!(!s.editor_ui.preserve_authored_geometry);
+}
+
+#[test]
 fn set_node_layout_prop_writes_text_specific_fields() {
     let mut s = state_with(vec![text("t1", "t", 0.0, 0.0, 100.0, 40.0, "hello")]);
     for (property, value) in [

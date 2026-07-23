@@ -4,11 +4,19 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use op_editor_core::EditorState;
+use serde::Serialize;
 
 use super::{McpTool, ToolErrorCode, ToolOutcome};
 
 pub struct SaveDocument {
-    document_json: String,
+    document_payload: Vec<u8>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EditorMeta {
+    active_page_index: usize,
+    preserve_authored_geometry: bool,
 }
 
 impl McpTool for SaveDocument {
@@ -24,7 +32,7 @@ impl McpTool for SaveDocument {
             );
         };
         let path = resolve_path(path);
-        if let Err(e) = std::fs::write(&path, &self.document_json) {
+        if let Err(e) = std::fs::write(&path, &self.document_payload) {
             return ToolOutcome::Err(
                 ToolErrorCode::ToolFailed,
                 format!("save document failed: {e}"),
@@ -38,16 +46,27 @@ impl McpTool for SaveDocument {
 }
 
 pub fn save_document_snapshot(state: &EditorState) -> SaveDocument {
-    // Dedup shared image payloads into the `images` table so the
-    // written `.op` matches the desktop save format (loader resolves
-    // the refs back to inline on open).
-    let document_json = serde_json::to_value(&state.doc)
-        .map(|mut value| {
-            jian_ops_schema::image_table::externalize_images(&mut value);
-            value.to_string()
-        })
-        .unwrap_or_else(|_| "{}".into());
-    SaveDocument { document_json }
+    // Stream once into the immutable MCP snapshot. The schema writer
+    // externalizes shared images while serializing, avoiding both a
+    // document-sized `Value` and a second final `String` allocation.
+    let mut document_payload = Vec::new();
+    let thumbnails = jian_ops_schema::image_thumbs::capture_snapshot();
+    if jian_ops_schema::image_table::write_document_with_extension(
+        &mut document_payload,
+        &state.doc,
+        &thumbnails,
+        "editorMeta",
+        &EditorMeta {
+            active_page_index: state.ui.active_page_index,
+            preserve_authored_geometry: state.editor_ui.preserve_authored_geometry,
+        },
+    )
+    .is_err()
+    {
+        document_payload.clear();
+        document_payload.extend_from_slice(b"{}");
+    }
+    SaveDocument { document_payload }
 }
 
 fn resolve_path(raw: &str) -> PathBuf {

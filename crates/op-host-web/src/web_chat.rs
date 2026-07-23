@@ -352,6 +352,10 @@ pub(crate) fn prepare_turn(state: &mut EditorState) -> Option<PreparedTurn> {
         "history": history_json,
         "attachments": attachments_json,
         "document": state.doc,
+        "editorMeta": op_pen_loader::EditorMeta {
+            active_page_index: state.ui.active_page_index,
+            preserve_authored_geometry: state.editor_ui.preserve_authored_geometry,
+        },
         "selectedIds": selected_ids,
         "activePageId": active_page_id,
     });
@@ -411,6 +415,7 @@ mod tests {
     #[test]
     fn prepare_turn_carries_model_and_message() {
         let mut state = state_with_queued_send("design a login page");
+        state.editor_ui.preserve_authored_geometry = true;
         state.chat.available_models = vec![ModelEntry::builtin_with_display_name(
             AgentProvider::ClaudeCode,
             "daemon-builtin:server-1",
@@ -430,6 +435,8 @@ mod tests {
         assert_eq!(body["max_output_tokens"], 4096);
         assert_eq!(body["agent_team_size"], 3);
         assert!(body["document"].is_object());
+        assert_eq!(body["editorMeta"]["activePageIndex"], 0);
+        assert_eq!(body["editorMeta"]["preserveAuthoredGeometry"], true);
         assert!(body["skills"].as_array().is_some_and(Vec::is_empty));
         // The drain consumed the flag — a second drain is idle.
         assert!(prepare_turn(&mut state).is_none());

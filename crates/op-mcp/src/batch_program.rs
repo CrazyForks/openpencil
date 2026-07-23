@@ -821,11 +821,10 @@ fn resolved_node_size(state: &EditorState, node_id: &str) -> Option<(f64, f64)> 
         None
     }
 
-    let scene = op_pen_loader::editor_state_to_layout_scene(state);
+    let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
     scene
-        .pages
-        .iter()
-        .find_map(|page| find(&page.children, node_id))
+        .active_page()
+        .and_then(|page| find(&page.children, node_id))
 }
 
 /// `U(path, data)` — shallow-patch the node at `path`. No result entry

@@ -51,7 +51,7 @@ pub struct ScreenshotPng {
 /// the default build warning-free.
 #[cfg(feature = "mcp-debug-tools")]
 pub fn capture(state: &EditorState, spec: &CaptureSpec) -> Result<ScreenshotPng, String> {
-    let scene = op_pen_loader::editor_state_to_layout_scene(state);
+    let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
     capture_scene(&scene, spec)
 }
 

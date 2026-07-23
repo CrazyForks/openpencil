@@ -7,10 +7,12 @@ use crate::theme::Theme;
 use crate::widgets::icons::{draw_icon, Icon};
 use crate::widgets::property_panel::{FillSummary, NodeSnapshot, PropertyPanelAction};
 use crate::widgets::property_panel_image_preview::paint_image_preview;
+use crate::widgets::property_panel_inputs::{paint_input_with_prefix_focused_state, INPUT_HEIGHT};
 use crate::widgets::property_panel_interactions::InteractionSummary;
 use crate::widgets::property_panel_layout::{
     action_button_rects_with_fill_picker, VisibleSections,
 };
+use crate::widgets::property_panel_sections::EditContext;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout};
 
@@ -19,13 +21,19 @@ const PANEL_GAP: f32 = 8.0;
 const PANEL_PAD: f32 = 12.0;
 const HEADER_H: f32 = 44.0;
 const MODE_H: f32 = 30.0;
+const TILE_SCALE_ROW_H: f32 = 36.0;
 const UPLOAD_H: f32 = 112.0;
 const ADJ_HEADER_H: f32 = 28.0;
 const ADJ_ROW_H: f32 = 34.0;
 
-fn panel_h() -> f32 {
+fn panel_h(show_tile_scale: bool) -> f32 {
     HEADER_H
         + MODE_H
+        + if show_tile_scale {
+            TILE_SCALE_ROW_H
+        } else {
+            0.0
+        }
         + 10.0
         + UPLOAD_H
         + 12.0
@@ -33,6 +41,12 @@ fn panel_h() -> f32 {
         + ADJ_HEADER_H
         + op_editor_core::ImageAdjustmentField::ALL.len() as f32 * ADJ_ROW_H
         + PANEL_PAD
+}
+
+fn tile_scale_visible(snapshot: &NodeSnapshot) -> bool {
+    snapshot.image_fill.as_ref().is_some_and(|summary| {
+        summary.mode == op_editor_core::ImageFillMode::Tile && summary.tile_scale.is_some()
+    })
 }
 
 fn image_body_rect(
@@ -63,9 +77,13 @@ fn image_body_rect(
     })
 }
 
-fn popover_rect(panel_rect: Rect, visible: VisibleSections, fills: &[FillSummary]) -> Option<Rect> {
-    let anchor = image_body_rect(panel_rect, visible, fills)?;
-    let h = panel_h();
+fn popover_rect(
+    panel_rect: Rect,
+    visible: VisibleSections,
+    snapshot: &NodeSnapshot,
+) -> Option<Rect> {
+    let anchor = image_body_rect(panel_rect, visible, &snapshot.fills)?;
+    let h = panel_h(tile_scale_visible(snapshot));
     let min_top = panel_rect.origin.y + 8.0;
     let max_top = (panel_rect.origin.y + panel_rect.size.y - h - 8.0).max(min_top);
     Some(Rect {
@@ -82,7 +100,7 @@ pub fn image_fill_popover_action_rects(
     visible: VisibleSections,
     snapshot: &NodeSnapshot,
 ) -> Vec<(PropertyPanelAction, Rect)> {
-    let Some(pop) = popover_rect(panel_rect, visible, &snapshot.fills) else {
+    let Some(pop) = popover_rect(panel_rect, visible, snapshot) else {
         return Vec::new();
     };
     let mut out = Vec::new();
@@ -110,7 +128,8 @@ pub fn image_fill_popover_action_rects(
         ));
     }
 
-    let upload = upload_rect(pop);
+    let show_tile_scale = tile_scale_visible(snapshot);
+    let upload = upload_rect(pop, show_tile_scale);
     out.push((PropertyPanelAction::PickFillImage, upload));
 
     if snapshot
@@ -124,7 +143,7 @@ pub fn image_fill_popover_action_rects(
             Rect {
                 origin: Point2D::new(
                     pop.origin.x + pop.size.x - 62.0,
-                    adjustments_header_y(pop) + 3.0,
+                    adjustments_header_y(pop, show_tile_scale) + 3.0,
                 ),
                 size: Point2D::new(50.0, 20.0),
             },
@@ -147,8 +166,8 @@ pub fn image_fill_popover_action_at(
             return Some(action);
         }
     }
-    let pop = popover_rect(panel_rect, visible, &snapshot.fills)?;
-    for (field, track) in adjustment_track_rects(pop) {
+    let pop = popover_rect(panel_rect, visible, snapshot)?;
+    for (field, track) in adjustment_track_rects(pop, tile_scale_visible(snapshot)) {
         if (track).contains(point) {
             let pct = ((point.x - track.origin.x) / track.size.x).clamp(0.0, 1.0);
             return Some(PropertyPanelAction::SetImageAdjustment {
@@ -160,13 +179,41 @@ pub fn image_fill_popover_action_at(
     None
 }
 
+/// Editable input inside the floating image-fill popover. Tile scale
+/// exists only on an authored `PenFill::Image`, so standalone Image
+/// nodes (whose summary reports `tile_scale: None`) never return it.
+pub fn image_fill_popover_input_at(
+    panel_rect: Rect,
+    visible: VisibleSections,
+    snapshot: &NodeSnapshot,
+    point: Point2D,
+) -> Option<op_editor_core::PropertyFocus> {
+    image_fill_popover_input_rect(panel_rect, visible, snapshot)?
+        .contains(point)
+        .then_some(op_editor_core::PropertyFocus::ImageTileScale)
+}
+
+/// Exact Tile-scale input bounds. Paint and host focus hit-testing
+/// both derive from this helper, so the floating input cannot drift.
+pub fn image_fill_popover_input_rect(
+    panel_rect: Rect,
+    visible: VisibleSections,
+    snapshot: &NodeSnapshot,
+) -> Option<Rect> {
+    if !tile_scale_visible(snapshot) {
+        return None;
+    }
+    let pop = popover_rect(panel_rect, visible, snapshot)?;
+    Some(tile_scale_rect(pop))
+}
+
 pub fn image_fill_popover_contains(
     panel_rect: Rect,
     visible: VisibleSections,
-    fills: &[FillSummary],
+    snapshot: &NodeSnapshot,
     point: Point2D,
 ) -> bool {
-    popover_rect(panel_rect, visible, fills)
+    popover_rect(panel_rect, visible, snapshot)
         .map(|pop| (pop).contains(point))
         .unwrap_or(false)
 }
@@ -174,12 +221,12 @@ pub fn image_fill_popover_contains(
 pub fn image_fill_popover_adjustment_action_for_drag(
     panel_rect: Rect,
     visible: VisibleSections,
-    fills: &[FillSummary],
+    snapshot: &NodeSnapshot,
     field: op_editor_core::ImageAdjustmentField,
     x: f32,
 ) -> Option<PropertyPanelAction> {
-    let pop = popover_rect(panel_rect, visible, fills)?;
-    let track = adjustment_track_rects(pop)
+    let pop = popover_rect(panel_rect, visible, snapshot)?;
+    let track = adjustment_track_rects(pop, tile_scale_visible(snapshot))
         .into_iter()
         .find_map(|(candidate, rect)| (candidate == field).then_some(rect))?;
     let pct = ((x - track.origin.x) / track.size.x).clamp(0.0, 1.0);
@@ -195,9 +242,10 @@ pub fn paint_image_fill_popover(
     panel_rect: Rect,
     visible: VisibleSections,
     snapshot: &NodeSnapshot,
+    edit: &EditContext<'_>,
     locale: op_editor_core::Locale,
 ) {
-    let Some(pop) = popover_rect(panel_rect, visible, &snapshot.fills) else {
+    let Some(pop) = popover_rect(panel_rect, visible, snapshot) else {
         return;
     };
     let summary = snapshot
@@ -207,6 +255,7 @@ pub fn paint_image_fill_popover(
             mode: op_editor_core::ImageFillMode::Fill,
             has_image: false,
             image_url: None,
+            tile_scale: None,
             exposure: 0.0,
             contrast: 0.0,
             saturation: 0.0,
@@ -236,27 +285,51 @@ pub fn paint_image_fill_popover(
         1.8,
     );
     paint_mode_control(cx, theme, pop, summary.mode, locale);
+    if tile_scale_visible(snapshot) {
+        paint_tile_scale(cx, theme, pop, &summary, edit, locale);
+    }
     paint_upload(cx, theme, pop, &summary, locale);
     paint_adjustments(cx, theme, pop, &summary, locale);
 }
 
-fn upload_rect(pop: Rect) -> Rect {
+fn tile_scale_rect(pop: Rect) -> Rect {
     Rect {
         origin: Point2D::new(
             pop.origin.x + PANEL_PAD,
-            pop.origin.y + HEADER_H + MODE_H + 10.0,
+            pop.origin.y + HEADER_H + MODE_H + 6.0,
+        ),
+        size: Point2D::new(pop.size.x - PANEL_PAD * 2.0, INPUT_HEIGHT),
+    }
+}
+
+fn upload_rect(pop: Rect, show_tile_scale: bool) -> Rect {
+    Rect {
+        origin: Point2D::new(
+            pop.origin.x + PANEL_PAD,
+            pop.origin.y
+                + HEADER_H
+                + MODE_H
+                + 10.0
+                + if show_tile_scale {
+                    TILE_SCALE_ROW_H
+                } else {
+                    0.0
+                },
         ),
         size: Point2D::new(pop.size.x - PANEL_PAD * 2.0, UPLOAD_H),
     }
 }
 
-fn adjustments_header_y(pop: Rect) -> f32 {
-    upload_rect(pop).origin.y + UPLOAD_H + 13.0
+fn adjustments_header_y(pop: Rect, show_tile_scale: bool) -> f32 {
+    upload_rect(pop, show_tile_scale).origin.y + UPLOAD_H + 13.0
 }
 
-fn adjustment_track_rects(pop: Rect) -> Vec<(op_editor_core::ImageAdjustmentField, Rect)> {
+fn adjustment_track_rects(
+    pop: Rect,
+    show_tile_scale: bool,
+) -> Vec<(op_editor_core::ImageAdjustmentField, Rect)> {
     let mut out = Vec::new();
-    let start_y = adjustments_header_y(pop) + ADJ_HEADER_H;
+    let start_y = adjustments_header_y(pop, show_tile_scale) + ADJ_HEADER_H;
     for (i, field) in op_editor_core::ImageAdjustmentField::ALL.iter().enumerate() {
         out.push((
             *field,
@@ -305,6 +378,31 @@ fn paint_mode_control(
     );
 }
 
+fn paint_tile_scale(
+    cx: &mut PaintCx<'_>,
+    theme: &Theme,
+    pop: Rect,
+    summary: &op_editor_core::ImageFillSummary,
+    edit: &EditContext<'_>,
+    locale: op_editor_core::Locale,
+) {
+    let focus = op_editor_core::PropertyFocus::ImageTileScale;
+    let fallback = crate::util::format_panel_number_roundtrip(summary.tile_scale.unwrap_or(1.0));
+    let value = edit.value_for(focus, &fallback);
+    paint_input_with_prefix_focused_state(
+        cx,
+        theme,
+        tile_scale_rect(pop),
+        op_i18n::translate(locale, "image.tileScale"),
+        value,
+        edit.focus == Some(focus),
+        edit.caret_at(focus),
+        edit.select_all_at(focus),
+        edit.input_at(focus),
+        edit.now_ms,
+    );
+}
+
 fn paint_upload(
     cx: &mut PaintCx<'_>,
     theme: &Theme,
@@ -312,7 +410,10 @@ fn paint_upload(
     summary: &op_editor_core::ImageFillSummary,
     locale: op_editor_core::Locale,
 ) {
-    let rect = upload_rect(pop);
+    let rect = upload_rect(
+        pop,
+        summary.tile_scale.is_some() && summary.mode == op_editor_core::ImageFillMode::Tile,
+    );
     cx.backend.fill_round_rect(rect, 6.0, theme.muted);
     if let Some(src) = summary.image_url.as_deref() {
         let preview = Rect {
@@ -360,7 +461,9 @@ fn paint_adjustments(
     summary: &op_editor_core::ImageFillSummary,
     locale: op_editor_core::Locale,
 ) {
-    let divider_y = upload_rect(pop).origin.y + UPLOAD_H + 12.0;
+    let show_tile_scale =
+        summary.tile_scale.is_some() && summary.mode == op_editor_core::ImageFillMode::Tile;
+    let divider_y = upload_rect(pop, show_tile_scale).origin.y + UPLOAD_H + 12.0;
     cx.backend.fill_rect(
         Rect {
             origin: Point2D::new(pop.origin.x, divider_y),
@@ -368,7 +471,7 @@ fn paint_adjustments(
         },
         theme.border,
     );
-    let header_y = adjustments_header_y(pop);
+    let header_y = adjustments_header_y(pop, show_tile_scale);
     paint_label(
         cx,
         theme,

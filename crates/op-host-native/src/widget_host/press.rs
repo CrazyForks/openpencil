@@ -14,7 +14,6 @@ use super::{
     PanelResizeKind, RotateDragState, WidgetHostNative,
 };
 use op_editor_core::codegen::CodeSelection;
-use op_editor_core::figma_import_state::ImportSource;
 use op_editor_core::pen_node_ext::PenNodeExt;
 use op_editor_ui::widgets::{
     rotation_corner_at_point, selection_handle_at_point, AIChatHit, AIChatPlaceholder,
@@ -95,7 +94,9 @@ impl WidgetHostNative {
             // (document-store-pages.ts:19-121) — snapshot-before-
             // mutate, skipped when the guard rejects the op.
             (A::DuplicatePage, T::Page(idx)) => {
-                self.with_doc_history(|s| s.duplicate_page(idx).is_some());
+                if self.with_doc_history(|s| s.duplicate_page(idx).is_some()) {
+                    self.fit_active_page_after_switch(self.last_viewport_w, self.last_viewport_h);
+                }
             }
             (A::MovePageUp, T::Page(idx)) => {
                 self.with_doc_history(|s| s.move_page_up(idx));
@@ -104,7 +105,10 @@ impl WidgetHostNative {
                 self.with_doc_history(|s| s.move_page_down(idx));
             }
             (A::DeletePage, T::Page(idx)) => {
-                self.with_doc_history(|s| s.remove_page(idx));
+                let deleting_active = idx == self.editor_state.ui.active_page_index;
+                if self.with_doc_history(|s| s.remove_page(idx)) && deleting_active {
+                    self.fit_active_page_after_switch(self.last_viewport_w, self.last_viewport_h);
+                }
             }
             (A::RenamePage, T::Page(idx)) => {
                 if self.editor_state.start_rename_page(idx) {
@@ -137,6 +141,15 @@ impl WidgetHostNative {
         if self.over_topmost_panel(x, y, viewport_w, viewport_h) {
             return true;
         }
+        // The model picker can extend across the LayerPanel. A secondary
+        // press on its visible card belongs to that floating surface and must
+        // never open a context menu for the covered layer/page underneath.
+        if self
+            .chat_model_picker_rect(viewport_w, viewport_h)
+            .is_some_and(|rect| rect.contains(Point2D::new(x, y)))
+        {
+            return true;
+        }
         // Select-tool right-click on a path anchor / handle opens the
         // point-type menu (`pen_press.rs`).
         if self.try_open_path_anchor_menu(x, y, viewport_w, viewport_h) {
@@ -149,7 +162,7 @@ impl WidgetHostNative {
         }
         use op_editor_core::editor_ui_state::LayerContextMenuState;
         use op_editor_core::ui_draft::LayerContextTarget;
-        use op_editor_ui::widgets::{LayerPanel, LayerPanelHit};
+        use op_editor_ui::widgets::LayerPanelHit;
         let layer_rect = Rect {
             origin: Point2D::new(0.0, TOP_BAR_HEIGHT),
             size: Point2D::new(
@@ -157,7 +170,7 @@ impl WidgetHostNative {
                 (viewport_h - TOP_BAR_HEIGHT).max(0.0),
             ),
         };
-        let panel = LayerPanel::from_editor(&self.editor_state);
+        let panel = self.layer_panel();
         match panel.hit_test(layer_rect, Point2D::new(x, y)) {
             Some(LayerPanelHit::Layer(id)) => {
                 let ec_id = id.clone();
@@ -304,29 +317,6 @@ impl WidgetHostNative {
             }
         }
 
-        // StatusBar controls — Search frames content, `[-]` / `[+]`
-        // step the zoom. Floating bottom-right, so it hit-tests above
-        // the canvas / toolbar.
-        if let Some(r) = self.status_bar_rect(viewport_width, viewport_height) {
-            use op_editor_core::StatusBarButton;
-            let bar = op_editor_ui::widgets::StatusBar::for_editor(&self.editor_state);
-            if let Some(btn) = bar.control_at(r, Point2D::new(x, y)) {
-                self.editor_state.editor_ui.pressed_button =
-                    Some(op_editor_core::ButtonPressTarget::StatusBar(btn));
-                match btn {
-                    StatusBarButton::Search => self.zoom_to_fit(viewport_width, viewport_height),
-                    StatusBarButton::ZoomOut => {
-                        self.status_bar_zoom(false, viewport_width, viewport_height)
-                    }
-                    StatusBarButton::ZoomIn => {
-                        self.status_bar_zoom(true, viewport_width, viewport_height)
-                    }
-                }
-                self.mark_dirty();
-                return true;
-            }
-        }
-
         // Path-anchor context menu — a row hit dispatches + consumes;
         // an outside press closes it and FALLS THROUGH (TS parity:
         // the canvas mousedown still routes). `pen_press.rs`.
@@ -382,24 +372,9 @@ impl WidgetHostNative {
         let in_git_panel = self
             .git_panel_outer_rect(viewport_width, viewport_height)
             .is_some_and(|r| (r).contains(Point2D::new(x, y)));
-
-        // 0z. Panel-resize gutter — ±4 px from rail edges.
-        if y >= TOP_BAR_HEIGHT && !in_git_panel {
-            if let Some(kind) = self.panel_resize_hover(x, y, viewport_width) {
-                let start_width = match kind {
-                    PanelResizeKind::LayerRight => self.editor_state.editor_ui.layer_panel_width,
-                    PanelResizeKind::PropertyLeft => {
-                        self.editor_state.editor_ui.property_panel_width
-                    }
-                };
-                self.panel_resize = Some(PanelResize {
-                    kind,
-                    start_x: x,
-                    start_width,
-                });
-                return true;
-            }
-        }
+        let in_chat_model_picker = self
+            .chat_model_picker_rect(viewport_width, viewport_height)
+            .is_some_and(|r| r.contains(Point2D::new(x, y)));
 
         // 0ab. Shape picker overlay.
         if self.dispatch_shape_picker_press(x, y, viewport_width, viewport_height) {
@@ -449,12 +424,10 @@ impl WidgetHostNative {
             self.close_import_menu();
             match choice {
                 Some(ImportMenuChoice::Figma) => {
-                    self.editor_state.editor_ui.import_source = ImportSource::Figma;
-                    self.editor_state.editor_ui.figma_import_open = true;
+                    self.apply_open_figma_import();
                 }
                 Some(ImportMenuChoice::Html) => {
-                    self.editor_state.editor_ui.import_source = ImportSource::Html;
-                    self.editor_state.editor_ui.figma_import_open = true;
+                    self.apply_open_html_import();
                 }
                 None => {
                     // Silent outside-close is a blank press — blur inputs too.
@@ -488,6 +461,70 @@ impl WidgetHostNative {
             self.editor_state.editor_ui.locale_picker.open = false;
             self.editor_state.editor_ui.locale_picker.hover = None;
             self.mark_dirty();
+            return true;
+        }
+
+        // 0a1. Image-fill popover. Property overlays are painted after the
+        // VariablesPanel, chat, StatusBar, marquee, and rail chrome, so the
+        // visible popup must own their overlap before those lower surfaces.
+        // Git and the modal/menu overlays above already had first refusal.
+        if !in_git_panel
+            && self.dismiss_image_fill_popover_on_press(x, y, viewport_width, viewport_height)
+        {
+            return true;
+        }
+
+        // StatusBar controls — Search frames content, `[-]` / `[+]`
+        // step the zoom. The bar paints above the canvas / toolbar but below
+        // the late PropertyPanel overlay pass.
+        if let Some(r) = self.status_bar_rect(viewport_width, viewport_height) {
+            use op_editor_core::StatusBarButton;
+            let bar = op_editor_ui::widgets::StatusBar::for_editor(&self.editor_state);
+            if let Some(btn) = bar.control_at(r, Point2D::new(x, y)) {
+                self.editor_state.editor_ui.pressed_button =
+                    Some(op_editor_core::ButtonPressTarget::StatusBar(btn));
+                match btn {
+                    StatusBarButton::Search => self.zoom_to_fit(viewport_width, viewport_height),
+                    StatusBarButton::ZoomOut => {
+                        self.status_bar_zoom(false, viewport_width, viewport_height)
+                    }
+                    StatusBarButton::ZoomIn => {
+                        self.status_bar_zoom(true, viewport_width, viewport_height)
+                    }
+                }
+                self.mark_dirty();
+                return true;
+            }
+        }
+
+        // 0z. Panel-resize gutter — ±4 px from rail edges. The gutter is
+        // lower than the floating image-fill card even where their bounds
+        // overlap.
+        if y >= TOP_BAR_HEIGHT && !in_git_panel && !in_chat_model_picker {
+            if let Some(kind) = self.panel_resize_hover(x, y, viewport_width) {
+                let start_width = match kind {
+                    PanelResizeKind::LayerRight => self.editor_state.editor_ui.layer_panel_width,
+                    PanelResizeKind::PropertyLeft => {
+                        self.editor_state.editor_ui.property_panel_width
+                    }
+                };
+                self.panel_resize = Some(PanelResize {
+                    kind,
+                    start_x: x,
+                    start_width,
+                });
+                return true;
+            }
+        }
+
+        // Chat paints after the TopBar. A short/top-anchored chat can lift the
+        // upward model dropdown across the bar, so its visible overlap must be
+        // routed before the lower TopBar surface. Other dropdowns/modals above
+        // chat already had first refusal in the blocks above.
+        if y < TOP_BAR_HEIGHT
+            && !in_git_panel
+            && self.apply_chat_model_picker_overlay_press(x, y, viewport_width, viewport_height)
+        {
             return true;
         }
 
@@ -628,13 +665,6 @@ impl WidgetHostNative {
             return true;
         }
 
-        // 0c0a. Image-fill popover — outside-click dismiss.
-        if !in_git_panel
-            && self.dismiss_image_fill_popover_on_press(x, y, viewport_width, viewport_height)
-        {
-            return true;
-        }
-
         // 0c0. Fill-type picker — outside-click dismiss.
         if self.editor_state.editor_ui.fill_type_picker.open && !in_git_panel {
             self.refresh_layout_scene();
@@ -669,6 +699,36 @@ impl WidgetHostNative {
                 }
             }
             self.editor_state.editor_ui.close_fill_type_picker();
+            self.mark_dirty();
+            return true;
+        }
+
+        // 0c0a. Layer / mask / fill-blend compositing picker. The popup is
+        // painted over the inspector body, so it owns both its rows and its
+        // padded chrome; the first outside press dismisses and is swallowed.
+        if self.editor_state.editor_ui.compositing_picker.open && !in_git_panel {
+            self.refresh_layout_scene();
+            if let Some(panel) = PropertyPanel::for_selection(&self.editor_state) {
+                let property_rect = Rect {
+                    origin: Point2D::new(
+                        viewport_width - self.editor_state.editor_ui.property_panel_width,
+                        TOP_BAR_HEIGHT,
+                    ),
+                    size: Point2D::new(
+                        self.editor_state.editor_ui.property_panel_width,
+                        (viewport_height - TOP_BAR_HEIGHT).max(0.0),
+                    ),
+                };
+                let point = Point2D::new(x, y);
+                if let Some(action) = panel.compositing_picker_action_at(property_rect, point) {
+                    self.apply_property_action(action);
+                    return true;
+                }
+                if panel.compositing_picker_contains(property_rect, point) {
+                    return true;
+                }
+            }
+            self.close_compositing_picker();
             self.mark_dirty();
             return true;
         }
@@ -801,6 +861,16 @@ impl WidgetHostNative {
         //       outside-click dismiss (`property_dispatch.rs`).
         if !in_git_panel
             && self.dismiss_export_picker_on_press(x, y, viewport_width, viewport_height)
+        {
+            return true;
+        }
+
+        // The model dropdown is painted with the chat above the base rails
+        // and can extend beyond the chat rect. Route its actual visible bounds
+        // before Variables/Property/Layer dispatch, while leaving the Git and
+        // property popovers painted above it in control of their overlap.
+        if !in_git_panel
+            && self.apply_chat_model_picker_overlay_press(x, y, viewport_width, viewport_height)
         {
             return true;
         }
@@ -1075,7 +1145,7 @@ impl WidgetHostNative {
         // 3. apply_click — LayerPanel + chat-defocus. Peek the
         //    LayerPanel hit-test for a drag-to-reorder candidate.
         if self.editor_state.editor_ui.sidebar_open {
-            use op_editor_ui::widgets::{LayerPanel, LayerPanelHit};
+            use op_editor_ui::widgets::LayerPanelHit;
             let layer_rect = Rect {
                 origin: Point2D::new(0.0, TOP_BAR_HEIGHT),
                 size: Point2D::new(
@@ -1083,7 +1153,7 @@ impl WidgetHostNative {
                     (viewport_height - TOP_BAR_HEIGHT).max(0.0),
                 ),
             };
-            let panel = LayerPanel::from_editor(&self.editor_state);
+            let panel = self.layer_panel();
             if let Some(LayerPanelHit::Layer(node_id)) =
                 panel.hit_test(layer_rect, Point2D::new(x, y))
             {

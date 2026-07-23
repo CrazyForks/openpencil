@@ -1,6 +1,6 @@
 use super::*;
 use crate::layout_scene::NodeKind;
-use crate::{RenderBackend, TextLayout};
+use crate::{Point2D, RenderBackend, TextLayout};
 
 #[derive(Default)]
 struct BlurCaptureBackend {

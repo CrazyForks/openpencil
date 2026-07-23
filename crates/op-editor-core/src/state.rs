@@ -570,6 +570,7 @@ mod tests {
             app_state_owner: std::collections::BTreeMap::new(),
             fill_refs: std::collections::HashMap::new(),
             stroke_refs: std::collections::HashMap::new(),
+            preserve_authored_geometry: false,
             revision: s.revision,
         });
         s.ui.pen_in_progress = Some(crate::NodeId::new("n7"));
@@ -620,6 +621,27 @@ mod tests {
         assert_eq!(s.doc.name.as_deref(), Some("BEFORE"));
         assert!(s.redo());
         assert_eq!(s.doc.name.as_deref(), Some("AFTER"));
+    }
+
+    #[test]
+    fn replace_normal_document_then_undo_restores_preserve_geometry() {
+        let mut s = EditorState::new();
+        let mut before = empty_document();
+        before.name = Some("PRESERVE".to_string());
+        s.replace_document(before);
+        s.editor_ui.preserve_authored_geometry = true;
+
+        let mut after = empty_document();
+        after.name = Some("NORMAL".to_string());
+        s.replace_document_with_undo(after);
+
+        assert!(!s.editor_ui.preserve_authored_geometry);
+        assert!(s.undo());
+        assert_eq!(s.doc.name.as_deref(), Some("PRESERVE"));
+        assert!(s.editor_ui.preserve_authored_geometry);
+        assert!(s.redo());
+        assert_eq!(s.doc.name.as_deref(), Some("NORMAL"));
+        assert!(!s.editor_ui.preserve_authored_geometry);
     }
 
     #[test]

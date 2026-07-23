@@ -9,6 +9,9 @@
 //! message type `Message`, so [`decode_message`] decodes part 1 against
 //! the `Message` definition.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 /// Native Kiwi types, indexed by `!encoded_type` (bitwise-NOT) for the
 /// negative type codes in a binary schema.
 const NATIVE_TYPES: [&str; 8] = [
@@ -199,12 +202,6 @@ pub struct Schema {
     pub definitions: Vec<Definition>,
 }
 
-impl Schema {
-    fn find(&self, name: &str) -> Option<&Definition> {
-        self.definitions.iter().find(|d| d.name == name)
-    }
-}
-
 /// One raw field before type resolution: `(name, type_code, is_array,
 /// value)`. Type codes stay numeric until every definition is known.
 type RawField = (String, i32, bool, u32);
@@ -299,8 +296,9 @@ pub enum FigValue {
     Str(String),
     Bytes(Vec<u8>),
     Array(Vec<FigValue>),
-    /// Insertion-ordered key/value pairs (Kiwi struct/message).
-    Object(Vec<(String, FigValue)>),
+    /// Insertion-ordered key/value pairs (Kiwi struct/message). Keys decoded
+    /// from the schema share one allocation across every object instance.
+    Object(Vec<(Arc<str>, FigValue)>),
 }
 
 impl FigValue {
@@ -310,9 +308,22 @@ impl FigValue {
         match self {
             FigValue::Object(pairs) => pairs
                 .iter()
-                .find(|(k, _)| k == key)
+                .find(|(k, _)| k.as_ref() == key)
                 .map(|(_, v)| v)
                 .filter(|v| !matches!(v, FigValue::Null)),
+            _ => None,
+        }
+    }
+
+    /// Mutable field lookup on an object value. Explicit `Null`
+    /// remains absent, matching [`get`](Self::get).
+    pub fn get_mut(&mut self, key: &str) -> Option<&mut FigValue> {
+        match self {
+            FigValue::Object(pairs) => pairs
+                .iter_mut()
+                .find(|(name, _)| name.as_ref() == key)
+                .map(|(_, value)| value)
+                .filter(|value| !matches!(value, FigValue::Null)),
             _ => None,
         }
     }
@@ -382,14 +393,22 @@ impl FigValue {
         self.get(key).and_then(|v| v.as_array())
     }
 
+    /// Mutable array field read.
+    pub fn get_array_mut(&mut self, key: &str) -> Option<&mut Vec<FigValue>> {
+        match self.get_mut(key)? {
+            FigValue::Array(values) => Some(values),
+            _ => None,
+        }
+    }
+
     /// Insert or overwrite a field on an object value (no-op for
     /// non-objects).
     pub fn set(&mut self, key: &str, value: FigValue) {
         if let FigValue::Object(pairs) = self {
-            if let Some(slot) = pairs.iter_mut().find(|(k, _)| k == key) {
+            if let Some(slot) = pairs.iter_mut().find(|(k, _)| k.as_ref() == key) {
                 slot.1 = value;
             } else {
-                pairs.push((key.to_string(), value));
+                pairs.push((Arc::from(key), value));
             }
         }
     }
@@ -397,46 +416,143 @@ impl FigValue {
 
 // ── Dynamic decoder ───────────────────────────────────────────────
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NativeType {
+    Bool,
+    Byte,
+    Int,
+    Uint,
+    Float,
+    String,
+    Int64,
+    Uint64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResolvedType {
+    Native(NativeType),
+    Definition(usize),
+}
+
 struct Decoder<'a, 'b> {
     schema: &'a Schema,
     bb: ByteBuffer<'b>,
+    /// Resolved field types parallel to `Schema::definitions[*].fields`.
+    /// Enum fields have no wire type and therefore store `None`.
+    field_types: Vec<Vec<Option<ResolvedType>>>,
+    /// Message/enum wire value → field index, parallel to definitions.
+    field_by_value: Vec<HashMap<u32, usize>>,
+    /// Object keys parallel to `Schema::definitions[*].fields`. A decoded
+    /// struct can occur hundreds of thousands of times, so cloning these
+    /// `Arc`s avoids allocating a fresh `String` for every occurrence.
+    object_keys: Vec<Vec<Arc<str>>>,
 }
 
 impl<'a, 'b> Decoder<'a, 'b> {
-    /// Decode one value of the named type.
-    fn decode_type(&mut self, type_name: &str, depth: u32) -> Result<FigValue, KiwiError> {
+    fn new(schema: &'a Schema, data: &'b [u8]) -> Result<Self, KiwiError> {
+        let definition_by_name: HashMap<&str, usize> = schema
+            .definitions
+            .iter()
+            .enumerate()
+            .map(|(index, def)| (def.name.as_str(), index))
+            .collect();
+
+        let resolve = |type_name: &str| -> Result<ResolvedType, KiwiError> {
+            let native = match type_name {
+                "bool" => Some(NativeType::Bool),
+                "byte" => Some(NativeType::Byte),
+                "int" => Some(NativeType::Int),
+                "uint" => Some(NativeType::Uint),
+                "float" => Some(NativeType::Float),
+                "string" => Some(NativeType::String),
+                "int64" => Some(NativeType::Int64),
+                "uint64" => Some(NativeType::Uint64),
+                _ => None,
+            };
+            if let Some(native) = native {
+                return Ok(ResolvedType::Native(native));
+            }
+            definition_by_name
+                .get(type_name)
+                .copied()
+                .map(ResolvedType::Definition)
+                .ok_or_else(|| KiwiError::BadType(type_name.to_string()))
+        };
+
+        let mut field_types = Vec::with_capacity(schema.definitions.len());
+        let mut field_by_value = Vec::with_capacity(schema.definitions.len());
+        let mut object_keys = Vec::with_capacity(schema.definitions.len());
+        let mut interned_keys: HashMap<&str, Arc<str>> = HashMap::new();
+        for def in &schema.definitions {
+            let mut types = Vec::with_capacity(def.fields.len());
+            let mut values = HashMap::with_capacity(def.fields.len());
+            let mut keys = Vec::with_capacity(def.fields.len());
+            for (field_index, field) in def.fields.iter().enumerate() {
+                types.push(if def.kind == DefKind::Enum {
+                    None
+                } else {
+                    Some(resolve(&field.type_name)?)
+                });
+                values.insert(field.value, field_index);
+                let key = interned_keys
+                    .entry(field.name.as_str())
+                    .or_insert_with(|| Arc::from(field.name.as_str()));
+                keys.push(Arc::clone(key));
+            }
+            field_types.push(types);
+            field_by_value.push(values);
+            object_keys.push(keys);
+        }
+
+        Ok(Self {
+            schema,
+            bb: ByteBuffer::new(data),
+            field_types,
+            field_by_value,
+            object_keys,
+        })
+    }
+
+    /// Decode one value of an already-resolved type.
+    fn decode_type(&mut self, resolved: ResolvedType, depth: u32) -> Result<FigValue, KiwiError> {
         if depth > MAX_DEPTH {
             return Err(KiwiError::TooDeep);
         }
-        match type_name {
-            "bool" => Ok(FigValue::Bool(self.bb.read_byte()? != 0)),
-            "byte" => Ok(FigValue::Uint(self.bb.read_byte()? as u32)),
-            "int" => Ok(FigValue::Int(self.bb.read_var_int()?)),
-            "uint" => Ok(FigValue::Uint(self.bb.read_var_uint()?)),
-            "float" => Ok(FigValue::Float(self.bb.read_var_float()?)),
-            "string" => Ok(FigValue::Str(self.bb.read_string()?)),
-            "int64" => Ok(FigValue::Int64(self.bb.read_var_int64()?)),
-            "uint64" => Ok(FigValue::Uint64(self.bb.read_var_uint64()?)),
-            _ => {
-                let def = self
-                    .schema
-                    .find(type_name)
-                    .ok_or_else(|| KiwiError::BadType(type_name.to_string()))?
-                    .clone();
-                match def.kind {
-                    DefKind::Enum => self.decode_enum(&def),
-                    DefKind::Struct => self.decode_struct(&def, depth),
-                    DefKind::Message => self.decode_message_def(&def, depth),
-                }
+        match resolved {
+            ResolvedType::Native(NativeType::Bool) => Ok(FigValue::Bool(self.bb.read_byte()? != 0)),
+            ResolvedType::Native(NativeType::Byte) => {
+                Ok(FigValue::Uint(self.bb.read_byte()? as u32))
             }
+            ResolvedType::Native(NativeType::Int) => Ok(FigValue::Int(self.bb.read_var_int()?)),
+            ResolvedType::Native(NativeType::Uint) => Ok(FigValue::Uint(self.bb.read_var_uint()?)),
+            ResolvedType::Native(NativeType::Float) => {
+                Ok(FigValue::Float(self.bb.read_var_float()?))
+            }
+            ResolvedType::Native(NativeType::String) => Ok(FigValue::Str(self.bb.read_string()?)),
+            ResolvedType::Native(NativeType::Int64) => {
+                Ok(FigValue::Int64(self.bb.read_var_int64()?))
+            }
+            ResolvedType::Native(NativeType::Uint64) => {
+                Ok(FigValue::Uint64(self.bb.read_var_uint64()?))
+            }
+            ResolvedType::Definition(def_index) => match self.schema.definitions[def_index].kind {
+                DefKind::Enum => self.decode_enum(def_index),
+                DefKind::Struct => self.decode_struct(def_index, depth),
+                DefKind::Message => self.decode_message_def(def_index, depth),
+            },
         }
     }
 
     /// Decode a field — handles `byte[]` (raw block), other arrays
     /// (length-prefixed elements), and scalars.
-    fn decode_field(&mut self, field: &Field, depth: u32) -> Result<FigValue, KiwiError> {
-        if field.is_array {
-            if field.type_name == "byte" {
+    fn decode_field(
+        &mut self,
+        resolved: ResolvedType,
+        is_array: bool,
+        depth: u32,
+    ) -> Result<FigValue, KiwiError> {
+        if is_array {
+            if resolved == ResolvedType::Native(NativeType::Byte) {
                 return Ok(FigValue::Bytes(self.bb.read_byte_array()?));
             }
             let n = self.bb.read_var_uint()?;
@@ -449,55 +565,83 @@ impl<'a, 'b> Decoder<'a, 'b> {
             }
             let mut items = Vec::with_capacity((n as usize).min(self.bb.remaining()));
             for _ in 0..n {
-                items.push(self.decode_type(&field.type_name, depth + 1)?);
+                items.push(self.decode_type(resolved, depth + 1)?);
             }
             Ok(FigValue::Array(items))
         } else {
-            self.decode_type(&field.type_name, depth + 1)
+            self.decode_type(resolved, depth + 1)
         }
     }
 
     /// Enum: a single varuint resolved to its field name.
-    fn decode_enum(&mut self, def: &Definition) -> Result<FigValue, KiwiError> {
+    fn decode_enum(&mut self, def_index: usize) -> Result<FigValue, KiwiError> {
         let v = self.bb.read_var_uint()?;
-        Ok(def
-            .fields
-            .iter()
-            .find(|f| f.value == v)
-            .map(|f| FigValue::Str(f.name.clone()))
+        Ok(self.field_by_value[def_index]
+            .get(&v)
+            .map(|field_index| {
+                FigValue::Str(
+                    self.schema.definitions[def_index].fields[*field_index]
+                        .name
+                        .clone(),
+                )
+            })
             .unwrap_or(FigValue::Null))
     }
 
     /// Struct: every field in declared order.
-    fn decode_struct(&mut self, def: &Definition, depth: u32) -> Result<FigValue, KiwiError> {
-        let mut pairs = Vec::with_capacity(def.fields.len());
-        for field in &def.fields {
-            let value = self.decode_field(field, depth)?;
-            pairs.push((field.name.clone(), value));
+    fn decode_struct(&mut self, def_index: usize, depth: u32) -> Result<FigValue, KiwiError> {
+        let field_count = self.schema.definitions[def_index].fields.len();
+        let mut pairs = Vec::with_capacity(field_count);
+        for field_index in 0..field_count {
+            let (name, resolved, is_array) = {
+                let field = &self.schema.definitions[def_index].fields[field_index];
+                let resolved = self.field_types[def_index][field_index]
+                    .ok_or_else(|| KiwiError::BadType(field.type_name.clone()))?;
+                (
+                    Arc::clone(&self.object_keys[def_index][field_index]),
+                    resolved,
+                    field.is_array,
+                )
+            };
+            let value = self.decode_field(resolved, is_array, depth)?;
+            pairs.push((name, value));
         }
         Ok(FigValue::Object(pairs))
     }
 
     /// Message: id-prefixed fields, terminated by id `0`.
-    fn decode_message_def(&mut self, def: &Definition, depth: u32) -> Result<FigValue, KiwiError> {
-        let mut pairs: Vec<(String, FigValue)> = Vec::new();
+    fn decode_message_def(&mut self, def_index: usize, depth: u32) -> Result<FigValue, KiwiError> {
+        let field_count = self.schema.definitions[def_index].fields.len();
+        let mut pairs: Vec<(Arc<str>, FigValue)> = Vec::new();
+        let mut pair_slots: Vec<Option<usize>> = vec![None; field_count];
         loop {
             let field_id = self.bb.read_var_uint()?;
             if field_id == 0 {
                 return Ok(FigValue::Object(pairs));
             }
-            let field = def
-                .fields
-                .iter()
-                .find(|f| f.value == field_id)
-                .ok_or_else(|| KiwiError::UnknownField(format!("{} id {field_id}", def.name)))?
-                .clone();
-            let value = self.decode_field(&field, depth)?;
+            let field_index = self.field_by_value[def_index]
+                .get(&field_id)
+                .copied()
+                .ok_or_else(|| {
+                    KiwiError::UnknownField(format!(
+                        "{} id {field_id}",
+                        self.schema.definitions[def_index].name
+                    ))
+                })?;
+            let (resolved, is_array) = {
+                let field = &self.schema.definitions[def_index].fields[field_index];
+                let resolved = self.field_types[def_index][field_index]
+                    .ok_or_else(|| KiwiError::BadType(field.type_name.clone()))?;
+                (resolved, field.is_array)
+            };
+            let value = self.decode_field(resolved, is_array, depth)?;
             // A repeated id overwrites — matches the JS `result.x = …`.
-            if let Some(slot) = pairs.iter_mut().find(|(k, _)| *k == field.name) {
-                slot.1 = value;
+            if let Some(slot) = pair_slots[field_index] {
+                pairs[slot].1 = value;
             } else {
-                pairs.push((field.name.clone(), value));
+                let field_name = Arc::clone(&self.object_keys[def_index][field_index]);
+                pair_slots[field_index] = Some(pairs.len());
+                pairs.push((field_name, value));
             }
         }
     }
@@ -506,22 +650,19 @@ impl<'a, 'b> Decoder<'a, 'b> {
 /// Decode the data chunk against `schema`, rooted at the `Message`
 /// definition (falling back to the first message definition).
 pub fn decode_message(schema: &Schema, data: &[u8]) -> Result<FigValue, KiwiError> {
-    let root = schema
-        .find("Message")
-        .filter(|d| d.kind == DefKind::Message)
+    let root_index = schema
+        .definitions
+        .iter()
+        .position(|d| d.name == "Message" && d.kind == DefKind::Message)
         .or_else(|| {
             schema
                 .definitions
                 .iter()
-                .find(|d| d.kind == DefKind::Message)
+                .position(|d| d.kind == DefKind::Message)
         })
-        .ok_or(KiwiError::NoRootMessage)?
-        .clone();
-    let mut decoder = Decoder {
-        schema,
-        bb: ByteBuffer::new(data),
-    };
-    decoder.decode_message_def(&root, 0)
+        .ok_or(KiwiError::NoRootMessage)?;
+    let mut decoder = Decoder::new(schema, data)?;
+    decoder.decode_message_def(root_index, 0)
 }
 
 #[cfg(test)]

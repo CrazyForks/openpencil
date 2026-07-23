@@ -141,21 +141,27 @@ impl WidgetHostNative {
 
     /// Track the picker row under the cursor (entry + import-row hover
     /// washes). The picker is a floating overlay, so while the cursor is
-    /// over the popup this CONSUMES the move (returns `true`) — otherwise
+    /// over the popup this CONSUMES the move — otherwise
     /// the caller falls through to the canvas / layer hovers behind the
     /// popup and lets a node highlight bleed through (穿透). When the
     /// pointer is genuinely outside the popup, the picker's own hovers are
-    /// cleared and this returns `false` so lower layers run normally.
-    pub(in crate::widget_host) fn update_font_picker_hover(&mut self, x: f32, y: f32) -> bool {
+    /// cleared and lower layers run normally. The second result reports a
+    /// hover-state change separately so a higher-popup exit can continue into
+    /// the model picker in the same cursor event without losing its repaint.
+    pub(in crate::widget_host) fn update_font_picker_hover(
+        &mut self,
+        x: f32,
+        y: f32,
+        panel: Option<&PropertyPanel>,
+    ) -> (bool, bool) {
         if !self.editor_state.editor_ui.font_picker.open {
-            return false;
+            return (false, false);
         }
-        self.refresh_layout_scene();
         let property_rect = self.property_rect(self.last_viewport_w, self.last_viewport_h);
         let point = Point2D::new(x, y);
         // Resolve over-popup + both hovers up front so the panel's
         // immutable borrow is released before we mutate the host.
-        let resolved = PropertyPanel::for_selection(&self.editor_state).map(|panel| {
+        let resolved = panel.map(|panel| {
             let over_popup = panel.font_picker_contains(property_rect, point);
             if over_popup {
                 (
@@ -186,14 +192,14 @@ impl WidgetHostNative {
             if changed && !cleared {
                 self.mark_dirty();
             }
-            true
+            (true, changed || cleared)
         } else {
             // Pointer left the popup — clear the picker's own hovers and
             // let the caller run the lower hover layers.
             if changed {
                 self.mark_dirty();
             }
-            false
+            (false, changed)
         }
     }
 

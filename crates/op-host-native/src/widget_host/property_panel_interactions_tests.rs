@@ -49,14 +49,43 @@ fn point_for_menu_row(host: &WidgetHostNative, want_row: usize) -> Point2D {
     panic!("no point maps to interaction-menu row {want_row}");
 }
 
+fn update_interaction_hover(host: &mut WidgetHostNative, point: Point2D) -> bool {
+    let panel = PropertyPanel::for_selection(host.editor_state());
+    host.update_interaction_menu_hover(point.x, point.y, VIEWPORT_W, VIEWPORT_H, panel.as_ref())
+}
+
+/// Find a point where an Effects popover row visually covers one of the
+/// inspector body's action buttons. This is the exact geometry that used to
+/// leave the covered button's stale hover wash visible through the popover.
+fn point_where_effect_menu_overlaps_action(host: &WidgetHostNative) -> (Point2D, usize, usize) {
+    let panel = PropertyPanel::for_selection(host.editor_state()).expect("property panel");
+    let rect = host.property_rect(VIEWPORT_W, VIEWPORT_H);
+    let popup = panel
+        .effect_add_menu_rect(rect)
+        .expect("open effect menu has painted bounds");
+    let point = Point2D::new(
+        popup.origin.x + popup.size.x / 2.0,
+        popup.origin.y + popup.size.y / 2.0,
+    );
+    let row = panel
+        .effect_add_menu_row_at(rect, point)
+        .expect("popup center is the middle effect row");
+    let action = panel
+        .action_hover_index(rect, point)
+        .expect("middle effect row overlaps an inspector action");
+    (point, action, row)
+}
+
 #[test]
 fn toggle_interaction_menu_opens_and_closes() {
     let mut host = WidgetHostNative::new();
     seed(
         &mut host,
-        r#"{ "version": "1.0.0", "children": [
-            {"type":"frame","id":"f1","name":"Frame"}
-        ]}"#,
+        r##"{ "version": "1.0.0", "children": [
+            {"type":"rectangle","id":"f1","name":"Rectangle",
+             "width":180,"height":120,
+             "fill":[{"type":"solid","color":"#BDC7D9"}]}
+        ]}"##,
     );
     host.editor_state_mut()
         .set_single_selection(NodeId::new("f1"));
@@ -200,17 +229,20 @@ fn interaction_menu_hover_tracks_the_row_under_the_cursor() {
 
     // No authored screens on this doc — row 0 is "Back (pop)".
     let point = point_for_menu_row(&host, 0);
-    assert!(host.update_interaction_menu_hover(point.x, point.y, VIEWPORT_W, VIEWPORT_H));
+    assert!(update_interaction_hover(&mut host, point));
     assert_eq!(
         host.editor_state().editor_ui.interaction_menu_hover,
         Some(0)
     );
 
     // A second update at the same point is a no-op (hover unchanged).
-    assert!(!host.update_interaction_menu_hover(point.x, point.y, VIEWPORT_W, VIEWPORT_H));
+    assert!(!update_interaction_hover(&mut host, point));
 
     // Moving off every row clears the hover.
-    assert!(host.update_interaction_menu_hover(-500.0, -500.0, VIEWPORT_W, VIEWPORT_H));
+    assert!(update_interaction_hover(
+        &mut host,
+        Point2D::new(-500.0, -500.0)
+    ));
     assert_eq!(host.editor_state().editor_ui.interaction_menu_hover, None);
 }
 
@@ -227,5 +259,42 @@ fn interaction_menu_hover_is_a_no_op_while_closed() {
         .set_single_selection(NodeId::new("f1"));
     assert!(!host.editor_state().editor_ui.interaction_menu_open);
 
-    assert!(!host.update_interaction_menu_hover(0.0, 0.0, VIEWPORT_W, VIEWPORT_H));
+    assert!(!update_interaction_hover(&mut host, Point2D::new(0.0, 0.0)));
+}
+
+#[test]
+fn effect_popover_hover_clears_the_covered_inspector_action_hover() {
+    let mut host = WidgetHostNative::new();
+    seed(
+        &mut host,
+        r#"{ "version": "1.0.0", "children": [
+            {"type":"frame","id":"f1","name":"Frame"}
+        ]}"#,
+    );
+    host.last_viewport_w = VIEWPORT_W;
+    host.last_viewport_h = VIEWPORT_H;
+    host.editor_state_mut()
+        .set_single_selection(NodeId::new("f1"));
+    host.apply_property_action(PropertyPanelAction::ToggleEffectAddPicker);
+
+    let (point, covered_action, effect_row) = point_where_effect_menu_overlaps_action(&host);
+    host.editor_state_mut().editor_ui.property_action_hover = Some(covered_action);
+
+    assert!(host.apply_cursor_move(point.x, point.y));
+    assert_eq!(
+        host.editor_state().editor_ui.effect_add_menu_hover,
+        Some(effect_row),
+        "the top popover row should own hover"
+    );
+    assert_eq!(
+        host.editor_state().editor_ui.property_action_hover,
+        None,
+        "the covered inspector action must not retain a hover wash"
+    );
+
+    // Even when the popover's own row is unchanged, it remains an owning
+    // floating surface and must clear any stale lower hover before returning.
+    host.editor_state_mut().editor_ui.property_action_hover = Some(covered_action);
+    assert!(host.apply_cursor_move(point.x, point.y));
+    assert_eq!(host.editor_state().editor_ui.property_action_hover, None);
 }

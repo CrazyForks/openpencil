@@ -106,7 +106,7 @@ impl McpTool for ExportNodes {
 /// state at registration time (same pattern as `get_screenshot_snapshot`).
 pub fn export_nodes_snapshot(state: &EditorState) -> ExportNodes {
     ExportNodes {
-        scene: op_pen_loader::editor_state_to_layout_scene(state),
+        scene: op_pen_loader::editor_state_to_active_page_layout_scene(state),
     }
 }
 

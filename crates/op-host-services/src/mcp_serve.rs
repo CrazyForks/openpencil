@@ -87,25 +87,14 @@ pub fn tool_text(response: &str) -> String {
 
 /// Load a `.op` file into an `EditorState` via the schema compat layer.
 pub fn load_editor_state(path: &Path) -> Result<EditorState, String> {
-    let src = std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    let loaded = op_pen_loader::load_canonical(&src)
-        .map_err(|e| format!("parse {}: {e}", path.display()))?;
-    for warning in &loaded.warnings {
-        eprintln!("openpencil-desktop mcp: schema warning: {warning:?}");
-    }
-    Ok(EditorState::from_document(loaded.value))
+    crate::doc_io::load_editor_state(path, op_editor_core::Locale::EnUs)
+        .map_err(|error| format!("load {}: {error}", path.display()))
 }
 
-/// Serialize the editor state's canonical document back to `path`,
-/// with shared image payloads deduplicated into the `images` table
-/// (mirrors `doc_io::save_to_path`; the loader resolves refs back).
+/// Serialize through the same streaming, atomic path as desktop Save.
 fn save_editor_state(state: &EditorState, path: &Path) -> Result<(), String> {
-    let mut value = serde_json::to_value(&state.doc)
-        .map_err(|e| format!("serialize {}: {e}", path.display()))?;
-    jian_ops_schema::image_table::externalize_images(&mut value);
-    let json = serde_json::to_string_pretty(&value)
-        .map_err(|e| format!("serialize {}: {e}", path.display()))?;
-    std::fs::write(path, json).map_err(|e| format!("write {}: {e}", path.display()))
+    crate::doc_io::save_to_path(state, path)
+        .map_err(|error| format!("save {}: {error}", path.display()))
 }
 
 /// Process one JSON-RPC message line against the editor state.
@@ -175,11 +164,29 @@ where
     // borrows it once the applier closure mutates it.
     let requested_tool = op_mcp::parse_tool_call(trimmed).map(|call| call.tool);
     let registry = rebuild_registry(state, requested_tool.as_deref());
+    process_tool_message_with_registry(&registry, line, |tool_name, cmd| {
+        apply(tool_name, state, cmd)
+    })
+}
+
+/// Dispatch one already-classified tool call through a caller-provided
+/// registry. Live hosts use this seam for tools whose complete snapshot is
+/// much smaller than an [`EditorState`] (for example `list_pages`) or that do
+/// not need state at all (`set_active_page`). The parser, command-application
+/// contract, and wire serializer remain the same as the general path above.
+pub(crate) fn process_tool_message_with_registry<F>(
+    registry: &ToolRegistry,
+    line: &str,
+    mut apply: F,
+) -> Result<Option<String>, String>
+where
+    F: FnMut(&str, &EditorCommand) -> bool,
+{
     let mut out: Vec<u8> = Vec::new();
     {
         let mut input = std::io::Cursor::new(line.as_bytes());
-        run_stdio_with_applier(&registry, &mut input, &mut out, |tool_name, cmd| {
-            apply(tool_name, state, cmd)
+        run_stdio_with_applier(registry, &mut input, &mut out, |tool_name, cmd| {
+            apply(tool_name, cmd)
         })
         .map_err(|e| format!("dispatch: {e}"))?;
     }

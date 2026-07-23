@@ -9,8 +9,8 @@
 use crate::widgets::property_panel::{EffectSummary, FillSummary, PropertyPanelAction};
 use crate::widgets::property_panel_fill::fill_row_height;
 use crate::widgets::property_panel_inputs::{
-    COLOR_VARIABLE_BUTTON_W, COLOR_VARIABLE_GAP, CREATE_COMPONENT_BTN_H, CREATE_COMPONENT_PAD_TOP,
-    HEADER_HEIGHT, INPUT_HEIGHT, PAD_X, SECTION_GAP, SECTION_HEADER_HEIGHT, TAB_HEIGHT,
+    COLOR_VARIABLE_BUTTON_W, COLOR_VARIABLE_GAP, HEADER_HEIGHT, INPUT_HEIGHT, PAD_X, SECTION_GAP,
+    SECTION_HEADER_HEIGHT, TAB_HEIGHT,
 };
 use crate::widgets::property_panel_interactions::{
     interactions_section_height, push_interaction_action_rects, InteractionSummary,
@@ -106,7 +106,12 @@ pub fn layer_section_height(visible: VisibleSections) -> f32 {
     } else {
         0.0
     };
-    SECTION_HEADER_HEIGHT + INPUT_HEIGHT + extra_arc_row + 12.0
+    let extra_compositing_row = if visible.compositing {
+        crate::widgets::property_panel_compositing::COMPOSITING_ROW_HEIGHT
+    } else {
+        0.0
+    };
+    SECTION_HEADER_HEIGHT + INPUT_HEIGHT + extra_arc_row + extra_compositing_row + 12.0
 }
 
 /// Rects of every clickable button / checkbox in the panel —
@@ -229,30 +234,12 @@ pub fn action_button_rects_with_fill_picker(
     y += TAB_HEIGHT;
     y += HEADER_HEIGHT;
     if visible.create_component {
-        use crate::widgets::property_panel_visibility::ComponentButtonState as CB;
-        let first_row = Rect {
-            origin: Point2D::new(x0 + PAD_X, y + CREATE_COMPONENT_PAD_TOP),
-            size: Point2D::new(usable_w, CREATE_COMPONENT_BTN_H),
-        };
-        match visible.component_button {
-            CB::Create => out.push((PropertyPanelAction::CreateComponent, first_row)),
-            CB::DetachComponent => out.push((PropertyPanelAction::DetachComponent, first_row)),
-            CB::Instance => {
-                out.push((PropertyPanelAction::GoToComponent, first_row));
-                out.push((
-                    PropertyPanelAction::DetachInstance,
-                    Rect {
-                        origin: Point2D::new(
-                            x0 + PAD_X,
-                            first_row.origin.y
-                                + CREATE_COMPONENT_BTN_H
-                                + crate::widgets::property_panel_inputs::CREATE_COMPONENT_ROW_GAP,
-                        ),
-                        size: Point2D::new(usable_w, CREATE_COMPONENT_BTN_H),
-                    },
-                ));
-            }
-        }
+        out.extend(crate::widgets::property_panel_instance::action_rects(
+            x0,
+            y,
+            w,
+            visible.component_button,
+        ));
         y += crate::widgets::property_panel_inputs::create_component_block_height(
             visible.component_button,
         );
@@ -266,7 +253,7 @@ pub fn action_button_rects_with_fill_picker(
             crate::widgets::property_panel_corner::uniform_and_toggle_rects(x0, y, w).1,
         ));
     }
-    if visible.corner_radius && visible.corner_expand {
+    if visible.corner_radius && visible.corner_per_corner && visible.corner_expand {
         y += INPUT_HEIGHT + crate::widgets::property_panel_corner::CORNER_GRID_EXTRA_HEIGHT + 12.0;
     } else {
         y += INPUT_HEIGHT + 12.0;
@@ -390,6 +377,18 @@ pub fn action_button_rects_with_fill_picker(
     }
 
     if visible.opacity {
+        if visible.compositing {
+            let mut compositing_y = y + SECTION_HEADER_HEIGHT + INPUT_HEIGHT;
+            if visible.ellipse_arc {
+                compositing_y += INPUT_HEIGHT + 6.0;
+            }
+            compositing_y += crate::widgets::property_panel_compositing::COMPOSITING_ROW_GAP;
+            for (target, rect) in
+                crate::widgets::property_panel_compositing::node_trigger_rects(x0, compositing_y, w)
+            {
+                out.push((PropertyPanelAction::ToggleCompositingPicker(target), rect));
+            }
+        }
         y += layer_section_height(visible);
         y += SECTION_GAP;
     }

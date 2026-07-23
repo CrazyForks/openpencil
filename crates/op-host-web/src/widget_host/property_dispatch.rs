@@ -1,7 +1,7 @@
-//! Web `apply_property_action` — PropertyPanel button / dropdown
-//! action dispatch. Split out of `press.rs` to keep that file under
-//! the 800-line cap (mirrors the native host's `property_dispatch.rs`).
+//! Web PropertyPanel action dispatch, mirroring the native host.
 
+#[path = "property_compositing_dispatch.rs"]
+mod property_compositing_dispatch;
 #[path = "property_input_dispatch.rs"]
 mod property_input_dispatch;
 pub(in crate::widget_host) use property_input_dispatch::property_focus_initial;
@@ -67,6 +67,17 @@ impl WidgetHost {
         action: op_editor_ui::widgets::PropertyPanelAction,
     ) {
         use op_editor_ui::widgets::PropertyPanelAction as A;
+        // ImageTileScale lives in the floating image-fill editor. Any button
+        // action may close that editor (or switch away from Tile), so commit
+        // its draft before the instance-write scope and before the input can
+        // disappear. Regular PropertyPanel presses already blur inputs; this
+        // also covers popup-owned actions and direct dispatch in tests/hosts.
+        self.commit_image_tile_scale_focus_if_any();
+        // Compositing and page-background edits share the same exact
+        // undo contract as native: snapshot before the instance-write
+        // redirect and push only after the routed document really changed.
+        let document_before = property_compositing_dispatch::updates_document(&action)
+            .then(|| self.editor_state.snapshot_for_history());
         match action {
             A::GoToComponent => {
                 if let Some(jian_ops_schema::node::PenNode::Ref(reference)) =
@@ -79,6 +90,10 @@ impl WidgetHost {
                         }) {
                             if page_index != self.editor_state.ui.active_page_index {
                                 let _ = self.editor_state.set_active_page(page_index);
+                                self.fit_active_page_after_switch(
+                                    self.last_viewport_w,
+                                    self.last_viewport_h,
+                                );
                             }
                         }
                     }
@@ -95,6 +110,28 @@ impl WidgetHost {
                 self.mark_dirty();
                 return;
             }
+            A::ToggleInstanceComponentPicker => {
+                let anchor = self.editor_state.selection.anchor.as_str().to_string();
+                self.editor_state
+                    .editor_ui
+                    .toggle_instance_component_picker(&anchor);
+                self.editor_state.editor_ui.close_fill_type_picker();
+                self.close_compositing_picker();
+                self.mark_dirty();
+                return;
+            }
+            A::SetInstanceComponent(component_id) => {
+                let instance_id = self.editor_state.selection.anchor.clone();
+                let component_id = op_editor_core::NodeId::new(component_id);
+                let _ = self
+                    .editor_state
+                    .set_instance_component(&instance_id, &component_id);
+                self.editor_state
+                    .editor_ui
+                    .close_instance_component_picker();
+                self.mark_dirty();
+                return;
+            }
             _ => {}
         }
         // Resolve Fill/Hug pixels against the real scene before an instance
@@ -108,6 +145,24 @@ impl WidgetHost {
         match action {
             A::SetPropertyTab(tab) => {
                 self.editor_state.editor_ui.property_tab = tab;
+            }
+            A::ToggleCompositingPicker(target) => {
+                self.toggle_compositing_picker(target);
+            }
+            A::SetNodeBlendMode(mode) => {
+                let _ = self.editor_state.set_selected_node_blend_mode(mode);
+                self.close_compositing_picker();
+            }
+            A::SetNodeMaskType(mask_type) => {
+                let _ = self.editor_state.set_selected_node_mask_type(mask_type);
+                self.close_compositing_picker();
+            }
+            A::SetFillBlendMode { index, mode } => {
+                let _ = self.editor_state.set_selected_fill_blend_mode(index, mode);
+                self.close_compositing_picker();
+            }
+            A::ClearPageBackground => {
+                let _ = self.editor_state.set_active_page_background_color(None);
             }
             A::ToggleCornerExpand => {
                 self.editor_state.editor_ui.toggle_corner_expand();
@@ -586,6 +641,11 @@ impl WidgetHost {
         }
         if let Some(scope) = instance_scope {
             self.editor_state.finish_instance_write(scope);
+        }
+        if let Some(before) = document_before {
+            if self.editor_state.snapshot_for_history() != before {
+                self.editor_state.history_push_past(before);
+            }
         }
         self.mark_dirty();
     }

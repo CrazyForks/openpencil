@@ -334,18 +334,20 @@ impl<'a> SnapshotCtx<'a> {
         {
             self.tainted_images += 1;
         }
+        let mut base = self.base(
+            id,
+            object
+                .get("tag")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| Some("img".into())),
+            rect,
+            Some(parent_rect),
+        );
+        base.blend_mode = blend_mode;
         Some(PenNode::Image(ImageNode {
             limits: Default::default(),
-            base: self.base(
-                id,
-                object
-                    .get("tag")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-                    .or_else(|| Some("img".into())),
-                rect,
-                Some(parent_rect),
-            ),
+            base,
             src: ImageSrc::from(
                 object
                     .get("src")
@@ -353,7 +355,6 @@ impl<'a> SnapshotCtx<'a> {
                     .unwrap_or_default(),
             ),
             object_fit,
-            blend_mode,
             width: Some(SizingBehavior::Number(rect.w)),
             height: Some(SizingBehavior::Number(rect.h)),
             corner_radius: visual.corner_radius,

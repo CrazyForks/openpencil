@@ -21,6 +21,8 @@
 
 mod adapter;
 mod authored_geometry;
+mod editor_meta;
+mod editor_scene;
 mod effects;
 mod layout_repair;
 mod layout_scene;
@@ -29,6 +31,10 @@ mod library;
 // Only the real-shaper (`skia-measure`) build benefits from caching; the
 // estimate backend is already cheap, so the module is gated to avoid dead code
 // under the CanvasKit (no-skia-measure) web build.
+#[cfg(test)]
+mod active_page_scene_tests;
+#[cfg(test)]
+mod geometry_mode_scene_tests;
 #[cfg(test)]
 mod html_import_scene_tests;
 #[cfg(feature = "skia-measure")]
@@ -72,9 +78,10 @@ pub mod variables;
 /// against the editor's variables + active theme. Builds the scene
 /// directly from the layout-resolved `DocPayload` — no intermediate
 /// shell-core `Document`.
+pub use editor_scene::{editor_state_to_active_page_layout_scene, editor_state_to_layout_scene};
 pub use layout_scene::{
-    editor_state_to_layout_scene, pen_document_to_layout_scene,
-    pen_document_to_layout_scene_for_preview,
+    pen_document_to_layout_scene, pen_document_to_layout_scene_for_preview,
+    pen_document_to_layout_scene_with_geometry_mode,
 };
 /// Skips the layout-scene rebuild when the document / active theme / active page
 /// are unchanged — the hosts hold one and drive `refresh_layout_scene` through it.
@@ -86,12 +93,20 @@ pub use adapter::{
     build_var_table, pen_document_to_payload, pen_document_to_payload_preserving_geometry,
     root_authored_origin, root_available_size, LoadedDoc,
 };
+pub use editor_meta::{
+    apply_editor_meta, apply_editor_meta_or_legacy_fallback, extract_editor_meta,
+    extract_editor_meta_with_report, write_source_with_current_schema,
+    write_source_with_editor_meta, EditorMeta, EditorMetaExtraction,
+};
 pub use effects::{
     effects_from_payload, effects_from_payload_ref, effects_to_payload, shadows_from_canonical,
     ShadowPayload,
 };
 pub use library::{merge_library_into_state, merge_library_src_into_state, LibraryMergeReport};
-pub use payload::{load_canonical, DocPayload, NodePayload, PagePayload, StrokePayload};
+pub use payload::{
+    load_canonical, write_normalized_source_with_current_schema, DocPayload, NodePayload,
+    PagePayload, StrokePayload,
+};
 pub use variables::{var_table_from_payload, var_table_to_payload, VarTablePayload};
 
 /// Build a shell-core [`VariableTable`] that reflects an

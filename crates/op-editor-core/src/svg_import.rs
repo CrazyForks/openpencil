@@ -26,7 +26,7 @@ use crate::node_id::NodeId;
 use crate::pen_node_ext::PenNodeExt;
 use crate::state::EditorState;
 use crate::{command_node::build_leaf_node, walkers};
-use jian_ops_schema::node::path::PenPathHandle;
+use jian_ops_schema::node::path::{PathFillRule, PenPathHandle};
 use jian_ops_schema::node::{PathNode, PenNode, PenNodeBase, PenPathAnchor};
 use jian_ops_schema::sizing::SizingBehavior;
 use jian_ops_schema::style::{PenFill, PenStroke, SolidFillBody, StrokeThickness};
@@ -63,6 +63,7 @@ struct StyleCtx {
     fill: Option<String>,
     stroke: Option<String>,
     stroke_width: f64,
+    fill_rule: Option<PathFillRule>,
 }
 
 impl Default for StyleCtx {
@@ -71,6 +72,7 @@ impl Default for StyleCtx {
             fill: None,
             stroke: None,
             stroke_width: 1.0,
+            fill_rule: None,
         }
     }
 }
@@ -306,6 +308,9 @@ fn compute_root_scale(root_attrs: &[(String, String)]) -> (f64, StyleCtx) {
         fill: attr("fill").map(|s| s.to_string()),
         stroke: attr("stroke").map(|s| s.to_string()),
         stroke_width: stroke_w,
+        fill_rule: extract_style_or_attr(root_attrs, "fill-rule")
+            .as_deref()
+            .and_then(parse_svg_fill_rule),
     };
     (scale, ctx)
 }
@@ -530,11 +535,15 @@ fn element_to_node_ctx(
                 offset,
                 fill_hex,
                 stroke,
+                ctx.fill_rule,
             );
         }
     }
     let id = walkers::alloc_n_id(next_id, taken)?;
     let mut node = element_to_node(&scaled, id, offset)?;
+    if let PenNode::Path(path) = &mut node {
+        path.fill_rule = ctx.fill_rule;
+    }
     if let Some(stroke) = stroke {
         set_node_stroke(&mut node, stroke);
     }
@@ -558,6 +567,18 @@ fn merge_style_ctx(parent: &StyleCtx, attrs: &[(String, String)]) -> StyleCtx {
         stroke_width: extract_style_or_attr(attrs, "stroke-width")
             .and_then(|s| s.trim().parse::<f64>().ok())
             .unwrap_or(parent.stroke_width),
+        fill_rule: extract_style_or_attr(attrs, "fill-rule")
+            .as_deref()
+            .and_then(parse_svg_fill_rule)
+            .or(parent.fill_rule),
+    }
+}
+
+fn parse_svg_fill_rule(raw: &str) -> Option<PathFillRule> {
+    match raw.trim() {
+        value if value.eq_ignore_ascii_case("evenodd") => Some(PathFillRule::Evenodd),
+        value if value.eq_ignore_ascii_case("nonzero") => Some(PathFillRule::Nonzero),
+        _ => None,
     }
 }
 
@@ -926,6 +947,7 @@ fn path_node_from_pen_anchors(
         anchors: Some(anchors),
         closed: Some(closed),
         fill_rule: None,
+        mask: None,
         width: Some(SizingBehavior::Number((max_x - min_x).max(0.0))),
         height: Some(SizingBehavior::Number((max_y - min_y).max(0.0))),
         fill: None,
@@ -949,6 +971,7 @@ fn path_node_from_svg_d(
     offset: (f64, f64),
     fill_hex: Option<String>,
     stroke: Option<PenStroke>,
+    fill_rule: Option<PathFillRule>,
 ) -> Option<PenNode> {
     let (local_d, bounds) = crate::svg_path_data::localize_svg_path(d)?;
     Some(PenNode::Path(PathNode {
@@ -963,7 +986,8 @@ fn path_node_from_svg_d(
         d: Some(local_d.clone()),
         anchors: None,
         closed: Some(local_d.contains('Z') || local_d.contains('z')),
-        fill_rule: None,
+        fill_rule,
+        mask: None,
         width: Some(SizingBehavior::Number(bounds.w)),
         height: Some(SizingBehavior::Number(bounds.h)),
         fill: fill_hex.map(|hex| vec![solid_fill(&hex)]),

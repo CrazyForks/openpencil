@@ -18,6 +18,8 @@ pub fn paint_layer_section(
     snapshot: &NodeSnapshot,
     labels: &PropertyLabels,
     edit: &EditContext<'_>,
+    show_compositing: bool,
+    locale: op_editor_core::Locale,
     x: f32,
     y: f32,
     width: f32,
@@ -29,6 +31,7 @@ pub fn paint_layer_section(
         origin: Point2D::new(x + PAD_X, y),
         size: Point2D::new(half_w, INPUT_HEIGHT),
     };
+    let opacity_value = format_number(snapshot.opacity_percent);
     paint_labeled_input(
         cx,
         theme,
@@ -36,7 +39,7 @@ pub fn paint_layer_section(
         opacity_rect,
         labels.opacity,
         PropertyFocus::Opacity,
-        "100",
+        &opacity_value,
         Some("%"),
     );
 
@@ -65,10 +68,20 @@ pub fn paint_layer_section(
         y += INPUT_HEIGHT;
     }
 
+    if show_compositing {
+        y += COMPOSITING_ROW_GAP;
+        crate::widgets::property_panel_compositing::paint_node_triggers(
+            cx, theme, snapshot, locale, x, y, width,
+        );
+        y += INPUT_HEIGHT;
+    }
+
     y += 12.0;
     paint_section_divider(cx, theme, x, y, width);
     y + SECTION_GAP
 }
+
+const COMPOSITING_ROW_GAP: f32 = crate::widgets::property_panel_compositing::COMPOSITING_ROW_GAP;
 
 #[allow(clippy::too_many_arguments)]
 fn paint_ellipse_arc_row(

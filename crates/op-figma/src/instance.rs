@@ -19,54 +19,30 @@ mod apply;
 mod assignment;
 #[cfg(test)]
 mod assignment_tests;
+mod cache;
 mod fingerprint;
 #[cfg(test)]
 mod fingerprint_tests;
 mod foreign_session;
 #[cfg(test)]
 mod foreign_tests;
+mod style;
 mod swap_filter;
 #[cfg(test)]
+mod swap_style_tests;
+#[cfg(test)]
 mod tests;
-
 use apply::{
-    apply_to_node, flatten_dfs, local_id, strip_first_guid, virtual_guid_base, walk_virtual,
+    apply_to_node, collect_nested_entries, flatten_dfs, local_id, mark_derived_branches,
+    strip_first_guid, virtual_guid_base, walk_virtual,
 };
 pub use assignment::seed_assignments_from_instances;
-use assignment::{guessed_mapping_is_implausible, instance_scale, rescale_only};
+use assignment::{
+    guessed_mapping_is_implausible, instance_scale, rescale_only, reserve_direct_identities,
+};
+pub(crate) use cache::{apply_instance_overrides_memoized, InstanceExpansionCache};
+pub(crate) use style::merge_symbol_props;
 pub(crate) use swap_filter::filter_swap_stale_derived;
-
-/// Layout keys an instance inherits from its master SYMBOL.
-const LAYOUT_KEYS: &[&str] = &[
-    "stackMode",
-    "stackSpacing",
-    "stackPadding",
-    "stackHorizontalPadding",
-    "stackVerticalPadding",
-    "stackPaddingRight",
-    "stackPaddingBottom",
-    "stackPrimaryAlignItems",
-    "stackCounterAlignItems",
-    "stackPrimarySizing",
-    "stackCounterSizing",
-    "stackChildPrimaryGrow",
-    "stackChildAlignSelf",
-    "frameMaskDisabled",
-];
-
-/// Visual keys an instance inherits from its master SYMBOL.
-const VISUAL_KEYS: &[&str] = &[
-    "fillPaints",
-    "strokePaints",
-    "strokeWeight",
-    "strokeAlign",
-    "cornerRadius",
-    "rectangleCornerRadiiIndependent",
-    "rectangleTopLeftCornerRadius",
-    "rectangleTopRightCornerRadius",
-    "rectangleBottomLeftCornerRadius",
-    "rectangleBottomRightCornerRadius",
-];
 
 /// Keys that must never be copied off an override entry onto a node.
 const OVERRIDE_SKIP_KEYS: &[&str] = &[
@@ -89,20 +65,6 @@ const OVERRIDE_SKIP_KEYS: &[&str] = &[
     "proportionsConstrained",
     "fontVersion",
 ];
-
-/// Copy SYMBOL props onto an instance where the instance lacks them
-/// (the instance's own values win).
-pub fn merge_symbol_props(instance: &FigValue, symbol: &FigValue) -> FigValue {
-    let mut merged = instance.clone();
-    for key in LAYOUT_KEYS.iter().chain(VISUAL_KEYS.iter()) {
-        if merged.get(key).is_none() {
-            if let Some(v) = symbol.get(key) {
-                merged.set(key, v.clone());
-            }
-        }
-    }
-    merged
-}
 
 /// `guidPath.guids` joined into a `/`-separated path key.
 fn guid_path_key(entry: &FigValue) -> Option<String> {
@@ -220,6 +182,15 @@ pub fn apply_instance_overrides_cached(
     let mut node_derived: HashMap<String, FigValue> = HashMap::new();
     let mut pk_to_node_guid: HashMap<String, String> = HashMap::new();
 
+    let reserved_node_guids = reserve_direct_identities(
+        &override_map,
+        &derived_map,
+        &guid_in_subtree,
+        &mut node_override,
+        &mut node_derived,
+        &mut pk_to_node_guid,
+    );
+
     let use_direct = !len1_derived.is_empty() && direct_matches * 2 > len1_derived.len()
         || len1_derived.is_empty();
 
@@ -256,8 +227,57 @@ pub fn apply_instance_overrides_cached(
         }
     } else if len1_derived.len() == flat_symbol.len() {
         // Strategy 1 — exact count, index mapping.
-        for (i, node) in flat_symbol.iter().enumerate() {
-            let d = len1_derived[i];
+        // Exact count does not prove that Figma allocated virtual IDs
+        // root-first. When one entry explicitly demands text and the
+        // subtree has one TEXT node, that semantic match is stronger
+        // than array position (Ant Design allocates its TEXT before
+        // the SYMBOL root). Swap only this unambiguous pair; otherwise
+        // preserve the historical positional fallback.
+        let remaining_derived: Vec<&FigValue> = len1_derived
+            .iter()
+            .copied()
+            .filter(|entry| {
+                guid_path_key(entry)
+                    .map(|pk| !reserved_node_guids.contains(&pk))
+                    .unwrap_or(true)
+            })
+            .collect();
+        let mut mapped_nodes: Vec<&TreeNode> = flat_symbol
+            .iter()
+            .copied()
+            .filter(|node| {
+                node.figma
+                    .get("guid")
+                    .and_then(guid_to_string)
+                    .map(|guid| !reserved_node_guids.contains(&guid))
+                    .unwrap_or(true)
+            })
+            .collect();
+        let text_entries: Vec<usize> = remaining_derived
+            .iter()
+            .copied()
+            .enumerate()
+            .filter_map(|(i, d)| {
+                let pk = guid_path_key(d)?;
+                let overrides = override_map.get(&pk).copied();
+                let entry = fingerprint::VirtualEntry {
+                    pk,
+                    rel_idx: i as f64,
+                    derived: Some(d),
+                    overrides,
+                };
+                fingerprint::demands_text(&entry).then_some(i)
+            })
+            .collect();
+        let text_nodes: Vec<usize> = mapped_nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, node)| (node.figma.get_str("type") == Some("TEXT")).then_some(i))
+            .collect();
+        if text_entries.len() == 1 && text_nodes.len() == 1 {
+            mapped_nodes.swap(text_entries[0], text_nodes[0]);
+        }
+        for (d, node) in remaining_derived.into_iter().zip(mapped_nodes) {
             let Some(node_guid) = node.figma.get("guid").and_then(guid_to_string) else {
                 continue;
             };
@@ -334,14 +354,16 @@ pub fn apply_instance_overrides_cached(
         };
 
         for (pk, ng) in walk_map {
-            pk_to_node_guid.insert(pk.clone(), ng.clone());
+            if !reserved_node_guids.contains(pk) && !reserved_node_guids.contains(ng) {
+                pk_to_node_guid.insert(pk.clone(), ng.clone());
+            }
         }
 
         // Merge every single-segment virtual pk into a VirtualEntry.
         let mut virt_pks: Vec<&String> = Vec::new();
         let mut seen_pk: HashSet<&String> = HashSet::new();
         for pk in derived_order.iter().chain(override_order.iter()) {
-            if !pk.contains('/') && seen_pk.insert(pk) {
+            if !pk.contains('/') && !reserved_node_guids.contains(pk) && seen_pk.insert(pk) {
                 virt_pks.push(pk);
             }
         }
@@ -383,6 +405,9 @@ pub fn apply_instance_overrides_cached(
                          node_derived: &mut HashMap<String, FigValue>,
                          node_override: &mut HashMap<String, FigValue>,
                          pk_to_node_guid: &mut HashMap<String, String>| {
+            if reserved_node_guids.contains(ng) && pk != ng {
+                return;
+            }
             pk_to_node_guid.insert(pk.clone(), ng.clone());
             if let Some(d) = derived_map.get(pk) {
                 node_derived.insert(ng.clone(), (*d).clone());
@@ -414,7 +439,7 @@ pub fn apply_instance_overrides_cached(
                 n.figma
                     .get("guid")
                     .and_then(guid_to_string)
-                    .map(|g| !pinned_nodes.contains(&g))
+                    .map(|g| !pinned_nodes.contains(&g) && !reserved_node_guids.contains(&g))
                     .unwrap_or(true)
             })
             .collect();
@@ -481,17 +506,23 @@ pub fn apply_instance_overrides_cached(
                     .map(|sid| sid != session_id)
                     .unwrap_or(false);
                 if is_foreign {
+                    let demands_instance = e.overrides.is_some_and(|entry| {
+                        entry.get("overriddenSymbolID").is_some()
+                            || entry
+                                .get_array("componentPropAssignments")
+                                .is_some_and(|assignments| !assignments.is_empty())
+                    });
                     foreign.push(foreign_session::ForeignPk {
                         pk: pk.clone(),
                         demands_text: fingerprint::demands_text(e),
-                        demands_instance: false,
+                        demands_instance,
                     });
                 }
                 continue;
             }
             if let Some(d) = derived_map.get(pk) {
                 if let Some(ng) = walk_map.get(pk) {
-                    if *ng != root_guid {
+                    if *ng != root_guid && !reserved_node_guids.contains(ng) {
                         node_derived.entry(ng.clone()).or_insert((*d).clone());
                     }
                 }
@@ -501,7 +532,7 @@ pub fn apply_instance_overrides_cached(
                     continue;
                 }
                 if let Some(ng) = walk_map.get(pk) {
-                    if *ng != root_guid {
+                    if *ng != root_guid && !reserved_node_guids.contains(ng) {
                         node_override.entry(ng.clone()).or_insert((*ov).clone());
                     }
                 }
@@ -560,7 +591,7 @@ pub fn apply_instance_overrides_cached(
             };
             for pk in group.pks.iter().map(|fp| &fp.pk) {
                 let Some(ng) = map.get(pk) else { continue };
-                if *ng == root_guid {
+                if *ng == root_guid || reserved_node_guids.contains(ng) {
                     continue;
                 }
                 if family_mode {
@@ -584,10 +615,19 @@ pub fn apply_instance_overrides_cached(
         }
     } else {
         // Strategy 3 — fallback index mapping over all derived entries.
-        let take = flat_symbol.len().min(derived.len());
-        for i in 0..take {
-            let node = flat_symbol[i];
-            let d = &derived[i];
+        let remaining_derived = derived.iter().filter(|entry| {
+            guid_path_key(entry)
+                .map(|pk| !reserved_node_guids.contains(&pk))
+                .unwrap_or(true)
+        });
+        let remaining_nodes = flat_symbol.iter().copied().filter(|node| {
+            node.figma
+                .get("guid")
+                .and_then(guid_to_string)
+                .map(|guid| !reserved_node_guids.contains(&guid))
+                .unwrap_or(true)
+        });
+        for (d, node) in remaining_derived.zip(remaining_nodes) {
             let Some(node_guid) = node.figma.get("guid").and_then(guid_to_string) else {
                 continue;
             };
@@ -654,11 +694,24 @@ pub fn apply_instance_overrides_cached(
         };
         collect_safe(&override_order, &override_map, &mut safe_nested_override);
         collect_safe(&derived_order, &derived_map, &mut safe_nested_derived);
+        let safe_node_override = node_override
+            .into_iter()
+            .filter(|(guid, _)| reserved_node_guids.contains(guid))
+            .collect::<HashMap<_, _>>();
+        let safe_node_derived = node_derived
+            .into_iter()
+            .filter(|(guid, _)| reserved_node_guids.contains(guid))
+            .collect::<HashMap<_, _>>();
         let rescaled = rescale_only(symbol_node, instance_size);
-        if safe_nested_override.is_empty() && safe_nested_derived.is_empty() {
+        if safe_node_override.is_empty()
+            && safe_node_derived.is_empty()
+            && safe_nested_override.is_empty()
+            && safe_nested_derived.is_empty()
+        {
             return rescaled;
         }
-        let empty: HashMap<String, FigValue> = HashMap::new();
+        let mut safe_derived_branch = HashSet::new();
+        mark_derived_branches(symbol_node, &safe_node_derived, &mut safe_derived_branch);
         // `rescaled` already carries the instance ratio, so the walk
         // below must not scale a second time.
         return rescaled
@@ -666,11 +719,11 @@ pub fn apply_instance_overrides_cached(
             .map(|c| {
                 apply_to_node(
                     c,
-                    &empty,
-                    &empty,
+                    &safe_node_override,
+                    &safe_node_derived,
                     &safe_nested_override,
                     &safe_nested_derived,
-                    &HashSet::new(),
+                    &safe_derived_branch,
                     (1.0, 1.0),
                 )
             })
@@ -680,38 +733,8 @@ pub fn apply_instance_overrides_cached(
     // ── Nested forwarding ────────────────────────────────────────────
     // Multi-segment guidPaths are forwarded into the resolved INSTANCE
     // node (head segment) as freshly-keyed entries.
-    let mut nested_override: HashMap<String, Vec<FigValue>> = HashMap::new();
-    let mut nested_derived: HashMap<String, Vec<FigValue>> = HashMap::new();
-    for pk in &override_order {
-        if !pk.contains('/') {
-            continue;
-        }
-        let head = pk.split('/').next().unwrap_or("");
-        let instance_guid = pk_to_node_guid
-            .get(head)
-            .cloned()
-            .unwrap_or_else(|| head.to_string());
-        if let Some(ov) = override_map.get(pk) {
-            if let Some(rest) = strip_first_guid(ov) {
-                nested_override.entry(instance_guid).or_default().push(rest);
-            }
-        }
-    }
-    for pk in &derived_order {
-        if !pk.contains('/') {
-            continue;
-        }
-        let head = pk.split('/').next().unwrap_or("");
-        let instance_guid = pk_to_node_guid
-            .get(head)
-            .cloned()
-            .unwrap_or_else(|| head.to_string());
-        if let Some(d) = derived_map.get(pk) {
-            if let Some(rest) = strip_first_guid(d) {
-                nested_derived.entry(instance_guid).or_default().push(rest);
-            }
-        }
-    }
+    let nested_override = collect_nested_entries(&override_order, &override_map, &pk_to_node_guid);
+    let nested_derived = collect_nested_entries(&derived_order, &derived_map, &pk_to_node_guid);
 
     // Hand the instance/symbol ratio to the resolver instead of
     // pre-scaling the whole subtree: it scales branch by branch and
@@ -736,32 +759,4 @@ pub fn apply_instance_overrides_cached(
             )
         })
         .collect()
-}
-
-/// Collect the guids of every node whose derived entry carries resolved
-/// GEOMETRY, plus their ancestors. Those branches are already in
-/// instance space, so the instance/symbol ratio must not touch them.
-/// A derived entry without `size` / `transform` (a bare marker, or one
-/// that only overrides paint) says nothing about geometry and leaves
-/// its branch on the component-space path.
-fn mark_derived_branches(
-    node: &TreeNode,
-    node_derived: &HashMap<String, FigValue>,
-    out: &mut HashSet<String>,
-) -> bool {
-    let key = node.figma.get("guid").and_then(guid_to_string);
-    let mut has = key
-        .as_ref()
-        .and_then(|k| node_derived.get(k.as_str()))
-        .is_some_and(|d| d.get("size").is_some() || d.get("transform").is_some());
-    for child in &node.children {
-        // No short-circuit: every marked descendant must be recorded.
-        has |= mark_derived_branches(child, node_derived, out);
-    }
-    if has {
-        if let Some(key) = key {
-            out.insert(key);
-        }
-    }
-    has
 }

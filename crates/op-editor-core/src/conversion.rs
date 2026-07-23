@@ -4,7 +4,6 @@ use jian_ops_schema::conversion::{ConversionEntry, ConversionKind, ConversionSpe
 use jian_ops_schema::node::PenNode;
 use jian_ops_schema::PenDocument;
 
-use crate::components::Component;
 use crate::node_id::NodeId;
 use crate::pen_node_ext::PenNodeExt;
 use crate::state::EditorState;
@@ -77,14 +76,16 @@ pub fn upsert_component(
         return false;
     };
 
-    if !replace_or_insert_component_master(state, &master_id, root.clone()) {
+    if !replace_or_insert_component_master(state, &master_id, root) {
         return false;
     }
-    state.components.insert(Component {
-        id: NodeId::new(master_id.clone()),
+    if !state.components.register_document_component(
+        &state.doc,
+        NodeId::new(master_id.clone()),
         name,
-        root,
-    });
+    ) {
+        return false;
+    }
     upsert_conversion_entry(
         &mut state.doc,
         ConversionEntry {

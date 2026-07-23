@@ -2,10 +2,9 @@
 //! main instance strategy matrix to keep each test module small.
 
 use super::*;
-use std::rc::Rc;
 
 fn obj(pairs: Vec<(&str, FigValue)>) -> FigValue {
-    FigValue::Object(pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
+    FigValue::Object(pairs.into_iter().map(|(k, v)| (k.into(), v)).collect())
 }
 
 fn guid(sid: u32, lid: u32) -> FigValue {
@@ -27,7 +26,7 @@ fn guid_path(guids: Vec<FigValue>) -> FigValue {
 }
 
 fn ov_with(guids: Vec<FigValue>, extra: Vec<(&str, FigValue)>) -> FigValue {
-    let mut pairs: Vec<(String, FigValue)> = vec![(
+    let mut pairs = vec![(
         "guidPath".into(),
         obj(vec![("guids", FigValue::Array(guids))]),
     )];
@@ -148,7 +147,7 @@ fn pooled_seeding_assigns_by_cross_instance_evidence() {
         text_leaf("delta", 12, "+0.00%", 40.0, 14.0),
     ]);
     let mut symbol_tree = HashMap::new();
-    symbol_tree.insert("0:0".to_string(), Rc::new(sym));
+    symbol_tree.insert("0:0".to_string(), &sym);
 
     let make_instance = |lid: u32, ov: Vec<FigValue>, dv: Vec<FigValue>| TreeNode {
         figma: obj(vec![
@@ -243,8 +242,9 @@ fn geometry_seeding_pins_from_rich_sibling_instance() {
             make_leaf("accent", 11, 8.0, 8.0, 11.0),
         ])
     };
+    let sym = make_sym();
     let mut symbol_tree = HashMap::new();
-    symbol_tree.insert("0:0".to_string(), Rc::new(make_sym()));
+    symbol_tree.insert("0:0".to_string(), &sym);
 
     let make_instance = |lid: u32, ov: Vec<FigValue>, dv: Vec<FigValue>| TreeNode {
         figma: obj(vec![
@@ -369,8 +369,9 @@ fn geometry_seeding_uses_fill_override_as_tie_breaker() {
             make_leaf("chip", 11, 77.0, 19.0, 243.0, true),
         ])
     };
+    let sym = make_sym();
     let mut symbol_tree = HashMap::new();
-    symbol_tree.insert("0:0".to_string(), Rc::new(make_sym()));
+    symbol_tree.insert("0:0".to_string(), &sym);
 
     let rich = TreeNode {
         figma: obj(vec![
@@ -456,7 +457,7 @@ fn swapped_instance_does_not_seed_base_component_cache() {
         make_leaf("accent", 11, 8.0, 8.0, 11.0),
     ]);
     let mut symbol_tree = HashMap::new();
-    symbol_tree.insert("0:0".to_string(), Rc::new(base_sym));
+    symbol_tree.insert("0:0".to_string(), &base_sym);
 
     let geom = |pk_lid: u32, w: f32, h: f32, x: f32| {
         ov_with(
@@ -518,7 +519,7 @@ fn pooled_seeding_does_not_overwrite_existing_pin() {
         text_leaf("value", 11, "0", 20.0, 24.0),
     ]);
     let mut symbol_tree = HashMap::new();
-    symbol_tree.insert("0:0".to_string(), Rc::new(sym));
+    symbol_tree.insert("0:0".to_string(), &sym);
 
     let make_root = || TreeNode {
         figma: obj(vec![

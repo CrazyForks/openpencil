@@ -162,11 +162,12 @@ fn map_image(context: &mut MapCtx<'_>, element: &DomElement, style: &ComputedSty
             "CSS object-position has no image-node equivalent; the image remains centered",
         );
     }
+    let mut image_base = base(context, "img", style);
+    image_base.blend_mode = image_blend_mode(context, style);
     let node = PenNode::Image(ImageNode {
-        base: base(context, "img", style),
+        base: image_base,
         src: ImageSrc::from(element.attr("src").unwrap_or("")),
         object_fit,
-        blend_mode: image_blend_mode(context, style),
         width: visual.width.or_else(|| numeric_attr(element, "width")),
         height: visual.height.or_else(|| numeric_attr(element, "height")),
         corner_radius: visual.corner_radius,
@@ -224,11 +225,12 @@ fn map_svg(context: &mut MapCtx<'_>, element: &DomElement, style: &ComputedStyle
     let source = serialize_element(element);
     let src = format!("data:image/svg+xml;base64,{}", STANDARD.encode(source));
     let visual = visual_props(context, style);
+    let mut image_base = base(context, "svg", style);
+    image_base.blend_mode = image_blend_mode(context, style);
     let node = PenNode::Image(ImageNode {
-        base: base(context, "svg", style),
+        base: image_base,
         src: ImageSrc::from(src),
         object_fit: None,
-        blend_mode: image_blend_mode(context, style),
         width: visual.width.or_else(|| numeric_attr(element, "width")),
         height: visual.height.or_else(|| numeric_attr(element, "height")),
         corner_radius: visual.corner_radius,
@@ -778,6 +780,6 @@ mod tests {
         let Some(PenNode::Image(image)) = node else {
             panic!("expected image node")
         };
-        assert_eq!(image.blend_mode, Some(BlendMode::Multiply));
+        assert_eq!(image.base.blend_mode, Some(BlendMode::Multiply));
     }
 }

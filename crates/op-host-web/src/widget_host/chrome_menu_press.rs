@@ -121,12 +121,22 @@ impl WidgetHost {
                 .map(op_editor_core::ButtonPressTarget::FigmaImport);
         match hit {
             FigmaImportHit::Close => {
+                if modal.page_selection_active() {
+                    self.editor_state.editor_ui.pending_file_action = Some(
+                        FileAction::FinishFigmaImport(op_editor_core::FigmaImportSelection::Cancel),
+                    );
+                }
                 self.editor_state.editor_ui.figma_import_open = false;
                 self.editor_state.editor_ui.figma_import_hover = None;
             }
             FigmaImportHit::Outside => {
                 // Outside click — blank press: dismiss + blur inputs.
                 self.blur_text_inputs_on_blank_press();
+                if modal.page_selection_active() {
+                    self.editor_state.editor_ui.pending_file_action = Some(
+                        FileAction::FinishFigmaImport(op_editor_core::FigmaImportSelection::Cancel),
+                    );
+                }
                 self.editor_state.editor_ui.figma_import_open = false;
                 self.editor_state.editor_ui.figma_import_hover = None;
             }
@@ -140,6 +150,21 @@ impl WidgetHost {
                         ImportSource::Figma => FileAction::ImportFigma,
                         ImportSource::Html => FileAction::ImportHtml,
                     });
+                self.editor_state.editor_ui.figma_import_open = false;
+                self.editor_state.editor_ui.figma_import_hover = None;
+            }
+            FigmaImportHit::Page(index) => {
+                self.editor_state.editor_ui.pending_file_action =
+                    Some(FileAction::FinishFigmaImport(
+                        op_editor_core::FigmaImportSelection::Page(index),
+                    ));
+                self.editor_state.editor_ui.figma_import_open = false;
+                self.editor_state.editor_ui.figma_import_hover = None;
+            }
+            FigmaImportHit::ImportAll => {
+                self.editor_state.editor_ui.pending_file_action = Some(
+                    FileAction::FinishFigmaImport(op_editor_core::FigmaImportSelection::All),
+                );
                 self.editor_state.editor_ui.figma_import_open = false;
                 self.editor_state.editor_ui.figma_import_hover = None;
             }

@@ -577,7 +577,7 @@ fn nova_store_desktop_preserves_cascade_geometry_layers_and_grid() {
         if image.base.x == Some(0.0)
             && image.base.y == Some(0.0)
             && image.object_fit == Some(ImageFitMode::Crop)
-            && image.blend_mode == Some(BlendMode::Multiply)));
+            && image.base.blend_mode == Some(BlendMode::Multiply)));
     let overlay = descendant_frame_named(hero, "::after").expect("gradient overlay");
     assert!(matches!(
         overlay.container.fill.as_deref(),

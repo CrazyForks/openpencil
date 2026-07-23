@@ -101,6 +101,12 @@ enum UiRequest {
     Snapshot {
         ack: SyncSender<EditorState>,
     },
+    /// Lightweight read snapshot for `list_pages`. Copying only page metadata
+    /// avoids cloning every node in a large live document just to report page
+    /// ids, names, and the active index.
+    ListPages {
+        ack: SyncSender<op_mcp::ListPages>,
+    },
     Apply {
         /// The MCP tool that produced `cmd` — `McpLiveServer::pump` reads
         /// this to gate canvas-generation indicators (frame glow + reveal
@@ -118,6 +124,13 @@ enum UiRequest {
     /// ack is `()` — the in-memory swap is infallible once the load succeeded.
     ReplaceDocument {
         doc: Box<jian_ops_schema::PenDocument>,
+        editor_meta: op_pen_loader::EditorMeta,
+        ack: SyncSender<()>,
+    },
+    /// Editor-only live-sync update. Page switches must not install an
+    /// identical whole document as an undoable replacement.
+    UpdateEditorMeta {
+        editor_meta: op_pen_loader::EditorMeta,
         ack: SyncSender<()>,
     },
     /// `debug_screenshot` against the LIVE canvas — the connection
@@ -208,6 +221,9 @@ impl McpLiveServer {
                 Ok(UiRequest::Snapshot { ack }) => {
                     let _ = ack.send(state.clone());
                 }
+                Ok(UiRequest::ListPages { ack }) => {
+                    let _ = ack.send(op_mcp::list_pages_snapshot(state));
+                }
                 Ok(UiRequest::Apply {
                     tool_name,
                     cmd,
@@ -234,16 +250,27 @@ impl McpLiveServer {
                         outcome.layout_dirty |= layout_dirty;
                     }
                 }
-                Ok(UiRequest::ReplaceDocument { doc, ack }) => {
+                Ok(UiRequest::ReplaceDocument {
+                    doc,
+                    editor_meta,
+                    ack,
+                }) => {
                     // The document was already loaded off the UI thread; just
                     // swap it in (preserving editor chrome). Layout is computed
                     // by the renderer at paint, so the swap + dirty flag
                     // repaints the new document with no extra layout pass here.
                     state.replace_document(*doc);
+                    op_pen_loader::apply_editor_meta(state, editor_meta);
                     let _ = ack.send(());
                     outcome.repaint = true;
                     outcome.layout_dirty = true;
                     outcome.document_replaced = true;
+                }
+                Ok(UiRequest::UpdateEditorMeta { editor_meta, ack }) => {
+                    op_pen_loader::apply_editor_meta(state, editor_meta);
+                    let _ = ack.send(());
+                    outcome.repaint = true;
+                    outcome.layout_dirty = true;
                 }
                 #[cfg(feature = "mcp-debug-tools")]
                 Ok(UiRequest::Screenshot { spec, ack }) => {
@@ -565,11 +592,11 @@ fn serve_connection<S: std::io::Read + std::io::Write>(
         }
         crate::mcp_serve::Stateless::NeedsState => {}
     }
-    // Everything below mutates shared state — the live `EditorState` OR a
-    // `--file` document on disk (a read-modify-write). Serialize ALL of it
-    // under one lock so concurrent connection threads can't interleave live
-    // applies OR race two file-backed writes to the same document. Tolerate
-    // a poisoned lock (a panicked sibling connection) rather than cascade.
+    // Everything below observes or mutates shared state — the live
+    // `EditorState` OR a `--file` document on disk (a read-modify-write).
+    // Serialize it under one lock so snapshots stay coherent, concurrent live
+    // applies cannot interleave, and file-backed writes cannot race. Tolerate a
+    // poisoned lock (a panicked sibling connection) rather than cascade.
     let _guard = stateful_lock
         .lock()
         .unwrap_or_else(|poison| poison.into_inner());
@@ -592,6 +619,12 @@ fn serve_connection<S: std::io::Read + std::io::Write>(
             request_screenshot(req_tx, wake_ui, shot_req)
         })
     {
+        return write_json_rpc_response(stream, &response);
+    }
+    // These tools need either no editor snapshot (`set_active_page`) or only
+    // page metadata (`list_pages`). Keep them on the normal MCP
+    // parser/registry/serializer path, but do not deep-clone the live document.
+    if let Some(response) = process_lightweight_live_tool(&req.body, req_tx, wake_ui)? {
         return write_json_rpc_response(stream, &response);
     }
     let mut state = request_snapshot(req_tx, wake_ui)?;
@@ -620,6 +653,42 @@ fn serve_connection<S: std::io::Read + std::io::Write>(
     write_json_rpc_response(stream, &response)
 }
 
+/// Dispatch live tools whose registry snapshot is independent of the full
+/// [`EditorState`]. Returning `None` delegates to the general snapshot path.
+fn process_lightweight_live_tool(
+    line: &str,
+    req_tx: &Sender<UiRequest>,
+    wake_ui: &UiWake,
+) -> Result<Option<String>, String> {
+    let Some(call) = op_mcp::parse_tool_call(line) else {
+        return Ok(None);
+    };
+    let is_write = match call.tool.as_str() {
+        "set_active_page" => true,
+        "list_pages" => false,
+        _ => return Ok(None),
+    };
+
+    let mut registry = op_mcp::ToolRegistry::default();
+    if is_write {
+        registry.register(Box::new(op_mcp::set_active_page_snapshot()));
+    } else {
+        registry.register(Box::new(request_list_pages(req_tx, wake_ui)?));
+    }
+    crate::mcp_serve::process_tool_message_with_registry(&registry, line, |tool_name, cmd| {
+        if !is_write {
+            return false;
+        }
+        match request_apply(req_tx, wake_ui, tool_name.to_string(), cmd.clone()) {
+            Ok(ack) => ack.applied,
+            Err(e) => {
+                eprintln!("openpencil-desktop mcp: apply failed: {e}");
+                false
+            }
+        }
+    })
+}
+
 /// Monotonic counter for the whole-document sync `version` reported back to a
 /// TS whole-doc-sync client (parity with `setSyncDocument`'s monotonic
 /// version). Process-global so concurrent connections still get distinct,
@@ -636,8 +705,8 @@ fn serve_document_sync<S: std::io::Read + std::io::Write>(
     stateful_lock: &Mutex<()>,
     body: &str,
 ) -> Result<(), String> {
-    let document_json = match crate::mcp_serve::parse_document_sync_body(body) {
-        Ok(json) => json,
+    let request = match crate::mcp_serve::parse_document_sync_request(body) {
+        Ok(request) => request,
         Err(message) => {
             return crate::mcp_serve::write_mcp_http_response(
                 stream,
@@ -646,11 +715,29 @@ fn serve_document_sync<S: std::io::Read + std::io::Write>(
             );
         }
     };
+    let editor_meta = request.resolved_editor_meta(request.embedded_editor_meta);
+    if request.metadata_only {
+        let _guard = stateful_lock
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        return match request_update_editor_meta(req_tx, wake_ui, editor_meta) {
+            Ok(()) => crate::mcp_serve::write_mcp_http_response(
+                stream,
+                "200 OK",
+                &crate::mcp_serve::document_sync_ok(LIVE_SYNC_VERSION.load(Ordering::Relaxed)),
+            ),
+            Err(transport_err) => crate::mcp_serve::write_mcp_http_response(
+                stream,
+                "500 Internal Server Error",
+                &crate::mcp_serve::rest_error_body(&transport_err),
+            ),
+        };
+    }
     // Load OFF the UI thread (parse only — no skia; layout runs at paint) so a
     // large document never pins the UI thread or holds the lock during the
     // parse. A load failure is a client fault → 400, like the TS validation
     // 400s in `document.post.ts`.
-    let loaded = match op_pen_loader::load_canonical(&document_json) {
+    let loaded = match op_pen_loader::load_canonical(request.document_json) {
         Ok(loaded) => loaded,
         Err(e) => {
             return crate::mcp_serve::write_mcp_http_response(
@@ -670,7 +757,7 @@ fn serve_document_sync<S: std::io::Read + std::io::Write>(
     let _guard = stateful_lock
         .lock()
         .unwrap_or_else(|poison| poison.into_inner());
-    match request_replace(req_tx, wake_ui, loaded.value) {
+    match request_replace(req_tx, wake_ui, loaded.value, editor_meta) {
         Ok(()) => {
             let version = LIVE_SYNC_VERSION.fetch_add(1, Ordering::Relaxed) + 1;
             crate::mcp_serve::write_mcp_http_response(
@@ -707,6 +794,18 @@ fn request_snapshot(req_tx: &Sender<UiRequest>, wake_ui: &UiWake) -> Result<Edit
         .map_err(|_| "UI thread is not accepting MCP snapshot requests".to_string())?;
     wake_ui();
     recv_with_timeout(ack_rx.recv_timeout(UI_ACK_TIMEOUT), "snapshot")
+}
+
+fn request_list_pages(
+    req_tx: &Sender<UiRequest>,
+    wake_ui: &UiWake,
+) -> Result<op_mcp::ListPages, String> {
+    let (ack_tx, ack_rx) = mpsc::sync_channel(1);
+    req_tx
+        .send(UiRequest::ListPages { ack: ack_tx })
+        .map_err(|_| "UI thread is not accepting MCP page-list requests".to_string())?;
+    wake_ui();
+    recv_with_timeout(ack_rx.recv_timeout(UI_ACK_TIMEOUT), "page-list")
 }
 
 fn request_apply(
@@ -755,16 +854,34 @@ fn request_replace(
     req_tx: &Sender<UiRequest>,
     wake_ui: &UiWake,
     doc: jian_ops_schema::PenDocument,
+    editor_meta: op_pen_loader::EditorMeta,
 ) -> Result<(), String> {
     let (ack_tx, ack_rx) = mpsc::sync_channel(1);
     req_tx
         .send(UiRequest::ReplaceDocument {
             doc: Box::new(doc),
+            editor_meta,
             ack: ack_tx,
         })
         .map_err(|_| "UI thread is not accepting MCP document-sync requests".to_string())?;
     wake_ui();
     recv_with_timeout(ack_rx.recv_timeout(UI_ACK_TIMEOUT), "document-sync")
+}
+
+fn request_update_editor_meta(
+    req_tx: &Sender<UiRequest>,
+    wake_ui: &UiWake,
+    editor_meta: op_pen_loader::EditorMeta,
+) -> Result<(), String> {
+    let (ack_tx, ack_rx) = mpsc::sync_channel(1);
+    req_tx
+        .send(UiRequest::UpdateEditorMeta {
+            editor_meta,
+            ack: ack_tx,
+        })
+        .map_err(|_| "UI thread is not accepting MCP metadata-sync requests".to_string())?;
+    wake_ui();
+    recv_with_timeout(ack_rx.recv_timeout(UI_ACK_TIMEOUT), "metadata-sync")
 }
 
 fn recv_with_timeout<T>(result: Result<T, RecvTimeoutError>, label: &str) -> Result<T, String> {
@@ -859,6 +976,74 @@ mod tests {
             .join()
             .expect("requester thread should not panic")
             .expect("snapshot request should complete");
+    }
+
+    #[test]
+    fn set_active_page_fast_path_sends_apply_without_full_snapshot() {
+        let (req_tx, req_rx) = mpsc::channel();
+        let wake_ui: UiWake = Arc::new(|| {});
+        let line = r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"set_active_page","arguments":{"index":"1"}}}"#;
+
+        let requester =
+            thread::spawn(move || process_lightweight_live_tool(line, &req_tx, &wake_ui));
+        let request = req_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("fast path should queue an apply request");
+        let UiRequest::Apply {
+            tool_name,
+            cmd: EditorCommand::SetActivePage { index },
+            ack,
+        } = request
+        else {
+            panic!("set_active_page must not request a full EditorState snapshot");
+        };
+        assert_eq!(tool_name, "set_active_page");
+        assert_eq!(index, 1);
+        ack.send(ApplyAck { applied: true }).expect("ack apply");
+
+        let response = requester
+            .join()
+            .expect("requester thread should not panic")
+            .expect("fast dispatch should succeed")
+            .expect("tool call should produce a response");
+        assert!(response.contains(r#"\"wrote\":\"true\""#), "{response}");
+    }
+
+    #[test]
+    fn list_pages_fast_path_requests_only_page_metadata() {
+        let (req_tx, req_rx) = mpsc::channel();
+        let wake_ui: UiWake = Arc::new(|| {});
+        let line = r#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"list_pages","arguments":{}}}"#;
+
+        let requester =
+            thread::spawn(move || process_lightweight_live_tool(line, &req_tx, &wake_ui));
+        let request = req_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("fast path should request page metadata");
+        let UiRequest::ListPages { ack } = request else {
+            panic!("list_pages must not request a full EditorState snapshot");
+        };
+        ack.send(op_mcp::ListPages {
+            page_count: 70,
+            active_page_index: 42,
+            pages: vec![
+                ("page-a".to_string(), "Intro".to_string()),
+                ("page-b".to_string(), "Analysis".to_string()),
+            ],
+        })
+        .expect("ack page metadata");
+
+        let response = requester
+            .join()
+            .expect("requester thread should not panic")
+            .expect("fast dispatch should succeed")
+            .expect("tool call should produce a response");
+        let result = crate::mcp_serve::tool_text(&response);
+        let json: serde_json::Value =
+            serde_json::from_str(&result).expect("list_pages result json");
+        assert_eq!(json["pageCount"], 70);
+        assert_eq!(json["activePageIndex"], 42);
+        assert_eq!(json["pages"][1]["name"], "Analysis");
     }
 
     #[test]
@@ -1032,11 +1217,20 @@ mod tests {
             last_mcp_epoch: 0,
         };
         let mut state = EditorState::new();
+        let replacement_doc = op_pen_loader::load_canonical(
+            r#"{"version":"1.0","children":[],"pages":[{"id":"p1","name":"One","children":[]},{"id":"p2","name":"Two","children":[]}] }"#,
+        )
+        .expect("two-page replacement")
+        .value;
 
         let (ack_tx, ack_rx) = mpsc::sync_channel(1);
         req_tx
             .send(UiRequest::ReplaceDocument {
-                doc: Box::new(EditorState::new().doc),
+                doc: Box::new(replacement_doc),
+                editor_meta: op_pen_loader::EditorMeta {
+                    active_page_index: 1,
+                    preserve_authored_geometry: true,
+                },
                 ack: ack_tx,
             })
             .expect("queue replace-document request");
@@ -1044,10 +1238,30 @@ mod tests {
         assert!(ack_rx.try_recv().is_ok(), "replace must ack");
         assert!(outcome.repaint);
         assert!(outcome.layout_dirty);
+        assert_eq!(state.ui.active_page_index, 1);
+        assert!(state.editor_ui.preserve_authored_geometry);
         assert!(
             outcome.document_replaced,
             "ReplaceDocument must flag document_replaced"
         );
+
+        let (ack_tx, ack_rx) = mpsc::sync_channel(1);
+        req_tx
+            .send(UiRequest::UpdateEditorMeta {
+                editor_meta: op_pen_loader::EditorMeta {
+                    active_page_index: 0,
+                    preserve_authored_geometry: false,
+                },
+                ack: ack_tx,
+            })
+            .expect("queue metadata-only request");
+        let metadata = server.pump(&mut state);
+        assert!(ack_rx.try_recv().is_ok(), "metadata update must ack");
+        assert!(metadata.repaint);
+        assert!(metadata.layout_dirty);
+        assert!(!metadata.document_replaced);
+        assert_eq!(state.ui.active_page_index, 0);
+        assert!(!state.editor_ui.preserve_authored_geometry);
     }
 
     // ── MCP-driven canvas generation indicators ─────────────────────────

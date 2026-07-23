@@ -43,8 +43,10 @@ pub mod command_promote;
 pub mod command_refine;
 mod command_root_replace;
 pub mod command_style_replace;
+mod component_backing;
 pub mod component_browser_state;
 pub mod components;
+pub mod compositing;
 pub mod conversion;
 pub mod design_md;
 pub mod design_md_button_state;
@@ -218,21 +220,22 @@ pub use command::{
 pub use command_node_attrs::{WidgetNumberField, WidgetTextField};
 pub use command_promote::PromoteResult;
 pub use component_browser_state::ComponentBrowserButton;
-pub use components::{Component, ComponentLibrary};
+pub use components::{Component, ComponentLibrary, ComponentOption};
+pub use compositing::{fill_blend_mode_at, node_blend_mode, node_mask_type};
 pub use design_md::{extract_design_md_from_document, generate_design_md, parse_design_md};
 pub use design_md_button_state::DesignMdButton;
 pub use editor_ui_state::{
     BooleanOp, CloneField, CloneFormState, CommitDiffPatch, CommitDiffSummary, CommitDiffView,
-    DesignMdRequest, EditorUiState, EmbedHost, ExportFormat, FileAction, FillType, FlexLayout,
-    FontPickerPurpose, GitBranchPickerMode, GitCandidateFile, GitCommitSummary, GitDiffTarget,
-    GitDiffView, GitFileEntry, GitOverflowView, GitPanelAction, GitPanelState,
-    ImageAdjustmentField, ImageFillMode, LayerContextMenuState, Locale, MergeConflictRow,
-    MergeResolveFile, MergeResolveState, MissingFontSurface, PaddingEditMode, PageRenameState,
-    PencilCursorStyle, PreviewDeviceKind, PropertyTab, RecentFile, ThemeMode, UpdateStatus,
-    VariableRowFocus,
+    CompositingPickerTarget, DesignMdRequest, EditorUiState, EmbedHost, ExportFormat, FileAction,
+    FillType, FlexLayout, FontPickerPurpose, GitBranchPickerMode, GitCandidateFile,
+    GitCommitSummary, GitDiffTarget, GitDiffView, GitFileEntry, GitOverflowView, GitPanelAction,
+    GitPanelState, ImageAdjustmentField, ImageFillMode, LayerContextMenuState, Locale,
+    MergeConflictRow, MergeResolveFile, MergeResolveState, MissingFontSurface, PaddingEditMode,
+    PageRenameState, PencilCursorStyle, PreviewDeviceKind, PropertyTab, RecentFile, ThemeMode,
+    UpdateStatus, VariableRowFocus,
 };
 pub use export_dialog_state::ExportDialogButton;
-pub use figma_import_state::FigmaImportButton;
+pub use figma_import_state::{FigmaImportButton, FigmaImportPage, FigmaImportSelection};
 pub use fill_order::move_fill;
 pub use fills::{
     first_fill_type, first_image_fill_summary, first_solid_fill_hex, first_solid_fill_opacity,
@@ -250,6 +253,8 @@ pub use instance_override::{
     resolve_instance_display_node_for_anchor, split_instance_child_anchor, InstanceWriteScope,
     INSTANCE_DIRECT_PROPS,
 };
+pub use jian_ops_schema::node::MaskType;
+pub use jian_ops_schema::style::BlendMode;
 pub use jian_ops_schema::{DesignMdColor, DesignMdSpec, DesignMdTypography, PenDocument};
 pub use node_defaults::{
     default_leaf_node_size, widget_default_size, DEFAULT_LEAF_NODE_SIZE, DEFAULT_TEXT_NODE_HEIGHT,

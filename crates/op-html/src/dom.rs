@@ -2,7 +2,9 @@ use html5ever::tendril::TendrilSink;
 use html5ever::{parse_document, ParseOpts};
 use markup5ever_rcdom::{Handle, NodeData, RcDom};
 
-const DROP_TAGS: &[&str] = &["script", "noscript", "template", "meta", "link", "head"];
+const DROP_TAGS: &[&str] = &[
+    "script", "noscript", "template", "meta", "link", "base", "head",
+];
 pub(crate) const MAX_DOM_DEPTH: usize = 32;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -51,6 +53,8 @@ pub struct ParsedDom {
     pub body_attrs: Vec<(String, String)>,
     pub style_blocks: Vec<String>,
     pub stylesheet_sources: Vec<StylesheetSource>,
+    /// Document-order candidates. URL validity depends on the caller's document URL.
+    pub base_hrefs: Vec<String>,
     pub title: Option<String>,
     pub depth_truncated: bool,
 }
@@ -127,6 +131,12 @@ fn harvest_head(handle: &Handle, out: &mut ParsedDom, depth: usize) {
                 }
                 return;
             }
+            "base" => {
+                if let Some(href) = href_attr(&attrs.borrow()) {
+                    out.base_hrefs.push(href);
+                }
+                return;
+            }
             "title" => {
                 out.title = Some(text_content(handle));
                 return;
@@ -160,6 +170,13 @@ fn stylesheet_href(attrs: &[html5ever::Attribute]) -> Option<String> {
             .find(|attr| attr.name.local.as_ref() == "href")
             .map(|attr| attr.value.to_string())
     })?
+}
+
+fn href_attr(attrs: &[html5ever::Attribute]) -> Option<String> {
+    attrs
+        .iter()
+        .find(|attr| attr.name.local.as_ref() == "href")
+        .map(|attr| attr.value.to_string())
 }
 
 fn text_content(handle: &Handle) -> String {
@@ -350,6 +367,18 @@ mod tests {
                 StylesheetSource::Inline(".a{color:red}".into()),
                 StylesheetSource::Link("b.css".into()),
             ]
+        );
+    }
+
+    #[test]
+    fn preserves_base_href_candidates_in_document_order() {
+        let parsed = parse_dom(
+            "<head><base target=_blank><base href='assets/'><base href='/ignored/'></head>\
+             <body><base href='body/'><p>x</p></body>",
+        );
+        assert_eq!(parsed.base_hrefs, ["assets/", "/ignored/"]);
+        assert!(
+            matches!(parsed.body.as_slice(), [DomNode::Element(element)] if element.tag == "p")
         );
     }
 

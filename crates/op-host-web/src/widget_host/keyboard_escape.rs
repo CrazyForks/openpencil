@@ -84,6 +84,11 @@ impl WidgetHost {
             self.mark_dirty();
             return true;
         }
+        if self.editor_state.editor_ui.compositing_picker.open {
+            self.close_compositing_picker();
+            self.mark_dirty();
+            return true;
+        }
         if self
             .editor_state
             .editor_ui
@@ -200,6 +205,13 @@ impl WidgetHost {
             self.editor_state
                 .editor_ui
                 .component_browser_confirm_delete_kit = None;
+            self.mark_dirty();
+            return true;
+        }
+        if self.editor_state.editor_ui.instance_component_picker_open {
+            self.editor_state
+                .editor_ui
+                .close_instance_component_picker();
             self.mark_dirty();
             return true;
         }

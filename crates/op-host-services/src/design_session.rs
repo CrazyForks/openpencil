@@ -363,7 +363,7 @@ pub fn fit_design_viewport_to_content(
 /// `None` for an empty page. Public so the desktop residual's
 /// viewport-fit tests can exercise it across the crate boundary.
 pub fn active_content_bounds(state: &EditorState) -> Option<DocRect> {
-    let scene = op_pen_loader::editor_state_to_layout_scene(state);
+    let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
     let page = scene.active_page()?;
     let mut iter = page
         .children

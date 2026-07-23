@@ -1,7 +1,10 @@
 use super::WidgetHostNative;
 use op_editor_core::agent_settings::SettingsFocus;
+use op_editor_core::chat::{AgentProvider, ModelEntry};
 use op_editor_core::{EditorState, NodeId};
-use op_editor_ui::widgets::{LayerPanel, LayerPanelHit, TopBar, TopBarHit, TOP_BAR_HEIGHT};
+use op_editor_ui::widgets::{
+    LayerPanel, LayerPanelHit, PropertyPanel, TopBar, TopBarHit, TOP_BAR_HEIGHT,
+};
 use op_editor_ui::{Point2D, Rect};
 
 const VIEWPORT_W: f32 = 1200.0;
@@ -39,6 +42,22 @@ fn layer_row_point(host: &WidgetHostNative, target: &NodeId) -> Point2D {
         y += 1.0;
     }
     panic!("no layer row for {target:?}");
+}
+
+fn image_popup_point(panel: &PropertyPanel, rect: Rect) -> Point2D {
+    let mut y = 0.0;
+    while y <= VIEWPORT_H {
+        let mut x = 0.0;
+        while x <= VIEWPORT_W {
+            let point = Point2D::new(x, y);
+            if panel.image_popovers_contain(rect, point) {
+                return point;
+            }
+            x += 2.0;
+        }
+        y += 2.0;
+    }
+    panic!("no image Search popover point");
 }
 
 #[test]
@@ -107,5 +126,61 @@ fn selection_changing_right_press_closes_image_search() {
             .search_query
             .text(),
         "hero query"
+    );
+}
+
+#[test]
+fn image_search_popup_wins_above_chat_picker_and_clears_covered_hover() {
+    let doc = jian_ops_schema::load_str(
+        r#"{"version":"1.0.0","children":[
+          {"type":"image","id":"hero","name":"Hero","x":120,"y":0,
+           "width":100,"height":100,"src":"https://x/y.png"}
+        ]}"#,
+    )
+    .expect("fixture")
+    .value;
+    let mut host = WidgetHostNative::new();
+    *host.editor_state_mut() = EditorState::from_document(doc);
+    host.editor_state_mut()
+        .set_single_selection(NodeId::new("hero"));
+    host.editor_state_mut().editor_ui.image_panel.search_open = true;
+    host.editor_state_mut()
+        .chat
+        .available_models
+        .push(ModelEntry::new(AgentProvider::CodexCli, "gpt-5", "GPT-5"));
+    host.last_viewport_w = VIEWPORT_W;
+    host.last_viewport_h = VIEWPORT_H;
+    host.mark_paint_dirty_for_test();
+    let property_rect = host.property_rect(VIEWPORT_W, VIEWPORT_H);
+    let panel = PropertyPanel::for_selection(host.editor_state()).expect("property panel");
+    let point = image_popup_point(&panel, property_rect);
+    host.editor_state_mut().chat.panel_position = Some((point.x - 100.0, point.y - 100.0));
+    host.editor_state_mut().editor_ui.chat_model_picker.open = true;
+    {
+        let ui = &mut host.editor_state_mut().editor_ui;
+        ui.chat_model_picker.hover = Some(0);
+        ui.chat_header_hover = Some(op_editor_core::ChatHeaderButton::NewChat);
+        ui.chat_footer_hover = Some(op_editor_core::ChatFooterButton::Send);
+        ui.chat_example_hover = Some(0);
+        ui.canvas_hover_node = Some(NodeId::new("stale-canvas"));
+        ui.property_action_hover = Some(2);
+    }
+    assert!(host.chat_panel_surface_contains(point.x, point.y, VIEWPORT_W, VIEWPORT_H));
+    assert!(host
+        .chat_model_picker_rect(VIEWPORT_W, VIEWPORT_H)
+        .is_some());
+
+    assert!(host.apply_cursor_move(point.x, point.y));
+    let ui = &host.editor_state().editor_ui;
+    assert!(ui.image_panel.search_open, "the higher popup stays open");
+    assert_eq!(ui.chat_model_picker.hover, None);
+    assert_eq!(ui.chat_header_hover, None);
+    assert_eq!(ui.chat_footer_hover, None);
+    assert_eq!(ui.chat_example_hover, None);
+    assert_eq!(ui.canvas_hover_node, None);
+    assert_eq!(ui.property_action_hover, None);
+    assert!(
+        !host.apply_cursor_move(point.x, point.y),
+        "stable Image Search popup ownership must not repaint"
     );
 }

@@ -25,9 +25,10 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::MessageEvent;
 
-use crate::document_json::{
-    externalize_for_disk, parse_document_json, with_borrowed_parsed_document,
-};
+#[path = "vscode_bridge_snapshot.rs"]
+mod document_snapshot;
+
+use crate::document_json::{parse_document_json, with_borrowed_parsed_document};
 use crate::live_sync;
 use crate::live_sync_glue::SharedSync;
 use crate::repaint_ctx::RepaintContext;
@@ -36,6 +37,8 @@ use op_editor_core::bridge_protocol::{
     BridgeInbound, ConflictMode,
 };
 use op_editor_core::web_sync::WebSyncClient;
+
+use document_snapshot::BridgeDocumentSnapshot;
 
 /// Tick cadence for the outbound-event observer. Latency only: the gate's edge
 /// latches never lose an event between ticks (a fast rise+fall is still drained
@@ -301,17 +304,16 @@ fn handle_open_document<C: RepaintContext + 'static>(
     };
 
     // Prologue borrow: replace + repaint + capture the opened pair/bytes.
-    let Some((pair, doc_json)) = with_borrowed_parsed_document(inner, parsed, |b, doc| {
+    let Some(snapshot) = with_borrowed_parsed_document(inner, parsed, |b, doc, meta| {
         b.host_mut().editor_state_mut().replace_document(doc);
+        op_pen_loader::apply_editor_meta_or_legacy_fallback(b.host_mut().editor_state_mut(), meta);
         b.host_mut().force_rotate_layer_panel_owner();
         b.host_mut().mark_editor_state_dirty();
         b.host_mut().arm_missing_fonts_detection();
         let (w, h) = b.viewport_size();
         b.host_mut().fit_content_to_viewport(w, h);
         let _ = b.repaint();
-        let s = b.host().editor_state();
-        let pair = (s.document_generation(), s.document_revision());
-        serde_json::to_string(&s.doc).ok().map(|json| (pair, json))
+        BridgeDocumentSnapshot::capture(b.host().editor_state())
     })
     .flatten() else {
         return;
@@ -319,13 +321,13 @@ fn handle_open_document<C: RepaintContext + 'static>(
 
     // Scope the open to generation G and block pulls, all before any await.
     if let Ok(mut s) = sync.try_borrow_mut() {
-        s.gate.note_open_pending(pair.0);
+        s.gate.note_open_pending(snapshot.pair().0);
     } else {
         return;
     }
 
     let base = crate::daemon_base::daemon_base();
-    drive_open_push(sync.clone(), base, pair, doc_json);
+    drive_open_push(sync.clone(), base, snapshot);
 }
 
 /// `snapshot`: independent of the tick. Conflict pending → reply
@@ -342,9 +344,10 @@ fn handle_snapshot<C: RepaintContext + 'static>(
         post_to_parent(&event_snapshot_conflict(&request_id, server_v));
         return;
     }
-    let Some((pair, doc_json)) = snapshot_state(inner) else {
+    let Some(snapshot) = snapshot_state(inner) else {
         return;
     };
+    let pair = snapshot.pair();
     let needs_push = sync
         .try_borrow()
         .map(|s| s.gate.needs_push(pair))
@@ -352,14 +355,14 @@ fn handle_snapshot<C: RepaintContext + 'static>(
     if !needs_push {
         post_to_parent(&event_snapshot_result(
             &request_id,
-            &externalize_for_disk(&doc_json),
+            &snapshot.externalized_json(),
             pair.0,
             pair.1,
         ));
         return;
     }
     let base = crate::daemon_base::daemon_base();
-    drive_snapshot_push(sync.clone(), base, request_id, pair, doc_json);
+    drive_snapshot_push(sync.clone(), base, request_id, snapshot);
 }
 
 /// `save-committed`: mark the reported revision saved. A stale generation
@@ -409,11 +412,11 @@ fn resolve_use_local<C: RepaintContext + 'static>(
         post_to_parent(&event_conflict_resolved(&request_id));
         return;
     };
-    let Some((pair, doc_json)) = snapshot_state(inner) else {
+    let Some(snapshot) = snapshot_state(inner) else {
         return;
     };
     let base = crate::daemon_base::daemon_base();
-    drive_use_local_push(sync.clone(), base, request_id, pair, doc_json, server_v);
+    drive_use_local_push(sync.clone(), base, request_id, snapshot, server_v);
 }
 
 /// `resolve-conflict: accept-remote`: first reply `snapshot-result` with the
@@ -427,12 +430,13 @@ fn resolve_accept_remote<C: RepaintContext + 'static>(
     sync: &SharedSync,
     request_id: String,
 ) {
-    let Some((pair, doc_json)) = snapshot_state(inner) else {
+    let Some(snapshot) = snapshot_state(inner) else {
         return;
     };
+    let pair = snapshot.pair();
     post_to_parent(&event_snapshot_result(
         &request_id,
-        &externalize_for_disk(&doc_json),
+        &snapshot.externalized_json(),
         pair.0,
         pair.1,
     ));
@@ -451,14 +455,14 @@ fn resolve_accept_remote<C: RepaintContext + 'static>(
 /// Acquire `push_busy` (waiting via a short self-reschedule while an in-flight
 /// push holds it — the open's state is already latched, and `open_pull_block`
 /// keeps pulls out meanwhile), then run the probe-conditional open push.
-fn drive_open_push(sync: SharedSync, base: String, pair: (u64, u64), doc_json: String) {
+fn drive_open_push(sync: SharedSync, base: String, snapshot: BridgeDocumentSnapshot) {
     if !acquire_push_busy(&sync) {
         schedule_once(PUSH_BUSY_RETRY_MS, move || {
-            drive_open_push(sync, base, pair, doc_json)
+            drive_open_push(sync, base, snapshot)
         });
         return;
     }
-    open_push_attempt(sync, base, pair, doc_json, RETRY_ONCE);
+    open_push_attempt(sync, base, snapshot, RETRY_ONCE);
 }
 
 /// Probe `GET /api/mcp/version` for the daemon's live version `V` (NOT
@@ -470,8 +474,7 @@ fn drive_open_push(sync: SharedSync, base: String, pair: (u64, u64), doc_json: S
 fn open_push_attempt(
     sync: SharedSync,
     base: String,
-    pair: (u64, u64),
-    doc_json: String,
+    snapshot: BridgeDocumentSnapshot,
     retries_left: u8,
 ) {
     let version_url = format!("{base}/api/mcp/version");
@@ -484,12 +487,12 @@ fn open_push_attempt(
                 release_push_busy(&sync);
                 return;
             };
-            let push_body = WebSyncClient::wrap_push_body_with_base(&doc_json, v);
+            let push_body = snapshot.push_body(v);
             let doc_url = format!("{base}/api/mcp/document");
             let on_resp: Rc<dyn Fn(String)> = {
                 let sync = sync.clone();
                 let base = base.clone();
-                let doc_json = doc_json.clone();
+                let snapshot = snapshot.clone();
                 Rc::new(move |resp: String| {
                     if let Some(server_v) = WebSyncClient::parse_push_conflict(&resp) {
                         if retries_left > 0 {
@@ -497,8 +500,7 @@ fn open_push_attempt(
                             open_push_attempt(
                                 sync.clone(),
                                 base.clone(),
-                                pair,
-                                doc_json.clone(),
+                                snapshot.clone(),
                                 retries_left - 1,
                             );
                             return;
@@ -511,7 +513,8 @@ fn open_push_attempt(
                     }
                     if let Some(version) = WebSyncClient::parse_push_response(&resp) {
                         if let Ok(mut s) = sync.try_borrow_mut() {
-                            s.client.mark_pushed(&doc_json, version);
+                            snapshot.mark_pushed(&mut s.client, version);
+                            let pair = snapshot.pair();
                             s.gate.note_synced(pair.0, pair.1);
                             s.push_busy = false;
                         }
@@ -536,16 +539,15 @@ fn drive_snapshot_push(
     sync: SharedSync,
     base: String,
     request_id: String,
-    pair: (u64, u64),
-    doc_json: String,
+    snapshot: BridgeDocumentSnapshot,
 ) {
     if !acquire_push_busy(&sync) {
         schedule_once(PUSH_BUSY_RETRY_MS, move || {
-            drive_snapshot_push(sync, base, request_id, pair, doc_json)
+            drive_snapshot_push(sync, base, request_id, snapshot)
         });
         return;
     }
-    snapshot_push_attempt(sync, base, request_id, pair, doc_json);
+    snapshot_push_attempt(sync, base, request_id, snapshot);
 }
 
 /// Snapshot-channel push with `baseVersion = last_version()` (the established
@@ -556,14 +558,13 @@ fn snapshot_push_attempt(
     sync: SharedSync,
     base: String,
     request_id: String,
-    pair: (u64, u64),
-    doc_json: String,
+    snapshot: BridgeDocumentSnapshot,
 ) {
     let base_version = sync
         .try_borrow()
         .map(|s| s.client.last_version())
         .unwrap_or(0);
-    let push_body = WebSyncClient::wrap_push_body_with_base(&doc_json, base_version);
+    let push_body = snapshot.push_body(base_version);
     let doc_url = format!("{base}/api/mcp/document");
     let on_resp: Rc<dyn Fn(String)> = {
         let sync = sync.clone();
@@ -577,14 +578,15 @@ fn snapshot_push_attempt(
                 return;
             }
             if let Some(version) = WebSyncClient::parse_push_response(&resp) {
+                let pair = snapshot.pair();
                 if let Ok(mut s) = sync.try_borrow_mut() {
-                    s.client.mark_pushed(&doc_json, version);
+                    snapshot.mark_pushed(&mut s.client, version);
                     s.gate.note_synced(pair.0, pair.1);
                     s.push_busy = false;
                 }
                 post_to_parent(&event_snapshot_result(
                     &request_id,
-                    &externalize_for_disk(&doc_json),
+                    &snapshot.externalized_json(),
                     pair.0,
                     pair.1,
                 ));
@@ -604,25 +606,16 @@ fn drive_use_local_push(
     sync: SharedSync,
     base: String,
     request_id: String,
-    pair: (u64, u64),
-    doc_json: String,
+    snapshot: BridgeDocumentSnapshot,
     base_version: u64,
 ) {
     if !acquire_push_busy(&sync) {
         schedule_once(PUSH_BUSY_RETRY_MS, move || {
-            drive_use_local_push(sync, base, request_id, pair, doc_json, base_version)
+            drive_use_local_push(sync, base, request_id, snapshot, base_version)
         });
         return;
     }
-    use_local_push_attempt(
-        sync,
-        base,
-        request_id,
-        pair,
-        doc_json,
-        base_version,
-        RETRY_ONCE,
-    );
+    use_local_push_attempt(sync, base, request_id, snapshot, base_version, RETRY_ONCE);
 }
 
 /// Re-push the local document with `baseVersion = base_version` (the conflict's
@@ -635,12 +628,11 @@ fn use_local_push_attempt(
     sync: SharedSync,
     base: String,
     request_id: String,
-    pair: (u64, u64),
-    doc_json: String,
+    snapshot: BridgeDocumentSnapshot,
     base_version: u64,
     retries_left: u8,
 ) {
-    let push_body = WebSyncClient::wrap_push_body_with_base(&doc_json, base_version);
+    let push_body = snapshot.push_body(base_version);
     let doc_url = format!("{base}/api/mcp/document");
     let on_resp: Rc<dyn Fn(String)> = {
         let sync = sync.clone();
@@ -651,8 +643,7 @@ fn use_local_push_attempt(
                         sync.clone(),
                         base.clone(),
                         request_id.clone(),
-                        pair,
-                        doc_json.clone(),
+                        snapshot.clone(),
                         server_v,
                         retries_left - 1,
                     );
@@ -667,7 +658,8 @@ fn use_local_push_attempt(
             }
             if let Some(version) = WebSyncClient::parse_push_response(&resp) {
                 if let Ok(mut s) = sync.try_borrow_mut() {
-                    s.client.mark_pushed(&doc_json, version);
+                    snapshot.mark_pushed(&mut s.client, version);
+                    let pair = snapshot.pair();
                     s.gate.note_synced(pair.0, pair.1);
                     s.push_busy = false;
                 }
@@ -735,14 +727,10 @@ fn read_triple<C: RepaintContext>(inner: &Rc<RefCell<C>>) -> Option<(u64, u64, b
     Some((s.document_generation(), s.document_revision(), s.is_dirty()))
 }
 
-/// Serialize the live document + capture its `(generation, revision)` pair
-/// atomically under a single borrow.
-fn snapshot_state<C: RepaintContext>(inner: &Rc<RefCell<C>>) -> Option<((u64, u64), String)> {
+/// Serialize the live document and editor metadata atomically.
+fn snapshot_state<C: RepaintContext>(inner: &Rc<RefCell<C>>) -> Option<BridgeDocumentSnapshot> {
     let b = inner.try_borrow().ok()?;
-    let s = b.host().editor_state();
-    let pair = (s.document_generation(), s.document_revision());
-    let json = serde_json::to_string(&s.doc).ok()?;
-    Some((pair, json))
+    BridgeDocumentSnapshot::capture(b.host().editor_state())
 }
 
 /// Try to claim the shared push single-flight latch. `true` when acquired.

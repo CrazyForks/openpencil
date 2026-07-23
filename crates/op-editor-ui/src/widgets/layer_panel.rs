@@ -105,8 +105,8 @@ impl LayerPanel {
     /// Allocate a process-unique owner id for a persistent host's
     /// LayerPanel cache slot (mirrors `AIChatPlaceholder::next_owner`).
     /// A host pulls an id at construction, passes it to
-    /// [`Self::from_editor_owned`] on the per-frame paint path, and pulls
-    /// a FRESH id after every whole-document replacement
+    /// [`Self::from_editor_owned`] on paint and event paths, and pulls a FRESH
+    /// id after every whole-document replacement
     /// (`force_rotate_layer_panel_owner`) — ids are stable only between
     /// replacements.
     pub fn next_layer_panel_owner() -> u64 {
@@ -114,19 +114,19 @@ impl LayerPanel {
     }
 
     /// Build the panel from the editor state via the CACHE-BYPASS path —
-    /// always a fresh walk that never touches the shared slot. Used by
-    /// unit tests and non-per-frame host call sites (click / scroll /
-    /// geometry / a11y). The per-frame paint path calls
-    /// [`Self::from_editor_owned`] to reap the cache.
+    /// always a fresh walk that never touches the shared slot. Used primarily
+    /// by unit tests and one-off callers without a persistent owner. Hosts call
+    /// [`Self::from_editor_owned`] for paint and event-time hit tests so those
+    /// paths share the same row model.
     pub fn from_editor(state: &EditorState) -> Self {
         Self::from_editor_owned(state, layer_panel_cache::UNOWNED)
     }
 
-    /// Owner-scoped build for the per-frame paint path. Resolves the row
-    /// model through the thread-local cache scoped to `owner`; rebuilds
-    /// only when the document revision / active page / collapsed set /
-    /// rename draft change. Selection + hover are applied as a live
-    /// overlay (see `layer_panel_cache`), so a selection-/hover-only
+    /// Owner-scoped build for a persistent host's paint and event paths.
+    /// Resolves the row model through the thread-local cache scoped to
+    /// `owner`; rebuilds only when the document revision / active page /
+    /// collapsed set / rename draft change. Selection + hover are applied as
+    /// a live overlay (see `layer_panel_cache`), so a selection-/hover-only
     /// change reuses the cached rows.
     pub fn from_editor_owned(state: &EditorState, owner: u64) -> Self {
         let rows = layer_panel_cache::resolve_owned(owner, state, || build_layer_rows(state));

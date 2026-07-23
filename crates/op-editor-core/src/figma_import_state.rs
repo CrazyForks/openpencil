@@ -16,6 +16,23 @@ pub enum ImportSource {
     Html,
 }
 
+/// Lightweight page metadata exposed after a binary `.fig` has been
+/// prepared but before its nodes are converted. The prepared document
+/// tree stays desktop-host-side; UI state carries only these labels.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FigmaImportPage {
+    pub name: String,
+    pub layer_count: usize,
+}
+
+/// User decision made in the multi-page import modal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FigmaImportSelection {
+    Page(usize),
+    All,
+    Cancel,
+}
+
 /// Which Figma-import-modal target the cursor is over. `None` =
 /// no hover wash.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,4 +41,8 @@ pub enum FigmaImportButton {
     Close,
     /// The dashed drop-zone (click to browse for a `.fig` file).
     DropZone,
+    /// One row in the prepared file's page list.
+    Page(usize),
+    /// Convert every page in the prepared file.
+    ImportAll,
 }

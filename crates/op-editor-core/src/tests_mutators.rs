@@ -836,26 +836,26 @@ fn toggle_node_collapsed_none_id_is_noop() {
 // --- Panel visibility predicates (Gap 4) ----------------------------
 
 #[test]
-fn property_panel_visible_tracks_selection() {
+fn property_panel_visible_falls_back_to_page_for_empty_or_stale_selection() {
     let mut s = three_rects();
     s.clear_selection();
-    assert!(!s.property_panel_visible());
+    assert!(s.property_panel_visible());
     s.set_single_selection(NodeId::new("n1"));
     assert!(s.property_panel_visible());
-    // A selection of an id that does not resolve is not visible.
+    // A stale selection falls back to the active-page inspector.
     s.set_single_selection(NodeId::new("nope"));
-    assert!(!s.property_panel_visible());
+    assert!(s.property_panel_visible());
 }
 
 #[test]
-fn right_rail_visible_true_on_selection_only() {
+fn right_rail_visible_for_page_or_selection_inspector() {
     let mut s = three_rects();
     s.clear_selection();
-    // No selection → hidden.
-    assert!(!s.right_rail_visible());
+    // No selection → active-page inspector.
+    assert!(s.right_rail_visible());
     // The VariablesPanel is a floating canvas overlay, not a right-rail panel.
     s.editor_ui.variables_panel_open = true;
-    assert!(!s.right_rail_visible());
+    assert!(s.right_rail_visible());
     s.editor_ui.variables_panel_open = false;
     // Selection makes it visible.
     s.set_single_selection(NodeId::new("n1"));
@@ -866,16 +866,16 @@ fn right_rail_visible_true_on_selection_only() {
 fn right_rail_stays_visible_on_code_tab_without_selection() {
     let mut s = three_rects();
     s.clear_selection();
-    // Design tab + no selection → hidden (baseline).
-    assert!(!s.right_rail_visible());
+    // Design tab + no selection → active-page properties.
+    assert!(s.right_rail_visible());
     // The Code tab is selection-independent (TS falls back to the active
     // page's children), so the rail must stay open with no selection.
     s.editor_ui.property_tab = crate::PropertyTab::Code;
     assert!(s.property_panel_visible());
     assert!(s.right_rail_visible());
-    // Back to Design without a selection → hidden again.
+    // Back to Design without a selection → page inspector remains.
     s.editor_ui.property_tab = crate::PropertyTab::Design;
-    assert!(!s.right_rail_visible());
+    assert!(s.right_rail_visible());
 }
 
 #[test]

@@ -11,9 +11,9 @@
 use super::helpers::{GIT_PANEL_CARET_GAP, TOOLBAR_INSET_X, TOOLBAR_INSET_Y};
 use super::WidgetHostNative;
 use op_editor_ui::widgets::{
-    AlignToolbar, GitPanel, GitPanelHit, LayoutCx, LocalePicker, ShapePicker, Toolbar, TopBar,
-    Widget, GIT_PANEL_INSET, ICON_PICKER_PANEL_H, ICON_PICKER_PANEL_W, IMPORT_MENU_WIDTH,
-    LOCALE_PICKER_WIDTH, SHAPE_PICKER_WIDTH, TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
+    AIChatPlaceholder, AlignToolbar, GitPanel, GitPanelHit, LayoutCx, LocalePicker, ShapePicker,
+    Toolbar, TopBar, Widget, GIT_PANEL_INSET, ICON_PICKER_PANEL_H, ICON_PICKER_PANEL_W,
+    IMPORT_MENU_WIDTH, LOCALE_PICKER_WIDTH, SHAPE_PICKER_WIDTH, TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
 };
 use op_editor_ui::{Point2D, Rect};
 
@@ -333,6 +333,20 @@ impl WidgetHostNative {
         ImportMenu::for_editor_ui(&self.editor_state.editor_ui).popup_rect(anchor, viewport)
     }
 
+    /// The chat model dropdown extends above the chat panel, so the chat
+    /// panel's own bounds are not enough for cursor and occlusion gates.
+    pub(in crate::widget_host) fn chat_model_picker_rect(
+        &self,
+        viewport_w: f32,
+        viewport_h: f32,
+    ) -> Option<Rect> {
+        if !self.editor_state.editor_ui.chat_model_picker.open {
+            return None;
+        }
+        let chat_rect = self.ai_chat_rect(viewport_w, viewport_h)?;
+        AIChatPlaceholder::from_editor(&self.editor_state).model_picker_bounds(chat_rect)
+    }
+
     /// Whether `(x, y)` is over ANY floating overlay that paints on top
     /// of the canvas region — the centred modal-ish panels, the Git
     /// panel popover, the always-on Toolbar / StatusBar / chat, and the
@@ -360,6 +374,9 @@ impl WidgetHostNative {
                 .is_some_and(|r| (r).contains(p))
             || self
                 .ai_chat_rect(viewport_w, viewport_h)
+                .is_some_and(|r| (r).contains(p))
+            || self
+                .chat_model_picker_rect(viewport_w, viewport_h)
                 .is_some_and(|r| (r).contains(p))
             || (self.toolbar_rect(viewport_w, viewport_h)).contains(p)
             || self

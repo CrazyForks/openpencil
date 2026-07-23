@@ -7,18 +7,14 @@ use crate::theme::Theme;
 use crate::widgets::icons::{draw_icon, Icon};
 use crate::widgets::property_panel::NodeSnapshot;
 use crate::widgets::property_panel_inputs::{
-    create_component_block_height, paint_input_with_icon_focused_state,
-    paint_input_with_prefix_focused_state, paint_section_divider, paint_section_label,
-    paint_text_input_view_value, COMPONENT_ACCENT, CREATE_COMPONENT_BTN_H, CREATE_COMPONENT_ICON,
-    CREATE_COMPONENT_PAD_TOP, CREATE_COMPONENT_ROW_GAP, HEADER_HEIGHT, INPUT_HEIGHT,
-    INSTANCE_ACCENT, PAD_X, SECTION_GAP, TAB_HEIGHT,
+    paint_input_with_icon_focused_state, paint_input_with_prefix_focused_state,
+    paint_section_divider, paint_section_label, paint_text_input_view_value, COMPONENT_ACCENT,
+    HEADER_HEIGHT, INPUT_HEIGHT, INSTANCE_ACCENT, PAD_X, SECTION_GAP, TAB_HEIGHT,
 };
 use crate::widgets::PaintCx;
 use crate::{Point2D, Rect, TextLayout};
 use op_editor_core::PropertyFocus;
 
-// Re-exports — fill paint moved to `property_panel_fill.rs`,
-// layout walkers + visibility flags to `property_panel_layout.rs`.
 pub use crate::widgets::property_panel_effects::paint_effects_section;
 pub use crate::widgets::property_panel_fill::{
     fill_type_label, paint_fill_section, paint_fill_type_picker,
@@ -26,7 +22,7 @@ pub use crate::widgets::property_panel_fill::{
 pub use crate::widgets::property_panel_image_fill::{
     image_fill_popover_action_at, image_fill_popover_action_rects,
     image_fill_popover_adjustment_action_for_drag, image_fill_popover_contains,
-    paint_image_fill_popover,
+    image_fill_popover_input_at, paint_image_fill_popover,
 };
 pub use crate::widgets::property_panel_inputs::format_color_hex as _format_color_hex_compat;
 pub use crate::widgets::property_panel_interactions::paint_interactions_section;
@@ -54,7 +50,6 @@ pub struct EditContext<'a> {
     pub now_ms: u64,
 }
 
-/// Localised chrome strings for the PropertyPanel sections.
 /// Resolved once at panel-construction time from `Document::t` so
 /// every section's `paint_section_label` call gets the
 /// locale-appropriate text without each helper hitting the
@@ -68,6 +63,7 @@ pub struct PropertyLabels {
     pub detach_component: &'static str,
     pub go_to_component: &'static str,
     pub detach_instance: &'static str,
+    pub swap_component: &'static str,
     pub position: &'static str,
     pub corner_per_corner: &'static str,
     pub mixed: &'static str,
@@ -126,6 +122,7 @@ impl PropertyLabels {
             detach_component: pick("property.detachComponent", "Detach Component"),
             go_to_component: pick("property.goToComponent", "Go to component"),
             detach_instance: pick("property.detachInstance", "Detach instance"),
+            swap_component: pick("property.swapComponent", "Swap"),
             position: pick("size.position", "Position"),
             corner_per_corner: pick("property.cornerPerCorner", "Edit corners independently"),
             mixed: pick("property.mixed", "Mixed"),
@@ -432,120 +429,6 @@ pub fn paint_node_header(
 }
 
 // ── Create-component button ───────────────────────────────────────
-
-pub fn paint_create_component(
-    cx: &mut PaintCx<'_>,
-    theme: &Theme,
-    labels: &PropertyLabels,
-    state: crate::widgets::property_panel_visibility::ComponentButtonState,
-    x: f32,
-    y: f32,
-    width: f32,
-) -> f32 {
-    use crate::widgets::property_panel_visibility::ComponentButtonState as S;
-    let first_row_y = y + CREATE_COMPONENT_PAD_TOP;
-    match state {
-        // Plain container: "Create component" (neutral).
-        S::Create => paint_component_button(
-            cx,
-            theme,
-            labels.create_component,
-            Icon::Component,
-            theme.foreground,
-            x,
-            first_row_y,
-            width,
-        ),
-        // Reusable component: purple "Detach component" — TS paints
-        // the same slot with the unlink affordance + purple accent.
-        S::DetachComponent => paint_component_button(
-            cx,
-            theme,
-            labels.detach_component,
-            Icon::Diamond,
-            COMPONENT_ACCENT,
-            x,
-            first_row_y,
-            width,
-        ),
-        // Instance: the Go-to-component / Detach-instance row pair.
-        S::Instance => {
-            paint_component_button(
-                cx,
-                theme,
-                labels.go_to_component,
-                Icon::Component,
-                INSTANCE_ACCENT,
-                x,
-                first_row_y,
-                width,
-            );
-            paint_component_button(
-                cx,
-                theme,
-                labels.detach_instance,
-                Icon::Diamond,
-                INSTANCE_ACCENT,
-                x,
-                first_row_y + CREATE_COMPONENT_BTN_H + CREATE_COMPONENT_ROW_GAP,
-                width,
-            );
-        }
-    }
-    y + create_component_block_height(state)
-}
-
-/// One compact button row in the create-component block — shared by
-/// all three [`ComponentButtonState`] variants so their geometry
-/// matches the layout walker's rects exactly.
-#[allow(clippy::too_many_arguments)]
-fn paint_component_button(
-    cx: &mut PaintCx<'_>,
-    theme: &Theme,
-    label_text: &str,
-    icon_glyph: Icon,
-    accent: crate::Color,
-    x: f32,
-    row_y: f32,
-    width: f32,
-) {
-    let btn_h = CREATE_COMPONENT_BTN_H;
-    let btn_rect = Rect {
-        origin: Point2D::new(x + PAD_X, row_y),
-        size: Point2D::new(width - PAD_X * 2.0, btn_h),
-    };
-    cx.backend.fill_round_rect(btn_rect, 8.0, theme.muted);
-    cx.backend
-        .stroke_round_rect(btn_rect, 8.0, theme.border, 1.0);
-    let icon = CREATE_COMPONENT_ICON;
-    draw_icon(
-        cx.backend,
-        icon_glyph,
-        Point2D::new(
-            btn_rect.origin.x + 12.0,
-            btn_rect.origin.y + (btn_h - icon) / 2.0,
-        ),
-        icon,
-        accent,
-        1.3,
-    );
-    let label = TextLayout::single_run(
-        label_text,
-        "system-ui",
-        13.0,
-        (accent).to_jian(),
-        Point2D::new(0.0, 0.0),
-    );
-    let label_w = cx.backend.measure_text(label_text, 13.0);
-    cx.backend.draw_text(
-        &label,
-        Point2D::new(
-            btn_rect.origin.x + (btn_rect.size.x - label_w) / 2.0 + 12.0,
-            btn_rect.origin.y + btn_h / 2.0 + 4.5,
-        ),
-    );
-}
-
 // ── Position section ──────────────────────────────────────────────
 
 // Paint-context + geometry args threaded through; a struct adds no gain.
@@ -562,6 +445,7 @@ pub fn paint_position_section(
     y: f32,
     width: f32,
 ) -> f32 {
+    let per_corner_expanded = corner_expanded && snapshot.supports_per_corner;
     let mut y = paint_section_label(cx, theme, labels.position, x, y, width);
     let usable_w = width - PAD_X * 2.0;
     let half_w = (usable_w - 8.0) / 2.0;
@@ -634,25 +518,27 @@ pub fn paint_position_section(
                 Rect::xywh(0.0, 0.0, 0.0, 0.0),
             )
         };
-        let mixed =
-            !crate::widgets::property_panel_corner::radii_are_uniform(snapshot.corner_radii);
-        let r_value = if mixed {
-            labels.mixed.to_string()
-        } else {
-            format!("{}", snapshot.corner_radius.round() as i32)
-        };
-        paint_input_with_prefix_focused_state(
-            cx,
-            theme,
-            r_rect,
-            "R",
-            edit.value_for(PropertyFocus::PositionR, &r_value),
-            edit.focus == Some(PropertyFocus::PositionR),
-            edit.caret_at(PropertyFocus::PositionR),
-            edit.select_all_at(PropertyFocus::PositionR),
-            edit.input_at(PropertyFocus::PositionR),
-            edit.now_ms,
-        );
+        if !per_corner_expanded {
+            let mixed =
+                !crate::widgets::property_panel_corner::radii_are_uniform(snapshot.corner_radii);
+            let r_value = if mixed {
+                labels.mixed.to_string()
+            } else {
+                format!("{}", snapshot.corner_radius.round() as i32)
+            };
+            paint_input_with_prefix_focused_state(
+                cx,
+                theme,
+                r_rect,
+                "R",
+                edit.value_for(PropertyFocus::PositionR, &r_value),
+                edit.focus == Some(PropertyFocus::PositionR),
+                edit.caret_at(PropertyFocus::PositionR),
+                edit.select_all_at(PropertyFocus::PositionR),
+                edit.input_at(PropertyFocus::PositionR),
+                edit.now_ms,
+            );
+        }
         if snapshot.supports_per_corner {
             crate::widgets::property_panel_corner::paint_toggle(
                 cx,
@@ -663,7 +549,7 @@ pub fn paint_position_section(
         }
     }
     y += INPUT_HEIGHT;
-    if show_radius && corner_expanded {
+    if show_radius && per_corner_expanded {
         crate::widgets::property_panel_corner::paint_grid(
             cx,
             theme,

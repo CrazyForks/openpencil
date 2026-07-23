@@ -147,48 +147,60 @@ impl std::fmt::Display for FigFileError {
     }
 }
 
-/// Pull the `blobs` array off the decoded root. Mirrors `extractBlobs`:
-/// an element with a `bytes` byte-array → raw bytes; a string element
-/// → string; anything else → empty bytes.
-fn extract_blobs(raw: &FigValue) -> Vec<BlobOrString> {
-    let Some(arr) = raw.get_array("blobs") else {
-        return Vec::new();
+/// Consume the decoded Kiwi root and move out the two large arrays.
+/// The old borrowed extraction used `to_vec()` for both node values
+/// and blob bytes, briefly retaining a complete decoded tree alongside
+/// a second deep copy on large files.
+fn extract_decoded_root(raw: FigValue) -> Option<(Vec<FigValue>, Vec<BlobOrString>)> {
+    let FigValue::Object(pairs) = raw else {
+        return None;
     };
-    arr.iter()
-        .map(|blob| {
-            if let Some(bytes) = blob.get("bytes").and_then(|b| b.as_bytes()) {
-                BlobOrString::Bytes(bytes.to_vec())
-            } else if let Some(s) = blob.as_str() {
-                BlobOrString::Str(s.to_string())
-            } else {
-                BlobOrString::Bytes(Vec::new())
-            }
-        })
-        .collect()
-}
 
-/// Locate the node-change array — `nodeChanges` if present + non-empty,
-/// else the first array of objects whose elements carry a `guid`.
-fn find_node_changes(raw: &FigValue) -> Option<Vec<FigValue>> {
-    if let Some(arr) = raw.get_array("nodeChanges") {
-        if !arr.is_empty() {
-            return Some(arr.to_vec());
-        }
-    }
-    if let FigValue::Object(pairs) = raw {
-        for (_, v) in pairs {
-            if let Some(arr) = v.as_array() {
-                if arr
-                    .first()
-                    .map(|n| n.get("guid").is_some())
-                    .unwrap_or(false)
-                {
-                    return Some(arr.to_vec());
-                }
+    let mut node_changes: Option<Vec<FigValue>> = None;
+    let mut fallback_node_changes: Option<Vec<FigValue>> = None;
+    let mut blobs = Vec::new();
+
+    for (name, value) in pairs {
+        match (name.as_ref(), value) {
+            ("nodeChanges", FigValue::Array(items)) if !items.is_empty() => {
+                node_changes = Some(items);
             }
+            ("blobs", FigValue::Array(items)) => {
+                blobs = items
+                    .into_iter()
+                    .map(|blob| match blob {
+                        FigValue::Object(fields) => fields
+                            .into_iter()
+                            .find_map(|(key, value)| {
+                                (key.as_ref() == "bytes")
+                                    .then_some(value)
+                                    .and_then(|value| match value {
+                                        FigValue::Bytes(bytes) => Some(BlobOrString::Bytes(bytes)),
+                                        _ => None,
+                                    })
+                            })
+                            .unwrap_or_else(|| BlobOrString::Bytes(Vec::new())),
+                        FigValue::Str(value) => BlobOrString::Str(value),
+                        _ => BlobOrString::Bytes(Vec::new()),
+                    })
+                    .collect();
+            }
+            (_, FigValue::Array(items))
+                if fallback_node_changes.is_none()
+                    && items
+                        .first()
+                        .map(|node| node.get("guid").is_some())
+                        .unwrap_or(false) =>
+            {
+                fallback_node_changes = Some(items);
+            }
+            _ => {}
         }
     }
-    None
+
+    node_changes
+        .or(fallback_node_changes)
+        .map(|nodes| (nodes, blobs))
 }
 
 /// Parse a `.fig` file buffer into a [`FigmaDecodedFile`] — the Rust
@@ -201,10 +213,10 @@ pub fn parse_fig_file(bytes: &[u8]) -> Result<FigmaDecodedFile, FigFileError> {
     }
     let schema = decode_binary_schema(&container.parts[0]).map_err(FigFileError::Kiwi)?;
     let raw = decode_message(&schema, &container.parts[1]).map_err(FigFileError::Kiwi)?;
-    let node_changes = find_node_changes(&raw).ok_or(FigFileError::NoNodeChanges)?;
+    let (node_changes, blobs) = extract_decoded_root(raw).ok_or(FigFileError::NoNodeChanges)?;
     Ok(FigmaDecodedFile {
         node_changes,
-        blobs: extract_blobs(&raw),
+        blobs,
         image_files: container.image_files,
     })
 }
@@ -214,7 +226,7 @@ mod tests {
     use super::*;
 
     fn obj(pairs: Vec<(&str, FigValue)>) -> FigValue {
-        FigValue::Object(pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
+        FigValue::Object(pairs.into_iter().map(|(k, v)| (k.into(), v)).collect())
     }
 
     #[test]
@@ -254,15 +266,24 @@ mod tests {
 
     #[test]
     fn extract_blobs_handles_bytes_and_strings() {
-        let raw = obj(vec![(
-            "blobs",
-            FigValue::Array(vec![
-                obj(vec![("bytes", FigValue::Bytes(vec![1, 2, 3]))]),
-                FigValue::Str("inline".into()),
-                FigValue::Int(0),
-            ]),
-        )]);
-        let blobs = extract_blobs(&raw);
+        let raw = obj(vec![
+            (
+                "nodeChanges",
+                FigValue::Array(vec![obj(vec![(
+                    "guid",
+                    obj(vec![("sessionID", FigValue::Uint(0))]),
+                )])]),
+            ),
+            (
+                "blobs",
+                FigValue::Array(vec![
+                    obj(vec![("bytes", FigValue::Bytes(vec![1, 2, 3]))]),
+                    FigValue::Str("inline".into()),
+                    FigValue::Int(0),
+                ]),
+            ),
+        ]);
+        let (_, blobs) = extract_decoded_root(raw).expect("root extracts");
         assert_eq!(blobs.len(), 3);
         assert_eq!(blobs[0].as_bytes(), Some(&[1u8, 2, 3][..]));
         assert_eq!(blobs[1], BlobOrString::Str("inline".into()));
@@ -278,7 +299,7 @@ mod tests {
                 obj(vec![("sessionID", FigValue::Uint(0))]),
             )])]),
         )]);
-        let nc = find_node_changes(&raw).expect("fallback finds the guid array");
+        let (nc, _) = extract_decoded_root(raw).expect("fallback finds the guid array");
         assert_eq!(nc.len(), 1);
     }
 }

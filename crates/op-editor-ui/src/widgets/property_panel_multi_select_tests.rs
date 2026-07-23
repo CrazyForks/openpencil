@@ -16,6 +16,7 @@ fn multi_selection_panel_shows_union_bounds_and_is_inert() {
 
     let panel = PropertyPanel::for_selection(&state).expect("multi-select must paint");
     assert!(panel.is_multi);
+    assert!(!panel.visible_sections().compositing);
     assert_eq!(panel.snapshot.kind, "2 items");
     assert_eq!(panel.snapshot.x, 60);
     assert_eq!(panel.snapshot.y, 60);

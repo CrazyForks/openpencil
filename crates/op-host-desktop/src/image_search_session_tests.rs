@@ -15,7 +15,6 @@ fn image_node(id: &str, src: &str, query: Option<&str>) -> PenNode {
         },
         src: src.into(),
         object_fit: None,
-        blend_mode: None,
         width: Some(SizingBehavior::Number(240.0)),
         height: Some(SizingBehavior::Number(160.0)),
         corner_radius: None,
@@ -648,6 +647,97 @@ fn poll_discards_a_result_when_only_provider_truncated_words_changed() {
         image.src.is_empty(),
         "the provider-level collision must not weaken authored intent identity"
     );
+}
+
+#[test]
+fn poll_shares_one_stale_intent_scan_across_a_completed_batch() {
+    let mut state = EditorState::default();
+    state.active_children_mut().clear();
+    state
+        .active_children_mut()
+        .push(image_node("img1", "", Some("burger fries")));
+    state
+        .active_children_mut()
+        .push(image_node("img2", "", Some("mountain lake")));
+    let original_targets = collect_targets(&state, &HashSet::new());
+    let expected_by_id: std::collections::HashMap<_, _> = original_targets
+        .into_iter()
+        .map(|target| {
+            let expected = intent_fingerprint(&target, None);
+            (target.node_id.as_str().to_string(), expected)
+        })
+        .collect();
+
+    let PenNode::Image(image) = &mut state.active_children_mut()[1] else {
+        panic!("image")
+    };
+    image.image_search_query = Some("city skyline".into());
+    state.mark_document_changed();
+
+    let mut jobs = Vec::new();
+    for id in ["img1", "img2"] {
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(Some(format!("https://result.example.com/{id}.jpg")))
+            .unwrap();
+        jobs.push(ImageSearchJob {
+            node_id: NodeId::new(id),
+            intent: Some(expected_by_id[id].clone()),
+            rx,
+        });
+    }
+    let mut session = ImageSearchSession {
+        in_flight: HashSet::from(["img1".to_string(), "img2".to_string()]),
+        jobs,
+        ..Default::default()
+    };
+
+    let scene = op_pen_loader::editor_state_to_active_page_layout_scene(&state);
+    assert!(session.poll_into_with_scene(&mut state, &scene));
+    assert_eq!(
+        session.stale_intent_scan_count, 1,
+        "all ready jobs in one poll must share one current-intent snapshot"
+    );
+    let PenNode::Image(current) = &state.active_children()[0] else {
+        panic!("image")
+    };
+    assert_eq!(
+        current.src, "https://result.example.com/img1.jpg",
+        "a result whose authored intent is still current must land"
+    );
+    let PenNode::Image(stale) = &state.active_children()[1] else {
+        panic!("image")
+    };
+    assert!(stale.src.is_empty(), "a stale result must not land");
+    assert!(session.jobs.is_empty());
+    assert!(session.in_flight.is_empty());
+}
+
+#[test]
+fn poll_does_not_scan_intents_while_all_jobs_are_pending() {
+    let mut state = EditorState::default();
+    state.active_children_mut().clear();
+    state
+        .active_children_mut()
+        .push(image_node("img1", "", Some("burger fries")));
+    let target = collect_targets(&state, &HashSet::new())
+        .into_iter()
+        .next()
+        .expect("target");
+    let (_tx, rx) = std::sync::mpsc::channel();
+    let mut session = ImageSearchSession {
+        in_flight: HashSet::from(["img1".to_string()]),
+        jobs: vec![ImageSearchJob {
+            node_id: NodeId::new("img1"),
+            intent: Some(intent_fingerprint(&target, None)),
+            rx,
+        }],
+        ..Default::default()
+    };
+
+    let scene = op_pen_loader::editor_state_to_active_page_layout_scene(&state);
+    assert!(!session.poll_into_with_scene(&mut state, &scene));
+    assert_eq!(session.stale_intent_scan_count, 0);
+    assert!(session.is_pending());
 }
 
 #[test]

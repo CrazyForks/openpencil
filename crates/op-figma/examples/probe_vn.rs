@@ -42,7 +42,7 @@ fn f32_le(b: &[u8], o: usize) -> Option<f32> {
 
 fn keys(v: &FigValue) -> Vec<String> {
     match v {
-        FigValue::Object(pairs) => pairs.iter().map(|(k, _)| k.clone()).collect(),
+        FigValue::Object(pairs) => pairs.iter().map(|(k, _)| k.to_string()).collect(),
         _ => Vec::new(),
     }
 }

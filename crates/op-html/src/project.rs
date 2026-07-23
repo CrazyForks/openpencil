@@ -3,6 +3,7 @@ use std::fmt;
 
 use url::Url;
 
+use crate::html_encoding::decode_html_bytes;
 use crate::resources::ImageTransform;
 use crate::{
     import_html_with_resources, wrap_imported_document, HtmlDocumentResult, HtmlImportOptions,
@@ -87,9 +88,7 @@ pub fn import_html_project_with_transform(
     let project = PreparedProject::new(files)?;
     let entry_index = project.entry_index()?;
     let entry = &project.files[entry_index];
-    let html = std::str::from_utf8(entry.bytes)
-        .map_err(|_| HtmlProjectError::HtmlIsNotUtf8(entry.relative_path.clone()))?;
-    let html = html.strip_prefix('\u{feff}').unwrap_or(html);
+    let html = decode_html_bytes(entry.bytes);
     let entry_path = entry.relative_path.clone();
     let html_entry_count = project
         .files
@@ -107,7 +106,7 @@ pub fn import_html_project_with_transform(
             .map(<[u8]>::to_vec)
     };
     Ok(import_html_entry_with_fetcher(
-        html,
+        &html,
         &entry_path,
         html_entry_count,
         options,
@@ -280,15 +279,20 @@ fn entry_file_stem(path: &str) -> &str {
         .map_or(file_name, |(stem, _)| stem)
 }
 
-fn html_entry_rank(path: &str) -> (u8, usize, u8, String, String) {
+fn html_entry_rank(path: &str) -> (u8, u8, usize, u8, String, String) {
     let file_name = path.rsplit('/').next().unwrap_or(path);
     let lower_name = file_name.to_ascii_lowercase();
+    let dependency_rank = u8::from(
+        path.split('/')
+            .any(|component| component.eq_ignore_ascii_case("node_modules")),
+    );
     let (index_rank, extension_rank) = match lower_name.as_str() {
         "index.html" => (0, 0),
         "index.htm" => (0, 1),
         _ => (1, 2),
     };
     (
+        dependency_rank,
         index_rank,
         path.matches('/').count(),
         extension_rank,
@@ -384,6 +388,15 @@ mod tests {
             file("site/dist/index.html", b"html"),
         ];
         assert_eq!(select_html_entry(&files).unwrap(), "dist/index.html");
+    }
+
+    #[test]
+    fn does_not_select_a_dependency_index_as_the_project_entry() {
+        let files = vec![
+            file("site/landing.html", b"landing"),
+            file("site/node_modules/demo/index.html", b"dependency"),
+        ];
+        assert_eq!(select_html_entry(&files).unwrap(), "landing.html");
     }
 
     #[test]
@@ -493,5 +506,63 @@ mod tests {
             json.contains("tail-marker"),
             "tail content must not be truncated"
         );
+    }
+
+    #[test]
+    fn imports_gbk_html_declared_by_meta_charset() {
+        let mut html = b"<meta charset='GBK'><p>".to_vec();
+        html.extend_from_slice(b"\xC4\xE3\xBA\xC3");
+        html.extend_from_slice(b"</p>");
+        let imported = import_html_project(
+            &[HtmlProjectFile::new("index.html", html)],
+            &HtmlImportOptions::default(),
+        )
+        .unwrap();
+        let json = serde_json::to_string(&imported.nodes).unwrap();
+        assert!(json.contains("你好"), "{json}");
+    }
+
+    #[test]
+    fn imports_gb18030_four_byte_sequences() {
+        let mut html = b"<meta charset=gb18030><p>".to_vec();
+        html.extend_from_slice(b"\x81\x37\xA3\x30");
+        html.extend_from_slice(b"</p>");
+        let imported = import_html_project(
+            &[HtmlProjectFile::new("index.html", html)],
+            &HtmlImportOptions::default(),
+        )
+        .unwrap();
+        let json = serde_json::to_string(&imported.nodes).unwrap();
+        assert!(json.contains('☃'), "{json}");
+    }
+
+    #[test]
+    fn imports_windows_1252_from_http_equiv_meta() {
+        let mut html =
+            b"<meta content='text/html; charset=windows-1252' http-equiv='content-type'><p>"
+                .to_vec();
+        html.extend_from_slice(b"\x93quoted\x94 \x80");
+        html.extend_from_slice(b"</p>");
+        let imported = import_html_project(
+            &[HtmlProjectFile::new("index.html", html)],
+            &HtmlImportOptions::default(),
+        )
+        .unwrap();
+        let json = serde_json::to_string(&imported.nodes).unwrap();
+        assert!(json.contains("“quoted” €"), "{json}");
+    }
+
+    #[test]
+    fn imports_utf16le_bom_before_a_conflicting_meta() {
+        let source = "<meta charset=windows-1252><p>BOM 你好</p>";
+        let mut html = b"\xFF\xFE".to_vec();
+        html.extend(source.encode_utf16().flat_map(u16::to_le_bytes));
+        let imported = import_html_project(
+            &[HtmlProjectFile::new("index.html", html)],
+            &HtmlImportOptions::default(),
+        )
+        .unwrap();
+        let json = serde_json::to_string(&imported.nodes).unwrap();
+        assert!(json.contains("BOM 你好"), "{json}");
     }
 }

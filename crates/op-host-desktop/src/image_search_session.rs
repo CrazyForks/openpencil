@@ -251,6 +251,11 @@ pub(crate) struct ImageSearchSession {
     /// target is already known via `in_flight`/`completed`).
     #[cfg(test)]
     scan_count: u32,
+    /// Test-only: counts coherent current-intent snapshots built by
+    /// `poll_into`. A batch of completed jobs must share one snapshot instead
+    /// of rebuilding the active-page scene once per job.
+    #[cfg(test)]
+    stale_intent_scan_count: u32,
     /// Canonical provider identities plus compact content digests already used
     /// this session. Similar queries otherwise share their Openverse top hit
     /// and fill several cards with the same artwork (measured: test0711-22).
@@ -363,7 +368,28 @@ impl ImageSearchSession {
         self.last_scanned = None;
     }
 
+    #[cfg(test)]
     pub(crate) fn enqueue_missing(&mut self, state: &EditorState) -> bool {
+        self.enqueue_missing_with_optional_scene(state, None)
+    }
+
+    /// Production redraw path: reuse the host's already-current active-page
+    /// scene instead of resolving the same page a second time just to obtain
+    /// image-slot dimensions. This matters for very large Figma pages where a
+    /// duplicate scene build can add hundreds of milliseconds per switch.
+    pub(crate) fn enqueue_missing_with_scene(
+        &mut self,
+        state: &EditorState,
+        scene: &op_editor_ui::layout_scene::LayoutScene,
+    ) -> bool {
+        self.enqueue_missing_with_optional_scene(state, Some(scene))
+    }
+
+    fn enqueue_missing_with_optional_scene(
+        &mut self,
+        state: &EditorState,
+        scene: Option<&op_editor_ui::layout_scene::LayoutScene>,
+    ) -> bool {
         // Perf gate: this runs on every `RedrawRequested`. Skip the whole-tree
         // walk when the document content AND active page are unchanged since
         // the last scan, and no session-set mutation (job completion/failure,
@@ -381,7 +407,10 @@ impl ImageSearchSession {
         }
         let mut known = self.completed.clone();
         known.extend(self.in_flight.iter().cloned());
-        let targets = collect_targets(state, &known);
+        let targets = match scene {
+            Some(scene) => collect_targets_with_scene(state, &known, scene),
+            None => collect_targets(state, &known),
+        };
         if targets.is_empty() {
             return false;
         }
@@ -415,9 +444,35 @@ impl ImageSearchSession {
         true
     }
 
+    #[cfg(test)]
     pub(crate) fn poll_into(&mut self, state: &mut EditorState) -> bool {
+        self.poll_into_with_optional_scene(state, None)
+    }
+
+    /// Production redraw path: validate every completed job against one
+    /// coherent intent snapshot derived from the host's already-current
+    /// active-page scene. This avoids rebuilding a large Figma page once per
+    /// completed image job while preserving the stale-result guard.
+    pub(crate) fn poll_into_with_scene(
+        &mut self,
+        state: &mut EditorState,
+        scene: &op_editor_ui::layout_scene::LayoutScene,
+    ) -> bool {
+        self.poll_into_with_optional_scene(state, Some(scene))
+    }
+
+    fn poll_into_with_optional_scene(
+        &mut self,
+        state: &mut EditorState,
+        scene: Option<&op_editor_ui::layout_scene::LayoutScene>,
+    ) -> bool {
         let mut changed = false;
         let mut i = 0;
+        // Production jobs always carry an intent. Build this lazily only when
+        // at least one such job is actually ready, then reuse it for every
+        // other completion drained by this poll. Pending-only frames stay at
+        // zero target walks.
+        let mut current_intents: Option<HashMap<String, String>> = None;
         while i < self.jobs.len() {
             match self.jobs[i].rx.try_recv() {
                 Ok(url) => {
@@ -432,8 +487,18 @@ impl ImageSearchSession {
                     // revision, but the gate invalidation still covers the
                     // failure path.)
                     self.last_scanned = None;
+                    if job.intent.is_some() && current_intents.is_none() {
+                        #[cfg(test)]
+                        {
+                            self.stale_intent_scan_count += 1;
+                        }
+                        current_intents = Some(current_intent_fingerprints(state, scene));
+                    }
                     if job.intent.as_ref().is_some_and(|expected| {
-                        current_intent_fingerprint(state, &job.node_id).as_ref() != Some(expected)
+                        current_intents
+                            .as_ref()
+                            .and_then(|intents| intents.get(job.node_id.as_str()))
+                            != Some(expected)
                     }) {
                         tracing::info!(
                             node_id = %job.node_id,
@@ -633,19 +698,38 @@ fn intent_fingerprint(target: &ImageSearchTarget, profile: Option<&ImageGenProfi
     }
 }
 
-fn current_intent_fingerprint(state: &EditorState, node_id: &NodeId) -> Option<String> {
-    let target = collect_targets(state, &HashSet::new())
-        .into_iter()
-        .find(|target| &target.node_id == node_id)?;
+fn current_intent_fingerprints(
+    state: &EditorState,
+    scene: Option<&op_editor_ui::layout_scene::LayoutScene>,
+) -> HashMap<String, String> {
     let profile = crate::image_panel_host::active_image_gen_profile(state);
-    Some(intent_fingerprint(&target, profile))
+    let targets = match scene {
+        Some(scene) => collect_targets_with_scene(state, &HashSet::new(), scene),
+        None => collect_targets(state, &HashSet::new()),
+    };
+    targets
+        .into_iter()
+        .map(|target| {
+            let fingerprint = intent_fingerprint(&target, profile);
+            (target.node_id.as_str().to_string(), fingerprint)
+        })
+        .collect()
 }
 
 pub(crate) fn collect_targets(
     state: &EditorState,
     known_node_ids: &HashSet<String>,
 ) -> Vec<ImageSearchTarget> {
-    let resolved_sizes = resolved_node_sizes(state);
+    let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
+    collect_targets_with_scene(state, known_node_ids, &scene)
+}
+
+fn collect_targets_with_scene(
+    state: &EditorState,
+    known_node_ids: &HashSet<String>,
+    scene: &op_editor_ui::layout_scene::LayoutScene,
+) -> Vec<ImageSearchTarget> {
+    let resolved_sizes = resolved_node_sizes(scene);
     let mut targets = Vec::new();
     collect_from_children(
         state.active_children(),
@@ -662,8 +746,9 @@ pub(crate) fn collect_targets(
 /// anonymous surface into an image target. It lets a G()-created fill/fill
 /// child inherit the actual slot aspect for search, generation, and stale-job
 /// detection instead of losing that intent as `None`.
-fn resolved_node_sizes(state: &EditorState) -> HashMap<String, (f64, f64)> {
-    let scene = op_pen_loader::editor_state_to_layout_scene(state);
+fn resolved_node_sizes(
+    scene: &op_editor_ui::layout_scene::LayoutScene,
+) -> HashMap<String, (f64, f64)> {
     let mut out = HashMap::new();
     fn walk(
         nodes: &[op_editor_ui::layout_scene::SceneNode],
@@ -680,7 +765,7 @@ fn resolved_node_sizes(state: &EditorState) -> HashMap<String, (f64, f64)> {
             walk(&node.children, out);
         }
     }
-    for page in &scene.pages {
+    if let Some(page) = scene.active_page() {
         walk(&page.children, &mut out);
     }
     out
@@ -1334,6 +1419,7 @@ pub(crate) fn apply_result(state: &mut EditorState, node_id: &NodeId, url: &str)
                 mode: Some(ImageFillMode::Crop),
                 original_size: None,
                 transform: None,
+                tile_scale: None,
                 explain: None,
                 opacity: None,
                 blend_mode: None,
@@ -1354,6 +1440,7 @@ pub(crate) fn apply_result(state: &mut EditorState, node_id: &NodeId, url: &str)
                 mode: Some(ImageFillMode::Crop),
                 original_size: None,
                 transform: None,
+                tile_scale: None,
                 explain: None,
                 opacity: None,
                 blend_mode: None,

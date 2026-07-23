@@ -3,7 +3,7 @@
 use super::*;
 
 fn obj(pairs: Vec<(&str, FigValue)>) -> FigValue {
-    FigValue::Object(pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
+    FigValue::Object(pairs.into_iter().map(|(k, v)| (k.into(), v)).collect())
 }
 
 #[test]

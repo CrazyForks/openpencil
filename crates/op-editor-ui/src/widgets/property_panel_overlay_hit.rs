@@ -11,6 +11,115 @@ use crate::{Point2D, Rect};
 use jian_widgets::components::select::SelectHit;
 
 impl PropertyPanel {
+    fn point_in_design_popup_clip(&self, panel_rect: Rect, point: Point2D) -> bool {
+        !self.is_multi
+            && matches!(self.tab, op_editor_core::PropertyTab::Design)
+            && panel_rect.contains(point)
+            && point.y >= panel_rect.origin.y + crate::widgets::property_panel_inputs::TAB_HEIGHT
+    }
+
+    fn popup_action_rects(
+        &self,
+        panel_rect: Rect,
+    ) -> Vec<(crate::widgets::property_panel::PropertyPanelAction, Rect)> {
+        crate::widgets::property_panel_sections::action_button_rects_with_fill_picker(
+            self.scrolled_rect(panel_rect),
+            self.visible_sections(),
+            &self.snapshot.effects,
+            &self.snapshot.fills,
+            &self.snapshot.interactions,
+            self.fill_type_picker.open,
+            self.fill_type_picker_index,
+            self.font_picker.open,
+            self.font_weight_picker_open,
+            self.export_scale_picker_open,
+            self.export_format_picker_open,
+            self.padding_mode_popover_open,
+        )
+    }
+
+    /// Whether `point` falls inside either open Export scale / format
+    /// popup, including the popup chrome around its option rows.
+    pub fn export_picker_contains(&self, panel_rect: Rect, point: Point2D) -> bool {
+        use crate::widgets::property_panel::PropertyPanelAction as A;
+
+        if (!self.export_scale_picker_open && !self.export_format_picker_open)
+            || !self.point_in_design_popup_clip(panel_rect, point)
+        {
+            return false;
+        }
+        let actions = self.popup_action_rects(panel_rect);
+        let scale_contains = self.export_scale_picker_open
+            && crate::widgets::property_panel_export::export_picker_popup_rect(
+                actions.iter().filter_map(|(action, rect)| {
+                    matches!(action, A::SetExportScale(_)).then_some(*rect)
+                }),
+            )
+            .is_some_and(|popup| popup.contains(point));
+        let format_contains = self.export_format_picker_open
+            && crate::widgets::property_panel_export::export_picker_popup_rect(
+                actions.iter().filter_map(|(action, rect)| {
+                    matches!(action, A::SetExportFormat(_)).then_some(*rect)
+                }),
+            )
+            .is_some_and(|popup| popup.contains(point));
+        scale_contains || format_contains
+    }
+
+    /// Whether `point` falls inside the open font-weight popup,
+    /// including its vertical chrome padding.
+    pub fn font_weight_picker_contains(&self, panel_rect: Rect, point: Point2D) -> bool {
+        self.font_weight_picker_open
+            && self.point_in_design_popup_clip(panel_rect, point)
+            && crate::widgets::property_panel_text::font_weight_picker_rect(
+                self.scrolled_rect(panel_rect),
+                self.visible_sections(),
+            )
+            .is_some_and(|popup| popup.contains(point))
+    }
+
+    /// Whether `point` falls inside the open padding-mode gear popup,
+    /// including its title and padded chrome.
+    pub fn padding_mode_popover_contains(&self, panel_rect: Rect, point: Point2D) -> bool {
+        use crate::widgets::property_panel::PropertyPanelAction as A;
+
+        if !self.padding_mode_popover_open || !self.point_in_design_popup_clip(panel_rect, point) {
+            return false;
+        }
+        self.popup_action_rects(panel_rect)
+            .into_iter()
+            .find_map(|(action, gear)| {
+                matches!(action, A::TogglePaddingModePopover).then_some(gear)
+            })
+            .map(|gear| {
+                crate::widgets::property_panel_flex::padding_mode_popover_rect_from_gear(
+                    gear,
+                    panel_rect.size.x,
+                )
+            })
+            .is_some_and(|popup| popup.contains(point))
+    }
+
+    /// Whether `point` falls inside the open stroke-mode gear popup,
+    /// including its title and padded chrome.
+    pub fn stroke_mode_popover_contains(&self, panel_rect: Rect, point: Point2D) -> bool {
+        use crate::widgets::property_panel::PropertyPanelAction as A;
+
+        if !self.stroke_mode_popover_open || !self.point_in_design_popup_clip(panel_rect, point) {
+            return false;
+        }
+        self.popup_action_rects(panel_rect)
+            .into_iter()
+            .find_map(|(action, gear)| matches!(action, A::ToggleStrokeModePopover).then_some(gear))
+            .map(|gear| {
+                crate::widgets::property_panel_stroke::stroke_mode_popover_rect_from_gear(
+                    gear,
+                    panel_rect.size.x,
+                )
+            })
+            .is_some_and(|popup| popup.contains(point))
+    }
+
     pub fn fill_type_picker_hit(&self, panel_rect: Rect, point: Point2D) -> SelectHit {
         if !self.fill_type_picker.open {
             return SelectHit::Outside;

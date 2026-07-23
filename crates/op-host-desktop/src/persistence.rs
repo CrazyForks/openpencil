@@ -1,36 +1,40 @@
 //! Desktop `.pen` / `.op` Save and Open dialog flow.
 //!
-//! Headless serialization, editor metadata, legacy-file handling, and preference preservation
-//! live in [`op_host_services::doc_io`]. This module owns the native pickers, [`run_action`]
-//! routing, and error dialogs. `op_editor_core::EditorState` remains the source of truth: Save
-//! writes its canonical document and Open recreates it through the shared parser.
+//! Owns native pickers, [`run_action`] routing, and error dialogs.
 
 use std::path::PathBuf;
 
 use op_editor_core::EditorState;
 use op_host_native::WidgetHostNative;
+#[cfg(test)]
+use op_host_services::doc_io::active_page_bbox;
 use op_host_services::doc_io::{
-    active_page_bbox, load_editor_state, preserve_app_preferences, save_to_path,
-    set_file_name_display, ActionOutcome, ErrorKind,
+    load_editor_state_with_report, preserve_app_preferences, save_to_path, set_file_name_display,
+    ActionOutcome, ErrorKind,
 };
-
 /// Pop a Save dialog (rfd native) and write the current document to
 /// the chosen path. `Ok(Some(path))` on success, `Ok(None)` on user
 /// cancel, `Err` on IO / encode failure.
 pub fn save_as_dialog(state: &EditorState) -> Result<Option<PathBuf>, String> {
-    let path = rfd::FileDialog::new()
+    let Some(path) = pick_save_as_path(state) else {
+        return Ok(None);
+    };
+    save_to_path(state, &path)?;
+    Ok(Some(path))
+}
+
+/// Pop only the native Save-As picker. The ordinary desktop path uses this
+/// before handing serialization to [`crate::save_session`]; synchronous
+/// close/reload confirmation keeps using [`save_as_dialog`].
+pub fn pick_save_as_path(state: &EditorState) -> Option<PathBuf> {
+    rfd::FileDialog::new()
         .set_title(op_i18n::translate(
             state.editor_ui.locale,
             "dialog.pickerSaveTitle",
         ))
         .add_filter("OpenPencil", &["pen", "op"])
         .set_file_name("untitled.op")
-        .save_file();
-    let Some(path) = path else {
-        return Ok(None);
-    };
-    save_to_path(state, &path)?;
-    Ok(Some(path))
+        .save_file()
 }
 
 /// Cmd+S — save to `current_path` if known, else fall through to
@@ -78,7 +82,6 @@ fn viewport_size_for_window(window: Option<&winit::window::Window>) -> (f32, f32
 fn fit_loaded_document(host: &mut WidgetHostNative, window: Option<&winit::window::Window>) {
     let (vw, vh) = viewport_size_for_window(window);
     host.fit_content_to_viewport(vw, vh);
-    host.editor_state_mut().mark_saved_revision();
     host.mark_editor_state_dirty();
 }
 
@@ -109,28 +112,32 @@ pub fn handle_save_as(
     }
 }
 
-/// Replace the host's `EditorState` with one loaded from `path`.
-fn load_into_host(host: &mut WidgetHostNative, path: &std::path::Path) -> Result<(), String> {
+fn load_into_host(host: &mut WidgetHostNative, path: &std::path::Path) -> Result<PathBuf, String> {
+    let loaded_source_state = crate::figma_import_session::capture_output_state(path)?;
     let locale = host.editor_state().editor_ui.locale;
-    let mut state = load_editor_state(path, locale)?;
+    let loaded = load_editor_state_with_report(path, locale);
+    crate::heap_pressure::schedule_relief("document load parse");
+    let loaded = loaded?;
+    let mut state = loaded.state;
     preserve_app_preferences(host.editor_state(), &mut state);
-    set_file_name_display(&mut state, Some(path));
+    let bound_path = crate::legacy_op_upgrade::prompt_and_save(
+        &mut state,
+        path,
+        &loaded.report,
+        loaded_source_state,
+    )?;
+    set_file_name_display(&mut state, Some(&bound_path));
     state.clear_selection();
-    let bb = active_page_bbox(&state);
     eprintln!(
-        "[open] {} top-level nodes; content bbox {:?}",
-        state.doc.children.len(),
-        bb
+        "[open] {} active-page top-level nodes",
+        state.active_children().len()
     );
     host.replace_editor_state(state);
     host.editor_state_mut().mark_saved_revision();
-    // The loaded document restarts at revision 0 / page 0, so its LayerPanel
-    // row-model-cache key aliases the replaced document's — rotate the owner so
-    // the next paint rebuilds instead of serving the old document's rows.
     host.force_rotate_layer_panel_owner();
     host.mark_editor_state_dirty();
     host.arm_missing_fonts_detection();
-    Ok(())
+    Ok(bound_path)
 }
 
 /// Cmd+O — pop the Open dialog and replace the current document.
@@ -151,10 +158,10 @@ pub fn handle_open(
         None => return false,
     };
     match load_into_host(host, &path) {
-        Ok(()) => {
+        Ok(bound_path) => {
             fit_loaded_document(host, window);
-            crate::settings_io::touch_recent(host, &path);
-            *current_path = Some(path);
+            crate::settings_io::touch_recent(host, &bound_path);
+            *current_path = Some(bound_path);
             refresh_title(current_path, window);
             true
         }
@@ -166,12 +173,7 @@ pub fn handle_open(
     }
 }
 
-/// Open `path` directly — no dialog. Backs drag-and-drop drops and
-/// the file-association launch path. Replaces the host's document,
-/// records the file in recents and refreshes the window title.
-/// Returns `true` when the document loaded (so the caller can
-/// request a redraw); a load failure pops the error dialog and
-/// leaves the current document untouched.
+/// Open a drag/drop or file-association path without a picker.
 pub fn open_path(
     host: &mut WidgetHostNative,
     path: PathBuf,
@@ -179,10 +181,10 @@ pub fn open_path(
     window: Option<&winit::window::Window>,
 ) -> bool {
     match load_into_host(host, &path) {
-        Ok(()) => {
+        Ok(bound_path) => {
             fit_loaded_document(host, window);
-            crate::settings_io::touch_recent(host, &path);
-            *current_path = Some(path);
+            crate::settings_io::touch_recent(host, &bound_path);
+            *current_path = Some(bound_path);
             refresh_title(current_path, window);
             true
         }
@@ -201,7 +203,6 @@ fn export_editor_state_to_path(state: &EditorState, path: &std::path::Path) -> R
 
     let fmt = state.editor_ui.export_format;
     let scale = state.editor_ui.export_scale;
-    let scene = op_pen_loader::editor_state_to_layout_scene(state);
     // A single selected node scopes raster and SVG exports to that
     // subtree. PDF remains page-level.
     let single_node = if state.selection_count() == 1 && state.selection.anchor.is_real() {
@@ -209,13 +210,17 @@ fn export_editor_state_to_path(state: &EditorState, path: &std::path::Path) -> R
     } else {
         None
     };
-    let raster = |rf: op_host_services::export::RasterFormat| -> Result<(), String> {
-        match single_node {
-            Some(id) => op_host_services::export::export_node_raster(&scene, id, path, rf, scale),
-            None => op_host_services::export::export_raster(&scene, path, rf, scale),
-        }
-    };
+    if fmt == Fmt::Pdf {
+        // PDF is intentionally multi-page; keep the full builder for it.
+        let scene = op_pen_loader::editor_state_to_layout_scene(state);
+        return op_host_services::export_pdf::export_pdf(&scene, path);
+    }
 
+    let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
+    let raster = |rf: op_host_services::export::RasterFormat| match single_node {
+        Some(id) => op_host_services::export::export_node_raster(&scene, id, path, rf, scale),
+        None => op_host_services::export::export_raster(&scene, path, rf, scale),
+    };
     match fmt {
         Fmt::Png => raster(op_host_services::export::RasterFormat::Png),
         Fmt::Jpeg => raster(op_host_services::export::RasterFormat::Jpeg),
@@ -224,7 +229,7 @@ fn export_editor_state_to_path(state: &EditorState, path: &std::path::Path) -> R
             Some(id) => op_host_services::export::export_node_svg(&scene, id, path),
             None => op_host_services::export::export_svg(&scene, path),
         },
-        Fmt::Pdf => op_host_services::export_pdf::export_pdf(&scene, path),
+        Fmt::Pdf => unreachable!("PDF returned before active-page scene construction"),
     }
 }
 
@@ -304,10 +309,10 @@ pub fn run_action(
             };
             let path = std::path::PathBuf::from(&entry.path);
             match load_into_host(host, &path) {
-                Ok(()) => {
+                Ok(bound_path) => {
                     fit_loaded_document(host, window);
-                    crate::settings_io::touch_recent(host, &path);
-                    *current_path = Some(path);
+                    crate::settings_io::touch_recent(host, &bound_path);
+                    *current_path = Some(bound_path);
                     refresh_title(current_path, window);
                     ActionOutcome::Saved
                 }
@@ -336,7 +341,7 @@ pub fn run_action(
                     host.editor_state().editor_ui.locale,
                     "dialog.pickerOpenTitle",
                 ))
-                .add_filter("HTML", &["html", "htm"])
+                .add_filter("HTML / ZIP", &["html", "htm", "zip"])
                 .pick_file()
             {
                 Some(p) => p,
@@ -366,6 +371,7 @@ pub fn run_action(
             // when it lands.
             ActionOutcome::FigmaImportStarted(path)
         }
+        FileAction::FinishFigmaImport(selection) => ActionOutcome::FigmaImportSelection(selection),
         FileAction::ImportImageOrSvg => {
             crate::persistence_image::handle_import_image_or_svg(host);
             ActionOutcome::Noop
@@ -382,7 +388,7 @@ pub fn run_action(
 }
 
 // `import_figma_into_host` (synchronous parse) was retired in favour
-// of `figma_import_session::spawn`, which moves the parse to a worker
+// of `figma_import_session::spawn_approved`, which moves the parse to a worker
 // thread and pumps the result back through a channel each frame.
 
 fn refresh_title(current_path: &Option<PathBuf>, window: Option<&winit::window::Window>) {
@@ -492,9 +498,9 @@ mod tests {
             Some(jian_ops_schema::sizing::SizingBehavior::Number(800.0))
         ));
         let v = host.editor_state().viewport;
-        assert!((v.zoom - 0.8933333).abs() < 1e-3, "zoom {}", v.zoom);
+        assert!((v.zoom - 0.68).abs() < 1e-3, "zoom {}", v.zoom);
         assert!((v.pan_x - 64.0).abs() < 1e-2, "pan_x {}", v.pan_x);
-        assert!((v.pan_y - 72.66669).abs() < 1e-2, "pan_y {}", v.pan_y);
+        assert!((v.pan_y - 158.0).abs() < 1e-2, "pan_y {}", v.pan_y);
     }
 
     #[test]

@@ -264,11 +264,9 @@ fn resolved_required_root_height(state: &EditorState, candidate: &ReflowCandidat
     // cannot distinguish ordinary flow children from absolute overlays. If the
     // active page cannot resolve the expected root/nav pair, leave the document
     // untouched instead of guessing a larger root.
-    let scene = op_pen_loader::editor_state_to_layout_scene(state);
+    let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
     scene
-        .pages
-        .get(state.ui.active_page_index)
-        .or_else(|| scene.pages.first())
+        .active_page()
         .and_then(|page| find_scene_node(&page.children, &candidate.root_id))
         .and_then(|root| {
             let nav = root

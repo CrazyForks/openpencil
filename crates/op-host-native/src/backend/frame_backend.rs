@@ -77,6 +77,14 @@ impl<'a> RenderBackend for NativeFrameBackend<'a> {
             .push_composite_layer(self.canvas, bounds, opacity, mode);
     }
 
+    fn supports_pixel_masks(&self) -> bool {
+        true
+    }
+
+    fn push_mask_source_layer(&mut self, luminance: bool) {
+        self.inner.push_mask_source_layer(self.canvas, luminance);
+    }
+
     fn push_blend_layer(&mut self, mode: ImageBlendMode) {
         self.inner.push_blend_layer(self.canvas, mode);
     }
@@ -439,6 +447,38 @@ impl<'a> RenderBackend for NativeFrameBackend<'a> {
             transform,
             blend_mode,
         );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_image_with_options_transform_blend_and_tile_scale(
+        &mut self,
+        rect: Rect,
+        image_id: u64,
+        encoded: &[u8],
+        mode: ImageDrawMode,
+        adjustments: ImageAdjustments,
+        opacity: f32,
+        corner_radius: f32,
+        transform: Option<[f32; 6]>,
+        blend_mode: ImageBlendMode,
+        original_size: Option<[f32; 2]>,
+        tile_scale: f32,
+    ) {
+        self.inner
+            .draw_image_with_options_transform_blend_and_tile_scale(
+                self.canvas,
+                rect,
+                image_id,
+                encoded,
+                mode,
+                adjustments,
+                opacity,
+                corner_radius,
+                transform,
+                blend_mode,
+                original_size,
+                tile_scale,
+            );
     }
 
     fn fill_round_rect_linear_gradient(

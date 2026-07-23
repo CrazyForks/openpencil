@@ -440,7 +440,7 @@ fn build_gl_surface(
     fboid: u32,
 ) -> SharedSkiaResult<skia_safe::Surface> {
     use skia_safe::gpu::{backend_render_targets, gl, SurfaceOrigin};
-    use skia_safe::{ColorType, Surface};
+    use skia_safe::{ColorSpace, ColorType, Surface};
 
     let fb_info = gl::FramebufferInfo {
         fboid,
@@ -462,7 +462,11 @@ fn build_gl_surface(
         &backend_rt,
         SurfaceOrigin::BottomLeft,
         ColorType::RGBA8888,
-        None,
+        // Canonical `.op` colours and the native paint API are sRGB. Leaving
+        // the destination untagged makes Skia's colour-management contract
+        // ambiguous and, on wide-gamut macOS displays, lets sRGB channel
+        // values reach a Display-P3 compositor unchanged.
+        ColorSpace::new_srgb(),
         None,
     )
     .ok_or_else(|| {

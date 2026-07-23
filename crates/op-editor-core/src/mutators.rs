@@ -149,29 +149,17 @@ impl EditorState {
         out
     }
 
-    /// Right-rail PropertyPanel visibility gate. Visible when at least
-    /// one id in the selection set resolves on the active page, OR when
-    /// the Code tab is active — the Code panel is selection-independent
-    /// (the TS code-panel falls back to the active page's children), so
-    /// clearing the selection must not collapse the rail and strand the
-    /// tab. Otherwise a faithful port of shell-core's
-    /// `Document::property_panel_visible`.
+    /// Right-rail PropertyPanel visibility gate. Both tabs always have a
+    /// meaningful fallback: Design exposes active-page properties whenever
+    /// the selection is empty or stale, and Code uses the active page's
+    /// children. Keep this consistent with `PropertyPanel::for_selection_at`
+    /// so canvas geometry never disagrees with the panel that gets painted.
     pub fn property_panel_visible(&self) -> bool {
-        if self.editor_ui.property_tab == crate::PropertyTab::Code {
-            return true;
-        }
-        if self.selection.set.is_empty() {
-            return false;
-        }
-        let children = self.active_children();
-        self.selection.set.iter().any(|id| {
-            find_node(children, id).is_some()
-                || crate::instance_override::split_instance_child_anchor(id, &self.doc).is_some()
-        })
+        true
     }
 
-    /// True when any widget occupies the right rail: currently only
-    /// the PropertyPanel, gated on selection.
+    /// True when any widget occupies the right rail: currently the
+    /// selection inspector or active-page inspector.
     pub fn right_rail_visible(&self) -> bool {
         self.property_panel_visible()
     }

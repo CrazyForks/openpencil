@@ -10,8 +10,8 @@ use crate::widgets::icons::{draw_icon, Icon};
 use crate::widgets::property_panel::NodeSnapshot;
 use crate::widgets::property_panel_color_variables::paint_color_variable_button;
 use crate::widgets::property_panel_inputs::{
-    format_color_hex, COLOR_VARIABLE_BUTTON_W, COLOR_VARIABLE_GAP, INPUT_HEIGHT, INPUT_RADIUS,
-    PAD_X, SECTION_HEADER_HEIGHT,
+    COLOR_VARIABLE_BUTTON_W, COLOR_VARIABLE_GAP, INPUT_HEIGHT, INPUT_RADIUS, PAD_X,
+    SECTION_HEADER_HEIGHT,
 };
 use crate::widgets::property_panel_sections::EditContext;
 use crate::widgets::PaintCx;
@@ -33,7 +33,10 @@ pub(crate) fn paint_fill_solid_body(
 ) {
     let hex_focus = PropertyFocus::FillHex(fill_index);
     let usable_w = width - PAD_X * 2.0;
-    let hex_owned = format_color_hex(fill);
+    // A canonical solid may carry alpha in its colour (`#RRGGBBAA`) as well
+    // as in the fill body's opacity. Surface all eight digits so merely
+    // focusing and blurring an imported/legacy colour cannot make it opaque.
+    let hex_owned = crate::util::color_to_hex_with_alpha(fill);
     let hex_focused = edit.focus == Some(hex_focus);
     let variable_text = variable_ref.map(|name| format!("${name}"));
     let hex_text = variable_text

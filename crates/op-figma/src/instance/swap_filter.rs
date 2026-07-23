@@ -22,9 +22,46 @@ use crate::tree::TreeNode;
 /// is one cluster or the best doesn't clearly beat the rest.
 pub(crate) fn filter_swap_stale_derived(
     derived: &[FigValue],
+    base_symbol_node: Option<&TreeNode>,
     symbol_node: &TreeNode,
     instance_size: Option<FigVec2>,
 ) -> Vec<FigValue> {
+    // Prefer exact component identity before the size heuristic. Figma keeps
+    // the old component's real GUID entries after a swap; when old and new
+    // masters are both 32 px layout blocks, size scoring cannot distinguish
+    // them. Exact base-subtree GUIDs are safe to remove, while GUIDs shared
+    // with the target remain protected for defensive compatibility.
+    let mut filtered = derived.to_vec();
+    if let Some(base_symbol_node) = base_symbol_node {
+        let mut base_nodes = Vec::new();
+        flatten_dfs(base_symbol_node, &mut base_nodes);
+        let base_guids: std::collections::HashSet<String> = base_nodes
+            .iter()
+            .filter_map(|node| node.figma.get("guid").and_then(crate::tree::guid_to_string))
+            .collect();
+        let mut target_nodes = Vec::new();
+        flatten_dfs(symbol_node, &mut target_nodes);
+        let target_guids: std::collections::HashSet<String> = target_nodes
+            .iter()
+            .filter_map(|node| node.figma.get("guid").and_then(crate::tree::guid_to_string))
+            .collect();
+        filtered.retain(|entry| {
+            let Some(guids) = entry
+                .get("guidPath")
+                .and_then(|path| path.get_array("guids"))
+            else {
+                return true;
+            };
+            if guids.len() != 1 {
+                return true;
+            }
+            let Some(guid) = guids.first().and_then(crate::tree::guid_to_string) else {
+                return true;
+            };
+            !base_guids.contains(&guid) || target_guids.contains(&guid)
+        });
+    }
+
     // Candidate node sizes (subtree minus root) + instance ratio.
     let mut flat: Vec<&TreeNode> = Vec::new();
     flatten_dfs(symbol_node, &mut flat);
@@ -33,7 +70,7 @@ pub(crate) fn filter_swap_stale_derived(
         .filter_map(|n| n.figma.get("size").and_then(FigVec2::from_value))
         .collect();
     if candidates.is_empty() {
-        return derived.to_vec();
+        return filtered;
     }
     let (rx, ry) = match (
         instance_size,
@@ -51,7 +88,7 @@ pub(crate) fn filter_swap_stale_derived(
         size: FigVec2,
     }
     let mut singles: Vec<SingleEntry> = Vec::new();
-    for (idx, e) in derived.iter().enumerate() {
+    for (idx, e) in filtered.iter().enumerate() {
         let guids = e.get("guidPath").and_then(|p| p.get_array("guids"));
         let Some(guids) = guids else { continue };
         if guids.len() != 1 {
@@ -70,7 +107,7 @@ pub(crate) fn filter_swap_stale_derived(
         });
     }
     if singles.len() < 2 {
-        return derived.to_vec();
+        return filtered;
     }
 
     // Cluster by contiguous localID (gap > 16 starts a new cluster).
@@ -83,7 +120,7 @@ pub(crate) fn filter_swap_stale_derived(
         }
     }
     if clusters.len() < 2 {
-        return derived.to_vec();
+        return filtered;
     }
 
     // Fit score: mean over the cluster of the best near-match (0..1,
@@ -115,7 +152,7 @@ pub(crate) fn filter_swap_stale_derived(
     // Only prune when the winner clearly fits better — a swapped-in
     // cluster fits nearly perfectly while the stale one mostly doesn't.
     if best_score < 0.6 || best_score - second_score < 0.2 {
-        return derived.to_vec();
+        return filtered;
     }
     let keep_lids: std::collections::HashSet<u32> =
         clusters[best_i].iter().map(|s| s.lid).collect();
@@ -124,7 +161,7 @@ pub(crate) fn filter_swap_stale_derived(
         .filter(|s| !keep_lids.contains(&s.lid))
         .map(|s| s.idx)
         .collect();
-    derived
+    filtered
         .iter()
         .enumerate()
         .filter(|(i, _)| !drop_idx.contains(i))

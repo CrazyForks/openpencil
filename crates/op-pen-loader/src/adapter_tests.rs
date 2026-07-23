@@ -41,6 +41,52 @@ fn preserving_geometry_keeps_authored_nested_positions() {
 }
 
 #[test]
+fn path_mask_marker_reaches_payload() {
+    let src = r#"{
+      "version":"1.0.0","pages":[{"id":"p","name":"P","children":[
+        {"type":"path","id":"mask","width":10,"height":10,
+         "d":"M0 0H10V10H0Z","mask":true}
+      ]}],"children":[]
+    }"#;
+    let loaded = load(src);
+    let mask = &loaded.payload.pages[0].children[0];
+    assert!(mask.is_mask);
+    assert_eq!(mask.mask_type, Some(jian_ops_schema::node::MaskType::Alpha));
+}
+
+#[test]
+fn shared_mask_type_reaches_payload_on_a_frame() {
+    let src = r#"{
+      "version":"1.0.0","pages":[{"id":"p","name":"P","children":[
+        {"type":"frame","id":"mask","width":10,"height":10,
+         "maskType":"luminance","children":[]}
+      ]}],"children":[]
+    }"#;
+    let loaded = load(src);
+    let mask = &loaded.payload.pages[0].children[0];
+    assert!(mask.is_mask);
+    assert_eq!(
+        mask.mask_type,
+        Some(jian_ops_schema::node::MaskType::Luminance)
+    );
+}
+
+#[test]
+fn shared_node_blend_mode_reaches_payload() {
+    let src = r#"{
+      "version":"1.0.0","pages":[{"id":"p","name":"P","children":[
+        {"type":"frame","id":"blend","width":10,"height":10,
+         "blendMode":"soft_light","children":[]}
+      ]}],"children":[]
+    }"#;
+    let loaded = load(src);
+    assert_eq!(
+        loaded.payload.pages[0].children[0].blend_mode,
+        Some(jian_ops_schema::style::BlendMode::SoftLight)
+    );
+}
+
+#[test]
 fn minimal_empty_doc() {
     let r = load(r#"{"version":"1.0.0","children":[]}"#);
     assert_eq!(r.payload.pages.len(), 1);
@@ -88,6 +134,30 @@ fn image_fill_payload_carries_fit_mode() {
     let n = &r.payload.pages[0].children[0];
     assert_eq!(n.image_src.as_deref(), Some("data:image/png;base64,AA=="));
     assert_eq!(n.image_fit.as_deref(), Some("tile"));
+    assert_eq!(n.image_tile_scale, None);
+}
+
+#[test]
+fn image_fill_payload_carries_only_positive_tile_scale() {
+    let load_scale = |scale: &str| {
+        let src = format!(
+            r#"{{
+              "version":"1.0.0","pages":[{{"id":"p","name":"P","children":[{{
+                "type":"rectangle","id":"r","width":220,"height":220,
+                "fill":[{{"type":"image","url":"data:image/png;base64,AA==",
+                  "mode":"tile","originalSize":{{"width":4096,"height":2048}},
+                  "tileScale":{scale}}}]
+              }}]}}],"children":[]
+            }}"#
+        );
+        let payload = &load(&src).payload.pages[0].children[0];
+        assert_eq!(payload.image_original_size, Some([4096.0, 2048.0]));
+        payload.image_tile_scale
+    };
+
+    assert_eq!(load_scale("0.38618907"), Some(0.38618907));
+    assert_eq!(load_scale("0"), None);
+    assert_eq!(load_scale("-2"), None);
 }
 
 #[test]
@@ -627,9 +697,9 @@ fn pencil_demo_op_fixture_loads() {
 }
 
 #[test]
-fn clip_content_threads_from_schema_and_root_frames_always_clip() {
-    // Root frame (no authored clipContent) clips like an artboard;
-    // nested containers clip only when clipContent:true is authored.
+fn clip_content_threads_from_schema_and_only_legacy_root_frames_clip() {
+    // Legacy root frames (no authored clipContent) clip like artboards, while
+    // an explicit false remains open; nested containers retain authored state.
     let src = r##"{
       "version":"1.0.0",
       "pages":[{
@@ -641,13 +711,20 @@ fn clip_content_threads_from_schema_and_root_frames_always_clip() {
             {"type":"frame","id":"open","width":100,"height":100},
             {"type":"group","id":"g","clipContent":true,"children":[]}
           ]
-        }]
+        },
+        {"type":"frame","id":"open-root","width":100,"height":100,
+         "clipContent":false,"children":[]}
+        ]
       }],
       "children":[]
     }"##;
     let r = load(src);
     let root = &r.payload.pages[0].children[0];
     assert!(root.clip_content, "root frame clips implicitly (TS rule)");
+    assert!(
+        !r.payload.pages[0].children[1].clip_content,
+        "explicitly open root frame must not be rewritten as legacy"
+    );
     assert!(root.children[0].clip_content, "authored clipContent:true");
     assert!(!root.children[1].clip_content, "nested frame defaults open");
     assert!(

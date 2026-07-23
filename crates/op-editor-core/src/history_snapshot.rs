@@ -33,6 +33,7 @@
 //! affected top-level entry — cloning it away from any sibling snapshot
 //! that shares it, so no other history state is contaminated.
 
+use crate::component_backing::DocumentComponentBacking;
 use crate::components::{Component, ComponentLibrary};
 use crate::node_id::NodeId;
 use crate::pen_node_ext::PenNodeExt;
@@ -40,6 +41,8 @@ use jian_ops_schema::node::PenNode;
 use jian_ops_schema::page::PenPage;
 use jian_ops_schema::variable::VariableDefinition;
 use jian_ops_schema::PenDocument;
+use serde::ser::{SerializeMap, SerializeSeq};
+use serde::{Serialize, Serializer};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
@@ -161,10 +164,115 @@ impl SharedDoc {
     }
 }
 
+impl jian_ops_schema::image_table::SaveImageOrder for SharedDoc {
+    fn visit_save_image_sources(&self, visit: &mut dyn FnMut(&jian_ops_schema::node::ImageSrc)) {
+        jian_ops_schema::image_table::visit_legacy_node_roots(
+            self.root_children.iter().map(Arc::as_ref),
+            visit,
+        );
+        for page in self.page_children.iter().rev() {
+            jian_ops_schema::image_table::visit_legacy_node_roots(
+                page.iter().map(Arc::as_ref),
+                visit,
+            );
+        }
+    }
+}
+
+/// Serialize the shared snapshot directly as the canonical `PenDocument`
+/// wire shape. This lets background saves keep unchanged top-level subtrees
+/// behind `Arc` instead of materializing a second owned document first.
+impl Serialize for SharedDoc {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let doc = &self.skeleton;
+        let mut map = serializer.serialize_map(None)?;
+        map.serialize_entry("version", &doc.version)?;
+        serialize_option(&mut map, "name", &doc.name)?;
+        serialize_option(&mut map, "themes", &doc.themes)?;
+        serialize_option(&mut map, "variables", &doc.variables)?;
+        if doc.pages.is_some() {
+            map.serialize_entry("pages", &SharedPages(self))?;
+        }
+        map.serialize_entry("children", &SharedNodes(&self.root_children))?;
+        serialize_option(&mut map, "formatVersion", &doc.format_version)?;
+        serialize_option(&mut map, "responsive", &doc.responsive)?;
+        serialize_option(&mut map, "id", &doc.id)?;
+        serialize_option(&mut map, "app", &doc.app)?;
+        serialize_option(&mut map, "routes", &doc.routes)?;
+        serialize_option(&mut map, "state", &doc.state)?;
+        serialize_option(&mut map, "lifecycle", &doc.lifecycle)?;
+        serialize_option(&mut map, "logicModules", &doc.logic_modules)?;
+        serialize_option(&mut map, "designMd", &doc.design_md)?;
+        serialize_option(&mut map, "conversion", &doc.conversion)?;
+        map.end()
+    }
+}
+
+fn serialize_option<M, T>(map: &mut M, key: &'static str, value: &Option<T>) -> Result<(), M::Error>
+where
+    M: SerializeMap,
+    T: Serialize,
+{
+    if let Some(value) = value {
+        map.serialize_entry(key, value)?;
+    }
+    Ok(())
+}
+
+struct SharedNodes<'a>(&'a [Arc<PenNode>]);
+
+impl Serialize for SharedNodes<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
+        for node in self.0 {
+            seq.serialize_element(node.as_ref())?;
+        }
+        seq.end()
+    }
+}
+
+struct SharedPages<'a>(&'a SharedDoc);
+
+impl Serialize for SharedPages<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let pages = self.0.skeleton.pages.as_deref().unwrap_or_default();
+        let mut seq = serializer.serialize_seq(Some(pages.len()))?;
+        for (index, page) in pages.iter().enumerate() {
+            let children = self
+                .0
+                .page_children
+                .get(index)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            seq.serialize_element(&SharedPage { page, children })?;
+        }
+        seq.end()
+    }
+}
+
+struct SharedPage<'a> {
+    page: &'a PenPage,
+    children: &'a [Arc<PenNode>],
+}
+
+impl Serialize for SharedPage<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut map = serializer.serialize_map(None)?;
+        map.serialize_entry("id", &self.page.id)?;
+        map.serialize_entry("name", &self.page.name)?;
+        map.serialize_entry("children", &SharedNodes(self.children))?;
+        serialize_option(&mut map, "backgroundColor", &self.page.background_color)?;
+        serialize_option(&mut map, "state", &self.page.state)?;
+        serialize_option(&mut map, "lifecycle", &self.page.lifecycle)?;
+        map.end()
+    }
+}
+
 /// Component prototypes stored in a snapshot, shared by `Arc`.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct SharedComponents {
     components: Vec<Arc<Component>>,
+    document_backing: DocumentComponentBacking,
 }
 
 impl SharedComponents {
@@ -173,14 +281,16 @@ impl SharedComponents {
     pub fn capture(lib: &ComponentLibrary, anchor: Option<&SharedComponents>) -> Self {
         SharedComponents {
             components: share_components(&lib.components, anchor.map(|a| a.components.as_slice())),
+            document_backing: lib.document_backing(),
         }
     }
 
     /// Rebuild an owned [`ComponentLibrary`].
     pub fn materialize(&self) -> ComponentLibrary {
-        ComponentLibrary {
-            components: self.components.iter().map(|a| a.as_ref().clone()).collect(),
-        }
+        let mut library = ComponentLibrary::default();
+        library.components = self.components.iter().map(|a| a.as_ref().clone()).collect();
+        library.restore_document_backing(Arc::clone(&self.document_backing));
+        library
     }
 
     /// Shared prototypes. Test / assertion hook for `ptr_eq` checks.
@@ -228,6 +338,7 @@ fn strip_page_children(page: &PenPage) -> PenPage {
     PenPage {
         id: page.id.clone(),
         name: page.name.clone(),
+        background_color: page.background_color.clone(),
         state: page.state.clone(),
         lifecycle: page.lifecycle.clone(),
         children: Vec::new(),

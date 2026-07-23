@@ -23,9 +23,8 @@
 use super::WidgetHost;
 use op_editor_ui::accessibility::{assemble_tree_update, PlacedWidget};
 use op_editor_ui::widgets::{
-    AIChatPlaceholder, CanvasViewport, LayerPanel, LayoutCx, PropertyPanel, StatusBar, Toolbar,
-    Widget, WidgetId, ROOT_WIDGET_ID, STATUS_BAR_HEIGHT, STATUS_BAR_WIDTH, TOOLBAR_WIDTH,
-    TOP_BAR_HEIGHT,
+    AIChatPlaceholder, CanvasViewport, LayoutCx, PropertyPanel, StatusBar, Toolbar, Widget,
+    WidgetId, ROOT_WIDGET_ID, STATUS_BAR_HEIGHT, STATUS_BAR_WIDTH, TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
 };
 use op_editor_ui::{Point2D, Rect};
 
@@ -76,7 +75,7 @@ impl WidgetHost {
         let top_bar_rect = self.top_bar_rect(viewport_width);
 
         // 2. LayerPanel — left rail, only when the sidebar is open.
-        let layer_panel = LayerPanel::from_editor(&self.editor_state);
+        let layer_panel = self.layer_panel();
         let layer_panel_rect = self.layer_panel_rect(viewport_height);
 
         // 3. CanvasViewport — middle band (sidebar / right-rail aware).

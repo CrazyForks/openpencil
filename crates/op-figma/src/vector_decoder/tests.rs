@@ -15,7 +15,7 @@ const REAL_VN_BLOB_B: &[u8] = &[
 ];
 
 fn obj(pairs: Vec<(&str, FigValue)>) -> FigValue {
-    FigValue::Object(pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
+    FigValue::Object(pairs.into_iter().map(|(k, v)| (k.into(), v)).collect())
 }
 
 fn push_f32(buf: &mut Vec<u8>, v: f32) {
@@ -144,6 +144,36 @@ fn fill_geometry_winding_rule_is_exposed_on_decode_result() {
             .expect("geometry decodes");
         assert_eq!(decoded.fill_rule, expected);
     }
+}
+
+#[test]
+fn stroke_geometry_winding_rule_is_exposed_when_stroke_outline_is_selected() {
+    let mut blob = Vec::new();
+    blob.push(0x01);
+    push_f32(&mut blob, 0.0);
+    push_f32(&mut blob, 0.0);
+    blob.push(0x02);
+    push_f32(&mut blob, 8.0);
+    push_f32(&mut blob, 0.0);
+    let node = obj(vec![
+        ("fillPaints", FigValue::Array(Vec::new())),
+        (
+            "strokePaints",
+            FigValue::Array(vec![obj(vec![("type", FigValue::Str("SOLID".into()))])]),
+        ),
+        (
+            "strokeGeometry",
+            FigValue::Array(vec![obj(vec![
+                ("commandsBlob", FigValue::Uint(0)),
+                ("windingRule", FigValue::Str("ODD".into())),
+            ])]),
+        ),
+    ]);
+
+    let decoded = decode_figma_vector_path(&node, &[BlobOrString::Bytes(blob)])
+        .expect("stroke geometry decodes");
+    assert!(decoded.from_stroke_geometry);
+    assert_eq!(decoded.fill_rule, Some(PathFillRule::Evenodd));
 }
 
 fn vector_network_node(blob: &[u8]) -> (FigValue, Vec<BlobOrString>) {

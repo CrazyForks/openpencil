@@ -60,13 +60,12 @@ impl WidgetHost {
     /// Zoom + pan so the active page's content is framed within the canvas.
     pub(in crate::widget_host) fn zoom_to_fit(&mut self, viewport_w: f32, viewport_h: f32) {
         self.refresh_layout_scene();
-        let Some(content) = self.layout_scene.content_bounds() else {
-            return;
-        };
-        let (_l, _t, canvas_w, canvas_h) = self.canvas_region(viewport_w, viewport_h);
-        self.editor_state
-            .viewport
-            .fit_to_with_max_zoom(content, canvas_w, canvas_h, 64.0, 1.0);
+        if let Some(content) = self.layout_scene.content_bounds() {
+            let (_l, _t, canvas_w, canvas_h) = self.canvas_region(viewport_w, viewport_h);
+            self.editor_state
+                .viewport
+                .fit_to_with_max_zoom(content, canvas_w, canvas_h, 64.0, 1.0);
+        }
         self.mark_dirty();
     }
 
@@ -133,9 +132,20 @@ impl WidgetHost {
         let ui = &self.editor_state.editor_ui;
         (ui.shape_picker.open && (self.shape_picker_rect(viewport_w, viewport_h)).contains(p))
             || (ui.locale_picker.open && (self.locale_picker_rect(viewport_w)).contains(p))
+            || (ui.import_menu_open && (self.import_menu_rect(viewport_w, viewport_h)).contains(p))
             || self
                 .file_menu_rect(viewport_w)
                 .is_some_and(|r| (r).contains(p))
+    }
+
+    pub(in crate::widget_host) fn import_menu_rect(
+        &self,
+        viewport_w: f32,
+        viewport_h: f32,
+    ) -> Rect {
+        use op_editor_ui::widgets::ImportMenu;
+        let (anchor, viewport) = self.import_menu_anchor(viewport_w, viewport_h);
+        ImportMenu::for_editor_ui(&self.editor_state.editor_ui).popup_rect(anchor, viewport)
     }
 
     /// Floating Design-MD panel rect — `None` when the panel is

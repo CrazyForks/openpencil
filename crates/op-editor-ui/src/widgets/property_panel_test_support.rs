@@ -23,9 +23,13 @@ pub(super) fn state_from(src: &str) -> EditorState {
 pub(super) fn visible_for(panel: &PropertyPanel) -> sections::VisibleSections {
     let caps = SectionCapabilities::for_kind(&panel.snapshot.kind_variant);
     sections::VisibleSections {
-        create_component: caps.create_component && panel.snapshot.can_create_component,
+        create_component: panel.snapshot.is_instance
+            || (caps.create_component && panel.snapshot.can_create_component),
         component_button: if panel.snapshot.is_instance {
-            crate::widgets::property_panel_visibility::ComponentButtonState::Instance
+            crate::widgets::property_panel_visibility::ComponentButtonState::Instance {
+                component_count: panel.instance_component_options.len(),
+                picker_open: panel.instance_component_picker_open,
+            }
         } else if panel.snapshot.is_reusable {
             crate::widgets::property_panel_visibility::ComponentButtonState::DetachComponent
         } else {
@@ -54,6 +58,7 @@ pub(super) fn visible_for(panel: &PropertyPanel) -> sections::VisibleSections {
         image: caps.image && panel.snapshot.is_image_node,
         image_warning: false,
         opacity: caps.opacity,
+        compositing: !panel.is_multi,
         corner_radius: panel.snapshot.has_corner_radius,
         corner_per_corner: panel.snapshot.supports_per_corner,
         corner_expand: panel.corner_expand_open,

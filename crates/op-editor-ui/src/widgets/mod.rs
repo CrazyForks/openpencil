@@ -48,6 +48,7 @@ pub mod path_anchor_context_menu;
 pub mod property_panel;
 pub mod property_panel_action;
 pub mod property_panel_code;
+pub mod property_panel_compositing;
 pub mod property_panel_corner;
 pub mod property_panel_effects;
 pub mod property_panel_export;
@@ -74,6 +75,7 @@ pub mod property_panel_image_popovers;
 mod property_panel_image_preview;
 pub mod property_panel_input_layout;
 pub mod property_panel_inputs;
+pub mod property_panel_instance;
 #[cfg(test)]
 mod property_panel_instance_tests;
 pub mod property_panel_interactions;
@@ -82,6 +84,7 @@ pub mod property_panel_layout;
 #[cfg(test)]
 mod property_panel_multi_select_tests;
 mod property_panel_overlay_hit;
+mod property_panel_page;
 #[cfg(test)]
 mod property_panel_press_tests;
 pub mod property_panel_sections;
@@ -133,6 +136,7 @@ mod canvas_path_overlay;
 mod canvas_selection_overlay;
 pub mod canvas_text_edit;
 pub mod canvas_viewport;
+mod canvas_viewport_background;
 mod canvas_viewport_fill_layers;
 mod canvas_viewport_grid;
 // `pub` for the remote-image miss-queue API (`take_remote_image_requests`

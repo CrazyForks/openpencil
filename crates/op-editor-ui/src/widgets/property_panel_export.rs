@@ -176,15 +176,8 @@ fn paint_select_popup(
     rows: &[(&str, bool, Rect)],
     hover: Option<usize>,
 ) {
-    let (Some((_, _, first)), Some((_, _, last))) = (rows.first(), rows.last()) else {
+    let Some(bg) = export_picker_popup_rect(rows.iter().map(|(_, _, rect)| *rect)) else {
         return;
-    };
-    let bg = Rect {
-        origin: Point2D::new(first.origin.x - 4.0, first.origin.y - 6.0),
-        size: Point2D::new(
-            first.size.x + 8.0,
-            (last.origin.y + last.size.y) - (first.origin.y - 6.0) + 6.0,
-        ),
     };
     cx.backend.fill_round_rect(bg, 8.0, theme.popover);
     cx.backend.stroke_round_rect(bg, 8.0, theme.border, 1.0);
@@ -230,4 +223,19 @@ fn paint_select_popup(
             );
         }
     }
+}
+
+/// Popup chrome enclosing an Export picker's option rows. Paint and
+/// host-facing containment both use this helper so the 4px horizontal
+/// and 6px vertical chrome padding cannot drift away from the row walk.
+pub(crate) fn export_picker_popup_rect(mut rows: impl Iterator<Item = Rect>) -> Option<Rect> {
+    let first = rows.next()?;
+    let last = rows.last().unwrap_or(first);
+    Some(Rect {
+        origin: Point2D::new(first.origin.x - 4.0, first.origin.y - 6.0),
+        size: Point2D::new(
+            first.size.x + 8.0,
+            (last.origin.y + last.size.y) - (first.origin.y - 6.0) + 6.0,
+        ),
+    })
 }

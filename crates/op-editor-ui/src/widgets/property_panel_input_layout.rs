@@ -84,9 +84,10 @@ pub fn editable_input_rects(
         origin: Point2D::new(x0 + PAD_X, y),
         size: Point2D::new(half_w, INPUT_HEIGHT),
     };
-    let radius_rect = visible
-        .corner_radius
-        .then_some(if visible.corner_per_corner {
+    let per_corner_expanded =
+        visible.corner_radius && visible.corner_per_corner && visible.corner_expand;
+    let radius_rect =
+        (visible.corner_radius && !per_corner_expanded).then_some(if visible.corner_per_corner {
             crate::widgets::property_panel_corner::uniform_and_toggle_rects(x0, y, w).0
         } else {
             Rect {
@@ -103,7 +104,7 @@ pub fn editable_input_rects(
     if let Some(radius_rect) = radius_rect {
         rects.push((PropertyFocus::PositionR, radius_rect));
     }
-    if visible.corner_radius && visible.corner_expand {
+    if per_corner_expanded {
         rects.extend(crate::widgets::property_panel_corner::input_rects(x0, y, w));
         y += crate::widgets::property_panel_corner::CORNER_GRID_EXTRA_HEIGHT;
     }
@@ -202,6 +203,9 @@ pub fn editable_input_rects(
                 ));
             }
             y += INPUT_HEIGHT;
+        }
+        if visible.compositing {
+            y += crate::widgets::property_panel_compositing::COMPOSITING_ROW_HEIGHT;
         }
         y += 12.0;
         y += SECTION_GAP;
@@ -503,6 +507,17 @@ pub(crate) fn push_fill_action_rects(
             | FillType::Shader
             | FillType::Image => {}
         }
+        let blend_y = y + crate::widgets::property_panel_fill::fill_content_body_height(
+            fill_type,
+            is_primary,
+            primary_stop_count,
+        );
+        out.push((
+            PropertyPanelAction::ToggleCompositingPicker(
+                crate::widgets::property_panel_action::CompositingTarget::FillBlend(fi),
+            ),
+            crate::widgets::property_panel_compositing::fill_trigger_rect(x0, blend_y, w),
+        ));
         y += fill_row_body_height(fill_type, is_primary, primary_stop_count);
     }
     y + 12.0 // trailing gap before the divider

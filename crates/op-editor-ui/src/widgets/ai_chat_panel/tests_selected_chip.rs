@@ -6,6 +6,7 @@ use crate::widgets::ai_chat_hit::AIChatHit;
 #[derive(Default)]
 struct SelectedChipPaintBackend {
     texts: Vec<(String, f32, jian_core::scene::Color, Point2D)>,
+    round_fills: Vec<(Rect, f32)>,
 }
 
 impl crate::RenderBackend for SelectedChipPaintBackend {
@@ -21,7 +22,9 @@ impl crate::RenderBackend for SelectedChipPaintBackend {
     }
     fn clip_rect(&mut self, _: Rect) {}
     fn stroke_line(&mut self, _: Point2D, _: Point2D, _: crate::Color, _: f32) {}
-    fn fill_round_rect(&mut self, _: Rect, _: f32, _: crate::Color) {}
+    fn fill_round_rect(&mut self, rect: Rect, radius: f32, _: crate::Color) {
+        self.round_fills.push((rect, radius));
+    }
     fn stroke_round_rect(&mut self, _: Rect, _: f32, _: crate::Color, _: f32) {}
     fn stroke_svg_path(&mut self, _: &str, _: Point2D, _: f32, _: crate::Color, _: f32) {}
     fn save(&mut self) {}
@@ -136,6 +139,39 @@ fn selected_count_chip_clear_hit_returns_clear_selection() {
     );
 
     assert_eq!(panel.hit_test(rect, point), Some(AIChatHit::ClearSelection));
+}
+
+#[test]
+fn selected_chip_keeps_model_picker_paint_bounds_and_hit_aligned() {
+    let (mut state, rect) = panel_with_selection(3);
+    state
+        .chat
+        .available_models
+        .push(op_editor_core::chat::ModelEntry::new(
+            op_editor_core::chat::AgentProvider::CodexCli,
+            "gpt-5",
+            "GPT-5",
+        ));
+    state.editor_ui.chat_model_picker.open = true;
+    let panel = AIChatPlaceholder::from_editor(&state);
+    let picker = panel.model_picker_bounds(rect).unwrap();
+
+    let backend = paint_panel(&panel, rect);
+    assert!(
+        backend
+            .round_fills
+            .iter()
+            .any(|(painted, radius)| *painted == picker && (*radius - 10.0).abs() < 0.01),
+        "the painted picker card must use the same bounds as overlay and hit testing"
+    );
+
+    let first_model_y = picker.origin.y
+        + crate::widgets::ai_chat_model_picker::MODEL_SEARCH_H
+        + crate::widgets::ai_chat_model_picker::MODEL_PICKER_PAD_Y
+        + crate::widgets::ai_chat_model_picker::MODEL_GROUP_H
+        + crate::widgets::ai_chat_model_picker::MODEL_ROW_H / 2.0;
+    let point = Point2D::new(picker.origin.x + picker.size.x / 2.0, first_model_y);
+    assert_eq!(panel.hit_test(rect, point), Some(AIChatHit::SelectModel(0)));
 }
 
 #[test]

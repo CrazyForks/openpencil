@@ -1,7 +1,7 @@
 //! Design fonts shipped inside the renderer.
 //!
-//! Designs (Pencil `.pen` / `.op`) reference Google Fonts like Inter,
-//! Space Grotesk or Manrope that are not installed on a typical machine.
+//! Designs (Pencil `.pen` / `.op`) reference Google Fonts like Roboto,
+//! Inter, Space Grotesk or Manrope that are not installed on a typical machine.
 //! Without them the skia paragraph shaper falls back to the platform
 //! default for both painting *and* measuring — wrong glyphs, wrong
 //! weight, and (because `fit_content` heights come from the measured
@@ -17,6 +17,11 @@
 /// OFL `.ttf` blobs embedded at compile time. Variable fonts (`*-VF`)
 /// carry the full weight axis; a few families ship as static weights.
 const BUNDLED: &[&[u8]] = &[
+    // NativeBackend already embeds this face as its last-resort renderer
+    // fallback. Register it here too so documents that explicitly request
+    // Roboto resolve the named family and missing-font detection agrees with
+    // what the renderer can actually draw.
+    include_bytes!("../../op-host-native/assets/Roboto-Regular.ttf"),
     include_bytes!("../assets/fonts/Inter-VF.ttf"),
     include_bytes!("../assets/fonts/SpaceGrotesk-VF.ttf"),
     include_bytes!("../assets/fonts/Manrope-VF.ttf"),

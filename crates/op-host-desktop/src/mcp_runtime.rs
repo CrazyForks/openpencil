@@ -2,6 +2,13 @@
 
 use super::{mcp_integrations, DesktopApp};
 
+fn mark_external_document_replacement_dirty(state: &mut op_editor_core::EditorState) {
+    // `replace_document` intentionally resets to a clean revision for Open.
+    // A live MCP replacement is an external edit, not a disk load, so mint a
+    // revision before the desktop's close/reload guards inspect it.
+    state.mark_document_changed();
+}
+
 impl DesktopApp {
     pub(crate) fn bootstrap_mcp_runtime_from_settings(&mut self) -> bool {
         let detected_flags = match &self.mcp_integrations_home {
@@ -168,6 +175,7 @@ impl DesktopApp {
             self.host.mark_editor_state_dirty();
         }
         if outcome.document_replaced {
+            mark_external_document_replacement_dirty(self.host.editor_state_mut());
             // `ReplaceDocument` (whole-document MCP sync, e.g. TS
             // `setSyncDocument` parity) installs a fresh `EditorState` whose
             // revision restarts at 0 AND whose node ids can collide with ids
@@ -181,6 +189,7 @@ impl DesktopApp {
             // session (sets + in-flight jobs + the scan gate) so the new
             // document starts clean.
             self.image_search.reset();
+            self.last_painted_page = None;
             // The replaced document restarts at revision 0 / page 0, so its
             // LayerPanel row-model-cache key aliases the previous document's.
             // Rotate the owner so the next paint rebuilds the rows.
@@ -266,6 +275,24 @@ impl DesktopApp {
             }
         }
         reverted
+    }
+}
+
+#[cfg(test)]
+mod dirty_tests {
+    use super::*;
+
+    #[test]
+    fn external_replace_is_dirty_even_though_replace_document_resets_revision() {
+        let mut state = op_editor_core::EditorState::new();
+        state.mark_saved_revision();
+        state.replace_document(op_editor_core::EditorState::new().doc);
+        assert!(!state.is_dirty(), "plain replace models a clean disk open");
+
+        mark_external_document_replacement_dirty(&mut state);
+
+        assert!(state.is_dirty());
+        assert!(state.editor_ui.document_dirty);
     }
 }
 

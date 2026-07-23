@@ -138,6 +138,10 @@ fn parse_standard_turn_body_reads_canvas_snapshot_fields() {
         "model": "claude-sonnet",
         "user": "design a page",
         "document": { "version": "1.0.0", "children": [] },
+        "editorMeta": {
+            "activePageIndex": 3,
+            "preserveAuthoredGeometry": true
+        },
         "selectedIds": ["n1", "", "n2"],
         "activePageId": "page-1",
         "agent_team_size": 9,
@@ -167,6 +171,13 @@ fn parse_standard_turn_body_reads_canvas_snapshot_fields() {
     assert_eq!(req.ai.model, "claude-sonnet");
     assert_eq!(req.ai.user, "design a page");
     assert!(req.document_json.is_some());
+    assert_eq!(
+        req.editor_meta,
+        Some(op_pen_loader::EditorMeta {
+            active_page_index: 3,
+            preserve_authored_geometry: true,
+        })
+    );
     assert_eq!(req.selected_ids, vec!["n1".to_string(), "n2".to_string()]);
     assert_eq!(req.active_page_id.as_deref(), Some("page-1"));
     assert_eq!(req.agent_team_size, Some(6));
@@ -212,6 +223,7 @@ fn stream_chat_route_passes_history_and_attachments_to_provider() {
             transient_builtin: None,
         },
         document_json: None,
+        editor_meta: None,
         selected_ids: Vec::new(),
         active_page_id: None,
         agent_team_size: None,
@@ -233,6 +245,38 @@ fn stream_chat_route_passes_history_and_attachments_to_provider() {
     assert_eq!(captured.user_message, "current request");
     assert_eq!(captured.history, history);
     assert_eq!(captured.attachments, attachments);
+}
+
+#[test]
+fn request_snapshot_restores_editor_meta_before_design_response_updates() {
+    let body = serde_json::json!({
+        "model": "default",
+        "user": "update the design",
+        "document": {
+            "version": "1.0.0",
+            "children": [],
+            "pages": [
+                {"id":"p1","name":"One","children":[]},
+                {"id":"p2","name":"Two","children":[]}
+            ]
+        },
+        "editorMeta": {
+            "activePageIndex": 1,
+            "preserveAuthoredGeometry": true
+        }
+    })
+    .to_string();
+    let req = parse_standard_turn_body(&body).expect("request parses");
+    let state = Mutex::new(WebCanvasState::new(EditorState::new(), 3100));
+
+    let snapshot =
+        apply_request_snapshot(&req, &state, &SseHub::default()).expect("request snapshot");
+
+    assert_eq!(snapshot.ui.active_page_index, 1);
+    assert!(snapshot.editor_ui.preserve_authored_geometry);
+    let live = state.lock().expect("live state");
+    assert_eq!(live.editor.ui.active_page_index, 1);
+    assert!(live.editor.editor_ui.preserve_authored_geometry);
 }
 
 #[test]
@@ -258,6 +302,44 @@ fn design_doc_sink_applies_and_bumps_version() {
     assert_eq!(state.lock().unwrap().version, 1);
     assert_eq!(sub.recv().unwrap(), 1);
     assert_eq!(sink.state().active_children().len(), 1);
+}
+
+#[test]
+fn starter_clear_marks_content_dirty_after_stale_save_ack() {
+    let mut state = EditorState::starter();
+    state.mark_saved_revision();
+    let generation = state.document_generation();
+    let stale_revision = state.document_revision();
+    assert!(!state.is_dirty());
+
+    assert!(clear_fresh_starter_frame_for_design(&mut state));
+
+    assert!(state.active_children().is_empty());
+    assert!(state.document_revision() > stale_revision);
+    assert!(state.is_dirty());
+    assert!(state.mark_saved_revision_at(generation, stale_revision));
+    assert!(
+        state.is_dirty(),
+        "an acknowledgement for the pre-clear snapshot must not mark the cleared document saved"
+    );
+}
+
+#[test]
+fn live_starter_clear_bumps_server_version_once_and_marks_document_dirty() {
+    let mut state = WebCanvasState::new(EditorState::starter(), 3100);
+    state.version = 41;
+    state.editor.mark_saved_revision();
+    let initial_revision = state.editor.document_revision();
+
+    assert_eq!(clear_live_starter_frame_for_design(&mut state), Some(42));
+    assert_eq!(state.version, 42);
+    assert!(state.editor.is_dirty());
+    assert!(state.editor.document_revision() > initial_revision);
+
+    let cleared_revision = state.editor.document_revision();
+    assert_eq!(clear_live_starter_frame_for_design(&mut state), None);
+    assert_eq!(state.version, 42);
+    assert_eq!(state.editor.document_revision(), cleared_revision);
 }
 
 #[test]

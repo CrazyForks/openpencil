@@ -92,8 +92,8 @@ impl EditorState {
                 replaced += replace_in_forest(&mut page.children, &from, &to);
             }
         }
-        for component in &mut self.components.components {
-            replaced += replace_in_node(&mut component.root, &from, &to);
+        for root in self.components.owned_roots_mut() {
+            replaced += replace_in_node(root, &from, &to);
         }
         if replaced > 0 {
             self.history_push_past(snapshot);
@@ -465,9 +465,9 @@ mod tests {
         }));
         let component = state
             .components
-            .find_by_id(&crate::NodeId::new("component"))
+            .resolved_root(&state.doc, &crate::NodeId::new("component"))
             .expect("component prototype");
-        let PenNode::Frame(frame) = &component.root else {
+        let PenNode::Frame(frame) = component else {
             panic!("component frame")
         };
         let PenNode::Text(label) = &frame.children.as_ref().expect("children")[0] else {
@@ -488,9 +488,9 @@ mod tests {
         assert!(state.undo());
         let component = state
             .components
-            .find_by_id(&crate::NodeId::new("component"))
+            .resolved_root(&state.doc, &crate::NodeId::new("component"))
             .expect("restored prototype");
-        let PenNode::Frame(frame) = &component.root else {
+        let PenNode::Frame(frame) = component else {
             panic!("component frame")
         };
         let PenNode::Text(label) = &frame.children.as_ref().expect("children")[0] else {

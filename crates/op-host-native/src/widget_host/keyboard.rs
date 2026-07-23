@@ -340,10 +340,11 @@ impl WidgetHostNative {
                 // names / bind key) take any non-control character.
                 !c.is_control()
             } else if is_hex_focus {
-                // Cap at 7 chars (`#RRGGBB`) — per-stop alpha is
-                // preserved at commit time so the user never types
-                // raw alpha digits.
-                (replacing_all || draft.len() < 7)
+                // Most colour rows cap at `#RRGGBB`; fill and page
+                // background rows additionally author `#RRGGBBAA`.
+                // Keep that exception on the focus type so adding it
+                // cannot silently widen fill / stroke inputs.
+                (replacing_all || draft.len() < focus.hex_max_len().unwrap_or(7))
                     && (c.is_ascii_hexdigit() || (c == '#' && pos == 0 && !draft.starts_with('#')))
             } else {
                 c.is_ascii_digit()
@@ -1600,7 +1601,15 @@ impl WidgetHostNative {
             return true;
         }
         if self.editor_state.editor_ui.figma_import_open {
+            if self.editor_state.editor_ui.figma_import_pages.len() > 1 {
+                self.editor_state.editor_ui.pending_file_action = Some(
+                    op_editor_core::editor_ui_state::FileAction::FinishFigmaImport(
+                        op_editor_core::FigmaImportSelection::Cancel,
+                    ),
+                );
+            }
             self.editor_state.editor_ui.figma_import_open = false;
+            self.editor_state.editor_ui.figma_import_hover = None;
             self.mark_dirty();
             return true;
         }
@@ -1645,6 +1654,11 @@ impl WidgetHostNative {
         }
         if self.editor_state.editor_ui.effect_add_picker_open {
             self.editor_state.editor_ui.close_effect_add_picker();
+            self.mark_dirty();
+            return true;
+        }
+        if self.editor_state.editor_ui.compositing_picker.open {
+            self.close_compositing_picker();
             self.mark_dirty();
             return true;
         }
@@ -1737,6 +1751,13 @@ impl WidgetHostNative {
         }
         if self.editor_state.editor_ui.font_picker.open {
             self.close_font_picker();
+            self.mark_dirty();
+            return true;
+        }
+        if self.editor_state.editor_ui.instance_component_picker_open {
+            self.editor_state
+                .editor_ui
+                .close_instance_component_picker();
             self.mark_dirty();
             return true;
         }

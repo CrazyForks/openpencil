@@ -3,7 +3,7 @@
 //! deflate-compressed) and drives it through the full
 //! [`parse_fig_binary`] pipeline.
 
-use crate::{parse_fig_binary, FigLayoutMode};
+use crate::{parse_fig_binary, prepare_fig_binary, FigLayoutMode, FigParseError};
 use jian_ops_schema::node::PenNode;
 use jian_ops_schema::sizing::SizingBehavior;
 use std::io::Write;
@@ -251,6 +251,44 @@ fn parses_a_full_binary_fig_into_a_document() {
         }
         other => panic!("expected a Rectangle, got {other:?}"),
     }
+}
+
+#[test]
+fn prepared_binary_exposes_pages_before_converting_one() {
+    let fig = build_fig(&build_schema(), &build_data());
+    let prepared = prepare_fig_binary(&fig, "Prepared", FigLayoutMode::Preserve)
+        .expect("binary .fig prepares");
+
+    assert_eq!(prepared.pages().len(), 1);
+    assert_eq!(prepared.pages()[0].id, "0:2");
+    assert_eq!(prepared.pages()[0].name, "Page 1");
+    assert_eq!(prepared.pages()[0].child_count, 1);
+
+    let import = prepared.into_page(0).expect("first page converts");
+    let pages = import.document.pages.expect("document has pages");
+    assert_eq!(pages.len(), 1);
+    assert_eq!(pages[0].name, "Page 1");
+    assert_eq!(pages[0].children.len(), 1);
+}
+
+#[test]
+fn prepared_binary_rejects_an_out_of_range_page() {
+    let fig = build_fig(&build_schema(), &build_data());
+    let prepared = prepare_fig_binary(&fig, "Prepared", FigLayoutMode::Preserve)
+        .expect("binary .fig prepares");
+    let error = prepared.into_page(1).expect_err("only page zero exists");
+
+    assert!(matches!(
+        &error,
+        FigParseError::PageOutOfBounds {
+            index: 1,
+            page_count: 1
+        }
+    ));
+    assert_eq!(
+        error.to_string(),
+        "Figma page index 1 is out of bounds (page count: 1)"
+    );
 }
 
 /// Wrap a payload as `canvas.fig` in a minimal stored (uncompressed)

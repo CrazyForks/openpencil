@@ -91,6 +91,27 @@ fn instantiate_component_clones_registered_root_with_fresh_ids() {
 }
 
 #[test]
+fn instantiate_document_component_reads_the_live_master_subtree() {
+    let mut s = sample();
+    assert!(s.apply(EditorCommand::CreateComponent {
+        node_id: id("n10"),
+        name: "Hero".into(),
+    }));
+    s.active_children_mut()[0].set_width_px(444.0);
+
+    let instance_id = s
+        .instantiate_component(&id("n10"))
+        .expect("live document master instantiates");
+    let instance = find_node(s.active_children(), &instance_id).expect("inserted instance");
+    assert_eq!(instance.width_px(), Some(444.0));
+    assert_eq!(
+        instance.children().map(Vec::len),
+        Some(2),
+        "the metadata-only compatibility root must not truncate instances"
+    );
+}
+
+#[test]
 fn rename_and_delete_component_update_registry_and_source_flag() {
     let mut s = state_with(vec![frame("n1", "Card", 0.0, 0.0, 100.0, 80.0, Vec::new())]);
     assert!(s.apply(EditorCommand::CreateComponent {
@@ -146,6 +167,7 @@ fn delete_component_clears_source_flag_outside_active_page() {
             id: "p1".into(),
             name: "Page 1".into(),
             children: Vec::new(),
+            background_color: None,
             state: None,
             lifecycle: None,
         },
@@ -153,6 +175,7 @@ fn delete_component_clears_source_flag_outside_active_page() {
             id: "p2".into(),
             name: "Page 2".into(),
             children: vec![component_frame],
+            background_color: None,
             state: None,
             lifecycle: None,
         },
@@ -218,4 +241,44 @@ fn detach_instance_materializes_overridden_subtree_with_fresh_ids() {
         find_node(s.active_children(), &inst_id).is_none(),
         "the ref node itself is gone"
     );
+}
+
+#[test]
+fn set_instance_component_updates_only_the_existing_ref_target_and_is_undoable() {
+    let doc = jian_ops_schema::load_str(
+        r##"{
+          "version":"1.0.0",
+          "children":[
+            {"type":"frame","id":"card","name":"Card","reusable":true,
+             "x":0,"y":0,"width":100,"height":80,"children":[]},
+            {"type":"frame","id":"banner","name":"Banner","reusable":true,
+             "x":0,"y":100,"width":200,"height":40,"children":[]},
+            {"type":"ref","id":"inst","ref":"card","x":300,"y":50,
+             "descendants":{"card":{"opacity":0.5}}}
+          ]
+        }"##,
+    )
+    .expect("component fixture parses")
+    .value;
+    let mut state = crate::EditorState::from_document(doc);
+
+    assert!(state.set_instance_component(&id("inst"), &id("banner")));
+    let PenNode::Ref(reference) = find_node(state.active_children(), &id("inst")).unwrap() else {
+        panic!("instance remains a Ref");
+    };
+    assert_eq!(reference.target, "banner");
+    assert_eq!(reference.base.x, Some(300.0));
+    assert!(
+        reference.descendants.is_some(),
+        "authored overrides are preserved"
+    );
+    assert!(state.history.can_undo());
+
+    assert!(!state.set_instance_component(&id("inst"), &id("banner")));
+    assert!(!state.set_instance_component(&id("inst"), &id("missing")));
+    assert!(state.undo());
+    let PenNode::Ref(reference) = find_node(state.active_children(), &id("inst")).unwrap() else {
+        panic!("undo restores the Ref");
+    };
+    assert_eq!(reference.target, "card");
 }

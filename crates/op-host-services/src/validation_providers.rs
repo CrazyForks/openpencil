@@ -113,7 +113,7 @@ impl ScreenshotProvider for RealScreenshotProvider {
     fn capture_root_frame(&self, state: &EditorState) -> Option<String> {
         // Same derive the canvas painter + debug_screenshot use, so the
         // pixels match what the user sees at zoom 1.
-        let scene = op_pen_loader::editor_state_to_layout_scene(state);
+        let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
         let spec = CaptureSpec {
             // `None` = whole active-page content (the "root frame" the
             // validation loop wants).

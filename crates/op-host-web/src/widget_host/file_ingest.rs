@@ -25,23 +25,26 @@ impl WidgetHost {
     /// `file_name_display` + `preserve_authored_geometry` win.
     pub fn install_ingested_state(&mut self, mut state: op_editor_core::EditorState) {
         let mut preserved = self.editor_state.editor_ui.clone();
+        let preserved_chat = self.editor_state.chat.clone();
         preserved.figma_import_in_progress = false;
         preserved.file_name_display = state.editor_ui.file_name_display.take();
         preserved.preserve_authored_geometry = state.editor_ui.preserve_authored_geometry;
         state.editor_ui = preserved;
-        self.editor_state = state;
-        // The imported document restarts at revision 0 / page 0, so its
-        // LayerPanel row-model-cache key aliases the replaced document's — rotate
-        // the owner so the next owned paint resolve rebuilds instead of serving
-        // the previous document's cached rows (mirrors native
-        // `install_imported_state`).
-        self.force_rotate_layer_panel_owner();
-        // An import always wants a fresh scene; invalidate the build cache so the
-        // next `refresh_layout_scene` rebuilds even if the imported document
-        // happens to match the last build's inputs (mirrors the native host).
-        self.scene_cache.invalidate();
-        self.editor_state_dirty = true;
+        // Chat sessions and the discovered model catalogue are app chrome, not
+        // document contents. Importing HTML/Figma must not silently replace
+        // them with `EditorState::from_document` defaults.
+        state.chat = preserved_chat;
+        self.replace_editor_state(state);
         self.arm_missing_fonts_detection();
+    }
+
+    /// Install a Figma/HTML import as a new unsaved document. Ordinary Open
+    /// uses `install_ingested_state` directly and remains clean; imports need
+    /// one explicit content revision so Save/close prompts cannot mistake the
+    /// fresh `0:0` state for an already persisted file.
+    pub fn install_unsaved_ingested_state(&mut self, state: op_editor_core::EditorState) {
+        self.install_ingested_state(state);
+        self.editor_state.mark_document_changed();
     }
 
     /// Insert nodes parsed from the Figma clipboard, centred on the

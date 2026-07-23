@@ -69,6 +69,7 @@ impl WidgetHost {
     }
 
     fn close_other_property_popovers_for_image(&mut self) {
+        self.commit_image_tile_scale_focus_if_any();
         let ui = &mut self.editor_state.editor_ui;
         ui.close_fill_type_picker();
         ui.image_fill_popover_open = false;
@@ -326,13 +327,27 @@ impl WidgetHost {
 
     pub(in crate::widget_host) fn close_image_popovers_for_higher_overlay(&mut self) -> bool {
         self.clear_image_input_selection_drag();
-        let panel = &mut self.editor_state.editor_ui.image_panel;
-        if !panel.search_open && !panel.generate_open {
-            return false;
+        let mut changed = false;
+        {
+            let panel = &mut self.editor_state.editor_ui.image_panel;
+            if panel.search_open || panel.generate_open {
+                panel.close_popovers();
+                changed = true;
+            }
         }
-        panel.close_popovers();
-        self.mark_dirty();
-        true
+        if self.editor_state.editor_ui.image_fill_popover_open {
+            self.commit_image_tile_scale_focus_if_any();
+            self.editor_state.editor_ui.image_fill_popover_open = false;
+            changed = true;
+        }
+        if self.editor_state.editor_ui.compositing_picker.open {
+            self.close_compositing_picker();
+            changed = true;
+        }
+        if changed {
+            self.mark_dirty();
+        }
+        changed
     }
 
     pub(in crate::widget_host) fn dismiss_image_popovers_on_press(

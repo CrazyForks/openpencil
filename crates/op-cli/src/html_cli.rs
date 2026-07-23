@@ -103,8 +103,9 @@ pub(super) fn map_import_snapshot(
 }
 
 pub(super) fn run_import_html(html_path: &str, out_path: &str) -> Result<String, String> {
-    let source = std::fs::read_to_string(html_path)
-        .map_err(|error| format!("read {html_path:?}: {error}"))?;
+    let source_bytes =
+        std::fs::read(html_path).map_err(|error| format!("read {html_path:?}: {error}"))?;
+    let source = op_html::html_encoding::decode_html_bytes(&source_bytes);
     let source_path = Path::new(html_path);
     let resource_dir = source_path.parent().unwrap_or_else(|| Path::new("."));
     let document_name = source_path
@@ -121,7 +122,7 @@ pub(super) fn run_import_html(html_path: &str, out_path: &str) -> Result<String,
         base_url: Some(format!("{LOCAL_RESOURCE_ORIGIN}document.html")),
         ..op_html::HtmlImportOptions::default()
     };
-    let imported = op_html::import_html_document(&source, &options, Some(&fetcher), None);
+    let imported = op_html::import_html_document(source.as_ref(), &options, Some(&fetcher), None);
     if imported.document.children.is_empty() {
         let detail = imported
             .warnings
@@ -219,6 +220,17 @@ fn count_nodes(nodes: &[PenNode]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::super::*;
+
+    fn temp_html_path(tag: &str, extension: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        std::env::temp_dir().join(format!(
+            "op-cli-html-{tag}-{}-{nanos}.{extension}",
+            std::process::id()
+        ))
+    }
 
     #[test]
     fn parse_args_maps_import_figma_to_direct_converter() {
@@ -318,6 +330,32 @@ mod tests {
             "a.op".to_string(),
         ];
         assert!(parse_args(&args).is_err());
+    }
+
+    #[test]
+    fn local_import_decodes_utf16le_bom() {
+        let input = temp_html_path("utf16", "html");
+        let output = temp_html_path("utf16", "op");
+        let mut bytes = vec![0xFF, 0xFE];
+        for unit in "<html><body><p>你好</p></body></html>".encode_utf16() {
+            bytes.extend_from_slice(&unit.to_le_bytes());
+        }
+        std::fs::write(&input, bytes).expect("write UTF-16 fixture");
+
+        let result = super::run_import_html(
+            input.to_str().expect("UTF-8 input path"),
+            output.to_str().expect("UTF-8 output path"),
+        )
+        .expect("import UTF-16 HTML");
+        let document = std::fs::read_to_string(&output).expect("read imported document");
+
+        let _ = std::fs::remove_file(&input);
+        let _ = std::fs::remove_file(&output);
+        assert!(result.contains("\"ok\":true"));
+        assert!(
+            document.contains("你好"),
+            "BOM-decoded text must survive the CLI conversion: {document}"
+        );
     }
 
     #[test]

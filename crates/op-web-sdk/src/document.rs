@@ -8,9 +8,27 @@ impl Viewer {
     /// Internal Rust API; the JS-facing wrapper is `Viewer::load_str` (maps the
     /// error to a `JsValue` so it surfaces as a thrown exception).
     pub fn load(&mut self, src: &str) -> Result<(), String> {
+        let editor_meta = op_pen_loader::extract_editor_meta(src);
         let loaded = op_pen_loader::load_canonical(src).map_err(|e| format!("{e:?}"))?;
-        self.doc = Some(loaded.value);
-        self.active_page = 0;
+        let doc = loaded.value;
+        let page_count = doc
+            .pages
+            .as_ref()
+            .map(|pages| pages.len())
+            .unwrap_or(1)
+            .max(1);
+        self.active_page = editor_meta
+            .map(|meta| meta.active_page_index.min(page_count - 1))
+            .unwrap_or_else(|| {
+                doc.pages
+                    .as_ref()
+                    .and_then(|pages| pages.iter().position(|page| !page.children.is_empty()))
+                    .unwrap_or(0)
+            });
+        self.preserve_authored_geometry = editor_meta
+            .map(|meta| meta.preserve_authored_geometry)
+            .unwrap_or(false);
+        self.doc = Some(doc);
         self.rebuild_scene();
         Ok(())
     }

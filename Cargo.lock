@@ -3224,6 +3224,7 @@ dependencies = [
  "jian-widgets",
  "op-ai",
  "op-i18n",
+ "serde",
  "serde_json",
  "tracing",
 ]
@@ -3385,6 +3386,7 @@ dependencies = [
  "github-copilot-sdk",
  "glam",
  "jian-ops-schema",
+ "memmap2",
  "op-acp",
  "op-ai",
  "op-ai-skills",
@@ -3429,6 +3431,7 @@ dependencies = [
  "serde",
  "serde_json",
  "ttf-parser",
+ "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -3447,6 +3450,7 @@ name = "op-html"
 version = "0.8.1"
 dependencies = [
  "base64",
+ "encoding_rs",
  "flate2",
  "html5ever",
  "jian-ops-schema",
@@ -3473,6 +3477,7 @@ dependencies = [
  "op-pen-loader",
  "regex",
  "rquickjs",
+ "serde",
  "serde_json",
  "tracing",
 ]

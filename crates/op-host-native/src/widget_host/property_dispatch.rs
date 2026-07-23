@@ -5,6 +5,8 @@
 //! layout-resolved `LayoutScene` (canvas); results feed `EditorState`
 //! mutators (the host's source of truth).
 
+#[path = "property_compositing_dispatch.rs"]
+mod property_compositing_dispatch;
 #[path = "property_input_dispatch.rs"]
 mod property_input_dispatch;
 
@@ -20,6 +22,18 @@ impl WidgetHostNative {
         action: op_editor_ui::widgets::PropertyPanelAction,
     ) {
         use op_editor_ui::widgets::PropertyPanelAction as A;
+        // ImageTileScale lives in the floating image-fill editor. Any button
+        // action may close that editor (or switch away from Tile), so commit
+        // its draft before the instance-write scope and before the input can
+        // disappear. Regular PropertyPanel presses already blur inputs; this
+        // also covers popup-owned actions and direct dispatch in tests/hosts.
+        self.commit_image_tile_scale_focus_if_any();
+        // The compositing/page actions below use lightweight core
+        // mutators. Capture history at the host choke point so an
+        // instance redirect is finished before equality is tested and
+        // same-value selections never create an empty undo entry.
+        let document_before = property_compositing_dispatch::updates_document(&action)
+            .then(|| self.editor_state.snapshot_for_history());
         // A sizing keyword toggle may temporarily swap an instance's merged
         // display node into the document below. Capture the real canvas size
         // before that scope starts so turning Fill/Hug off freezes exactly
@@ -52,6 +66,10 @@ impl WidgetHostNative {
                         if let Some(idx) = target_page {
                             if idx != self.editor_state.ui.active_page_index {
                                 let _ = self.editor_state.set_active_page(idx);
+                                self.fit_active_page_after_switch(
+                                    self.last_viewport_w,
+                                    self.last_viewport_h,
+                                );
                             }
                         }
                     }
@@ -68,6 +86,28 @@ impl WidgetHostNative {
                 self.mark_dirty();
                 return;
             }
+            A::ToggleInstanceComponentPicker => {
+                let anchor = self.editor_state.selection.anchor.as_str().to_string();
+                self.editor_state
+                    .editor_ui
+                    .toggle_instance_component_picker(&anchor);
+                self.editor_state.editor_ui.close_fill_type_picker();
+                self.close_compositing_picker();
+                self.mark_dirty();
+                return;
+            }
+            A::SetInstanceComponent(component_id) => {
+                let instance_id = self.editor_state.selection.anchor.clone();
+                let component_id = op_editor_core::NodeId::new(component_id);
+                let _ = self
+                    .editor_state
+                    .set_instance_component(&instance_id, &component_id);
+                self.editor_state
+                    .editor_ui
+                    .close_instance_component_picker();
+                self.mark_dirty();
+                return;
+            }
             _ => {}
         }
         // CHOKE POINT (GAP #10): when the anchor is a Ref, swap in
@@ -78,9 +118,31 @@ impl WidgetHostNative {
         let instance_scope = self.editor_state.begin_instance_write_for_anchor();
         match action {
             // Dispatched in the pre-scope match above; unreachable here.
-            A::GoToComponent | A::DetachInstance | A::DetachComponent => {}
+            A::GoToComponent
+            | A::DetachInstance
+            | A::DetachComponent
+            | A::ToggleInstanceComponentPicker
+            | A::SetInstanceComponent(_) => {}
             A::SetPropertyTab(tab) => {
                 self.editor_state.editor_ui.property_tab = tab;
+            }
+            A::ToggleCompositingPicker(target) => {
+                self.toggle_compositing_picker(target);
+            }
+            A::SetNodeBlendMode(mode) => {
+                let _ = self.editor_state.set_selected_node_blend_mode(mode);
+                self.close_compositing_picker();
+            }
+            A::SetNodeMaskType(mask_type) => {
+                let _ = self.editor_state.set_selected_node_mask_type(mask_type);
+                self.close_compositing_picker();
+            }
+            A::SetFillBlendMode { index, mode } => {
+                let _ = self.editor_state.set_selected_fill_blend_mode(index, mode);
+                self.close_compositing_picker();
+            }
+            A::ClearPageBackground => {
+                let _ = self.editor_state.set_active_page_background_color(None);
             }
             A::ToggleCornerExpand => {
                 self.editor_state.editor_ui.toggle_corner_expand();
@@ -684,6 +746,11 @@ impl WidgetHostNative {
         }
         if let Some(scope) = instance_scope {
             self.editor_state.finish_instance_write(scope);
+        }
+        if let Some(before) = document_before {
+            if self.editor_state.snapshot_for_history() != before {
+                self.editor_state.history_push_past(before);
+            }
         }
         self.mark_dirty();
     }

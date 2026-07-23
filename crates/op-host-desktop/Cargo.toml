@@ -271,8 +271,11 @@ objc2 = "0.5"
 objc2-app-kit = { version = "0.2", default-features = false, features = [
   "std",
   "NSApplication",
+  "NSColorSpace",
   "NSImage",
   "NSResponder",
+  "NSView",
+  "NSWindow",
 ] }
 objc2-foundation = { version = "0.2", default-features = false, features = [
   "std",

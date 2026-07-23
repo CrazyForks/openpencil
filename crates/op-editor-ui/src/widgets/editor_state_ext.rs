@@ -89,6 +89,8 @@ pub fn figma_import_button(
     match hit {
         W::Close => Some(O::Close),
         W::DropZone => Some(O::DropZone),
+        W::Page(index) => Some(O::Page(index)),
+        W::ImportAll => Some(O::ImportAll),
         W::Outside | W::Inside => None,
     }
 }

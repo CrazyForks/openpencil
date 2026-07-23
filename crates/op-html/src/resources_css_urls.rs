@@ -57,12 +57,12 @@ pub(crate) fn rebase_stylesheet_urls(source: &str, stylesheet_url: &str) -> Stri
     output
 }
 
-struct ParsedUrl {
-    value: String,
-    quote: Option<char>,
+pub(super) struct ParsedUrl {
+    pub(super) value: String,
+    pub(super) quote: Option<char>,
 }
 
-fn parse_url_argument(argument: &str) -> Option<ParsedUrl> {
+pub(super) fn parse_url_argument(argument: &str) -> Option<ParsedUrl> {
     let without_comments = strip_comments(argument);
     let argument = without_comments.trim();
     if argument.is_empty() {
@@ -111,7 +111,7 @@ fn is_identifier_char(value: char) -> bool {
     value.is_alphanumeric() || value == '-' || value == '_' || value == '\\' || !value.is_ascii()
 }
 
-fn function_end(source: &str, open: usize) -> Option<usize> {
+pub(super) fn function_end(source: &str, open: usize) -> Option<usize> {
     let bytes = source.as_bytes();
     if bytes.get(open) != Some(&b'(') {
         return None;
@@ -151,7 +151,7 @@ fn function_end(source: &str, open: usize) -> Option<usize> {
     None
 }
 
-fn string_end(source: &str, start: usize, quote: char) -> Option<usize> {
+pub(super) fn string_end(source: &str, start: usize, quote: char) -> Option<usize> {
     let bytes = source.as_bytes();
     let mut cursor = start + quote.len_utf8();
     while cursor < source.len() {
@@ -210,7 +210,7 @@ fn strip_comments(source: &str) -> String {
     output
 }
 
-fn unescape_css(source: &str, quoted: bool) -> Option<String> {
+pub(super) fn unescape_css(source: &str, quoted: bool) -> Option<String> {
     let mut output = String::with_capacity(source.len());
     let mut characters = source.chars().peekable();
     while let Some(current) = characters.next() {

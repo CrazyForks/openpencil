@@ -83,10 +83,11 @@ fn fixture_schema_bytes() -> Vec<u8> {
         w.var_uint(0); // struct fields ignore value
     }
 
-    // -- def 2: message Message { name:1, kind:2, pos:3, tags:4, blob:5, count:6 } --
+    // -- def 2: message Message { name:1, kind:2, pos:3, tags:4, blob:5,
+    //                             count:6, pos2:7 } --
     w.string("Message");
     w.byte(2); // MESSAGE
-    w.var_uint(6);
+    w.var_uint(7);
     // name: string (native idx5 → -6)
     w.string("name");
     w.var_int(-6);
@@ -117,6 +118,11 @@ fn fixture_schema_bytes() -> Vec<u8> {
     w.var_int(-3);
     w.byte(0);
     w.var_uint(6);
+    // pos2: Vec2 (def index 1); used to prove repeated structs share keys.
+    w.string("pos2");
+    w.var_int(1);
+    w.byte(0);
+    w.var_uint(7);
 
     w.out
 }
@@ -197,6 +203,32 @@ fn omitted_message_fields_are_absent() {
 }
 
 #[test]
+fn repeated_struct_instances_share_schema_object_keys() {
+    let schema = decode_binary_schema(&fixture_schema_bytes()).unwrap();
+    let mut w = ByteWriter::default();
+    w.var_uint(3); // pos
+    w.var_float(1.0);
+    w.var_float(2.0);
+    w.var_uint(7); // pos2
+    w.var_float(3.0);
+    w.var_float(4.0);
+    w.var_uint(0);
+
+    let value = decode_message(&schema, &w.out).unwrap();
+    let FigValue::Object(first) = value.get("pos").expect("first struct") else {
+        panic!("pos is not an object");
+    };
+    let FigValue::Object(second) = value.get("pos2").expect("second struct") else {
+        panic!("pos2 is not an object");
+    };
+
+    assert_eq!(first[0].0.as_ref(), "x");
+    assert_eq!(second[0].0.as_ref(), "x");
+    assert!(Arc::ptr_eq(&first[0].0, &second[0].0));
+    assert!(Arc::ptr_eq(&first[1].0, &second[1].0));
+}
+
+#[test]
 fn var_float_round_trips() {
     let mut w = ByteWriter::default();
     let cases = [
@@ -256,4 +288,21 @@ fn truncated_buffer_errors() {
     w.var_uint(1); // field id 1 = name (string) — but no string follows
     let err = decode_message(&schema, &w.out);
     assert!(matches!(err, Err(KiwiError::OutOfBounds)));
+}
+
+#[test]
+fn mutable_object_and_array_lookups_update_in_place() {
+    let mut value = FigValue::Object(vec![
+        ("items".into(), FigValue::Array(vec![FigValue::Uint(1)])),
+        ("missing".into(), FigValue::Null),
+    ]);
+
+    value
+        .get_array_mut("items")
+        .expect("array is mutable")
+        .push(FigValue::Uint(2));
+
+    assert_eq!(value.get_array("items").map(<[FigValue]>::len), Some(2));
+    assert!(value.get_mut("missing").is_none());
+    assert!(value.get_array_mut("unknown").is_none());
 }

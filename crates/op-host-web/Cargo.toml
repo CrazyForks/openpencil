@@ -60,6 +60,7 @@ accesskit = "0.24"
 console_error_panic_hook = "0.1"
 js-sys = "0.3"
 base64 = "0.22"
+url = "2"
 # CanvasKit FFI: await the async CanvasKitInit() promise from Rust.
 wasm-bindgen-futures = { version = "0.4", optional = true }
 # Phase C1 DOM event mappers build `jian_core::gesture::WheelEvent` etc
@@ -89,6 +90,8 @@ features = [
   "CompositionEvent",
   "console",
   "DataTransfer",
+  "DataTransferItem",
+  "DataTransferItemList",
   "Document",
   "DomRect",
   "DragEvent",

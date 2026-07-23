@@ -62,6 +62,10 @@ pub struct EditorSnapshot {
     /// together prevents a history restore from producing asymmetric token
     /// resolution state.
     pub stroke_refs: HashMap<NodeId, String>,
+    /// Whether the current document must keep its authored coordinates instead
+    /// of running flex layout. Layout mutations can clear this document-level
+    /// latch, so undo / redo must restore it alongside the document snapshot.
+    pub preserve_authored_geometry: bool,
     /// Document revision at snapshot time. Restoring it lets undo back
     /// to a saved snapshot clear the dirty marker naturally.
     pub revision: u64,
@@ -127,6 +131,7 @@ impl EditorState {
             app_state_owner: self.app_state_owner.clone(),
             fill_refs: self.ui.variables.fill_refs.clone(),
             stroke_refs: self.ui.variables.stroke_refs.clone(),
+            preserve_authored_geometry: self.editor_ui.preserve_authored_geometry,
             revision: self.revision,
         }
     }
@@ -157,6 +162,7 @@ impl EditorState {
         self.app_state_owner = snapshot.app_state_owner;
         self.ui.variables.fill_refs = snapshot.fill_refs;
         self.ui.variables.stroke_refs = snapshot.stroke_refs;
+        self.editor_ui.preserve_authored_geometry = snapshot.preserve_authored_geometry;
         self.revision = snapshot.revision;
         self.sync_dirty_flag();
     }

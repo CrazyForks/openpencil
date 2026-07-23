@@ -119,6 +119,20 @@ fn picker_set_hsv_writes_through_to_node() {
 }
 
 #[test]
+fn fill_picker_preserves_embedded_color_alpha() {
+    let mut s = doc_with_rect();
+    assert!(s.set_selected_color(true, "#11223380"));
+    assert!(s.open_color_picker(ColorTarget::Fill, 0.0));
+    assert!(s.color_picker_set_hsv(0.0, 1.0, 1.0));
+    let node = s.selected_node().expect("rect");
+    assert_eq!(
+        crate::fills::first_solid_fill_hex(node),
+        Some("#ff000080"),
+        "picker RGB edits must retain the canonical colour alpha"
+    );
+}
+
+#[test]
 fn close_picker_pushes_history_only_on_change() {
     let mut s = doc_with_rect();
     let depth = s.history.past.len();

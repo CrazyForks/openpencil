@@ -1,6 +1,7 @@
 //! Unit tests for [`editor_state_to_layout_scene`].
 
 use super::*;
+use jian_ops_schema::node::MaskType;
 
 #[test]
 fn layout_scene_carries_even_odd_path_fill_rule() {
@@ -12,6 +13,88 @@ fn layout_scene_carries_even_odd_path_fill_rule() {
     }"#;
     let scene = editor_state_to_layout_scene(&state_from(src));
     assert!(scene.active_page().unwrap().children[0].even_odd_fill);
+}
+
+#[test]
+fn layout_scene_carries_path_mask_marker() {
+    let src = r#"{
+      "version":"1.0.0","pages":[{"id":"p","name":"P","children":[
+        {"type":"path","id":"mask","width":100,"height":100,
+         "d":"M0 0H100V100H0Z","mask":true}
+      ]}],"children":[]
+    }"#;
+    let scene = editor_state_to_layout_scene(&state_from(src));
+    let mask = &scene.active_page().unwrap().children[0];
+    assert!(mask.is_mask);
+    assert_eq!(mask.mask_type, Some(MaskType::Alpha));
+}
+
+#[test]
+fn layout_scene_carries_luminance_mask_on_a_container() {
+    let src = r#"{
+      "version":"1.0.0","pages":[{"id":"p","name":"P","children":[
+        {"type":"frame","id":"mask","width":100,"height":100,
+         "maskType":"luminance","children":[]}
+      ]}],"children":[]
+    }"#;
+    let scene = editor_state_to_layout_scene(&state_from(src));
+    let mask = &scene.active_page().unwrap().children[0];
+    assert_eq!(mask.mask_type, Some(MaskType::Luminance));
+}
+
+#[test]
+fn mask_source_opacity_excludes_the_common_ancestor_opacity() {
+    let src = r##"{
+      "version":"1.0.0","pages":[{"id":"p","name":"P","children":[
+        {"type":"frame","id":"parent","width":100,"height":100,"opacity":0.5,
+         "children":[
+           {"type":"rectangle","id":"mask","width":10,"height":10,
+            "opacity":0.5,"maskType":"alpha",
+            "fill":[{"type":"solid","color":"#ffffff"}]}
+         ]}
+      ]}],"children":[]
+    }"##;
+    let scene = editor_state_to_layout_scene(&state_from(src));
+    let parent = &scene.active_page().unwrap().children[0];
+    let mask = &parent.children[0];
+    assert!((parent.opacity - 1.0).abs() < 0.001);
+    assert!((parent.composite_opacity - 0.5).abs() < 0.001);
+    assert!((mask.opacity - 0.5).abs() < 0.001);
+    assert!((mask.composite_opacity - 1.0).abs() < 0.001);
+}
+
+#[test]
+fn node_blend_carries_local_opacity_on_the_composite_layer() {
+    let src = r#"{
+      "version":"1.0.0","pages":[{"id":"p","name":"P","children":[
+        {"type":"frame","id":"parent","width":100,"height":100,
+         "opacity":0.5,"blendMode":"soft_light","children":[
+           {"type":"rectangle","id":"child","width":10,"height":10}
+         ]}
+      ]}],"children":[]
+    }"#;
+    let scene = editor_state_to_layout_scene(&state_from(src));
+    let parent = &scene.active_page().unwrap().children[0];
+    assert_eq!(parent.blend_mode, ImageBlendMode::SoftLight);
+    assert_eq!(parent.children[0].blend_mode, ImageBlendMode::Normal);
+    assert!((parent.opacity - 1.0).abs() < 0.001);
+    assert!((parent.composite_opacity - 0.5).abs() < 0.001);
+    assert!((parent.children[0].opacity - 1.0).abs() < 0.001);
+    assert!((parent.children[0].composite_opacity - 1.0).abs() < 0.001);
+}
+
+#[test]
+fn extended_canonical_blend_modes_map_to_scene_modes() {
+    use jian_ops_schema::style::BlendMode;
+    for (canonical, scene) in [
+        (BlendMode::SoftLight, ImageBlendMode::SoftLight),
+        (BlendMode::ColorDodge, ImageBlendMode::ColorDodge),
+        (BlendMode::ColorBurn, ImageBlendMode::ColorBurn),
+        (BlendMode::HardLight, ImageBlendMode::HardLight),
+        (BlendMode::Exclusion, ImageBlendMode::Exclusion),
+    ] {
+        assert_eq!(blend_mode_to_scene(Some(&canonical)), scene);
+    }
 }
 
 #[test]
@@ -289,7 +372,7 @@ fn variable_ref_replaces_only_primary_fill_layer() {
         SceneFillLayer::Gradient {
             gradient: SceneGradient::Linear { opacity, stops, .. },
             blend_mode: ImageBlendMode::Screen,
-        } if (*opacity - 0.6).abs() < 0.001
+        } if (opacity - 0.6).abs() < 0.001
           && (stops[0].color.g - 0x11 as f32 / 255.0).abs() < 0.001
     ));
     assert!(matches!(
@@ -299,7 +382,7 @@ fn variable_ref_replaces_only_primary_fill_layer() {
             blend_mode: ImageBlendMode::Overlay,
             fit: SceneImageFit::Fit,
             ..
-        } if (*opacity - 0.8).abs() < 0.001
+        } if (opacity - 0.8).abs() < 0.001
     ));
     assert!((r1.opacity - 0.5).abs() < 0.001);
 
@@ -698,13 +781,46 @@ fn image_fill_mode_threads_into_scene_node() {
     let src = r##"{
       "version":"1.0.0","pages":[{"id":"p","name":"P","children":[{
         "type":"rectangle","id":"r","width":360,"height":240,
-        "fill":[{"type":"image","url":"data:image/png;base64,AA==","mode":"fit"}]
+        "fill":[{"type":"image","url":"data:image/png;base64,AA==","mode":"tile",
+          "originalSize":{"width":4096,"height":2048},"tileScale":0.38618907}]
       }]}],"children":[]
     }"##;
     let scene = editor_state_to_layout_scene(&state_from(src));
     let n = &scene.pages[0].children[0];
     assert_eq!(n.image_src.as_deref(), Some("data:image/png;base64,AA=="));
-    assert_eq!(n.image_fit, jian_scene::layout_scene::SceneImageFit::Fit);
+    assert_eq!(n.image_fit, jian_scene::layout_scene::SceneImageFit::Tile);
+    assert_eq!(n.image_original_size, Some([4096.0, 2048.0]));
+    assert_eq!(n.image_tile_scale, 0.38618907);
+    assert!(matches!(
+        n.fill_layers.as_slice(),
+        [SceneFillLayer::Image {
+            fit: SceneImageFit::Tile,
+            original_size: Some([4096.0, 2048.0]),
+            tile_scale,
+            ..
+        }] if *tile_scale == 0.38618907
+    ));
+}
+
+#[test]
+fn invalid_or_missing_tile_scale_defaults_to_one_in_scene() {
+    for tile_scale in ["", ",\"tileScale\":0", ",\"tileScale\":-2"] {
+        let src = format!(
+            r#"{{
+              "version":"1.0.0","pages":[{{"id":"p","name":"P","children":[{{
+                "type":"rectangle","id":"r","width":220,"height":220,
+                "fill":[{{"type":"image","url":"data:image/png;base64,AA==","mode":"tile"{tile_scale}}}]
+              }}]}}],"children":[]
+            }}"#
+        );
+        let scene = editor_state_to_layout_scene(&state_from(&src));
+        let node = &scene.pages[0].children[0];
+        assert_eq!(node.image_tile_scale, 1.0);
+        assert!(matches!(
+            node.fill_layers.as_slice(),
+            [SceneFillLayer::Image { tile_scale, .. }] if *tile_scale == 1.0
+        ));
+    }
 }
 
 #[test]
@@ -760,10 +876,10 @@ fn node_opacity_bakes_into_resolved_fill_alpha() {
 }
 
 #[test]
-fn node_opacity_is_cumulative_through_containers() {
-    // A 0.5-opacity frame containing a 0.5-opacity child folds to
-    // 0.25 on the child's resolved fill (group opacity composites
-    // multiplicatively down the tree).
+fn container_opacity_isolated_from_leaf_paint_opacity() {
+    // The frame's 0.5 alpha applies once to its assembled subtree, while the
+    // leaf keeps its own 0.5 direct-paint fast path. The visible result is
+    // still 0.25, but overlapping siblings no longer accumulate frame alpha.
     let src = r##"{
       "version":"1.0.0",
       "pages":[{"id":"p","name":"P","children":[
@@ -784,9 +900,13 @@ fn node_opacity_is_cumulative_through_containers() {
         .find(|n| n.id == "r")
         .expect("child r");
     let fill = child.fill.expect("rect fill");
+    assert!((frame.opacity - 1.0).abs() < 1e-3);
+    assert!((frame.composite_opacity - 0.5).abs() < 1e-3);
+    assert!((child.opacity - 0.5).abs() < 1e-3);
+    assert!((child.composite_opacity - 1.0).abs() < 1e-3);
     assert!(
-        (fill.a - 0.25).abs() < 1e-3,
-        "0.5 * 0.5 cumulative opacity should bake to 0.25, got {}",
+        (fill.a - 0.5).abs() < 1e-3,
+        "only the leaf's 0.5 opacity should bake into its fill, got {}",
         fill.a
     );
 }
@@ -1126,7 +1246,7 @@ fn mesh_gradient_fill_threads_into_scene_node() {
             assert_eq!(colors.len(), 4);
             assert!(colors[0].r > 0.99 && colors[0].g < 0.01, "vertex (0,0) red");
             assert!(colors[3].b > 0.99, "vertex (1,1) white");
-            assert!((*opacity - 1.0).abs() < 1e-6);
+            assert!((opacity - 1.0).abs() < 1e-6);
         }
         other => panic!("expected mesh, got {other:?}"),
     }

@@ -32,6 +32,17 @@ impl NativeBackend {
             .paint(&paint);
         canvas.save_layer(&rec);
     }
+
+    /// Assemble subsequent mask-source draws in isolation and apply the
+    /// finished source to the already-isolated sibling content with DstIn.
+    pub fn push_mask_source_layer(&self, canvas: &skia_safe::Canvas, luminance: bool) {
+        let mut paint = skia_safe::Paint::default();
+        paint.set_blend_mode(skia_safe::BlendMode::DstIn);
+        if luminance {
+            paint.set_color_filter(skia_safe::ColorFilter::luma());
+        }
+        canvas.save_layer(&skia_safe::canvas::SaveLayerRec::default().paint(&paint));
+    }
 }
 
 pub(super) fn to_skia_blend_mode(mode: ImageBlendMode) -> skia_safe::BlendMode {
@@ -47,6 +58,11 @@ pub(super) fn to_skia_blend_mode(mode: ImageBlendMode) -> skia_safe::BlendMode {
         ImageBlendMode::Saturation => skia_safe::BlendMode::Saturation,
         ImageBlendMode::Color => skia_safe::BlendMode::Color,
         ImageBlendMode::Luminosity => skia_safe::BlendMode::Luminosity,
+        ImageBlendMode::SoftLight => skia_safe::BlendMode::SoftLight,
+        ImageBlendMode::ColorDodge => skia_safe::BlendMode::ColorDodge,
+        ImageBlendMode::ColorBurn => skia_safe::BlendMode::ColorBurn,
+        ImageBlendMode::HardLight => skia_safe::BlendMode::HardLight,
+        ImageBlendMode::Exclusion => skia_safe::BlendMode::Exclusion,
     }
 }
 
@@ -84,6 +100,19 @@ mod tests {
     }
 
     #[test]
+    fn extended_blend_modes_map_directly_to_skia() {
+        for (scene, skia) in [
+            (ImageBlendMode::SoftLight, skia_safe::BlendMode::SoftLight),
+            (ImageBlendMode::ColorDodge, skia_safe::BlendMode::ColorDodge),
+            (ImageBlendMode::ColorBurn, skia_safe::BlendMode::ColorBurn),
+            (ImageBlendMode::HardLight, skia_safe::BlendMode::HardLight),
+            (ImageBlendMode::Exclusion, skia_safe::BlendMode::Exclusion),
+        ] {
+            assert_eq!(to_skia_blend_mode(scene), skia);
+        }
+    }
+
+    #[test]
     fn outer_layer_keeps_inner_blend_from_sampling_canvas_backdrop() {
         let backend = NativeBackend::with_dpi(1.0);
         let mut surface = skia_safe::surfaces::raster_n32_premul((20, 20)).unwrap();
@@ -105,5 +134,59 @@ mod tests {
             center.b() < 16,
             "canvas blue must not enter blend: {center:?}"
         );
+    }
+
+    #[test]
+    fn alpha_mask_layer_preserves_backdrop_and_masks_only_isolated_content() {
+        let backend = NativeBackend::with_dpi(1.0);
+        let mut surface = skia_safe::surfaces::raster_n32_premul((20, 10)).unwrap();
+        surface.canvas().clear(skia_safe::Color::BLUE);
+        let bounds = Rect::xywh(0.0, 0.0, 20.0, 10.0);
+        backend.push_composite_layer(surface.canvas(), bounds, 1.0, ImageBlendMode::Normal);
+        let red = skia_safe::Paint::new(skia_safe::Color4f::new(1.0, 0.0, 0.0, 1.0), None);
+        surface.canvas().draw_rect(to_sk_rect(bounds), &red);
+        backend.push_mask_source_layer(surface.canvas(), false);
+        let half = skia_safe::Paint::new(skia_safe::Color4f::new(1.0, 1.0, 1.0, 0.5), None);
+        surface
+            .canvas()
+            .draw_rect(skia_safe::Rect::from_xywh(0.0, 0.0, 10.0, 10.0), &half);
+        surface.canvas().restore();
+        surface.canvas().restore();
+
+        let left = pixel(&mut surface, 5, 5);
+        let right = pixel(&mut surface, 15, 5);
+        assert!(
+            left.r() > 110 && left.b() > 110,
+            "half red over blue: {left:?}"
+        );
+        assert!(
+            right.b() > 240 && right.r() < 16,
+            "backdrop survives: {right:?}"
+        );
+    }
+
+    #[test]
+    fn luminance_mask_converts_black_and_white_to_alpha_before_dst_in() {
+        let backend = NativeBackend::with_dpi(1.0);
+        let mut surface = skia_safe::surfaces::raster_n32_premul((20, 10)).unwrap();
+        surface.canvas().clear(skia_safe::Color::TRANSPARENT);
+        let bounds = Rect::xywh(0.0, 0.0, 20.0, 10.0);
+        backend.push_composite_layer(surface.canvas(), bounds, 1.0, ImageBlendMode::Normal);
+        let red = skia_safe::Paint::new(skia_safe::Color4f::new(1.0, 0.0, 0.0, 1.0), None);
+        surface.canvas().draw_rect(to_sk_rect(bounds), &red);
+        backend.push_mask_source_layer(surface.canvas(), true);
+        let white = skia_safe::Paint::new(skia_safe::Color4f::new(1.0, 1.0, 1.0, 1.0), None);
+        let black = skia_safe::Paint::new(skia_safe::Color4f::new(0.0, 0.0, 0.0, 1.0), None);
+        surface
+            .canvas()
+            .draw_rect(skia_safe::Rect::from_xywh(0.0, 0.0, 10.0, 10.0), &white);
+        surface
+            .canvas()
+            .draw_rect(skia_safe::Rect::from_xywh(10.0, 0.0, 10.0, 10.0), &black);
+        surface.canvas().restore();
+        surface.canvas().restore();
+
+        assert!(pixel(&mut surface, 5, 5).a() > 240);
+        assert!(pixel(&mut surface, 15, 5).a() < 16);
     }
 }

@@ -40,6 +40,7 @@ pub(super) fn map_fill(style: &ComputedStyle, context: &mut MapCtx<'_>) -> Optio
                     mode: background_image_mode(style, index, context),
                     original_size: None,
                     transform: None,
+                    tile_scale: None,
                     explain: None,
                     opacity: None,
                     blend_mode: blend,
@@ -588,6 +589,11 @@ pub(crate) fn map_blend_mode(value: &str) -> Option<BlendMode> {
         "saturation" => Some(BlendMode::Saturation),
         "color" => Some(BlendMode::Color),
         "luminosity" => Some(BlendMode::Luminosity),
+        "soft-light" => Some(BlendMode::SoftLight),
+        "color-dodge" => Some(BlendMode::ColorDodge),
+        "color-burn" => Some(BlendMode::ColorBurn),
+        "hard-light" => Some(BlendMode::HardLight),
+        "exclusion" => Some(BlendMode::Exclusion),
         _ => None,
     }
 }

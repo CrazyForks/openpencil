@@ -5,7 +5,6 @@
 use crate::figma_types::FigGuid;
 use crate::kiwi::FigValue;
 use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
 
 /// Recursion ceiling for `materialize` — guards a malformed file with
 /// a cyclic parent chain.
@@ -65,6 +64,27 @@ fn index_by_key(node_changes: &[FigValue]) -> (HashMap<String, FigValue>, Vec<St
             order.push(key.clone());
         }
         by_key.insert(key, nc.clone());
+    }
+    (by_key, order)
+}
+
+/// Owned counterpart to [`index_by_key`]. Full-file import no longer
+/// needs the decoded flat list after tree construction, so move each
+/// record into the index instead of deep-cloning all node values.
+fn index_by_key_owned(node_changes: Vec<FigValue>) -> (HashMap<String, FigValue>, Vec<String>) {
+    let mut by_key: HashMap<String, FigValue> = HashMap::new();
+    let mut order: Vec<String> = Vec::new();
+    for nc in node_changes {
+        if nc.get_str("phase") == Some("REMOVED") {
+            continue;
+        }
+        let Some(key) = nc.get("guid").and_then(guid_to_string) else {
+            continue;
+        };
+        if !by_key.contains_key(&key) {
+            order.push(key.clone());
+        }
+        by_key.insert(key, nc);
     }
     (by_key, order)
 }
@@ -165,6 +185,16 @@ pub fn build_tree(node_changes: &[FigValue]) -> Option<TreeNode> {
     Some(materialize(&root_key, &mut by_key, &children_of, 0))
 }
 
+/// Build the canonical document tree while consuming the flat decoded
+/// node list. Prefer this for full-file conversion, where retaining the
+/// source list would only force a second copy of every nested value.
+pub fn build_tree_owned(node_changes: Vec<FigValue>) -> Option<TreeNode> {
+    let (mut by_key, order) = index_by_key_owned(node_changes);
+    let (children_of, root_key) = build_adjacency(&order, &by_key);
+    let root_key = root_key?;
+    Some(materialize(&root_key, &mut by_key, &children_of, 0))
+}
+
 /// Build orphan-rooted trees for clipboard data with no `DOCUMENT`
 /// wrapper — roots are nodes whose parent is absent.
 pub fn build_tree_for_clipboard(node_changes: &[FigValue]) -> Vec<TreeNode> {
@@ -205,18 +235,19 @@ pub fn collect_components(node: &TreeNode, map: &mut HashMap<String, String>, co
     }
 }
 
-/// Pre-order DFS: register every `SYMBOL` node's guid → its subtree.
+/// Pre-order DFS: register every `SYMBOL` node's guid → its source subtree.
 ///
-/// The subtree is cloned once per distinct SYMBOL definition (the tree
-/// walk that builds the page output still needs its own copy of the
-/// master component), but wrapped in an `Rc` so every instance of that
-/// SYMBOL shares the one clone — a cheap refcount bump per instance
-/// instead of a second deep clone (previously the dominant cost on
-/// instance-heavy files).
-pub fn collect_symbol_tree(node: &TreeNode, map: &mut HashMap<String, Rc<TreeNode>>) {
+/// The conversion context never outlives the decoded tree, so borrowing the
+/// master definitions avoids cloning overlapping component subtrees merely
+/// to index them. Instance materialization still produces independent owned
+/// children where mutation is required.
+pub fn collect_symbol_tree<'tree>(
+    node: &'tree TreeNode,
+    map: &mut HashMap<String, &'tree TreeNode>,
+) {
     if node.figma.get_str("type") == Some("SYMBOL") {
         if let Some(key) = node.figma.get("guid").and_then(guid_to_string) {
-            map.insert(key, Rc::new(node.clone()));
+            map.insert(key, node);
         }
     }
     for child in &node.children {
@@ -229,7 +260,7 @@ mod tests {
     use super::*;
 
     fn obj(pairs: Vec<(&str, FigValue)>) -> FigValue {
-        FigValue::Object(pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
+        FigValue::Object(pairs.into_iter().map(|(k, v)| (k.into(), v)).collect())
     }
 
     fn guid(s: u32, l: u32) -> FigValue {
@@ -318,6 +349,25 @@ mod tests {
             children: vec![],
         };
         assert!(is_user_page(&real));
+    }
+
+    #[test]
+    fn symbol_index_borrows_the_source_subtree() {
+        let changes = vec![
+            node(0, "DOCUMENT", None, ""),
+            node(1, "CANVAS", Some(0), "a"),
+            node(2, "SYMBOL", Some(1), "a"),
+            node(3, "RECTANGLE", Some(2), "a"),
+        ];
+        let tree = build_tree(&changes).expect("tree builds");
+        let symbol = &tree.children[0].children[0];
+        let mut symbols = HashMap::new();
+        collect_symbol_tree(&tree, &mut symbols);
+
+        assert!(std::ptr::eq(
+            *symbols.get("0:2").expect("indexed symbol"),
+            symbol
+        ));
     }
 
     #[test]

@@ -159,6 +159,18 @@ pub fn fill_row_body_height(
     is_primary: bool,
     primary_stop_count: usize,
 ) -> f32 {
+    fill_content_body_height(fill_type, is_primary, primary_stop_count)
+        + crate::widgets::property_panel_compositing::COMPOSITING_ROW_HEIGHT
+}
+
+/// Height of only the type-specific body, before the common per-fill
+/// Blend dropdown. Exposed to the action walker so its trigger lands
+/// at exactly the same y as paint.
+pub(crate) fn fill_content_body_height(
+    fill_type: op_editor_core::FillType,
+    is_primary: bool,
+    primary_stop_count: usize,
+) -> f32 {
     use op_editor_core::FillType;
     match fill_type {
         FillType::Solid => INPUT_HEIGHT + 6.0,
@@ -607,6 +619,16 @@ fn paint_one_fill(
         | FillType::Shader
         | FillType::Image => {}
     }
-    y += fill_row_body_height(fill_type, is_primary, primary_stop_count);
+    y += fill_content_body_height(fill_type, is_primary, primary_stop_count);
+    crate::widgets::property_panel_compositing::paint_fill_trigger(
+        cx,
+        theme,
+        fill.blend_mode.as_ref(),
+        locale,
+        x,
+        y,
+        width,
+    );
+    y += crate::widgets::property_panel_compositing::COMPOSITING_ROW_HEIGHT;
     y
 }

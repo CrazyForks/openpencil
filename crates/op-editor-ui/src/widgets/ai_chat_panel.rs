@@ -399,7 +399,7 @@ impl<'a> AIChatPlaceholder<'a> {
     }
 
     pub fn model_picker_bounds(&self, rect: Rect) -> Option<Rect> {
-        if !self.model_picker.open {
+        if self.state.collapsed || !self.model_picker.open {
             return None;
         }
         let input_rect = self.input_rect(rect);
@@ -810,8 +810,7 @@ impl<'a> Widget for AIChatPlaceholder<'a> {
         paint_bottom_toolbar(cx, self, &footer, toolbar_center_y, streaming, send_active);
 
         // Model-picker dropdown paints above other panel content.
-        if self.model_picker.open {
-            let picker = self.model_picker_rect(rect, input_rect);
+        if let Some(picker) = self.model_picker_bounds(rect) {
             crate::widgets::ai_chat_model_picker::paint_model_picker(
                 cx,
                 &self.theme,

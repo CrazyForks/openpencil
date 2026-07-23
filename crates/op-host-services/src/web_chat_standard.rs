@@ -32,6 +32,7 @@ const STANDARD_MODIFY_STEP: &str =
 pub struct WebStandardTurnRequest {
     pub ai: AiStreamRequest,
     document_json: Option<String>,
+    editor_meta: Option<op_pen_loader::EditorMeta>,
     selected_ids: Vec<String>,
     active_page_id: Option<String>,
     agent_team_size: Option<u32>,
@@ -45,6 +46,10 @@ pub fn parse_standard_turn_body(body: &str) -> Option<WebStandardTurnRequest> {
     let value: Value = serde_json::from_str(body).ok()?;
     let obj = value.as_object()?;
     let document_json = obj.get("document").map(Value::to_string);
+    let editor_meta = obj
+        .get("editorMeta")
+        .cloned()
+        .and_then(|value| serde_json::from_value(value).ok());
     let selected_ids = obj
         .get("selectedIds")
         .and_then(Value::as_array)
@@ -74,6 +79,7 @@ pub fn parse_standard_turn_body(body: &str) -> Option<WebStandardTurnRequest> {
     Some(WebStandardTurnRequest {
         ai,
         document_json,
+        editor_meta,
         selected_ids,
         active_page_id,
         agent_team_size,
@@ -165,12 +171,9 @@ pub fn stream_standard_turn<W: Write>(
     {
         let version = {
             let mut guard = state.lock().unwrap_or_else(|p| p.into_inner());
-            if guard.editor.doc == EditorState::starter().doc {
-                guard.editor.active_children_mut().clear();
-                guard.editor.clear_selection();
-                guard.version += 1;
+            if let Some(version) = clear_live_starter_frame_for_design(&mut guard) {
                 snapshot = guard.editor.clone();
-                Some(guard.version)
+                Some(version)
             } else {
                 None
             }
@@ -250,6 +253,9 @@ fn apply_request_snapshot(
                 broadcast_version = Some(version);
             }
         }
+        if let Some(meta) = req.editor_meta {
+            op_pen_loader::apply_editor_meta(&mut guard.editor, meta);
+        }
         if let Some(size) = req.agent_team_size {
             guard.editor.chat.agent_team_size = size.clamp(1, 6);
         }
@@ -306,7 +312,19 @@ fn clear_fresh_starter_frame_for_design(state: &mut EditorState) -> bool {
     }
     state.active_children_mut().clear();
     state.clear_selection();
+    // Raw `active_children_mut()` bypasses the command/history path, so it
+    // must advance the content revision explicitly. Save acknowledgements
+    // use that revision to avoid marking newer edits as saved.
+    state.mark_document_changed();
     true
+}
+
+fn clear_live_starter_frame_for_design(state: &mut WebCanvasState) -> Option<u64> {
+    if !clear_fresh_starter_frame_for_design(&mut state.editor) {
+        return None;
+    }
+    state.version += 1;
+    Some(state.version)
 }
 
 fn resolve_standard_route(

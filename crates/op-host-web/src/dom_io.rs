@@ -3,9 +3,7 @@
 //! Browser file-IO glue — the web consumer of
 //! `editor_ui.pending_file_action` plus the DOM paste / drag-drop
 //! listeners. The pure serialize / ingest logic lives in
-//! `crate::file_actions`; this module owns only the `web_sys` side:
-//! Blob downloads, hidden `<input type=file>` pickers, `FileReader`
-//! reads, and the event routing.
+//! `crate::file_actions`; this module owns Blob/file-picker reads and routing.
 //!
 //! Closure lifetime pattern: long-lived listeners go through
 //! `crate::listener::add_listener` (stored on the `WebShell` like
@@ -14,28 +12,41 @@
 //! from `raf_pump.rs` so each fires once and frees its own
 //! wasm-bindgen closure slot. If the user cancels a file dialog the
 //! `change` event never fires and that input + closure leak until
-//! page unload — bounded (one hidden node per cancelled pick);
-//! browsers expose no reliable cancel event across engines.
+//! page unload in older engines that do not dispatch the modern file-input
+//! `cancel` event; current engines clean up on both `change` and `cancel`.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use wasm_bindgen::closure::Closure;
-use wasm_bindgen::{JsCast, JsValue};
+use wasm_bindgen::JsValue;
 
 use op_editor_core::chat::{ChatAttachment, MAX_ATTACHMENT_BYTES};
-use op_editor_core::editor_ui_state::{ExportFormat, FileAction};
+use op_editor_core::figma_import_state::ImportSource;
 use op_editor_core::KitIoRequest;
 
-use crate::file_actions::{self, DropKind};
-use crate::listener::{add_listener, now_unix_secs, Listener};
+use crate::file_actions::{self, DropBatchPlan, DropKind};
+use crate::listener::{add_listener, Listener};
 use crate::repaint_ctx::RepaintContext;
 
-type InnerRc<C> = Rc<RefCell<C>>;
+mod browser_files;
+mod document_io;
+mod drop_entries;
+mod figma_import;
+mod html_directory_session;
+mod html_zip_session;
+mod import_generation;
 
-/// One-shot closure slot — the closure drops itself out of the slot
-/// after firing (raf_pump idiom), freeing its wasm-bindgen slot.
-type OnceSlot = Rc<RefCell<Option<Closure<dyn FnMut()>>>>;
+use browser_files::{html_project_file_path, open_html_project_picker};
+pub(crate) use browser_files::{js_bytes, open_file_picker, read_file, ReadMode};
+pub(crate) use document_io::drain_pending_file_action;
+use document_io::read_open_document_file;
+use figma_import::{import_figma, ingest_figma_file};
+use import_generation::{
+    begin_document_import, clear_document_import_if_owned, document_import_activity,
+    document_import_is_current,
+};
+
+type InnerRc<C> = Rc<RefCell<C>>;
 
 fn console_error(msg: &str) {
     web_sys::console::error_1(&JsValue::from_str(msg));
@@ -43,100 +54,6 @@ fn console_error(msg: &str) {
 
 fn console_warn(msg: &str) {
     web_sys::console::warn_1(&JsValue::from_str(msg));
-}
-
-// ---------------------------------------------------------------------
-// pending_file_action drain (task item 1)
-// ---------------------------------------------------------------------
-
-/// Consume a pending file action raised by a press dispatcher.
-/// Mirrors the desktop's `persistence::run_action` routing; called
-/// from the mousedown listener right after `codegen_web::drain_codegen_flags`,
-/// once the press-time `inner` borrow is released. The flag is taken
-/// FIRST so a failed handler can't re-fire on every later press.
-pub(crate) fn drain_pending_file_action<C: RepaintContext + 'static>(inner: &InnerRc<C>) {
-    let action = inner
-        .borrow_mut()
-        .host_mut()
-        .editor_state_mut()
-        .editor_ui
-        .pending_file_action
-        .take();
-    let Some(action) = action else {
-        return;
-    };
-    match action {
-        FileAction::New => new_document(inner),
-        FileAction::Open => open_document(inner),
-        FileAction::Save => save_document(inner, true),
-        FileAction::SaveAs => save_document(inner, false),
-        FileAction::ExportImage => {
-            // Same fallback as the desktop run_action: open the
-            // format/scale picker dialog; Export raises
-            // `ExportImageConfirm` which lands below.
-            let mut b = inner.borrow_mut();
-            let ui = &mut b.host_mut().editor_state_mut().editor_ui;
-            ui.image_panel.close_popovers();
-            ui.export_dialog_open = true;
-            b.host_mut().mark_editor_state_dirty();
-            let _ = b.repaint();
-        }
-        FileAction::ExportImageConfirm => export_image(inner),
-        FileAction::ImportFigma => import_figma(inner),
-        FileAction::ImportHtml => import_html_file(inner),
-        FileAction::ImportImageOrSvg => import_image_or_svg(inner),
-        FileAction::PickFillImage => pick_fill_image(inner),
-        FileAction::RelinkImage => relink_image(inner),
-        FileAction::OpenRecent(i) => open_recent_document(inner, i),
-        FileAction::ClearRecent => {
-            let mut b = inner.borrow_mut();
-            b.host_mut()
-                .editor_state_mut()
-                .editor_ui
-                .recent_files
-                .clear();
-            b.host_mut().mark_editor_state_dirty();
-            let _ = b.repaint();
-        }
-    }
-}
-
-fn open_recent_document<C: RepaintContext + 'static>(inner: &InnerRc<C>, index: usize) {
-    let Some(path) = inner
-        .borrow()
-        .host()
-        .editor_state()
-        .editor_ui
-        .recent_files
-        .get(index)
-        .map(|recent| recent.path.clone())
-    else {
-        return;
-    };
-    let body = serde_json::json!({ "path": path.clone() }).to_string();
-    let base = crate::daemon_base::daemon_base();
-    let inner_for_response = inner.clone();
-    let path_for_response = path.clone();
-    let on_response: Rc<dyn Fn(String)> = Rc::new(move |response: String| {
-        let mut b = inner_for_response.borrow_mut();
-        if !file_actions::apply_open_recent_response(
-            b.host_mut().editor_state_mut(),
-            &path_for_response,
-            &response,
-            now_unix_secs(),
-        ) {
-            return;
-        }
-        b.host_mut().mark_editor_state_dirty();
-        let _ = b.repaint();
-    });
-    if !crate::live_sync::post_json(
-        &format!("{base}/api/file/open-recent"),
-        &body,
-        Some(on_response),
-    ) {
-        console_warn("open recent request could not start");
-    }
 }
 
 /// Consume a chat attachment-pick request raised by the chat footer.
@@ -218,211 +135,6 @@ pub(crate) fn drain_pending_kit_io<C: RepaintContext + 'static>(inner: &InnerRc<
     }
 }
 
-/// File → New: fresh starter document, app preferences carried over,
-/// viewport fit to the blank starter frame (desktop `FileAction::New`).
-fn new_document<C: RepaintContext + 'static>(inner: &InnerRc<C>) {
-    let mut b = inner.borrow_mut();
-    let mut state = op_editor_core::EditorState::starter();
-    file_actions::preserve_app_preferences(b.host().editor_state(), &mut state);
-    state.editor_ui.file_name_display = None;
-    *b.host_mut().editor_state_mut() = state;
-    // Fresh starter document restarts at revision 0 / page 0 — rotate the
-    // LayerPanel cache owner so the next paint rebuilds (same aliasing as Open).
-    b.host_mut().force_rotate_layer_panel_owner();
-    b.host_mut().mark_editor_state_dirty();
-    let (w, h) = b.viewport_size();
-    b.host_mut().fit_content_to_viewport(w, h);
-    let _ = b.repaint();
-}
-
-/// File → Save / Save As: first ask the local daemon to write the current
-/// document to its backing file path (when this web session has one). If the
-/// daemon has no path or the request cannot start, fall back to the original
-/// browser Blob download.
-fn save_document<C: RepaintContext + 'static>(inner: &InnerRc<C>, daemon_first: bool) {
-    let (json, name, body, snap_gen, snap_rev) = {
-        let b = inner.borrow();
-        let state = b.host().editor_state();
-        let json = match file_actions::serialize_document(state) {
-            Ok(json) => json,
-            Err(e) => {
-                console_error(&format!("[save] {e}"));
-                return;
-            }
-        };
-        let name = file_actions::save_file_name(state);
-        let body = file_actions::save_request_body(state);
-        let snap_gen = state.document_generation();
-        let snap_rev = state.document_revision();
-        (json, name, body, snap_gen, snap_rev)
-    };
-    let body = match body {
-        Ok(body) => body,
-        Err(e) => {
-            console_error(&format!("[save] {e}"));
-            download_saved_document(inner, &name, &json);
-            return;
-        }
-    };
-
-    if !daemon_first {
-        download_saved_document(inner, &name, &json);
-        return;
-    }
-
-    let base = crate::daemon_base::daemon_base();
-    let inner_for_response = inner.clone();
-    let fallback_json = json.clone();
-    let fallback_name = name.clone();
-    let on_response: Rc<dyn Fn(String)> =
-        Rc::new(
-            move |response| match file_actions::parse_save_response(&response) {
-                Ok(saved) => {
-                    let mut b = inner_for_response.borrow_mut();
-                    b.host_mut().editor_state_mut().editor_ui.file_name_display =
-                        Some(saved.file_name);
-                    let _ = b
-                        .host_mut()
-                        .editor_state_mut()
-                        .mark_saved_revision_at(snap_gen, snap_rev);
-                    b.host_mut().mark_editor_state_dirty();
-                    let _ = b.repaint();
-                }
-                Err(e) => {
-                    console_warn(&format!("[save] daemon save unavailable: {e}"));
-                    download_saved_document(&inner_for_response, &fallback_name, &fallback_json);
-                }
-            },
-        );
-    if !crate::live_sync::post_json(&format!("{base}/api/file/save"), &body, Some(on_response)) {
-        download_saved_document(inner, &name, &json);
-    }
-}
-
-fn download_saved_document<C: RepaintContext + 'static>(
-    inner: &InnerRc<C>,
-    name: &str,
-    json: &str,
-) {
-    if let Err(e) = crate::web_clipboard::download_bytes(name, "application/json", json.as_bytes())
-    {
-        web_sys::console::error_1(&e);
-        return;
-    }
-    let mut b = inner.borrow_mut();
-    if b.host()
-        .editor_state()
-        .editor_ui
-        .file_name_display
-        .is_none()
-    {
-        b.host_mut().editor_state_mut().editor_ui.file_name_display = Some(name.to_string());
-        b.host_mut().mark_editor_state_dirty();
-        let _ = b.repaint();
-    }
-}
-
-/// Export dialog → Export: SVG downloads vector markup from the
-/// shared serializer; PDF asks the local web-canvas daemon to emit
-/// the same Skia vector PDF as desktop; raster formats ask that same
-/// daemon to run desktop's Skia offscreen exporter.
-fn export_image<C: RepaintContext + 'static>(inner: &InnerRc<C>) {
-    let b = inner.borrow();
-    let fmt = b.host().editor_state().editor_ui.export_format;
-    if fmt == ExportFormat::Svg {
-        match file_actions::export_svg_document(b.host().editor_state()) {
-            Ok(svg) => {
-                if let Err(e) = crate::web_clipboard::download_bytes(
-                    "openpencil-export.svg",
-                    "image/svg+xml",
-                    svg.as_bytes(),
-                ) {
-                    web_sys::console::error_1(&e);
-                }
-            }
-            Err(e) => console_error(&format!("[export-svg] {e}")),
-        }
-        return;
-    }
-    if fmt == ExportFormat::Pdf {
-        let body = match file_actions::export_pdf_request_body(b.host().editor_state()) {
-            Ok(body) => body,
-            Err(e) => {
-                console_error(&format!("[export-pdf] {e}"));
-                return;
-            }
-        };
-        let base = crate::daemon_base::daemon_base();
-        let on_response: std::rc::Rc<dyn Fn(String)> = std::rc::Rc::new(move |response| {
-            match file_actions::parse_pdf_download_response(&response) {
-                Ok(pdf) => {
-                    if let Err(e) =
-                        crate::web_clipboard::download_bytes(&pdf.file_name, &pdf.mime, &pdf.bytes)
-                    {
-                        web_sys::console::error_1(&e);
-                    }
-                }
-                Err(e) => console_error(&format!("[export-pdf] {e}")),
-            }
-        });
-        if !crate::live_sync::post_json(&format!("{base}/api/export/pdf"), &body, Some(on_response))
-        {
-            console_error("[export-pdf] request could not start");
-        }
-        return;
-    }
-    let body = match file_actions::export_raster_request_body(b.host().editor_state()) {
-        Ok(body) => body,
-        Err(e) => {
-            console_error(&format!("[export-raster] {e}"));
-            return;
-        }
-    };
-    let base = crate::daemon_base::daemon_base();
-    let on_response: std::rc::Rc<dyn Fn(String)> = std::rc::Rc::new(move |response| {
-        match file_actions::parse_raster_download_response(&response) {
-            Ok(raster) => {
-                if let Err(e) = crate::web_clipboard::download_bytes(
-                    &raster.file_name,
-                    &raster.mime,
-                    &raster.bytes,
-                ) {
-                    web_sys::console::error_1(&e);
-                }
-            }
-            Err(e) => console_error(&format!("[export-raster] {e}")),
-        }
-    });
-    if !crate::live_sync::post_json(
-        &format!("{base}/api/export/raster"),
-        &body,
-        Some(on_response),
-    ) {
-        console_error("[export-raster] request could not start");
-    }
-}
-
-/// File → Open: hidden `.op` / `.pen` picker → canonical ingest →
-/// state swap → viewport fit.
-fn open_document<C: RepaintContext + 'static>(inner: &InnerRc<C>) {
-    let inner = inner.clone();
-    open_file_picker(
-        ".op,.pen",
-        Box::new(move |file| {
-            let name = file.name();
-            let inner2 = inner.clone();
-            read_file(
-                file,
-                ReadMode::Text,
-                Box::new(move |value| match value.as_string() {
-                    Some(src) => apply_opened_document(&inner2, &src, &name),
-                    None => console_error("[open] file read produced no text"),
-                }),
-            );
-        }),
-    );
-}
-
 /// Component Browser → Import kit: hidden `.op` / `.pen` / `.json`
 /// picker → extract reusable components → append session kit.
 fn import_kit_file<C: RepaintContext + 'static>(inner: &InnerRc<C>) {
@@ -482,136 +194,122 @@ fn mint_web_kit_id() -> String {
     format!("kit-web-{millis:013x}-{nonce:08x}")
 }
 
-/// Shared `.op` / `.pen` ingestion for the Open picker and drag-drop.
-fn apply_opened_document<C: RepaintContext + 'static>(
-    inner: &InnerRc<C>,
-    src: &str,
-    file_name: &str,
-) {
-    let mut b = inner.borrow_mut();
-    match file_actions::ingest_op_source(src, b.host().editor_state()) {
-        Ok(ingested) => {
-            for w in &ingested.warnings {
-                console_warn(&format!("[open] schema warning: {w}"));
-            }
-            let mut state = ingested.state;
-            state.editor_ui.file_name_display = Some(file_name.to_string());
-            // Use the shared ingestion path so an opened `.op` / `.pen` gets
-            // the same cache invalidation and missing-font detection as Figma
-            // and HTML document imports.
-            b.host_mut().install_ingested_state(state);
-            let (w, h) = b.viewport_size();
-            b.host_mut().fit_content_to_viewport(w, h);
-            let _ = b.repaint();
-        }
-        Err(e) => console_error(&format!("[open] {file_name}: {e}")),
-    }
-}
-
-/// Figma modal drop-zone → hidden `.fig` picker → binary parse →
-/// state install (the parse runs on the main thread after the async
-/// read; the in-progress overlay covers the stall).
-fn import_figma<C: RepaintContext + 'static>(inner: &InnerRc<C>) {
-    let inner = inner.clone();
-    open_file_picker(
-        ".fig",
-        Box::new(move |file| {
-            ingest_figma_file(&inner, file);
-        }),
-    );
-}
-
-/// Pick one HTML file, optionally together with sibling CSS and images. The
-/// ordinary multi-file picker keeps the common single-file flow working while
-/// still allowing a saved complete page to be selected as a bounded bundle.
+/// Pick loose saved-page files or one ZIP project. Loose selections are indexed
+/// together, then only the entry and referenced resources are read.
 fn import_html_file<C: RepaintContext + 'static>(inner: &InnerRc<C>) {
     let inner = inner.clone();
-    open_html_bundle_picker(Box::new(move |files| {
-        {
-            let mut b = inner.borrow_mut();
-            let ui = &mut b.host_mut().editor_state_mut().editor_ui;
-            ui.import_source = op_editor_core::figma_import_state::ImportSource::Html;
-            ui.figma_import_in_progress = true;
-            b.host_mut().mark_editor_state_dirty();
-            let _ = b.repaint();
-        }
-        let inner2 = inner.clone();
-        read_html_bundle(
-            files,
-            Box::new(move |files| match file_actions::ingest_html_bundle(files) {
-                Ok(ingested) => {
-                    for warning in &ingested.warnings {
-                        console_warn(&format!("[import-html] warning: {warning}"));
-                    }
-                    let mut b = inner2.borrow_mut();
-                    b.host_mut().install_ingested_state(ingested.state);
-                    let (w, h) = b.viewport_size();
-                    b.host_mut().fit_content_to_viewport(w, h);
-                    let _ = b.repaint();
-                }
-                Err(error) => {
-                    clear_figma_in_progress(&inner2);
-                    console_error(&format!("[import-html] {error}"));
-                }
-            }),
-        );
+    open_html_project_picker(Box::new(move |files| {
+        import_html_batch(&inner, files);
     }));
 }
 
-/// Shared `.fig` ingestion for the import picker and drag-drop.
-fn ingest_figma_file<C: RepaintContext + 'static>(inner: &InnerRc<C>, file: web_sys::File) {
-    let name = file.name();
-    {
-        // Raise the parsing overlay before the async read so the next
-        // frame shows feedback (mirrors `figma_import_session::spawn`).
-        let mut b = inner.borrow_mut();
-        let ui = &mut b.host_mut().editor_state_mut().editor_ui;
-        ui.import_source = op_editor_core::figma_import_state::ImportSource::Figma;
-        ui.figma_import_in_progress = true;
-        b.host_mut().mark_editor_state_dirty();
-        let _ = b.repaint();
-    }
-    let inner2 = inner.clone();
-    read_file(
-        file,
-        ReadMode::Bytes,
-        Box::new(move |value| {
-            let stem = file_actions::file_stem(&name).to_string();
-            let Some(bytes) = js_bytes(&value) else {
-                clear_figma_in_progress(&inner2);
+fn import_html_batch<C: RepaintContext + 'static>(inner: &InnerRc<C>, files: Vec<web_sys::File>) {
+    let kinds: Vec<_> = files
+        .iter()
+        .map(|file| file_actions::drop_kind(&file.name()))
+        .collect();
+    match file_actions::drop_batch_plan(&kinds) {
+        DropBatchPlan::HtmlProject => {
+            if files.len() > op_html::MAX_PROJECT_FILES {
                 console_error(&format!(
-                    "[import-figma] {name}: file read produced no bytes"
+                    "[import-html] project contains {} files; limit is {}",
+                    files.len(),
+                    op_html::MAX_PROJECT_FILES
                 ));
                 return;
-            };
-            // Parse outside any `inner` borrow — it's the heavy step.
-            match file_actions::ingest_figma_bytes(&bytes, &stem) {
-                Ok(ingested) => {
-                    for w in &ingested.warnings {
-                        console_warn(&format!("[import-figma] warning: {w}"));
-                    }
-                    let mut b = inner2.borrow_mut();
-                    b.host_mut().install_ingested_state(ingested.state);
-                    let (w, h) = b.viewport_size();
-                    b.host_mut().fit_content_to_viewport(w, h);
-                    let _ = b.repaint();
-                }
-                Err(e) => {
-                    clear_figma_in_progress(&inner2);
-                    console_error(&format!("[import-figma] {name}: {e}"));
-                }
             }
-        }),
-    );
+            let generation = begin_html_document_import(inner);
+            let inner2 = inner.clone();
+            let files = files
+                .into_iter()
+                .map(|file| drop_entries::DroppedProjectFile {
+                    relative_path: html_project_file_path(&file),
+                    file,
+                })
+                .collect();
+            html_directory_session::start(
+                files,
+                document_import_activity(inner, generation, ImportSource::Html),
+                Box::new(move |result| {
+                    finish_html_import(&inner2, generation, result);
+                }),
+            );
+        }
+        DropBatchPlan::HtmlZip => {
+            let Some(file) = files.into_iter().next() else {
+                return;
+            };
+            let generation = begin_html_document_import(inner);
+            let inner2 = inner.clone();
+            html_zip_session::start(
+                file,
+                document_import_activity(inner, generation, ImportSource::Html),
+                Box::new(move |result| finish_html_import(&inner2, generation, result)),
+            );
+        }
+        DropBatchPlan::InvalidZipMix => {
+            console_error(
+                "[import-html] select or drop one ZIP by itself; ZIP cannot be mixed with other files",
+            );
+        }
+        DropBatchPlan::InvalidHtmlMix => {
+            console_error(
+                "[import-html] HTML projects may only contain HTML, CSS, fonts, SVG, and image resources",
+            );
+        }
+        DropBatchPlan::Individual => {
+            console_error("[import-html] selected files contain no .html, .htm, or .zip file");
+        }
+    }
 }
 
-fn clear_figma_in_progress<C: RepaintContext + 'static>(inner: &InnerRc<C>) {
+fn begin_html_document_import<C: RepaintContext + 'static>(inner: &InnerRc<C>) -> u64 {
+    begin_document_import(inner, ImportSource::Html)
+}
+
+fn finish_html_import<C: RepaintContext + 'static>(
+    inner: &InnerRc<C>,
+    generation: u64,
+    result: Result<file_actions::IngestedDoc, String>,
+) {
+    finish_document_import(inner, generation, ImportSource::Html, result, "import-html");
+}
+
+fn finish_document_import<C: RepaintContext + 'static>(
+    inner: &InnerRc<C>,
+    generation: u64,
+    source: ImportSource,
+    result: Result<file_actions::IngestedDoc, String>,
+    log_tag: &str,
+) -> bool {
+    if !document_import_is_current(inner, generation, source) {
+        return false;
+    }
+    match result {
+        Ok(ingested) => {
+            install_ingested_document(inner, ingested, log_tag);
+            true
+        }
+        Err(error) => {
+            clear_document_import_if_owned(inner, generation, source);
+            console_error(&format!("[{log_tag}] {error}"));
+            false
+        }
+    }
+}
+
+fn install_ingested_document<C: RepaintContext + 'static>(
+    inner: &InnerRc<C>,
+    ingested: file_actions::IngestedDoc,
+    log_tag: &str,
+) {
+    for warning in &ingested.warnings {
+        console_warn(&format!("[{log_tag}] warning: {warning}"));
+    }
     let mut b = inner.borrow_mut();
-    b.host_mut()
-        .editor_state_mut()
-        .editor_ui
-        .figma_import_in_progress = false;
-    b.host_mut().mark_editor_state_dirty();
+    b.host_mut().install_unsaved_ingested_state(ingested.state);
+    let (w, h) = b.viewport_size();
+    b.host_mut().fit_content_to_viewport(w, h);
     let _ = b.repaint();
 }
 
@@ -941,14 +639,63 @@ fn handle_drop_event<C: RepaintContext + 'static>(inner: &InnerRc<C>, evt: &web_
     let Some(dt) = evt.data_transfer() else {
         return;
     };
+    let inner_for_directory = inner.clone();
+    let directory_generation = Rc::new(std::cell::Cell::new(0));
+    let directory_generation_cb = directory_generation.clone();
+    if drop_entries::read_dropped_directory_project(
+        &dt,
+        Box::new(move |result| {
+            let generation = directory_generation_cb.get();
+            match result {
+                Ok(files) => {
+                    let inner_for_finish = inner_for_directory.clone();
+                    html_directory_session::start(
+                        files,
+                        document_import_activity(
+                            &inner_for_directory,
+                            generation,
+                            ImportSource::Html,
+                        ),
+                        Box::new(move |result| {
+                            finish_html_import(&inner_for_finish, generation, result);
+                        }),
+                    );
+                }
+                Err(error) => {
+                    finish_html_import(&inner_for_directory, generation, Err(error));
+                }
+            }
+        }),
+    ) {
+        directory_generation.set(begin_html_document_import(inner));
+        return;
+    }
     let Some(files) = dt.files() else {
         return;
     };
-    for i in 0..files.length() {
-        let Some(file) = files.get(i) else {
-            continue;
-        };
-        route_dropped_file(inner, file);
+    let mut dropped = Vec::with_capacity(files.length() as usize);
+    for index in 0..files.length() {
+        if let Some(file) = files.get(index) {
+            dropped.push(file);
+        }
+    }
+    if dropped.is_empty() {
+        return;
+    }
+    let kinds: Vec<_> = dropped
+        .iter()
+        .map(|file| file_actions::drop_kind(&file.name()))
+        .collect();
+    match file_actions::drop_batch_plan(&kinds) {
+        DropBatchPlan::Individual => {
+            for file in dropped {
+                route_dropped_file(inner, file);
+            }
+        }
+        DropBatchPlan::HtmlProject
+        | DropBatchPlan::HtmlZip
+        | DropBatchPlan::InvalidHtmlMix
+        | DropBatchPlan::InvalidZipMix => import_html_batch(inner, dropped),
     }
 }
 
@@ -956,39 +703,14 @@ fn route_dropped_file<C: RepaintContext + 'static>(inner: &InnerRc<C>, file: web
     let name = file.name();
     match file_actions::drop_kind(&name) {
         DropKind::Document => {
-            let inner2 = inner.clone();
-            read_file(
-                file,
-                ReadMode::Text,
-                Box::new(move |value| match value.as_string() {
-                    Some(src) => apply_opened_document(&inner2, &src, &name),
-                    None => console_error("[open] dropped file read produced no text"),
-                }),
-            );
+            read_open_document_file(inner, file);
         }
         DropKind::Figma => ingest_figma_file(inner, file),
-        DropKind::Html => {
-            let inner2 = inner.clone();
-            read_file(
-                file,
-                ReadMode::Text,
-                Box::new(move |value| match value.as_string() {
-                    Some(source) => match file_actions::ingest_html_source(&source, &name) {
-                        Ok(ingested) => {
-                            for warning in &ingested.warnings {
-                                console_warn(&format!("[import-html] warning: {warning}"));
-                            }
-                            let mut b = inner2.borrow_mut();
-                            b.host_mut().install_ingested_state(ingested.state);
-                            let (w, h) = b.viewport_size();
-                            b.host_mut().fit_content_to_viewport(w, h);
-                            let _ = b.repaint();
-                        }
-                        Err(error) => console_error(&format!("[import-html] {name}: {error}")),
-                    },
-                    None => console_error("[import-html] dropped file read produced no text"),
-                }),
-            );
+        DropKind::Html | DropKind::Zip => import_html_batch(inner, vec![file]),
+        DropKind::HtmlResource => {
+            console_warn(&format!(
+                "[drop] HTML resource must be dropped together with an HTML page: {name}"
+            ));
         }
         DropKind::Svg => {
             let inner2 = inner.clone();
@@ -1016,257 +738,4 @@ fn route_dropped_file<C: RepaintContext + 'static>(inner: &InnerRc<C>, file: web
             console_warn(&format!("[drop] unsupported file type: {name}"));
         }
     }
-}
-
-// ---------------------------------------------------------------------
-// Hidden file input + FileReader plumbing
-// ---------------------------------------------------------------------
-
-const MAX_HTML_BUNDLE_FILES: usize = 512;
-const MAX_HTML_BUNDLE_BYTES: u64 = 64 * 1024 * 1024;
-
-/// Open a normal multi-file picker. Selecting one `.html` file preserves the
-/// basic import path; selecting its saved-page siblings supplies a resource
-/// bundle without forcing browsers into directory-only mode.
-fn open_html_bundle_picker(on_files: Box<dyn FnOnce(Vec<web_sys::File>)>) {
-    let result = (|| -> Result<(), JsValue> {
-        let window = web_sys::window()
-            .ok_or_else(|| JsValue::from_str("HTML picker: window unavailable"))?;
-        let document = window
-            .document()
-            .ok_or_else(|| JsValue::from_str("HTML picker: document unavailable"))?;
-        let input = document
-            .create_element("input")?
-            .dyn_into::<web_sys::HtmlInputElement>()
-            .map_err(|_| JsValue::from_str("HTML picker: <input> cast failed"))?;
-        input.set_type("file");
-        input.set_multiple(true);
-        input.set_accept(
-            ".html,.htm,.css,.png,.jpg,.jpeg,.gif,.webp,.svg,.woff,.woff2,.ttf,.otf,.eot",
-        );
-        input.set_attribute("style", "display:none")?;
-        input.set_attribute("aria-hidden", "true")?;
-        let body = document
-            .body()
-            .ok_or_else(|| JsValue::from_str("HTML picker: document.body unavailable"))?;
-        body.append_child(&input)?;
-
-        let slot: OnceSlot = Rc::new(RefCell::new(None));
-        let slot2 = slot.clone();
-        let input_cb = input.clone();
-        let mut once = Some(on_files);
-        *slot.borrow_mut() = Some(Closure::new(move || {
-            let mut files = Vec::new();
-            if let Some(list) = input_cb.files() {
-                for index in 0..list.length() {
-                    if let Some(file) = list.get(index) {
-                        files.push(file);
-                    }
-                }
-            }
-            input_cb.remove();
-            if let Some(cb) = once.take() {
-                cb(files);
-            }
-            let _ = slot2.borrow_mut().take();
-        }));
-        {
-            let slot_ref = slot.borrow();
-            let closure = slot_ref.as_ref().expect("closure just installed");
-            input.add_event_listener_with_callback("change", closure.as_ref().unchecked_ref())?;
-        }
-        input.click();
-        Ok(())
-    })();
-    if let Err(error) = result {
-        web_sys::console::error_1(&error);
-    }
-}
-
-struct HtmlBundleReadState {
-    remaining: usize,
-    files: Vec<file_actions::HtmlBundleFile>,
-    on_done: Option<Box<dyn FnOnce(Vec<file_actions::HtmlBundleFile>)>>,
-}
-
-fn read_html_bundle(
-    files: Vec<web_sys::File>,
-    on_done: Box<dyn FnOnce(Vec<file_actions::HtmlBundleFile>)>,
-) {
-    let mut entries: Vec<_> = files
-        .into_iter()
-        .map(|file| (html_bundle_file_path(&file), file))
-        .collect();
-    entries.sort_by(|a, b| {
-        let a_html = matches!(file_actions::drop_kind(&a.0), DropKind::Html);
-        let b_html = matches!(file_actions::drop_kind(&b.0), DropKind::Html);
-        b_html.cmp(&a_html).then_with(|| a.0.cmp(&b.0))
-    });
-
-    let mut selected = Vec::new();
-    let mut total_bytes = 0u64;
-    let mut truncated = false;
-    for (path, file) in entries {
-        let bytes = file.size().max(0.0) as u64;
-        if selected.len() >= MAX_HTML_BUNDLE_FILES
-            || total_bytes.saturating_add(bytes) > MAX_HTML_BUNDLE_BYTES
-        {
-            truncated = true;
-            continue;
-        }
-        total_bytes += bytes;
-        selected.push((path, file));
-    }
-    if truncated {
-        console_warn("[import-html] saved-page bundle was truncated at 512 files / 64 MiB");
-    }
-    if selected.is_empty() {
-        on_done(Vec::new());
-        return;
-    }
-
-    let state = Rc::new(RefCell::new(HtmlBundleReadState {
-        remaining: selected.len(),
-        files: Vec::with_capacity(selected.len()),
-        on_done: Some(on_done),
-    }));
-    for (path, file) in selected {
-        let state2 = state.clone();
-        read_file(
-            file,
-            ReadMode::Bytes,
-            Box::new(move |value| {
-                let completion = {
-                    let mut state = state2.borrow_mut();
-                    if let Some(bytes) = js_bytes(&value) {
-                        state.files.push(file_actions::HtmlBundleFile {
-                            relative_path: path,
-                            bytes,
-                        });
-                    }
-                    state.remaining -= 1;
-                    (state.remaining == 0)
-                        .then(|| (std::mem::take(&mut state.files), state.on_done.take()))
-                };
-                if let Some((files, Some(on_done))) = completion {
-                    on_done(files);
-                }
-            }),
-        );
-    }
-}
-
-fn html_bundle_file_path(file: &web_sys::File) -> String {
-    let relative = js_sys::Reflect::get(file.as_ref(), &JsValue::from_str("webkitRelativePath"))
-        .ok()
-        .and_then(|value| value.as_string())
-        .filter(|path| !path.is_empty());
-    match relative.as_deref().and_then(|path| path.split_once('/')) {
-        Some((_, path)) if !path.is_empty() => path.to_string(),
-        _ => file.name(),
-    }
-}
-
-/// Pop a hidden `<input type=file accept=…>` and invoke `on_file`
-/// with the chosen file. One-shot; see the module docs for the
-/// cancel-leak trade-off.
-pub(crate) fn open_file_picker(accept: &str, on_file: Box<dyn FnOnce(web_sys::File)>) {
-    let result = (|| -> Result<(), JsValue> {
-        let window = web_sys::window()
-            .ok_or_else(|| JsValue::from_str("file picker: window unavailable"))?;
-        let document = window
-            .document()
-            .ok_or_else(|| JsValue::from_str("file picker: document unavailable"))?;
-        let input = document
-            .create_element("input")?
-            .dyn_into::<web_sys::HtmlInputElement>()
-            .map_err(|_| JsValue::from_str("file picker: <input> cast failed"))?;
-        input.set_type("file");
-        input.set_accept(accept);
-        input.set_attribute("style", "display:none")?;
-        input.set_attribute("aria-hidden", "true")?;
-        let body = document
-            .body()
-            .ok_or_else(|| JsValue::from_str("file picker: document.body unavailable"))?;
-        body.append_child(&input)?;
-
-        let slot: OnceSlot = Rc::new(RefCell::new(None));
-        let slot2 = slot.clone();
-        let input_cb = input.clone();
-        let mut once = Some(on_file);
-        *slot.borrow_mut() = Some(Closure::new(move || {
-            let file = input_cb.files().and_then(|files| files.get(0));
-            input_cb.remove();
-            if let (Some(cb), Some(file)) = (once.take(), file) {
-                cb(file);
-            }
-            // Self-drop (raf_pump idiom) — the change event has been
-            // handed back to the JS side for this firing.
-            let _ = slot2.borrow_mut().take();
-        }));
-        {
-            let slot_ref = slot.borrow();
-            let closure = slot_ref.as_ref().expect("closure just installed");
-            input.add_event_listener_with_callback("change", closure.as_ref().unchecked_ref())?;
-        }
-        input.click();
-        Ok(())
-    })();
-    if let Err(e) = result {
-        web_sys::console::error_1(&e);
-    }
-}
-
-/// How to read a `File` — maps onto the three `FileReader` modes the
-/// ingestion paths need.
-pub(crate) enum ReadMode {
-    /// `readAsText` → `.op` / `.pen` / `.svg` sources.
-    Text,
-    /// `readAsArrayBuffer` → binary `.fig` payloads.
-    Bytes,
-    /// `readAsDataURL` → raster images (the browser builds the
-    /// `data:` URL, so no base64 dependency is needed).
-    DataUrl,
-}
-
-/// Read `file` asynchronously and invoke `on_done` with the raw
-/// `FileReader.result` JsValue (string for Text / DataUrl, an
-/// ArrayBuffer for Bytes; `JsValue::NULL` on a failed read).
-pub(crate) fn read_file(file: web_sys::File, mode: ReadMode, on_done: Box<dyn FnOnce(JsValue)>) {
-    let result = (|| -> Result<(), JsValue> {
-        let reader = web_sys::FileReader::new()?;
-        let slot: OnceSlot = Rc::new(RefCell::new(None));
-        let slot2 = slot.clone();
-        let reader_cb = reader.clone();
-        let mut once = Some(on_done);
-        *slot.borrow_mut() = Some(Closure::new(move || {
-            let value = reader_cb.result().unwrap_or(JsValue::NULL);
-            if let Some(cb) = once.take() {
-                cb(value);
-            }
-            let _ = slot2.borrow_mut().take();
-        }));
-        {
-            let slot_ref = slot.borrow();
-            let closure = slot_ref.as_ref().expect("closure just installed");
-            // `loadend` fires for success, error, and abort alike, so
-            // the one-shot callback always resolves and frees itself.
-            reader.set_onloadend(Some(closure.as_ref().unchecked_ref()));
-        }
-        match mode {
-            ReadMode::Text => reader.read_as_text(&file)?,
-            ReadMode::Bytes => reader.read_as_array_buffer(&file)?,
-            ReadMode::DataUrl => reader.read_as_data_url(&file)?,
-        }
-        Ok(())
-    })();
-    if let Err(e) = result {
-        web_sys::console::error_1(&e);
-    }
-}
-
-/// Extract a byte vec from a `FileReader.result` ArrayBuffer.
-pub(crate) fn js_bytes(value: &JsValue) -> Option<Vec<u8>> {
-    let buf = value.clone().dyn_into::<js_sys::ArrayBuffer>().ok()?;
-    Some(js_sys::Uint8Array::new(&buf).to_vec())
 }

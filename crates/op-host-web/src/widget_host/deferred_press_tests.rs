@@ -1,4 +1,4 @@
-use super::WidgetHost;
+use super::{ChatDragState, WidgetHost};
 use op_editor_core::agent_settings::{
     AgentSettingsTab, ImageGenField, ImageGenProvider, SettingsFocus,
 };
@@ -6,7 +6,8 @@ use op_editor_core::chat::{AgentProvider, ModelEntry};
 use op_editor_core::{AgentSettingsButton, ButtonPressTarget};
 use op_editor_ui::widgets::agent_settings_panel::AgentSettingsPanel;
 use op_editor_ui::widgets::{
-    ai_chat_model_picker, AIChatPlaceholder, PropertyPanel, PropertyPanelAction, TOP_BAR_HEIGHT,
+    ai_chat_model_picker, AIChatPlaceholder, LayerPanel, LayerPanelHit, PropertyPanel,
+    PropertyPanelAction, TOP_BAR_HEIGHT,
 };
 use op_editor_ui::{Point2D, Rect};
 
@@ -23,6 +24,33 @@ fn seed_two_chat_models(host: &mut WidgetHost) {
             "gemini-2.5-pro",
             "Gemini 2.5 Pro",
         ));
+}
+
+fn seed_layer_for_context_menu(host: &mut WidgetHost) {
+    let doc = jian_ops_schema::load_str(
+        r#"{"version":"1.0.0","children":[
+            {"type":"rectangle","id":"n1","name":"Layer","x":0,"y":0,"width":100,"height":50}
+        ]}"#,
+    )
+    .expect("layer fixture parses")
+    .value;
+    host.editor_state = op_editor_core::EditorState::from_document(doc);
+    host.editor_state_dirty = true;
+}
+
+fn first_layer_row_point(host: &WidgetHost, viewport_h: f32) -> Point2D {
+    let rect = host.layer_panel_rect(viewport_h);
+    let panel = LayerPanel::from_editor(&host.editor_state);
+    let x = 48.0;
+    let mut y = rect.origin.y + 1.0;
+    while y < rect.origin.y + rect.size.y {
+        let point = Point2D::new(x, y);
+        if matches!(panel.hit_test(rect, point), Some(LayerPanelHit::Layer(_))) {
+            return point;
+        }
+        y += 1.0;
+    }
+    panic!("layer row not found");
 }
 
 #[test]
@@ -51,6 +79,153 @@ fn chat_model_row_press_selects_and_closes_immediately() {
 
     assert!(!host.apply_release_with_viewport(1200.0, 800.0));
     assert_eq!(host.editor_state.chat.selected_model, 1);
+}
+
+#[test]
+fn chat_model_row_wins_over_variables_panel_and_preset_menu() {
+    let mut host = WidgetHost::new();
+    seed_two_chat_models(&mut host);
+    host.editor_state.editor_ui.variables_panel_open = true;
+    host.editor_state.editor_ui.variables_preset_menu_open = true;
+    host.editor_state.editor_ui.chat_model_picker.open = true;
+    let viewport = (1440.0, 600.0);
+    let chat = host
+        .ai_chat_rect(viewport.0, viewport.1)
+        .expect("chat rect");
+    let panel = AIChatPlaceholder::from_editor(&host.editor_state);
+    let picker = panel.model_picker_bounds(chat).expect("picker rect");
+    let point = Point2D::new(
+        picker.origin.x + 48.0,
+        picker.origin.y
+            + ai_chat_model_picker::MODEL_SEARCH_H
+            + ai_chat_model_picker::MODEL_PICKER_PAD_Y
+            + ai_chat_model_picker::MODEL_GROUP_H
+            + ai_chat_model_picker::MODEL_ROW_H
+            + ai_chat_model_picker::MODEL_GROUP_H
+            + ai_chat_model_picker::MODEL_ROW_H / 2.0,
+    );
+    assert!(host
+        .variables_panel_rect(viewport.0, viewport.1)
+        .expect("variables rect")
+        .contains(point));
+    assert_eq!(
+        panel.hit_test(chat, point),
+        Some(op_editor_ui::widgets::AIChatHit::SelectModel(1))
+    );
+
+    assert!(host.apply_press(point.x, point.y, viewport.0, viewport.1));
+
+    assert_eq!(host.editor_state.chat.selected_model, 1);
+    assert!(!host.editor_state.editor_ui.chat_model_picker.open);
+    assert!(host.editor_state.editor_ui.variables_panel_open);
+    assert!(host.editor_state.editor_ui.variables_preset_menu_open);
+}
+
+#[test]
+fn right_press_on_model_picker_does_not_open_covered_layer_context_menu() {
+    let mut host = WidgetHost::new();
+    seed_layer_for_context_menu(&mut host);
+    seed_two_chat_models(&mut host);
+    let viewport = (1200.0, 800.0);
+    let layer_point = first_layer_row_point(&host, viewport.1);
+    host.chat_drag = Some(ChatDragState {
+        grab_dx: 0.0,
+        grab_dy: 0.0,
+        pos_x: 0.0,
+        pos_y: 0.0,
+    });
+    host.editor_state.editor_ui.chat_model_picker.open = true;
+    let initial_picker = host
+        .chat_model_picker_rect(viewport.0, viewport.1)
+        .expect("initial picker rect");
+    host.chat_drag.as_mut().expect("chat drag").pos_y +=
+        layer_point.y - (initial_picker.origin.y + initial_picker.size.y / 2.0);
+    let picker = host
+        .chat_model_picker_rect(viewport.0, viewport.1)
+        .expect("picker rect");
+    assert!(picker.contains(layer_point));
+
+    assert!(host.apply_right_press(layer_point.x, layer_point.y, viewport.0, viewport.1));
+
+    assert!(host.editor_state.editor_ui.layer_context_menu.is_none());
+    assert!(host.editor_state.editor_ui.chat_model_picker.open);
+}
+
+#[test]
+fn collapsing_chat_closes_model_picker() {
+    let mut host = WidgetHost::new();
+    seed_two_chat_models(&mut host);
+    host.editor_state.editor_ui.chat_model_picker.open = true;
+    host.editor_state
+        .editor_ui
+        .chat_model_picker_input
+        .set_text("gpt");
+    let chat = host.ai_chat_rect(1200.0, 800.0).unwrap();
+
+    assert!(host.apply_press(chat.origin.x + 25.0, chat.origin.y + 18.0, 1200.0, 800.0,));
+
+    assert!(host.editor_state.chat.collapsed);
+    assert!(!host.editor_state.editor_ui.chat_model_picker.open);
+    assert!(host
+        .editor_state
+        .editor_ui
+        .chat_model_picker_input
+        .text()
+        .is_empty());
+}
+
+#[test]
+fn hidden_chat_rect_closes_stale_model_picker_before_lower_press() {
+    let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.embed = op_editor_core::EmbedHost::VsCode;
+    host.editor_state.editor_ui.chat_model_picker.open = true;
+
+    assert!(host.apply_press(300.0, 300.0, 1200.0, 800.0));
+
+    assert!(!host.editor_state.editor_ui.chat_model_picker.open);
+}
+
+#[test]
+fn chat_model_picker_visible_over_topbar_wins_press() {
+    let mut host = WidgetHost::new();
+    seed_two_chat_models(&mut host);
+    for idx in 2..10 {
+        host.editor_state
+            .chat
+            .available_models
+            .push(ModelEntry::new(
+                AgentProvider::CodexCli,
+                format!("model-{idx}"),
+                format!("Model {idx}"),
+            ));
+    }
+    host.set_now_ms(456);
+    host.editor_state.chat.maximized = true;
+    host.editor_state.editor_ui.chat_model_picker.open = true;
+    let (viewport_w, viewport_h) = (1200.0, 330.0);
+    let chat = host.ai_chat_rect(viewport_w, viewport_h).unwrap();
+    let panel = AIChatPlaceholder::from_editor(&host.editor_state);
+    let picker = panel.model_picker_bounds(chat).unwrap();
+    let search_top = picker.origin.y.max(0.0);
+    let search_bottom = (picker.origin.y + ai_chat_model_picker::MODEL_SEARCH_H)
+        .min(op_editor_ui::widgets::TOP_BAR_HEIGHT);
+    assert!(search_top < search_bottom);
+    let point = Point2D::new(picker.origin.x + 24.0, (search_top + search_bottom) / 2.0);
+    assert_eq!(
+        panel.hit_test(chat, point),
+        Some(op_editor_ui::widgets::AIChatHit::FocusModelSearch)
+    );
+
+    assert!(host.apply_press(point.x, point.y, viewport_w, viewport_h));
+
+    assert!(host.editor_state.editor_ui.chat_model_picker.open);
+    assert_eq!(
+        host.editor_state
+            .editor_ui
+            .chat_model_picker_input
+            .next_blink_flip_ms(456),
+        956
+    );
 }
 
 #[test]

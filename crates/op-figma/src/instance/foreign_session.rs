@@ -66,8 +66,9 @@ fn collect<'a>(n: &'a TreeNode, out: &mut Vec<&'a TreeNode>) {
 }
 
 /// Resolve one foreign group to `pk → node guid`, or `None` when no
-/// unique validated anchor exists. Requires ≥2 text-demanding entries
-/// — a single hit is too weak to certify an anchor.
+/// unique validated anchor exists. Requires at least two typed demands
+/// (TEXT and/or nested INSTANCE heads); untyped cosmetic payloads alone are
+/// too weak to certify an anchor.
 pub(super) fn resolve_group(
     group: &ForeignGroup,
     symbol_node: &TreeNode,
@@ -85,7 +86,12 @@ pub(super) fn resolve_group(
         .filter(|fp| fp.demands_instance)
         .map(|fp| &fp.pk)
         .collect();
-    if text_pks.len() < 2 {
+    let typed_demands = group
+        .pks
+        .iter()
+        .filter(|pk| pk.demands_text || pk.demands_instance)
+        .count();
+    if typed_demands < 2 {
         return None;
     }
 
@@ -148,20 +154,16 @@ pub(super) fn resolve_group(
 /// anything.
 const FAMILY_SAFE_KEYS: &[&str] = &["opacity", "visible"];
 
-fn stripped(entry: &FigValue) -> Option<Vec<(&String, &FigValue)>> {
+fn stripped(entry: &FigValue) -> Option<Vec<(&str, &FigValue)>> {
     let FigValue::Object(pairs) = entry else {
         return None;
     };
-    let kept: Vec<(&String, &FigValue)> = pairs
+    let kept: Vec<(&str, &FigValue)> = pairs
         .iter()
-        .filter(|(k, _)| k != "guidPath")
-        .map(|(k, v)| (k, v))
+        .filter(|(k, _)| k.as_ref() != "guidPath")
+        .map(|(k, v)| (k.as_ref(), v))
         .collect();
-    if kept.is_empty()
-        || !kept
-            .iter()
-            .all(|(k, _)| FAMILY_SAFE_KEYS.contains(&k.as_str()))
-    {
+    if kept.is_empty() || !kept.iter().all(|(k, _)| FAMILY_SAFE_KEYS.contains(k)) {
         return None;
     }
     Some(kept)

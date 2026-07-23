@@ -45,23 +45,13 @@ pub fn run_cli_if_requested() -> bool {
         std::process::exit(1);
     }
 
-    let src = match std::fs::read_to_string(file) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("render-shots: read {file}: {e}");
-            std::process::exit(1);
-        }
-    };
-    let loaded = match load_render_document(&src, file) {
-        Ok(l) => l,
+    let state = match load_render_state(file) {
+        Ok(state) => state,
         Err(msg) => {
             eprintln!("{msg}");
             std::process::exit(1);
         }
     };
-    for warning in &loaded.warnings {
-        eprintln!("render-shots: schema warning: {warning:?}");
-    }
     // Register bundled design fonts before the layout/measure + paint
     // pass so `fit_content` heights and glyphs match Pencil even when the
     // family isn't installed system-wide.
@@ -72,8 +62,7 @@ pub fn run_cli_if_requested() -> bool {
         Ok(store) => store.rescan_and_register(),
         Err(err) => eprintln!("render-shots: skipping imported-font rescan: {err}"),
     }
-    let state = op_editor_core::EditorState::from_document(loaded.value);
-    let scene = op_pen_loader::editor_state_to_layout_scene(&state);
+    let scene = op_pen_loader::editor_state_to_active_page_layout_scene(&state);
 
     let Some(page) = scene.active_page() else {
         eprintln!("render-shots: no active page");
@@ -122,11 +111,12 @@ pub fn run_cli_if_requested() -> bool {
     true
 }
 
-fn load_render_document(
-    src: &str,
-    file: &str,
-) -> Result<jian_ops_schema::LoadResult<jian_ops_schema::PenDocument>, String> {
-    op_pen_loader::load_canonical(src).map_err(|e| format!("render-shots: parse {file}: {e}"))
+fn load_render_state(file: &str) -> Result<op_editor_core::EditorState, String> {
+    op_host_services::doc_io::load_editor_state(
+        std::path::Path::new(file),
+        op_editor_core::Locale::EnUs,
+    )
+    .map_err(|e| format!("render-shots: parse {file}: {e}"))
 }
 
 /// Filesystem-safe filename from a node id (ids are short slugs like
@@ -161,10 +151,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn load_render_document_accepts_ts_future_version_files() {
-        let loaded = load_render_document(
+    fn load_render_state_accepts_future_version_and_restores_editor_meta() {
+        let path = std::env::temp_dir().join(format!(
+            "openpencil-render-shots-future-version-{}.op",
+            std::process::id()
+        ));
+        std::fs::write(
+            &path,
             r##"{
   "version": "2.8",
+  "editorMeta": {
+    "activePageIndex": 0,
+    "preserveAuthoredGeometry": true
+  },
   "children": [
     {
       "id": "future-root",
@@ -179,15 +178,21 @@ mod tests {
     }
   ]
 }"##,
-            "future.op",
         )
-        .expect("render-shots loader should accept TS future-version files");
+        .expect("write future-version fixture");
+        let state = load_render_state(path.to_str().expect("UTF-8 temp path"))
+            .expect("render-shots loader should accept TS future-version files");
 
-        match &loaded.value.children[0] {
+        match &state.doc.children[0] {
             jian_ops_schema::node::PenNode::Frame(frame) => {
                 assert_eq!(frame.base.id, "future-root");
             }
             other => panic!("expected frame root, got {other:?}"),
         }
+        assert!(
+            state.editor_ui.preserve_authored_geometry,
+            "render-shots must use the same reopen geometry mode as the editor"
+        );
+        let _ = std::fs::remove_file(path);
     }
 }

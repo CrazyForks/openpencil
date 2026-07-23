@@ -7,8 +7,9 @@
 
 use super::helpers::GIT_PANEL_CARET_GAP;
 use super::{CursorHint, WidgetHostNative};
+use op_editor_core::chat::{AgentProvider, ModelEntry};
 use op_editor_core::{ButtonPressTarget, GitButton, GitFileEntry, GitPanelAction};
-use op_editor_ui::widgets::{GitPanel, GitPanelHit, TopBar, TOP_BAR_HEIGHT};
+use op_editor_ui::widgets::{ai_chat_model_picker, GitPanel, GitPanelHit, TopBar, TOP_BAR_HEIGHT};
 use op_editor_ui::{Point2D, Rect};
 
 /// A host with the Git panel open in its no-repo onboarding state
@@ -39,6 +40,14 @@ fn find_git_hit(panel: &GitPanel<'_>, body: Rect, target: GitPanelHit) -> Point2
         y += 4.0;
     }
     panic!("could not find git hit target {target:?}");
+}
+
+fn open_model_picker(host: &mut WidgetHostNative) {
+    host.editor_state_mut()
+        .chat
+        .available_models
+        .push(ModelEntry::new(AgentProvider::CodexCli, "gpt-5", "GPT-5"));
+    host.editor_state_mut().editor_ui.chat_model_picker.open = true;
 }
 
 #[test]
@@ -427,6 +436,138 @@ fn git_popover_row_hover_uses_shared_menu_state() {
             .hover,
         Some(1)
     );
+}
+
+#[test]
+fn open_model_picker_does_not_mask_git_button_hover() {
+    let mut host = WidgetHostNative::new();
+    let (vw, vh) = (1440.0, 900.0);
+    host.last_viewport_w = vw;
+    host.last_viewport_h = vh;
+    open_model_picker(&mut host);
+    {
+        let panel = &mut host.editor_state_mut().editor_ui.git_panel;
+        panel.open = true;
+        panel.loading = false;
+        panel.in_repo = true;
+        panel.branch = Some("main".to_string());
+    }
+
+    let body = host.git_panel_rect(vw, vh).expect("Git panel rect");
+    let panel = GitPanel::for_editor(host.editor_state()).expect("Git panel widget");
+    let point = find_git_hit(&panel, body, GitPanelHit::Overflow);
+
+    assert!(host.apply_cursor_move(point.x, point.y));
+    assert_eq!(
+        host.editor_state().editor_ui.git_panel.button_hover,
+        Some(GitButton::Overflow),
+        "the Git surface painted above chat must retain hover priority"
+    );
+
+    let _ = host.apply_cursor_move(point.x, point.y);
+    assert_eq!(
+        host.editor_state().editor_ui.git_panel.button_hover,
+        Some(GitButton::Overflow),
+        "the picker must not clear an unchanged Git hover on a later move"
+    );
+}
+
+#[test]
+fn moving_from_chat_into_git_clears_chat_and_lower_hover_in_one_event() {
+    let mut host = WidgetHostNative::new();
+    let (vw, vh) = (1440.0, 900.0);
+    host.last_viewport_w = vw;
+    host.last_viewport_h = vh;
+    host.editor_state_mut().chat.maximized = true;
+    {
+        let panel = &mut host.editor_state_mut().editor_ui.git_panel;
+        panel.open = true;
+        panel.loading = false;
+        panel.in_repo = true;
+        panel.branch = Some("main".to_string());
+    }
+    let body = host.git_panel_rect(vw, vh).expect("Git panel rect");
+    let panel = GitPanel::for_editor(host.editor_state()).expect("Git panel widget");
+    let point = find_git_hit(&panel, body, GitPanelHit::Overflow);
+    assert!(host.chat_panel_surface_contains(point.x, point.y, vw, vh));
+    {
+        let ui = &mut host.editor_state_mut().editor_ui;
+        ui.chat_header_hover = Some(op_editor_core::ChatHeaderButton::NewChat);
+        ui.chat_tab_hover = Some(0);
+        ui.chat_design_block_hover = Some((0, 0));
+        ui.chat_footer_hover = Some(op_editor_core::ChatFooterButton::Send);
+        ui.chat_example_hover = Some(0);
+        ui.parallel_agents_picker_hover = Some(1);
+        ui.canvas_hover_node = Some(op_editor_core::NodeId::new("stale-canvas"));
+        ui.property_action_hover = Some(0);
+    }
+
+    assert!(host.apply_cursor_move(point.x, point.y));
+    let ui = &host.editor_state().editor_ui;
+    assert_eq!(ui.git_panel.button_hover, Some(GitButton::Overflow));
+    assert_eq!(ui.chat_header_hover, None);
+    assert_eq!(ui.chat_tab_hover, None);
+    assert_eq!(ui.chat_design_block_hover, None);
+    assert_eq!(ui.chat_footer_hover, None);
+    assert_eq!(ui.chat_example_hover, None);
+    assert_eq!(ui.parallel_agents_picker_hover, None);
+    assert_eq!(ui.canvas_hover_node, None);
+    assert_eq!(ui.property_action_hover, None);
+    assert!(
+        !host.apply_cursor_move(point.x, point.y),
+        "stable Git hover must not request another repaint"
+    );
+    assert_eq!(
+        host.editor_state().editor_ui.git_panel.button_hover,
+        Some(GitButton::Overflow)
+    );
+}
+
+#[test]
+fn open_model_picker_still_truncates_hover_outside_git_panel() {
+    let mut host = WidgetHostNative::new();
+    let (vw, vh) = (1440.0, 900.0);
+    host.last_viewport_w = vw;
+    host.last_viewport_h = vh;
+    open_model_picker(&mut host);
+    {
+        let panel = &mut host.editor_state_mut().editor_ui.git_panel;
+        panel.open = true;
+        panel.loading = false;
+        panel.in_repo = true;
+        panel.branch = Some("main".to_string());
+    }
+    let picker = host
+        .chat_model_picker_rect(vw, vh)
+        .expect("model picker rect");
+    let point = Point2D::new(
+        picker.origin.x + 48.0,
+        picker.origin.y
+            + ai_chat_model_picker::MODEL_SEARCH_H
+            + ai_chat_model_picker::MODEL_PICKER_PAD_Y
+            + ai_chat_model_picker::MODEL_GROUP_H
+            + ai_chat_model_picker::MODEL_ROW_H / 2.0,
+    );
+    assert!(
+        !host
+            .git_panel_outer_rect(vw, vh)
+            .expect("Git panel outer rect")
+            .contains(point),
+        "probe must exercise the picker outside the higher Git surface"
+    );
+    {
+        let ui = &mut host.editor_state_mut().editor_ui;
+        ui.canvas_hover_node = Some(op_editor_core::NodeId::new("stale-canvas"));
+        ui.property_action_hover = Some(0);
+    }
+
+    assert!(host.apply_cursor_move(point.x, point.y));
+    assert_eq!(
+        host.editor_state().editor_ui.chat_model_picker.hover,
+        Some(0)
+    );
+    assert_eq!(host.editor_state().editor_ui.canvas_hover_node, None);
+    assert_eq!(host.editor_state().editor_ui.property_action_hover, None);
 }
 
 #[test]

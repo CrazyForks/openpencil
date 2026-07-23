@@ -63,7 +63,15 @@ pub fn create_component_block_height(
     use crate::widgets::property_panel_visibility::ComponentButtonState as S;
     match state {
         S::Create | S::DetachComponent => CREATE_COMPONENT_BLOCK_H,
-        S::Instance => CREATE_COMPONENT_BLOCK_H + CREATE_COMPONENT_BTN_H + CREATE_COMPONENT_ROW_GAP,
+        S::Instance {
+            component_count,
+            picker_open,
+        } => {
+            let swap_rows =
+                usize::from(component_count > 0) + if picker_open { component_count } else { 0 };
+            CREATE_COMPONENT_BLOCK_H
+                + (1 + swap_rows) as f32 * (CREATE_COMPONENT_BTN_H + CREATE_COMPONENT_ROW_GAP)
+        }
     }
 }
 

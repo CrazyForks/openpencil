@@ -70,6 +70,30 @@ impl WidgetHostNative {
         panel.resize_edge_at(rect, Point2D::new(x, y))
     }
 
+    /// Whether the ordinary Chat panel owns a screen point. This mirrors the
+    /// non-model-picker surface covered by `AIChatPlaceholder::cursor_probe`:
+    /// every point inside the painted card plus its invisible resize gutter.
+    /// Keep this probe transcript-free so LayerPanel/Variables pre-dispatch can
+    /// respect Chat's z-order without hashing the chat log a second time.
+    pub(in crate::widget_host) fn chat_panel_surface_contains(
+        &self,
+        x: f32,
+        y: f32,
+        viewport_w: f32,
+        viewport_h: f32,
+    ) -> bool {
+        let Some(rect) = self.ai_chat_rect(viewport_w, viewport_h) else {
+            return false;
+        };
+        let point = Point2D::new(x, y);
+        if rect.contains(point) {
+            return true;
+        }
+        AIChatPlaceholder::from_editor(&self.editor_state)
+            .resize_edge_at(rect, point)
+            .is_some()
+    }
+
     fn chat_resize_cursor(edge: ChatResizeEdge) -> CursorHint {
         match edge {
             ChatResizeEdge::E | ChatResizeEdge::W => CursorHint::ResizeEw,
@@ -85,6 +109,77 @@ impl WidgetHostNative {
     /// highlight set just before does not linger beneath it. Returns
     /// `true` if anything changed.
     pub(in crate::widget_host) fn clear_lower_overlay_hover(&mut self) -> bool {
+        self.clear_lower_overlay_hover_impl(true)
+    }
+
+    /// Clear hover state below the open chat model picker while preserving
+    /// the picker's own active row.
+    pub(in crate::widget_host) fn clear_hover_below_chat_model_picker(&mut self) -> bool {
+        let changed = self.clear_lower_overlay_hover_impl(false);
+        // Opening/owning the picker truncates canvas dispatch. Force the first
+        // point after it closes to run a fresh tree walk even when it is within
+        // the canvas hover jitter radius. Resetting the probe is not itself a
+        // visual change, so preserve the helper's repaint result.
+        self.last_hover_probe = None;
+        changed
+    }
+
+    /// Clear hover feedback painted below the ordinary Chat panel while
+    /// preserving every Chat-owned hover resolved for the same cursor event.
+    /// Surfaces painted above Chat (StatusBar, AlignToolbar, property popovers,
+    /// Git/context menus) are intentionally absent from this list.
+    pub(in crate::widget_host) fn clear_hover_below_chat_panel(&mut self) -> bool {
+        let mut changed = false;
+        {
+            let ui = &mut self.editor_state.editor_ui;
+            changed |= ui.canvas_hover_node.take().is_some();
+            changed |= ui.hovered_layer_id.take().is_some();
+            changed |= ui.hovered_page_index.take().is_some();
+            changed |= ui.toolbar_hover.take().is_some();
+            changed |= ui.variables_panel_hover.take().is_some();
+            changed |= ui.variables_preset_menu_hover.take().is_some();
+            changed |= ui.property_action_hover.take().is_some();
+            changed |= ui.property_tab_hover.take().is_some();
+            changed |= ui.fill_type_picker.hover.take().is_some();
+            changed |= ui.topbar_button_hover.take().is_some();
+            changed |= std::mem::take(&mut ui.topbar_traffic_hover);
+        }
+        changed |= self.editor_state.codegen.framework_hover.take().is_some();
+        changed |= self.editor_state.codegen.action_hover.take().is_some();
+        // The next point back on canvas must run a fresh tree walk even when it
+        // is less than the 3 px jitter threshold from the pre-Chat probe.
+        self.last_hover_probe = None;
+        if changed {
+            self.mark_dirty();
+        }
+        changed
+    }
+
+    /// Clear Chat's own hover feedback plus every surface painted below Chat,
+    /// while preserving the hover owned by whichever higher surface triggered
+    /// the call (StatusBar, AlignToolbar, context/Git, or a property popover).
+    /// This is the transition helper for a single cursor move from Chat into an
+    /// overlapping higher-painted footprint.
+    pub(in crate::widget_host) fn clear_chat_and_lower_hover(&mut self) -> bool {
+        let mut changed = false;
+        {
+            let ui = &mut self.editor_state.editor_ui;
+            changed |= ui.chat_model_picker.hover.take().is_some();
+            changed |= ui.chat_header_hover.take().is_some();
+            changed |= ui.chat_tab_hover.take().is_some();
+            changed |= ui.chat_design_block_hover.take().is_some();
+            changed |= ui.chat_footer_hover.take().is_some();
+            changed |= ui.chat_example_hover.take().is_some();
+            changed |= ui.parallel_agents_picker_hover.take().is_some();
+        }
+        let lower_changed = self.clear_hover_below_chat_panel();
+        if changed {
+            self.mark_dirty();
+        }
+        changed || lower_changed
+    }
+
+    fn clear_lower_overlay_hover_impl(&mut self, clear_chat_model_picker: bool) -> bool {
         let mut changed = false;
         {
             let ui = &mut self.editor_state.editor_ui;
@@ -95,12 +190,23 @@ impl WidgetHostNative {
             changed |= ui.locale_picker.hover.take().is_some();
             changed |= ui.shape_picker.hover.take().is_some();
             changed |= ui.fill_type_picker.hover.take().is_some();
+            changed |= ui.compositing_picker.hover.take().is_some();
             changed |= ui.toolbar_hover.take().is_some();
             changed |= ui.align_toolbar_hover.take().is_some();
-            changed |= ui.chat_model_picker.hover.take().is_some();
+            changed |= ui.topbar_button_hover.take().is_some();
+            changed |= std::mem::take(&mut ui.topbar_traffic_hover);
+            if clear_chat_model_picker {
+                changed |= ui.chat_model_picker.hover.take().is_some();
+            }
+            changed |= ui.chat_header_hover.take().is_some();
+            changed |= ui.chat_tab_hover.take().is_some();
             changed |= ui.chat_design_block_hover.take().is_some();
             changed |= ui.chat_footer_hover.take().is_some();
+            changed |= ui.chat_example_hover.take().is_some();
+            changed |= ui.parallel_agents_picker_hover.take().is_some();
             changed |= ui.export_picker_hover.take().is_some();
+            changed |= ui.variables_panel_hover.take().is_some();
+            changed |= ui.variables_preset_menu_hover.take().is_some();
             // Right-rail panel hovers — cleared so a wash doesn't linger
             // under a floating panel covering the rail.
             changed |= ui.property_action_hover.take().is_some();
@@ -231,16 +337,16 @@ impl WidgetHostNative {
         y: f32,
         viewport_w: f32,
         viewport_h: f32,
+        panel: Option<&op_editor_ui::widgets::PropertyPanel>,
     ) -> bool {
-        use op_editor_ui::widgets::{PropertyPanel, TOP_BAR_HEIGHT};
+        use op_editor_ui::widgets::TOP_BAR_HEIGHT;
         use op_editor_ui::{Point2D, Rect};
         if !self.editor_state.editor_ui.export_scale_picker_open
             && !self.editor_state.editor_ui.export_format_picker_open
         {
             return false;
         }
-        self.refresh_layout_scene();
-        let Some(panel) = PropertyPanel::for_selection(&self.editor_state) else {
+        let Some(panel) = panel else {
             return false;
         };
         let property_rect = Rect {
@@ -272,14 +378,14 @@ impl WidgetHostNative {
         y: f32,
         viewport_w: f32,
         viewport_h: f32,
+        panel: Option<&op_editor_ui::widgets::PropertyPanel>,
     ) -> bool {
-        use op_editor_ui::widgets::{PropertyPanel, TOP_BAR_HEIGHT};
+        use op_editor_ui::widgets::TOP_BAR_HEIGHT;
         use op_editor_ui::{Point2D, Rect};
         if !self.editor_state.editor_ui.effect_add_picker_open {
             return false;
         }
-        self.refresh_layout_scene();
-        let Some(panel) = PropertyPanel::for_selection(&self.editor_state) else {
+        let Some(panel) = panel else {
             return false;
         };
         let property_rect = Rect {
@@ -311,14 +417,14 @@ impl WidgetHostNative {
         y: f32,
         viewport_w: f32,
         viewport_h: f32,
+        panel: Option<&op_editor_ui::widgets::PropertyPanel>,
     ) -> bool {
-        use op_editor_ui::widgets::{PropertyPanel, TOP_BAR_HEIGHT};
+        use op_editor_ui::widgets::TOP_BAR_HEIGHT;
         use op_editor_ui::{Point2D, Rect};
         if !self.editor_state.editor_ui.interaction_menu_open {
             return false;
         }
-        self.refresh_layout_scene();
-        let Some(panel) = PropertyPanel::for_selection(&self.editor_state) else {
+        let Some(panel) = panel else {
             return false;
         };
         let property_rect = Rect {
@@ -344,12 +450,16 @@ impl WidgetHostNative {
     /// Update the layer-panel hover id from the current cursor
     /// position. Returns `true` if the hover state changed.
     pub fn update_layer_hover(&mut self, x: f32, y: f32, viewport_w: f32, viewport_h: f32) -> bool {
-        use op_editor_ui::widgets::{LayerPanel, LayerPanelHit};
+        use op_editor_ui::widgets::LayerPanelHit;
         let sidebar_open = self.editor_state.editor_ui.sidebar_open;
         let panel_w = self.editor_state.editor_ui.layer_panel_width;
         // A top-most floating panel covers the layer rail when dragged
         // over it — no row highlights underneath it.
-        let blocked_by_overlay = self.over_topmost_panel(x, y, viewport_w, viewport_h)
+        let blocked_by_overlay = self
+            .chat_model_picker_rect(viewport_w, viewport_h)
+            .is_some()
+            || self.chat_panel_surface_contains(x, y, viewport_w, viewport_h)
+            || self.over_topmost_panel(x, y, viewport_w, viewport_h)
             || self.over_dropdown_overlay(x, y, viewport_w, viewport_h);
         let (new_layer, new_page) = if sidebar_open
             && !blocked_by_overlay
@@ -361,7 +471,7 @@ impl WidgetHostNative {
                 origin: Point2D::new(0.0, TOP_BAR_HEIGHT),
                 size: Point2D::new(panel_w, (viewport_h - TOP_BAR_HEIGHT).max(0.0)),
             };
-            let panel = LayerPanel::from_editor(&self.editor_state);
+            let panel = self.layer_panel();
             match panel.hit_test(layer_rect, Point2D::new(x, y)) {
                 Some(LayerPanelHit::Layer(id))
                 | Some(LayerPanelHit::ToggleHidden(id))
@@ -395,6 +505,10 @@ impl WidgetHostNative {
         viewport_h: f32,
     ) -> bool {
         self.editor_state.editor_ui.sidebar_open
+            && self
+                .chat_model_picker_rect(viewport_w, viewport_h)
+                .is_none()
+            && !self.chat_panel_surface_contains(x, y, viewport_w, viewport_h)
             && !self.over_topmost_panel(x, y, viewport_w, viewport_h)
             && !self.over_dropdown_overlay(x, y, viewport_w, viewport_h)
             && y >= TOP_BAR_HEIGHT
@@ -446,19 +560,64 @@ impl WidgetHostNative {
         if let Some(resize) = self.chat_resize {
             return Self::chat_resize_cursor(resize.edge);
         }
-        if let Some(edge) = self.chat_resize_hover(x, y, viewport_w, viewport_h) {
-            return Self::chat_resize_cursor(edge);
+        // Keep an in-flight Variables resize gesture authoritative even if a
+        // different overlay opens before the next pointer event.
+        if let Some(edge) = self.variables_resize {
+            use op_editor_ui::widgets::variables_panel::VariablesResizeEdge;
+            return match edge {
+                VariablesResizeEdge::Right => CursorHint::ResizeEw,
+                VariablesResizeEdge::Bottom => CursorHint::ResizeNs,
+                VariablesResizeEdge::Corner => CursorHint::ResizeNwse,
+            };
         }
-        // Floating VariablesPanel resize affordances (TS ew/ns/nwse
-        // cursor strips) — in-flight drag first, then edge hover.
-        if let Some(edge) = self.variables_resize.or_else(|| {
-            self.variables_panel_rect(viewport_w, viewport_h)
-                .and_then(|rect| {
-                    use op_editor_ui::widgets::variables_panel::VariablesPanel;
-                    VariablesPanel::for_editor(&self.editor_state)
-                        .resize_edge_at(rect, Point2D::new(x, y))
-                })
-        }) {
+        // Image popovers paint above Chat. Their editor gets an I-beam; the
+        // rest of the popup stays neutral before the model picker applies its
+        // modal cursor gate.
+        let image_panel = &self.editor_state.editor_ui.image_panel;
+        if image_panel.search_open || image_panel.generate_open {
+            if let Some(panel) =
+                op_editor_ui::widgets::PropertyPanel::for_selection(&self.editor_state)
+            {
+                let property_rect = self.property_rect(viewport_w, viewport_h);
+                let point = Point2D::new(x, y);
+                if panel.image_popover_input_at(property_rect, point).is_some() {
+                    return CursorHint::Text;
+                }
+                if panel.image_popovers_contain(property_rect, point) {
+                    return CursorHint::Default;
+                }
+            }
+        }
+        // The model picker is modal below the overlays handled above. Stop
+        // before probing Chat/Variables resize and transcript geometry: those
+        // controls are visually covered or intentionally inactive, and each
+        // probe used to rebuild AIChatPlaceholder on every raw mouse move.
+        if self.editor_state.editor_ui.chat_model_picker.open {
+            return CursorHint::Default;
+        }
+
+        // Build Chat once for both resize and transcript cursor probes.
+        let chat_panel = self.ai_chat_rect(viewport_w, viewport_h).map(|rect| {
+            (
+                rect,
+                AIChatPlaceholder::from_editor(&self.editor_state).owned_by(self.chat_panel_owner),
+            )
+        });
+        if let Some((rect, panel)) = chat_panel.as_ref() {
+            if let Some(edge) = panel.resize_edge_at(*rect, Point2D::new(x, y)) {
+                return Self::chat_resize_cursor(edge);
+            }
+        }
+        // Floating VariablesPanel resize affordances (TS ew/ns/nwse cursor
+        // strips). The panel is below Chat/model-picker in paint order.
+        if let Some(edge) = self
+            .variables_panel_rect(viewport_w, viewport_h)
+            .and_then(|rect| {
+                use op_editor_ui::widgets::variables_panel::VariablesPanel;
+                VariablesPanel::for_editor(&self.editor_state)
+                    .resize_edge_at(rect, Point2D::new(x, y))
+            })
+        {
             use op_editor_ui::widgets::variables_panel::VariablesResizeEdge;
             return match edge {
                 VariablesResizeEdge::Right => CursorHint::ResizeEw,
@@ -476,32 +635,11 @@ impl WidgetHostNative {
         // re-resolves the build and self-corrects any staleness on the next
         // painted frame. Before the first paint no build exists and this yields
         // the default arrow, which is acceptable.
-        if let Some(chat_rect) = self.ai_chat_rect(viewport_w, viewport_h) {
-            // Owner-stamp so the display-frame hint reads only THIS host's build.
-            let panel =
-                AIChatPlaceholder::from_editor(&self.editor_state).owned_by(self.chat_panel_owner);
+        if let Some((chat_rect, panel)) = chat_panel.as_ref() {
             if let Some(AIChatHit::SelectInputText(_) | AIChatHit::SelectTranscriptText(_, _)) =
-                panel.hit_test_current_build(chat_rect, Point2D::new(x, y))
+                panel.hit_test_current_build(*chat_rect, Point2D::new(x, y))
             {
                 return CursorHint::Text;
-            }
-        }
-        // Image popovers extend outside the property rail. Their editor gets
-        // an I-beam; the rest of the popup stays neutral so a canvas cursor
-        // cannot bleed through from the selected node underneath.
-        let image_panel = &self.editor_state.editor_ui.image_panel;
-        if image_panel.search_open || image_panel.generate_open {
-            if let Some(panel) =
-                op_editor_ui::widgets::PropertyPanel::for_selection(&self.editor_state)
-            {
-                let property_rect = self.property_rect(viewport_w, viewport_h);
-                let point = Point2D::new(x, y);
-                if panel.image_popover_input_at(property_rect, point).is_some() {
-                    return CursorHint::Text;
-                }
-                if panel.image_popovers_contain(property_rect, point) {
-                    return CursorHint::Default;
-                }
             }
         }
         // Any floating overlay (panels, Git popover, Toolbar /
@@ -684,13 +822,12 @@ impl WidgetHostNative {
     /// page.
     pub(in crate::widget_host) fn zoom_to_fit(&mut self, viewport_w: f32, viewport_h: f32) {
         self.refresh_layout_scene();
-        let Some(content) = self.layout_scene.content_bounds() else {
-            return;
-        };
-        let (_l, _t, canvas_w, canvas_h) = self.canvas_region(viewport_w, viewport_h);
-        self.editor_state
-            .viewport
-            .fit_to_with_max_zoom(content, canvas_w, canvas_h, 64.0, 1.0);
+        if let Some(content) = self.layout_scene.content_bounds() {
+            let (_l, _t, canvas_w, canvas_h) = self.canvas_region(viewport_w, viewport_h);
+            self.editor_state
+                .viewport
+                .fit_to_with_max_zoom(content, canvas_w, canvas_h, 64.0, 1.0);
+        }
         self.mark_dirty();
     }
 

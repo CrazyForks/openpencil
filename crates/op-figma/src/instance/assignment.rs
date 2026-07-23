@@ -3,8 +3,36 @@ use crate::common::scale_tree_children;
 use crate::figma_types::FigVec2;
 use crate::kiwi::FigValue;
 use crate::tree::{guid_to_string, TreeNode};
-use std::collections::HashMap;
-use std::rc::Rc;
+use std::collections::{HashMap, HashSet};
+
+/// Reserve exact target-subtree GUIDs before virtual/index heuristics run.
+/// Mixed component-swap payloads can contain equally-sized derived entries
+/// from both the old and new masters; exact identity always wins that tie.
+pub(super) fn reserve_direct_identities(
+    override_map: &HashMap<String, &FigValue>,
+    derived_map: &HashMap<String, &FigValue>,
+    guid_in_subtree: &HashSet<String>,
+    node_override: &mut HashMap<String, FigValue>,
+    node_derived: &mut HashMap<String, FigValue>,
+    pk_to_node_guid: &mut HashMap<String, String>,
+) -> HashSet<String> {
+    let reserved: HashSet<String> = override_map
+        .keys()
+        .chain(derived_map.keys())
+        .filter(|pk| !pk.contains('/') && guid_in_subtree.contains(*pk))
+        .cloned()
+        .collect();
+    for guid in &reserved {
+        pk_to_node_guid.insert(guid.clone(), guid.clone());
+        if let Some(entry) = derived_map.get(guid) {
+            node_derived.insert(guid.clone(), (*entry).clone());
+        }
+        if let Some(entry) = override_map.get(guid) {
+            node_override.insert(guid.clone(), (*entry).clone());
+        }
+    }
+    reserved
+}
 
 /// Pre-conversion pooled seeding: walk the whole tree, group every
 /// INSTANCE's single-segment virtual entries by SYMBOL, pool their
@@ -13,7 +41,7 @@ use std::rc::Rc;
 /// pin quality doesn't depend on which instance converts first.
 pub fn seed_assignments_from_instances(
     root: &TreeNode,
-    symbol_tree: &HashMap<String, Rc<TreeNode>>,
+    symbol_tree: &HashMap<String, &TreeNode>,
     cache: &mut HashMap<String, String>,
 ) {
     // symbol guid -> pk -> pooled evidence.
@@ -172,7 +200,7 @@ pub fn seed_assignments_from_instances(
     collect_geom(root, &mut geom_seeds);
 
     for (sym_guid, per_pk) in &pool {
-        let Some(symbol) = symbol_tree.get(sym_guid) else {
+        let Some(symbol) = symbol_tree.get(sym_guid).copied() else {
             continue;
         };
         let mut flat: Vec<&TreeNode> = Vec::new();
@@ -201,7 +229,7 @@ pub fn seed_assignments_from_instances(
     }
 
     for (sym_guid, inst_size, entries) in &geom_seeds {
-        let Some(symbol) = symbol_tree.get(sym_guid) else {
+        let Some(symbol) = symbol_tree.get(sym_guid).copied() else {
             continue;
         };
         let mut flat: Vec<&TreeNode> = Vec::new();

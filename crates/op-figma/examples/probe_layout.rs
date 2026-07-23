@@ -44,7 +44,7 @@ fn main() {
     let mut state = op_editor_core::EditorState::from_document(import.document.clone());
     state.ui.active_page_index = page_index;
     state.editor_ui.preserve_authored_geometry = true;
-    let scene = op_pen_loader::editor_state_to_layout_scene(&state);
+    let scene = op_pen_loader::editor_state_to_active_page_layout_scene(&state);
     let scene_page = scene.active_page().expect("active scene page");
 
     let mut stack = Vec::new();

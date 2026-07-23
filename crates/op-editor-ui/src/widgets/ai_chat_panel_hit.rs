@@ -13,6 +13,41 @@ use crate::widgets::ai_chat_transcript_cache::CanonicalTranscript;
 use crate::{Point2D, Rect};
 
 impl<'a> AIChatPlaceholder<'a> {
+    /// Resolve a hit owned by the open model-picker overlay.
+    ///
+    /// The picker grows upward and can extend beyond (or overlap the header
+    /// of) the chat panel. Keep this probe separate from the panel-body
+    /// containment check so every painted part of the overlay stays
+    /// interactive and wins over controls painted underneath it.
+    fn open_model_picker_hit(&self, rect: Rect, point: Point2D) -> Option<AIChatHit> {
+        if self.state.collapsed || !self.model_picker.open {
+            return None;
+        }
+        let picker = self.model_picker_bounds(rect)?;
+        if crate::widgets::ai_chat_model_picker::search_clear_hit(
+            picker,
+            point,
+            self.model_picker_input.text(),
+        ) {
+            return Some(AIChatHit::ClearModelSearch);
+        }
+        match crate::widgets::ai_chat_model_picker::model_picker_hit(
+            self.model_picker,
+            picker,
+            point,
+            &self.state.available_models,
+            self.model_picker_input.text(),
+        ) {
+            jian_widgets::components::select::SelectHit::Row(idx) => {
+                Some(AIChatHit::SelectModel(idx))
+            }
+            jian_widgets::components::select::SelectHit::Inside => {
+                Some(AIChatHit::FocusModelSearch)
+            }
+            jian_widgets::components::select::SelectHit::Outside => None,
+        }
+    }
+
     pub fn hit_test(&self, rect: Rect, point: Point2D) -> Option<AIChatHit> {
         self.hit_test_with_canonical(rect, point, None)
     }
@@ -28,6 +63,9 @@ impl<'a> AIChatPlaceholder<'a> {
         point: Point2D,
         canonical: Option<&CanonicalTranscript>,
     ) -> Option<AIChatHit> {
+        if let Some(hit) = self.open_model_picker_hit(rect, point) {
+            return Some(hit);
+        }
         if let Some(edge) = self.resize_edge_at(rect, point) {
             return Some(AIChatHit::Resize(edge));
         }
@@ -93,34 +131,12 @@ impl<'a> AIChatPlaceholder<'a> {
         // ~17 px above where they are painted.
         let input_rect = self.input_rect(rect);
         let input_area_h = self.input_area_height_for_rect(rect);
-        // Model-picker dropdown — an overlay above the chip. When
-        // open it behaves modally: a row click selects, any other
-        // click dismisses it. Hit-tested before the input so a row
-        // click isn't eaten by the message list beneath.
+        // The open picker was probed before panel containment because it can
+        // extend beyond this rect. Reaching here means the point is inside the
+        // chat but outside the picker, so dismiss the modal overlay after any
+        // header control that was not visually covered by it has handled the
+        // press normally.
         if self.model_picker.open {
-            let picker = self.model_picker_rect(rect, input_rect);
-            if crate::widgets::ai_chat_model_picker::search_clear_hit(
-                picker,
-                point,
-                self.model_picker_input.text(),
-            ) {
-                return Some(AIChatHit::ClearModelSearch);
-            }
-            match crate::widgets::ai_chat_model_picker::model_picker_hit(
-                self.model_picker,
-                picker,
-                point,
-                &self.state.available_models,
-                self.model_picker_input.text(),
-            ) {
-                jian_widgets::components::select::SelectHit::Row(idx) => {
-                    return Some(AIChatHit::SelectModel(idx));
-                }
-                jian_widgets::components::select::SelectHit::Inside => {
-                    return Some(AIChatHit::FocusModelSearch);
-                }
-                jian_widgets::components::select::SelectHit::Outside => {}
-            }
             return Some(AIChatHit::ToggleModelPicker);
         }
         // Parallel-agents picker — when open, behaves modally: a row click

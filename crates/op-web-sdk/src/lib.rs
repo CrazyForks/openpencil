@@ -25,6 +25,9 @@ pub struct Viewer {
     doc: Option<jian_ops_schema::PenDocument>,
     /// Index of the currently visible page (0-based).
     active_page: usize,
+    /// Whether the loaded document should use its authored parent-local
+    /// geometry instead of running flex layout again.
+    preserve_authored_geometry: bool,
     /// Paint-only layout scene built from the loaded document.
     /// `None` until a document is loaded and `rebuild_scene` runs.
     scene: Option<op_editor_ui::layout_scene::LayoutScene>,
@@ -41,6 +44,7 @@ impl Viewer {
         Viewer {
             doc: None,
             active_page: 0,
+            preserve_authored_geometry: false,
             scene: None,
             viewport: DocViewport::IDENTITY,
         }

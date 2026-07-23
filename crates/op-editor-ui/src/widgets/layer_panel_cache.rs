@@ -1,4 +1,4 @@
-//! Per-frame layer-row model cache.
+//! Owner-scoped layer-row model cache shared by paint and host hit tests.
 //!
 //! `LayerPanel::from_editor` re-walks the whole active-page `PenNode`
 //! tree and allocates ~4 `String`s per node EVERY frame, then
@@ -60,10 +60,10 @@
 //! coincidental revision-counter collision.
 //!
 //! [`UNOWNED`] (`0`) is the cache-BYPASS sentinel: `from_editor`
-//! (unit tests + non-hot host call sites like click / scroll / geometry
-//! / a11y) resolves under it and ALWAYS gets a fresh build that never
-//! reads or writes the shared slot. That keeps those paths trivially
-//! correct while the per-frame paint path (owned) reaps the cache.
+//! (primarily unit tests and one-off callers without a persistent host)
+//! resolves under it and ALWAYS gets a fresh build that never reads or
+//! writes the shared slot. Persistent hosts use one owned resolve for paint,
+//! click, scroll, geometry, and accessibility so all hot paths share rows.
 //!
 //! Precedent: `ai_chat_transcript_cache.rs` (the owner-scoped
 //! thread-local slot pattern) and `op-pen-loader/src/measure_cache.rs`.
@@ -87,8 +87,8 @@ use super::layer_panel::{LayerItem, PageItem};
 static NEXT_OWNER: AtomicU64 = AtomicU64::new(1);
 
 /// Cache-bypass sentinel. A resolve under this owner ALWAYS builds fresh
-/// and never touches the shared slot — used by `from_editor` (unit tests
-/// + non-per-frame host call sites).
+/// and never touches the shared slot — used by `from_editor` (primarily unit
+/// tests and one-off callers without a persistent owner).
 pub(crate) const UNOWNED: u64 = 0;
 
 /// Allocate a fresh, process-unique panel-owner id. Hosts allocate one at

@@ -236,3 +236,73 @@ fn image_fill_popover_internal_gap_is_consumed_without_action() {
         "clicks in non-interactive popover gaps must be consumed so the popover stays open",
     );
 }
+
+#[test]
+fn tile_image_fill_exposes_scale_input_but_other_image_surfaces_do_not() {
+    let rect = Rect {
+        origin: Point2D::new(320.0, 24.0),
+        size: Point2D::new(280.0, 900.0),
+    };
+
+    let mut tiled = image_fill_state();
+    tiled.editor_ui.image_fill_popover_open = true;
+    assert!(tiled.set_selected_image_fill_mode(op_editor_core::ImageFillMode::Tile));
+    let tiled_panel = PropertyPanel::for_selection(&tiled).expect("tiled fill panel");
+    assert_eq!(
+        tiled_panel
+            .snapshot
+            .image_fill
+            .as_ref()
+            .and_then(|summary| summary.tile_scale),
+        Some(1.0)
+    );
+    let tile_input = super::property_panel_image_fill::image_fill_popover_input_rect(
+        rect,
+        visible_for(&tiled_panel),
+        &tiled_panel.snapshot,
+    )
+    .expect("Tile PenFill input rect");
+    let tile_point = Point2D::new(
+        tile_input.origin.x + tile_input.size.x / 2.0,
+        tile_input.origin.y + tile_input.size.y / 2.0,
+    );
+    assert_eq!(
+        tiled_panel.image_fill_popover_input_at(rect, tile_point),
+        Some(op_editor_core::PropertyFocus::ImageTileScale)
+    );
+
+    let mut non_tile = image_fill_state();
+    non_tile.editor_ui.image_fill_popover_open = true;
+    let non_tile_panel = PropertyPanel::for_selection(&non_tile).expect("fill panel");
+    assert!(
+        super::property_panel_image_fill::image_fill_popover_input_rect(
+            rect,
+            visible_for(&non_tile_panel),
+            &non_tile_panel.snapshot,
+        )
+        .is_none()
+    );
+
+    let mut standalone = state_from(
+        r##"{"version":"1.0.0","children":[{
+            "type":"image","id":"standalone","name":"Image",
+            "x":0,"y":0,"width":100,"height":100,"src":""
+        }]}"##,
+    );
+    standalone.set_single_selection(NodeId::new("standalone"));
+    standalone.editor_ui.image_fill_popover_open = true;
+    let standalone_panel = PropertyPanel::for_selection(&standalone).expect("image node panel");
+    assert!(standalone_panel
+        .snapshot
+        .image_fill
+        .as_ref()
+        .is_some_and(|summary| summary.tile_scale.is_none()));
+    assert!(
+        super::property_panel_image_fill::image_fill_popover_input_rect(
+            rect,
+            visible_for(&standalone_panel),
+            &standalone_panel.snapshot,
+        )
+        .is_none()
+    );
+}

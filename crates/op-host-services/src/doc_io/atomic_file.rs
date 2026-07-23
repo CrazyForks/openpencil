@@ -1,0 +1,113 @@
+//! Sibling-temp creation and atomic destination replacement for `.op` saves.
+
+use std::path::{Path, PathBuf};
+
+/// Create a unique sibling with `create_new`, so overlapping saves and stale
+/// files from a recycled PID can never truncate one another.
+pub(super) fn create_sibling_temp(path: &Path) -> Result<(PathBuf, std::fs::File), String> {
+    for _ in 0..128 {
+        let candidate = unique_sibling_temp_path(path);
+        match std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&candidate)
+        {
+            Ok(file) => return Ok((candidate, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("create {}: {error}", candidate.display())),
+        }
+    }
+    Err(format!(
+        "could not create a unique save file beside {}",
+        path.display()
+    ))
+}
+
+fn unique_sibling_temp_path(path: &Path) -> PathBuf {
+    static NEXT_TEMP: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let sequence = NEXT_TEMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let pid = std::process::id();
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("document.op");
+    path.with_file_name(format!(".{file_name}.{pid}.{sequence}.tmp"))
+}
+
+#[cfg(not(windows))]
+pub(super) fn replace_file(tmp: &Path, path: &Path) -> Result<(), String> {
+    std::fs::rename(tmp, path)
+        .map_err(|error| format!("replace {} with {}: {error}", path.display(), tmp.display()))
+}
+
+/// Windows `std::fs::rename` cannot replace an existing destination. These OS
+/// primitives preserve the old file until the completed sibling temp commits.
+#[cfg(windows)]
+pub(super) fn replace_file(tmp: &Path, path: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr;
+
+    const REPLACEFILE_IGNORE_MERGE_ERRORS: u32 = 0x2;
+    const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
+    const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
+
+    #[link(name = "Kernel32")]
+    #[allow(non_snake_case)]
+    extern "system" {
+        fn ReplaceFileW(
+            replaced_file_name: *const u16,
+            replacement_file_name: *const u16,
+            backup_file_name: *const u16,
+            replace_flags: u32,
+            exclude: *mut std::ffi::c_void,
+            reserved: *mut std::ffi::c_void,
+        ) -> i32;
+        fn MoveFileExW(
+            existing_file_name: *const u16,
+            new_file_name: *const u16,
+            flags: u32,
+        ) -> i32;
+    }
+
+    fn wide(path: &Path) -> Vec<u16> {
+        path.as_os_str().encode_wide().chain(Some(0)).collect()
+    }
+
+    let temporary = wide(tmp);
+    let destination = wide(path);
+    // SAFETY: both path buffers are NUL-terminated and remain alive for each
+    // call; the optional Windows API pointer arguments are documented nullable.
+    let replaced = unsafe {
+        ReplaceFileW(
+            destination.as_ptr(),
+            temporary.as_ptr(),
+            ptr::null(),
+            REPLACEFILE_IGNORE_MERGE_ERRORS,
+            ptr::null_mut(),
+            ptr::null_mut(),
+        )
+    };
+    if replaced != 0 {
+        return Ok(());
+    }
+
+    // ReplaceFileW requires an existing destination. MoveFileExW also covers
+    // first-save and destination appearance/disappearance races atomically.
+    let moved = unsafe {
+        MoveFileExW(
+            temporary.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if moved != 0 {
+        Ok(())
+    } else {
+        Err(format!(
+            "replace {} with {}: {}",
+            path.display(),
+            tmp.display(),
+            std::io::Error::last_os_error()
+        ))
+    }
+}

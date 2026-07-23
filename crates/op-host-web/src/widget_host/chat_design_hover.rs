@@ -1,40 +1,31 @@
 use super::WidgetHost;
 use op_editor_ui::widgets::AIChatPlaceholder;
-use op_editor_ui::Point2D;
+use op_editor_ui::{Point2D, Rect};
 
 impl WidgetHost {
+    pub(in crate::widget_host) fn chat_model_picker_rect(
+        &self,
+        viewport_w: f32,
+        viewport_h: f32,
+    ) -> Option<Rect> {
+        if !self.editor_state.editor_ui.chat_model_picker.open {
+            return None;
+        }
+        let chat_rect = self.ai_chat_rect(viewport_w, viewport_h)?;
+        AIChatPlaceholder::from_editor(&self.editor_state).model_picker_bounds(chat_rect)
+    }
+
     pub(in crate::widget_host) fn update_chat_model_picker_hover(
         &mut self,
         x: f32,
         y: f32,
-        over_topmost: bool,
+        picker: Rect,
     ) -> bool {
-        if !self.editor_state.editor_ui.chat_model_picker.open || over_topmost {
-            if self
-                .editor_state
-                .editor_ui
-                .chat_model_picker
-                .hover
-                .take()
-                .is_some()
-            {
-                self.mark_dirty();
-                return true;
-            }
+        if !self.editor_state.editor_ui.chat_model_picker.open {
             return false;
         }
 
         use op_editor_ui::widgets::ai_chat_model_picker::{model_picker_hit, SelectHit};
-
-        let Some(picker) = self
-            .ai_chat_rect(self.last_viewport_w, self.last_viewport_h)
-            .and_then(|chat_rect| {
-                AIChatPlaceholder::from_editor_at(&self.editor_state, self.now_ms)
-                    .model_picker_bounds(chat_rect)
-            })
-        else {
-            return false;
-        };
 
         let new_hover = match model_picker_hit(
             &self.editor_state.editor_ui.chat_model_picker,

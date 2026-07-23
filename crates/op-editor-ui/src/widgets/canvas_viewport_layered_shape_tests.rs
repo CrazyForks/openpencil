@@ -28,7 +28,7 @@ enum Op {
     ClipPolygon,
     ClipSvg,
     Composite(f32, ImageBlendMode),
-    Image(f32, ImageBlendMode),
+    Image(f32, ImageBlendMode, f32),
     Restore,
 }
 
@@ -101,7 +101,23 @@ impl RenderBackend for ShapeCaptureBackend {
         _: Option<[f32; 6]>,
         blend_mode: ImageBlendMode,
     ) {
-        self.ops.push(Op::Image(opacity, blend_mode));
+        self.ops.push(Op::Image(opacity, blend_mode, 1.0));
+    }
+    fn draw_image_with_options_transform_blend_and_tile_scale(
+        &mut self,
+        _: Rect,
+        _: u64,
+        _: &[u8],
+        _: ImageDrawMode,
+        _: ImageAdjustments,
+        opacity: f32,
+        _: f32,
+        _: Option<[f32; 6]>,
+        blend_mode: ImageBlendMode,
+        _: Option<[f32; 2]>,
+        tile_scale: f32,
+    ) {
+        self.ops.push(Op::Image(opacity, blend_mode, tile_scale));
     }
     fn save(&mut self) {
         self.ops.push(Op::Save);
@@ -138,6 +154,8 @@ fn image_layer() -> SceneFillLayer {
         src_id: 0x5A17,
         fit: Default::default(),
         transform: None,
+        original_size: Some([1.0, 1.0]),
+        tile_scale: 0.38618907,
         adjustments: Default::default(),
         opacity: 0.75,
         blend_mode: ImageBlendMode::Multiply,
@@ -276,7 +294,7 @@ fn expected_image_ops(clip: Op) -> Vec<Op> {
         clip,
         Op::Composite(0.5, ImageBlendMode::Normal),
         Op::Composite(1.0, ImageBlendMode::Multiply),
-        Op::Image(0.75, ImageBlendMode::Normal),
+        Op::Image(0.75, ImageBlendMode::Normal, 0.38618907),
         Op::Restore,
         Op::Restore,
         Op::Restore,

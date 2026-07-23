@@ -9,7 +9,7 @@ use crate::widgets::agent_settings_mcp::{self, McpHit};
 use crate::widgets::agent_settings_panel_card::paint_agent_card;
 use crate::widgets::agent_settings_panel_geometry::{
     acp_section_y, agent_card_rect_at, agent_card_rect_in, close_rect, connect_btn_rect_at,
-    content_rect, disconnect_btn_rect_at, nav_item_rect, tab_i18n_label,
+    content_paint_clip_rect, content_rect, disconnect_btn_rect_at, nav_item_rect, tab_i18n_label,
 };
 use crate::widgets::agent_settings_system::{self, SystemHit};
 use crate::widgets::editor_state_ext::theme_for;
@@ -572,7 +572,7 @@ fn paint_panel(
     paint_sidebar(cx, theme, settings, _ui, panel, mode);
     let content_rect = content_rect(panel);
     cx.backend.save();
-    cx.backend.clip_rect(content_rect);
+    cx.backend.clip_rect(content_paint_clip_rect(panel));
     cx.backend
         .translate(Point2D::new(0.0, -settings.scroll_y.offset));
     match mode.active_tab(settings) {

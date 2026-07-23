@@ -724,7 +724,7 @@ fn path_names(path: &[&TreeNode]) -> String {
 
 fn object_keys(value: &FigValue) -> Vec<&str> {
     match value {
-        FigValue::Object(pairs) => pairs.iter().map(|(key, _)| key.as_str()).collect(),
+        FigValue::Object(pairs) => pairs.iter().map(|(key, _)| key.as_ref()).collect(),
         _ => Vec::new(),
     }
 }

@@ -79,6 +79,39 @@ fn rename_page_rejects_blank_and_writes_name() {
 }
 
 #[test]
+fn page_background_promotes_legacy_root_without_losing_children() {
+    let mut s = state_with(vec![rect("n1", "A", 0.0, 0.0, 10.0, 10.0)]);
+    assert_eq!(s.active_page_background_color(), None);
+
+    assert!(s.set_active_page_background_color(Some(" #d7e4f380 ".into())));
+    assert_eq!(s.active_page_background_color(), Some("#d7e4f380"));
+    let pages = s.doc.pages.as_ref().expect("legacy document promoted");
+    assert_eq!(pages.len(), 1);
+    assert_eq!(pages[0].children.len(), 1);
+    assert_eq!(pages[0].children[0].id_str(), "n1");
+    assert!(s.doc.children.is_empty());
+
+    assert!(!s.set_active_page_background_color(Some("#d7e4f380".into())));
+    assert!(s.set_active_page_background_color(None));
+    assert_eq!(s.active_page_background_color(), None);
+    assert!(!s.set_active_page_background_color(Some("  ".into())));
+}
+
+#[test]
+fn page_background_promotion_round_trips_in_one_history_step() {
+    let mut s = state_with(vec![rect("n1", "A", 0.0, 0.0, 10.0, 10.0)]);
+    let before = s.snapshot_for_history();
+    assert!(s.set_active_page_background_color(Some("#10203040".into())));
+    s.history_push_past(before);
+
+    assert!(s.undo());
+    assert!(s.doc.pages.is_none());
+    assert_eq!(s.doc.children[0].id_str(), "n1");
+    assert!(s.redo());
+    assert_eq!(s.active_page_background_color(), Some("#10203040"));
+}
+
+#[test]
 fn duplicate_page_clones_children_with_fresh_ids() {
     let mut s = state_with(vec![rect("n1", "A", 0.0, 0.0, 10.0, 10.0)]);
     s.add_page(); // migrate + new page
@@ -90,6 +123,15 @@ fn duplicate_page_clones_children_with_fresh_ids() {
     assert_eq!(pages[1].children.len(), 1);
     assert_ne!(pages[1].children[0].id_str(), "n1");
     assert!(s.validate().is_ok());
+}
+
+#[test]
+fn duplicate_page_preserves_background_metadata() {
+    let mut s = state_with(vec![rect("n1", "A", 0.0, 0.0, 10.0, 10.0)]);
+    assert!(s.set_active_page_background_color(Some("#abcdef80".into())));
+    let clone = s.duplicate_page(0).expect("duplicate_page");
+    let pages = s.doc.pages.as_ref().unwrap();
+    assert_eq!(pages[clone].background_color.as_deref(), Some("#abcdef80"));
 }
 
 #[test]

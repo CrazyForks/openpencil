@@ -4,7 +4,7 @@
 use super::*;
 
 fn obj(pairs: Vec<(&str, FigValue)>) -> FigValue {
-    FigValue::Object(pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
+    FigValue::Object(pairs.into_iter().map(|(k, v)| (k.into(), v)).collect())
 }
 
 fn color_obj(r: f64, g: f64, b: f64) -> FigValue {
@@ -26,6 +26,88 @@ fn solid_fill_maps_to_hex() {
         PenFill::Solid(b) => assert_eq!(b.color, "#ff0000"),
         _ => panic!("expected solid"),
     }
+}
+
+#[test]
+fn supported_paint_blend_modes_map_to_canonical_values() {
+    for (figma, expected) in [
+        ("DARKEN", BlendMode::Darken),
+        ("MULTIPLY", BlendMode::Multiply),
+        ("SCREEN", BlendMode::Screen),
+        ("OVERLAY", BlendMode::Overlay),
+        ("LIGHTEN", BlendMode::Lighten),
+        ("DIFFERENCE", BlendMode::Difference),
+        ("HUE", BlendMode::Hue),
+        ("SATURATION", BlendMode::Saturation),
+        ("COLOR", BlendMode::Color),
+        ("LUMINOSITY", BlendMode::Luminosity),
+        ("SOFT_LIGHT", BlendMode::SoftLight),
+        ("COLOR_DODGE", BlendMode::ColorDodge),
+        ("COLOR_BURN", BlendMode::ColorBurn),
+        ("HARD_LIGHT", BlendMode::HardLight),
+        ("EXCLUSION", BlendMode::Exclusion),
+    ] {
+        assert_eq!(map_blend_mode(Some(figma)), Some(expected));
+    }
+}
+
+#[test]
+fn normal_and_unsupported_paint_blends_keep_source_over_default() {
+    for figma in [
+        "NORMAL",
+        "PASS_THROUGH",
+        "LINEAR_BURN",
+        "LINEAR_DODGE",
+        "UNKNOWN_FUTURE_MODE",
+    ] {
+        assert_eq!(map_blend_mode(Some(figma)), None);
+    }
+}
+
+#[test]
+fn paint_blend_is_carried_by_solid_gradient_and_image_fills() {
+    let stops = || {
+        FigValue::Array(vec![obj(vec![
+            ("position", FigValue::Float(0.0)),
+            ("color", color_obj(0.0, 0.0, 0.0)),
+        ])])
+    };
+    let paints = [
+        obj(vec![
+            ("type", FigValue::Str("SOLID".into())),
+            ("color", color_obj(1.0, 0.0, 0.0)),
+            ("blendMode", FigValue::Str("MULTIPLY".into())),
+        ]),
+        obj(vec![
+            ("type", FigValue::Str("GRADIENT_LINEAR".into())),
+            ("stops", stops()),
+            ("blendMode", FigValue::Str("SCREEN".into())),
+        ]),
+        obj(vec![
+            ("type", FigValue::Str("IMAGE".into())),
+            (
+                "image",
+                obj(vec![("hash", FigValue::Bytes(vec![0xab, 0xcd]))]),
+            ),
+            ("blendMode", FigValue::Str("OVERLAY".into())),
+        ]),
+    ];
+    let fills = map_figma_fills(Some(&paints)).unwrap();
+    assert!(matches!(
+        &fills[0],
+        PenFill::Solid(body)
+            if body.blend_mode.as_ref() == Some(&BlendMode::Multiply)
+    ));
+    assert!(matches!(
+        &fills[1],
+        PenFill::LinearGradient(body)
+            if body.blend_mode.as_ref() == Some(&BlendMode::Screen)
+    ));
+    assert!(matches!(
+        &fills[2],
+        PenFill::Image(body)
+            if body.blend_mode.as_ref() == Some(&BlendMode::Overlay)
+    ));
 }
 
 #[test]
@@ -98,6 +180,98 @@ fn image_fill_maps_crop_and_tile_scale_modes() {
             _ => panic!("expected image fill"),
         }
     }
+}
+
+#[test]
+fn image_fill_maps_positive_tile_scale_only_for_tile_mode() {
+    let image_fill = |mode: &str, scale: Option<f32>| {
+        let mut pairs = vec![
+            ("type", FigValue::Str("IMAGE".into())),
+            (
+                "image",
+                obj(vec![("hash", FigValue::Bytes(vec![0xab, 0xcd]))]),
+            ),
+            ("imageScaleMode", FigValue::Str(mode.into())),
+        ];
+        if let Some(scale) = scale {
+            pairs.push(("scale", FigValue::Float(scale)));
+        }
+        let paints = [obj(pairs)];
+        let fills = map_figma_fills(Some(&paints)).unwrap();
+        let PenFill::Image(image) = &fills[0] else {
+            panic!("expected image fill");
+        };
+        image.tile_scale
+    };
+
+    assert_eq!(image_fill("TILE", Some(0.38618907)), Some(0.38618907));
+    assert_eq!(image_fill("TILE", None), None);
+    assert_eq!(image_fill("TILE", Some(0.0)), None);
+    assert_eq!(image_fill("TILE", Some(f32::NAN)), None);
+    assert_eq!(image_fill("TILE", Some(f32::INFINITY)), None);
+    assert_eq!(image_fill("FIT", Some(0.38618907)), None);
+}
+
+#[test]
+fn image_fill_maps_current_filter_to_slider_units() {
+    let paints = [obj(vec![
+        ("type", FigValue::Str("IMAGE".into())),
+        (
+            "image",
+            obj(vec![("hash", FigValue::Bytes(vec![0xab, 0xcd]))]),
+        ),
+        (
+            "paintFilter",
+            obj(vec![
+                ("exposure", FigValue::Float(0.5)),
+                ("contrast", FigValue::Float(-0.25)),
+                ("vibrance", FigValue::Float(0.75)),
+                ("temperature", FigValue::Float(1.5)),
+                ("tint", FigValue::Float(-1.5)),
+                ("highlights", FigValue::Float(0.0)),
+            ]),
+        ),
+    ])];
+    let fills = map_figma_fills(Some(&paints)).unwrap();
+    let PenFill::Image(image) = &fills[0] else {
+        panic!("expected image fill");
+    };
+    assert_eq!(image.exposure, Some(50.0));
+    assert_eq!(image.contrast, Some(-25.0));
+    assert_eq!(image.saturation, Some(75.0));
+    assert_eq!(image.temperature, Some(100.0));
+    assert_eq!(image.tint, Some(-100.0));
+    assert_eq!(image.highlights, None);
+    assert_eq!(image.shadows, None);
+}
+
+#[test]
+fn image_filter_falls_back_per_channel_to_legacy_adjustments() {
+    let paints = [obj(vec![
+        ("type", FigValue::Str("IMAGE".into())),
+        (
+            "image",
+            obj(vec![("hash", FigValue::Bytes(vec![0xab, 0xcd]))]),
+        ),
+        ("paintFilter", obj(vec![("exposure", FigValue::Float(0.2))])),
+        (
+            "filterColorAdjust",
+            obj(vec![
+                ("exposure", FigValue::Float(0.9)),
+                ("temperature", FigValue::Float(0.3)),
+                ("vibrance", FigValue::Float(-0.4)),
+                ("shadows", FigValue::Float(-0.1)),
+            ]),
+        ),
+    ])];
+    let fills = map_figma_fills(Some(&paints)).unwrap();
+    let PenFill::Image(image) = &fills[0] else {
+        panic!("expected image fill");
+    };
+    assert_eq!(image.exposure, Some(20.0));
+    assert!((image.temperature.unwrap() - 30.0).abs() < 0.0001);
+    assert_eq!(image.saturation, Some(-40.0));
+    assert!((image.shadows.unwrap() + 10.0).abs() < 0.0001);
 }
 
 #[test]
@@ -209,6 +383,12 @@ fn layout_space_between_skips_gap() {
     let l = map_figma_layout(&node);
     assert_eq!(l.justify_content, Some(JustifyContent::SpaceBetween));
     assert_eq!(l.gap, None);
+}
+
+#[test]
+fn layout_preserves_disabled_frame_mask_as_explicit_open_content() {
+    let node = obj(vec![("frameMaskDisabled", FigValue::Bool(true))]);
+    assert_eq!(map_figma_layout(&node).clip_content, Some(false));
 }
 
 #[test]

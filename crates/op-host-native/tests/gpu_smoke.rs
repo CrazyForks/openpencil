@@ -36,6 +36,17 @@ fn paint_chrome_red(ctx: &mut SharedSkiaContext, backend: &mut NativeBackend) {
     ctx.present();
 }
 
+fn surface_is_srgb(ctx: &mut SharedSkiaContext) -> bool {
+    let mut is_srgb = false;
+    ctx.with_frame(|canvas, _glow| {
+        is_srgb = canvas
+            .image_info()
+            .color_space()
+            .is_some_and(|color_space| color_space.is_srgb());
+    });
+    is_srgb
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // macOS: invisible winit window + glutin → SharedSkiaContext::new_desktop
 // ──────────────────────────────────────────────────────────────────────────
@@ -95,6 +106,10 @@ mod platform {
             };
             match SharedSkiaContext::new_desktop(window) {
                 Ok(mut ctx) => {
+                    assert!(
+                        surface_is_srgb(&mut ctx),
+                        "GL-backed Skia surface must declare an sRGB destination"
+                    );
                     let mut backend = NativeBackend::with_dpi(window.scale_factor() as f32);
                     paint_chrome_red(&mut ctx, &mut backend);
                     state.succeeded = readback_red(&ctx);
@@ -241,6 +256,10 @@ mod platform {
                 return;
             }
         };
+        assert!(
+            surface_is_srgb(&mut ctx),
+            "GL-backed Skia surface must declare an sRGB destination"
+        );
         let mut backend = NativeBackend::with_dpi(1.0);
         paint_chrome_red(&mut ctx, &mut backend);
 

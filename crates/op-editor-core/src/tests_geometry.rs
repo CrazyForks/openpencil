@@ -212,6 +212,25 @@ fn commit_property_edit_writes_position_and_size() {
     assert_eq!(n.width_px(), Some(88.0));
 }
 
+#[test]
+fn commit_property_edit_writes_node_opacity_from_percent() {
+    use jian_ops_schema::node::base::NumberOrExpression;
+
+    let mut s = state_with(vec![rect("n1", "A", 0.0, 0.0, 50.0, 50.0)]);
+    s.set_single_selection(NodeId::new("n1"));
+
+    assert!(s.commit_property_edit(PropertyFocus::Opacity, 42.5));
+    let n = find_node(s.active_children(), &NodeId::new("n1")).unwrap();
+    let Some(NumberOrExpression::Number(opacity)) = n.base().opacity else {
+        panic!("numeric node opacity");
+    };
+    assert!((opacity - 0.425).abs() < 1e-6);
+
+    assert!(s.commit_property_edit(PropertyFocus::Opacity, 150.0));
+    let n = find_node(s.active_children(), &NodeId::new("n1")).unwrap();
+    assert_eq!(n.base().opacity, Some(NumberOrExpression::Number(1.0)));
+}
+
 // --- Editability gates ----------------------------------------------
 
 #[test]

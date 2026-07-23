@@ -22,7 +22,7 @@
 //! second transition ever waits in line.
 
 use super::PreviewSession;
-use op_editor_ui::layout_scene::{LayoutScene, SceneGradient, SceneNode, ScenePage};
+use op_editor_ui::layout_scene::{LayoutScene, SceneNode, ScenePage};
 use op_editor_ui::widgets::{paint_scene_page_with, PaintCx, PaintSceneOptions};
 use op_editor_ui::{Point2D, Rect, RenderBackend};
 
@@ -115,42 +115,22 @@ impl ScreenTransition {
     }
 }
 
-/// Scale every alpha-bearing channel in this subtree by `factor` (the
-/// Replace cross-fade). Multiplies `opacity` (the one channel the
-/// painter reads directly, for raster images) plus the alpha ALREADY
-/// baked into `fill` / `stroke` / each gradient variant's own `opacity`
-/// at scene-build time (see `SceneNode::opacity`'s doc).
-///
-/// Known gap: drop-shadow (`effects`) and SkSL shader fills keep full
-/// alpha through the 160ms window. Accepted: there is no render-backend
-/// primitive for true offscreen alpha compositing (the trait has no
-/// save-layer/blend op), so a complete fade would mean extending that
-/// trait — out of scope here — and shadows are rare on the nav/tab
-/// chrome that is actually visible during a tab-switch cross-fade.
+/// Apply the Replace cross-fade once to this transition root's composed
+/// output. The painter creates a temporary normal-blend layer even for a
+/// leaf root, so overlapping descendants, effects, shaders, and text runs
+/// all fade together without rewriting their authored paint alpha.
 fn fade_scene_node(node: &mut SceneNode, factor: f32) {
-    node.opacity *= factor;
-    node.fill = node.fill.map(|c| c.with_alpha(c.a * factor));
-    if let Some(stroke) = node.stroke.as_mut() {
-        stroke.color = stroke.color.with_alpha(stroke.color.a * factor);
-    }
-    if let Some(gradient) = node.gradient.as_mut() {
-        match gradient {
-            SceneGradient::Linear { opacity, .. }
-            | SceneGradient::Radial { opacity, .. }
-            | SceneGradient::Mesh { opacity, .. } => *opacity *= factor,
-        }
-    }
-    // Per-run text styling overrides the node's own `fill` for its byte
-    // range (`SceneTextRun::fill`, `None` = inherit) — a run that DOES
-    // override colour (a highlighted word, an inline link) would
-    // otherwise paint at full alpha the whole 160ms window while
-    // everything around it fades, since it never reads `node.fill`.
-    for run in &mut node.text_runs {
-        run.fill = run.fill.map(|c| c.with_alpha(c.a * factor));
-    }
-    for child in &mut node.children {
-        fade_scene_node(child, factor);
-    }
+    let factor = if factor.is_finite() {
+        factor.clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    let authored_opacity = if node.composite_opacity.is_finite() {
+        node.composite_opacity.clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    node.composite_opacity = authored_opacity * factor;
 }
 
 /// Paint one root, optionally faded, inside `content_clip`. Mirrors the
@@ -455,84 +435,58 @@ mod tests {
     }
 
     #[test]
-    fn fade_scales_fill_stroke_and_gradient_alpha() {
-        use op_editor_ui::layout_scene::{SceneGradientStop, SceneStroke};
+    fn fade_multiplies_only_the_transition_root_composite_opacity() {
         use op_editor_ui::Color;
-        let mut node = SceneNode::leaf("n", op_editor_ui::layout_scene::NodeKind::Rect);
-        node.opacity = 1.0;
-        node.fill = Some(Color {
+
+        let mut child = SceneNode::leaf("c", op_editor_ui::layout_scene::NodeKind::Rect);
+        child.composite_opacity = 0.4;
+        child.opacity = 0.3;
+        child.fill = Some(Color {
+            r: 0.0,
+            g: 0.0,
+            b: 1.0,
+            a: 0.7,
+        });
+
+        let mut root = SceneNode::leaf("r", op_editor_ui::layout_scene::NodeKind::Frame);
+        root.composite_opacity = 0.6;
+        root.opacity = 0.8;
+        root.fill = Some(Color {
             r: 1.0,
             g: 0.0,
             b: 0.0,
-            a: 1.0,
+            a: 0.9,
         });
-        node.stroke = Some(SceneStroke {
-            color: Color {
-                r: 0.0,
-                g: 0.0,
-                b: 0.0,
-                a: 0.8,
-            },
-            width: 1.0,
-            sides: None,
-            align: Default::default(),
-        });
-        node.gradient = Some(SceneGradient::Linear {
-            angle_deg: 0.0,
-            opacity: 1.0,
-            stops: vec![SceneGradientStop {
-                offset: 0.0,
-                color: Color::WHITE,
-            }],
-        });
-        fade_scene_node(&mut node, 0.5);
-        assert!((node.opacity - 0.5).abs() < 1e-6);
-        assert!((node.fill.unwrap().a - 0.5).abs() < 1e-6);
-        assert!((node.stroke.unwrap().color.a - 0.4).abs() < 1e-6);
-        match node.gradient.unwrap() {
-            SceneGradient::Linear { opacity, .. } => assert!((opacity - 0.5).abs() < 1e-6),
-            _ => panic!("expected linear gradient"),
-        }
-    }
+        root.children.push(child);
+        let steady_page = ScenePage {
+            id: "p".into(),
+            name: "P".into(),
+            children: vec![root],
+        };
+        let mut faded_page = steady_page.clone();
 
-    #[test]
-    fn fade_scales_per_run_text_colour_override() {
-        use op_editor_ui::layout_scene::SceneTextRun;
-        use op_editor_ui::Color;
-        let mut node = SceneNode::leaf("t", op_editor_ui::layout_scene::NodeKind::Text);
-        node.fill = Some(Color::BLACK);
-        node.text = Some("hi there".to_owned());
-        node.text_runs = vec![SceneTextRun {
-            start: 3,
-            end: 8,
-            font_size: 0.0,
-            font_weight: 0,
-            fill: Some(Color {
-                r: 0.2,
-                g: 0.4,
-                b: 0.9,
-                a: 1.0,
-            }),
-            italic: false,
-            underline: false,
-            strikethrough: false,
-        }];
-        fade_scene_node(&mut node, 0.25);
+        fade_scene_node(&mut faded_page.children[0], 0.5);
+
+        let faded_root = &faded_page.children[0];
+        assert!((faded_root.composite_opacity - 0.3).abs() < 1e-6);
+        assert!((faded_root.opacity - 0.8).abs() < 1e-6);
+        assert!((faded_root.fill.unwrap().a - 0.9).abs() < 1e-6);
+        assert!((faded_root.children[0].composite_opacity - 0.4).abs() < 1e-6);
+        assert!((faded_root.children[0].opacity - 0.3).abs() < 1e-6);
+        assert!((faded_root.children[0].fill.unwrap().a - 0.7).abs() < 1e-6);
         assert!(
-            (node.text_runs[0].fill.unwrap().a - 0.25).abs() < 1e-6,
-            "a run's own colour override must fade like everything else, \
-             not stay opaque for the whole cross-fade"
+            (steady_page.children[0].composite_opacity - 0.6).abs() < 1e-6,
+            "the steady-state scene must remain authored and reusable"
         );
     }
 
     #[test]
-    fn fade_recurses_into_children() {
-        use op_editor_ui::Color;
-        let mut child = SceneNode::leaf("c", op_editor_ui::layout_scene::NodeKind::Rect);
-        child.fill = Some(Color::BLACK);
-        let mut parent = SceneNode::leaf("p", op_editor_ui::layout_scene::NodeKind::Frame);
-        parent.children = vec![child];
-        fade_scene_node(&mut parent, 0.25);
-        assert!((parent.children[0].fill.unwrap().a - 0.25).abs() < 1e-6);
+    fn fade_adds_a_composite_layer_to_a_leaf_root() {
+        let mut leaf = SceneNode::leaf("leaf", op_editor_ui::layout_scene::NodeKind::Rect);
+        assert_eq!(leaf.composite_opacity, 1.0);
+
+        fade_scene_node(&mut leaf, 0.25);
+
+        assert!((leaf.composite_opacity - 0.25).abs() < 1e-6);
     }
 }

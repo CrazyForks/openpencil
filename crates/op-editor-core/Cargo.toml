@@ -24,5 +24,6 @@ op-ai = { path = "../op-ai" }
 # render_backend.rs uses glam::Vec2 as Point2D (spec §5.2). Pinned to the
 # same version op-editor-ui uses so both crates resolve one glam.
 glam = { version = "0.29", default-features = false, features = ["std"] }
+serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

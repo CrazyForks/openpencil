@@ -445,9 +445,9 @@ pub fn repair_radial_stacks(sink: &mut dyn DocSink, root_id: &str) -> bool {
 }
 
 fn resolved_rects(state: &EditorState) -> HashMap<String, Rect> {
-    let scene = op_pen_loader::editor_state_to_layout_scene(state);
+    let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
     let mut map = HashMap::new();
-    for page in &scene.pages {
+    if let Some(page) = scene.active_page() {
         collect_rects(&page.children, &mut map);
     }
     map

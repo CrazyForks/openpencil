@@ -75,6 +75,93 @@ extern "C" {
         b: f32,
         a: f32,
     );
+    #[wasm_bindgen(method, js_name = fillRoundRectLinearGradient)]
+    fn fill_round_rect_linear_gradient(
+        this: &OpCk,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        rad: f32,
+        stops: &[f32],
+        angle_deg: f32,
+        opacity: f32,
+    );
+    #[wasm_bindgen(method, js_name = fillRoundRectLinearGradientPerCorner)]
+    fn fill_round_rect_linear_gradient_per_corner(
+        this: &OpCk,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        top_left: f32,
+        top_right: f32,
+        bottom_right: f32,
+        bottom_left: f32,
+        stops: &[f32],
+        angle_deg: f32,
+        opacity: f32,
+    );
+    #[wasm_bindgen(method, js_name = fillRoundRectRadialGradient)]
+    fn fill_round_rect_radial_gradient(
+        this: &OpCk,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        rad: f32,
+        stops: &[f32],
+        cx_frac: f32,
+        cy_frac: f32,
+        radius_frac: f32,
+        opacity: f32,
+    );
+    #[wasm_bindgen(method, js_name = fillRoundRectRadialGradientPerCorner)]
+    fn fill_round_rect_radial_gradient_per_corner(
+        this: &OpCk,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        top_left: f32,
+        top_right: f32,
+        bottom_right: f32,
+        bottom_left: f32,
+        stops: &[f32],
+        cx_frac: f32,
+        cy_frac: f32,
+        radius_frac: f32,
+        opacity: f32,
+    );
+    #[wasm_bindgen(method, js_name = fillRoundRectMeshGradient)]
+    fn fill_round_rect_mesh_gradient(
+        this: &OpCk,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        rad: f32,
+        rows: u32,
+        cols: u32,
+        colors: &[f32],
+        opacity: f32,
+    );
+    #[wasm_bindgen(method, js_name = fillRoundRectMeshGradientPerCorner)]
+    fn fill_round_rect_mesh_gradient_per_corner(
+        this: &OpCk,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        top_left: f32,
+        top_right: f32,
+        bottom_right: f32,
+        bottom_left: f32,
+        rows: u32,
+        cols: u32,
+        colors: &[f32],
+        opacity: f32,
+    );
     #[wasm_bindgen(method, js_name = strokeRoundRect)]
     fn stroke_round_rect(
         this: &OpCk,
@@ -265,6 +352,9 @@ extern "C" {
         opacity: f32,
         corner_radius: f32,
         blend_mode: u8,
+        original_width: f32,
+        original_height: f32,
+        tile_scale: f32,
     );
     #[wasm_bindgen(method, js_name = imageDecoded)]
     fn image_decoded(this: &OpCk, image_id_lo: u32, image_id_hi: u32, max_edge_px: u32) -> bool;
@@ -365,6 +455,8 @@ extern "C" {
         opacity: f32,
         blend_mode: u8,
     );
+    #[wasm_bindgen(method, js_name = pushMaskSourceLayer)]
+    fn push_mask_source_layer(this: &OpCk, luminance: bool);
     #[wasm_bindgen(method, js_name = pushBlendLayer)]
     fn push_blend_layer(this: &OpCk, blend_mode: u8);
     #[wasm_bindgen(method, js_name = pushBackdropBlurLayer)]
@@ -422,6 +514,14 @@ fn flatten_gradient_stops(stops: &[(f32, Color)]) -> Vec<f32> {
     flat
 }
 
+fn flatten_gradient_colors(colors: &[Color]) -> Vec<f32> {
+    let mut flat = Vec::with_capacity(colors.len() * 4);
+    for color in colors {
+        flat.extend([color.r, color.g, color.b, color.a]);
+    }
+    flat
+}
+
 fn image_draw_mode_code(mode: ImageDrawMode) -> u8 {
     match mode {
         ImageDrawMode::Fill => 0,
@@ -430,6 +530,20 @@ fn image_draw_mode_code(mode: ImageDrawMode) -> u8 {
         ImageDrawMode::Tile => 3,
         ImageDrawMode::Stretch => 4,
     }
+}
+
+fn normalized_tile_scale(scale: f32) -> f32 {
+    if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    }
+}
+
+fn valid_original_size(size: Option<[f32; 2]>) -> Option<[f32; 2]> {
+    size.filter(|[width, height]| {
+        width.is_finite() && height.is_finite() && *width > 0.0 && *height > 0.0
+    })
 }
 
 fn image_blend_mode_code(mode: ImageBlendMode) -> u8 {
@@ -445,6 +559,11 @@ fn image_blend_mode_code(mode: ImageBlendMode) -> u8 {
         ImageBlendMode::Saturation => 8,
         ImageBlendMode::Color => 9,
         ImageBlendMode::Luminosity => 10,
+        ImageBlendMode::SoftLight => 11,
+        ImageBlendMode::ColorDodge => 12,
+        ImageBlendMode::ColorBurn => 13,
+        ImageBlendMode::HardLight => 14,
+        ImageBlendMode::Exclusion => 15,
     }
 }
 
@@ -590,6 +709,165 @@ impl RenderBackend for CanvasKitBackend {
             color.g,
             color.b,
             color.a,
+        );
+    }
+    fn fill_round_rect_linear_gradient(
+        &mut self,
+        rect: Rect,
+        radius: f32,
+        stops: &[(f32, Color)],
+        angle_deg: f32,
+        opacity: f32,
+    ) {
+        if stops.is_empty() {
+            return;
+        }
+        let stops = flatten_gradient_stops(stops);
+        self.ck.fill_round_rect_linear_gradient(
+            rect.origin.x,
+            rect.origin.y,
+            rect.size.x,
+            rect.size.y,
+            radius,
+            &stops,
+            angle_deg,
+            opacity,
+        );
+    }
+    fn fill_round_rect_linear_gradient_per_corner(
+        &mut self,
+        rect: Rect,
+        radii: [f32; 4],
+        stops: &[(f32, Color)],
+        angle_deg: f32,
+        opacity: f32,
+    ) {
+        if stops.is_empty() {
+            return;
+        }
+        let stops = flatten_gradient_stops(stops);
+        self.ck.fill_round_rect_linear_gradient_per_corner(
+            rect.origin.x,
+            rect.origin.y,
+            rect.size.x,
+            rect.size.y,
+            radii[0],
+            radii[1],
+            radii[2],
+            radii[3],
+            &stops,
+            angle_deg,
+            opacity,
+        );
+    }
+    fn fill_round_rect_radial_gradient(
+        &mut self,
+        rect: Rect,
+        radius: f32,
+        stops: &[(f32, Color)],
+        cx_frac: f32,
+        cy_frac: f32,
+        radius_frac: f32,
+        opacity: f32,
+    ) {
+        if stops.is_empty() {
+            return;
+        }
+        let stops = flatten_gradient_stops(stops);
+        self.ck.fill_round_rect_radial_gradient(
+            rect.origin.x,
+            rect.origin.y,
+            rect.size.x,
+            rect.size.y,
+            radius,
+            &stops,
+            cx_frac,
+            cy_frac,
+            radius_frac,
+            opacity,
+        );
+    }
+    fn fill_round_rect_radial_gradient_per_corner(
+        &mut self,
+        rect: Rect,
+        radii: [f32; 4],
+        stops: &[(f32, Color)],
+        cx_frac: f32,
+        cy_frac: f32,
+        radius_frac: f32,
+        opacity: f32,
+    ) {
+        if stops.is_empty() {
+            return;
+        }
+        let stops = flatten_gradient_stops(stops);
+        self.ck.fill_round_rect_radial_gradient_per_corner(
+            rect.origin.x,
+            rect.origin.y,
+            rect.size.x,
+            rect.size.y,
+            radii[0],
+            radii[1],
+            radii[2],
+            radii[3],
+            &stops,
+            cx_frac,
+            cy_frac,
+            radius_frac,
+            opacity,
+        );
+    }
+    fn fill_round_rect_mesh_gradient(
+        &mut self,
+        rect: Rect,
+        radius: f32,
+        rows: u32,
+        cols: u32,
+        colors: &[Color],
+        opacity: f32,
+    ) {
+        if colors.is_empty() {
+            return;
+        }
+        let colors = flatten_gradient_colors(colors);
+        self.ck.fill_round_rect_mesh_gradient(
+            rect.origin.x,
+            rect.origin.y,
+            rect.size.x,
+            rect.size.y,
+            radius,
+            rows,
+            cols,
+            &colors,
+            opacity,
+        );
+    }
+    fn fill_round_rect_mesh_gradient_per_corner(
+        &mut self,
+        rect: Rect,
+        radii: [f32; 4],
+        rows: u32,
+        cols: u32,
+        colors: &[Color],
+        opacity: f32,
+    ) {
+        if colors.is_empty() {
+            return;
+        }
+        let colors = flatten_gradient_colors(colors);
+        self.ck.fill_round_rect_mesh_gradient_per_corner(
+            rect.origin.x,
+            rect.origin.y,
+            rect.size.x,
+            rect.size.y,
+            radii[0],
+            radii[1],
+            radii[2],
+            radii[3],
+            rows,
+            cols,
+            &colors,
+            opacity,
         );
     }
     fn stroke_round_rect(&mut self, rect: Rect, radius: f32, color: Color, width: f32) {
@@ -1020,6 +1298,36 @@ impl RenderBackend for CanvasKitBackend {
         transform: Option<[f32; 6]>,
         blend_mode: ImageBlendMode,
     ) {
+        self.draw_image_with_options_transform_blend_and_tile_scale(
+            rect,
+            image_id,
+            _encoded,
+            mode,
+            adjustments,
+            opacity,
+            corner_radius,
+            transform,
+            blend_mode,
+            None,
+            1.0,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_image_with_options_transform_blend_and_tile_scale(
+        &mut self,
+        rect: Rect,
+        image_id: u64,
+        _encoded: &[u8],
+        mode: ImageDrawMode,
+        adjustments: ImageAdjustments,
+        opacity: f32,
+        corner_radius: f32,
+        transform: Option<[f32; 6]>,
+        blend_mode: ImageBlendMode,
+        original_size: Option<[f32; 2]>,
+        tile_scale: f32,
+    ) {
         let transform = transform.as_ref().map_or(&[][..], |value| &value[..]);
         let adjustment_values = [
             adjustments.exposure,
@@ -1030,6 +1338,8 @@ impl RenderBackend for CanvasKitBackend {
             adjustments.highlights,
             adjustments.shadows,
         ];
+        let [original_width, original_height] =
+            valid_original_size(original_size).unwrap_or([0.0, 0.0]);
         self.ck.draw_image_with_options(
             image_id as u32,
             (image_id >> 32) as u32,
@@ -1043,6 +1353,9 @@ impl RenderBackend for CanvasKitBackend {
             opacity,
             corner_radius,
             image_blend_mode_code(blend_mode),
+            original_width,
+            original_height,
+            normalized_tile_scale(tile_scale),
         );
     }
     fn measure_text(&mut self, text: &str, font_size: f32) -> f32 {
@@ -1160,6 +1473,12 @@ impl RenderBackend for CanvasKitBackend {
             opacity,
             image_blend_mode_code(mode),
         );
+    }
+    fn supports_pixel_masks(&self) -> bool {
+        true
+    }
+    fn push_mask_source_layer(&mut self, luminance: bool) {
+        self.ck.push_mask_source_layer(luminance);
     }
     fn push_blend_layer(&mut self, mode: ImageBlendMode) {
         self.ck.push_blend_layer(image_blend_mode_code(mode));
@@ -2037,7 +2356,9 @@ pub async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
                 "]" if !is_mod && !b.host.input_active() => {
                     consumed = b.host.apply_reorder(ReorderDirection::Up)
                 }
-                "K" | "k" if is_mod && shift && !evt.alt_key() && !image_popover_open => {
+                "F" | "f" | "H" | "h" | "K" | "k"
+                    if is_mod && shift && !evt.alt_key() && !image_popover_open =>
+                {
                     consumed =
                         b.host
                             .apply_keydown_shortcut(key.as_str(), is_mod, shift, evt.alt_key())
@@ -2167,6 +2488,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rounded_gradient_ffi_preserves_stop_and_vertex_alpha() {
+        let transparent = Color {
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+            a: 0.0,
+        };
+        let opaque = Color {
+            r: 0.25,
+            g: 0.5,
+            b: 0.75,
+            a: 1.0,
+        };
+
+        assert_eq!(
+            flatten_gradient_stops(&[(0.0, transparent), (1.0, opaque)]),
+            vec![0.0, 1.0, 1.0, 1.0, 0.0, 1.0, 0.25, 0.5, 0.75, 1.0]
+        );
+        assert_eq!(
+            flatten_gradient_colors(&[transparent, opaque]),
+            vec![1.0, 1.0, 1.0, 0.0, 0.25, 0.5, 0.75, 1.0]
+        );
+    }
+
+    #[test]
     fn canvaskit_draw_path_only_reads_predecoded_images() {
         let bridge = include_str!("op_ck_bridge.js");
         let draw_start = bridge
@@ -2179,6 +2525,37 @@ mod tests {
         let draw = &bridge[draw_start..draw_end];
         assert!(draw.contains("imageCaches.fullImage(imageIdLo, imageIdHi)"));
         assert!(!draw.contains("MakeImageFromEncoded"));
+    }
+
+    #[test]
+    fn tile_scale_is_forwarded_and_bridge_bounds_repetition() {
+        assert_eq!(normalized_tile_scale(0.38618907), 0.38618907);
+        assert_eq!(normalized_tile_scale(0.0), 1.0);
+        assert_eq!(normalized_tile_scale(f32::NAN), 1.0);
+        assert_eq!(normalized_tile_scale(f32::INFINITY), 1.0);
+        assert_eq!(
+            valid_original_size(Some([4096.0, 2048.0])),
+            Some([4096.0, 2048.0])
+        );
+        assert_eq!(valid_original_size(Some([0.0, 2048.0])), None);
+        assert_eq!(valid_original_size(Some([f32::NAN, 2048.0])), None);
+
+        let bridge = include_str!("op_ck_bridge.js");
+        let start = bridge
+            .find("drawImageWithOptions(")
+            .expect("image bridge method");
+        let end = bridge[start..].find("\n    },").expect("image bridge end") + start;
+        let method = &bridge[start..end];
+        assert!(method.contains("mode === 3 ? null : figmaImageLocalMatrix"));
+        assert!(method.contains("Number.isFinite(tileScale) && tileScale > 0"));
+        assert!(method.contains("originalWidth > 0 ? originalWidth : imageW"));
+        assert!(method.contains("originalHeight > 0 ? originalHeight : imageH"));
+        assert!(method.contains("const maxRepeatsPerAxis = 128"));
+        assert!(method.contains("const tileW = sourceW * safeTileScale"));
+        assert!(method.contains("const tileH = sourceH * safeTileScale"));
+        assert!(method.contains("(w - tileW) / 2"));
+        assert!(method.contains("if (!(nextX > ix)) break"));
+        assert!(method.contains("if (!(nextY > iy)) break"));
     }
 
     #[test]
@@ -2197,6 +2574,70 @@ mod tests {
         assert!(method.contains("canvas.saveLayer(paint, CK.LTRBRect("));
         assert!(method.contains("paint.delete()"));
         assert!(!method.contains("canvas.save();"));
+    }
+
+    #[test]
+    fn blend_mode_codes_are_stable_and_extended_modes_match_the_bridge() {
+        let modes = [
+            ImageBlendMode::Normal,
+            ImageBlendMode::Darken,
+            ImageBlendMode::Multiply,
+            ImageBlendMode::Screen,
+            ImageBlendMode::Overlay,
+            ImageBlendMode::Lighten,
+            ImageBlendMode::Difference,
+            ImageBlendMode::Hue,
+            ImageBlendMode::Saturation,
+            ImageBlendMode::Color,
+            ImageBlendMode::Luminosity,
+            ImageBlendMode::SoftLight,
+            ImageBlendMode::ColorDodge,
+            ImageBlendMode::ColorBurn,
+            ImageBlendMode::HardLight,
+            ImageBlendMode::Exclusion,
+        ];
+        assert_eq!(
+            modes.map(image_blend_mode_code),
+            [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+        );
+
+        let bridge = include_str!("op_ck_bridge.js");
+        let start = bridge
+            .find("const blendModeForCode =")
+            .expect("blend mode bridge table");
+        let end = bridge[start..]
+            .find("][blendMode]")
+            .expect("blend mode bridge table end")
+            + start;
+        let table = &bridge[start..end];
+        let mut cursor = 0;
+        for name in [
+            "CK.BlendMode.SoftLight",
+            "CK.BlendMode.ColorDodge",
+            "CK.BlendMode.ColorBurn",
+            "CK.BlendMode.HardLight",
+            "CK.BlendMode.Exclusion",
+        ] {
+            let offset = table[cursor..].find(name).expect(name);
+            cursor += offset + name.len();
+        }
+    }
+
+    #[test]
+    fn mask_source_bridge_uses_dst_in_and_optional_luma_filter() {
+        let bridge = include_str!("op_ck_bridge.js");
+        let start = bridge
+            .find("pushMaskSourceLayer(")
+            .expect("mask source bridge method");
+        let end = bridge[start..]
+            .find("\n    },")
+            .expect("mask source bridge end")
+            + start;
+        let method = &bridge[start..end];
+        assert!(method.contains("CK.BlendMode.DstIn"));
+        assert!(method.contains("CK.ColorFilter.MakeLuma()"));
+        assert!(method.contains("canvas.saveLayer(paint)"));
+        assert!(!method.contains("canvas.clipPath"));
     }
 
     #[test]

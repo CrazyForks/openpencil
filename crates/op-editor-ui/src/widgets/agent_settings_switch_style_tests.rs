@@ -10,6 +10,7 @@ struct CaptureBackend {
     round_fills: Vec<(Rect, Color)>,
     ovals: Vec<(Rect, Color)>,
     round_strokes: Vec<(Rect, Color, f32)>,
+    clips: Vec<Rect>,
     text_points: Vec<Point2D>,
 }
 
@@ -21,7 +22,9 @@ impl RenderBackend for CaptureBackend {
     fn draw_text(&mut self, _: &TextLayout, point: Point2D) {
         self.text_points.push(point);
     }
-    fn clip_rect(&mut self, _: Rect) {}
+    fn clip_rect(&mut self, rect: Rect) {
+        self.clips.push(rect);
+    }
     fn stroke_line(&mut self, _: Point2D, _: Point2D, _: Color, _: f32) {}
     fn fill_round_rect(&mut self, rect: Rect, _: f32, color: Color) {
         self.round_fills.push((rect, color));
@@ -339,6 +342,52 @@ fn enabled_mcp_cli_cell_uses_subtle_border_not_primary_outline() {
             .any(|(r, color, _)| rect_eq(*r, cell) && color_eq(*color, panel.theme.primary)),
         "enabled MCP CLI cell should not look like a focused field with a primary outline"
     );
+}
+
+#[test]
+fn settings_content_clip_preserves_full_width_card_side_borders() {
+    let mut state = EditorState::default();
+    state.editor_ui.theme_mode = ThemeMode::Light;
+    state.editor_ui.agent_settings.tab = AgentSettingsTab::Mcp;
+    state.editor_ui.agent_settings.mcp_server.running = true;
+    let panel = AgentSettingsPanel::for_editor(&state);
+    let rect = panel.rect(1200.0, 800.0);
+    let content = super::agent_settings_panel_geometry::content_rect(rect);
+    let content_x = content.origin.x;
+    let content_w = content.size.x;
+    let content_right = content_x + content_w;
+    let mut backend = CaptureBackend::default();
+    let mut cx = PaintCx {
+        backend: &mut backend,
+    };
+
+    panel.paint(&mut cx, rect);
+
+    let clip = backend
+        .clips
+        .first()
+        .expect("settings body should be clipped");
+    assert!((clip.origin.y - content.origin.y).abs() < 0.01);
+    assert!((clip.size.y - content.size.y).abs() < 0.01);
+
+    let edge_strokes: Vec<_> = backend
+        .round_strokes
+        .iter()
+        .filter(|(stroke, _, width)| {
+            (*width - 1.0).abs() < 0.01
+                && ((stroke.origin.x - content_x).abs() < 0.01
+                    || (stroke.origin.x + stroke.size.x - content_right).abs() < 0.01)
+        })
+        .collect();
+    assert!(
+        edge_strokes.len() >= 4,
+        "MCP server, config, and outer grid cards should reach the content edges"
+    );
+    for (stroke, _, width) in edge_strokes {
+        let half_stroke = width / 2.0;
+        assert!(clip.origin.x <= stroke.origin.x - half_stroke);
+        assert!(clip.origin.x + clip.size.x >= stroke.origin.x + stroke.size.x + half_stroke);
+    }
 }
 
 #[test]

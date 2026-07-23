@@ -4,7 +4,7 @@ use super::helpers::{resize_bounds, PANEL_MAX_WIDTH, PANEL_MIN_WIDTH};
 use super::{DragState, PanelResizeKind, WidgetHostNative};
 use op_editor_core::codegen::CodeSelection;
 use op_editor_ui::widgets::{
-    AIChatHit, AIChatPlaceholder, CanvasViewport, ChatResizeEdge, AI_CHAT_MAX_RATIO,
+    AIChatHit, AIChatPlaceholder, CanvasViewport, ChatResizeEdge, PropertyPanel, AI_CHAT_MAX_RATIO,
     AI_CHAT_MIN_HEIGHT, AI_CHAT_MIN_WIDTH,
 };
 use op_editor_ui::{Point2D, Rect};
@@ -214,6 +214,9 @@ impl WidgetHostNative {
                 let _ = self
                     .editor_state
                     .move_selected_in_layout_direction(total_dx, total_dy);
+                // The drag snapshot already advanced the revision before the
+                // clone and any flex reorder were authored.
+                self.scene_cache.invalidate();
                 self.mark_dirty();
             }
             if let Some(d) = self.node_drag.as_mut() {
@@ -539,9 +542,8 @@ impl WidgetHostNative {
             }
             return changed;
         }
-        if self.editor_state.editor_ui.agent_settings_open && self.update_agent_settings_hover(x, y)
-        {
-            return true;
+        if self.editor_state.editor_ui.agent_settings_open {
+            return self.update_agent_settings_hover(x, y);
         }
         // Modal export dialog — owns the cursor while open. Update its
         // per-button hover wash (format / scale / cancel / export) and
@@ -679,6 +681,14 @@ impl WidgetHostNative {
             }
         }
         // Top-most floating panel drags own cursor movement.
+        let model_picker_open = self.editor_state.editor_ui.chat_model_picker.open;
+        // Chat paints above Variables/Toolbar/Canvas. Resolve its cheap surface
+        // ownership before those lower layers get a chance to consume the move;
+        // the full transcript-aware `cursor_probe` remains single-shot below.
+        let chat_surface_owns_point = !model_picker_open
+            && self.chat_panel_surface_contains(x, y, self.last_viewport_w, self.last_viewport_h);
+        let chat_or_picker_owns_point = model_picker_open || chat_surface_owns_point;
+        let mut higher_overlay_hover_changed = false;
         if let Some(d) = self.design_md_drag {
             self.editor_state.editor_ui.design_md_panel_pos = Some((x - d.grab_dx, y - d.grab_dy));
             self.mark_dirty();
@@ -703,9 +713,10 @@ impl WidgetHostNative {
                     self.clear_lower_overlay_hover();
                     return true;
                 }
-                if changed {
+                if changed && !chat_or_picker_owns_point {
                     return true;
                 }
+                higher_overlay_hover_changed |= changed;
             }
         }
         if let Some(d) = self.component_browser_drag {
@@ -732,9 +743,10 @@ impl WidgetHostNative {
                     self.clear_lower_overlay_hover();
                     return true;
                 }
-                if changed {
+                if changed && !chat_or_picker_owns_point {
                     return true;
                 }
+                higher_overlay_hover_changed |= changed;
             }
         }
         if let Some(d) = self.icon_picker_drag {
@@ -761,28 +773,21 @@ impl WidgetHostNative {
                     self.clear_lower_overlay_hover();
                     return true;
                 }
-                if changed {
+                if changed && !chat_or_picker_owns_point {
                     return true;
                 }
+                higher_overlay_hover_changed |= changed;
             }
         }
         if self.over_dropdown_overlay(x, y, self.last_viewport_w, self.last_viewport_h) {
             self.update_dropdown_hover(x, y, false);
-            self.clear_layer_panel_hover();
-            if self
-                .editor_state
-                .editor_ui
-                .variables_panel_hover
-                .take()
-                .is_some()
-            {
-                self.mark_dirty();
-            }
+            self.clear_chat_and_lower_hover();
             return true;
         }
         // Preset dropdown is a top-most overlay over the variables panel — track
         // its per-row hover and swallow moves over it first.
-        if self.editor_state.editor_ui.variables_preset_menu_open
+        if !chat_or_picker_owns_point
+            && self.editor_state.editor_ui.variables_preset_menu_open
             && self.update_variables_preset_menu_hover(
                 x,
                 self.last_viewport_w,
@@ -793,7 +798,7 @@ impl WidgetHostNative {
             self.clear_lower_overlay_hover();
             return true;
         }
-        if self.editor_state.editor_ui.variables_panel_open {
+        if !chat_or_picker_owns_point && self.editor_state.editor_ui.variables_panel_open {
             let point = Point2D::new(x, y);
             if let Some(panel_rect) =
                 self.variables_panel_rect(self.last_viewport_w, self.last_viewport_h)
@@ -822,20 +827,18 @@ impl WidgetHostNative {
                 return true;
             }
         }
+        // Keep one owned PropertyPanel snapshot for this cursor event. The
+        // nested Option records that construction was attempted even when the
+        // current selection cannot produce a panel, so a later hover layer
+        // does not repeat the same expensive snapshot/i18n work.
+        let property_rect = self.property_rect(self.last_viewport_w, self.last_viewport_h);
+        let point = Point2D::new(x, y);
+        let property_drag_active =
+            self.image_adjustment_drag.is_some() || self.effect_radius_drag.is_some();
+        let mut property_panel_probe =
+            property_drag_active.then(|| PropertyPanel::for_selection(&self.editor_state));
         if let Some(field) = self.image_adjustment_drag {
-            if let Some(panel) =
-                op_editor_ui::widgets::PropertyPanel::for_selection(&self.editor_state)
-            {
-                let property_rect = Rect {
-                    origin: Point2D::new(
-                        self.last_viewport_w - self.editor_state.editor_ui.property_panel_width,
-                        op_editor_ui::widgets::TOP_BAR_HEIGHT,
-                    ),
-                    size: Point2D::new(
-                        self.editor_state.editor_ui.property_panel_width,
-                        (self.last_viewport_h - op_editor_ui::widgets::TOP_BAR_HEIGHT).max(0.0),
-                    ),
-                };
+            if let Some(panel) = property_panel_probe.as_ref().and_then(Option::as_ref) {
                 if let Some(action) = panel.image_adjustment_drag_action(property_rect, field, x) {
                     self.apply_property_action(action);
                     return true;
@@ -843,19 +846,7 @@ impl WidgetHostNative {
             }
         }
         if let Some(effect) = self.effect_radius_drag {
-            if let Some(panel) =
-                op_editor_ui::widgets::PropertyPanel::for_selection(&self.editor_state)
-            {
-                let property_rect = Rect {
-                    origin: Point2D::new(
-                        self.last_viewport_w - self.editor_state.editor_ui.property_panel_width,
-                        op_editor_ui::widgets::TOP_BAR_HEIGHT,
-                    ),
-                    size: Point2D::new(
-                        self.editor_state.editor_ui.property_panel_width,
-                        (self.last_viewport_h - op_editor_ui::widgets::TOP_BAR_HEIGHT).max(0.0),
-                    ),
-                };
+            if let Some(panel) = property_panel_probe.as_ref().and_then(Option::as_ref) {
                 if let Some(action) = panel.effect_radius_drag_action(property_rect, effect, x) {
                     self.apply_property_action(action);
                     return true;
@@ -884,26 +875,44 @@ impl WidgetHostNative {
         if let Some(consumed) = self.apply_pen_cursor_move(x, y) {
             return consumed;
         }
-        // Git empty-state Init-card hover — toggles the disabled hint
-        // pill (a no-op repaint=false when the panel is closed / the
-        // cursor isn't over that card).
-        if self.update_git_panel_empty_hover(x, y) {
-            return true;
-        }
-        // Git ready-view branch-button hover — `hover:bg-accent` wash on
-        // the `⎇ <branch> ▾` trigger.
-        if self.update_git_panel_ready_hover(x, y) {
-            return true;
-        }
-        // Path-anchor context-menu row hover (`pen_press.rs`).
-        if self.update_path_anchor_menu_hover(x, y) {
-            return true;
-        }
         // Suppress lower-overlay hover while a floating panel is on top.
-        let over_topmost =
-            self.over_topmost_panel(x, y, self.last_viewport_w, self.last_viewport_h);
+        // VariablesPanel is below Chat in paint order; when the model picker
+        // is visible, the earlier true-top-panel branches have already
+        // returned and Variables must not make this gate look top-most.
+        let over_topmost = !chat_or_picker_owns_point
+            && self.over_topmost_panel(x, y, self.last_viewport_w, self.last_viewport_h);
+        let mut upper_hover_changed = higher_overlay_hover_changed;
         // Fold stale-hover clearing into the final repaint signal.
         let cleared = over_topmost && self.clear_lower_overlay_hover();
+        // Path-anchor context menu is painted above Git and Chat. An unchanged
+        // row still owns the point, so return without falling into the model
+        // picker behind it.
+        let over_path_menu = self
+            .editor_state
+            .ui
+            .path_anchor_menu
+            .clone()
+            .map(|state| {
+                op_editor_ui::widgets::path_anchor_context_menu::PathAnchorContextMenu::for_state(
+                    &self.editor_state,
+                    state,
+                )
+                .rect()
+                .contains(Point2D::new(x, y))
+            })
+            .unwrap_or(false);
+        let path_menu_changed = self.update_path_anchor_menu_hover(x, y);
+        if over_path_menu {
+            let below_changed = self.clear_chat_and_lower_hover();
+            return path_menu_changed || below_changed;
+        }
+        if path_menu_changed {
+            if chat_or_picker_owns_point {
+                upper_hover_changed = true;
+            } else {
+                return true;
+            }
+        }
         if let Some(state) = self
             .editor_state
             .editor_ui
@@ -913,49 +922,342 @@ impl WidgetHostNative {
         {
             use op_editor_ui::widgets::layer_context_menu::LayerContextMenu;
             let menu = LayerContextMenu::for_state(&self.editor_state, state.clone());
+            let over_menu = menu.rect().contains(Point2D::new(x, y));
             let new_hover = menu.hovered_row_at(Point2D::new(x, y));
-            if new_hover != state.menu.hover {
+            let menu_hover_changed = new_hover != state.menu.hover;
+            if menu_hover_changed {
                 let mut next = state;
                 next.menu.hover = new_hover;
                 self.editor_state.editor_ui.layer_context_menu = Some(next);
                 self.mark_dirty();
+            }
+            if over_menu {
+                let below_changed = self.clear_chat_and_lower_hover();
+                return menu_hover_changed || below_changed;
+            }
+            if menu_hover_changed {
+                if chat_or_picker_owns_point {
+                    upper_hover_changed = true;
+                } else {
+                    return true;
+                }
+            }
+        }
+        // Git is painted and pressed above Chat. Update both Git views before
+        // the picker and keep an unchanged point inside the Git footprint from
+        // leaking into the picker behind it.
+        let over_git = self
+            .git_panel_outer_rect(self.last_viewport_w, self.last_viewport_h)
+            .is_some_and(|rect| rect.contains(Point2D::new(x, y)));
+        let git_hover_changed =
+            self.update_git_panel_empty_hover(x, y) | self.update_git_panel_ready_hover(x, y);
+        if over_git {
+            let below_changed = self.clear_chat_and_lower_hover();
+            return git_hover_changed || below_changed;
+        }
+        if git_hover_changed {
+            if chat_or_picker_owns_point {
+                upper_hover_changed = true;
+            } else {
                 return true;
             }
         }
         // File-menu / locale / shape dropdown hover (`geometry.rs`).
         if self.update_dropdown_hover(x, y, over_topmost) {
-            return true;
+            if chat_or_picker_owns_point {
+                upper_hover_changed = true;
+            } else {
+                return true;
+            }
+        }
+        let property_popover_open = self.editor_state.editor_ui.export_scale_picker_open
+            || self.editor_state.editor_ui.export_format_picker_open
+            || self.editor_state.editor_ui.compositing_picker.open
+            || self.editor_state.editor_ui.effect_add_picker_open
+            || self.editor_state.editor_ui.interaction_menu_open
+            || self.editor_state.editor_ui.padding_mode_popover_open
+            || self.editor_state.editor_ui.stroke_mode_popover_open
+            || self.editor_state.editor_ui.font_weight_picker_open
+            || self.editor_state.editor_ui.font_picker.open
+            || self.editor_state.editor_ui.image_fill_popover_open
+            || self.editor_state.editor_ui.image_panel.search_open
+            || self.editor_state.editor_ui.image_panel.generate_open;
+        if property_popover_open && property_panel_probe.is_none() {
+            // The old per-popover helpers each refreshed and rebuilt the same
+            // panel. Refresh once, then share one immutable snapshot across
+            // every overlay and the eventual base-property hover pass.
+            self.refresh_layout_scene();
+            property_panel_probe = Some(PropertyPanel::for_selection(&self.editor_state));
+        }
+        let property_panel = property_panel_probe.as_ref().and_then(Option::as_ref);
+        // Image Search / Generate and image-fill adjustment popovers are
+        // painted and pressed above Chat. Their popup body receives first
+        // refusal even while the Chat model picker is open; reuse the same
+        // PropertyPanel snapshot as every other property overlay.
+        let over_image_popup = property_panel.is_some_and(|panel| {
+            panel.image_popovers_contain(property_rect, point)
+                || panel.image_fill_popover_contains(property_rect, point)
+        });
+        if over_image_popup {
+            return self.clear_chat_and_lower_hover();
         }
         // Export-section select-popup row hover (no-op when closed).
-        if !over_topmost
-            && self.update_export_picker_hover(x, y, self.last_viewport_w, self.last_viewport_h)
-        {
-            return true;
+        let over_export_popup = !over_topmost
+            && property_panel
+                .is_some_and(|panel| panel.export_picker_contains(property_rect, point));
+        let export_hover_changed = !over_topmost
+            && self.update_export_picker_hover(
+                x,
+                y,
+                self.last_viewport_w,
+                self.last_viewport_h,
+                property_panel,
+            );
+        if over_export_popup {
+            let below_changed = self.clear_chat_and_lower_hover();
+            return export_hover_changed || below_changed;
+        }
+        if export_hover_changed {
+            if chat_or_picker_owns_point {
+                upper_hover_changed = true;
+            } else {
+                return true;
+            }
         }
         // Effects "+" add-menu row hover (no-op when closed).
-        if !over_topmost
-            && self.update_effect_add_menu_hover(x, y, self.last_viewport_w, self.last_viewport_h)
-        {
-            return true;
+        let over_effect_popup = !over_topmost
+            && property_panel
+                .is_some_and(|panel| panel.effect_add_menu_contains(property_rect, point));
+        let effect_hover_changed = !over_topmost
+            && self.update_effect_add_menu_hover(
+                x,
+                y,
+                self.last_viewport_w,
+                self.last_viewport_h,
+                property_panel,
+            );
+        if over_effect_popup {
+            let below_changed = self.clear_chat_and_lower_hover();
+            return effect_hover_changed || below_changed;
+        }
+        if effect_hover_changed {
+            if chat_or_picker_owns_point {
+                upper_hover_changed = true;
+            } else {
+                return true;
+            }
+        }
+        // Layer / mask / per-fill blend dropdown hover. Blend choices use a
+        // compact two-column popup, but the SelectState still stores the
+        // flattened row index so paint and both hosts remain identical.
+        let over_compositing_popup = !over_topmost
+            && self.editor_state.editor_ui.compositing_picker.open
+            && property_panel
+                .is_some_and(|panel| panel.compositing_picker_contains(property_rect, point));
+        let new_compositing_hover = (!over_topmost
+            && self.editor_state.editor_ui.compositing_picker.open)
+            .then(|| {
+                property_panel
+                    .and_then(|panel| panel.compositing_picker_row_at(property_rect, point))
+            })
+            .flatten();
+        let compositing_hover_changed =
+            new_compositing_hover != self.editor_state.editor_ui.compositing_picker.hover;
+        if compositing_hover_changed {
+            self.editor_state.editor_ui.compositing_picker.hover = new_compositing_hover;
+            self.mark_dirty();
+        }
+        if over_compositing_popup {
+            let below_changed = self.clear_chat_and_lower_hover();
+            return compositing_hover_changed || below_changed;
+        }
+        if compositing_hover_changed {
+            if chat_or_picker_owns_point {
+                upper_hover_changed = true;
+            } else {
+                return true;
+            }
         }
         // Interactions Navigate/Back/Remove popover row hover (no-op
         // when closed).
-        if !over_topmost
-            && self.update_interaction_menu_hover(x, y, self.last_viewport_w, self.last_viewport_h)
-        {
-            return true;
+        let over_interaction_popup = !over_topmost
+            && property_panel.is_some_and(|panel| {
+                !matches!(
+                    panel.interaction_menu_hit(property_rect, point),
+                    op_editor_ui::widgets::InteractionMenuHit::Outside
+                )
+            });
+        let interaction_hover_changed = !over_topmost
+            && self.update_interaction_menu_hover(
+                x,
+                y,
+                self.last_viewport_w,
+                self.last_viewport_h,
+                property_panel,
+            );
+        if over_interaction_popup {
+            let below_changed = self.clear_chat_and_lower_hover();
+            return interaction_hover_changed || below_changed;
+        }
+        if interaction_hover_changed {
+            if chat_or_picker_owns_point {
+                upper_hover_changed = true;
+            } else {
+                return true;
+            }
         }
         // Padding-mode gear popover row hover (no-op when closed).
-        if self.update_padding_mode_popover_hover(x, y) {
-            return true;
+        let over_padding_or_stroke_popup = property_panel.is_some_and(|panel| {
+            (self.editor_state.editor_ui.padding_mode_popover_open
+                && panel.padding_mode_popover_contains(property_rect, point))
+                || (self.editor_state.editor_ui.stroke_mode_popover_open
+                    && panel.stroke_mode_popover_contains(property_rect, point))
+        });
+        let padding_hover_changed = self.update_padding_mode_popover_hover(x, y, property_panel);
+        if over_padding_or_stroke_popup {
+            let below_changed = self.clear_chat_and_lower_hover();
+            return padding_hover_changed || below_changed;
+        }
+        if padding_hover_changed {
+            if chat_or_picker_owns_point {
+                upper_hover_changed = true;
+            } else {
+                return true;
+            }
         }
         // Font-weight dropdown row hover (no-op when closed).
-        if self.update_font_weight_picker_hover(x, y) {
-            return true;
+        let over_font_weight_popup = property_panel
+            .is_some_and(|panel| panel.font_weight_picker_contains(property_rect, point));
+        let font_weight_hover_changed = self.update_font_weight_picker_hover(x, y, property_panel);
+        if over_font_weight_popup {
+            let below_changed = self.clear_chat_and_lower_hover();
+            return font_weight_hover_changed || below_changed;
+        }
+        if font_weight_hover_changed {
+            if chat_or_picker_owns_point {
+                upper_hover_changed = true;
+            } else {
+                return true;
+            }
         }
         // Font-family picker entry hover (no-op when closed).
-        if self.update_font_picker_hover(x, y) {
-            return true;
+        let (over_font_picker, font_picker_hover_changed) =
+            self.update_font_picker_hover(x, y, property_panel);
+        if over_font_picker {
+            let below_changed = self.clear_chat_and_lower_hover();
+            return font_picker_hover_changed || below_changed;
+        }
+        if font_picker_hover_changed {
+            if chat_or_picker_owns_point {
+                upper_hover_changed = true;
+            } else {
+                return true;
+            }
+        }
+        // StatusBar paints and presses above Chat. Preserve its hover/cursor
+        // ownership before the model picker globally truncates lower layers.
+        if let Some(status_rect) = self.status_bar_rect(self.last_viewport_w, self.last_viewport_h)
+        {
+            let point = Point2D::new(x, y);
+            let over_status = !over_topmost && status_rect.contains(point);
+            let new_hover = if over_topmost {
+                None
+            } else {
+                op_editor_ui::widgets::StatusBar::for_editor(&self.editor_state)
+                    .control_at(status_rect, point)
+            };
+            let status_hover_changed = new_hover != self.editor_state.editor_ui.statusbar_hover;
+            if status_hover_changed {
+                self.editor_state.editor_ui.statusbar_hover = new_hover;
+                self.mark_dirty();
+            }
+            if over_status {
+                let below_changed = self.clear_chat_and_lower_hover();
+                return status_hover_changed || below_changed;
+            }
+            if status_hover_changed {
+                if chat_or_picker_owns_point {
+                    upper_hover_changed = true;
+                } else {
+                    return true;
+                }
+            }
+        }
+        // AlignToolbar is painted after Chat, so its entire card (including
+        // gaps between buttons) receives first refusal before either the model
+        // picker or the ordinary Chat surface truncates lower hover dispatch.
+        let late_pointer_capture_active = self.rotate_drag.is_some()
+            || self.handle_drag.is_some()
+            || self.create_drag.is_some()
+            || self.path_anchor_drag.is_some()
+            || self.arc_handle_drag.is_some()
+            || self.marquee_drag.is_some()
+            || self.layer_drag.is_some()
+            || self.panel_resize.is_some()
+            || self.chat_resize.is_some()
+            || self.chat_drag.is_some()
+            || self.drag.is_some();
+        if !late_pointer_capture_active {
+            let over_align = !over_topmost
+                && self
+                    .align_toolbar_rect(self.last_viewport_w, self.last_viewport_h)
+                    .is_some_and(|rect| rect.contains(point));
+            let new_align_hover = if !over_topmost {
+                self.align_toolbar_hit(x, y, self.last_viewport_w, self.last_viewport_h)
+            } else {
+                None
+            };
+            let align_hover_changed =
+                new_align_hover != self.editor_state.editor_ui.align_toolbar_hover;
+            if align_hover_changed {
+                self.editor_state.editor_ui.align_toolbar_hover = new_align_hover;
+                self.mark_dirty();
+            }
+            if over_align {
+                let below_changed = self.clear_chat_and_lower_hover();
+                return align_hover_changed || below_changed;
+            }
+            if align_hover_changed {
+                if chat_or_picker_owns_point {
+                    upper_hover_changed = true;
+                } else {
+                    return true;
+                }
+            }
+        }
+        // The chat model picker is modal only below overlays painted and
+        // pressed above the chat (Git, context menus, and property popovers).
+        // Once those surfaces have had first refusal, update the picker row,
+        // clear stale lower highlights, and stop before constructing the base
+        // chat/property/canvas probes.
+        if self.editor_state.editor_ui.chat_model_picker.open {
+            use op_editor_ui::widgets::ai_chat_model_picker::{model_picker_hit, SelectHit};
+            let Some(picker) =
+                self.chat_model_picker_rect(self.last_viewport_w, self.last_viewport_h)
+            else {
+                // A collapsed/hidden chat or a viewport too small to lay it
+                // out must not leave an invisible modal hover lock behind.
+                self.editor_state.editor_ui.close_chat_model_picker();
+                self.mark_dirty();
+                return true;
+            };
+            let new_hover = match model_picker_hit(
+                &self.editor_state.editor_ui.chat_model_picker,
+                picker,
+                Point2D::new(x, y),
+                &self.editor_state.chat.available_models,
+                self.editor_state.editor_ui.chat_model_picker_input.text(),
+            ) {
+                SelectHit::Row(index) => Some(index),
+                SelectHit::Inside | SelectHit::Outside => None,
+            };
+            let hover_changed = new_hover != self.editor_state.editor_ui.chat_model_picker.hover;
+            if hover_changed {
+                self.editor_state.editor_ui.chat_model_picker.hover = new_hover;
+                self.mark_dirty();
+            }
+            let lower_changed = self.clear_hover_below_chat_model_picker();
+            return upper_hover_changed || hover_changed || lower_changed;
         }
         // TopBar window-control cluster — hovering it reveals the
         // close / minimise / maximise glyphs on the 3 dots.
@@ -965,11 +1267,16 @@ impl WidgetHostNative {
                 origin: Point2D::new(0.0, 0.0),
                 size: Point2D::new(self.last_viewport_w, TOP_BAR_HEIGHT),
             };
-            let over = (TopBar::traffic_cluster_rect(tb_rect)).contains(Point2D::new(x, y));
+            let over = !chat_surface_owns_point
+                && (TopBar::traffic_cluster_rect(tb_rect)).contains(Point2D::new(x, y));
             if over != self.editor_state.editor_ui.topbar_traffic_hover {
                 self.editor_state.editor_ui.topbar_traffic_hover = over;
                 self.mark_dirty();
-                return true;
+                if chat_surface_owns_point {
+                    upper_hover_changed = true;
+                } else {
+                    return true;
+                }
             }
         }
         // TopBar chrome-button hover wash (sidebar / file-menu / figma /
@@ -983,150 +1290,70 @@ impl WidgetHostNative {
             };
             let mut top_bar = TopBar::for_editor_ui(&self.editor_state.editor_ui);
             top_bar.chip_text_w = Some(self.topbar_chip_text_w(&top_bar));
-            let new_hover = top_bar
-                .hit_test(tb_rect, Point2D::new(x, y))
+            let new_hover = (!chat_surface_owns_point)
+                .then(|| top_bar.hit_test(tb_rect, Point2D::new(x, y)))
+                .flatten()
                 .map(op_editor_ui::widgets::editor_state_ext::topbar_button_hover);
             if new_hover != self.editor_state.editor_ui.topbar_button_hover {
                 self.editor_state.editor_ui.topbar_button_hover = new_hover;
                 self.mark_dirty();
-                return true;
-            }
-        }
-        // Open chat model-picker — track the model row under the
-        // cursor so the dropdown paints a hover wash. Non-row chrome
-        // clears any stale highlight.
-        if self.editor_state.editor_ui.chat_model_picker.open && !over_topmost {
-            use op_editor_ui::widgets::ai_chat_model_picker::{model_picker_hit, SelectHit};
-            use op_editor_ui::widgets::AIChatPlaceholder;
-            let picker = self
-                .ai_chat_rect(self.last_viewport_w, self.last_viewport_h)
-                .and_then(|chat_rect| {
-                    AIChatPlaceholder::from_editor_at(&self.editor_state, self.now_ms)
-                        .model_picker_bounds(chat_rect)
-                });
-            if let Some(picker) = picker {
-                let new_hover = match model_picker_hit(
-                    &self.editor_state.editor_ui.chat_model_picker,
-                    picker,
-                    Point2D::new(x, y),
-                    &self.editor_state.chat.available_models,
-                    self.editor_state.editor_ui.chat_model_picker_input.text(),
-                ) {
-                    SelectHit::Row(index) => Some(index),
-                    SelectHit::Inside | SelectHit::Outside => None,
-                };
-                if new_hover != self.editor_state.editor_ui.chat_model_picker.hover {
-                    self.editor_state.editor_ui.chat_model_picker.hover = new_hover;
-                    self.mark_dirty();
+                if chat_surface_owns_point {
+                    upper_hover_changed = true;
+                } else {
                     return true;
                 }
             }
         }
-        // Resolve the chat transcript ONCE for this cursor event. The
-        // header-hover hit-test AND the design-block hover below both read this
-        // single combined probe, so a move over the transcript fingerprints it
-        // once instead of twice. This is the ONE hash per physical cursor move;
-        // the separate cursor-hint pass (`geometry::cursor_hint`) reads the
-        // stored build with zero hashes and stays consistent with the displayed
-        // frame, so nothing coord-keyed is cached here anymore.
-        let chat_probe = self
-            .ai_chat_rect(self.last_viewport_w, self.last_viewport_h)
-            .map(|chat_rect| {
-                use op_editor_ui::widgets::AIChatPlaceholder;
-                AIChatPlaceholder::from_editor_at(&self.editor_state, self.now_ms)
-                    .owned_by(self.chat_panel_owner)
-                    .cursor_probe(chat_rect, Point2D::new(x, y))
-            });
-        // AI chat header buttons (chevron / maximize / new chat) hover.
-        // The chat panel is itself the topmost surface, so this is NOT
-        // gated on `over_topmost`; the hit is None off the panel, which
-        // clears any stale header hover.
-        if let Some(probe) = chat_probe.as_ref() {
-            let new_hover = probe
-                .hit
-                .as_ref()
-                .and_then(op_editor_ui::widgets::editor_state_ext::chat_header_hover);
-            if new_hover != self.editor_state.editor_ui.chat_header_hover {
-                self.editor_state.editor_ui.chat_header_hover = new_hover;
-                self.mark_dirty();
-                return true;
-            }
+        // Construct the chat panel once for this cursor event and resolve all
+        // of its hover results in one immutable scope. Besides keeping the
+        // transcript fingerprint to one pass, this avoids cloning translated
+        // labels and tab titles again for every chat sub-control.
+        let (chat_probe, chat_tab_hover, chat_footer_hover, parallel_hover, example_hover) =
+            if let Some(chat_rect) = self.ai_chat_rect(self.last_viewport_w, self.last_viewport_h) {
+                let point = Point2D::new(x, y);
+                let panel = AIChatPlaceholder::from_editor_at(&self.editor_state, self.now_ms)
+                    .owned_by(self.chat_panel_owner);
+                (
+                    Some(panel.cursor_probe(chat_rect, point)),
+                    panel.tab_hover_at(chat_rect, point),
+                    panel.footer_hover_at(chat_rect, point),
+                    panel.parallel_agents_picker_hover_at(chat_rect, point),
+                    panel.example_hover_at(chat_rect, point),
+                )
+            } else {
+                (None, None, None, None, None)
+            };
+        // `cursor_probe.hit` is the authoritative Chat ownership result: it is
+        // Some for every painted body point and for the invisible resize
+        // gutter. Aggregate all Chat-owned hover writes before returning so a
+        // changed control can never leave a stale canvas highlight behind.
+        let chat_owns_point = chat_probe.as_ref().is_some_and(|probe| probe.hit.is_some());
+        let mut chat_hover_changed = false;
+        let new_header_hover = chat_probe
+            .as_ref()
+            .and_then(|probe| probe.hit.as_ref())
+            .and_then(op_editor_ui::widgets::editor_state_ext::chat_header_hover);
+        if new_header_hover != self.editor_state.editor_ui.chat_header_hover {
+            self.editor_state.editor_ui.chat_header_hover = new_header_hover;
+            chat_hover_changed = true;
         }
         // AI chat tab row hover — drives the close-× visibility on each tab.
-        // `tab_hover_at` returns None when collapsed or no tabs exist; the
-        // else branch clears any stale index when the panel is not present.
-        if let Some(chat_rect) = self.ai_chat_rect(self.last_viewport_w, self.last_viewport_h) {
-            use op_editor_ui::widgets::AIChatPlaceholder;
-            let new_hover = AIChatPlaceholder::from_editor_at(&self.editor_state, self.now_ms)
-                .tab_hover_at(chat_rect, Point2D::new(x, y));
-            if new_hover != self.editor_state.editor_ui.chat_tab_hover {
-                self.editor_state.editor_ui.chat_tab_hover = new_hover;
-                self.mark_dirty();
-                return true;
-            }
-        } else if self.editor_state.editor_ui.chat_tab_hover.take().is_some() {
-            self.mark_dirty();
-            return true;
+        if chat_tab_hover != self.editor_state.editor_ui.chat_tab_hover {
+            self.editor_state.editor_ui.chat_tab_hover = chat_tab_hover;
+            chat_hover_changed = true;
         }
-        if let Some(chat_rect) = self.ai_chat_rect(self.last_viewport_w, self.last_viewport_h) {
-            use op_editor_ui::widgets::AIChatPlaceholder;
-            let new_hover = AIChatPlaceholder::from_editor_at(&self.editor_state, self.now_ms)
-                .footer_hover_at(chat_rect, Point2D::new(x, y));
-            if new_hover != self.editor_state.editor_ui.chat_footer_hover {
-                self.editor_state.editor_ui.chat_footer_hover = new_hover;
-                self.mark_dirty();
-                return true;
-            }
-        } else if self
-            .editor_state
-            .editor_ui
-            .chat_footer_hover
-            .take()
-            .is_some()
-        {
-            self.mark_dirty();
-            return true;
+        if chat_footer_hover != self.editor_state.editor_ui.chat_footer_hover {
+            self.editor_state.editor_ui.chat_footer_hover = chat_footer_hover;
+            chat_hover_changed = true;
         }
         // Parallel-agents picker row hover — drives the highlight wash inside the overlay.
-        if let Some(chat_rect) = self.ai_chat_rect(self.last_viewport_w, self.last_viewport_h) {
-            use op_editor_ui::widgets::AIChatPlaceholder;
-            let new_hover = AIChatPlaceholder::from_editor_at(&self.editor_state, self.now_ms)
-                .parallel_agents_picker_hover_at(chat_rect, Point2D::new(x, y));
-            if new_hover != self.editor_state.editor_ui.parallel_agents_picker_hover {
-                self.editor_state.editor_ui.parallel_agents_picker_hover = new_hover;
-                self.mark_dirty();
-                return true;
-            }
-        } else {
-            if self
-                .editor_state
-                .editor_ui
-                .parallel_agents_picker_hover
-                .take()
-                .is_some()
-            {
-                self.mark_dirty();
-                return true;
-            }
+        if parallel_hover != self.editor_state.editor_ui.parallel_agents_picker_hover {
+            self.editor_state.editor_ui.parallel_agents_picker_hover = parallel_hover;
+            chat_hover_changed = true;
         }
-        if let Some(chat_rect) = self.ai_chat_rect(self.last_viewport_w, self.last_viewport_h) {
-            use op_editor_ui::widgets::AIChatPlaceholder;
-            let new_hover = AIChatPlaceholder::from_editor_at(&self.editor_state, self.now_ms)
-                .example_hover_at(chat_rect, Point2D::new(x, y));
-            if new_hover != self.editor_state.editor_ui.chat_example_hover {
-                self.editor_state.editor_ui.chat_example_hover = new_hover;
-                self.mark_dirty();
-                return true;
-            }
-        } else if self
-            .editor_state
-            .editor_ui
-            .chat_example_hover
-            .take()
-            .is_some()
-        {
-            self.mark_dirty();
-            return true;
+        if example_hover != self.editor_state.editor_ui.chat_example_hover {
+            self.editor_state.editor_ui.chat_example_hover = example_hover;
+            chat_hover_changed = true;
         }
         // Design-block hover — reuse the combined probe resolved above (gated on
         // `over_topmost` exactly as the old dedicated pass was).
@@ -1137,8 +1364,10 @@ impl WidgetHostNative {
                 .as_ref()
                 .and_then(|probe| probe.design_block_hover)
         };
-        if self.apply_chat_design_hover(design_hover) {
-            return true;
+        chat_hover_changed |= self.apply_chat_design_hover(design_hover);
+        if chat_hover_changed {
+            self.mark_dirty();
+            upper_hover_changed = true;
         }
         if let Some(drag) = self.rotate_drag {
             let cursor_angle = (y - drag.center_screen_y).atan2(x - drag.center_screen_x);
@@ -1365,77 +1594,56 @@ impl WidgetHostNative {
             // Canvas pan only translates the viewport; keep layout cache intact.
             return true;
         }
+        if chat_owns_point {
+            let lower_changed = self.clear_hover_below_chat_panel();
+            return upper_hover_changed || lower_changed;
+        }
         // Toolbar hover after drag detection.
         if self.update_toolbar_hover(x, y, over_topmost) {
             return true;
         }
-        // StatusBar control hover wash (search / zoom-out / zoom-in).
-        // Suppressed under a floating panel so it doesn't light up
-        // beneath the chat / a dropdown.
-        {
-            let new_hover = if over_topmost {
-                None
-            } else {
-                self.status_bar_rect(self.last_viewport_w, self.last_viewport_h)
-                    .and_then(|r| {
-                        op_editor_ui::widgets::StatusBar::for_editor(&self.editor_state)
-                            .control_at(r, Point2D::new(x, y))
-                    })
-            };
-            if new_hover != self.editor_state.editor_ui.statusbar_hover {
-                self.editor_state.editor_ui.statusbar_hover = new_hover;
-                self.mark_dirty();
-                return true;
-            }
-        }
         // PropertyPanel tab/action hover wash. Shown with a selection.
         let mut property_hover_changed = false;
-        if !over_topmost && self.editor_state.property_panel_visible() {
-            use op_editor_ui::widgets::{PropertyPanel, TOP_BAR_HEIGHT};
-            if let Some(panel) = PropertyPanel::for_selection(&self.editor_state) {
-                let property_rect = Rect {
-                    origin: Point2D::new(
-                        self.last_viewport_w - self.editor_state.editor_ui.property_panel_width,
-                        TOP_BAR_HEIGHT,
-                    ),
-                    size: Point2D::new(
-                        self.editor_state.editor_ui.property_panel_width,
-                        (self.last_viewport_h - TOP_BAR_HEIGHT).max(0.0),
-                    ),
-                };
-                let point = Point2D::new(x, y);
-                let new_tab_hover = panel.tab_hover_at(property_rect, point);
-                if new_tab_hover != self.editor_state.editor_ui.property_tab_hover {
-                    self.editor_state.editor_ui.property_tab_hover = new_tab_hover;
-                    property_hover_changed = true;
-                }
-                let new_fill_type_hover = panel.fill_type_picker_row_at(property_rect, point);
-                if new_fill_type_hover != self.editor_state.editor_ui.fill_type_picker.hover {
-                    self.editor_state.editor_ui.fill_type_picker.hover = new_fill_type_hover;
-                    property_hover_changed = true;
-                }
-                let new_action_hover = panel.action_hover_index(property_rect, point);
-                if new_action_hover != self.editor_state.editor_ui.property_action_hover {
-                    self.editor_state.editor_ui.property_action_hover = new_action_hover;
-                    property_hover_changed = true;
-                }
+        let needs_property_probe = !over_topmost
+            && self.editor_state.property_panel_visible()
+            && (property_rect.contains(point)
+                || self.editor_state.editor_ui.fill_type_picker.open
+                || self.editor_state.editor_ui.compositing_picker.open);
+        if needs_property_probe && property_panel_probe.is_none() {
+            property_panel_probe = Some(PropertyPanel::for_selection(&self.editor_state));
+        }
+        let property_panel = if needs_property_probe {
+            property_panel_probe.as_ref().and_then(Option::as_ref)
+        } else {
+            None
+        };
+        if let Some(panel) = property_panel {
+            let new_tab_hover = panel.tab_hover_at(property_rect, point);
+            if new_tab_hover != self.editor_state.editor_ui.property_tab_hover {
+                self.editor_state.editor_ui.property_tab_hover = new_tab_hover;
+                property_hover_changed = true;
+            }
+            let new_fill_type_hover = panel.fill_type_picker_row_at(property_rect, point);
+            if new_fill_type_hover != self.editor_state.editor_ui.fill_type_picker.hover {
+                self.editor_state.editor_ui.fill_type_picker.hover = new_fill_type_hover;
+                property_hover_changed = true;
+            }
+            let new_compositing_hover = panel.compositing_picker_row_at(property_rect, point);
+            if new_compositing_hover != self.editor_state.editor_ui.compositing_picker.hover {
+                self.editor_state.editor_ui.compositing_picker.hover = new_compositing_hover;
+                property_hover_changed = true;
+            }
+            let new_action_hover = panel.action_hover_index(property_rect, point);
+            if new_action_hover != self.editor_state.editor_ui.property_action_hover {
+                self.editor_state.editor_ui.property_action_hover = new_action_hover;
+                property_hover_changed = true;
             }
         } else {
             let ui = &mut self.editor_state.editor_ui;
             property_hover_changed |= ui.property_tab_hover.take().is_some();
             property_hover_changed |= ui.fill_type_picker.hover.take().is_some();
-        }
-        // Align toolbar hover after drag detection.
-        let new_hover = if self.editor_state.selection_count() >= 2 && !over_topmost {
-            self.align_toolbar_hit(x, y, self.last_viewport_w, self.last_viewport_h)
-        } else {
-            None
-        };
-        let new_hover_ec = new_hover;
-        if new_hover_ec != self.editor_state.editor_ui.align_toolbar_hover {
-            self.editor_state.editor_ui.align_toolbar_hover = new_hover_ec;
-            self.mark_dirty();
-            return true;
+            property_hover_changed |= ui.compositing_picker.hover.take().is_some();
+            property_hover_changed |= ui.property_action_hover.take().is_some();
         }
         // Code-panel hover wash. Reuses Code-panel action geometry so
         // framework chips, scroll chevrons, and body buttons share click and
@@ -1494,7 +1702,7 @@ impl WidgetHostNative {
             // else branch) always clears, threshold or not.
             if let Some((hx, hy)) = self.last_hover_probe {
                 if (x - hx).abs() < 3.0 && (y - hy).abs() < 3.0 {
-                    return cleared;
+                    return cleared || upper_hover_changed;
                 }
             }
             self.last_hover_probe = Some((x, y));
@@ -1533,7 +1741,7 @@ impl WidgetHostNative {
             return true;
         }
         // Fold stale-hover clearing into the repaint signal.
-        cleared
+        cleared || upper_hover_changed
     }
 
     /// Mouse-release — ends active drag; chat-panel snaps corner.

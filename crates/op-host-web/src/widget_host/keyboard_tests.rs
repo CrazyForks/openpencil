@@ -1,9 +1,12 @@
 use super::WidgetHost;
 use op_editor_core::{
+    agent_settings::SettingsFocus, figma_import_state::ImportSource, ui_draft::ColorTarget,
     CloneField, CloneFormState, EditorState, GitBranchPickerMode, GitFileEntry, GitPanelAction,
-    NodeId,
+    NodeId, PropertyFocus,
 };
-use op_editor_ui::{KeyCode, KeyEvent, KeyLocation, KeyState, KeyValue, Modifiers};
+use op_editor_ui::{
+    widgets::ImportMenu, KeyCode, KeyEvent, KeyLocation, KeyState, KeyValue, Modifiers, Point2D,
+};
 
 fn seed_text_edit(host: &mut WidgetHost, content: &str) {
     let doc = jian_ops_schema::load_str(&format!(
@@ -65,6 +68,182 @@ fn keydown_shortcut_cmd_shift_k_toggles_component_browser() {
     host.editor_state_dirty = false;
     assert!(!host.apply_keydown_shortcut("K", true, true, true));
     assert!(!host.editor_state.editor_ui.component_browser_open);
+    assert!(!host.editor_state_dirty);
+}
+
+#[test]
+fn keydown_import_shortcuts_select_their_source_without_stale_state() {
+    let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.import_source = ImportSource::Html;
+    host.editor_state.editor_ui.import_menu_open = true;
+    host.editor_state.editor_ui.import_menu.open = true;
+    host.editor_state_dirty = false;
+
+    assert!(host.apply_keydown_shortcut("F", true, true, false));
+    assert!(host.editor_state.editor_ui.figma_import_open);
+    assert_eq!(
+        host.editor_state.editor_ui.import_source,
+        ImportSource::Figma
+    );
+    assert!(!host.editor_state.editor_ui.import_menu_open);
+    assert!(host.editor_state_dirty);
+
+    host.editor_state.editor_ui.figma_import_open = false;
+    host.editor_state.editor_ui.import_source = ImportSource::Figma;
+    host.editor_state_dirty = false;
+    assert!(host.apply_keydown_shortcut("h", true, true, false));
+    assert!(host.editor_state.editor_ui.figma_import_open);
+    assert_eq!(
+        host.editor_state.editor_ui.import_source,
+        ImportSource::Html
+    );
+    assert!(host.editor_state_dirty);
+}
+
+#[test]
+fn keydown_import_shortcuts_require_unmodified_cmd_shift() {
+    let mut host = WidgetHost::new();
+
+    assert!(!host.apply_keydown_shortcut("F", false, true, false));
+    assert!(!host.apply_keydown_shortcut("H", true, false, false));
+    assert!(!host.apply_keydown_shortcut("f", true, true, true));
+    assert!(!host.editor_state.editor_ui.figma_import_open);
+}
+
+#[test]
+fn keydown_import_shortcut_does_not_open_beneath_an_existing_modal() {
+    let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.import_source = ImportSource::Html;
+    host.editor_state.editor_ui.agent_settings_open = true;
+    host.editor_state_dirty = false;
+
+    assert!(host.apply_keydown_shortcut("F", true, true, false));
+
+    let ui = &host.editor_state.editor_ui;
+    assert!(ui.agent_settings_open);
+    assert!(!ui.figma_import_open);
+    assert_eq!(ui.import_source, ImportSource::Html);
+    assert!(!host.editor_state_dirty);
+}
+
+#[test]
+fn keydown_import_shortcut_blurs_covered_text_and_ime_owners() {
+    let mut host = WidgetHost::new();
+    seed_text_edit(&mut host, "hello");
+    assert!(host
+        .editor_state
+        .open_color_picker(ColorTarget::Fill, 120.0));
+    host.editor_state.ui.property_focus = Some(PropertyFocus::SizeW);
+    host.editor_state.chat.focused = true;
+    {
+        let ui = &mut host.editor_state.editor_ui;
+        ui.chat_model_picker.open = true;
+        ui.chat_model_picker_input.set_text("model");
+        ui.font_picker.open = true;
+        ui.icon_picker.open = true;
+        ui.component_browser_open = true;
+        ui.ime_preedit = Some(Default::default());
+    }
+
+    assert!(host.apply_keydown_shortcut("F", true, true, false));
+
+    assert!(
+        host.editor_state.ui.text_editing.is_none(),
+        "canvas text edit blurs"
+    );
+    assert!(
+        host.editor_state.ui.property_focus.is_none(),
+        "property input blurs"
+    );
+    assert!(!host.editor_state.chat.focused, "chat input blurs");
+    assert!(!host.editor_state.editor_ui.chat_model_picker.open);
+    assert!(host
+        .editor_state
+        .editor_ui
+        .chat_model_picker_input
+        .text()
+        .is_empty());
+    assert!(!host.editor_state.editor_ui.font_picker.open);
+    assert!(!host.editor_state.editor_ui.icon_picker.open);
+    assert!(!host.editor_state.editor_ui.component_browser_open);
+    assert!(host.editor_state.editor_ui.ime_preedit.is_none());
+    assert!(host.editor_state.ui.color_picker.is_none());
+    assert!(!host.input_active(), "no covered input keeps IME ownership");
+}
+
+#[test]
+fn import_menu_choice_uses_the_shortcut_focus_cleanup() {
+    let (vw, vh) = (1200.0, 800.0);
+    let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.import_menu_open = true;
+    host.editor_state.editor_ui.import_menu.open = true;
+    host.editor_state.chat.focused = true;
+    host.editor_state.editor_ui.chat_model_picker.open = true;
+    let (anchor, viewport) = host.import_menu_anchor(vw, vh);
+    let menu = ImportMenu::for_editor_ui(&host.editor_state.editor_ui);
+    let panel = menu.popup_rect(anchor, viewport);
+    let point = Point2D::new(
+        panel.origin.x + panel.size.x / 2.0,
+        panel.origin.y + menu.row_height() / 2.0,
+    );
+
+    assert!(host.apply_press(point.x, point.y, vw, vh));
+
+    assert!(host.editor_state.editor_ui.figma_import_open);
+    assert!(!host.editor_state.chat.focused);
+    assert!(!host.editor_state.editor_ui.chat_model_picker.open);
+}
+
+#[test]
+fn keydown_import_shortcut_is_inert_while_import_is_in_progress() {
+    let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.import_source = ImportSource::Figma;
+    host.editor_state.editor_ui.figma_import_in_progress = true;
+    host.editor_state.chat.focused = true;
+    host.editor_state.editor_ui.chat_model_picker.open = true;
+    host.editor_state_dirty = false;
+
+    assert!(
+        host.apply_keydown_shortcut("H", true, true, false),
+        "the chord stays consumed"
+    );
+
+    assert_eq!(
+        host.editor_state.editor_ui.import_source,
+        ImportSource::Figma
+    );
+    assert!(!host.editor_state.editor_ui.figma_import_open);
+    assert!(
+        host.editor_state.chat.focused,
+        "rejected shortcut has no blur side effect"
+    );
+    assert!(host.editor_state.editor_ui.chat_model_picker.open);
+    assert!(!host.editor_state_dirty);
+}
+
+#[test]
+fn keydown_import_shortcuts_do_not_escape_settings_or_git_inputs() {
+    let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.agent_settings_open = true;
+    host.editor_state.editor_ui.agent_settings.focus = Some(SettingsFocus::McpPort);
+    host.editor_state_dirty = false;
+
+    assert!(host.apply_keydown_shortcut("F", true, true, false));
+    assert!(!host.editor_state.editor_ui.figma_import_open);
+    assert_eq!(
+        host.editor_state.editor_ui.agent_settings.focus,
+        Some(SettingsFocus::McpPort)
+    );
+    assert!(!host.editor_state_dirty);
+
+    host.editor_state.editor_ui.agent_settings.focus = None;
+    host.editor_state.editor_ui.agent_settings_open = false;
+    host.editor_state.editor_ui.git_panel.open = true;
+    host.editor_state.editor_ui.git_panel.commit_focused = true;
+
+    assert!(host.apply_keydown_shortcut("H", true, true, false));
+    assert!(!host.editor_state.editor_ui.figma_import_open);
+    assert!(host.editor_state.editor_ui.git_panel.commit_focused);
     assert!(!host.editor_state_dirty);
 }
 

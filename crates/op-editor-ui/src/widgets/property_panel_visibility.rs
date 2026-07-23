@@ -202,7 +202,15 @@ impl SectionCapabilities {
 pub enum ComponentButtonState {
     Create,
     DetachComponent,
-    Instance,
+    Instance {
+        /// Number of registered component targets shown by Swap.
+        /// Zero keeps the legacy two-row instance lifecycle block.
+        component_count: usize,
+        /// Expanded lists are inline so the existing property-panel
+        /// scroll makes every component reachable without a second
+        /// nested scroll surface.
+        picker_open: bool,
+    },
 }
 
 /// Whether each section currently paints.
@@ -242,6 +250,9 @@ pub struct VisibleSections {
     /// (host asset check flagged the selected node's src).
     pub image_warning: bool,
     pub opacity: bool,
+    /// Node-level Blend / Mask controls. Hidden for the inert
+    /// multi-selection aggregate and page-only inspector.
+    pub compositing: bool,
     pub corner_radius: bool,
     pub corner_per_corner: bool,
     pub corner_expand: bool,
@@ -289,6 +300,7 @@ impl VisibleSections {
         image: false,
         image_warning: false,
         opacity: true,
+        compositing: true,
         corner_radius: true,
         corner_per_corner: true,
         corner_expand: false,

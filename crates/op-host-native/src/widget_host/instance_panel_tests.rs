@@ -22,6 +22,8 @@ const COMPONENT_DOC: &str = r##"{
        {"type":"icon_font","id":"icon","name":"home","iconFontName":"home",
         "width":24,"height":24,"fill":[{"type":"solid","color":"#111111"}]}
      ]},
+    {"type":"frame","id":"banner","name":"Banner","reusable":true,
+     "x":0,"y":140,"width":280,"height":60,"children":[]},
     {"type":"ref","id":"inst1","ref":"card","x":300,"y":50}
   ]
 }"##;
@@ -69,6 +71,38 @@ fn fill_hex_commit_on_instance_lands_in_descendants() {
             .map(str::to_ascii_lowercase)
             .as_deref(),
         Some("#ff0000")
+    );
+}
+
+#[test]
+fn fill_hex_commit_and_focus_seed_round_trip_embedded_alpha() {
+    let mut host = seeded_host();
+    host.editor_state_mut().ui.property_focus = Some(op_editor_core::PropertyFocus::FillHex(0));
+    host.editor_state_mut()
+        .ui
+        .property_input
+        .set_text("#ff000080");
+    host.commit_property_focus_if_any();
+
+    let over = ref_node(&host)
+        .descendants
+        .as_ref()
+        .and_then(|d| d.get("card"))
+        .expect("fill override routed under descendants[card]");
+    assert_eq!(
+        over.pointer("/fill/0/color")
+            .and_then(serde_json::Value::as_str),
+        Some("#FF000080")
+    );
+
+    let panel = op_editor_ui::widgets::PropertyPanel::for_selection(host.editor_state())
+        .expect("instance panel remains available");
+    assert_eq!(
+        super::press_helpers::property_focus_initial(
+            op_editor_core::PropertyFocus::FillHex(0),
+            &panel,
+        ),
+        "#FF000080"
     );
 }
 
@@ -192,6 +226,22 @@ fn go_to_component_panel_action_selects_the_master() {
     let mut host = seeded_host();
     host.apply_property_action(op_editor_ui::widgets::PropertyPanelAction::GoToComponent);
     assert_eq!(host.editor_state().selection.anchor.as_str(), "card");
+}
+
+#[test]
+fn native_instance_swap_dispatch_retargets_ref_and_closes_picker() {
+    use op_editor_ui::widgets::PropertyPanelAction;
+
+    let mut host = seeded_host();
+    host.apply_property_action(PropertyPanelAction::ToggleInstanceComponentPicker);
+    assert!(host.editor_state().editor_ui.instance_component_picker_open);
+
+    host.apply_property_action(PropertyPanelAction::SetInstanceComponent(
+        "banner".to_string(),
+    ));
+    assert_eq!(ref_node(&host).target, "banner");
+    assert!(!host.editor_state().editor_ui.instance_component_picker_open);
+    assert_eq!(host.editor_state().history.past.len(), 1);
 }
 
 #[test]

@@ -5,9 +5,10 @@
 //! layer-panel component/instance badging flags.
 
 use super::property_panel::{PropertyPanel, PropertyPanelAction};
-use super::property_panel_test_support::state_from;
+use super::property_panel_test_support::{state_from, CountingBackend};
 use crate::widgets::layer_panel::LayerPanel;
 use crate::widgets::property_panel_visibility::ComponentButtonState;
+use crate::widgets::{PaintCx, Widget};
 use crate::{Point2D, Rect};
 use op_editor_core::NodeId;
 
@@ -17,6 +18,8 @@ const COMPONENT_DOC: &str = r##"{
     {"type":"frame","id":"card","name":"Card","reusable":true,"x":0,"y":0,"width":200,"height":100,
      "fill":[{"type":"solid","color":"#222222"}],
      "children":[{"type":"text","id":"title","name":"Title","content":"Hello"}]},
+    {"type":"frame","id":"banner","name":"Banner","reusable":true,
+     "x":0,"y":140,"width":280,"height":60,"children":[]},
     {"type":"ref","id":"inst1","ref":"card","x":300,"y":50,
      "descendants":{
        "card":{"fill":[{"type":"solid","color":"#ff8800"}]},
@@ -50,6 +53,166 @@ fn instance_snapshot_merges_display_node_and_flags_instance() {
         snap.kind_variant,
         crate::layout_scene::NodeKind::Frame
     ));
+}
+
+#[test]
+fn instance_snapshot_exposes_sorted_swap_options_and_current_target() {
+    let mut state = state_from(COMPONENT_DOC);
+    state.set_single_selection(NodeId::new("inst1"));
+    let panel = PropertyPanel::for_selection(&state).expect("panel builds");
+    assert_eq!(panel.instance_component_target.as_deref(), Some("card"));
+    let options: Vec<_> = panel
+        .instance_component_options
+        .iter()
+        .map(|option| (option.id.as_str(), option.name.as_str()))
+        .collect();
+    assert_eq!(options, [("banner", "Banner"), ("card", "Card")]);
+    assert!(!panel.instance_component_picker_open);
+
+    let rebuilt = PropertyPanel::for_selection(&state).expect("panel rebuilds");
+    assert!(std::sync::Arc::ptr_eq(
+        &panel.instance_component_options,
+        &rebuilt.instance_component_options,
+    ));
+}
+
+#[test]
+fn expanded_swap_list_paints_only_viewport_sized_candidate_window() {
+    let state = state_from(COMPONENT_DOC);
+    let labels = super::property_panel_sections::PropertyLabels::for_editor_ui(&state.editor_ui);
+    let theme = super::editor_state_ext::theme_for(&state.editor_ui);
+    let options: Vec<_> = (0..10_000)
+        .map(|index| op_editor_core::ComponentOption {
+            id: format!("component-{index}"),
+            name: format!("Candidate {index}"),
+        })
+        .collect();
+    let mut backend = CountingBackend::default();
+    let mut cx = PaintCx {
+        backend: &mut backend,
+    };
+
+    super::property_panel_instance::paint_component_block(
+        &mut cx,
+        &theme,
+        &labels,
+        ComponentButtonState::Instance {
+            component_count: options.len(),
+            picker_open: true,
+        },
+        &options,
+        Some("component-0"),
+        100_000.0,
+        100_400.0,
+        0.0,
+        0.0,
+        280.0,
+    );
+
+    let candidates: Vec<_> = backend
+        .texts
+        .iter()
+        .filter(|text| text.starts_with("Candidate "))
+        .collect();
+    assert!(
+        !candidates.is_empty(),
+        "the visible candidate window paints"
+    );
+    assert!(
+        candidates.len() <= 12,
+        "10k candidates must not become 10k paint calls: {}",
+        candidates.len()
+    );
+}
+
+#[test]
+fn dangling_ref_can_be_repaired_from_the_swap_control() {
+    let mut state = state_from(
+        r##"{
+          "version":"1.0.0",
+          "children":[
+            {"type":"frame","id":"banner","name":"Banner","reusable":true,
+             "width":200,"height":60,"children":[]},
+            {"type":"ref","id":"inst1","ref":"missing","x":20,"y":30}
+          ]
+        }"##,
+    );
+    state.set_single_selection(NodeId::new("inst1"));
+    let panel = PropertyPanel::for_selection(&state).expect("dangling Ref still inspects");
+    assert!(panel.snapshot.is_instance);
+    assert_eq!(panel.instance_component_options.len(), 1);
+    assert!(panel.visible_sections().create_component);
+}
+
+#[test]
+fn swap_control_stays_hidden_without_an_alternative_component() {
+    let mut state = state_from(
+        r##"{
+          "version":"1.0.0",
+          "children":[
+            {"type":"frame","id":"card","name":"Card","reusable":true,
+             "width":200,"height":60,"children":[]},
+            {"type":"ref","id":"inst1","ref":"card","x":20,"y":30}
+          ]
+        }"##,
+    );
+    state.set_single_selection(NodeId::new("inst1"));
+    let panel = PropertyPanel::for_selection(&state).expect("Ref panel builds");
+    assert!(panel.instance_component_options.is_empty());
+    let actions: Vec<_> = super::property_panel_layout::action_button_rects(
+        Rect {
+            origin: Point2D::new(0.0, 0.0),
+            size: Point2D::new(280.0, 1000.0),
+        },
+        panel.visible_sections(),
+        &panel.snapshot.effects,
+        &panel.snapshot.fills,
+        &panel.snapshot.interactions,
+    )
+    .into_iter()
+    .map(|(action, _)| action)
+    .collect();
+    assert!(!actions.contains(&PropertyPanelAction::ToggleInstanceComponentPicker));
+}
+
+#[test]
+fn expanded_instance_swap_rows_paint_and_hit_the_component_target() {
+    let mut state = state_from(COMPONENT_DOC);
+    state.set_single_selection(NodeId::new("inst1"));
+    state.editor_ui.toggle_instance_component_picker("inst1");
+    let panel = PropertyPanel::for_selection(&state).expect("panel builds");
+    let labels = super::property_panel_sections::PropertyLabels::for_editor_ui(&state.editor_ui);
+    let rect = Rect {
+        origin: Point2D::new(0.0, 0.0),
+        size: Point2D::new(280.0, 1200.0),
+    };
+    let button_state = panel.visible_sections().component_button;
+    let block_y =
+        super::property_panel_inputs::TAB_HEIGHT + super::property_panel_inputs::HEADER_HEIGHT;
+    let rows = super::property_panel_instance::block_rects(0.0, block_y, 280.0, button_state);
+    let banner = rows.option_rect(0).expect("first option row");
+    let banner_center = Point2D::new(
+        banner.origin.x + banner.size.x / 2.0,
+        banner.origin.y + banner.size.y / 2.0,
+    );
+    assert_eq!(
+        panel.hit_test_action(rect, banner_center),
+        Some(PropertyPanelAction::SetInstanceComponent(
+            "banner".to_string()
+        ))
+    );
+
+    let mut backend = CountingBackend::default();
+    panel.paint(
+        &mut PaintCx {
+            backend: &mut backend,
+        },
+        rect,
+    );
+    let swap_label = format!("{}: Card", labels.swap_component);
+    assert!(backend.texts.iter().any(|text| text == &swap_label));
+    assert!(backend.texts.iter().any(|text| text == "Banner"));
+    assert!(backend.texts.iter().any(|text| text == "Card"));
 }
 
 #[test]
@@ -118,6 +281,7 @@ fn instance_panel_emits_go_to_component_and_detach_rows() {
     .collect();
     assert!(actions.contains(&PropertyPanelAction::GoToComponent));
     assert!(actions.contains(&PropertyPanelAction::DetachInstance));
+    assert!(actions.contains(&PropertyPanelAction::ToggleInstanceComponentPicker));
     assert!(!actions.contains(&PropertyPanelAction::CreateComponent));
 }
 
@@ -153,8 +317,18 @@ fn instance_block_height_matches_two_rows() {
         CREATE_COMPONENT_BLOCK_H
     );
     assert_eq!(
-        create_component_block_height(ComponentButtonState::Instance),
+        create_component_block_height(ComponentButtonState::Instance {
+            component_count: 0,
+            picker_open: false,
+        }),
         CREATE_COMPONENT_BLOCK_H + CREATE_COMPONENT_BTN_H + CREATE_COMPONENT_ROW_GAP
+    );
+    assert_eq!(
+        create_component_block_height(ComponentButtonState::Instance {
+            component_count: 2,
+            picker_open: true,
+        }),
+        CREATE_COMPONENT_BLOCK_H + 4.0 * (CREATE_COMPONENT_BTN_H + CREATE_COMPONENT_ROW_GAP)
     );
 }
 

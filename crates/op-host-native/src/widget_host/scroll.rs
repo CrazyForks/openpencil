@@ -211,6 +211,14 @@ impl WidgetHostNative {
             origin: Point2D::new(viewport_width - pw, TOP_BAR_HEIGHT),
             size: Point2D::new(pw, (viewport_height - TOP_BAR_HEIGHT).max(0.0)),
         };
+        // The compact compositing popup has no internal scroll. It still
+        // owns wheel events over its painted chrome so the inspector behind
+        // it cannot move and detach the popup from its trigger.
+        if self.editor_state.editor_ui.compositing_picker.open
+            && panel.compositing_picker_contains(property_rect, Point2D::new(x, y))
+        {
+            return true;
+        }
         if !(property_rect).contains(Point2D::new(x, y)) {
             return false;
         }
@@ -274,7 +282,7 @@ impl WidgetHostNative {
         delta_y: f32,
         viewport_height: f32,
     ) -> bool {
-        use op_editor_ui::widgets::{LayerPanel, TOP_BAR_HEIGHT};
+        use op_editor_ui::widgets::TOP_BAR_HEIGHT;
         use op_editor_ui::Rect;
         if !self.editor_state.editor_ui.sidebar_open {
             return false;
@@ -287,7 +295,7 @@ impl WidgetHostNative {
         if !(rect).contains(Point2D::new(x, y)) {
             return false;
         }
-        let r = LayerPanel::from_editor(&self.editor_state).regions(rect);
+        let r = self.layer_panel().regions(rect);
         let mut changed = false;
         if y >= r.layers_rows_top {
             if delta_y != 0.0
@@ -338,7 +346,7 @@ impl WidgetHostNative {
         &mut self,
         viewport_height: f32,
     ) -> bool {
-        use op_editor_ui::widgets::{LayerPanel, TOP_BAR_HEIGHT};
+        use op_editor_ui::widgets::TOP_BAR_HEIGHT;
         use op_editor_ui::Rect;
 
         if !self.editor_state.editor_ui.sidebar_open {
@@ -355,7 +363,7 @@ impl WidgetHostNative {
                 (viewport_height - TOP_BAR_HEIGHT).max(0.0),
             ),
         };
-        let panel = LayerPanel::from_editor(&self.editor_state);
+        let panel = self.layer_panel();
         let Some(next) = panel.layers_offset_revealing(rect, &selected) else {
             return false;
         };
@@ -437,6 +445,9 @@ impl WidgetHostNative {
         viewport_height: f32,
         zoom_intent: bool,
     ) -> bool {
+        if self.try_scroll_figma_import(x, y, delta_y, viewport_width, viewport_height) {
+            return true;
+        }
         if self.try_scroll_missing_fonts_picker(x, y, delta_y, viewport_width, viewport_height) {
             return true;
         }

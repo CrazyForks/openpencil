@@ -43,8 +43,8 @@ pub const PROPERTY_PANEL_WIDTH: f32 = 280.0;
 // `widgets::PropertyPanelAction` / `property_panel::PropertyPanelAction`
 // path is unchanged.
 pub use crate::widgets::property_panel_action::{
-    FontWeightChoice, LayoutAlignValue, LayoutJustifyValue, PropertyPanelAction, TextAlignValue,
-    TextGrowthValue, TextVerticalAlignValue,
+    CompositingTarget, FontWeightChoice, LayoutAlignValue, LayoutJustifyValue, PropertyPanelAction,
+    TextAlignValue, TextGrowthValue, TextVerticalAlignValue,
 };
 
 // `SectionCapabilities` lives in `property_panel_layout.rs`
@@ -127,6 +127,14 @@ pub struct PropertyPanel {
     pub id: WidgetId,
     pub snapshot: NodeSnapshot,
     pub theme: Theme,
+    /// Design-tab page inspector target. It is built only when no
+    /// node is selected and uses a dedicated paint / hit-test branch;
+    /// node sections never consult the neutral snapshot in this mode.
+    pub page_only: bool,
+    pub page_name: String,
+    /// Raw authored page background (`#RRGGBB` / `#RRGGBBAA`). Keep
+    /// `None` distinct from white so focus + blur is side-effect free.
+    pub page_background: Option<String>,
     /// Localised chrome strings — `Document::t` lookups resolved
     /// once at construction time so every section paint hands
     /// straight to the renderer without re-walking the i18n table.
@@ -156,6 +164,18 @@ pub struct PropertyPanel {
     /// Which fill row the open fill-type dropdown targets (the Fill
     /// section stacks one type dropdown per fill).
     pub fill_type_picker_index: usize,
+    /// Shared two-column Blend / one-column Mask picker state.
+    pub compositing_picker: SelectState,
+    pub compositing_picker_target: Option<CompositingTarget>,
+    /// Registered document components offered by the selected Ref's
+    /// inline Swap control. Empty for non-Refs and when no alternative
+    /// target exists.
+    pub instance_component_options:
+        std::sync::Arc<[crate::widgets::property_panel_instance::InstanceComponentOption]>,
+    /// Current canonical `ref` target of the selected Ref.
+    pub instance_component_target: Option<String>,
+    /// Whether the inline component list is expanded for this anchor.
+    pub instance_component_picker_open: bool,
     pub corner_expand_open: bool,
     /// Whether the Effects "+" add-menu is
     /// open.
@@ -303,7 +323,7 @@ impl PropertyPanel {
         now_ms: u64,
     ) -> Option<Self> {
         let mut panel = Self::for_selection_at(state, now_ms)?;
-        if state.selection_count() == 1 {
+        if !panel.page_only && state.selection_count() == 1 {
             if let Some(node) = scene
                 .active_page()
                 .and_then(|page| page.find(state.selection.anchor.as_str()))
@@ -343,7 +363,29 @@ impl PropertyPanel {
                 None,
             ));
         }
-        None
+        let (page_name, page_background) = match state.doc.pages.as_ref() {
+            Some(pages) if !pages.is_empty() => {
+                let index = state.ui.active_page_index.min(pages.len() - 1);
+                (
+                    pages[index].name.clone(),
+                    pages[index].background_color.clone(),
+                )
+            }
+            _ => ("Page 1".to_string(), None),
+        };
+        let mut panel = Self::build_from_snapshot(
+            state,
+            NodeSnapshot::empty_for_code_tab(),
+            op_editor_core::FillType::Solid,
+            now_ms,
+            false,
+            None,
+            None,
+        );
+        panel.page_only = true;
+        panel.page_name = page_name;
+        panel.page_background = page_background;
+        Some(panel)
     }
 
     /// Selection-driven panel builder — `None` when no selected id
@@ -351,6 +393,12 @@ impl PropertyPanel {
     fn for_selection_nodes(state: &EditorState, now_ms: u64) -> Option<Self> {
         if state.selection_count() == 1 {
             let authored_node = state.selected_node();
+            let authored_ref_target = match authored_node {
+                Some(jian_ops_schema::node::PenNode::Ref(reference)) => {
+                    Some(reference.target.clone())
+                }
+                _ => None,
+            };
             // An INSTANCE (`Ref`) selection resolves into its merged
             // display node — component base → descendants[target]
             // overrides → instance props. A virtual child resolves to
@@ -363,7 +411,7 @@ impl PropertyPanel {
                     &state.selection.anchor,
                 ),
             };
-            let is_instance = authored_node.is_some() && display.is_some();
+            let is_instance = matches!(authored_node, Some(jian_ops_schema::node::PenNode::Ref(_)));
             let display_node = display.or_else(|| authored_node.cloned())?;
             let node = &display_node;
             let fill_type = op_editor_core::first_fill_type(node);
@@ -409,6 +457,19 @@ impl PropertyPanel {
             let mut panel = Self::build_from_snapshot(
                 state, snapshot, fill_type, now_ms, false, fill_ref, stroke_ref,
             );
+            if let Some(target) = authored_ref_target {
+                let options = state.components.sorted_options();
+                let has_alternative =
+                    options.len() > 1 || options.first().is_some_and(|option| option.id != target);
+                panel.instance_component_target = Some(target);
+                if has_alternative {
+                    panel.instance_component_options = options;
+                    panel.instance_component_picker_open =
+                        state.editor_ui.instance_component_picker_open
+                            && state.editor_ui.instance_component_picker_anchor
+                                == state.selection.anchor.as_str();
+                }
+            }
             panel.image_panel_view =
                 crate::widgets::property_panel_image_assets::image_panel_view(state, node);
             return Some(panel);
@@ -481,10 +542,19 @@ impl PropertyPanel {
         if ui.font_picker_purpose != Some(op_editor_core::FontPickerPurpose::PropertyText) {
             font_picker.open = false;
         }
+        // Effects / Interactions menus are floating, owning surfaces.  Do not
+        // carry a stale body-action hover into the immutable paint snapshot
+        // while either menu is open: their downward-opening geometry can
+        // overlap the next section's action row.
+        let action_hover_blocked =
+            ui.effect_add_picker_open || ui.interaction_menu_open || ui.compositing_picker.open;
         Self {
             id: WidgetId::new(2000),
             snapshot,
             theme: theme_for(ui),
+            page_only: false,
+            page_name: String::new(),
+            page_background: None,
             labels: sections::PropertyLabels::for_editor_ui(ui),
             // Multi-select inputs are inert in v1 — broadcast edits
             // to all selected nodes lands later. Force focus to None
@@ -517,6 +587,11 @@ impl PropertyPanel {
             fill_type,
             fill_type_picker: ui.fill_type_picker.clone(),
             fill_type_picker_index: ui.fill_type_picker_index,
+            compositing_picker: ui.compositing_picker.clone(),
+            compositing_picker_target: ui.compositing_picker_target,
+            instance_component_options: std::sync::Arc::from([]),
+            instance_component_target: None,
+            instance_component_picker_open: false,
             corner_expand_open,
             effect_add_picker_open: ui.effect_add_picker_open,
             interaction_menu_open: ui.interaction_menu_open,
@@ -546,7 +621,7 @@ impl PropertyPanel {
                 Some(op_editor_core::ButtonPressTarget::FontWeightPicker(index)) => Some(index),
                 _ => None,
             },
-            action_hover: if is_multi {
+            action_hover: if is_multi || action_hover_blocked {
                 None
             } else {
                 ui.property_action_hover
@@ -619,10 +694,9 @@ impl PropertyPanel {
     /// `Row` = a choice was clicked, `Inside` = swallow (keep open),
     /// `Outside` = dismiss. Only meaningful while the menu is open.
     pub fn effect_add_menu_hit(&self, panel_rect: Rect, point: Point2D) -> EffectAddMenuHit {
-        let Some(add_rect) = self.effect_add_button_rect(self.scrolled_rect(panel_rect)) else {
+        let Some(menu) = self.effect_add_menu_rect(panel_rect) else {
             return EffectAddMenuHit::Outside;
         };
-        let menu = crate::widgets::property_panel_effects::effect_add_menu_rect(add_rect);
         for (action, row) in crate::widgets::property_panel_effects::effect_add_menu_row_rects(menu)
         {
             if row.contains(point) {
@@ -636,11 +710,27 @@ impl PropertyPanel {
         }
     }
 
+    /// Exact painted bounds of the open Effects add-menu, including its
+    /// padded chrome. Hosts use this as the O(1) ownership/occlusion test;
+    /// deriving it here keeps popup paint, hit, and hover geometry identical.
+    pub fn effect_add_menu_rect(&self, panel_rect: Rect) -> Option<Rect> {
+        if !self.effect_add_picker_open {
+            return None;
+        }
+        self.effect_add_button_rect(self.scrolled_rect(panel_rect))
+            .map(crate::widgets::property_panel_effects::effect_add_menu_rect)
+    }
+
+    /// Whether `point` lies anywhere inside the open Effects add-menu chrome.
+    pub fn effect_add_menu_contains(&self, panel_rect: Rect, point: Point2D) -> bool {
+        self.effect_add_menu_rect(panel_rect)
+            .is_some_and(|menu| menu.contains(point))
+    }
+
     /// Row index under `point` in the open Effects add-menu — drives the
     /// hover highlight (mirrors [`Self::export_picker_row_at`]).
     pub fn effect_add_menu_row_at(&self, panel_rect: Rect, point: Point2D) -> Option<usize> {
-        let add_rect = self.effect_add_button_rect(self.scrolled_rect(panel_rect))?;
-        let menu = crate::widgets::property_panel_effects::effect_add_menu_rect(add_rect);
+        let menu = self.effect_add_menu_rect(panel_rect)?;
         crate::widgets::property_panel_effects::effect_add_menu_row_rects(menu)
             .into_iter()
             .position(|(_, row)| row.contains(point))
@@ -756,6 +846,9 @@ impl PropertyPanel {
     /// Total height (px) of the panel's section content — drives the
     /// scroll clamp so the inspector can't scroll past its end.
     pub fn content_height(&self, panel_rect: Rect) -> f32 {
+        if self.page_only {
+            return crate::widgets::property_panel_page::content_height();
+        }
         sections::property_panel_content_height(
             panel_rect,
             self.visible_sections(),
@@ -770,14 +863,18 @@ impl PropertyPanel {
     pub(crate) fn visible_sections(&self) -> sections::VisibleSections {
         let caps = self.capabilities();
         let component_button = if self.snapshot.is_instance {
-            crate::widgets::property_panel_visibility::ComponentButtonState::Instance
+            crate::widgets::property_panel_visibility::ComponentButtonState::Instance {
+                component_count: self.instance_component_options.len(),
+                picker_open: self.instance_component_picker_open,
+            }
         } else if self.snapshot.is_reusable {
             crate::widgets::property_panel_visibility::ComponentButtonState::DetachComponent
         } else {
             crate::widgets::property_panel_visibility::ComponentButtonState::Create
         };
         sections::VisibleSections {
-            create_component: caps.create_component && self.snapshot.can_create_component,
+            create_component: self.snapshot.is_instance
+                || (caps.create_component && self.snapshot.can_create_component),
             component_button,
             flex_layout: caps.flex_layout,
             flex_layout_mode: self.snapshot.flex_layout,
@@ -801,6 +898,7 @@ impl PropertyPanel {
                     .as_ref()
                     .is_some_and(|v| v.warning.is_some()),
             opacity: caps.opacity,
+            compositing: !self.is_multi,
             corner_radius: self.snapshot.has_corner_radius,
             corner_per_corner: self.snapshot.supports_per_corner,
             corner_expand: self.corner_expand_open,
@@ -850,6 +948,9 @@ impl PropertyPanel {
                 self.locale,
             );
         }
+        if self.page_only {
+            return self.page_action_at(panel_rect, point);
+        }
         if self.image_fill_popover_open {
             if let Some(action) = sections::image_fill_popover_action_at(
                 self.scrolled_rect(panel_rect),
@@ -858,6 +959,19 @@ impl PropertyPanel {
                 point,
             ) {
                 return Some(action);
+            }
+        }
+        if self.compositing_picker.open {
+            match self.compositing_picker_hit(panel_rect, point) {
+                SelectHit::Row(index) => {
+                    if let Some(target) = self.compositing_picker_target {
+                        return crate::widgets::property_panel_compositing::action_for_row(
+                            target, index,
+                        );
+                    }
+                }
+                SelectHit::Inside => return None,
+                SelectHit::Outside => {}
             }
         }
         // Image Search / Generate popovers — overlay controls win
@@ -923,8 +1037,23 @@ impl PropertyPanel {
         if !self.point_in_section_viewport(panel_rect, point) {
             return None;
         }
+        let scrolled = self.scrolled_rect(panel_rect);
+        let component_block_y = scrolled.origin.y
+            + crate::widgets::property_panel_inputs::TAB_HEIGHT
+            + crate::widgets::property_panel_inputs::HEADER_HEIGHT;
+        if let Some(index) = crate::widgets::property_panel_instance::option_index_at(
+            scrolled.origin.x,
+            component_block_y,
+            scrolled.size.x,
+            self.visible_sections().component_button,
+            point,
+        ) {
+            if let Some(option) = self.instance_component_options.get(index) {
+                return Some(PropertyPanelAction::SetInstanceComponent(option.id.clone()));
+            }
+        }
         let rects = sections::action_button_rects_with_fill_picker(
-            self.scrolled_rect(panel_rect),
+            scrolled,
             self.visible_sections(),
             &self.snapshot.effects,
             &self.snapshot.fills,
@@ -1006,7 +1135,7 @@ impl PropertyPanel {
         sections::image_fill_popover_adjustment_action_for_drag(
             self.scrolled_rect(panel_rect),
             self.visible_sections(),
-            &self.snapshot.fills,
+            &self.snapshot,
             field,
             x,
         )
@@ -1056,9 +1185,28 @@ impl PropertyPanel {
             && sections::image_fill_popover_contains(
                 self.scrolled_rect(panel_rect),
                 self.visible_sections(),
-                &self.snapshot.fills,
+                &self.snapshot,
                 point,
             )
+    }
+
+    /// Focusable Tile-scale input inside the floating image-fill
+    /// editor. Hosts call this before the rail's regular input walker
+    /// because the popover can extend left over the canvas.
+    pub fn image_fill_popover_input_at(
+        &self,
+        panel_rect: Rect,
+        point: Point2D,
+    ) -> Option<PropertyFocus> {
+        if self.is_multi || !self.image_fill_popover_open {
+            return None;
+        }
+        sections::image_fill_popover_input_at(
+            self.scrolled_rect(panel_rect),
+            self.visible_sections(),
+            &self.snapshot,
+            point,
+        )
     }
 
     // Font-picker / image-popover overlay accessors (entries,
@@ -1079,6 +1227,9 @@ impl PropertyPanel {
             // The Code tab paints no Design input rows — a click must
             // not focus an invisible input (paint + hit-test agree).
             return None;
+        }
+        if self.page_only {
+            return self.page_input_at(panel_rect, point);
         }
         if !self.point_in_section_viewport(panel_rect, point) {
             return None;
@@ -1104,12 +1255,18 @@ impl PropertyPanel {
         if self.is_multi || matches!(self.tab, op_editor_core::PropertyTab::Code) {
             return None;
         }
+        if self.page_only {
+            return None;
+        }
         if self.fill_type_picker.open
             && !matches!(
                 self.fill_type_picker_hit(panel_rect, point),
                 SelectHit::Outside
             )
         {
+            return None;
+        }
+        if self.compositing_picker_contains(panel_rect, point) {
             return None;
         }
         if !self.point_in_section_viewport(panel_rect, point) {
@@ -1322,6 +1479,24 @@ impl Widget for PropertyPanel {
             );
             return;
         }
+        if self.page_only {
+            cx.backend.save();
+            cx.backend.clip_rect(Rect {
+                origin: Point2D::new(x, tab_bottom),
+                size: Point2D::new(w, (rect.origin.y + rect.size.y - tab_bottom).max(0.0)),
+            });
+            crate::widgets::property_panel_page::paint_page_inspector(
+                cx,
+                &self.theme,
+                &edit_ctx,
+                self.locale,
+                &self.page_name,
+                self.page_background.as_deref(),
+                rect,
+            );
+            cx.backend.restore();
+            return;
+        }
         // Section content scrolls below the pinned tab strip; clip it
         // so a scrolled-up section can't paint over the tabs or bleed
         // onto the neighbouring rail. Overlays (fill / export pickers)
@@ -1343,12 +1518,16 @@ impl Widget for PropertyPanel {
         // matching the layout walker's `+= TAB_HEIGHT` step.
         let mut y = tab_bottom - scroll;
         y = sections::paint_node_header(cx, &self.theme, &self.snapshot, x, y, w);
-        if caps.create_component && self.snapshot.can_create_component {
-            y = sections::paint_create_component(
+        if self.visible_sections().create_component {
+            y = crate::widgets::property_panel_instance::paint_component_block(
                 cx,
                 &self.theme,
                 &self.labels,
                 self.visible_sections().component_button,
+                &self.instance_component_options,
+                self.instance_component_target.as_deref(),
+                tab_bottom,
+                rect.origin.y + rect.size.y,
                 x,
                 y,
                 w,
@@ -1451,6 +1630,8 @@ impl Widget for PropertyPanel {
                 &self.snapshot,
                 &self.labels,
                 &edit_ctx,
+                !self.is_multi,
+                self.locale,
                 x,
                 y,
                 w,
@@ -1523,6 +1704,56 @@ impl Widget for PropertyPanel {
                 y,
                 w,
             );
+        }
+        // Base-action feedback belongs to the scrolling panel body. Paint it
+        // before every floating menu so a stale hover/press wash can never be
+        // composited over popup chrome. The menu-specific hover states below
+        // then remain the sole feedback on the top-most surface.
+        if self.action_hover.is_some() || self.action_pressed.is_some() {
+            let rects = sections::action_button_rects_with_fill_picker(
+                self.scrolled_rect(rect),
+                self.visible_sections(),
+                &self.snapshot.effects,
+                &self.snapshot.fills,
+                &self.snapshot.interactions,
+                self.fill_type_picker.open,
+                self.fill_type_picker_index,
+                self.font_picker.open,
+                self.font_weight_picker_open,
+                self.export_scale_picker_open,
+                self.export_format_picker_open,
+                self.padding_mode_popover_open,
+            );
+            if let Some(i) = self.action_hover {
+                if let Some((action, r)) = rects.get(i) {
+                    let wash = action_wash_rect(action, *r, &self.labels, self.locale, cx.backend);
+                    paint_button_feedback_wash(
+                        cx.backend,
+                        &self.theme,
+                        wash,
+                        6.0,
+                        true,
+                        self.action_pressed == Some(i),
+                    );
+                    if matches!(action, PropertyPanelAction::ToggleCornerExpand) {
+                        crate::widgets::property_panel_corner::paint_tooltip(
+                            cx,
+                            &self.theme,
+                            *r,
+                            self.labels.corner_per_corner,
+                        );
+                    }
+                }
+            }
+            if let Some(i) = self.action_pressed {
+                if self.action_hover != Some(i) {
+                    if let Some((action, r)) = rects.get(i) {
+                        let wash =
+                            action_wash_rect(action, *r, &self.labels, self.locale, cx.backend);
+                        paint_button_feedback_wash(cx.backend, &self.theme, wash, 6.0, false, true);
+                    }
+                }
+            }
         }
         // Effects "+" add-menu overlay.
         if self.effect_add_picker_open {
@@ -1683,62 +1914,17 @@ impl Widget for PropertyPanel {
                 self.padding_mode_popover_open,
             );
         }
-        // Per-button feedback wash — one translucent overlay on the action
-        // button under the cursor or primary pointer press (flex / size /
-        // fill / effects / export / create-component). Index into the same
-        // walker the host's hover update + hit-test use.
-        if self.action_hover.is_some() || self.action_pressed.is_some() {
-            let rects = sections::action_button_rects_with_fill_picker(
-                self.scrolled_rect(rect),
-                self.visible_sections(),
-                &self.snapshot.effects,
-                &self.snapshot.fills,
-                &self.snapshot.interactions,
-                self.fill_type_picker.open,
-                self.fill_type_picker_index,
-                self.font_picker.open,
-                self.font_weight_picker_open,
-                self.export_scale_picker_open,
-                self.export_format_picker_open,
-                self.padding_mode_popover_open,
-            );
-            if let Some(i) = self.action_hover {
-                if let Some((action, r)) = rects.get(i) {
-                    let wash = action_wash_rect(action, *r, &self.labels, self.locale, cx.backend);
-                    paint_button_feedback_wash(
-                        cx.backend,
-                        &self.theme,
-                        wash,
-                        6.0,
-                        true,
-                        self.action_pressed == Some(i),
-                    );
-                    if matches!(action, PropertyPanelAction::ToggleCornerExpand) {
-                        crate::widgets::property_panel_corner::paint_tooltip(
-                            cx,
-                            &self.theme,
-                            *r,
-                            self.labels.corner_per_corner,
-                        );
-                    }
-                }
-            }
-            if let Some(i) = self.action_pressed {
-                if self.action_hover != Some(i) {
-                    if let Some((action, r)) = rects.get(i) {
-                        let wash =
-                            action_wash_rect(action, *r, &self.labels, self.locale, cx.backend);
-                        paint_button_feedback_wash(cx.backend, &self.theme, wash, 6.0, false, true);
-                    }
-                }
-            }
-        }
+        self.paint_compositing_picker(cx, rect);
         cx.backend.restore();
     }
 
     fn access_node(&self) -> accesskit::Node {
         let mut node = accesskit::Node::new(accesskit::Role::Group);
-        node.set_label(self.snapshot.kind.clone());
+        node.set_label(if self.page_only {
+            self.page_name.clone()
+        } else {
+            self.snapshot.kind.clone()
+        });
         node
     }
 }
@@ -1749,6 +1935,9 @@ impl PropertyPanel {
     /// the image-fill / search / generate popovers sit above floating
     /// canvas controls.
     pub fn paint_overlays(&self, cx: &mut PaintCx<'_>, rect: Rect) {
+        if self.page_only {
+            return;
+        }
         let caps = self.capabilities();
         if !(caps.fill || caps.image) {
             return;
@@ -1764,12 +1953,21 @@ impl PropertyPanel {
             size: rect.size,
         };
         if self.image_fill_popover_open {
+            let edit_ctx = sections::EditContext {
+                focus: self.focus,
+                draft: self.draft.as_str(),
+                input: &self.input,
+                caret: self.caret_pos,
+                select_all: self.select_all,
+                now_ms: self.now_ms,
+            };
             sections::paint_image_fill_popover(
                 cx,
                 &self.theme,
                 scrolled,
                 self.visible_sections(),
                 &self.snapshot,
+                &edit_ctx,
                 self.locale,
             );
         }

@@ -573,6 +573,7 @@ mod tests {
             id: "p1".to_string(),
             name: "Page 1".to_string(),
             children: vec![reusable_frame("c1", "Nav Bar", None)],
+            background_color: None,
             state: None,
             lifecycle: None,
         }]);

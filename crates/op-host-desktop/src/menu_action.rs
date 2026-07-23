@@ -91,27 +91,11 @@ impl DesktopApp {
             }
             A::Save => {
                 self.host.commit_variable_row_focus_if_any_pub();
-                let ok = persistence::handle_save(
-                    &mut self.host,
-                    &mut self.current_path,
-                    self.window.as_ref(),
-                );
-                if ok {
-                    self.mark_document_saved();
-                }
-                ok
+                self.request_background_save()
             }
             A::SaveAs => {
                 self.host.commit_variable_row_focus_if_any_pub();
-                let ok = persistence::handle_save_as(
-                    &mut self.host,
-                    &mut self.current_path,
-                    self.window.as_ref(),
-                );
-                if ok {
-                    self.mark_document_saved();
-                }
-                ok
+                self.request_background_save_as()
             }
             A::Export => {
                 self.host.commit_variable_row_focus_if_any_pub();

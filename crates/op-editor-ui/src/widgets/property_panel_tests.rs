@@ -61,6 +61,20 @@ fn for_selection_with_real_node_builds_snapshot() {
 }
 
 #[test]
+fn snapshot_reads_imported_node_opacity_as_percent() {
+    let mut state = state_from(
+        r#"{ "version": "1.0.0", "children": [
+              {"type":"rectangle","id":"r","name":"Figma layer",
+               "width":100,"height":40,"opacity":0.425}
+        ]}"#,
+    );
+    state.set_single_selection(NodeId::new("r"));
+
+    let panel = PropertyPanel::for_selection(&state).expect("selected rectangle panel");
+    assert!((panel.snapshot.opacity_percent - 42.5).abs() < f32::EPSILON);
+}
+
+#[test]
 fn scene_aware_panel_reports_resolved_fill_and_hug_dimensions() {
     let mut state = state_from(
         r##"{ "version": "1.0.0", "children": [
@@ -117,9 +131,12 @@ fn scene_aware_panel_keeps_unbounded_group_aggregate_dimensions() {
 }
 
 #[test]
-fn for_selection_without_selection_returns_none() {
+fn for_selection_without_selection_builds_page_inspector() {
     let state = EditorState::new();
-    assert!(PropertyPanel::for_selection(&state).is_none());
+    let panel = PropertyPanel::for_selection(&state).expect("implicit page inspector");
+    assert!(panel.page_only);
+    assert_eq!(panel.page_name, "Page 1");
+    assert_eq!(panel.page_background, None);
 }
 
 #[test]
@@ -147,11 +164,12 @@ fn for_selection_code_tab_builds_panel_without_selection() {
 }
 
 #[test]
-fn for_selection_design_tab_still_hides_panel_without_selection() {
+fn for_selection_design_tab_shows_page_inspector_without_selection() {
     let mut state = EditorState::sample();
     state.clear_selection();
     state.editor_ui.property_tab = PropertyTab::Design;
-    assert!(PropertyPanel::for_selection(&state).is_none());
+    let panel = PropertyPanel::for_selection(&state).expect("page inspector");
+    assert!(panel.page_only);
 }
 
 #[test]
@@ -184,10 +202,10 @@ fn inactive_property_tab_hover_paints_pill_background() {
 }
 
 #[test]
-fn for_selection_with_stale_selection_returns_none() {
+fn for_selection_with_stale_selection_falls_back_to_page_inspector() {
     let mut state = EditorState::sample();
     state.set_single_selection(NodeId::new("n9999"));
-    assert!(PropertyPanel::for_selection(&state).is_none());
+    assert!(PropertyPanel::for_selection(&state).is_some_and(|panel| panel.page_only));
 }
 
 #[test]
@@ -335,6 +353,110 @@ fn effects_add_menu_hits_all_three_effect_kinds() {
     assert_eq!(
         panel.effect_add_menu_hit(rect, Point2D::new(5.0, 5.0)),
         EffectAddMenuHit::Outside
+    );
+}
+
+#[test]
+fn effects_add_menu_owns_feedback_above_the_covered_interaction_row() {
+    use crate::widgets::EffectAddMenuHit;
+
+    let mut state = EditorState::sample();
+    state.set_single_selection(NodeId::new("n10"));
+    let rect = Rect {
+        origin: Point2D::new(0.0, 0.0),
+        size: Point2D::new(280.0, 1600.0),
+    };
+
+    let closed = PropertyPanel::for_selection(&state).expect("frame panel");
+    let action_rects = sections::action_button_rects_with_fill_picker(
+        rect,
+        visible_for(&closed),
+        &closed.snapshot.effects,
+        &closed.snapshot.fills,
+        &closed.snapshot.interactions,
+        false,
+        0,
+        false,
+        false,
+        false,
+        false,
+        false,
+    );
+    let (interaction_index, interaction_rect) = action_rects
+        .iter()
+        .enumerate()
+        .find_map(|(index, (action, rect))| {
+            matches!(action, PropertyPanelAction::ToggleInteractionMenu).then_some((index, *rect))
+        })
+        .expect("frame panel has an Add interaction action");
+
+    // Reproduce the stale lower hover that existed when the Effects menu was
+    // opened while the cursor crossed into its overlap with Interactions.
+    state.editor_ui.property_action_hover = Some(interaction_index);
+    state.editor_ui.toggle_effect_add_picker();
+    let mut panel = PropertyPanel::for_selection(&state).expect("open effects menu panel");
+    assert_eq!(
+        panel.action_hover, None,
+        "an owning popup must not carry a body-action hover into paint"
+    );
+
+    let menu = panel
+        .effect_add_menu_rect(rect)
+        .expect("open effects menu bounds");
+    let rows = crate::widgets::property_panel_effects::effect_add_menu_row_rects(menu);
+    let (popup_action, overlap_point) = rows
+        .iter()
+        .find_map(|(action, popup_row)| {
+            let left = popup_row.origin.x.max(interaction_rect.origin.x);
+            let top = popup_row.origin.y.max(interaction_rect.origin.y);
+            let right = (popup_row.origin.x + popup_row.size.x)
+                .min(interaction_rect.origin.x + interaction_rect.size.x);
+            let bottom = (popup_row.origin.y + popup_row.size.y)
+                .min(interaction_rect.origin.y + interaction_rect.size.y);
+            (right > left && bottom > top).then_some((
+                action.clone(),
+                Point2D::new((left + right) / 2.0, (top + bottom) / 2.0),
+            ))
+        })
+        .expect("downward Effects menu overlaps Add interaction");
+
+    assert!(matches!(
+        panel.effect_add_menu_hit(rect, overlap_point),
+        EffectAddMenuHit::Row(_)
+    ));
+    assert!(panel.effect_add_menu_contains(rect, overlap_point));
+    assert_eq!(
+        panel.hit_test_action(rect, overlap_point),
+        Some(popup_action),
+        "popup hit testing must win over the covered body action"
+    );
+
+    // Even if a caller injects a stale body hover into the immutable panel,
+    // popup chrome is painted later and therefore remains visually top-most.
+    panel.action_hover = Some(interaction_index);
+    let theme = panel.theme;
+    let mut backend = RoundFillBackend::default();
+    {
+        let mut cx = PaintCx {
+            backend: &mut backend,
+        };
+        panel.paint(&mut cx, rect);
+    }
+    let body_hover_paint = backend
+        .fills
+        .iter()
+        .position(|(painted, color)| {
+            *painted == interaction_rect && color_eq(*color, theme.button_hover)
+        })
+        .expect("injected body hover paints its feedback wash");
+    let popup_background_paint = backend
+        .fills
+        .iter()
+        .position(|(painted, color)| *painted == menu && color_eq(*color, theme.popover))
+        .expect("effects popup paints its background");
+    assert!(
+        body_hover_paint < popup_background_paint,
+        "popup background must composite after the covered body hover"
     );
 }
 

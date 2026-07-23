@@ -8,15 +8,19 @@ use jian_ops_schema::style::{PenFill, SolidFillBody};
 
 pub mod color;
 pub mod css;
+pub mod css_encoding;
 pub mod dom;
+pub mod html_encoding;
 pub mod length;
 pub mod mapper;
 mod project;
 mod project_zip;
+mod project_zip_range;
 pub mod resources;
 pub mod snapshot;
 pub mod special;
 pub mod text;
+mod zip_encoding;
 
 pub use project::{
     import_html_project, import_html_project_document, import_html_project_document_with_transform,
@@ -30,6 +34,13 @@ pub use project_zip::{
     import_html_zip_reader_document, import_html_zip_reader_document_with_transform,
     import_html_zip_reader_with_transform, import_html_zip_with_transform, MAX_ZIP_ENTRIES,
 };
+pub use project_zip_range::{
+    decode_html_zip_entry, html_zip_entry_data_range, html_zip_local_header_length,
+    html_zip_project_url, locate_html_zip_directory, parse_html_zip_central_directory,
+    validate_html_zip_local_header, HtmlZipByteRange, HtmlZipCompressionMethod,
+    HtmlZipDirectoryLocator, HtmlZipRangeEntry, HtmlZipRangeManifest, HTML_ZIP_EOCD_MIN_BYTES,
+    HTML_ZIP_LOCAL_HEADER_FIXED_BYTES, HTML_ZIP_TAIL_BYTES,
+};
 pub use snapshot::{import_snapshot, import_snapshot_document};
 
 #[cfg(test)]
@@ -37,6 +48,9 @@ mod e2e_tests;
 
 #[cfg(test)]
 mod stylesheet_resource_tests;
+
+#[cfg(test)]
+mod project_zip_range_unicode_tests;
 
 pub struct HtmlImportOptions {
     pub viewport_width: f64,
@@ -102,6 +116,11 @@ pub fn import_html_with_resources(
     if truncate_dom_nodes(&mut parsed.body, &mut remaining) {
         warnings.push("node limit reached (20000), remaining content dropped".to_string());
     }
+    let resource_base = resources::select_document_base(
+        opts.base_url.as_deref(),
+        &parsed.base_hrefs,
+        &mut warnings,
+    );
 
     let viewport_height = opts.viewport_width * 0.625;
     let mut ua_parser =
@@ -112,14 +131,21 @@ pub fn import_html_with_resources(
         viewport_height,
     );
     warnings.extend(ua_warnings);
-    let mut budget = resources::ResourceBudget::default();
+    let mut budget = resources::ResourceBudget;
     let mut author_parser =
         css::cascade::StylesheetParser::new(css::cascade::StyleOrigin::Author, 500);
     for stylesheet_source in std::mem::take(&mut parsed.stylesheet_sources) {
         let stylesheet = match stylesheet_source {
-            dom::StylesheetSource::Inline(stylesheet) => stylesheet,
+            dom::StylesheetSource::Inline(stylesheet) => resources::expand_stylesheet_imports(
+                &stylesheet,
+                resource_base.as_deref(),
+                None,
+                fetcher,
+                &mut budget,
+                &mut warnings,
+            ),
             dom::StylesheetSource::Link(href) => {
-                let resolved = resources::resolve_url(opts.base_url.as_deref(), &href);
+                let resolved = resources::resolve_resource_url(resource_base.as_deref(), &href);
                 let display_url = resolved.as_deref().unwrap_or(&href);
                 if !budget.take(&mut warnings) {
                     continue;
@@ -131,7 +157,15 @@ pub fn import_html_with_resources(
                     warnings.push(format!("external stylesheet skipped: {display_url}"));
                     continue;
                 };
-                resources::rebase_stylesheet_urls(&String::from_utf8_lossy(&bytes), display_url)
+                let decoded = css_encoding::decode_css_bytes(&bytes);
+                resources::expand_stylesheet_imports(
+                    &decoded,
+                    Some(display_url),
+                    Some(display_url),
+                    fetcher,
+                    &mut budget,
+                    &mut warnings,
+                )
             }
         };
         let (author_rules, stylesheet_warnings) =
@@ -184,7 +218,7 @@ pub fn import_html_with_resources(
         viewport_width: opts.viewport_width,
         base_font_size: root_font_size,
         document_name: opts.document_name.clone(),
-        base_url: opts.base_url.clone(),
+        base_url: resource_base.clone(),
     };
     let mut context = mapper::MapCtx {
         opts: &mapping_opts,
@@ -273,7 +307,7 @@ pub fn import_html_with_resources(
     if let Some(fetcher) = fetcher {
         resources::embed_images(
             &mut nodes,
-            opts.base_url.as_deref(),
+            resource_base.as_deref(),
             fetcher,
             transform,
             &mut budget,
@@ -434,6 +468,34 @@ mod tests {
             .warnings
             .iter()
             .any(|warning| warning.contains("external stylesheet skipped")));
+    }
+
+    #[test]
+    fn imports_more_than_the_retired_resource_count_limit() {
+        let links = (0..205)
+            .map(|index| format!(r#"<link rel="stylesheet" href="{index}.css">"#))
+            .collect::<String>();
+        let html = format!("<head>{links}</head><body><p>ok</p></body>");
+        let fetched = std::cell::Cell::new(0usize);
+        let fetcher = |_: &str| {
+            fetched.set(fetched.get() + 1);
+            Some(Vec::new())
+        };
+        let result = import_html_with_resources(
+            &html,
+            &HtmlImportOptions {
+                base_url: Some("https://a.dev/index.html".into()),
+                ..Default::default()
+            },
+            Some(&fetcher),
+            None,
+        );
+
+        assert_eq!(fetched.get(), 205);
+        assert!(!result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("resource limit")));
     }
 
     #[test]

@@ -41,9 +41,9 @@ struct Rect {
 /// EditorState → resolved absolute rect (w, h) per node id, via the SAME jian
 /// flex pass `snapshot_layout` uses.
 fn resolved_rects(state: &EditorState) -> HashMap<String, Rect> {
-    let scene = op_pen_loader::editor_state_to_layout_scene(state);
+    let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
     let mut map = HashMap::new();
-    for page in &scene.pages {
+    if let Some(page) = scene.active_page() {
         collect_rects(&page.children, &mut map);
     }
     map

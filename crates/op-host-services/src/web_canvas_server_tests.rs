@@ -450,10 +450,14 @@ fn post_mcp_server_rejects_invalid_body_without_changing_settings() {
 
 #[test]
 fn get_document_returns_doc_and_version() {
-    let r = handle_web_canvas_request("GET", "/api/mcp/document", "", &mut fresh_state());
+    let mut state = fresh_state();
+    state.editor.editor_ui.preserve_authored_geometry = true;
+    let r = handle_web_canvas_request("GET", "/api/mcp/document", "", &mut state);
     assert!(r.status.starts_with("200"));
     assert!(r.body.contains(r#""document":"#));
     assert!(r.body.contains(r#""version":0"#));
+    assert!(r.body.contains(r#""activePageIndex":0"#));
+    assert!(r.body.contains(r#""preserveAuthoredGeometry":true"#));
 }
 
 #[test]
@@ -511,12 +515,12 @@ fn post_file_save_requires_a_known_daemon_path() {
 }
 
 #[test]
-fn post_file_save_writes_current_path_and_embedded_active_page_meta() {
+fn post_file_save_writes_current_path_and_embedded_editor_meta() {
     use op_editor_core::PenNodeExt;
 
     let path = write_temp_op("save-target", r#"{"version":"1.0.0","children":[]}"#);
     let mut s = WebCanvasState::new_with_path(EditorState::new(), 3100, Some(path.clone()));
-    let body = r##"{"document":{"version":"1.0.0","children":[],"pages":[{"id":"p1","name":"One","children":[]},{"id":"p2","name":"Two","children":[{"id":"saved-node","type":"rectangle","name":"Saved Rect","x":1,"y":2,"width":80,"height":40,"fill":[{"type":"solid","color":"#123456"}]}]}]},"activePageIndex":1}"##;
+    let body = r##"{"document":{"version":"1.0.0","children":[],"pages":[{"id":"p1","name":"One","children":[]},{"id":"p2","name":"Two","children":[{"id":"saved-node","type":"rectangle","name":"Saved Rect","x":1,"y":2,"width":80,"height":40,"fill":[{"type":"solid","color":"#123456"}]}]}],"editorMeta":{"activePageIndex":1,"preserveAuthoredGeometry":true}},"activePageIndex":1}"##;
 
     let r = handle_web_canvas_request("POST", "/api/file/save", body, &mut s);
 
@@ -524,11 +528,13 @@ fn post_file_save_writes_current_path_and_embedded_active_page_meta() {
     assert!(r.body.contains(r#""ok":true"#), "{}", r.body);
     assert_eq!(s.version, 1);
     assert_eq!(s.editor.ui.active_page_index, 1);
+    assert!(s.editor.editor_ui.preserve_authored_geometry);
     assert_eq!(s.editor.active_children()[0].base().id, "saved-node");
     let saved = std::fs::read_to_string(&path).expect("saved file");
     assert!(saved.contains("saved-node"), "{saved}");
     let saved_json: serde_json::Value = serde_json::from_str(&saved).expect("saved json");
     assert_eq!(saved_json["editorMeta"]["activePageIndex"], 1);
+    assert_eq!(saved_json["editorMeta"]["preserveAuthoredGeometry"], true);
     let mut sidecar = path.clone();
     sidecar.set_extension("op.opmeta");
     assert!(
@@ -537,6 +543,26 @@ fn post_file_save_writes_current_path_and_embedded_active_page_meta() {
     );
     let _ = std::fs::remove_file(path);
     let _ = std::fs::remove_file(sidecar);
+}
+
+#[test]
+fn post_file_save_keeps_document_wrapper_validation_errors() {
+    let path = write_temp_op("save-validation", r#"{"version":"1.0.0","children":[]}"#);
+    let mut state = WebCanvasState::new_with_path(EditorState::new(), 3100, Some(path.clone()));
+
+    let missing = handle_web_canvas_request("POST", "/api/file/save", "{}", &mut state);
+    assert!(missing.status.starts_with("400"), "{}", missing.body);
+    assert!(missing.body.contains("save failed: missing document"));
+
+    let scalar =
+        handle_web_canvas_request("POST", "/api/file/save", r#"{"document":42}"#, &mut state);
+    assert!(scalar.status.starts_with("400"), "{}", scalar.body);
+    assert!(scalar
+        .body
+        .contains("save failed: document must be an object"));
+    assert_eq!(state.version, 0);
+
+    let _ = std::fs::remove_file(path);
 }
 
 #[test]
@@ -1320,6 +1346,129 @@ fn document_post_without_base_version_keeps_legacy_behavior() {
     let mut state = fresh_state();
     assert!(state.apply_document_push(SYNC_BODY, None).unwrap().applied);
     assert!(state.apply_document_push(SYNC_BODY, None).unwrap().applied);
+}
+
+#[test]
+fn document_post_restores_embedded_authored_geometry_mode() {
+    let mut state = fresh_state();
+    let body = r#"{
+      "document":{
+        "version":"1.0.0",
+        "children":[],
+        "editorMeta":{
+          "activePageIndex":0,
+          "preserveAuthoredGeometry":true
+        }
+      }
+    }"#;
+
+    assert!(state.apply_document_push(body, None).unwrap().applied);
+    assert!(state.editor.editor_ui.preserve_authored_geometry);
+}
+
+#[test]
+fn document_post_restores_top_level_authored_geometry_mode() {
+    let mut state = fresh_state();
+    let body = r#"{
+      "document":{"version":"1.0.0","children":[]},
+      "preserveAuthoredGeometry":true
+    }"#;
+
+    assert!(state.apply_document_push(body, None).unwrap().applied);
+    assert!(state.editor.editor_ui.preserve_authored_geometry);
+}
+
+#[test]
+fn document_post_merges_top_level_editor_meta_fields_independently() {
+    let nested = r#"{
+      "document":{
+        "version":"1.0.0",
+        "children":[],
+        "pages":[
+          {"id":"p1","name":"One","children":[]},
+          {"id":"p2","name":"Two","children":[]}
+        ],
+        "editorMeta":{"activePageIndex":1,"preserveAuthoredGeometry":true}
+      },
+      "preserveAuthoredGeometry":false
+    }"#;
+    let mut state = fresh_state();
+    assert!(state.apply_document_push(nested, None).unwrap().applied);
+    assert_eq!(state.editor.ui.active_page_index, 1);
+    assert!(!state.editor.editor_ui.preserve_authored_geometry);
+
+    let active_override = r#"{
+      "document":{
+        "version":"1.0.0",
+        "children":[],
+        "pages":[
+          {"id":"p1","name":"One","children":[]},
+          {"id":"p2","name":"Two","children":[]}
+        ],
+        "editorMeta":{"activePageIndex":1,"preserveAuthoredGeometry":true}
+      },
+      "activePageIndex":0
+    }"#;
+    assert!(
+        state
+            .apply_document_push(active_override, None)
+            .unwrap()
+            .applied
+    );
+    assert_eq!(state.editor.ui.active_page_index, 0);
+    assert!(state.editor.editor_ui.preserve_authored_geometry);
+}
+
+#[test]
+fn legacy_document_post_defaults_missing_editor_meta() {
+    let mut state = fresh_state();
+    state.editor.ui.active_page_index = 7;
+    state.editor.editor_ui.preserve_authored_geometry = true;
+
+    assert!(state.apply_document_push(SYNC_BODY, None).unwrap().applied);
+
+    assert_eq!(state.editor.ui.active_page_index, 0);
+    assert!(!state.editor.editor_ui.preserve_authored_geometry);
+}
+
+#[test]
+fn metadata_only_post_updates_editor_meta_without_replacing_or_bumping_version() {
+    let mut state = fresh_state();
+    let two_pages = r#"{
+      "document":{
+        "version":"1.0.0",
+        "children":[],
+        "pages":[
+          {"id":"p1","name":"One","children":[]},
+          {"id":"p2","name":"Two","children":[]}
+        ]
+      }
+    }"#;
+    assert!(state.apply_document_push(two_pages, None).unwrap().applied);
+    let before = doc_fingerprint(&state);
+    let generation = state.editor.document_generation();
+    let revision = state.editor.document_revision();
+
+    let metadata_only = r##"{
+      "document":{
+        "version":"1.0.0",
+        "children":[{"id":"ignored","type":"rectangle","x":0,"y":0,"width":10,"height":10}]
+      },
+      "activePageIndex":1,
+      "preserveAuthoredGeometry":true,
+      "metadataOnly":true
+    }"##;
+    let outcome = state
+        .apply_document_push(metadata_only, None)
+        .expect("metadata-only push");
+
+    assert!(outcome.applied);
+    assert_eq!(outcome.current_version, before.0);
+    assert_eq!(doc_fingerprint(&state), before);
+    assert_eq!(state.editor.document_generation(), generation);
+    assert_eq!(state.editor.document_revision(), revision);
+    assert_eq!(state.editor.ui.active_page_index, 1);
+    assert!(state.editor.editor_ui.preserve_authored_geometry);
 }
 
 #[test]

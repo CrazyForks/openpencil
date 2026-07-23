@@ -144,6 +144,9 @@ impl ApplicationHandler<DesktopEvent> for DesktopApp {
                 return;
             }
         };
+        if !crate::macos_app::configure_srgb_window(&window) {
+            tracing::warn!("could not configure the AppKit window colour space as sRGB");
+        }
         // IME starts disabled. Once a logical text input takes focus,
         // `sync_native_ime` publishes its caret area before enabling IME so
         // the first macOS candidate window never observes the zero anchor.
@@ -296,10 +299,7 @@ impl ApplicationHandler<DesktopEvent> for DesktopApp {
         // on a multi-second parse.
         if let Some(path) = self.initial_file.take() {
             if op_host_services::doc_io::is_supported_figma_import(&path) {
-                figma_import_session::cancel(&mut self.host, &mut self.current_figma_import);
-                html_import_session::cancel(&mut self.host, &mut self.current_html_import);
-                self.current_figma_import = Some(figma_import_session::spawn(&mut self.host, path));
-                self.request_redraw(true);
+                let _ = self.begin_figma_import(path);
             } else if op_host_services::doc_io::is_supported_html_import(&path) {
                 figma_import_session::cancel(&mut self.host, &mut self.current_figma_import);
                 html_import_session::cancel(&mut self.host, &mut self.current_html_import);
@@ -393,6 +393,11 @@ impl ApplicationHandler<DesktopEvent> for DesktopApp {
                 // repaint here — the `RedrawRequested` handler's a11y push
                 // then republishes a current, full tree.
                 self.request_redraw(true);
+            }
+            DesktopEvent::SaveReady => {
+                if self.poll_background_save() {
+                    self.request_redraw(true);
+                }
             }
         }
     }
@@ -514,6 +519,7 @@ impl ApplicationHandler<DesktopEvent> for DesktopApp {
                 // Clear the drag overlay now that the drop has landed.
                 self.host.editor_state_mut().editor_ui.file_drop_active = false;
                 self.host.mark_editor_state_dirty();
+                self.request_redraw(true);
                 // Drag-and-drop open. `.op` / `.pen` documents route
                 // through the canonical loader; `.fig` Figma exports
                 // route through the background Figma import worker
@@ -522,11 +528,7 @@ impl ApplicationHandler<DesktopEvent> for DesktopApp {
                 // window). Anything else is ignored silently so a
                 // stray drop can't disrupt the current document.
                 if op_host_services::doc_io::is_supported_figma_import(&path) {
-                    figma_import_session::cancel(&mut self.host, &mut self.current_figma_import);
-                    html_import_session::cancel(&mut self.host, &mut self.current_html_import);
-                    self.current_figma_import =
-                        Some(figma_import_session::spawn(&mut self.host, path));
-                    self.request_redraw(true);
+                    let _ = self.begin_figma_import(path);
                 } else if op_host_services::doc_io::is_supported_html_import(&path) {
                     figma_import_session::cancel(&mut self.host, &mut self.current_figma_import);
                     html_import_session::cancel(&mut self.host, &mut self.current_html_import);
@@ -697,7 +699,8 @@ impl ApplicationHandler<DesktopEvent> for DesktopApp {
                     &mut self.current_path,
                     self.window.as_ref(),
                 ) {
-                    figma_import_session::PumpOutcome::CompletedOk => {
+                    figma_import_session::PumpOutcome::CompletedOk
+                    | figma_import_session::PumpOutcome::CompletedSaved => {
                         self.rebind_git_session_for_current_path();
                         // The import installed a fresh `EditorState` whose
                         // revision restarts at 0 AND whose node ids can
@@ -715,6 +718,10 @@ impl ApplicationHandler<DesktopEvent> for DesktopApp {
                     figma_import_session::PumpOutcome::CompletedErr => {
                         self.redraw_dirty = true;
                     }
+                    figma_import_session::PumpOutcome::SelectionReady
+                    | figma_import_session::PumpOutcome::Cancelled => {
+                        self.redraw_dirty = true;
+                    }
                     figma_import_session::PumpOutcome::StillPending
                     | figma_import_session::PumpOutcome::Idle => {}
                 }
@@ -724,7 +731,8 @@ impl ApplicationHandler<DesktopEvent> for DesktopApp {
                     &mut self.current_path,
                     self.window.as_ref(),
                 ) {
-                    figma_import_session::PumpOutcome::CompletedOk => {
+                    figma_import_session::PumpOutcome::CompletedOk
+                    | figma_import_session::PumpOutcome::CompletedSaved => {
                         self.rebind_git_session_for_current_path();
                         // Same fresh-EditorState reasoning as the Figma
                         // pump above: drop stale image-search state.
@@ -734,6 +742,8 @@ impl ApplicationHandler<DesktopEvent> for DesktopApp {
                     figma_import_session::PumpOutcome::CompletedErr => {
                         self.redraw_dirty = true;
                     }
+                    figma_import_session::PumpOutcome::SelectionReady
+                    | figma_import_session::PumpOutcome::Cancelled => {}
                     figma_import_session::PumpOutcome::Idle
                     | figma_import_session::PumpOutcome::StillPending => {}
                 }
@@ -798,8 +808,13 @@ impl ApplicationHandler<DesktopEvent> for DesktopApp {
                     self.host.mark_editor_state_dirty();
                     self.redraw_dirty = true;
                 }
-                self.image_search.enqueue_missing(self.host.editor_state());
-                if self.image_search.poll_into(self.host.editor_state_mut()) {
+                let (editor_state, layout_scene) = self.host.editor_state_mut_and_layout_scene();
+                self.image_search
+                    .enqueue_missing_with_scene(editor_state, layout_scene);
+                if self
+                    .image_search
+                    .poll_into_with_scene(editor_state, layout_scene)
+                {
                     self.host.mark_editor_state_dirty();
                     self.redraw_dirty = true;
                 }
@@ -912,6 +927,7 @@ impl ApplicationHandler<DesktopEvent> for DesktopApp {
                 let should_paint = self.prepare_redraw();
                 if should_paint {
                     self.refresh_host_clock();
+                    let mut painted = false;
                     if let (Some(ctx), Some(backend)) = (self.ctx.as_mut(), self.backend.as_mut()) {
                         frame::paint(
                             ctx,
@@ -921,6 +937,14 @@ impl ApplicationHandler<DesktopEvent> for DesktopApp {
                             self.viewport_height,
                             self.dpi,
                         );
+                        painted = true;
+                    }
+                    if painted {
+                        let page = self.active_page_paint_identity();
+                        if self.last_painted_page.as_ref() != Some(&page) {
+                            self.last_painted_page = Some(page);
+                            crate::heap_pressure::schedule_relief("page first paint");
+                        }
                     }
                     // Paint publishes exact input geometry. Refresh the OS
                     // candidate anchor now, before any future Preedit event.
@@ -956,7 +980,10 @@ impl ApplicationHandler<DesktopEvent> for DesktopApp {
                     event_loop.set_control_flow(ControlFlow::WaitUntil(
                         Instant::now() + Duration::from_millis(33),
                     ));
-                } else if self.current_figma_import.is_some()
+                } else if self
+                    .current_figma_import
+                    .as_ref()
+                    .is_some_and(figma_import_session::FigmaImportSession::is_worker_pending)
                     || self.current_html_import.is_some()
                     || self.pending_figma_paste.is_some()
                     || self.pending_html_paste.is_some()
@@ -1264,6 +1291,9 @@ impl ApplicationHandler<DesktopEvent> for DesktopApp {
                         eui.export_dialog_open = true;
                         self.host.mark_editor_state_dirty();
                         self.request_redraw(true);
+                    } else if matches!(action, op_editor_core::editor_ui_state::FileAction::Save) {
+                        self.host.commit_variable_row_focus_if_any_pub();
+                        self.request_background_save();
                     } else {
                         // The file menu just closed (file_menu_open=false set
                         // in dispatch_file_menu_press), but `run_action` opens
@@ -1284,56 +1314,61 @@ impl ApplicationHandler<DesktopEvent> for DesktopApp {
                                 self.dpi,
                             );
                         }
-                        match persistence::run_action(
-                            action,
-                            &mut self.host,
-                            &mut self.current_path,
-                            self.window.as_ref(),
-                        ) {
-                            // `mark_document_saved` cancels any
-                            // in-flight Figma import internally, so a
-                            // stale worker can't overwrite the fresh
-                            // document when its result lands.
-                            op_host_services::doc_io::ActionOutcome::Saved => {
-                                self.mark_document_saved()
+                        if matches!(action, op_editor_core::editor_ui_state::FileAction::SaveAs) {
+                            self.host.commit_variable_row_focus_if_any_pub();
+                            self.request_background_save_as();
+                        } else {
+                            match persistence::run_action(
+                                action,
+                                &mut self.host,
+                                &mut self.current_path,
+                                self.window.as_ref(),
+                            ) {
+                                // `mark_document_saved` cancels any
+                                // in-flight Figma import internally, so a
+                                // stale worker can't overwrite the fresh
+                                // document when its result lands.
+                                op_host_services::doc_io::ActionOutcome::Saved => {
+                                    self.mark_document_saved()
+                                }
+                                // User picked a `.fig`; confirm its output,
+                                // then replace any prior import session and let
+                                // `pump` apply the document once parsing finishes.
+                                op_host_services::doc_io::ActionOutcome::FigmaImportStarted(
+                                    path,
+                                ) => {
+                                    let _ = self.begin_figma_import(path);
+                                }
+                                op_host_services::doc_io::ActionOutcome::FigmaImportSelection(
+                                    selection,
+                                ) => {
+                                    if figma_import_session::finish_selection(
+                                        &mut self.host,
+                                        &mut self.current_figma_import,
+                                        selection,
+                                    ) {
+                                        self.request_redraw(true);
+                                    }
+                                }
+                                // User picked a saved page or ZIP project; same
+                                // background session discipline as the Figma branch.
+                                op_host_services::doc_io::ActionOutcome::HtmlImportStarted(
+                                    path,
+                                ) => {
+                                    figma_import_session::cancel(
+                                        &mut self.host,
+                                        &mut self.current_figma_import,
+                                    );
+                                    html_import_session::cancel(
+                                        &mut self.host,
+                                        &mut self.current_html_import,
+                                    );
+                                    self.current_html_import =
+                                        Some(html_import_session::spawn(&mut self.host, path));
+                                    self.request_redraw(true);
+                                }
+                                op_host_services::doc_io::ActionOutcome::Noop => {}
                             }
-                            // User picked a `.fig`; spin up the worker
-                            // session and let `pump` apply the document
-                            // once parsing finishes. Cancel any prior
-                            // in-flight session first so two imports
-                            // in quick succession don't race.
-                            op_host_services::doc_io::ActionOutcome::FigmaImportStarted(path) => {
-                                // Cancel BOTH workers: a late result from
-                                // the other importer would overwrite the
-                                // document this one is about to produce.
-                                figma_import_session::cancel(
-                                    &mut self.host,
-                                    &mut self.current_figma_import,
-                                );
-                                html_import_session::cancel(
-                                    &mut self.host,
-                                    &mut self.current_html_import,
-                                );
-                                self.current_figma_import =
-                                    Some(figma_import_session::spawn(&mut self.host, path));
-                                self.request_redraw(true);
-                            }
-                            // User picked a saved page or ZIP project; same
-                            // background session discipline as the Figma branch.
-                            op_host_services::doc_io::ActionOutcome::HtmlImportStarted(path) => {
-                                figma_import_session::cancel(
-                                    &mut self.host,
-                                    &mut self.current_figma_import,
-                                );
-                                html_import_session::cancel(
-                                    &mut self.host,
-                                    &mut self.current_html_import,
-                                );
-                                self.current_html_import =
-                                    Some(html_import_session::spawn(&mut self.host, path));
-                                self.request_redraw(true);
-                            }
-                            op_host_services::doc_io::ActionOutcome::Noop => {}
                         }
                     }
                 }
@@ -1642,7 +1677,10 @@ impl DesktopApp {
             || self.current_codegen.is_some()
             || self.current_design_md.is_some()
             || !self.sub_agents.is_empty()
-            || self.current_figma_import.is_some()
+            || self
+                .current_figma_import
+                .as_ref()
+                .is_some_and(figma_import_session::FigmaImportSession::is_worker_pending)
             || self.current_html_import.is_some()
             || self.pending_figma_paste.is_some()
             || self.pending_html_paste.is_some()

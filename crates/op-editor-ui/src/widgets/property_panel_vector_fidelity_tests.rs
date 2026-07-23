@@ -1,8 +1,9 @@
 use super::property_panel::{PropertyPanel, PropertyPanelAction};
 use super::property_panel_sections as sections;
-use super::property_panel_test_support::{state_from, visible_for};
+use super::property_panel_test_support::{state_from, visible_for, CountingBackend};
+use crate::widgets::{PaintCx, Widget};
 use crate::{Point2D, Rect};
-use op_editor_core::{EditorState, NodeId};
+use op_editor_core::{EditorState, NodeId, PropertyFocus};
 
 #[test]
 fn per_corner_expand_emits_grid_focuses_and_shifts_later_sections() {
@@ -39,11 +40,20 @@ fn per_corner_expand_emits_grid_focuses_and_shifts_later_sections() {
         &panel.snapshot.fills,
         &panel.snapshot.effects,
     );
+    assert!(inputs
+        .iter()
+        .all(|(focus, _)| *focus != PropertyFocus::PositionR));
+    let collapsed_inputs = sections::editable_input_rects(
+        rect,
+        visible_for(&collapsed),
+        &collapsed.snapshot.fills,
+        &collapsed.snapshot.effects,
+    );
     for focus in [
-        op_editor_core::PropertyFocus::CornerTL,
-        op_editor_core::PropertyFocus::CornerTR,
-        op_editor_core::PropertyFocus::CornerBL,
-        op_editor_core::PropertyFocus::CornerBR,
+        PropertyFocus::CornerTL,
+        PropertyFocus::CornerTR,
+        PropertyFocus::CornerBL,
+        PropertyFocus::CornerBR,
     ] {
         let (_, target) = inputs
             .iter()
@@ -60,6 +70,36 @@ fn per_corner_expand_emits_grid_focuses_and_shifts_later_sections() {
             Some(focus)
         );
     }
+    let old_uniform_rect = collapsed_inputs
+        .iter()
+        .find(|(focus, _)| *focus == PropertyFocus::PositionR)
+        .expect("collapsed per-corner editor exposes the uniform radius input")
+        .1;
+    let old_uniform_center = Point2D::new(
+        old_uniform_rect.origin.x + old_uniform_rect.size.x / 2.0,
+        old_uniform_rect.origin.y + old_uniform_rect.size.y / 2.0,
+    );
+    assert_eq!(panel.hit_test(rect, old_uniform_center), None);
+    assert_eq!(panel.hit_test_action(rect, old_uniform_center), None);
+
+    let paint_texts = |panel: &PropertyPanel| {
+        let mut backend = CountingBackend::default();
+        {
+            let mut cx = PaintCx {
+                backend: &mut backend,
+            };
+            panel.paint(&mut cx, rect);
+        }
+        backend.texts
+    };
+    let collapsed_texts = paint_texts(&collapsed);
+    assert!(collapsed_texts.iter().any(|text| text == "R"));
+    let expanded_texts = paint_texts(&panel);
+    assert!(expanded_texts.iter().all(|text| text != "R"));
+    for prefix in ["TL", "TR", "BL", "BR"] {
+        assert!(expanded_texts.iter().any(|text| text == prefix));
+    }
+
     let size_y = |panel: &PropertyPanel| {
         sections::editable_input_rects(
             rect,
@@ -68,7 +108,7 @@ fn per_corner_expand_emits_grid_focuses_and_shifts_later_sections() {
             &panel.snapshot.effects,
         )
         .into_iter()
-        .find(|(focus, _)| *focus == op_editor_core::PropertyFocus::SizeW)
+        .find(|(focus, _)| *focus == PropertyFocus::SizeW)
         .unwrap()
         .1
         .origin

@@ -1,49 +1,92 @@
-//! Background `.fig` import session — moves the multi-second
-//! `parse_fig_binary` call off the main thread so the editor UI keeps
-//! repainting (cursor moves, overlay animation) while a large Figma
-//! file decodes.
-//!
-//! Lifecycle, mirrors `chat_session`:
-//!   1. `spawn` — kick off file read + parse on a `std::thread`,
-//!      returning a session handle holding the receiver.
-//!   2. `pump` — called every `RedrawRequested`; non-blocking
-//!      `try_recv` on the channel. Returns whether the host state
-//!      changed (so the caller can mark the next frame dirty).
-//!   3. `is_pending` — true while the worker is still running. The
-//!      app handler reads this to schedule periodic wakes so the
-//!      "正在解析…" overlay keeps repainting under `WaitUntil` flow.
-//!
-//! On result land:
-//!   - `Ok(import)` → swap `EditorState` to the imported document and
-//!     clear `figma_import_in_progress`.
-//!   - `Err(e)` → show the native error dialog + clear the flag.
+//! Two-stage background `.fig` import: prepare once, optionally wait
+//! for a page choice, then convert the selected scope off-thread.
 
 use op_editor_core::EditorState;
 use op_host_native::WidgetHostNative;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
 
 use crate::persistence::show_error_dialog_public;
-use op_host_services::doc_io::ErrorKind;
+use op_host_services::doc_io::{commit_staged_document, save_to_path, ErrorKind};
 
 mod image_sources;
 use image_sources::{bind_import_thumbnails, PendingImportThumbs};
+mod output_guard;
+pub(crate) use output_guard::{capture_output_state, OutputEntryState};
+mod worker_control;
+use worker_control::CancellationToken;
+#[cfg(test)]
+mod cancellation_tests;
 
-/// Successful worker output. Keep this Skia-free: building
-/// `LayoutScene` runs text measurement, which can contend with the
-/// main-thread painter and freeze the progress overlay.
+/// Successful Skia-free worker output. `LayoutScene` stays on the UI thread.
 pub struct PreparedImport {
     pub state: EditorState,
     pub warnings: Vec<String>,
 }
 
-/// One in-flight `.fig` parse — the source path (for the error
-/// dialog) plus the worker-thread receiver.
+type PrepareResult = Result<op_figma::PreparedFig, String>;
+type ConvertResult = Result<PreparedImport, String>;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ImportOutputMode {
+    CreateFixed,
+    ReplaceFixed { expected: OutputEntryState },
+    NumberedCopy,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ExistingOutputDecision {
+    Replace,
+    NumberedCopy,
+    Cancel,
+}
+
+struct PersistedFile {
+    // Publication is durable once the completed sibling atomically replaces
+    // the fixed output. If UI ownership changes in the tiny post-publish race,
+    // leave that valid file in place; deleting by path could race another
+    // importer replacing the same destination.
+    output_path: PathBuf,
+}
+
+impl PersistedFile {
+    fn new(output_path: PathBuf) -> Self {
+        Self { output_path }
+    }
+
+    fn path(&self) -> &Path {
+        &self.output_path
+    }
+
+    fn commit(self) -> PathBuf {
+        self.output_path
+    }
+}
+
+struct CompletedImport {
+    prepared: PreparedImport,
+    persisted: Result<PersistedFile, String>,
+}
+
+type PersistResult = Result<CompletedImport, String>;
+
+static IMPORT_OUTPUT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+enum SessionStage {
+    Preparing(Receiver<PrepareResult>),
+    AwaitingSelection(Option<op_figma::PreparedFig>),
+    Converting(Receiver<PersistResult>),
+}
+
+/// One import; its prepared tree is consumed once after page selection.
 pub struct FigmaImportSession {
     path: PathBuf,
-    rx: Receiver<Result<PreparedImport, String>>,
+    stage: SessionStage,
+    cancellation: CancellationToken,
+    output_mode: ImportOutputMode,
 }
 
 impl FigmaImportSession {
@@ -51,71 +94,174 @@ impl FigmaImportSession {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    pub fn is_worker_pending(&self) -> bool {
+        matches!(
+            self.stage,
+            SessionStage::Preparing(_) | SessionStage::Converting(_)
+        )
+    }
 }
 
-/// Spawn a worker thread that reads `path`, parses it with
-/// `op_figma::parse_fig_binary` in `Preserve` mode, and posts the
-/// result back through a channel. Returns the session handle.
-pub fn spawn(host: &mut WidgetHostNative, path: PathBuf) -> FigmaImportSession {
+impl Drop for FigmaImportSession {
+    fn drop(&mut self) {
+        self.cancellation.cancel();
+    }
+}
+
+fn select_output_mode(
+    source_path: &Path,
+    choose_existing: impl FnOnce(&Path) -> ExistingOutputDecision,
+) -> Result<Option<ImportOutputMode>, String> {
+    let output_path = adjacent_op_base_path(source_path)?;
+    if capture_output_state(&output_path)?.is_missing() {
+        return Ok(Some(ImportOutputMode::CreateFixed));
+    }
+    Ok(match choose_existing(&output_path) {
+        ExistingOutputDecision::Replace => Some(ImportOutputMode::ReplaceFixed {
+            // Capture after the modal returns Yes so edits made while the
+            // dialog was open are part of the state the user approved.
+            expected: capture_output_state(&output_path)?,
+        }),
+        ExistingOutputDecision::NumberedCopy => Some(ImportOutputMode::NumberedCopy),
+        ExistingOutputDecision::Cancel => None,
+    })
+}
+
+pub(crate) fn prompt_output_mode(
+    host: &WidgetHostNative,
+    source_path: &Path,
+) -> Option<ImportOutputMode> {
+    let locale = host.editor_state().editor_ui.locale;
+    match select_output_mode(source_path, |output_path| {
+        let name = output_path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| output_path.display().to_string());
+        let body = op_i18n::translate(locale, "figma.overwriteBody").replace("{{name}}", &name);
+        match rfd::MessageDialog::new()
+            .set_title(op_i18n::translate(locale, "figma.overwriteTitle"))
+            .set_description(&body)
+            .set_level(rfd::MessageLevel::Warning)
+            .set_buttons(rfd::MessageButtons::YesNoCancel)
+            .show()
+        {
+            rfd::MessageDialogResult::Yes => ExistingOutputDecision::Replace,
+            rfd::MessageDialogResult::No => ExistingOutputDecision::NumberedCopy,
+            _ => ExistingOutputDecision::Cancel,
+        }
+    }) {
+        Ok(mode) => mode,
+        Err(error) => {
+            show_error_dialog_public(host, ErrorKind::Save, Some(source_path), &error);
+            None
+        }
+    }
+}
+
+/// Spawn an import whose adjacent-file decision has already been approved.
+/// Keeping the prompt outside this function lets callers leave the current
+/// import and document untouched when the user cancels the dialog.
+pub(crate) fn spawn_approved(
+    host: &mut WidgetHostNative,
+    path: PathBuf,
+    output_mode: ImportOutputMode,
+) -> FigmaImportSession {
     let (tx, rx) = mpsc::channel();
-    // Flip the overlay flag so paint shows "正在解析…" feedback as
-    // soon as the next frame fires. We deliberately do NOT call
-    // `mark_editor_state_dirty()` here: that would set
-    // `editor_state_dirty=true`, which triggers
-    // `refresh_layout_scene` on the next paint and rebuilds the
-    // layout against the OLD document — wasted work since the
-    // import is about to replace `editor_state` whole-cloth. The
-    // overlay widget reads `editor_ui.figma_import_in_progress`
-    // directly, not through `layout_scene`, so the cached layout
-    // from before the spawn is fine to keep painting underneath.
+    let cancellation = CancellationToken::default();
+    // The overlay reads this UI flag directly. Do not dirty the old document's
+    // layout: the import will replace `editor_state` whole-cloth.
     let ui = &mut host.editor_state_mut().editor_ui;
     ui.import_source = op_editor_core::figma_import_state::ImportSource::Figma;
+    ui.figma_import_open = false;
     ui.figma_import_in_progress = true;
+    clear_page_selector(ui);
 
     let path_for_thread = path.clone();
+    let worker_cancellation = cancellation.clone();
     thread::Builder::new()
         .name("op-figma-import".into())
         .spawn(move || {
-            let result = parse_path(&path_for_thread);
+            let Some(_permit) = worker_cancellation.worker_permit() else {
+                return;
+            };
+            let result = prepare_path(&path_for_thread, &worker_cancellation);
             // Recv side may be gone if the user closed the app
             // mid-parse; tolerate the SendError silently.
-            let _ = tx.send(result);
+            if !worker_cancellation.is_cancelled() {
+                let _ = tx.send(result);
+            }
         })
         .expect("spawn op-figma-import worker");
 
-    FigmaImportSession { path, rx }
+    FigmaImportSession {
+        path,
+        stage: SessionStage::Preparing(rx),
+        cancellation,
+        output_mode,
+    }
 }
 
-fn parse_path(path: &Path) -> Result<PreparedImport, String> {
+fn prepare_path(path: &Path, cancellation: &CancellationToken) -> PrepareResult {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    if cancellation.is_cancelled() {
+        return Err("Figma import was cancelled".to_string());
+    }
     let file_name = path
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("Figma Import");
-    // Down-scale every referenced bitmap before it is embedded as
-    // base64 — an image-heavy `.fig` can carry hundreds of MB of
-    // full-resolution photos, which would otherwise bloat the
-    // document, the scene rebuild, and every paint-time decode. This
-    // is CPU raster work (decode/resample/encode); unlike LayoutScene
-    // text measurement it does not touch FontMgr, so it is safe on
-    // this worker thread.
+    let prepared =
+        op_figma::prepare_fig_binary(&bytes, file_name, op_figma::FigLayoutMode::Preserve)
+            .map_err(|e| e.to_string())?;
+    if cancellation.is_cancelled() {
+        return Err("Figma import was cancelled".to_string());
+    }
+    Ok(prepared)
+}
+
+fn convert_prepared(
+    prepared: op_figma::PreparedFig,
+    selection: op_editor_core::FigmaImportSelection,
+    cancellation: &CancellationToken,
+) -> ConvertResult {
+    if cancellation.is_cancelled() {
+        return Err("Figma import was cancelled".to_string());
+    }
     let pending_thumbs = RefCell::new(PendingImportThumbs::default());
     let transform = |bytes: &[u8]| {
+        if cancellation.is_cancelled() {
+            return Some(Vec::new());
+        }
         let prepared = crate::image_downscale::prepare_figma_import_image(bytes);
+        if cancellation.is_cancelled() {
+            return Some(Vec::new());
+        }
         if let Some(thumb) = prepared.thumbnail {
             let final_bytes = prepared.replacement.as_deref().unwrap_or(bytes);
             pending_thumbs.borrow_mut().record(final_bytes, thumb);
         }
         prepared.replacement
     };
-    let import = op_figma::parse_fig_binary_with_images(
-        &bytes,
-        file_name,
-        op_figma::FigLayoutMode::Preserve,
-        Some(&transform),
-    )
+    let import = match selection {
+        op_editor_core::FigmaImportSelection::Page(index) => {
+            prepared.into_page_with_images(index, Some(&transform))
+        }
+        op_editor_core::FigmaImportSelection::All => {
+            prepared.into_all_pages_with_images(Some(&transform))
+        }
+        op_editor_core::FigmaImportSelection::Cancel => {
+            return Err("Figma import was cancelled".to_string());
+        }
+    }
     .map_err(|e| e.to_string())?;
+    if cancellation.is_cancelled() {
+        return Err("Figma import was cancelled".to_string());
+    }
     let mut state = EditorState::from_document(import.document);
+    if cancellation.is_cancelled() {
+        return Err("Figma import was cancelled".to_string());
+    }
     bind_import_thumbnails(&state.doc, &mut pending_thumbs.borrow_mut());
     state.editor_ui.preserve_authored_geometry = true;
     Ok(PreparedImport {
@@ -124,14 +270,344 @@ fn parse_path(path: &Path) -> Result<PreparedImport, String> {
     })
 }
 
-/// Returns true when the session resolved and the host state changed
-/// (caller should mark the next frame dirty). Returns false when the
-/// worker is still running or no session is active.
-///
-/// On success this drains the receiver, applies the imported
-/// document, refreshes the host title, and clears the
-/// in-progress flag. On failure it pops the native error dialog. In
-/// either case the `*session` slot becomes `None`.
+#[cfg(test)]
+fn parse_path(path: &Path) -> Result<PreparedImport, String> {
+    let cancellation = CancellationToken::default();
+    convert_prepared(
+        prepare_path(path, &cancellation)?,
+        op_editor_core::FigmaImportSelection::All,
+        &cancellation,
+    )
+}
+
+fn conversion_receiver(
+    prepared: op_figma::PreparedFig,
+    selection: op_editor_core::FigmaImportSelection,
+    cancellation: CancellationToken,
+    source_path: PathBuf,
+    output_mode: ImportOutputMode,
+) -> Receiver<PersistResult> {
+    let (tx, rx) = mpsc::channel();
+    thread::Builder::new()
+        .name("op-figma-convert".into())
+        .spawn(move || {
+            let Some(_permit) = cancellation.worker_permit() else {
+                return;
+            };
+            let result = convert_prepared(prepared, selection, &cancellation).map(|prepared| {
+                persist_import_next_to_source(prepared, &source_path, output_mode, &cancellation)
+            });
+            if !cancellation.is_cancelled() {
+                let _ = tx.send(result);
+            }
+        })
+        .expect("spawn op-figma-convert worker");
+    rx
+}
+
+/// The primary imported document is the fixed sibling `Design.op`. Re-imports
+/// replace it only after confirmation; keeping both publishes `Design (N).op`.
+fn adjacent_op_base_path(source_path: &Path) -> Result<PathBuf, String> {
+    if source_path.file_name().is_none() {
+        return Err("Figma import path has no file name".to_string());
+    }
+    let output_path = source_path.with_extension("op");
+    if output_path == source_path {
+        return Err("Figma import source already has the .op extension".to_string());
+    }
+    Ok(output_path)
+}
+
+fn import_staging_path(source_path: &Path) -> Result<PathBuf, String> {
+    let base = adjacent_op_base_path(source_path)?;
+    let parent = base.parent().unwrap_or_else(|| Path::new(""));
+    let name = base
+        .file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_else(|| "Figma Import.op".into());
+    for _ in 0..100 {
+        let sequence = IMPORT_OUTPUT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let candidate = parent.join(format!(
+            ".{name}.op-import-{}-{sequence}",
+            std::process::id()
+        ));
+        if !candidate.try_exists().map_err(|error| {
+            format!(
+                "could not inspect import staging path {}: {error}",
+                candidate.display()
+            )
+        })? {
+            return Ok(candidate);
+        }
+    }
+    Err(format!(
+        "could not allocate an import staging file beside {}",
+        source_path.display()
+    ))
+}
+
+fn remove_import_artifact(path: &Path) {
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => eprintln!(
+            "[import-figma] could not remove staging artifact {}: {error}",
+            path.display()
+        ),
+    }
+}
+
+fn remove_legacy_sidecar(path: &Path) {
+    match std::fs::remove_file(op_host_services::doc_io::sidecar_path(path)) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => eprintln!(
+            "[import-figma] stale view-state sidecar cleanup failed for {}: {error}",
+            path.display()
+        ),
+    }
+}
+
+fn publish_new_link(staging_path: &Path, output_path: &Path) -> Result<PathBuf, std::io::Error> {
+    std::fs::hard_link(staging_path, output_path)?;
+    remove_legacy_sidecar(output_path);
+    Ok(output_path.to_path_buf())
+}
+
+fn publish_numbered_copy(staging_path: &Path, source_path: &Path) -> Result<PathBuf, String> {
+    let base = adjacent_op_base_path(source_path)?;
+    let parent = base.parent().unwrap_or_else(|| Path::new(""));
+    let stem = base
+        .file_stem()
+        .map(|stem| stem.to_string_lossy())
+        .unwrap_or_else(|| "Figma Import".into());
+    for suffix in 1..=10_000 {
+        let candidate = parent.join(format!("{stem} ({suffix}).op"));
+        match publish_new_link(staging_path, &candidate) {
+            Ok(path) => return Ok(path),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!(
+                    "could not publish converted OpenPencil document {}: {error}",
+                    candidate.display()
+                ));
+            }
+        }
+    }
+    Err(format!(
+        "could not find an unused OP file name beside {}",
+        source_path.display()
+    ))
+}
+
+fn publish_staged_op(
+    staging_path: &Path,
+    source_path: &Path,
+    output_mode: ImportOutputMode,
+    cancellation: &CancellationToken,
+) -> Result<PathBuf, String> {
+    let output_path = adjacent_op_base_path(source_path)?;
+    if cancellation.is_cancelled() {
+        return Err("Figma import was cancelled".to_string());
+    }
+    match output_mode {
+        ImportOutputMode::ReplaceFixed { expected } => {
+            let unchanged = capture_output_state(&output_path)
+                .map(|current| current == expected)
+                .unwrap_or_else(|error| {
+                    eprintln!(
+                        "[import-figma] fixed output could not be revalidated; preserving it: {error}"
+                    );
+                    false
+                });
+            if !unchanged {
+                // Consent applied to the exact entry observed after Yes. A
+                // later edit, replacement, deletion, or creation is a new
+                // state; preserve it and publish without another worker-side
+                // prompt.
+                return publish_numbered_copy(staging_path, source_path);
+            }
+            if expected.is_missing() {
+                return match publish_new_link(staging_path, &output_path) {
+                    Ok(path) => Ok(path),
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                        publish_numbered_copy(staging_path, source_path)
+                    }
+                    Err(error) => Err(format!(
+                        "could not publish converted OpenPencil document {}: {error}",
+                        output_path.display()
+                    )),
+                };
+            }
+            commit_staged_document(staging_path, &output_path).map_err(|error| {
+                format!(
+                    "could not publish converted OpenPencil document {}: {error}",
+                    output_path.display()
+                )
+            })?;
+            Ok(output_path)
+        }
+        ImportOutputMode::NumberedCopy => publish_numbered_copy(staging_path, source_path),
+        ImportOutputMode::CreateFixed => match publish_new_link(staging_path, &output_path) {
+            Ok(path) => Ok(path),
+            // A fixed file appeared after the initial existence check. Never
+            // overwrite it without consent; preserve both with a numbered copy.
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                publish_numbered_copy(staging_path, source_path)
+            }
+            Err(error) => Err(format!(
+                "could not publish converted OpenPencil document {}: {error}",
+                output_path.display()
+            )),
+        },
+    }
+}
+
+/// Persist on the conversion worker before moving the imported state to the
+/// UI thread. This keeps the large canonical serialization off the event loop
+/// and makes the returned path a truthful, already-committed `current_path`.
+fn persist_import_next_to_source(
+    prepared: PreparedImport,
+    source_path: &Path,
+    output_mode: ImportOutputMode,
+    cancellation: &CancellationToken,
+) -> CompletedImport {
+    let persisted = (|| {
+        if cancellation.is_cancelled() {
+            return Err("Figma import was cancelled".to_string());
+        }
+        let staging_path = import_staging_path(source_path)?;
+        if let Err(error) = save_to_path(&prepared.state, &staging_path) {
+            remove_import_artifact(&staging_path);
+            return Err(format!(
+                "could not write converted OpenPencil document beside {}: {error}",
+                source_path.display()
+            ));
+        }
+        if cancellation.is_cancelled() {
+            remove_import_artifact(&staging_path);
+            return Err("Figma import was cancelled".to_string());
+        }
+        let output_path = publish_staged_op(&staging_path, source_path, output_mode, cancellation);
+        remove_import_artifact(&staging_path);
+        Ok(PersistedFile::new(output_path?))
+    })();
+    CompletedImport {
+        prepared,
+        persisted,
+    }
+}
+
+fn clear_page_selector(ui: &mut op_editor_core::editor_ui_state::EditorUiState) {
+    ui.figma_import_pages.clear();
+    ui.figma_import_page_select = Default::default();
+    ui.figma_import_hover = None;
+}
+
+fn start_conversion(
+    host: &mut WidgetHostNative,
+    session: &mut FigmaImportSession,
+    prepared: op_figma::PreparedFig,
+    selection: op_editor_core::FigmaImportSelection,
+) {
+    let ui = &mut host.editor_state_mut().editor_ui;
+    ui.figma_import_open = false;
+    ui.figma_import_in_progress = true;
+    clear_page_selector(ui);
+    let source_path = session.path.clone();
+    session.stage = SessionStage::Converting(conversion_receiver(
+        prepared,
+        selection,
+        session.cancellation.clone(),
+        source_path,
+        session.output_mode,
+    ));
+    host.mark_editor_state_dirty();
+}
+
+/// Consume the prepared tree after a modal page/all/cancel choice.
+/// Returns true when an awaiting session handled the choice.
+pub fn finish_selection(
+    host: &mut WidgetHostNative,
+    session: &mut Option<FigmaImportSession>,
+    selection: op_editor_core::FigmaImportSelection,
+) -> bool {
+    if selection == op_editor_core::FigmaImportSelection::Cancel {
+        let handled = session.is_some();
+        cancel(host, session);
+        return handled;
+    }
+    let Some(sess) = session.as_mut() else {
+        return false;
+    };
+    let SessionStage::AwaitingSelection(prepared) = &mut sess.stage else {
+        return false;
+    };
+    let Some(prepared) = prepared.take() else {
+        return false;
+    };
+    start_conversion(host, sess, prepared, selection);
+    true
+}
+
+fn apply_completed_import<F>(
+    host: &mut WidgetHostNative,
+    completed: CompletedImport,
+    current_path: &mut Option<PathBuf>,
+    window: Option<&winit::window::Window>,
+    report_save_failure: F,
+) -> PumpOutcome
+where
+    F: FnOnce(&WidgetHostNative, &str),
+{
+    let CompletedImport {
+        mut prepared,
+        persisted,
+    } = completed;
+    for warning in &prepared.warnings {
+        eprintln!("[import-figma] warning: {warning}");
+    }
+    if let Ok(saved) = &persisted {
+        op_host_services::doc_io::set_file_name_display(&mut prepared.state, Some(saved.path()));
+        prepared.state.mark_saved_revision();
+    } else {
+        // Conversion succeeded but the generated OP did not. Keep the
+        // imported design open as unsaved work so Save routes through Save As
+        // and the close prompt cannot discard it silently.
+        prepared.state.mark_document_changed();
+    }
+    // Swap in the parsed state. The worker deliberately did not build a
+    // LayoutScene because that touches Skia / FontMgr and can block the
+    // main-thread progress overlay.
+    host.install_imported_state_with_drop_hook(prepared.state, || {
+        crate::heap_pressure::schedule_relief("Figma replaced-document drop");
+    });
+    match persisted {
+        Ok(saved) => {
+            let output_path = saved.commit();
+            crate::settings_io::touch_recent(host, &output_path);
+            *current_path = Some(output_path);
+            refresh_title(current_path, window);
+            PumpOutcome::CompletedSaved
+        }
+        Err(error) => {
+            eprintln!("[import-figma] adjacent OP save failed: {error}");
+            *current_path = None;
+            refresh_title(current_path, window);
+            let detail = format!(
+                "{error}\n\nThe imported design is open but unsaved. Use Save As to choose another location."
+            );
+            report_save_failure(host, &detail);
+            PumpOutcome::CompletedOk
+        }
+    }
+}
+
+/// Non-blocking session drain. A successful conversion applies the imported
+/// document and binds its generated OP path. A conversion failure leaves the
+/// old document in place; an adjacent-file write failure installs the result
+/// as dirty, clears `current_path`, and asks the user to Save As. Every terminal
+/// outcome clears the `*session` slot.
 pub fn pump(
     host: &mut WidgetHostNative,
     session: &mut Option<FigmaImportSession>,
@@ -141,23 +617,74 @@ pub fn pump(
     let Some(sess) = session.as_mut() else {
         return PumpOutcome::Idle;
     };
-    match sess.rx.try_recv() {
-        Ok(Ok(prepared)) => {
-            for warning in &prepared.warnings {
-                eprintln!("[import-figma] warning: {warning}");
+    enum Event {
+        Prepared(op_figma::PreparedFig),
+        Converted(Box<CompletedImport>),
+        Error(String),
+        Disconnected,
+        Pending,
+        Cancelled,
+    }
+    let event = match &mut sess.stage {
+        SessionStage::Preparing(rx) => match rx.try_recv() {
+            Ok(Ok(prepared)) => Event::Prepared(prepared),
+            Ok(Err(error)) => Event::Error(error),
+            Err(TryRecvError::Empty) => Event::Pending,
+            Err(TryRecvError::Disconnected) => Event::Disconnected,
+        },
+        SessionStage::AwaitingSelection(_) => {
+            if host.editor_state().editor_ui.figma_import_open {
+                Event::Pending
+            } else {
+                Event::Cancelled
             }
-            // Swap in the parsed state. The worker deliberately did
-            // not build a LayoutScene because that touches Skia /
-            // FontMgr and can block the main-thread progress overlay.
-            host.install_imported_state(prepared.state);
-            // Imported docs have no `.op` path; next Save routes via
-            // Save As — matches the synchronous import behaviour.
-            *current_path = None;
-            refresh_title(current_path, window);
-            *session = None;
-            PumpOutcome::CompletedOk
         }
-        Ok(Err(e)) => {
+        SessionStage::Converting(rx) => match rx.try_recv() {
+            Ok(Ok(prepared)) => Event::Converted(Box::new(prepared)),
+            Ok(Err(error)) => Event::Error(error),
+            Err(TryRecvError::Empty) => Event::Pending,
+            Err(TryRecvError::Disconnected) => Event::Disconnected,
+        },
+    };
+    match event {
+        Event::Prepared(prepared) if prepared.pages().len() > 1 => {
+            let pages = prepared
+                .pages()
+                .iter()
+                .map(|page| op_editor_core::FigmaImportPage {
+                    name: page.name.clone(),
+                    layer_count: page.child_count,
+                })
+                .collect();
+            let ui = &mut host.editor_state_mut().editor_ui;
+            ui.import_source = op_editor_core::figma_import_state::ImportSource::Figma;
+            ui.figma_import_pages = pages;
+            ui.figma_import_page_select = Default::default();
+            ui.figma_import_page_select.open = true;
+            ui.figma_import_open = true;
+            ui.figma_import_in_progress = false;
+            sess.stage = SessionStage::AwaitingSelection(Some(prepared));
+            host.mark_editor_state_dirty();
+            PumpOutcome::SelectionReady
+        }
+        Event::Prepared(prepared) => {
+            start_conversion(
+                host,
+                sess,
+                prepared,
+                op_editor_core::FigmaImportSelection::All,
+            );
+            PumpOutcome::StillPending
+        }
+        Event::Converted(completed) => {
+            let outcome =
+                apply_completed_import(host, *completed, current_path, window, |host, detail| {
+                    show_error_dialog_public(host, ErrorKind::Save, None, detail);
+                });
+            *session = None;
+            outcome
+        }
+        Event::Error(e) => {
             eprintln!("[import-figma] {e}");
             show_error_dialog_public(host, ErrorKind::Open, Some(&sess.path), &e);
             host.editor_state_mut().editor_ui.figma_import_in_progress = false;
@@ -165,8 +692,12 @@ pub fn pump(
             *session = None;
             PumpOutcome::CompletedErr
         }
-        Err(TryRecvError::Empty) => PumpOutcome::StillPending,
-        Err(TryRecvError::Disconnected) => {
+        Event::Pending => PumpOutcome::StillPending,
+        Event::Cancelled => {
+            cancel(host, session);
+            PumpOutcome::Cancelled
+        }
+        Event::Disconnected => {
             // Worker thread panicked or dropped without sending —
             // pop the same native dialog the explicit error path
             // uses so the user gets feedback instead of a silently
@@ -182,24 +713,34 @@ pub fn pump(
     }
 }
 
-/// Drop the active session (if any) and clear the in-progress flag —
-/// called when another document-replacing action runs while a Figma
-/// import is still parsing (File→New, File→Open, another File→Import
-/// Figma). Without this guard, a stale worker would later overwrite
-/// the user's freshly-opened document in `pump`.
-///
-/// The worker thread keeps running until it tries to `tx.send`; that
-/// send becomes a no-op once we drop the receiver here. The thread
-/// is short-lived (one parse + layout pass) so leaking it briefly is
-/// fine.
+/// Cancel the active session and clear its UI. A non-interruptible decode may
+/// finish, but its token suppresses later phases and the worker gate prevents
+/// a replacement import from overlapping it in memory.
 pub fn cancel(host: &mut WidgetHostNative, session: &mut Option<FigmaImportSession>) {
-    if session.is_some() {
+    let had_session = session.is_some();
+    let ui_needs_clear = {
+        let ui = &host.editor_state().editor_ui;
+        ui.figma_import_in_progress
+            || !ui.figma_import_pages.is_empty()
+            || ui.figma_import_page_select.open
+    };
+    if had_session {
         eprintln!("[import-figma] cancelling in-flight session — superseded");
+        session.as_ref().unwrap().cancellation.cancel();
         *session = None;
-        if host.editor_state().editor_ui.figma_import_in_progress {
-            host.editor_state_mut().editor_ui.figma_import_in_progress = false;
-            host.mark_editor_state_dirty();
+    }
+    if had_session || ui_needs_clear {
+        let ui = &mut host.editor_state_mut().editor_ui;
+        ui.figma_import_in_progress = false;
+        ui.figma_import_open = false;
+        if matches!(
+            ui.pending_file_action,
+            Some(op_editor_core::FileAction::FinishFigmaImport(_))
+        ) {
+            ui.pending_file_action = None;
         }
+        clear_page_selector(ui);
+        host.mark_editor_state_dirty();
     }
 }
 
@@ -211,8 +752,14 @@ pub enum PumpOutcome {
     Idle,
     /// Worker thread still running.
     StillPending,
+    /// Preparation finished and the page selector opened.
+    SelectionReady,
+    /// The selector was dismissed and its prepared tree was dropped.
+    Cancelled,
     /// Worker finished and the document was applied.
     CompletedOk,
+    /// Worker persisted the imported document before applying it.
+    CompletedSaved,
     /// Worker finished with an error (dialog already shown).
     CompletedErr,
 }
@@ -227,377 +774,5 @@ fn refresh_title(current_path: &Option<PathBuf>, window: Option<&winit::window::
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[derive(Default)]
-    struct ByteCounter(u64);
-
-    impl std::io::Write for ByteCounter {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0 += bytes.len() as u64;
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    #[derive(serde::Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct SavedTableProbe {
-        #[serde(default)]
-        images: std::collections::BTreeMap<String, serde::de::IgnoredAny>,
-        #[serde(default)]
-        image_thumbs: std::collections::BTreeMap<String, String>,
-    }
-
-    fn compact_json_size(value: &impl serde::Serialize) -> u64 {
-        let mut counter = ByteCounter::default();
-        serde_json::to_writer(&mut counter, value).expect("count compact JSON bytes");
-        counter.0
-    }
-
-    fn probe_saved_tables(path: &Path) -> SavedTableProbe {
-        let file = std::fs::File::open(path).expect("open saved document");
-        let mut deserializer = serde_json::Deserializer::from_reader(std::io::BufReader::new(file));
-        deserializer.disable_recursion_limit();
-        <SavedTableProbe as serde::Deserialize>::deserialize(&mut deserializer)
-            .expect("probe saved tables")
-    }
-
-    fn no_thumbs_path(path: &Path) -> PathBuf {
-        let stem = path
-            .file_stem()
-            .and_then(|name| name.to_str())
-            .unwrap_or("openpencil-tesla-blurup");
-        path.with_file_name(format!("{stem}-no-thumbs.op"))
-    }
-
-    fn select_summary_page(state: &mut EditorState) -> usize {
-        let pages = state.doc.pages.as_ref().expect("Tesla document has pages");
-        let page_index = pages
-            .iter()
-            .position(|page| page.name.ends_with("汇总稿"))
-            .unwrap_or_else(|| {
-                panic!(
-                    "汇总稿 missing; pages={:?}",
-                    pages
-                        .iter()
-                        .map(|page| page.name.as_str())
-                        .collect::<Vec<_>>()
-                )
-            });
-        assert!(state.set_active_page(page_index));
-        page_index
-    }
-
-    fn paint_and_pump_decode_frame(
-        host: &mut WidgetHostNative,
-        backend: &mut op_host_native::NativeBackend,
-        image_decodes: &mut crate::image_decode_host::ImageDecodeHost,
-        surface: &mut skia_safe::Surface,
-        started: std::time::Instant,
-    ) {
-        const WIDTH: f32 = 1440.0;
-        const HEIGHT: f32 = 900.0;
-        surface.canvas().restore_to_count(1);
-        surface.canvas().reset_matrix();
-        surface.canvas().clear(skia_safe::Color::BLACK);
-        host.set_now_ms(started.elapsed().as_millis() as u64);
-        {
-            let mut frame = op_host_native::NativeFrameBackend::new(backend, surface.canvas());
-            host.paint(&mut frame, WIDTH, HEIGHT);
-        }
-        image_decodes.pump(backend);
-    }
-
-    fn write_surface_png(surface: &mut skia_safe::Surface, path: &Path) {
-        let png = surface
-            .image_snapshot()
-            .encode(None, skia_safe::EncodedImageFormat::PNG, 100)
-            .expect("encode verification frame as PNG");
-        std::fs::write(path, png.as_bytes()).expect("write verification frame PNG");
-    }
-
-    fn run_zoomed_out_decode_probe(mut state: EditorState, mut host: WidgetHostNative) {
-        use op_editor_ui::widgets::canvas_viewport_image::pending_decode_count;
-        use std::time::{Duration, Instant};
-
-        const WIDTH: f32 = 1440.0;
-        const HEIGHT: f32 = 900.0;
-        const FRAME_PERIOD: Duration = Duration::from_millis(16);
-        const SETTLE_DEADLINE: Duration = Duration::from_secs(120);
-        const STABLE_IDLE: Duration = Duration::from_secs(3);
-        const IDLE_SAMPLE: Duration = Duration::from_secs(5);
-
-        let page_index = select_summary_page(&mut state);
-        host.install_imported_state(state);
-        host.fit_content_to_viewport(WIDTH, HEIGHT);
-        let mut backend = op_host_native::NativeBackend::with_dpi(1.0);
-        let mut surface = skia_safe::surfaces::raster_n32_premul((WIDTH as i32, HEIGHT as i32))
-            .expect("offscreen raster surface");
-        let mut image_decodes = crate::image_decode_host::ImageDecodeHost::new();
-        let started = Instant::now();
-        let mut frames = 0u64;
-        let mut idle_candidate = None;
-        let mut settled = false;
-
-        op_host_native::begin_image_paint_diagnostics();
-        paint_and_pump_decode_frame(
-            &mut host,
-            &mut backend,
-            &mut image_decodes,
-            &mut surface,
-            started,
-        );
-        frames += 1;
-        let first_frame = op_host_native::image_paint_diagnostics_snapshot();
-        assert!(
-            first_frame.successful_thumbnail_draws > 0,
-            "the reopened first frame must draw persisted blur-up thumbnails"
-        );
-        assert_eq!(
-            first_frame.sharp_raster_hits, 0,
-            "the reopened first frame starts before full rasters are installed"
-        );
-        let blur_capture = Path::new("/private/tmp/openpencil-tesla-blur-first.png");
-        write_surface_png(&mut surface, blur_capture);
-
-        while started.elapsed() < SETTLE_DEADLINE {
-            let frame_started = Instant::now();
-            paint_and_pump_decode_frame(
-                &mut host,
-                &mut backend,
-                &mut image_decodes,
-                &mut surface,
-                started,
-            );
-            frames += 1;
-            let queue_empty = !image_decodes.is_pending() && pending_decode_count() == 0;
-            if queue_empty {
-                let idle_since = idle_candidate.get_or_insert_with(Instant::now);
-                if idle_since.elapsed() >= STABLE_IDLE {
-                    settled = true;
-                    break;
-                }
-            } else {
-                idle_candidate = None;
-            }
-            if let Some(remaining) = FRAME_PERIOD.checked_sub(frame_started.elapsed()) {
-                std::thread::sleep(remaining);
-            }
-        }
-
-        let settled_at = started.elapsed();
-        let before_idle = image_decodes
-            .stats_snapshot()
-            .expect("set OP_IMAGE_DECODE_STATS=1 for the real-file decode probe");
-        let idle_started = Instant::now();
-        while idle_started.elapsed() < IDLE_SAMPLE {
-            let frame_started = Instant::now();
-            paint_and_pump_decode_frame(
-                &mut host,
-                &mut backend,
-                &mut image_decodes,
-                &mut surface,
-                started,
-            );
-            frames += 1;
-            if let Some(remaining) = FRAME_PERIOD.checked_sub(frame_started.elapsed()) {
-                std::thread::sleep(remaining);
-            }
-        }
-        let idle_elapsed = idle_started.elapsed();
-        let after_idle = image_decodes
-            .stats_snapshot()
-            .expect("decode telemetry remains active");
-        let queue_pending = pending_decode_count();
-        let diagnostics = op_host_native::end_image_paint_diagnostics();
-        let sharp_capture = Path::new("/private/tmp/openpencil-tesla-sharp-terminal.png");
-        write_surface_png(&mut surface, sharp_capture);
-        let idle_installs = after_idle.0.saturating_sub(before_idle.0);
-        let idle_reinstalls = after_idle.1.saturating_sub(before_idle.1);
-        let sample_secs = idle_elapsed.as_secs_f64();
-        assert!(after_idle.0 > 0, "the harness must install sharp rasters");
-        assert!(
-            diagnostics.sharp_raster_hits > 0,
-            "later frames must sharpen at least one blur-up thumbnail"
-        );
-        assert_eq!(
-            diagnostics.paint_thread_full_decodes, 0,
-            "full images must never decode synchronously on the paint thread"
-        );
-        eprintln!(
-            "fig_decode_probe: page_index={page_index}, frames={frames}, settled={settled}, \
-             settle_window={:.1}s, terminal_sample={sample_secs:.1}s, terminal_installs={idle_installs}, \
-             terminal_reinstalls={idle_reinstalls}, terminal_installs_per_sec={:.1}, \
-             terminal_reinstalls_per_sec={:.1}, installs_total={}, reinstalls_total={}, in_flight={}, \
-             pending={}, state={}, first_thumb_draws={}, first_sharp_hits={}, thumb_draws_total={}, \
-             sharp_hits_total={}, paint_sync_full_decodes={}, blur_capture={}, sharp_capture={}",
-            settled_at.as_secs_f64(),
-            idle_installs as f64 / sample_secs,
-            idle_reinstalls as f64 / sample_secs,
-            after_idle.0,
-            after_idle.1,
-            after_idle.2,
-            queue_pending,
-            after_idle.4,
-            first_frame.successful_thumbnail_draws,
-            first_frame.sharp_raster_hits,
-            diagnostics.successful_thumbnail_draws,
-            diagnostics.sharp_raster_hits,
-            diagnostics.paint_thread_full_decodes,
-            blur_capture.display(),
-            sharp_capture.display(),
-        );
-    }
-
-    #[test]
-    fn deferred_thumbnail_binding_uses_the_final_source_string() {
-        use base64::engine::general_purpose::STANDARD as B64;
-        use base64::Engine as _;
-        use jian_ops_schema::node::image_src::paint_image_id;
-
-        let provisional = b"raw import bytes that are replaced";
-        let final_bytes = b"final transformed bytes";
-        let final_src = format!("data:image/jpeg;base64,{}", B64.encode(final_bytes));
-        let provisional_src = format!("data:image/png;base64,{}", B64.encode(provisional));
-        let doc = serde_json::from_value(serde_json::json!({
-            "version": "0.8.2",
-            "children": [{
-                "type": "rectangle",
-                "id": "image-fill",
-                "fill": [{"type": "image", "url": final_src}]
-            }]
-        }))
-        .expect("test document");
-        let jpeg = vec![0xff, 0xd8, 0xff, 0xd9];
-        let mut pending = PendingImportThumbs::default();
-        pending.record(final_bytes, jpeg.clone());
-
-        bind_import_thumbnails(&doc, &mut pending);
-
-        let final_id = paint_image_id(&final_src);
-        assert_eq!(
-            &*jian_ops_schema::image_thumbs::thumb_for(final_id).expect("final id is bound"),
-            jpeg
-        );
-        assert!(
-            jian_ops_schema::image_thumbs::thumb_for(paint_image_id(&provisional_src)).is_none(),
-            "the callback's provisional source is never persisted"
-        );
-    }
-
-    /// Manual large-file bench for the exact worker code path
-    /// (`parse_path`, including the down-scale transform). Point
-    /// `OP_FIG_BENCH` at a `.fig` file and run:
-    ///
-    /// ```sh
-    /// OP_IMAGE_DECODE_STATS=1 OP_FIG_BENCH=/path/to/big.fig \
-    ///   cargo test -p op-host-desktop --release fig_import_bench -- --ignored --nocapture
-    /// ```
-    #[test]
-    #[ignore = "manual bench — needs OP_FIG_BENCH pointing at a local .fig"]
-    fn fig_import_bench() {
-        let Ok(path) = std::env::var("OP_FIG_BENCH") else {
-            eprintln!("OP_FIG_BENCH not set — skipping");
-            return;
-        };
-        let output = std::env::var_os("OP_FIG_BENCH_OUT")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                PathBuf::from(format!(
-                    "/private/tmp/openpencil-tesla-blurup-{}.op",
-                    std::process::id()
-                ))
-            });
-        let started = std::time::Instant::now();
-        let prepared = parse_path(Path::new(&path)).expect("bench file parses");
-        let import_elapsed = started.elapsed();
-        let PreparedImport {
-            mut state,
-            warnings,
-        } = prepared;
-        let warning_count = warnings.len();
-        let page_index = select_summary_page(&mut state);
-        let inline_bytes = compact_json_size(&state.doc);
-
-        let save_started = std::time::Instant::now();
-        op_host_services::doc_io::save_to_path(&state, &output).expect("production save succeeds");
-        let save_elapsed = save_started.elapsed();
-        let saved_bytes = std::fs::metadata(&output).expect("saved metadata").len();
-        let probe = probe_saved_tables(&output);
-        assert!(!probe.image_thumbs.is_empty(), "saved imageThumbs table");
-        assert!(
-            probe
-                .image_thumbs
-                .keys()
-                .all(|paint_id| paint_id.parse::<u64>().is_ok()),
-            "imageThumbs keys are decimal paint ids"
-        );
-        let first_thumb_id = probe
-            .image_thumbs
-            .keys()
-            .next()
-            .expect("one thumbnail id")
-            .parse::<u64>()
-            .expect("decimal thumbnail id");
-        let thumb_table_bytes = compact_json_size(&probe.image_thumbs);
-
-        jian_ops_schema::image_thumbs::clear_registry();
-        assert!(jian_ops_schema::image_thumbs::thumb_for(first_thumb_id).is_none());
-        let baseline = no_thumbs_path(&output);
-        op_host_services::doc_io::save_to_path(&state, &baseline)
-            .expect("no-thumbnail baseline save succeeds");
-        let baseline_probe = probe_saved_tables(&baseline);
-        assert!(
-            baseline_probe.image_thumbs.is_empty(),
-            "cleared registry omits imageThumbs"
-        );
-        let baseline_bytes = std::fs::metadata(&baseline)
-            .expect("baseline metadata")
-            .len();
-        let thumbnail_delta = saved_bytes as i128 - baseline_bytes as i128;
-        drop(state);
-
-        // The running desktop host exists before a document is opened. Build
-        // it before reload so its empty default document cannot clear the
-        // thumbnail table that the production load path is about to seed.
-        let host = WidgetHostNative::new();
-        let reload_started = std::time::Instant::now();
-        let reloaded =
-            op_host_services::doc_io::load_editor_state(&output, op_editor_core::Locale::EnUs)
-                .expect("production reopen succeeds");
-        let reload_elapsed = reload_started.elapsed();
-        assert!(
-            jian_ops_schema::image_thumbs::thumb_for(first_thumb_id).is_some(),
-            "reopen seeds the persisted thumbnail registry"
-        );
-        eprintln!(
-            "fig_import_bench: page_index={page_index}, parse+downscale={:.1}s, \
-             save={:.1}s, reload={:.1}s, inline={:.1} MB, saved={:.1} MB, \
-             no_thumbs={:.1} MB, thumbnail_delta={:.1} MB, thumb_table={:.1} MB, \
-             images={}, imageThumbs={}, warnings={warning_count}, output={}, baseline={}",
-            import_elapsed.as_secs_f64(),
-            save_elapsed.as_secs_f64(),
-            reload_elapsed.as_secs_f64(),
-            inline_bytes as f64 / 1e6,
-            saved_bytes as f64 / 1e6,
-            baseline_bytes as f64 / 1e6,
-            thumbnail_delta as f64 / 1e6,
-            thumb_table_bytes as f64 / 1e6,
-            probe.images.len(),
-            probe.image_thumbs.len(),
-            output.display(),
-            baseline.display(),
-        );
-        run_zoomed_out_decode_probe(reloaded, host);
-        if warning_count != 356 {
-            eprintln!(
-                "fig_import_bench premise drift: expected 356 warnings, observed {warning_count}"
-            );
-        }
-    }
-}
+#[path = "figma_import_session/tests.rs"]
+mod tests;

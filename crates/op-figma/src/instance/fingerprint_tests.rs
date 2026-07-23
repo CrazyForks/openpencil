@@ -562,7 +562,7 @@ fn swap_drops_stale_cluster_with_same_sized_frame() {
 /// Helper: run the swap-stale-derived filter then apply, mirroring
 /// what `convert_instance` does when `overriddenSymbolID` swaps.
 fn filter_and_apply_swap(sym: &TreeNode, derived: &[FigValue], isz: FigVec2) -> Vec<TreeNode> {
-    let filtered = crate::instance::filter_swap_stale_derived(derived, sym, Some(isz));
+    let filtered = crate::instance::filter_swap_stale_derived(derived, None, sym, Some(isz));
     apply_instance_overrides(sym, None, Some(&filtered), Some(isz))
 }
 

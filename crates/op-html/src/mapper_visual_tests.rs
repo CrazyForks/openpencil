@@ -32,6 +32,19 @@ fn run<T>(action: impl FnOnce(&mut MapCtx<'_>) -> T) -> (T, Vec<String>) {
 }
 
 #[test]
+fn css_extended_blend_modes_map_to_native_compositors() {
+    for (css, expected) in [
+        ("soft-light", BlendMode::SoftLight),
+        ("color-dodge", BlendMode::ColorDodge),
+        ("color-burn", BlendMode::ColorBurn),
+        ("hard-light", BlendMode::HardLight),
+        ("exclusion", BlendMode::Exclusion),
+    ] {
+        assert_eq!(map_blend_mode(css), Some(expected), "{css}");
+    }
+}
+
+#[test]
 fn layered_background_keeps_css_order_color_and_variable_stops() {
     let style = computed(&[
         ("--tone", "oklch(62% 0.2 25)"),

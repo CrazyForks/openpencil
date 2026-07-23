@@ -137,7 +137,7 @@ impl WidgetHost {
                 // Per-frame paint: resolve the row model through the
                 // owner-scoped cache so idle / streaming / hover repaints
                 // that don't touch the layer tree skip the walk + measure.
-                LayerPanel::from_editor_owned(&self.editor_state, self.layer_panel_owner)
+                self.layer_panel()
             };
             if let Some(d) = &active_drag {
                 layer_panel.drop_target = layer_panel

@@ -221,14 +221,7 @@ impl DesktopApp {
                         // variable-row inline edit before save
                         // so the typed value lands on disk.
                         self.host.commit_variable_row_focus_if_any_pub();
-                        consumed = persistence::handle_save(
-                            &mut self.host,
-                            &mut self.current_path,
-                            self.window.as_ref(),
-                        );
-                        if consumed {
-                            self.mark_document_saved();
-                        }
+                        consumed = self.request_background_save();
                     }
                     "o" => {
                         self.host.commit_variable_row_focus_if_any_pub();
@@ -288,14 +281,7 @@ impl DesktopApp {
                     // Cmd+Shift+S = Save As; always allowed.
                     "s" => {
                         self.host.commit_variable_row_focus_if_any_pub();
-                        consumed = persistence::handle_save_as(
-                            &mut self.host,
-                            &mut self.current_path,
-                            self.window.as_ref(),
-                        );
-                        if consumed {
-                            self.mark_document_saved();
-                        }
+                        consumed = self.request_background_save_as();
                     }
                     "p" => {
                         self.host.commit_variable_row_focus_if_any_pub();
@@ -316,6 +302,7 @@ impl DesktopApp {
                     "d" => consumed = self.host.apply_toggle_design_md_panel(),
                     "k" => consumed = self.host.apply_toggle_component_browser(),
                     "f" => consumed = self.host.apply_open_figma_import(),
+                    "h" => consumed = self.host.apply_open_html_import(),
                     _ => {}
                 }
             }

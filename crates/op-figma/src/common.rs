@@ -4,15 +4,16 @@
 //! SYMBOL-subtree rescaler.
 
 use crate::figma_types::{BlobOrString, FigMatrix};
+use crate::instance::InstanceExpansionCache;
 use crate::kiwi::FigValue;
-use crate::mappers::{map_height_sizing, map_width_sizing};
+use crate::mappers::{map_blend_mode, map_height_sizing, map_width_sizing};
+use crate::mask::figma_mask_type;
 use crate::tree::TreeNode;
 use crate::vector_decoder::{INSTANCE_GEOMETRY_SCALE_X, INSTANCE_GEOMETRY_SCALE_Y};
 use jian_ops_schema::node::base::{NumberOrExpression, PenNodeBase};
 use jian_ops_schema::node::container::CornerRadius;
 use jian_ops_schema::sizing::SizingBehavior;
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::sync::RwLock;
 
 /// Stroke vs fill rendering for a host-resolved icon.
@@ -93,13 +94,13 @@ pub const SKIPPED_TYPES: &[&str] = &[
 ];
 
 /// State threaded through the whole conversion pass.
-pub struct ConversionContext {
+pub struct ConversionContext<'tree> {
     /// Figma SYMBOL guid → minted `fig_N` ref id.
     pub component_map: HashMap<String, String>,
-    /// Figma SYMBOL guid → its subtree (for instance inlining). `Rc`-shared
-    /// so every instance of the same SYMBOL reuses one clone instead of
-    /// paying for a fresh deep clone per instance.
-    pub symbol_tree: HashMap<String, Rc<TreeNode>>,
+    /// Figma SYMBOL guid → its source subtree (for instance inlining).
+    /// Borrowing the prepared tree avoids a second, overlapping copy of all
+    /// component definitions while conversion is active.
+    pub symbol_tree: HashMap<String, &'tree TreeNode>,
     /// Non-fatal conversion notes.
     pub warnings: Vec<String>,
     /// Sequential `fig_N` id allocator.
@@ -110,9 +111,11 @@ pub struct ConversionContext {
     /// Cross-instance virtual-GUID assignment pins ("sym|pk" → node
     /// guid) shared by every instance of the same SYMBOL.
     pub instance_assignments: HashMap<String, String>,
+    /// Exact, bounded memoization of resolved instance child trees.
+    pub instance_expansions: InstanceExpansionCache,
 }
 
-impl ConversionContext {
+impl ConversionContext<'_> {
     /// Mint the next sequential `fig_N` id.
     pub fn generate_id(&mut self) -> String {
         let id = format!("fig_{}", self.id_counter);
@@ -167,12 +170,12 @@ pub fn extract_position(figma: &FigValue) -> (f64, f64) {
     (round2(m.m02), round2(m.m12))
 }
 
-/// Rotation in whole degrees (`abs(m00)` ignores horizontal flip).
+/// Rotation in degrees to two decimal places (`abs(m00)` ignores horizontal flip).
 /// `None` when zero.
 pub fn extract_rotation(figma: &FigValue) -> Option<f64> {
     let m = figma.get("transform").and_then(FigMatrix::from_value)?;
     let angle = m.m10.atan2(m.m00.abs()) * (180.0 / std::f64::consts::PI);
-    let rounded = js_round(angle);
+    let rounded = round2(angle);
     if rounded != 0.0 {
         Some(rounded)
     } else {
@@ -265,6 +268,8 @@ pub fn common_props(figma: &FigValue, id: String) -> PenNodeBase {
         },
         flip_x,
         flip_y,
+        mask_type: figma_mask_type(figma),
+        blend_mode: map_blend_mode(figma.get_str("blendMode")),
         theme: None,
         // Figma import never authors responsive size constraints.
         constraints: None,
@@ -276,7 +281,7 @@ pub fn common_props(figma: &FigValue, id: String) -> PenNodeBase {
 pub fn resolve_width(
     figma: &FigValue,
     parent_stack_mode: Option<&str>,
-    ctx: &ConversionContext,
+    ctx: &ConversionContext<'_>,
 ) -> SizingBehavior {
     match ctx.layout_mode {
         FigLayoutMode::Preserve => SizingBehavior::Number(
@@ -293,7 +298,7 @@ pub fn resolve_width(
 pub fn resolve_height(
     figma: &FigValue,
     parent_stack_mode: Option<&str>,
-    ctx: &ConversionContext,
+    ctx: &ConversionContext<'_>,
 ) -> SizingBehavior {
     match ctx.layout_mode {
         FigLayoutMode::Preserve => SizingBehavior::Number(
@@ -430,10 +435,12 @@ fn scale_tree_children_owned(children: Vec<TreeNode>, sx: f64, sy: f64) -> Vec<T
 }
 
 /// Detect which decoded blobs are images (by magic bytes), keyed by
-/// blob index.
-pub fn collect_image_blobs(blobs: &[BlobOrString]) -> HashMap<u32, Vec<u8>> {
+/// blob index. Consumes the pool so image bytes move into the result
+/// after geometry conversion instead of being cloned and retained in
+/// two full buffers throughout the import.
+pub fn collect_image_blobs(blobs: Vec<BlobOrString>) -> HashMap<u32, Vec<u8>> {
     let mut map = HashMap::new();
-    for (i, blob) in blobs.iter().enumerate() {
+    for (i, blob) in blobs.into_iter().enumerate() {
         if let BlobOrString::Bytes(b) = blob {
             if b.len() > 8 {
                 let is_image = (b[0] == 0x89 && b[1] == 0x50)
@@ -441,7 +448,7 @@ pub fn collect_image_blobs(blobs: &[BlobOrString]) -> HashMap<u32, Vec<u8>> {
                     || (b[0] == 0x47 && b[1] == 0x49)
                     || (b[0] == 0x52 && b[1] == 0x49);
                 if is_image {
-                    map.insert(i as u32, b.clone());
+                    map.insert(i as u32, b);
                 }
             }
         }
@@ -454,7 +461,7 @@ mod tests {
     use super::*;
 
     fn obj(pairs: Vec<(&str, FigValue)>) -> FigValue {
-        FigValue::Object(pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
+        FigValue::Object(pairs.into_iter().map(|(k, v)| (k.into(), v)).collect())
     }
 
     fn matrix(m00: f32, m01: f32, m02: f32, m10: f32, m11: f32, m12: f32) -> FigValue {
@@ -482,6 +489,23 @@ mod tests {
     }
 
     #[test]
+    fn rotation_preserves_sub_degree_precision() {
+        let radians = 13.37_f64.to_radians();
+        let n = obj(vec![(
+            "transform",
+            matrix(
+                radians.cos() as f32,
+                -radians.sin() as f32,
+                0.0,
+                radians.sin() as f32,
+                radians.cos() as f32,
+                0.0,
+            ),
+        )]);
+        assert_eq!(extract_rotation(&n), Some(13.37));
+    }
+
+    #[test]
     fn horizontal_flip_detected() {
         // m00 negative, det negative → flipX.
         let n = obj(vec![("transform", matrix(-1.0, 0.0, 0.0, 0.0, 1.0, 0.0))]);
@@ -503,6 +527,21 @@ mod tests {
         let low = obj(vec![("cornerSmoothing", FigValue::Float(-0.5))]);
         assert_eq!(map_corner_smoothing(&high), 1.0);
         assert_eq!(map_corner_smoothing(&low), 0.0);
+    }
+
+    #[test]
+    fn node_blend_mode_is_shared_by_every_figma_node_kind() {
+        for kind in ["FRAME", "GROUP", "TEXT", "PATH", "INSTANCE"] {
+            let node = obj(vec![
+                ("type", FigValue::Str(kind.into())),
+                ("blendMode", FigValue::Str("MULTIPLY".into())),
+            ]);
+            assert_eq!(
+                common_props(&node, kind.to_ascii_lowercase()).blend_mode,
+                Some(jian_ops_schema::style::BlendMode::Multiply),
+                "{kind}"
+            );
+        }
     }
 
     #[test]

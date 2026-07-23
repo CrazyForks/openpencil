@@ -41,6 +41,7 @@ fn visible_for(panel: &PropertyPanel) -> sections::VisibleSections {
         image: caps.image && panel.snapshot.is_image_node,
         image_warning: false,
         opacity: caps.opacity,
+        compositing: !panel.is_multi,
         corner_radius: panel.snapshot.has_corner_radius,
         corner_per_corner: panel.snapshot.supports_per_corner,
         corner_expand: panel.corner_expand_open,

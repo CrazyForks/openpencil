@@ -2,7 +2,10 @@
 //! added for TS parity (panel toggles, create-component, space-pan).
 
 use super::WidgetHostNative;
-use op_editor_core::NodeId;
+use op_editor_core::{
+    agent_settings::SettingsFocus, figma_import_state::ImportSource, ui_draft::ColorTarget, NodeId,
+    PropertyFocus,
+};
 
 fn seed(host: &mut WidgetHostNative, json: &str) {
     let doc = jian_ops_schema::load_str(json)
@@ -15,6 +18,8 @@ fn seed(host: &mut WidgetHostNative, json: &str) {
 const ONE_RECT: &str = r#"{"version":"1.0.0","children":[{"type":"rectangle","id":"n1","name":"n1","x":400,"y":300,"width":100,"height":50}]}"#;
 
 const ONE_FRAME: &str = r#"{"version":"1.0.0","children":[{"type":"frame","id":"f1","name":"Card","x":0,"y":0,"width":100,"height":50}]}"#;
+
+const ONE_TEXT: &str = r##"{"version":"1.0.0","children":[{"type":"text","id":"t1","name":"Title","x":0,"y":0,"width":100,"height":24,"content":"hello","font_size":16,"fills":[{"type":"solid","color":"#111827"}]}]}"##;
 
 #[test]
 fn panel_toggle_shortcuts_flip_their_flags() {
@@ -31,9 +36,159 @@ fn panel_toggle_shortcuts_flip_their_flags() {
 
     assert!(host.apply_toggle_component_browser());
     assert!(host.editor_state().editor_ui.component_browser_open);
+}
+
+#[test]
+fn import_shortcuts_open_the_requested_source_without_stale_state() {
+    let mut host = WidgetHostNative::new();
+
+    host.editor_state_mut().editor_ui.import_source = ImportSource::Html;
+    host.editor_state_mut().editor_ui.import_menu_open = true;
+    host.editor_state_mut().editor_ui.import_menu.open = true;
+    assert!(host.apply_open_figma_import());
+    assert!(host.editor_state().editor_ui.figma_import_open);
+    assert_eq!(
+        host.editor_state().editor_ui.import_source,
+        ImportSource::Figma
+    );
+    assert!(!host.editor_state().editor_ui.import_menu_open);
+
+    host.editor_state_mut().editor_ui.figma_import_open = false;
+    host.editor_state_mut().editor_ui.import_source = ImportSource::Figma;
+    assert!(host.apply_open_html_import());
+    assert!(host.editor_state().editor_ui.figma_import_open);
+    assert_eq!(
+        host.editor_state().editor_ui.import_source,
+        ImportSource::Html
+    );
+}
+
+#[test]
+fn import_shortcut_does_not_open_beneath_an_existing_modal() {
+    let mut host = WidgetHostNative::new();
+    host.editor_state_mut().editor_ui.import_source = ImportSource::Html;
+    host.editor_state_mut().editor_ui.agent_settings_open = true;
+    host.editor_state_dirty = false;
+
+    assert!(host.apply_open_figma_import(), "the chord stays consumed");
+
+    let ui = &host.editor_state().editor_ui;
+    assert!(ui.agent_settings_open);
+    assert!(!ui.figma_import_open);
+    assert_eq!(ui.import_source, ImportSource::Html);
+    assert!(!host.editor_state_dirty);
+}
+
+#[test]
+fn closing_settings_clears_focus_before_an_import_shortcut() {
+    let mut host = WidgetHostNative::new();
+    {
+        let ui = &mut host.editor_state_mut().editor_ui;
+        ui.agent_settings_open = true;
+        ui.agent_settings.focus = Some(SettingsFocus::McpPort);
+        ui.settings_input.set_text("4321");
+    }
+
+    assert!(host.apply_toggle_agent_settings());
+    assert!(!host.editor_state().editor_ui.agent_settings_open);
+    assert!(host.editor_state().editor_ui.agent_settings.focus.is_none());
+    assert_eq!(
+        host.editor_state().editor_ui.agent_settings.mcp_server.port,
+        4321
+    );
 
     assert!(host.apply_open_figma_import());
     assert!(host.editor_state().editor_ui.figma_import_open);
+}
+
+#[test]
+fn import_shortcut_blurs_covered_text_and_ime_owners() {
+    let mut host = WidgetHostNative::new();
+    seed(&mut host, ONE_TEXT);
+    host.editor_state_mut()
+        .set_single_selection(NodeId::new("t1"));
+    assert!(host.editor_state_mut().start_text_edit(NodeId::new("t1")));
+    assert!(host
+        .editor_state_mut()
+        .open_color_picker(ColorTarget::Fill, 120.0));
+    {
+        let state = host.editor_state_mut();
+        state.ui.property_focus = Some(PropertyFocus::SizeW);
+        state.chat.focused = true;
+        let ui = &mut state.editor_ui;
+        ui.chat_model_picker.open = true;
+        ui.chat_model_picker_input.set_text("model");
+        ui.font_picker.open = true;
+        ui.icon_picker.open = true;
+        ui.component_browser_open = true;
+        ui.ime_preedit = Some(Default::default());
+    }
+
+    assert!(host.apply_open_figma_import());
+
+    let state = host.editor_state();
+    assert!(state.ui.text_editing.is_none(), "canvas text edit blurs");
+    assert!(state.ui.property_focus.is_none(), "property input blurs");
+    assert!(!state.chat.focused, "chat input blurs");
+    assert!(!state.editor_ui.chat_model_picker.open);
+    assert!(state.editor_ui.chat_model_picker_input.text().is_empty());
+    assert!(!state.editor_ui.font_picker.open);
+    assert!(!state.editor_ui.icon_picker.open);
+    assert!(!state.editor_ui.component_browser_open);
+    assert!(state.editor_ui.ime_preedit.is_none());
+    assert!(state.ui.color_picker.is_none());
+    assert!(!host.input_active(), "no covered input keeps IME ownership");
+}
+
+#[test]
+fn import_menu_choice_uses_the_shortcut_focus_cleanup() {
+    use op_editor_ui::widgets::ImportMenu;
+
+    let (vw, vh) = (1200.0, 800.0);
+    let mut host = WidgetHostNative::new();
+    {
+        let state = host.editor_state_mut();
+        state.editor_ui.import_menu_open = true;
+        state.editor_ui.import_menu.open = true;
+        state.chat.focused = true;
+        state.editor_ui.chat_model_picker.open = true;
+    }
+    let (anchor, viewport) = host.import_menu_anchor(vw, vh);
+    let menu = ImportMenu::for_editor_ui(&host.editor_state().editor_ui);
+    let panel = menu.popup_rect(anchor, viewport);
+    let point = op_editor_ui::Point2D::new(
+        panel.origin.x + panel.size.x / 2.0,
+        panel.origin.y + menu.row_height() / 2.0,
+    );
+
+    assert!(host.apply_press(point.x, point.y, vw, vh));
+
+    let state = host.editor_state();
+    assert!(state.editor_ui.figma_import_open);
+    assert!(!state.chat.focused);
+    assert!(!state.editor_ui.chat_model_picker.open);
+}
+
+#[test]
+fn import_shortcut_is_inert_while_an_import_is_in_progress() {
+    let mut host = WidgetHostNative::new();
+    host.editor_state_mut().editor_ui.import_source = ImportSource::Figma;
+    host.editor_state_mut().editor_ui.figma_import_in_progress = true;
+    host.editor_state_mut().chat.focused = true;
+    host.editor_state_mut().editor_ui.chat_model_picker.open = true;
+    host.editor_state_dirty = false;
+
+    assert!(host.apply_open_html_import(), "the chord stays consumed");
+
+    let state = host.editor_state();
+    assert_eq!(state.editor_ui.import_source, ImportSource::Figma);
+    assert!(!state.editor_ui.figma_import_open);
+    assert!(
+        state.chat.focused,
+        "rejected shortcut has no blur side effect"
+    );
+    assert!(state.editor_ui.chat_model_picker.open);
+    assert!(!host.editor_state_dirty);
 }
 
 #[test]

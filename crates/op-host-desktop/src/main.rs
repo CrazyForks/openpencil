@@ -37,6 +37,7 @@ mod git_jobs;
 mod git_overflow_host;
 mod git_session;
 mod git_ssh_host;
+mod heap_pressure;
 mod html_import_session;
 mod iconify_host;
 mod image_decode_host;
@@ -48,6 +49,7 @@ mod ime_window;
 mod keyboard_input;
 mod kit_io;
 mod kit_persistence;
+mod legacy_op_upgrade;
 mod macos_app;
 mod mcp_config_io;
 mod mcp_integrations;
@@ -61,6 +63,7 @@ mod persistence_image;
 mod provider_probe_host;
 mod remote_image_host;
 mod render_cli;
+mod save_session;
 mod settings_io;
 mod single_instance;
 mod sub_agent_session;
@@ -99,6 +102,19 @@ enum DesktopEvent {
     /// painted frame republishes a current full tree via the normal
     /// `RedrawRequested` a11y push.
     A11yActivated,
+    /// A background document save finished. The UI thread drains the
+    /// completion, applies its generation-scoped revision ack, and surfaces
+    /// any native error dialog.
+    SaveReady,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PaintedPageIdentity {
+    document_epoch: u64,
+    page_id: String,
+    /// Canonical page ids should be unique. Keep the index only as a fallback
+    /// for malformed legacy documents with duplicate ids.
+    duplicate_index: Option<usize>,
 }
 
 struct DesktopApp {
@@ -136,6 +152,10 @@ struct DesktopApp {
     redraw_pending: bool,
     /// True when the pending redraw needs a paint even if cursor coalescing drained to no-op.
     redraw_dirty: bool,
+    /// Logical page whose first frame has completed. The document epoch
+    /// distinguishes whole-document replacements, while the page id keeps
+    /// page deletion/reorder correct even when an index is reused.
+    last_painted_page: Option<PaintedPageIdentity>,
     /// Monotonic clock anchor — `Instant.elapsed().as_millis()`
     /// from this is fed into `WidgetHostNative::set_now_ms` so
     /// `jian_core::anim::blink_visible` can drive the caret blink
@@ -147,6 +167,10 @@ struct DesktopApp {
     rotate_cursor: Option<winit::window::CustomCursor>,
     /// Path of the currently-open .pen/.op document; None when unsaved.
     current_path: Option<PathBuf>,
+    /// At most one background document serialization / atomic write. Keeping
+    /// saves serialized prevents an older snapshot from committing after a
+    /// newer Save request to the same path.
+    save_session: save_session::SaveSession,
     error: Option<SharedSkiaError>,
     /// Design-loop canvas indicator — tracks the active agent epoch,
     /// colour/name identity, and initial frame set. `None` when no
@@ -287,10 +311,6 @@ struct DesktopApp {
     win_size: Option<(u32, u32)>,
     /// Whether the window is currently maximized.
     win_maximized: bool,
-    /// Document fingerprint captured at the last save / open / new.
-    /// `document_is_dirty` compares the live fingerprint against this
-    /// to drive the unsaved-changes prompt on close.
-    saved_doc_fingerprint: u64,
     /// In-app Git — the repository bound to the open document.
     /// Rebound whenever the document path changes; read by the
     /// window title and the Git panel.
@@ -300,11 +320,11 @@ struct DesktopApp {
     git_pull_job: Option<git_jobs::GitPullJob>,
     /// In-flight background `git push`, if any.
     git_push_job: Option<git_jobs::GitPushJob>,
-    /// Document fingerprint captured when a `git pull` was spawned.
+    /// Document generation + revision captured when a `git pull` was spawned.
     /// The post-pull reload compares against it to detect edits made
     /// *during* the async pull — which the spawn-time confirm did
     /// not cover — and re-confirm before discarding them.
-    git_pull_doc_baseline: Option<u64>,
+    git_pull_doc_baseline: Option<(u64, u64, u64)>,
     /// In-flight background Git status query, if any.
     git_status_job: Option<git_jobs::GitStatusJob>,
     /// In-flight background Git diff (`git diff` / `git show`), if any.
@@ -376,10 +396,6 @@ impl DesktopApp {
         }
         host.editor_state_mut().mark_saved_revision();
         host.mark_editor_state_dirty();
-        // Baseline for the unsaved-changes prompt — the fresh,
-        // empty document is by definition "saved" (nothing to lose).
-        let saved_doc_fingerprint =
-            op_host_services::doc_io::document_fingerprint(host.editor_state());
         let update_probe = if cfg!(test) {
             update_check::UpdateProbe::idle()
         } else {
@@ -415,9 +431,11 @@ impl DesktopApp {
             pending_cursor_move: None,
             redraw_pending: false,
             redraw_dirty: false,
+            last_painted_page: None,
             clock_start: Instant::now(),
             rotate_cursor: None,
             current_path: None,
+            save_session: save_session::SaveSession::new(),
             error: None,
             design_loop_indicator: None,
             design_session_indicator: None,
@@ -457,7 +475,6 @@ impl DesktopApp {
             win_pos: None,
             win_size: None,
             win_maximized: false,
-            saved_doc_fingerprint,
             git_session: git_session::GitSession::new(),
             git_pull_job: None,
             git_push_job: None,
@@ -470,6 +487,31 @@ impl DesktopApp {
             mcp_server: None,
             force_live_mcp_port: None,
             mcp_integrations_home: None,
+        }
+    }
+
+    fn active_page_paint_identity(&self) -> PaintedPageIdentity {
+        let document_epoch = self.host.document_epoch();
+        let state = self.host.editor_state();
+        let Some(pages) = state.doc.pages.as_ref().filter(|pages| !pages.is_empty()) else {
+            return PaintedPageIdentity {
+                document_epoch,
+                page_id: "__document_root__".to_string(),
+                duplicate_index: None,
+            };
+        };
+        let index = state.ui.active_page_index.min(pages.len() - 1);
+        let page_id = pages[index].id.to_string();
+        let duplicate = pages
+            .iter()
+            .filter(|page| page.id.as_str() == page_id.as_str())
+            .take(2)
+            .count()
+            > 1;
+        PaintedPageIdentity {
+            document_epoch,
+            page_id,
+            duplicate_index: duplicate.then_some(index),
         }
     }
 
@@ -490,10 +532,10 @@ impl DesktopApp {
         true
     }
 
-    /// Snapshot the current document as the saved baseline — called
-    /// after every successful load / save / new so `document_is_dirty`
-    /// only reports edits made *since* that point. Also rebinds the
-    /// Git session (the document path may have changed).
+    /// Mark the live revision as the saved baseline — called after a
+    /// synchronous load / save / new. The editor's monotonic revision token
+    /// avoids serializing the whole document merely to decide whether it is
+    /// dirty.
     fn mark_document_saved(&mut self) {
         // Any successful Save / Open / New replaced the document. If
         // a background Figma import is still running, its result
@@ -509,20 +551,15 @@ impl DesktopApp {
         // `pump_*_clipboard_paste` — a paste decoded for a document
         // that a later Open / New / import replaced is dropped there.
         self.image_search.reset();
-        self.saved_doc_fingerprint =
-            op_host_services::doc_io::document_fingerprint(self.host.editor_state());
         self.host.editor_state_mut().mark_saved_revision();
         self.rebind_git_session_for_current_path();
     }
 
     /// Rebind the Git session to `current_path`, retitle the window
     /// and refresh an open Git panel — WITHOUT touching the
-    /// unsaved-changes baseline. `mark_document_saved` calls this
-    /// after a real save; a Figma import calls it directly: the
-    /// import changed the document path (so the old repo binding is
-    /// stale) but the imported design is unsaved work, so
-    /// `saved_doc_fingerprint` must stay put or close would skip the
-    /// save prompt.
+    /// unsaved-changes baseline. `mark_document_saved` calls this after a real
+    /// save; import paths call it directly after explicitly marking their new
+    /// state saved or dirty.
     fn rebind_git_session_for_current_path(&mut self) {
         // The empty-state "Init" card is gated on the doc having a path.
         self.host
@@ -600,8 +637,31 @@ impl DesktopApp {
     /// Whether the document carries edits since the last save / open
     /// / new.
     fn document_is_dirty(&self) -> bool {
-        op_host_services::doc_io::document_fingerprint(self.host.editor_state())
-            != self.saved_doc_fingerprint
+        self.host.editor_state().is_dirty()
+    }
+
+    /// Confirm the adjacent `.op` destination before disturbing any active
+    /// import. Cancel therefore leaves the current worker and document intact.
+    fn begin_figma_import(&mut self, path: PathBuf) -> bool {
+        if self
+            .current_figma_import
+            .as_ref()
+            .is_some_and(|session| session.path() == path.as_path())
+        {
+            return true;
+        }
+        let Some(output_mode) = figma_import_session::prompt_output_mode(&self.host, &path) else {
+            return false;
+        };
+        figma_import_session::cancel(&mut self.host, &mut self.current_figma_import);
+        html_import_session::cancel(&mut self.host, &mut self.current_html_import);
+        self.current_figma_import = Some(figma_import_session::spawn_approved(
+            &mut self.host,
+            path,
+            output_mode,
+        ));
+        self.request_redraw(true);
+        true
     }
 
     /// Open documents macOS delivered through the open-documents
@@ -622,15 +682,6 @@ impl DesktopApp {
                 if !is_op && !is_fig && !is_html {
                     continue;
                 }
-                if is_fig
-                    && self
-                        .current_figma_import
-                        .as_ref()
-                        .is_some_and(|sess| sess.path() == path.as_path())
-                {
-                    opened = true;
-                    continue;
-                }
                 if opened {
                     eprintln!(
                         "openpencil-desktop: ignoring extra opened file \
@@ -640,17 +691,11 @@ impl DesktopApp {
                     continue;
                 }
                 if is_fig {
-                    // `.fig` → background import. Mark `opened` true
-                    // so further drops in this batch are skipped, but
-                    // don't run `mark_document_saved` (the document is
-                    // still pending; pump applies it when the worker
-                    // finishes).
-                    figma_import_session::cancel(&mut self.host, &mut self.current_figma_import);
-                    html_import_session::cancel(&mut self.host, &mut self.current_html_import);
-                    self.current_figma_import =
-                        Some(figma_import_session::spawn(&mut self.host, path));
-                    self.request_redraw(true);
-                    opened = true;
+                    // `.fig` → background import. An accepted destination
+                    // marks this batch handled; cancelling the dialog leaves
+                    // the current import untouched and allows the next path.
+                    // `pump` applies accepted imports when the worker finishes.
+                    opened = self.begin_figma_import(path);
                 } else if is_html {
                     figma_import_session::cancel(&mut self.host, &mut self.current_figma_import);
                     html_import_session::cancel(&mut self.host, &mut self.current_html_import);
@@ -699,11 +744,7 @@ impl DesktopApp {
                 continue;
             }
             if is_fig {
-                figma_import_session::cancel(&mut self.host, &mut self.current_figma_import);
-                html_import_session::cancel(&mut self.host, &mut self.current_html_import);
-                self.current_figma_import = Some(figma_import_session::spawn(&mut self.host, path));
-                self.request_redraw(true);
-                opened = true;
+                opened = self.begin_figma_import(path);
             } else if is_html {
                 figma_import_session::cancel(&mut self.host, &mut self.current_figma_import);
                 html_import_session::cancel(&mut self.host, &mut self.current_html_import);
@@ -749,6 +790,9 @@ impl DesktopApp {
         // first — otherwise an unflushed draft would not count toward
         // `document_is_dirty` and the reload would drop it silently.
         self.host.commit_pending_input_pub();
+        if self.save_session.is_active() && !self.finish_background_saves() {
+            return false;
+        }
         if !self.document_is_dirty() {
             return true;
         }
@@ -779,6 +823,11 @@ impl DesktopApp {
     }
 
     fn confirm_close(&mut self) -> bool {
+        // A Save-As may be writing an otherwise-clean document to a new path.
+        // Finish it before the process can exit and abandon the worker.
+        if self.save_session.is_active() && !self.finish_background_saves() {
+            return false;
+        }
         if !self.document_is_dirty() {
             return true;
         }
@@ -870,8 +919,12 @@ impl DesktopApp {
                     // them. An unchanged document reloads silently.
                     let edited_during_pull = baseline
                         .map(|base| {
-                            op_host_services::doc_io::document_fingerprint(self.host.editor_state())
-                                != base
+                            let state = self.host.editor_state();
+                            (
+                                self.host.document_epoch(),
+                                state.document_generation(),
+                                state.document_revision(),
+                            ) != base
                         })
                         .unwrap_or(false);
                     if !edited_during_pull || self.confirm_document_reload() {
@@ -948,25 +1001,31 @@ impl DesktopApp {
 
     fn drain_pending_cursor_move(&mut self) -> bool {
         if let Some((cx, cy)) = self.pending_cursor_move.take() {
-            let over_layer_panel = self.host.cursor_over_layer_panel(
-                cx,
-                cy,
-                self.viewport_width,
-                self.viewport_height,
-            );
-            let hover_changed =
-                self.host
+            let model_picker_open = self.host.editor_state().editor_ui.chat_model_picker.open;
+            let over_layer_panel = !model_picker_open
+                && self.host.cursor_over_layer_panel(
+                    cx,
+                    cy,
+                    self.viewport_width,
+                    self.viewport_height,
+                );
+            let hover_changed = !model_picker_open
+                && self
+                    .host
                     .update_layer_hover(cx, cy, self.viewport_width, self.viewport_height);
-            // A top-most dropdown (file menu / locale / shape picker) paints
-            // OVER the layer panel, so when one is open the cursor must still
-            // reach `apply_cursor_move` (which updates the dropdown's hover)
+            // A top-most dropdown (file menu / locale / shape / chat model)
+            // paints OVER the layer panel, so when one is open the cursor must
+            // still reach `apply_cursor_move` (which updates its hover)
             // even inside the panel's x-range. Otherwise the dropdown's left
             // half — overlapping the sidebar — is short-circuited here and its
             // rows never highlight (only the right half, clear of the sidebar,
             // did).
             let overlay_open = {
                 let eui = &self.host.editor_state().editor_ui;
-                eui.file_menu_open || eui.locale_picker.open || eui.shape_picker.open
+                eui.file_menu_open
+                    || eui.locale_picker.open
+                    || eui.shape_picker.open
+                    || eui.chat_model_picker.open
             };
             // Side-panel resize starts on the gutter but must keep receiving
             // cursor moves after the pointer crosses back into the layer rail.
@@ -1187,6 +1246,9 @@ mod chat_intent_host_tests;
 
 #[cfg(test)]
 mod main_tests;
+
+#[cfg(test)]
+mod page_paint_identity_tests;
 
 #[cfg(test)]
 mod keyboard_shortcut_tests;

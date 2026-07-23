@@ -706,9 +706,9 @@ fn navigate_patch(verb: &str, path: &str) -> String {
 /// scoped to its own module, mirroring the existing per-module
 /// `resolved_widths` precedent in `sidebar_archetype`.
 fn resolved_y_offsets(state: &EditorState) -> HashMap<String, f64> {
-    let scene = op_pen_loader::editor_state_to_layout_scene(state);
+    let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
     let mut out = HashMap::new();
-    for page in &scene.pages {
+    if let Some(page) = scene.active_page() {
         collect_y_offsets(&page.children, &mut out);
     }
     out

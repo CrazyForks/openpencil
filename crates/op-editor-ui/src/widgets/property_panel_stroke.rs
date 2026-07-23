@@ -86,21 +86,28 @@ fn stroke_mode_popover_layout(x0: f32, y: f32, width: f32) -> (Rect, Rect, [Rect
         origin: Point2D::new(x0 + width - PAD_X - 18.0, y + 2.0),
         size: Point2D::new(18.0, 18.0),
     };
-    let pop_w = 190.0_f32.min(width - PAD_X * 2.0);
-    let pop_x = gear.origin.x + 18.0 - pop_w;
+    let pop_box = stroke_mode_popover_rect_from_gear(gear, width);
+    let pop_w = pop_box.size.x;
+    let pop_x = pop_box.origin.x;
     let pad = 6.0;
     let title_h = 22.0;
     let row_h = 26.0;
-    let pop_box = Rect {
-        origin: Point2D::new(pop_x, y + 24.0),
-        size: Point2D::new(pop_w, pad * 2.0 + title_h + row_h * 3.0),
-    };
     let first_row = pop_box.origin.y + pad + title_h;
     let row = |i: usize| Rect {
         origin: Point2D::new(pop_x + pad, first_row + i as f32 * row_h),
         size: Point2D::new(pop_w - pad * 2.0, row_h),
     };
     (gear, pop_box, [row(0), row(1), row(2)])
+}
+
+/// Popup chrome derived from the stroke gear emitted by the shared
+/// action walker. Paint and host containment both call this helper.
+pub(crate) fn stroke_mode_popover_rect_from_gear(gear: Rect, width: f32) -> Rect {
+    let pop_w = 190.0_f32.min(width - PAD_X * 2.0);
+    Rect {
+        origin: Point2D::new(gear.origin.x + gear.size.x - pop_w, gear.origin.y + 22.0),
+        size: Point2D::new(pop_w, 6.0 * 2.0 + 22.0 + 26.0 * 3.0),
+    }
 }
 
 pub(crate) fn push_stroke_action_rects(

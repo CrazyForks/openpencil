@@ -2,20 +2,24 @@
 //! per-type converter modules. Walks the [`TreeNode`] tree and emits
 //! canonical `PenNode`s.
 
-use crate::boolean_fallback::convert_empty_boolean_group;
+use crate::boolean_fallback::{convert_empty_boolean_group, convert_swapped_boolean_group};
 use crate::common::{
-    common_props, extract_position, lookup_icon_by_name, map_corner_radius, map_corner_smoothing,
-    normalize_angle, resolve_height, resolve_width, round2, round3, ConversionContext,
-    FigLayoutMode, IconStyle, SKIPPED_TYPES,
+    common_props, lookup_icon_by_name, map_corner_radius, map_corner_smoothing, normalize_angle,
+    resolve_height, resolve_width, round2, round3, ConversionContext, FigLayoutMode, IconStyle,
+    SKIPPED_TYPES,
 };
 use crate::corner_geometry::smoothed_rect_path;
 use crate::figma_types::FigVec2;
-use crate::instance::{apply_instance_overrides_cached, merge_symbol_props};
+use crate::instance::{apply_instance_overrides_memoized, merge_symbol_props};
 use crate::kiwi::FigValue;
+use crate::layout_positioning::{
+    apply_layout_positioning, order_children, sizing_parent_stack_mode,
+};
 use crate::mappers::{
     fig_fill_color, map_figma_effects, map_figma_fills, map_figma_layout, map_figma_stroke,
     LayoutProps,
 };
+use crate::mask::{any_visible, figma_path_mask};
 use crate::node_build::{
     ellipse_node, frame_node, group_node, line_node, path_node, rectangle_node, ref_node, text_node,
 };
@@ -57,13 +61,9 @@ fn is_string_sizing(s: &SizingBehavior) -> bool {
     )
 }
 
-/// Convert a parent's children, skipping invisible / transparent
-/// nodes. `parentStackMode` passed down is `None` in preserve mode.
-pub fn convert_children(parent: &TreeNode, ctx: &mut ConversionContext) -> Vec<PenNode> {
-    let parent_stack_mode: Option<String> = match ctx.layout_mode {
-        FigLayoutMode::Preserve => None,
-        FigLayoutMode::OpenPencil => parent.figma.get_str("stackMode").map(|s| s.to_string()),
-    };
+/// Convert a parent's children, skipping invisible / transparent nodes.
+pub fn convert_children(parent: &TreeNode, ctx: &mut ConversionContext<'_>) -> Vec<PenNode> {
+    let parent_stack_mode = parent.figma.get_str("stackMode").map(str::to_string);
     let mut result = Vec::new();
     for child in &parent.children {
         if child.figma.get_bool("visible") == Some(false) {
@@ -83,27 +83,28 @@ pub fn convert_children(parent: &TreeNode, ctx: &mut ConversionContext) -> Vec<P
 pub fn convert_node(
     tree: &TreeNode,
     parent_stack_mode: Option<&str>,
-    ctx: &mut ConversionContext,
+    ctx: &mut ConversionContext<'_>,
 ) -> Option<PenNode> {
     let ty = tree.figma.get_str("type")?;
     if SKIPPED_TYPES.contains(&ty) {
         return None;
     }
-    Some(match ty {
-        "FRAME" | "SECTION" => convert_frame(tree, parent_stack_mode, ctx),
-        "GROUP" => convert_group(tree, parent_stack_mode, ctx),
-        "SYMBOL" => convert_component(tree, parent_stack_mode, ctx),
-        "INSTANCE" => convert_instance(tree, parent_stack_mode, ctx),
-        "RECTANGLE" | "ROUNDED_RECTANGLE" => convert_rectangle(tree, parent_stack_mode, ctx),
-        "ELLIPSE" => convert_ellipse(tree, parent_stack_mode, ctx),
+    let sizing_parent = sizing_parent_stack_mode(&tree.figma, parent_stack_mode, ctx.layout_mode);
+    let mut node = match ty {
+        "FRAME" | "SECTION" => convert_frame(tree, sizing_parent, ctx),
+        "GROUP" => convert_group(tree, sizing_parent, ctx),
+        "SYMBOL" => convert_component(tree, sizing_parent, ctx),
+        "INSTANCE" => convert_instance(tree, sizing_parent, ctx),
+        "RECTANGLE" | "ROUNDED_RECTANGLE" => convert_rectangle(tree, sizing_parent, ctx),
+        "ELLIPSE" => convert_ellipse(tree, sizing_parent, ctx),
         "LINE" => convert_line(tree, ctx),
         "VECTOR" | "STAR" | "REGULAR_POLYGON" | "BOOLEAN_OPERATION" => {
-            convert_vector(tree, parent_stack_mode, ctx)
+            convert_vector(tree, sizing_parent, ctx)
         }
-        "TEXT" => convert_text(tree, parent_stack_mode, ctx),
+        "TEXT" => convert_text(tree, sizing_parent, ctx),
         _ => {
             if !tree.children.is_empty() {
-                convert_frame(tree, parent_stack_mode, ctx)
+                convert_frame(tree, sizing_parent, ctx)
             } else {
                 ctx.warnings.push(format!(
                     "Skipped unsupported node type: {ty} ({})",
@@ -112,7 +113,9 @@ pub fn convert_node(
                 return None;
             }
         }
-    })
+    };
+    apply_layout_positioning(&mut node, &tree.figma, parent_stack_mode, ctx.layout_mode);
+    Some(node)
 }
 
 /// Build the `{ width, height, layout?, cornerRadius, fill, stroke,
@@ -121,7 +124,7 @@ fn build_container(
     figma: &FigValue,
     parent_stack_mode: Option<&str>,
     has_auto_layout: bool,
-    ctx: &ConversionContext,
+    ctx: &ConversionContext<'_>,
 ) -> ContainerProps {
     let mut container = ContainerProps {
         width: Some(resolve_width(figma, parent_stack_mode, ctx)),
@@ -132,13 +135,14 @@ fn build_container(
         FigLayoutMode::Preserve => {
             if has_auto_layout {
                 Some(map_figma_layout(figma))
-            } else if figma.get_bool("frameMaskDisabled") != Some(true) {
+            } else {
                 Some(LayoutProps {
-                    clip_content: Some(true),
+                    // Preserve the inverse Figma flag explicitly. An absent
+                    // canonical value is reserved for legacy root-frame
+                    // clipping compatibility in the loader.
+                    clip_content: Some(figma.get_bool("frameMaskDisabled") != Some(true)),
                     ..LayoutProps::default()
                 })
-            } else {
-                None
             }
         }
         FigLayoutMode::OpenPencil => Some(map_figma_layout(figma)),
@@ -154,23 +158,10 @@ fn build_container(
     container
 }
 
-/// Auto-layout flow order is ascending; the tree builder sorted
-/// descending (z-order), so auto-layout containers reverse back to
-/// flow order in BOTH modes — Preserve keeps authored geometry but
-/// downstream flex re-solves still read array order, and OpenPencil
-/// feeds the array straight to the layout engine.
-fn order_children(children: Vec<PenNode>, has_auto_layout: bool) -> Vec<PenNode> {
-    if has_auto_layout && children.len() > 1 {
-        children.into_iter().rev().collect()
-    } else {
-        children
-    }
-}
-
 fn convert_frame(
     tree: &TreeNode,
     parent_stack_mode: Option<&str>,
-    ctx: &mut ConversionContext,
+    ctx: &mut ConversionContext<'_>,
 ) -> PenNode {
     let id = ctx.generate_id();
     let children = convert_children(tree, ctx);
@@ -180,7 +171,7 @@ fn convert_frame(
         .map(|s| s != "NONE")
         .unwrap_or(false);
     let container = build_container(figma, parent_stack_mode, has_auto_layout, ctx);
-    let ordered = order_children(children, has_auto_layout);
+    let ordered = order_children(children, has_auto_layout, ctx.layout_mode);
     let base = common_props(figma, id);
     frame_node(
         base,
@@ -197,7 +188,7 @@ fn convert_frame(
 fn convert_component(
     tree: &TreeNode,
     parent_stack_mode: Option<&str>,
-    ctx: &mut ConversionContext,
+    ctx: &mut ConversionContext<'_>,
 ) -> PenNode {
     let figma_id = tree
         .figma
@@ -216,7 +207,7 @@ fn convert_component(
         .map(|s| s != "NONE")
         .unwrap_or(false);
     let container = build_container(figma, parent_stack_mode, has_auto_layout, ctx);
-    let ordered = order_children(children, has_auto_layout);
+    let ordered = order_children(children, has_auto_layout, ctx.layout_mode);
     let base = common_props(figma, id);
     frame_node(
         base,
@@ -233,7 +224,7 @@ fn convert_component(
 fn convert_group(
     tree: &TreeNode,
     parent_stack_mode: Option<&str>,
-    ctx: &mut ConversionContext,
+    ctx: &mut ConversionContext<'_>,
 ) -> PenNode {
     let id = ctx.generate_id();
     let children = convert_children(tree, ctx);
@@ -267,6 +258,10 @@ fn has_visual_overrides(figma: &FigValue) -> bool {
                     || ov.get("arcData").is_some()
                     || ov.get("textData").is_some()
                     || ov.get("fontSize").is_some()
+                    || ov.get("overriddenSymbolID").is_some()
+                    || ov
+                        .get_array("componentPropAssignments")
+                        .is_some_and(|assignments| !assignments.is_empty())
             })
         })
         .unwrap_or(false)
@@ -275,46 +270,60 @@ fn has_visual_overrides(figma: &FigValue) -> bool {
 fn convert_instance(
     tree: &TreeNode,
     parent_stack_mode: Option<&str>,
-    ctx: &mut ConversionContext,
+    ctx: &mut ConversionContext<'_>,
 ) -> PenNode {
     let figma = &tree.figma;
-    let component_guid = figma
-        .get("overriddenSymbolID")
-        .or_else(|| figma.get("symbolData").and_then(|s| s.get("symbolID")))
+    let override_guid = figma.get("overriddenSymbolID").and_then(guid_to_string);
+    let base_guid = figma
+        .get("symbolData")
+        .and_then(|data| data.get("symbolID"))
         .and_then(guid_to_string);
+    let component_guid = override_guid.clone().or_else(|| base_guid.clone());
 
-    let inline =
-        component_guid.is_some() && (tree.children.is_empty() || has_visual_overrides(figma));
+    // A real component swap must expand the target instead of stale children.
+    let is_swap = override_guid
+        .as_ref()
+        .is_some_and(|target| base_guid.as_ref() != Some(target));
+    let inline = component_guid.is_some()
+        && (is_swap || tree.children.is_empty() || has_visual_overrides(figma));
 
     if inline {
         let key = component_guid.clone().unwrap();
-        // Borrow the `Rc<TreeNode>` in place instead of cloning it — the
-        // symbol map and `instance_assignments` are disjoint fields of
-        // `ctx`, so this borrow coexists with the `&mut` below without
-        // needing an owned copy of the (potentially large) subtree.
-        if let Some(symbol_node) = ctx.symbol_tree.get(&key) {
+        // Copy the borrowed master reference out of the map before mutating
+        // the rest of the conversion context during recursive expansion.
+        if let Some(symbol_node) = ctx.symbol_tree.get(&key).copied() {
             if !symbol_node.children.is_empty() {
                 let overrides = figma
                     .get("symbolData")
                     .and_then(|s| s.get_array("symbolOverrides"))
                     .map(|a| a.to_vec());
+                let base_symbol_node = base_guid
+                    .as_ref()
+                    .and_then(|guid| ctx.symbol_tree.get(guid))
+                    .copied();
                 let instance_size = figma.get("size").and_then(FigVec2::from_value);
                 // A component swap (`overriddenSymbolID` differs from the
                 // base `symbolID`) leaves the pre-swap component's stale
                 // derived cluster in the array — drop it so it can't
                 // hijack the fingerprint mapping onto the swapped subtree.
-                let is_swap = figma.get("overriddenSymbolID").is_some();
                 let derived = figma.get_array("derivedSymbolData").map(|a| {
                     if is_swap {
-                        crate::instance::filter_swap_stale_derived(a, symbol_node, instance_size)
+                        crate::instance::filter_swap_stale_derived(
+                            a,
+                            base_symbol_node,
+                            symbol_node,
+                            instance_size,
+                        )
                     } else {
                         a.to_vec()
                     }
                 });
-                let children = apply_instance_overrides_cached(
+                let children = apply_instance_overrides_memoized(
+                    &mut ctx.instance_expansions,
+                    &key,
                     symbol_node,
-                    overrides.as_deref(),
-                    derived.as_deref(),
+                    overrides,
+                    derived,
                     instance_size,
                     &mut ctx.instance_assignments,
                 );
@@ -344,7 +353,7 @@ fn convert_instance(
 fn convert_rectangle(
     tree: &TreeNode,
     parent_stack_mode: Option<&str>,
-    ctx: &mut ConversionContext,
+    ctx: &mut ConversionContext<'_>,
 ) -> PenNode {
     let id = ctx.generate_id();
     let figma = &tree.figma;
@@ -374,6 +383,7 @@ fn convert_rectangle(
                 map_figma_fills(figma.get_array("fillPaints")),
                 map_figma_stroke(figma),
                 map_figma_effects(figma.get_array("effects")),
+                figma_path_mask(figma),
             );
         }
     }
@@ -425,7 +435,7 @@ fn map_figma_arc_data(arc: &FigValue) -> (Option<f64>, Option<f64>, Option<f64>)
 fn convert_ellipse(
     tree: &TreeNode,
     parent_stack_mode: Option<&str>,
-    ctx: &mut ConversionContext,
+    ctx: &mut ConversionContext<'_>,
 ) -> PenNode {
     let id = ctx.generate_id();
     let figma = &tree.figma;
@@ -467,14 +477,12 @@ fn convert_ellipse(
     )
 }
 
-fn convert_line(tree: &TreeNode, ctx: &mut ConversionContext) -> PenNode {
+fn convert_line(tree: &TreeNode, ctx: &mut ConversionContext<'_>) -> PenNode {
     let id = ctx.generate_id();
     let figma = &tree.figma;
-    let (x, y) = extract_position(figma);
-    let w = figma
-        .get("size")
-        .and_then(|s| s.get_f64("x"))
-        .unwrap_or(100.0);
+    let size = figma.get("size");
+    let w = size.and_then(|s| s.get_f64("x")).unwrap_or(100.0);
+    let h = size.and_then(|s| s.get_f64("y")).unwrap_or(0.0);
     // Line builds its base manually — no flip / locked.
     let mut base = common_props(figma, id);
     base.flip_x = None;
@@ -482,8 +490,8 @@ fn convert_line(tree: &TreeNode, ctx: &mut ConversionContext) -> PenNode {
     base.locked = None;
     line_node(
         base,
-        x + w,
-        y,
+        w,
+        h,
         map_figma_stroke(figma),
         map_figma_effects(figma.get_array("effects")),
     )
@@ -492,7 +500,7 @@ fn convert_line(tree: &TreeNode, ctx: &mut ConversionContext) -> PenNode {
 fn convert_text(
     tree: &TreeNode,
     parent_stack_mode: Option<&str>,
-    ctx: &mut ConversionContext,
+    ctx: &mut ConversionContext<'_>,
 ) -> PenNode {
     let id = ctx.generate_id();
     let figma = &tree.figma;
@@ -520,17 +528,11 @@ fn convert_text(
     )
 }
 
-fn any_visible(paints: Option<&[FigValue]>) -> bool {
-    paints
-        .map(|p| p.iter().any(|x| x.get_bool("visible") != Some(false)))
-        .unwrap_or(false)
-}
-
 /// Whether the node references enough binary data to represent actual
 /// vector geometry. Short command blobs and nodes with no geometry
 /// source are degenerate, while non-empty undecodable data still uses
 /// the visible rectangle fallback so the import failure remains clear.
-fn has_non_degenerate_vector_geometry(figma: &FigValue, ctx: &ConversionContext) -> bool {
+fn has_non_degenerate_vector_geometry(figma: &FigValue, ctx: &ConversionContext<'_>) -> bool {
     for key in ["fillGeometry", "strokeGeometry"] {
         if let Some(geometries) = figma.get_array(key) {
             for geometry in geometries {
@@ -560,15 +562,15 @@ fn has_non_degenerate_vector_geometry(figma: &FigValue, ctx: &ConversionContext)
 fn convert_vector(
     tree: &TreeNode,
     parent_stack_mode: Option<&str>,
-    ctx: &mut ConversionContext,
+    ctx: &mut ConversionContext<'_>,
 ) -> PenNode {
     let id = ctx.generate_id();
     let figma = &tree.figma;
 
-    // Icon-lookup branch — match the node's name against the host's
-    // icon registry. When set, the node converts to a Path carrying the
-    // canonical 24×24 lucide `d` + `icon_id`, bypassing vector decode.
-    // Mirrors TS `convertVector` lines 25-65.
+    if let Some(group) = convert_swapped_boolean_group(tree, parent_stack_mode, id.clone(), ctx) {
+        return group;
+    }
+    // Resolve matching host icons to canonical 24×24 path data.
     let name = figma.get_str("name").unwrap_or("");
     if let Some(icon) = lookup_icon_by_name(name) {
         return build_icon_path_node(figma, id, parent_stack_mode, ctx, icon);
@@ -633,6 +635,7 @@ fn convert_vector(
                 map_figma_fills(figma.get_array("strokePaints")),
                 None,
                 map_figma_effects(figma.get_array("effects")),
+                figma_path_mask(figma),
             );
         }
         return path_node(
@@ -647,6 +650,7 @@ fn convert_vector(
                 .flatten(),
             map_figma_stroke(figma),
             map_figma_effects(figma.get_array("effects")),
+            figma_path_mask(figma),
         );
     }
 
@@ -661,6 +665,7 @@ fn convert_vector(
             None,
             Some(stroke),
             map_figma_effects(figma.get_array("effects")),
+            figma_path_mask(figma),
         );
     }
 
@@ -682,6 +687,7 @@ fn convert_vector(
             None,
             None,
             None,
+            figma_path_mask(figma),
         );
     }
 
@@ -711,7 +717,7 @@ fn build_icon_path_node(
     figma: &FigValue,
     id: String,
     parent_stack_mode: Option<&str>,
-    ctx: &mut ConversionContext,
+    ctx: &mut ConversionContext<'_>,
     icon: crate::common::IconLookupResult,
 ) -> PenNode {
     use jian_ops_schema::style::{
@@ -778,6 +784,7 @@ fn build_icon_path_node(
         fill,
         stroke,
         map_figma_effects(figma.get_array("effects")),
+        figma_path_mask(figma),
     )
 }
 
@@ -787,5 +794,7 @@ mod tests;
 mod tests_boolean_fallback;
 #[cfg(test)]
 mod tests_instance_scale;
+#[cfg(test)]
+mod tests_instance_swap;
 #[cfg(test)]
 mod tests_vector_regressions;

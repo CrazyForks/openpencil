@@ -47,7 +47,7 @@ impl McpTool for GetCanvasBounds {
 }
 
 pub fn get_canvas_bounds_snapshot(state: &EditorState) -> GetCanvasBounds {
-    let scene = op_pen_loader::editor_state_to_layout_scene(state);
+    let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
     GetCanvasBounds {
         bounds: scene.content_bounds().map(|bounds| {
             (

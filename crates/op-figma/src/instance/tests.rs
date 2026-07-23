@@ -8,7 +8,7 @@
 use super::*;
 
 pub(super) fn obj(pairs: Vec<(&str, FigValue)>) -> FigValue {
-    FigValue::Object(pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect())
+    FigValue::Object(pairs.into_iter().map(|(k, v)| (k.into(), v)).collect())
 }
 
 pub(super) fn guid(sid: u32, lid: u32) -> FigValue {
@@ -30,7 +30,7 @@ pub(super) fn guid_path(guids: Vec<FigValue>) -> FigValue {
 }
 
 pub(super) fn ov_with(guids: Vec<FigValue>, extra: Vec<(&str, FigValue)>) -> FigValue {
-    let mut pairs: Vec<(String, FigValue)> = vec![(
+    let mut pairs = vec![(
         "guidPath".into(),
         obj(vec![("guids", FigValue::Array(guids))]),
     )];
@@ -127,6 +127,83 @@ fn strategy_1_index_maps_when_count_matches() {
     let names: Vec<Option<&str>> = out.iter().map(|c| c.figma.get_str("name")).collect();
     assert!(names.contains(&Some("B-Override")), "{names:?}");
     assert!(names.contains(&Some("a")), "{names:?}");
+}
+
+/// Ant Design's `newest version number` component has exactly two
+/// nodes (SYMBOL root + TEXT) and two virtual entries. Figma allocated
+/// the TEXT first, while Strategy 1's root-first index mapping did the
+/// opposite and silently applied the text style to the discarded root.
+#[test]
+fn strategy_1_routes_unique_text_style_to_unique_text_node() {
+    let mut text = leaf("4.23.3", 179_429, 170_443);
+    text.figma.set("type", FigValue::Str("TEXT".into()));
+    text.figma.set("size", size(51.0, 22.0));
+    text.figma.set("fontSize", FigValue::Float(14.0));
+    text.figma.set(
+        "fontName",
+        obj(vec![
+            ("family", FigValue::Str("Menlo".into())),
+            ("style", FigValue::Str("Regular".into())),
+        ]),
+    );
+    let mut sym = symbol_root(vec![text]);
+    sym.figma.set("size", size(51.0, 22.0));
+
+    let derived = vec![
+        guid_path(vec![guid(1_887, 2_339)]),
+        guid_path(vec![guid(1_887, 2_340)]),
+    ];
+    let overrides = vec![
+        ov_with(
+            vec![guid(1_887, 2_339)],
+            vec![
+                ("fontSize", FigValue::Float(38.0)),
+                (
+                    "fontName",
+                    obj(vec![
+                        ("family", FigValue::Str("Roboto".into())),
+                        ("style", FigValue::Str("Medium".into())),
+                    ]),
+                ),
+                (
+                    "lineHeight",
+                    obj(vec![
+                        ("value", FigValue::Float(46.0)),
+                        ("units", FigValue::Str("PIXELS".into())),
+                    ]),
+                ),
+            ],
+        ),
+        ov_with(vec![guid(1_887, 2_340)], vec![("size", size(108.0, 46.0))]),
+    ];
+
+    let out = apply_instance_overrides(
+        &sym,
+        Some(&overrides),
+        Some(&derived),
+        Some(FigVec2 { x: 108.0, y: 46.0 }),
+    );
+    let text = &out[0].figma;
+    assert_eq!(text.get_f64("fontSize"), Some(38.0));
+    assert_eq!(
+        text.get("fontName").and_then(|font| font.get_str("family")),
+        Some("Roboto")
+    );
+    assert_eq!(
+        text.get("fontName").and_then(|font| font.get_str("style")),
+        Some("Medium")
+    );
+    assert_eq!(
+        text.get("lineHeight")
+            .and_then(|line_height| line_height.get_f64("value")),
+        Some(46.0)
+    );
+    let resolved_size = text
+        .get("size")
+        .and_then(FigVec2::from_value)
+        .expect("text keeps the resolved instance size");
+    assert!((resolved_size.x - 108.0).abs() < 0.001);
+    assert!((resolved_size.y - 46.0).abs() < 0.001);
 }
 
 #[test]
@@ -261,6 +338,91 @@ fn nested_overrides_forwarded_into_instance_subtree() {
     assert_eq!((g.session_id, g.local_id), (2, 30));
 }
 
+/// A Supporter row carries authored defaults in its nested INSTANCE.
+/// Newer rows put the person's name in a component text assignment on
+/// the parent INSTANCE, while forwarding the image on the leaf pk.
+#[test]
+fn nested_override_forwarding_prefers_forwarded_fields_on_pk_collision() {
+    let old_image = obj(vec![
+        ("type", FigValue::Str("IMAGE".into())),
+        ("image", obj(vec![("hash", FigValue::Bytes(vec![0x11; 4]))])),
+    ]);
+    let new_image = obj(vec![
+        ("type", FigValue::Str("IMAGE".into())),
+        ("image", obj(vec![("hash", FigValue::Bytes(vec![0x22; 4]))])),
+    ]);
+    let authored = ov_with(
+        vec![guid(2, 30)],
+        vec![
+            (
+                "textData",
+                obj(vec![(
+                    "characters",
+                    FigValue::Str("Ant Design Part 01".into()),
+                )]),
+            ),
+            ("fontSize", FigValue::Float(14.0)),
+            ("fillPaints", FigValue::Array(vec![old_image])),
+        ],
+    );
+    let inst = TreeNode {
+        figma: obj(vec![
+            ("type", FigValue::Str("INSTANCE".into())),
+            ("guid", guid(1, 20)),
+            (
+                "symbolData",
+                obj(vec![("symbolOverrides", FigValue::Array(vec![authored]))]),
+            ),
+        ]),
+        children: vec![],
+    };
+    let sym = symbol_root(vec![inst]);
+    let derived = vec![guid_path(vec![guid(1, 20)])];
+    let text_assignment = ov_with(
+        vec![guid(1, 20)],
+        vec![(
+            "componentPropAssignments",
+            FigValue::Array(vec![obj(vec![(
+                "value",
+                obj(vec![(
+                    "textValue",
+                    obj(vec![("characters", FigValue::Str("Alex Tijero".into()))]),
+                )]),
+            )])]),
+        )],
+    );
+    let forwarded = ov_with(
+        vec![guid(1, 20), guid(2, 30)],
+        vec![("fillPaints", FigValue::Array(vec![new_image]))],
+    );
+
+    let out = apply_instance_overrides(
+        &sym,
+        Some(&[text_assignment, forwarded]),
+        Some(&derived),
+        None,
+    );
+    let merged = out[0]
+        .figma
+        .get("symbolData")
+        .and_then(|data| data.get_array("symbolOverrides"))
+        .and_then(|entries| entries.first())
+        .expect("nested override survives forwarding");
+    assert_eq!(
+        merged
+            .get("textData")
+            .and_then(|text| text.get_str("characters")),
+        Some("Alex Tijero")
+    );
+    assert_eq!(merged.get_f64("fontSize"), Some(14.0));
+    let hash = merged
+        .get_array("fillPaints")
+        .and_then(|paints| paints.first())
+        .and_then(|paint| paint.get("image"))
+        .and_then(|image| image.get("hash"));
+    assert_eq!(hash, Some(&FigValue::Bytes(vec![0x22; 4])));
+}
+
 use crate::figma_types::FigGuid;
 
 /// Sidebar-logo regression shape: a nested INSTANCE arrives with its
@@ -291,7 +453,7 @@ fn nested_derived_forwarding_preserves_authored_derived_data() {
     let derived = vec![
         guid_path(vec![guid(1, 20)]),
         // Multi-segment derived — forwarded into the instance. 2:30
-        // duplicates the authored pk (field-merge, authored wins);
+        // duplicates the authored pk (field-merge, forwarded wins);
         // 2:31 is new (appended).
         derived_with(
             vec![guid(1, 20), guid(2, 30)],
@@ -331,8 +493,8 @@ fn nested_derived_forwarding_preserves_authored_derived_data() {
         .and_then(FigVec2::from_value)
         .expect("merged entry keeps a size");
     assert!(
-        (sz.x - 43.0).abs() < 0.001,
-        "authored field must win the merge, got {}",
+        (sz.x - 9.0).abs() < 0.001,
+        "outer forwarded field must win the merge, got {}",
         sz.x
     );
     assert!(

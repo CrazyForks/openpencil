@@ -197,7 +197,7 @@ pub fn pen_documents_to_payload_for_preview(
             .iter()
             .map(|n| node_to_payload(n, &rects))
             .collect();
-        mark_root_frame_clips(&mut children);
+        mark_root_frame_clips(paint_roots, &mut children);
         PagePayload {
             id: id.to_string(),
             name: name.to_string(),
@@ -293,6 +293,25 @@ fn map_scalar(
     }
 }
 
+/// Resolve one page into the paint payload used by the editor scene.
+///
+/// The full-document adapters above remain available to export/validation
+/// callers. Interactive hosts use this focused entry point so switching pages
+/// does not lay out every inactive page or retain their duplicate payloads.
+pub(crate) fn pen_roots_to_page_payload(
+    id: &str,
+    name: &str,
+    roots: &[PenNode],
+    page_idx: usize,
+    preserve_authored_geometry: bool,
+) -> PagePayload {
+    if preserve_authored_geometry {
+        build_page_preserving_geometry(id, name, roots)
+    } else {
+        build_page(id, name, roots, page_idx)
+    }
+}
+
 fn build_page(id: &str, name: &str, roots: &[PenNode], page_idx: usize) -> PagePayload {
     let mut layout_rects: BTreeMap<String, [f32; 4]> = BTreeMap::new();
     for root in roots {
@@ -303,7 +322,7 @@ fn build_page(id: &str, name: &str, roots: &[PenNode], page_idx: usize) -> PageP
         .iter()
         .map(|n| node_to_payload(n, &layout_rects))
         .collect();
-    mark_root_frame_clips(&mut children);
+    mark_root_frame_clips(roots, &mut children);
     PagePayload {
         id: id.to_string(),
         name: name.to_string(),
@@ -314,7 +333,7 @@ fn build_page(id: &str, name: &str, roots: &[PenNode], page_idx: usize) -> PageP
 fn build_page_preserving_geometry(id: &str, name: &str, roots: &[PenNode]) -> PagePayload {
     let rects = crate::authored_geometry::rects_for_roots(roots);
     let mut children: Vec<NodePayload> = roots.iter().map(|n| node_to_payload(n, &rects)).collect();
-    mark_root_frame_clips(&mut children);
+    mark_root_frame_clips(roots, &mut children);
     PagePayload {
         id: id.to_string(),
         name: name.to_string(),
@@ -322,14 +341,17 @@ fn build_page_preserving_geometry(id: &str, name: &str, roots: &[PenNode]) -> Pa
     }
 }
 
-/// TS flattener parity (`document-flattener.ts`): ROOT frames clip
-/// their children like artboards even without an authored
-/// `clipContent: true` (`isRootFrame = node.type === 'frame' &&
-/// depth === 0`). Only frames — top-level groups / rects keep their
-/// authored flag.
-fn mark_root_frame_clips(children: &mut [NodePayload]) {
-    for child in children {
-        if child.kind == "frame" {
+/// Legacy TS flattener parity (`document-flattener.ts`): ROOT frames whose
+/// canonical `clipContent` field is absent clip like artboards. An explicit
+/// `clipContent: false` is authored geometry and must remain open. Pair the
+/// source roots with their payloads so the DTO can keep its compact `bool`.
+fn mark_root_frame_clips(roots: &[PenNode], children: &mut [NodePayload]) {
+    for (root, child) in roots.iter().zip(children) {
+        if matches!(
+            root,
+            PenNode::Frame(frame) if frame.container.clip_content.is_none()
+        ) && child.kind == "frame"
+        {
             child.clip_content = true;
         }
     }
@@ -857,6 +879,12 @@ fn polygon_to_payload(n: &PolygonNode) -> NodePayload {
 fn path_to_payload(n: &PathNode) -> NodePayload {
     let mut p = base_payload(&n.base, "path");
     p.path_closed = n.closed.unwrap_or(false);
+    // `PathNode.mask` predates the shared, typed mask field. Preserve old
+    // documents by interpreting `true` as the historical/default ALPHA mode.
+    if p.mask_type.is_none() && n.mask.unwrap_or(false) {
+        p.mask_type = Some(jian_ops_schema::node::MaskType::Alpha);
+    }
+    p.is_mask = p.mask_type.is_some();
     p.even_odd_fill = matches!(
         n.fill_rule,
         Some(jian_ops_schema::node::PathFillRule::Evenodd)
@@ -989,7 +1017,6 @@ fn image_to_payload(n: &ImageNode) -> NodePayload {
     // (corrupt url / unsupported codec).
     p.image_src = Some(n.src.clone());
     p.image_fit = n.object_fit.as_ref().map(image_node_fit_to_payload);
-    p.image_blend_mode = n.blend_mode.clone();
     p.image_adjustments = image_node_adjustments(n);
     p.fill = Some([0.85, 0.86, 0.88, 1.0]);
     p.name = if n.base.name.as_deref().unwrap_or("").is_empty() {

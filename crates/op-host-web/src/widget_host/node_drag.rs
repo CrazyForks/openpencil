@@ -158,6 +158,9 @@ impl WidgetHost {
                 let _ = self
                     .editor_state
                     .move_selected_in_layout_direction(total_dx, total_dy);
+                // The drag snapshot already advanced the revision before the
+                // clone and any flex reorder were authored.
+                self.scene_cache.invalidate();
                 self.mark_dirty();
             }
             if let Some(d) = self.node_drag.as_mut() {
@@ -277,6 +280,10 @@ impl WidgetHost {
             mutated |= self.apply_drag_commit(id, plan);
         }
         if mutated {
+            // The drag snapshot already consumed this gesture's document
+            // revision, so the final tree mutation must invalidate the scene
+            // cache explicitly.
+            self.scene_cache.invalidate();
             self.mark_dirty();
         }
         mutated
@@ -340,6 +347,11 @@ impl WidgetHost {
             }
         }
         if mutated {
+            // Drag history advances the document revision when the gesture
+            // starts, before this live reorder mutates the tree. Invalidate the
+            // revision-keyed scene cache so sibling reflow observes the new
+            // order instead of reusing the pre-mutation scene.
+            self.scene_cache.invalidate();
             self.mark_dirty();
             self.start_layout_transition_from_scene_excluding(before_scene, &id);
         }

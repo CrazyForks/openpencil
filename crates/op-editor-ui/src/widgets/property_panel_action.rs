@@ -129,6 +129,11 @@ pub enum LayoutJustifyValue {
     SpaceAround,
 }
 
+/// Which compositing dropdown owns the shared picker state. Kept in
+/// editor-core because the open / hover state persists across the
+/// immutable panel snapshot rebuilt each frame.
+pub type CompositingTarget = op_editor_core::CompositingPickerTarget;
+
 /// Actions the Code panel emits. SelectFramework + Copy mutate state
 /// directly; Generate/Regenerate/Cancel raise pending flags the host
 /// codegen session (P3) drains; Download/ExportBundle are host file IO.
@@ -163,6 +168,19 @@ pub enum PropertyPanelAction {
     SetFlexLayout(op_editor_core::FlexLayout),
     ToggleCornerExpand,
     SetFillRule(jian_ops_schema::node::path::PathFillRule),
+    /// Open or close one of the Layer / Fill compositing dropdowns.
+    ToggleCompositingPicker(CompositingTarget),
+    /// Set the selected node's subtree blend mode. `None` is the
+    /// canonical source-over / Normal default.
+    SetNodeBlendMode(Option<jian_ops_schema::style::BlendMode>),
+    /// Set the selected node's canonical sibling-mask semantics.
+    /// `None` means the node is not a mask.
+    SetNodeMaskType(Option<jian_ops_schema::node::base::MaskType>),
+    /// Set one authored fill layer's blend mode. `None` is Normal.
+    SetFillBlendMode {
+        index: usize,
+        mode: Option<jian_ops_schema::style::BlendMode>,
+    },
     ToggleSizeFillWidth,
     ToggleSizeFillHeight,
     ToggleSizeHugWidth,
@@ -185,6 +203,12 @@ pub enum PropertyPanelAction {
     /// User clicked "Detach instance" — host materializes the Ref
     /// into an independent subtree (TS `detachComponent` case 2).
     DetachInstance,
+    /// Open or close the selected Ref's component-target list.
+    ToggleInstanceComponentPicker,
+    /// Retarget the selected canonical Ref to another registered
+    /// component id. The host writes this into the existing `ref`
+    /// field; no extra persisted instance schema is involved.
+    SetInstanceComponent(String),
     /// User clicked fill `index`'s fill-type dropdown — host toggles
     /// the picker open for that fill (`fill_type_picker` + the index
     /// it targets).
@@ -296,6 +320,9 @@ pub enum PropertyPanelAction {
     },
     /// User clicked the image adjustment reset affordance.
     ResetImageAdjustments,
+    /// Clear the active page's authored canvas background so the
+    /// editor theme surface is used again.
+    ClearPageBackground,
     /// User clicked the Icon section's icon/library row — host opens
     /// the native Lucide picker in replace-selection mode.
     OpenSelectedIconPicker,

@@ -4,11 +4,24 @@ use super::super::WidgetHost;
 use super::current_stop_alpha;
 use op_editor_core::PropertyFocus;
 use op_editor_ui::util::{
-    color_to_hex, color_to_hex_with_alpha, format_panel_number, parse_hex_color,
+    color_to_hex, color_to_hex_with_alpha, format_panel_number, format_panel_number_roundtrip,
+    parse_hex_color,
 };
 use op_editor_ui::Color;
 
 impl WidgetHost {
+    /// Commit the floating image-fill editor's numeric draft before an action
+    /// hides or replaces that editor. Keeping this guard here gives every
+    /// close path the same focus/draft cleanup without disturbing unrelated
+    /// property inputs.
+    pub(in crate::widget_host) fn commit_image_tile_scale_focus_if_any(&mut self) -> bool {
+        if self.editor_state.ui.property_focus != Some(PropertyFocus::ImageTileScale) {
+            return false;
+        }
+        self.commit_property_focus_if_any();
+        true
+    }
+
     pub(in crate::widget_host) fn commit_effect_param_focus_if_any(&mut self) {
         let Some(focus) = self.editor_state.editor_ui.effect_param_focus.take() else {
             return;
@@ -56,11 +69,26 @@ impl WidgetHost {
         let before = self.editor_state.snapshot_for_history();
         let instance_scope = self.editor_state.begin_instance_write_for_anchor();
         match focus {
+            PropertyFocus::PageBackgroundHex => {
+                let authored = draft.trim();
+                if self.editor_state.active_page_background_color() != Some(authored) {
+                    if let Some(hex) = normalized_page_background_hex(authored) {
+                        let _ = self
+                            .editor_state
+                            .set_active_page_background_color(Some(hex));
+                    }
+                }
+            }
+            PropertyFocus::ImageTileScale => {
+                if let Ok(value) = draft.trim().parse::<f32>() {
+                    let _ = self.editor_state.set_selected_image_tile_scale(value);
+                }
+            }
             PropertyFocus::FillHex(index) => {
                 let stripped = draft.trim().trim_start_matches('#');
                 if !stripped.is_empty() {
                     if let Some(color) = parse_hex_color(draft.trim()) {
-                        let hex = color_to_hex(color);
+                        let hex = color_to_hex_with_alpha(color);
                         if index == 0 {
                             let _ = self.editor_state.set_selected_color(true, &hex);
                         } else {
@@ -150,11 +178,20 @@ impl WidgetHost {
     }
 }
 
+fn normalized_page_background_hex(value: &str) -> Option<String> {
+    let digits = value.strip_prefix('#')?;
+    if !matches!(digits.len(), 6 | 8) || !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(format!("#{}", digits.to_ascii_uppercase()))
+}
+
 pub(in crate::widget_host) fn property_focus_initial(
     focus: PropertyFocus,
     panel: &op_editor_ui::widgets::PropertyPanel,
 ) -> String {
     match focus {
+        PropertyFocus::PageBackgroundHex => panel.page_background.clone().unwrap_or_default(),
         PropertyFocus::PositionX => panel.snapshot.x.to_string(),
         PropertyFocus::PositionY => panel.snapshot.y.to_string(),
         PropertyFocus::SizeW => panel.snapshot.width.to_string(),
@@ -194,7 +231,7 @@ pub(in crate::widget_host) fn property_focus_initial(
             .get(index)
             .map(|effect| format_panel_number(effect.blur))
             .unwrap_or_else(|| "0".to_string()),
-        PropertyFocus::Opacity => "100".to_string(),
+        PropertyFocus::Opacity => format_panel_number(panel.snapshot.opacity_percent),
         PropertyFocus::PolygonSides => panel.snapshot.polygon_sides.unwrap_or(3).to_string(),
         PropertyFocus::EllipseStart => format_panel_number(
             panel
@@ -250,13 +287,20 @@ pub(in crate::widget_host) fn property_focus_initial(
                 .unwrap_or(panel.snapshot.fill_opacity);
             ((opacity * 100.0).round() as i32).to_string()
         }
+        PropertyFocus::ImageTileScale => panel
+            .snapshot
+            .image_fill
+            .as_ref()
+            .and_then(|image| image.tile_scale)
+            .map(format_panel_number_roundtrip)
+            .unwrap_or_else(|| "1".to_string()),
         PropertyFocus::FillHex(index) => panel
             .snapshot
             .fills
             .get(index)
             .map(|f| f.color)
             .or(panel.snapshot.fill)
-            .map(color_to_hex)
+            .map(color_to_hex_with_alpha)
             .unwrap_or_else(|| "#FFFFFF".to_string()),
         PropertyFocus::StrokeHex => color_to_hex(panel.snapshot.stroke_swatch_color()),
         // Seed the SAME width the inline input paints (0 when unset, and

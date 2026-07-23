@@ -3,6 +3,7 @@
 //! 800-line cap. Mirrors the native `widget_host/keyboard.rs` ops.
 
 use super::WidgetHost;
+use op_editor_core::figma_import_state::ImportSource;
 
 impl WidgetHost {
     /// Copy `text` for the current surface. The VS Code embed relays the
@@ -584,10 +585,71 @@ impl WidgetHost {
         shift: bool,
         alt: bool,
     ) -> bool {
-        if is_mod && shift && !alt && key.eq_ignore_ascii_case("k") {
-            return self.apply_toggle_component_browser();
+        if !is_mod || !shift || alt {
+            return false;
         }
-        false
+        if key.eq_ignore_ascii_case("k") {
+            self.apply_toggle_component_browser()
+        } else if key.eq_ignore_ascii_case("f") {
+            self.apply_open_import(ImportSource::Figma)
+        } else if key.eq_ignore_ascii_case("h") {
+            self.apply_open_import(ImportSource::Html)
+        } else {
+            false
+        }
+    }
+
+    pub(in crate::widget_host) fn apply_open_import(&mut self, source: ImportSource) -> bool {
+        // Consume the chord without touching the active import or a visible
+        // settings/Git input. An existing higher modal keeps ownership too;
+        // otherwise the import modal would open invisibly beneath it and
+        // unexpectedly appear only after that modal closes.
+        let ui = &self.editor_state.editor_ui;
+        if ui.figma_import_in_progress
+            || !ui.figma_import_pages.is_empty()
+            || ui.export_dialog_open
+            || ui.login_modal_open
+            || ui.agent_settings_open
+            || (ui.missing_fonts_modal_open
+                && ui
+                    .missing_fonts_prompt
+                    .as_ref()
+                    .is_some_and(|prompt| !prompt.entries.is_empty()))
+            || self.git_commit_focus_active()
+            || self.git_remote_focus_active()
+            || self.git_https_focus_active()
+            || self.git_author_focus_active()
+            || self.git_branch_create_focus_active()
+            || self.git_clone_input_active()
+        {
+            return true;
+        }
+
+        // The import modal covers every editor text surface. Commit canvas /
+        // layer editing, then reuse the canonical chrome-input blur path so a
+        // hidden property, chat, or model-picker input cannot keep receiving
+        // keyboard/IME events behind the scrim.
+        let _ = self.editor_state.rename_commit();
+        let _ = self.editor_state.text_edit_commit();
+        self.editor_state.color_picker_blur_hex();
+        self.editor_state.color_picker_blur_rgb();
+        let _ = self.editor_state.close_color_picker();
+        self.blur_text_inputs_on_blank_press();
+        self.close_image_popovers_for_higher_overlay();
+        self.close_import_menu();
+        let ui = &mut self.editor_state.editor_ui;
+        ui.close_font_picker();
+        ui.close_icon_picker();
+        ui.component_browser_open = false;
+        ui.component_browser_kit_picker_open = false;
+        ui.component_browser_confirm_delete_kit = None;
+        ui.component_browser_hover = None;
+        ui.ime_preedit = None;
+        ui.import_source = source;
+        ui.figma_import_open = true;
+        ui.figma_import_hover = None;
+        self.mark_dirty();
+        true
     }
 
     /// `[` / `]` — bump the selected node down / up by one

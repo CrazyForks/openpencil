@@ -6,6 +6,18 @@ use super::current_stop_alpha;
 use op_editor_core::PropertyFocus;
 
 impl WidgetHostNative {
+    /// Commit the floating image-fill editor's numeric draft before an action
+    /// hides or replaces that editor. Keeping this guard here gives every
+    /// close path the same focus/draft cleanup without disturbing unrelated
+    /// property inputs.
+    pub(in crate::widget_host) fn commit_image_tile_scale_focus_if_any(&mut self) -> bool {
+        if self.editor_state.ui.property_focus != Some(PropertyFocus::ImageTileScale) {
+            return false;
+        }
+        self.commit_property_focus_if_any();
+        true
+    }
+
     /// Export-dialog press dispatcher.
     pub(in crate::widget_host) fn dispatch_export_dialog_press(
         &mut self,
@@ -74,12 +86,22 @@ impl WidgetHostNative {
                 .map(op_editor_core::ButtonPressTarget::FigmaImport);
         match hit {
             FigmaImportHit::Close => {
+                if modal.page_selection_active() {
+                    self.editor_state.editor_ui.pending_file_action = Some(
+                        FileAction::FinishFigmaImport(op_editor_core::FigmaImportSelection::Cancel),
+                    );
+                }
                 self.editor_state.editor_ui.figma_import_open = false;
                 self.editor_state.editor_ui.figma_import_hover = None;
             }
             FigmaImportHit::Outside => {
                 // Outside click — blank press: dismiss + blur inputs.
                 self.blur_text_inputs_on_blank_press();
+                if modal.page_selection_active() {
+                    self.editor_state.editor_ui.pending_file_action = Some(
+                        FileAction::FinishFigmaImport(op_editor_core::FigmaImportSelection::Cancel),
+                    );
+                }
                 self.editor_state.editor_ui.figma_import_open = false;
                 self.editor_state.editor_ui.figma_import_hover = None;
             }
@@ -90,6 +112,21 @@ impl WidgetHostNative {
                         ImportSource::Figma => FileAction::ImportFigma,
                         ImportSource::Html => FileAction::ImportHtml,
                     });
+                self.editor_state.editor_ui.figma_import_open = false;
+                self.editor_state.editor_ui.figma_import_hover = None;
+            }
+            FigmaImportHit::Page(index) => {
+                self.editor_state.editor_ui.pending_file_action =
+                    Some(FileAction::FinishFigmaImport(
+                        op_editor_core::FigmaImportSelection::Page(index),
+                    ));
+                self.editor_state.editor_ui.figma_import_open = false;
+                self.editor_state.editor_ui.figma_import_hover = None;
+            }
+            FigmaImportHit::ImportAll => {
+                self.editor_state.editor_ui.pending_file_action = Some(
+                    FileAction::FinishFigmaImport(op_editor_core::FigmaImportSelection::All),
+                );
                 self.editor_state.editor_ui.figma_import_open = false;
                 self.editor_state.editor_ui.figma_import_hover = None;
             }
@@ -209,11 +246,30 @@ impl WidgetHostNative {
         let before = self.editor_state.snapshot_for_history();
         let instance_scope = self.editor_state.begin_instance_write_for_anchor();
         match focus {
+            PropertyFocus::PageBackgroundHex => {
+                let authored = draft.trim();
+                // A page with no authored background seeds an empty draft.
+                // Empty/unchanged blur is deliberately a no-op; clearing is
+                // an explicit panel action so focus alone cannot inflate an
+                // old document with a new background field.
+                if self.editor_state.active_page_background_color() != Some(authored) {
+                    if let Some(hex) = normalized_page_background_hex(authored) {
+                        let _ = self
+                            .editor_state
+                            .set_active_page_background_color(Some(hex));
+                    }
+                }
+            }
+            PropertyFocus::ImageTileScale => {
+                if let Ok(value) = draft.trim().parse::<f32>() {
+                    let _ = self.editor_state.set_selected_image_tile_scale(value);
+                }
+            }
             PropertyFocus::FillHex(index) => {
                 let stripped = draft.trim().trim_start_matches('#');
                 if !stripped.is_empty() {
                     if let Some(color) = parse_hex_color(draft.trim()) {
-                        let hex = super::super::helpers::color_to_hex(color);
+                        let hex = super::super::helpers::color_to_hex_with_alpha(color);
                         // The primary fill (index 0) keeps `set_selected_color`
                         // (prepends a solid + colour-variable-aware); a
                         // non-primary row writes its own solid fill by index.
@@ -308,4 +364,14 @@ impl WidgetHostNative {
         }
         self.mark_dirty();
     }
+}
+
+/// Validate and canonicalize an authored page colour without routing it
+/// through the RGB-only helper (which would discard an imported alpha byte).
+fn normalized_page_background_hex(value: &str) -> Option<String> {
+    let digits = value.strip_prefix('#')?;
+    if !matches!(digits.len(), 6 | 8) || !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(format!("#{}", digits.to_ascii_uppercase()))
 }

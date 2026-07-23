@@ -1,5 +1,4 @@
-//! Redraw-scheduler tests for the desktop event loop. Split out of
-//! `main.rs` to keep that file under the 800-line cap.
+//! Redraw-scheduler tests, split from `main.rs` to keep it under the line cap.
 
 use super::*;
 use op_host_services::mcp_serve::tool_text;
@@ -53,6 +52,20 @@ fn panel_resize_drag_continues_inside_left_layer_panel() {
     assert!(
         app.host.editor_state().editor_ui.layer_panel_width < start_width,
         "in-flight panel resize must keep receiving cursor moves after the cursor enters the left panel"
+    );
+}
+
+#[test]
+fn hidden_model_picker_is_healed_over_the_layer_panel() {
+    let mut app = DesktopApp::new(None);
+    app.host.editor_state_mut().chat.collapsed = true;
+    app.host.editor_state_mut().editor_ui.chat_model_picker.open = true;
+    app.pending_cursor_move = Some((20.0, op_editor_ui::widgets::TOP_BAR_HEIGHT + 20.0));
+
+    assert!(app.drain_pending_cursor_move());
+    assert!(
+        !app.host.editor_state().editor_ui.chat_model_picker.open,
+        "a stale picker without visible bounds must not stay modal over the layer rail"
     );
 }
 
@@ -155,11 +168,10 @@ fn fresh_app_fits_blank_frame_like_ts_canvas_init() {
     assert!(app.host.editor_state().selection.is_empty());
     let v = app.host.editor_state().viewport;
 
-    // With no fresh selection, the right rail is hidden and the
-    // blank frame fits in the wider canvas region.
-    assert!((v.zoom - 0.8933333).abs() < 1e-3, "zoom {}", v.zoom);
+    // The page-properties rail stays visible for background editing; fit uses its narrower canvas.
+    assert!((v.zoom - 0.68).abs() < 1e-3, "zoom {}", v.zoom);
     assert!((v.pan_x - 64.0).abs() < 1e-2, "pan_x {}", v.pan_x);
-    assert!((v.pan_y - 72.66669).abs() < 1e-2, "pan_y {}", v.pan_y);
+    assert!((v.pan_y - 158.0).abs() < 1e-2, "pan_y {}", v.pan_y);
 }
 
 #[test]
@@ -170,9 +182,9 @@ fn fresh_app_refits_blank_frame_to_actual_window_size_once() {
 
     assert!(app.fit_initial_blank_frame_to_actual_viewport());
     let v = app.host.editor_state().viewport;
-    assert!((v.zoom - 0.52666664).abs() < 1e-3, "zoom {}", v.zoom);
+    assert!((v.zoom - 0.31333333).abs() < 1e-3, "zoom {}", v.zoom);
     assert!((v.pan_x - 64.0).abs() < 1e-2, "pan_x {}", v.pan_x);
-    assert!((v.pan_y - 119.33334).abs() < 1e-2, "pan_y {}", v.pan_y);
+    assert!((v.pan_y - 204.66667).abs() < 1e-2, "pan_y {}", v.pan_y);
 
     app.viewport_width = 1200.0;
     app.viewport_height = 800.0;

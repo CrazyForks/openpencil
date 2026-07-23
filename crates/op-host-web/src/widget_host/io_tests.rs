@@ -141,12 +141,14 @@ fn save_serializes_the_canonical_document_json() {
     let host = WidgetHost::new();
     let json =
         crate::file_actions::serialize_document(host.editor_state()).expect("serialize succeeds");
-    // The Save payload is the canonical document JSON — exactly what
-    // the desktop's `persistence::save_to_path` writes (pretty-printed
-    // `state.doc`), with a string `version` marker.
-    let expected =
-        serde_json::to_string_pretty(&host.editor_state().doc).expect("serde serializes");
-    assert_eq!(json, expected);
+    // The Save payload is the canonical document JSON plus the same embedded
+    // active-page metadata the desktop writer persists.
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("saved JSON");
+    let expected = serde_json::to_value(&host.editor_state().doc).expect("serde serializes");
+    assert_eq!(parsed["version"], expected["version"]);
+    assert_eq!(parsed["children"], expected["children"]);
+    assert_eq!(parsed["editorMeta"]["activePageIndex"], 0);
+    assert_eq!(parsed["editorMeta"]["preserveAuthoredGeometry"], false);
     assert!(json.contains("\"version\""));
     // And it round-trips through the same canonical loader the web
     // Open path uses.
@@ -156,6 +158,46 @@ fn save_serializes_the_canonical_document_json() {
         ingested.state.doc.children.len(),
         host.editor_state().doc.children.len()
     );
+}
+
+#[test]
+fn figma_preserve_geometry_survives_web_save_open_round_trip() {
+    let mut host = WidgetHost::new();
+    host.editor_state.add_page();
+    host.editor_state.ui.active_page_index = 1;
+    host.editor_state.editor_ui.preserve_authored_geometry = true;
+
+    let json =
+        crate::file_actions::serialize_document(host.editor_state()).expect("serialize succeeds");
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("saved JSON");
+    assert_eq!(parsed["editorMeta"]["preserveAuthoredGeometry"], true);
+
+    let ingested = crate::file_actions::ingest_op_source(&json, host.editor_state())
+        .expect("canonical round-trip parses");
+    assert_eq!(ingested.state.ui.active_page_index, 1);
+    assert!(ingested.state.editor_ui.preserve_authored_geometry);
+}
+
+#[test]
+fn legacy_op_without_preserve_metadata_reopens_in_layout_mode() {
+    let mut host = WidgetHost::new();
+    // The previous document must not leak its Figma-import mode into an old
+    // `.op` that predates preserveAuthoredGeometry.
+    host.editor_state.editor_ui.preserve_authored_geometry = true;
+    let legacy = r#"{
+      "version":"1.0.0",
+      "children":[],
+      "pages":[
+        {"id":"p1","name":"One","children":[]},
+        {"id":"p2","name":"Two","children":[]}
+      ],
+      "editorMeta":{"activePageIndex":1}
+    }"#;
+
+    let ingested = crate::file_actions::ingest_op_source(legacy, host.editor_state())
+        .expect("legacy canonical document parses");
+    assert_eq!(ingested.state.ui.active_page_index, 1);
+    assert!(!ingested.state.editor_ui.preserve_authored_geometry);
 }
 
 #[test]
@@ -302,7 +344,8 @@ fn drop_kind_classifies_by_extension_case_insensitively() {
     assert_eq!(drop_kind("Mockup.FIG"), DropKind::Figma);
     assert_eq!(drop_kind("icon.svg"), DropKind::Svg);
     assert_eq!(drop_kind("photo.JPEG"), DropKind::Image);
-    assert_eq!(drop_kind("notes.txt"), DropKind::Unsupported);
+    assert_eq!(drop_kind("notes.txt"), DropKind::HtmlResource);
+    assert_eq!(drop_kind("notes.md"), DropKind::Unsupported);
 }
 
 #[test]
@@ -334,6 +377,7 @@ fn install_ingested_state_preserves_live_chrome_and_clears_progress() {
     host.editor_state.editor_ui.theme_mode = ThemeMode::Light;
     host.editor_state.editor_ui.figma_import_in_progress = true;
     host.editor_state.editor_ui.file_name_display = Some("old.op".to_string());
+    host.editor_state.chat.title = "Existing conversation".to_string();
 
     let mut incoming = op_editor_core::EditorState::starter();
     incoming.editor_ui.preserve_authored_geometry = true;
@@ -347,6 +391,27 @@ fn install_ingested_state_preserves_live_chrome_and_clears_progress() {
         ui.file_name_display, None,
         "imported documents start untitled"
     );
+    assert_eq!(
+        host.editor_state.chat.title, "Existing conversation",
+        "document imports preserve chat sessions"
+    );
+}
+
+#[test]
+fn unsaved_import_is_dirty_while_an_opened_document_install_stays_clean() {
+    let mut imported = WidgetHost::new();
+    let imported_epoch = imported.document_epoch();
+    imported.install_unsaved_ingested_state(op_editor_core::EditorState::starter());
+    assert_ne!(imported.document_epoch(), imported_epoch);
+    assert!(imported.editor_state().is_dirty());
+    assert!(imported.editor_state().editor_ui.document_dirty);
+
+    let mut opened = WidgetHost::new();
+    let opened_epoch = opened.document_epoch();
+    opened.install_ingested_state(op_editor_core::EditorState::starter());
+    assert_ne!(opened.document_epoch(), opened_epoch);
+    assert!(!opened.editor_state().is_dirty());
+    assert!(!opened.editor_state().editor_ui.document_dirty);
 }
 
 #[test]

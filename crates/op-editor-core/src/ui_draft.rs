@@ -27,6 +27,9 @@ use std::collections::{BTreeMap, HashMap};
 /// shell-core's `PropertyFocus`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PropertyFocus {
+    /// Active page's `#RRGGBB` / `#RRGGBBAA` canvas background. This is
+    /// available with no node selection.
+    PageBackgroundHex,
     PositionX,
     PositionY,
     Rotation,
@@ -48,7 +51,7 @@ pub enum PropertyFocus {
     PaddingBottom,
     PaddingLeft,
     Opacity,
-    /// One fill's `#RRGGBB` colour input — indexed into the node's
+    /// One fill's `#RRGGBB` / `#RRGGBBAA` colour input — indexed into the node's
     /// `fill` list. The Fill section stacks one row per fill, so this
     /// carries which fill's hex field is focused. Only a Solid fill
     /// paints a hex input; an out-of-range / non-solid index is a
@@ -57,6 +60,8 @@ pub enum PropertyFocus {
     /// One fill's opacity input — percentage (0..100), indexed into
     /// the node's `fill` list (same per-fill scoping as [`FillHex`]).
     FillOpacity(usize),
+    /// Primary image fill's Figma TILE scale.
+    ImageTileScale,
     /// LinearGradient angle input — degrees in the canonical `.op`
     /// convention (0° = bottom→top, 90° = left→right). Only valid
     /// while the selected node's first fill is `LinearGradient`.
@@ -116,16 +121,22 @@ pub enum PropertyFocus {
 }
 
 impl PropertyFocus {
+    /// Maximum complete draft length for a hex input, including `#`.
+    /// Fill colours and page backgrounds accept `#RRGGBBAA`; imported and
+    /// legacy `.op` files may carry alpha in the colour itself in addition to
+    /// the paint body's separate opacity field.
+    pub fn hex_max_len(self) -> Option<usize> {
+        match self {
+            PropertyFocus::PageBackgroundHex | PropertyFocus::FillHex(_) => Some(9),
+            PropertyFocus::StrokeHex | PropertyFocus::GradientStopHex(_) => Some(7),
+            _ => None,
+        }
+    }
+
     /// True when the focused row carries hex colour input — drives
-    /// the `#`-sticky keyboard validation. Hex focuses cap the draft
-    /// at 7 chars (`#RRGGBB`).
+    /// the `#`-sticky keyboard validation.
     pub fn is_hex(self) -> bool {
-        matches!(
-            self,
-            PropertyFocus::FillHex(_)
-                | PropertyFocus::StrokeHex
-                | PropertyFocus::GradientStopHex(_)
-        )
+        self.hex_max_len().is_some()
     }
 
     /// True when the focused row accepts arbitrary (non-control) text
@@ -156,6 +167,7 @@ impl PropertyFocus {
                 | PropertyFocus::PositionR
                 | PropertyFocus::Opacity
                 | PropertyFocus::FillOpacity(_)
+                | PropertyFocus::ImageTileScale
                 | PropertyFocus::LayoutGap
                 | PropertyFocus::PaddingTop
                 | PropertyFocus::PaddingRight
@@ -409,5 +421,15 @@ mod tests {
         assert!(ui.pen_in_progress.is_none());
         assert!(ui.variables.active_theme.is_empty());
         assert!(ui.variables.fill_refs.is_empty());
+    }
+
+    #[test]
+    fn property_focus_hex_lengths_cover_authored_fill_and_page_alpha() {
+        assert_eq!(PropertyFocus::PageBackgroundHex.hex_max_len(), Some(9));
+        assert_eq!(PropertyFocus::FillHex(0).hex_max_len(), Some(9));
+        assert_eq!(PropertyFocus::StrokeHex.hex_max_len(), Some(7));
+        assert_eq!(PropertyFocus::PositionX.hex_max_len(), None);
+        assert!(PropertyFocus::PageBackgroundHex.is_hex());
+        assert!(PropertyFocus::ImageTileScale.accepts_decimal());
     }
 }

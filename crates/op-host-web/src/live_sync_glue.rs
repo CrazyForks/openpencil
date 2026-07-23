@@ -17,7 +17,8 @@
 //!   the last-synced baseline (the sole authoritative gate; a stored conflict
 //!   holds it closed until explicit resolution), skips the actual POST when
 //!   the content hash matches the daemon baseline (re-baselining directly so
-//!   the gate can't deadlock), and POSTs `{document, baseVersion}` to
+//!   the gate can't deadlock), and POSTs
+//!   `{document, baseVersion, activePageIndex, preserveAuthoredGeometry}` to
 //!   `/api/mcp/document`. Pushes over 2 MiB are skipped with a one-shot
 //!   console warning (TS `SYNC_MAX_BODY_BYTES` parity), baseline untouched. A
 //!   `version-conflict` response suspends the gate until the host resolves it
@@ -41,7 +42,8 @@
 //! document authority, rather than by browser-side capture.
 
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::io::{self, Write};
+use std::rc::{Rc, Weak};
 
 use op_editor_core::sync_gate::SyncGate;
 use op_editor_core::web_sync::{self, WebSyncClient};
@@ -57,6 +59,62 @@ const PUSH_INTERVAL_MS: i32 = 2000;
 /// are not pushed (warned once), mirroring the renderer's oversize guard.
 const SYNC_MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
 
+enum SyncDocumentJson {
+    Ready(String),
+    Oversize,
+    Failed,
+}
+
+struct CappedJsonWriter {
+    bytes: Vec<u8>,
+    exceeded: bool,
+}
+
+impl CappedJsonWriter {
+    fn new() -> Self {
+        Self {
+            bytes: Vec::new(),
+            exceeded: false,
+        }
+    }
+}
+
+impl Write for CappedJsonWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if self.bytes.len().saturating_add(bytes.len()) > SYNC_MAX_BODY_BYTES {
+            self.exceeded = true;
+            return Err(io::Error::new(
+                io::ErrorKind::FileTooLarge,
+                "sync document exceeds limit",
+            ));
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Serialize directly into a capped buffer. A giant Figma document therefore
+/// never creates a giant temporary `String` merely to discover that live sync
+/// cannot send it.
+fn serialize_sync_document(doc: &op_editor_core::PenDocument) -> SyncDocumentJson {
+    let mut writer = CappedJsonWriter::new();
+    if serde_json::to_writer(&mut writer, doc).is_err() {
+        return if writer.exceeded {
+            SyncDocumentJson::Oversize
+        } else {
+            SyncDocumentJson::Failed
+        };
+    }
+    match String::from_utf8(writer.bytes) {
+        Ok(json) => SyncDocumentJson::Ready(json),
+        Err(_) => SyncDocumentJson::Failed,
+    }
+}
+
 /// Shared sync state: the gate deciding pull/push eligibility, the wire-level
 /// client (version/hash bookkeeping), and the push single-flight latch. Built
 /// once in `mount_ck` and handed to both this module's ticks and the
@@ -67,6 +125,10 @@ pub(crate) struct SyncController {
     pub gate: SyncGate,
     pub client: WebSyncClient,
     pub push_busy: bool,
+    /// A document identity already measured above the periodic push limit.
+    /// WASM linear memory does not shrink after a giant temporary JSON string,
+    /// so do not rebuild the same oversized snapshot every two seconds.
+    oversize_identity: Option<(u64, u64, u64)>,
 }
 
 impl SyncController {
@@ -75,11 +137,45 @@ impl SyncController {
             gate: SyncGate::default(),
             client: WebSyncClient::new(),
             push_busy: false,
+            oversize_identity: None,
         }
     }
 }
 
 pub(crate) type SharedSync = Rc<RefCell<SyncController>>;
+
+thread_local! {
+    /// The mounted editor's sync controller, exposed weakly so File → Save can
+    /// consume the daemon's returned version without creating an ownership
+    /// cycle or threading sync state through every DOM file-action callback.
+    static ACTIVE_SYNC: RefCell<Option<Weak<RefCell<SyncController>>>> = const { RefCell::new(None) };
+}
+
+/// Commit a successful daemon Save as a sync acknowledgement.
+///
+/// The daemon has already installed exactly the saved snapshot. Recording its
+/// version prevents the next probe from downloading and replacing the same
+/// potentially huge document, while the snapshot pair reopens the pull gate.
+/// A later local edit still differs from this pair and remains eligible for a
+/// normal push (or another explicit Save for oversized documents).
+pub(crate) fn acknowledge_daemon_save(
+    version: u64,
+    generation: u64,
+    revision: u64,
+    active_page_index: usize,
+    preserve_authored_geometry: bool,
+) {
+    ACTIVE_SYNC.with(|slot| {
+        let Some(sync) = slot.borrow().as_ref().and_then(Weak::upgrade) else {
+            return;
+        };
+        let mut sync = sync.borrow_mut();
+        sync.client.mark_applied(version);
+        sync.client
+            .note_applied_snapshot_without_hash(active_page_index, preserve_authored_geometry);
+        sync.gate.note_synced(generation, revision);
+    });
+}
 
 /// The document-identity pair every gating decision is keyed on. Read fresh
 /// from the live editor state at each decision point — never cached — so an
@@ -90,11 +186,52 @@ fn current_pair<C: RepaintContext>(b: &C) -> (u64, u64) {
     (s.document_generation(), s.document_revision())
 }
 
+fn current_oversize_identity<C: RepaintContext>(b: &C) -> (u64, u64, u64) {
+    let host = b.host();
+    let state = host.editor_state();
+    (
+        host.document_epoch(),
+        state.document_generation(),
+        state.document_revision(),
+    )
+}
+
+/// Content changes advance the gate's `(generation, revision)` pair, while
+/// active-page switches intentionally do not. Treat an editor-metadata delta
+/// as an additional push reason without weakening the conflict latch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PushReasons {
+    content: bool,
+    editor_meta: bool,
+}
+
+impl PushReasons {
+    fn any(self) -> bool {
+        self.content || self.editor_meta
+    }
+}
+
+fn push_reasons(
+    sync: &SyncController,
+    pair: (u64, u64),
+    active_page_index: usize,
+    preserve_authored_geometry: bool,
+) -> PushReasons {
+    PushReasons {
+        content: sync.gate.needs_push(pair),
+        editor_meta: sync.gate.conflict().is_none()
+            && sync
+                .client
+                .editor_meta_needs_push(active_page_index, preserve_authored_geometry),
+    }
+}
+
 /// Wire the bidirectional sync loops onto the mounted shell. Called once from
 /// `mount_ck`; both intervals run for the page lifetime. `sync` is shared with
 /// the postMessage bridge — this module only ever borrows it for the duration
 /// of a single decision, never across an await/callback boundary.
 pub(crate) fn start<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, sync: SharedSync) {
+    ACTIVE_SYNC.with(|slot| *slot.borrow_mut() = Some(Rc::downgrade(&sync)));
     let base = crate::daemon_base::daemon_base();
     // One document fetch / one push at a time; ticks observing an in-flight
     // request skip (the TS hook queues at most one — same effective shape).
@@ -199,10 +336,10 @@ fn poll_version<C: RepaintContext + 'static>(
 }
 
 /// Apply a `GET /api/mcp/document` response to the live shell.
-/// `WebSyncClient::sync` runs the apply closure only for a newer document and
-/// commits that exact version only when the closure returns `true` (swap +
-/// repaint both succeeded) — so the committed version is never stale and a
-/// failed repaint is retried on the next poll. On success the local
+/// `WebSyncClient::sync_with_editor_meta` runs the apply closure only for a
+/// newer document and commits that exact version only when the closure returns
+/// `true` (swap + repaint both succeeded) — so the committed version is never
+/// stale and a failed repaint is retried on the next poll. On success the local
 /// serialization becomes the push baseline (echo suppression), the selection
 /// key is invalidated (the doc swap reset daemon + local selection, so the
 /// daemon must be told the browser's current one again), and the sync-gate
@@ -233,7 +370,7 @@ fn apply_document_response<C: RepaintContext + 'static>(
         .try_borrow()
         .map(|s| s.client.initialized())
         .unwrap_or(false);
-    // The existing `WebSyncClient::sync` closure runs while `sync` is held
+    // The `WebSyncClient::sync_with_editor_meta` closure runs while `sync` is held
     // mutably borrowed (via `s` below) — it must never itself touch `sync`;
     // it only touches `inner_ref`, which is a separate RefCell.
     let applied = sync
@@ -241,12 +378,21 @@ fn apply_document_response<C: RepaintContext + 'static>(
         .ok()
         .and_then(|mut s| {
             s.client
-                .sync(body, |doc, _version| {
-                    inner_ref
-                        .host_mut()
-                        .replace_document_from_sync(doc, undoable);
-                    inner_ref.repaint().is_ok()
-                })
+                .sync_with_editor_meta(
+                    body,
+                    |doc, _version, active_page_index, preserve_authored_geometry| {
+                        let host = inner_ref.host_mut();
+                        host.replace_document_from_sync(doc, undoable);
+                        op_pen_loader::apply_editor_meta(
+                            host.editor_state_mut(),
+                            op_pen_loader::EditorMeta {
+                                active_page_index,
+                                preserve_authored_geometry,
+                            },
+                        );
+                        inner_ref.repaint().is_ok()
+                    },
+                )
                 .ok()
         })
         .unwrap_or(false);
@@ -254,9 +400,21 @@ fn apply_document_response<C: RepaintContext + 'static>(
         // Baseline = OUR serialization of the just-applied document, so the
         // push tick compares apples to apples (serde normalization differs
         // from the daemon's wire bytes).
-        if let Ok(json) = serde_json::to_string(&inner_ref.host().editor_state().doc) {
-            if let Ok(mut s) = sync.try_borrow_mut() {
-                s.client.note_applied_snapshot(&json);
+        let state = inner_ref.host().editor_state();
+        let active_page_index = state.ui.active_page_index;
+        let preserve_authored_geometry = state.editor_ui.preserve_authored_geometry;
+        let serialized = serialize_sync_document(&state.doc);
+        if let Ok(mut s) = sync.try_borrow_mut() {
+            // Always baseline the two scalar fields. Oversized documents skip
+            // their byte hash, but must not look metadata-dirty forever.
+            s.client
+                .note_applied_editor_meta(active_page_index, preserve_authored_geometry);
+            if let SyncDocumentJson::Ready(json) = serialized {
+                s.client.note_applied_snapshot_with_editor_meta(
+                    &json,
+                    active_page_index,
+                    preserve_authored_geometry,
+                );
             }
         }
         if let Ok(mut last_selection_key) = last_selection_key.try_borrow_mut() {
@@ -285,12 +443,11 @@ fn apply_document_response<C: RepaintContext + 'static>(
     }
 }
 
-/// Serialize + conditionally push the local document. `SyncGate::needs_push`
-/// is the SOLE authoritative gate (false while a conflict is pending, or
-/// while the current pair matches the last-synced baseline — including
-/// before the first daemon apply, daemon-authority per the module docs);
-/// `take_doc_sync_dirty` is consumed purely as a cheap "maybe changed" hint
-/// and never substitutes for the gate.
+/// Serialize + conditionally push the local document. Content changes are
+/// gated by `SyncGate::needs_push`; the two editor-metadata fields have their
+/// own baseline because page switching intentionally leaves the content
+/// revision unchanged. Both paths honor the conflict latch and bootstrap
+/// authority. `take_doc_sync_dirty` remains only a cheap hint.
 fn push_document_if_changed<C: RepaintContext + 'static>(
     inner: &Rc<RefCell<C>>,
     base: &str,
@@ -301,7 +458,7 @@ fn push_document_if_changed<C: RepaintContext + 'static>(
     if busy {
         return;
     }
-    let (pair, doc_json) = {
+    let (pair, doc_json, active_page_index, preserve_authored_geometry, reasons) = {
         let Ok(mut b) = inner.try_borrow_mut() else {
             return;
         };
@@ -310,24 +467,69 @@ fn push_document_if_changed<C: RepaintContext + 'static>(
         // caught by the gate anyway since it reads the live pair directly.
         let _ = b.host_mut().take_doc_sync_dirty();
         let pair = current_pair(&*b);
-        let due = sync.borrow().gate.needs_push(pair);
-        if !due {
+        let state = b.host().editor_state();
+        let active_page_index = state.ui.active_page_index;
+        let preserve_authored_geometry = state.editor_ui.preserve_authored_geometry;
+        let reasons = push_reasons(
+            &sync.borrow(),
+            pair,
+            active_page_index,
+            preserve_authored_geometry,
+        );
+        if !reasons.any() {
             return;
         }
-        let Ok(json) = serde_json::to_string(&b.host().editor_state().doc) else {
+        let oversize_identity = current_oversize_identity(&*b);
+        if sync.borrow().oversize_identity == Some(oversize_identity) {
             return;
+        }
+        let json = match serialize_sync_document(&b.host().editor_state().doc) {
+            SyncDocumentJson::Ready(json) => json,
+            SyncDocumentJson::Oversize => {
+                sync.borrow_mut().oversize_identity = Some(oversize_identity);
+                if !oversize_warned.replace(true) {
+                    web_sys::console::warn_1(
+                        &format!(
+                            "[mcp-sync] Skip oversized document push: > {:.2}MiB",
+                            SYNC_MAX_BODY_BYTES as f64 / (1024.0 * 1024.0)
+                        )
+                        .into(),
+                    );
+                }
+                return;
+            }
+            SyncDocumentJson::Failed => return,
         };
-        (pair, json)
+        (
+            pair,
+            json,
+            active_page_index,
+            preserve_authored_geometry,
+            reasons,
+        )
     };
 
-    let should_push = sync.borrow().client.should_push(&doc_json);
+    let should_push = if reasons.content {
+        sync.borrow().client.should_push_with_editor_meta(
+            &doc_json,
+            active_page_index,
+            preserve_authored_geometry,
+        )
+    } else {
+        // A daemon Save acknowledgement intentionally leaves the large typed
+        // document hash unknown. A metadata-only page switch must be decided
+        // from the scalar baseline, not mistaken for a content change.
+        reasons.editor_meta
+    };
     if !should_push {
         // Bytes already match the daemon baseline (e.g. a generation-only
         // replace — same content, new generation): no push to send, but the
         // baseline MUST advance directly or `needs_push` stays true forever,
         // the hash check keeps skipping the push, and the pull gate never
         // reopens (deadlock).
-        sync.borrow_mut().gate.note_synced(pair.0, pair.1);
+        let mut sync = sync.borrow_mut();
+        sync.oversize_identity = None;
+        sync.gate.note_synced(pair.0, pair.1);
         return;
     }
     if !SyncGate::periodic_push_allowed(doc_json.len()) {
@@ -345,11 +547,19 @@ fn push_document_if_changed<C: RepaintContext + 'static>(
                 .into(),
             );
         }
+        sync.borrow_mut().oversize_identity = Some(current_oversize_identity(&*inner.borrow()));
         return;
     }
+    sync.borrow_mut().oversize_identity = None;
     oversize_warned.set(false);
     let base_version = sync.borrow().client.last_version();
-    let body = WebSyncClient::wrap_push_body_with_base(&doc_json, base_version);
+    let body = WebSyncClient::wrap_push_body_with_base_editor_meta_and_mode(
+        &doc_json,
+        base_version,
+        active_page_index,
+        preserve_authored_geometry,
+        !reasons.content,
+    );
     sync.borrow_mut().push_busy = true;
     let sync_done = sync.clone();
     // The pair captured AT SERIALIZATION TIME (above), not whatever the
@@ -369,7 +579,12 @@ fn push_document_if_changed<C: RepaintContext + 'static>(
         let accepted_version = WebSyncClient::parse_push_response(&resp);
         if let Some(version) = accepted_version {
             let mut s = sync_done.borrow_mut();
-            s.client.mark_pushed(&doc_json, version);
+            s.client.mark_pushed_with_editor_meta(
+                &doc_json,
+                active_page_index,
+                preserve_authored_geometry,
+                version,
+            );
             s.gate.note_synced(pushed_pair.0, pushed_pair.1);
         }
         // Neither shape recognized (network/parse failure): dropped
@@ -417,4 +632,72 @@ fn push_selection_if_changed<C: RepaintContext + 'static>(
     };
     *last_selection_key = Some(key);
     let _ = live_sync::post_json(&format!("{base}/api/mcp/selection"), &body, None);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn minimal_document() -> op_editor_core::PenDocument {
+        serde_json::from_str(r#"{"version":"1.0","children":[]}"#)
+            .expect("minimal document should deserialize")
+    }
+
+    #[test]
+    fn capped_serializer_matches_regular_json_for_small_documents() {
+        let doc = minimal_document();
+        let expected = serde_json::to_string(&doc).expect("regular serialization should succeed");
+
+        match serialize_sync_document(&doc) {
+            SyncDocumentJson::Ready(actual) => assert_eq!(actual, expected),
+            SyncDocumentJson::Oversize => panic!("small document should fit under the cap"),
+            SyncDocumentJson::Failed => panic!("small document should serialize"),
+        }
+    }
+
+    #[test]
+    fn capped_serializer_stops_oversized_documents_at_the_limit() {
+        let mut doc = minimal_document();
+        doc.name = Some("x".repeat(SYNC_MAX_BODY_BYTES));
+
+        assert!(matches!(
+            serialize_sync_document(&doc),
+            SyncDocumentJson::Oversize
+        ));
+    }
+
+    #[test]
+    fn capped_writer_accepts_exact_limit_then_rejects_another_byte() {
+        let mut writer = CappedJsonWriter::new();
+        let exact_limit = vec![b'x'; SYNC_MAX_BODY_BYTES];
+        writer
+            .write_all(&exact_limit)
+            .expect("the exact cap should be accepted");
+        assert_eq!(writer.bytes.len(), SYNC_MAX_BODY_BYTES);
+
+        assert!(writer.write_all(b"x").is_err());
+        assert!(writer.exceeded);
+        assert_eq!(writer.bytes.len(), SYNC_MAX_BODY_BYTES);
+    }
+
+    #[test]
+    fn active_page_only_change_is_push_due_without_a_revision_change() {
+        let mut sync = SyncController::new();
+        let pair = (7, 11);
+        sync.gate.note_synced(pair.0, pair.1);
+        sync.client.mark_applied(3);
+        sync.client.note_applied_snapshot_without_hash(0, true);
+
+        assert!(!push_reasons(&sync, pair, 0, true).any());
+        assert!(
+            push_reasons(&sync, pair, 1, true).editor_meta,
+            "page metadata must bypass the unchanged revision pair"
+        );
+
+        sync.gate.note_conflict(4);
+        assert!(
+            !push_reasons(&sync, pair, 1, true).any(),
+            "metadata pushes must still honor the conflict latch"
+        );
+    }
 }

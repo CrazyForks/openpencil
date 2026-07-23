@@ -17,8 +17,8 @@ use super::helpers::{TOOLBAR_INSET_X, TOOLBAR_INSET_Y};
 use super::WidgetHostNative;
 use op_editor_ui::accessibility::{assemble_tree_update, PlacedWidget};
 use op_editor_ui::widgets::{
-    AIChatPlaceholder, CanvasViewport, LayerPanel, LayoutCx, PropertyPanel, StatusBar, Toolbar,
-    TopBar, Widget, WidgetId, ROOT_WIDGET_ID, TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
+    AIChatPlaceholder, CanvasViewport, LayoutCx, PropertyPanel, StatusBar, Toolbar, TopBar, Widget,
+    WidgetId, ROOT_WIDGET_ID, TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
 };
 use op_editor_ui::{Point2D, Rect};
 
@@ -62,7 +62,7 @@ impl WidgetHostNative {
         };
 
         // 2. LayerPanel — left rail, only when the sidebar is open.
-        let layer_panel = LayerPanel::from_editor(&self.editor_state);
+        let layer_panel = self.layer_panel();
         let layer_panel_rect = Rect {
             origin: Point2D::new(0.0, TOP_BAR_HEIGHT),
             size: Point2D::new(

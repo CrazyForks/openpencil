@@ -31,87 +31,15 @@ use jian_scene::layout_scene::{
 use op_editor_core::render_backend::{Color, ImageBlendMode};
 use op_editor_core::scene_vars::VariableTable;
 
-use crate::editor_state_var_table;
 use crate::payload::{
     DocPayload, GradientPayload, GradientStopPayload, NodePayload, ShaderPayload, StrokePayload,
 };
 
-/// Build a paint-only [`LayoutScene`] from an editor state.
-///
-/// Runs the same jian `LayoutEngine` + `SkiaMeasure` flex pass that
-/// the canonical `.op` loader uses (via [`pen_document_to_payload`]),
-/// resolves variable `$ref` fills / strokes against the editor's
-/// variables + active theme (via [`editor_state_var_table`]), and
-/// re-shapes the resolved node tree into a render scene that carries
-/// NO editor state.
-pub fn editor_state_to_layout_scene(state: &op_editor_core::EditorState) -> LayoutScene {
-    // Render-time document preparation (TS parity: the flattener
-    // expands component instances, then `resolveNodeForCanvas` lands
-    // every `$token` as a concrete value — fills / strokes / shadows
-    // / opacity / gap / padding / font-weight / text content). Refs
-    // expand FIRST so the instance subtrees resolve their tokens
-    // too; loaded documents render without any transient editor
-    // cache, and numeric tokens reach the flex solver as real
-    // numbers instead of unparsed expressions. Each pass clones the
-    // tree, so both early-out via cheap detector walks — the common
-    // ref-free / token-free document pays no clone at all.
-    let mut prepared = std::borrow::Cow::Borrowed(&state.doc);
-    if op_editor_core::ref_resolve::document_has_refs(&prepared) {
-        prepared = std::borrow::Cow::Owned(op_editor_core::ref_resolve::resolve_refs_for_canvas(
-            &prepared,
-        ));
-    }
-    if op_editor_core::variables_resolve::document_has_tokens(&prepared) {
-        prepared = std::borrow::Cow::Owned(
-            op_editor_core::variables_resolve::resolve_document_for_canvas(
-                &prepared,
-                &state.ui.variables.active_theme,
-            ),
-        );
-    }
-    // The layout-resolved payload — flex layout already baked into
-    // every `NodePayload`'s AABB by jian-core's `LayoutEngine`. This
-    // is the reusable layout-resolution core; it never touches the
-    // shell-core `Document` model.
-    let payload: DocPayload = if state.editor_ui.preserve_authored_geometry {
-        crate::adapter::pen_document_to_payload_preserving_geometry(&prepared).payload
-    } else {
-        crate::adapter::pen_document_to_payload(&prepared).payload
-    };
-    // Variables + active theme + the `fill_refs` / `stroke_refs`
-    // caches the editor holds. `editor_state_var_table` folds the
-    // persisted definitions and the transient `EditorState.ui`
-    // selection / caches together.
-    let var_table: VariableTable = editor_state_var_table(state);
+// Keep the legacy test module's historical local name; implementation lives in `editor_scene`.
+#[cfg(test)]
+use crate::editor_scene::editor_state_to_layout_scene;
 
-    LayoutScene {
-        pages: payload
-            .pages
-            .iter()
-            .map(|page| ScenePage {
-                id: page.id.clone(),
-                name: page.name.clone(),
-                children: page
-                    .children
-                    .iter()
-                    .map(|n| node_payload_to_scene(n, &var_table, 1.0))
-                    .collect(),
-            })
-            .collect(),
-        // Follow the editor's active page (`EditorState.ui`) so the
-        // canvas switches when the user picks a page in the LayerPanel.
-        // `pen_document_to_payload` hardcodes the payload's index to 0,
-        // so the live editor state — not the payload — is the source
-        // of truth here; clamp into range against the page count.
-        active_page_index: state
-            .ui
-            .active_page_index
-            .min(payload.pages.len().saturating_sub(1)),
-    }
-}
-
-/// Build a [`LayoutScene`] from a bare [`PenDocument`] + active theme +
-/// active page index — the document-only path (no [`EditorState`]).
+/// Build a [`LayoutScene`] from a bare [`PenDocument`], theme, and active page index.
 ///
 /// Runs the SAME render-time ref + token resolution and flex layout as
 /// [`editor_state_to_layout_scene`]; Canvas Preview uses this to render
@@ -128,6 +56,23 @@ pub fn pen_document_to_layout_scene(
     active_theme: &std::collections::BTreeMap<String, String>,
     active_page_index: usize,
 ) -> LayoutScene {
+    pen_document_to_layout_scene_with_geometry_mode(doc, active_theme, active_page_index, false)
+}
+
+/// Build a [`LayoutScene`] from a bare [`PenDocument`] while selecting how
+/// node geometry is resolved.
+///
+/// `preserve_authored_geometry` is intended for Preserve-mode Figma imports:
+/// those documents already carry numeric parent-local positions and sizes, so
+/// running flex layout again would both waste work and move overlapping
+/// children away from their authored coordinates. Passing `false` retains the
+/// historical behavior of [`pen_document_to_layout_scene`].
+pub fn pen_document_to_layout_scene_with_geometry_mode(
+    doc: &jian_ops_schema::PenDocument,
+    active_theme: &std::collections::BTreeMap<String, String>,
+    active_page_index: usize,
+    preserve_authored_geometry: bool,
+) -> LayoutScene {
     let mut prepared = std::borrow::Cow::Borrowed(doc);
     if op_editor_core::ref_resolve::document_has_refs(&prepared) {
         prepared = std::borrow::Cow::Owned(op_editor_core::ref_resolve::resolve_refs_for_canvas(
@@ -139,7 +84,11 @@ pub fn pen_document_to_layout_scene(
             op_editor_core::variables_resolve::resolve_document_for_canvas(&prepared, active_theme),
         );
     }
-    let payload: DocPayload = crate::adapter::pen_document_to_payload(&prepared).payload;
+    let payload: DocPayload = if preserve_authored_geometry {
+        crate::adapter::pen_document_to_payload_preserving_geometry(&prepared).payload
+    } else {
+        crate::adapter::pen_document_to_payload(&prepared).payload
+    };
     let mut var_table = crate::adapter::build_var_table(&prepared);
     var_table.active_theme = active_theme.clone();
     LayoutScene {
@@ -212,20 +161,42 @@ pub fn pen_document_to_layout_scene_for_preview(
 /// here so the scene carries only concrete colours; a registered ref
 /// wins over the node's authored colour, mirroring the canvas
 /// painter's `var_table.fill_for(id).or(node.fill)`.
-fn node_payload_to_scene(
+pub(crate) fn node_payload_to_scene(
     node: &NodePayload,
     var_table: &VariableTable,
-    parent_opacity: f32,
+    inherited_paint_opacity: f32,
 ) -> SceneNode {
     use op_editor_core::render_backend::{Point2D, Rect};
     let node_id = op_editor_core::NodeId::new(node.id.clone());
-    // Node-level opacity composites multiplicatively down the tree
-    // (a 0.5 frame dims its 0.5 child to 0.25). We bake it into the
-    // resolved fill / stroke / gradient alpha rather than painting a
-    // group layer: every shape here is leaf-painted, so per-shape
-    // alpha matches a group-opacity layer except when a node's own
-    // sub-shapes overlap — which the current scene model never emits.
-    let cum_opacity = (parent_opacity * node.opacity).clamp(0.0, 1.0);
+    let mask_type = node.mask_type.or_else(|| {
+        node.is_mask
+            .then_some(jian_ops_schema::node::MaskType::Alpha)
+    });
+    // A mask source is composited into siblings that already carry the common
+    // ancestor opacity. Baking that ancestor into the mask as well would
+    // multiply it a second time through DstIn. Reset only at the mask root;
+    // Its own local opacity remains represented on either the direct paint or
+    // the source's isolation layer.
+    let inherited_paint_opacity = if mask_type.is_some() {
+        1.0
+    } else {
+        inherited_paint_opacity
+    };
+    let local_opacity = node.opacity.clamp(0.0, 1.0);
+    let blend_mode = blend_mode_to_scene(node.blend_mode.as_ref());
+    // A translucent subtree must apply its local alpha after its own paint and
+    // children have assembled; otherwise overlapping children accumulate alpha
+    // independently. Non-Normal node blending already requires the same
+    // isolation layer, so it carries local opacity there even for leaves. Keep
+    // ordinary leaves on the direct-paint path to avoid allocating a layer.
+    let isolates_output =
+        blend_mode != ImageBlendMode::Normal || (!node.children.is_empty() && local_opacity < 1.0);
+    let paint_opacity = if isolates_output {
+        inherited_paint_opacity
+    } else {
+        (inherited_paint_opacity * local_opacity).clamp(0.0, 1.0)
+    };
+    let composite_opacity = if isolates_output { local_opacity } else { 1.0 };
     let bounds = Rect {
         origin: Point2D::new(node.x, node.y),
         size: Point2D::new(node.w, node.h),
@@ -233,7 +204,7 @@ fn node_payload_to_scene(
     let children: Vec<SceneNode> = node
         .children
         .iter()
-        .map(|c| node_payload_to_scene(c, var_table, cum_opacity))
+        .map(|c| node_payload_to_scene(c, var_table, paint_opacity))
         .collect();
     let aggregate_bounds_cache = SceneNode::compute_aggregate_bounds(bounds, &children);
     let variable_fill = var_table.fill_for(&node_id);
@@ -242,10 +213,12 @@ fn node_payload_to_scene(
         kind: str_to_kind(&node.kind),
         bounds,
         aggregate_bounds_cache,
-        // Carried so the image painter can dim rasters (which have no
-        // colour to bake opacity into); fill/stroke/gradient/shadow
-        // already have `cum_opacity` folded into their alpha above.
-        opacity: cum_opacity,
+        // Carried so the image and canonical fill-stack painters can apply
+        // direct paint opacity; legacy fill/stroke/gradient/shadow fields
+        // already have `paint_opacity` folded into their alpha below.
+        opacity: paint_opacity,
+        composite_opacity,
+        blend_mode,
         rotation: node.rotation,
         flip_x: node.flip_x,
         flip_y: node.flip_y,
@@ -257,17 +230,17 @@ fn node_payload_to_scene(
         // painter's `node_fill` helper.
         fill: variable_fill
             .or_else(|| node.fill.map(array_to_color))
-            .map(|c| mul_alpha(c, cum_opacity)),
+            .map(|c| mul_alpha(c, paint_opacity)),
         fill_layers: fill_layers_to_scene(&node.fill_layers, variable_fill),
         fill_type: str_to_scene_fill_type(&node.fill_type),
         gradient: node
             .gradient
             .as_ref()
-            .map(|g| scale_gradient_opacity(payload_gradient_to_scene(g), cum_opacity)),
+            .map(|g| scale_gradient_opacity(payload_gradient_to_scene(g), paint_opacity)),
         shader: node
             .shader
             .as_ref()
-            .map(|s| payload_shader_to_scene(s, cum_opacity)),
+            .map(|s| payload_shader_to_scene(s, paint_opacity)),
         stroke: if is_status_bar_shell_stroke(node) {
             // The scene path (editor canvas + render-shots) bypasses the
             // adapter's `legacy_payload_repair`, so an iPhone status-bar
@@ -278,12 +251,12 @@ fn node_payload_to_scene(
         } else {
             node.stroke.as_ref().map(|s| {
                 let mut st = scene_stroke(s, &node_id, var_table);
-                st.color = mul_alpha(st.color, cum_opacity);
+                st.color = mul_alpha(st.color, paint_opacity);
                 st
             })
         },
         text: node.text.clone(),
-        text_runs: text_runs_to_scene(&node.text_runs, cum_opacity),
+        text_runs: text_runs_to_scene(&node.text_runs, paint_opacity),
         font_family: node.font_family.clone(),
         font_size: node.font_size,
         font_weight: node.font_weight,
@@ -302,6 +275,8 @@ fn node_payload_to_scene(
             .collect(),
         path_anchors: node.path_anchors.iter().map(anchor_to_scene).collect(),
         path_closed: node.path_closed,
+        is_mask: node.is_mask || node.mask_type.is_some(),
+        mask_type,
         even_odd_fill: node.even_odd_fill,
         svg_path: node.svg_path.clone(),
         arc_start_angle: node.arc_start_angle,
@@ -315,8 +290,10 @@ fn node_payload_to_scene(
             .map(stable_image_source_id)
             .unwrap_or(0),
         image_fit: image_fit_to_scene(node.image_fit.as_deref()),
-        image_blend_mode: image_blend_mode_to_scene(node.image_blend_mode.as_ref()),
+        image_blend_mode: blend_mode_to_scene(node.image_blend_mode.as_ref()),
         image_transform: node.image_transform,
+        image_original_size: image_original_size_to_scene(node.image_original_size),
+        image_tile_scale: image_tile_scale_to_scene(node.image_tile_scale),
         image_adjustments: image_adjustments_to_scene(node.image_adjustments),
         effects: crate::effects::effects_from_payload_ref(&node.effects)
             .into_iter()
@@ -324,7 +301,7 @@ fn node_payload_to_scene(
             .chain(crate::effects::background_blur_effect_from_payload(
                 node.background_blur,
             ))
-            .map(|e| scale_effect_opacity(e, cum_opacity))
+            .map(|e| scale_effect_opacity(e, paint_opacity))
             .collect(),
         hidden: node.hidden,
         locked: node.locked,
@@ -366,11 +343,12 @@ fn widget_payload_to_scene(w: &crate::payload::WidgetPayload) -> SceneWidget {
 /// Map payload text runs onto scene runs: each segment's `text` length
 /// becomes a byte range into the node's flattened string (the payload
 /// flattens segments in order, so ranges are cumulative). Per-run fill
-/// colours get the node's cumulative opacity folded into their alpha —
-/// same treatment as the node-level fill.
+/// colours get the node's direct paint opacity folded into their alpha — the
+/// same treatment as the node-level fill. Isolated group alpha is applied by
+/// the painter after all runs and descendants have assembled.
 fn text_runs_to_scene(
     runs: &[crate::payload::TextRunPayload],
-    cum_opacity: f32,
+    paint_opacity: f32,
 ) -> Vec<SceneTextRun> {
     let mut start = 0usize;
     runs.iter()
@@ -384,7 +362,7 @@ fn text_runs_to_scene(
                 fill: run
                     .fill
                     .map(array_to_color)
-                    .map(|c| mul_alpha(c, cum_opacity)),
+                    .map(|c| mul_alpha(c, paint_opacity)),
                 italic: run.italic,
                 underline: run.underline,
                 strikethrough: run.strikethrough,
@@ -491,7 +469,8 @@ fn image_fit_to_scene(value: Option<&str>) -> SceneImageFit {
 
 /// Resolve every canonical fill without collapsing the stack. Canonical arrays
 /// are front-to-back; the scene preserves that order and painters reverse it.
-/// Layer alpha stays authored; `SceneNode::opacity` owns cumulative opacity.
+/// Layer alpha stays authored; `SceneNode::opacity` owns direct paint opacity
+/// and any isolated local group alpha lives on `SceneNode::composite_opacity`.
 fn fill_layers_to_scene(
     fills: &[jian_ops_schema::style::PenFill],
     variable_fill: Option<Color>,
@@ -553,6 +532,12 @@ fn fill_layers_to_scene(
                             .transform
                             .as_ref()
                             .map(|m| [m.m00, m.m01, m.m02, m.m10, m.m11, m.m12]),
+                        original_size: image_original_size_to_scene(
+                            body.original_size
+                                .as_ref()
+                                .map(|size| [size.width, size.height]),
+                        ),
+                        tile_scale: image_tile_scale_to_scene(body.tile_scale),
                         adjustments: image_adjustments_to_scene(
                             crate::style_payload::image_fill_adjustments(body),
                         ),
@@ -564,6 +549,18 @@ fn fill_layers_to_scene(
             }
         })
         .collect()
+}
+
+fn image_original_size_to_scene(value: Option<[f32; 2]>) -> Option<[f32; 2]> {
+    value.filter(|[width, height]| {
+        width.is_finite() && height.is_finite() && *width > 0.0 && *height > 0.0
+    })
+}
+
+fn image_tile_scale_to_scene(value: Option<f32>) -> f32 {
+    value
+        .filter(|scale| scale.is_finite() && *scale > 0.0)
+        .unwrap_or(1.0)
 }
 
 fn fill_opacity(fill: &jian_ops_schema::style::PenFill) -> f32 {
@@ -589,10 +586,10 @@ fn fill_blend_mode_to_scene(fill: &jian_ops_schema::style::PenFill) -> ImageBlen
         PenFill::Shader(body) => body.blend_mode.as_ref(),
         PenFill::Image(body) => body.blend_mode.as_ref(),
     };
-    image_blend_mode_to_scene(blend)
+    blend_mode_to_scene(blend)
 }
 
-fn image_blend_mode_to_scene(value: Option<&jian_ops_schema::style::BlendMode>) -> ImageBlendMode {
+fn blend_mode_to_scene(value: Option<&jian_ops_schema::style::BlendMode>) -> ImageBlendMode {
     use jian_ops_schema::style::BlendMode;
     match value {
         Some(BlendMode::Darken) => ImageBlendMode::Darken,
@@ -605,6 +602,11 @@ fn image_blend_mode_to_scene(value: Option<&jian_ops_schema::style::BlendMode>) 
         Some(BlendMode::Saturation) => ImageBlendMode::Saturation,
         Some(BlendMode::Color) => ImageBlendMode::Color,
         Some(BlendMode::Luminosity) => ImageBlendMode::Luminosity,
+        Some(BlendMode::SoftLight) => ImageBlendMode::SoftLight,
+        Some(BlendMode::ColorDodge) => ImageBlendMode::ColorDodge,
+        Some(BlendMode::ColorBurn) => ImageBlendMode::ColorBurn,
+        Some(BlendMode::HardLight) => ImageBlendMode::HardLight,
+        Some(BlendMode::Exclusion) => ImageBlendMode::Exclusion,
         Some(BlendMode::Normal) | None => ImageBlendMode::Normal,
     }
 }

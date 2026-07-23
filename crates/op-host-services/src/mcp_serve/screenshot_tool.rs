@@ -85,7 +85,7 @@ impl McpTool for GetScreenshot {
 /// Snapshot constructor — derives the layout scene and resolves the root
 /// node id from the live editor state at registration time.
 pub fn get_screenshot_snapshot(state: &EditorState) -> GetScreenshot {
-    let scene = op_pen_loader::editor_state_to_layout_scene(state);
+    let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
     let root_node_id = scene
         .active_page()
         .and_then(|page| page.children.first())

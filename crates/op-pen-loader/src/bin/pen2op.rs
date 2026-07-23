@@ -7,8 +7,8 @@
 //!
 //! Usage: `pen2op <in.pen> <out.op>`
 //!
-//! The output is `serde_json::to_string_pretty(&result.value)` — the same
-//! canonical-PenDocument serialize path `op-smoke` uses to dump `state.doc`.
+//! The output uses the same canonical-PenDocument serialization as `op-smoke`
+//! and carries an existing top-level `editorMeta` extension through unchanged.
 
 use std::process::ExitCode;
 
@@ -44,8 +44,20 @@ fn main() -> ExitCode {
         );
     }
 
-    // Same serialize path as op-smoke's `state.doc` dump.
-    let json = match serde_json::to_string_pretty(&loaded.value) {
+    // Preserve OpenPencil's ignored top-level editor extension while the
+    // typed canonical document is normalized. Older inputs without metadata
+    // retain the historical document-only output shape.
+    let editor_meta = op_pen_loader::extract_editor_meta(&src);
+    let serialized = match editor_meta {
+        Some(meta) => serde_json::to_value(&loaded.value).and_then(|mut value| {
+            if let Some(object) = value.as_object_mut() {
+                object.insert("editorMeta".into(), serde_json::to_value(meta)?);
+            }
+            serde_json::to_string_pretty(&value)
+        }),
+        None => serde_json::to_string_pretty(&loaded.value),
+    };
+    let json = match serialized {
         Ok(j) => j,
         Err(e) => {
             eprintln!("[pen2op] serialize {in_path} failed: {e}");

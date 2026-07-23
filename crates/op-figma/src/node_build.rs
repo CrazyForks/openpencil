@@ -142,6 +142,7 @@ pub fn path_node(
     fill: Option<Vec<PenFill>>,
     stroke: Option<PenStroke>,
     effects: Option<Vec<PenEffect>>,
+    mask: Option<bool>,
 ) -> PenNode {
     PenNode::Path(PathNode {
         base,
@@ -150,6 +151,7 @@ pub fn path_node(
         anchors: None,
         closed: None,
         fill_rule,
+        mask,
         width: Some(width),
         height: Some(height),
         fill,

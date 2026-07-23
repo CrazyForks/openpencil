@@ -427,24 +427,8 @@ pub fn paint_font_weight_picker(
     hover: Option<usize>,
     pressed: Option<usize>,
 ) {
-    let x0 = panel_rect.origin.x;
-    let w = panel_rect.size.x;
-    let usable_w = w - PAD_X * 2.0;
-    let Some(text_y) = text_section_top(panel_rect, visible) else {
+    let Some((pop, rows)) = font_weight_picker_layout(panel_rect, visible) else {
         return;
-    };
-    let rows = font_weight_picker_action_rects(x0, text_y, usable_w);
-    if rows.is_empty() {
-        return;
-    }
-    let first = rows.first().map(|(_, r)| *r).unwrap();
-    let last = rows.last().map(|(_, r)| *r).unwrap();
-    let pop = Rect {
-        origin: Point2D::new(first.origin.x, first.origin.y - 6.0),
-        size: Point2D::new(
-            first.size.x,
-            last.origin.y + last.size.y - first.origin.y + 12.0,
-        ),
     };
     cx.backend.fill_round_rect(pop, 8.0, theme.popover);
     cx.backend.stroke_round_rect(pop, 8.0, theme.border, 1.0);
@@ -500,6 +484,38 @@ pub fn paint_font_weight_picker(
             );
         }
     }
+}
+
+fn font_weight_picker_layout(
+    panel_rect: Rect,
+    visible: crate::widgets::property_panel_layout::VisibleSections,
+) -> Option<(Rect, Vec<(PropertyPanelAction, Rect)>)> {
+    let text_y = text_section_top(panel_rect, visible)?;
+    let rows = font_weight_picker_action_rects(
+        panel_rect.origin.x,
+        text_y,
+        panel_rect.size.x - PAD_X * 2.0,
+    );
+    let first = rows.first().map(|(_, rect)| *rect)?;
+    let last = rows.last().map(|(_, rect)| *rect).unwrap_or(first);
+    let popup = Rect {
+        origin: Point2D::new(first.origin.x, first.origin.y - 6.0),
+        size: Point2D::new(
+            first.size.x,
+            last.origin.y + last.size.y - first.origin.y + 12.0,
+        ),
+    };
+    Some((popup, rows))
+}
+
+/// Full font-weight popup chrome, including the 6px padding above and
+/// below its option rows. Shared with paint through
+/// `font_weight_picker_layout`.
+pub(crate) fn font_weight_picker_rect(
+    panel_rect: Rect,
+    visible: crate::widgets::property_panel_layout::VisibleSections,
+) -> Option<Rect> {
+    font_weight_picker_layout(panel_rect, visible).map(|(popup, _)| popup)
 }
 
 pub(crate) fn text_section_top(

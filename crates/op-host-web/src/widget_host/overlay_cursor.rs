@@ -5,6 +5,7 @@
 //! and `geometry.rs::update_dropdown_hover`; lives in a sibling module
 //! so the spine file stays lean.
 
+use op_editor_ui::widgets::PropertyPanel;
 use op_editor_ui::Point2D;
 
 use super::WidgetHost;
@@ -92,7 +93,14 @@ impl WidgetHost {
     /// floating panels' header drags + hover washes, and the open
     /// dropdowns' row hovers. Returns `true` when the move was
     /// consumed (the caller repaints and skips lower layers).
-    pub(in crate::widget_host) fn apply_overlay_cursor_move(&mut self, x: f32, y: f32) -> bool {
+    pub(in crate::widget_host) fn apply_overlay_cursor_move(
+        &mut self,
+        x: f32,
+        y: f32,
+        property_panel: Option<&PropertyPanel>,
+        chat_or_picker_owns_point: bool,
+        upper_hover_changed: &mut bool,
+    ) -> bool {
         // Colour-picker SvBox / HueSlider drag — live HSV updates.
         if let Some(state) = self.editor_state.ui.color_picker.clone() {
             if let Some(kind) = state.drag {
@@ -128,6 +136,15 @@ impl WidgetHost {
                 }
                 return true;
             }
+            let picker = op_editor_ui::widgets::color_picker::ColorPicker::for_state(
+                &self.editor_state,
+                state,
+            );
+            let panel = picker.rect(self.last_viewport_w, self.last_viewport_h);
+            if panel.contains(Point2D::new(x, y)) {
+                self.clear_chat_and_lower_hover();
+                return true;
+            }
         }
         // Top-most floating panel drags own cursor movement.
         if let Some(d) = self.design_md_drag {
@@ -151,12 +168,13 @@ impl WidgetHost {
                     self.mark_dirty();
                 }
                 if panel_rect.contains(point) {
-                    self.clear_lower_overlay_hover();
+                    self.clear_hover_below_topmost_panel();
                     return true;
                 }
-                if changed {
+                if changed && !chat_or_picker_owns_point {
                     return true;
                 }
+                *upper_hover_changed |= changed;
             }
         }
         if let Some(d) = self.component_browser_drag {
@@ -180,12 +198,13 @@ impl WidgetHost {
                     self.mark_dirty();
                 }
                 if panel_rect.contains(point) {
-                    self.clear_lower_overlay_hover();
+                    self.clear_hover_below_topmost_panel();
                     return true;
                 }
-                if changed {
+                if changed && !chat_or_picker_owns_point {
                     return true;
                 }
+                *upper_hover_changed |= changed;
             }
         }
         if let Some(d) = self.icon_picker_drag {
@@ -209,58 +228,99 @@ impl WidgetHost {
                     self.mark_dirty();
                 }
                 if panel_rect.contains(point) {
-                    self.clear_lower_overlay_hover();
+                    self.clear_hover_below_topmost_panel();
                     return true;
                 }
-                if changed {
+                if changed && !chat_or_picker_owns_point {
                     return true;
                 }
+                *upper_hover_changed |= changed;
             }
         }
         let over_dropdown =
             self.over_dropdown_overlay(x, y, self.last_viewport_w, self.last_viewport_h);
-        let dropdown_changed = self.update_dropdown_hover(x, y);
-        let underlay_cleared = over_dropdown && self.clear_hover_under_dropdown_overlay();
-        if dropdown_changed || underlay_cleared || over_dropdown {
+        let property_rect = op_editor_ui::Rect {
+            origin: Point2D::new(
+                self.last_viewport_w - self.editor_state.editor_ui.property_panel_width,
+                op_editor_ui::widgets::TOP_BAR_HEIGHT,
+            ),
+            size: Point2D::new(
+                self.editor_state.editor_ui.property_panel_width,
+                (self.last_viewport_h - op_editor_ui::widgets::TOP_BAR_HEIGHT).max(0.0),
+            ),
+        };
+        let point = Point2D::new(x, y);
+        let over_property_dropdown = property_panel.is_some_and(|panel| {
+            (self.editor_state.editor_ui.fill_type_picker.open
+                && !matches!(
+                    panel.fill_type_picker_hit(property_rect, point),
+                    op_editor_ui::widgets::shape_picker::SelectHit::Outside
+                ))
+                || (self.editor_state.editor_ui.effect_add_picker_open
+                    && panel.effect_add_menu_contains(property_rect, point))
+                || (self.editor_state.editor_ui.compositing_picker.open
+                    && panel.compositing_picker_contains(property_rect, point))
+        });
+        let dropdown_changed = self.update_dropdown_hover(x, y, property_panel);
+        let underlay_cleared = over_dropdown && self.clear_hover_under_dropdown_overlay(false);
+        if underlay_cleared || over_dropdown {
             return true;
         }
-        if self.editor_state.editor_ui.variables_panel_open {
-            use op_editor_ui::widgets::variables_panel::VariablesPanel;
-            if let Some(panel_rect) =
-                self.variables_panel_rect(self.last_viewport_w, self.last_viewport_h)
-            {
-                let point = Point2D::new(x, y);
-                if panel_rect.contains(point) {
-                    let new_hover = VariablesPanel::for_editor_at(&self.editor_state, self.now_ms)
-                        .hover_at(panel_rect, point);
-                    if new_hover != self.editor_state.editor_ui.variables_panel_hover {
-                        self.editor_state.editor_ui.variables_panel_hover = new_hover;
-                        self.mark_dirty();
-                    }
-                    self.clear_lower_overlay_hover();
-                    return true;
-                }
+        if over_property_dropdown {
+            // Property dropdowns are painted after the inspector body.  Their
+            // footprint may overlap a button in the next section, so clear the
+            // body hover instead of leaving the previously hovered action lit
+            // beneath the popup.  Preserve the popup's own row hover.
+            self.clear_hover_under_dropdown_overlay(true);
+            return true;
+        }
+        let over_property_image_overlay = property_panel.is_some_and(|panel| {
+            (self.editor_state.editor_ui.image_fill_popover_open
+                && panel.image_fill_popover_contains(property_rect, point))
+                || ((self.editor_state.editor_ui.image_panel.search_open
+                    || self.editor_state.editor_ui.image_panel.generate_open)
+                    && panel.image_popovers_contain(property_rect, point))
+        });
+        if over_property_image_overlay {
+            self.clear_chat_and_lower_hover();
+            return true;
+        }
+        if dropdown_changed {
+            if chat_or_picker_owns_point {
+                *upper_hover_changed = true;
+            } else {
+                return true;
             }
         }
         false
     }
 
-    fn clear_hover_under_dropdown_overlay(&mut self) -> bool {
+    fn clear_hover_under_dropdown_overlay(
+        &mut self,
+        preserve_property_dropdown_hover: bool,
+    ) -> bool {
         let mut changed = false;
         {
             let ui = &mut self.editor_state.editor_ui;
             changed |= ui.canvas_hover_node.take().is_some();
             changed |= ui.hovered_layer_id.take().is_some();
             changed |= ui.hovered_page_index.take().is_some();
-            changed |= ui.fill_type_picker.hover.take().is_some();
+            if !preserve_property_dropdown_hover {
+                changed |= ui.fill_type_picker.hover.take().is_some();
+                changed |= ui.effect_add_menu_hover.take().is_some();
+                changed |= ui.compositing_picker.hover.take().is_some();
+            }
             changed |= ui.toolbar_hover.take().is_some();
             changed |= ui.align_toolbar_hover.take().is_some();
             changed |= ui.statusbar_hover.take().is_some();
             changed |= ui.topbar_button_hover.take().is_some();
             changed |= ui.chat_model_picker.hover.take().is_some();
+            changed |= ui.chat_header_hover.take().is_some();
+            changed |= ui.chat_tab_hover.take().is_some();
             changed |= ui.chat_design_block_hover.take().is_some();
             changed |= ui.chat_footer_hover.take().is_some();
             changed |= ui.chat_example_hover.take().is_some();
+            changed |= ui.parallel_agents_picker_hover.take().is_some();
             changed |= ui.export_picker_hover.take().is_some();
             changed |= ui.property_action_hover.take().is_some();
             changed |= ui.property_tab_hover.take().is_some();
@@ -284,8 +344,23 @@ impl WidgetHost {
     /// floating panel covering the point suppresses updates. Returns
     /// `true` on change. Port of the native
     /// `geometry.rs::update_dropdown_hover`.
-    fn update_dropdown_hover(&mut self, x: f32, y: f32) -> bool {
-        if self.over_topmost_panel(x, y, self.last_viewport_w, self.last_viewport_h)
+    fn update_dropdown_hover(
+        &mut self,
+        x: f32,
+        y: f32,
+        property_panel: Option<&PropertyPanel>,
+    ) -> bool {
+        let point = Point2D::new(x, y);
+        let over_true_topmost = self
+            .design_md_panel_rect(self.last_viewport_w, self.last_viewport_h)
+            .is_some_and(|rect| rect.contains(point))
+            || self
+                .icon_picker_panel_rect(self.last_viewport_w, self.last_viewport_h)
+                .is_some_and(|rect| rect.contains(point))
+            || self
+                .component_browser_panel_rect(self.last_viewport_w, self.last_viewport_h)
+                .is_some_and(|rect| rect.contains(point));
+        if over_true_topmost
             && !self.over_dropdown_overlay(x, y, self.last_viewport_w, self.last_viewport_h)
         {
             return false;
@@ -300,6 +375,23 @@ impl WidgetHost {
             let new_hover = menu.hovered_at(panel, Point2D::new(x, y));
             if new_hover != self.editor_state.editor_ui.file_menu.hover {
                 self.editor_state.editor_ui.file_menu.hover = new_hover;
+                self.mark_dirty();
+                return true;
+            }
+        }
+        if self.editor_state.editor_ui.import_menu_open {
+            use op_editor_ui::widgets::ImportMenu;
+            self.refresh_layout_scene();
+            let (anchor, viewport) =
+                self.import_menu_anchor(self.last_viewport_w, self.last_viewport_h);
+            let menu = ImportMenu::for_editor_ui(&self.editor_state.editor_ui);
+            let new_hover = match menu.hit(anchor, viewport, Point2D::new(x, y)) {
+                op_editor_ui::widgets::import_menu::SelectHit::Row(idx) => Some(idx),
+                op_editor_ui::widgets::import_menu::SelectHit::Inside
+                | op_editor_ui::widgets::import_menu::SelectHit::Outside => None,
+            };
+            if new_hover != self.editor_state.editor_ui.import_menu.hover {
+                self.editor_state.editor_ui.import_menu.hover = new_hover;
                 self.mark_dirty();
                 return true;
             }
@@ -337,9 +429,9 @@ impl WidgetHost {
             }
         }
         if self.editor_state.editor_ui.fill_type_picker.open {
-            use op_editor_ui::widgets::{PropertyPanel, TOP_BAR_HEIGHT};
+            use op_editor_ui::widgets::TOP_BAR_HEIGHT;
             self.refresh_layout_scene();
-            if let Some(panel) = PropertyPanel::for_selection(&self.editor_state) {
+            if let Some(panel) = property_panel {
                 let property_rect = op_editor_ui::Rect {
                     origin: Point2D::new(
                         self.last_viewport_w - self.editor_state.editor_ui.property_panel_width,
@@ -358,10 +450,32 @@ impl WidgetHost {
                 }
             }
         }
-        if self.editor_state.editor_ui.effect_add_picker_open {
-            use op_editor_ui::widgets::{PropertyPanel, TOP_BAR_HEIGHT};
+        if self.editor_state.editor_ui.compositing_picker.open {
+            use op_editor_ui::widgets::TOP_BAR_HEIGHT;
             self.refresh_layout_scene();
-            if let Some(panel) = PropertyPanel::for_selection(&self.editor_state) {
+            if let Some(panel) = property_panel {
+                let property_rect = op_editor_ui::Rect {
+                    origin: Point2D::new(
+                        self.last_viewport_w - self.editor_state.editor_ui.property_panel_width,
+                        TOP_BAR_HEIGHT,
+                    ),
+                    size: Point2D::new(
+                        self.editor_state.editor_ui.property_panel_width,
+                        (self.last_viewport_h - TOP_BAR_HEIGHT).max(0.0),
+                    ),
+                };
+                let new_hover = panel.compositing_picker_row_at(property_rect, Point2D::new(x, y));
+                if new_hover != self.editor_state.editor_ui.compositing_picker.hover {
+                    self.editor_state.editor_ui.compositing_picker.hover = new_hover;
+                    self.mark_dirty();
+                    return true;
+                }
+            }
+        }
+        if self.editor_state.editor_ui.effect_add_picker_open {
+            use op_editor_ui::widgets::TOP_BAR_HEIGHT;
+            self.refresh_layout_scene();
+            if let Some(panel) = property_panel {
                 let property_rect = op_editor_ui::Rect {
                     origin: Point2D::new(
                         self.last_viewport_w - self.editor_state.editor_ui.property_panel_width,

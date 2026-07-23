@@ -348,6 +348,37 @@ impl RenderBackend for BaselineAdjustingBackend<'_> {
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn draw_image_with_options_transform_blend_and_tile_scale(
+        &mut self,
+        rect: Rect,
+        image_id: u64,
+        encoded: &[u8],
+        mode: ImageDrawMode,
+        adjustments: ImageAdjustments,
+        opacity: f32,
+        corner_radius: f32,
+        transform: Option<[f32; 6]>,
+        blend_mode: ImageBlendMode,
+        original_size: Option<[f32; 2]>,
+        tile_scale: f32,
+    ) {
+        self.inner
+            .draw_image_with_options_transform_blend_and_tile_scale(
+                rect,
+                image_id,
+                encoded,
+                mode,
+                adjustments,
+                opacity,
+                corner_radius,
+                transform,
+                blend_mode,
+                original_size,
+                tile_scale,
+            );
+    }
+
     fn fill_round_rect_linear_gradient(
         &mut self,
         rect: Rect,

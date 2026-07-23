@@ -171,7 +171,7 @@ impl WidgetHost {
                     // icon names / bind key) take any non-control char.
                     !c.is_control()
                 } else if focus.is_hex() {
-                    (replacing_all || draft.len() < 7)
+                    (replacing_all || draft.len() < focus.hex_max_len().unwrap_or(7))
                         && (c.is_ascii_hexdigit()
                             || (c == '#' && pos == 0 && !draft.starts_with('#')))
                 } else {

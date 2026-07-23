@@ -17,7 +17,19 @@
 use base64::Engine as _;
 use op_editor_core::editor_ui_state::ExportFormat;
 use op_editor_core::{uikit_io, EditorState, UIKit};
-use std::collections::HashMap;
+
+mod drop_plan;
+mod save_payload;
+mod save_queue;
+
+pub use drop_plan::{drop_batch_plan, drop_kind, DropBatchPlan, DropKind};
+pub use save_payload::{
+    acknowledge_browser_download, parse_save_response, save_ack_matches_document, save_file_name,
+    save_snapshot_matches_document, serialize_save_payload, SavePayloadTarget,
+};
+#[cfg(test)]
+pub use save_payload::{save_request_body, serialize_document};
+pub use save_queue::LatestSaveQueue;
 
 /// An ingested document plus the loader's best-effort schema
 /// warnings (the desktop logs these to stderr; the web glue routes
@@ -27,67 +39,8 @@ pub struct IngestedDoc {
     pub warnings: Vec<String>,
 }
 
-/// One browser-selected file belonging to a saved-page bundle. Paths are
-/// relative to the selected directory; bytes are collected asynchronously by
-/// `dom_io` before the synchronous HTML converter runs.
-pub struct HtmlBundleFile {
-    pub relative_path: String,
-    pub bytes: Vec<u8>,
-}
-
-/// Serialize the canonical document to the `.op` JSON the desktop /
-/// TS editors write, with shared image payloads deduplicated into the
-/// `images` table. The web Save path downloads this as a Blob. (The
-/// live-sync push bodies below deliberately stay inline — the daemon
-/// consumes them straight from serde without the compat loader.)
-pub fn serialize_document(state: &EditorState) -> Result<String, String> {
-    let mut value = serde_json::to_value(&state.doc).map_err(|e| e.to_string())?;
-    jian_ops_schema::image_table::externalize_images(&mut value);
-    serde_json::to_string_pretty(&value).map_err(|e| e.to_string())
-}
-
-/// Download file name for Save / Save As — the current display name
-/// when one is set (a previously opened file), else `untitled.op`.
-pub fn save_file_name(state: &EditorState) -> String {
-    match state.editor_ui.file_name_display.as_deref() {
-        Some(name) if !name.trim().is_empty() => name.to_string(),
-        _ => "untitled.op".to_string(),
-    }
-}
-
-pub fn save_request_body(state: &EditorState) -> Result<String, String> {
-    serde_json::to_string(&serde_json::json!({
-        "document": state.doc,
-        "activePageIndex": state.ui.active_page_index,
-    }))
-    .map_err(|e| e.to_string())
-}
-
-#[derive(Debug)]
-pub struct SaveResponse {
-    pub file_name: String,
-}
-
-pub fn parse_save_response(response: &str) -> Result<SaveResponse, String> {
-    let parsed: serde_json::Value = serde_json::from_str(response).map_err(|e| e.to_string())?;
-    if !parsed.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
-        let message = parsed
-            .get("error")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Save failed");
-        return Err(message.to_string());
-    }
-    let file_name = parsed
-        .get("fileName")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or("untitled.op")
-        .to_string();
-    Ok(SaveResponse { file_name })
-}
-
 pub fn export_svg_document(state: &EditorState) -> Result<String, String> {
-    let scene = op_pen_loader::editor_state_to_layout_scene(state);
+    let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
     if state.selection_count() == 1 && state.selection.anchor.is_real() {
         op_editor_ui::svg_export::serialize_node_svg(&scene, state.selection.anchor.as_str())
     } else {
@@ -109,9 +62,26 @@ pub struct RasterDownload {
     pub bytes: Vec<u8>,
 }
 
+fn document_value_with_editor_meta(state: &EditorState) -> Result<serde_json::Value, String> {
+    let mut document = serde_json::to_value(&state.doc).map_err(|e| e.to_string())?;
+    let Some(object) = document.as_object_mut() else {
+        return Err("canonical document must serialize as an object".to_string());
+    };
+    object.insert(
+        "editorMeta".to_string(),
+        serde_json::to_value(op_pen_loader::EditorMeta {
+            active_page_index: state.ui.active_page_index,
+            preserve_authored_geometry: state.editor_ui.preserve_authored_geometry,
+        })
+        .map_err(|e| e.to_string())?,
+    );
+    Ok(document)
+}
+
 pub fn export_pdf_request_body(state: &EditorState) -> Result<String, String> {
+    let document = document_value_with_editor_meta(state)?;
     serde_json::to_string(&serde_json::json!({
-        "document": state.doc,
+        "document": document,
         "activePageIndex": state.ui.active_page_index,
     }))
     .map_err(|e| e.to_string())
@@ -161,8 +131,9 @@ pub fn export_raster_request_body(state: &EditorState) -> Result<String, String>
             return Err("raster export requires PNG, JPEG, or WEBP".to_string());
         }
     };
+    let document = document_value_with_editor_meta(state)?;
     let mut body = serde_json::json!({
-        "document": state.doc,
+        "document": document,
         "activePageIndex": state.ui.active_page_index,
         "format": format,
         "scale": state.editor_ui.export_scale,
@@ -272,12 +243,15 @@ pub fn import_kit_source(src: &str, kit_id: String) -> Result<Option<UIKit>, Str
 /// carrying over the app-level preferences from `previous` (the
 /// state being replaced). Mirrors the desktop's
 /// `persistence::load_editor_state` + `preserve_app_preferences`
-/// pair, minus the `.opmeta` sidecar (no filesystem on web — the
-/// loaded document starts on page 0).
+/// pair, minus the legacy `.opmeta` sidecar. Embedded `editorMeta`
+/// restores the active page and Figma Preserve geometry mode; older files
+/// without it open on their first non-empty page, matching desktop.
 pub fn ingest_op_source(src: &str, previous: &EditorState) -> Result<IngestedDoc, String> {
+    let editor_meta = op_pen_loader::extract_editor_meta(src);
     let loaded = op_pen_loader::load_canonical(src).map_err(|e| e.to_string())?;
     let warnings = loaded.warnings.iter().map(|w| format!("{w:?}")).collect();
     let mut state = EditorState::from_document(loaded.value);
+    op_pen_loader::apply_editor_meta_or_legacy_fallback(&mut state, editor_meta);
     preserve_app_preferences(previous, &mut state);
     Ok(IngestedDoc { state, warnings })
 }
@@ -298,98 +272,37 @@ pub fn ingest_figma_bytes(bytes: &[u8], file_name: &str) -> Result<IngestedDoc, 
     })
 }
 
-/// Parse an HTML file into a fresh editable document. Browser imports cannot
-/// synchronously fetch external resources, so the converter records those as
-/// warnings and keeps the best-effort structured result.
-pub fn ingest_html_source(source: &str, file_name: &str) -> Result<IngestedDoc, String> {
-    let options = op_html::HtmlImportOptions {
-        document_name: Some(file_name.to_string()),
-        ..Default::default()
-    };
-    let imported = op_html::import_html_document(source, &options, None, None);
+/// Install payload returned by the isolated Figma import Worker.
+///
+/// `source` is a complete, ordinary canonical `.op` document (including the
+/// shared `images` / `imageThumbs` tables produced in the Worker). Routing it
+/// through the compatibility loader preserves the exact same old-schema and
+/// image-interning behavior as File → Open; no paged placeholder document is
+/// ever exposed to `EditorState` in this first phase.
+pub fn ingest_figma_temp_source(
+    source: &str,
+    worker_warnings_json: &str,
+) -> Result<IngestedDoc, String> {
+    let loaded = op_pen_loader::load_canonical(source).map_err(|error| error.to_string())?;
+    let mut warnings: Vec<String> = serde_json::from_str(worker_warnings_json)
+        .map_err(|error| format!("decode Figma Worker warnings failed: {error}"))?;
+    warnings.extend(loaded.warnings.iter().map(|warning| format!("{warning:?}")));
+    let mut state = EditorState::from_document(loaded.value);
+    state.editor_ui.preserve_authored_geometry = true;
+    Ok(IngestedDoc { state, warnings })
+}
+
+#[cfg(test)]
+fn ingest_html_project(files: &[op_html::HtmlProjectFile]) -> Result<IngestedDoc, String> {
+    let imported = op_html::import_html_project_document(files, &Default::default())
+        .map_err(|error| error.to_string())?;
+    if imported.document.children.is_empty() {
+        return Err("HTML project contains no importable content".to_string());
+    }
     Ok(IngestedDoc {
         state: EditorState::from_document(imported.document),
         warnings: imported.warnings,
     })
-}
-
-const HTML_BUNDLE_ORIGIN: &str = "https://openpencil.local/";
-
-/// Parse a browser-selected saved-page directory. Browser sandboxes do not
-/// expose sibling files after a single `.html` pick, so `dom_io` supplies the
-/// directory as an in-memory bundle and this helper presents it to `op-html`
-/// through the same synchronous resource-fetch seam used by the desktop.
-pub fn ingest_html_bundle(files: Vec<HtmlBundleFile>) -> Result<IngestedDoc, String> {
-    let mut resources = HashMap::new();
-    let mut html_candidates = Vec::new();
-
-    for file in files {
-        let Some(path) = normalize_bundle_path(&file.relative_path) else {
-            continue;
-        };
-        let Some(url) = op_html::resources::resolve_url(Some(HTML_BUNDLE_ORIGIN), &path) else {
-            continue;
-        };
-        if is_html_path(&path) {
-            html_candidates.push((html_candidate_rank(&path), url.clone(), path));
-        }
-        resources.insert(url, file.bytes);
-    }
-
-    html_candidates.sort_by(|a, b| a.0.cmp(&b.0));
-    let (_, html_url, html_path) = html_candidates
-        .into_iter()
-        .next()
-        .ok_or_else(|| "selected files contain no .html or .htm file".to_string())?;
-    let source = resources
-        .get(&html_url)
-        .ok_or_else(|| "selected HTML file could not be read".to_string())?;
-    let source = String::from_utf8_lossy(source);
-    let fetcher = |url: &str| {
-        let without_suffix = url.split_once(['?', '#']).map_or(url, |(path, _)| path);
-        resources.get(without_suffix).cloned()
-    };
-    let file_name = html_path.rsplit('/').next().unwrap_or(&html_path);
-    let options = op_html::HtmlImportOptions {
-        document_name: Some(file_stem(file_name).to_string()),
-        base_url: Some(html_url),
-        ..Default::default()
-    };
-    let imported = op_html::import_html_document(&source, &options, Some(&fetcher), None);
-    Ok(IngestedDoc {
-        state: EditorState::from_document(imported.document),
-        warnings: imported.warnings,
-    })
-}
-
-fn normalize_bundle_path(path: &str) -> Option<String> {
-    let normalized = path.replace('\\', "/");
-    let mut parts = Vec::new();
-    for part in normalized.split('/') {
-        match part {
-            "" | "." => {}
-            ".." => {
-                parts.pop()?;
-            }
-            _ => parts.push(part),
-        }
-    }
-    (!parts.is_empty()).then(|| parts.join("/"))
-}
-
-fn is_html_path(path: &str) -> bool {
-    let lower = path.to_ascii_lowercase();
-    lower.ends_with(".html") || lower.ends_with(".htm")
-}
-
-fn html_candidate_rank(path: &str) -> (usize, u8, String) {
-    let file_name = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
-    let is_index = matches!(file_name.as_str(), "index.html" | "index.htm");
-    (
-        path.matches('/').count(),
-        u8::from(!is_index),
-        path.to_ascii_lowercase(),
-    )
 }
 
 /// Carry app-level preferences from the state being replaced into a
@@ -425,43 +338,6 @@ pub fn preserve_app_preferences(previous: &EditorState, next: &mut EditorState) 
 /// What a picked / dropped file is, by extension (case-insensitive
 /// — matches the desktop's `is_supported_document` /
 /// `is_supported_figma_import` semantics).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DropKind {
-    /// Canonical `.op` / `.pen` document — replaces the open document.
-    Document,
-    /// Binary Figma `.fig` export — imported via `op_figma`.
-    Figma,
-    /// HTML document — imported into editable auto-layout nodes.
-    Html,
-    /// SVG file — parsed into editable nodes via `import_svg_named`.
-    Svg,
-    /// Raster image — inserted as an Image node carrying a data URL.
-    Image,
-    /// Anything else — ignored with a console warning.
-    Unsupported,
-}
-
-/// Classify a file name for the drop / picker router.
-pub fn drop_kind(name: &str) -> DropKind {
-    let lower = name.to_ascii_lowercase();
-    if lower.ends_with(".op") || lower.ends_with(".pen") {
-        DropKind::Document
-    } else if lower.ends_with(".fig") {
-        DropKind::Figma
-    } else if lower.ends_with(".html") || lower.ends_with(".htm") {
-        DropKind::Html
-    } else if lower.ends_with(".svg") {
-        DropKind::Svg
-    } else if [".png", ".jpg", ".jpeg", ".gif", ".webp"]
-        .iter()
-        .any(|ext| lower.ends_with(ext))
-    {
-        DropKind::Image
-    } else {
-        DropKind::Unsupported
-    }
-}
-
 /// File name without its last extension — node naming for inserted
 /// images / SVGs (mirrors the desktop's `Path::file_stem` usage; the
 /// browser only hands us a flat name string).
@@ -505,6 +381,39 @@ pub fn attachment_file_name(name: &str) -> String {
 mod tests {
     use super::*;
     use op_editor_core::PenNodeExt;
+
+    #[test]
+    fn metadata_free_open_uses_first_nonempty_page_and_legacy_layout_mode() {
+        let previous = EditorState::new();
+        let source = r#"{
+          "version":"1.0.0",
+          "children":[],
+          "pages":[
+            {"id":"empty","name":"Empty","children":[]},
+            {"id":"content","name":"Content","children":[
+              {"type":"rectangle","id":"visible","x":0,"y":0,"width":10,"height":10}
+            ]}
+          ]
+        }"#;
+
+        let ingested = ingest_op_source(source, &previous).expect("legacy document loads");
+
+        assert_eq!(ingested.state.ui.active_page_index, 1);
+        assert!(!ingested.state.editor_ui.preserve_authored_geometry);
+    }
+
+    #[test]
+    fn figma_worker_canonical_source_installs_all_pages_eagerly() {
+        let source = r#"{"version":"1.0","pages":[{"id":"p1","name":"One","children":[{"type":"rectangle","id":"a"}]},{"id":"p2","name":"Two","children":[{"type":"rectangle","id":"b"}]}],"children":[]}"#;
+        let ingested = ingest_figma_temp_source(source, r#"["worker warning"]"#)
+            .expect("worker canonical source loads");
+        let pages = ingested.state.doc.pages.as_ref().expect("pages");
+        assert_eq!(pages.len(), 2);
+        assert_eq!(pages[0].children.len(), 1);
+        assert_eq!(pages[1].children.len(), 1);
+        assert!(ingested.state.editor_ui.preserve_authored_geometry);
+        assert_eq!(ingested.warnings, ["worker warning"]);
+    }
 
     #[test]
     fn app_preferences_preserve_runtime_font_availability() {
@@ -591,6 +500,7 @@ mod tests {
             .expect("save response");
 
         assert_eq!(saved.file_name, "design.op");
+        assert_eq!(saved.version, Some(3));
     }
 
     #[test]
@@ -609,6 +519,7 @@ mod tests {
             .value;
         let mut state = EditorState::from_document(doc);
         assert!(state.set_active_page(1));
+        state.editor_ui.preserve_authored_geometry = true;
 
         let body = export_pdf_request_body(&state).expect("request body");
         let parsed: serde_json::Value = serde_json::from_str(&body).expect("json body");
@@ -622,6 +533,11 @@ mod tests {
             "PDF Node"
         );
         assert_eq!(parsed["activePageIndex"], 1);
+        assert_eq!(parsed["document"]["editorMeta"]["activePageIndex"], 1);
+        assert_eq!(
+            parsed["document"]["editorMeta"]["preserveAuthoredGeometry"],
+            true
+        );
     }
 
     #[test]
@@ -658,6 +574,7 @@ mod tests {
         let mut state = EditorState::from_document(doc);
         state.editor_ui.export_format = ExportFormat::Webp;
         state.editor_ui.export_scale = 3.0;
+        state.editor_ui.preserve_authored_geometry = true;
         state.set_single_selection(op_editor_core::NodeId::new("raster-node"));
 
         let body = export_raster_request_body(&state).expect("request body");
@@ -668,6 +585,10 @@ mod tests {
         assert_eq!(parsed["selectedNodeId"], "raster-node");
         assert_eq!(parsed["activePageIndex"], 0);
         assert_eq!(parsed["document"]["children"][0]["id"], "raster-node");
+        assert_eq!(
+            parsed["document"]["editorMeta"]["preserveAuthoredGeometry"],
+            true
+        );
     }
 
     #[test]
@@ -710,40 +631,89 @@ mod tests {
     }
 
     #[test]
-    fn drop_kind_recognizes_html() {
+    fn drop_kind_recognizes_html_and_zip() {
         assert!(matches!(drop_kind("page.html"), DropKind::Html));
         assert!(matches!(drop_kind("PAGE.HTM"), DropKind::Html));
+        assert!(matches!(drop_kind("site.CSS"), DropKind::HtmlResource));
+        assert!(matches!(drop_kind("ui.WOFF2"), DropKind::HtmlResource));
+        assert!(matches!(drop_kind("brand.otf"), DropKind::HtmlResource));
+        assert!(matches!(drop_kind("app.mjs"), DropKind::HtmlResource));
+        assert!(matches!(
+            drop_kind("manifest.webmanifest"),
+            DropKind::HtmlResource
+        ));
+        assert!(matches!(drop_kind("favicon.ico"), DropKind::Image));
+        assert!(matches!(drop_kind("photo.avif"), DropKind::Image));
+        assert!(matches!(drop_kind("saved-page.ZIP"), DropKind::Zip));
         assert!(matches!(drop_kind("a.svg"), DropKind::Svg));
     }
 
     #[test]
-    fn ingest_html_source_builds_state() {
-        let ingested = ingest_html_source("<h1>T</h1>", "page").expect("HTML import");
-        assert_eq!(ingested.state.doc.children.len(), 1);
+    fn drop_batch_plan_groups_html_with_explicit_resources() {
+        assert_eq!(
+            drop_batch_plan(&[
+                DropKind::Html,
+                DropKind::HtmlResource,
+                DropKind::Image,
+                DropKind::Svg,
+            ]),
+            DropBatchPlan::HtmlProject
+        );
+        assert_eq!(
+            drop_batch_plan(&[DropKind::Html, DropKind::Html]),
+            DropBatchPlan::HtmlProject
+        );
     }
 
     #[test]
-    fn ingest_html_bundle_resolves_relative_stylesheets_and_images() {
+    fn drop_batch_plan_rejects_html_document_figma_and_unknown_mixes() {
+        for conflict in [DropKind::Document, DropKind::Figma, DropKind::Unsupported] {
+            assert_eq!(
+                drop_batch_plan(&[DropKind::Html, conflict]),
+                DropBatchPlan::InvalidHtmlMix
+            );
+        }
+    }
+
+    #[test]
+    fn drop_batch_plan_rejects_zip_mixes_and_keeps_other_drops_individual() {
+        assert_eq!(drop_batch_plan(&[DropKind::Zip]), DropBatchPlan::HtmlZip);
+        assert_eq!(
+            drop_batch_plan(&[DropKind::Zip, DropKind::Html]),
+            DropBatchPlan::InvalidZipMix
+        );
+        assert_eq!(
+            drop_batch_plan(&[DropKind::Image, DropKind::Svg]),
+            DropBatchPlan::Individual
+        );
+        assert_eq!(
+            drop_batch_plan(&[DropKind::HtmlResource]),
+            DropBatchPlan::Individual
+        );
+    }
+
+    #[test]
+    fn ingest_html_project_resolves_relative_stylesheets_and_images() {
         let files = vec![
-            HtmlBundleFile {
+            op_html::HtmlProjectFile {
                 relative_path: "pages/index.html".into(),
                 bytes: br#"<link rel="stylesheet" href="../assets/site.css">
                     <div class="hero"></div>"#
                     .to_vec(),
             },
-            HtmlBundleFile {
+            op_html::HtmlProjectFile {
                 relative_path: "assets/site.css".into(),
                 bytes: br#".hero { width: 40px; height: 30px;
                     background-image: url('./hero icon.png?v=1'); }"#
                     .to_vec(),
             },
-            HtmlBundleFile {
+            op_html::HtmlProjectFile {
                 relative_path: "assets/hero icon.png".into(),
                 bytes: vec![0x89, 0x50, 0x4e, 0x47, 1, 2, 3],
             },
         ];
 
-        let ingested = ingest_html_bundle(files).expect("saved-page bundle imports");
+        let ingested = ingest_html_project(&files).expect("saved-page project imports");
         let json = serde_json::to_string(&ingested.state.doc).expect("document serializes");
 
         assert!(json.contains("data:image/png;base64,"));
@@ -754,23 +724,23 @@ mod tests {
     }
 
     #[test]
-    fn ingest_html_bundle_prefers_index_and_rejects_missing_html() {
-        let ingested = ingest_html_bundle(vec![
-            HtmlBundleFile {
+    fn ingest_html_project_prefers_index_and_rejects_missing_html() {
+        let files = vec![
+            op_html::HtmlProjectFile {
                 relative_path: "other.html".into(),
                 bytes: b"<h1>Other</h1>".to_vec(),
             },
-            HtmlBundleFile {
+            op_html::HtmlProjectFile {
                 relative_path: "INDEX.HTML".into(),
                 bytes: b"<h1>Index chosen</h1>".to_vec(),
             },
-        ])
-        .expect("index candidate imports");
+        ];
+        let ingested = ingest_html_project(&files).expect("index candidate imports");
         let json = serde_json::to_string(&ingested.state.doc).expect("document serializes");
         assert!(json.contains("Index chosen"));
         assert!(!json.contains("Other"));
 
-        assert!(ingest_html_bundle(vec![HtmlBundleFile {
+        assert!(ingest_html_project(&[op_html::HtmlProjectFile {
             relative_path: "style.css".into(),
             bytes: b"body {}".to_vec(),
         }])

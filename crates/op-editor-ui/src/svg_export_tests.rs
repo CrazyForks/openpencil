@@ -577,23 +577,20 @@ fn gradient_only_other_node_contributes_bounds_and_emits_rect() {
 }
 
 #[test]
-fn resolved_layer_opacity_is_not_applied_twice_to_gradient_stroke_or_descendants() {
+fn composite_opacity_wraps_gradient_stroke_and_descendants_once() {
     let mut frame = SceneNode::leaf("opacity-frame", NodeKind::Frame);
     frame.bounds = Rect::xywh(0.0, 0.0, 100.0, 100.0);
-    // LayoutScene stores cumulative opacity here for raster images.
-    frame.opacity = 0.5;
+    frame.composite_opacity = 0.5;
     frame.gradient = Some(SceneGradient::Linear {
         angle_deg: 90.0,
-        // The loader has already folded the same cumulative node opacity
-        // into the gradient multiplier used by the canvas shader.
-        opacity: 0.5,
+        opacity: 1.0,
         stops: vec![SceneGradientStop {
             offset: 0.0,
             color: Color::RED,
         }],
     });
     frame.stroke = Some(SceneStroke {
-        color: Color::BLACK.with_alpha(0.5),
+        color: Color::BLACK,
         width: 2.0,
         sides: None,
         align: SceneStrokeAlign::Center,
@@ -604,17 +601,14 @@ fn resolved_layer_opacity_is_not_applied_twice_to_gradient_stroke_or_descendants
         10.0,
         20.0,
         20.0,
-        Color::RED.with_alpha(0.5),
+        Color::RED,
     ));
 
     let body = serialize_node_svg(&scene_with(vec![frame]), "opacity-frame").expect("svg");
 
-    assert!(body.contains(r#"stop-opacity="0.5""#), "{body}");
-    assert!(body.contains(r#"stroke-opacity="0.5""#), "{body}");
+    assert!(body.contains(r#"stop-opacity="1""#), "{body}");
+    assert!(!body.contains("stroke-opacity="), "{body}");
     assert!(body.contains(r#"id="opacity-child""#), "{body}");
-    assert!(body.contains(r#"fill-opacity="0.5""#), "{body}");
-    assert!(
-        !body.contains(r#"<g opacity="0.5""#),
-        "cumulative layer opacity was applied twice: {body}"
-    );
+    assert!(!body.contains("fill-opacity="), "{body}");
+    assert_eq!(body.matches(r#"<g opacity="0.5""#).count(), 1, "{body}");
 }

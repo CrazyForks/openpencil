@@ -10,7 +10,6 @@ use jian_ops_schema::node::container::CornerRadius;
 use jian_ops_schema::node::text::TextContent;
 use jian_ops_schema::node::PenNode;
 use jian_ops_schema::style::StrokeThickness;
-use std::rc::Rc;
 
 const TESLA_AUX_BG_NETWORK: &str = concat!(
     "040000000400000001000000000000000000104100000000000000000000000000001041",
@@ -215,7 +214,7 @@ fn derived_instance_scales_geometry_and_visual_metrics_into_40px_frame() {
         BlobOrString::Bytes(captured_bytes(TESLA_AUX_BG_NETWORK)),
         BlobOrString::Bytes(captured_bytes(MINIMAL_24PX_COMMAND_GEOMETRY)),
     ];
-    ctx.symbol_tree.insert("238:1664".into(), Rc::new(symbol));
+    ctx.symbol_tree.insert("238:1664".into(), &symbol);
 
     let PenNode::Frame(frame) = convert_instance(&instance, None, &mut ctx) else {
         panic!("instance must materialise as a frame");

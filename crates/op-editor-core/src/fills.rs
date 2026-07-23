@@ -23,6 +23,10 @@ pub struct ImageFillSummary {
     /// inline `data:image/...;base64,...` URLs so the property popover
     /// can decode and preview them without another host-side fetch.
     pub image_url: Option<String>,
+    /// Effective Figma TILE scale for an image fill. `Some(1.0)` is the
+    /// backward-compatible default when `tileScale` is absent or invalid;
+    /// standalone Image nodes report `None` because they do not support it.
+    pub tile_scale: Option<f32>,
     pub exposure: f32,
     pub contrast: f32,
     pub saturation: f32,
@@ -396,6 +400,7 @@ pub fn first_image_fill_summary(node: &PenNode) -> Option<ImageFillSummary> {
         mode: ImageFillMode::from_schema(body.mode.as_ref()),
         has_image: !trimmed_url.is_empty(),
         image_url: (!trimmed_url.is_empty()).then(|| body.url.to_string()),
+        tile_scale: Some(effective_image_tile_scale(body.tile_scale)),
         exposure: body.exposure.unwrap_or(0.0),
         contrast: body.contrast.unwrap_or(0.0),
         saturation: body.saturation.unwrap_or(0.0),
@@ -423,6 +428,43 @@ pub fn set_primary_image_fill_mode(node: &mut PenNode, mode: ImageFillMode) -> b
         return false;
     };
     body.mode = Some(mode.to_schema());
+    true
+}
+
+/// Lowest and highest tile scales accepted by the inspector. Keeping the
+/// range finite and bounded prevents accidental near-zero tile explosions or
+/// unusably large patterns while covering normal Figma-authored values.
+pub const MIN_IMAGE_TILE_SCALE: f32 = 0.01;
+pub const MAX_IMAGE_TILE_SCALE: f32 = 100.0;
+
+fn validated_image_tile_scale(value: f32) -> Option<f32> {
+    if !value.is_finite() || value <= 0.0 {
+        return None;
+    }
+    Some(value.clamp(MIN_IMAGE_TILE_SCALE, MAX_IMAGE_TILE_SCALE))
+}
+
+fn effective_image_tile_scale(value: Option<f32>) -> f32 {
+    value
+        .filter(|scale| scale.is_finite() && *scale > 0.0)
+        .unwrap_or(1.0)
+}
+
+/// Set the primary image fill's TILE scale. Invalid/non-positive values are
+/// rejected without mutating the document. New `1.0` values use the omitted
+/// old-wire default; an already-authored `Some(1.0)` remains untouched because
+/// its effective value did not change. Standalone Image nodes are unsupported.
+pub fn set_primary_image_tile_scale(node: &mut PenNode, value: f32) -> bool {
+    let Some(body) = primary_image_fill_mut(node) else {
+        return false;
+    };
+    let Some(value) = validated_image_tile_scale(value) else {
+        return false;
+    };
+    if effective_image_tile_scale(body.tile_scale) == value {
+        return false;
+    }
+    body.tile_scale = (value != 1.0).then_some(value);
     true
 }
 
@@ -682,6 +724,7 @@ fn default_fill_of_type(kind: FillType, hex: &str) -> PenFill {
             mode: None,
             original_size: None,
             transform: None,
+            tile_scale: None,
             explain: None,
             opacity: None,
             blend_mode: None,
@@ -920,7 +963,8 @@ pub fn set_fill_type_at(node: &mut PenNode, index: usize, kind: FillType) -> boo
     true
 }
 
-/// Write `hex` into the solid fill at `index`. No-op (returns `false`) if
+/// Write `hex` (`#RRGGBB` or `#RRGGBBAA`) into the solid fill at `index`.
+/// No-op (returns `false`) if
 /// that fill isn't a solid — type changes go through [`set_fill_type_at`].
 pub fn set_fill_hex_at(node: &mut PenNode, index: usize, hex: &str) -> bool {
     let Some(fills) = node_fills_mut(node) else {
@@ -951,6 +995,14 @@ pub fn set_fill_opacity_at(node: &mut PenNode, index: usize, opacity: f32) -> bo
             true
         }
         Some(PenFill::RadialGradient(b)) => {
+            b.opacity = Some(opacity);
+            true
+        }
+        Some(PenFill::MeshGradient(b)) => {
+            b.opacity = Some(opacity);
+            true
+        }
+        Some(PenFill::Shader(b)) => {
             b.opacity = Some(opacity);
             true
         }
@@ -1184,5 +1236,27 @@ mod tests {
             }
             other => panic!("expected LinearGradient, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn indexed_opacity_updates_mesh_and_shader_fills() {
+        let mut node = rect_node();
+        let fills = node_fills_mut(&mut node).expect("rect carries fills");
+        fills.clear();
+        fills.push(default_fill_of_type(FillType::MeshGradient, "#112233"));
+        fills.push(default_fill_of_type(FillType::Shader, "#445566"));
+
+        assert!(set_fill_opacity_at(&mut node, 0, 0.35));
+        assert!(set_fill_opacity_at(&mut node, 1, 0.65));
+
+        let fills = node_fills(&node).expect("rect carries fills");
+        assert!(matches!(
+            &fills[0],
+            PenFill::MeshGradient(body) if body.opacity == Some(0.35)
+        ));
+        assert!(matches!(
+            &fills[1],
+            PenFill::Shader(body) if body.opacity == Some(0.65)
+        ));
     }
 }

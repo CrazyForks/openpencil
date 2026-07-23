@@ -27,6 +27,27 @@ pub fn paint_scene_page_with(
     cull: Rect,
     options: PaintSceneOptions<'_>,
 ) {
+    if options.only_root.is_none() {
+        let _ = super::canvas_viewport_paint::paint_scene_nodes_with_options_hiding(
+            cx,
+            &page.children,
+            viewport_origin,
+            zoom,
+            None,
+            cull,
+            None,
+            None,
+            None,
+            None,
+            options.skip_node,
+            0,
+            None,
+            None,
+            None,
+        );
+        return;
+    }
+
     for child in page.children.iter().rev() {
         if let Some(root) = options.only_root {
             if child.id != root {
@@ -96,14 +117,16 @@ pub fn paint_scene_subtree(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layout_scene::{NodeKind, SceneNode};
-    use crate::{Color, ImageDrawMode, RenderBackend, TextLayout};
+    use crate::layout_scene::{MaskType, NodeKind, SceneNode};
+    use crate::{Color, ImageBlendMode, ImageDrawMode, RenderBackend, TextLayout};
 
     /// Records fill_rect calls; every other backend method is a no-op.
     /// Same pattern as `canvas_viewport_paint_tests::TextCaptureBackend`.
     #[derive(Default)]
     struct FillCaptureBackend {
         fill_rects: Vec<Rect>,
+        composite_layers: Vec<(f32, ImageBlendMode)>,
+        mask_sources: Vec<bool>,
     }
 
     impl RenderBackend for FillCaptureBackend {
@@ -119,6 +142,15 @@ mod tests {
         fn restore(&mut self) {}
         fn translate(&mut self, _: Point2D) {}
         fn scale(&mut self, _: Point2D, _: Point2D) {}
+        fn push_composite_layer(&mut self, _: Rect, opacity: f32, mode: ImageBlendMode) {
+            self.composite_layers.push((opacity, mode));
+        }
+        fn supports_pixel_masks(&self) -> bool {
+            true
+        }
+        fn push_mask_source_layer(&mut self, luminance: bool) {
+            self.mask_sources.push(luminance);
+        }
         fn stroke_line(&mut self, _: Point2D, _: Point2D, _: Color, _: f32) {}
         fn fill_round_rect(&mut self, rect: Rect, _: f32, _: Color) {
             self.fill_rects.push(rect);
@@ -214,6 +246,36 @@ mod tests {
             );
         }
         assert_eq!(be.fill_rects.len(), 1, "c1 must be skipped");
+    }
+
+    #[test]
+    fn all_roots_reuse_the_mask_aware_sibling_walk() {
+        let content = rect_node("content", 0.0, 0.0, 20.0, 20.0);
+        let mut mask = rect_node("mask", 0.0, 0.0, 20.0, 20.0);
+        mask.is_mask = true;
+        mask.mask_type = Some(MaskType::Alpha);
+        let page = ScenePage {
+            id: "p".into(),
+            name: "p".into(),
+            children: vec![content, mask],
+        };
+        let mut be = FillCaptureBackend::default();
+        {
+            let mut cx = PaintCx { backend: &mut be };
+            paint_scene_page_with(
+                &mut cx,
+                &page,
+                Point2D::ZERO,
+                1.0,
+                wide_cull(),
+                PaintSceneOptions {
+                    only_root: None,
+                    skip_node: None,
+                },
+            );
+        }
+        assert_eq!(be.composite_layers, vec![(1.0, ImageBlendMode::Normal)]);
+        assert_eq!(be.mask_sources, vec![false]);
     }
 
     #[test]

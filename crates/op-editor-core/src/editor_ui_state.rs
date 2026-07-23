@@ -97,6 +97,15 @@ pub enum FontPickerPurpose {
     },
 }
 
+/// Inspector property whose options are shown in the shared compositing
+/// picker. Fill blend carries its authored fill-list index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompositingPickerTarget {
+    NodeBlend,
+    NodeMask,
+    FillBlend(usize),
+}
+
 /// File-menu actions the host runner has to handle (rfd dialogs +
 /// serde live host-side, not here). `ExportImage` opens the picker;
 /// `ExportImageConfirm` commits.
@@ -109,6 +118,9 @@ pub enum FileAction {
     ExportImage,
     ExportImageConfirm,
     ImportFigma,
+    /// Complete or cancel a prepared multi-page Figma import. Native
+    /// desktop owns the prepared tree; web safely ignores this action.
+    FinishFigmaImport(crate::figma_import_state::FigmaImportSelection),
     /// User chose `从 HTML 导入` in the top-bar import menu — host
     /// opens a file dialog for a saved page / snapshot and hands the
     /// path to the background HTML import worker.
@@ -1023,6 +1035,11 @@ pub struct EditorUiState {
     /// Which Figma-import target the cursor is over (close / drop-zone)
     /// — drives the `theme.button_hover` wash. Host updates on cursor-move.
     pub figma_import_hover: Option<crate::figma_import_state::FigmaImportButton>,
+    /// Page summaries shown after desktop has prepared a multi-page
+    /// `.fig`. Empty while the modal is in its initial file-picker mode.
+    pub figma_import_pages: Vec<crate::figma_import_state::FigmaImportPage>,
+    /// Shared Select hover/pressed/scroll state for the page list.
+    pub figma_import_page_select: jian_widgets::components::select::SelectState,
     /// True while a `.fig` is being parsed on a worker thread. Paint
     /// uses this to show a "正在解析 Figma 文件…" overlay so the user
     /// gets feedback during the multi-second parse (a 2-3 MB .fig with
@@ -1238,6 +1255,16 @@ pub struct EditorUiState {
     /// the row whose picker is showing. Meaningless when the picker is
     /// closed; defaults to `0`.
     pub fill_type_picker_index: usize,
+    /// Shared dropdown interaction state for node blend, node mask, and
+    /// per-fill blend-mode options.
+    pub compositing_picker: jian_widgets::components::select::SelectState,
+    /// Property row that owns the open compositing picker.
+    pub compositing_picker_target: Option<CompositingPickerTarget>,
+    /// Whether the selected Ref's inline component-target list is open.
+    pub instance_component_picker_open: bool,
+    /// Selection anchor that owns the open component-target list.
+    /// Scoping prevents a picker opened on one Ref from leaking to the next.
+    pub instance_component_picker_anchor: String,
     /// Whether the Position section shows the per-corner 2×2 radius grid.
     pub corner_expand_open: bool,
     /// Whether the Effects section's three-kind "+" add-menu is open.
@@ -1551,6 +1578,8 @@ impl Default for EditorUiState {
             figma_import_open: false,
             import_source: crate::figma_import_state::ImportSource::default(),
             figma_import_hover: None,
+            figma_import_pages: Vec::new(),
+            figma_import_page_select: Default::default(),
             figma_import_in_progress: false,
             file_drop_active: false,
             preserve_authored_geometry: false,
@@ -1618,6 +1647,10 @@ impl Default for EditorUiState {
             size_clip_content: false,
             fill_type_picker: jian_widgets::components::select::SelectState::default(),
             fill_type_picker_index: 0,
+            compositing_picker: jian_widgets::components::select::SelectState::default(),
+            compositing_picker_target: None,
+            instance_component_picker_open: false,
+            instance_component_picker_anchor: String::new(),
             corner_expand_open: false,
             effect_add_picker_open: false,
             effect_add_menu_hover: None,
@@ -1808,6 +1841,25 @@ impl EditorUiState {
         self.interaction_menu_open = false;
         self.interaction_menu_hover = None;
         was
+    }
+
+    pub fn toggle_instance_component_picker(&mut self, anchor: &str) {
+        let opening =
+            !self.instance_component_picker_open || self.instance_component_picker_anchor != anchor;
+        self.instance_component_picker_open = opening;
+        if opening {
+            self.instance_component_picker_anchor.clear();
+            self.instance_component_picker_anchor.push_str(anchor);
+        } else {
+            self.instance_component_picker_anchor.clear();
+        }
+    }
+
+    pub fn close_instance_component_picker(&mut self) -> bool {
+        let was_open = self.instance_component_picker_open;
+        self.instance_component_picker_open = false;
+        self.instance_component_picker_anchor.clear();
+        was_open
     }
 
     pub fn toggle_fill_type_picker(&mut self) {

@@ -1,9 +1,4 @@
-//! Platform-neutral SVG serializer for a layout-resolved scene.
-//!
-//! Hosts pass the same [`LayoutScene`] they paint on canvas. The
-//! serializer emits vector markup for the active page and is usable
-//! from both native and wasm builds; host-specific code decides
-//! whether to write the string to disk or download it in the browser.
+//! Platform-neutral active-page SVG serializer for native and wasm hosts.
 
 use crate::layout_scene::{
     regular_polygon_points, LayoutScene, NodeKind, SceneGradient, SceneImageFit, SceneNode,
@@ -44,8 +39,7 @@ pub fn serialize_active_page_svg(scene: &LayoutScene) -> Result<String, String> 
     )
 }
 
-/// Serialize one node and its complete subtree, tightly cropped to its
-/// painted bounds. The lookup is scoped to the active page.
+/// Serialize one active-page node and subtree, tightly cropped to its painted bounds.
 pub fn serialize_node_svg(scene: &LayoutScene, node_id: &str) -> Result<String, String> {
     let page = scene.active_page().ok_or("no active page")?;
     let (node, ancestor_xform, ancestor_clips) =
@@ -419,6 +413,15 @@ fn emit_node(out: &mut String, n: &SceneNode) {
     if needs_g {
         emit_affine_group_start(out, local_xform);
     }
+    let composite_opacity = if n.composite_opacity.is_finite() {
+        n.composite_opacity.clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    let needs_opacity_group = composite_opacity < 1.0;
+    if needs_opacity_group {
+        let _ = write!(out, r#"<g opacity="{composite_opacity}">"#);
+    }
     match &n.kind {
         NodeKind::Rect | NodeKind::Frame => emit_rect(out, n),
         NodeKind::Ellipse => emit_ellipse(out, n),
@@ -446,6 +449,9 @@ fn emit_node(out: &mut String, n: &SceneNode) {
         emit_node(out, child);
     }
     if clips_children {
+        out.push_str("</g>");
+    }
+    if needs_opacity_group {
         out.push_str("</g>");
     }
     if needs_g {

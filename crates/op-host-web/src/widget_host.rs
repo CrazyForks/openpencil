@@ -127,6 +127,8 @@ mod overlay_keys;
 #[cfg(test)]
 mod overlay_press_tests;
 mod overlay_rects;
+#[cfg(test)]
+mod page_switch_center_tests;
 mod paint;
 #[cfg(test)]
 mod paint_caret_tests;
@@ -136,6 +138,8 @@ mod pen_press;
 #[cfg(test)]
 mod pen_press_tests;
 mod press;
+#[cfg(test)]
+mod property_compositing_tests;
 mod property_dispatch;
 mod property_focus_press;
 #[cfg(test)]
@@ -170,6 +174,7 @@ mod variables_panel_rows;
 #[cfg(test)]
 mod variables_panel_tests;
 mod variables_preset_press;
+mod viewport_fit;
 mod web_fonts;
 
 pub(in crate::widget_host) const TOOLBAR_INSET_X: f32 = 12.0;
@@ -207,6 +212,12 @@ pub struct WidgetHost {
     /// content-hash check absorbs UI-only false positives).
     #[cfg(feature = "canvaskit")]
     doc_sync_dirty: bool,
+    /// Monotonic identity of the complete EditorState installed in this host.
+    /// EditorState's generation may restart at zero across Open/New/import, so
+    /// delayed acknowledgements pair that generation with this epoch.
+    document_epoch: u64,
+    /// Per-mount owner token for asynchronous HTML/Figma document imports.
+    pub(crate) document_import_generation: u64,
     pub(in crate::widget_host) theme: Theme,
     drag: Option<DragState>,
     /// True while Space is held and no text input owns the keyboard.
@@ -394,6 +405,25 @@ impl WidgetHost {
         &mut self.editor_state
     }
 
+    /// Identity of the currently installed complete EditorState.
+    #[cfg(feature = "canvaskit")]
+    pub(crate) fn document_epoch(&self) -> u64 {
+        self.document_epoch
+    }
+
+    /// Install a complete state without rebuilding it through
+    /// `EditorState::replace_document`, which would drop incoming document-
+    /// adjacent state. Every whole-state seam uses this helper so async work
+    /// observes one monotonic identity and host caches cannot alias revision 0.
+    #[cfg(feature = "canvaskit")]
+    pub(crate) fn replace_editor_state(&mut self, state: op_editor_core::EditorState) {
+        self.editor_state = state;
+        self.document_epoch = self.document_epoch.wrapping_add(1).max(1);
+        self.force_rotate_layer_panel_owner();
+        self.scene_cache.invalidate();
+        self.mark_editor_state_dirty();
+    }
+
     /// Public dirty-flag — mirrors the native host. Web codegen mutates
     /// `editor_state` through `editor_state_mut()` and calls this so the next
     /// paint re-derives the layout scene.
@@ -512,7 +542,7 @@ impl WidgetHost {
         let editor_state = op_editor_core::EditorState::starter();
         // Seed the render scene once up front; subsequent frames
         // re-derive only when `editor_state_dirty` is set.
-        let layout_scene = op_pen_loader::editor_state_to_layout_scene(&editor_state);
+        let layout_scene = op_pen_loader::editor_state_to_active_page_layout_scene(&editor_state);
         let last_chat_session_index = editor_state.chat.active_index();
         Self {
             editor_state,
@@ -522,6 +552,8 @@ impl WidgetHost {
             editor_state_dirty: false,
             #[cfg(feature = "canvaskit")]
             doc_sync_dirty: false,
+            document_epoch: 0,
+            document_import_generation: 0,
             theme: Theme::dark(),
             drag: None,
             space_pan: false,
@@ -598,6 +630,15 @@ impl WidgetHost {
     /// `crate::dom_io`, outside the `widget_host` module.
     pub(crate) fn force_rotate_layer_panel_owner(&mut self) {
         self.layer_panel_owner = op_editor_ui::widgets::LayerPanel::next_layer_panel_owner();
+    }
+
+    /// Build the Layer panel through this host's owner-scoped row cache so
+    /// event-time hit tests reuse the same active-page rows as paint.
+    pub(in crate::widget_host) fn layer_panel(&self) -> op_editor_ui::widgets::LayerPanel {
+        op_editor_ui::widgets::LayerPanel::from_editor_owned(
+            &self.editor_state,
+            self.layer_panel_owner,
+        )
     }
 
     /// Forward the latest shift-key state from the DOM listener
@@ -1028,10 +1069,13 @@ impl WidgetHost {
     /// Returns true if hover state changed (caller should
     /// repaint). Mirrors the native host.
     pub fn update_layer_hover(&mut self, x: f32, y: f32, viewport_h: f32) -> bool {
-        use op_editor_ui::widgets::{LayerPanel, LayerPanelHit, TOP_BAR_HEIGHT};
+        use op_editor_ui::widgets::{LayerPanelHit, TOP_BAR_HEIGHT};
         let sidebar_open = self.editor_state.editor_ui.sidebar_open;
         let panel_w = self.editor_state.editor_ui.layer_panel_width;
-        let blocked_by_overlay = self.over_topmost_panel(x, y, self.last_viewport_w, viewport_h)
+        let blocked_by_overlay = self
+            .chat_model_picker_rect(self.last_viewport_w, viewport_h)
+            .is_some()
+            || self.over_topmost_panel(x, y, self.last_viewport_w, viewport_h)
             || self.over_dropdown_overlay(x, y, self.last_viewport_w, viewport_h);
         let (new_layer, new_page) = if sidebar_open
             && !blocked_by_overlay
@@ -1044,7 +1088,7 @@ impl WidgetHost {
                 origin: Point2D::new(0.0, TOP_BAR_HEIGHT),
                 size: Point2D::new(panel_w, (viewport_h - TOP_BAR_HEIGHT).max(0.0)),
             };
-            let panel = LayerPanel::from_editor(&self.editor_state);
+            let panel = self.layer_panel();
             match panel.hit_test(layer_rect, Point2D::new(x, y)) {
                 Some(LayerPanelHit::Layer(id))
                 | Some(LayerPanelHit::ToggleHidden(id))
@@ -1082,7 +1126,70 @@ impl WidgetHost {
         changed
     }
 
-    pub(in crate::widget_host) fn clear_lower_overlay_hover(&mut self) -> bool {
+    pub(in crate::widget_host) fn clear_hover_below_chat_model_picker(&mut self) -> bool {
+        self.clear_lower_overlay_hover_impl(false)
+    }
+
+    pub(in crate::widget_host) fn clear_hover_below_topmost_panel(&mut self) -> bool {
+        self.clear_lower_overlay_hover_impl(true)
+    }
+
+    /// Clear hover state for surfaces painted below the regular Chat panel.
+    /// Chat's own hover state and the higher Status/Align/overlay tiers are
+    /// deliberately preserved.
+    pub(in crate::widget_host) fn clear_hover_below_chat_panel(&mut self) -> bool {
+        let mut changed = false;
+        {
+            let ui = &mut self.editor_state.editor_ui;
+            changed |= ui.canvas_hover_node.take().is_some();
+            changed |= ui.hovered_layer_id.take().is_some();
+            changed |= ui.hovered_page_index.take().is_some();
+            changed |= ui.toolbar_hover.take().is_some();
+            changed |= ui.variables_panel_hover.take().is_some();
+            changed |= ui.variables_preset_menu_hover.take().is_some();
+            changed |= ui.property_action_hover.take().is_some();
+            changed |= ui.property_tab_hover.take().is_some();
+            changed |= ui.fill_type_picker.hover.take().is_some();
+        }
+        changed |= self.editor_state.codegen.framework_hover.take().is_some();
+        changed |= self.editor_state.codegen.action_hover.take().is_some();
+        if changed {
+            self.mark_dirty();
+        }
+        changed
+    }
+
+    /// Clear the regular Chat surface and everything painted below it while
+    /// preserving the currently owning higher overlay's own hover state.
+    pub(in crate::widget_host) fn clear_chat_and_lower_hover(&mut self) -> bool {
+        let mut changed = false;
+        {
+            let ui = &mut self.editor_state.editor_ui;
+            changed |= ui.chat_model_picker.hover.take().is_some();
+            changed |= ui.chat_header_hover.take().is_some();
+            changed |= ui.chat_tab_hover.take().is_some();
+            changed |= ui.chat_design_block_hover.take().is_some();
+            changed |= ui.chat_footer_hover.take().is_some();
+            changed |= ui.chat_example_hover.take().is_some();
+            changed |= ui.parallel_agents_picker_hover.take().is_some();
+            changed |= ui.canvas_hover_node.take().is_some();
+            changed |= ui.hovered_layer_id.take().is_some();
+            changed |= ui.hovered_page_index.take().is_some();
+            changed |= ui.toolbar_hover.take().is_some();
+            changed |= ui.variables_panel_hover.take().is_some();
+            changed |= ui.variables_preset_menu_hover.take().is_some();
+            changed |= ui.property_action_hover.take().is_some();
+            changed |= ui.property_tab_hover.take().is_some();
+        }
+        changed |= self.editor_state.codegen.framework_hover.take().is_some();
+        changed |= self.editor_state.codegen.action_hover.take().is_some();
+        if changed {
+            self.mark_dirty();
+        }
+        changed
+    }
+
+    fn clear_lower_overlay_hover_impl(&mut self, clear_chat_model_picker: bool) -> bool {
         let mut changed = false;
         {
             let ui = &mut self.editor_state.editor_ui;
@@ -1097,11 +1204,18 @@ impl WidgetHost {
             changed |= ui.align_toolbar_hover.take().is_some();
             changed |= ui.statusbar_hover.take().is_some();
             changed |= ui.topbar_button_hover.take().is_some();
-            changed |= ui.chat_model_picker.hover.take().is_some();
+            if clear_chat_model_picker {
+                changed |= ui.chat_model_picker.hover.take().is_some();
+            }
+            changed |= ui.chat_header_hover.take().is_some();
+            changed |= ui.chat_tab_hover.take().is_some();
             changed |= ui.chat_design_block_hover.take().is_some();
             changed |= ui.chat_footer_hover.take().is_some();
             changed |= ui.chat_example_hover.take().is_some();
+            changed |= ui.parallel_agents_picker_hover.take().is_some();
             changed |= ui.export_picker_hover.take().is_some();
+            changed |= ui.variables_panel_hover.take().is_some();
+            changed |= ui.variables_preset_menu_hover.take().is_some();
             changed |= ui.property_action_hover.take().is_some();
             changed |= ui.property_tab_hover.take().is_some();
             if let Some(menu) = ui.layer_context_menu.as_mut() {

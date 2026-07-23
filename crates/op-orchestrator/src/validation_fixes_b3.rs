@@ -431,6 +431,7 @@ fn build_path_node(
         anchors: None,
         closed: None,
         fill_rule: None,
+        mask: None,
         width,
         height,
         fill: Some(vec![]), // stroke-style: empty fill

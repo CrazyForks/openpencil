@@ -43,6 +43,18 @@ pub(super) fn content_rect(panel: Rect) -> Rect {
     }
 }
 
+/// Paint-only clip for the scrollable settings body. Full-width cards sit
+/// exactly on the content edges, while their 1px outlines are centered on
+/// those edges. Leave one horizontal pixel for the outer half of each stroke
+/// (and its antialiasing) without relaxing the vertical scroll clip.
+pub(super) fn content_paint_clip_rect(panel: Rect) -> Rect {
+    let content = content_rect(panel);
+    Rect {
+        origin: Point2D::new(content.origin.x - 1.0, content.origin.y),
+        size: Point2D::new(content.size.x + 2.0, content.size.y),
+    }
+}
+
 pub(super) fn nav_item_rect(panel: Rect, i: usize) -> Rect {
     let y = panel.origin.y + NAV_TOP + i as f32 * NAV_ITEM_STEP;
     Rect {

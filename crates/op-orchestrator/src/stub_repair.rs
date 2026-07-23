@@ -122,9 +122,9 @@ fn is_image_paint(paint: &Value) -> bool {
 }
 
 fn resolved_sizes(state: &op_editor_core::EditorState) -> HashMap<String, (f64, f64)> {
-    let scene = op_pen_loader::editor_state_to_layout_scene(state);
+    let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
     let mut out = HashMap::new();
-    for page in &scene.pages {
+    if let Some(page) = scene.active_page() {
         collect_sizes(&page.children, &mut out);
     }
     out

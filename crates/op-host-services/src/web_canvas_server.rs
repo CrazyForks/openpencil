@@ -230,8 +230,8 @@ impl WebCanvasState {
         body: &str,
         base_version_override: Option<u64>,
     ) -> Result<PushOutcome, String> {
-        let document_json = crate::mcp_serve::parse_document_sync_body(body)?;
-        let base_version = base_version_override.or_else(|| extract_base_version(body));
+        let request = crate::mcp_serve::parse_document_sync_request(body)?;
+        let base_version = base_version_override.or(request.base_version);
         if let Some(expected) = base_version {
             if expected != self.version {
                 return Ok(PushOutcome {
@@ -240,13 +240,27 @@ impl WebCanvasState {
                 });
             }
         }
+        let editor_meta = request.resolved_editor_meta(request.embedded_editor_meta);
+        if request.metadata_only {
+            // Active-page changes do not mutate canonical document content.
+            // Apply the scalar pair without replacing the identical document,
+            // bumping its generation, or publishing a version that another
+            // browser would install as a full undoable remote replacement.
+            op_pen_loader::apply_editor_meta(&mut self.editor, editor_meta);
+            return Ok(PushOutcome {
+                applied: true,
+                current_version: self.version,
+            });
+        }
         // Load via the same proven path as desktop file-open. A load failure
         // is a client fault → 400, like the TS validation 400s.
-        let loaded = op_pen_loader::load_canonical(&document_json).map_err(|e| e.to_string())?;
+        let loaded =
+            op_pen_loader::load_canonical(request.document_json).map_err(|e| e.to_string())?;
         for w in &loaded.warnings {
             eprintln!("openpencil-desktop --serve-web: schema warning: {w:?}");
         }
         let version = self.replace_document(loaded.value);
+        op_pen_loader::apply_editor_meta(&mut self.editor, editor_meta);
         Ok(PushOutcome {
             applied: true,
             current_version: version,
@@ -269,16 +283,6 @@ pub(crate) struct ResetOutcome {
 pub(crate) struct PushOutcome {
     pub applied: bool,
     pub current_version: u64,
-}
-
-/// Extract an optional top-level `baseVersion` from a document-sync POST
-/// body via serde — never a hand-rolled scan. Malformed JSON here simply
-/// yields `None`; `parse_document_sync_body` already owns rejecting a
-/// malformed body with the real client-facing error.
-fn extract_base_version(body: &str) -> Option<u64> {
-    serde_json::from_str::<serde_json::Value>(body)
-        .ok()
-        .and_then(|value| value.get("baseVersion").and_then(|v| v.as_u64()))
 }
 
 /// A handled reply: HTTP status line + JSON body, ready for
@@ -359,7 +363,12 @@ pub fn handle_web_canvas_request(
         ("GET", "/api/mcp/document") => match serde_json::to_string(&state.editor.doc) {
             Ok(doc_json) => WebReply {
                 status: "200 OK",
-                body: format!(r#"{{"document":{doc_json},"version":{}}}"#, state.version),
+                body: format!(
+                    r#"{{"document":{doc_json},"version":{},"activePageIndex":{},"preserveAuthoredGeometry":{}}}"#,
+                    state.version,
+                    state.editor.ui.active_page_index,
+                    state.editor.editor_ui.preserve_authored_geometry
+                ),
             },
             Err(e) => WebReply {
                 status: "500 Internal Server Error",
@@ -535,7 +544,7 @@ fn build_raster_download(body: &str, fallback: &EditorState) -> Result<RasterDow
         .map(|scale| scale as f32)
         .unwrap_or(editor.editor_ui.export_scale);
     let selected_node_id = selected_node_id_from_export_body(parsed.as_ref(), &editor);
-    let scene = op_pen_loader::editor_state_to_layout_scene(&editor);
+    let scene = op_pen_loader::editor_state_to_active_page_layout_scene(&editor);
     let tmp = tmp_export_path(ext);
     let result = match selected_node_id {
         Some(id) => crate::export::export_node_raster(&scene, &id, &tmp, format, scale),
@@ -654,8 +663,12 @@ fn export_editor_from_value(
         return Err("document must be an object".into());
     }
     let src = serde_json::to_string(doc).map_err(|e| e.to_string())?;
+    let editor_meta = op_pen_loader::extract_editor_meta(&src);
     let loaded = op_pen_loader::load_canonical(&src).map_err(|e| e.to_string())?;
     let mut editor = EditorState::from_document(loaded.value);
+    if let Some(meta) = editor_meta {
+        op_pen_loader::apply_editor_meta(&mut editor, meta);
+    }
     if let Some(index) = body
         .and_then(|body| body.get("activePageIndex"))
         .and_then(|index| index.as_u64())
@@ -727,9 +740,12 @@ fn save_editor_from_body(
     previous: &EditorState,
     path: &std::path::Path,
 ) -> Result<EditorState, String> {
-    let (doc, active_page_index) = document_and_active_page_from_body(body)?;
+    let (doc, active_page_index, editor_meta) = document_and_active_page_from_body(body)?;
     let mut next = previous.clone();
     next.replace_document(doc);
+    if let Some(meta) = editor_meta {
+        op_pen_loader::apply_editor_meta(&mut next, meta);
+    }
     if let Some(index) = active_page_index {
         let page_count = next
             .doc
@@ -747,24 +763,29 @@ fn save_editor_from_body(
 
 fn document_and_active_page_from_body(
     body: &str,
-) -> Result<(jian_ops_schema::PenDocument, Option<usize>), String> {
-    let parsed: serde_json::Value = serde_json::from_str(body).map_err(|e| e.to_string())?;
-    let Some(doc) = parsed.get("document") else {
+) -> Result<
+    (
+        jian_ops_schema::PenDocument,
+        Option<usize>,
+        Option<op_pen_loader::EditorMeta>,
+    ),
+    String,
+> {
+    let parsed =
+        crate::mcp_serve::parse_borrowed_document_envelope(body).map_err(|e| e.to_string())?;
+    let Some(doc_json) = parsed.document_json else {
         return Err("missing document".into());
     };
-    if !doc.is_object() {
+    if !doc_json.trim_start().starts_with('{') {
         return Err("document must be an object".into());
     }
-    let doc_json = serde_json::to_string(doc).map_err(|e| e.to_string())?;
-    let loaded = op_pen_loader::load_canonical(&doc_json).map_err(|e| e.to_string())?;
+    let editor_meta = op_pen_loader::extract_editor_meta(doc_json);
+    let loaded = op_pen_loader::load_canonical(doc_json).map_err(|e| e.to_string())?;
     for w in &loaded.warnings {
         eprintln!("openpencil-desktop --serve-web: schema warning: {w:?}");
     }
-    let active_page_index = parsed
-        .get("activePageIndex")
-        .and_then(|v| v.as_u64())
-        .map(|v| v as usize);
-    Ok((loaded.value, active_page_index))
+    let active_page_index = parsed.active_page_index.map(|value| value as usize);
+    Ok((loaded.value, active_page_index, editor_meta))
 }
 
 fn update_mcp_server_settings(body: &str, state: &mut WebCanvasState) -> WebReply {

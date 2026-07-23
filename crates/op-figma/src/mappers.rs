@@ -10,9 +10,9 @@ use crate::kiwi::FigValue;
 use jian_ops_schema::node::container::{AlignItems, JustifyContent, LayoutMode, Padding};
 use jian_ops_schema::sizing::{SizingBehavior, SizingKeyword};
 use jian_ops_schema::style::{
-    BlurBody, GradientStop, ImageFillBody, ImageFillMode, ImageOriginalSize, ImageTransform,
-    LinearGradientBody, PenEffect, PenFill, PenStroke, RadialGradientBody, ShadowBody,
-    SolidFillBody, StrokeAlign, StrokeCap, StrokeJoin, StrokeThickness,
+    BlendMode, BlurBody, GradientStop, ImageFillBody, ImageFillMode, ImageOriginalSize,
+    ImageTransform, LinearGradientBody, PenEffect, PenFill, PenStroke, RadialGradientBody,
+    ShadowBody, SolidFillBody, StrokeAlign, StrokeCap, StrokeJoin, StrokeThickness,
 };
 
 /// Identity-matrix epsilon for image-fill transforms.
@@ -77,6 +77,7 @@ fn gradient_stops(paint: &FigValue) -> Vec<GradientStop> {
 
 fn map_single_fill(paint: &FigValue) -> Option<PenFill> {
     let opacity = paint.get_f64("opacity").map(|o| o as f32);
+    let blend_mode = map_blend_mode(paint.get_str("blendMode"));
     match paint.get_str("type")? {
         "SOLID" => {
             paint.get("color")?;
@@ -84,7 +85,7 @@ fn map_single_fill(paint: &FigValue) -> Option<PenFill> {
                 color: fill_color_hex(paint),
                 explain: None,
                 opacity,
-                blend_mode: None,
+                blend_mode,
             }))
         }
         "GRADIENT_LINEAR" => {
@@ -99,7 +100,7 @@ fn map_single_fill(paint: &FigValue) -> Option<PenFill> {
                 stops: gradient_stops(paint),
                 explain: None,
                 opacity,
-                blend_mode: None,
+                blend_mode,
             }))
         }
         "GRADIENT_RADIAL" | "GRADIENT_ANGULAR" | "GRADIENT_DIAMOND" => {
@@ -111,10 +112,11 @@ fn map_single_fill(paint: &FigValue) -> Option<PenFill> {
                 stops: gradient_stops(paint),
                 explain: None,
                 opacity,
-                blend_mode: None,
+                blend_mode,
             }))
         }
         "IMAGE" => {
+            let mode = map_scale_mode(paint.get_str("imageScaleMode"));
             let image = paint.get("image");
             let url = image
                 .and_then(|i| i.get("hash"))
@@ -135,7 +137,7 @@ fn map_single_fill(paint: &FigValue) -> Option<PenFill> {
                 .unwrap_or_default();
             Some(PenFill::Image(ImageFillBody {
                 url: url.into(),
-                mode: Some(map_scale_mode(paint.get_str("imageScaleMode"))),
+                mode: Some(mode.clone()),
                 original_size: normalize_original_size(
                     paint.get_f64("originalImageWidth"),
                     paint.get_f64("originalImageHeight"),
@@ -144,20 +146,68 @@ fn map_single_fill(paint: &FigValue) -> Option<PenFill> {
                     .get("transform")
                     .and_then(FigMatrix::from_value)
                     .and_then(normalize_image_transform),
+                tile_scale: (mode == ImageFillMode::Tile)
+                    .then(|| paint.get_f64("scale"))
+                    .flatten()
+                    .filter(|scale| scale.is_finite() && *scale > 0.0)
+                    .map(|scale| scale as f32),
                 explain: None,
                 opacity,
-                blend_mode: None,
-                exposure: None,
-                contrast: None,
-                saturation: None,
-                temperature: None,
-                tint: None,
-                highlights: None,
-                shadows: None,
+                blend_mode,
+                exposure: image_adjustment(paint, &["exposure"]),
+                contrast: image_adjustment(paint, &["contrast"]),
+                // The binary `.fig` schema calls Figma's Saturation
+                // slider `vibrance`; accept the public/API spelling too.
+                saturation: image_adjustment(paint, &["saturation", "vibrance"]),
+                temperature: image_adjustment(paint, &["temperature"]),
+                tint: image_adjustment(paint, &["tint"]),
+                highlights: image_adjustment(paint, &["highlights"]),
+                shadows: image_adjustment(paint, &["shadows"]),
             }))
         }
         _ => None,
     }
+}
+
+/// Preserve node- and paint-level blend modes represented by the canonical
+/// schema and both production renderers. `NORMAL` and `PASS_THROUGH` stay
+/// absent because neither needs an isolated composite layer; unsupported
+/// Figma modes keep the same safe source-over fallback.
+pub(crate) fn map_blend_mode(value: Option<&str>) -> Option<BlendMode> {
+    match value? {
+        "DARKEN" => Some(BlendMode::Darken),
+        "MULTIPLY" => Some(BlendMode::Multiply),
+        "SCREEN" => Some(BlendMode::Screen),
+        "OVERLAY" => Some(BlendMode::Overlay),
+        "LIGHTEN" => Some(BlendMode::Lighten),
+        "DIFFERENCE" => Some(BlendMode::Difference),
+        "HUE" => Some(BlendMode::Hue),
+        "SATURATION" => Some(BlendMode::Saturation),
+        "COLOR" => Some(BlendMode::Color),
+        "LUMINOSITY" => Some(BlendMode::Luminosity),
+        "SOFT_LIGHT" => Some(BlendMode::SoftLight),
+        "COLOR_DODGE" => Some(BlendMode::ColorDodge),
+        "COLOR_BURN" => Some(BlendMode::ColorBurn),
+        "HARD_LIGHT" => Some(BlendMode::HardLight),
+        "EXCLUSION" => Some(BlendMode::Exclusion),
+        _ => None,
+    }
+}
+
+/// Figma image-filter values use `[-1, 1]`; the canonical editor and painter
+/// use the UI slider range `[-100, 100]`. Prefer the current sparse
+/// `paintFilter` message and fill missing channels from the legacy
+/// `filterColorAdjust` struct. Neutral values remain absent on the wire.
+fn image_adjustment(paint: &FigValue, keys: &[&str]) -> Option<f32> {
+    let value = ["paintFilter", "filterColorAdjust"]
+        .into_iter()
+        .filter_map(|field| paint.get(field))
+        .find_map(|filter| keys.iter().find_map(|key| filter.get_f64(key)))?;
+    if !value.is_finite() {
+        return None;
+    }
+    let scaled = (value * 100.0).clamp(-100.0, 100.0) as f32;
+    (scaled != 0.0).then_some(scaled)
 }
 
 /// Gradient direction vector is column 0 of the paint transform;
@@ -377,9 +427,10 @@ pub fn map_figma_layout(node: &FigValue) -> LayoutProps {
         result.align_items = map_align_items(align);
     }
 
-    if node.get_bool("frameMaskDisabled") != Some(true) {
-        result.clip_content = Some(true);
-    }
+    // Figma stores the inverse of canonical `clipContent`. Keep both values
+    // explicit: Preserve-mode imports need `Some(false)` to distinguish an
+    // authored open frame from a legacy document where the field is absent.
+    result.clip_content = Some(node.get_bool("frameMaskDisabled") != Some(true));
 
     result
 }

@@ -57,7 +57,8 @@ fn indexed_solid_fill_hex(node: &jian_ops_schema::node::PenNode, index: usize) -
 impl EditorState {
     // --- Fill / stroke colour ---------------------------------------
 
-    /// Write a `#rrggbb` hex to the anchor node's fill (`is_fill`) or
+    /// Write a `#rrggbb` / `#rrggbbaa` hex to the anchor node's fill
+    /// (`is_fill`) or
     /// stroke colour. Editable-gated. Returns true when the write
     /// landed. Mirrors shell-core's `set_selected_color`.
     pub fn set_selected_color(&mut self, is_fill: bool, hex: &str) -> bool {
@@ -201,15 +202,15 @@ impl EditorState {
         }
         .unwrap_or_else(|| "#000000".to_string());
         let (h, s, v) = rgb_to_hsv(parse_hex_rgb(&current_hex).unwrap_or((0.0, 0.0, 0.0)));
-        // Preserve per-stop / per-effect alpha across picker edits.
-        // Fill / stroke ignore alpha (they carry it in a separate
-        // opacity input) so this only matters for `GradientStop`
-        // and `EffectColor`.
+        // Preserve authored colour alpha across picker edits. Solid fills
+        // normally carry transparency in the separate body-opacity field,
+        // but the canonical schema and older `.op` files also allow an
+        // alpha byte in `color`; the renderer multiplies both channels.
         let alpha = match target {
-            ColorTarget::GradientStop(_) | ColorTarget::EffectColor(_) => {
+            ColorTarget::Fill | ColorTarget::GradientStop(_) | ColorTarget::EffectColor(_) => {
                 parse_hex_alpha(&current_hex)
             }
-            _ => 1.0,
+            ColorTarget::Stroke => 1.0,
         };
         self.ui.pending_color_history = Some(self.snapshot_for_history());
         self.ui.color_picker = Some(ColorPickerState {
@@ -381,10 +382,11 @@ impl EditorState {
                 // which prepends a fresh solid when the node has no solid
                 // fill (and is colour-variable-aware). A non-primary fill
                 // row writes its own solid fill in place.
+                let hex_with_alpha = splice_alpha(&hex, self.picker_alpha());
                 if fill_index == 0 {
-                    self.set_selected_color(true, &hex);
+                    self.set_selected_color(true, &hex_with_alpha);
                 } else {
-                    let _ = self.set_selected_fill_hex_at(fill_index, &hex);
+                    let _ = self.set_selected_fill_hex_at(fill_index, &hex_with_alpha);
                 }
             }
             ColorTarget::Stroke => {

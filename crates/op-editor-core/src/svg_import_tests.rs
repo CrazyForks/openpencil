@@ -98,6 +98,7 @@ fn import_svg_command_can_insert_on_requested_page_without_switching_active_page
             id: "page-1".into(),
             name: "Page 1".into(),
             children: vec![frame("n1", "Current", 0.0, 0.0, 400.0, 400.0, vec![])],
+            background_color: None,
             state: None,
             lifecycle: None,
         },
@@ -105,6 +106,7 @@ fn import_svg_command_can_insert_on_requested_page_without_switching_active_page
             id: "page-2".into(),
             name: "Page 2".into(),
             children: Vec::new(),
+            background_color: None,
             state: None,
             lifecycle: None,
         },
@@ -368,4 +370,33 @@ fn compound_filled_path_stays_single_path_node() {
         2,
         "subpaths must stay in one d: {d}"
     );
+}
+
+#[test]
+fn path_fill_rule_imports_from_attribute_style_and_group_inheritance() {
+    use jian_ops_schema::node::path::PathFillRule;
+
+    for (svg, expected) in [
+        (
+            r#"<svg><path fill-rule="evenodd" d="M0 0H20V20H0Z M5 5H15V15H5Z"/></svg>"#,
+            PathFillRule::Evenodd,
+        ),
+        (
+            r#"<svg><path style="fill-rule: nonzero" d="M0 0H20V20H0Z"/></svg>"#,
+            PathFillRule::Nonzero,
+        ),
+        (
+            r#"<svg><g style="fill-rule:evenodd"><path d="M0 0H20V20H0Z M5 5H15V15H5Z"/></g></svg>"#,
+            PathFillRule::Evenodd,
+        ),
+    ] {
+        let mut state = state_with(vec![]);
+        let mut next = 1u64;
+        assert_eq!(state.import_svg(&mut next, svg, (0.0, 0.0)), 1);
+        let nodes = imported_nodes(&state);
+        let PenNode::Path(path) = nodes[0] else {
+            panic!("expected path");
+        };
+        assert_eq!(path.fill_rule, Some(expected));
+    }
 }

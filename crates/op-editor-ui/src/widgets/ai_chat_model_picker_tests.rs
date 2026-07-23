@@ -5,9 +5,19 @@ use crate::{Color, Point2D, Rect, RenderBackend, TextLayout};
 use jian_core::text_input::TextInputState;
 use jian_widgets::components::select::{SelectHit, SelectState};
 use op_editor_core::chat::{AgentProvider, ModelEntry};
+use op_editor_core::EditorState;
 
 fn entry(p: AgentProvider, v: &str) -> ModelEntry {
     ModelEntry::new(p, v, v)
+}
+
+fn open_panel_with_models(count: usize) -> EditorState {
+    let mut state = EditorState::new();
+    state.chat.available_models = (0..count)
+        .map(|idx| entry(AgentProvider::CodexCli, &format!("model-{idx}")))
+        .collect();
+    state.editor_ui.chat_model_picker.open = true;
+    state
 }
 
 #[derive(Default)]
@@ -174,6 +184,54 @@ fn model_picker_hit_uses_shared_select_state_protocol() {
     assert_eq!(
         model_picker_hit(&state, rect, Point2D::new(-1.0, 12.0), &models, ""),
         SelectHit::Outside
+    );
+}
+
+#[test]
+fn chat_hit_test_prioritizes_picker_outside_panel_and_over_header_resize() {
+    use super::{AIChatHit, AIChatPlaceholder};
+
+    let state = open_panel_with_models(10);
+    let panel = AIChatPlaceholder::from_editor(&state);
+    let chat = Rect::xywh(100.0, 100.0, 320.0, 250.0);
+    let picker = panel.model_picker_bounds(chat).unwrap();
+    assert!(picker.origin.y < chat.origin.y);
+
+    let outside_chat_search = Point2D::new(picker.origin.x + 20.0, picker.origin.y + 20.0);
+    assert!(!chat.contains(outside_chat_search));
+    assert_eq!(
+        panel.hit_test(chat, outside_chat_search),
+        Some(AIChatHit::FocusModelSearch)
+    );
+
+    // The capped 10-model popup covers both the header and the north resize
+    // gutter. Its visible rows must win over the hidden controls underneath.
+    assert_eq!(
+        panel.hit_test(
+            chat,
+            Point2D::new(chat.origin.x + 25.0, chat.origin.y + 18.0)
+        ),
+        Some(AIChatHit::SelectModel(1))
+    );
+    assert_eq!(
+        panel.hit_test(chat, Point2D::new(chat.origin.x + 25.0, chat.origin.y)),
+        Some(AIChatHit::SelectModel(0))
+    );
+}
+
+#[test]
+fn collapsed_chat_never_exposes_stale_model_picker_bounds() {
+    use super::{AIChatHit, AIChatPlaceholder};
+
+    let mut state = open_panel_with_models(10);
+    state.chat.collapsed = true;
+    let panel = AIChatPlaceholder::from_editor(&state);
+    let chat = Rect::xywh(100.0, 100.0, 150.0, 32.0);
+
+    assert_eq!(panel.model_picker_bounds(chat), None);
+    assert_eq!(
+        panel.hit_test(chat, Point2D::new(120.0, 116.0)),
+        Some(AIChatHit::ToggleCollapse)
     );
 }
 

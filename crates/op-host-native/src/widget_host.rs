@@ -81,6 +81,7 @@ mod design_md_press;
 mod design_md_press_tests;
 #[cfg(test)]
 mod document_epoch_tests;
+mod figma_import_scroll;
 #[cfg(test)]
 mod figma_import_tests;
 #[cfg(test)]
@@ -120,6 +121,8 @@ mod mode_transition_host;
 #[cfg(test)]
 mod overlay_cursor_tests;
 mod overlay_rects;
+#[cfg(test)]
+mod page_switch_center_tests;
 mod paint;
 #[cfg(test)]
 mod panel_history_tests;
@@ -136,6 +139,8 @@ mod preview_frame;
 mod preview_frame_geometry_tests;
 #[cfg(all(test, not(target_os = "windows")))]
 mod preview_frame_tests;
+#[cfg(test)]
+mod property_compositing_tests;
 mod property_dispatch;
 mod property_layout_dispatch;
 #[cfg(test)]
@@ -685,7 +690,7 @@ impl WidgetHostNative {
         let layout_scene_font_generation = jian_skia::font_generation();
         // Seed the render scene once up front; subsequent frames
         // re-derive only when `editor_state_dirty` is set.
-        let layout_scene = op_pen_loader::editor_state_to_layout_scene(&editor_state);
+        let layout_scene = op_pen_loader::editor_state_to_active_page_layout_scene(&editor_state);
         let last_chat_session_index = editor_state.chat.active_index();
         Self {
             editor_state,
@@ -797,6 +802,18 @@ impl WidgetHostNative {
     /// `ReplaceDocument` (`mcp_runtime.rs`) and must rotate synchronously.
     pub fn force_rotate_layer_panel_owner(&mut self) {
         self.layer_panel_owner = op_editor_ui::widgets::LayerPanel::next_layer_panel_owner();
+    }
+
+    /// Build the Layer panel through this host's owner-scoped row cache.
+    ///
+    /// Paint and event-time hit tests must share this path: page/layer presses,
+    /// hover, scrolling, and accessibility otherwise rebuild and reallocate the
+    /// whole active-page row model independently on large documents.
+    pub(in crate::widget_host) fn layer_panel(&self) -> op_editor_ui::widgets::LayerPanel {
+        op_editor_ui::widgets::LayerPanel::from_editor_owned(
+            &self.editor_state,
+            self.layer_panel_owner,
+        )
     }
 
     /// Push the host's current shift-key state. Runners call this
@@ -1152,6 +1169,21 @@ impl WidgetHostNative {
         let font_generation = jian_skia::font_generation();
         let font_changed = font_generation != self.layout_scene_font_generation;
         if self.editor_state_dirty || font_changed {
+            let active_page_index = self
+                .editor_state
+                .ui
+                .active_page_index
+                .min(self.editor_state.page_count().saturating_sub(1));
+            let active_page_changed = active_page_index != self.layout_scene.active_page_index;
+            if active_page_changed {
+                // A page switch builds a disjoint render tree. Release the
+                // previous transition + scene before the loader allocates the
+                // new payload and scene so both page trees do not overlap at
+                // the switch's peak. Same-page document/font rebuilds retain
+                // the old scene until the replacement is ready.
+                self.layout_transition = None;
+                drop(std::mem::take(&mut self.layout_scene));
+            }
             // Only re-derive when the scene inputs (doc / theme / active page /
             // font generation) actually changed — most `editor_state_dirty`
             // marks (hover, scroll, selection, caret drafts, chat streaming)
@@ -1211,6 +1243,21 @@ impl WidgetHostNative {
         &self.layout_scene
     }
 
+    /// Borrow the canonical state mutably together with the scene snapshot
+    /// resolved immediately before that borrow. Background enrichers may use
+    /// it to derive one coherent pre-mutation validation view; it must not be
+    /// treated as current after a state mutation, and callers must mark the
+    /// host dirty when they mutate the state.
+    pub fn editor_state_mut_and_layout_scene(
+        &mut self,
+    ) -> (
+        &mut op_editor_core::EditorState,
+        &op_editor_ui::layout_scene::LayoutScene,
+    ) {
+        self.refresh_layout_scene();
+        (&mut self.editor_state, &self.layout_scene)
+    }
+
     /// Mark `editor_state` as mutated so the next `refresh_layout_scene()`
     /// re-derives the render scene. Call after any direct mutation of
     /// `self.editor_state`.
@@ -1264,17 +1311,39 @@ impl WidgetHostNative {
     pub fn replace_editor_state(&mut self, state: op_editor_core::EditorState) {
         self.editor_state = state;
         self.document_epoch = self.document_epoch.wrapping_add(1);
+        self.scene_cache.invalidate();
         self.editor_state_dirty = true;
     }
 
     /// Install a Figma-imported editor state. The worker only parses
     /// into canonical data; layout scene construction stays on the
     /// normal host path so the worker never touches Skia / FontMgr.
-    pub fn install_imported_state(&mut self, mut state: op_editor_core::EditorState) {
+    pub fn install_imported_state(&mut self, state: op_editor_core::EditorState) {
+        self.install_imported_state_with_drop_hook(state, || {});
+    }
+
+    /// Import-specific replacement with a callback that runs after the old
+    /// state and scene finish dropping on the background worker. Desktop uses
+    /// this to schedule allocator pressure relief at the correct lifetime
+    /// boundary without blocking the UI thread; other native callers keep the
+    /// no-op callback above.
+    pub fn install_imported_state_with_drop_hook<F>(
+        &mut self,
+        mut state: op_editor_core::EditorState,
+        after_drop: F,
+    ) where
+        F: FnOnce() + Send + 'static,
+    {
+        let imported_document_dirty = state.editor_ui.document_dirty;
         let mut preserved = self.editor_state.editor_ui.clone();
         preserved.figma_import_in_progress = false;
         preserved.file_name_display = state.editor_ui.file_name_display.take();
         preserved.preserve_authored_geometry = state.editor_ui.preserve_authored_geometry;
+        // Dirty/saved state belongs to the incoming document. The rest of the
+        // live shell UI is intentionally retained, but inheriting this flag
+        // from the replaced editor would make a saved import appear dirty (or
+        // an unsaved import appear clean).
+        preserved.document_dirty = imported_document_dirty;
         // The imported document replaces the previous one, so an in-flight
         // clone wizard belongs to a document that no longer exists — drop
         // it. The host's `poll_git_clone_job` then abandons the job (it
@@ -1296,6 +1365,7 @@ impl WidgetHostNative {
             .spawn(move || {
                 drop(old_state);
                 drop(old_scene);
+                after_drop();
             })
             .expect("spawn op-import-drop worker");
 

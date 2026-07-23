@@ -16,6 +16,8 @@ type ImageFillPayload = (
     jian_ops_schema::node::ImageSrc,
     String,
     Option<[f32; 6]>,
+    Option<[f32; 2]>,
+    Option<f32>,
     Option<ImageAdjustmentPayload>,
 );
 
@@ -38,6 +40,7 @@ pub(crate) fn base_payload(base: &PenNodeBase, kind: &str) -> NodePayload {
         flip_x: base.flip_x.unwrap_or(false),
         flip_y: base.flip_y.unwrap_or(false),
         opacity: base_opacity(base),
+        blend_mode: base.blend_mode.clone(),
         corner_radius: 0.0,
         corner_radii: None,
         clip_content: false,
@@ -54,6 +57,8 @@ pub(crate) fn base_payload(base: &PenNodeBase, kind: &str) -> NodePayload {
         points: Vec::new(),
         path_anchors: Vec::new(),
         path_closed: false,
+        is_mask: base.mask_type.is_some(),
+        mask_type: base.mask_type,
         even_odd_fill: false,
         svg_path: None,
         font_size: 0.0,
@@ -74,6 +79,8 @@ pub(crate) fn base_payload(base: &PenNodeBase, kind: &str) -> NodePayload {
         image_fit: None,
         image_blend_mode: None,
         image_transform: None,
+        image_original_size: None,
+        image_tile_scale: None,
         image_adjustments: None,
         widget: None,
         children: Vec::new(),
@@ -117,10 +124,14 @@ pub(crate) fn assign_first_fill(p: &mut NodePayload, fills: Option<&[PenFill]>) 
     p.fill_type = first_fill_type(fills);
     p.gradient = first_gradient(fills);
     p.shader = first_shader(fills);
-    if let Some((url, fit, transform, adjustments)) = first_image_fill(fills) {
+    if let Some((url, fit, transform, original_size, tile_scale, adjustments)) =
+        first_image_fill(fills)
+    {
         p.image_src = Some(url);
         p.image_fit = Some(fit);
         p.image_transform = transform;
+        p.image_original_size = original_size;
+        p.image_tile_scale = tile_scale;
         p.image_adjustments = adjustments;
     }
 }
@@ -140,6 +151,15 @@ fn first_image_fill(fills: Option<&[PenFill]>) -> Option<ImageFillPayload> {
             body.transform
                 .as_ref()
                 .map(|m| [m.m00, m.m01, m.m02, m.m10, m.m11, m.m12]),
+            body.original_size.as_ref().and_then(|size| {
+                (size.width.is_finite()
+                    && size.height.is_finite()
+                    && size.width > 0.0
+                    && size.height > 0.0)
+                    .then_some([size.width, size.height])
+            }),
+            body.tile_scale
+                .filter(|scale| scale.is_finite() && *scale > 0.0),
             image_fill_adjustments(body),
         ))
     }

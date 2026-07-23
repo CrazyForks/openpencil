@@ -135,6 +135,32 @@ fn selected_ref(host: &WidgetHost) -> &jian_ops_schema::node::RefNode {
     }
 }
 
+#[test]
+fn web_instance_swap_dispatch_retargets_ref_and_closes_picker() {
+    let mut host = WidgetHost::new();
+    seed(
+        &mut host,
+        r##"{"version":"1.0.0","children":[
+          {"type":"frame","id":"card","name":"Card","reusable":true,
+           "x":0,"y":0,"width":100,"height":80,"children":[]},
+          {"type":"frame","id":"banner","name":"Banner","reusable":true,
+           "x":0,"y":100,"width":200,"height":40,"children":[]},
+          {"type":"ref","id":"inst1","ref":"card","x":300,"y":50}
+        ]}"##,
+    );
+    host.editor_state.set_single_selection(NodeId::new("inst1"));
+
+    host.apply_property_action(PropertyPanelAction::ToggleInstanceComponentPicker);
+    assert!(host.editor_state.editor_ui.instance_component_picker_open);
+    host.apply_property_action(PropertyPanelAction::SetInstanceComponent(
+        "banner".to_string(),
+    ));
+
+    assert_eq!(selected_ref(&host).target, "banner");
+    assert!(!host.editor_state.editor_ui.instance_component_picker_open);
+    assert_eq!(host.editor_state.history.past.len(), 1);
+}
+
 fn node_bounds(host: &WidgetHost, id: &str) -> op_editor_core::DocRect {
     let id = NodeId::new(id);
     let node = op_editor_core::walkers::find_node(host.editor_state.active_children(), &id)
@@ -447,6 +473,34 @@ fn web_property_focus_commit_is_undoable() {
     assert!(host.editor_state.undo());
     let bounds = own_bounds(host.editor_state.selected_node().unwrap());
     assert_eq!(bounds.w, 180.0);
+}
+
+#[test]
+fn web_fill_hex_commit_and_focus_seed_round_trip_embedded_alpha() {
+    let mut host = WidgetHost::new();
+    seed(
+        &mut host,
+        r##"{ "version": "1.0.0", "children": [
+              {"type":"rectangle","id":"alpha","name":"Alpha",
+               "width":20,"height":20,
+               "fill":[{"type":"solid","color":"#11223380"}]}
+        ]}"##,
+    );
+    host.editor_state.set_single_selection(NodeId::new("alpha"));
+    let panel = PropertyPanel::for_selection(&host.editor_state).expect("property panel");
+    assert_eq!(
+        super::property_dispatch::property_focus_initial(PropertyFocus::FillHex(0), &panel),
+        "#11223380"
+    );
+
+    host.editor_state.ui.property_focus = Some(PropertyFocus::FillHex(0));
+    host.editor_state.ui.property_input.set_text("#ff000040");
+    host.commit_property_focus_if_any();
+
+    let fill = op_editor_core::fills::node_fills(host.editor_state.selected_node().unwrap())
+        .and_then(|fills| fills.first())
+        .expect("solid fill");
+    assert!(matches!(fill, PenFill::Solid(body) if body.color == "#FF000040"));
 }
 
 #[test]

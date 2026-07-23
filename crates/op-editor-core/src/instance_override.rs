@@ -62,8 +62,19 @@ pub use crate::instance_child_override::{
 /// `expand_ref` applies the target's top-level overrides onto the
 /// merged node (see `ref_resolve.rs`).
 pub const INSTANCE_DIRECT_PROPS: &[&str] = &[
-    "x", "y", "name", "visible", "locked", "rotation", "opacity", "flipX", "flipY", "enabled",
+    "x",
+    "y",
+    "name",
+    "visible",
+    "locked",
+    "rotation",
+    "opacity",
+    "flipX",
+    "flipY",
+    "enabled",
     "theme",
+    "blendMode",
+    "maskType",
 ];
 
 /// Keys that identify the node / route its overrides — never diffed,

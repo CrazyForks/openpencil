@@ -56,6 +56,15 @@ mod document_json;
 mod dom_io;
 #[cfg(feature = "canvaskit")]
 mod file_actions;
+// Short-lived Worker-side Figma converter. The exported class is instantiated
+// only in a module Worker by `figma_temp_worker.js`; the main editor never
+// retains it.
+#[cfg(feature = "canvaskit")]
+mod figma_temp_writer;
+#[cfg(feature = "canvaskit")]
+pub use figma_temp_writer::FigmaTempWriter;
+#[cfg(feature = "canvaskit")]
+mod figma_temp_bridge;
 #[cfg(feature = "canvaskit")]
 mod raf_pump;
 #[cfg(feature = "canvaskit")]

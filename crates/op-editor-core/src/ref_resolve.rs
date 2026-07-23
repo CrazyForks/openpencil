@@ -23,8 +23,10 @@
 //! and never persisted, so the extra depth only ever ADDS rendered
 //! content.
 
-use std::collections::BTreeSet;
+use std::cell::OnceCell;
+use std::collections::{BTreeSet, HashMap};
 
+use crate::components::ComponentLibrary;
 use jian_ops_schema::node::PenNode;
 use jian_ops_schema::PenDocument;
 use serde_json::{Map, Value};
@@ -34,6 +36,81 @@ use serde_json::{Map, Value};
 /// convention cannot drift between canvas expansion and editing.
 pub(crate) fn instance_child_virtual_id(ref_id: &str, child_id: &str) -> String {
     format!("{ref_id}__{child_id}")
+}
+
+/// Borrowed document-wide id index used during one render-resolution pass.
+/// Building it once changes component target lookup from O(refs × nodes) to
+/// O(nodes + refs), while the index disappears as soon as the active page has
+/// been prepared.
+struct NodeLookup<'a> {
+    by_id: HashMap<&'a str, &'a PenNode>,
+    fallback_document: Option<&'a PenDocument>,
+    fallback_by_id: OnceCell<HashMap<&'a str, &'a PenNode>>,
+}
+
+impl<'a> NodeLookup<'a> {
+    fn index_document(doc: &'a PenDocument) -> HashMap<&'a str, &'a PenNode> {
+        fn walk<'a>(nodes: &'a [PenNode], by_id: &mut HashMap<&'a str, &'a PenNode>) {
+            for node in nodes {
+                let id = crate::pen_node_ext::PenNodeExt::base(node).id.as_str();
+                // Match the old depth-first lookup: duplicate ids resolve to
+                // the first document-order node.
+                by_id.entry(id).or_insert(node);
+                if let Some(children) = crate::pen_node_ext::PenNodeExt::children(node) {
+                    walk(children, by_id);
+                }
+            }
+        }
+
+        let mut by_id = HashMap::new();
+        if let Some(pages) = doc.pages.as_ref() {
+            for page in pages {
+                walk(&page.children, &mut by_id);
+            }
+        }
+        walk(&doc.children, &mut by_id);
+        by_id
+    }
+
+    fn from_document(doc: &'a PenDocument) -> Self {
+        Self {
+            by_id: Self::index_document(doc),
+            fallback_document: None,
+            fallback_by_id: OnceCell::new(),
+        }
+    }
+
+    fn from_components_with_document_fallback(
+        components: &'a ComponentLibrary,
+        document: &'a PenDocument,
+    ) -> Self {
+        let mut by_id = HashMap::with_capacity(components.len());
+        for component in &components.components {
+            let root = if components.is_document_backed(&component.id) {
+                components.root_at_stored_location(document, &component.id)
+            } else {
+                Some(&component.root)
+            };
+            if let Some(root) = root {
+                by_id.entry(component.id.as_str()).or_insert(root);
+            }
+        }
+        Self {
+            by_id,
+            fallback_document: Some(document),
+            fallback_by_id: OnceCell::new(),
+        }
+    }
+
+    fn find(&self, id: &str) -> Option<&'a PenNode> {
+        self.by_id.get(id).copied().or_else(|| {
+            let document = self.fallback_document?;
+            self.fallback_by_id
+                .get_or_init(|| Self::index_document(document))
+                .get(id)
+                .copied()
+        })
+    }
 }
 
 /// Expand every `Ref` node in `doc` into its resolved component
@@ -49,13 +126,14 @@ pub fn resolve_refs_for_canvas(doc: &PenDocument) -> PenDocument {
     // it is a distinct object from `resolved`, which is built fresh
     // into `out` vecs rather than mutated in place, so there is no
     // borrow conflict and no need for a second whole-document clone.
+    let lookup = NodeLookup::from_document(doc);
     let mut visited = BTreeSet::new();
     if let Some(pages) = resolved.pages.as_mut() {
         for page in pages {
-            page.children = resolve_nodes(&page.children, doc, &mut visited);
+            page.children = resolve_nodes(&page.children, &lookup, &mut visited);
         }
     }
-    resolved.children = resolve_nodes(&resolved.children, doc, &mut visited);
+    resolved.children = resolve_nodes(&resolved.children, &lookup, &mut visited);
     resolved
 }
 
@@ -63,28 +141,49 @@ pub fn resolve_refs_for_canvas(doc: &PenDocument) -> PenDocument {
 /// against the whole document. Hosts that only need the active page can use
 /// this focused form without cloning and walking every inactive page.
 pub fn resolve_refs_for_canvas_roots(nodes: &[PenNode], lookup: &PenDocument) -> Vec<PenNode> {
-    resolve_nodes(nodes, lookup, &mut BTreeSet::new())
+    let lookup = NodeLookup::from_document(lookup);
+    resolve_nodes(nodes, &lookup, &mut BTreeSet::new())
+}
+
+/// Expand refs in one canvas root list using the editor's already-built
+/// component registry first. The document-wide id index is allocated lazily
+/// only when a target is absent from that registry, preserving support for
+/// legacy refs whose target is not marked reusable.
+pub fn resolve_refs_for_canvas_roots_with_components(
+    nodes: &[PenNode],
+    components: &ComponentLibrary,
+    document: &PenDocument,
+) -> Vec<PenNode> {
+    let lookup = NodeLookup::from_components_with_document_fallback(components, document);
+    resolve_nodes(nodes, &lookup, &mut BTreeSet::new())
+}
+
+/// True when a canvas-root list contains at least one component instance.
+///
+/// This is the page-scoped companion to [`document_has_refs`]. Render hosts
+/// use it before cloning an active page so inactive pages do not participate in
+/// a page switch.
+pub fn roots_have_refs(nodes: &[PenNode]) -> bool {
+    nodes.iter().any(|node| {
+        matches!(node, PenNode::Ref(_))
+            || crate::pen_node_ext::PenNodeExt::children(node)
+                .is_some_and(|children| roots_have_refs(children))
+    })
 }
 
 /// True when any `Ref` node exists anywhere in the document — the
 /// scene builder's early-out so ref-free documents (the common case)
 /// skip the expansion pass's full-tree clone.
 pub fn document_has_refs(doc: &PenDocument) -> bool {
-    fn walk(nodes: &[PenNode]) -> bool {
-        nodes.iter().any(|node| {
-            matches!(node, PenNode::Ref(_))
-                || crate::pen_node_ext::PenNodeExt::children(node).is_some_and(|c| walk(c))
-        })
-    }
     doc.pages
         .as_ref()
-        .is_some_and(|pages| pages.iter().any(|p| walk(&p.children)))
-        || walk(&doc.children)
+        .is_some_and(|pages| pages.iter().any(|p| roots_have_refs(&p.children)))
+        || roots_have_refs(&doc.children)
 }
 
 fn resolve_nodes(
     nodes: &[PenNode],
-    lookup: &PenDocument,
+    lookup: &NodeLookup<'_>,
     visited: &mut BTreeSet<String>,
 ) -> Vec<PenNode> {
     let mut out = Vec::with_capacity(nodes.len());
@@ -94,11 +193,11 @@ fn resolve_nodes(
                 if visited.contains(&reference.target) {
                     continue; // Cycle guard — drop like TS.
                 }
-                let Some(component) = find_node(lookup, &reference.target) else {
+                let Some(component) = lookup.find(&reference.target) else {
                     continue; // Unknown target — drop like TS.
                 };
                 visited.insert(reference.target.clone());
-                if let Some(resolved) = expand_ref(node, &component, lookup, visited) {
+                if let Some(resolved) = expand_ref(node, component, lookup, visited) {
                     out.push(resolved);
                 }
                 visited.remove(&reference.target);
@@ -121,7 +220,7 @@ fn resolve_nodes(
 fn expand_ref(
     ref_node: &PenNode,
     component: &PenNode,
-    lookup: &PenDocument,
+    lookup: &NodeLookup<'_>,
     visited: &mut BTreeSet<String>,
 ) -> Option<PenNode> {
     let component_value = serde_json::to_value(component).ok()?;
@@ -472,6 +571,38 @@ mod tests {
             panic!("rect child survives");
         };
         assert_eq!(badge.base.id, "inst1__badge");
+    }
+
+    #[test]
+    fn component_lookup_builds_document_fallback_only_after_a_miss() {
+        let doc = doc_from(
+            r##"{
+              "version":"1.0.0",
+              "children":[
+                {"type":"frame","id":"master","reusable":true,
+                 "width":100,"height":40},
+                {"type":"frame","id":"legacy-target",
+                 "width":80,"height":30}
+              ]
+            }"##,
+        );
+        let components = ComponentLibrary::from_document(&doc);
+        let lookup = NodeLookup::from_components_with_document_fallback(&components, &doc);
+
+        assert!(lookup.fallback_by_id.get().is_none());
+        assert!(std::ptr::eq(
+            lookup.find("master").expect("registered master"),
+            &doc.children[0],
+        ));
+        assert!(
+            lookup.fallback_by_id.get().is_none(),
+            "registered component hits must not index the full document"
+        );
+        assert!(lookup.find("legacy-target").is_some());
+        assert!(
+            lookup.fallback_by_id.get().is_some(),
+            "a non-component target keeps the document-wide compatibility fallback"
+        );
     }
 
     #[test]

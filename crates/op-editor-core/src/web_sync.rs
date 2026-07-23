@@ -16,6 +16,26 @@
 
 use jian_ops_schema::PenDocument;
 
+/// A whole-document live-sync payload plus editor-only view state carried by
+/// the response wrapper. These fields intentionally stay outside
+/// [`PenDocument`] so older schema bindings remain valid.
+#[derive(Debug)]
+pub struct WebSyncDocument {
+    pub document: PenDocument,
+    pub version: u64,
+    pub active_page_index: usize,
+    pub preserve_authored_geometry: bool,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WireEditorMeta {
+    #[serde(default, alias = "active_page_index")]
+    active_page_index: Option<usize>,
+    #[serde(default, alias = "preserve_authored_geometry")]
+    preserve_authored_geometry: Option<bool>,
+}
+
 /// Tracks the last document version this client has applied, so a poll/SSE
 /// event only triggers a (re)load when the daemon's monotonic version actually
 /// advanced — avoiding redundant document swaps + repaints.
@@ -38,6 +58,10 @@ pub struct WebSyncClient {
     /// BROWSER is the authority — an architectural divergence, documented at
     /// the glue site).
     baseline_hash: Option<u64>,
+    /// Editor-only metadata paired with `baseline_hash`. Kept separate so the
+    /// existing document-only hash APIs retain their historical behavior.
+    baseline_active_page_index: usize,
+    baseline_preserve_authored_geometry: bool,
 }
 
 /// FNV-1a 64-bit — tiny, dependency-free content hash for the push baseline.
@@ -81,6 +105,20 @@ impl WebSyncClient {
     /// a failed apply/repaint doesn't lose the update — the next poll re-offers
     /// the same (still-newer) version until it is committed.
     pub fn next_document(&self, body: &str) -> Result<Option<(PenDocument, u64)>, String> {
+        self.next_document_with_metadata(body)
+            .map(|next| next.map(|next| (next.document, next.version)))
+    }
+
+    /// Metadata-aware companion to [`next_document`](Self::next_document).
+    /// `activePageIndex` and `preserveAuthoredGeometry` are additive top-level
+    /// wrapper fields. Each top-level field independently overrides its nested
+    /// `document.editorMeta` counterpart. Older daemons may omit both; nested
+    /// metadata is then honored, otherwise the legacy `0` / `false` defaults
+    /// apply.
+    pub fn next_document_with_metadata(
+        &self,
+        body: &str,
+    ) -> Result<Option<WebSyncDocument>, String> {
         let value: serde_json::Value =
             serde_json::from_str(body).map_err(|e| format!("sync response parse: {e}"))?;
         let version = value
@@ -94,9 +132,29 @@ impl WebSyncClient {
         let document = value
             .get("document")
             .ok_or_else(|| "sync response missing `document`".to_string())?;
+        let nested_meta = document
+            .get("editorMeta")
+            .and_then(|meta| serde_json::from_value::<WireEditorMeta>(meta.clone()).ok())
+            .unwrap_or_default();
+        let active_page_index = value
+            .get("activePageIndex")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|index| usize::try_from(index).ok())
+            .or(nested_meta.active_page_index)
+            .unwrap_or(0);
+        let preserve_authored_geometry = value
+            .get("preserveAuthoredGeometry")
+            .and_then(serde_json::Value::as_bool)
+            .or(nested_meta.preserve_authored_geometry)
+            .unwrap_or(false);
         let doc: PenDocument = serde_json::from_value(document.clone())
             .map_err(|e| format!("sync response document parse: {e}"))?;
-        Ok(Some((doc, version)))
+        Ok(Some(WebSyncDocument {
+            document: doc,
+            version,
+            active_page_index,
+            preserve_authored_geometry,
+        }))
     }
 
     /// Record that `version` has been applied AND repainted. Call this only
@@ -120,9 +178,40 @@ impl WebSyncClient {
     where
         F: FnOnce(PenDocument, u64) -> bool,
     {
-        match self.next_document(body)? {
-            Some((doc, version)) => {
-                if apply(doc, version) {
+        self.sync_with_metadata(body, |doc, version, _preserve_authored_geometry| {
+            apply(doc, version)
+        })
+    }
+
+    /// Metadata-aware companion to [`sync`](Self::sync). The geometry mode is
+    /// committed together with the exact document/version by the caller's
+    /// apply closure, avoiding a typed `PenDocument` replacement that silently
+    /// resets Preserve-mode Figma imports.
+    pub fn sync_with_metadata<F>(&mut self, body: &str, apply: F) -> Result<bool, String>
+    where
+        F: FnOnce(PenDocument, u64, bool) -> bool,
+    {
+        self.sync_with_editor_meta(body, |doc, version, _active_page_index, preserve| {
+            apply(doc, version, preserve)
+        })
+    }
+
+    /// Full editor-metadata companion to [`sync`](Self::sync). Active page and
+    /// authored-geometry mode are applied as one versioned snapshot while the
+    /// preserve-only helper above remains source compatible.
+    pub fn sync_with_editor_meta<F>(&mut self, body: &str, apply: F) -> Result<bool, String>
+    where
+        F: FnOnce(PenDocument, u64, usize, bool) -> bool,
+    {
+        match self.next_document_with_metadata(body)? {
+            Some(next) => {
+                let version = next.version;
+                if apply(
+                    next.document,
+                    version,
+                    next.active_page_index,
+                    next.preserve_authored_geometry,
+                ) {
                     self.mark_applied(version);
                     Ok(true)
                 } else {
@@ -155,6 +244,56 @@ impl WebSyncClient {
         format!(r#"{{"document":{doc_json},"baseVersion":{base_version}}}"#)
     }
 
+    /// Metadata-aware conditional push. The additive wrapper field is ignored
+    /// by older daemons and lets newer daemons preserve Figma-authored absolute
+    /// geometry without changing the canonical document schema.
+    pub fn wrap_push_body_with_base_and_preserve(
+        doc_json: &str,
+        base_version: u64,
+        preserve_authored_geometry: bool,
+    ) -> String {
+        format!(
+            r#"{{"document":{doc_json},"baseVersion":{base_version},"preserveAuthoredGeometry":{preserve_authored_geometry}}}"#
+        )
+    }
+
+    /// Full editor-metadata conditional push. The fields remain additive and
+    /// can be ignored by older daemons.
+    pub fn wrap_push_body_with_base_and_editor_meta(
+        doc_json: &str,
+        base_version: u64,
+        active_page_index: usize,
+        preserve_authored_geometry: bool,
+    ) -> String {
+        Self::wrap_push_body_with_base_editor_meta_and_mode(
+            doc_json,
+            base_version,
+            active_page_index,
+            preserve_authored_geometry,
+            false,
+        )
+    }
+
+    /// Full editor metadata with an optional metadata-only hint. New daemons
+    /// use the hint to avoid replacing an identical document (and creating a
+    /// remote undo step) for a page-only change; older daemons ignore it.
+    pub fn wrap_push_body_with_base_editor_meta_and_mode(
+        doc_json: &str,
+        base_version: u64,
+        active_page_index: usize,
+        preserve_authored_geometry: bool,
+        metadata_only: bool,
+    ) -> String {
+        let metadata_only_field = if metadata_only {
+            r#","metadataOnly":true"#
+        } else {
+            ""
+        };
+        format!(
+            r#"{{"document":{doc_json},"baseVersion":{base_version},"activePageIndex":{active_page_index},"preserveAuthoredGeometry":{preserve_authored_geometry}{metadata_only_field}}}"#
+        )
+    }
+
     /// True once the first daemon document has been applied. The push path is
     /// gated on this: the host page may reset the daemon document on refresh,
     /// but the browser must still pull that authoritative post-reset state
@@ -184,12 +323,99 @@ impl WebSyncClient {
     /// window; a content hash is race-free where a timer is heuristic.)
     pub fn note_applied_snapshot(&mut self, doc_json: &str) {
         self.baseline_hash = Some(fnv1a64(doc_json.as_bytes()));
+        self.baseline_active_page_index = 0;
+        self.baseline_preserve_authored_geometry = false;
+    }
+
+    /// Record the document plus its live-sync wrapper metadata as the applied
+    /// baseline. Unlike [`note_applied_snapshot`](Self::note_applied_snapshot),
+    /// this detects a Preserve-mode change even when the typed document bytes
+    /// are identical.
+    pub fn note_applied_snapshot_with_metadata(
+        &mut self,
+        doc_json: &str,
+        preserve_authored_geometry: bool,
+    ) {
+        self.note_applied_snapshot_with_editor_meta(doc_json, 0, preserve_authored_geometry);
+    }
+
+    /// Record the document and complete editor metadata as the applied
+    /// baseline.
+    pub fn note_applied_snapshot_with_editor_meta(
+        &mut self,
+        doc_json: &str,
+        active_page_index: usize,
+        preserve_authored_geometry: bool,
+    ) {
+        self.baseline_hash = Some(fnv1a64(doc_json.as_bytes()));
+        self.note_applied_editor_meta(active_page_index, preserve_authored_geometry);
+    }
+
+    /// Update only the editor-metadata half of the baseline. Pulling an
+    /// oversized document may intentionally skip serializing its bytes, but
+    /// must still baseline these small fields or every tick would treat them
+    /// as a new local edit.
+    pub fn note_applied_editor_meta(
+        &mut self,
+        active_page_index: usize,
+        preserve_authored_geometry: bool,
+    ) {
+        self.baseline_active_page_index = active_page_index;
+        self.baseline_preserve_authored_geometry = preserve_authored_geometry;
+    }
+
+    /// Record a daemon-installed snapshot when its typed-document byte hash is
+    /// not available without a second large serialization. The sync gate owns
+    /// the exact generation/revision baseline; leaving the content hash
+    /// unknown guarantees the next real content edit pushes, while the scalar
+    /// metadata baseline prevents an immediate no-op echo.
+    pub fn note_applied_snapshot_without_hash(
+        &mut self,
+        active_page_index: usize,
+        preserve_authored_geometry: bool,
+    ) {
+        self.baseline_hash = None;
+        self.note_applied_editor_meta(active_page_index, preserve_authored_geometry);
+    }
+
+    /// Cheap metadata-only change check used before deciding whether a
+    /// same-revision page switch needs a push. This avoids serializing the
+    /// document merely to compare two scalar editor fields.
+    pub fn editor_meta_needs_push(
+        &self,
+        active_page_index: usize,
+        preserve_authored_geometry: bool,
+    ) -> bool {
+        self.initialized
+            && (self.baseline_active_page_index != active_page_index
+                || self.baseline_preserve_authored_geometry != preserve_authored_geometry)
     }
 
     /// True when the locally-serialized document differs from the last
     /// applied/pushed baseline (and the first daemon sync has happened).
     pub fn should_push(&self, doc_json: &str) -> bool {
         self.initialized && self.baseline_hash != Some(fnv1a64(doc_json.as_bytes()))
+    }
+
+    /// Metadata-aware push check for the current live-sync wrapper.
+    pub fn should_push_with_metadata(
+        &self,
+        doc_json: &str,
+        preserve_authored_geometry: bool,
+    ) -> bool {
+        self.should_push_with_editor_meta(doc_json, 0, preserve_authored_geometry)
+    }
+
+    /// Full editor-metadata push check for the current live-sync wrapper.
+    pub fn should_push_with_editor_meta(
+        &self,
+        doc_json: &str,
+        active_page_index: usize,
+        preserve_authored_geometry: bool,
+    ) -> bool {
+        self.initialized
+            && (self.baseline_hash != Some(fnv1a64(doc_json.as_bytes()))
+                || self.editor_meta_needs_push(active_page_index, preserve_authored_geometry))
     }
 
     /// Bootstrap pushes are intentionally disabled. A refreshed web page first
@@ -206,6 +432,33 @@ impl WebSyncClient {
     /// echoes our own push back into the canvas.
     pub fn mark_pushed(&mut self, doc_json: &str, version: u64) {
         self.note_applied_snapshot(doc_json);
+        self.mark_applied(version);
+    }
+
+    /// Metadata-aware companion to [`mark_pushed`](Self::mark_pushed).
+    pub fn mark_pushed_with_metadata(
+        &mut self,
+        doc_json: &str,
+        preserve_authored_geometry: bool,
+        version: u64,
+    ) {
+        self.note_applied_snapshot_with_metadata(doc_json, preserve_authored_geometry);
+        self.mark_applied(version);
+    }
+
+    /// Full editor-metadata companion to [`mark_pushed`](Self::mark_pushed).
+    pub fn mark_pushed_with_editor_meta(
+        &mut self,
+        doc_json: &str,
+        active_page_index: usize,
+        preserve_authored_geometry: bool,
+        version: u64,
+    ) {
+        self.note_applied_snapshot_with_editor_meta(
+            doc_json,
+            active_page_index,
+            preserve_authored_geometry,
+        );
         self.mark_applied(version);
     }
 
@@ -271,6 +524,10 @@ fn active_page_id(state: &crate::EditorState) -> Option<String> {
         .and_then(|pages| pages.get(state.ui.active_page_index))
         .map(|page| page.id.clone())
 }
+
+#[cfg(test)]
+#[path = "web_sync_editor_meta_tests.rs"]
+mod editor_meta_tests;
 
 #[cfg(test)]
 mod tests {
@@ -346,6 +603,21 @@ mod tests {
         // retry succeeds → commits 5.
         assert!(c.sync(v5, |_d, _v| true).expect("ok"));
         assert_eq!(c.applied_version(), 5);
+    }
+
+    #[test]
+    fn metadata_aware_sync_applies_preserve_mode_before_committing_version() {
+        let mut c = WebSyncClient::new();
+        let body = r#"{"document":{"version":"1.0","children":[]},"version":8,"preserveAuthoredGeometry":true}"#;
+        let mut applied = None;
+        assert!(c
+            .sync_with_metadata(body, |_doc, version, preserve| {
+                applied = Some((version, preserve));
+                true
+            })
+            .expect("valid response"));
+        assert_eq!(applied, Some((8, true)));
+        assert_eq!(c.applied_version(), 8);
     }
 
     #[test]
@@ -470,6 +742,19 @@ mod tests {
             WebSyncClient::parse_push_conflict(r#"{"ok":true,"version":9}"#),
             None
         );
+    }
+
+    #[test]
+    fn metadata_aware_push_adds_preserve_mode_without_changing_legacy_helpers() {
+        let doc = r#"{"version":"1.0","children":[]}"#;
+        let preserved = WebSyncClient::wrap_push_body_with_base_and_preserve(doc, 7, true);
+        let value: serde_json::Value = serde_json::from_str(&preserved).expect("push json");
+        assert_eq!(value["baseVersion"], 7);
+        assert_eq!(value["preserveAuthoredGeometry"], true);
+
+        let legacy = WebSyncClient::wrap_push_body_with_base(doc, 7);
+        let legacy_value: serde_json::Value = serde_json::from_str(&legacy).expect("legacy json");
+        assert!(legacy_value.get("preserveAuthoredGeometry").is_none());
     }
 
     #[test]
