@@ -9,6 +9,7 @@ import * as syncVersion from './sync-version.mjs';
 import {
   collectVersionDrift,
   inspectBunLockWorkspaceVersions,
+  renderBunLockWorkspaceVersions,
   renderPackageManifest,
   renderSdkEntry,
 } from './sync-version.mjs';
@@ -432,6 +433,25 @@ test('Bun lock inspection still rejects unterminated block comments after primit
   assert.throws(() => inspectBunLockWorkspaceVersions(lockfile), /unterminated block comment/i);
 });
 
+test('Bun lock rendering updates only managed workspace version literals', () => {
+  const lockfile = `{
+    "workspaces": {
+      "": { "name": "@zseven-w/openpencil-packages" },
+      "op-web-sdk": { "version": "1.0.0", "fixture": "1.0.0" },
+      "op-web-sdk-react": { "version": "1.0.1" },
+      "op-web-sdk-vue": { "version": "1.0.2" },
+    },
+  }`;
+
+  const output = renderBunLockWorkspaceVersions(lockfile, '2.3.4');
+  assert.deepEqual(inspectBunLockWorkspaceVersions(output), {
+    'op-web-sdk': '2.3.4',
+    'op-web-sdk-react': '2.3.4',
+    'op-web-sdk-vue': '2.3.4',
+  });
+  assert.match(output, /"fixture": "1\.0\.0"/);
+});
+
 test('drift collection reports each stale path with expected and actual versions', () => {
   assert.deepEqual(
     collectVersionDrift('2.3.4', [
@@ -608,22 +628,27 @@ test('write mode restores every managed file when Bun lock regeneration fails', 
   assert.deepEqual(await readManagedFiles(fixture.managedPaths), before);
 });
 
-test('write mode restores every managed file when post-write validation fails', async (t) => {
+test('write mode repairs workspace versions when Bun leaves them stale', async (t) => {
   const fixture = await createRepositoryFixture(t);
-  const before = await readManagedFiles(fixture.managedPaths);
   const runner = createCommandRunner(fixture.packagesRoot, '2.3.4', {
     regenerateLock: false,
   });
 
-  await assert.rejects(
-    syncVersion.synchronizeVersions({
-      mode: 'write',
-      ...fixture,
-      runCommand: runner.runCommand,
-    }),
-    /post-write validation failed.*bun\.lock/i,
+  const result = await syncVersion.synchronizeVersions({
+    mode: 'write',
+    ...fixture,
+    runCommand: runner.runCommand,
+  });
+
+  assert.deepEqual(result.drift, []);
+  assert.deepEqual(
+    inspectBunLockWorkspaceVersions(await readFile(fixture.managedPaths[7], 'utf8')),
+    {
+      'op-web-sdk': '2.3.4',
+      'op-web-sdk-react': '2.3.4',
+      'op-web-sdk-vue': '2.3.4',
+    },
   );
-  assert.deepEqual(await readManagedFiles(fixture.managedPaths), before);
 });
 
 test('write mode waits for sibling writes to settle before rollback', async (t) => {

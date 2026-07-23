@@ -41,7 +41,7 @@ pub(super) const GIT_BUTTON_AVAILABLE: bool = !cfg!(target_arch = "wasm32");
 /// has no equivalent runtime/measurement bridge, so hide the button there
 /// rather than exposing a non-interactive preview flag.
 pub(super) const PREVIEW_BUTTON_AVAILABLE: bool = !cfg!(target_arch = "wasm32");
-/// The v0.8.2 sign-in flow (OIDC Auth Code + PKCE via the system
+/// The planned sign-in flow (OIDC Auth Code + PKCE via the system
 /// browser) is desktop-only. The web build has no equivalent, so the
 /// avatar button (and its layout slot) is compiled out there rather
 /// than painting a click that goes nowhere (same pattern as

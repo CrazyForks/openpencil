@@ -256,7 +256,7 @@ mod tests {
     #[test]
     fn visits_every_typed_image_source_shape_used_by_imports() {
         let document = serde_json::from_value(serde_json::json!({
-            "version": "0.8.2",
+            "version": "1.0.0",
             "children": [
                 {
                     "type": "rectangle",
@@ -305,7 +305,7 @@ mod tests {
         let png_src = "data:image/png;base64,U0FNRQ==";
         let jpeg_src = "data:image/jpeg;base64,U0FNRQ==";
         let document = serde_json::from_value(serde_json::json!({
-            "version": "0.8.2",
+            "version": "1.0.0",
             "children": [
                 {"type": "image", "id": "png", "src": png_src},
                 {"type": "image", "id": "jpeg", "src": jpeg_src}

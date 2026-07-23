@@ -1,6 +1,6 @@
 {
   "name": "@zseven-w/op-web-sdk-vue",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "Vue 3 adapter for the OpenPencil read-only web viewer SDK",
   "license": "MIT",
   "type": "module",

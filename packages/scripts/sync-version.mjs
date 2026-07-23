@@ -278,6 +278,40 @@ export function inspectBunLockWorkspaceVersions(source) {
   return versions;
 }
 
+export function renderBunLockWorkspaceVersions(source, version) {
+  const rootEntries = readJsoncObjectEntries(source, 0);
+  const workspaces = rootEntries.find((entry) => entry.key === 'workspaces');
+  if (workspaces === undefined) {
+    throw new Error('bun.lock does not contain a top-level workspaces object');
+  }
+
+  const workspaceEntries = readJsoncObjectEntries(source, workspaces.valueStart);
+  const replacements = sdkWorkspaceNames.map((workspaceName) => {
+    const workspace = workspaceEntries.find((entry) => entry.key === workspaceName);
+    if (workspace === undefined || source[workspace.valueStart] !== '{') {
+      throw new Error(`bun.lock is missing workspace ${workspaceName}`);
+    }
+    const versionEntry = readJsoncObjectEntries(source, workspace.valueStart).find(
+      (entry) => entry.key === 'version',
+    );
+    if (versionEntry === undefined || source[versionEntry.valueStart] !== '"') {
+      throw new Error(`bun.lock workspace ${workspaceName} is missing a string version`);
+    }
+    return {
+      start: versionEntry.valueStart,
+      end: versionEntry.valueEnd,
+      output: JSON.stringify(version),
+    };
+  });
+
+  let output = source;
+  for (const replacement of replacements.toSorted((left, right) => right.start - left.start)) {
+    output =
+      output.slice(0, replacement.start) + replacement.output + output.slice(replacement.end);
+  }
+  return output;
+}
+
 export function collectVersionDrift(expectedVersion, consumers) {
   return consumers
     .filter(({ actualVersion }) => actualVersion !== expectedVersion)
@@ -479,6 +513,13 @@ export async function synchronizeVersions({
       throw new Error(`Bun lockfile regeneration failed: ${errorMessage(error)}`, {
         cause: error,
       });
+    }
+
+    const lockPath = resolve(packagesRoot, 'bun.lock');
+    const lockSource = await readFile(lockPath, 'utf8');
+    const lockOutput = renderBunLockWorkspaceVersions(lockSource, version);
+    if (lockSource !== lockOutput) {
+      await writeManagedFile(lockPath, lockOutput);
     }
 
     const drift = collectVersionDrift(version, await readConsumers(packagesRoot));

@@ -3143,7 +3143,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "op-acp"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "futures-util",
  "op-ai",
@@ -3157,11 +3157,11 @@ dependencies = [
 
 [[package]]
 name = "op-ai"
-version = "0.8.1"
+version = "0.8.2"
 
 [[package]]
 name = "op-ai-skills"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "include_dir",
  "jian-ops-schema",
@@ -3170,7 +3170,7 @@ dependencies = [
 
 [[package]]
 name = "op-cli"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "base64",
  "jian-ops-schema",
@@ -3186,7 +3186,7 @@ dependencies = [
 
 [[package]]
 name = "op-codegen"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "base64",
  "jian-ops-schema",
@@ -3199,7 +3199,7 @@ dependencies = [
 
 [[package]]
 name = "op-config-store"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -3207,7 +3207,7 @@ dependencies = [
 
 [[package]]
 name = "op-design-lint"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "jian-ops-schema",
  "serde",
@@ -3216,7 +3216,7 @@ dependencies = [
 
 [[package]]
 name = "op-editor-core"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "glam",
  "jian-core",
@@ -3231,7 +3231,7 @@ dependencies = [
 
 [[package]]
 name = "op-editor-host-core"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "jian-ops-schema",
  "op-ai",
@@ -3245,7 +3245,7 @@ dependencies = [
 
 [[package]]
 name = "op-editor-ui"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "accesskit",
  "base64",
@@ -3263,7 +3263,7 @@ dependencies = [
 
 [[package]]
 name = "op-figma"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "base64",
  "flate2",
@@ -3278,7 +3278,7 @@ dependencies = [
 
 [[package]]
 name = "op-git"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "git2",
  "op-config-store",
@@ -3289,7 +3289,7 @@ dependencies = [
 
 [[package]]
 name = "op-host-desktop"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -3346,7 +3346,7 @@ dependencies = [
 
 [[package]]
 name = "op-host-native"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "accesskit",
  "casement",
@@ -3375,7 +3375,7 @@ dependencies = [
 
 [[package]]
 name = "op-host-services"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "agent",
  "anthropic-agent-sdk",
@@ -3412,7 +3412,7 @@ dependencies = [
 
 [[package]]
 name = "op-host-web"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "accesskit",
  "base64",
@@ -3439,7 +3439,7 @@ dependencies = [
 
 [[package]]
 name = "op-host-web-server"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "op-host-services",
  "serde_json",
@@ -3447,7 +3447,7 @@ dependencies = [
 
 [[package]]
 name = "op-html"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "base64",
  "encoding_rs",
@@ -3462,11 +3462,11 @@ dependencies = [
 
 [[package]]
 name = "op-i18n"
-version = "0.8.1"
+version = "0.8.2"
 
 [[package]]
 name = "op-mcp"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "jian-ops-schema",
  "jian-scene",
@@ -3484,7 +3484,7 @@ dependencies = [
 
 [[package]]
 name = "op-opmerge"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "jian-ops-schema",
  "serde_json",
@@ -3493,7 +3493,7 @@ dependencies = [
 
 [[package]]
 name = "op-orchestrator"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "futures",
  "jian-ops-schema",
@@ -3512,7 +3512,7 @@ dependencies = [
 
 [[package]]
 name = "op-pen-loader"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "jian-core",
  "jian-ops-schema",
@@ -3527,14 +3527,14 @@ dependencies = [
 
 [[package]]
 name = "op-process-io"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "tokio",
 ]
 
 [[package]]
 name = "op-rpc-transport"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -3542,7 +3542,7 @@ dependencies = [
 
 [[package]]
 name = "op-smoke"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "agent",
  "futures",
@@ -3561,7 +3561,7 @@ dependencies = [
 
 [[package]]
 name = "op-web-sdk"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "console_error_panic_hook",
  "jian-ops-schema",

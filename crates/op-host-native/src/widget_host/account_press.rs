@@ -43,8 +43,8 @@ impl WidgetHostNative {
             }
             LoginModalHit::SignIn => {
                 // Dev/demo fast path — never reachable in a production
-                // build; the real flow is `v0.8.2 M3: OIDC Auth Code +
-                // PKCE via system browser`.
+                // build; the planned real flow uses OIDC Auth Code +
+                // PKCE via the system browser.
                 if dev_fake_login_enabled() {
                     self.editor_state.editor_ui.account =
                         op_editor_core::AccountState::dev_fake_signed_in();

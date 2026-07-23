@@ -252,7 +252,7 @@ fn deferred_thumbnail_binding_uses_the_final_source_string() {
     let final_src = format!("data:image/jpeg;base64,{}", B64.encode(final_bytes));
     let provisional_src = format!("data:image/png;base64,{}", B64.encode(provisional));
     let doc = serde_json::from_value(serde_json::json!({
-        "version": "0.8.2",
+        "version": "1.0.0",
         "children": [{
             "type": "rectangle",
             "id": "image-fill",

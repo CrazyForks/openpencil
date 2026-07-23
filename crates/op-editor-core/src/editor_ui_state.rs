@@ -1096,7 +1096,7 @@ pub struct EditorUiState {
     /// settings-modal input.
     pub settings_input: jian_core::text_input::TextInputState,
 
-    // --- Account (v0.8.2 user system: platform + zseven-sso) --------
+    // --- Account (planned platform + zseven-sso user system) -------
     /// Signed-in / signed-out identity. The backend (OIDC Auth Code +
     /// PKCE via system browser) is not wired yet — see
     /// `AccountState::dev_fake_signed_in` for the dev-only fast path.

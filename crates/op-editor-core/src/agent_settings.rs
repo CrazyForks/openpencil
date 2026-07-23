@@ -25,7 +25,7 @@ pub enum AgentSettingsTab {
     Images,
     Fonts,
     System,
-    /// Sign-in status + workspace identity (v0.8.2 user system).
+    /// Sign-in status + workspace identity for the planned user system.
     Account,
 }
 

@@ -1,5 +1,5 @@
-//! Account / sign-in state for the v0.8.2 user system (platform +
-//! zseven-sso). The real backend is not live yet — this module carries
+//! Account / sign-in state for the planned platform + zseven-sso user
+//! system. The real backend is not live yet — this module carries
 //! the state model plus a dev-only fake-login seam so the topbar avatar
 //! button, its dropdown, the sign-in modal, and the settings modal's
 //! Account tab can all be built and exercised end-to-end before the

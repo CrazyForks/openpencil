@@ -3,8 +3,8 @@
 //! authentication focused: OpenPencil identity, one browser action,
 //! and a concise security/status note.
 //!
-//! The real auth flow (v0.8.2 M3: OIDC Auth Code + PKCE via system
-//! browser) is not wired yet, so the primary button is an honest stub:
+//! The planned auth flow (OIDC Auth Code + PKCE via the system browser)
+//! is not wired yet, so the primary button is an honest stub:
 //! it stays clickable, but production builds reveal a "coming soon"
 //! note instead of pretending to sign in. `AccountState::
 //! dev_fake_signed_in` is the dev/demo fast path (gated host-side by

@@ -516,7 +516,7 @@ impl WidgetHost {
                 TopBarHit::Account => {
                     // Unreachable: `ACCOUNT_BUTTON_AVAILABLE` gates the
                     // avatar button out of the web build's hit-test (the
-                    // v0.8.2 sign-in flow is desktop-only).
+                    // sign-in flow is desktop-only).
                 }
             }
             self.mark_dirty();

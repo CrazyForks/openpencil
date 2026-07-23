@@ -288,8 +288,8 @@ impl WidgetHost {
             }
             AgentSettingsHit::OpenLoginModal | AgentSettingsHit::SignOutAccount => {
                 // Unreachable: `AgentSettingsPanelMode::WebBuiltinOnly`
-                // omits the Account tab from `visible_tabs` (the v0.8.2
-                // sign-in flow is desktop-only), so `hit_test` never
+                // omits the Account tab from `visible_tabs` (the sign-in
+                // flow is desktop-only), so `hit_test` never
                 // resolves to these variants on the web build.
             }
             AgentSettingsHit::FocusMcpPort => {
