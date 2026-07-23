@@ -7,7 +7,7 @@
 //! as the shared executor `script_gen` runs its recorded `I(...)` program
 //! through — these tests exercise it directly.
 
-use super::run_program_to_forest;
+use super::{format_program_warning, run_program_to_forest};
 use op_editor_core::PenNodeExt;
 
 #[test]
@@ -103,5 +103,18 @@ fn run_program_to_forest_drains_hoisted_state_off_the_scratch_document() {
     assert!(
         frame.state.is_none(),
         "returned node must have its state drained, not just the scratch schema"
+    );
+}
+
+#[test]
+fn dropped_line_warning_includes_the_bounded_envelope_preview() {
+    let warning = format_program_warning(&serde_json::json!({
+        "line": "I(row, {\"type\":\"text\",\"textAlign\":\"start\"})",
+        "error": "invalid PenNode payload"
+    }))
+    .expect("warning");
+    assert_eq!(
+        warning,
+        "[program-gen] dropped line `I(row, {\"type\":\"text\",\"textAlign\":\"start\"})`: invalid PenNode payload"
     );
 }

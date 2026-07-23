@@ -779,6 +779,37 @@ fn empty_stroke_array_is_tolerated_as_no_stroke() {
     );
 }
 
+#[test]
+fn logical_text_align_is_normalized_without_touching_container_alignment() {
+    // Text alignment is a physical enum (`left`/`right`), while layout-axis
+    // alignment legitimately uses logical `start`/`end`. A generated forecast
+    // used the latter spelling for both HIGH/LOW labels and lost every text
+    // node during deserialization.
+    let mut state = sample();
+    let program = concat!(
+        "row=I(null, {\"type\":\"frame\",\"name\":\"Forecast Row\",\"layout\":\"horizontal\",\"justifyContent\":\"end\",\"alignItems\":\"start\"})\n",
+        "high=I(row, {\"type\":\"text\",\"name\":\"High\",\"content\":\"72°\",\"textAlign\":\"start\"})\n",
+        "low=I(row, {\"type\":\"text\",\"name\":\"Low\",\"content\":\"54°\",\"textAlign\":\"end\"})"
+    );
+    let (envelope, cmd) = call_operations(&state, program);
+    assert!(
+        envelope.get("errors").is_none(),
+        "logical text alignments must not drop their nodes: {envelope}"
+    );
+    let row_id = binding_id(&envelope, "row");
+    assert!(state.apply(cmd.expect("alignment program emits a command")));
+
+    let row = op_editor_core::walkers::find_node(state.active_children(), &NodeId::new(&row_id))
+        .expect("forecast row");
+    let value = serde_json::to_value(row).expect("row json");
+    assert_eq!(value["justifyContent"], "end");
+    assert_eq!(value["alignItems"], "start");
+    let children = value["children"].as_array().expect("row children");
+    assert_eq!(children.len(), 2, "both HIGH/LOW labels survive");
+    assert_eq!(children[0]["textAlign"], "left");
+    assert_eq!(children[1]["textAlign"], "right");
+}
+
 /// Count nodes named `name` anywhere in the forest.
 fn count_named(nodes: &[jian_ops_schema::node::PenNode], name: &str) -> usize {
     nodes

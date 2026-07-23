@@ -719,6 +719,7 @@ pub(crate) fn normalize_node_shape(value: &mut serde_json::Value) {
     normalize_layout_keyword(obj, "alignItems");
     normalize_image_src(obj);
     normalize_text_growth(obj);
+    normalize_text_align(obj);
     normalize_sizing_keyword(obj, "width");
     normalize_sizing_keyword(obj, "height");
     if let Some(serde_json::Value::Array(children)) = obj.get_mut("children") {
@@ -968,6 +969,23 @@ fn normalize_text_growth(obj: &mut serde_json::Map<String, serde_json::Value>) {
             obj.remove("textGrowth");
         }
     }
+}
+
+/// `textAlign` is a physical four-value enum, unlike the layout-axis alignment
+/// fields above. Models borrowing CSS logical alignment sometimes emit
+/// `start` / `end`; translate those values before serde sees them so the text
+/// node survives. Keep this scoped to the exact text property — container
+/// `justifyContent` / `alignItems` legitimately use `start` / `end`.
+fn normalize_text_align(obj: &mut serde_json::Map<String, serde_json::Value>) {
+    let Some(serde_json::Value::String(value)) = obj.get_mut("textAlign") else {
+        return;
+    };
+    let normalized = match value.trim().to_ascii_lowercase().as_str() {
+        "start" => "left",
+        "end" => "right",
+        _ => return,
+    };
+    *value = normalized.to_string();
 }
 
 fn normalize_layout_keyword(obj: &mut serde_json::Map<String, serde_json::Value>, key: &str) {

@@ -89,11 +89,24 @@ fn surface_program_warnings(envelope_json: &str) {
     if let Ok(serde_json::Value::Object(map)) = serde_json::from_str(envelope_json) {
         if let Some(serde_json::Value::Array(errors)) = map.get("errors") {
             for err in errors {
-                if let Some(msg) = err.get("error").and_then(|e| e.as_str()) {
-                    eprintln!("[program-gen] dropped line: {msg}");
+                if let Some(warning) = format_program_warning(err) {
+                    eprintln!("{warning}");
                 }
             }
         }
+    }
+}
+
+fn format_program_warning(error: &serde_json::Value) -> Option<String> {
+    let message = error.get("error").and_then(|value| value.as_str())?;
+    match error
+        .get("line")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        Some(line) => Some(format!("[program-gen] dropped line `{line}`: {message}")),
+        None => Some(format!("[program-gen] dropped line: {message}")),
     }
 }
 
