@@ -27,6 +27,13 @@ use crate::types::DocSink;
 mod geometry_echo;
 pub(crate) use geometry_echo::geometry_diagnostics_for_roots;
 
+#[path = "geometry_compact_status.rs"]
+mod geometry_compact_status;
+use geometry_compact_status::{
+    compact_status_header_is_damaged, compact_trailing_status_pair, is_compact_status_badge,
+    is_compact_status_badge_structure, stack_compact_status_header,
+};
+
 #[derive(Clone, Copy)]
 struct Rect {
     x: f64,
@@ -353,7 +360,8 @@ fn collect_text_overflow_fixes_with_context(
         .map(|r| (r.x, r.w))
         .filter(|_| flex_parent && !protect_current)
     {
-        let pill_parent = crate::chip_repair::is_pill_chip(v);
+        let status_badge = is_compact_status_badge(v, rects);
+        let pill_parent = crate::chip_repair::is_pill_chip(v) || status_badge;
         for c in children(v) {
             if c.get("type").and_then(Value::as_str) != Some("text") {
                 continue;
@@ -361,11 +369,14 @@ fn collect_text_overflow_fixes_with_context(
             if pill_parent {
                 if let Some(cid) = c.get("id").and_then(Value::as_str) {
                     let fill = c.get("width").and_then(Value::as_str) == Some("fill_container");
+                    let status_label_has_non_hug_width = status_badge
+                        && c.get("width").is_some()
+                        && c.get("width").and_then(Value::as_str) != Some("fit_content");
                     let wrap = c
                         .get("textGrowth")
                         .and_then(Value::as_str)
                         .is_some_and(|g| g.starts_with("fixed-width"));
-                    if fill {
+                    if fill || status_label_has_non_hug_width {
                         cmds.push(EditorCommand::SetNodeLayoutProp {
                             node_id: NodeId::new(cid.to_string()),
                             property: "width".to_string(),
@@ -507,6 +518,8 @@ fn collect_frame_overflow_fixes_with_context(
             .and_then(|id| rects.get(id))
             .map(|r| (r.x, r.w))
         {
+            let compact_tail_id = compact_trailing_status_pair(v, rects)
+                .and_then(|(_, tail)| tail.get("id").and_then(Value::as_str));
             for c in children(v) {
                 if c.get("type").and_then(Value::as_str) == Some("text") {
                     continue;
@@ -547,7 +560,14 @@ fn collect_frame_overflow_fixes_with_context(
                     c.get("type").and_then(Value::as_str),
                     Some("frame" | "group")
                 );
-                let past_right = is_container && cr.x + cr.w > parent_x + pw + TEXT_OVERFLOW_EPS;
+                // A trailing status badge stays Hug when only its right edge
+                // spills because the title pair is collectively overfull; the
+                // row repair stacks the pair instead. If the badge is
+                // intrinsically wider than the whole parent, the width branch
+                // below still applies.
+                let past_right = is_container
+                    && compact_tail_id != Some(cid)
+                    && cr.x + cr.w > parent_x + pw + TEXT_OVERFLOW_EPS;
                 if (cr.w > pw + TEXT_OVERFLOW_EPS || past_right) && pw > 1.0 {
                     cmds.push(EditorCommand::SetNodeLayoutProp {
                         node_id: NodeId::new(cid.to_string()),
@@ -575,10 +595,24 @@ const ROW_GAP_FIX: f64 = 16.0;
 /// the name gate). Flush segmented controls stay safe: those are 2-3 equal
 /// small children, gated out by the ≥3-cells + row-cell height + text checks.
 fn collect_row_gap_fixes(v: &Value, rects: &HashMap<String, Rect>, cmds: &mut Vec<EditorCommand>) {
+    if compact_trailing_status_pair(v, rects).is_some() {
+        // A title + status badge pair needs a small explicit breathing gap,
+        // but the generic 16px data-column gap consumes too much of a narrow
+        // two-up card. Normalize both fresh 0px rows and previously damaged
+        // 16px rows to the same stable value.
+        if (num(v, "gap") - 8.0).abs() > f64::EPSILON {
+            if let Some(id) = v.get("id").and_then(Value::as_str) {
+                cmds.push(EditorCommand::SetNodeLayoutProp {
+                    node_id: NodeId::new(id.to_string()),
+                    property: "gap".to_string(),
+                    value: LayoutPropValue::Number(8.0),
+                });
+            }
+        }
     // `< 8.0`, not `<= 0.0`: a 1-7px authored gap still resolves as touching
     // (the jam proof below requires <3px breathing anyway), and an
     // exactly-1.0 hairline gap slipped through every gate (measured).
-    if layout_str(v) == Some("horizontal") && num(v, "gap") < 8.0 {
+    } else if layout_str(v) == Some("horizontal") && num(v, "gap") < 8.0 {
         let kids = children(v);
         let frame_kids: Vec<&Value> = kids
             .iter()
@@ -807,6 +841,18 @@ fn collect_row_overfull_fixes_with_context(
                 })
                 .collect();
             if inner > 1.0 && !kids.is_empty() && kid_rects.iter().all(Option::is_some) {
+                let compact_pair = compact_trailing_status_pair(v, rects);
+                if let Some((_, tail)) = compact_pair {
+                    if tail.get("width").and_then(Value::as_str) == Some("fill_container") {
+                        if let Some(tail_id) = tail.get("id").and_then(Value::as_str) {
+                            cmds.push(EditorCommand::SetNodeLayoutProp {
+                                node_id: NodeId::new(tail_id.to_string()),
+                                property: "width".to_string(),
+                                value: LayoutPropValue::Keyword("fit_content".to_string()),
+                            });
+                        }
+                    }
+                }
                 if crate::chip_repair::all_children_are_pill_chips(&kids) {
                     if let Some(row_id) = v.get("id").and_then(Value::as_str) {
                         cmds.push(EditorCommand::SetNodeLayoutProp {
@@ -821,17 +867,25 @@ fn collect_row_overfull_fixes_with_context(
                 let sum: f64 = kid_rects.iter().flatten().map(|r| r.w).sum::<f64>()
                     + gap * (kids.len().saturating_sub(1)) as f64;
                 let is_overfull = sum > inner + ROW_OVERFULL_EPS;
+                let compact_pair_reflowed = compact_pair.is_some_and(|(leading, tail)| {
+                    let needs_reflow = is_overfull
+                        || (inner <= 180.0 && compact_status_header_is_damaged(leading, tail));
+                    if needs_reflow {
+                        stack_compact_status_header(v, leading, tail, cmds);
+                    }
+                    needs_reflow
+                });
                 // NARROW-CARD anatomy guard, independent of the text measure:
                 // a display value + a painted chip can't share a ~200px line
                 // even when a lossy measure claims they fit (the estimate
                 // backend under-reads 40px display digits; the PAINT
                 // overlapped — measured). Reference metric cards stack them.
-                let stacked = if is_overfull && inner <= 260.0 {
+                let stacked = if !compact_pair_reflowed && is_overfull && inner <= 260.0 {
                     let before = cmds.len();
                     stack_overfull_value_chip_row(v, &kids, rects, cmds);
                     cmds.len() > before
                 } else {
-                    false
+                    compact_pair_reflowed
                 };
                 if !stacked && is_overfull {
                     // Widest rigid child ≥120px, containers before text.
@@ -1115,6 +1169,15 @@ fn diag_label(v: &Value) -> String {
 }
 
 fn collect_diagnostics(v: &Value, rects: &HashMap<String, Rect>, out: &mut Vec<String>) {
+    collect_diagnostics_with_context(v, rects, out, false);
+}
+
+fn collect_diagnostics_with_context(
+    v: &Value,
+    rects: &HashMap<String, Rect>,
+    out: &mut Vec<String>,
+    in_table: bool,
+) {
     if out.len() >= MAX_DIAGNOSTICS {
         return;
     }
@@ -1166,6 +1229,8 @@ fn collect_diagnostics(v: &Value, rects: &HashMap<String, Rect>, out: &mut Vec<S
             .and_then(|id| rects.get(id))
             .map(|r| (r.x, r.w))
         {
+            let compact_tail_id = compact_trailing_status_pair(v, rects)
+                .and_then(|(_, tail)| tail.get("id").and_then(Value::as_str));
             for c in children(v) {
                 if out.len() >= MAX_DIAGNOSTICS {
                     return;
@@ -1183,11 +1248,13 @@ fn collect_diagnostics(v: &Value, rects: &HashMap<String, Rect>, out: &mut Vec<S
                     c.get("type").and_then(Value::as_str),
                     Some("frame" | "group")
                 );
-                let past_right = is_container && cr.x + cr.w > parent_x + pw + TEXT_OVERFLOW_EPS;
+                let past_right = is_container
+                    && compact_tail_id != c.get("id").and_then(Value::as_str)
+                    && cr.x + cr.w > parent_x + pw + TEXT_OVERFLOW_EPS;
                 if cr.w <= pw + TEXT_OVERFLOW_EPS && !past_right {
                     continue;
                 }
-                if crate::chip_repair::is_pill_chip(v)
+                if (crate::chip_repair::is_pill_chip(v) || is_compact_status_badge(v, rects))
                     && c.get("type").and_then(Value::as_str) == Some("text")
                 {
                     continue;
@@ -1213,9 +1280,10 @@ fn collect_diagnostics(v: &Value, rects: &HashMap<String, Rect>, out: &mut Vec<S
     collect_vertical_spill_diagnostics(v, rects, out);
     collect_sibling_jam_diagnostics(v, rects, out);
     collect_starved_fill_diagnostics(v, rects, out);
-    collect_rail_width_collapse_diagnostics(v, rects, out);
+    collect_rail_width_collapse_diagnostics_with_context(v, rects, out, in_table);
+    let child_in_table = in_table || is_table_shape(v);
     for c in children(v) {
-        collect_diagnostics(c, rects, out);
+        collect_diagnostics_with_context(c, rects, out, child_in_table);
     }
 }
 
@@ -1228,29 +1296,36 @@ fn collect_diagnostics(v: &Value, rects: &HashMap<String, Rect>, out: &mut Vec<S
 /// `geometry_rail_collapse_tests.rs`'s de-identified "Savings Goals" rail —
 /// a 200px fixed card 1 starving cards 2/3 down to ~51px, truncating their
 /// titles and ballooning their height from forced wrapping).
+#[cfg(test)]
 fn collect_rail_width_collapse_diagnostics(
     v: &Value,
     rects: &HashMap<String, Rect>,
     out: &mut Vec<String>,
 ) {
-    if layout_str(v) != Some("horizontal") {
+    collect_rail_width_collapse_diagnostics_with_context(v, rects, out, false);
+}
+
+fn collect_rail_width_collapse_diagnostics_with_context(
+    v: &Value,
+    rects: &HashMap<String, Rect>,
+    out: &mut Vec<String>,
+    in_table: bool,
+) {
+    if in_table || layout_str(v) != Some("horizontal") {
         return;
     }
     let cards = children(v);
-    let Some(ref_w) = cards
-        .iter()
-        .filter_map(fixed_width)
-        .fold(None, |acc: Option<f64>, w| {
-            Some(acc.map_or(w, |a| a.max(w)))
-        })
-    else {
+    let Some(ref_w) = rail_reference_width(cards) else {
         return;
     };
     for c in cards {
         if out.len() >= MAX_DIAGNOSTICS {
             return;
         }
-        if c.get("width").and_then(Value::as_str) != Some("fill_container") {
+        if !is_rail_card_sibling(c)
+            || is_compact_status_badge_structure(c)
+            || c.get("width").and_then(Value::as_str) != Some("fill_container")
+        {
             continue;
         }
         let Some(cid) = c.get("id").and_then(Value::as_str) else {
@@ -1836,28 +1911,55 @@ fn collect_card_overflow_clips(
 const RAIL_COLLAPSE_RATIO: f64 = 2.5;
 const RAIL_COLLAPSE_FLOOR: f64 = 80.0;
 
+fn is_rail_card_sibling(v: &Value) -> bool {
+    matches!(
+        v.get("type").and_then(Value::as_str),
+        Some("frame" | "group")
+    )
+}
+
+fn rail_reference_width(cards: &[Value]) -> Option<f64> {
+    cards
+        .iter()
+        .filter(|card| is_rail_card_sibling(card) && !is_compact_status_badge_structure(card))
+        .filter_map(fixed_width)
+        // A rail reference must itself be card-sized. Tiny dots, icons, and
+        // avatar slots are ordinary row adornments, never the width contract
+        // for their fill sibling.
+        .filter(|width| *width >= RAIL_COLLAPSE_FLOOR)
+        .fold(None, |acc: Option<f64>, width| {
+            Some(acc.map_or(width, |current| current.max(width)))
+        })
+}
+
 fn collect_rail_width_collapse_fixes(
     v: &Value,
     rects: &HashMap<String, Rect>,
     cmds: &mut Vec<EditorCommand>,
 ) {
-    if layout_str(v) == Some("horizontal") {
+    collect_rail_width_collapse_fixes_with_context(v, rects, cmds, false);
+}
+
+fn collect_rail_width_collapse_fixes_with_context(
+    v: &Value,
+    rects: &HashMap<String, Rect>,
+    cmds: &mut Vec<EditorCommand>,
+    in_table: bool,
+) {
+    if !in_table && layout_str(v) == Some("horizontal") {
         let cards = children(v);
         // The reference: the WIDEST sibling with a declared FIXED width — the
         // pattern the other siblings should have matched. Widest, not first,
         // so a small fixed icon leading the row (e.g. a 36px IconTile before
         // a fill_container title) never gets mistaken for the reference card.
-        if let Some(ref_w) = cards
-            .iter()
-            .filter_map(fixed_width)
-            .fold(None, |acc: Option<f64>, w| {
-                Some(acc.map_or(w, |a| a.max(w)))
-            })
-        {
+        if let Some(ref_w) = rail_reference_width(cards) {
             for c in cards {
                 // Only `fill_container` siblings are candidates — a sibling
                 // with its own (smaller-by-design) fixed width is left alone.
-                if c.get("width").and_then(Value::as_str) != Some("fill_container") {
+                if !is_rail_card_sibling(c)
+                    || is_compact_status_badge_structure(c)
+                    || c.get("width").and_then(Value::as_str) != Some("fill_container")
+                {
                     continue;
                 }
                 let Some(cid) = c.get("id").and_then(Value::as_str) else {
@@ -1885,8 +1987,9 @@ fn collect_rail_width_collapse_fixes(
             }
         }
     }
+    let child_in_table = in_table || is_table_shape(v);
     for c in children(v) {
-        collect_rail_width_collapse_fixes(c, rects, cmds);
+        collect_rail_width_collapse_fixes_with_context(c, rects, cmds, child_in_table);
     }
 }
 
@@ -1969,3 +2072,7 @@ mod tests;
 #[cfg(test)]
 #[path = "geometry_rail_collapse_tests.rs"]
 mod rail_collapse_tests;
+
+#[cfg(test)]
+#[path = "geometry_compact_status_tests.rs"]
+mod compact_status_tests;

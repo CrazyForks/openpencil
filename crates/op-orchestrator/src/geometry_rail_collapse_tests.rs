@@ -195,6 +195,147 @@ fn all_fixed_width_row_is_left_untouched() {
     );
 }
 
+#[test]
+fn compact_badge_dot_does_not_become_a_card_width_reference() {
+    // 0723-2-gm regression: the AQI "Good" badge is a compact horizontal
+    // pill with a 6px status dot and a fill text label. The old generic row
+    // matcher treated the ellipse as a fixed card and rewrote the text width
+    // to 6px, while text-overflow repair changed it back on the next round.
+    let row = json!({
+        "type":"frame","id":"badge","name":"Good Badge","layout":"horizontal",
+        "children":[
+            {"type":"ellipse","id":"dot","width":6,"height":6},
+            {"type":"text","id":"label","content":"Good","width":"fill_container"}
+        ]
+    });
+    let rects = rects(&[
+        ("badge", 0.0, 0.0, 52.0, 24.0),
+        ("dot", 8.0, 9.0, 6.0, 6.0),
+        ("label", 18.0, 4.0, 2.0, 16.0),
+    ]);
+    let mut cmds = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    collect_rail_width_collapse_fixes(&row, &rects, &mut cmds);
+    collect_rail_width_collapse_diagnostics(&row, &rects, &mut diagnostics);
+
+    assert!(
+        cmds.is_empty(),
+        "leaf adornments and text are not card siblings: {cmds:?}"
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "detect-only echo must share the same card-only gate: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn compact_status_badge_is_not_a_collapsed_card_candidate() {
+    // The inverse 0723-2-gm failure: a fixed 96px title wrapper could look
+    // like the rail reference while the already-damaged status BADGE was a
+    // 17px fill_container frame. Both are containers, but neither is a card
+    // rail. The status-dot anatomy must keep the badge out of both fix and
+    // detect modes.
+    let row = json!({
+        "type":"frame","id":"header","layout":"horizontal",
+        "justifyContent":"space_between","children":[
+            {
+                "type":"frame","id":"title","width":96,"layout":"horizontal",
+                "children":[{"type":"text","id":"title-text","content":"AIR QUALITY"}]
+            },
+            {
+                "type":"frame","id":"badge","width":"fill_container",
+                "layout":"horizontal","gap":4,"padding":[3,8],
+                "fill":[{"type":"solid","color":"#C4F82A20"}],
+                "children":[
+                    {"type":"ellipse","id":"dot","width":6,"height":6},
+                    {"type":"text","id":"label","content":"Good","width":"fill_container"}
+                ]
+            }
+        ]
+    });
+    let rects = rects(&[
+        ("header", 0.0, 0.0, 129.0, 22.0),
+        ("title", 0.0, 0.0, 96.0, 14.0),
+        ("badge", 112.0, 0.0, 17.0, 22.0),
+        ("dot", 120.0, 8.0, 6.0, 6.0),
+        ("label", 130.0, 4.0, 1.0, 14.0),
+    ]);
+    let mut cmds = Vec::new();
+    let mut diagnostics = Vec::new();
+
+    collect_rail_width_collapse_fixes(&row, &rects, &mut cmds);
+    collect_rail_width_collapse_diagnostics(&row, &rects, &mut diagnostics);
+
+    assert!(
+        cmds.is_empty(),
+        "compact status badge is not a card candidate: {cmds:?}"
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "detect-only mode must share the status-badge exclusion: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn starved_fill_table_cell_is_not_treated_as_a_card_rail() {
+    let table = json!({
+        "type":"frame","id":"table","layout":"vertical","children":[
+            {
+                "type":"frame","id":"row-1","layout":"horizontal","gap":8,
+                "children":[
+                    {"type":"frame","id":"r1-name","width":166,"children":[]},
+                    {"type":"frame","id":"r1-email","width":100,"children":[]},
+                    {"type":"frame","id":"r1-contact","width":"fill_container","children":[]}
+                ]
+            },
+            {
+                "type":"frame","id":"row-2","layout":"horizontal","gap":8,
+                "children":[
+                    {"type":"frame","id":"r2-name","width":166,"children":[]},
+                    {"type":"frame","id":"r2-email","width":100,"children":[]},
+                    {"type":"frame","id":"r2-contact","width":"fill_container","children":[]}
+                ]
+            }
+        ]
+    });
+    let rects = rects(&[
+        ("table", 0.0, 0.0, 300.0, 80.0),
+        ("row-1", 0.0, 0.0, 300.0, 32.0),
+        ("r1-name", 0.0, 0.0, 166.0, 32.0),
+        ("r1-email", 174.0, 0.0, 100.0, 32.0),
+        ("r1-contact", 282.0, 0.0, 18.0, 32.0),
+        ("row-2", 0.0, 40.0, 300.0, 32.0),
+        ("r2-name", 0.0, 40.0, 166.0, 32.0),
+        ("r2-email", 174.0, 40.0, 100.0, 32.0),
+        ("r2-contact", 282.0, 40.0, 18.0, 32.0),
+    ]);
+    let row = &table["children"][0];
+
+    // Prove the row would satisfy the generic ratio/floor detector without
+    // its table context.
+    let mut context_free = Vec::new();
+    collect_rail_width_collapse_fixes(row, &rects, &mut context_free);
+    assert!(
+        !context_free.is_empty(),
+        "fixture must exercise the raw rail-width ratio"
+    );
+
+    let mut cmds = Vec::new();
+    collect_rail_width_collapse_fixes(&table, &rects, &mut cmds);
+    assert!(
+        cmds.is_empty(),
+        "table column scaling owns starved cells; card-rail repair must abstain: {cmds:?}"
+    );
+
+    let mut diagnostics = Vec::new();
+    collect_rail_width_collapse_diagnostics_with_context(row, &rects, &mut diagnostics, true);
+    assert!(
+        diagnostics.is_empty(),
+        "detect-only mode must share the table exclusion: {diagnostics:?}"
+    );
+}
+
 /// 0718-1-k3-1 postmortem (Bug A) — exact-number regression. Measured on
 /// the real file: a 342px-inner rail, one 232px fixed-width reference card,
 /// two `fill_container` siblings squeezed to 41px each (232 + 2×14 gap +
