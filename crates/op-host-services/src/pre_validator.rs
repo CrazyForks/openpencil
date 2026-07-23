@@ -393,6 +393,16 @@ mod tests {
         );
     }
 
+    /// edge-section-padding: exercises independent per-section `SetPadding`
+    /// plans and the host's NumberArray command translation.
+    #[test]
+    fn parity_edge_section_padding() {
+        assert_parity(
+            include_str!("../../op-design-lint/tests/fixtures/docs/edge-section-padding.json"),
+            "edge-section-padding",
+        );
+    }
+
     /// stacked-horizontal-padding: all Info severity — zero fixes applied;
     /// doc remains unchanged under both paths.
     #[test]
@@ -442,7 +452,7 @@ mod tests {
     }
 
     #[test]
-    fn pre_validation_preserves_scroller_layout_region() {
+    fn pre_validation_preserves_scroller_but_repairs_regular_sibling() {
         let doc: jian_ops_schema::PenDocument = serde_json::from_str(
             r##"{
                 "version":"1.0",
@@ -480,7 +490,10 @@ mod tests {
 
         let result = LintPreValidator.run_pre_validation_fixes(&mut sink);
 
-        assert_eq!(result.total, 0, "scroller geometry fixes must be filtered");
+        assert_eq!(
+            result.total, 1,
+            "the scroller must be protected while its regular sibling gets a page rail"
+        );
         let root = op_editor_core::walkers::find_node(
             sink.state().active_children(),
             &op_editor_core::NodeId::new("root"),
@@ -488,6 +501,15 @@ mod tests {
         .expect("root exists");
         let root_json = serde_json::to_value(root).expect("root serializes");
         assert!(root_json.get("padding").is_none());
+        let summary = op_editor_core::walkers::find_node(
+            sink.state().active_children(),
+            &op_editor_core::NodeId::new("summary"),
+        )
+        .expect("summary exists");
+        assert_eq!(
+            serde_json::to_value(summary).unwrap()["padding"],
+            serde_json::json!([0.0, 24.0, 0.0, 24.0])
+        );
         let label = op_editor_core::walkers::find_node(
             sink.state().active_children(),
             &op_editor_core::NodeId::new("label"),
@@ -497,5 +519,68 @@ mod tests {
             serde_json::to_value(label).unwrap()["height"],
             serde_json::json!(24.0)
         );
+    }
+
+    #[test]
+    fn pre_validation_repairs_header_beside_protected_scroller() {
+        let doc: jian_ops_schema::PenDocument = serde_json::from_str(
+            r##"{
+                "version":"1.0",
+                "children":[{
+                    "type":"frame","id":"root","width":375,"height":812,"layout":"vertical",
+                    "children":[
+                        {
+                            "type":"frame","id":"hourly","layout":"vertical",
+                            "children":[
+                                {
+                                    "type":"frame","id":"hourly-header","role":"navbar",
+                                    "layout":"horizontal",
+                                    "children":[{
+                                        "type":"text","id":"hourly-title","content":"Hourly"
+                                    }]
+                                },
+                                {
+                                    "type":"frame","id":"hourly-scroll",
+                                    "layout":"horizontal","clipContent":true,
+                                    "children":[{
+                                        "type":"frame","id":"hour-card",
+                                        "children":[{
+                                            "type":"text","id":"hour-label","content":"Now"
+                                        }]
+                                    }]
+                                }
+                            ]
+                        },
+                        {
+                            "type":"frame","id":"forecast","padding":[0,24,0,24],
+                            "children":[{
+                                "type":"text","id":"forecast-title","content":"7-Day"
+                            }]
+                        }
+                    ]
+                }]
+            }"##,
+        )
+        .expect("header plus scroller fixture");
+        let mut sink = TestSink::from_doc(doc);
+
+        let result = LintPreValidator.run_pre_validation_fixes(&mut sink);
+
+        assert_eq!(result.total, 1);
+        let header = op_editor_core::walkers::find_node(
+            sink.state().active_children(),
+            &op_editor_core::NodeId::new("hourly-header"),
+        )
+        .expect("header exists");
+        assert_eq!(
+            serde_json::to_value(header).unwrap()["padding"],
+            serde_json::json!([0.0, 24.0, 0.0, 24.0])
+        );
+        let scroller = op_editor_core::walkers::find_node(
+            sink.state().active_children(),
+            &op_editor_core::NodeId::new("hourly-scroll"),
+        )
+        .expect("scroller exists");
+        assert!(serde_json::to_value(scroller).unwrap()["padding"].is_null());
     }
 }

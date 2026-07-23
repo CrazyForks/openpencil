@@ -463,6 +463,32 @@ mod tests {
         );
     }
 
+    /// Per-section mobile rails plan one `SetPadding` action per offender and
+    /// remain structurally equivalent to the direct mutation path.
+    #[test]
+    fn equivalence_edge_section_padding() {
+        let raw = include_str!("../tests/fixtures/docs/edge-section-padding.json");
+        let mut clone_a: PenDocument = serde_json::from_str(raw).expect("parse");
+        let mut clone_b: PenDocument = serde_json::from_str(raw).expect("parse");
+
+        let report = detect_and_fix(&mut clone_a);
+        let plan = detect_and_plan(&clone_b);
+        let applied = plan
+            .iter()
+            .filter(|fix| apply_planned_fix_to_doc(&mut clone_b, fix))
+            .count();
+
+        assert_eq!(report.total, 2);
+        assert_eq!(plan.len(), 2);
+        assert_eq!(applied, 2);
+        assert!(plan.iter().all(|fix| matches!(
+            &fix.action,
+            PlannedAction::SetPadding(value)
+                if value == &serde_json::json!([0, 24, 0, 24])
+        )));
+        assert_eq!(clone_a, clone_b);
+    }
+
     /// Load the `stacked-horizontal-padding` fixture and assert equivalence.
     ///
     /// This fixture exercises an `Info`-severity `StackedHorizontalPadding`

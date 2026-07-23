@@ -21,6 +21,8 @@ pub mod widget_a11y;
 
 #[cfg(test)]
 mod siblings_tests;
+#[cfg(test)]
+mod spacing_edge_tests;
 
 pub use siblings::*;
 pub use spacing::*;

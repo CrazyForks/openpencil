@@ -4,19 +4,24 @@
 //! Two aesthetic detectors share a "mobile-page shape" filter — a `frame`
 //! whose width is 320–480, whose height is `>= 568` and `>= width * 1.5`,
 //! with a `layout` set and `>= 2` children:
-//! - `detect_edge_section_padding` — root has 0 h-padding and a content
-//!   section glues text / icons to the screen edge.
+//! - `detect_edge_section_padding` — root has 0 h-padding and one or more
+//!   direct content sections glue text / icons to the screen edge.
 //! - `detect_stacked_horizontal_padding` — root and a content section both
 //!   carry h-padding, producing a doubled gutter.
 
-use jian_ops_schema::node::{Padding, PenNode};
+use jian_ops_schema::node::{container::LayoutMode, Padding, PenNode};
 use jian_ops_schema::sizing::SizingBehavior;
 use serde_json::Value;
 
 use crate::issue::{FixProperty, Issue, IssueCategory, IssueSeverity};
 use crate::node_util::{
-    children, fmt_num, json_number, node_id, node_kind, padding, raw_padding_value, role, NodeKind,
+    children, fmt_num, has_stroke, json_number, node_fills, node_id, node_kind, padding,
+    raw_padding_value, role, NodeKind,
 };
+
+const DEFAULT_MOBILE_SECTION_RAIL: f64 = 24.0;
+const MIN_MOBILE_SECTION_RAIL: f64 = 16.0;
+const MAX_MOBILE_SECTION_RAIL: f64 = 28.0;
 
 /// Roles that legitimately span the full mobile viewport width and SHOULD
 /// have 0 horizontal padding from the page root. Port of the TS
@@ -30,6 +35,8 @@ const FULL_BLEED_ROLES: &[&str] = &[
     "header",
     "top-nav",
     "bottom-nav",
+    "bottom-tab-bar",
+    "bottom-navigation-bar",
     "status-bar",
     "tab-bar",
     "tabbar",
@@ -69,6 +76,22 @@ fn get_padding_right(node: &PenNode) -> f64 {
     }
 }
 
+fn get_padding_top(node: &PenNode) -> f64 {
+    match padding(node) {
+        Some(Padding::LtrB(p)) => p[0],
+        Some(Padding::XY([v, _])) | Some(Padding::Uniform(v)) => *v,
+        Some(Padding::Expression(_)) | None => 0.0,
+    }
+}
+
+fn get_padding_bottom(node: &PenNode) -> f64 {
+    match padding(node) {
+        Some(Padding::LtrB(p)) => p[2],
+        Some(Padding::XY([v, _])) | Some(Padding::Uniform(v)) => *v,
+        Some(Padding::Expression(_)) | None => 0.0,
+    }
+}
+
 /// Port of `hasTextOrIconDescendant` (`detectors-spacing.ts:45-54`). True when
 /// `node` is — or recursively contains — a `text` or `icon_font` node.
 fn has_text_or_icon_descendant(node: &PenNode) -> bool {
@@ -92,6 +115,104 @@ fn is_image_only_section(node: &PenNode) -> bool {
         }
         role(c).unwrap_or("").to_lowercase() == "image-placeholder"
     })
+}
+
+fn is_full_bleed_section(node: &PenNode) -> bool {
+    let child_role = role(node).unwrap_or("").to_lowercase();
+    FULL_BLEED_ROLES.contains(&child_role.as_str()) || is_image_only_section(node)
+}
+
+fn has_concrete_zero_horizontal_padding(node: &PenNode) -> bool {
+    !matches!(padding(node), Some(Padding::Expression(_)))
+        && get_padding_left(node) == 0.0
+        && get_padding_right(node) == 0.0
+}
+
+fn is_intentional_horizontal_scroller(node: &PenNode) -> bool {
+    match node {
+        PenNode::Frame(node) => {
+            node.container.layout == Some(LayoutMode::Horizontal)
+                && node.container.clip_content == Some(true)
+        }
+        PenNode::Group(node) => {
+            node.container.layout == Some(LayoutMode::Horizontal)
+                && node.container.clip_content == Some(true)
+        }
+        PenNode::Rectangle(node) => {
+            node.container.layout == Some(LayoutMode::Horizontal)
+                && node.container.clip_content == Some(true)
+        }
+        _ => false,
+    }
+}
+
+fn contains_intentional_horizontal_scroller(node: &PenNode) -> bool {
+    is_intentional_horizontal_scroller(node)
+        || children(node)
+            .iter()
+            .any(contains_intentional_horizontal_scroller)
+}
+
+fn is_transparent_container(node: &PenNode) -> bool {
+    matches!(
+        node_kind(node),
+        NodeKind::Frame | NodeKind::Group | NodeKind::Rectangle
+    ) && node_fills(node).is_none_or(Vec::is_empty)
+        && !has_stroke(node)
+}
+
+fn infer_mobile_section_rail(kids: &[PenNode]) -> f64 {
+    let candidates: Vec<f64> = kids
+        .iter()
+        .filter(|child| matches!(node_kind(child), NodeKind::Frame))
+        .filter(|child| !is_full_bleed_section(child))
+        .filter_map(|child| {
+            let left = get_padding_left(child);
+            let right = get_padding_right(child);
+            let rail = (left + right) / 2.0;
+            ((left - right).abs() <= 0.5
+                && (MIN_MOBILE_SECTION_RAIL..=MAX_MOBILE_SECTION_RAIL).contains(&rail))
+            .then_some(rail)
+        })
+        .collect();
+
+    let mut best = DEFAULT_MOBILE_SECTION_RAIL;
+    let mut best_count = 0usize;
+    let mut best_distance = f64::INFINITY;
+    for candidate in &candidates {
+        let count = candidates
+            .iter()
+            .filter(|other| (**other - *candidate).abs() <= 0.5)
+            .count();
+        let distance = (*candidate - DEFAULT_MOBILE_SECTION_RAIL).abs();
+        if count > best_count || (count == best_count && distance < best_distance) {
+            best = *candidate;
+            best_count = count;
+            best_distance = distance;
+        }
+    }
+    best
+}
+
+fn suggested_symmetric_padding(node: &PenNode, rail: f64) -> Value {
+    Value::Array(vec![
+        json_number(get_padding_top(node)),
+        json_number(rail),
+        json_number(get_padding_bottom(node)),
+        json_number(rail),
+    ])
+}
+
+fn push_edge_section_issue(node: &PenNode, rail: f64, reason: String, issues: &mut Vec<Issue>) {
+    issues.push(Issue {
+        node_id: node_id(node).to_string(),
+        category: IssueCategory::EdgeSectionPadding,
+        severity: IssueSeverity::Warning,
+        property: FixProperty::Padding,
+        current_value: raw_padding_value(padding(node)),
+        suggested_value: suggested_symmetric_padding(node, rail),
+        reason,
+    });
 }
 
 /// True when a node looks like a real mobile device frame — the shared shape
@@ -118,21 +239,24 @@ fn looks_like_mobile_page(node: &PenNode) -> bool {
 
 /// Port of `detectEdgeSectionPadding` (`detectors-spacing.ts:100-197`).
 ///
-/// Detects the "Categories no padding" bug — a mobile page where the root has
-/// 0 left padding AND a content section also has 0 left padding AND that
-/// section contains visible text / icon descendants, so content visually
-/// butts against the viewport edge.
+/// Detects the "Categories no padding" bug — a mobile page whose root owns no
+/// horizontal gutter and whose direct content sections inconsistently apply
+/// their own page rail. Each repairable unpadded content section is reported
+/// separately, so one correctly padded sibling no longer suppresses repairs
+/// for the rest of the page.
 ///
 /// False-positive guards: mobile-shaped root only; skip child sections with
 /// full-bleed roles (`FULL_BLEED_ROLES`); skip image-only sections; only flag
-/// sections that carry text / icon descendants. The two-pass content-child
-/// scan also tracks whether any sibling already carries per-section h-padding
-/// — if so the design has opted out of root-level gutter and the detector
-/// aborts entirely (the `hasPerSectionPaddedSibling` rule, added per 2026-05-11
-/// user feedback that root padding stacked on top of per-section gutters).
+/// sections that carry text / icon descendants.
 ///
-/// Suggested fix: set `root.padding` to `[top, 16, bottom, 16]`, preserving
-/// vertical padding — 16 is the iOS HIG / Material default mobile gutter.
+/// The symmetric rail is inferred from direct padded content siblings when
+/// they agree on a value in the 16–28px mobile range; otherwise the current
+/// 24px mobile rail policy is used. Existing vertical padding is preserved.
+///
+/// A section that directly owns an intentional clipped horizontal scroller is
+/// not itself targeted because host pre-validation protects scroller ancestry.
+/// Instead, transparent direct header siblings are targeted. This aligns the
+/// visible header without rewriting authored scroll geometry.
 pub fn detect_edge_section_padding(root: &PenNode) -> Vec<Issue> {
     let mut issues = Vec::new();
     walk_edge_section_padding(root, &mut issues);
@@ -144,77 +268,65 @@ fn walk_edge_section_padding(node: &PenNode, issues: &mut Vec<Issue>) {
     // A mobile root: page-shaped, `layout` set, `>= 2` children.
     let is_mobile_root = looks_like_mobile_page(node) && has_layout(node) && kids.len() >= 2;
 
-    if is_mobile_root && get_padding_left(node) == 0.0 {
-        // Two-pass scan over content children, skipping full-bleed chrome /
-        // image-only banners which are intentionally edge-to-edge:
-        //   - any with own h-padding > 0  → the design has chosen the
-        //                                   per-section gutter pattern; abort.
-        //   - any with no padding but text/icon descendants → genuinely glues
-        //                                   content to the viewport edge; flag.
-        let mut has_per_section_padded_sibling = false;
-        let mut offending_children: usize = 0;
+    if is_mobile_root && has_concrete_zero_horizontal_padding(node) {
+        let rail = infer_mobile_section_rail(kids);
         for child in kids {
             if !matches!(node_kind(child), NodeKind::Frame) {
                 continue;
             }
-            let child_role = role(child).unwrap_or("").to_lowercase();
-            if FULL_BLEED_ROLES.contains(&child_role.as_str()) {
+            if is_full_bleed_section(child) {
                 continue;
             }
-            if is_image_only_section(child) {
+            // Padding a surfaced root-direct card changes its interior but
+            // leaves the card border glued to the viewport. Without an outer
+            // wrapper there is no safe automatic inset, so report/fix only
+            // transparent section owners here; whole-doc cleanup can repair
+            // generated wrapper structure first.
+            if !is_transparent_container(child) {
                 continue;
             }
-            if get_padding_left(child) > 0.0 {
-                has_per_section_padded_sibling = true;
+            if !has_concrete_zero_horizontal_padding(child) {
                 continue;
             }
             if !has_text_or_icon_descendant(child) {
                 continue;
             }
-            offending_children += 1;
-        }
-        if offending_children > 0 && !has_per_section_padded_sibling {
-            let current_pad = padding(node);
-            // Suggested padding — 4 cases mirroring the TS `currentPad` branch.
-            // Every numeric element routes through `json_number` so an
-            // integral inset serializes as a JSON integer, not a float.
-            let suggested: Value = match current_pad {
-                Some(Padding::LtrB(p)) => Value::Array(vec![
-                    json_number(p[0]),
-                    json_number(16.0),
-                    json_number(p[2]),
-                    json_number(16.0),
-                ]),
-                Some(Padding::XY([v, _])) => Value::Array(vec![
-                    json_number(*v),
-                    json_number(16.0),
-                    json_number(*v),
-                    json_number(16.0),
-                ]),
-                Some(Padding::Uniform(v)) => Value::Array(vec![
-                    json_number(*v),
-                    json_number(16.0),
-                    json_number(*v),
-                    json_number(16.0),
-                ]),
-                Some(Padding::Expression(_)) | None => Value::Array(vec![
-                    json_number(0.0),
-                    json_number(16.0),
-                    json_number(0.0),
-                    json_number(16.0),
-                ]),
-            };
-            issues.push(Issue {
-                node_id: node_id(node).to_string(),
-                category: IssueCategory::EdgeSectionPadding,
-                severity: IssueSeverity::Warning,
-                property: FixProperty::Padding,
-                current_value: raw_padding_value(current_pad),
-                suggested_value: suggested,
-                reason: format!(
-                    "mobile root has 0 horizontal padding while {offending_children} content section(s) glue text/icon to screen edge"
+
+            let direct_scroller = children(child)
+                .iter()
+                .any(is_intentional_horizontal_scroller);
+            if direct_scroller {
+                for header in children(child).iter().filter(|header| {
+                    !is_intentional_horizontal_scroller(header)
+                        && is_transparent_container(header)
+                        && has_concrete_zero_horizontal_padding(header)
+                        && has_text_or_icon_descendant(header)
+                }) {
+                    push_edge_section_issue(
+                        header,
+                        rail,
+                        format!(
+                            "mobile scroller header has 0 horizontal padding; apply a {}px page rail without changing clipped scroll geometry",
+                            fmt_num(rail)
+                        ),
+                        issues,
+                    );
+                }
+                continue;
+            }
+            if contains_intentional_horizontal_scroller(child) {
+                continue;
+            }
+
+            push_edge_section_issue(
+                child,
+                rail,
+                format!(
+                    "mobile content section has 0 horizontal padding; apply a {}px symmetric page rail",
+                    fmt_num(rail)
                 ),
-            });
+                issues,
+            );
         }
     }
 
@@ -298,195 +410,6 @@ fn walk_stacked_horizontal_padding(node: &PenNode, issues: &mut Vec<Issue>) {
 
     for child in kids {
         walk_stacked_horizontal_padding(child, issues);
-    }
-}
-
-#[cfg(test)]
-mod edge_section_padding_tests {
-    use super::*;
-    use serde_json::json;
-
-    fn node(value: serde_json::Value) -> PenNode {
-        serde_json::from_value(value).expect("fixture must deserialize as PenNode")
-    }
-
-    /// A mobile-shaped root with 0 left padding and a content child that has
-    /// text and 0 padding → one `edge-section-padding` issue.
-    #[test]
-    fn flags_mobile_root_with_edge_glued_content() {
-        let root = node(json!({
-            "type": "frame", "id": "root",
-            "width": 393, "height": 852, "layout": "vertical",
-            "children": [
-                {
-                    "type": "frame", "id": "s1", "role": "categories",
-                    "children": [{"type": "text", "id": "t1", "content": "Categories"}]
-                },
-                {
-                    "type": "frame", "id": "s2", "role": "list",
-                    "children": [{"type": "text", "id": "t2", "content": "Item"}]
-                }
-            ]
-        }));
-        let issues = detect_edge_section_padding(&root);
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].node_id, "root");
-        assert_eq!(issues[0].category, IssueCategory::EdgeSectionPadding);
-        assert_eq!(issues[0].property, FixProperty::Padding);
-        assert_eq!(issues[0].severity, IssueSeverity::Warning);
-        // No prior padding → suggested `[0, 16, 0, 16]`.
-        assert_eq!(issues[0].suggested_value, json!([0, 16, 0, 16]));
-        assert_eq!(issues[0].current_value, json!(null));
-    }
-
-    /// A sibling already carrying per-section h-padding aborts the detector —
-    /// the design has opted out of root-level gutter.
-    #[test]
-    fn aborts_when_a_sibling_has_per_section_padding() {
-        let root = node(json!({
-            "type": "frame", "id": "root",
-            "width": 393, "height": 852, "layout": "vertical",
-            "children": [
-                {
-                    "type": "frame", "id": "s1", "role": "categories",
-                    "children": [{"type": "text", "id": "t1", "content": "Categories"}]
-                },
-                {
-                    "type": "frame", "id": "s2", "role": "list", "padding": [0, 24, 0, 24],
-                    "children": [{"type": "text", "id": "t2", "content": "Item"}]
-                }
-            ]
-        }));
-        assert!(detect_edge_section_padding(&root).is_empty());
-    }
-
-    /// A child with a full-bleed role (`hero`) is skipped — only the
-    /// non-full-bleed sibling with text/no-padding counts.
-    #[test]
-    fn skips_full_bleed_role_children() {
-        // Only the hero child has text+no-padding; it is skipped → no issue.
-        let root = node(json!({
-            "type": "frame", "id": "root",
-            "width": 393, "height": 852, "layout": "vertical",
-            "children": [
-                {
-                    "type": "frame", "id": "hero", "role": "hero",
-                    "children": [{"type": "text", "id": "t1", "content": "Welcome"}]
-                },
-                {
-                    "type": "frame", "id": "banner", "role": "banner",
-                    "children": [{"type": "text", "id": "t2", "content": "Sale"}]
-                }
-            ]
-        }));
-        assert!(detect_edge_section_padding(&root).is_empty());
-    }
-
-    /// An image-only child is skipped (intentional full-bleed media).
-    #[test]
-    fn skips_image_only_section() {
-        let root = node(json!({
-            "type": "frame", "id": "root",
-            "width": 393, "height": 852, "layout": "vertical",
-            "children": [
-                {
-                    "type": "frame", "id": "media", "role": "gallery",
-                    "children": [{"type": "image", "id": "img1", "src": "a.png"}]
-                },
-                {
-                    "type": "frame", "id": "media2", "role": "gallery",
-                    "children": [{"type": "image", "id": "img2", "src": "b.png"}]
-                }
-            ]
-        }));
-        assert!(detect_edge_section_padding(&root).is_empty());
-    }
-
-    /// A non-mobile-shaped frame (393×200 — a card / modal) is never flagged.
-    #[test]
-    fn never_flags_non_mobile_shaped_frame() {
-        let root = node(json!({
-            "type": "frame", "id": "root",
-            "width": 393, "height": 200, "layout": "vertical",
-            "children": [
-                {
-                    "type": "frame", "id": "s1", "role": "categories",
-                    "children": [{"type": "text", "id": "t1", "content": "Categories"}]
-                },
-                {
-                    "type": "frame", "id": "s2", "role": "list",
-                    "children": [{"type": "text", "id": "t2", "content": "Item"}]
-                }
-            ]
-        }));
-        assert!(detect_edge_section_padding(&root).is_empty());
-    }
-
-    /// A child with no text / icon descendants is not an offender.
-    #[test]
-    fn ignores_section_without_text_or_icon() {
-        let root = node(json!({
-            "type": "frame", "id": "root",
-            "width": 393, "height": 852, "layout": "vertical",
-            "children": [
-                {
-                    "type": "frame", "id": "s1", "role": "divider-area",
-                    "children": [{"type": "rectangle", "id": "r1"}]
-                },
-                {
-                    "type": "frame", "id": "s2", "role": "divider-area",
-                    "children": [{"type": "rectangle", "id": "r2"}]
-                }
-            ]
-        }));
-        assert!(detect_edge_section_padding(&root).is_empty());
-    }
-
-    /// An existing root padding is preserved on the vertical axis when the
-    /// suggested `[top, 16, bottom, 16]` is built.
-    #[test]
-    fn preserves_vertical_padding_in_suggestion() {
-        let root = node(json!({
-            "type": "frame", "id": "root",
-            "width": 393, "height": 852, "layout": "vertical",
-            "padding": [12, 0, 12, 0],
-            "children": [
-                {
-                    "type": "frame", "id": "s1", "role": "categories",
-                    "children": [{"type": "text", "id": "t1", "content": "Categories"}]
-                },
-                {
-                    "type": "frame", "id": "s2", "role": "list",
-                    "children": [{"type": "text", "id": "t2", "content": "Item"}]
-                }
-            ]
-        }));
-        let issues = detect_edge_section_padding(&root);
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].suggested_value, json!([12, 16, 12, 16]));
-        assert_eq!(issues[0].current_value, json!([12, 0, 12, 0]));
-    }
-
-    /// An icon_font descendant (no text) still counts as content.
-    #[test]
-    fn flags_section_with_icon_descendant() {
-        let root = node(json!({
-            "type": "frame", "id": "root",
-            "width": 393, "height": 852, "layout": "vertical",
-            "children": [
-                {
-                    "type": "frame", "id": "s1", "role": "toolbar-area",
-                    "children": [{"type": "icon_font", "id": "i1", "iconFontName": "star"}]
-                },
-                {
-                    "type": "frame", "id": "s2", "role": "toolbar-area",
-                    "children": [{"type": "icon_font", "id": "i2", "iconFontName": "heart"}]
-                }
-            ]
-        }));
-        let issues = detect_edge_section_padding(&root);
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].node_id, "root");
     }
 }
 
