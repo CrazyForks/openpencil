@@ -19,6 +19,7 @@ pub mod design_md_policy;
 pub mod design_system;
 pub mod design_type;
 pub mod intent;
+pub(crate) mod mobile_content_rail;
 mod mobile_reflow;
 pub mod model_profile;
 pub(crate) mod orchestration_self_check;
@@ -92,6 +93,8 @@ mod cleanup_scroller_preservation_tests;
 mod geometry_chip_tests;
 #[cfg(test)]
 mod geometry_root_containment_tests;
+#[cfg(test)]
+mod mobile_content_rail_tests;
 #[cfg(test)]
 mod prompt_resolved_style_tests;
 #[cfg(test)]

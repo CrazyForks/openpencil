@@ -70,6 +70,12 @@ pub(crate) fn repair_mobile_structural_chrome_for_all_roots(sink: &mut dyn DocSi
 }
 
 pub(crate) fn repair_mobile_structural_chrome(sink: &mut dyn DocSink, root_id: &str) {
+    // Some model turns incorrectly tag a large late-page content shell as the
+    // bottom nav, then append the real tab row inside it after unrelated
+    // alerts/cards. Split only that unambiguous mixed shell first so the normal
+    // chrome pass below sees the real nav as a root-level surface.
+    promote_mixed_bottom_nav_shell(sink, root_id);
+
     let repairs = {
         let Some(root) = super::find_root(sink.state(), root_id) else {
             return;
@@ -131,6 +137,129 @@ pub(crate) fn repair_mobile_structural_chrome(sink: &mut dyn DocSink, root_id: &
             patch_json: r#"{"fill":null,"stroke":null,"effects":null,"cornerRadius":0,"width":"fill_container","height":"fill_container","layout":"vertical","gap":4,"padding":[4,0],"justifyContent":"center","alignItems":"center"}"#.to_string(),
             page_id: None,
         });
+    }
+}
+
+#[derive(Debug)]
+struct MixedBottomNavPromotion {
+    shell_id: NodeId,
+    nav_id: NodeId,
+}
+
+fn promote_mixed_bottom_nav_shell(sink: &mut dyn DocSink, root_id: &str) {
+    let promotion = {
+        let Some(root) = super::find_root(sink.state(), root_id) else {
+            return;
+        };
+        if !super::is_mobile_root(root) {
+            return;
+        }
+        mixed_bottom_nav_promotion(root)
+    };
+    let Some(promotion) = promotion else {
+        return;
+    };
+
+    if !sink.apply(EditorCommand::PatchNodeData {
+        node_id: promotion.shell_id,
+        // The bottom-nav name is semantic input to later cleanup passes. Once
+        // the real tab row is promoted, keep this mixed shell eligible for
+        // ordinary content-rail repair under a deliberately neutral,
+        // transparent structural wrapper. Business cards inside retain their
+        // own authored surfaces.
+        patch_json: r#"{"role":null,"name":"App Content","fill":null,"stroke":null,"effects":null,"cornerRadius":0}"#.to_string(),
+        page_id: None,
+    }) {
+        return;
+    }
+    sink.apply(EditorCommand::MoveNode {
+        node_id: promotion.nav_id,
+        target_parent: NodeId::new(root_id.to_string()),
+        page_id: None,
+        index: None,
+    });
+}
+
+fn mixed_bottom_nav_promotion(root: &PenNode) -> Option<MixedBottomNavPromotion> {
+    let children = root.children()?;
+    let last_index = children.len().saturating_sub(1);
+    let candidates: Vec<(usize, MixedBottomNavPromotion)> = children
+        .iter()
+        .enumerate()
+        .filter_map(|(index, child)| {
+            mixed_bottom_nav_shell_candidate(child, index == last_index)
+                .map(|promotion| (index, promotion))
+        })
+        .collect();
+    let [(shell_index, promotion)] = candidates.as_slice() else {
+        return None;
+    };
+
+    // A second root-level nav (or another wrapper containing one) makes it
+    // unclear which surface is canonical. Leave that tree intact for the
+    // existing duplicate-nav logic instead of reparenting speculatively.
+    if children.iter().enumerate().any(|(index, child)| {
+        index != *shell_index && bottom_nav_surface_target(child, index == last_index).is_some()
+    }) {
+        return None;
+    }
+    Some(MixedBottomNavPromotion {
+        shell_id: promotion.shell_id.clone(),
+        nav_id: promotion.nav_id.clone(),
+    })
+}
+
+fn mixed_bottom_nav_shell_candidate(
+    shell: &PenNode,
+    allow_structural: bool,
+) -> Option<MixedBottomNavPromotion> {
+    if !is_bottom_nav_surface(shell, allow_structural) {
+        return None;
+    }
+    let children = shell.children()?;
+    let nested_navs: Vec<&PenNode> = children
+        .iter()
+        .filter(|child| is_bottom_nav_surface(child, true))
+        .collect();
+    let [nav] = nested_navs.as_slice() else {
+        return None;
+    };
+    if !children.iter().any(|child| {
+        child.id_str() != nav.id_str() && is_substantial_non_nav_business_sibling(child)
+    }) {
+        return None;
+    }
+    Some(MixedBottomNavPromotion {
+        shell_id: NodeId::new(shell.id_str().to_string()),
+        nav_id: NodeId::new(nav.id_str().to_string()),
+    })
+}
+
+fn is_substantial_non_nav_business_sibling(node: &PenNode) -> bool {
+    if is_bottom_nav_surface(node, true) || node.height_px().is_some_and(|height| height <= 8.0) {
+        return false;
+    }
+    let hay = super::node_identity_haystack(node);
+    if super::contains_any(
+        &hay,
+        &["divider", "separator", "hairline", "rule", "分隔", "分割线"],
+    ) {
+        return false;
+    }
+    contains_meaningful_business_content(node)
+}
+
+fn contains_meaningful_business_content(node: &PenNode) -> bool {
+    match node {
+        PenNode::Text(text) => match &text.content {
+            jian_ops_schema::node::text::TextContent::Plain(content) => !content.trim().is_empty(),
+            jian_ops_schema::node::text::TextContent::Styled(segments) => !segments.is_empty(),
+        },
+        PenNode::Image(_) => true,
+        _ => node
+            .children()
+            .map(|children| children.iter().any(contains_meaningful_business_content))
+            .unwrap_or(false),
     }
 }
 

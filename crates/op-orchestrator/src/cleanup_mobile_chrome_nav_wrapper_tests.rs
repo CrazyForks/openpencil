@@ -106,6 +106,12 @@ fn bottom_nav_wrapper_with_divider_keeps_tabbar_full_width() {
         .expect("root survives");
     let outer = find_node(root, "bottom-nav").expect("outer nav survives");
     let inner = find_node(root, "tabbar").expect("inner tabbar survives");
+    assert!(
+        root.children().expect("root children").iter().any(|child| {
+            child.id_str() == "bottom-nav" && find_node(child, "tabbar").is_some()
+        }),
+        "a divider-only wrapper must retain its nested tabbar"
+    );
     let outer_json = serde_json::to_value(outer).expect("outer serializes");
     let inner_json = serde_json::to_value(inner).expect("inner serializes");
     assert_eq!(
@@ -119,6 +125,267 @@ fn bottom_nav_wrapper_with_divider_keeps_tabbar_full_width() {
         "inner tabbar must retain a full-width sizing mode: {inner_json}"
     );
     assert_eq!(inner_json["layout"], json!("horizontal"));
+}
+
+#[test]
+fn mixed_business_wrapper_promotes_real_tabbar_to_mobile_root() {
+    let mut sink = VecDocSink::new();
+    let tree: PenNode = serde_json::from_value(json!({
+        "type": "frame",
+        "id": "root",
+        "name": "Weather App",
+        "width": 375,
+        "height": 1285,
+        "layout": "vertical",
+        "children": [
+            {
+                "type": "frame",
+                "id": "content",
+                "name": "Forecast Content",
+                "width": "fill_container",
+                "height": 800,
+                "children": []
+            },
+            {
+                "type": "frame",
+                "id": "mixed-shell",
+                "name": "Bottom Navigation Bar",
+                "role": "bottom-tab-bar",
+                "width": "fill_container",
+                "height": 458,
+                "layout": "vertical",
+                "cornerRadius": 24,
+                "fill": [{"type": "solid", "color": "#111111"}],
+                "stroke": {
+                    "thickness": 1,
+                    "fill": [{"type": "solid", "color": "#334155"}]
+                },
+                "effects": [{
+                    "type": "shadow",
+                    "offsetX": 0,
+                    "offsetY": 8,
+                    "blur": 20,
+                    "spread": 0,
+                    "color": "#00000033"
+                }],
+                "children": [
+                    {
+                        "type": "frame",
+                        "id": "alert",
+                        "name": "Weather Alert Banner",
+                        "width": "fill_container",
+                        "height": 136,
+                        "children": [
+                            {
+                                "type": "text",
+                                "id": "alert-copy",
+                                "content": "Flash Flood & High Wind Warning",
+                                "width": "fill_container",
+                                "height": 24
+                            }
+                        ]
+                    },
+                    {
+                        "type": "frame",
+                        "id": "metrics",
+                        "name": "Metrics Grid",
+                        "width": "fill_container",
+                        "height": 226,
+                        "children": [
+                            {
+                                "type": "text",
+                                "id": "metrics-copy",
+                                "content": "Humidity 88%",
+                                "width": "fit_content",
+                                "height": 24
+                            }
+                        ]
+                    },
+                    {
+                        "type": "frame",
+                        "id": "tabbar",
+                        "name": "Bottom Tab Bar",
+                        "role": "bottom-tab-bar",
+                        "width": "fill_container",
+                        "height": 72,
+                        "layout": "horizontal",
+                        "children": [
+                            tab("now", "Now", "cloud-sun"),
+                            tab("radar", "Radar", "radar"),
+                            tab("locations", "Locations", "map-pin"),
+                            tab("settings", "Settings", "settings")
+                        ]
+                    }
+                ]
+            }
+        ]
+    }))
+    .expect("mixed nav wrapper json");
+    sink.state.apply(EditorCommand::InsertAuthoredSubtree {
+        nodes: vec![tree],
+        parent_id: NodeId::NONE,
+        page_id: None,
+    });
+    sink.applied.clear();
+
+    crate::cleanup::repair_mobile_structural_chrome_for_all_roots(&mut sink);
+
+    let root = sink
+        .state
+        .active_children()
+        .iter()
+        .find(|node| node.id_str() == "root")
+        .expect("root survives");
+    let root_children = root.children().expect("root children");
+    assert_eq!(
+        root_children
+            .iter()
+            .map(PenNodeExt::id_str)
+            .collect::<Vec<_>>(),
+        vec!["content", "mixed-shell", "tabbar"],
+        "the real tabbar must become the mobile root's last child"
+    );
+    let shell = &root_children[1];
+    assert_eq!(
+        shell.base().role.as_deref(),
+        None,
+        "the mixed content shell must stop claiming bottom-tab-bar semantics"
+    );
+    assert_eq!(
+        shell.base().name.as_deref(),
+        Some("App Content"),
+        "the promoted shell must no longer be excluded from content cleanup by a nav name"
+    );
+    let shell_json = serde_json::to_value(shell).expect("shell serializes");
+    assert!(
+        shell_json
+            .get("fill")
+            .is_none_or(serde_json::Value::is_null)
+            && shell_json
+                .get("stroke")
+                .is_none_or(serde_json::Value::is_null)
+            && shell_json
+                .get("effects")
+                .is_none_or(serde_json::Value::is_null)
+            && shell_json["cornerRadius"] == json!(0.0),
+        "the demoted content shell must be transparent: {shell_json}"
+    );
+    assert_eq!(
+        shell
+            .children()
+            .expect("shell children")
+            .iter()
+            .map(PenNodeExt::id_str)
+            .collect::<Vec<_>>(),
+        vec!["alert", "metrics"],
+        "business sections remain grouped while only the true nav row is promoted"
+    );
+    let nav = &root_children[2];
+    assert_eq!(nav.height_px(), Some(72.0));
+    assert_eq!(
+        serde_json::to_value(nav).expect("nav serializes")["width"],
+        json!(375.0),
+        "normal nav normalization runs after promotion"
+    );
+}
+
+#[test]
+fn ambiguous_mixed_wrapper_with_two_nav_rows_is_not_split() {
+    let mut sink = VecDocSink::new();
+    let tree: PenNode = serde_json::from_value(json!({
+        "type": "frame",
+        "id": "root",
+        "name": "Ambiguous App",
+        "width": 375,
+        "height": 812,
+        "layout": "vertical",
+        "children": [
+            {
+                "type": "frame",
+                "id": "mixed-shell",
+                "name": "Bottom Navigation Bar",
+                "role": "bottom-tab-bar",
+                "width": "fill_container",
+                "height": 300,
+                "layout": "vertical",
+                "children": [
+                    {
+                        "type": "frame",
+                        "id": "business",
+                        "name": "Summary",
+                        "width": "fill_container",
+                        "height": 120,
+                        "children": [
+                            {
+                                "type": "text",
+                                "id": "summary-copy",
+                                "content": "Summary",
+                                "width": "fit_content",
+                                "height": 24
+                            }
+                        ]
+                    },
+                    {
+                        "type": "frame",
+                        "id": "tabbar-a",
+                        "name": "Bottom Tab Bar A",
+                        "role": "bottom-tab-bar",
+                        "width": "fill_container",
+                        "height": 72,
+                        "layout": "horizontal",
+                        "children": [
+                            tab("a-home", "Home", "home"),
+                            tab("a-search", "Search", "search"),
+                            tab("a-profile", "Profile", "user")
+                        ]
+                    },
+                    {
+                        "type": "frame",
+                        "id": "tabbar-b",
+                        "name": "Bottom Tab Bar B",
+                        "role": "bottom-tab-bar",
+                        "width": "fill_container",
+                        "height": 72,
+                        "layout": "horizontal",
+                        "children": [
+                            tab("b-home", "Home", "home"),
+                            tab("b-search", "Search", "search"),
+                            tab("b-profile", "Profile", "user")
+                        ]
+                    }
+                ]
+            }
+        ]
+    }))
+    .expect("ambiguous nav wrapper json");
+    sink.state.apply(EditorCommand::InsertAuthoredSubtree {
+        nodes: vec![tree],
+        parent_id: NodeId::NONE,
+        page_id: None,
+    });
+    sink.applied.clear();
+
+    crate::cleanup::repair_mobile_structural_chrome_for_all_roots(&mut sink);
+
+    let root = sink
+        .state
+        .active_children()
+        .iter()
+        .find(|node| node.id_str() == "root")
+        .expect("root survives");
+    let root_children = root.children().expect("root children");
+    assert_eq!(
+        root_children
+            .iter()
+            .map(PenNodeExt::id_str)
+            .collect::<Vec<_>>(),
+        vec!["mixed-shell"],
+        "two plausible nav rows are ambiguous and must not be reparented"
+    );
+    let shell = &root_children[0];
+    assert_eq!(shell.base().role.as_deref(), Some("bottom-tab-bar"));
+    assert!(find_node(shell, "tabbar-a").is_some());
+    assert!(find_node(shell, "tabbar-b").is_some());
 }
 
 fn tab(id: &str, label: &str, icon: &str) -> serde_json::Value {

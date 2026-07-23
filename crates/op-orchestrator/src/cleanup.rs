@@ -1404,6 +1404,12 @@ pub fn run_cleanup_passes(sink: &mut dyn DocSink, plan: &OrchestratorPlan, root_
         // can grow the root around the stale numeric wrapper and erase the
         // evidence that the wrapper used to consume the entire viewport.
         cleanup_mobile_chrome::anchor_bottom_nav_last(sink, rid);
+        crate::mobile_content_rail::repair_mobile_content_rails(sink, rid);
+        // The newly-established section rail may expose a redundant transparent
+        // inner wrapper carrying the same horizontal inset. Re-run the
+        // existing ownership collapse after rail repair so only one layer owns
+        // the gutter.
+        collapse_nested_horizontal_padding(sink, rid);
         crate::mobile_reflow::repair_mobile_trailing_nav_reflow_for_root_in_sink(sink, rid);
         cleanup_mobile_dense::repair_dense_mobile_rows(sink, rid);
         cleanup_desktop_dashboard::repair_sparse_desktop_dashboard_rows(sink, plan, rid);

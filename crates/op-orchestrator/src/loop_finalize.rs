@@ -453,6 +453,7 @@ pub fn apply_loop_finalize(state: &mut EditorState) {
         crate::cleanup::repair_mobile_structural_chrome_for_all_roots(&mut sink);
         crate::avatar_repair::repair_avatar_slots_for_all_roots(&mut sink);
         crate::cleanup::anchor_bottom_nav_last_for_all_roots(&mut sink);
+        crate::mobile_content_rail::repair_mobile_content_rails_for_all_roots(&mut sink);
         crate::cleanup::distribute_bottom_nav_tabs_for_all_roots(&mut sink);
         crate::cleanup::collapse_nested_horizontal_padding_for_all_roots(&mut sink);
         crate::cleanup::expand_absolute_container_to_children_for_all_roots(&mut sink);
