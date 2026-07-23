@@ -293,11 +293,8 @@ mod tests {
         assert!(!stats.wrote_images_table);
         assert!(parsed.get("images").is_none());
 
-        let path = std::env::temp_dir().join(format!(
-            "openpencil-stream-load-{}-{}.op",
-            std::process::id(),
-            std::thread::current().name().unwrap_or("test")
-        ));
+        let path =
+            std::env::temp_dir().join(format!("openpencil-stream-load-{}.op", std::process::id()));
         std::fs::write(&path, streamed).expect("write fixture");
         let reloaded = super::super::load_editor_state(&path, op_editor_core::Locale::EnUs)
             .expect("product loader roundtrip");

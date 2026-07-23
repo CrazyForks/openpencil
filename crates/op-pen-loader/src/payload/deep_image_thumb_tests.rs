@@ -1,13 +1,4 @@
 use super::*;
-use std::sync::Mutex;
-
-static THUMB_TEST_LOCK: Mutex<()> = Mutex::new(());
-
-fn lock_thumbnail_registry() -> std::sync::MutexGuard<'static, ()> {
-    THUMB_TEST_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
 
 fn deeply_nested_document_with_thumb(paint_id: u64) -> String {
     let mut src =
@@ -42,7 +33,7 @@ fn deeply_nested_invalid_document_with_thumb(paint_id: u64) -> String {
 
 #[test]
 fn deep_load_recognizes_image_thumbs_as_a_seeded_table() {
-    let _guard = lock_thumbnail_registry();
+    let _guard = lock_thumbnail_registry_for_test();
     std::thread::Builder::new()
         .name("deep-thumb-loader-test".into())
         .stack_size(64 * 1024 * 1024)
@@ -77,7 +68,7 @@ fn deep_load_recognizes_image_thumbs_as_a_seeded_table() {
 
 #[test]
 fn failed_deep_typed_load_preserves_the_thumbnail_registry() {
-    let _guard = lock_thumbnail_registry();
+    let _guard = lock_thumbnail_registry_for_test();
     std::thread::Builder::new()
         .name("deep-thumb-transaction-test".into())
         .stack_size(64 * 1024 * 1024)

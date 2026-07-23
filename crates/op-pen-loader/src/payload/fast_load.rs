@@ -188,6 +188,7 @@ mod tests {
 
     #[test]
     fn fast_preserve_load_resolves_shared_images_and_attaches_thumbnails() {
+        let _guard = super::super::lock_thumbnail_registry_for_test();
         let source = "data:image/png;base64,c2hhcmVkLWltYWdl";
         let paint_id = jian_ops_schema::node::image_src::paint_image_id(source);
         let src = format!(
