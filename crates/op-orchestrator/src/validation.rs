@@ -416,7 +416,8 @@ pub struct ValidationSummary {
 /// 6. Emit `ValidationDone`.  Return `Ok(ValidationSummary)`.
 ///
 /// Returns `Err(OrchestratorError::Aborted)` when the abort flag is set before
-/// any vision round starts.
+/// a vision round starts. Once `ValidationStarted` has been emitted, every
+/// return path also emits terminal `ValidationDone`.
 ///
 /// `reference_screenshot` is currently always `None` from within this function;
 /// D1's host wiring will thread host-side reference images through.
@@ -472,6 +473,7 @@ pub fn run_post_generation_validation(
     for round in 1..=MAX_VALIDATION_ROUNDS {
         // 5a: abort check — if set before this round starts, return early.
         if abort.is_set() {
+            on_progress(Progress::ValidationDone { total_applied });
             return Err(OrchestratorError::Aborted);
         }
 

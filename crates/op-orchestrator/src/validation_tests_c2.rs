@@ -413,7 +413,7 @@ fn tc6_fix_history_dedup_second_occurrence_dropped() {
     );
 }
 
-/// TC-7: abort fires before the loop → Err(Aborted), no rounds.
+/// TC-7: abort before the loop → Err(Aborted), no rounds, terminal done event.
 #[test]
 fn tc7_abort_stops_loop() {
     let mut sink = sink_with_n_nodes(40);
@@ -441,6 +441,17 @@ fn tc7_abort_stops_loop() {
             .iter()
             .any(|p| matches!(p, Progress::ValidationRoundStarted { .. })),
         "no round should start after abort"
+    );
+    assert!(
+        matches!(
+            events.as_slice(),
+            [
+                Progress::ValidationStarted,
+                Progress::ValidationPreCheckDone { .. },
+                Progress::ValidationDone { total_applied: 0 }
+            ]
+        ),
+        "an aborted validation phase must still terminate: {events:?}"
     );
 }
 
