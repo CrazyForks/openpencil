@@ -47,6 +47,14 @@ pub(super) fn replace_file(tmp: &Path, path: &Path) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
     use std::ptr;
 
+    // ReplaceFileW and MoveFileExW can race when background save jobs commit
+    // different sibling temps to the same destination. Keep only the final
+    // name swap serialized; JSON encoding and file I/O remain concurrent.
+    static REPLACE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _replace_guard = REPLACE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+
     const REPLACEFILE_IGNORE_MERGE_ERRORS: u32 = 0x2;
     const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
     const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
