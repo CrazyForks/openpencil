@@ -134,6 +134,15 @@ mod tests {
         assert!(skill.content.contains("Not a floating pill"));
         assert!(skill
             .content
+            .contains("transparent root-direct section frames"));
+        assert!(skill.content.contains("padding: [0,24]"));
+        assert!(skill.content.contains("24px leading inset"));
+        assert!(skill.content.contains("0px trailing"));
+        assert!(!skill
+            .content
+            .contains("ALL content elements must sit inside ONE wrapper"));
+        assert!(skill
+            .content
             .contains("Do not repeat the same predictable mobile stack"));
         assert!(
             !skill.content.contains("BOTTOM TAB BAR — PILL STYLE"),

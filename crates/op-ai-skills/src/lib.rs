@@ -294,9 +294,10 @@ mod tests {
             "mobile-app domain skill must resolve for a mobile ask"
         );
         assert!(
-            prompt.contains("ordinary content wrapper")
-                && prompt.contains("height=\"fit_content\""),
-            "mobile domain must teach Hug Height as the ordinary content default"
+            prompt.contains("transparent root-direct section frames")
+                && prompt.contains("height=\"fit_content\"")
+                && prompt.contains("padding: [0,24]"),
+            "mobile domain must teach Hug Height and the section-owned content rail"
         );
     }
 

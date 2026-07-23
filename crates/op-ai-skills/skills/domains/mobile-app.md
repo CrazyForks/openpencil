@@ -11,8 +11,9 @@ category: domain
 
 MOBILE APP — MANDATORY THREE-SECTION ARCHITECTURE:
 
-Every mobile screen is composed as a vertical stack of exactly three sections.
-You MUST define all three before generating any content.
+Every mobile screen accounts for three logical layers: status chrome, app content,
+and optional bottom navigation. These are architectural layers, not a requirement
+to wrap every content section inside one padded App Content frame.
 
 Screen-height contract: use numeric 390-393×844 as a temporary construction seed so an empty skeleton is visible. Before finishing, a normal content-driven mobile page switches its root to `height="fit_content"` (Hug), matching its completed flow. Keep a numeric viewport only when the user explicitly requested that viewport/device frame or the design deliberately contains one clipped viewport body that must consume remaining height.
 
@@ -28,17 +29,25 @@ The status bar (time, signal, wifi, battery) is **automatically pre-inserted** b
 
 Chip rows (filter/date/guests pills): each chip HUGS (width fit_content, single-line text, height 36-44, cornerRadius=full); the ROW clips overflow (clipContent) instead of squeezing chips — never let a pill's text wrap. A badge/pill/button frame ALWAYS carries its content (text or icon) — an empty decorated frame renders as a mystery blob.
 
-ALL content elements must sit inside ONE wrapper container (vertical stack).
+Keep the mobile root at 0 horizontal padding so status chrome, integrated bottom
+navigation, and intentional full-bleed media can remain full width. Emit ordinary
+app content as transparent root-direct section frames with
+`width="fill_container"`, `height="fit_content"`, `layout="vertical"`, and the
+same `padding: [0,24]` rail exactly once per section. Do not repeat that
+horizontal inset on child wrappers. Only a deliberately clipped scroll viewport
+under an explicit fixed-height root may use `height="fill_container"`; in that
+case it is the ONE named remainder consumer, not a sizing mode copied onto its
+sections.
 
-The ordinary content wrapper is `width="fill_container"`, `height="fit_content"`, `layout="vertical"`. Its child sections/cards also Hug Height. Only a deliberately clipped scroll viewport under an explicit fixed-height root may use `height="fill_container"`; in that case it is the ONE named remainder consumer, not a sizing mode copied onto its sections.
+Use gap and vertical padding, not margins or empty spacers, for rhythm between
+sections. Give the last ordinary content section enough bottom padding to clear
+the following bottom navigation.
 
-Wrapper provides:
+A clipped horizontal scroller is the rail exception: its section stays full
+width, its section header gets 24px left/right padding, and its clipped
+viewport gets a 24px leading inset with a flush 0px trailing edge.
 
-- Consistent left/right padding: 16-28px (applied ONCE at wrapper level; reference-measured screens use [0,24] on the wrapper with a 402px root)
-- Gap-based vertical spacing between sections (use gap, NOT margins): 24-40 by density
-- padding-bottom equal to the gap value for bottom space (NOT spacer elements)
-
-Content stacking order inside the wrapper:
+Content stacking order across the ordinary sections:
 
 1. Top context: title / navigation header / search / filters
 2. Primary content: the main "job to be done" for this screen
@@ -66,7 +75,8 @@ Rules:
 
 DO NOT:
 
-- Add per-section horizontal padding (wrapper handles it)
+- Put the 24px content rail on the root page or duplicate it on an inner wrapper
+- Let an ordinary root-direct content section touch the screen edge
 - Use spacer elements for bottom space (use padding-bottom)
 - Cram multiple competing sections above the fold
 

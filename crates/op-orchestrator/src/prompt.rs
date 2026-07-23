@@ -1037,6 +1037,11 @@ fn build_subagent_prompt_core(
         .as_ref()
         .map(|instruction| format!("{instruction}\n\n"))
         .unwrap_or_default();
+    let spacing_rule = if is_mobile_layout {
+        "SPACING CONSISTENCY — MOBILE CONTENT RAIL: The root page may keep 0 horizontal padding for full-width status/navigation/full-bleed media. This ordinary transparent root-direct section owns padding:[0,24] exactly once; do not duplicate it on an inner wrapper. If this section is a clipped horizontal scroller, keep its section full width, inset its header 24px on both sides, and give the clipped viewport a 24px leading inset with a flush 0px trailing edge."
+    } else {
+        "SPACING CONSISTENCY: Use a single outer content gutter and consistent internal gaps. Do not create nested wrappers with conflicting padding or content touching edges."
+    };
 
     // Two constraints differ by output protocol. The public subagent path uses
     // the script-gen branch; the raw-JSONL branch is legacy-only for direct
@@ -1064,7 +1069,7 @@ CRITICAL LAYOUT CONSTRAINTS:\n\
 - Target content amount: ~{:.0}px tall. Generate enough elements to fill this area.\n\
 - DENSITY: Do NOT pack the area edge-to-edge. Prefer fewer, stronger modules with visible negative space; most sections should have 3-5 primary rows/cards at most.\n\
 - VISUAL HIERARCHY: Each section must have one clear focal element, secondary supporting text, and quieter metadata. Avoid equal-weight blocks competing for attention.\n\
-- SPACING CONSISTENCY: Use a single outer content gutter and consistent internal gaps. Do not create nested wrappers with conflicting padding or content touching edges.\n\
+- {spacing_rule}\n\
 - CRAFT POLISH: Add refinement through restrained 1px low-contrast borders, tonal surfaces, small state badges, and subtle shadows. Avoid template-like thick outlines, giant pills, or flat blocks with no micro-detail.\n\
 - MEDIA CONSISTENCY: Use photographic images sparingly and keep them visually consistent in subject, crop, tone, and radius. For food/category UI, prefer cohesive icon or illustration tiles over random unrelated photos.\n\
 - ICON SCALE: Icons support content; keep most icons 16-22px inside 36-48px controls. Avoid oversized circular icon bubbles or repeated identical icon treatments unless the design brief calls for them.\n\

@@ -21,4 +21,4 @@ DESIGN CRAFT:
 - Cards: consistent cornerRadius/padding/shadow. Content: image - title - description - action.
 - Nav: logo + 3-5 links + CTA. space_between distribution. Keep minimal.
 - Alternate section backgrounds (white/#F8FAFC) for natural separation.
-- Mobile: one App Content wrapper owns horizontal padding and vertical gaps; inner sections should not each add competing gutters.
+- Mobile: keep the page root at 0 horizontal padding for full-width chrome/full-bleed media; ordinary transparent root-direct content sections each own the same 24px rail exactly once. A clipped horizontal scroller stays full width, with a 24px-inset header and a 24px leading/0px trailing viewport inset.

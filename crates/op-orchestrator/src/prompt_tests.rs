@@ -219,7 +219,7 @@ fn subagent_prompt_carries_ts_layout_contract() {
         false,
     );
 
-    let required = "Page sections:|Food Categories [category chips]|\"fill_container\"|\"fit_content\"|Generate enough elements|MOBILE STATUS BAR|time, signal, wifi, battery|NO PHONE MOCKUP WRAPPER|MOBILE WIDTH SAFETY|MOBILE SINGLE CONTENT RAIL|MOBILE SEARCH BAR|MOBILE SECTION CHROME|MOBILE VERTICAL RHYTHM|MOBILE TOP RHYTHM|MOBILE GRID ALIGNMENT|MOBILE CARD OVERLAYS|MOBILE IMAGE PRESENTATION|verify only rendering integrity|Do not judge or replace a displayed image during self-check based on subject relevance|explicit user-requested image edit remains allowed|NO BLANK PLACEHOLDERS|MOBILE NAV SURFACE|MOBILE NAV SHADOW|NO FIXED FOOD TEMPLATE|Do not default to the same search + categories + orange promo + two product cards composition|TYPOGRAPHY HIERARCHY|DENSITY|VISUAL HIERARCHY|SPACING CONSISTENCY|CRAFT POLISH|MEDIA CONSISTENCY|ICON SCALE|SIGNATURE MOMENT|WOW FACTOR|COMPOSITIONAL CONTRAST|PREMIUM DETAIL|NO DECORATION SPAM";
+    let required = "Page sections:|Food Categories [category chips]|\"fill_container\"|\"fit_content\"|Generate enough elements|MOBILE STATUS BAR|time, signal, wifi, battery|NO PHONE MOCKUP WRAPPER|MOBILE WIDTH SAFETY|MOBILE SINGLE CONTENT RAIL|MOBILE SCROLLER RAIL|MOBILE SEARCH BAR|MOBILE SECTION CHROME|MOBILE VERTICAL RHYTHM|MOBILE TOP RHYTHM|MOBILE GRID ALIGNMENT|MOBILE CARD OVERLAYS|MOBILE IMAGE PRESENTATION|verify only rendering integrity|Do not judge or replace a displayed image during self-check based on subject relevance|explicit user-requested image edit remains allowed|NO BLANK PLACEHOLDERS|MOBILE NAV SURFACE|MOBILE NAV SHADOW|NO FIXED FOOD TEMPLATE|Do not default to the same search + categories + orange promo + two product cards composition|TYPOGRAPHY HIERARCHY|DENSITY|VISUAL HIERARCHY|SPACING CONSISTENCY|CRAFT POLISH|MEDIA CONSISTENCY|ICON SCALE|SIGNATURE MOMENT|WOW FACTOR|COMPOSITIONAL CONTRAST|PREMIUM DETAIL|NO DECORATION SPAM";
     // Mobile UI guardrails now load via the `mobile-ui` skill (system prompt);
     // section + quality markers stay in the user prompt. Accept either. The
     // `"fill_container"` / `"fit_content"` markers are quote-only (no
@@ -232,6 +232,30 @@ fn subagent_prompt_carries_ts_layout_contract() {
         assert!(
             cr.system_prompt.contains(required) || cr.user_prompt.contains(required),
             "missing {required}"
+        );
+    }
+    let combined = format!("{}\n{}", cr.system_prompt, cr.user_prompt);
+    for required in [
+        "root page may keep 0 horizontal padding",
+        "ordinary transparent root-direct content section",
+        "padding:[0,24]",
+        "inset its header 24px on both sides",
+        "24px leading inset",
+        "0px trailing edge",
+    ] {
+        assert!(
+            combined.contains(required),
+            "missing mobile content-rail rule {required}"
+        );
+    }
+    for stale in [
+        "ONE PAGE GUTTER, ON THE ROOT",
+        "ALL content elements must sit inside ONE wrapper",
+        "Add per-section horizontal padding (wrapper handles it)",
+    ] {
+        assert!(
+            !combined.contains(stale),
+            "stale mobile gutter rule must not survive: {stale}"
         );
     }
     assert!(!cr.system_prompt.contains("MOBILE IMAGE QUALITY"));

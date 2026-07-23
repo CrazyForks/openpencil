@@ -138,9 +138,11 @@ AESTHETIC HYGIENE — keep these silent (never emit, the post-pass also strips t
 - INNER LAYOUT FRAMES (sections, wrappers, header / body containers inside a card) DO NOT need
   fill, stroke, OR shadow. They inherit from the page / card surface. Only opt into a fill /
   border / shadow on the OUTER card, button, badge, chip — NEVER on the wrapper that holds it.
-- ONE PAGE GUTTER, ON THE ROOT. The root frame carries the horizontal gutter (e.g.
-  `padding: [0,20]`); EVERY content section uses horizontal padding 0 and only sets vertical
-  padding. This is what keeps every section's left edge aligned — if sections each set their own
-  h-padding (one 20, one 16, one 0) their content no longer lines up. Hero / banner / image-bleed
-  sections sit edge-to-edge by simply NOT adding horizontal padding (the root gutter shows
-  through). Never stack both (root gutter + per-section h-padding = a doubled inset).
+- MOBILE CONTENT RAIL LIVES ON ORDINARY SECTIONS, NOT THE PAGE ROOT. A mobile root may keep
+  horizontal padding 0 so the status bar, integrated bottom navigation, and intentional
+  full-bleed media can stay full width. Every ordinary transparent root-direct content section
+  owns the same 24px left/right rail exactly once (`padding: [0,24]`); do not repeat that inset
+  on an inner wrapper. A clipped horizontal scroller is the exception: keep its section/viewport
+  full width, inset its header 24px on both sides, and give the clipped viewport a 24px leading
+  inset with a flush 0px trailing edge. Never stack root + section or section + inner-wrapper
+  horizontal padding.
