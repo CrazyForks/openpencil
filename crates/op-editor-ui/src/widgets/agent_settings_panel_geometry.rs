@@ -5,12 +5,29 @@ use crate::widgets::agent_settings_panel::{
     CARD_GAP, CARD_HEIGHT, CONNECT_BTN_H, CONNECT_BTN_W, NAV_ITEM_HEIGHT, NAV_ITEM_STEP, NAV_TOP,
     PAD, SECTION_GAP, SIDEBAR_WIDTH,
 };
+use crate::widgets::ACCOUNT_UI_AVAILABLE;
 use crate::widgets::{agent_settings_acp, agent_settings_builtin};
 use crate::{Point2D, Rect};
 use op_editor_core::agent_settings::{AgentSettings, AgentSettingsTab};
 use op_editor_core::editor_ui_state::EditorUiState;
 
 const DISCONNECT_BTN_W: f32 = 96.0;
+
+const FULL_TABS_WITHOUT_ACCOUNT: [AgentSettingsTab; 5] = [
+    AgentSettingsTab::Agents,
+    AgentSettingsTab::Mcp,
+    AgentSettingsTab::Images,
+    AgentSettingsTab::Fonts,
+    AgentSettingsTab::System,
+];
+
+pub(super) fn full_settings_tabs() -> &'static [AgentSettingsTab] {
+    if ACCOUNT_UI_AVAILABLE {
+        &AgentSettingsTab::ALL
+    } else {
+        &FULL_TABS_WITHOUT_ACCOUNT
+    }
+}
 
 pub(super) fn tab_i18n_label(ui: &EditorUiState, tab: AgentSettingsTab) -> &'static str {
     match tab {

@@ -396,7 +396,9 @@ impl WidgetHostNative {
             self.dispatch_figma_import_press(x, y, viewport_width, viewport_height);
             return true;
         }
-        if self.editor_state.editor_ui.login_modal_open {
+        if op_editor_ui::widgets::ACCOUNT_UI_AVAILABLE
+            && self.editor_state.editor_ui.login_modal_open
+        {
             self.close_image_popovers_for_higher_overlay();
             self.dispatch_login_modal_press(x, y, viewport_width, viewport_height);
             return true;
@@ -405,7 +407,9 @@ impl WidgetHostNative {
         // 0a'. Account dropdown — anchored under the TopBar avatar
         // button; must hit-test before the TopBar's own block so a
         // re-click on the avatar closes rather than re-toggling.
-        if self.editor_state.editor_ui.account_menu_open {
+        if op_editor_ui::widgets::ACCOUNT_UI_AVAILABLE
+            && self.editor_state.editor_ui.account_menu_open
+        {
             self.close_image_popovers_for_higher_overlay();
             self.dispatch_account_menu_press(x, y, viewport_width, viewport_height);
             return true;
@@ -629,6 +633,9 @@ impl WidgetHostNative {
                     return true;
                 }
                 TopBarHit::Account => {
+                    if !op_editor_ui::widgets::ACCOUNT_UI_AVAILABLE {
+                        return false;
+                    }
                     if self.editor_state.editor_ui.account.is_signed_in() {
                         self.editor_state.editor_ui.account_menu_open = true;
                         self.editor_state.editor_ui.account_menu_hover = None;

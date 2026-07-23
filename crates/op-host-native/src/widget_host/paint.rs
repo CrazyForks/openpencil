@@ -533,7 +533,7 @@ impl WidgetHostNative {
         }
 
         // 10e. Sign-in modal — full-viewport scrim + centred card.
-        if ui.login_modal_open {
+        if op_editor_ui::widgets::ACCOUNT_UI_AVAILABLE && ui.login_modal_open {
             use op_editor_ui::widgets::login_modal::LoginModal;
             frame.fill_rect(
                 Rect {
@@ -558,7 +558,7 @@ impl WidgetHostNative {
         // 10f. Signed-in account dropdown — anchored under the TopBar
         //      avatar button, no scrim (same tier as the file menu /
         //      locale picker).
-        if ui.account_menu_open {
+        if op_editor_ui::widgets::ACCOUNT_UI_AVAILABLE && ui.account_menu_open {
             use op_editor_ui::widgets::account_menu::AccountMenu;
             let top_bar_rect = Rect {
                 origin: Point2D::new(0.0, 0.0),

@@ -62,7 +62,7 @@ impl Drop for EnvVarGuard {
 }
 
 #[test]
-fn clicking_avatar_while_anonymous_opens_login_modal() {
+fn account_release_gate_blocks_login_modal_for_anonymous_user() {
     let mut host = WidgetHostNative::new();
     assert_eq!(
         host.editor_state().editor_ui.account,
@@ -75,14 +75,14 @@ fn clicking_avatar_while_anonymous_opens_login_modal() {
         account_rect.origin.y + account_rect.size.y / 2.0,
     );
 
-    assert!(host.apply_press(center.x, center.y, VW, VH));
+    host.apply_press(center.x, center.y, VW, VH);
 
-    assert!(host.editor_state().editor_ui.login_modal_open);
+    assert!(!host.editor_state().editor_ui.login_modal_open);
     assert!(!host.editor_state().editor_ui.account_menu_open);
 }
 
 #[test]
-fn clicking_avatar_while_signed_in_opens_account_menu() {
+fn account_release_gate_blocks_menu_for_signed_in_state() {
     let mut host = WidgetHostNative::new();
     host.editor_state_mut().editor_ui.account = AccountState::SignedIn {
         display_name: "Fini".into(),
@@ -95,10 +95,55 @@ fn clicking_avatar_while_signed_in_opens_account_menu() {
         account_rect.origin.y + account_rect.size.y / 2.0,
     );
 
-    assert!(host.apply_press(center.x, center.y, VW, VH));
+    host.apply_press(center.x, center.y, VW, VH);
 
-    assert!(host.editor_state().editor_ui.account_menu_open);
+    assert!(!host.editor_state().editor_ui.account_menu_open);
     assert!(!host.editor_state().editor_ui.login_modal_open);
+}
+
+#[test]
+fn stale_login_modal_state_does_not_dispatch_while_release_gate_is_hidden() {
+    const { assert!(!op_editor_ui::widgets::ACCOUNT_UI_AVAILABLE) };
+    let mut host = WidgetHostNative::new();
+    host.editor_state_mut().editor_ui.login_modal_open = true;
+
+    let modal = LoginModal::for_editor(host.editor_state());
+    let panel = modal.rect(VW, VH);
+    let sign_in_point = Point2D::new(
+        panel.origin.x + panel.size.x / 2.0,
+        panel.origin.y + panel.size.y - 56.0,
+    );
+    host.apply_press(sign_in_point.x, sign_in_point.y, VW, VH);
+
+    assert_eq!(
+        host.editor_state().editor_ui.account,
+        AccountState::Anonymous
+    );
+    assert!(!host.editor_state().editor_ui.login_modal_stub_hint_shown);
+}
+
+#[test]
+fn stale_account_menu_state_does_not_dispatch_while_release_gate_is_hidden() {
+    const { assert!(!op_editor_ui::widgets::ACCOUNT_UI_AVAILABLE) };
+    let mut host = WidgetHostNative::new();
+    let signed_in = AccountState::SignedIn {
+        display_name: "Fini".into(),
+        handle: "fini".into(),
+    };
+    host.editor_state_mut().editor_ui.account = signed_in.clone();
+    host.editor_state_mut().editor_ui.account_menu_open = true;
+
+    let top_bar = TopBar::for_editor_ui(&host.editor_state().editor_ui);
+    let anchor = top_bar.account_button_rect(top_bar_rect());
+    let menu = AccountMenu::for_editor_ui(&host.editor_state().editor_ui).expect("signed in");
+    let menu_rect = menu.rect_at(anchor);
+    let sign_out_point = Point2D::new(
+        menu_rect.origin.x + 20.0,
+        menu_rect.origin.y + menu_rect.size.y - 8.0,
+    );
+    host.apply_press(sign_out_point.x, sign_out_point.y, VW, VH);
+
+    assert_eq!(host.editor_state().editor_ui.account, signed_in);
 }
 
 #[test]

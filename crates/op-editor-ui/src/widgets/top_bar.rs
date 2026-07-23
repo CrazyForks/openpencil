@@ -41,12 +41,10 @@ pub(super) const GIT_BUTTON_AVAILABLE: bool = !cfg!(target_arch = "wasm32");
 /// has no equivalent runtime/measurement bridge, so hide the button there
 /// rather than exposing a non-interactive preview flag.
 pub(super) const PREVIEW_BUTTON_AVAILABLE: bool = !cfg!(target_arch = "wasm32");
-/// The planned sign-in flow (OIDC Auth Code + PKCE via the system
-/// browser) is desktop-only. The web build has no equivalent, so the
-/// avatar button (and its layout slot) is compiled out there rather
-/// than painting a click that goes nowhere (same pattern as
-/// `GIT_BUTTON_AVAILABLE` / `PREVIEW_BUTTON_AVAILABLE`).
-pub const ACCOUNT_BUTTON_AVAILABLE: bool = !cfg!(target_arch = "wasm32");
+/// The account button follows the shared release gate and remains
+/// desktop-only when that experience is enabled again.
+pub const ACCOUNT_BUTTON_AVAILABLE: bool =
+    super::ACCOUNT_UI_AVAILABLE && !cfg!(target_arch = "wasm32");
 /// Stacked agent-icon metrics — mirror TS `top-bar.tsx`
 /// (`w-5 h-5 rounded-md bg-foreground/10 ring-1 ring-card` chips
 /// overlapped by `-space-x-1.5`).

@@ -26,6 +26,13 @@ use crate::{Point2D, Rect, RenderBackend};
 /// `const MIN_RAIL_WIDTH` in each host).
 pub const MIN_RAIL_WIDTH: f32 = 80.0;
 
+/// Temporary release gate for the unfinished user-account experience.
+///
+/// Keep the account state, modal, menu, translations, and host dispatchers
+/// compiled and tested so a later release can restore every entry point from
+/// this one gate, then update the release-gate assertions.
+pub const ACCOUNT_UI_AVAILABLE: bool = false;
+
 // Phase B primitives.
 pub(crate) mod button;
 pub mod prop_row;
@@ -174,6 +181,8 @@ pub mod brand_icons;
 // Step 4 — extra editor-chrome widgets (TS app parity).
 pub mod account_menu;
 pub mod agent_settings_account;
+#[cfg(test)]
+mod agent_settings_account_gate_tests;
 pub mod agent_settings_acp;
 mod agent_settings_acp_helpers;
 pub mod agent_settings_builtin;

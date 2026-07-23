@@ -9,7 +9,8 @@ use crate::widgets::agent_settings_mcp::{self, McpHit};
 use crate::widgets::agent_settings_panel_card::paint_agent_card;
 use crate::widgets::agent_settings_panel_geometry::{
     acp_section_y, agent_card_rect_at, agent_card_rect_in, close_rect, connect_btn_rect_at,
-    content_paint_clip_rect, content_rect, disconnect_btn_rect_at, nav_item_rect, tab_i18n_label,
+    content_paint_clip_rect, content_rect, disconnect_btn_rect_at, full_settings_tabs,
+    nav_item_rect, tab_i18n_label,
 };
 use crate::widgets::agent_settings_system::{self, SystemHit};
 use crate::widgets::editor_state_ext::theme_for;
@@ -52,7 +53,7 @@ pub enum AgentSettingsPanelMode {
 impl AgentSettingsPanelMode {
     fn visible_tabs(self) -> &'static [AgentSettingsTab] {
         match self {
-            AgentSettingsPanelMode::Full => &AgentSettingsTab::ALL,
+            AgentSettingsPanelMode::Full => full_settings_tabs(),
             AgentSettingsPanelMode::WebBuiltinOnly => &[
                 AgentSettingsTab::Agents,
                 AgentSettingsTab::Images,

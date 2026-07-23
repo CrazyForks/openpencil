@@ -335,10 +335,9 @@ fn chip_with_only_builtin_agents_reserves_no_icon_cluster() {
     );
 }
 
-/// The user-avatar button sits directly left of the Globe button —
-/// between the agent chip and the locale/theme cluster.
 #[test]
-fn account_button_hit_tests_and_sits_left_of_globe() {
+fn account_button_release_gate_removes_hit_target_and_layout_slot() {
+    const { assert!(!ACCOUNT_BUTTON_AVAILABLE) };
     let bar = TopBar::untitled();
     let rect = Rect {
         origin: Point2D::new(0.0, 0.0),
@@ -348,13 +347,20 @@ fn account_button_hit_tests_and_sits_left_of_globe() {
     let globe = bar.globe_rect(rect);
     assert!(
         nearly_eq(account.origin.x + account.size.x, globe.origin.x),
-        "avatar button should abut the globe button's left edge"
+        "dormant avatar geometry should stay ready for the next release"
     );
-    let center = Point2D::new(
-        account.origin.x + account.size.x / 2.0,
-        account.origin.y + account.size.y / 2.0,
+    assert!(
+        nearly_eq(bar.chip_right_anchor_x(rect), globe.origin.x),
+        "hiding the avatar must also collapse its layout slot"
     );
-    assert_eq!(bar.hit_test(rect, center), Some(TopBarHit::Account));
+    for x in 0..1000 {
+        let hit = bar.hit_test(rect, Point2D::new(x as f32, TOP_BAR_HEIGHT / 2.0));
+        assert_ne!(
+            hit,
+            Some(TopBarHit::Account),
+            "hidden account control hit at x={x}"
+        );
+    }
 }
 
 #[test]

@@ -443,7 +443,7 @@ impl WidgetHostNative {
         if ui.figma_import_in_progress
             || !ui.figma_import_pages.is_empty()
             || ui.export_dialog_open
-            || ui.login_modal_open
+            || (op_editor_ui::widgets::ACCOUNT_UI_AVAILABLE && ui.login_modal_open)
             || ui.agent_settings_open
             || (ui.missing_fonts_modal_open
                 && ui
