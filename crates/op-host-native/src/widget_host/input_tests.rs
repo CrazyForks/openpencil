@@ -989,6 +989,7 @@ fn status_bar_search_click_frames_content_in_viewport() {
     host.editor_state_mut().viewport.zoom = 0.2;
 
     let (vw, vh) = (1200.0, 800.0);
+    let (_, _, canvas_w, canvas_h) = host.canvas_region(vw, vh);
     let r = host
         .status_bar_rect(vw, vh)
         .expect("status bar visible at this size");
@@ -997,9 +998,11 @@ fn status_bar_search_click_frames_content_in_viewport() {
 
     assert!(consumed, "search-icon click must be consumed");
     let v = host.editor_state().viewport;
+    let expected_pan_x = canvas_w / 2.0 - 250.0;
+    let expected_pan_y = canvas_h / 2.0 - 200.0;
     assert!((v.zoom - 1.0).abs() < 1e-3, "zoom {}", v.zoom);
-    assert!((v.pan_x - 230.0).abs() < 1e-2, "pan_x {}", v.pan_x);
-    assert!((v.pan_y - 180.0).abs() < 1e-2, "pan_y {}", v.pan_y);
+    assert!((v.pan_x - expected_pan_x).abs() < 1e-2, "pan_x {}", v.pan_x);
+    assert!((v.pan_y - expected_pan_y).abs() < 1e-2, "pan_y {}", v.pan_y);
 }
 
 #[test]

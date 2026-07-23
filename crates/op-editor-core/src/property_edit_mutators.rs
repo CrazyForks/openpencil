@@ -641,6 +641,9 @@ impl EditorState {
         if removed && index == 0 {
             self.ui.variables.fill_refs.remove(&sel);
         }
+        if removed {
+            self.mark_document_changed();
+        }
         removed
     }
 
@@ -667,19 +670,28 @@ impl EditorState {
         let Some(node) = find_node_mut(self.active_children_mut(), &sel) else {
             return false;
         };
-        if crate::image_node_props::set_image_node_mode(node, mode) {
+        let changed = if crate::image_node_props::set_image_node_mode(node, mode) {
             true
         } else {
             crate::fills::set_primary_image_fill_mode(node, mode)
+        };
+        if changed {
+            self.mark_document_changed();
         }
+        changed
     }
 
     /// Set TILE scale on a primary image fill. Unlike mode/adjustments, this
     /// deliberately does not fall back to a standalone Image node because its
     /// schema has no tileScale property.
     pub fn set_selected_image_tile_scale(&mut self, value: f32) -> bool {
-        self.with_selected_node(|node| crate::fills::set_primary_image_tile_scale(node, value))
-            .unwrap_or(false)
+        let changed = self
+            .with_selected_node(|node| crate::fills::set_primary_image_tile_scale(node, value))
+            .unwrap_or(false);
+        if changed {
+            self.mark_document_changed();
+        }
+        changed
     }
 
     pub fn set_selected_image_adjustment(
@@ -694,11 +706,15 @@ impl EditorState {
         let Some(node) = find_node_mut(self.active_children_mut(), &sel) else {
             return false;
         };
-        if crate::image_node_props::set_image_node_adjustment(node, field, value) {
+        let changed = if crate::image_node_props::set_image_node_adjustment(node, field, value) {
             true
         } else {
             crate::fills::set_primary_image_adjustment(node, field, value)
+        };
+        if changed {
+            self.mark_document_changed();
         }
+        changed
     }
 
     pub fn reset_selected_image_adjustments(&mut self) -> bool {
@@ -709,11 +725,15 @@ impl EditorState {
         let Some(node) = find_node_mut(self.active_children_mut(), &sel) else {
             return false;
         };
-        if crate::image_node_props::reset_image_node_adjustments(node) {
+        let changed = if crate::image_node_props::reset_image_node_adjustments(node) {
             true
         } else {
             crate::fills::reset_primary_image_adjustments(node)
+        };
+        if changed {
+            self.mark_document_changed();
         }
+        changed
     }
 }
 

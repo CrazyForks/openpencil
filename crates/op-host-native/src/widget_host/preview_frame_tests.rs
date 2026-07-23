@@ -140,10 +140,14 @@ fn manual_pick_wins_until_exit_then_reinfers() {
 fn device_scroll_divides_by_fit_and_clamps() {
     let _guard = test_lock();
     let mut host = host_with_doc(phone_doc(2000));
-    host.last_viewport_w = 300.0;
+    host.last_viewport_w = 800.0;
     host.last_viewport_h = 400.0;
-    host.enter_preview((300.0, 400.0));
-    host.recompute_device_frame(300.0, 400.0);
+    assert!(
+        host.enter_preview((800.0, 400.0)),
+        "preview entry failed: {:?}",
+        host.editor_state().editor_ui.preview_warnings
+    );
+    host.recompute_device_frame(800.0, 400.0);
     let fit = host.preview_device_frame.as_ref().unwrap().fit;
     host.apply_device_scroll(-100.0);
     assert!((host.preview_scroll_y - 100.0 / fit).abs() < 0.5);

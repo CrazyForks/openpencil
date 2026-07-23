@@ -223,6 +223,14 @@ fn interaction_menu_hover_tracks_the_row_under_the_cursor() {
     );
     host.editor_state_mut()
         .set_single_selection(NodeId::new("f1"));
+    let property_rect = host.property_rect(VIEWPORT_W, VIEWPORT_H);
+    assert!(host.apply_wheel(
+        property_rect.origin.x + property_rect.size.x / 2.0,
+        property_rect.origin.y + property_rect.size.y / 2.0,
+        -10_000.0,
+        VIEWPORT_W,
+        VIEWPORT_H,
+    ));
     host.apply_property_action(PropertyPanelAction::ToggleInteractionMenu);
     assert!(host.editor_state().editor_ui.interaction_menu_open);
     assert_eq!(host.editor_state().editor_ui.interaction_menu_hover, None);
