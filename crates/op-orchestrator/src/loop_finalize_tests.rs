@@ -288,6 +288,86 @@ fn loop_finalize_preserves_page_root_background() {
     );
 }
 
+#[test]
+fn loop_finalize_restores_nested_front_card_surface_without_reordering_stack() {
+    let mut state = state_with_forest(json!([{
+        "type":"frame","id":"page","name":"Page","width":375,"height":812,
+        "layout":"vertical","children":[{
+            "type":"frame","id":"preview","name":"Word Card Stack Preview",
+            "layout":"vertical","children":[{
+                "type":"frame","id":"stack","name":"Card Stack Container",
+                "width":"fill_container","height":168,"layout":"none","children":[
+                    {
+                        "type":"frame","id":"front","name":"Front Card",
+                        "x":0,"y":18,"width":345,"height":148,
+                        "layout":"vertical","cornerRadius":20,"fill":[],
+                        "children":[
+                            {"type":"frame","id":"tag","name":"Tag Pill",
+                             "fill":[{"type":"solid","color":"#F3F4F6"}],
+                             "children":[{"type":"text","id":"tag-text","content":"Today"}]},
+                            {"type":"frame","id":"body","name":"Front Center Block",
+                             "children":[{"type":"text","id":"word","content":"Resilient"}]},
+                            {"type":"frame","id":"action","name":"Audio Button","role":"button",
+                             "fill":[{"type":"solid","color":"#FF6B6B"}],
+                             "children":[{"type":"icon_font","id":"audio","iconFontName":"volume-2"}]}
+                        ]
+                    },
+                    {
+                        "type":"frame","id":"back","name":"Peeked Back Card","role":"card",
+                        "x":14,"y":0,"width":317,"height":148,"cornerRadius":18,
+                        "fill":[{"type":"solid","color":"$color-surface-3"}],
+                        "children":[{"type":"text","id":"back-text","content":"Example"}]
+                    }
+                ]
+            }]
+        }]
+    }]));
+
+    apply_loop_finalize(&mut state);
+
+    assert_eq!(
+        role_of(&state, "Front Card").as_deref(),
+        Some("card"),
+        "a nested real card must not be stripped as a forest-root wrapper"
+    );
+    assert_eq!(
+        fill_of(&state, "Front Card"),
+        Some(json!([{"type":"solid","color":"$color-surface"}])),
+        "the front card needs a theme-aware opaque surface, not page-bg white that later gets stripped"
+    );
+
+    let stack =
+        find_by_name(state.active_children(), "Card Stack Container").expect("card stack survives");
+    let children = stack.children().expect("stack children");
+    let names: Vec<&str> = children
+        .iter()
+        .map(|child| child.base().name.as_deref().unwrap_or(""))
+        .collect();
+    assert_eq!(
+        names,
+        ["Front Card", "Peeked Back Card"],
+        "topmost-first authored order is already correct and must not change"
+    );
+    assert_eq!(
+        [
+            children[0].base().x,
+            children[0].base().y,
+            children[0].width_px(),
+            children[0].height_px(),
+        ],
+        [Some(0.0), Some(18.0), Some(345.0), Some(148.0)]
+    );
+    assert_eq!(
+        [
+            children[1].base().x,
+            children[1].base().y,
+            children[1].width_px(),
+            children[1].height_px(),
+        ],
+        [Some(14.0), Some(0.0), Some(317.0), Some(148.0)]
+    );
+}
+
 /// Empty document → no panic, no-op.
 #[test]
 fn loop_finalize_on_empty_doc_is_noop() {

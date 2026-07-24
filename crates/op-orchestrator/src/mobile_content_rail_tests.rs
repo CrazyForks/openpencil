@@ -1,4 +1,6 @@
-use crate::mobile_content_rail::repair_mobile_content_rails_for_all_roots;
+use crate::mobile_content_rail::{
+    repair_mobile_content_rails, repair_mobile_content_rails_for_all_roots,
+};
 use crate::test_support::VecDocSink;
 use crate::types::DocSink;
 use jian_ops_schema::node::PenNode;
@@ -105,6 +107,144 @@ fn clipped_scroller_repairs_header_and_leading_edge_only() {
 }
 
 #[test]
+fn clipped_scroller_moves_duplicate_inner_leading_rail_to_viewport() {
+    let mut sink = insert(json!({
+        "type":"frame","id":"root","width":375,"height":812,"layout":"vertical",
+        "children":[
+            {"type":"frame","id":"status","role":"status-bar","height":44},
+            {"type":"frame","id":"hourly","width":"fill_container","layout":"vertical",
+             "children":[
+                {"type":"frame","id":"header","name":"Header Row","layout":"horizontal",
+                 "children":[text("title","Hourly Forecast")]},
+                {"type":"frame","id":"viewport","width":"fill_container","layout":"horizontal",
+                 "clipContent":true,"children":[
+                    {"type":"frame","id":"rail","width":"fit_content","layout":"horizontal",
+                     "gap":8,"padding":[0,24],"children":[
+                        {"type":"frame","id":"now","width":58,"cornerRadius":12,
+                         "children":[text("now-t","NOW")]},
+                        {"type":"frame","id":"later","width":58,"cornerRadius":12,
+                         "children":[text("later-t","13:00")]}
+                     ]}
+                 ]}
+             ]},
+            {"type":"frame","id":"body","padding":[0,24],"children":[text("body-t","Body")]},
+            {"type":"frame","id":"nav","role":"bottom-tab-bar","height":72}
+        ]
+    }));
+
+    repair_mobile_content_rails_for_all_roots(&mut sink);
+
+    assert_eq!(
+        node_json(&sink, "viewport")["padding"],
+        json!([0.0, 0.0, 0.0, 24.0])
+    );
+    assert_eq!(
+        node_json(&sink, "rail")["padding"],
+        json!([0.0, 24.0, 0.0, 0.0]),
+        "the viewport owns the leading rail while the lane keeps its end spacer"
+    );
+
+    sink.applied.clear();
+    repair_mobile_content_rails_for_all_roots(&mut sink);
+    assert!(
+        sink.applied.is_empty(),
+        "the single-owner scroller rail must be idempotent"
+    );
+}
+
+#[test]
+fn existing_double_scroller_rail_collapses_to_one_leading_owner() {
+    let mut sink = insert(json!({
+        "type":"frame","id":"root","width":375,"height":812,"layout":"vertical",
+        "children":[
+            {"type":"frame","id":"status","role":"status-bar","height":44},
+            {"type":"frame","id":"viewport","width":"fill_container","layout":"horizontal",
+             "padding":[0,0,0,24],"clipContent":true,"children":[
+                {"type":"frame","id":"rail","width":"fit_content","layout":"horizontal",
+                 "padding":[0,24],"children":[
+                    {"type":"frame","id":"a","width":58,"children":[text("a-t","A")]},
+                    {"type":"frame","id":"b","width":58,"children":[text("b-t","B")]}
+                 ]}
+             ]},
+            {"type":"frame","id":"body","padding":[0,24],"children":[text("body-t","Body")]},
+            {"type":"frame","id":"nav","role":"bottom-tab-bar","height":72}
+        ]
+    }));
+
+    repair_mobile_content_rails_for_all_roots(&mut sink);
+
+    assert_eq!(
+        node_json(&sink, "viewport")["padding"],
+        json!([0.0, 0.0, 0.0, 24.0])
+    );
+    assert_eq!(
+        node_json(&sink, "rail")["padding"],
+        json!([0.0, 24.0, 0.0, 0.0])
+    );
+}
+
+#[test]
+fn authored_small_viewport_inset_does_not_consume_the_inner_content_rail() {
+    let mut sink = insert(json!({
+        "type":"frame","id":"root","width":375,"height":812,"layout":"vertical",
+        "children":[
+            {"type":"frame","id":"status","role":"status-bar","height":44},
+            {"type":"frame","id":"viewport","width":"fill_container","layout":"horizontal",
+             "padding":[0,0,0,8],"clipContent":true,"children":[
+                {"type":"frame","id":"rail","width":"fit_content","layout":"horizontal",
+                 "padding":[0,24],"children":[
+                    {"type":"frame","id":"a","width":58,"children":[text("a-t","A")]},
+                    {"type":"frame","id":"b","width":58,"children":[text("b-t","B")]}
+                 ]}
+             ]},
+            {"type":"frame","id":"body","padding":[0,24],"children":[text("body-t","Body")]},
+            {"type":"frame","id":"nav","role":"bottom-tab-bar","height":72}
+        ]
+    }));
+
+    repair_mobile_content_rails_for_all_roots(&mut sink);
+
+    assert_eq!(
+        node_json(&sink, "viewport")["padding"],
+        json!([0.0, 0.0, 0.0, 8.0])
+    );
+    assert_eq!(
+        node_json(&sink, "rail")["padding"],
+        json!([0.0, 24.0]),
+        "a non-canonical authored viewport inset is not proof of duplicate rail ownership"
+    );
+}
+
+#[test]
+fn clipped_scroller_does_not_rewrite_a_surfaced_child_card() {
+    let mut sink = insert(json!({
+        "type":"frame","id":"root","width":375,"height":812,"layout":"vertical",
+        "children":[
+            {"type":"frame","id":"status","role":"status-bar","height":44},
+            {"type":"frame","id":"viewport","width":"fill_container","layout":"horizontal",
+             "clipContent":true,"children":[
+                {"type":"frame","id":"card","width":"fit_content","layout":"horizontal",
+                 "padding":[0,24],"cornerRadius":16,
+                 "fill":[{"type":"solid","color":"#181818"}],"children":[
+                    {"type":"text","id":"card-title","content":"Title"},
+                    {"type":"text","id":"card-meta","content":"Meta"}
+                 ]}
+             ]},
+            {"type":"frame","id":"body","padding":[0,24],"children":[text("body-t","Body")]},
+            {"type":"frame","id":"nav","role":"bottom-tab-bar","height":72}
+        ]
+    }));
+
+    repair_mobile_content_rails_for_all_roots(&mut sink);
+
+    assert_eq!(
+        node_json(&sink, "viewport")["padding"],
+        json!([0.0, 0.0, 0.0, 24.0])
+    );
+    assert_eq!(node_json(&sink, "card")["padding"], json!([0.0, 24.0]));
+}
+
+#[test]
 fn root_direct_scroller_gets_leading_rail_without_trailing_inset() {
     let mut sink = insert(json!({
         "type":"frame","id":"root","width":375,"height":812,"layout":"vertical",
@@ -132,6 +272,33 @@ fn root_direct_scroller_gets_leading_rail_without_trailing_inset() {
 }
 
 #[test]
+fn trailing_only_scroller_padding_still_gets_a_leading_rail() {
+    let mut sink = insert(json!({
+        "type":"frame","id":"root","width":375,"height":812,"layout":"vertical",
+        "children":[
+            {"type":"frame","id":"status","role":"status-bar","height":44},
+            {"type":"frame","id":"viewport","width":"fill_container","layout":"horizontal",
+             "padding":[0,12,0,0],"clipContent":true,"children":[
+                {"type":"frame","id":"row","width":"fit_content","layout":"horizontal",
+                 "children":[
+                    {"type":"image","id":"image-a","width":120,"height":90,"src":"a.png"},
+                    {"type":"image","id":"image-b","width":120,"height":90,"src":"b.png"}
+                 ]}
+             ]},
+            {"type":"frame","id":"body","padding":[0,24],"children":[text("body-t","Body")]},
+            {"type":"frame","id":"nav","role":"bottom-tab-bar","height":72}
+        ]
+    }));
+
+    repair_mobile_content_rails_for_all_roots(&mut sink);
+
+    assert_eq!(
+        node_json(&sink, "viewport")["padding"],
+        json!([0.0, 12.0, 0.0, 24.0])
+    );
+}
+
+#[test]
 fn deeper_scroller_is_not_closed_by_symmetric_ancestor_padding() {
     let mut sink = insert(json!({
         "type":"frame","id":"root","width":375,"height":812,"layout":"vertical",
@@ -154,6 +321,62 @@ fn deeper_scroller_is_not_closed_by_symmetric_ancestor_padding() {
 
     assert!(node_json(&sink, "section").get("padding").is_none());
     assert!(node_json(&sink, "viewport").get("padding").is_none());
+}
+
+#[test]
+fn progress_meter_inside_surfaced_card_does_not_suppress_outer_section_rail() {
+    let mut sink = insert(json!({
+        "type":"frame","id":"root","width":375,"height":812,"layout":"vertical",
+        "children":[
+            {"type":"frame","id":"status","role":"status-bar","height":44},
+            {"type":"frame","id":"forecast","width":"fill_container","layout":"vertical",
+             "padding":[0,24],"children":[text("forecast-t","7-Day Forecast")]},
+            {"type":"frame","id":"metrics","width":"fill_container","layout":"vertical",
+             "children":[
+                {"type":"frame","id":"metrics-row","width":"fill_container","layout":"horizontal",
+                 "gap":12,"children":[
+                    {"type":"frame","id":"sun-card","width":"fill_container","layout":"vertical",
+                     "padding":14,"cornerRadius":16,
+                     "fill":[{"type":"solid","color":"#181818"}],
+                     "stroke":{"thickness":1,"fill":[{"type":"solid","color":"#333333"}]},
+                     "children":[text("sunset","Sunset 8:32 PM")]},
+                    {"type":"frame","id":"environment-card","width":"fill_container",
+                     "layout":"vertical","padding":14,"cornerRadius":16,
+                     "fill":[{"type":"solid","color":"#181818"}],
+                     "stroke":{"thickness":1,"fill":[{"type":"solid","color":"#333333"}]},
+                     "children":[
+                        text("humidity","Humidity 78%"),
+                        {"type":"frame","id":"progress-meter","width":"fill_container","height":6,
+                         "layout":"horizontal","clipContent":true,
+                         "fill":[{"type":"solid","color":"#222222"}],"children":[
+                            {"type":"frame","id":"progress-fill","width":110,
+                             "height":"fill_container",
+                             "fill":[{"type":"solid","color":"#C4F82A"}],"children":[]}
+                         ]}
+                     ]}
+                 ]}
+             ]},
+            {"type":"frame","id":"nav","role":"bottom-tab-bar","height":72}
+        ]
+    }));
+
+    repair_mobile_content_rails_for_all_roots(&mut sink);
+
+    assert_eq!(
+        node_json(&sink, "metrics")["padding"],
+        json!([0.0, 24.0, 0.0, 24.0])
+    );
+    assert!(
+        node_json(&sink, "progress-meter").get("padding").is_none(),
+        "a clipped meter inside a surfaced card is not a page-level scroller"
+    );
+
+    sink.applied.clear();
+    repair_mobile_content_rails_for_all_roots(&mut sink);
+    assert!(
+        sink.applied.is_empty(),
+        "the repaired outer section rail must be idempotent"
+    );
 }
 
 #[test]
@@ -388,5 +611,186 @@ fn mixed_bottom_nav_shell_is_demoted_before_content_rail_repair() {
     assert!(
         node_json(&sink, "real-nav").get("padding").is_some(),
         "real nav keeps its own normalized internal chrome padding"
+    );
+}
+
+// -- Selected-frame append path: `root_id` nests under an existing top-level
+// mobile screen rather than being a top-level active root itself. --
+
+#[test]
+fn appended_nested_section_gets_its_content_rail_repaired() {
+    let mut sink = insert(json!({
+        "type":"frame","id":"root","width":375,"height":812,"layout":"vertical",
+        "children":[
+            {"type":"frame","id":"status","role":"status-bar","height":44},
+            {"type":"frame","id":"existing","padding":[0,24],"children":[text("existing-t","Existing")]},
+            {"type":"frame","id":"appended","width":"fill_container","layout":"horizontal",
+             "clipContent":true,"children":[
+                {"type":"frame","id":"appended-rail","width":"fit_content","layout":"horizontal",
+                 "padding":[0,24],"children":[
+                    {"type":"frame","id":"a","width":58,"children":[text("a-t","A")]},
+                    {"type":"frame","id":"b","width":58,"children":[text("b-t","B")]}
+                 ]}
+             ]},
+            {"type":"frame","id":"nav","role":"bottom-tab-bar","height":72}
+        ]
+    }));
+
+    // `appended` is not a top-level active root — it is a direct child of
+    // `root` — mirroring `inserted_root_ids` from a selected-frame append.
+    repair_mobile_content_rails(&mut sink, "appended");
+
+    assert_eq!(
+        node_json(&sink, "appended")["padding"],
+        json!([0.0, 0.0, 0.0, 24.0]),
+        "the nested viewport must gain the same leading rail a top-level one would"
+    );
+    assert_eq!(
+        node_json(&sink, "appended-rail")["padding"],
+        json!([0.0, 24.0, 0.0, 0.0]),
+        "the redundant inner rail collapses just like the top-level case"
+    );
+}
+
+#[test]
+fn appended_nested_section_inside_desktop_frame_is_untouched() {
+    let mut sink = insert(json!({
+        "type":"frame","id":"desktop","width":1440,"height":900,"layout":"vertical",
+        "children":[
+            {"type":"frame","id":"existing","children":[text("existing-t","Existing")]},
+            {"type":"frame","id":"appended","width":"fill_container","layout":"horizontal",
+             "clipContent":true,"children":[
+                {"type":"frame","id":"appended-rail","width":"fit_content","layout":"horizontal",
+                 "padding":[0,24],"children":[
+                    {"type":"frame","id":"a","width":58,"children":[text("a-t","A")]},
+                    {"type":"frame","id":"b","width":58,"children":[text("b-t","B")]}
+                 ]}
+             ]}
+        ]
+    }));
+
+    repair_mobile_content_rails(&mut sink, "appended");
+
+    assert!(
+        sink.applied.is_empty(),
+        "the enclosing top-level root is not a mobile screen, so the append is out of scope"
+    );
+}
+
+#[test]
+fn appended_section_repair_never_touches_a_sibling_double_rail_scroller() {
+    let mut sink = insert(json!({
+        "type":"frame","id":"root","width":375,"height":812,"layout":"vertical",
+        "children":[
+            {"type":"frame","id":"status","role":"status-bar","height":44},
+            {"type":"frame","id":"existing-viewport","width":"fill_container","layout":"horizontal",
+             "padding":[0,0,0,24],"clipContent":true,"children":[
+                {"type":"frame","id":"existing-rail","width":"fit_content","layout":"horizontal",
+                 "padding":[0,24],"children":[
+                    {"type":"frame","id":"x","width":58,"children":[text("x-t","X")]},
+                    {"type":"frame","id":"y","width":58,"children":[text("y-t","Y")]}
+                 ]}
+             ]},
+            {"type":"frame","id":"appended","width":"fill_container","layout":"horizontal",
+             "clipContent":true,"children":[
+                {"type":"frame","id":"appended-rail","width":"fit_content","layout":"horizontal",
+                 "padding":[0,24],"children":[
+                    {"type":"frame","id":"a","width":58,"children":[text("a-t","A")]},
+                    {"type":"frame","id":"b","width":58,"children":[text("b-t","B")]}
+                 ]}
+             ]},
+            {"type":"frame","id":"nav","role":"bottom-tab-bar","height":72}
+        ]
+    }));
+
+    // `existing-viewport` already carries the exact same double-rail
+    // duplicate the appended section has, but it was not part of this
+    // append — the fix must be scoped to `appended`'s own subtree only.
+    repair_mobile_content_rails(&mut sink, "appended");
+
+    assert_eq!(
+        node_json(&sink, "appended")["padding"],
+        json!([0.0, 0.0, 0.0, 24.0])
+    );
+    assert_eq!(
+        node_json(&sink, "appended-rail")["padding"],
+        json!([0.0, 24.0, 0.0, 0.0])
+    );
+    assert_eq!(
+        node_json(&sink, "existing-viewport")["padding"],
+        json!([0.0, 0.0, 0.0, 24.0]),
+        "sibling scroller outside the inserted subtree keeps its original padding"
+    );
+    assert_eq!(
+        node_json(&sink, "existing-rail")["padding"],
+        json!([0.0, 24.0]),
+        "sibling scroller's inner rail is out of mutation scope and must be left alone"
+    );
+}
+
+#[test]
+fn appended_section_repair_is_idempotent() {
+    let mut sink = insert(json!({
+        "type":"frame","id":"root","width":375,"height":812,"layout":"vertical",
+        "children":[
+            {"type":"frame","id":"status","role":"status-bar","height":44},
+            {"type":"frame","id":"existing","padding":[0,24],"children":[text("existing-t","Existing")]},
+            {"type":"frame","id":"appended","width":"fill_container","layout":"horizontal",
+             "clipContent":true,"children":[
+                {"type":"frame","id":"appended-rail","width":"fit_content","layout":"horizontal",
+                 "padding":[0,24],"children":[
+                    {"type":"frame","id":"a","width":58,"children":[text("a-t","A")]},
+                    {"type":"frame","id":"b","width":58,"children":[text("b-t","B")]}
+                 ]}
+             ]},
+            {"type":"frame","id":"nav","role":"bottom-tab-bar","height":72}
+        ]
+    }));
+
+    repair_mobile_content_rails(&mut sink, "appended");
+    sink.applied.clear();
+    repair_mobile_content_rails(&mut sink, "appended");
+
+    assert!(
+        sink.applied.is_empty(),
+        "a second repair pass over the same nested append must be a no-op"
+    );
+}
+
+#[test]
+fn appended_inner_lane_alone_does_not_get_its_rail_stripped() {
+    let mut sink = insert(json!({
+        "type":"frame","id":"root","width":375,"height":812,"layout":"vertical",
+        "children":[
+            {"type":"frame","id":"status","role":"status-bar","height":44},
+            {"type":"frame","id":"viewport","width":"fill_container","layout":"horizontal",
+             "clipContent":true,"children":[
+                {"type":"frame","id":"lane","width":"fit_content","layout":"horizontal",
+                 "padding":[0,24],"children":[
+                    {"type":"frame","id":"a","width":58,"children":[text("a-t","A")]},
+                    {"type":"frame","id":"b","width":58,"children":[text("b-t","B")]}
+                 ]}
+             ]},
+            {"type":"frame","id":"body","padding":[0,24],"children":[text("body-t","Body")]},
+            {"type":"frame","id":"nav","role":"bottom-tab-bar","height":72}
+        ]
+    }));
+
+    // `viewport` already exists (no leading padding of its own) and `lane`
+    // is the append's inserted root — i.e. root_id lands on the INNER lane,
+    // not the outer scroller. The outer add and inner clear are an atomic
+    // pair; since the outer viewport is out of scope, neither half may
+    // apply, or `lane`'s own canonical rail gets wiped with nothing put in
+    // its place.
+    repair_mobile_content_rails(&mut sink, "lane");
+
+    assert_eq!(
+        node_json(&sink, "lane")["padding"],
+        json!([0.0, 24.0]),
+        "the inner lane's own rail must survive when its outer viewport pairing is out of scope"
+    );
+    assert!(
+        node_json(&sink, "viewport").get("padding").is_none(),
+        "the outer viewport is out of scope for this append and must not be touched either"
     );
 }

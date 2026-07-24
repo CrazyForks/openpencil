@@ -20,6 +20,8 @@ use std::collections::{BTreeMap, HashSet};
 const DEFAULT_MOBILE_RAIL: f64 = 24.0;
 const MIN_MOBILE_WIDTH: f64 = 320.0;
 const MAX_MOBILE_WIDTH: f64 = 480.0;
+const MIN_CONTENT_RAIL: f64 = 16.0;
+const MAX_CONTENT_RAIL: f64 = 28.0;
 
 pub(crate) fn repair_mobile_content_rails_for_all_roots(sink: &mut dyn DocSink) {
     let root_ids: Vec<String> = sink
@@ -34,21 +36,43 @@ pub(crate) fn repair_mobile_content_rails_for_all_roots(sink: &mut dyn DocSink) 
 }
 
 pub(crate) fn repair_mobile_content_rails(sink: &mut dyn DocSink, root_id: &str) {
-    let repairs = {
-        let Some(root) = sink
-            .state()
-            .active_children()
-            .iter()
-            .find(|node| node.id_str() == root_id)
-        else {
+    // `root_id` is a top-level active root in the common case (fresh-document
+    // generation), but the classic selected-frame append path nests the
+    // inserted subtree root under an existing top-level mobile screen instead
+    // of placing it at the top level (the same "Component 11c" shape
+    // `cleanup.rs::find_root` already works around). The appended fragment
+    // itself is usually just a section — it will not pass
+    // `looks_like_mobile_screen` on its own — so on a miss we walk up to the
+    // enclosing top-level screen to use as detection CONTEXT, but keep
+    // mutations scoped to `root_id`'s own subtree so pre-existing content
+    // elsewhere in that screen is never touched.
+    let (repairs, apply_root_id) = {
+        let roots = sink.state().active_children();
+        if let Some(root) = roots.iter().find(|node| node.id_str() == root_id) {
+            (collect_repairs(root), root_id.to_string())
+        } else if let Some((screen, scope)) = find_enclosing_top_level(roots, root_id) {
+            let repairs = collect_repairs(screen)
+                .into_iter()
+                .filter(|repair| repair_touches_scope(repair, &scope))
+                .collect();
+            (repairs, screen.id_str().to_string())
+        } else {
             return;
-        };
-        collect_repairs(root)
+        }
     };
+    // Scope filtering above is per-repair, but some repairs are only correct
+    // as a PAIR (a scroller's own leading-rail add + its inner lane's
+    // matching leading-rail clear): if the append's scope contains only the
+    // inner lane, filtering can keep the "clear" half and drop the "add"
+    // half, net-erasing the rail entirely. Drop any repair whose declared
+    // partner did not survive scoping.
+    let repairs = drop_unpaired_repairs(repairs);
 
     for repair in repairs {
         match repair {
-            RailRepair::SetPadding { node_id, padding } => {
+            RailRepair::SetPadding {
+                node_id, padding, ..
+            } => {
                 sink.apply(EditorCommand::SetNodeLayoutProp {
                     node_id: NodeId::new(node_id),
                     property: "padding".to_string(),
@@ -63,7 +87,7 @@ pub(crate) fn repair_mobile_content_rails(sink: &mut dyn DocSink, root_id: &str)
                 let wrapper_id = NodeId::new(wrapper.id_str().to_string());
                 if !sink.apply(EditorCommand::InsertAuthoredSubtree {
                     nodes: vec![*wrapper],
-                    parent_id: NodeId::new(root_id.to_string()),
+                    parent_id: NodeId::new(apply_root_id.clone()),
                     page_id: None,
                 }) {
                     continue;
@@ -82,7 +106,7 @@ pub(crate) fn repair_mobile_content_rails(sink: &mut dyn DocSink, root_id: &str)
                 }
                 sink.apply(EditorCommand::MoveNode {
                     node_id: wrapper_id,
-                    target_parent: NodeId::new(root_id.to_string()),
+                    target_parent: NodeId::new(apply_root_id.clone()),
                     page_id: None,
                     index: Some(original_index),
                 });
@@ -91,11 +115,75 @@ pub(crate) fn repair_mobile_content_rails(sink: &mut dyn DocSink, root_id: &str)
     }
 }
 
+/// Finds the top-level active root whose subtree contains `target_id`,
+/// returning that root together with the full id set of `target_id`'s own
+/// subtree (the mutation-scope allowlist).
+fn find_enclosing_top_level<'a>(
+    roots: &'a [PenNode],
+    target_id: &str,
+) -> Option<(&'a PenNode, HashSet<String>)> {
+    roots
+        .iter()
+        .find_map(|root| subtree_ids_rooted_at(root, target_id).map(|scope| (root, scope)))
+}
+
+/// Returns the id set of `target_id`'s own subtree (including itself) if
+/// `target_id` appears anywhere under `node`, else `None`.
+fn subtree_ids_rooted_at(node: &PenNode, target_id: &str) -> Option<HashSet<String>> {
+    if node.id_str() == target_id {
+        let mut ids = HashSet::new();
+        collect_node_ids(node, &mut ids);
+        return Some(ids);
+    }
+    node.children()
+        .into_iter()
+        .flatten()
+        .find_map(|child| subtree_ids_rooted_at(child, target_id))
+}
+
+/// True when a repair's mutation target lies inside the scoped subtree.
+fn repair_touches_scope(repair: &RailRepair, scope: &HashSet<String>) -> bool {
+    match repair {
+        RailRepair::SetPadding { node_id, .. } => scope.contains(node_id),
+        RailRepair::WrapSurface { surface_id, .. } => scope.contains(surface_id),
+    }
+}
+
+/// Drops any `SetPadding` repair whose `requires` partner (the other half of
+/// an atomic outer-add/inner-clear pair, see `collect_scroller_padding_repairs`)
+/// is not itself present in `repairs`. A no-op when `repairs` is unfiltered
+/// (both halves of every pair are always present together), so this is safe
+/// to run unconditionally.
+fn drop_unpaired_repairs(repairs: Vec<RailRepair>) -> Vec<RailRepair> {
+    let present: HashSet<String> = repairs
+        .iter()
+        .filter_map(|repair| match repair {
+            RailRepair::SetPadding { node_id, .. } => Some(node_id.clone()),
+            RailRepair::WrapSurface { .. } => None,
+        })
+        .collect();
+    repairs
+        .into_iter()
+        .filter(|repair| match repair {
+            RailRepair::SetPadding {
+                requires: Some(req),
+                ..
+            } => present.contains(req),
+            _ => true,
+        })
+        .collect()
+}
+
 #[derive(Debug)]
 enum RailRepair {
     SetPadding {
         node_id: String,
         padding: Vec<f64>,
+        /// When `Some(id)`, this repair is only meaningful if the repair
+        /// targeting `id` is ALSO present in the final (post-scope-filter)
+        /// list — see `collect_scroller_padding_repairs`'s outer-add /
+        /// inner-clear pair.
+        requires: Option<String>,
     },
     WrapSurface {
         surface_id: String,
@@ -132,12 +220,7 @@ fn collect_repairs(root: &PenNode) -> Vec<RailRepair> {
         // A root-direct horizontal viewport owns its own asymmetric rail,
         // including image-only carousels that have no text/icon descendants.
         if is_clipped_horizontal_scroller(section) {
-            if horizontal_padding(section).is_none_or(|pair| !nonzero_pair(pair)) {
-                repairs.push(RailRepair::SetPadding {
-                    node_id: section.id_str().to_string(),
-                    padding: padding_with_leading_rail(section, rail),
-                });
-            }
+            collect_scroller_padding_repairs(section, rail, &mut repairs);
             continue;
         }
 
@@ -173,14 +256,7 @@ fn collect_repairs(root: &PenNode) -> Vec<RailRepair> {
             // viewport.
             for child in section.children().into_iter().flatten() {
                 if is_clipped_horizontal_scroller(child) {
-                    if !has_expression_padding(child)
-                        && horizontal_padding(child).is_none_or(|pair| !nonzero_pair(pair))
-                    {
-                        repairs.push(RailRepair::SetPadding {
-                            node_id: child.id_str().to_string(),
-                            padding: padding_with_leading_rail(child, rail),
-                        });
-                    }
+                    collect_scroller_padding_repairs(child, rail, &mut repairs);
                 } else if is_scroller_header(child)
                     && !has_expression_padding(child)
                     && horizontal_padding(child).is_none_or(|pair| !nonzero_pair(pair))
@@ -188,6 +264,7 @@ fn collect_repairs(root: &PenNode) -> Vec<RailRepair> {
                     repairs.push(RailRepair::SetPadding {
                         node_id: child.id_str().to_string(),
                         padding: padding_with_horizontal_rail(child, rail),
+                        requires: None,
                     });
                 }
             }
@@ -213,6 +290,7 @@ fn collect_repairs(root: &PenNode) -> Vec<RailRepair> {
             repairs.push(RailRepair::SetPadding {
                 node_id: section.id_str().to_string(),
                 padding: padding_with_horizontal_rail(section, rail),
+                requires: None,
             });
         }
     }
@@ -254,7 +332,7 @@ fn infer_content_rail(sections: &[PenNode]) -> f64 {
         let Some((left, right)) = horizontal_padding(section) else {
             continue;
         };
-        if (left - right).abs() > 0.5 || !(16.0..=28.0).contains(&left) {
+        if (left - right).abs() > 0.5 || !(MIN_CONTENT_RAIL..=MAX_CONTENT_RAIL).contains(&left) {
             continue;
         }
         *counts.entry(left.round() as i64).or_default() += 1;
@@ -437,9 +515,87 @@ fn is_clipped_horizontal_scroller(node: &PenNode) -> bool {
     })
 }
 
+fn collect_scroller_padding_repairs(scroller: &PenNode, rail: f64, repairs: &mut Vec<RailRepair>) {
+    if has_expression_padding(scroller) {
+        return;
+    }
+
+    let current_padding = horizontal_padding(scroller);
+    let needs_leading_rail = current_padding.is_none_or(|(left, _)| left <= 0.0);
+
+    if needs_leading_rail {
+        repairs.push(RailRepair::SetPadding {
+            node_id: scroller.id_str().to_string(),
+            padding: padding_with_leading_rail(scroller, rail),
+            requires: None,
+        });
+    }
+
+    if let Some((node_id, padding, inner_left)) = redundant_inner_scroller_rail_repair(scroller) {
+        let duplicates_existing_rail =
+            current_padding.is_some_and(|(outer_left, _)| (outer_left - inner_left).abs() <= 0.5);
+        if needs_leading_rail || duplicates_existing_rail {
+            // The inner lane's rail is only redundant once the OUTER
+            // scroller actually owns a leading rail. When this push is
+            // triggered by `needs_leading_rail`, the outer's own add above
+            // is what establishes that ownership — if scope filtering drops
+            // the outer add (e.g. an append whose inserted root is this
+            // inner lane itself, not the outer viewport), clearing the inner
+            // lane alone would erase the rail entirely. `duplicates_existing_rail`
+            // needs no such pairing: the outer already owns a rail we are not
+            // touching, so the inner clear stands on its own.
+            let requires = needs_leading_rail.then(|| scroller.id_str().to_string());
+            repairs.push(RailRepair::SetPadding {
+                node_id,
+                padding,
+                requires,
+            });
+        }
+    }
+}
+
+fn redundant_inner_scroller_rail_repair(scroller: &PenNode) -> Option<(String, Vec<f64>, f64)> {
+    let children = scroller.children()?;
+    let [inner] = children.as_slice() else {
+        return None;
+    };
+    let props = container_props(inner)?;
+    if props.layout != Some(LayoutMode::Horizontal)
+        || props.clip_content == Some(true)
+        || !matches!(
+            props.width.as_ref(),
+            Some(SizingBehavior::Keyword(SizingKeyword::FitContent))
+        )
+        || !is_transparent_surface(inner)
+        || has_expression_padding(inner)
+        || inner.children().map_or(0, |children| children.len()) < 2
+    {
+        return None;
+    }
+
+    let (left, right) = horizontal_padding(inner)?;
+    if !(MIN_CONTENT_RAIL..=MAX_CONTENT_RAIL).contains(&left) {
+        return None;
+    }
+    let (top, bottom) = vertical_padding(inner);
+    Some((
+        inner.id_str().to_string(),
+        vec![top, right, bottom, 0.0],
+        left,
+    ))
+}
+
 fn contains_clipped_horizontal_scroller(node: &PenNode) -> bool {
-    is_clipped_horizontal_scroller(node)
-        || node
+    if is_clipped_horizontal_scroller(node) {
+        return true;
+    }
+
+    // Only transparent structural wrappers can pass scroller ownership up to
+    // an ancestor section. Surfaced cards often contain clipped horizontal
+    // progress meters; treating those meters as page rails suppresses the
+    // card group's own mobile content inset.
+    is_transparent_surface(node)
+        && node
             .children()
             .is_some_and(|children| children.iter().any(contains_clipped_horizontal_scroller))
 }
