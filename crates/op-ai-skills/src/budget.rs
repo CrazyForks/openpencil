@@ -17,6 +17,28 @@ pub fn estimate_tokens(text: &str) -> u32 {
     (text.chars().count().div_ceil(4)) as u32
 }
 
+/// Emit a diagnostic when a skill's own content silently exceeds its
+/// per-skill `budget` and gets truncated by [`truncate_content`] below.
+/// This corpus has no test that catches a skill drifting over its own
+/// budget as authors add content over time (`layout.md` sat ~700 tokens
+/// over budget — silently dropping its tail from every generation-phase
+/// prompt — for months before anyone noticed). `op-ai-skills` is
+/// dependency-minimal by design (wasm32-clean, no runtime IO — see the
+/// crate doc comment), so this skips `tracing`/`log` in favor of a plain
+/// `eprintln!`, and skips it entirely on wasm32 targets where stdio isn't
+/// a meaningful diagnostic channel.
+#[cfg(not(target_arch = "wasm32"))]
+fn warn_truncated(name: &str, budget_tokens: u32, actual_tokens: u32, dropped_chars: usize) {
+    eprintln!(
+        "op-ai-skills: skill {name:?} exceeds its budget ({actual_tokens} tokens > {budget_tokens} budget) \
+         — truncated, dropping {dropped_chars} trailing chars from the injected prompt. \
+         Raise `budget:` in the skill's frontmatter or trim its content."
+    );
+}
+
+#[cfg(target_arch = "wasm32")]
+fn warn_truncated(_name: &str, _budget_tokens: u32, _actual_tokens: u32, _dropped_chars: usize) {}
+
 /// Truncate `content` to roughly `max_tokens`, preferring to cut at a
 /// newline when one falls in the second half of the window (so the
 /// truncation lands on a clean line break).
@@ -96,6 +118,14 @@ pub fn trim_by_budget_pinned(
             } else {
                 raw
             };
+            if needs_truncate {
+                warn_truncated(
+                    &s.meta.name,
+                    per,
+                    raw,
+                    s.content.chars().count() - content.chars().count(),
+                );
+            }
             ResolvedSkill {
                 meta: s.meta.clone(),
                 content,
