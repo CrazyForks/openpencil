@@ -132,10 +132,19 @@ fn user_bin_dirs() -> Vec<PathBuf> {
     let Some(home) = dirs::home_dir() else {
         return dirs;
     };
+    // Antigravity's official Unix installer (`curl -fsSL
+    // https://antigravity.google/cli/install.sh | bash`) writes `agy` to
+    // `$HOME/.local/bin` by default (`TARGET_DIR="$HOME/.local/bin"` in
+    // that script), mirroring the explicit `%LOCALAPPDATA%\agy\bin` entry
+    // the Windows resolver carries (`cli_resolver_windows.rs`). Listed
+    // first and by name — not left to coincidentally match the generic
+    // dev-tool list below — so this candidate keeps resolving even if
+    // that list's contents change. `.local/bin` is intentionally absent
+    // from the loop below to avoid probing it twice.
+    dirs.push(home.join(".local/bin"));
     for rel in [
         ".bun/bin",
         ".volta/bin",
-        ".local/bin",
         ".local/share/mise/shims",
         ".asdf/shims",
         "Library/pnpm",
@@ -660,5 +669,28 @@ mod tests {
         // Whatever is or isn't installed on the test machine, the
         // probe must return cleanly.
         let _ = discover_models();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn posix_candidates_list_antigravity_dir_exactly_once() {
+        // `.local/bin` is both the generic dev-tool candidate and
+        // Antigravity's official installer target; it must appear once,
+        // not be probed twice.
+        let dirs = user_bin_dirs();
+        let Some(home) = dirs::home_dir() else {
+            return;
+        };
+        let antigravity_dir = home.join(".local/bin");
+        assert_eq!(
+            dirs.iter().filter(|d| **d == antigravity_dir).count(),
+            1,
+            "expected exactly one .local/bin candidate, got {dirs:?}"
+        );
+        assert_eq!(
+            dirs.first(),
+            Some(&antigravity_dir),
+            "Antigravity's official dir should be checked first"
+        );
     }
 }
