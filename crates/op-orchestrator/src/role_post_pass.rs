@@ -2140,6 +2140,247 @@ fn is_container_kind(node: &Value) -> bool {
     )
 }
 
+const FULL_MICRO_SURFACE_RADIUS: f64 = 999.0;
+const MAX_MICRO_SURFACE_SHORT_AXIS: f64 = 64.0;
+
+fn name_words(node: &Value) -> Vec<String> {
+    node.get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect()
+}
+
+fn has_name_word(words: &[String], needle: &str) -> bool {
+    words.iter().any(|word| word == needle)
+}
+
+fn has_large_container_semantics(words: &[String]) -> bool {
+    [
+        "card", "cloud", "preview", "panel", "screen", "grid", "list",
+    ]
+    .iter()
+    .any(|word| has_name_word(words, word))
+}
+
+fn has_compact_padding(node: &Value) -> bool {
+    let Some(padding) = node.get("padding") else {
+        return true;
+    };
+    let values: Vec<f64> = match padding {
+        Value::Number(value) => value.as_f64().into_iter().collect(),
+        Value::Array(values) => values.iter().filter_map(Value::as_f64).collect(),
+        _ => return false,
+    };
+    if values.is_empty() || values.iter().any(|value| *value < 0.0 || *value > 24.0) {
+        return false;
+    }
+    let vertical = match values.as_slice() {
+        [all] => all * 2.0,
+        [vertical, _horizontal] => vertical * 2.0,
+        [top, _right, bottom, _left] => top + bottom,
+        _ => return false,
+    };
+    vertical <= 32.0
+}
+
+fn has_compact_hug_anatomy(node: &Value) -> bool {
+    if !matches!(
+        node.get("layout").and_then(Value::as_str),
+        None | Some("horizontal")
+    ) || !has_compact_padding(node)
+    {
+        return false;
+    }
+    let Some(children) = node.get("children").and_then(Value::as_array) else {
+        return false;
+    };
+    if children.is_empty() || children.len() > 3 {
+        return false;
+    }
+    children.iter().all(|child| {
+        let child_type = child.get("type").and_then(Value::as_str);
+        if !matches!(
+            child_type,
+            Some("text" | "icon_font" | "path" | "image" | "ellipse")
+        ) {
+            return false;
+        }
+        if child_type == Some("text")
+            && numeric_prop(child, "fontSize").is_some_and(|size| size > 24.0)
+        {
+            return false;
+        }
+        ["width", "height"].iter().all(|key| {
+            numeric_prop(child, key)
+                .map(|size| size > 0.0 && size <= MAX_MICRO_SURFACE_SHORT_AXIS)
+                .unwrap_or(true)
+        })
+    })
+}
+
+fn is_compact_capsule_surface(node: &Value, words: &[String], is_avatar: bool) -> bool {
+    if has_large_container_semantics(words) {
+        return false;
+    }
+
+    let width = numeric_prop(node, "width");
+    let height = numeric_prop(node, "height");
+    if width.is_some_and(|size| size <= 0.0) || height.is_some_and(|size| size <= 0.0) {
+        return false;
+    }
+
+    if is_avatar {
+        let (Some(width), Some(height)) = (width, height) else {
+            return false;
+        };
+        let tolerance = 2.0_f64.max(width.max(height) * 0.15);
+        return width <= MAX_MICRO_SURFACE_SHORT_AXIS
+            && height <= MAX_MICRO_SURFACE_SHORT_AXIS
+            && (width - height).abs() <= tolerance;
+    }
+
+    let width_hugs_or_fills = matches!(
+        node.get("width").and_then(Value::as_str),
+        Some("fit_content" | "fill_container")
+    );
+    let height_hugs = node.get("height").and_then(Value::as_str) == Some("fit_content");
+    let width_supported = width.is_some() || width_hugs_or_fills || node.get("width").is_none();
+    let height_supported = height.is_some() || height_hugs || node.get("height").is_none();
+    if !width_supported || !height_supported {
+        return false;
+    }
+
+    if let (Some(width), Some(height)) = (width, height) {
+        return width.min(height) <= MAX_MICRO_SURFACE_SHORT_AXIS;
+    }
+    if width.is_some_and(|size| size > MAX_MICRO_SURFACE_SHORT_AXIS) && height_hugs
+        || height.is_some_and(|size| size > MAX_MICRO_SURFACE_SHORT_AXIS) && width_hugs_or_fills
+    {
+        return false;
+    }
+
+    let needs_hug_proof = width.is_none() || height.is_none();
+    !needs_hug_proof || has_compact_hug_anatomy(node)
+}
+
+fn excludes_semantic_rounding(node: &Value, words: &[String]) -> bool {
+    let role = role_of(node).unwrap_or("").to_ascii_lowercase();
+    role.contains("nav")
+        || matches!(
+            role.as_str(),
+            "status-bar" | "tab-bar" | "bottom-tab-bar" | "navbar"
+        )
+        || [
+            "bar",
+            "row",
+            "container",
+            "group",
+            "wrapper",
+            "section",
+            "nav",
+            "navigation",
+        ]
+        .iter()
+        .any(|word| has_name_word(words, word))
+}
+
+fn fixed_near_square_side(node: &Value) -> Option<f64> {
+    let width = node.get("width").and_then(Value::as_f64)?;
+    let height = node.get("height").and_then(Value::as_f64)?;
+    if width <= 0.0 || height <= 0.0 {
+        return None;
+    }
+    let side = width.min(height);
+    let tolerance = 2.0_f64.max(side * 0.15);
+    ((width - height).abs() <= tolerance).then_some(side)
+}
+
+fn is_explicit_rounded_card(node: &Value, words: &[String]) -> bool {
+    if corner_radius(node) <= 0.0 {
+        return false;
+    }
+    let role = role_of(node).unwrap_or("");
+    let role_is_card = matches!(
+        role,
+        "card"
+            | "stat-card"
+            | "pricing-card"
+            | "feature-card"
+            | "image-card"
+            | "product-card"
+            | "restaurant-card"
+            | "menu-card"
+            | "testimonial"
+    );
+    let name = node
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    role_is_card || name == "card" || (name.ends_with(" card") && has_name_word(words, "card"))
+}
+
+/// Add only omitted micro-component radii when the node's semantics make a
+/// square result unambiguously accidental. Explicit `cornerRadius: 0` remains
+/// an authored sharp-style decision; structural bars/rows/containers/nav stay
+/// untouched. Icon wells are more style-dependent, so they are rounded only
+/// inside an already-rounded, explicitly card-like ancestor.
+fn round_missing_semantic_micro_surfaces(node: &mut Value, rounded_card_ancestor: bool) {
+    let is_frame = node.get("type").and_then(Value::as_str) == Some("frame");
+    let words = if is_frame {
+        name_words(node)
+    } else {
+        Vec::new()
+    };
+    let this_is_rounded_card = is_frame && is_explicit_rounded_card(node, &words);
+    let structural = is_frame && excludes_semantic_rounding(node, &words);
+    let radius_missing = is_frame && node.get("cornerRadius").is_none();
+    let painted = is_frame && has_visible_fill(node);
+
+    if radius_missing && painted && !structural {
+        let role = role_of(node).unwrap_or("");
+        let capsule_semantics = matches!(role, "badge" | "pill" | "tag" | "avatar")
+            || ["badge", "pill", "tag", "avatar"]
+                .iter()
+                .any(|word| has_name_word(&words, word));
+        let avatar_semantics = role == "avatar" || has_name_word(&words, "avatar");
+        if capsule_semantics && is_compact_capsule_surface(node, &words, avatar_semantics) {
+            node["cornerRadius"] = json!(FULL_MICRO_SURFACE_RADIUS);
+        } else {
+            let status_indicator = role == "status"
+                || (has_name_word(&words, "status")
+                    && (has_name_word(&words, "dot") || has_name_word(&words, "indicator")))
+                || (has_name_word(&words, "active") && has_name_word(&words, "indicator"));
+            if status_indicator {
+                if let Some(side) = fixed_near_square_side(node) {
+                    node["cornerRadius"] = json!(side / 2.0);
+                }
+            } else {
+                let exact_icon_box = node
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|name| name.trim().eq_ignore_ascii_case("Icon Box"));
+                if rounded_card_ancestor && exact_icon_box {
+                    if let Some(side) = fixed_near_square_side(node) {
+                        node["cornerRadius"] = json!((side / 4.0).min(12.0));
+                    }
+                }
+            }
+        }
+    }
+
+    let child_has_rounded_card_ancestor = rounded_card_ancestor || this_is_rounded_card;
+    if let Some(children) = node.get_mut("children").and_then(Value::as_array_mut) {
+        for child in children.iter_mut() {
+            round_missing_semantic_micro_surfaces(child, child_has_rounded_card_ancestor);
+        }
+    }
+}
+
 /// A COUNT BADGE (a painted chip whose only child is a 1-3 digit text — a
 /// nav item's "12") reads as a stray square when the model omits its corner
 /// radius; the badge convention is a pill. Only fires when `cornerRadius`
@@ -2147,7 +2388,15 @@ fn is_container_kind(node: &Value) -> bool {
 /// decision and stays.
 fn round_count_badges(node: &mut Value) {
     let is_frame = node.get("type").and_then(Value::as_str) == Some("frame");
-    if is_frame && node.get("cornerRadius").is_none() {
+    let words = if is_frame {
+        name_words(node)
+    } else {
+        Vec::new()
+    };
+    if is_frame
+        && node.get("cornerRadius").is_none()
+        && is_compact_capsule_surface(node, &words, false)
+    {
         let painted = node
             .get("fill")
             .map(|f| match f {
@@ -2225,6 +2474,7 @@ pub fn enforce_surface_color_discipline(nodes: &mut [PenNode]) {
             continue;
         };
         fix_surface_color_discipline(&mut v, true);
+        round_missing_semantic_micro_surfaces(&mut v, false);
         round_count_badges(&mut v);
         if let Ok(new_node) = serde_json::from_value::<PenNode>(v) {
             *node = new_node;

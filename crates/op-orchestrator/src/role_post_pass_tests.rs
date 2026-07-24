@@ -1605,3 +1605,279 @@ fn authored_radius_and_word_chips_stay() {
     assert_eq!(v0["cornerRadius"].as_f64(), Some(0.0));
     assert!(v1.get("cornerRadius").is_none() || v1["cornerRadius"].is_null());
 }
+
+#[test]
+fn missing_semantic_micro_surfaces_are_rounded() {
+    let mut nodes: Vec<jian_ops_schema::node::PenNode> = vec![
+        serde_json::from_value(json!({
+            "type":"frame","id":"done","name":"Done Badge","width":20,"height":20,
+            "fill":[{"type":"solid","color":"#22C55E"}],
+            "children":[{"type":"icon_font","id":"check","iconFontName":"check"}]
+        }))
+        .unwrap(),
+        serde_json::from_value(json!({
+            "type":"frame","id":"status","name":"Status Pill","role":"stat-card",
+            "width":"fill_container","height":28,
+            "fill":[{"type":"solid","color":"#FF6B6B20"}],
+            "children":[{"type":"text","id":"status-text","content":"进行中"}]
+        }))
+        .unwrap(),
+        serde_json::from_value(json!({
+            "type":"frame","id":"tag","role":"tag","width":"fit_content","height":"fit_content",
+            "fill":[{"type":"solid","color":"#F3F4F6"}],
+            "children":[{"type":"text","id":"tag-text","content":"今日核心词"}]
+        }))
+        .unwrap(),
+        serde_json::from_value(json!({
+            "type":"frame","id":"avatar","role":"avatar","width":36,"height":36,
+            "fill":[{"type":"solid","color":"#E5E7EB"}],
+            "children":[{"type":"text","id":"avatar-text","content":"A"}]
+        }))
+        .unwrap(),
+        serde_json::from_value(json!({
+            "type":"frame","id":"active","name":"Active Indicator","width":8,"height":8,
+            "fill":[{"type":"solid","color":"#FF6B6B"}],
+            "children":[]
+        }))
+        .unwrap(),
+    ];
+
+    enforce_surface_color_discipline(&mut nodes);
+    let values: Vec<Value> = nodes
+        .iter()
+        .map(|node| serde_json::to_value(node).unwrap())
+        .collect();
+
+    for value in &values[..4] {
+        assert!(
+            value["cornerRadius"]
+                .as_f64()
+                .is_some_and(|radius| radius >= 100.0),
+            "badge/pill/tag/avatar should become a capsule: {value}"
+        );
+    }
+    assert_eq!(
+        values[4]["cornerRadius"].as_f64(),
+        Some(4.0),
+        "a fixed near-square active indicator should become a true circle"
+    );
+}
+
+#[test]
+fn semantic_capsule_rounding_skips_large_fixed_surfaces() {
+    let mut nodes: Vec<jian_ops_schema::node::PenNode> = vec![
+        serde_json::from_value(json!({
+            "type":"frame","id":"avatar-card","name":"Avatar Card",
+            "width":240,"height":180,
+            "fill":[{"type":"solid","color":"#FFFFFF"}],
+            "children":[{"type":"text","id":"avatar-card-title","content":"Profile"}]
+        }))
+        .unwrap(),
+        serde_json::from_value(json!({
+            "type":"frame","id":"tag-cloud","name":"Tag Cloud",
+            "width":320,"height":160,
+            "fill":[{"type":"solid","color":"#F3F4F6"}],
+            "children":[{"type":"text","id":"tag-cloud-title","content":"Topics"}]
+        }))
+        .unwrap(),
+        serde_json::from_value(json!({
+            "type":"frame","id":"badge-preview","name":"Badge Preview",
+            "width":200,"height":120,
+            "fill":[{"type":"solid","color":"#F3F4F6"}],
+            "children":[{"type":"text","id":"badge-preview-title","content":"Preview"}]
+        }))
+        .unwrap(),
+    ];
+
+    enforce_surface_color_discipline(&mut nodes);
+    for node in &nodes {
+        let value = serde_json::to_value(node).unwrap();
+        assert!(
+            value.get("cornerRadius").is_none() || value["cornerRadius"].is_null(),
+            "large fixed semantic containers are not micro surfaces: {value}"
+        );
+    }
+}
+
+#[test]
+fn semantic_capsule_rounding_honors_compact_boundaries_and_hug_anatomy() {
+    let mut nodes: Vec<jian_ops_schema::node::PenNode> = vec![
+        serde_json::from_value(json!({
+            "type":"frame","id":"avatar-64","role":"avatar","name":"Avatar",
+            "width":64,"height":64,
+            "fill":[{"type":"solid","color":"#E5E7EB"}]
+        }))
+        .unwrap(),
+        serde_json::from_value(json!({
+            "type":"frame","id":"avatar-65","role":"avatar","name":"Avatar",
+            "width":65,"height":65,
+            "fill":[{"type":"solid","color":"#E5E7EB"}]
+        }))
+        .unwrap(),
+        serde_json::from_value(json!({
+            "type":"frame","id":"fit-tag","role":"tag","name":"Topic Tag",
+            "width":"fit_content","height":"fit_content","layout":"horizontal",
+            "padding":[4,10],"fill":[{"type":"solid","color":"#F3F4F6"}],
+            "children":[{"type":"text","id":"fit-tag-text","content":"Travel","fontSize":12}]
+        }))
+        .unwrap(),
+        serde_json::from_value(json!({
+            "type":"frame","id":"fit-cloud","name":"Tag Cloud",
+            "width":"fit_content","height":"fit_content","layout":"horizontal",
+            "fill":[{"type":"solid","color":"#F3F4F6"}],
+            "children":[
+                {"type":"frame","id":"cloud-a","children":[]},
+                {"type":"frame","id":"cloud-b","children":[]},
+                {"type":"frame","id":"cloud-c","children":[]},
+                {"type":"frame","id":"cloud-d","children":[]}
+            ]
+        }))
+        .unwrap(),
+        serde_json::from_value(json!({
+            "type":"frame","id":"numeric-preview","name":"Badge Preview",
+            "width":240,"height":160,"layout":"horizontal",
+            "fill":[{"type":"solid","color":"#F3F4F6"}],
+            "children":[{"type":"text","id":"preview-count","content":"80"}]
+        }))
+        .unwrap(),
+    ];
+
+    enforce_surface_color_discipline(&mut nodes);
+    let values: Vec<Value> = nodes
+        .iter()
+        .map(|node| serde_json::to_value(node).unwrap())
+        .collect();
+
+    assert_eq!(values[0]["cornerRadius"].as_f64(), Some(999.0));
+    assert!(values[1].get("cornerRadius").is_none());
+    assert_eq!(values[2]["cornerRadius"].as_f64(), Some(999.0));
+    assert!(values[3].get("cornerRadius").is_none());
+    assert!(
+        values[4].get("cornerRadius").is_none(),
+        "large numeric badge preview must not bypass the semantic gate via count-badge repair"
+    );
+}
+
+#[test]
+fn semantic_rounding_preserves_authored_sharp_and_structural_surfaces() {
+    let mut nodes: Vec<jian_ops_schema::node::PenNode> = vec![
+        serde_json::from_value(json!({
+            "type":"frame","id":"sharp","name":"Done Badge","cornerRadius":0,
+            "width":20,"height":20,"fill":[{"type":"solid","color":"#22C55E"}]
+        }))
+        .unwrap(),
+        serde_json::from_value(json!({
+            "type":"frame","id":"transparent","name":"Status Pill","width":80,"height":28
+        }))
+        .unwrap(),
+        serde_json::from_value(json!({
+            "type":"frame","id":"status-bar","name":"Status Bar","width":"fill_container","height":62,
+            "fill":[{"type":"solid","color":"#FFFFFF"}]
+        }))
+        .unwrap(),
+        serde_json::from_value(json!({
+            "type":"frame","id":"row","name":"Badge Row","width":"fill_container","height":32,
+            "fill":[{"type":"solid","color":"#F3F4F6"}]
+        }))
+        .unwrap(),
+        serde_json::from_value(json!({
+            "type":"frame","id":"container","name":"Pill Container","width":"fill_container","height":40,
+            "fill":[{"type":"solid","color":"#F3F4F6"}]
+        }))
+        .unwrap(),
+        serde_json::from_value(json!({
+            "type":"frame","id":"nav","role":"bottom-tab-bar","name":"Bottom Navigation Bar",
+            "width":375,"height":72,"fill":[{"type":"solid","color":"#FFFFFF"}]
+        }))
+        .unwrap(),
+    ];
+
+    enforce_surface_color_discipline(&mut nodes);
+    let values: Vec<Value> = nodes
+        .iter()
+        .map(|node| serde_json::to_value(node).unwrap())
+        .collect();
+
+    assert_eq!(values[0]["cornerRadius"].as_f64(), Some(0.0));
+    for value in &values[1..] {
+        assert!(
+            value.get("cornerRadius").is_none() || value["cornerRadius"].is_null(),
+            "unpainted or structural surfaces must stay untouched: {value}"
+        );
+    }
+}
+
+#[test]
+fn exact_icon_box_inside_rounded_card_gets_conservative_radius() {
+    let mut nodes: Vec<jian_ops_schema::node::PenNode> = vec![
+        serde_json::from_value(json!({
+            "type":"frame","id":"named-card","name":"Listening Task Card","cornerRadius":18,
+            "children":[{
+                "type":"frame","id":"icon-a","name":"Icon Box","role":"icon",
+                "width":32,"height":32,"fill":[{"type":"solid","color":"#22C55E20"}]
+            }]
+        }))
+        .unwrap(),
+        serde_json::from_value(json!({
+            "type":"frame","id":"role-card","role":"card","name":"Lesson Surface","cornerRadius":20,
+            "children":[{
+                "type":"frame","id":"icon-b","name":"Icon Box",
+                "width":64,"height":64,"fill":[{"type":"solid","color":"#FF6B6B20"}]
+            }]
+        }))
+        .unwrap(),
+    ];
+
+    enforce_surface_color_discipline(&mut nodes);
+    let named = serde_json::to_value(&nodes[0]).unwrap();
+    let role = serde_json::to_value(&nodes[1]).unwrap();
+    assert_eq!(named["children"][0]["cornerRadius"].as_f64(), Some(8.0));
+    assert_eq!(
+        role["children"][0]["cornerRadius"].as_f64(),
+        Some(12.0),
+        "the contextual icon radius is capped at 12px"
+    );
+}
+
+#[test]
+fn icon_box_rounding_requires_rounded_card_context_and_missing_radius() {
+    let mut nodes: Vec<jian_ops_schema::node::PenNode> = vec![
+        serde_json::from_value(json!({
+            "type":"frame","id":"outside","name":"Section",
+            "children":[{
+                "type":"frame","id":"icon-outside","name":"Icon Box",
+                "width":32,"height":32,"fill":[{"type":"solid","color":"#F3F4F6"}]
+            }]
+        }))
+        .unwrap(),
+        serde_json::from_value(json!({
+            "type":"frame","id":"sharp-card","role":"card","cornerRadius":0,
+            "children":[{
+                "type":"frame","id":"icon-sharp","name":"Icon Box",
+                "width":32,"height":32,"fill":[{"type":"solid","color":"#F3F4F6"}]
+            }]
+        }))
+        .unwrap(),
+        serde_json::from_value(json!({
+            "type":"frame","id":"rounded-card","role":"card","cornerRadius":18,
+            "children":[{
+                "type":"frame","id":"icon-authored","name":"Icon Box","cornerRadius":0,
+                "width":32,"height":32,"fill":[{"type":"solid","color":"#F3F4F6"}]
+            }]
+        }))
+        .unwrap(),
+    ];
+
+    enforce_surface_color_discipline(&mut nodes);
+    let outside = serde_json::to_value(&nodes[0]).unwrap();
+    let sharp = serde_json::to_value(&nodes[1]).unwrap();
+    let authored = serde_json::to_value(&nodes[2]).unwrap();
+
+    assert!(outside["children"][0].get("cornerRadius").is_none());
+    assert!(sharp["children"][0].get("cornerRadius").is_none());
+    assert_eq!(
+        authored["children"][0]["cornerRadius"].as_f64(),
+        Some(0.0),
+        "an explicit sharp icon box is an authored decision"
+    );
+}
