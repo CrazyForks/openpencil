@@ -252,6 +252,8 @@ fn cleanup_deletes_only_empty_decorated_small_frame_stubs() {
             {"type":"frame","id":"book","name":"Book Btn 1","padding":[8,14],"cornerRadius":9999,
              "fill":[{"type":"solid","color":"#E5E7EB"}],"children":[]},
             {"type":"ellipse","id":"dot","name":"Status Dot","width":6,"height":6,"fill":[{"type":"solid","color":"#22C55E"}]},
+            {"type":"frame","id":"active","name":"Active Indicator","width":8,"height":8,"cornerRadius":4,
+             "fill":[{"type":"solid","color":"#FF6B6B"}],"children":[]},
             {"type":"frame","id":"badge","name":"Real Badge","width":58,"height":24,"padding":[5,10],"cornerRadius":9999,
              "fill":[{"type":"solid","color":"#F97316"}],"children":[{"type":"text","id":"badge-t","content":"-25%"}]},
             {"type":"frame","id":"skeleton","name":"Skeleton","width":120,"height":80,"cornerRadius":12,
@@ -266,6 +268,10 @@ fn cleanup_deletes_only_empty_decorated_small_frame_stubs() {
     assert!(find_by_name(&root, "Discount Badge 1").is_none());
     assert!(find_by_name(&root, "Book Btn 1").is_none());
     assert!(find_by_name(&root, "Status Dot").is_some());
+    assert!(
+        find_by_name(&root, "Active Indicator").is_some(),
+        "a painted semantic state dot is content, not an abandoned decorated stub"
+    );
     assert!(find_by_name(&root, "Real Badge").is_some());
     assert!(find_by_name(&root, "Skeleton").is_some());
     assert!(find_by_name(&root, "Spacer").is_some());

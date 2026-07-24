@@ -79,6 +79,11 @@ fn is_empty_decorated_stub(v: &Value, resolved_size: Option<(f64, f64)>) -> bool
         // no child image node, so treating them as empty stubs destroys the
         // asset before the later avatar-repair pass can inspect it.
         && !is_meaningful_media_leaf(v)
+        // A painted state/presence dot is itself the content. Weak models
+        // often emit it as a tiny childless frame rather than an ellipse; once
+        // the radius pass makes it circular it must not be mistaken for an
+        // abandoned badge shell.
+        && !has_state_indicator_semantics(v)
         && has_visible_paint(v)
         && (padding_positive(v) || numeric(v, "cornerRadius").is_some_and(|r| r > 0.0))
         && width.is_some_and(|w| w > 0.0 && w < 80.0)
@@ -87,6 +92,47 @@ fn is_empty_decorated_stub(v: &Value, resolved_size: Option<(f64, f64)>) -> bool
 
 fn is_meaningful_media_leaf(v: &Value) -> bool {
     has_image_fill(v) || has_avatar_semantics(v)
+}
+
+fn has_state_indicator_semantics(v: &Value) -> bool {
+    let role = v
+        .get("role")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if matches!(
+        role.as_str(),
+        "status-dot"
+            | "status-indicator"
+            | "presence-dot"
+            | "presence-indicator"
+            | "online-indicator"
+            | "notification-dot"
+    ) {
+        return true;
+    }
+
+    let name = v
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    [
+        "status dot",
+        "status indicator",
+        "active indicator",
+        "presence dot",
+        "presence indicator",
+        "online dot",
+        "online indicator",
+        "notification dot",
+        "状态点",
+        "状态指示",
+        "在线点",
+        "在线指示",
+    ]
+    .iter()
+    .any(|needle| name.contains(needle))
 }
 
 fn has_image_fill(v: &Value) -> bool {
