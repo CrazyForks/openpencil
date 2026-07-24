@@ -160,3 +160,18 @@ pub(crate) mod font_registry_test_support {
         LOCK.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
+
+#[cfg(test)]
+pub(crate) mod agent_indicator_test_support {
+    use std::sync::{LazyLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
+
+    static LOCK: LazyLock<RwLock<()>> = LazyLock::new(|| RwLock::new(()));
+
+    pub(crate) fn read() -> RwLockReadGuard<'static, ()> {
+        LOCK.read().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub(crate) fn write() -> RwLockWriteGuard<'static, ()> {
+        LOCK.write().unwrap_or_else(|e| e.into_inner())
+    }
+}

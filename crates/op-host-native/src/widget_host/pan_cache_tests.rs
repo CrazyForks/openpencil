@@ -14,7 +14,9 @@ fn seed_red_rect(host: &mut WidgetHostNative) {
     let doc = jian_ops_schema::load_str(json)
         .expect("fixture JSON parses")
         .value;
-    *host.editor_state_mut() = op_editor_core::EditorState::from_document(doc);
+    let mut state = op_editor_core::EditorState::from_document(doc);
+    state.chat.collapsed = true;
+    *host.editor_state_mut() = state;
     host.mark_paint_dirty_for_test();
 }
 
@@ -62,6 +64,7 @@ fn fonts_stable_since(generation: u64) -> bool {
 
 #[test]
 fn pan_gesture_frames_blit_the_cached_canvas_layer() {
+    let _indicator_guard = crate::agent_indicator_test_support::read();
     let fonts0 = jian_skia::font_generation();
     let mut host = WidgetHostNative::new();
     seed_red_rect(&mut host);
@@ -130,6 +133,7 @@ fn pan_gesture_frames_blit_the_cached_canvas_layer() {
 
 #[test]
 fn zoom_gesture_frames_never_build_the_pan_cache() {
+    let _indicator_guard = crate::agent_indicator_test_support::read();
     let fonts0 = jian_skia::font_generation();
     let mut host = WidgetHostNative::new();
     seed_red_rect(&mut host);
@@ -162,6 +166,7 @@ fn zoom_gesture_frames_never_build_the_pan_cache() {
 
 #[test]
 fn long_pan_scroll_refresh_matches_a_direct_paint_exactly() {
+    let _indicator_guard = crate::agent_indicator_test_support::read();
     let fonts0 = jian_skia::font_generation();
     let mut host = WidgetHostNative::new();
     seed_red_rect(&mut host);
@@ -210,6 +215,7 @@ fn long_pan_scroll_refresh_matches_a_direct_paint_exactly() {
 
 #[test]
 fn zoom_ticks_serve_scaled_blits_from_the_retained_layer() {
+    let _indicator_guard = crate::agent_indicator_test_support::read();
     let fonts0 = jian_skia::font_generation();
     let mut host = WidgetHostNative::new();
     seed_red_rect(&mut host);
@@ -244,6 +250,7 @@ fn zoom_ticks_serve_scaled_blits_from_the_retained_layer() {
 
 #[test]
 fn progressive_restore_converges_to_direct_paint_quality() {
+    let _indicator_guard = crate::agent_indicator_test_support::read();
     let fonts0 = jian_skia::font_generation();
     let mut host = WidgetHostNative::new();
     // A drop shadow is degrade-only content: gesture frames skip it,
@@ -252,7 +259,9 @@ fn progressive_restore_converges_to_direct_paint_quality() {
     let doc = jian_ops_schema::load_str(json)
         .expect("fixture JSON parses")
         .value;
-    *host.editor_state_mut() = op_editor_core::EditorState::from_document(doc);
+    let mut state = op_editor_core::EditorState::from_document(doc);
+    state.chat.collapsed = true;
+    *host.editor_state_mut() = state;
     host.mark_paint_dirty_for_test();
     let mut backend = NativeBackend::with_dpi(1.0);
 
@@ -295,6 +304,7 @@ fn progressive_restore_converges_to_direct_paint_quality() {
 
 #[test]
 fn document_mutation_invalidates_the_pan_cache() {
+    let _indicator_guard = crate::agent_indicator_test_support::read();
     let fonts0 = jian_skia::font_generation();
     let mut host = WidgetHostNative::new();
     seed_red_rect(&mut host);

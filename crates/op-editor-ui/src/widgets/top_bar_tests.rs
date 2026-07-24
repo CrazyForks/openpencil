@@ -103,7 +103,7 @@ fn narrow_dirty_title_drops_git_before_filename_extension_or_status() {
     bar.label_agents_and_mcp = "Agents & MCP";
     let rect = Rect {
         origin: Point2D::ZERO,
-        size: Point2D::new(608.0, TOP_BAR_HEIGHT),
+        size: Point2D::new(620.0, TOP_BAR_HEIGHT),
     };
 
     let layout = bar.title_layout(rect, title_test_width);
