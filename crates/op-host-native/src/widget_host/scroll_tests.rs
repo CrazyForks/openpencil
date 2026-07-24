@@ -121,3 +121,31 @@ fn locale_picker_wheel_scrolls_select_state_without_zooming_canvas() {
     assert_eq!(state.hover, None);
     assert_eq!(host.editor_state().viewport.zoom, zoom);
 }
+
+#[test]
+fn canvas_pan_gesture_opens_and_closes_the_interactive_degrade_window() {
+    let mut host = WidgetHostNative::new();
+    host.set_now_ms(1_000);
+    assert!(!host.fast_interaction_active());
+
+    // A trackpad pan over the canvas marks the gesture hot: the canvas
+    // paints interactive-degraded and the scheduler wakes exactly when
+    // the window closes so the release frame restores full quality.
+    assert!(host.apply_pan_gesture(600.0, 400.0, 5.0, 0.0, 1200.0, 800.0));
+    assert!(host.fast_interaction_active());
+    let deadline = host
+        .next_animation_deadline_ms()
+        .expect("hot gesture schedules a wake-up");
+    assert!(deadline <= 1_000 + super::INTERACTION_HOT_MS);
+
+    host.set_now_ms(1_000 + super::INTERACTION_HOT_MS);
+    assert!(!host.fast_interaction_active());
+}
+
+#[test]
+fn canvas_zoom_wheel_marks_the_gesture_hot() {
+    let mut host = WidgetHostNative::new();
+    host.set_now_ms(2_000);
+    assert!(host.apply_wheel(600.0, 400.0, -40.0, 1200.0, 800.0));
+    assert!(host.fast_interaction_active());
+}

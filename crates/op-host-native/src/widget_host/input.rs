@@ -872,6 +872,9 @@ impl WidgetHostNative {
         if self.apply_code_selection_drag_cursor_move(x, y) {
             return true;
         }
+        if let Some(consumed) = self.apply_image_crop_drag_cursor_move(x, y) {
+            return consumed;
+        }
         if let Some(consumed) = self.apply_node_drag_cursor_move(x, y) {
             return consumed;
         }
@@ -1595,6 +1598,7 @@ impl WidgetHostNative {
             drag.last_x = x;
             drag.last_y = y;
             self.editor_state.viewport.pan(dx, dy);
+            self.note_viewport_gesture();
             // Canvas pan only translates the viewport; keep layout cache intact.
             return true;
         }
@@ -1795,6 +1799,9 @@ impl WidgetHostNative {
             self.mark_dirty();
             return true;
         }
+        if self.finish_image_crop_drag() {
+            return true;
+        }
         if let Some(drag) = self.node_drag.take() {
             // Drag ended — drop the transient smart-guide lines, then
             // run the drop policy (auto-layout reorder / reparent).
@@ -1938,6 +1945,9 @@ impl WidgetHostNative {
         if self.create_drag.take().is_some() {
             self.editor_state.tool = op_editor_core::Tool::Select;
             self.mark_dirty();
+            return true;
+        }
+        if self.finish_image_crop_drag() {
             return true;
         }
         if let Some(drag) = self.node_drag.take() {

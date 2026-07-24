@@ -39,14 +39,30 @@ use mask::paint_child_siblings;
 
 #[path = "canvas_viewport_layer_bounds.rs"]
 mod layer_bounds;
-use layer_bounds::{node_composite_layer_bounds, sibling_mask_layer_bounds};
+use layer_bounds::{
+    node_composite_layer_bounds, sibling_mask_layer_bounds, subtree_intersects_cull,
+};
+
+/// Effects whose zoom-scaled footprint stays under this many device
+/// pixels are invisible — but their save-layers still break the GPU
+/// render pass (measured: a zoomed-out page with ~4.6k blur effects
+/// spent ~85% of every panned frame in per-draw render-pass submits
+/// on the macOS GL-on-Metal driver). Sub-pixel effects skip instead.
+const MIN_VISIBLE_EFFECT_DEVICE_PX: f32 = 0.3;
 
 /// Paint every `Effect::DropShadow` on `node` as a blurred shape
 /// behind its fill. The shadow corner radius matches the node
 /// kind — `corner_radius` for Frame / Rect, min-half for an
 /// ellipse silhouette. Offset + blur scale by `zoom` so the
-/// shadow tracks the node across viewport zoom.
-fn paint_drop_shadows(cx: &mut PaintCx<'_>, node: &SceneNode, world_rect: Rect, zoom: f32) {
+/// shadow tracks the node across viewport zoom. A shadow whose
+/// blur AND offset are both sub-pixel on screen skips entirely.
+fn paint_drop_shadows(
+    cx: &mut PaintCx<'_>,
+    node: &SceneNode,
+    world_rect: Rect,
+    zoom: f32,
+    dpi_scale: f32,
+) {
     let radius = if node.kind == NodeKind::Ellipse {
         world_rect.size.x.min(world_rect.size.y) / 2.0
     } else {
@@ -59,6 +75,10 @@ fn paint_drop_shadows(cx: &mut PaintCx<'_>, node: &SceneNode, world_rect: Rect, 
         // Inset shadows are painted inside the silhouette by the
         // per-kind painter, not here — skip them in the outer pass.
         if s.inner {
+            continue;
+        }
+        let footprint = s.blur.max(s.offset_x.abs()).max(s.offset_y.abs());
+        if footprint * zoom * dpi_scale < MIN_VISIBLE_EFFECT_DEVICE_PX {
             continue;
         }
         let shadow_rect = Rect {
@@ -345,6 +365,11 @@ struct PaintNodeOptions<'a, 'generation> {
     /// source, so its own node-level blend must not composite again. Exact id
     /// matching suppresses only that root; blended descendants still render.
     suppress_node_composite_id: Option<&'a str>,
+    /// True while a pan/zoom gesture is active: effect save-layers
+    /// (shadow / blur / backdrop) and sub-pixel leaves skip so the
+    /// interactive frame stays cheap; the gesture-end repaint restores
+    /// full quality (Figma-style interactive degrade).
+    fast_interaction: bool,
 }
 
 use super::canvas_overlay_transform::OverlayTransform;
@@ -518,6 +543,7 @@ pub(crate) fn paint_node_with_options_hiding<'a>(
         queued_shell_ids,
         mask_source: false,
         suppress_node_composite_id: None,
+        fast_interaction: false,
     };
     paint_node_inner(cx, node, &options, &mut Vec::new(), false)
 }
@@ -542,6 +568,7 @@ pub(crate) fn paint_scene_nodes_with_options_hiding<'a>(
     generating_descendant_ids: Option<&HashSet<String>>,
     generation_accent: Option<Color>,
     queued_shell_ids: Option<&HashSet<String>>,
+    fast_interaction: bool,
 ) -> PaintNodeHits<'a> {
     let options = PaintNodeOptions {
         viewport_origin,
@@ -559,6 +586,7 @@ pub(crate) fn paint_scene_nodes_with_options_hiding<'a>(
         queued_shell_ids,
         mask_source: false,
         suppress_node_composite_id: None,
+        fast_interaction,
     };
     let mut hits = PaintNodeHits::default();
     paint_child_siblings(cx, nodes, &options, &mut Vec::new(), false, &mut hits);
@@ -604,6 +632,7 @@ pub fn paint_scene_page(
         None,
         None,
         None,
+        false,
     );
 }
 
@@ -678,16 +707,30 @@ fn paint_node_inner<'a>(
         }
         _ => None,
     };
-    // Viewport culling — bounded leaves skip paint entirely when
-    // off-screen. Containers (bounds = ZERO) always recurse.
-    if world_rect.size.x > 0.0 && world_rect.size.y > 0.0 && node.children.is_empty() {
-        let off = world_rect.origin.x + world_rect.size.x < cull.origin.x
-            || world_rect.origin.x > cull.origin.x + cull.size.x
-            || world_rect.origin.y + world_rect.size.y < cull.origin.y
-            || world_rect.origin.y > cull.origin.y + cull.size.y;
-        if off {
-            return PaintNodeHits::default();
-        }
+    // Viewport culling — skip a complete off-screen subtree, not only leaves.
+    // Open containers include overflowing descendants; transforms, strokes,
+    // shadows, and blur use the same conservative bounds as save layers.
+    if !subtree_intersects_cull(
+        node,
+        viewport_origin,
+        zoom,
+        cull,
+        options.hidden,
+        transforms,
+    ) {
+        return PaintNodeHits::default();
+    }
+    let dpi_scale = cx.backend.dpi_scale();
+    // Sub-pixel LOD: a leaf under ~3/4 of a device pixel contributes
+    // nothing visible, but its fill/stroke/clip ops still reach the
+    // GPU — a zoomed-out 38k-node page carries ~8k such leaves per
+    // frame. Always skipped (not only mid-gesture): it makes the
+    // gesture-end full-quality repaint and every zoomed-out resting
+    // frame proportionally cheaper at no visible cost.
+    if node.children.is_empty()
+        && world_rect.size.x.abs().max(world_rect.size.y.abs()) * dpi_scale < 0.75
+    {
+        return PaintNodeHits::default();
     }
     // Wrap the paint in save/transform/restore when the node carries
     // a mirror, a non-zero rotation, or an in-flight reveal pop. All
@@ -737,10 +780,18 @@ fn paint_node_inner<'a>(
     // node, clipped to the node silhouette. Keep the backdrop layer
     // open while the node paints so translucent fills and children
     // composite over the filtered copy.
-    let background_blur_sigma = node.effects.iter().find_map(|effect| match effect {
-        Effect::BackgroundBlur { radius } if *radius > 0.0 => Some(*radius * 0.5 * zoom),
-        _ => None,
-    });
+    let background_blur_sigma = node
+        .effects
+        .iter()
+        .find_map(|effect| match effect {
+            Effect::BackgroundBlur { radius } if *radius > 0.0 => Some(*radius * 0.5 * zoom),
+            _ => None,
+        })
+        // Sub-pixel backdrop blur is invisible; skip its save-layer.
+        // Gestures skip all backdrop layers (interactive degrade).
+        .filter(|sigma| {
+            !options.fast_interaction && sigma * dpi_scale >= MIN_VISIBLE_EFFECT_DEVICE_PX
+        });
     let background_blur_pushed = if let Some(sigma) =
         background_blur_sigma.filter(|_| world_rect.size.x > 0.0 && world_rect.size.y > 0.0)
     {
@@ -799,10 +850,18 @@ fn paint_node_inner<'a>(
     // CSS radius → Skia sigma conversion is `radius / 2`, scaled by
     // the viewport zoom. Popped at every return path below alongside
     // the transform save.
-    let blur_sigma = node.effects.iter().find_map(|e| match e {
-        Effect::Blur(b) if b.radius > 0.0 => Some(b.radius * 0.5 * zoom),
-        _ => None,
-    });
+    let blur_sigma = node
+        .effects
+        .iter()
+        .find_map(|e| match e {
+            Effect::Blur(b) if b.radius > 0.0 => Some(b.radius * 0.5 * zoom),
+            _ => None,
+        })
+        // Sub-pixel layer blur is invisible; skip its save-layer.
+        // Gestures skip all blur layers (interactive degrade).
+        .filter(|sigma| {
+            !options.fast_interaction && sigma * dpi_scale >= MIN_VISIBLE_EFFECT_DEVICE_PX
+        });
     if let Some(sigma) = blur_sigma {
         cx.backend.push_blur_layer(sigma);
     }
@@ -812,6 +871,7 @@ fn paint_node_inner<'a>(
     // faithfully (Frame / Rect / Ellipse) cast one; Polygon / Line
     // / Path shadows are deferred until a shape-mask path exists.
     if !node.effects.is_empty()
+        && !options.fast_interaction
         && world_rect.size.x > 0.0
         && world_rect.size.y > 0.0
         && matches!(
@@ -819,7 +879,7 @@ fn paint_node_inner<'a>(
             NodeKind::Frame | NodeKind::Rect | NodeKind::Ellipse
         )
     {
-        paint_drop_shadows(cx, node, world_rect, zoom);
+        paint_drop_shadows(cx, node, world_rect, zoom, dpi_scale);
     }
 
     match &node.kind {

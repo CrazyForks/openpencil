@@ -298,6 +298,9 @@ struct DesktopApp {
     /// regardless of whether the change came from the native menu, the
     /// in-canvas File menu, or a Finder open.
     recent_menu_labels: Vec<String>,
+    /// Raw paths behind `recent_menu_labels` — the allocation-free
+    /// change check `refresh_recent_menu` runs every loop iteration.
+    recent_menu_paths: Vec<String>,
     /// Background auto-update probe — checks the GitHub releases API
     /// on a worker thread; its result is drained into
     /// `editor_ui.update_status` on a later frame.
@@ -470,6 +473,7 @@ impl DesktopApp {
             initial_file,
             app_menu: None,
             recent_menu_labels: Vec::new(),
+            recent_menu_paths: Vec::new(),
             update_probe,
             update_prompt_shown: false,
             win_pos: None,

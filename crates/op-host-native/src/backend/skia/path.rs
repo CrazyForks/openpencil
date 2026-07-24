@@ -2,7 +2,16 @@ use super::{jian_color_to_color4f, to_sk_rect, NativeBackend};
 use op_editor_ui::{Color, Point2D, Rect};
 use std::hash::{Hash, Hasher};
 
-const SVG_PATH_CACHE_CAP: usize = 2048;
+/// Parsed-path cache bounds. The cache must hold the working set of a
+/// vector-heavy document — a Figma import easily carries >10k distinct
+/// paths, all visible at once when zoomed out. A small entry cap (the
+/// old 2048) made every such frame cycle the whole cache and re-parse
+/// every visible path, so panning a zoomed-out page burned tens of ms
+/// per frame in `parse_path::from_svg`. Budget by bytes (d-string
+/// length as the proxy — parsed path size tracks it) with a generous
+/// entry cap as the safety bound on tiny paths.
+const SVG_PATH_CACHE_BYTE_BUDGET: usize = 64 * 1024 * 1024;
+const SVG_PATH_CACHE_MAX_ENTRIES: usize = 65536;
 const SVG_RASTER_CACHE_CAP: usize = 256;
 const SVG_RASTER_COMPLEXITY_MIN: usize = 4096;
 const SVG_RASTER_MAX_PIXELS: i32 = 2_000_000;
@@ -52,28 +61,40 @@ impl NativeBackend {
 
         let path = skia_safe::utils::parse_path::from_svg(d);
         let even_odd = path.is_some() && has_multiple_close_commands(d);
-        let was_present = self.svg_path_cache.contains_key(&key);
-        self.svg_path_cache.insert(
+        if let Some(old) = self.svg_path_cache.insert(
             key,
             SvgPathCacheEntry {
                 d: d.to_string(),
                 path: path.clone(),
                 even_odd,
             },
-        );
-        if !was_present {
+        ) {
+            self.svg_path_cache_bytes = self.svg_path_cache_bytes.saturating_sub(old.d.len());
+        } else {
             self.svg_path_cache_order.push_back(key);
         }
-        while self.svg_path_cache.len() > SVG_PATH_CACHE_CAP {
+        self.svg_path_cache_bytes = self.svg_path_cache_bytes.saturating_add(d.len());
+        self.evict_svg_paths_over(SVG_PATH_CACHE_BYTE_BUDGET, SVG_PATH_CACHE_MAX_ENTRIES);
+
+        path.map(|path| (key, path, even_odd))
+    }
+
+    /// Evict oldest-inserted parsed paths until the cache fits both
+    /// `byte_budget` and `max_entries`. Separated from
+    /// [`Self::cached_svg_path`] so tests can exercise eviction with
+    /// small budgets.
+    pub(crate) fn evict_svg_paths_over(&mut self, byte_budget: usize, max_entries: usize) {
+        while self.svg_path_cache_bytes > byte_budget || self.svg_path_cache.len() > max_entries {
             match self.svg_path_cache_order.pop_front() {
                 Some(oldest) => {
-                    self.svg_path_cache.remove(&oldest);
+                    if let Some(entry) = self.svg_path_cache.remove(&oldest) {
+                        self.svg_path_cache_bytes =
+                            self.svg_path_cache_bytes.saturating_sub(entry.d.len());
+                    }
                 }
                 None => break,
             }
         }
-
-        path.map(|path| (key, path, even_odd))
     }
 
     fn cached_raster_svg_path(

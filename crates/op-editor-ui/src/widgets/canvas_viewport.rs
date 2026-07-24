@@ -360,6 +360,10 @@ pub struct CanvasViewport<'a> {
     /// Selection chrome is hidden in that state so the dragged
     /// element itself is the only moving visual affordance.
     pub(super) node_drag_active: bool,
+    /// True while the selected image fill is in crop editing mode.
+    /// The selection outline remains visible, but resize/rotate chrome is
+    /// hidden so dragging inside the frame clearly pans the bitmap.
+    pub(super) image_crop_edit_active: bool,
     /// Optional floating copy of the dragged node. The base scene can
     /// still be reflowed to preview sibling avoidance while this copy
     /// follows the cursor.
@@ -383,6 +387,14 @@ pub struct CanvasViewport<'a> {
     /// carries no node names); painted screen-space above each root
     /// frame (TS `drawFrameLabelColored`).
     pub(super) frame_labels: Vec<FrameLabel>,
+    /// True while a pan/zoom gesture is live — the scene paints in
+    /// interactive-degrade mode (effect layers + sub-pixel leaves
+    /// skip); the host schedules a full-quality repaint on gesture end.
+    pub fast_interaction: bool,
+    /// Restrict node culling (and thus the painted content) to this
+    /// rect instead of the widget rect. The host's pan cache uses it
+    /// to repaint only the strip a scroll refresh exposed.
+    pub cull_override: Option<Rect>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -433,6 +445,11 @@ impl<'a> CanvasViewport<'a> {
             active_guides: state.editor_ui.active_guides.clone(),
             drop_indicator: state.editor_ui.canvas_drop_indicator.clone(),
             node_drag_active: false,
+            image_crop_edit_active: state
+                .editor_ui
+                .image_crop_editing
+                .as_ref()
+                .is_some_and(|id| id == &state.selection.anchor),
             node_drag_overlay: None,
             text_editing: state
                 .ui
@@ -453,7 +470,19 @@ impl<'a> CanvasViewport<'a> {
                 .filter(|_| matches!(state.tool, op_editor_core::Tool::Select))
                 .map(|id| id.as_str().to_string()),
             frame_labels: collect_frame_labels(state),
+            fast_interaction: false,
+            cull_override: None,
         }
+    }
+
+    /// Shift the paint origin by `(dx, dy)` logical px while keeping the
+    /// doc↔screen mapping fixed. The host's pan bitmap cache paints into
+    /// an offscreen layer whose rect is grown by a margin on every side;
+    /// adding the margin here cancels the shifted `rect.origin` so nodes
+    /// land at the same logical coordinates as an on-window paint.
+    pub fn offset_paint_origin(&mut self, dx: f32, dy: f32) {
+        self.viewport.pan_x += dx;
+        self.viewport.pan_y += dy;
     }
 
     /// Read-only construction for the embedding SDK: paints `scene` at
@@ -482,6 +511,7 @@ impl<'a> CanvasViewport<'a> {
             active_guides: Vec::new(),
             drop_indicator: None,
             node_drag_active: false,
+            image_crop_edit_active: false,
             node_drag_overlay: None,
             text_editing: None,
             text_edit_input: Default::default(),
@@ -491,6 +521,8 @@ impl<'a> CanvasViewport<'a> {
             now_ms: 0,
             hovered: None,
             frame_labels: Vec::new(),
+            fast_interaction: false,
+            cull_override: None,
         }
     }
 
@@ -655,7 +687,9 @@ impl<'a> Widget for CanvasViewport<'a> {
         }
         let indicators = op_editor_core::agent_indicators::snapshot_at_if_active(self.now_ms);
         let selection_chrome_visible = !self.node_drag_active;
-        let show_handles = selection_chrome_visible && self.selected_set.len() == 1;
+        let show_handles = selection_chrome_visible
+            && !self.image_crop_edit_active
+            && self.selected_set.len() == 1;
         let single_selected_id = self.selected_set.first().map(String::as_str);
         let selected_lookup = if show_handles {
             single_selected_id
@@ -708,13 +742,13 @@ impl<'a> Widget for CanvasViewport<'a> {
                 selection_color: crate::widgets::text_selection::selection_color(&self.theme),
             });
             const CULL_MARGIN: f32 = 64.0;
-            let cull = Rect {
+            let cull = self.cull_override.unwrap_or(Rect {
                 origin: Point2D::new(rect.origin.x - CULL_MARGIN, rect.origin.y - CULL_MARGIN),
                 size: Point2D::new(
                     rect.size.x + CULL_MARGIN * 2.0,
                     rect.size.y + CULL_MARGIN * 2.0,
                 ),
-            };
+            });
             let reveal_schedule = indicators
                 .as_ref()
                 .and_then(|indicators| reveal_schedule_for_paint(&indicators.reveals, self.now_ms));
@@ -776,6 +810,7 @@ impl<'a> Widget for CanvasViewport<'a> {
                     .as_ref()
                     .map(|_| super::canvas_generation_scan::SKELETON_BLUE),
                 generation_sets.as_ref().map(|sets| &sets.queued),
+                self.fast_interaction,
             );
             paint_hits.merge_missing(child_hits);
             if let Some(overlay) = self.node_drag_overlay.as_ref() {

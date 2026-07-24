@@ -55,6 +55,7 @@ mod arc_drag;
 mod blur_inputs;
 #[cfg(test)]
 mod blur_inputs_tests;
+mod canvas_pan_cache;
 mod canvas_select_drag;
 #[cfg(test)]
 mod canvas_select_drag_tests;
@@ -99,6 +100,9 @@ mod history_guard;
 mod icon_picker_press;
 #[cfg(test)]
 mod icon_picker_press_tests;
+mod image_crop_drag;
+#[cfg(test)]
+mod image_crop_drag_tests;
 mod image_panel_dispatch;
 #[cfg(test)]
 mod image_panel_overlay_tests;
@@ -124,6 +128,8 @@ mod overlay_rects;
 #[cfg(test)]
 mod page_switch_center_tests;
 mod paint;
+#[cfg(test)]
+mod pan_cache_tests;
 #[cfg(test)]
 mod panel_history_tests;
 mod pen_press;
@@ -275,6 +281,8 @@ pub struct WidgetHostNative {
     /// Active image-fill adjustment slider drag in the floating
     /// property popover.
     pub(in crate::widget_host) image_adjustment_drag: Option<op_editor_core::ImageAdjustmentField>,
+    /// Active bitmap pan while the selected image fill is in crop edit mode.
+    pub(in crate::widget_host) image_crop_drag: Option<image_crop_drag::ImageCropDragState>,
     pub(in crate::widget_host) effect_radius_drag: Option<usize>,
     /// Active generated-code preview text selection drag.
     pub(in crate::widget_host) code_selection_drag: Option<CodeSelectionDragState>,
@@ -358,6 +366,26 @@ pub struct WidgetHostNative {
     /// `RedrawRequested` from a single `Instant` start anchor;
     /// any other host (mobile / browser) installs its own clock.
     pub(in crate::widget_host) now_ms: u64,
+    /// Millisecond deadline until which a pan/zoom gesture counts as
+    /// live. While `now_ms` is before it, the canvas paints in
+    /// interactive-degrade mode (effect layers + sub-pixel leaves
+    /// skip); the animation scheduler wakes at the deadline so the
+    /// gesture-end frame repaints at full quality.
+    pub(in crate::widget_host) interaction_hot_until_ms: u64,
+    /// Offscreen canvas layer serving pure-pan frames during a live
+    /// gesture. See `widget_host/canvas_pan_cache.rs`.
+    pub(in crate::widget_host) pan_cache: Option<canvas_pan_cache::CanvasPanCache>,
+    /// Progressive gesture-end quality restore over `pan_cache`.
+    pub(in crate::widget_host) pan_cache_restore: Option<canvas_pan_cache::PanCacheRestore>,
+    /// Frames served by a pan-cache blit (test observability).
+    pub(in crate::widget_host) pan_cache_blits: u64,
+    /// In-place scroll refreshes performed (test observability).
+    pub(in crate::widget_host) pan_cache_scrolls: u64,
+    /// Full expanded-layer builds performed (test observability).
+    pub(in crate::widget_host) pan_cache_builds: u64,
+    /// Whether the most recent gesture tick was a zoom — zoom frames
+    /// never build the pan cache (each tick would invalidate it).
+    pub(in crate::widget_host) last_gesture_was_zoom: bool,
     /// Whether the shift key is currently held. Runners update
     /// this via `set_modifier_shift` on every modifier change.
     /// Drives shift+click multi-select in `apply_press`.
@@ -710,6 +738,7 @@ impl WidgetHostNative {
             component_browser_drag: None,
             icon_picker_drag: None,
             image_adjustment_drag: None,
+            image_crop_drag: None,
             effect_radius_drag: None,
             code_selection_drag: None,
             chat_input_selection_drag: None,
@@ -731,6 +760,13 @@ impl WidgetHostNative {
             layer_drag: None,
             next_node_id: 100,
             now_ms: 0,
+            interaction_hot_until_ms: 0,
+            pan_cache: None,
+            pan_cache_restore: None,
+            pan_cache_blits: 0,
+            pan_cache_scrolls: 0,
+            pan_cache_builds: 0,
+            last_gesture_was_zoom: false,
             shift_held: false,
             alt_held: false,
             last_viewport_w: 0.0,
@@ -1191,6 +1227,10 @@ impl WidgetHostNative {
             // the rebuild would be a no-op.
             if let Some(scene) = self.scene_cache.maybe_rebuild(&self.editor_state) {
                 self.layout_scene = scene;
+                // A rebuilt scene invalidates the pan bitmap cache
+                // (covers the font-generation path, which bypasses
+                // `mark_dirty`).
+                self.drop_pan_cache();
             }
             self.editor_state_dirty = false;
             self.layout_scene_font_generation = font_generation;
@@ -1263,6 +1303,9 @@ impl WidgetHostNative {
     /// `self.editor_state`.
     pub(in crate::widget_host) fn mark_dirty(&mut self) {
         self.editor_state_dirty = true;
+        // A mutated document / UI invalidates the pan bitmap cache —
+        // a blitted frame must never show stale content.
+        self.drop_pan_cache();
     }
 
     /// Test-only: flag the render scene stale after a test mutated
@@ -1270,6 +1313,7 @@ impl WidgetHostNative {
     #[cfg(test)]
     pub(in crate::widget_host) fn mark_paint_dirty_for_test(&mut self) {
         self.editor_state_dirty = true;
+        self.drop_pan_cache();
     }
 
     /// Borrow the canonical-model editor state — the host's single
@@ -1505,10 +1549,48 @@ impl WidgetHostNative {
         self.editor_state.chat.focused
     }
 
+    /// Record a live canvas pan gesture tick: the canvas paints
+    /// interactive-degraded until `INTERACTION_HOT_MS` after the
+    /// last tick, then the scheduler-driven repaint restores quality.
+    pub(in crate::widget_host) fn note_viewport_gesture(&mut self) {
+        self.interaction_hot_until_ms = self.now_ms.saturating_add(INTERACTION_HOT_MS);
+        self.last_gesture_was_zoom = false;
+    }
+
+    /// Record a live canvas ZOOM gesture tick. Same degrade window as
+    /// a pan, but the pan bitmap cache must NOT rebuild per tick — the
+    /// zoom invalidates it every frame, so building (2× a plain frame)
+    /// would be pure loss; zoom frames paint direct in degrade mode.
+    pub(in crate::widget_host) fn note_viewport_zoom_gesture(&mut self) {
+        self.interaction_hot_until_ms = self.now_ms.saturating_add(INTERACTION_HOT_MS);
+        self.last_gesture_was_zoom = true;
+    }
+
+    /// Whether the current frame should paint in interactive-degrade
+    /// mode (a pan/zoom gesture ticked within the hot window).
+    pub(in crate::widget_host) fn fast_interaction_active(&self) -> bool {
+        self.now_ms < self.interaction_hot_until_ms
+    }
+
     /// Next millisecond at which the host should wake to repaint
     /// the caret blink phase. `None` = no animation pending.
     pub fn next_animation_deadline_ms(&self) -> Option<u64> {
         let mut next = op_editor_core::agent_indicators::next_reveal_deadline_ms(self.now_ms);
+        // Gesture-end full-quality repaint: wake once the
+        // interactive-degrade window closes. Quantized UP to a 50 ms
+        // grid so consecutive gesture ticks report the SAME deadline —
+        // the desktop runner's waker dedups identical instants, and a
+        // per-tick sliding deadline re-armed the OS timer every frame.
+        if self.fast_interaction_active() {
+            let deadline = self.interaction_hot_until_ms.div_ceil(50) * 50;
+            next = Some(next.map_or(deadline, |current| current.min(deadline)));
+        }
+        // Progressive quality restore: one tile per frame until the
+        // visible region is sharp again.
+        if self.pan_cache_restore.is_some() {
+            let deadline = self.now_ms.saturating_add(16);
+            next = Some(next.map_or(deadline, |current| current.min(deadline)));
+        }
         if let Some(deadline) =
             op_editor_core::agent_indicators::next_generation_scan_deadline_ms(self.now_ms)
         {
@@ -1540,6 +1622,11 @@ impl WidgetHostNative {
         next
     }
 }
+
+/// How long after the last pan/zoom tick the canvas keeps painting in
+/// interactive-degrade mode. Long enough to cover trackpad event gaps,
+/// short enough that full quality returns imperceptibly after release.
+const INTERACTION_HOT_MS: u64 = 150;
 
 impl Default for WidgetHostNative {
     fn default() -> Self {

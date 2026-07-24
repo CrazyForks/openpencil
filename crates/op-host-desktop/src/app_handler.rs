@@ -44,8 +44,17 @@ impl ApplicationHandler<DesktopEvent> for DesktopApp {
         // (caret blink, streaming chat, imports, background jobs). Live MCP uses
         // `DesktopEvent::McpWake`, so an idle server no longer creates timer
         // ticks just to poll for possible requests.
-        if self.timed_wake_needs_redraw(&cause) && self.resume_time_needs_redraw() {
-            self.request_redraw(true);
+        if self.timed_wake_needs_redraw(&cause) {
+            if self.resume_time_needs_redraw() {
+                self.request_redraw(true);
+            } else {
+                // A timed wake with nothing to repaint must still RESET
+                // the control flow: leaving the elapsed `WaitUntil` in
+                // place made casement re-fire the timer immediately —
+                // an idle spin that burned ~40% of the main thread in
+                // CFRunLoop timer arming (measured via `sample`).
+                self.schedule_next_wake(event_loop);
+            }
         }
         // Native-menu selections arrive on `muda`'s global channel.
         // A menu click wakes the event loop, so draining here — at
@@ -928,6 +937,13 @@ impl ApplicationHandler<DesktopEvent> for DesktopApp {
                 if should_paint {
                     self.refresh_host_clock();
                     let mut painted = false;
+                    // `OP_SLOW_FRAME_LOG=1` prints every paint slower
+                    // than ~2 frames with pan-cache attribution, so a
+                    // felt stutter can be pinned to blit / scroll /
+                    // full-paint work on a live session.
+                    let slow_log = std::env::var_os("OP_SLOW_FRAME_LOG").is_some();
+                    let frame_start = slow_log.then(Instant::now);
+                    let stats_before = slow_log.then(|| self.host.pan_cache_stats());
                     if let (Some(ctx), Some(backend)) = (self.ctx.as_mut(), self.backend.as_mut()) {
                         frame::paint(
                             ctx,
@@ -938,6 +954,22 @@ impl ApplicationHandler<DesktopEvent> for DesktopApp {
                             self.dpi,
                         );
                         painted = true;
+                    }
+                    if let (Some(start), Some((blits0, scrolls0, builds0))) =
+                        (frame_start, stats_before)
+                    {
+                        let elapsed = start.elapsed();
+                        if elapsed.as_millis() >= 32 {
+                            let (blits, scrolls, builds) = self.host.pan_cache_stats();
+                            eprintln!(
+                                "[slow-frame] {:>4}ms degrade={} blit={} scroll={} build={}",
+                                elapsed.as_millis(),
+                                self.host.interaction_degrade_active(),
+                                blits - blits0,
+                                scrolls - scrolls0,
+                                builds - builds0,
+                            );
+                        }
                     }
                     if painted {
                         let page = self.active_page_paint_identity();
@@ -966,83 +998,7 @@ impl ApplicationHandler<DesktopEvent> for DesktopApp {
                         });
                     }
                 }
-                // Chat / design / Figma-import worker active → wake
-                // ~10 fps to pump results and animate the loading
-                // overlay's spinner. Chat + design need ~30 fps for
-                // streaming deltas; Figma import is a one-shot result
-                // but the overlay's spinner needs frames to animate.
-                if self.current_chat.is_some()
-                    || self.current_design.is_some()
-                    || self.current_codegen.is_some()
-                    || self.current_design_md.is_some()
-                    || !self.sub_agents.is_empty()
-                {
-                    event_loop.set_control_flow(ControlFlow::WaitUntil(
-                        Instant::now() + Duration::from_millis(33),
-                    ));
-                } else if self
-                    .current_figma_import
-                    .as_ref()
-                    .is_some_and(figma_import_session::FigmaImportSession::is_worker_pending)
-                    || self.current_html_import.is_some()
-                    || self.pending_figma_paste.is_some()
-                    || self.pending_html_paste.is_some()
-                {
-                    event_loop.set_control_flow(ControlFlow::WaitUntil(
-                        Instant::now() + Duration::from_millis(100),
-                    ));
-                } else if let Some(deadline_ms) = self.host.next_animation_deadline_ms() {
-                    let deadline = self.clock_start + Duration::from_millis(deadline_ms);
-                    event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
-                } else if self.update_probe.is_pending()
-                    || self.model_probe.is_pending()
-                    || self.image_search.is_pending()
-                    || self.image_panel.is_pending()
-                    // Remote-image fetches in flight, or fresh misses
-                    // the paint above just recorded (the next pump
-                    // picks them up).
-                    || self.remote_images.is_pending()
-                    || op_editor_ui::widgets::canvas_viewport_image::has_pending_remote_image_requests()
-                    || self.image_decodes.is_pending()
-                    || op_editor_ui::widgets::canvas_viewport_image::has_pending_decodes()
-                    || self
-                        .iconify_job
-                        .as_ref()
-                        .is_some_and(crate::iconify_host::IconifyJob::is_pending)
-                    || self.provider_connect_pending()
-                    || self.acp_agent_connect_pending()
-                    || self
-                        .git_pull_job
-                        .as_ref()
-                        .is_some_and(git_jobs::GitPullJob::is_pending)
-                    || self
-                        .git_push_job
-                        .as_ref()
-                        .is_some_and(git_jobs::GitPushJob::is_pending)
-                    || self
-                        .git_status_job
-                        .as_ref()
-                        .is_some_and(git_jobs::GitStatusJob::is_pending)
-                    || self
-                        .git_diff_job
-                        .as_ref()
-                        .is_some_and(git_jobs::GitDiffJob::is_pending)
-                {
-                    // Keep waking ~2 Hz until background probes/jobs
-                    // land so results are drained even while the app
-                    // is idle.
-                    event_loop.set_control_flow(ControlFlow::WaitUntil(
-                        Instant::now() + Duration::from_millis(500),
-                    ));
-                } else if self.host.editor_state().editor_ui.git_panel.open {
-                    // While the Git panel is open, wake every 2 s for
-                    // the periodic repository re-snapshot above.
-                    event_loop.set_control_flow(ControlFlow::WaitUntil(
-                        Instant::now() + Duration::from_secs(2),
-                    ));
-                } else {
-                    event_loop.set_control_flow(ControlFlow::Wait);
-                }
+                self.schedule_next_wake(event_loop);
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor_x = position.x as f32 / self.dpi;
@@ -1269,7 +1225,7 @@ impl ApplicationHandler<DesktopEvent> for DesktopApp {
                     ui.missing_fonts_pending_detect && ui.system_fonts_loaded
                 };
                 if missing_fonts_detection_ready {
-                    self.host.arm_missing_fonts_detection();
+                    self.host.complete_pending_missing_fonts_detection();
                     self.request_redraw(true);
                 }
                 if let Some(action) = self
@@ -1658,6 +1614,90 @@ impl DesktopApp {
     fn refresh_host_clock(&mut self) {
         let now_ms = self.clock_start.elapsed().as_millis() as u64;
         self.host.set_now_ms(now_ms);
+    }
+
+    /// Next wake instant on a fixed `period_ms` grid anchored at
+    /// `clock_start`. Consecutive loop turns inside one period produce
+    /// the SAME instant, so casement's `EventLoopWaker::start_at`
+    /// dedup skips the CFRunLoop timer re-arm — a sliding
+    /// `Instant::now() + period` deadline re-armed the OS timer on
+    /// every loop turn (measured ~40% of the main thread during a
+    /// gesture on a 38k-node document).
+    fn periodic_wake_instant(&self, period_ms: u64) -> Instant {
+        let elapsed = self.clock_start.elapsed().as_millis() as u64;
+        self.clock_start + Duration::from_millis(((elapsed / period_ms) + 1) * period_ms)
+    }
+
+    /// Choose the event loop's next wake based on active work. Called
+    /// at the end of every painted frame AND after a timed wake that
+    /// produced no redraw — leaving an elapsed `WaitUntil` in place
+    /// made casement re-fire it immediately, spinning the loop at
+    /// full speed until the next real event.
+    fn schedule_next_wake(&mut self, event_loop: &ActiveEventLoop) {
+        // Chat / design / Figma-import worker active → wake ~30 fps to
+        // pump results and animate the loading overlay's spinner.
+        if self.current_chat.is_some()
+            || self.current_design.is_some()
+            || self.current_codegen.is_some()
+            || self.current_design_md.is_some()
+            || !self.sub_agents.is_empty()
+        {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(self.periodic_wake_instant(33)));
+        } else if self
+            .current_figma_import
+            .as_ref()
+            .is_some_and(figma_import_session::FigmaImportSession::is_worker_pending)
+            || self.current_html_import.is_some()
+            || self.pending_figma_paste.is_some()
+            || self.pending_html_paste.is_some()
+        {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(self.periodic_wake_instant(100)));
+        } else if let Some(deadline_ms) = self.host.next_animation_deadline_ms() {
+            let deadline = self.clock_start + Duration::from_millis(deadline_ms);
+            event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+        } else if self.update_probe.is_pending()
+            || self.model_probe.is_pending()
+            || self.image_search.is_pending()
+            || self.image_panel.is_pending()
+            // Remote-image fetches in flight, or fresh misses the last
+            // paint recorded (the next pump picks them up).
+            || self.remote_images.is_pending()
+            || op_editor_ui::widgets::canvas_viewport_image::has_pending_remote_image_requests()
+            || self.image_decodes.is_pending()
+            || op_editor_ui::widgets::canvas_viewport_image::has_pending_decodes()
+            || self
+                .iconify_job
+                .as_ref()
+                .is_some_and(crate::iconify_host::IconifyJob::is_pending)
+            || self.provider_connect_pending()
+            || self.acp_agent_connect_pending()
+            || self
+                .git_pull_job
+                .as_ref()
+                .is_some_and(git_jobs::GitPullJob::is_pending)
+            || self
+                .git_push_job
+                .as_ref()
+                .is_some_and(git_jobs::GitPushJob::is_pending)
+            || self
+                .git_status_job
+                .as_ref()
+                .is_some_and(git_jobs::GitStatusJob::is_pending)
+            || self
+                .git_diff_job
+                .as_ref()
+                .is_some_and(git_jobs::GitDiffJob::is_pending)
+        {
+            // Keep waking ~2 Hz until background probes/jobs land so
+            // results are drained even while the app is idle.
+            event_loop.set_control_flow(ControlFlow::WaitUntil(self.periodic_wake_instant(500)));
+        } else if self.host.editor_state().editor_ui.git_panel.open {
+            // While the Git panel is open, wake every 2 s for the
+            // periodic repository re-snapshot.
+            event_loop.set_control_flow(ControlFlow::WaitUntil(self.periodic_wake_instant(2000)));
+        } else {
+            event_loop.set_control_flow(ControlFlow::Wait);
+        }
     }
 
     fn timed_wake_needs_redraw(&self, cause: &StartCause) -> bool {

@@ -30,19 +30,25 @@ impl DesktopApp {
         let Some(menu) = self.app_menu.as_ref() else {
             return;
         };
-        let labels: Vec<String> = self
-            .host
-            .editor_state()
-            .editor_ui
-            .recent_files
-            .iter()
-            .map(|r| recent_menu_label(&r.path))
-            .collect();
-        if labels == self.recent_menu_labels {
+        let recent = &self.host.editor_state().editor_ui.recent_files;
+        // Allocation-free change check first — this runs on EVERY loop
+        // iteration, and building the label strings each time (path
+        // parsing + per-entry allocations) showed up in gesture-time
+        // profiles. Labels are derived only when the paths changed.
+        if recent.len() == self.recent_menu_paths.len()
+            && recent
+                .iter()
+                .zip(self.recent_menu_paths.iter())
+                .all(|(r, cached)| r.path == *cached)
+        {
             return;
         }
-        menu.set_recent_files(&labels);
-        self.recent_menu_labels = labels;
+        let labels: Vec<String> = recent.iter().map(|r| recent_menu_label(&r.path)).collect();
+        self.recent_menu_paths = recent.iter().map(|r| r.path.clone()).collect();
+        if labels != self.recent_menu_labels {
+            menu.set_recent_files(&labels);
+            self.recent_menu_labels = labels;
+        }
     }
 
     /// Dispatch a native-menu selection onto the matching host action —

@@ -212,28 +212,84 @@ impl WidgetHostNative {
                 }
                 self.paint_preview_switcher(&mut *frame, canvas_rect);
                 self.paint_screen_switcher(&mut *frame, canvas_rect);
-            } else {
+            } else if !self.serve_canvas_from_pan_cache(frame, canvas_rect) {
                 // PAINT path — the canvas reads editor state + the
                 // layout-resolved render scene (`refresh_layout_scene`).
-                let mut transition_scene = None;
-                if let Some(transition) = self.layout_transition.as_ref() {
-                    if transition.is_active(self.now_ms) {
-                        let mut scene = self.layout_scene.clone();
-                        transition.apply_to_scene(&mut scene, self.now_ms);
-                        transition_scene = Some(scene);
+                // During a live pan gesture the frame is rendered once
+                // into an offscreen layer (grown by the pan-cache
+                // margin) so following pure-pan frames blit it above.
+                // Zoom ticks never build: the next tick's zoom change
+                // would invalidate the freshly built layer anyway.
+                let build_pan_cache = self.pan_cache_usable() && !self.last_gesture_was_zoom;
+                let cached_layer = {
+                    let mut transition_scene = None;
+                    if let Some(transition) = self.layout_transition.as_ref() {
+                        if transition.is_active(self.now_ms) {
+                            let mut scene = self.layout_scene.clone();
+                            transition.apply_to_scene(&mut scene, self.now_ms);
+                            transition_scene = Some(scene);
+                        }
                     }
-                }
-                let canvas_scene = transition_scene.as_ref().unwrap_or(&self.layout_scene);
-                let mut canvas = CanvasViewport::from_editor(&self.editor_state, canvas_scene);
-                canvas.now_ms = self.now_ms;
-                canvas.set_node_drag_active(self.node_drag.as_ref().is_some_and(|drag| drag.moved));
-                canvas.set_node_drag_overlay(self.node_drag_overlay_for_paint());
-                let mut cx = PaintCx {
-                    backend: &mut *frame,
+                    let canvas_scene = transition_scene.as_ref().unwrap_or(&self.layout_scene);
+                    let mut canvas = CanvasViewport::from_editor(&self.editor_state, canvas_scene);
+                    canvas.now_ms = self.now_ms;
+                    canvas.fast_interaction = self.fast_interaction_active();
+                    canvas.set_node_drag_active(
+                        self.node_drag.as_ref().is_some_and(|drag| drag.moved),
+                    );
+                    canvas.set_node_drag_overlay(self.node_drag_overlay_for_paint());
+                    let mut rendered_layer = None;
+                    if build_pan_cache {
+                        use super::canvas_pan_cache::PAN_CACHE_MARGIN as M;
+                        let expanded = Rect {
+                            origin: Point2D::new(
+                                canvas_rect.origin.x - M,
+                                canvas_rect.origin.y - M,
+                            ),
+                            size: Point2D::new(
+                                canvas_rect.size.x + M * 2.0,
+                                canvas_rect.size.y + M * 2.0,
+                            ),
+                        };
+                        // The +M pan offset cancels the -M rect shift so
+                        // the doc↔logical mapping matches an on-window
+                        // paint exactly.
+                        canvas.offset_paint_origin(M, M);
+                        rendered_layer = frame.render_offscreen_layer(canvas_rect, M, |off| {
+                            let mut cx = PaintCx { backend: off };
+                            canvas.paint(&mut cx, expanded);
+                        });
+                        if rendered_layer.is_none() {
+                            // Offscreen allocation failed — restore the
+                            // mapping and paint directly.
+                            canvas.offset_paint_origin(-M, -M);
+                        }
+                    }
+                    if rendered_layer.is_none() {
+                        let mut cx = PaintCx {
+                            backend: &mut *frame,
+                        };
+                        canvas.paint(&mut cx, canvas_rect);
+                    }
+                    rendered_layer
                 };
-                canvas.paint(&mut cx, canvas_rect);
+                if let Some(mut surface) = cached_layer {
+                    use super::canvas_pan_cache::PAN_CACHE_MARGIN;
+                    frame.draw_offscreen_layer(
+                        &surface.image_snapshot(),
+                        canvas_rect,
+                        PAN_CACHE_MARGIN,
+                        Point2D::new(0.0, 0.0),
+                    );
+                    self.store_pan_cache(surface, canvas_rect, dpi);
+                }
             }
         }
+
+        // Re-borrow after the canvas section: the pan-cache path above
+        // needs `&mut self`, which must not overlap the earlier shared
+        // `ui` borrow.
+        let ui = &self.editor_state.editor_ui;
 
         // 5. PropertyPanel — only when selection.
         let property_panel = PropertyPanel::for_selection_at_with_scene(
@@ -726,5 +782,283 @@ impl WidgetHostNative {
                 self.now_ms,
             );
         }
+    }
+}
+
+impl WidgetHostNative {
+    /// Serve the canvas region from the pan bitmap cache: a pure-pan
+    /// frame blits the resident layer; past the scroll threshold the
+    /// layer first scrolls in place and repaints only the exposed
+    /// strips (so a long pan never pays a full re-render hitch).
+    /// Returns whether the frame was painted here.
+    fn serve_canvas_from_pan_cache(
+        &mut self,
+        frame: &mut NativeFrameBackend<'_>,
+        canvas_rect: Rect,
+    ) -> bool {
+        use super::canvas_pan_cache::PAN_CACHE_SCROLL_THRESHOLD;
+        if !self.fast_interaction_active() {
+            // Gesture over: restore quality progressively (one tile per
+            // frame) while the layer keeps blitting, then keep serving
+            // the sharp layer until any invalidation. The layer is KEPT
+            // across gestures so the next pan skips the expanded rebuild.
+            return self.serve_rest_restore(frame, canvas_rect);
+        }
+        // A live gesture supersedes any in-flight restore.
+        self.pan_cache_restore = None;
+        if !self.pan_cache_usable() {
+            self.drop_pan_cache();
+            return false;
+        }
+        let dpi = frame.dpi_scale();
+        let Some(offset) = self.pan_cache_offset(canvas_rect, dpi) else {
+            // Zoom gesture with a retained layer: serve an approximate
+            // SCALED blit (soft zoom); the gesture-end repaint restores
+            // sharpness. Only zoom gestures take this path — a pan
+            // whose cache mismatches must rebuild sharp content.
+            if self.last_gesture_was_zoom {
+                if let Some(dst) = self.pan_cache_zoom_dst(canvas_rect, dpi) {
+                    self.blit_pan_cache_scaled(frame, canvas_rect, dst);
+                    return true;
+                }
+            }
+            return false;
+        };
+        let offset = if offset.x.abs().max(offset.y.abs()) > PAN_CACHE_SCROLL_THRESHOLD {
+            match self.scroll_refresh_pan_cache(frame, canvas_rect, dpi) {
+                Some(residual) => residual,
+                None => return false,
+            }
+        } else {
+            offset
+        };
+        self.blit_pan_cache(frame, canvas_rect, offset);
+        true
+    }
+
+    /// Scroll the cached layer by the whole-device-pixel part of the
+    /// accumulated pan and repaint ONLY the strips scrolling exposed
+    /// (nodes culled to each strip — a fraction of a full frame).
+    /// Returns the residual sub-pixel blit offset.
+    fn scroll_refresh_pan_cache(
+        &mut self,
+        frame: &mut NativeFrameBackend<'_>,
+        canvas_rect: Rect,
+        dpi: f32,
+    ) -> Option<Point2D> {
+        use super::canvas_pan_cache::PAN_CACHE_MARGIN as M;
+        let mut cache = self.pan_cache.take()?;
+        let snap = |v: f32| (v * dpi).round() / dpi;
+        let dx = self.editor_state.viewport.pan_x - cache.pan.x;
+        let dy = self.editor_state.viewport.pan_y - cache.pan.y;
+        // Refresh only the DOMINANT axis: one strip = one scene
+        // traversal + one render-target pass per refresh. A diagonal
+        // fling whose minor axis also crosses the threshold simply
+        // refreshes it on the next frame — same total work, half the
+        // single-frame budget.
+        let (sdx, sdy) = if dx.abs() >= dy.abs() {
+            (snap(dx), 0.0)
+        } else {
+            (0.0, snap(dy))
+        };
+        // 1. Shift the surviving pixels by a whole device-pixel delta —
+        //    a lossless copy, so repeated refreshes never accumulate
+        //    resampling blur.
+        let snapshot = cache.surface.image_snapshot();
+        {
+            let offscreen = cache.surface.canvas();
+            let save = offscreen.save();
+            offscreen.reset_matrix();
+            let mut paint = skia_safe::Paint::default();
+            paint.set_blend_mode(skia_safe::BlendMode::Src);
+            offscreen.draw_image(&snapshot, (sdx * dpi, sdy * dpi), Some(&paint));
+            offscreen.restore_to_count(save);
+        }
+        cache.pan = Point2D::new(cache.pan.x + sdx, cache.pan.y + sdy);
+        // 2. Repaint only the exposed strips. Shifting content right
+        //    (sdx > 0) exposes the left edge, and vice versa; the
+        //    vertical strip runs full height and the horizontal strip
+        //    full width so a diagonal pan's L-shape is fully covered.
+        let expanded = Rect {
+            origin: Point2D::new(canvas_rect.origin.x - M, canvas_rect.origin.y - M),
+            size: Point2D::new(canvas_rect.size.x + M * 2.0, canvas_rect.size.y + M * 2.0),
+        };
+        let mut strips: Vec<Rect> = Vec::new();
+        if sdx > 0.0 {
+            strips.push(Rect {
+                origin: expanded.origin,
+                size: Point2D::new(sdx, expanded.size.y),
+            });
+        } else if sdx < 0.0 {
+            strips.push(Rect {
+                origin: Point2D::new(expanded.origin.x + expanded.size.x + sdx, expanded.origin.y),
+                size: Point2D::new(-sdx, expanded.size.y),
+            });
+        }
+        if sdy > 0.0 {
+            strips.push(Rect {
+                origin: expanded.origin,
+                size: Point2D::new(expanded.size.x, sdy),
+            });
+        } else if sdy < 0.0 {
+            strips.push(Rect {
+                origin: Point2D::new(expanded.origin.x, expanded.origin.y + expanded.size.y + sdy),
+                size: Point2D::new(expanded.size.x, -sdy),
+            });
+        }
+        if !strips.is_empty() {
+            let mut canvas = CanvasViewport::from_editor(&self.editor_state, &self.layout_scene);
+            canvas.now_ms = self.now_ms;
+            canvas.fast_interaction = true;
+            canvas.offset_paint_origin(M, M);
+            for strip in strips {
+                canvas.cull_override = Some(strip);
+                frame.paint_offscreen_region(
+                    &mut cache.surface,
+                    canvas_rect,
+                    M,
+                    Some(strip),
+                    |off| {
+                        let mut cx = PaintCx { backend: off };
+                        canvas.paint(&mut cx, expanded);
+                    },
+                );
+            }
+        }
+        self.pan_cache_scrolls = self.pan_cache_scrolls.wrapping_add(1);
+        // Strips paint in degrade mode — the layer needs a fresh
+        // progressive restore once the gesture ends.
+        cache.sharp = false;
+        let residual = Point2D::new(
+            self.editor_state.viewport.pan_x - cache.pan.x,
+            self.editor_state.viewport.pan_y - cache.pan.y,
+        );
+        self.pan_cache = Some(cache);
+        Some(residual)
+    }
+
+    /// Rest-time serve: progressively restore the visible region to
+    /// full quality (one tile per frame) into the retained layer, then
+    /// keep blitting the sharp layer until any invalidation. Returns
+    /// whether this frame was painted here.
+    fn serve_rest_restore(
+        &mut self,
+        frame: &mut NativeFrameBackend<'_>,
+        canvas_rect: Rect,
+    ) -> bool {
+        use super::canvas_pan_cache::{PAN_CACHE_MARGIN as M, PAN_CACHE_RESTORE_TILES};
+        // Rest blits must never freeze time-driven canvas visuals.
+        let rest_usable = self.preview.is_none()
+            && self
+                .layout_transition
+                .as_ref()
+                .is_none_or(|transition| !transition.is_active(self.now_ms))
+            && op_editor_core::agent_indicators::snapshot_at_if_active(self.now_ms).is_none()
+            && self.node_drag.is_none()
+            && self.marquee_drag.is_none()
+            && self.editor_state.editor_ui.starter_ghost.is_none()
+            && self.editor_state.ui.text_editing.is_none();
+        if !rest_usable {
+            self.pan_cache_restore = None;
+            return false;
+        }
+        let dpi = frame.dpi_scale();
+        let hovered_now = self.editor_state.editor_ui.canvas_hover_node.clone();
+        {
+            let Some(cache) = self.pan_cache.as_ref() else {
+                self.pan_cache_restore = None;
+                return false;
+            };
+            // Hover is baked into the layer, and some hover clears skip
+            // `mark_dirty` — a stamp mismatch must repaint direct.
+            if cache.hovered != hovered_now {
+                self.drop_pan_cache();
+                return false;
+            }
+        }
+        let Some(offset) = self.pan_cache_offset(canvas_rect, dpi) else {
+            self.pan_cache_restore = None;
+            return false;
+        };
+        if self.pan_cache.as_ref().is_some_and(|cache| cache.sharp)
+            && self.pan_cache_restore.is_none()
+        {
+            self.blit_pan_cache(frame, canvas_rect, offset);
+            return true;
+        }
+        // Start the restore: rebase the layer onto the exact current
+        // pan (one resampled shift of the degraded content) so tiles
+        // repaint at identity alignment and the final blit is 1:1.
+        if self.pan_cache_restore.is_none() {
+            if offset.x != 0.0 || offset.y != 0.0 {
+                if let Some(cache) = self.pan_cache.as_mut() {
+                    let snapshot = cache.surface.image_snapshot();
+                    let offscreen = cache.surface.canvas();
+                    let save = offscreen.save();
+                    offscreen.reset_matrix();
+                    let mut paint = skia_safe::Paint::default();
+                    paint.set_blend_mode(skia_safe::BlendMode::Src);
+                    offscreen.draw_image(&snapshot, (offset.x * dpi, offset.y * dpi), Some(&paint));
+                    offscreen.restore_to_count(save);
+                    cache.pan = Point2D::new(
+                        self.editor_state.viewport.pan_x,
+                        self.editor_state.viewport.pan_y,
+                    );
+                }
+            }
+            let tile_h = (canvas_rect.size.y / PAN_CACHE_RESTORE_TILES as f32).ceil();
+            let tiles = (0..PAN_CACHE_RESTORE_TILES)
+                .map(|i| Rect {
+                    origin: Point2D::new(
+                        canvas_rect.origin.x,
+                        canvas_rect.origin.y + i as f32 * tile_h,
+                    ),
+                    size: Point2D::new(canvas_rect.size.x, tile_h),
+                })
+                .collect();
+            self.pan_cache_restore =
+                Some(super::canvas_pan_cache::PanCacheRestore { tiles, next: 0 });
+        }
+        // Repaint the next tile at FULL quality into the layer.
+        if let Some(restore) = self.pan_cache_restore.take() {
+            let mut restore = restore;
+            if let (Some(tile), Some(mut cache)) = (
+                restore.tiles.get(restore.next).copied(),
+                self.pan_cache.take(),
+            ) {
+                let expanded = Rect {
+                    origin: Point2D::new(canvas_rect.origin.x - M, canvas_rect.origin.y - M),
+                    size: Point2D::new(canvas_rect.size.x + M * 2.0, canvas_rect.size.y + M * 2.0),
+                };
+                {
+                    let mut canvas =
+                        CanvasViewport::from_editor(&self.editor_state, &self.layout_scene);
+                    canvas.now_ms = self.now_ms;
+                    canvas.fast_interaction = false;
+                    canvas.offset_paint_origin(M, M);
+                    canvas.cull_override = Some(tile);
+                    frame.paint_offscreen_region(
+                        &mut cache.surface,
+                        canvas_rect,
+                        M,
+                        Some(tile),
+                        |off| {
+                            let mut cx = PaintCx { backend: off };
+                            canvas.paint(&mut cx, expanded);
+                        },
+                    );
+                }
+                restore.next += 1;
+                if restore.next >= restore.tiles.len() {
+                    cache.sharp = true;
+                    self.pan_cache = Some(cache);
+                } else {
+                    self.pan_cache = Some(cache);
+                    self.pan_cache_restore = Some(restore);
+                }
+            }
+        }
+        self.blit_pan_cache(frame, canvas_rect, Point2D::new(0.0, 0.0));
+        true
     }
 }

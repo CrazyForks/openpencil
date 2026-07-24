@@ -616,6 +616,7 @@ impl WidgetHostNative {
         let (cx0, cy0, _cw, _ch) = self.canvas_region(viewport_width, viewport_height);
         let cursor = Point2D::new(x - cx0, y - cy0);
         self.editor_state.viewport.zoom_at(cursor, delta_y);
+        self.note_viewport_zoom_gesture();
         // No `mark_dirty()`: a zoom only changes the viewport
         // transform, not the document tree, so the cached
         // `layout_scene` stays valid — re-running the taffy layout
@@ -785,6 +786,7 @@ impl WidgetHostNative {
             return false;
         }
         self.editor_state.viewport.pan(dx, dy);
+        self.note_viewport_gesture();
         // No `mark_dirty()`: a pan only translates the viewport, not
         // the document tree — see the `apply_wheel` zoom branch. The
         // `true` return drives the repaint.

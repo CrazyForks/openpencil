@@ -44,6 +44,7 @@ pub fn paint_scene_page_with(
             None,
             None,
             None,
+            false,
         );
         return;
     }

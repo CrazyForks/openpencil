@@ -271,6 +271,10 @@ fn decorate_slice(
     }
 }
 
+/// Below this many device pixels of glyph height, text paints as a
+/// translucent bar ("greeking") instead of running the full layout.
+const GREEK_TEXT_MAX_DEVICE_PX: f32 = 3.0;
+
 pub(crate) fn paint_text_node(
     cx: &mut PaintCx<'_>,
     node: &SceneNode,
@@ -310,6 +314,28 @@ pub(crate) fn paint_text_node(
         b: 0.08,
         a: 1.0,
     });
+    // Greeking LOD: below ~3 device px of glyph height the text is an
+    // unreadable smudge, but the full layout below (CJK wrap measuring,
+    // per-line measures, per-run typeface segmentation) still costs the
+    // same — a zoomed-out text-dense page (4k+ text nodes all visible)
+    // paid full shaping on every panned frame. Paint a translucent ink
+    // bar over the node bounds instead; an edited node keeps the exact
+    // glyph path so caret / selection geometry stays true.
+    if editing.is_none() {
+        let font_size_doc = if paint_node.font_size > 0.0 {
+            paint_node.font_size
+        } else {
+            13.0
+        };
+        let device_px = font_size_doc * zoom * cx.backend.dpi_scale();
+        if device_px < GREEK_TEXT_MAX_DEVICE_PX {
+            if !text.is_empty() {
+                cx.backend
+                    .fill_rect(world_rect, ink.with_alpha(ink.a * 0.18));
+            }
+            return;
+        }
+    }
     let family = if paint_node.font_family.trim().is_empty() {
         "system-ui"
     } else {
@@ -602,6 +628,63 @@ mod tests {
         node.font_size = 20.0;
         node.line_height = 1.0;
         node
+    }
+
+    #[test]
+    fn tiny_on_screen_text_greeks_to_a_bar_instead_of_shaping() {
+        // 20 px font at 5% zoom is a ~1 px smudge on screen: the full
+        // layout (CJK wrap measuring, per-run typeface segmentation)
+        // must be skipped — a zoomed-out text-dense page pays it for
+        // every text node on every panned frame.
+        let node = text_node("hello world");
+        let mut backend = CaptureBackend::default();
+        let mut cx = PaintCx {
+            backend: &mut backend,
+        };
+
+        paint_text_node(&mut cx, &node, node.bounds, 0.05, &None);
+
+        assert!(
+            backend.contents.is_empty(),
+            "greeked text must not shape or draw glyph runs"
+        );
+        assert_eq!(backend.fill_rects, vec![node.bounds]);
+    }
+
+    #[test]
+    fn editing_text_never_greeks_even_at_tiny_zoom() {
+        let node = text_node("ab");
+        let edit = EditCaret {
+            editing: "t".to_string(),
+            input: jian_core::text_input::TextInputState::with_text("ab"),
+            now_ms: 0,
+            selection_color: Color::BLUE,
+        };
+        let mut backend = CaptureBackend::default();
+        let mut cx = PaintCx {
+            backend: &mut backend,
+        };
+
+        paint_text_node(&mut cx, &node, node.bounds, 0.05, &Some(edit));
+
+        assert!(
+            !backend.contents.is_empty(),
+            "the edited node keeps exact glyph paint for caret parity"
+        );
+    }
+
+    #[test]
+    fn empty_text_paints_nothing_when_greeked() {
+        let node = text_node("");
+        let mut backend = CaptureBackend::default();
+        let mut cx = PaintCx {
+            backend: &mut backend,
+        };
+
+        paint_text_node(&mut cx, &node, node.bounds, 0.05, &None);
+
+        assert!(backend.contents.is_empty());
+        assert!(backend.fill_rects.is_empty());
     }
 
     #[test]

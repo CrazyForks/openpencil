@@ -131,6 +131,10 @@ fn finish_active_mask(
                 queued_shell_ids: None,
                 mask_source: true,
                 suppress_node_composite_id: Some(node.id.as_str()),
+                // Mask coverage must stay exact even mid-gesture — a
+                // skipped sub-pixel mask leaf would change what the
+                // mask reveals, not just its fidelity.
+                fast_interaction: false,
             };
             let _ = paint_node_inner(cx, node, &mask_options, transforms, false);
             // First restore applies the assembled source to isolated content

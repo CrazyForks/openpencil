@@ -107,6 +107,9 @@ pub struct NativeBackend {
     thumb_cache: image::ThumbCache,
     svg_path_cache: std::collections::HashMap<u64, path::SvgPathCacheEntry>,
     svg_path_cache_order: std::collections::VecDeque<u64>,
+    /// Sum of `SvgPathCacheEntry` d-string lengths — the byte proxy the
+    /// path-cache budget evicts against (parsed path size tracks d length).
+    svg_path_cache_bytes: usize,
     svg_raster_cache: std::collections::HashMap<path::SvgRasterKey, path::SvgRasterCacheEntry>,
     svg_raster_cache_order: std::collections::VecDeque<path::SvgRasterKey>,
     dot_point_buffer: Vec<skia_safe::Point>,
@@ -238,6 +241,7 @@ impl NativeBackend {
             thumb_cache: image::ThumbCache::default(),
             svg_path_cache: std::collections::HashMap::new(),
             svg_path_cache_order: std::collections::VecDeque::new(),
+            svg_path_cache_bytes: 0,
             svg_raster_cache: std::collections::HashMap::new(),
             svg_raster_cache_order: std::collections::VecDeque::new(),
             dot_point_buffer: Vec::new(),

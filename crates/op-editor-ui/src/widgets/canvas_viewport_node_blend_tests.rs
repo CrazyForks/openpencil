@@ -269,6 +269,7 @@ fn deferred_mask_suppresses_only_root_blend_not_descendant_blend() {
         None,
         None,
         None,
+        false,
     );
 
     assert!(backend

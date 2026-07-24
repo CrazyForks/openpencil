@@ -443,6 +443,55 @@ fn svg_path_cache_reuses_parsed_paths() {
 }
 
 #[test]
+fn svg_path_cache_holds_a_large_document_working_set() {
+    // A vector-heavy Figma import easily carries >10k distinct paths.
+    // A small entry cap made every zoomed-out frame cycle the whole
+    // cache and re-parse every visible path from scratch — the cache
+    // must hold a large working set, bounded by bytes instead.
+    let mut be = NativeBackend::with_dpi(1.0);
+    let mut surface = skia_safe::surfaces::raster_n32_premul((32, 32)).unwrap();
+    let canvas = surface.canvas();
+    for i in 0..4096 {
+        let d = format!("M0 {i} L10 0 L10 10 Z");
+        be.fill_svg_path(canvas, &d, Point2D::ZERO, 1.0, 1.0, Color::BLACK);
+    }
+    assert_eq!(be.svg_path_cache_len(), 4096);
+}
+
+#[test]
+fn svg_path_cache_evicts_oldest_over_byte_budget() {
+    let mut be = NativeBackend::with_dpi(1.0);
+    let mut surface = skia_safe::surfaces::raster_n32_premul((32, 32)).unwrap();
+    let canvas = surface.canvas();
+    let first = "M0 0 L10 0 L10 10 Z";
+    be.fill_svg_path(canvas, first, Point2D::ZERO, 1.0, 1.0, Color::BLACK);
+    be.fill_svg_path(
+        canvas,
+        "M0 1 L10 0 L10 10 Z",
+        Point2D::ZERO,
+        1.0,
+        1.0,
+        Color::BLACK,
+    );
+    be.fill_svg_path(
+        canvas,
+        "M0 2 L10 0 L10 10 Z",
+        Point2D::ZERO,
+        1.0,
+        1.0,
+        Color::BLACK,
+    );
+    assert_eq!(be.svg_path_cache_len(), 3);
+
+    // A budget that only fits two of the three entries drops the
+    // oldest (FIFO), keeping the most recently inserted pair.
+    be.evict_svg_paths_over(first.len() * 2, usize::MAX);
+    assert_eq!(be.svg_path_cache_len(), 2);
+    be.evict_svg_paths_over(usize::MAX, 1);
+    assert_eq!(be.svg_path_cache_len(), 1);
+}
+
+#[test]
 fn explicit_even_odd_rule_sets_skia_path_fill_type() {
     let mut be = NativeBackend::with_dpi(1.0);
     let d = "M0 0H20V20H0Z M5 5H15V15H5Z";
