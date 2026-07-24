@@ -17,13 +17,25 @@ pub(super) fn paint_fill_layers_then_stroke(
     world_rect: Rect,
     zoom: f32,
 ) -> bool {
-    let painted = paint_fill_layers_with(cx, node, world_rect, |cx, layer| {
-        paint_rect_fill_layer(cx, node, layer, world_rect, zoom);
-    });
+    let painted = paint_fill_layers(cx, node, world_rect, zoom);
     if painted {
         paint_node_stroke(cx, node, world_rect, zoom);
     }
     painted
+}
+
+/// Paint the complete front-to-back fill stack without the node outline.
+/// Recursing containers call this before children and paint their outline
+/// after restoring any child clip.
+pub(super) fn paint_fill_layers(
+    cx: &mut PaintCx<'_>,
+    node: &SceneNode,
+    world_rect: Rect,
+    zoom: f32,
+) -> bool {
+    paint_fill_layers_with(cx, node, world_rect, |cx, layer| {
+        paint_rect_fill_layer(cx, node, layer, world_rect, zoom);
+    })
 }
 
 /// Paint the complete front-to-back fill stack through a shape-specific

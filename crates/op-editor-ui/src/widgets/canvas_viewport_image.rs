@@ -322,6 +322,31 @@ pub(super) fn paint_image_node(
     src: &str,
     show_placeholder: bool,
 ) {
+    paint_image_node_with_stroke(cx, node, world_rect, zoom, src, show_placeholder, true);
+}
+
+/// Paint an image node's contents without its outline. Recursing image
+/// containers use this so their outline can overlay children exactly once.
+pub(super) fn paint_image_node_without_stroke(
+    cx: &mut PaintCx<'_>,
+    node: &SceneNode,
+    world_rect: Rect,
+    zoom: f32,
+    src: &str,
+    show_placeholder: bool,
+) {
+    paint_image_node_with_stroke(cx, node, world_rect, zoom, src, show_placeholder, false);
+}
+
+fn paint_image_node_with_stroke(
+    cx: &mut PaintCx<'_>,
+    node: &SceneNode,
+    world_rect: Rect,
+    zoom: f32,
+    src: &str,
+    show_placeholder: bool,
+    paint_stroke: bool,
+) {
     let bytes = image_source_bytes(src, node.image_src_id);
     let id = if node.image_src_id == 0 {
         stable_image_source_id(src)
@@ -444,7 +469,7 @@ pub(super) fn paint_image_node(
             cx.backend.restore();
         }
     }
-    if let Some(stroke) = node.stroke {
+    if let Some(stroke) = node.stroke.filter(|_| paint_stroke) {
         let width = stroke.width * zoom;
         if let Some(radii) = per_corner {
             cx.backend

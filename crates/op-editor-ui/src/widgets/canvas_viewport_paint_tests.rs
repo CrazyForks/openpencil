@@ -647,7 +647,7 @@ mod path_tests {
 }
 
 mod clip_tests {
-    use crate::layout_scene::{MaskType, NodeKind, SceneNode};
+    use crate::layout_scene::{MaskType, NodeKind, SceneNode, SceneStroke, SceneStrokeAlign};
     use crate::widgets::canvas_viewport_paint::{
         paint_node_with_options, paint_scene_nodes_with_options_hiding,
     };
@@ -669,7 +669,9 @@ mod clip_tests {
             self.ops
                 .push(format!("fill({},{})", rect.origin.x, rect.origin.y));
         }
-        fn stroke_rect(&mut self, _: Rect, _: Color, _: f32) {}
+        fn stroke_rect(&mut self, _: Rect, _: Color, _: f32) {
+            self.ops.push("stroke".into());
+        }
         fn draw_text(&mut self, _: &TextLayout, _: Point2D) {}
         fn clip_rect(&mut self, rect: Rect) {
             self.ops.push(format!(
@@ -707,8 +709,13 @@ mod clip_tests {
         }
         fn translate(&mut self, _: Point2D) {}
         fn stroke_line(&mut self, _: Point2D, _: Point2D, _: Color, _: f32) {}
-        fn fill_round_rect(&mut self, _: Rect, _: f32, _: Color) {}
-        fn stroke_round_rect(&mut self, _: Rect, _: f32, _: Color, _: f32) {}
+        fn fill_round_rect(&mut self, rect: Rect, _: f32, _: Color) {
+            self.ops
+                .push(format!("fill({},{})", rect.origin.x, rect.origin.y));
+        }
+        fn stroke_round_rect(&mut self, _: Rect, _: f32, _: Color, _: f32) {
+            self.ops.push("stroke".into());
+        }
         fn stroke_svg_path(&mut self, _: &str, _: Point2D, _: f32, _: Color, _: f32) {}
         fn resize(&mut self, _: u32, _: u32) {}
         fn dpi_scale(&self) -> f32 {
@@ -757,6 +764,55 @@ mod clip_tests {
 
     fn paint(node: &SceneNode) -> Vec<String> {
         capture(node, Rect::xywh(0.0, 0.0, 4000.0, 4000.0)).ops
+    }
+
+    fn add_center_stroke(node: &mut SceneNode) {
+        node.stroke = Some(SceneStroke {
+            color: Color::BLACK,
+            width: 2.0,
+            sides: None,
+            align: SceneStrokeAlign::Center,
+        });
+    }
+
+    #[test]
+    fn clipped_round_container_stroke_overlays_children_once() {
+        for kind in [NodeKind::Frame, NodeKind::Rect] {
+            let mut container = frame_with_child(true, 9999.0);
+            container.kind = kind;
+            add_center_stroke(&mut container);
+
+            let ops = paint(&container);
+            assert_eq!(
+                ops,
+                vec![
+                    "fill(0,0)".to_string(),
+                    "save".to_string(),
+                    "clip_rr(0,0,100,100,r=50)".to_string(),
+                    "fill(10,10)".to_string(),
+                    "restore".to_string(),
+                    "stroke".to_string(),
+                ]
+            );
+            assert_eq!(
+                ops.iter().filter(|op| op.as_str() == "stroke").count(),
+                1,
+                "container stroke must be painted exactly once"
+            );
+        }
+    }
+
+    #[test]
+    fn leaf_frame_keeps_fill_then_single_stroke() {
+        let mut frame = SceneNode::leaf("leaf", NodeKind::Frame);
+        frame.bounds = Rect::xywh(0.0, 0.0, 100.0, 100.0);
+        frame.fill = Some(Color::WHITE);
+        add_center_stroke(&mut frame);
+
+        assert_eq!(
+            paint(&frame),
+            vec!["fill(0,0)".to_string(), "stroke".to_string()]
+        );
     }
 
     #[test]

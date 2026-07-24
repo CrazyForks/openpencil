@@ -18,11 +18,13 @@ use crate::layout_scene::{Effect, NodeKind};
 use crate::widgets::canvas_viewport::EditCaret;
 use crate::widgets::canvas_viewport_fill_layers::{
     fill_layer_fallback_color, paint_clipped_fill_layers_with, paint_clipped_shape_rich_fill_layer,
-    paint_fill_layers_then_stroke, paint_svg_path_fill_layers, paint_svg_path_gradient,
+    paint_fill_layers, paint_fill_layers_then_stroke, paint_svg_path_fill_layers,
+    paint_svg_path_gradient,
 };
-use crate::widgets::canvas_viewport_image::paint_image_node;
+use crate::widgets::canvas_viewport_image::{paint_image_node, paint_image_node_without_stroke};
 use crate::widgets::canvas_viewport_overlay::{
-    align_stroke_rect, paint_fill_then_stroke, scaled_non_uniform_corner_radii,
+    align_stroke_rect, paint_fill_then_stroke, paint_node_fill, paint_node_stroke,
+    scaled_non_uniform_corner_radii,
 };
 use crate::widgets::canvas_viewport_text::paint_text_node;
 use crate::widgets::canvas_viewport_widget::paint_widget_visual;
@@ -822,12 +824,28 @@ fn paint_node_inner<'a>(
 
     match &node.kind {
         NodeKind::Frame => {
+            let has_children = !node.children.is_empty();
             // Image-fill Frames paint the bitmap behind their
             // children; gradient + solid fall back to the shared
             // fill/stroke painter. Without this branch a Frame whose
             // primary fill is `PenFill::Image { url }` only shows the
             // grey placeholder + its children, never the image.
-            if paint_fill_layers_then_stroke(cx, node, world_rect, zoom) {
+            if has_children {
+                if paint_fill_layers(cx, node, world_rect, zoom) {
+                    // Container stroke is deferred until after its children.
+                } else if let Some(src) = node.image_src.as_deref() {
+                    paint_image_node_without_stroke(
+                        cx,
+                        node,
+                        world_rect,
+                        zoom,
+                        src,
+                        !options.mask_source,
+                    );
+                } else {
+                    paint_node_fill(cx, node, world_rect, zoom, node.fill);
+                }
+            } else if paint_fill_layers_then_stroke(cx, node, world_rect, zoom) {
                 // painted
             } else if let Some(src) = node.image_src.as_deref() {
                 paint_image_node(cx, node, world_rect, zoom, src, !options.mask_source);
@@ -882,6 +900,9 @@ fn paint_node_inner<'a>(
             if clipped {
                 cx.backend.restore();
             }
+            if has_children {
+                paint_node_stroke(cx, node, world_rect, zoom);
+            }
         }
         NodeKind::Other(tag) if tag == "icon_font" => crate::widgets::icons::paint_icon_font_node(
             cx.backend,
@@ -908,14 +929,31 @@ fn paint_node_inner<'a>(
             }
         }
         NodeKind::Rect => {
+            let has_children = !node.children.is_empty();
             // Composite widgets that degrade to `rect` (switch /
             // checkbox / slider / progress / radio_group / number_input
             // / text_area) paint their recognizable static visual on the
             // design surface instead of the bare rect.
-            if !paint_widget_visual(cx, node, world_rect, zoom)
-                && !paint_fill_layers_then_stroke(cx, node, world_rect, zoom)
-            {
-                if let Some(src) = node.image_src.as_deref() {
+            let widget_painted = paint_widget_visual(cx, node, world_rect, zoom);
+            if !widget_painted {
+                if has_children {
+                    if paint_fill_layers(cx, node, world_rect, zoom) {
+                        // Container stroke is deferred until after its children.
+                    } else if let Some(src) = node.image_src.as_deref() {
+                        paint_image_node_without_stroke(
+                            cx,
+                            node,
+                            world_rect,
+                            zoom,
+                            src,
+                            !options.mask_source,
+                        );
+                    } else {
+                        paint_node_fill(cx, node, world_rect, zoom, node.fill);
+                    }
+                } else if paint_fill_layers_then_stroke(cx, node, world_rect, zoom) {
+                    // painted
+                } else if let Some(src) = node.image_src.as_deref() {
                     // Image nodes land as `kind="rect"` (the loader rewrites
                     // their variant so non-image paths keep working). When a
                     // `src` is carried, paint the bitmap; the grey `fill`
@@ -945,6 +983,9 @@ fn paint_node_inner<'a>(
             );
             if clipped {
                 cx.backend.restore();
+            }
+            if has_children && !widget_painted {
+                paint_node_stroke(cx, node, world_rect, zoom);
             }
         }
         NodeKind::Ellipse => {

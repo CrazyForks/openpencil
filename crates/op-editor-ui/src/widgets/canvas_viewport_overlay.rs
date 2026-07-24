@@ -113,6 +113,19 @@ pub fn paint_fill_then_stroke(
     zoom: f32,
     fill: Option<crate::Color>,
 ) {
+    paint_node_fill(cx, node, world_rect, zoom, fill);
+    paint_node_stroke(cx, node, world_rect, zoom);
+}
+
+/// Paint only a node's fill. Recursing containers use this before their
+/// children, then overlay the outline after the child clip is restored.
+pub(crate) fn paint_node_fill(
+    cx: &mut PaintCx<'_>,
+    node: &SceneNode,
+    world_rect: Rect,
+    zoom: f32,
+    fill: Option<crate::Color>,
+) {
     let r = node.corner_radius * zoom;
     let use_round = r > 0.5;
     let per_corner = scaled_non_uniform_corner_radii(node, zoom);
@@ -149,7 +162,6 @@ pub fn paint_fill_then_stroke(
             cx.backend.fill_rect(world_rect, fill);
         }
     }
-    paint_node_stroke(cx, node, world_rect, zoom);
 }
 
 /// Paint only a node's stroke. Layered-fill nodes use this after painting all
