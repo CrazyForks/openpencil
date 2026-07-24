@@ -400,9 +400,10 @@ fn gradient_only_svg_path_contributes_painted_bounds() {
 }
 
 #[test]
-fn clip_content_wraps_children_but_not_frame_stroke() {
+fn clipped_container_stroke_overlays_children_once() {
     let mut frame = SceneNode::leaf("clipped-frame", NodeKind::Frame);
     frame.bounds = Rect::xywh(10.0, 20.0, 100.0, 80.0);
+    frame.fill = Some(Color::WHITE);
     frame.clip_content = true;
     frame.stroke = Some(SceneStroke {
         color: Color::BLACK,
@@ -420,21 +421,62 @@ fn clip_content_wraps_children_but_not_frame_stroke() {
     ));
 
     let body = serialize_node_svg(&scene_with(vec![frame]), "clipped-frame").expect("svg");
-    let frame_rect = body
+    let frame_fill = body
         .find(r#"<rect id="clipped-frame""#)
-        .expect("frame rect");
+        .expect("frame fill");
     let clip_group = body
         .find(r#"<g clip-path="url(#clip-"#)
         .expect("clip group");
     let child = body
         .find(r#"<rect id="clipped-child""#)
         .expect("child rect");
+    let clip_group_end = body[child..]
+        .find("</g>")
+        .map(|offset| child + offset)
+        .expect("clip group end");
+    let stroke_overlay = body[clip_group_end..]
+        .find(r#"stroke="rgb(0,0,0)""#)
+        .map(|offset| clip_group_end + offset)
+        .expect("frame stroke overlay");
 
     assert!(
-        frame_rect < clip_group,
-        "frame stroke is inside clip group: {body}"
+        frame_fill < clip_group,
+        "frame fill is inside clip group: {body}"
     );
     assert!(clip_group < child, "child is outside clip group: {body}");
+    assert!(
+        clip_group_end < stroke_overlay,
+        "frame stroke must overlay clipped children: {body}"
+    );
+    assert_eq!(
+        body.matches(r#"stroke="rgb(0,0,0)""#).count(),
+        1,
+        "container stroke must be emitted exactly once: {body}"
+    );
+}
+
+#[test]
+fn leaf_rect_keeps_single_combined_shape() {
+    let mut rect = filled_rect("leaf-stroke", 10.0, 20.0, 100.0, 80.0, Color::WHITE);
+    rect.stroke = Some(SceneStroke {
+        color: Color::BLACK,
+        width: 8.0,
+        sides: None,
+        align: SceneStrokeAlign::Center,
+    });
+
+    let body = serialize_node_svg(&scene_with(vec![rect]), "leaf-stroke").expect("svg");
+
+    assert_eq!(
+        body.matches(r#"<rect id="leaf-stroke""#).count(),
+        1,
+        "leaf rect should remain one combined shape: {body}"
+    );
+    assert_eq!(
+        body.matches(r#"stroke="rgb(0,0,0)""#).count(),
+        1,
+        "leaf rect stroke must be emitted exactly once: {body}"
+    );
 }
 
 #[test]

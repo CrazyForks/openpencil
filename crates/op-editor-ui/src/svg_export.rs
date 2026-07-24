@@ -8,8 +8,11 @@ use crate::{Color, Point2D, Rect};
 use std::fmt::Write as _;
 
 mod image_metadata;
+#[path = "svg_export_rect.rs"]
+mod rect;
 mod transform;
 
+use rect::{emit_rect, emit_rect_fill, emit_rect_stroke_overlay};
 use transform::{
     apply_ancestor_clip_bounds, apply_clip_bounds, close_ancestor_clip_groups,
     emit_affine_group_start, emit_ancestor_clip_defs, emit_ancestor_clip_groups_start,
@@ -422,7 +425,11 @@ fn emit_node(out: &mut String, n: &SceneNode) {
     if needs_opacity_group {
         let _ = write!(out, r#"<g opacity="{composite_opacity}">"#);
     }
+    let defers_rect_stroke = matches!(n.kind, NodeKind::Rect | NodeKind::Frame)
+        && !n.children.is_empty()
+        && n.stroke.is_some();
     match &n.kind {
+        NodeKind::Rect | NodeKind::Frame if defers_rect_stroke => emit_rect_fill(out, n),
         NodeKind::Rect | NodeKind::Frame => emit_rect(out, n),
         NodeKind::Ellipse => emit_ellipse(out, n),
         NodeKind::Polygon => emit_polygon(out, n),
@@ -451,41 +458,15 @@ fn emit_node(out: &mut String, n: &SceneNode) {
     if clips_children {
         out.push_str("</g>");
     }
+    if defers_rect_stroke {
+        emit_rect_stroke_overlay(out, n);
+    }
     if needs_opacity_group {
         out.push_str("</g>");
     }
     if needs_g {
         out.push_str("</g>");
     }
-}
-
-fn emit_rect(out: &mut String, n: &SceneNode) {
-    if n.fill.is_none()
-        && n.gradient.is_none()
-        && n.stroke.is_none()
-        && !matches!(n.kind, NodeKind::Rect)
-    {
-        return;
-    }
-    let r = normalize_rect(n.bounds);
-    if r.size.x == 0.0 && r.size.y == 0.0 {
-        return;
-    }
-    let rx = if n.corner_radius > 0.0 {
-        format!(r#" rx="{}""#, n.corner_radius)
-    } else {
-        String::new()
-    };
-    let _ = write!(
-        out,
-        r#"<rect id="{}" x="{}" y="{}" width="{}" height="{}"{rx}{}/>"#,
-        xml_escape(&n.id),
-        r.origin.x,
-        r.origin.y,
-        r.size.x,
-        r.size.y,
-        fill_stroke_attrs(n),
-    );
 }
 
 fn emit_ellipse(out: &mut String, n: &SceneNode) {
@@ -757,6 +738,14 @@ fn xml_escape(text: &str) -> String {
 }
 
 fn fill_stroke_attrs(n: &SceneNode) -> String {
+    let mut s = fill_attrs(n);
+    if let Some(stroke) = n.stroke {
+        s.push_str(&stroke_attrs(stroke.color, stroke.width));
+    }
+    s
+}
+
+fn fill_attrs(n: &SceneNode) -> String {
     let mut s = String::new();
     if n.gradient.is_some() {
         let _ = write!(s, r#" fill="url(#gradient-{})""#, svg_id(&n.id));
@@ -767,9 +756,6 @@ fn fill_stroke_attrs(n: &SceneNode) -> String {
         }
     } else {
         s.push_str(r#" fill="none""#);
-    }
-    if let Some(stroke) = n.stroke {
-        s.push_str(&stroke_attrs(stroke.color, stroke.width));
     }
     s
 }
