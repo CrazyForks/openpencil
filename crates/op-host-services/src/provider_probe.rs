@@ -3,7 +3,7 @@
 //!
 //! Pressing Connect on a provider card runs a real probe: binary
 //! resolution (installed?), a responsiveness gate where TS runs one
-//! (`codex --version` / `gemini --version`), a live model query, and
+//! (`codex --version`), a live model query, and
 //! an auth-state read that yields the human-readable
 //! `connectionInfo` string ("Connected via pro (a@b.c)"). Failures
 //! map through the same friendly-error tables the TS route uses.
@@ -27,8 +27,8 @@ use crate::model_discovery::{
     parse_copilot_model_list, resolve_cli, write_lsp_frame,
 };
 use crate::provider_probe_models::{
-    claude_initialize_query, codex_home, codex_models_from_latest_md, gemini_models_from_api,
-    ClaudeAccount, ClaudeInitResult,
+    claude_initialize_query, codex_home, codex_models_from_latest_md, ClaudeAccount,
+    ClaudeInitResult,
 };
 
 /// Probe result — the TS `ConnectResult` shape plus the install
@@ -78,9 +78,6 @@ fn no_models_error(provider: AgentProvider) -> String {
         AgentProvider::GithubCopilot => {
             "No models found. Run \"copilot login\" to authenticate first.".to_string()
         }
-        AgentProvider::GeminiCli => {
-            "No models found. Run \"gemini\" once to authenticate, or set GEMINI_API_KEY.".to_string()
-        }
         AgentProvider::Antigravity => {
             "No model available. Run \"agy\" once to authenticate.".to_string()
         }
@@ -119,7 +116,6 @@ pub fn connect_provider(provider: AgentProvider) -> ProbeOutcome {
         AgentProvider::CodexCli => connect_codex_cli(),
         AgentProvider::OpenCode => connect_opencode(),
         AgentProvider::GithubCopilot => connect_copilot(),
-        AgentProvider::GeminiCli => connect_gemini_cli(),
         AgentProvider::Antigravity => crate::cli_provider_probe::connect_antigravity(),
         AgentProvider::GrokBuild => crate::cli_provider_probe::connect_grok_build(),
     }
@@ -157,7 +153,6 @@ fn install_command_for_platform(
                 "See documentation"
             }
         }
-        AgentProvider::GeminiCli => "npm install -g @anthropic-ai/gemini-cli",
         AgentProvider::Antigravity if windows => {
             "irm https://antigravity.google/cli/install.ps1 | iex"
         }
@@ -702,73 +697,6 @@ fn friendly_copilot_error(raw: &str) -> String {
         return "Connection timed out. Please try again.".to_string();
     }
     raw.to_string()
-}
-
-// ---------------------------------------------------------------
-// Gemini CLI (connect-agent.ts:975-1063)
-// ---------------------------------------------------------------
-
-fn connect_gemini_cli() -> ProbeOutcome {
-    let Some(exe) = resolve_cli("gemini") else {
-        return ProbeOutcome::not_installed(AgentProvider::GeminiCli, "Gemini CLI not found");
-    };
-    // Responsiveness gate — TS runs `gemini --version` with a 10 s
-    // budget (connect-agent.ts:986-997).
-    let Some(version) = cli_version(&exe, Duration::from_secs(10)) else {
-        return ProbeOutcome::failed("Gemini CLI not responding".to_string());
-    };
-    let models = match gemini_models_from_api() {
-        Some(models) if !models.is_empty() => models,
-        Some(_) => return ProbeOutcome::failed(no_models_error(AgentProvider::GeminiCli)),
-        None => {
-            return ProbeOutcome::failed(
-                "Unable to fetch Gemini models. Run \"gemini\" once to authenticate, or set GEMINI_API_KEY.".to_string(),
-            )
-        }
-    };
-    let (info, hint) = build_gemini_connection_info();
-    connected_probe_outcome(
-        AgentProvider::GeminiCli,
-        models,
-        Some(info),
-        None,
-        Some(hint),
-        Some(version),
-    )
-}
-
-/// TS `buildGeminiConnectionInfo` (connect-agent.ts:1027-1063).
-fn build_gemini_connection_info() -> (String, String) {
-    let hint = config_path(
-        "~/.gemini/settings.json",
-        "%USERPROFILE%\\.gemini\\settings.json",
-    );
-    let env_key = std::env::var("GEMINI_API_KEY")
-        .ok()
-        .filter(|k| !k.is_empty())
-        .or_else(|| {
-            std::env::var("GOOGLE_API_KEY")
-                .ok()
-                .filter(|k| !k.is_empty())
-        });
-    if let Some(key) = env_key {
-        return (format!("Connected via API key ({})", mask_key(&key)), hint);
-    }
-    let gemini_dir = dirs::home_dir().map(|h| h.join(".gemini"));
-    if let Some(dir) = gemini_dir {
-        if dir.join("oauth_creds.json").is_file() {
-            // Try the active Google account email.
-            if let Ok(raw) = std::fs::read_to_string(dir.join("google_accounts.json")) {
-                if let Ok(accounts) = serde_json::from_str::<serde_json::Value>(&raw) {
-                    if let Some(active) = accounts.get("active").and_then(|v| v.as_str()) {
-                        return (format!("Connected via Google ({active})"), hint);
-                    }
-                }
-            }
-            return ("Connected via Google OAuth".to_string(), hint);
-        }
-    }
-    ("Connected via Gemini CLI".to_string(), hint)
 }
 
 #[cfg(test)]

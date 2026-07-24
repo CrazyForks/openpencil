@@ -1,13 +1,11 @@
-//! Per-CLI quirks for the Codex / Gemini subprocess transports —
-//! verbatim ports of the TS reference clients:
+//! Per-CLI quirks for the Codex subprocess transport — a verbatim
+//! port of the TS reference client:
 //!
 //! - `apps/web/server/utils/codex-client.ts` — env allowlist (+
 //!   `~/.codex/config.toml` `env_key` opt-ins), stderr error
 //!   extraction with auth-hint rewrites, JSONL line parsing.
-//! - `apps/web/server/utils/gemini-client.ts` — env allowlist,
-//!   `-o stream-json` line parsing, user-friendly API error mapping.
 //!
-//! Both also share the TS `buildPrompt` GUIDELINES / TASK framing so
+//! It also keeps the TS `buildPrompt` GUIDELINES / TASK framing so
 //! the wire prompt matches the TS server byte-for-byte.
 
 use op_ai::chat_provider::{ChatDelta, StopReason};
@@ -49,11 +47,6 @@ const CODEX_ENV_ALLOWLIST: &[&str] = &[
     "HOMEDRIVE",
     "HOMEPATH",
 ];
-
-/// Allowlist-based env filter for the Gemini CLI subprocess (TS
-/// `gemini-client.ts::GEMINI_ENV_ALLOWLIST` — same system core, no
-/// extra config-file opt-ins).
-const GEMINI_ENV_ALLOWLIST: &[&str] = CODEX_ENV_ALLOWLIST;
 
 /// Extract provider-declared `env_key` entries from
 /// `~/.codex/config.toml` content. Preserves the default safety
@@ -120,22 +113,9 @@ pub fn codex_child_env() -> Vec<(String, String)> {
         .collect()
 }
 
-/// Gemini child env: allowlisted system vars + `GOOGLE_*` /
-/// `GEMINI_*` / `GCLOUD_*` prefixes (TS `filterGeminiEnv`).
-pub fn gemini_child_env() -> Vec<(String, String)> {
-    std::env::vars()
-        .filter(|(k, _)| {
-            GEMINI_ENV_ALLOWLIST.contains(&k.as_str())
-                || k.starts_with("GOOGLE_")
-                || k.starts_with("GEMINI_")
-                || k.starts_with("GCLOUD_")
-        })
-        .collect()
-}
-
-/// TS `codex-client.ts::buildPrompt` / `gemini-client.ts::buildPrompt`
-/// framing: an empty system prompt passes the task through; otherwise
-/// the system prompt rides a GUIDELINES block ahead of the TASK block.
+/// TS `codex-client.ts::buildPrompt` framing: an empty system prompt
+/// passes the task through; otherwise the system prompt rides a
+/// GUIDELINES block ahead of the TASK block.
 pub fn guidelines_task_prompt(system_prompt: &str, task: &str) -> String {
     let task = task.trim();
     let system = system_prompt.trim();
@@ -320,88 +300,6 @@ fn is_codex_auth_error(msg: &str) -> bool {
     false
 }
 
-/// Parse one `gemini -o stream-json` stdout line (TS
-/// `parseStreamJsonLine`). `None` = skip silently — non-JSON noise
-/// like "Loaded cached credentials." never reaches the transcript.
-pub fn parse_gemini_stream_line(line: &str) -> Option<ChatDelta> {
-    let trimmed = line.trim();
-    if !trimmed.starts_with('{') {
-        return None;
-    }
-    let val: serde_json::Value = serde_json::from_str(trimmed).ok()?;
-    let ty = val.get("type").and_then(|v| v.as_str()).unwrap_or("");
-
-    if ty == "message" && val.get("role").and_then(|v| v.as_str()) == Some("assistant") {
-        let content = val.get("content").and_then(|v| v.as_str()).unwrap_or("");
-        if !content.is_empty() {
-            return Some(ChatDelta::TextDelta(content.to_string()));
-        }
-        return None;
-    }
-
-    if ty == "result" {
-        // Check for error in result event; a success result carries
-        // no renderable delta (the text already streamed).
-        if val.get("status").and_then(|v| v.as_str()) == Some("error") {
-            if let Some(err) = val.get("error") {
-                let msg = err
-                    .get("message")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Unknown error");
-                return Some(ChatDelta::Error(friendly_gemini_api_error(msg)));
-            }
-        }
-        return None;
-    }
-
-    if ty == "error" {
-        let msg = val
-            .get("message")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Unknown error");
-        return Some(ChatDelta::Error(friendly_gemini_api_error(msg)));
-    }
-
-    None
-}
-
-/// Map raw Gemini API errors to user-friendly messages (TS
-/// `friendlyGeminiApiError`).
-pub fn friendly_gemini_api_error(raw: &str) -> String {
-    let lower = raw.to_ascii_lowercase();
-    if lower.contains("quota")
-        || lower.contains("exhausted")
-        || lower.contains("429")
-        || lower.contains("capacity")
-    {
-        if let Some(reset) = match_reset_after(raw) {
-            return format!("Gemini quota exhausted. Resets after {reset}.");
-        }
-        return "Gemini quota exhausted. Please wait and try again.".to_string();
-    }
-    if lower.contains("401") || lower.contains("unauthenticated") || lower.contains("auth") {
-        return "Gemini auth expired. Run \"gemini\" in your terminal to re-authenticate."
-            .to_string();
-    }
-    if raw.contains("[object Object]") {
-        return "Gemini API error. Check your quota or try a different model.".to_string();
-    }
-    raw.to_string()
-}
-
-/// TS regex `/reset after (\S+)/i` — the quota-reset timestamp token.
-fn match_reset_after(raw: &str) -> Option<&str> {
-    let lower = raw.to_ascii_lowercase();
-    let pos = lower.find("reset after ")?;
-    let tail = &raw[pos + "reset after ".len()..];
-    let token: &str = tail.split_whitespace().next()?;
-    if token.is_empty() {
-        None
-    } else {
-        Some(token)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -528,61 +426,5 @@ env_key = not_quoted
             extract_codex_cli_error("something odd happened").as_deref(),
             Some("something odd happened")
         );
-    }
-
-    #[test]
-    fn gemini_line_parser_assistant_messages_and_noise() {
-        assert_eq!(parse_gemini_stream_line("Loaded cached credentials."), None);
-        assert_eq!(
-            parse_gemini_stream_line(r#"{"type":"message","role":"assistant","content":"Hello"}"#),
-            Some(ChatDelta::TextDelta("Hello".into()))
-        );
-        // Empty content / non-assistant roles are skipped.
-        assert_eq!(
-            parse_gemini_stream_line(r#"{"type":"message","role":"assistant","content":""}"#),
-            None
-        );
-        assert_eq!(
-            parse_gemini_stream_line(r#"{"type":"message","role":"user","content":"x"}"#),
-            None
-        );
-    }
-
-    #[test]
-    fn gemini_line_parser_result_and_error_events() {
-        // Success result carries no delta.
-        assert_eq!(
-            parse_gemini_stream_line(r#"{"type":"result","status":"ok","response":"done"}"#),
-            None
-        );
-        assert_eq!(
-            parse_gemini_stream_line(
-                r#"{"type":"result","status":"error","error":{"message":"401 unauthenticated"}}"#
-            ),
-            Some(ChatDelta::Error(
-                "Gemini auth expired. Run \"gemini\" in your terminal to re-authenticate.".into()
-            ))
-        );
-        assert_eq!(
-            parse_gemini_stream_line(r#"{"type":"error","message":"plain failure"}"#),
-            Some(ChatDelta::Error("plain failure".into()))
-        );
-    }
-
-    #[test]
-    fn gemini_friendly_error_table_matches_ts() {
-        assert_eq!(
-            friendly_gemini_api_error("Quota will reset after 3:00PM details"),
-            "Gemini quota exhausted. Resets after 3:00PM."
-        );
-        assert_eq!(
-            friendly_gemini_api_error("429 too many requests"),
-            "Gemini quota exhausted. Please wait and try again."
-        );
-        assert_eq!(
-            friendly_gemini_api_error("[object Object]"),
-            "Gemini API error. Check your quota or try a different model."
-        );
-        assert_eq!(friendly_gemini_api_error("boring"), "boring");
     }
 }

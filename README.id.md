@@ -64,7 +64,7 @@ Secara otomatis menyesuaikan dengan kemampuan setiap model. Claude mendapat prom
 
 ### 🔌 Server MCP
 
-Instal satu klik ke Claude Code, Codex, Gemini, OpenCode, Kiro, atau Copilot CLI. Desain dari terminal Anda — baca, buat, dan modifikasi file `.op` melalui agen yang kompatibel dengan MCP.
+Instal satu klik ke Claude Code, Codex, OpenCode, Kiro, atau Copilot CLI. Desain dari terminal Anda — baca, buat, dan modifikasi file `.op` melalui agen yang kompatibel dengan MCP.
 
 </td>
 </tr>
@@ -125,7 +125,7 @@ Rilis Rust bertag menerbitkan satu image web host. Image TypeScript lama yang me
 | --- | --- |
 | `ghcr.io/zseven-w/openpencil-web:vX.Y.Z` | Rust web host, wasm bundle, dan aset CanvasKit |
 
-Web UI hanya menampilkan built-in agent profiles; alat Claude/Codex/OpenCode/Copilot/Gemini CLI tidak dibundel ke dalam image Docker.
+Web UI hanya menampilkan built-in agent profiles; alat Claude/Codex/OpenCode/Copilot CLI tidak dibundel ke dalam image Docker.
 
 **Jalankan:**
 
@@ -161,7 +161,6 @@ docker run -p 3100:3100 openpencil-web-rust
 | **Codex CLI**            | Hubungkan di Pengaturan Agen (`Cmd+,`)                                                              |
 | **OpenCode**             | Hubungkan di Pengaturan Agen (`Cmd+,`)                                                              |
 | **GitHub Copilot**       | `copilot login` lalu hubungkan di Pengaturan Agen (`Cmd+,`)                                         |
-| **Gemini CLI**           | Hubungkan di Pengaturan Agen (`Cmd+,`)                                                              |
 
 **Profil Kemampuan Model** — secara otomatis menyesuaikan prompt, mode thinking, dan timeout per tingkatan model. Model tingkat penuh (Claude) mendapat prompt lengkap; tingkat standar (GPT-4o, Gemini, DeepSeek) menonaktifkan thinking; tingkat dasar (MiniMax, Qwen, Llama, Mistral) mendapat prompt JSON bertingkat yang disederhanakan untuk keandalan maksimum.
 
@@ -169,7 +168,7 @@ docker run -p 3100:3100 openpencil-web-rust
 
 **Server MCP**
 
-- Server MCP bawaan (crate `op-mcp`) — instal satu klik ke Claude Code / Codex / Gemini / OpenCode / Kiro / Copilot CLI
+- Server MCP bawaan (crate `op-mcp`) — instal satu klik ke Claude Code / Codex / OpenCode / Kiro / Copilot CLI
 - Tidak memerlukan Node.js — transport stdio melalui binary desktop (`--mcp <path>`), ditambah endpoint HTTP langsung (`127.0.0.1:<port>/mcp`) dari aplikasi yang berjalan
 - Otomasi desain dari terminal: baca, buat, dan modifikasi file `.op` melalui agen yang kompatibel dengan MCP
 - **Alur kerja desain berlapis** — `design_skeleton` → `design_content` → `design_refine` untuk desain multi-bagian dengan fidelitas lebih tinggi
@@ -229,7 +228,7 @@ Mendukung string inline, `@filepath`, dan stdin (`-`). Bekerja dengan aplikasi d
 - Alur kerja berlapis — `design_skeleton` → `design_content` → `design_refine` dengan prompt yang terfokus per fase
 - Panduan Gaya — 50+ gaya bawaan (glassmorphism, brutalist, retro, dll.) dengan pencocokan fuzzy berbasis tag, terintegrasi ke perencanaan dan pembuatan
 - Profil kemampuan multi-model — secara otomatis menyesuaikan mode berpikir, upaya, dan bentuk prompt berdasarkan tingkat model
-- Runtime agen bawaan (Rust) + penyedia Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot, Gemini
+- Runtime agen bawaan (Rust) + penyedia Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot, dan Google Gemini API
 - Passthrough format Anthropic untuk penyedia LLM Tiongkok — Kimi, Zhipu, GLM, DouBao, Ark, Bailian/DashScope, ModelScope, Coding Plans
 
 **Integrasi Git**

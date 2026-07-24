@@ -185,9 +185,9 @@ fn validate_general_semantics(payload: &SettingsPayload) -> Result<(), String> {
     if payload
         .mcp_cli_enabled
         .as_ref()
-        .is_some_and(|enabled| enabled.len() != McpCli::ALL.len())
+        .is_some_and(|enabled| !matches!(enabled.len(), 6..=8))
     {
-        return Err("browser MCP CLI flags would be normalized".into());
+        return Err("unsupported browser MCP CLI flag layout".into());
     }
     if payload
         .recent_files

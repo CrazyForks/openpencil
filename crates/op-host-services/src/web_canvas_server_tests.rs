@@ -818,6 +818,26 @@ fn web_cli_and_acp_connect_routes_are_unavailable_in_both_dispatchers() {
 }
 
 #[test]
+fn retired_gemini_cli_connect_aliases_are_rejected_before_probe() {
+    for provider in ["gemini", "gemini-cli"] {
+        let mut state = fresh_state();
+        let body = serde_json::json!({ "provider": provider }).to_string();
+
+        let reply = handle_provider_connect_request_with_probe(&body, &mut state, |_| {
+            panic!("retired Gemini CLI request must not reach the probe")
+        });
+
+        assert_eq!(reply.status, "400 Bad Request", "provider={provider}");
+        assert!(state
+            .editor
+            .editor_ui
+            .agent_settings
+            .pending_provider_connect
+            .is_none());
+    }
+}
+
+#[test]
 fn post_open_recent_loads_recent_path_and_bumps_version() {
     use op_editor_core::editor_ui_state::RecentFile;
     use op_editor_core::PenNodeExt;

@@ -214,7 +214,7 @@ mod tests {
 
     fn reset_settings(app: &mut DesktopApp) {
         let es = app.host.editor_state_mut();
-        es.editor_ui.agent_settings.connected = [false; 7];
+        es.editor_ui.agent_settings.connected = [false; 6];
         es.editor_ui.agent_settings.provider_connection = Default::default();
         es.editor_ui.agent_settings.pending_provider_connect = None;
         es.editor_ui.agent_settings.builtin_agents.clear();
@@ -256,9 +256,9 @@ mod tests {
             .chat
             .discovered_models
             .push(op_editor_core::ModelEntry::new(
-                AgentProvider::GeminiCli,
-                "gemini-2.5-pro",
-                "Gemini 2.5 Pro",
+                AgentProvider::Antigravity,
+                "default",
+                "Antigravity Default",
             ));
         app.host
             .editor_state_mut()
@@ -297,15 +297,15 @@ mod tests {
             settings.provider_connection[0].info.as_deref(),
             Some("Connected via pro (a@b.c)")
         );
-        // Claude's entry spliced in, sorted before the seeded Gemini
-        // entry (ALL order), which survived.
+        // Claude's entry spliced in, sorted before the seeded
+        // Antigravity entry (ALL order), which survived.
         let values: Vec<&str> = es
             .chat
             .discovered_models
             .iter()
             .map(|m| m.value.as_str())
             .collect();
-        assert_eq!(values, ["claude-sonnet-4-6", "gemini-2.5-pro"]);
+        assert_eq!(values, ["claude-sonnet-4-6", "default"]);
         // Connected → the picker lists the Claude model.
         assert!(es
             .chat

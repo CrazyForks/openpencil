@@ -608,9 +608,6 @@ pub fn paint_provider_logo(
         AgentProvider::CodexCli => {
             paint_brand_logo(cx.backend, BrandLogo::OpenAI, top_left, size, color)
         }
-        AgentProvider::GeminiCli => {
-            paint_brand_logo(cx.backend, BrandLogo::Gemini, top_left, size, color)
-        }
         AgentProvider::GithubCopilot => {
             paint_brand_logo(cx.backend, BrandLogo::Copilot, top_left, size, color)
         }
@@ -630,7 +627,6 @@ pub(super) fn provider_label(provider: AgentProvider) -> &'static str {
     match provider {
         AgentProvider::ClaudeCode => "ANTHROPIC",
         AgentProvider::CodexCli => "OPENAI",
-        AgentProvider::GeminiCli => "GOOGLE GEMINI",
         AgentProvider::GithubCopilot => "GITHUB COPILOT",
         AgentProvider::OpenCode => "OPENCODE",
         AgentProvider::Antigravity => "ANTIGRAVITY",
@@ -643,7 +639,6 @@ fn group_label(provider: AgentProvider, builtin: bool) -> &'static str {
         match provider {
             AgentProvider::ClaudeCode => "ANTHROPIC API KEY",
             AgentProvider::CodexCli => "OPENAI API KEY",
-            AgentProvider::GeminiCli => "GEMINI API KEY",
             AgentProvider::GithubCopilot => "COPILOT API KEY",
             AgentProvider::OpenCode => "OPENCODE API KEY",
             AgentProvider::Antigravity => "ANTIGRAVITY API KEY",

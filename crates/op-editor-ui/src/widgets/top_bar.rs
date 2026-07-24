@@ -106,7 +106,7 @@ pub struct TopBar {
     pub agent_count: u32,
     /// Per-provider connect state, indexed by `AgentProvider::ALL`.
     /// The active chip paints one brand icon per connected provider.
-    pub connected: [bool; 7],
+    pub connected: [bool; 6],
     /// Number of enabled MCP CLI integrations — the `· N MCP` half
     /// of the chip status.
     pub mcp_count: u32,
@@ -164,7 +164,7 @@ impl TopBar {
             file_name: file_name.into(),
             edited: false,
             agent_count: 1,
-            connected: [false; 7],
+            connected: [false; 6],
             mcp_count: 0,
             theme: Theme::dark(),
             label_edited: "",

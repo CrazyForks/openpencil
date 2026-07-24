@@ -609,12 +609,16 @@ fn select_chat_model_picks_model_and_syncs_agent() {
     let mut s = sample();
     s.chat.available_models = vec![
         crate::ModelEntry::new(crate::AgentProvider::ClaudeCode, "claude", "Claude"),
-        crate::ModelEntry::new(crate::AgentProvider::GeminiCli, "gemini", "Gemini"),
+        crate::ModelEntry::new(
+            crate::AgentProvider::Antigravity,
+            "antigravity",
+            "Antigravity",
+        ),
     ];
     s.editor_ui.chat_model_picker.open = true;
     s.select_chat_model(1);
     assert_eq!(s.chat.selected_model, 1);
-    // GeminiCli is index 4 in AgentProvider::ALL.
+    // Antigravity is index 4 in AgentProvider::ALL.
     assert_eq!(s.editor_ui.chat_selected_agent, 4);
     // Picker closes on selection.
     assert!(!s.editor_ui.chat_model_picker.open);
@@ -667,7 +671,7 @@ fn rebuild_chat_models_syncs_agent_to_selected_model_provider() {
         "gpt-5.5",
         "GPT-5.5",
     )];
-    s.editor_ui.agent_settings.connected = [false, true, false, false, false, false, false];
+    s.editor_ui.agent_settings.connected = [false, true, false, false, false, false];
     s.editor_ui.agent_settings.provider_connection[1].phase =
         crate::agent_settings::ProviderConnectPhase::Connected;
     s.editor_ui.chat_selected_agent = 0;
@@ -682,7 +686,7 @@ fn rebuild_chat_models_syncs_agent_to_selected_model_provider() {
 fn rebuild_chat_models_does_not_invent_cli_models_without_discovery() {
     let mut s = sample();
     s.chat.discovered_models.clear();
-    s.editor_ui.agent_settings.connected = [false, true, false, false, false, false, false];
+    s.editor_ui.agent_settings.connected = [false, true, false, false, false, false];
 
     s.rebuild_chat_models();
 

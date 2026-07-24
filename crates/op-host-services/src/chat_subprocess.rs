@@ -1,5 +1,5 @@
 //! Subprocess CLI bridge — spawns an external CLI binary
-//! (Claude Code / Codex / Gemini / Antigravity / Grok Build) and bridges its stdio into the
+//! (Claude Code / Codex / Antigravity / Grok Build) and bridges its stdio into the
 //! shell-core `ChatProvider` shape.
 //!
 //! Per-CLI wire protocol (single-shot mode; multi-turn context rides
@@ -22,13 +22,6 @@
 //!   Divergence from TS (documented): TS buffers the whole turn and
 //!   reads `--output-last-message`; Rust streams `item.completed`
 //!   agent messages live — same final text, no temp file.
-//! - **Gemini CLI (`gemini`)** — `gemini -o stream-json
-//!   --approval-mode plan [-m <id>] -p ' '` with the prompt piped via
-//!   stdin (TS parity: `gemini-client.ts::streamGeminiExec`; the
-//!   `-p ' '` marker is the TS quirk — Gemini appends the `-p` value
-//!   after stdin content). Lines parse via
-//!   [`chat_subprocess_quirks::parse_gemini_stream_line`]; child env
-//!   is allowlist-filtered.
 //! - **GitHub Copilot** — no subprocess template. The routed path is
 //!   the official SDK (`chat_copilot.rs`); the old `gh-copilot
 //!   suggest` fallback was stale (the `gh` extension was retired in
@@ -51,13 +44,13 @@
 //!   Its NDJSON `text`, `thought`, `end`, and `error` events parse through
 //!   [`crate::chat_grok_stream::parse_grok_stream_line`].
 //!
-//! Codex / Gemini parse-misses are skipped silently (TS parity — TS
+//! Codex parse-misses are skipped silently (TS parity — TS
 //! drops unparsed lines); generic custom binaries degrade unparsed
 //! lines to raw `TextDelta` so plain-stdout CLIs still show output.
 //! On stdout EOF the bridge reaps the child + interprets exit status —
 //! non-zero exit surfaces as `Error + Done { Aborted }` (codex BLOCK
 //! 4 / 5), with Codex stderr routed through the TS error extractor.
-//! Codex / Gemini turns also carry the TS 15-minute wall clock
+//! Codex turns also carry the TS 15-minute wall clock
 //! (`<CLI> request timed out after 900s.`). On receiver drop the
 //! bridge `child.start_kill()` so the user can navigate away without
 //! leaking processes.
@@ -85,8 +78,8 @@ pub use crate::chat_subprocess_parse::parse_line;
 
 /// How the user's prompt reaches the CLI. Claude Code's `--print`
 /// mode requires the prompt as a positional argv after `--` and
-/// closes stdin immediately. Codex (`-` prompt arg) and Gemini read
-/// the message off piped stdin. Generic `with_binary` callers can
+/// closes stdin immediately. Codex (`-` prompt arg) reads the
+/// message off piped stdin. Generic `with_binary` callers can
 /// pick either via [`SubprocessProvider::with_binary_mode`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PromptMode {
@@ -101,9 +94,9 @@ pub enum PromptMode {
     PromptFile(&'static str),
 }
 
-/// TS `DEFAULT_CODEX_TIMEOUT_MS` / `DEFAULT_GEMINI_TIMEOUT_MS` —
-/// both reference clients cap a turn at 15 minutes then SIGTERM.
-const CLI_TURN_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+/// TS `DEFAULT_CODEX_TIMEOUT_MS` — the reference client caps a turn
+/// at 15 minutes then SIGTERM.
+const CODEX_TURN_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 /// Cap on the retained Codex stderr tail used for error extraction.
 const STDERR_TAIL_CAP: usize = 64 * 1024;
@@ -117,8 +110,7 @@ pub struct SubprocessProvider {
     label: String,
     prompt_mode: PromptMode,
     /// Argv flag that selects a model for this CLI (`--model` for
-    /// Codex, `-m` for Gemini — both verified against the TS
-    /// reference clients). `None` = the transport has no model
+    /// Codex and Antigravity, `-m` for Grok Build). `None` = the transport has no model
     /// selector; `ChatRequest::model` is ignored and the CLI keeps
     /// its own default.
     model_flag: Option<&'static str>,
@@ -129,8 +121,7 @@ pub struct SubprocessProvider {
     /// prose directive).
     native_effort_config: bool,
     /// Trailing argv appended after the per-turn flags — Codex's `-`
-    /// stdin marker, Gemini's `-p ' '` marker. TS keeps the same
-    /// flag-then-marker order (`codex-client.ts` / `gemini-client.ts`).
+    /// stdin marker. TS keeps the same flag-then-marker order.
     tail_args: Vec<String>,
     /// Which known CLI this provider bridges (drives per-CLI env
     /// filtering, line parsing, stderr capture, and timeout quirks).
@@ -156,9 +147,8 @@ impl SubprocessProvider {
 
     fn for_cli_with_purpose(cli: CliName, turn_purpose: safety::TurnPurpose) -> Option<Self> {
         // Per-CLI model selector (third tuple slot): Codex takes
-        // `--model <id>` and Gemini `-m <id>` — matching the TS
-        // reference (`codex-client.ts` / `gemini-client.ts`). Claude
-        // Code's model rides the SDK adapter (`chat_claude.rs`), so
+        // `--model <id>` — matching the TS reference. Claude Code's
+        // model rides the SDK adapter (`chat_claude.rs`), so
         // its subprocess template carries no flag here.
         type Template = (Vec<String>, PromptMode, Option<&'static str>, Vec<String>);
         let (args, prompt_mode, model_flag, tail_args): Template = match cli {
@@ -172,20 +162,6 @@ impl SubprocessProvider {
                 PromptMode::PositionalArg,
                 None,
                 Vec::new(),
-            ),
-            // TS `gemini-client.ts::streamGeminiExec` argv order:
-            // `-o stream-json --approval-mode plan [-m model] -p ' '`,
-            // prompt via stdin.
-            CliName::Gemini => (
-                vec![
-                    "-o".into(),
-                    "stream-json".into(),
-                    "--approval-mode".into(),
-                    "plan".into(),
-                ],
-                PromptMode::Stdin,
-                Some("-m"),
-                vec!["-p".into(), " ".into()],
             ),
             // TS `codex-client.ts` argv: `exec --json
             // --skip-git-repo-check --sandbox read-only [--model]
@@ -324,8 +300,8 @@ fn codex_reasoning_effort(thinking: ThinkingMode, effort: EffortLevel) -> Option
 /// can substitute a malicious binary; runtime-library paths
 /// (NODE_OPTIONS, PYTHONPATH, etc.) can inject code into Node-based
 /// CLIs. Mirrors bartolli/anthropic-agent-sdk's `DANGEROUS_ENV_VARS`.
-/// Used for Claude Code + custom binaries; Codex / Gemini get the
-/// stricter TS allowlists (`chat_subprocess_quirks`). Returns the
+/// Used for Claude Code + custom binaries; Codex gets the stricter
+/// TS allowlist (`chat_subprocess_quirks`). Returns the
 /// env-var pairs the child will receive (parent env minus the
 /// dangerous names — preserving every safe var so node version
 /// managers like nvm / volta still pick the right Node).
@@ -353,8 +329,8 @@ impl ChatProvider for SubprocessProvider {
     fn send(&self, request: ChatRequest) -> Box<dyn Iterator<Item = ChatDelta> + Send> {
         let binary = self.binary.clone();
         let cli = self.cli;
-        // Build the effective prompt. Neither claude `--print` nor
-        // gemini exposes a portable reasoning flag, so the thinking +
+        // Build the effective prompt. Claude `--print` does not
+        // expose a portable reasoning flag, so the thinking +
         // effort knobs travel in-band as a leading directive line
         // (documented beyond-TS-baseline behavior); staged attachments
         // are appended as `[attached …: <path>]` lines the CLI can
@@ -400,13 +376,11 @@ impl ChatProvider for SubprocessProvider {
         if !digest.is_empty() {
             prompt = format!("{digest}\n\n{prompt}");
         }
-        // System-prompt framing: Codex + Gemini mirror the TS
-        // GUIDELINES / TASK `buildPrompt` byte-for-byte; everything
+        // System-prompt framing: Codex mirrors the TS GUIDELINES /
+        // TASK `buildPrompt` byte-for-byte; everything
         // else keeps the generic `system\n\n---\n\nprompt` join.
         prompt = match cli {
-            Some(CliName::Codex) | Some(CliName::Gemini) => {
-                quirks::guidelines_task_prompt(&request.system_prompt, &prompt)
-            }
+            Some(CliName::Codex) => quirks::guidelines_task_prompt(&request.system_prompt, &prompt),
             _ => prompt_with_system_prompt(&request.system_prompt, prompt),
         };
         let attachment_paths = guard.as_ref().map(|g| g.paths()).unwrap_or(&[]);
@@ -467,12 +441,11 @@ impl ChatProvider for SubprocessProvider {
         }
         let args = Arc::new(args_with_prompt);
         let prompt_mode = self.prompt_mode;
-        // Per-CLI child env: Codex / Gemini use the TS allowlists so
+        // Per-CLI child env: Codex uses the TS allowlist so
         // unrelated secrets never reach the CLI; Claude Code + custom
         // binaries keep the scrub-the-dangerous-vars policy.
         let mut env_pairs = match cli {
             Some(CliName::Codex) => quirks::codex_child_env(),
-            Some(CliName::Gemini) => quirks::gemini_child_env(),
             Some(CliName::Antigravity | CliName::GrokBuild) => {
                 safety::child_env(cli).unwrap_or_default()
             }
@@ -480,7 +453,7 @@ impl ChatProvider for SubprocessProvider {
         };
         safety::append_isolated_env(&mut env_pairs, isolation.as_ref());
         let turn_timeout = match cli {
-            Some(CliName::Codex | CliName::Gemini) => Some(CLI_TURN_TIMEOUT),
+            Some(CliName::Codex) => Some(CODEX_TURN_TIMEOUT),
             Some(CliName::Antigravity) => Some(safety::ANTIGRAVITY_TIMEOUT),
             Some(CliName::GrokBuild) => Some(safety::GROK_TIMEOUT),
             _ => None,
@@ -518,8 +491,7 @@ impl ChatProvider for SubprocessProvider {
             // Drain stderr on a sibling task so the CLI never
             // deadlocks on a full stderr pipe (codex BLOCK 1). Codex
             // keeps a bounded tail for the TS error extraction
-            // (`extractCodexCliError`); other CLIs discard it (TS
-            // parity: gemini stream path discards stderr).
+            // (`extractCodexCliError`); other CLIs discard it.
             let stderr_tail: Arc<std::sync::Mutex<String>> = Arc::default();
             if let Some(stderr) = child.take_stderr() {
                 let capture = (cli == Some(CliName::Codex) || safety::is_guarded_cli(cli))
@@ -607,7 +579,7 @@ impl ChatProvider for SubprocessProvider {
                         break;
                     }
                     // TS wall clock: SIGTERM + "request timed out"
-                    // (codex-client.ts / gemini-client.ts reject text).
+                    // (`codex-client.ts` rejects text).
                     _ = tokio::time::sleep_until(deadline), if turn_timeout.is_some() => {
                         let secs = turn_timeout.map(|d| d.as_secs()).unwrap_or_default();
                         let _ = tx
@@ -633,12 +605,11 @@ impl ChatProvider for SubprocessProvider {
                                 let _ = child.start_kill();
                                 break;
                             }
-                            // Per-CLI parse: Codex / Gemini skip
-                            // unparsed lines (TS parity); generic
+                            // Per-CLI parse: Codex skips unparsed
+                            // lines (TS parity); generic
                             // CLIs degrade them to raw text.
                             let delta = match cli {
                                 Some(CliName::Codex) => quirks::parse_codex_line(&line),
-                                Some(CliName::Gemini) => quirks::parse_gemini_stream_line(&line),
                                 Some(CliName::GrokBuild) => {
                                     crate::chat_grok_stream::parse_grok_stream_line(&line)
                                 }

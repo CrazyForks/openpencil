@@ -26,9 +26,9 @@ pub(crate) fn set_cli_enabled(cli: McpCli, enabled: bool, port: u16) -> Result<P
     set_cli_enabled_at_path(cli, enabled, port, path)
 }
 
-pub(crate) fn detect_enabled_clis() -> [bool; 8] {
+pub(crate) fn detect_enabled_clis() -> [bool; 7] {
     let Some(home) = dirs::home_dir() else {
-        return [false; 8];
+        return [false; 7];
     };
     detect_enabled_clis_for_home(&home, true)
 }
@@ -50,12 +50,12 @@ pub(crate) fn set_cli_enabled_at_home(
 }
 
 /// Like [`detect_enabled_clis`] but against an explicit home dir (no env).
-pub(crate) fn detect_enabled_clis_at_home(home: &Path) -> [bool; 8] {
+pub(crate) fn detect_enabled_clis_at_home(home: &Path) -> [bool; 7] {
     detect_enabled_clis_for_home(home, false)
 }
 
-fn detect_enabled_clis_for_home(home: &Path, use_env: bool) -> [bool; 8] {
-    let mut flags = [false; 8];
+fn detect_enabled_clis_for_home(home: &Path, use_env: bool) -> [bool; 7] {
+    let mut flags = [false; 7];
     for (idx, cli) in McpCli::ALL.iter().copied().enumerate() {
         flags[idx] = if cli == McpCli::Antigravity {
             antigravity_config_has_openpencil(&config_path(cli, home, use_env))
@@ -80,11 +80,9 @@ fn set_cli_enabled_at_path(
         McpCli::Antigravity => {
             return Err("Antigravity configuration requires a home directory".into())
         }
-        McpCli::ClaudeCode
-        | McpCli::Gemini
-        | McpCli::OpenCode
-        | McpCli::Kiro
-        | McpCli::GithubCopilot => update_json_config(&path, enabled, port)?,
+        McpCli::ClaudeCode | McpCli::OpenCode | McpCli::Kiro | McpCli::GithubCopilot => {
+            update_json_config(&path, enabled, port)?
+        }
     }
     Ok(path)
 }
@@ -98,11 +96,9 @@ fn cli_config_has_openpencil(cli: McpCli, path: &Path) -> bool {
             .map(|text| grok_config_has_openpencil(&text))
             .unwrap_or(false),
         McpCli::Antigravity => antigravity_config_has_openpencil(path),
-        McpCli::ClaudeCode
-        | McpCli::Gemini
-        | McpCli::OpenCode
-        | McpCli::Kiro
-        | McpCli::GithubCopilot => json_config_has_openpencil(path),
+        McpCli::ClaudeCode | McpCli::OpenCode | McpCli::Kiro | McpCli::GithubCopilot => {
+            json_config_has_openpencil(path)
+        }
     }
 }
 
@@ -119,7 +115,6 @@ fn config_path(cli: McpCli, home: &Path, use_env: bool) -> PathBuf {
                 home.join(".codex").join("config.toml")
             }
         }
-        McpCli::Gemini => home.join(".gemini").join("settings.json"),
         McpCli::OpenCode => home.join(".opencode").join("config.json"),
         McpCli::Kiro => home.join(".kiro").join("settings.json"),
         McpCli::GithubCopilot => home.join(".config").join("github-copilot").join("mcp.json"),

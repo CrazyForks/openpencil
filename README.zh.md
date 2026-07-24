@@ -64,7 +64,7 @@
 
 ### 🔌 MCP 服务器
 
-一键安装到 Claude Code、Codex、Gemini、OpenCode、Kiro 或 Copilot CLI。从终端进行设计 — 通过任意 MCP 兼容的智能体读取、创建和修改 `.op` 文件。
+一键安装到 Claude Code、Codex、OpenCode、Kiro 或 Copilot CLI。从终端进行设计 — 通过任意 MCP 兼容的智能体读取、创建和修改 `.op` 文件。
 
 </td>
 </tr>
@@ -125,7 +125,7 @@ cargo run -p op-host-desktop
 | --- | --- |
 | `ghcr.io/zseven-w/openpencil-web:vX.Y.Z` | Rust web host、wasm bundle 和 CanvasKit 资源 |
 
-Web UI 只暴露内置 agent profiles；Docker 镜像不再内置 Claude/Codex/OpenCode/Copilot/Gemini CLI 工具。
+Web UI 只暴露内置 agent profiles；Docker 镜像不再内置 Claude/Codex/OpenCode/Copilot CLI 工具。
 
 **运行：**
 
@@ -161,7 +161,6 @@ docker run -p 3100:3100 openpencil-web-rust
 | **Codex CLI**         | 在 Agent 设置中连接（`Cmd+,`）                                        |
 | **OpenCode**          | 在 Agent 设置中连接（`Cmd+,`）                                        |
 | **GitHub Copilot**    | 运行 `copilot login` 后在 Agent 设置中连接（`Cmd+,`）                 |
-| **Gemini CLI**        | 在 Agent 设置中连接（`Cmd+,`）                                        |
 
 **模型能力配置** — 自动根据模型层级适配提示词、思考模式和超时时间。完整层级模型（Claude）获得完整提示词；标准层级模型（GPT-4o、Gemini、DeepSeek）关闭思考模式；基础层级模型（MiniMax、Qwen、Llama、Mistral）使用简化的嵌套 JSON 提示词以确保最大可靠性。
 
@@ -169,7 +168,7 @@ docker run -p 3100:3100 openpencil-web-rust
 
 **MCP 服务器**
 
-- 内置 MCP 服务器（`op-mcp` crate）— 一键安装到 Claude Code / Codex / Gemini / OpenCode / Kiro / Copilot CLI
+- 内置 MCP 服务器（`op-mcp` crate）— 一键安装到 Claude Code / Codex / OpenCode / Kiro / Copilot CLI
 - 无需 Node.js — 通过桌面应用二进制文件（`--mcp <path>`）使用 stdio 传输，运行中的应用还提供实时 HTTP 端点（`127.0.0.1:<port>/mcp`）
 - 从终端进行设计自动化：通过任意 MCP 兼容的智能体读取、创建和修改 `.op` 文件
 - **分层设计工作流** — `design_skeleton` → `design_content` → `design_refine`，实现更高保真度的多区块设计
@@ -229,7 +228,7 @@ cat design.dsl | op design - # 从 stdin 管道输入
 - 分层工作流 — `design_skeleton` → `design_content` → `design_refine`，每个阶段使用聚焦的提示词
 - 风格指南 — 50+ 内置风格（glassmorphism、brutalist、retro 等），支持基于标签的模糊匹配，并接入规划与生成流程
 - 多模型能力配置 — 按模型层级自动适配思考模式、推理强度与提示词形态
-- 内置智能体运行时（Rust）+ Anthropic、Claude Agent SDK、OpenCode、Codex、Copilot、Gemini 提供商
+- 内置智能体运行时（Rust）+ Anthropic、Claude Agent SDK、OpenCode、Codex、Copilot、Google Gemini API 提供商
 - 国产大模型 Anthropic 格式透传 — Kimi、Zhipu、GLM、DouBao、Ark、Bailian/DashScope、ModelScope、Coding Plans
 
 **Git 集成**

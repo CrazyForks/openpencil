@@ -64,7 +64,7 @@
 
 ### 🔌 MCP-сервер
 
-Установка в один клик в Claude Code, Codex, Gemini, OpenCode, Kiro или Copilot CLI. Дизайн из терминала — чтение, создание и изменение файлов `.op` через любой MCP-совместимый агент.
+Установка в один клик в Claude Code, Codex, OpenCode, Kiro или Copilot CLI. Дизайн из терминала — чтение, создание и изменение файлов `.op` через любой MCP-совместимый агент.
 
 </td>
 </tr>
@@ -125,7 +125,7 @@ cargo run -p op-host-desktop
 | --- | --- |
 | `ghcr.io/zseven-w/openpencil-web:vX.Y.Z` | Rust web host, wasm bundle и ресурсы CanvasKit |
 
-Веб-интерфейс показывает только встроенные профили агентов; инструменты Claude/Codex/OpenCode/Copilot/Gemini CLI не входят в Docker-образы.
+Веб-интерфейс показывает только встроенные профили агентов; инструменты Claude/Codex/OpenCode/Copilot CLI не входят в Docker-образы.
 
 **Запуск:**
 
@@ -161,7 +161,6 @@ docker run -p 3100:3100 openpencil-web-rust
 | **Codex CLI**                   | Подключить в настройках агента (`Cmd+,`)                                                                       |
 | **OpenCode**                    | Подключить в настройках агента (`Cmd+,`)                                                                       |
 | **GitHub Copilot**              | `copilot login`, затем подключить в настройках агента (`Cmd+,`)                                                |
-| **Gemini CLI**                  | Подключить в настройках агента (`Cmd+,`)                                                                       |
 
 **Профили возможностей моделей** — автоматически адаптирует промпты, режим thinking и таймауты для каждого уровня моделей. Модели полного уровня (Claude) получают полные промпты; стандартного уровня (GPT-4o, Gemini, DeepSeek) — с отключённым thinking; базового уровня (MiniMax, Qwen, Llama, Mistral) — упрощённые промпты с вложенным JSON для максимальной надёжности.
 
@@ -169,7 +168,7 @@ docker run -p 3100:3100 openpencil-web-rust
 
 **MCP-сервер**
 
-- Встроенный MCP-сервер (крейт `op-mcp`) — установка в один клик в Claude Code / Codex / Gemini / OpenCode / Kiro / Copilot CLI
+- Встроенный MCP-сервер (крейт `op-mcp`) — установка в один клик в Claude Code / Codex / OpenCode / Kiro / Copilot CLI
 - Node.js не требуется — stdio-транспорт через десктопный бинарный файл (`--mcp <path>`), плюс работающий HTTP-эндпоинт (`127.0.0.1:<port>/mcp`) из запущенного приложения
 - Автоматизация дизайна из терминала: чтение, создание и изменение файлов `.op` через любой MCP-совместимый агент
 - **Послойный рабочий процесс** — `design_skeleton` → `design_content` → `design_refine` для дизайнов высокого качества с несколькими секциями
@@ -229,7 +228,7 @@ cat design.dsl | op design - # Передача через stdin
 - Послойный рабочий процесс — `design_skeleton` → `design_content` → `design_refine` со сфокусированными промптами на каждой фазе
 - Руководства по стилю — 50+ встроенных стилей (glassmorphism, brutalist, retro и т. д.) с нечётким сопоставлением по тегам, интегрированным в планирование и генерацию
 - Профили возможностей мультимодели — автоматически подстраивает режим размышления, уровень усилий и форму промпта в зависимости от уровня модели
-- Встроенный рантайм агентов (Rust) + провайдеры Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot, Gemini
+- Встроенный рантайм агентов (Rust) + провайдеры Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot и Google Gemini API
 - Проброс формата Anthropic для китайских провайдеров LLM — Kimi, Zhipu, GLM, DouBao, Ark, Bailian/DashScope, ModelScope, Coding Plans
 
 **Интеграция с Git**

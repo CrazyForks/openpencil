@@ -8,7 +8,7 @@
 use op_editor_core::editor_ui_state::{RecentFile, RECENT_FILE_CAP};
 use op_editor_core::{
     BuiltinAgentConfig, BuiltinAgentKind, BuiltinAgentPresetKey, EditorState, ImageGenProfile,
-    ImageGenProvider, Locale, McpCli, ThemeMode,
+    ImageGenProvider, Locale, ThemeMode,
 };
 use serde::{Deserialize, Serialize};
 
@@ -75,7 +75,7 @@ pub(crate) struct Fingerprint {
     theme: ThemeMode,
     locale: Locale,
     port: u16,
-    cli: [bool; 8],
+    cli: [bool; 7],
     images_adv: bool,
     auto_update_enabled: bool,
     experimental_features_enabled: bool,
@@ -250,10 +250,7 @@ fn apply_payload(state: &mut EditorState, payload: SettingsPayload) {
         eui.agent_settings.mcp_server.port = port.max(1024);
     }
     if let Some(flags) = payload.mcp_cli_enabled {
-        eui.agent_settings.mcp_cli_enabled = [false; 8];
-        for (index, enabled) in flags.into_iter().take(McpCli::ALL.len()).enumerate() {
-            eui.agent_settings.mcp_cli_enabled[index] = enabled;
-        }
+        eui.agent_settings.mcp_cli_enabled = migrate_mcp_cli_flags(flags);
     }
     if let Some(open) = payload.images_advanced_open {
         eui.agent_settings.images_advanced_open = open;
@@ -319,6 +316,29 @@ fn apply_payload(state: &mut EditorState, payload: SettingsPayload) {
             .collect();
     }
     state.rebuild_chat_models();
+}
+
+/// Remove the retired Gemini CLI slot from positional browser settings.
+/// Released snapshots used six or eight entries; current snapshots use seven.
+fn migrate_mcp_cli_flags(flags: Vec<bool>) -> [bool; 7] {
+    let mut migrated = [false; 7];
+    match flags.len() {
+        7 => migrated.copy_from_slice(&flags),
+        8.. => {
+            migrated[0] = flags[0];
+            migrated[1] = flags[1];
+            migrated[2..].copy_from_slice(&flags[3..8]);
+        }
+        3..=6 => {
+            migrated[0] = flags[0];
+            migrated[1] = flags[1];
+            migrated[2..flags.len() - 1].copy_from_slice(&flags[3..]);
+        }
+        _ => {
+            migrated[..flags.len()].copy_from_slice(&flags);
+        }
+    }
+    migrated
 }
 
 fn apply_credential_payload(state: &mut EditorState, payload: CredentialPayload) {

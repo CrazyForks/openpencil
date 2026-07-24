@@ -63,6 +63,31 @@ fn checked_settings_load_rejects_an_unsupported_settings_version() {
 }
 
 #[test]
+fn checked_settings_load_migrates_retired_gemini_cli_slots() {
+    let root = checked_settings_test_path("retired-gemini-cli");
+    let path = root.join("settings.json");
+    std::fs::create_dir_all(&root).expect("create settings test directory");
+    std::fs::write(
+        &path,
+        br#"{"version":1,"connected":[true,false,true,false,true,true,false],"mcp_cli_enabled":[true,false,true,false,true,false,true,true]}"#,
+    )
+    .expect("write legacy settings");
+    let mut state = EditorState::new();
+
+    load_checked_from_path(&mut state, &path).expect("legacy v1 layout should migrate");
+
+    assert_eq!(
+        state.editor_ui.agent_settings.connected,
+        [true, false, true, false, true, false]
+    );
+    assert_eq!(
+        state.editor_ui.agent_settings.mcp_cli_enabled,
+        [true, false, false, true, false, true, true]
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn checked_settings_load_rejects_unknown_fields_at_every_settings_nesting_level() {
     let cases = vec![
         (

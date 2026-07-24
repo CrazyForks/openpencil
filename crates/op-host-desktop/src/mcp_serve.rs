@@ -18,9 +18,9 @@ use op_host_services::mcp_serve::{run, run_http};
 /// - `--mcp-http <port> <path>` — Streamable-HTTP MCP server.
 /// - `--serve-web <port> [doc] [--host <addr>]` — headless web-canvas daemon.
 ///
-/// External CLIs (Claude Code / Codex / Gemini / Copilot) spawn the
-/// binary in these modes to drive the Rust editor the same way they
-/// drive TS pen-mcp.
+/// External CLIs (Claude Code / Codex / OpenCode / Kiro / Copilot /
+/// Antigravity / Grok Build) spawn the binary in these modes to drive
+/// the Rust editor.
 pub fn run_cli_if_requested() -> bool {
     let mut args = std::env::args().skip(1);
     let Some(first) = args.next() else {

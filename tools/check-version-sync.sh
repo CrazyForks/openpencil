@@ -362,9 +362,9 @@ validate_cli_bundle_version_template() {
     bundle=crates/op-cli/assets/skill-bundle.json
     sentinel=__OPENPENCIL_VERSION__
     sentinel_count=$(rg --fixed-strings --count-matches -- "$sentinel" "$bundle" || true)
-    if [[ "${sentinel_count:-0}" != 6 ]]; then
+    if [[ "${sentinel_count:-0}" != 5 ]]; then
         report_missing "$bundle" \
-            "expected exactly 6 version sentinels ${sentinel} (found ${sentinel_count:-0})"
+            "expected exactly 5 version sentinels ${sentinel} (found ${sentinel_count:-0})"
     fi
     reject_matches fixed "$bundle" "$current_version" \
         'embedded CLI bundle must not contain the canonical version literal'

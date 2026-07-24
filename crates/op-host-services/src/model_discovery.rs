@@ -36,7 +36,6 @@ pub fn model_entry_to_ec(m: ModelEntry) -> op_editor_core::ModelEntry {
         ScP::CodexCli => op_editor_core::AgentProvider::CodexCli,
         ScP::OpenCode => op_editor_core::AgentProvider::OpenCode,
         ScP::GithubCopilot => op_editor_core::AgentProvider::GithubCopilot,
-        ScP::GeminiCli => op_editor_core::AgentProvider::GeminiCli,
         ScP::Antigravity => op_editor_core::AgentProvider::Antigravity,
         ScP::GrokBuild => op_editor_core::AgentProvider::GrokBuild,
     };
@@ -47,12 +46,12 @@ pub fn model_entry_to_ec(m: ModelEntry) -> op_editor_core::ModelEntry {
 /// provider-grouped model list. Safe to call off the UI thread —
 /// it only reads files and spawns short-lived subprocesses.
 pub fn discover_models() -> Vec<ModelEntry> {
-    discover_models_for_connected([true; 7])
+    discover_models_for_connected([true; 6])
 }
 
 /// Discover a startup-selected provider set concurrently while preserving
 /// the stable Settings/model-picker provider order in the returned catalog.
-pub fn discover_models_for_connected(connected: [bool; 7]) -> Vec<ModelEntry> {
+pub fn discover_models_for_connected(connected: [bool; 6]) -> Vec<ModelEntry> {
     let workers: Vec<_> = discovery_provider_order()
         .into_iter()
         .enumerate()
@@ -71,7 +70,6 @@ fn discover_provider(provider: AgentProvider) -> Vec<ModelEntry> {
         AgentProvider::CodexCli => discover_codex(),
         AgentProvider::OpenCode => discover_opencode(),
         AgentProvider::GithubCopilot => discover_copilot(),
-        AgentProvider::GeminiCli => discover_gemini(),
         AgentProvider::Antigravity => crate::cli_model_discovery::discover_antigravity(),
         AgentProvider::GrokBuild => crate::cli_model_discovery::discover_grok(),
     }
@@ -79,7 +77,7 @@ fn discover_provider(provider: AgentProvider) -> Vec<ModelEntry> {
 
 /// Provider probe order mirrors TS `DEFAULT_PROVIDERS`, which is
 /// also the core `AgentProvider::ALL` order used by Settings.
-fn discovery_provider_order() -> [AgentProvider; 7] {
+fn discovery_provider_order() -> [AgentProvider; 6] {
     AgentProvider::ALL
 }
 
@@ -342,23 +340,6 @@ pub fn parse_codex_models_cache(raw: &str) -> Option<Vec<ModelEntry>> {
     // like the TS Array.sort.
     keyed.sort_by_key(|(priority, _)| *priority);
     Some(keyed.into_iter().map(|(_, model)| model).collect())
-}
-
-/// Gemini CLI — live model listing from the generativelanguage API
-/// using the CLI's own credentials (API key env or OAuth token,
-/// connect-agent.ts:904-973), falling back to the TS
-/// `FALLBACK_GEMINI_MODELS` list when the fetch fails or returns
-/// nothing — gated on the CLI being installed.
-fn discover_gemini() -> Vec<ModelEntry> {
-    if resolve_cli("gemini").is_none() {
-        return Vec::new();
-    }
-    if let Some(models) = crate::provider_probe_models::gemini_models_from_api() {
-        if !models.is_empty() {
-            return models;
-        }
-    }
-    crate::provider_probe_models::fallback_gemini_models()
 }
 
 /// How long to wait for `copilot --stdio` to answer `models.list`.

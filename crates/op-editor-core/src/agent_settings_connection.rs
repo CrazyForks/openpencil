@@ -56,8 +56,7 @@ pub struct ProviderConnection {
     /// Config-file path hint (TS `hintPath`).
     pub hint_path: Option<String>,
     /// CLI version string when the probe ran a version check
-    /// (`codex --version` / `gemini --version`, mirroring the TS
-    /// responsiveness gates).
+    /// (for example, `codex --version`).
     pub version: Option<String>,
 }
 
@@ -172,7 +171,7 @@ impl AgentSettings {
         self.provider_verified_connected_at(Self::provider_index(provider))
     }
 
-    pub fn verified_connected_mask(&self) -> [bool; 7] {
+    pub fn verified_connected_mask(&self) -> [bool; 6] {
         std::array::from_fn(|i| self.provider_verified_connected_at(i))
     }
 
@@ -303,20 +302,20 @@ mod tests {
     fn not_installed_outcome_carries_install_guidance() {
         let mut s = AgentSettings::default();
         s.apply_provider_connect_outcome(
-            AgentProvider::GeminiCli,
+            AgentProvider::CodexCli,
             ProviderConnectOutcome {
                 connected: false,
                 not_installed: true,
-                install_command: Some("npm install -g @anthropic-ai/gemini-cli".into()),
-                error: Some("Gemini CLI not found".into()),
+                install_command: Some("npm install -g @openai/codex".into()),
+                error: Some("Codex CLI not found".into()),
                 ..ProviderConnectOutcome::default()
             },
         );
-        let conn = &s.provider_connection[4];
+        let conn = &s.provider_connection[1];
         assert!(conn.not_installed);
         assert_eq!(
             conn.install_command.as_deref(),
-            Some("npm install -g @anthropic-ai/gemini-cli")
+            Some("npm install -g @openai/codex")
         );
     }
 
@@ -342,7 +341,7 @@ mod tests {
         assert!(s.provider_verified_connected(AgentProvider::ClaudeCode));
         assert_eq!(
             s.verified_connected_mask(),
-            [true, false, false, false, false, false, false]
+            [true, false, false, false, false, false]
         );
     }
 }

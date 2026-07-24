@@ -218,7 +218,7 @@ new_repo() {
     printf '%s\n' '{"name":"fixture-packages"}' > "$repo/packages/package.json"
 
     cat > "$repo/crates/op-cli/assets/skill-bundle.json" <<'JSON'
-{"one":"__OPENPENCIL_VERSION__","two":"__OPENPENCIL_VERSION__","three":"__OPENPENCIL_VERSION__","four":"__OPENPENCIL_VERSION__","five":"__OPENPENCIL_VERSION__","six":"__OPENPENCIL_VERSION__"}
+{"one":"__OPENPENCIL_VERSION__","two":"__OPENPENCIL_VERSION__","three":"__OPENPENCIL_VERSION__","four":"__OPENPENCIL_VERSION__","five":"__OPENPENCIL_VERSION__"}
 JSON
     cat > "$repo/crates/op-editor-core/src/state.rs" <<'RUST'
 version: env!("CARGO_PKG_VERSION").to_owned(),
@@ -690,15 +690,15 @@ assert_no_success_output 'mismatched release tag'
 pass 'mismatched v* release tags are rejected outside the release workflow too'
 
 repo=$(new_repo cli_bundle_wrong_sentinel_count 0.8.1)
-sed -i.bak 's/,"six":"__OPENPENCIL_VERSION__"//' \
+sed -i.bak 's/,"five":"__OPENPENCIL_VERSION__"//' \
     "$repo/crates/op-cli/assets/skill-bundle.json"
 rm "$repo/crates/op-cli/assets/skill-bundle.json.bak"
 run_guard "$repo"
 assert_status 1 'CLI bundle sentinel count'
-assert_contains 'crates/op-cli/assets/skill-bundle.json:1: error: expected exactly 6 version sentinels' \
+assert_contains 'crates/op-cli/assets/skill-bundle.json:1: error: expected exactly 5 version sentinels' \
     'CLI bundle sentinel count'
 assert_no_success_output 'CLI bundle sentinel count'
-pass 'embedded CLI bundle retains exactly six version sentinels'
+pass 'embedded CLI bundle retains exactly five version sentinels'
 
 repo=$(new_repo cli_bundle_without_sentinels 0.8.1)
 sed -i.bak 's/__OPENPENCIL_VERSION__/__MISSING_VERSION__/g' \
@@ -706,7 +706,7 @@ sed -i.bak 's/__OPENPENCIL_VERSION__/__MISSING_VERSION__/g' \
 rm "$repo/crates/op-cli/assets/skill-bundle.json.bak"
 run_guard "$repo"
 assert_status 1 'CLI bundle missing sentinels'
-assert_contains 'crates/op-cli/assets/skill-bundle.json:1: error: expected exactly 6 version sentinels' \
+assert_contains 'crates/op-cli/assets/skill-bundle.json:1: error: expected exactly 5 version sentinels' \
     'CLI bundle missing sentinels'
 assert_contains '(found 0)' 'CLI bundle missing sentinels'
 assert_no_success_output 'CLI bundle missing sentinels'

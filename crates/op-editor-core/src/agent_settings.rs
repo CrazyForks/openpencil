@@ -57,7 +57,6 @@ impl AgentSettingsTab {
 pub enum McpCli {
     ClaudeCode,
     Codex,
-    Gemini,
     OpenCode,
     Kiro,
     GithubCopilot,
@@ -66,10 +65,9 @@ pub enum McpCli {
 }
 
 impl McpCli {
-    pub const ALL: [McpCli; 8] = [
+    pub const ALL: [McpCli; 7] = [
         McpCli::ClaudeCode,
         McpCli::Codex,
-        McpCli::Gemini,
         McpCli::OpenCode,
         McpCli::Kiro,
         McpCli::GithubCopilot,
@@ -81,7 +79,6 @@ impl McpCli {
         match self {
             McpCli::ClaudeCode => "Claude Code CLI",
             McpCli::Codex => "Codex CLI",
-            McpCli::Gemini => "Gemini CLI",
             McpCli::OpenCode => "OpenCode CLI",
             McpCli::Kiro => "Kiro CLI",
             McpCli::GithubCopilot => "GitHub Copilot CLI",
@@ -416,7 +413,7 @@ pub struct ImageGenProfile {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentSettings {
     pub tab: AgentSettingsTab,
-    pub connected: [bool; 7],
+    pub connected: [bool; 6],
     /// The embedding host's real MCP endpoint (e.g. the VS Code
     /// extension's McpProxy URL), delivered via the bridge `init`
     /// message. When set, the MCP tab's client-config card displays
@@ -426,7 +423,7 @@ pub struct AgentSettings {
     pub embed_mcp_url: Option<String>,
     /// Probe-derived per-provider connect status, indexed like
     /// `connected`. Runtime-only — not persisted.
-    pub provider_connection: [ProviderConnection; 7],
+    pub provider_connection: [ProviderConnection; 6],
     /// Connect-press request seam — the desktop host drains this
     /// into the async provider probe (`provider_probe_host.rs`).
     pub pending_provider_connect: Option<AgentProvider>,
@@ -450,7 +447,7 @@ pub struct AgentSettings {
     pub acp_agent_connection: BTreeMap<String, AcpAgentConnection>,
     pub scroll_y: jian_core::scroll::ScrollState,
     pub mcp_server: McpServer,
-    pub mcp_cli_enabled: [bool; 8],
+    pub mcp_cli_enabled: [bool; 7],
     pub mcp_client_config_copied_at_ms: Option<u64>,
     pub hover_agent_settings_close: bool,
     pub hover_mcp_server_button: bool,
@@ -502,7 +499,7 @@ impl Default for AgentSettings {
     fn default() -> Self {
         Self {
             tab: AgentSettingsTab::Agents,
-            connected: [false; 7],
+            connected: [false; 6],
             embed_mcp_url: None,
             provider_connection: Default::default(),
             pending_provider_connect: None,
@@ -520,7 +517,7 @@ impl Default for AgentSettings {
             acp_agent_connection: BTreeMap::new(),
             scroll_y: Default::default(),
             mcp_server: McpServer::default(),
-            mcp_cli_enabled: [false; 8],
+            mcp_cli_enabled: [false; 7],
             mcp_client_config_copied_at_ms: None,
             hover_agent_settings_close: false,
             hover_mcp_server_button: false,

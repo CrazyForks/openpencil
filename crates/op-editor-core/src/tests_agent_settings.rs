@@ -2,13 +2,13 @@ use crate::agent_settings::{
     AcpConnectionType, AgentSettings, AgentSettingsTab, BuiltinAgentConfig, BuiltinAgentKind,
     ImageGenProvider, ImageTestStatus, McpCli,
 };
-use crate::agent_settings_builtin_presets::BuiltinAgentPresetKey;
+use crate::agent_settings_builtin_presets::{builtin_agent_preset, BuiltinAgentPresetKey};
 
 #[test]
 fn default_settings_are_quiescent() {
     let s = AgentSettings::default();
     assert_eq!(s.tab, AgentSettingsTab::Agents);
-    assert_eq!(s.connected, [false; 7]);
+    assert_eq!(s.connected, [false; 6]);
     assert!(s.builtin_agents.is_empty());
     assert!(s.builtin_agent_draft.is_none());
     assert!(s.acp_agent_draft.is_none());
@@ -31,7 +31,7 @@ fn default_settings_are_quiescent() {
 #[test]
 fn tab_and_cli_arrays_cover_all_variants() {
     assert_eq!(AgentSettingsTab::ALL.len(), 6);
-    assert_eq!(McpCli::ALL.len(), 8);
+    assert_eq!(McpCli::ALL.len(), 7);
 }
 
 #[test]
@@ -139,6 +139,19 @@ fn add_builtin_agent_prefills_ts_provider_presets_first() {
                 "",
             ),
         ]
+    );
+}
+
+#[test]
+fn gemini_api_preset_remains_available_after_cli_retirement() {
+    let preset = builtin_agent_preset(BuiltinAgentPresetKey::Gemini);
+
+    assert_eq!(preset.display_name, "Google Gemini");
+    assert_eq!(preset.kind, BuiltinAgentKind::OpenAiCompat);
+    assert_eq!(preset.model, "gemini-3-flash-preview");
+    assert_eq!(
+        preset.base_url,
+        "https://generativelanguage.googleapis.com/v1beta/openai"
     );
 }
 

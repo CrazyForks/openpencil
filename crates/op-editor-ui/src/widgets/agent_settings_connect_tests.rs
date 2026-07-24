@@ -166,10 +166,10 @@ fn failed_probe_paints_error_in_destructive_red() {
 fn not_installed_card_paints_amber_install_guidance() {
     let mut state = EditorState::default();
     let settings = &mut state.editor_ui.agent_settings;
-    settings.provider_connection[4].phase = ProviderConnectPhase::Error;
-    settings.provider_connection[4].not_installed = true;
-    settings.provider_connection[4].install_command =
-        Some("npm install -g @anthropic-ai/gemini-cli".to_string());
+    settings.provider_connection[1].phase = ProviderConnectPhase::Error;
+    settings.provider_connection[1].not_installed = true;
+    settings.provider_connection[1].install_command =
+        Some("npm install -g @openai/codex".to_string());
     let capture = paint_panel(&mut state);
     let (text, color) = find_text(&capture, "Not installed")
         .expect("not-installed card should show install guidance");
@@ -177,7 +177,7 @@ fn not_installed_card_paints_amber_install_guidance() {
     // install command may ellipsize at the tail; the actionable prefix must
     // still paint so the user knows what to run.
     assert!(
-        text.contains("npm install -g @anthropic-ai/gemin"),
+        text.contains("npm install -g @openai/codex"),
         "guidance line should carry the install command prefix, got: {text}"
     );
     let amber = (Color {

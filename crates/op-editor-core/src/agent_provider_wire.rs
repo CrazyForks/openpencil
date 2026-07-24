@@ -8,7 +8,6 @@ impl AgentProvider {
             Self::CodexCli => "codex-cli",
             Self::OpenCode => "open-code",
             Self::GithubCopilot => "github-copilot",
-            Self::GeminiCli => "gemini-cli",
             Self::Antigravity => "antigravity",
             Self::GrokBuild => "grok-build",
         }
@@ -21,7 +20,6 @@ impl AgentProvider {
             "codex-cli" => Some(Self::CodexCli),
             "open-code" => Some(Self::OpenCode),
             "github-copilot" => Some(Self::GithubCopilot),
-            "gemini-cli" => Some(Self::GeminiCli),
             "antigravity" => Some(Self::Antigravity),
             "grok-build" => Some(Self::GrokBuild),
             _ => None,
@@ -42,5 +40,6 @@ mod tests {
             );
         }
         assert_eq!(AgentProvider::from_wire_id("default"), None);
+        assert_eq!(AgentProvider::from_wire_id("gemini-cli"), None);
     }
 }

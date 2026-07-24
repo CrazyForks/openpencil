@@ -109,13 +109,14 @@ fn parse_builtin_model_key(value: &str) -> Option<(&str, &str)> {
 /// Heuristic provider tag for a legacy daemon built-in model id.
 pub(crate) fn provider_for_model_id(id: &str) -> AgentProvider {
     let lower = id.to_ascii_lowercase();
-    if lower.contains("gemini") {
-        AgentProvider::GeminiCli
-    } else if lower.contains("antigravity") {
+    if lower.contains("antigravity") {
         AgentProvider::Antigravity
     } else if lower.contains("grok") {
         AgentProvider::GrokBuild
-    } else if lower.contains("gpt") || lower.contains("codex") {
+    } else if lower.contains("gpt") || lower.contains("codex") || lower.contains("gemini") {
+        // Legacy bare model ids have no transport identity. Gemini API
+        // built-ins use the generic OpenAI-compatible tag; they must not be
+        // mislabeled as the retired Gemini CLI or as Antigravity.
         AgentProvider::CodexCli
     } else if lower.contains("copilot") {
         AgentProvider::GithubCopilot

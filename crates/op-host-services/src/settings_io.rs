@@ -10,9 +10,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use op_editor_core::editor_ui_state::{RecentFile, RECENT_FILE_CAP};
 use op_editor_core::{
-    AcpAgentConfig, AcpConnectionType, AgentProvider, BuiltinAgentConfig, BuiltinAgentKind,
-    BuiltinAgentPresetKey, EditorState, ImageGenProfile, ImageGenProvider, Locale, McpCli,
-    ThemeMode,
+    AcpAgentConfig, AcpConnectionType, BuiltinAgentConfig, BuiltinAgentKind, BuiltinAgentPresetKey,
+    EditorState, ImageGenProfile, ImageGenProvider, Locale, ThemeMode,
 };
 use serde::{Deserialize, Serialize};
 
@@ -79,14 +78,14 @@ pub struct Fingerprint {
     theme: ThemeMode,
     locale: Locale,
     port: u16,
-    cli: [bool; 8],
+    cli: [bool; 7],
     images_adv: bool,
     openverse_client_id: String,
     openverse_client_secret: String,
     openverse_credential_owner: Option<String>,
     auto_update_enabled: bool,
     experimental_features_enabled: bool,
-    connected: [bool; 7],
+    connected: [bool; 6],
     builtin_agents: Vec<BuiltinAgentConfig>,
     acp_agents: Vec<AcpAgentConfig>,
     image_gen_profiles: Vec<ImageGenProfile>,
@@ -148,10 +147,8 @@ struct SettingsPayload {
     auto_update_enabled: Option<bool>,
     #[serde(default)]
     experimental_features_enabled: Option<bool>,
-    /// Per-provider connect state, indexed by `AgentProvider::ALL`
-    /// (Claude / Codex / OpenCode / Copilot / Gemini / Antigravity /
-    /// Grok Build). Restored on
-    /// launch so the chat model picker survives a restart.
+    /// Per-provider connect state, indexed by `AgentProvider::ALL`.
+    /// Restored on launch so the chat model picker survives a restart.
     #[serde(default)]
     connected: Option<Vec<bool>>,
     #[serde(default)]
@@ -259,10 +256,7 @@ fn apply_payload_with_options(
         eui.agent_settings.mcp_server.port = port.max(1024);
     }
     if let Some(flags) = payload.mcp_cli_enabled {
-        eui.agent_settings.mcp_cli_enabled = [false; 8];
-        for (index, enabled) in flags.into_iter().take(McpCli::ALL.len()).enumerate() {
-            eui.agent_settings.mcp_cli_enabled[index] = enabled;
-        }
+        eui.agent_settings.mcp_cli_enabled = migrate_mcp_cli_flags(flags);
     }
     if let Some(b) = payload.images_advanced_open {
         eui.agent_settings.images_advanced_open = b;
@@ -279,10 +273,7 @@ fn apply_payload_with_options(
         eui.agent_settings.experimental_features_enabled = b;
     }
     if let Some(c) = payload.connected {
-        eui.agent_settings.connected = [false; 7];
-        for (index, connected) in c.into_iter().take(AgentProvider::ALL.len()).enumerate() {
-            eui.agent_settings.connected[index] = connected;
-        }
+        eui.agent_settings.connected = migrate_connected_provider_flags(c);
     }
     if let Some(agents) = payload.builtin_agents {
         let agents = agents
@@ -363,6 +354,52 @@ fn apply_payload_with_options(
     // empty this early, so this is a no-op until discovery lands and
     // `ModelProbe::poll_into` rebuilds again against the same mask.
     state.rebuild_chat_models();
+}
+
+/// Remove the retired Gemini CLI slot from positional v1 settings without
+/// shifting the providers that followed it. Released settings used either
+/// five slots (through Gemini) or seven slots (Gemini + Antigravity + Grok);
+/// the current six-slot layout omits Gemini.
+fn migrate_connected_provider_flags(flags: Vec<bool>) -> [bool; 6] {
+    let mut migrated = [false; 6];
+    match flags.len() {
+        6 => migrated.copy_from_slice(&flags),
+        5 => migrated[..4].copy_from_slice(&flags[..4]),
+        7.. => {
+            migrated[..4].copy_from_slice(&flags[..4]);
+            migrated[4] = flags[5];
+            migrated[5] = flags[6];
+        }
+        _ => {
+            let unchanged = flags.len().min(4);
+            migrated[..unchanged].copy_from_slice(&flags[..unchanged]);
+        }
+    }
+    migrated
+}
+
+/// Remove the retired Gemini CLI MCP slot from positional v1 settings.
+/// Historical layouts had six or eight slots; the current seven-slot layout
+/// keeps every other CLI in its original relative order.
+fn migrate_mcp_cli_flags(flags: Vec<bool>) -> [bool; 7] {
+    let mut migrated = [false; 7];
+    match flags.len() {
+        7 => migrated.copy_from_slice(&flags),
+        8.. => {
+            migrated[0] = flags[0];
+            migrated[1] = flags[1];
+            migrated[2..].copy_from_slice(&flags[3..8]);
+        }
+        3..=6 => {
+            migrated[0] = flags[0];
+            migrated[1] = flags[1];
+            migrated[2..flags.len() - 1].copy_from_slice(&flags[3..]);
+        }
+        _ => {
+            migrated[..flags.len()].copy_from_slice(&flags);
+        }
+    }
+    migrated
 }
 
 fn builtin_agent_to_payload(agent: &BuiltinAgentConfig) -> BuiltinAgentPayload {

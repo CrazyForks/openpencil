@@ -346,9 +346,9 @@ fn selected_cli_model_is_none_when_entry_provider_diverges_from_routed_agent() {
         "GPT-5.5",
     )];
     host.editor_state_mut().select_chat_model(0);
-    // Force a divergence: route Gemini while the selected entry
+    // Force a divergence: route Antigravity while the selected entry
     // still belongs to Codex. The Codex model id must NOT be
-    // passed to the Gemini CLI.
+    // passed to Antigravity.
     host.editor_state_mut().editor_ui.chat_selected_agent = 4;
     assert!(selected_cli_model_id(&host).is_none());
 }

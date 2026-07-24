@@ -965,7 +965,6 @@ fn parse_agent_provider(raw: &str) -> Option<op_editor_core::AgentProvider> {
         "codex" | "codexcli" => Some(AgentProvider::CodexCli),
         "opencode" => Some(AgentProvider::OpenCode),
         "githubcopilot" | "copilot" => Some(AgentProvider::GithubCopilot),
-        "gemini" | "geminicli" => Some(AgentProvider::GeminiCli),
         "antigravity" | "agy" => Some(AgentProvider::Antigravity),
         "grok" | "grokbuild" => Some(AgentProvider::GrokBuild),
         _ => None,
@@ -982,7 +981,6 @@ fn provider_to_probe(
         AgentProvider::CodexCli => ProbeProvider::CodexCli,
         AgentProvider::OpenCode => ProbeProvider::OpenCode,
         AgentProvider::GithubCopilot => ProbeProvider::GithubCopilot,
-        AgentProvider::GeminiCli => ProbeProvider::GeminiCli,
         AgentProvider::Antigravity => ProbeProvider::Antigravity,
         AgentProvider::GrokBuild => ProbeProvider::GrokBuild,
     }
@@ -1086,7 +1084,6 @@ fn provider_key(provider: op_editor_core::AgentProvider) -> &'static str {
         AgentProvider::CodexCli => "codex",
         AgentProvider::OpenCode => "opencode",
         AgentProvider::GithubCopilot => "github-copilot",
-        AgentProvider::GeminiCli => "gemini",
         AgentProvider::Antigravity => "antigravity",
         AgentProvider::GrokBuild => "grok-build",
     }

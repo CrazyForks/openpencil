@@ -64,7 +64,7 @@ Automatically adapts to each model's capabilities. Claude gets full prompts with
 
 ### 🔌 MCP Server
 
-One-click install into Claude Code, Codex, Gemini, OpenCode, Kiro, or Copilot CLIs. Design from your terminal — read, create, and modify `.op` files through any MCP-compatible agent.
+One-click install into Claude Code, Codex, OpenCode, Kiro, or Copilot CLIs. Design from your terminal — read, create, and modify `.op` files through any MCP-compatible agent.
 
 </td>
 </tr>
@@ -243,7 +243,7 @@ Tagged Rust releases publish a single web-host image. The retired TypeScript ima
 | --- | --- |
 | `ghcr.io/zseven-w/openpencil-web:vX.Y.Z` | Rust web host, wasm bundle, and CanvasKit assets |
 
-The web UI exposes built-in agent profiles only; Claude/Codex/OpenCode/Copilot/Gemini CLI tooling is not bundled into Docker images.
+The web UI exposes built-in agent profiles only; Claude/Codex/OpenCode/Copilot CLI tooling is not bundled into Docker images.
 
 **Run:**
 
@@ -282,7 +282,6 @@ docker run -p 3100:3100 openpencil-web-rust
 | **Codex CLI**               | Connect in Agent Settings (`Cmd+,`)                                                               |
 | **OpenCode**                | Connect in Agent Settings (`Cmd+,`)                                                               |
 | **GitHub Copilot**          | `copilot login` then connect in Agent Settings (`Cmd+,`)                                          |
-| **Gemini CLI**              | Connect in Agent Settings (`Cmd+,`)                                                               |
 
 **Model Capability Profiles** — automatically adapts prompts, thinking mode, and timeouts per model tier. Full-tier models (Claude) get complete prompts; standard-tier (GPT-4o, Gemini, DeepSeek) disable thinking; basic-tier (MiniMax, Qwen, Llama, Mistral) get simplified nested-JSON prompts for maximum reliability.
 
@@ -290,7 +289,7 @@ docker run -p 3100:3100 openpencil-web-rust
 
 **MCP Server**
 
-- Built-in MCP server (`op-mcp` crate) — one-click install into Claude Code / Codex / Gemini / OpenCode / Kiro / Copilot CLIs
+- Built-in MCP server (`op-mcp` crate) — one-click install into Claude Code / Codex / OpenCode / Kiro / Copilot CLIs
 - No Node.js required — stdio transport via the desktop binary (`--mcp <path>`), plus a live HTTP endpoint (`127.0.0.1:<port>/mcp`) from the running app
 - Design automation from terminal: read, create, and modify `.op` files via any MCP-compatible agent
 - **Layered design workflow** — `design_skeleton` → `design_content` → `design_refine` for higher-fidelity multi-section designs
@@ -367,7 +366,7 @@ Supports three input methods: inline string, `@filepath` (read from file), or `-
 - Layered workflow — `design_skeleton` → `design_content` → `design_refine` with focused prompts per phase
 - Style Guides — 50+ built-in styles (glassmorphism, brutalist, retro, etc.) with tag-based fuzzy matching, wired into planning and generation
 - Multi-model capability profiles — auto-adapts thinking mode, effort, and prompt shape per model tier
-- Built-in Rust agent runtime + Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot, Gemini providers
+- Built-in Rust agent runtime + Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot, Google Gemini API providers
 - Anthropic-format passthrough for Chinese LLM providers — Kimi, Zhipu, GLM, DouBao, Ark, Bailian/DashScope, ModelScope, Coding Plans
 
 **Git Integration**

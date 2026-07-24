@@ -109,9 +109,9 @@ fn imported_agents_are_excluded_from_persistence() {
 
 #[test]
 fn connected_state_round_trips_through_payload() {
-    // Connect Claude (0) + Gemini (4), leave the rest off.
+    // Connect Claude (0) + Antigravity (4), leave the rest off.
     let mut src = EditorState::new();
-    src.editor_ui.agent_settings.connected = [true, false, false, false, true, true, false];
+    src.editor_ui.agent_settings.connected = [true, false, false, false, true, false];
     // Serialize → JSON → deserialize, the real on-disk path.
     let json = serde_json::to_string(&to_payload(&src)).unwrap();
     let payload: SettingsPayload = serde_json::from_str(&json).unwrap();
@@ -119,7 +119,7 @@ fn connected_state_round_trips_through_payload() {
     apply_payload(&mut dst, payload);
     assert_eq!(
         dst.editor_ui.agent_settings.connected,
-        [true, false, false, false, true, true, false]
+        [true, false, false, false, true, false]
     );
 }
 
@@ -130,26 +130,58 @@ fn six_cli_mcp_payload_migrates_to_new_cli_count() {
     )
     .unwrap();
     let mut dst = EditorState::new();
-    dst.editor_ui.agent_settings.mcp_cli_enabled = [true; 8];
+    dst.editor_ui.agent_settings.mcp_cli_enabled = [true; 7];
 
     apply_payload(&mut dst, payload);
 
     assert_eq!(
         dst.editor_ui.agent_settings.mcp_cli_enabled,
-        [true, false, true, false, true, true, false, false]
+        [true, false, false, true, true, false, false]
     );
 }
 
 #[test]
-fn five_provider_connected_payload_migrates_to_new_provider_count() {
+fn eight_cli_mcp_payload_drops_gemini_without_shifting_later_clis() {
+    let payload: SettingsPayload = serde_json::from_str(
+        r#"{"version":1,"mcp_cli_enabled":[true,false,true,false,true,false,true,true]}"#,
+    )
+    .unwrap();
+    let mut dst = EditorState::new();
+
+    apply_payload(&mut dst, payload);
+
+    assert_eq!(
+        dst.editor_ui.agent_settings.mcp_cli_enabled,
+        [true, false, false, true, false, true, true]
+    );
+}
+
+#[test]
+fn seven_provider_connected_payload_drops_gemini_without_shifting_later_providers() {
+    let payload: SettingsPayload = serde_json::from_str(
+        r#"{"version":1,"connected":[true,false,true,false,true,true,false]}"#,
+    )
+    .unwrap();
+    let mut dst = EditorState::new();
+
+    apply_payload(&mut dst, payload);
+
+    assert_eq!(
+        dst.editor_ui.agent_settings.connected,
+        [true, false, true, false, true, false]
+    );
+}
+
+#[test]
+fn five_provider_connected_payload_drops_retired_gemini() {
     let payload: SettingsPayload =
         serde_json::from_str(r#"{"version":1,"connected":[true,false,false,false,true]}"#).unwrap();
     let mut dst = EditorState::new();
-    dst.editor_ui.agent_settings.connected = [false, false, false, false, false, true, true];
+    dst.editor_ui.agent_settings.connected = [false, false, false, false, true, true];
     apply_payload(&mut dst, payload);
     assert_eq!(
         dst.editor_ui.agent_settings.connected,
-        [true, false, false, false, true, false, false]
+        [true, false, false, false, false, false]
     );
 }
 
@@ -162,7 +194,7 @@ fn legacy_settings_without_connected_field_default_to_disconnected() {
     let payload: SettingsPayload = serde_json::from_str(legacy).unwrap();
     let mut dst = EditorState::new();
     apply_payload(&mut dst, payload);
-    assert_eq!(dst.editor_ui.agent_settings.connected, [false; 7]);
+    assert_eq!(dst.editor_ui.agent_settings.connected, [false; 6]);
 }
 
 #[test]

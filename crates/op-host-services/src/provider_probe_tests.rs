@@ -169,10 +169,6 @@ fn install_commands_mirror_install_agent_ts() {
         install_command(AgentProvider::CodexCli),
         "npm install -g @openai/codex"
     );
-    assert_eq!(
-        install_command(AgentProvider::GeminiCli),
-        "npm install -g @anthropic-ai/gemini-cli"
-    );
     let antigravity = if cfg!(windows) {
         "irm https://antigravity.google/cli/install.ps1 | iex"
     } else {

@@ -74,6 +74,18 @@ pub(super) fn prepare(raw: &str) -> PreparedSettings {
         .as_object_mut()
         .expect("browser settings object was checked above");
     let mut sanitized = removed_forbidden;
+    if let Some(flags) = payload
+        .mcp_cli_enabled
+        .as_ref()
+        .filter(|flags| flags.len() != op_editor_core::McpCli::ALL.len())
+    {
+        object.insert(
+            "mcp_cli_enabled".into(),
+            serde_json::to_value(super::migrate_mcp_cli_flags(flags.clone()))
+                .expect("boolean array serialization cannot fail"),
+        );
+        sanitized = true;
+    }
     for key in [
         "openverse_oauth",
         "builtin_agents",

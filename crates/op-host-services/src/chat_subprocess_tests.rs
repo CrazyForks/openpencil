@@ -125,26 +125,6 @@ fn for_cli_claude_code_seeds_print_stream_json_flags() {
 }
 
 #[test]
-fn for_cli_uses_default_binary_per_cli_name() {
-    // Resolved path may be bare or absolute depending on what's
-    // installed on the test host; check the basename only.
-    let gemini = SubprocessProvider::for_cli(CliName::Gemini).unwrap();
-    assert!(
-        gemini.binary.ends_with("gemini"),
-        "binary={}",
-        gemini.binary
-    );
-    assert_eq!(gemini.prompt_mode, PromptMode::Stdin);
-    // TS gemini-client.ts streamGeminiExec argv: `-o stream-json
-    // --approval-mode plan … -p ' '` (prompt via stdin).
-    assert_eq!(
-        gemini.args,
-        vec!["-o", "stream-json", "--approval-mode", "plan"]
-    );
-    assert_eq!(gemini.tail_args, vec!["-p", " "]);
-}
-
-#[test]
 fn for_cli_rejects_opencode_and_copilot() {
     // OpenCode chats over its HTTP server (chat_http_server.rs);
     // Copilot's routed transport is the official SDK
@@ -297,29 +277,6 @@ fn codex_turn_args_map_effort_to_reasoning_config() {
             .unwrap_or_else(|| panic!("--config missing for {thinking:?}/{effort:?}: {args:?}"));
         assert_eq!(args[pos + 1], format!("model_reasoning_effort={expected}"));
     }
-}
-
-#[test]
-fn gemini_turn_args_append_m_flag_when_selected() {
-    let p = SubprocessProvider::for_cli(CliName::Gemini).unwrap();
-    let args = p.turn_args(&request_with_model(Some("gemini-2.5-pro")));
-    let pos = args
-        .iter()
-        .position(|a| a == "-m")
-        .expect("-m flag present");
-    assert_eq!(args[pos + 1], "gemini-2.5-pro");
-    // Gemini has no native effort knob — never a --config arg.
-    assert!(!args.iter().any(|a| a == "--config"));
-    // The `-p ' '` stdin marker trails the model flag (TS order).
-    assert_eq!(args[args.len() - 2], "-p");
-    assert_eq!(args[args.len() - 1], " ");
-}
-
-#[test]
-fn gemini_turn_args_omit_m_flag_when_unset() {
-    let p = SubprocessProvider::for_cli(CliName::Gemini).unwrap();
-    let args = p.turn_args(&request_with_model(None));
-    assert!(!args.iter().any(|a| a == "-m"), "args={args:?}");
 }
 
 #[test]

@@ -64,7 +64,7 @@
 
 ### 🔌 MCP सर्वर
 
-Claude Code, Codex, Gemini, OpenCode, Kiro, या Copilot CLIs में वन-क्लिक इंस्टॉल। अपने टर्मिनल से डिज़ाइन करें — किसी भी MCP-संगत एजेंट के ज़रिए `.op` फ़ाइलें पढ़ें, बनाएँ और संशोधित करें।
+Claude Code, Codex, OpenCode, Kiro, या Copilot CLIs में वन-क्लिक इंस्टॉल। अपने टर्मिनल से डिज़ाइन करें — किसी भी MCP-संगत एजेंट के ज़रिए `.op` फ़ाइलें पढ़ें, बनाएँ और संशोधित करें।
 
 </td>
 </tr>
@@ -125,7 +125,7 @@ cargo run -p op-host-desktop
 | --- | --- |
 | `ghcr.io/zseven-w/openpencil-web:vX.Y.Z` | Rust web host, wasm bundle और CanvasKit assets |
 
-Web UI केवल built-in agent profiles दिखाता है; Claude/Codex/OpenCode/Copilot/Gemini CLI tools Docker images में शामिल नहीं हैं।
+Web UI केवल built-in agent profiles दिखाता है; Claude/Codex/OpenCode/Copilot CLI tools Docker images में शामिल नहीं हैं।
 
 **चलाएँ:**
 
@@ -161,7 +161,6 @@ docker run -p 3100:3100 openpencil-web-rust
 | **Codex CLI**             | एजेंट सेटिंग्स में कनेक्ट करें (`Cmd+,`)                                                     |
 | **OpenCode**              | एजेंट सेटिंग्स में कनेक्ट करें (`Cmd+,`)                                                     |
 | **GitHub Copilot**        | `copilot login` फिर एजेंट सेटिंग्स में कनेक्ट करें (`Cmd+,`)                                 |
-| **Gemini CLI**            | एजेंट सेटिंग्स में कनेक्ट करें (`Cmd+,`)                                                     |
 
 **मॉडल क्षमता प्रोफ़ाइल** — प्रत्येक मॉडल टियर के अनुसार प्रॉम्प्ट, थिंकिंग मोड और टाइमआउट को स्वचालित रूप से अनुकूलित करता है। फुल-टियर मॉडल (Claude) को पूर्ण प्रॉम्प्ट मिलते हैं; स्टैंडर्ड-टियर (GPT-4o, Gemini, DeepSeek) में थिंकिंग अक्षम होती है; बेसिक-टियर (MiniMax, Qwen, Llama, Mistral) को अधिकतम विश्वसनीयता के लिए सरलीकृत नेस्टेड-JSON प्रॉम्प्ट मिलते हैं।
 
@@ -169,7 +168,7 @@ docker run -p 3100:3100 openpencil-web-rust
 
 **MCP सर्वर**
 
-- बिल्ट-इन MCP सर्वर (`op-mcp` crate) — Claude Code / Codex / Gemini / OpenCode / Kiro / Copilot CLIs में वन-क्लिक इंस्टॉल
+- बिल्ट-इन MCP सर्वर (`op-mcp` crate) — Claude Code / Codex / OpenCode / Kiro / Copilot CLIs में वन-क्लिक इंस्टॉल
 - Node.js की कोई आवश्यकता नहीं — डेस्कटॉप बाइनरी (`--mcp <path>`) के ज़रिए stdio ट्रांसपोर्ट, साथ ही चल रहे ऐप से एक लाइव HTTP एंडपॉइंट (`127.0.0.1:<port>/mcp`)
 - टर्मिनल से डिज़ाइन ऑटोमेशन: किसी भी MCP-संगत एजेंट के ज़रिए `.op` फ़ाइलें पढ़ें, बनाएँ और संपादित करें
 - **लेयर्ड डिज़ाइन वर्कफ़्लो** — उच्च-फ़िडेलिटी मल्टी-सेक्शन डिज़ाइन के लिए `design_skeleton` → `design_content` → `design_refine`
@@ -229,7 +228,7 @@ cat design.dsl | op design - # stdin से पाइप करें
 - लेयर्ड वर्कफ़्लो — `design_skeleton` → `design_content` → `design_refine`, प्रत्येक चरण के लिए केंद्रित प्रॉम्प्ट
 - स्टाइल गाइड — 50+ इन-बिल्ट स्टाइल (glassmorphism, brutalist, retro आदि), टैग-आधारित फ़ज़ी मैचिंग, प्लानिंग और जनरेशन में एकीकृत
 - मल्टी-मॉडल क्षमता प्रोफ़ाइल — मॉडल स्तर के अनुसार थिंकिंग मोड, प्रयास और प्रॉम्प्ट रूप को स्वचालित रूप से अनुकूलित करता है
-- बिल्ट-इन एजेंट रनटाइम (Rust) + Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot, Gemini प्रदाता
+- बिल्ट-इन एजेंट रनटाइम (Rust) + Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot और Google Gemini API प्रदाता
 - चीनी LLM प्रदाताओं के लिए Anthropic फ़ॉर्मेट पासथ्रू — Kimi, Zhipu, GLM, DouBao, Ark, Bailian/DashScope, ModelScope, Coding Plans
 
 **Git इंटीग्रेशन**

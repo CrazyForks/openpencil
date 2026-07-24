@@ -35,7 +35,7 @@ impl DesktopApp {
         }
         changed |= self.reconcile_mcp_server_from_settings();
         if any_cli_enabled {
-            changed |= self.reconcile_mcp_cli_integrations(Some(([false; 8], port)));
+            changed |= self.reconcile_mcp_cli_integrations(Some(([false; 7], port)));
         }
         if self.mcp_server_active() {
             changed |= self.request_redraw(false);
@@ -226,7 +226,7 @@ impl DesktopApp {
 
     pub(crate) fn reconcile_mcp_cli_integrations(
         &mut self,
-        before: Option<([bool; 8], u16)>,
+        before: Option<([bool; 7], u16)>,
     ) -> bool {
         let Some((before_flags, before_port)) = before else {
             return false;

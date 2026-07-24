@@ -200,9 +200,6 @@ fn missing_models_connect_error(provider: AgentProvider) -> String {
         AgentProvider::GithubCopilot => {
             "No models found. GitHub Copilot did not return a model list.".to_string()
         }
-        AgentProvider::GeminiCli => {
-            "No models found. Gemini CLI did not return a model list.".to_string()
-        }
         AgentProvider::Antigravity => {
             "No model available. Antigravity did not expose its default model.".to_string()
         }
@@ -218,7 +215,6 @@ fn provider_key(provider: AgentProvider) -> &'static str {
         AgentProvider::CodexCli => "codex",
         AgentProvider::OpenCode => "opencode",
         AgentProvider::GithubCopilot => "github-copilot",
-        AgentProvider::GeminiCli => "gemini",
         AgentProvider::Antigravity => "antigravity",
         AgentProvider::GrokBuild => "grok-build",
     }

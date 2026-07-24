@@ -64,7 +64,7 @@ Her modelin yeteneklerine otomatik olarak uyum sağlar. Claude tam promptlar ve 
 
 ### 🔌 MCP Sunucusu
 
-Claude Code, Codex, Gemini, OpenCode, Kiro veya Copilot CLI'larına tek tıkla kurulum. Terminalinizden tasarım yapın — herhangi bir MCP uyumlu ajan aracılığıyla `.op` dosyalarını okuyun, oluşturun ve düzenleyin.
+Claude Code, Codex, OpenCode, Kiro veya Copilot CLI'larına tek tıkla kurulum. Terminalinizden tasarım yapın — herhangi bir MCP uyumlu ajan aracılığıyla `.op` dosyalarını okuyun, oluşturun ve düzenleyin.
 
 </td>
 </tr>
@@ -125,7 +125,7 @@ Etiketli Rust sürümleri tek bir web host görüntüsü yayımlar. AI CLI'ları
 | --- | --- |
 | `ghcr.io/zseven-w/openpencil-web:vX.Y.Z` | Rust web host, wasm bundle ve CanvasKit varlıkları |
 
-Web UI yalnızca yerleşik agent profillerini gösterir; Claude/Codex/OpenCode/Copilot/Gemini CLI araçları Docker görüntülerine dahil değildir.
+Web UI yalnızca yerleşik agent profillerini gösterir; Claude/Codex/OpenCode/Copilot CLI araçları Docker görüntülerine dahil değildir.
 
 **Çalıştır:**
 
@@ -161,7 +161,6 @@ docker run -p 3100:3100 openpencil-web-rust
 | **Codex CLI**               | Ajan Ayarlarından bağlanın (`Cmd+,`)                                                                      |
 | **OpenCode**                | Ajan Ayarlarından bağlanın (`Cmd+,`)                                                                      |
 | **GitHub Copilot**          | `copilot login` ardından Ajan Ayarlarından bağlanın (`Cmd+,`)                                             |
-| **Gemini CLI**              | Ajan Ayarlarından bağlanın (`Cmd+,`)                                                                      |
 
 **Model Yetenek Profilleri** — promptları, düşünme modunu ve zaman aşımlarını model katmanına göre otomatik olarak uyarlar. Tam katman modeller (Claude) eksiksiz promptlar alır; standart katman (GPT-4o, Gemini, DeepSeek) düşünme modunu devre dışı bırakır; temel katman (MiniMax, Qwen, Llama, Mistral) maksimum güvenilirlik için basitleştirilmiş iç içe JSON promptları alır.
 
@@ -169,7 +168,7 @@ docker run -p 3100:3100 openpencil-web-rust
 
 **MCP Sunucusu**
 
-- Yerleşik MCP sunucusu (`op-mcp` crate) — Claude Code / Codex / Gemini / OpenCode / Kiro / Copilot CLI'larına tek tıkla kurulum
+- Yerleşik MCP sunucusu (`op-mcp` crate) — Claude Code / Codex / OpenCode / Kiro / Copilot CLI'larına tek tıkla kurulum
 - Node.js gerekmez — masaüstü ikili dosyası aracılığıyla stdio aktarımı (`--mcp <path>`), ayrıca çalışan uygulamadan canlı bir HTTP uç noktası (`127.0.0.1:<port>/mcp`)
 - Terminalden tasarım otomasyonu: herhangi bir MCP uyumlu ajan aracılığıyla `.op` dosyalarını okuyun, oluşturun ve düzenleyin
 - **Katmanlı tasarım iş akışı** — daha yüksek kaliteli çok bölümlü tasarımlar için `design_skeleton` → `design_content` → `design_refine`
@@ -229,7 +228,7 @@ Satır içi metni, `@filepath` ve stdin'i (`-`) destekler. Masaüstü uygulama, 
 - Katmanlı iş akışı — `design_skeleton` → `design_content` → `design_refine`, her aşamada odaklı prompt'lar
 - Stil Rehberleri — 50+ yerleşik stil (glassmorphism, brutalist, retro vb.), etiket tabanlı bulanık eşleştirme ile planlama ve üretime entegre
 - Çoklu model yetenek profilleri — model katmanına göre düşünme modunu, çabayı ve prompt biçimini otomatik olarak uyarlar
-- Yerleşik ajan çalışma ortamı (Rust) + Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot, Gemini sağlayıcıları
+- Yerleşik ajan çalışma ortamı (Rust) + Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot ve Google Gemini API sağlayıcıları
 - Çinli LLM sağlayıcıları için Anthropic formatlı geçiş — Kimi, Zhipu, GLM, DouBao, Ark, Bailian/DashScope, ModelScope, Coding Plans
 
 **Git Entegrasyonu**

@@ -64,7 +64,7 @@ Tự động thích ứng với khả năng của từng mô hình. Claude nhậ
 
 ### 🔌 Máy chủ MCP
 
-Cài đặt một cú nhấp vào Claude Code, Codex, Gemini, OpenCode, Kiro hoặc Copilot CLI. Thiết kế từ terminal — đọc, tạo và chỉnh sửa tệp `.op` thông qua bất kỳ tác nhân tương thích MCP nào.
+Cài đặt một cú nhấp vào Claude Code, Codex, OpenCode, Kiro hoặc Copilot CLI. Thiết kế từ terminal — đọc, tạo và chỉnh sửa tệp `.op` thông qua bất kỳ tác nhân tương thích MCP nào.
 
 </td>
 </tr>
@@ -125,7 +125,7 @@ Các bản phát hành Rust có tag chỉ phát hành một image web host. Các
 | --- | --- |
 | `ghcr.io/zseven-w/openpencil-web:vX.Y.Z` | Rust web host, wasm bundle và tài nguyên CanvasKit |
 
-Web UI chỉ hiển thị các built-in agent profiles; công cụ Claude/Codex/OpenCode/Copilot/Gemini CLI không được đóng gói trong Docker images.
+Web UI chỉ hiển thị các built-in agent profiles; công cụ Claude/Codex/OpenCode/Copilot CLI không được đóng gói trong Docker images.
 
 **Chạy:**
 
@@ -161,7 +161,6 @@ docker run -p 3100:3100 openpencil-web-rust
 | **Codex CLI**                      | Kết nối trong Cài đặt tác nhân (`Cmd+,`)                                                                     |
 | **OpenCode**                       | Kết nối trong Cài đặt tác nhân (`Cmd+,`)                                                                     |
 | **GitHub Copilot**                 | `copilot login` rồi kết nối trong Cài đặt tác nhân (`Cmd+,`)                                                 |
-| **Gemini CLI**                     | Kết nối trong Cài đặt tác nhân (`Cmd+,`)                                                                     |
 
 **Hồ sơ Năng lực Mô hình** — tự động thích ứng prompt, chế độ thinking và thời gian chờ theo từng cấp mô hình. Mô hình cấp đầy đủ (Claude) nhận prompt hoàn chỉnh; cấp tiêu chuẩn (GPT-4o, Gemini, DeepSeek) tắt thinking; cấp cơ bản (MiniMax, Qwen, Llama, Mistral) nhận prompt JSON lồng nhau đơn giản hóa để đảm bảo độ tin cậy tối đa.
 
@@ -169,7 +168,7 @@ docker run -p 3100:3100 openpencil-web-rust
 
 **Máy chủ MCP**
 
-- Máy chủ MCP tích hợp sẵn (crate `op-mcp`) — cài đặt một cú nhấp vào Claude Code / Codex / Gemini / OpenCode / Kiro / Copilot CLI
+- Máy chủ MCP tích hợp sẵn (crate `op-mcp`) — cài đặt một cú nhấp vào Claude Code / Codex / OpenCode / Kiro / Copilot CLI
 - Không cần Node.js — stdio transport qua tệp nhị phân desktop (`--mcp <path>`), cộng với một HTTP endpoint trực tiếp (`127.0.0.1:<port>/mcp`) từ ứng dụng đang chạy
 - Tự động hóa thiết kế từ terminal: đọc, tạo và chỉnh sửa các tệp `.op` qua bất kỳ tác nhân tương thích MCP nào
 - **Quy trình thiết kế phân lớp** — `design_skeleton` → `design_content` → `design_refine` cho thiết kế đa phần có độ trung thực cao hơn
@@ -229,7 +228,7 @@ Hỗ trợ chuỗi inline, `@filepath` và stdin (`-`). Hoạt động với ứ
 - Quy trình phân lớp — `design_skeleton` → `design_content` → `design_refine` với prompt tập trung cho từng giai đoạn
 - Style Guides — hơn 50 style tích hợp (glassmorphism, brutalist, retro, v.v.) với khớp mờ dựa trên tag, tích hợp vào lập kế hoạch và tạo
 - Hồ sơ năng lực đa mô hình — tự động điều chỉnh chế độ tư duy, nỗ lực và hình thức prompt theo cấp mô hình
-- Runtime tác nhân tích hợp (Rust) + nhà cung cấp Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot, Gemini
+- Runtime tác nhân tích hợp (Rust) + nhà cung cấp Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot và Google Gemini API
 - Chuyển tiếp định dạng Anthropic cho các nhà cung cấp LLM Trung Quốc — Kimi, Zhipu, GLM, DouBao, Ark, Bailian/DashScope, ModelScope, Coding Plans
 
 **Tích hợp Git**

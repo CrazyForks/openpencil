@@ -64,7 +64,7 @@ S'adapte automatiquement aux capacités de chaque modèle. Claude obtient des pr
 
 ### 🔌 Serveur MCP
 
-Installation en un clic dans les CLI Claude Code, Codex, Gemini, OpenCode, Kiro ou Copilot. Designez depuis votre terminal — lisez, créez et modifiez des fichiers `.op` via tout agent compatible MCP.
+Installation en un clic dans les CLI Claude Code, Codex, OpenCode, Kiro ou Copilot. Designez depuis votre terminal — lisez, créez et modifiez des fichiers `.op` via tout agent compatible MCP.
 
 </td>
 </tr>
@@ -125,7 +125,7 @@ Les releases Rust taguées publient une seule image web host. Les anciennes imag
 | --- | --- |
 | `ghcr.io/zseven-w/openpencil-web:vX.Y.Z` | Rust web host, wasm bundle et ressources CanvasKit |
 
-L'interface web expose uniquement les profils d'agents intégrés ; les outils Claude/Codex/OpenCode/Copilot/Gemini CLI ne sont pas inclus dans les images Docker.
+L'interface web expose uniquement les profils d'agents intégrés ; les outils Claude/Codex/OpenCode/Copilot CLI ne sont pas inclus dans les images Docker.
 
 **Exécuter :**
 
@@ -161,7 +161,6 @@ docker run -p 3100:3100 openpencil-web-rust
 | **Codex CLI**                 | Connecter dans les Paramètres de l'agent (`Cmd+,`)                                                                      |
 | **OpenCode**                  | Connecter dans les Paramètres de l'agent (`Cmd+,`)                                                                      |
 | **GitHub Copilot**            | `copilot login` puis connecter dans les Paramètres de l'agent (`Cmd+,`)                                                 |
-| **Gemini CLI**                | Connecter dans les Paramètres de l'agent (`Cmd+,`)                                                                      |
 
 **Profils de capacités des modèles** — adapte automatiquement les prompts, le mode de réflexion et les délais d'attente par niveau de modèle. Les modèles de niveau complet (Claude) reçoivent des prompts complets ; le niveau standard (GPT-4o, Gemini, DeepSeek) désactive la réflexion ; le niveau basique (MiniMax, Qwen, Llama, Mistral) reçoit des prompts JSON imbriqués simplifiés pour une fiabilité maximale.
 
@@ -169,7 +168,7 @@ docker run -p 3100:3100 openpencil-web-rust
 
 **Serveur MCP**
 
-- Serveur MCP intégré (crate `op-mcp`) — installation en un clic dans les CLI Claude Code / Codex / Gemini / OpenCode / Kiro / Copilot
+- Serveur MCP intégré (crate `op-mcp`) — installation en un clic dans les CLI Claude Code / Codex / OpenCode / Kiro / Copilot
 - Aucun besoin de Node.js — transport stdio via le binaire de bureau (`--mcp <path>`), plus un point de terminaison HTTP en direct (`127.0.0.1:<port>/mcp`) depuis l'application en cours d'exécution
 - Automatisation du design depuis le terminal : lire, créer et modifier des fichiers `.op` via tout agent compatible MCP
 - **Workflow de design en couches** — `design_skeleton` → `design_content` → `design_refine` pour des designs multi-sections de plus haute fidélité
@@ -229,7 +228,7 @@ Prend en charge les chaînes en ligne, `@filepath` et stdin (`-`). Fonctionne av
 - Workflow en couches — `design_skeleton` → `design_content` → `design_refine` avec des prompts ciblés par phase
 - Guides de style — plus de 50 styles intégrés (glassmorphism, brutalist, retro, etc.) avec appariement flou basé sur les tags, intégrés dans la planification et la génération
 - Profils de capacités multi-modèles — adapte automatiquement le mode de réflexion, l'effort et la forme du prompt selon le niveau du modèle
-- Runtime d'agent intégré (Rust) + fournisseurs Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot, Gemini
+- Runtime d'agent intégré (Rust) + fournisseurs Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot et Google Gemini API
 - Passthrough au format Anthropic pour les fournisseurs LLM chinois — Kimi, Zhipu, GLM, DouBao, Ark, Bailian/DashScope, ModelScope, Coding Plans
 
 **Intégration Git**

@@ -64,7 +64,7 @@
 
 ### 🔌 MCP サーバー
 
-Claude Code、Codex、Gemini、OpenCode、Kiro、Copilot CLI にワンクリックでインストール。ターミナルからデザイン — MCP 対応エージェントを通じて `.op` ファイルの読み取り、作成、編集が可能。
+Claude Code、Codex、OpenCode、Kiro、Copilot CLI にワンクリックでインストール。ターミナルからデザイン — MCP 対応エージェントを通じて `.op` ファイルの読み取り、作成、編集が可能。
 
 </td>
 </tr>
@@ -125,7 +125,7 @@ cargo run -p op-host-desktop
 | --- | --- |
 | `ghcr.io/zseven-w/openpencil-web:vX.Y.Z` | Rust web host、wasm bundle、CanvasKit assets |
 
-Web UI は built-in agent profiles のみを公開します。Claude/Codex/OpenCode/Copilot/Gemini CLI ツールは Docker イメージに同梱されません。
+Web UI は built-in agent profiles のみを公開します。Claude/Codex/OpenCode/Copilot CLI ツールは Docker イメージに同梱されません。
 
 **実行：**
 
@@ -161,7 +161,6 @@ docker run -p 3100:3100 openpencil-web-rust
 | **Codex CLI**                     | エージェント設定で接続（`Cmd+,`）                                                                 |
 | **OpenCode**                      | エージェント設定で接続（`Cmd+,`）                                                                 |
 | **GitHub Copilot**                | `copilot login` 後、エージェント設定で接続（`Cmd+,`）                                             |
-| **Gemini CLI**                    | エージェント設定で接続（`Cmd+,`）                                                                 |
 
 **モデル能力プロファイル** — モデルの階層に応じてプロンプト、シンキングモード、タイムアウトを自動適応。フル階層モデル（Claude）には完全なプロンプト、標準階層（GPT-4o、Gemini、DeepSeek）ではシンキングを無効化、ベーシック階層（MiniMax、Qwen、Llama、Mistral）には最大限の信頼性のために簡略化されたネスト JSON プロンプトを使用。
 
@@ -169,7 +168,7 @@ docker run -p 3100:3100 openpencil-web-rust
 
 **MCP サーバー**
 
-- 内蔵 MCP サーバー（`op-mcp` crate） — Claude Code / Codex / Gemini / OpenCode / Kiro / Copilot CLI にワンクリックでインストール
+- 内蔵 MCP サーバー（`op-mcp` crate） — Claude Code / Codex / OpenCode / Kiro / Copilot CLI にワンクリックでインストール
 - Node.js は不要 — デスクトップバイナリ経由の stdio トランスポート（`--mcp <path>`）に加え、実行中のアプリからライブ HTTP エンドポイント（`127.0.0.1:<port>/mcp`）を提供
 - ターミナルからのデザイン自動化：MCP 対応エージェントを通じて `.op` ファイルの読み取り、作成、編集が可能
 - **レイヤードデザインワークフロー** — `design_skeleton` → `design_content` → `design_refine` による高忠実度マルチセクションデザイン
@@ -229,7 +228,7 @@ cat design.dsl | op design - # stdin からパイプ入力
 - レイヤードワークフロー — `design_skeleton` → `design_content` → `design_refine`、各フェーズごとに焦点を絞ったプロンプト
 - スタイルガイド — 50+ のビルトインスタイル（glassmorphism、brutalist、retro など）、タグベースのファジーマッチング対応、プランニングと生成に統合
 - マルチモデル能力プロファイル — モデル階層に応じてシンキングモード、エフォート、プロンプト形状を自動適応
-- ビルトインエージェントランタイム（Rust）+ Anthropic、Claude Agent SDK、OpenCode、Codex、Copilot、Gemini プロバイダー
+- ビルトインエージェントランタイム（Rust）+ Anthropic、Claude Agent SDK、OpenCode、Codex、Copilot、Google Gemini API プロバイダー
 - 中国系 LLM プロバイダー向け Anthropic フォーマットパススルー — Kimi、Zhipu、GLM、DouBao、Ark、Bailian/DashScope、ModelScope、Coding Plans
 
 **Git 統合**

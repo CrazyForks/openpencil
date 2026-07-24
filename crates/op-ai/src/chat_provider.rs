@@ -6,8 +6,8 @@
 //!   against the user's chosen `Provider` (Anthropic, OpenAI-compat,
 //!   Ollama, ...). This is the OP-native agent.
 //! - **Subprocess(CliName)** — spawn an external CLI binary
-//!   (Claude Code / Gemini / Copilot) and pipe line-delimited JSON
-//!   over its stdin / stdout.
+//!   (Claude Code / Copilot / Antigravity / Grok Build) and pipe
+//!   line-delimited JSON over its stdin / stdout.
 //! - **HttpServer(CliName)** — spawn `codex serve` / `opencode serve`
 //!   and hit its local HTTP/SSE endpoint with reqwest.
 //! - **Acp** — Agent Client Protocol (ndJSON over stdio); the
@@ -31,8 +31,6 @@ use std::sync::Arc;
 pub enum CliName {
     /// Anthropic's `claude` CLI (subprocess IPC).
     ClaudeCode,
-    /// Google's `gemini` CLI (subprocess IPC).
-    Gemini,
     /// GitHub Copilot CLI (subprocess IPC).
     Copilot,
     /// OpenAI Codex CLI (HTTP server mode).
@@ -49,7 +47,6 @@ impl CliName {
     pub fn label(self) -> &'static str {
         match self {
             CliName::ClaudeCode => "Claude Code",
-            CliName::Gemini => "Gemini",
             CliName::Copilot => "GitHub Copilot",
             CliName::Codex => "Codex",
             CliName::OpenCode => "OpenCode",
@@ -63,7 +60,6 @@ impl CliName {
     pub fn default_binary(self) -> &'static str {
         match self {
             CliName::ClaudeCode => "claude",
-            CliName::Gemini => "gemini",
             // The standalone `copilot` CLI (the `gh-copilot` gh
             // extension is retired; the official SDK + model
             // discovery both target `copilot`).
@@ -76,14 +72,13 @@ impl CliName {
     }
     /// Which backend transport this CLI uses. Mirrors the table in
     /// [[project_agent_runtime]] memory:
-    /// Claude/Gemini/Copilot = subprocess IPC; Codex/OpenCode = HTTP server.
+    /// Claude/Copilot/Antigravity/Grok Build = subprocess IPC;
+    /// Codex/OpenCode = HTTP server.
     pub fn backend(self) -> ChatProviderKind {
         match self {
-            CliName::ClaudeCode
-            | CliName::Gemini
-            | CliName::Copilot
-            | CliName::Antigravity
-            | CliName::GrokBuild => ChatProviderKind::Subprocess(self),
+            CliName::ClaudeCode | CliName::Copilot | CliName::Antigravity | CliName::GrokBuild => {
+                ChatProviderKind::Subprocess(self)
+            }
             CliName::Codex | CliName::OpenCode => ChatProviderKind::HttpServer(self),
         }
     }
@@ -285,8 +280,8 @@ pub struct ChatRequest {
     pub attachments: Vec<ChatAttachment>,
     /// Model id the user picked in the chat model picker (e.g.
     /// `gpt-5.5`, `claude-sonnet-4-6`). Each transport forwards it on
-    /// its own knob (`--model` for Codex, `-m` for Gemini, SDK
-    /// `options.model` for Claude Code / Copilot). `None` keeps the
+    /// its own knob (`--model` for Codex / Antigravity, `-m` for
+    /// Grok Build, SDK `options.model` for Claude Code / Copilot). `None` keeps the
     /// provider's own default — TS parity: every provider in
     /// `apps/web/server/api/ai/chat.ts` only sets the model when one
     /// was supplied.
@@ -438,14 +433,10 @@ mod tests {
     #[test]
     fn cli_name_backend_table_matches_architecture_memo() {
         // project_agent_runtime memory:
-        //  Subprocess IPC = Claude Code / Gemini / Copilot
+        //  Subprocess IPC = Claude Code / Copilot / Antigravity / Grok Build
         //  HTTP server   = Codex / OpenCode
         assert!(matches!(
             CliName::ClaudeCode.backend(),
-            ChatProviderKind::Subprocess(_)
-        ));
-        assert!(matches!(
-            CliName::Gemini.backend(),
             ChatProviderKind::Subprocess(_)
         ));
         assert!(matches!(

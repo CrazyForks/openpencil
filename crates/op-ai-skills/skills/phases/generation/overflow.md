@@ -21,7 +21,7 @@ When the spec says "horizontal scrolling cards", "swipeable row", "chip row", "m
 
 ### Preferred (MCP tool path): pick one of 3 narrow row tools
 
-If you have access to MCP tools (external client: Claude Code / Codex / Gemini CLI / Cursor), call the tool matching what's in the row — all three produce the overflow-safe wrapper+clipContent+fit_content structure and cannot be made incorrectly by schema.
+If you have access to MCP tools (external client: Claude Code / Codex / Cursor), call the tool matching what's in the row — all three produce the overflow-safe wrapper+clipContent+fit_content structure and cannot be made incorrectly by schema.
 
 - **`add_card_row_v0`** — items with `title` + optional `subtitle` + optional `icon` (workout cards, feature tiles, content cards). Default card size 140×160.
 - **`add_metric_row_v0`** — items with `label` + `value` + optional `icon` (dashboard stats: Steps/Kcal/Sleep/Revenue). Default tile size 120×100, value rendered 28/700.

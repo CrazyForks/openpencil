@@ -64,7 +64,7 @@
 
 ### 🔌 MCP 서버
 
-Claude Code, Codex, Gemini, OpenCode, Kiro 또는 Copilot CLI에 원클릭 설치. 터미널에서 디자인하세요 — MCP 호환 에이전트를 통해 `.op` 파일을 읽고, 생성하고, 편집할 수 있습니다.
+Claude Code, Codex, OpenCode, Kiro 또는 Copilot CLI에 원클릭 설치. 터미널에서 디자인하세요 — MCP 호환 에이전트를 통해 `.op` 파일을 읽고, 생성하고, 편집할 수 있습니다.
 
 </td>
 </tr>
@@ -125,7 +125,7 @@ cargo run -p op-host-desktop
 | --- | --- |
 | `ghcr.io/zseven-w/openpencil-web:vX.Y.Z` | Rust web host, wasm bundle, CanvasKit assets |
 
-웹 UI는 내장 agent profiles만 노출합니다. Claude/Codex/OpenCode/Copilot/Gemini CLI 도구는 Docker 이미지에 포함되지 않습니다.
+웹 UI는 내장 agent profiles만 노출합니다. Claude/Codex/OpenCode/Copilot CLI 도구는 Docker 이미지에 포함되지 않습니다.
 
 **실행:**
 
@@ -161,7 +161,6 @@ docker run -p 3100:3100 openpencil-web-rust
 | **Codex CLI**        | 에이전트 설정에서 연결 (`Cmd+,`)                                                |
 | **OpenCode**         | 에이전트 설정에서 연결 (`Cmd+,`)                                                |
 | **GitHub Copilot**   | `copilot login` 후 에이전트 설정에서 연결 (`Cmd+,`)                             |
-| **Gemini CLI**       | 에이전트 설정에서 연결 (`Cmd+,`)                                                |
 
 **모델 역량 프로파일** — 모델 티어에 따라 프롬프트, 사고 모드, 타임아웃을 자동 조정합니다. 풀 티어 모델(Claude)은 완전한 프롬프트를 받고, 스탠다드 티어(GPT-4o, Gemini, DeepSeek)는 사고 모드를 비활성화하며, 베이직 티어(MiniMax, Qwen, Llama, Mistral)는 최대 안정성을 위해 단순화된 중첩 JSON 프롬프트를 받습니다.
 
@@ -169,7 +168,7 @@ docker run -p 3100:3100 openpencil-web-rust
 
 **MCP 서버**
 
-- 내장 MCP 서버 (`op-mcp` 크레이트) — Claude Code / Codex / Gemini / OpenCode / Kiro / Copilot CLI에 원클릭 설치
+- 내장 MCP 서버 (`op-mcp` 크레이트) — Claude Code / Codex / OpenCode / Kiro / Copilot CLI에 원클릭 설치
 - Node.js 불필요 — 데스크톱 바이너리(`--mcp <path>`)를 통한 stdio 전송, 그리고 실행 중인 앱이 제공하는 실시간 HTTP 엔드포인트(`127.0.0.1:<port>/mcp`)
 - 터미널에서 디자인 자동화: MCP 호환 에이전트를 통해 `.op` 파일 읽기, 생성, 편집
 - **계층적 디자인 워크플로** — `design_skeleton` → `design_content` → `design_refine`으로 더 높은 충실도의 멀티 섹션 디자인
@@ -229,7 +228,7 @@ cat design.dsl | op design - # stdin에서 파이프 입력
 - 계층적 워크플로 — `design_skeleton` → `design_content` → `design_refine`, 각 단계에 집중된 프롬프트 사용
 - 스타일 가이드 — 50개 이상의 내장 스타일(glassmorphism, brutalist, retro 등), 태그 기반 퍼지 매칭 지원, 플래닝과 생성에 통합
 - 멀티 모델 역량 프로파일 — 모델 등급별로 싱킹 모드, 노력도, 프롬프트 형태를 자동 적응
-- 내장 에이전트 런타임(Rust) + Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot, Gemini 제공자
+- 내장 에이전트 런타임(Rust) + Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot, Google Gemini API 제공자
 - 중국 LLM 제공자를 위한 Anthropic 형식 패스스루 — Kimi, Zhipu, GLM, DouBao, Ark, Bailian/DashScope, ModelScope, Coding Plans
 
 **Git 통합**

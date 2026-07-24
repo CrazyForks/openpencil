@@ -644,8 +644,8 @@ fn near(a: f64, b: f64) -> bool {
 
 /// Build the `ChatProvider` for an agent index (into
 /// `AgentProvider::ALL`: 0 ClaudeCode, 1 CodexCli, 2 OpenCode,
-/// 3 GithubCopilot, 4 GeminiCli, 5 Antigravity, 6 GrokBuild). Claude Code uses its dedicated
-/// SDK adapter; Codex / Gemini use the subprocess transport; Copilot
+/// 3 GithubCopilot, 4 Antigravity, 5 GrokBuild). Claude Code uses its dedicated
+/// SDK adapter; Codex uses the subprocess transport; Copilot
 /// rides the official SDK; OpenCode chats over its local HTTP server
 /// (`chat_http_server.rs`).
 ///
@@ -671,10 +671,8 @@ fn provider_for_agent(agent_idx: usize, chat_session: bool) -> Option<Box<dyn Ch
         } else {
             CopilotProvider::new()
         })),
-        4 => SubprocessProvider::for_cli(CliName::Gemini)
-            .map(|p| Box::new(p) as Box<dyn ChatProvider>),
-        5 => subprocess_provider(CliName::Antigravity, chat_session),
-        6 => subprocess_provider(CliName::GrokBuild, chat_session),
+        4 => subprocess_provider(CliName::Antigravity, chat_session),
+        5 => subprocess_provider(CliName::GrokBuild, chat_session),
         _ => None,
     }
 }

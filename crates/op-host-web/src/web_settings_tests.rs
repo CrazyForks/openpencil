@@ -59,6 +59,39 @@ fn settings_payload_round_trips_recent_files_and_mcp_preferences() {
 }
 
 #[test]
+fn legacy_mcp_flags_drop_gemini_without_shifting_google_antigravity() {
+    let legacy = r#"{
+        "version":1,
+        "mcp_cli_enabled":[true,false,true,false,true,false,true,true]
+    }"#;
+    let mut state = EditorState::new();
+    let mut writes = Vec::new();
+
+    let loaded = load_into_with(&mut state, Some(legacy), None, |key, json| {
+        writes.push((key.to_string(), json.to_string()));
+        true
+    });
+
+    assert!(
+        !loaded.loaded,
+        "ordinary settings do not contain a credential payload"
+    );
+    assert_eq!(
+        state.editor_ui.agent_settings.mcp_cli_enabled,
+        [true, false, false, true, false, true, true]
+    );
+    let rewritten = writes
+        .iter()
+        .find_map(|(key, json)| (key == STORAGE_KEY).then_some(json))
+        .expect("legacy positional settings should be rewritten");
+    let value: serde_json::Value = serde_json::from_str(rewritten).expect("rewritten settings");
+    assert_eq!(
+        value["mcp_cli_enabled"],
+        serde_json::json!([true, false, false, true, false, true, true])
+    );
+}
+
+#[test]
 fn separate_settings_and_credential_payloads_round_trip_their_own_fields() {
     let mut src = EditorState::new();
     src.editor_ui.agent_settings.add_builtin_agent_config(

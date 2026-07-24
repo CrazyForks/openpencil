@@ -1,12 +1,13 @@
 //! `ChatProvider` → `LlmClient` adapter.
 //!
 //! Lets the orchestrator reuse whichever chat-panel agent the user
-//! already selected (Claude Code / Copilot / Gemini / …) as its LLM
+//! already selected (Claude Code / Copilot / Antigravity / …) as its LLM
 //! transport, instead of forcing a separate Anthropic API key.
 //!
 //! The CLI agents (`ClaudeCodeProvider`, `CopilotProvider`,
 //! `SubprocessProvider`) manage their own auth — `claude` is logged in
-//! by the user, Copilot rides GitHub auth, Gemini rides `gcloud`.
+//! by the user, Copilot rides GitHub auth, and Antigravity manages its
+//! Google account.
 //! `agent::Provider` (the `QueryEngine`-facing trait) is a different
 //! shape and only `AnthropicProvider` implements it, hence the original
 //! Anthropic-key requirement. This adapter eliminates that
@@ -232,9 +233,10 @@ mod tests {
     //
     // The manual per-subtask retry (failed-subtask remediation, phase 2)
     // reuses `ChatProviderLlmClient` with WHATEVER `ChatProvider` the user
-    // currently has selected — a CLI subprocess agent (Claude Code /
-    // Copilot / Gemini via `SubprocessProvider`) exactly as often as a
-    // builtin API-key provider. `call()` above has no branch on the
+    // currently has selected — a CLI-backed agent (Claude Code /
+    // Copilot adapters, or Codex / Antigravity / Grok Build via
+    // `SubprocessProvider`) exactly as often as a builtin API-key
+    // provider. `call()` above has no branch on the
     // concrete provider type anywhere — it only calls the `ChatProvider`
     // trait method — so these two tests prove that structurally, with two
     // stub providers shaped like the two real families instead of relying

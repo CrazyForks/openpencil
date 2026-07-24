@@ -635,7 +635,7 @@ mod tests {
             .all(|entry| entry.builtin_provider_id.is_some()));
         assert_eq!(
             state.chat.available_models[1].provider,
-            AgentProvider::GeminiCli
+            AgentProvider::CodexCli
         );
         // Select the second model, then re-apply a re-ordered catalog — the
         // selection follows the entry by identity.
@@ -661,7 +661,7 @@ mod tests {
         assert_eq!(provider_for_model_id("gpt-5.5"), AgentProvider::CodexCli);
         assert_eq!(
             provider_for_model_id("gemini-2.5-pro"),
-            AgentProvider::GeminiCli
+            AgentProvider::CodexCli
         );
         assert_eq!(
             provider_for_model_id("copilot-fast"),

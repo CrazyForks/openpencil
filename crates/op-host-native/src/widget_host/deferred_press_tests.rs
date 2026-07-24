@@ -22,9 +22,9 @@ fn seed_two_chat_models(host: &mut WidgetHostNative) {
         .chat
         .available_models
         .push(ModelEntry::new(
-            AgentProvider::GeminiCli,
-            "gemini-2.5-pro",
-            "Gemini 2.5 Pro",
+            AgentProvider::Antigravity,
+            "default",
+            "Antigravity Default",
         ));
 }
 

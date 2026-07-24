@@ -64,7 +64,7 @@ Orchestrator แบ่งหน้าที่ซับซ้อนออกเ�
 
 ### 🔌 MCP Server
 
-ติดตั้งได้ด้วยคลิกเดียวใน Claude Code, Codex, Gemini, OpenCode, Kiro หรือ Copilot CLIs ออกแบบจาก terminal ของคุณ — อ่าน สร้าง และแก้ไขไฟล์ `.op` ผ่าน agent ที่รองรับ MCP
+ติดตั้งได้ด้วยคลิกเดียวใน Claude Code, Codex, OpenCode, Kiro หรือ Copilot CLIs ออกแบบจาก terminal ของคุณ — อ่าน สร้าง และแก้ไขไฟล์ `.op` ผ่าน agent ที่รองรับ MCP
 
 </td>
 </tr>
@@ -125,7 +125,7 @@ Rust release ที่มี tag จะเผยแพร่ image แบบ web
 | --- | --- |
 | `ghcr.io/zseven-w/openpencil-web:vX.Y.Z` | Rust web host, wasm bundle และ CanvasKit assets |
 
-Web UI แสดงเฉพาะ built-in agent profiles เท่านั้น เครื่องมือ Claude/Codex/OpenCode/Copilot/Gemini CLI จะไม่ถูกบันเดิลใน Docker images
+Web UI แสดงเฉพาะ built-in agent profiles เท่านั้น เครื่องมือ Claude/Codex/OpenCode/Copilot CLI จะไม่ถูกบันเดิลใน Docker images
 
 **รัน:**
 
@@ -161,7 +161,6 @@ docker run -p 3100:3100 openpencil-web-rust
 | **Codex CLI**               | เชื่อมต่อใน Agent Settings (`Cmd+,`)                                                           |
 | **OpenCode**                | เชื่อมต่อใน Agent Settings (`Cmd+,`)                                                           |
 | **GitHub Copilot**          | `copilot login` จากนั้นเชื่อมต่อใน Agent Settings (`Cmd+,`)                                    |
-| **Gemini CLI**              | เชื่อมต่อใน Agent Settings (`Cmd+,`)                                                           |
 
 **โปรไฟล์ความสามารถของโมเดล** — ปรับ prompt, โหมด thinking และ timeout ตามระดับโมเดลโดยอัตโนมัติ โมเดลระดับเต็ม (Claude) ได้ prompt ครบถ้วน; โมเดลระดับมาตรฐาน (GPT-4o, Gemini, DeepSeek) ปิด thinking; โมเดลระดับพื้นฐาน (MiniMax, Qwen, Llama, Mistral) ได้ prompt แบบ nested-JSON ที่ย่อลงเพื่อความเสถียรสูงสุด
 
@@ -169,7 +168,7 @@ docker run -p 3100:3100 openpencil-web-rust
 
 **MCP Server**
 
-- MCP Server ในตัว (`op-mcp` crate) — ติดตั้งได้ด้วยคลิกเดียวใน Claude Code / Codex / Gemini / OpenCode / Kiro / Copilot CLIs
+- MCP Server ในตัว (`op-mcp` crate) — ติดตั้งได้ด้วยคลิกเดียวใน Claude Code / Codex / OpenCode / Kiro / Copilot CLIs
 - ไม่ต้องใช้ Node.js — stdio transport ผ่าน binary เดสก์ท็อป (`--mcp <path>`) พร้อม live HTTP endpoint (`127.0.0.1:<port>/mcp`) จากแอปที่กำลังทำงาน
 - การทำ Design automation จาก terminal: อ่าน สร้าง และแก้ไขไฟล์ `.op` ผ่าน agent ที่รองรับ MCP
 - **Layered design workflow** — `design_skeleton` → `design_content` → `design_refine` สำหรับดีไซน์หลายส่วนที่มีความละเอียดสูงขึ้น
@@ -229,7 +228,7 @@ cat design.dsl | op design - # Pipe จาก stdin
 - Layered workflow — `design_skeleton` → `design_content` → `design_refine` พร้อม prompt ที่เน้นเฉพาะในแต่ละเฟส
 - Style Guides — สไตล์ในตัวกว่า 50 แบบ (glassmorphism, brutalist, retro ฯลฯ) พร้อม fuzzy matching ตาม tag ใช้ในการวางแผนและการสร้าง
 - โปรไฟล์ความสามารถหลายโมเดล — ปรับโหมดการคิด ความพยายาม และรูปแบบ prompt อัตโนมัติตามระดับโมเดล
-- Agent runtime ในตัว (Rust) + ผู้ให้บริการ Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot, Gemini
+- Agent runtime ในตัว (Rust) + ผู้ให้บริการ Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot และ Google Gemini API
 - Passthrough รูปแบบ Anthropic สำหรับผู้ให้บริการ LLM จีน — Kimi, Zhipu, GLM, DouBao, Ark, Bailian/DashScope, ModelScope, Coding Plans
 
 **การเชื่อมต่อ Git**

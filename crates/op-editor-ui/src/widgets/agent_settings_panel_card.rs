@@ -81,13 +81,6 @@ pub(super) fn paint_agent_card(
             AVATAR_ICON,
             theme.foreground,
         ),
-        AgentProvider::GeminiCli => paint_brand_logo(
-            cx.backend,
-            BrandLogo::Gemini,
-            icon_top_left,
-            AVATAR_ICON,
-            theme.foreground,
-        ),
         AgentProvider::Antigravity => paint_brand_logo(
             cx.backend,
             BrandLogo::Antigravity,

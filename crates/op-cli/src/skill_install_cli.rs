@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 
 const BUNDLE_JSON: &str = include_str!("../assets/skill-bundle.json");
 const VERSION_SENTINEL: &str = "__OPENPENCIL_VERSION__";
-// Top-level bundle version plus five embedded plugin/package manifest versions.
-const EXPECTED_VERSION_SENTINEL_COUNT: usize = 6;
+// Top-level bundle version plus four embedded plugin/package manifest versions.
+const EXPECTED_VERSION_SENTINEL_COUNT: usize = 5;
 const REPO: &str = "zseven-w/openpencil-skill";
 const SKILL_NAME: &str = "openpencil-skill";
 
@@ -21,7 +21,6 @@ enum Target {
     Claude,
     Codex,
     Cursor,
-    Gemini,
     OpenCode,
 }
 
@@ -31,10 +30,9 @@ impl Target {
             "claude" | "claude-code" | "claudecode" => Ok(Target::Claude),
             "codex" => Ok(Target::Codex),
             "cursor" => Ok(Target::Cursor),
-            "gemini" | "gemini-cli" => Ok(Target::Gemini),
             "opencode" | "open-code" => Ok(Target::OpenCode),
             _ => Err(format!(
-                "unknown target {raw:?}; available: claude, codex, cursor, gemini, opencode"
+                "unknown target {raw:?}; available: claude, codex, cursor, opencode"
             )),
         }
     }
@@ -44,7 +42,6 @@ impl Target {
             Target::Claude => "claude",
             Target::Codex => "codex",
             Target::Cursor => "cursor",
-            Target::Gemini => "gemini",
             Target::OpenCode => "opencode",
         }
     }
@@ -110,7 +107,7 @@ fn resolve_targets(
     let detected = detect_targets(home);
     if detected.is_empty() && matches!(action, Action::Install) {
         return Err(
-            "no supported AI coding agents detected; pass --target claude|codex|cursor|gemini|opencode"
+            "no supported AI coding agents detected; pass --target claude|codex|cursor|opencode"
                 .into(),
         );
     }
@@ -127,9 +124,6 @@ fn detect_targets(home: &Path) -> Vec<Target> {
     }
     if home.join(".cursor").exists() {
         targets.push(Target::Cursor);
-    }
-    if command_exists("gemini") {
-        targets.push(Target::Gemini);
     }
     if command_exists("opencode") {
         targets.push(Target::OpenCode);
@@ -152,9 +146,6 @@ fn install_target(target: Target, home: &Path, bundle: &SkillBundle) -> Result<(
         Target::Claude => install_claude(home, bundle),
         Target::Codex => install_codex(home, bundle),
         Target::Cursor => write_bundle_to(&home.join(".cursor/plugins").join(SKILL_NAME), bundle),
-        Target::Gemini => {
-            write_bundle_to(&home.join(".gemini/extensions").join(SKILL_NAME), bundle)
-        }
         Target::OpenCode => install_opencode(home, bundle),
     }
 }
@@ -164,7 +155,6 @@ fn uninstall_target(target: Target, home: &Path) -> Result<(), String> {
         Target::Claude => uninstall_claude(home),
         Target::Codex => uninstall_codex(home),
         Target::Cursor => remove_path(&home.join(".cursor/plugins").join(SKILL_NAME)),
-        Target::Gemini => remove_path(&home.join(".gemini/extensions").join(SKILL_NAME)),
         Target::OpenCode => uninstall_opencode(home),
     }
 }
@@ -491,7 +481,6 @@ mod tests {
             ".claude-plugin/plugin.json",
             ".cursor-plugin/plugin.json",
             "package.json",
-            "gemini-extension.json",
         ] {
             let content = bundle
                 .files
@@ -544,11 +533,26 @@ mod tests {
     fn bundle_renderer_rejects_partially_templated_versions() {
         let partial_template = BUNDLE_JSON.replacen(VERSION_SENTINEL, env!("CARGO_PKG_VERSION"), 1);
         let error = render_bundle_template(&partial_template, env!("CARGO_PKG_VERSION"))
-            .expect_err("template with only five version sentinels should fail");
+            .expect_err("partially rendered template should fail");
         let expected = format!("expected {EXPECTED_VERSION_SENTINEL_COUNT}");
         let found = format!("found {}", EXPECTED_VERSION_SENTINEL_COUNT - 1);
 
         assert!(error.contains(&expected), "unexpected error: {error}");
         assert!(error.contains(&found), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn gemini_cli_is_not_an_install_target() {
+        let error = super::Target::parse("gemini-cli")
+            .expect_err("retired Gemini CLI integration must stay unavailable");
+
+        assert!(
+            error.contains("unknown target"),
+            "unexpected error: {error}"
+        );
+        assert!(
+            !error.contains("available: gemini"),
+            "unexpected error: {error}"
+        );
     }
 }

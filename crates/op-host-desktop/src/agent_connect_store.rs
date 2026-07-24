@@ -22,7 +22,7 @@ struct PersistedAgentConnections {
 
 /// Persist the currently-connected provider ids. Best-effort: a failed
 /// write must never break the probe flow.
-pub(crate) fn save(connected: &[bool; 7]) {
+pub(crate) fn save(connected: &[bool; 6]) {
     let value = PersistedAgentConnections {
         connected: AgentProvider::ALL
             .iter()
@@ -42,6 +42,10 @@ pub(crate) fn load() -> Vec<AgentProvider> {
     let Ok(Some(value)) = op_config_store::read_json::<PersistedAgentConnections>(FILE) else {
         return Vec::new();
     };
+    providers_from_persisted(&value)
+}
+
+fn providers_from_persisted(value: &PersistedAgentConnections) -> Vec<AgentProvider> {
     AgentProvider::ALL
         .iter()
         .copied()
@@ -54,12 +58,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn round_trips_connected_providers_through_json() {
+    fn legacy_gemini_cli_entry_is_ignored_without_hiding_supported_providers() {
         let value = PersistedAgentConnections {
-            connected: vec!["Claude Code".into(), "Gemini CLI".into()],
+            connected: vec![
+                "Claude Code".into(),
+                "Gemini CLI".into(),
+                "Antigravity".into(),
+            ],
         };
         let json = serde_json::to_string(&value).expect("serialize");
         let back: PersistedAgentConnections = serde_json::from_str(&json).expect("parse");
-        assert_eq!(back.connected, vec!["Claude Code", "Gemini CLI"]);
+        assert_eq!(
+            providers_from_persisted(&back),
+            vec![AgentProvider::ClaudeCode, AgentProvider::Antigravity]
+        );
     }
 }
