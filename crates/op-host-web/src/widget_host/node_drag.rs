@@ -67,9 +67,33 @@ impl WidgetHost {
         self.editor_state.editor_ui.last_canvas_click = if self.shift_held || is_double {
             None
         } else {
-            Some((deepest, self.now_ms))
+            Some((deepest.clone(), self.now_ms))
         };
+        // A leaf selected directly from the Layer panel can sit below the
+        // canvas depth resolver's primary target. Preserve that exact crop
+        // selection on the first press so the second press can activate crop
+        // editing. A child hit does not qualify: it must retain ordinary
+        // one-level drill semantics.
+        let selected_crop_is_deepest = deepest == self.editor_state.selection.anchor
+            && self.editor_state.selection_count() == 1
+            && self.editor_state.can_edit_selected_image_crop();
+        let primary = if selected_crop_is_deepest {
+            deepest.clone()
+        } else {
+            targets.primary.clone()
+        };
+        if let Some(editing) = self.editor_state.editor_ui.image_crop_editing.clone() {
+            if hit_path.contains(&editing)
+                && self.start_active_image_crop_drag(&editing, &hit_path, x, y)
+            {
+                return true;
+            }
+            self.exit_image_crop_edit();
+        }
         if is_double && !text_edit_was_active {
+            if selected_crop_is_deepest && self.enter_selected_image_crop_edit() {
+                return true;
+            }
             if let Some(secondary) = targets.secondary_under_pointer {
                 self.editor_state.set_single_selection(secondary.clone());
                 self.editor_state.editor_ui.entered_container = Some(targets.primary);
@@ -85,7 +109,7 @@ impl WidgetHost {
             }
         }
 
-        let target = targets.primary;
+        let target = primary;
         let mut should_start_drag = true;
         if self.shift_held {
             let was_in_set = self.editor_state.is_selected(&target);

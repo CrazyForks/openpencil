@@ -375,11 +375,11 @@ impl TopBar {
         // only — see `GIT_BUTTON_AVAILABLE`; also hidden inside a VS Code
         // embed alongside the rest of the file-scoped chrome — the file
         // name it hangs off doesn't paint either).
-        if GIT_BUTTON_AVAILABLE
-            && self.file_controls_visible()
-            && (self.git_button_rect(rect)).contains(point)
-        {
-            return Some(TopBarHit::ToggleGitPanel);
+        if GIT_BUTTON_AVAILABLE && self.file_controls_visible() {
+            let git_rect = self.git_button_rect(rect);
+            if git_rect.size.x > 0.0 && git_rect.contains(point) {
+                return Some(TopBarHit::ToggleGitPanel);
+            }
         }
         // Right cluster: Maximize / Play / Sun / Globe-with-chevron
         // (right→left). Maximize + Play + Sun are normal ICON_BUTTON
@@ -424,11 +424,6 @@ impl TopBar {
         // each side keeps the click target slightly looser than
         // the visible chip so the first press always lands.
         let status_text = self.chip_status_text();
-        let dot_w = if status_text.is_some() {
-            8.0 + 6.0
-        } else {
-            0.0
-        };
         // Prefer the host-measured text width so the hit area matches the
         // painted chip exactly (paint uses skia `measure_text` @ 11 px).
         // Without a measure backend (wasm) fall back to a ~7 px/char
@@ -441,16 +436,7 @@ impl TopBar {
             };
             chip_chars as f32 * 7.0
         });
-        // Same geometry as `paint_chrome`'s chip: 8 (lead pad) + icons + 6
-        // (gap) + dot + text + 12 (trail pad). No extra slop.
-        let chip_w = 8.0 + self.agent_icons_span() + dot_w + text_w + 12.0;
-        let chip_rect = Rect {
-            origin: Point2D::new(
-                self.chip_right_anchor_x(rect) - chip_w - (DIVIDER_GAP * 2.0 + DIVIDER_W),
-                rect.origin.y + 4.0,
-            ),
-            size: Point2D::new(chip_w, rect.size.y - 8.0),
-        };
+        let chip_rect = self.agent_chip_rect(rect, text_w);
         if (chip_rect).contains(point) {
             return Some(TopBarHit::OpenAgentSettings);
         }
@@ -594,14 +580,6 @@ pub(super) fn paint_import_button(
         color,
         1.5,
     );
-}
-
-/// Rough "is this a full-width (CJK/Hangul/full-width-form) glyph"
-/// test — used only to estimate the rendered file-name width so the
-/// git button clears it.
-pub(super) fn is_wide_glyph(c: char) -> bool {
-    let cp = c as u32;
-    matches!(cp, 0x1100..=0x11FF | 0x2E80..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF | 0xFF00..=0xFFEF)
 }
 
 /// Top-left y for a glyph of `size` vertically centred on `center_y`.

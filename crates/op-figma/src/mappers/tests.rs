@@ -183,6 +183,73 @@ fn image_fill_maps_crop_and_tile_scale_modes() {
 }
 
 #[test]
+fn image_fill_maps_transformed_stretch_to_crop_and_preserves_transform() {
+    let paints = [obj(vec![
+        ("type", FigValue::Str("IMAGE".into())),
+        (
+            "image",
+            obj(vec![("hash", FigValue::Bytes(vec![0xab, 0xcd]))]),
+        ),
+        ("imageScaleMode", FigValue::Str("STRETCH".into())),
+        (
+            "transform",
+            obj(vec![
+                ("m00", FigValue::Float(0.5089059)),
+                ("m01", FigValue::Float(0.0)),
+                ("m02", FigValue::Float(0.490246)),
+                ("m10", FigValue::Float(0.0)),
+                ("m11", FigValue::Float(0.28951487)),
+                ("m12", FigValue::Float(0.37636933)),
+            ]),
+        ),
+    ])];
+    let fills = map_figma_fills(Some(&paints)).unwrap();
+    let PenFill::Image(image) = &fills[0] else {
+        panic!("expected image fill");
+    };
+
+    assert_eq!(image.mode, Some(ImageFillMode::Crop));
+    let transform = image.transform.as_ref().expect("crop transform");
+    assert_eq!(transform.m00, 0.5089059);
+    assert_eq!(transform.m01, 0.0);
+    assert_eq!(transform.m02, 0.490246);
+    assert_eq!(transform.m10, 0.0);
+    assert_eq!(transform.m11, 0.28951487);
+    assert_eq!(transform.m12, 0.37636933);
+}
+
+#[test]
+fn image_fill_keeps_untransformed_stretch_mode() {
+    for transform in [
+        None,
+        Some(obj(vec![
+            ("m00", FigValue::Float(1.0)),
+            ("m11", FigValue::Float(1.0)),
+        ])),
+    ] {
+        let mut pairs = vec![
+            ("type", FigValue::Str("IMAGE".into())),
+            (
+                "image",
+                obj(vec![("hash", FigValue::Bytes(vec![0xab, 0xcd]))]),
+            ),
+            ("imageScaleMode", FigValue::Str("STRETCH".into())),
+        ];
+        if let Some(transform) = transform {
+            pairs.push(("transform", transform));
+        }
+        let paints = [obj(pairs)];
+        let fills = map_figma_fills(Some(&paints)).unwrap();
+        let PenFill::Image(image) = &fills[0] else {
+            panic!("expected image fill");
+        };
+
+        assert_eq!(image.mode, Some(ImageFillMode::Stretch));
+        assert_eq!(image.transform, None);
+    }
+}
+
+#[test]
 fn image_fill_maps_positive_tile_scale_only_for_tile_mode() {
     let image_fill = |mode: &str, scale: Option<f32>| {
         let mut pairs = vec![

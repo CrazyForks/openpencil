@@ -415,6 +415,9 @@ impl WidgetHost {
         if self.apply_image_panel_send() {
             return true;
         }
+        if self.exit_image_crop_edit() {
+            return true;
+        }
         // Enter belongs to the open font-search overlay. Swallow it before
         // any stale background focus or the chat composer can act on it.
         if self.editor_state.editor_ui.font_picker.open {

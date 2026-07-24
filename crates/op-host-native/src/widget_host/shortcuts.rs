@@ -298,7 +298,7 @@ impl WidgetHostNative {
         let ok = self.editor_state.undo();
         if ok {
             self.mark_dirty();
-            self.refresh_missing_fonts_after_document_change();
+            self.refresh_missing_fonts_after_history_change();
         }
         ok
     }
@@ -316,7 +316,7 @@ impl WidgetHostNative {
         let ok = self.editor_state.redo();
         if ok {
             self.mark_dirty();
-            self.refresh_missing_fonts_after_document_change();
+            self.refresh_missing_fonts_after_history_change();
         }
         ok
     }
@@ -535,6 +535,7 @@ impl WidgetHostNative {
     /// DISCARDS any in-flight pen path (TS `onToolChange` resets the
     /// pen preview without committing, `skia-pen-tool.ts:38-50`).
     pub fn apply_set_tool(&mut self, tool: op_editor_core::Tool) {
+        self.exit_image_crop_edit();
         // Leaving Select must drop the hover outline immediately —
         // cursor moves stop updating it for other tools.
         self.editor_state.editor_ui.canvas_hover_node = None;

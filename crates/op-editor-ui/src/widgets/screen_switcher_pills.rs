@@ -102,7 +102,9 @@ impl ScreenSwitcherPills<'_> {
 
             let max_label_w = (rect.size.x - LABEL_PAD_X * 2.0).max(0.0);
             let label = truncate_to_width(cx, &self.labels[index], LABEL_FONT, max_label_w);
-            let text_width = cx.backend.measure_text(&label, LABEL_FONT);
+            let text_width = cx
+                .backend
+                .measure_text_family(&label, LABEL_FONT, "system-ui");
             let text_color = if active {
                 theme.accent_foreground
             } else {

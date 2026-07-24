@@ -134,6 +134,91 @@ fn image_fill_body_paints_selected_image_thumbnail_with_mode() {
 }
 
 #[test]
+fn legacy_crop_thumbnail_forwards_affine_window_and_original_size() {
+    const PNG_DATA_URL: &str =
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+    let mut state = state_from(&format!(
+        r##"{{"version":"1.0.0","children":[{{
+            "type":"rectangle","id":"legacy-crop","name":"Legacy crop",
+            "x":0,"y":0,"width":191,"height":236,
+            "fill":[{{"type":"image","url":"{PNG_DATA_URL}","mode":"stretch",
+                "originalSize":{{"width":1179,"height":2556}},
+                "transform":{{"m00":0.5089059,"m01":0.0,"m02":0.490246,
+                    "m10":0.0,"m11":0.28951487,"m12":0.37636933}}}}]
+        }}]}}"##
+    ));
+    state.set_single_selection(NodeId::new("legacy-crop"));
+    state.editor_ui.locale = op_editor_core::Locale::ZhCn;
+    let panel = PropertyPanel::for_selection(&state).expect("image fill panel");
+    assert_eq!(
+        panel.snapshot.image_fill.as_ref().unwrap().mode,
+        op_editor_core::ImageFillMode::Crop,
+    );
+
+    let mut backend = CountingBackend::default();
+    {
+        let mut cx = PaintCx {
+            backend: &mut backend,
+        };
+        panel.paint(
+            &mut cx,
+            Rect {
+                origin: Point2D::new(320.0, 24.0),
+                size: Point2D::new(280.0, 900.0),
+            },
+        );
+    }
+
+    assert_eq!(backend.image_modes, vec![ImageDrawMode::Crop]);
+    assert_eq!(
+        backend.image_transforms,
+        vec![Some([
+            0.5089059, 0.0, 0.490246, 0.0, 0.28951487, 0.37636933
+        ])],
+    );
+    assert_eq!(backend.image_original_sizes, vec![Some([1179.0, 2556.0])]);
+    assert!(
+        backend.texts.iter().any(|text| text == "裁剪"),
+        "the legacy transformed stretch row should expose Crop semantics",
+    );
+}
+
+#[test]
+fn tile_thumbnail_forwards_authored_scale() {
+    const PNG_DATA_URL: &str =
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+    let mut state = state_from(&format!(
+        r##"{{"version":"1.0.0","children":[{{
+            "type":"rectangle","id":"tile","name":"Tile",
+            "x":0,"y":0,"width":220,"height":220,
+            "fill":[{{"type":"image","url":"{PNG_DATA_URL}","mode":"tile",
+                "originalSize":{{"width":4096,"height":2048}},
+                "tileScale":0.38618907}}]
+        }}]}}"##
+    ));
+    state.set_single_selection(NodeId::new("tile"));
+    let panel = PropertyPanel::for_selection(&state).expect("image fill panel");
+
+    let mut backend = CountingBackend::default();
+    {
+        let mut cx = PaintCx {
+            backend: &mut backend,
+        };
+        panel.paint(
+            &mut cx,
+            Rect {
+                origin: Point2D::new(320.0, 24.0),
+                size: Point2D::new(280.0, 900.0),
+            },
+        );
+    }
+
+    assert_eq!(backend.image_modes, vec![ImageDrawMode::Tile]);
+    assert_eq!(backend.image_original_sizes, vec![Some([4096.0, 2048.0])]);
+    assert_eq!(backend.image_tile_scales, vec![0.38618907]);
+}
+
+#[test]
 fn image_fill_adjustment_reset_label_uses_i18n() {
     let mut state = image_fill_state();
     state.editor_ui.image_fill_popover_open = true;

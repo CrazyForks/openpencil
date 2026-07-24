@@ -1,4 +1,5 @@
 use super::top_bar::*;
+use super::top_bar_title::elide_filename_to_width;
 use crate::theme::Theme;
 use crate::widgets::icons::Icon;
 use crate::widgets::{PaintCx, Widget};
@@ -7,6 +8,142 @@ use op_editor_core::editor_ui_state::EditorUiState;
 
 fn nearly_eq(a: f32, b: f32) -> bool {
     (a - b).abs() < 0.01
+}
+
+fn title_test_width(text: &str, size: f32) -> f32 {
+    text.chars()
+        .map(|c| if c.is_ascii() { size * 0.68 } else { size })
+        .sum()
+}
+
+#[test]
+fn long_file_name_middle_elides_and_preserves_extension() {
+    let input = "openpencil-memory-repro (1).op";
+    let output = elide_filename_to_width(input, 92.0, |text| title_test_width(text, 13.0));
+
+    assert_ne!(output, input);
+    assert!(output.contains('…'), "got {output:?}");
+    assert!(
+        output.ends_with(".op"),
+        "extension must survive: {output:?}"
+    );
+    assert!(title_test_width(&output, 13.0) <= 92.0);
+}
+
+#[test]
+fn long_dirty_title_stays_between_left_and_right_controls() {
+    let mut bar = TopBar::new("openpencil-memory-repro (1).op");
+    bar.edited = true;
+    bar.label_edited = "— 已编辑";
+    bar.agent_count = 0;
+    bar.mcp_count = 0;
+    bar.label_agents_and_mcp = "Agents & MCP";
+    let rect = Rect {
+        origin: Point2D::ZERO,
+        size: Point2D::new(760.0, TOP_BAR_HEIGHT),
+    };
+
+    let layout = bar.title_layout(rect, title_test_width);
+    let slot_right = layout.slot.origin.x + layout.slot.size.x;
+    assert!(layout.file_name.ends_with(".op"));
+    assert!(layout.file_name.contains('…'));
+    assert!(
+        layout.edited_x.is_some(),
+        "dirty marker must remain allocated"
+    );
+    let git = layout.git_rect.expect("760px window still fits Git icon");
+    assert!(layout.file_x >= layout.slot.origin.x);
+    assert!(git.origin.x + git.size.x <= slot_right + 0.01);
+    assert_eq!(
+        bar.hit_test(
+            rect,
+            Point2D::new(
+                bar.git_button_rect(rect).origin.x + ICON_BUTTON / 2.0,
+                TOP_BAR_HEIGHT / 2.0,
+            ),
+        ),
+        Some(TopBarHit::ToggleGitPanel),
+    );
+}
+
+#[test]
+fn git_position_does_not_follow_file_name_length() {
+    let make_bar = |file_name: &str| {
+        let mut bar = TopBar::new(file_name);
+        bar.edited = true;
+        bar.label_edited = "— 已编辑";
+        bar.agent_count = 0;
+        bar.mcp_count = 0;
+        bar.label_agents_and_mcp = "Agents & MCP";
+        bar
+    };
+    let short = make_bar("test.op");
+    let long = make_bar("openpencil-super-long-project-file-name-for-title-overflow-check (1).op");
+    let rect = Rect {
+        origin: Point2D::ZERO,
+        size: Point2D::new(1_200.0, TOP_BAR_HEIGHT),
+    };
+    let short_git = short.git_button_rect(rect);
+    let long_git = long.git_button_rect(rect);
+    let long_layout = long.title_layout(rect, title_test_width);
+
+    assert!(short_git.size.x > 0.0);
+    assert!(nearly_eq(short_git.origin.x, long_git.origin.x));
+    assert!(long_layout.file_name.contains('…'), "{long_layout:?}");
+    assert!(long_layout.file_name.ends_with(".op"));
+}
+
+#[test]
+fn narrow_dirty_title_drops_git_before_filename_extension_or_status() {
+    let mut bar = TopBar::new("openpencil-memory-repro (1).op");
+    bar.edited = true;
+    bar.label_edited = "— 已编辑";
+    bar.agent_count = 0;
+    bar.mcp_count = 0;
+    bar.label_agents_and_mcp = "Agents & MCP";
+    let rect = Rect {
+        origin: Point2D::ZERO,
+        size: Point2D::new(608.0, TOP_BAR_HEIGHT),
+    };
+
+    let layout = bar.title_layout(rect, title_test_width);
+    assert!(layout.file_name.ends_with(".op"), "{layout:?}");
+    assert!(layout.edited_x.is_some());
+    assert!(
+        layout.git_rect.is_none(),
+        "Git yields before identity/status"
+    );
+}
+
+#[test]
+fn short_file_name_remains_unelided_and_keeps_exact_git_gap() {
+    let bar = TopBar::new("test.op");
+    let rect = Rect {
+        origin: Point2D::ZERO,
+        size: Point2D::new(1200.0, TOP_BAR_HEIGHT),
+    };
+    let layout = bar.title_layout(rect, title_test_width);
+    let file_w = title_test_width(&layout.file_name, 13.0);
+    let git = layout.git_rect.expect("wide title bar shows Git");
+
+    assert_eq!(layout.file_name, "test.op");
+    assert!(nearly_eq(git.origin.x - (layout.file_x + file_w), 10.0));
+}
+
+#[test]
+fn zero_width_title_slot_paints_no_filename_or_git_target() {
+    let mut bar = TopBar::new("very-long-file-name.op");
+    bar.edited = true;
+    bar.label_edited = "— Edited";
+    let rect = Rect {
+        origin: Point2D::ZERO,
+        size: Point2D::new(260.0, TOP_BAR_HEIGHT),
+    };
+    let layout = bar.title_layout(rect, title_test_width);
+
+    assert_eq!(layout.slot.size.x, 0.0);
+    assert!(layout.file_name.is_empty());
+    assert!(layout.git_rect.is_none());
 }
 
 #[test]

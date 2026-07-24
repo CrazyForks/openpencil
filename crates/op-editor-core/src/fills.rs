@@ -7,6 +7,7 @@
 //! colour model.
 
 use crate::editor_ui_state::{FillType, ImageAdjustmentField, ImageFillMode};
+use crate::PenNodeExt;
 use jian_ops_schema::node::PenNode;
 use jian_ops_schema::style::{
     GradientStop, ImageFillBody, LinearGradientBody, MeshGradientBody, MeshVertexStop, PenEffect,
@@ -27,6 +28,14 @@ pub struct ImageFillSummary {
     /// backward-compatible default when `tileScale` is absent or invalid;
     /// standalone Image nodes report `None` because they do not support it.
     pub tile_scale: Option<f32>,
+    /// Figma affine image transform, mapping normalized node coordinates to
+    /// normalized image UV coordinates. Standalone Image nodes do not carry
+    /// this fill-only crop payload.
+    pub transform: Option<[f32; 6]>,
+    /// Authored source dimensions used by crop initialization and TILE
+    /// rendering. This remains independent from the decoded preview raster's
+    /// possibly-downsampled dimensions.
+    pub original_size: Option<[f32; 2]>,
     pub exposure: f32,
     pub contrast: f32,
     pub saturation: f32,
@@ -396,11 +405,34 @@ pub fn first_image_fill_summary(node: &PenNode) -> Option<ImageFillSummary> {
         return None;
     };
     let trimmed_url = body.url.trim();
+    let transform = body
+        .transform
+        .as_ref()
+        .map(|m| [m.m00, m.m01, m.m02, m.m10, m.m11, m.m12]);
+    let mode = match body.mode.as_ref() {
+        // Older `.op` documents preserve Figma's wire representation:
+        // interactively cropped images were serialized as STRETCH plus an
+        // affine sampling transform. Expose the actual editing semantics.
+        Some(jian_ops_schema::style::ImageFillMode::Stretch)
+            if crate::image_crop::image_fill_body_is_crop(body) =>
+        {
+            ImageFillMode::Crop
+        }
+        mode => ImageFillMode::from_schema(mode),
+    };
     Some(ImageFillSummary {
-        mode: ImageFillMode::from_schema(body.mode.as_ref()),
+        mode,
         has_image: !trimmed_url.is_empty(),
         image_url: (!trimmed_url.is_empty()).then(|| body.url.to_string()),
         tile_scale: Some(effective_image_tile_scale(body.tile_scale)),
+        transform,
+        original_size: body.original_size.as_ref().and_then(|size| {
+            (size.width.is_finite()
+                && size.height.is_finite()
+                && size.width > 0.0
+                && size.height > 0.0)
+                .then_some([size.width, size.height])
+        }),
         exposure: body.exposure.unwrap_or(0.0),
         contrast: body.contrast.unwrap_or(0.0),
         saturation: body.saturation.unwrap_or(0.0),
@@ -424,11 +456,35 @@ fn primary_image_fill_mut(node: &mut PenNode) -> Option<&mut ImageFillBody> {
 
 /// Set the primary image fill's fit mode.
 pub fn set_primary_image_fill_mode(node: &mut PenNode, mode: ImageFillMode) -> bool {
+    let node_width = node.width_px().map(|value| value as f32);
+    let node_height = node.height_px().map(|value| value as f32);
     let Some(body) = primary_image_fill_mut(node) else {
         return false;
     };
-    body.mode = Some(mode.to_schema());
-    true
+    let schema_mode = mode.to_schema();
+    let mut changed = body.mode.as_ref() != Some(&schema_mode);
+    body.mode = Some(schema_mode);
+    if mode == ImageFillMode::Crop {
+        if body.transform.is_none() {
+            let transform = node_width.zip(node_height).and_then(|(width, height)| {
+                crate::image_crop::centered_crop_transform(
+                    width,
+                    height,
+                    body.original_size.as_ref(),
+                )
+            });
+            if transform.is_some() {
+                body.transform = transform;
+                changed = true;
+            }
+        }
+    } else if body.transform.take().is_some() {
+        // Affine image transforms take precedence over every non-Tile mode in
+        // both renderers. Clear a crop transform when leaving Crop so Fill/Fit
+        // actually changes the rendered placement.
+        changed = true;
+    }
+    changed
 }
 
 /// Lowest and highest tile scales accepted by the inspector. Keeping the
@@ -1258,5 +1314,58 @@ mod tests {
             &fills[1],
             PenFill::Shader(body) if body.opacity == Some(0.65)
         ));
+    }
+
+    #[test]
+    fn transformed_legacy_stretch_summary_reports_crop_preview_payload() {
+        let src = r#"{"version":"1.0.0","children":[{
+            "type":"rectangle","id":"crop","name":"Legacy crop",
+            "x":0,"y":0,"width":191,"height":236,
+            "fill":[{"type":"image","url":"data:image/png;base64,AA==",
+                "mode":"stretch",
+                "originalSize":{"width":1179,"height":2556},
+                "transform":{"m00":0.5089059,"m01":0.0,"m02":0.490246,
+                    "m10":0.0,"m11":0.28951487,"m12":0.37636933}}]
+        }]}"#;
+        let node = jian_ops_schema::load_str(src)
+            .expect("legacy crop fixture parses")
+            .value
+            .children
+            .into_iter()
+            .next()
+            .expect("one node");
+
+        let summary = first_image_fill_summary(&node).expect("image summary");
+        assert_eq!(summary.mode, ImageFillMode::Crop);
+        assert_eq!(
+            summary.transform,
+            Some([0.5089059, 0.0, 0.490246, 0.0, 0.28951487, 0.37636933])
+        );
+        assert_eq!(summary.original_size, Some([1179.0, 2556.0]));
+        assert_eq!(summary.tile_scale, Some(1.0));
+    }
+
+    #[test]
+    fn untransformed_stretch_summary_keeps_historical_fill_fallback() {
+        let src = r#"{"version":"1.0.0","children":[{
+            "type":"rectangle","id":"stretch","name":"Stretch",
+            "x":0,"y":0,"width":10,"height":10,
+            "fill":[{"type":"image","url":"data:image/png;base64,AA==",
+                "mode":"stretch",
+                "transform":{"m00":1.0,"m01":0.0,"m02":0.0,
+                    "m10":0.0,"m11":1.0,"m12":0.0}}]
+        }]}"#;
+        let node = jian_ops_schema::load_str(src)
+            .expect("stretch fixture parses")
+            .value
+            .children
+            .into_iter()
+            .next()
+            .expect("one node");
+
+        let summary = first_image_fill_summary(&node).expect("image summary");
+        assert_eq!(summary.mode, ImageFillMode::Fill);
+        assert_eq!(summary.transform, Some([1.0, 0.0, 0.0, 0.0, 1.0, 0.0]));
+        assert_eq!(summary.original_size, None);
     }
 }

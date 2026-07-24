@@ -364,10 +364,10 @@ fn pick_fill_image<C: RepaintContext + 'static>(inner: &InnerRc<C>) {
                         return;
                     };
                     let mut b = inner2.borrow_mut();
-                    if b.host_mut()
-                        .editor_state_mut()
-                        .set_selected_fill_image_url(&url)
-                    {
+                    if file_actions::apply_fill_image_data_url(
+                        b.host_mut().editor_state_mut(),
+                        &url,
+                    ) {
                         // Fill content written outside the command/history
                         // path — bump the revision so the layer-panel cache +
                         // save-dirty tracking (keyed on `document_revision()`)

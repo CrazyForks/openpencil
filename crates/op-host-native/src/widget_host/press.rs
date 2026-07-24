@@ -1102,14 +1102,10 @@ impl WidgetHostNative {
             if let Some(hit) = toolbar.hit_test(toolbar_rect, Point2D::new(x, y)) {
                 match hit {
                     op_editor_ui::widgets::ToolbarHit::Tool(tool) => {
-                        // TS onToolChange DISCARDS an in-progress pen
-                        // path on tool switch (`skia-pen-tool.ts:38-50`).
-                        self.cancel_pen_on_tool_switch(tool);
-                        self.editor_state.tool = tool;
+                        self.apply_set_tool(tool);
                         self.editor_state.editor_ui.shape_picker.open = false;
                         self.editor_state.editor_ui.shape_picker.hover = None;
                         self.editor_state.editor_ui.shape_picker.pressed = None;
-                        self.mark_dirty();
                         return true;
                     }
                     op_editor_ui::widgets::ToolbarHit::Action(action) => {
@@ -1213,6 +1209,26 @@ impl WidgetHostNative {
             let doc_point = self.editor_state.viewport.to_document(canvas_local);
 
             if matches!(self.editor_state.tool, Tool::Select) {
+                if let Some(editing) = self.editor_state.editor_ui.image_crop_editing.clone() {
+                    if let Some(hit_path) = self
+                        .layout_scene
+                        .node_path_at_doc_point(doc_point, self.editor_state.viewport.zoom)
+                        .filter(|path| path.iter().any(|id| id == editing.as_str()))
+                    {
+                        let hit_path = hit_path
+                            .into_iter()
+                            .map(op_editor_core::NodeId::new)
+                            .collect();
+                        return self.apply_canvas_node_press(
+                            hit_path,
+                            x,
+                            y,
+                            text_edit_was_active,
+                            viewport_height,
+                        );
+                    }
+                    self.exit_image_crop_edit();
+                }
                 // Path controls hit-test FIRST (TS handleSelectMouseDown,
                 // skia-interaction.ts:277-306) — before arc / resize /
                 // rotation, so anchor dots near a corner stay grabbable.

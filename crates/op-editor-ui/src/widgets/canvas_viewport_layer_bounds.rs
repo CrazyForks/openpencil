@@ -61,6 +61,41 @@ pub(super) fn sibling_mask_layer_bounds<'a>(
     finish_layer_bounds(bounds, viewport_origin, zoom, cull, transforms)
 }
 
+/// Whether any paint from `node` or its descendants can reach `cull`.
+///
+/// Unlike the old leaf-only canvas cull, this uses the same conservative
+/// effect- and transform-aware subtree bounds as offscreen layer allocation.
+/// Invalid imported geometry stays paintable rather than disappearing.
+pub(super) fn subtree_intersects_cull(
+    node: &SceneNode,
+    viewport_origin: Point2D,
+    zoom: f32,
+    cull: Rect,
+    hidden_id: Option<&str>,
+    transforms: &[OverlayTransform],
+) -> bool {
+    let cull = match finite_normalized_rect(cull) {
+        Ok(Some(cull)) => cull,
+        _ => return true,
+    };
+    let local_cull = match inverse_transform_rect(cull, transforms) {
+        Ok(cull) => cull,
+        Err(()) => return true,
+    };
+    let doc_bounds = match subtree_visual_bounds(node, true, hidden_id) {
+        Ok(Some(bounds)) => bounds,
+        Ok(None) => return false,
+        Err(()) => return true,
+    };
+    let world_bounds = match doc_to_world_rect(doc_bounds, viewport_origin, zoom)
+        .and_then(|bounds| outset_rect(bounds, DEVICE_EDGE_PAD))
+    {
+        Ok(bounds) => bounds,
+        Err(()) => return true,
+    };
+    intersect_rects(world_bounds, local_cull).is_some()
+}
+
 fn subtree_visual_bounds(
     node: &SceneNode,
     apply_root_transform: bool,

@@ -95,6 +95,9 @@ mod geometry;
 mod group_ops;
 mod history_guard;
 mod icon_picker_press;
+mod image_crop_drag;
+#[cfg(test)]
+mod image_crop_drag_tests;
 mod image_panel_dispatch;
 #[cfg(test)]
 mod image_panel_overlay_tests;
@@ -228,6 +231,8 @@ pub struct WidgetHost {
     /// Active image-fill adjustment slider drag in the floating
     /// property popover.
     image_adjustment_drag: Option<op_editor_core::ImageAdjustmentField>,
+    /// Active bitmap pan while the selected image fill is in crop edit mode.
+    image_crop_drag: Option<image_crop_drag::ImageCropDragState>,
     effect_radius_drag: Option<usize>,
     /// Active generated-code preview text selection drag.
     code_selection_drag: Option<CodeSelectionDragState>,
@@ -559,6 +564,7 @@ impl WidgetHost {
             space_pan: false,
             chat_drag: None,
             image_adjustment_drag: None,
+            image_crop_drag: None,
             effect_radius_drag: None,
             code_selection_drag: None,
             chat_input_selection_drag: None,

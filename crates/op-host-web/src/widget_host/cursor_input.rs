@@ -34,6 +34,7 @@ impl WidgetHost {
             || self.create_drag.is_some()
             || self.path_anchor_drag.is_some()
             || self.handle_drag.is_some()
+            || self.image_crop_drag.is_some()
             || self.node_drag.is_some()
             || self.marquee_drag.is_some()
             || self.layer_drag.is_some()
@@ -722,6 +723,9 @@ impl WidgetHost {
         }
         if self.apply_code_selection_drag_cursor_move(x, y) {
             return true;
+        }
+        if let Some(consumed) = self.apply_image_crop_drag_cursor_move(x, y) {
+            return consumed;
         }
         if let Some(consumed) = self.apply_node_drag_cursor_move(x, y) {
             return consumed;

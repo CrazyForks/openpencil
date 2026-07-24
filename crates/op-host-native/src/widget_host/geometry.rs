@@ -660,6 +660,9 @@ impl WidgetHostNative {
         {
             return CursorHint::ResizeEw;
         }
+        if self.image_crop_drag.is_some() {
+            return CursorHint::Grabbing;
+        }
         if self.is_dragging_node() {
             return CursorHint::Default;
         }
@@ -708,6 +711,15 @@ impl WidgetHostNative {
             }
             Tool::Text => CursorHint::Text,
             Tool::Select => {
+                if let Some(editing) = self.editor_state.editor_ui.image_crop_editing.as_ref() {
+                    let over_editing_node = self
+                        .layout_scene
+                        .node_path_at_doc_point(doc_point, zoom)
+                        .is_some_and(|path| path.iter().any(|id| id == editing.as_str()));
+                    if over_editing_node {
+                        return CursorHint::Grab;
+                    }
+                }
                 let canvas_rect = Rect {
                     origin: Point2D::new(cx0, cy0),
                     size: Point2D::new(cw, ch),

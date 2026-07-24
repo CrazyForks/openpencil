@@ -24,6 +24,11 @@ use std::path::Path;
 /// File extensions the import dialog accepts.
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg"];
 
+struct EmbeddedImage {
+    url: String,
+    original_size: Option<[f32; 2]>,
+}
+
 /// Pop a file dialog scoped to image / SVG extensions, returning the
 /// chosen path. `None` when the user cancelled.
 fn pick_image_path(host: &WidgetHostNative) -> Option<std::path::PathBuf> {
@@ -42,17 +47,21 @@ fn pick_image_path(host: &WidgetHostNative) -> Option<std::path::PathBuf> {
 /// files get the `image/svg+xml` MIME, everything else picks from a
 /// small extension table — falling back to `application/octet-stream`
 /// so an unknown extension still round-trips.
-fn read_as_data_url(path: &Path) -> std::io::Result<String> {
+fn read_as_data_url(path: &Path) -> std::io::Result<EmbeddedImage> {
     let bytes = std::fs::read(path)?;
     // Shrink an oversized raster source before it lands in the document
     // (a multi-MB `src` lags every later scene rebuild + canvas decode).
     // SVG / undecodable / already-small sources fall through unchanged.
-    if let Some((mime, scaled)) = crate::image_downscale::maybe_downscale(&bytes) {
-        return Ok(format!("data:{};base64,{}", mime, B64.encode(&scaled)));
-    }
-    let mime = mime_for(path);
-    let encoded = B64.encode(&bytes);
-    Ok(format!("data:{};base64,{}", mime, encoded))
+    let (mime, payload) = match crate::image_downscale::maybe_downscale(&bytes) {
+        Some((mime, scaled)) => (mime, scaled),
+        None => (mime_for(path), bytes),
+    };
+    let original_size = op_editor_ui::image_runtime::encoded_image_dimensions(&payload)
+        .map(|(width, height)| [width as f32, height as f32]);
+    Ok(EmbeddedImage {
+        url: format!("data:{};base64,{}", mime, B64.encode(&payload)),
+        original_size,
+    })
 }
 
 fn mime_for(path: &Path) -> &'static str {
@@ -116,8 +125,8 @@ pub fn handle_import_image_or_svg(host: &mut WidgetHostNative) {
         host.mark_editor_state_dirty();
         return;
     }
-    let url = match read_as_data_url(&path) {
-        Ok(u) => u,
+    let embedded = match read_as_data_url(&path) {
+        Ok(embedded) => embedded,
         Err(e) => {
             eprintln!("[import-image] {}: {e}", path.display());
             return;
@@ -130,7 +139,7 @@ pub fn handle_import_image_or_svg(host: &mut WidgetHostNative) {
         .to_string();
     let _ = host
         .editor_state_mut()
-        .insert_image_node_at_viewport(&name, &url);
+        .insert_image_node_at_viewport(&name, &embedded.url);
     host.mark_editor_state_dirty();
 }
 
@@ -140,14 +149,21 @@ pub fn handle_pick_fill_image(host: &mut WidgetHostNative) {
     let Some(path) = pick_image_path(host) else {
         return;
     };
-    let url = match read_as_data_url(&path) {
-        Ok(u) => u,
+    apply_pick_fill_image(host, &path);
+}
+
+fn apply_pick_fill_image(host: &mut WidgetHostNative, path: &Path) {
+    let embedded = match read_as_data_url(path) {
+        Ok(embedded) => embedded,
         Err(e) => {
             eprintln!("[fill-image] {}: {e}", path.display());
             return;
         }
     };
-    if host.editor_state_mut().set_selected_fill_image_url(&url) {
+    if host
+        .editor_state_mut()
+        .set_selected_fill_image_url_with_original_size(&embedded.url, embedded.original_size)
+    {
         // `set_selected_fill_image_url` writes fill content without touching
         // the command/history path, so bump the revision (layer-panel cache +
         // save-dirty tracking key on `document_revision()`). The sibling
@@ -182,8 +198,8 @@ pub fn handle_relink_image(host: &mut WidgetHostNative) {
 /// Core of [`handle_relink_image`], factored out so the embed-then-write
 /// behavior is testable without a real file-picker dialog.
 fn apply_relink(host: &mut WidgetHostNative, path: &Path) {
-    let url = match read_as_data_url(path) {
-        Ok(u) => u,
+    let embedded = match read_as_data_url(path) {
+        Ok(embedded) => embedded,
         Err(e) => {
             eprintln!("[relink-image] {}: {e}", path.display());
             return;
@@ -198,7 +214,7 @@ fn apply_relink(host: &mut WidgetHostNative, path: &Path) {
     if let Some(jian_ops_schema::node::PenNode::Image(image)) =
         op_editor_core::walkers::find_node_mut(state.active_children_mut(), &id)
     {
-        image.src = url.into();
+        image.src = embedded.url.into();
     }
     // Drop the stale asset check so the warning row clears on the
     // next pump (it re-probes the new src).
@@ -208,7 +224,8 @@ fn apply_relink(host: &mut WidgetHostNative, path: &Path) {
 
 #[cfg(test)]
 mod relink_tests {
-    use super::apply_relink;
+    use super::{apply_pick_fill_image, apply_relink};
+    use op_editor_core::{EditorState, ImageFillMode};
     use op_host_native::widget_host::WidgetHostNative;
 
     /// The Relink button must embed the picked file, not point at its
@@ -263,5 +280,44 @@ mod relink_tests {
             "assets/broken.png",
             "a read failure must not overwrite the existing src"
         );
+    }
+
+    #[test]
+    fn picked_fill_persists_final_bitmap_dimensions_and_exits_crop_edit() {
+        let mut surface = skia_safe::surfaces::raster_n32_premul((7, 5)).expect("surface");
+        surface.canvas().clear(skia_safe::Color::BLUE);
+        let png = surface
+            .image_snapshot()
+            .encode(None, skia_safe::EncodedImageFormat::PNG, 100)
+            .expect("encode png");
+        let path =
+            std::env::temp_dir().join(format!("op-fill-upload-test-{}.png", std::process::id()));
+        std::fs::write(&path, png.as_bytes()).expect("write png");
+
+        let mut host = WidgetHostNative::new();
+        *host.editor_state_mut() = EditorState::sample();
+        let selected = host.editor_state().selection.anchor.clone();
+        assert!(host
+            .editor_state_mut()
+            .set_selected_fill_image_url_with_original_size(
+                "data:image/png;base64,old",
+                Some([100.0, 100.0]),
+            ));
+        assert!(host
+            .editor_state_mut()
+            .set_selected_image_fill_mode(ImageFillMode::Crop));
+        host.editor_state_mut().editor_ui.image_crop_editing = Some(selected.clone());
+
+        apply_pick_fill_image(&mut host, &path);
+        let _ = std::fs::remove_file(&path);
+
+        let summary = op_editor_core::fills::first_image_fill_summary(
+            host.editor_state().selected_node().expect("selected node"),
+        )
+        .expect("image fill");
+        assert_eq!(summary.original_size, Some([7.0, 5.0]));
+        assert_eq!(summary.mode, ImageFillMode::Fill);
+        assert_eq!(host.editor_state().editor_ui.image_crop_editing, None);
+        assert_eq!(host.editor_state().selection.anchor, selected);
     }
 }

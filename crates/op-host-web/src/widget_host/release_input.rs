@@ -87,6 +87,9 @@ impl WidgetHost {
         if self.release_create_drag() {
             return true;
         }
+        if self.finish_image_crop_drag() {
+            return true;
+        }
         if self.release_node_drag() {
             return true;
         }
@@ -155,6 +158,9 @@ impl WidgetHost {
             return true;
         }
         if self.release_create_drag() {
+            return true;
+        }
+        if self.finish_image_crop_drag() {
             return true;
         }
         if self.release_node_drag() {

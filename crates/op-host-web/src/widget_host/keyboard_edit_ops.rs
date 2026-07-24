@@ -23,6 +23,7 @@ impl WidgetHost {
     /// path (TS `onToolChange`, `skia-pen-tool.ts:38-50`), clears the canvas
     /// hover outline, and syncs the toolbar shape slot for shape variants.
     pub(crate) fn apply_set_tool(&mut self, tool: op_editor_core::Tool) {
+        self.exit_image_crop_edit();
         self.editor_state.editor_ui.canvas_hover_node = None;
         self.commit_variable_row_focus_if_any();
         if !matches!(tool, op_editor_core::Tool::Pen) {
@@ -541,7 +542,7 @@ impl WidgetHost {
         }
         if self.editor_state.undo() {
             self.mark_dirty();
-            self.refresh_missing_fonts_after_document_change();
+            self.refresh_missing_fonts_after_history_change();
             return true;
         }
         false
@@ -553,7 +554,7 @@ impl WidgetHost {
         }
         if self.editor_state.redo() {
             self.mark_dirty();
-            self.refresh_missing_fonts_after_document_change();
+            self.refresh_missing_fonts_after_history_change();
             return true;
         }
         false

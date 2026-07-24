@@ -163,75 +163,84 @@ impl TopBar {
                 self.is_pressed(TopBarButton::OpenImportMenu),
             );
 
-            // ── Centered file name ─────────────────────────────
-            let name = TextLayout::single_run(
-                &self.file_name,
-                "system-ui",
-                13.0,
-                (self.theme.foreground).to_jian(),
-                Point2D::new(0.0, 0.0),
-            );
-            let file_x = rect.origin.x + (rect.size.x - self.title_approx_width()) / 2.0;
-            cx.backend
-                .draw_text(&name, Point2D::new(file_x, center_y + 5.0));
-            if self.edited {
-                // Anchor on the MEASURED name width, not the 9px/char estimate:
-                // narrow Latin glyphs paint well under the estimate, which left
-                // a visible dead gap before the marker (measured: ~20px on
-                // "test0703.op"; the reference chrome shows a single space).
-                let name_w = cx.backend.measure_text(&self.file_name, 13.0);
-                let edited = TextLayout::single_run(
-                    self.label_edited,
-                    "system-ui",
-                    11.0,
-                    (self.theme.muted_foreground).to_jian(),
-                    Point2D::new(0.0, 0.0),
-                );
-                cx.backend
-                    .draw_text(&edited, Point2D::new(file_x + name_w + 6.0, center_y + 4.0));
-            }
+            // ── Bounded centered file title ─────────────────────
+            // File name, dirty marker, and Git button share one slot between
+            // the import control and agent chip. Paint uses the same family
+            // metrics as the text runs, so the title ends exactly at the
+            // reserved Git gap instead of inheriting a conservative estimate.
+            // Clipping remains a hard guard against platform-font differences.
+            let title = self.title_layout(rect, |text, size| {
+                cx.backend.measure_text_family(text, size, "system-ui")
+            });
+            if title.slot.size.x > 0.0 {
+                cx.backend.save();
+                cx.backend.clip_rect(title.slot);
 
-            // Git-panel button just right of the file name (TS GitButton):
-            // a branch glyph + optional branch name. Always shown on
-            // desktop — a click toggles the git panel (which offers `init`
-            // when the doc isn't yet in a repo). Compiled out on web,
-            // which has no git backend to paint a panel.
-            if GIT_BUTTON_AVAILABLE {
-                let git_rect = self.git_button_rect(rect);
-                let git_color = paint_hover_bg(
-                    cx,
-                    &self.theme,
-                    git_rect,
-                    self.is_hovered(TopBarButton::ToggleGitPanel),
-                    self.is_pressed(TopBarButton::ToggleGitPanel),
-                );
-                draw_icon(
-                    cx.backend,
-                    Icon::GitBranch,
-                    Point2D::new(
-                        Self::git_icon_left(git_rect),
-                        glyph_top(center_y, ICON_SIZE),
-                    ),
-                    ICON_SIZE,
-                    git_color,
-                    1.4,
-                );
-                if let Some(branch) = self.git_branch.as_deref() {
-                    let label = TextLayout::single_run(
-                        branch,
+                if !title.file_name.is_empty() {
+                    let name = TextLayout::single_run(
+                        &title.file_name,
                         "system-ui",
-                        11.0,
-                        (git_color).to_jian(),
+                        13.0,
+                        (self.theme.foreground).to_jian(),
                         Point2D::new(0.0, 0.0),
                     );
-                    cx.backend.draw_text(
-                        &label,
-                        Point2D::new(
-                            Self::git_icon_left(git_rect) + ICON_SIZE + 6.0,
-                            center_y + 4.0,
-                        ),
-                    );
+                    cx.backend
+                        .draw_text(&name, Point2D::new(title.file_x, center_y + 5.0));
                 }
+
+                if let Some(edited_x) = title.edited_x {
+                    let edited = TextLayout::single_run(
+                        self.label_edited,
+                        "system-ui",
+                        11.0,
+                        (self.theme.muted_foreground).to_jian(),
+                        Point2D::new(0.0, 0.0),
+                    );
+                    cx.backend
+                        .draw_text(&edited, Point2D::new(edited_x, center_y + 4.0));
+                }
+
+                // Git-panel button just right of the file name (TS
+                // GitButton). It may collapse in an exceptionally narrow
+                // window so the dirty marker remains visible.
+                if let Some(git_rect) = title.git_rect {
+                    let git_color = paint_hover_bg(
+                        cx,
+                        &self.theme,
+                        git_rect,
+                        self.is_hovered(TopBarButton::ToggleGitPanel),
+                        self.is_pressed(TopBarButton::ToggleGitPanel),
+                    );
+                    draw_icon(
+                        cx.backend,
+                        Icon::GitBranch,
+                        Point2D::new(
+                            Self::git_icon_left(git_rect),
+                            glyph_top(center_y, ICON_SIZE),
+                        ),
+                        ICON_SIZE,
+                        git_color,
+                        1.4,
+                    );
+                    if let Some(branch) = self.git_branch.as_deref() {
+                        let label = TextLayout::single_run(
+                            branch,
+                            "system-ui",
+                            11.0,
+                            (git_color).to_jian(),
+                            Point2D::new(0.0, 0.0),
+                        );
+                        cx.backend.draw_text(
+                            &label,
+                            Point2D::new(
+                                Self::git_icon_left(git_rect) + ICON_SIZE + 6.0,
+                                center_y + 4.0,
+                            ),
+                        );
+                    }
+                }
+
+                cx.backend.restore();
             }
         }
 
@@ -337,18 +346,9 @@ impl TopBar {
         let status_text = self.chip_status_text();
         let show_dot = status_text.is_some();
         let chip_text: &str = status_text.as_deref().unwrap_or(self.label_agents_and_mcp);
-        let dot_w = if show_dot { 6.0 + 6.0 } else { 0.0 };
         let icons_span = self.agent_icons_span();
         let text_w = cx.backend.measure_text(chip_text, 11.0);
-        let chip_w = 8.0 + icons_span + dot_w + text_w + 12.0;
-        // Leave room for the chip↔globe divider (4 px gap + 1 px + 4 px).
-        let chip_rect = Rect {
-            origin: Point2D::new(
-                rx - chip_w - (DIVIDER_GAP * 2.0 + DIVIDER_W),
-                center_y - 13.0,
-            ),
-            size: Point2D::new(chip_w, 26.0),
-        };
+        let chip_rect = self.agent_chip_rect(rect, text_w);
         // Hover wash behind the whole chip (TS `hover:bg-accent`).
         let _ = crate::widgets::button::paint_ghost_button_feedback(
             cx.backend,

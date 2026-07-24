@@ -38,6 +38,8 @@ const HEADER_HEIGHT: f32 = 22.0;
 const DIVIDER_GAP: f32 = 4.0;
 const ICON_SIZE: f32 = 16.0;
 const SHORTCUT_FONT: f32 = 11.0;
+const FONT_FAMILY: &str = "system-ui";
+const RECENT_COLUMN_GAP: f32 = 10.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileMenuChoice {
@@ -381,7 +383,7 @@ fn paint_row(
     );
     let label_layout = TextLayout::single_run(
         label,
-        "system-ui",
+        FONT_FAMILY,
         13.0,
         (theme.foreground).to_jian(),
         Point2D::new(0.0, 0.0),
@@ -391,10 +393,12 @@ fn paint_row(
         Point2D::new(x + PAD_X + ICON_SIZE + 10.0, y + ROW_HEIGHT / 2.0 + 5.0),
     );
     if !shortcut.is_empty() {
-        let sw = cx.backend.measure_text(shortcut, SHORTCUT_FONT);
+        let sw = cx
+            .backend
+            .measure_text_family(shortcut, SHORTCUT_FONT, FONT_FAMILY);
         let sl = TextLayout::single_run(
             shortcut,
-            "system-ui",
+            FONT_FAMILY,
             SHORTCUT_FONT,
             (theme.muted_foreground).to_jian(),
             Point2D::new(0.0, 0.0),
@@ -435,7 +439,7 @@ fn paint_row_disabled(
     );
     let label_layout = TextLayout::single_run(
         label,
-        "system-ui",
+        FONT_FAMILY,
         13.0,
         (dim).to_jian(),
         Point2D::new(0.0, 0.0),
@@ -445,10 +449,12 @@ fn paint_row_disabled(
         Point2D::new(x + PAD_X + ICON_SIZE + 10.0, y + ROW_HEIGHT / 2.0 + 5.0),
     );
     if !shortcut.is_empty() {
-        let sw = cx.backend.measure_text(shortcut, SHORTCUT_FONT);
+        let sw = cx
+            .backend
+            .measure_text_family(shortcut, SHORTCUT_FONT, FONT_FAMILY);
         let sl = TextLayout::single_run(
             shortcut,
-            "system-ui",
+            FONT_FAMILY,
             SHORTCUT_FONT,
             (dim).to_jian(),
             Point2D::new(0.0, 0.0),
@@ -479,36 +485,51 @@ fn paint_recent_row(
         theme.muted_foreground,
         1.4,
     );
-    // Reserve space for the age column on the right + a small gap
-    // so a long file name never overlaps the age label. Truncate with
-    // a trailing `…` when the name exceeds that budget.
-    let aw = cx.backend.measure_text(&entry.age, SHORTCUT_FONT);
-    let name_x = x + PAD_X + ICON_SIZE + 10.0;
-    let name_max_x = x + MENU_WIDTH - PAD_X - aw - 8.0;
-    let name_budget = (name_max_x - name_x).max(0.0);
+    // The age column keeps a stable right edge. The name is both measured
+    // and clipped before that column, so even an unexpected platform-font
+    // metric cannot paint over the age.
+    let aw = cx
+        .backend
+        .measure_text_family(&entry.age, SHORTCUT_FONT, FONT_FAMILY);
+    let (name_x, name_budget, age_x) = recent_row_columns(x, aw);
     let display_name = truncate_to_width(cx, &entry.name, 13.0, name_budget);
     let name_layout = TextLayout::single_run(
         &display_name,
-        "system-ui",
+        FONT_FAMILY,
         13.0,
         (theme.foreground).to_jian(),
         Point2D::new(0.0, 0.0),
     );
-    cx.backend.draw_text(
-        &name_layout,
-        Point2D::new(name_x, y + ROW_HEIGHT / 2.0 + 5.0),
-    );
+    if name_budget > 0.0 {
+        cx.backend.save();
+        cx.backend.clip_rect(Rect {
+            origin: Point2D::new(name_x, y),
+            size: Point2D::new(name_budget, ROW_HEIGHT),
+        });
+        cx.backend.draw_text(
+            &name_layout,
+            Point2D::new(name_x, y + ROW_HEIGHT / 2.0 + 5.0),
+        );
+        cx.backend.restore();
+    }
     let age_layout = TextLayout::single_run(
         &entry.age,
-        "system-ui",
+        FONT_FAMILY,
         SHORTCUT_FONT,
         (theme.muted_foreground).to_jian(),
         Point2D::new(0.0, 0.0),
     );
-    cx.backend.draw_text(
-        &age_layout,
-        Point2D::new(x + MENU_WIDTH - PAD_X - aw, y + ROW_HEIGHT / 2.0 + 4.0),
-    );
+    cx.backend
+        .draw_text(&age_layout, Point2D::new(age_x, y + ROW_HEIGHT / 2.0 + 4.0));
+}
+
+fn recent_row_columns(x: f32, age_width: f32) -> (f32, f32, f32) {
+    let name_x = x + PAD_X + ICON_SIZE + 10.0;
+    let content_right = x + MENU_WIDTH - PAD_X;
+    let name_right = content_right - age_width - RECENT_COLUMN_GAP;
+    let name_budget = (name_right - name_x).max(0.0);
+    let age_x = content_right - age_width;
+    (name_x, name_budget, age_x)
 }
 
 /// Truncate `s` so it fits `max_w` pixels at `font_size`, appending
@@ -524,24 +545,33 @@ pub(crate) fn truncate_to_width(
     font_size: f32,
     max_w: f32,
 ) -> String {
-    if cx.backend.measure_text(s, font_size) <= max_w {
+    truncate_to_width_measured(s, max_w, |text| {
+        cx.backend.measure_text_family(text, font_size, FONT_FAMILY)
+    })
+}
+
+fn truncate_to_width_measured(s: &str, max_w: f32, mut measure: impl FnMut(&str) -> f32) -> String {
+    if max_w <= 0.0 {
+        return String::new();
+    }
+    if measure(s) <= max_w {
         return s.to_string();
     }
-    let ellipsis_w = cx.backend.measure_text("…", font_size);
+    let ellipsis_w = measure("…");
+    if ellipsis_w > max_w {
+        return String::new();
+    }
     let budget = (max_w - ellipsis_w).max(0.0);
     let mut kept = String::new();
-    let mut width = 0.0_f32;
     for ch in s.chars() {
         let mut probe = kept.clone();
         probe.push(ch);
-        let w = cx.backend.measure_text(&probe, font_size);
+        let w = measure(&probe);
         if w > budget {
             break;
         }
         kept = probe;
-        width = w;
     }
-    let _ = width;
     if kept.is_empty() {
         "…".to_string()
     } else {
@@ -550,10 +580,10 @@ pub(crate) fn truncate_to_width(
 }
 
 fn paint_empty(cx: &mut PaintCx<'_>, theme: &Theme, x: f32, y: f32, label: &str) {
-    let lw = cx.backend.measure_text(label, 12.0);
+    let lw = cx.backend.measure_text_family(label, 12.0, FONT_FAMILY);
     let lay = TextLayout::single_run(
         label,
-        "system-ui",
+        FONT_FAMILY,
         12.0,
         (theme.muted_foreground).to_jian(),
         Point2D::new(0.0, 0.0),
@@ -567,7 +597,7 @@ fn paint_empty(cx: &mut PaintCx<'_>, theme: &Theme, x: f32, y: f32, label: &str)
 fn paint_header(cx: &mut PaintCx<'_>, theme: &Theme, x: f32, y: f32, label: &str) {
     let layout = TextLayout::single_run(
         label,
-        "system-ui",
+        FONT_FAMILY,
         11.0,
         (theme.muted_foreground).to_jian(),
         Point2D::new(0.0, 0.0),
@@ -676,5 +706,26 @@ mod tests {
             menu.hit(panel, Point2D::new(panel.origin.x - 1.0, header_y)),
             MenuHit::Outside
         );
+    }
+
+    #[test]
+    fn recent_columns_keep_an_exact_gap_before_the_right_aligned_age() {
+        let age_width = 42.0;
+        let (name_x, name_budget, age_x) = recent_row_columns(0.0, age_width);
+        let name_right = name_x + name_budget;
+
+        assert_eq!(age_x + age_width, MENU_WIDTH - PAD_X);
+        assert_eq!(age_x - name_right, RECENT_COLUMN_GAP);
+    }
+
+    #[test]
+    fn measured_truncation_stays_inside_its_budget() {
+        let measure = |text: &str| text.chars().count() as f32 * 7.0;
+        let output =
+            truncate_to_width_measured("openpencil-super-long-project-file-name.op", 98.0, measure);
+
+        assert!(output.ends_with('…'), "{output:?}");
+        assert!(measure(&output) <= 98.0, "{output:?}");
+        assert_eq!(truncate_to_width_measured("abc", 0.0, measure), "");
     }
 }

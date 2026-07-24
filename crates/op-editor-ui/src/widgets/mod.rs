@@ -292,6 +292,7 @@ mod top_bar_geometry;
 mod top_bar_paint;
 #[cfg(test)]
 mod top_bar_tests;
+mod top_bar_title;
 mod top_bar_window_control;
 pub mod variables_panel;
 mod variables_preset_menu;

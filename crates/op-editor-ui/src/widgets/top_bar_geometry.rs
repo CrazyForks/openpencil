@@ -3,6 +3,7 @@
 //! Paint (`top_bar_paint.rs`) and hit-test (`top_bar.rs::hit_test`) both
 //! route through these so button rects can never drift between the two.
 
+use super::top_bar_title::TopBarTitleLayout;
 use crate::widgets::top_bar::*;
 use crate::{Point2D, Rect};
 
@@ -128,6 +129,26 @@ impl TopBar {
         }
     }
 
+    /// Agent-chip bounds for an already measured status-label width.
+    ///
+    /// Paint, hit-test, and the center-title slot all share this geometry so
+    /// a long file name cannot cross underneath the chip.
+    pub(super) fn agent_chip_rect(&self, top_bar_rect: Rect, text_w: f32) -> Rect {
+        let dot_w = if self.chip_status_text().is_some() {
+            6.0 + 6.0
+        } else {
+            0.0
+        };
+        let chip_w = 8.0 + self.agent_icons_span() + dot_w + text_w + 12.0;
+        Rect {
+            origin: Point2D::new(
+                self.chip_right_anchor_x(top_bar_rect) - chip_w - (DIVIDER_GAP * 2.0 + DIVIDER_W),
+                top_bar_rect.origin.y + (top_bar_rect.size.y - 26.0) / 2.0,
+            ),
+            size: Point2D::new(chip_w, 26.0),
+        }
+    }
+
     /// Play / Stop toggle button — second from the right (just left of
     /// Maximize), or rightmost when Maximize is hidden in a VS Code embed.
     /// Shared by paint + hit-test so they can't drift.
@@ -172,40 +193,12 @@ impl TopBar {
     /// name. Width holds the branch glyph plus an optional branch
     /// label. Shared by paint + hit-test so they can't drift.
     pub(super) fn git_button_rect(&self, top_bar_rect: Rect) -> Rect {
-        let center_y = top_bar_rect.origin.y + top_bar_rect.size.y / 2.0;
-        // The name is *centred* using the 9 px/char heuristic, but a
-        // CJK glyph renders ~14 px wide, so the real right edge is
-        // further out — use a CJK-aware estimate so the button clears
-        // the (often CJK) file name instead of overlapping it.
-        let center_approx = self.title_approx_width();
-        let render_w: f32 = self
-            .file_name
-            .chars()
-            .map(|c| if is_wide_glyph(c) { 14.0 } else { 7.5 })
-            .sum();
-        let filename_left = top_bar_rect.origin.x + (top_bar_rect.size.x - center_approx) / 2.0;
-        let filename_right = filename_left + render_w + self.edited_approx_width();
-        let branch_w = self
-            .git_branch
-            .as_deref()
-            .map(|b| 6.0 + b.chars().count() as f32 * 7.0)
-            .unwrap_or(0.0);
-        Rect {
-            origin: Point2D::new(filename_right + 10.0, center_y - ICON_BUTTON / 2.0),
-            size: Point2D::new(GIT_BUTTON_PAD_X * 2.0 + ICON_SIZE + branch_w, ICON_BUTTON),
-        }
-    }
-
-    pub(super) fn title_approx_width(&self) -> f32 {
-        self.file_name.chars().count() as f32 * 9.0 + self.edited_approx_width()
-    }
-
-    pub(super) fn edited_approx_width(&self) -> f32 {
-        if self.edited {
-            8.0 + self.label_edited.chars().count() as f32 * 7.0
-        } else {
-            0.0
-        }
+        self.title_layout_estimated(top_bar_rect)
+            .git_rect
+            .unwrap_or(Rect {
+                origin: Point2D::new(top_bar_rect.origin.x, top_bar_rect.origin.y),
+                size: Point2D::new(0.0, 0.0),
+            })
     }
 
     pub(super) fn git_icon_left(git_button: Rect) -> f32 {
@@ -217,10 +210,29 @@ impl TopBar {
     /// panel anchors its caret here so it reads as a popover hanging
     /// off the button (TS parity); `None` when the button is hidden.
     pub fn git_button_center_x(&self, top_bar_rect: Rect) -> Option<f32> {
-        if !GIT_BUTTON_AVAILABLE {
+        if !GIT_BUTTON_AVAILABLE || !self.file_controls_visible() {
             return None;
         }
         let r = self.git_button_rect(top_bar_rect);
-        Some(r.origin.x + r.size.x / 2.0)
+        (r.size.x > 0.0).then_some(r.origin.x + r.size.x / 2.0)
     }
+
+    /// Deterministic title geometry shared by paint, hit-test, and popup
+    /// anchoring. The estimate is intentionally conservative; paint clips to
+    /// the returned slot as a final guard against platform font differences.
+    pub(super) fn title_layout_estimated(&self, top_bar_rect: Rect) -> TopBarTitleLayout {
+        self.title_layout(top_bar_rect, estimated_text_width)
+    }
+}
+
+fn estimated_text_width(text: &str, font_size: f32) -> f32 {
+    text.chars()
+        .map(|c| {
+            if c.is_ascii() {
+                font_size * 0.68
+            } else {
+                font_size
+            }
+        })
+        .sum()
 }

@@ -1267,6 +1267,9 @@ impl WidgetHostNative {
         if self.apply_image_panel_send() {
             return true;
         }
+        if self.exit_image_crop_edit() {
+            return true;
+        }
         if self.editor_state.color_picker_hex_focused() {
             self.editor_state.color_picker_blur_hex();
             self.mark_dirty();
@@ -1774,6 +1777,9 @@ impl WidgetHostNative {
         if self.editor_state.editor_ui.image_fill_popover_open {
             self.editor_state.editor_ui.image_fill_popover_open = false;
             self.mark_dirty();
+            return true;
+        }
+        if self.exit_image_crop_edit() {
             return true;
         }
         if self.editor_state.chat.focused {

@@ -467,51 +467,6 @@ impl EditorState {
         }
     }
 
-    /// Replace the selected node's primary fill with an Image fill
-    /// rooted at `src` (typically a `data:` URL). Existing colour /
-    /// gradient is overwritten; non-fillable variants reject silently.
-    /// Returns `true` on success.
-    pub fn set_selected_fill_image_url(&mut self, src: &str) -> bool {
-        use jian_ops_schema::style::{ImageFillBody, PenFill};
-        let sel = self.selection.anchor.clone();
-        if !sel.is_real() || !self.is_editable(&sel) {
-            return false;
-        }
-        let Some(node) = crate::walkers::find_node_mut(self.active_children_mut(), &sel) else {
-            return false;
-        };
-        if let PenNode::Image(image) = node {
-            image.src = src.into();
-            return true;
-        }
-        let Some(fills) = crate::fills::node_fills_mut(node) else {
-            return false;
-        };
-        let body = PenFill::Image(ImageFillBody {
-            url: src.into(),
-            mode: None,
-            original_size: None,
-            transform: None,
-            tile_scale: None,
-            explain: None,
-            opacity: None,
-            blend_mode: None,
-            exposure: None,
-            contrast: None,
-            saturation: None,
-            temperature: None,
-            tint: None,
-            highlights: None,
-            shadows: None,
-        });
-        if fills.is_empty() {
-            fills.push(body);
-        } else {
-            fills[0] = body;
-        }
-        true
-    }
-
     /// Replace the path nodes `source_ids` on the active page with a
     /// single new `Path` node whose geometry is the boolean `contours`
     /// (one closed polyline per subpath). Used by the host's path-boolean

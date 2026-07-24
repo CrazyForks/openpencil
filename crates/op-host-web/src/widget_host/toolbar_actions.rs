@@ -13,7 +13,7 @@ impl WidgetHost {
                 let acted = self.editor_state.undo();
                 if acted {
                     self.mark_dirty();
-                    self.refresh_missing_fonts_after_document_change();
+                    self.refresh_missing_fonts_after_history_change();
                 }
                 acted
             }
@@ -21,7 +21,7 @@ impl WidgetHost {
                 let acted = self.editor_state.redo();
                 if acted {
                     self.mark_dirty();
-                    self.refresh_missing_fonts_after_document_change();
+                    self.refresh_missing_fonts_after_history_change();
                 }
                 acted
             }

@@ -208,6 +208,7 @@ impl EditorState {
         };
         if self.selection != next {
             self.editor_ui.image_panel.close_popovers();
+            self.editor_ui.image_crop_editing = None;
             self.selection = next;
         }
     }
@@ -219,6 +220,7 @@ impl EditorState {
             return;
         }
         self.editor_ui.image_panel.close_popovers();
+        self.editor_ui.image_crop_editing = None;
         if let Some(pos) = self.selection.set.iter().position(|n| *n == id) {
             self.selection.set.remove(pos);
             self.selection.anchor = self.selection.set.last().cloned().unwrap_or(NodeId::NONE);
@@ -233,6 +235,7 @@ impl EditorState {
         if !self.selection.is_empty() {
             self.editor_ui.image_panel.close_popovers();
         }
+        self.editor_ui.image_crop_editing = None;
         self.selection = SelectionState::empty();
     }
 

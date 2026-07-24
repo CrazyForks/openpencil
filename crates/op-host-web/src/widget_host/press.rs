@@ -963,11 +963,10 @@ impl WidgetHost {
             if let Some(hit) = toolbar.hit_test(toolbar_rect, Point2D::new(x, y)) {
                 match hit {
                     op_editor_ui::widgets::ToolbarHit::Tool(tool) => {
-                        self.editor_state.tool = tool;
+                        self.apply_set_tool(tool);
                         self.editor_state.editor_ui.shape_picker.open = false;
                         self.editor_state.editor_ui.shape_picker.hover = None;
                         self.editor_state.editor_ui.shape_picker.pressed = None;
-                        self.mark_dirty();
                         return true;
                     }
                     op_editor_ui::widgets::ToolbarHit::Action(action) => {
@@ -1058,6 +1057,29 @@ impl WidgetHost {
                 return rename_committed || text_edit_committed || property_focus_committed;
             }
             if matches!(self.editor_state.tool, op_editor_core::Tool::Select) {
+                if let Some(editing) = self.editor_state.editor_ui.image_crop_editing.clone() {
+                    let (cx0, cy0, _cw, _ch) = self.canvas_region(viewport_width, viewport_height);
+                    let canvas_local = Point2D::new(x - cx0, y - cy0);
+                    let doc_point = self.editor_state.viewport.to_document(canvas_local);
+                    if let Some(hit_path) = self
+                        .layout_scene
+                        .node_path_at_doc_point(doc_point, self.editor_state.viewport.zoom)
+                        .filter(|path| path.iter().any(|id| id == editing.as_str()))
+                    {
+                        let hit_path = hit_path
+                            .into_iter()
+                            .map(op_editor_core::NodeId::new)
+                            .collect();
+                        return self.apply_canvas_node_press(
+                            hit_path,
+                            x,
+                            y,
+                            text_edit_was_active,
+                            viewport_height,
+                        );
+                    }
+                    self.exit_image_crop_edit();
+                }
                 if self.try_path_anchor_press(x, y, viewport_width, viewport_height) {
                     return true;
                 }

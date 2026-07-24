@@ -19,10 +19,12 @@ use op_editor_core::editor_ui_state::ExportFormat;
 use op_editor_core::{uikit_io, EditorState, UIKit};
 
 mod drop_plan;
+mod image_fill_upload;
 mod save_payload;
 mod save_queue;
 
 pub use drop_plan::{drop_batch_plan, drop_kind, DropBatchPlan, DropKind};
+pub use image_fill_upload::apply_fill_image_data_url;
 pub use save_payload::{
     acknowledge_browser_download, parse_save_response, save_ack_matches_document, save_file_name,
     save_snapshot_matches_document, serialize_save_payload, SavePayloadTarget,

@@ -337,8 +337,7 @@ impl WidgetHost {
                 ));
             match hit {
                 op_editor_ui::widgets::ToolbarHit::Tool(tool) => {
-                    self.editor_state.tool = tool;
-                    self.mark_dirty();
+                    self.apply_set_tool(tool);
                     return true;
                 }
                 op_editor_ui::widgets::ToolbarHit::Action(action) => {

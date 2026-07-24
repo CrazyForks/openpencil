@@ -296,6 +296,20 @@ fn decode_data_url_bytes(src: &str) -> Option<Arc<[u8]>> {
 /// rounded up to a power of two so a slow zoom re-decodes in steps
 /// instead of on every frame, and clamped to a sane ceiling.
 pub(crate) fn required_raster_edge(world_rect: Rect, dpi_scale: f32) -> u32 {
+    required_raster_edge_with_transform(world_rect, dpi_scale, None)
+}
+
+/// Transform-aware raster requirement for image crops.
+///
+/// A crop transform whose linear part maps the node unit square to a small
+/// source-UV window magnifies that source window on screen. Scale the decode
+/// request by the inverse smallest singular value so the backend does not
+/// downsample the source before the renderer enlarges the crop.
+pub(crate) fn required_raster_edge_with_transform(
+    world_rect: Rect,
+    dpi_scale: f32,
+    transform: Option<[f32; 6]>,
+) -> u32 {
     const MIN_EDGE: u32 = 64;
     const MAX_EDGE: u32 = 4096;
     let dpi = if dpi_scale.is_finite() && dpi_scale > 0.0 {
@@ -303,7 +317,10 @@ pub(crate) fn required_raster_edge(world_rect: Rect, dpi_scale: f32) -> u32 {
     } else {
         1.0
     };
-    let longest = world_rect.size.x.abs().max(world_rect.size.y.abs()) * dpi;
+    let crop_scale = transform
+        .and_then(inverse_smallest_singular_value)
+        .unwrap_or(1.0);
+    let longest = world_rect.size.x.abs().max(world_rect.size.y.abs()) * dpi * crop_scale;
     if !longest.is_finite() || longest <= 0.0 {
         return MIN_EDGE;
     }
@@ -312,6 +329,23 @@ pub(crate) fn required_raster_edge(world_rect: Rect, dpi_scale: f32) -> u32 {
         .clamp(MIN_EDGE, MAX_EDGE)
         .next_power_of_two()
         .min(MAX_EDGE)
+}
+
+fn inverse_smallest_singular_value(transform: [f32; 6]) -> Option<f32> {
+    let [a, b, _, c, d, _] = transform;
+    if ![a, b, c, d].iter().all(|value| value.is_finite()) {
+        return None;
+    }
+    let trace = a * a + b * b + c * c + d * d;
+    let determinant_squared = (a * d - b * c).powi(2);
+    let discriminant = (trace * trace - 4.0 * determinant_squared).max(0.0);
+    let lambda_min = (trace - discriminant.sqrt()) * 0.5;
+    let sigma_min = lambda_min.max(0.0).sqrt();
+    if sigma_min <= 1e-6 {
+        Some(4096.0)
+    } else {
+        Some((1.0 / sigma_min).max(1.0))
+    }
 }
 
 pub(super) fn paint_image_node(
@@ -358,7 +392,13 @@ fn paint_image_node_with_stroke(
     // image at full size is what made a zoomed-out image-dense page
     // thrash its cache (hundreds of 16 MB rasters against a 384 MB
     // budget) while the same page zoomed in stayed smooth.
-    let max_edge_px = required_raster_edge(world_rect, cx.backend.dpi_scale());
+    let decode_transform = if node.image_fit == crate::layout_scene::SceneImageFit::Tile {
+        None
+    } else {
+        node.image_transform
+    };
+    let max_edge_px =
+        required_raster_edge_with_transform(world_rect, cx.backend.dpi_scale(), decode_transform);
     let sharp_enough = bytes
         .as_deref()
         .is_some_and(|encoded| cx.backend.image_decoded(id, encoded, max_edge_px));

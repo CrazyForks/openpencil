@@ -256,6 +256,8 @@ pub fn paint_image_fill_popover(
             has_image: false,
             image_url: None,
             tile_scale: None,
+            transform: None,
+            original_size: None,
             exposure: 0.0,
             contrast: 0.0,
             saturation: 0.0,

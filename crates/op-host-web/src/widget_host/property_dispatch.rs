@@ -256,18 +256,29 @@ impl WidgetHost {
                 let _ = self.editor_state.remove_selected_gradient_stop(index);
             }
             A::ToggleImageFillPopover => {
-                let ui = &mut self.editor_state.editor_ui;
-                ui.image_fill_popover_open = !ui.image_fill_popover_open;
-                ui.close_fill_type_picker();
-                ui.export_scale_picker_open = false;
-                ui.export_format_picker_open = false;
-                ui.property_color_variable_picker_open = None;
+                let opening = {
+                    let ui = &mut self.editor_state.editor_ui;
+                    ui.image_fill_popover_open = !ui.image_fill_popover_open;
+                    ui.close_fill_type_picker();
+                    ui.export_scale_picker_open = false;
+                    ui.export_format_picker_open = false;
+                    ui.property_color_variable_picker_open = None;
+                    ui.image_fill_popover_open
+                };
+                if opening {
+                    let _ = self.enter_selected_image_crop_edit();
+                }
             }
             A::CloseImageFillPopover => {
                 self.editor_state.editor_ui.image_fill_popover_open = false;
             }
             A::SetImageFillMode(mode) => {
                 let _ = self.editor_state.set_selected_image_fill_mode(mode);
+                if mode == op_editor_core::ImageFillMode::Crop {
+                    let _ = self.enter_selected_image_crop_edit();
+                } else {
+                    self.exit_image_crop_edit();
+                }
             }
             A::SetImageAdjustment { field, value } => {
                 self.image_adjustment_drag = Some(field);

@@ -10,6 +10,7 @@ struct ImageRadiusCaptureBackend {
     image_blend_modes: Vec<ImageBlendMode>,
     image_original_sizes: Vec<Option<[f32; 2]>>,
     image_tile_scales: Vec<f32>,
+    decode_edges: Vec<u32>,
     decode_ready: Option<bool>,
 }
 
@@ -30,7 +31,8 @@ impl RenderBackend for ImageRadiusCaptureBackend {
     fn fill_round_rect(&mut self, _: Rect, _: f32, _: Color) {}
     fn stroke_round_rect(&mut self, _: Rect, _: f32, _: Color, _: f32) {}
     fn stroke_svg_path(&mut self, _: &str, _: Point2D, _: f32, _: Color, _: f32) {}
-    fn image_decoded(&mut self, _: u64, _: &[u8], _: u32) -> bool {
+    fn image_decoded(&mut self, _: u64, _: &[u8], max_edge_px: u32) -> bool {
+        self.decode_edges.push(max_edge_px);
         self.decode_ready.unwrap_or(true)
     }
     fn image_resident(&mut self, _: u64) -> bool {
@@ -180,6 +182,34 @@ fn tile_fill_forwards_source_size_scale_and_zoom() {
     );
     assert_eq!(backend.image_original_sizes[2], Some([4096.0, 2048.0]));
     assert!((backend.image_tile_scales[2] - 0.77237814).abs() < f32::EPSILON);
+}
+
+#[test]
+fn tile_fill_ignores_transform_for_decode_but_forwards_it_to_draw() {
+    let _guard = lock_statics();
+    let transform = [0.01, 0.0, 0.4, 0.0, 0.01, 0.4];
+    let mut node = SceneNode::leaf("tile", NodeKind::Rect);
+    node.image_fit = crate::layout_scene::SceneImageFit::Tile;
+    node.image_transform = Some(transform);
+    let mut backend = ImageRadiusCaptureBackend::default();
+
+    paint_image_node(
+        &mut PaintCx {
+            backend: &mut backend,
+        },
+        &node,
+        Rect::xywh(0.0, 0.0, 220.0, 220.0),
+        1.0,
+        "data:image/png;base64,QUJD",
+        true,
+    );
+
+    assert_eq!(
+        backend.decode_edges,
+        vec![256],
+        "tile transforms describe repetition and must not inflate the raster request"
+    );
+    assert_eq!(backend.image_transforms, vec![Some(transform)]);
 }
 
 #[test]
@@ -345,4 +375,23 @@ fn miss_queue_is_bounded() {
     }
     let taken = take_remote_image_requests(usize::MAX);
     assert_eq!(taken.len(), REMOTE_MISS_QUEUE_CAP);
+}
+
+#[test]
+fn transformed_crop_requests_source_resolution_for_visible_uv_window() {
+    let tesla_transform = Some([0.5089059, 0.0, 0.490246, 0.0, 0.28951487, 0.37636933]);
+    assert_eq!(
+        required_raster_edge_with_transform(
+            Rect::xywh(0.0, 0.0, 195.25409, 240.81339),
+            1.0,
+            tesla_transform,
+        ),
+        1024,
+        "the 0.2895-high UV crop needs roughly 832 source pixels"
+    );
+    assert_eq!(
+        required_raster_edge(Rect::xywh(0.0, 0.0, 195.25409, 240.81339), 1.0),
+        256,
+        "an untransformed image keeps the normal target-sized decode"
+    );
 }

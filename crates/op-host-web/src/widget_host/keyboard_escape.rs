@@ -225,6 +225,9 @@ impl WidgetHost {
             self.mark_dirty();
             return true;
         }
+        if self.exit_image_crop_edit() {
+            return true;
+        }
         if self.editor_state.editor_ui.chat_model_picker.open {
             self.editor_state.editor_ui.close_chat_model_picker();
             self.mark_dirty();

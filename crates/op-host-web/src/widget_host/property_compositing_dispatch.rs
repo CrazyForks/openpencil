@@ -11,6 +11,7 @@ pub(super) fn updates_document(action: &PropertyPanelAction) -> bool {
         PropertyPanelAction::SetNodeBlendMode(_)
             | PropertyPanelAction::SetNodeMaskType(_)
             | PropertyPanelAction::SetFillBlendMode { .. }
+            | PropertyPanelAction::SetImageFillMode(_)
             | PropertyPanelAction::ClearPageBackground
     )
 }

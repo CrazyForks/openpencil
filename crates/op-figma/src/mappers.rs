@@ -116,7 +116,20 @@ fn map_single_fill(paint: &FigValue) -> Option<PenFill> {
             }))
         }
         "IMAGE" => {
-            let mode = map_scale_mode(paint.get_str("imageScaleMode"));
+            let transform = paint
+                .get("transform")
+                .and_then(FigMatrix::from_value)
+                .and_then(normalize_image_transform);
+            let mode = match (
+                map_scale_mode(paint.get_str("imageScaleMode")),
+                transform.as_ref(),
+            ) {
+                // Figma serializes interactively cropped images as STRETCH
+                // plus a non-identity affine transform. Preserve the matrix,
+                // but expose the paint's actual editing semantics as CROP.
+                (ImageFillMode::Stretch, Some(_)) => ImageFillMode::Crop,
+                (mode, _) => mode,
+            };
             let image = paint.get("image");
             let url = image
                 .and_then(|i| i.get("hash"))
@@ -142,10 +155,7 @@ fn map_single_fill(paint: &FigValue) -> Option<PenFill> {
                     paint.get_f64("originalImageWidth"),
                     paint.get_f64("originalImageHeight"),
                 ),
-                transform: paint
-                    .get("transform")
-                    .and_then(FigMatrix::from_value)
-                    .and_then(normalize_image_transform),
+                transform,
                 tile_scale: (mode == ImageFillMode::Tile)
                     .then(|| paint.get_f64("scale"))
                     .flatten()

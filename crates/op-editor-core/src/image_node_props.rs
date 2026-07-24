@@ -16,6 +16,8 @@ pub fn image_node_summary(node: &PenNode) -> Option<ImageFillSummary> {
         has_image: !trimmed_url.is_empty(),
         image_url: (!trimmed_url.is_empty()).then(|| image.src.to_string()),
         tile_scale: None,
+        transform: None,
+        original_size: None,
         exposure: image.exposure.unwrap_or(0.0) as f32,
         contrast: image.contrast.unwrap_or(0.0) as f32,
         saturation: image.saturation.unwrap_or(0.0) as f32,
@@ -67,4 +69,31 @@ pub fn reset_image_node_adjustments(node: &mut PenNode) -> bool {
     image.highlights = Some(0.0);
     image.shadows = Some(0.0);
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn standalone_image_summary_has_no_fill_crop_or_tile_payload() {
+        let src = r#"{"version":"1.0.0","children":[{
+            "type":"image","id":"image","name":"Image",
+            "x":0,"y":0,"width":100,"height":80,
+            "src":"data:image/png;base64,AA==","objectFit":"crop"
+        }]}"#;
+        let node = jian_ops_schema::load_str(src)
+            .expect("image fixture parses")
+            .value
+            .children
+            .into_iter()
+            .next()
+            .expect("one node");
+
+        let summary = image_node_summary(&node).expect("image summary");
+        assert_eq!(summary.mode, ImageFillMode::Crop);
+        assert_eq!(summary.transform, None);
+        assert_eq!(summary.original_size, None);
+        assert_eq!(summary.tile_scale, None);
+    }
 }

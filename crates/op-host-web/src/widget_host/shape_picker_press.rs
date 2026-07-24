@@ -25,13 +25,7 @@ impl WidgetHost {
                 match picker.choice_at(idx) {
                     Some(choice) => match choice {
                         ShapeChoice::Tool(tool) => {
-                            // TS onToolChange DISCARDS an in-progress pen path
-                            // on tool switch (`skia-pen-tool.ts:38-50`).
-                            if !matches!(tool, op_editor_core::Tool::Pen) {
-                                let _ = self.editor_state.cancel_pen_path();
-                            }
-                            self.editor_state.editor_ui.shape_tool = tool;
-                            self.editor_state.tool = tool;
+                            self.apply_set_tool(tool);
                         }
                         ShapeChoice::OpenIconPicker => {
                             self.editor_state.editor_ui.open_icon_picker(false);

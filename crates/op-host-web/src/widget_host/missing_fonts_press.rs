@@ -183,7 +183,9 @@ impl WidgetHost {
             self.replace_missing_fonts_data(true);
             return;
         }
-        self.editor_state.editor_ui.missing_fonts_pending_detect = true;
+        let ui = &mut self.editor_state.editor_ui;
+        ui.missing_fonts_pending_detect = true;
+        ui.missing_fonts_pending_open_modal = true;
         self.mark_dirty();
         crate::repaint_coalescer::request();
     }
@@ -193,7 +195,24 @@ impl WidgetHost {
             self.replace_missing_fonts_data(false);
             return;
         }
-        self.editor_state.editor_ui.missing_fonts_pending_detect = true;
+        let ui = &mut self.editor_state.editor_ui;
+        ui.missing_fonts_pending_detect = true;
+        ui.missing_fonts_pending_open_modal = false;
+        self.mark_dirty();
+        crate::repaint_coalescer::request();
+    }
+
+    pub(in crate::widget_host) fn refresh_missing_fonts_after_history_change(&mut self) {
+        if self.editor_state.editor_ui.system_fonts_loaded {
+            let ui = &mut self.editor_state.editor_ui;
+            ui.missing_fonts_pending_detect = false;
+            ui.missing_fonts_pending_open_modal = false;
+            self.refresh_missing_fonts_prompt();
+            return;
+        }
+        let ui = &mut self.editor_state.editor_ui;
+        ui.missing_fonts_pending_detect = true;
+        ui.missing_fonts_pending_open_modal = ui.missing_fonts_modal_open;
         self.mark_dirty();
         crate::repaint_coalescer::request();
     }
@@ -222,13 +241,16 @@ impl WidgetHost {
                 self.editor_state.editor_ui.agent_settings.tab,
                 op_editor_core::AgentSettingsTab::Fonts
             );
-        self.replace_missing_fonts_data(!settings_fonts_open);
+        let open_modal =
+            self.editor_state.editor_ui.missing_fonts_pending_open_modal && !settings_fonts_open;
+        self.replace_missing_fonts_data(open_modal);
     }
 
     fn replace_missing_fonts_data(&mut self, open_modal: bool) {
         let prompt = detect_missing_fonts(&self.editor_state);
         let ui = &mut self.editor_state.editor_ui;
         ui.missing_fonts_pending_detect = false;
+        ui.missing_fonts_pending_open_modal = false;
         ui.missing_fonts_modal_open = open_modal && prompt.is_some();
         if open_modal {
             ui.missing_fonts_scroll.offset = 0.0;
@@ -321,6 +343,28 @@ mod tests {
         ))
         .expect("document");
         EditorState::from_document(doc)
+    }
+
+    fn host_after_resolving_missing_font(missing: &str, fonts_loaded: bool) -> WidgetHost {
+        let mut host = WidgetHost::new();
+        host.editor_state = state_with_text(missing);
+        if fonts_loaded {
+            host.editor_state.editor_ui.system_fonts_loaded = true;
+            host.editor_state.editor_ui.system_font_families = Arc::new(vec!["Arial".to_string()]);
+        }
+        host.arm_missing_fonts_detection();
+        assert!(host
+            .editor_state
+            .apply(op_editor_core::EditorCommand::ReplaceFontFamily {
+                from: missing.to_string(),
+                to: "Arial".to_string(),
+            },));
+        if fonts_loaded {
+            host.refresh_missing_fonts_prompt();
+            assert!(host.editor_state.editor_ui.missing_fonts_prompt.is_none());
+        }
+        assert!(!host.editor_state.editor_ui.missing_fonts_modal_open);
+        host
     }
 
     fn populate_scrollable_font_list(host: &mut WidgetHost) {
@@ -449,5 +493,75 @@ mod tests {
             ui.missing_fonts_prompt.as_ref().unwrap().entries[0].family,
             "__OpenPencilWebDeferredFontTest__"
         );
+    }
+
+    #[test]
+    fn keyboard_history_navigation_refreshes_missing_fonts_without_reopening_prompt() {
+        const MISSING: &str = "__OpenPencilWebUndoMissingFont__";
+        let mut host = host_after_resolving_missing_font(MISSING, true);
+
+        assert!(host.apply_undo());
+        assert_eq!(
+            host.editor_state
+                .editor_ui
+                .missing_fonts_prompt
+                .as_ref()
+                .and_then(|prompt| prompt.entries.first())
+                .map(|entry| entry.family.as_str()),
+            Some(MISSING)
+        );
+        assert!(!host.editor_state.editor_ui.missing_fonts_modal_open);
+
+        assert!(host.apply_redo());
+        assert!(host.editor_state.editor_ui.missing_fonts_prompt.is_none());
+        assert!(!host.editor_state.editor_ui.missing_fonts_modal_open);
+    }
+
+    #[test]
+    fn toolbar_undo_refreshes_missing_fonts_without_reopening_prompt() {
+        const MISSING: &str = "__OpenPencilWebToolbarUndoMissingFont__";
+        let mut host = host_after_resolving_missing_font(MISSING, true);
+
+        assert!(host.dispatch_toolbar_action(op_editor_ui::widgets::ToolbarAction::Undo));
+        assert_eq!(
+            host.editor_state
+                .editor_ui
+                .missing_fonts_prompt
+                .as_ref()
+                .and_then(|prompt| prompt.entries.first())
+                .map(|entry| entry.family.as_str()),
+            Some(MISSING)
+        );
+        assert!(!host.editor_state.editor_ui.missing_fonts_modal_open);
+
+        assert!(host.dispatch_toolbar_action(op_editor_ui::widgets::ToolbarAction::Redo));
+        assert!(host.editor_state.editor_ui.missing_fonts_prompt.is_none());
+        assert!(!host.editor_state.editor_ui.missing_fonts_modal_open);
+    }
+
+    #[test]
+    fn undo_keeps_deferred_font_detection_passive_after_query_completes() {
+        const MISSING: &str = "__OpenPencilWebDeferredUndoMissingFont__";
+        let mut host = host_after_resolving_missing_font(MISSING, false);
+        assert!(host.editor_state.editor_ui.missing_fonts_pending_detect);
+        assert!(host.editor_state.editor_ui.missing_fonts_pending_open_modal);
+
+        assert!(host.apply_undo());
+        assert!(host.editor_state.editor_ui.missing_fonts_pending_detect);
+        assert!(!host.editor_state.editor_ui.missing_fonts_pending_open_modal);
+        assert!(!host.editor_state.editor_ui.missing_fonts_modal_open);
+
+        host.apply_browser_system_font_families(vec!["Arial".to_string()]);
+
+        let ui = &host.editor_state.editor_ui;
+        assert!(!ui.missing_fonts_pending_detect);
+        assert_eq!(
+            ui.missing_fonts_prompt
+                .as_ref()
+                .and_then(|prompt| prompt.entries.first())
+                .map(|entry| entry.family.as_str()),
+            Some(MISSING)
+        );
+        assert!(!ui.missing_fonts_modal_open);
     }
 }

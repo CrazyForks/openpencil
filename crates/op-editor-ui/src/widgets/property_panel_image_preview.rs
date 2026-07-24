@@ -1,10 +1,10 @@
 //! Shared image-fill preview helpers for the Fill row and popover.
 
 use crate::widgets::canvas_viewport_image::{
-    image_source_bytes, note_pending_decode, required_raster_edge,
+    image_source_bytes, note_pending_decode, required_raster_edge_with_transform,
 };
 use crate::widgets::PaintCx;
-use crate::{ImageAdjustments, ImageDrawMode, Rect};
+use crate::{ImageAdjustments, ImageBlendMode, ImageDrawMode, Rect};
 
 pub(crate) fn paint_image_preview(
     cx: &mut PaintCx<'_>,
@@ -14,12 +14,15 @@ pub(crate) fn paint_image_preview(
 ) -> bool {
     cx.backend.save();
     cx.backend.clip_rect(rect);
-    let has_source = paint_image_source(
+    let has_source = paint_image_source_with_options(
         cx,
         rect,
         src,
         mode_to_draw_mode(summary.mode),
         summary_adjustments(summary),
+        summary.transform,
+        summary.original_size,
+        summary.tile_scale.unwrap_or(1.0),
     );
     cx.backend.restore();
     has_source
@@ -35,11 +38,31 @@ pub(crate) fn paint_image_source(
     mode: ImageDrawMode,
     adjustments: ImageAdjustments,
 ) -> bool {
+    paint_image_source_with_options(cx, rect, src, mode, adjustments, None, None, 1.0)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_image_source_with_options(
+    cx: &mut PaintCx<'_>,
+    rect: Rect,
+    src: &str,
+    mode: ImageDrawMode,
+    adjustments: ImageAdjustments,
+    transform: Option<[f32; 6]>,
+    original_size: Option<[f32; 2]>,
+    tile_scale: f32,
+) -> bool {
     let id = src_hash(src);
     let Some(bytes) = image_source_bytes(src, id) else {
         return false;
     };
-    let max_edge_px = required_raster_edge(rect, cx.backend.dpi_scale());
+    let decode_transform = if mode == ImageDrawMode::Tile {
+        None
+    } else {
+        transform
+    };
+    let max_edge_px =
+        required_raster_edge_with_transform(rect, cx.backend.dpi_scale(), decode_transform);
     let sharp_enough = cx.backend.image_decoded(id, bytes.as_ref(), max_edge_px);
     if !sharp_enough {
         note_pending_decode(id, max_edge_px);
@@ -50,7 +73,19 @@ pub(crate) fn paint_image_source(
     let resident = !sharp_enough && cx.backend.image_resident(id);
     if preview_raster_ready(sharp_enough, resident) {
         cx.backend
-            .draw_image_with_options(rect, id, bytes.as_ref(), mode, adjustments, 1.0, 0.0);
+            .draw_image_with_options_transform_blend_and_tile_scale(
+                rect,
+                id,
+                bytes.as_ref(),
+                mode,
+                adjustments,
+                1.0,
+                0.0,
+                transform,
+                ImageBlendMode::Normal,
+                original_size,
+                tile_scale,
+            );
     }
     true
 }
@@ -135,5 +170,33 @@ mod tests {
             "a sharper raster is still queued"
         );
         mark_decode_done(id);
+    }
+
+    #[test]
+    fn tile_preview_ignores_transform_for_decode_but_forwards_it_to_draw() {
+        let src = "data:image/png;base64,QUJD";
+        let transform = [0.01, 0.0, 0.4, 0.0, 0.01, 0.4];
+        let mut backend = CountingBackend::default();
+
+        assert!(paint_image_source_with_options(
+            &mut PaintCx {
+                backend: &mut backend,
+            },
+            Rect::xywh(0.0, 0.0, 220.0, 220.0),
+            src,
+            ImageDrawMode::Tile,
+            ImageAdjustments::default(),
+            Some(transform),
+            Some([4096.0, 2048.0]),
+            0.5,
+        ));
+
+        assert_eq!(
+            backend.image_decode_edges,
+            vec![256],
+            "tile transforms describe repetition and must not inflate the raster request"
+        );
+        assert_eq!(backend.image_transforms, vec![Some(transform)]);
+        assert_eq!(backend.image_modes, vec![ImageDrawMode::Tile]);
     }
 }

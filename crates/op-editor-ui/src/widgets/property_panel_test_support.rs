@@ -7,7 +7,7 @@
 use super::property_panel::{PropertyPanel, SectionCapabilities};
 use super::property_panel_sections as sections;
 use crate::widgets::{PaintCx, Widget};
-use crate::{Color, ImageDrawMode, Point2D, Rect};
+use crate::{Color, ImageAdjustments, ImageBlendMode, ImageDrawMode, Point2D, Rect};
 use op_editor_core::EditorState;
 
 /// Build an `EditorState` from a canonical-schema JSON fixture.
@@ -90,6 +90,10 @@ pub(super) struct CountingBackend {
     pub(super) round_rects: usize,
     pub(super) images: Vec<(Rect, u64, usize)>,
     pub(super) image_modes: Vec<ImageDrawMode>,
+    pub(super) image_transforms: Vec<Option<[f32; 6]>>,
+    pub(super) image_original_sizes: Vec<Option<[f32; 2]>>,
+    pub(super) image_tile_scales: Vec<f32>,
+    pub(super) image_decode_edges: Vec<u32>,
     pub(super) image_decode_ready: Option<bool>,
     pub(super) image_resident_ready: Option<bool>,
 }
@@ -114,7 +118,8 @@ impl crate::RenderBackend for CountingBackend {
     }
     fn stroke_round_rect(&mut self, _: Rect, _: f32, _: Color, _: f32) {}
     fn stroke_svg_path(&mut self, _: &str, _: Point2D, _: f32, _: Color, _: f32) {}
-    fn image_decoded(&mut self, _: u64, _: &[u8], _: u32) -> bool {
+    fn image_decoded(&mut self, _: u64, _: &[u8], max_edge_px: u32) -> bool {
+        self.image_decode_edges.push(max_edge_px);
         self.image_decode_ready.unwrap_or(true)
     }
     fn image_resident(&mut self, _: u64) -> bool {
@@ -132,6 +137,26 @@ impl crate::RenderBackend for CountingBackend {
     ) {
         self.images.push((rect, image_id, encoded.len()));
         self.image_modes.push(mode);
+    }
+    fn draw_image_with_options_transform_blend_and_tile_scale(
+        &mut self,
+        rect: Rect,
+        image_id: u64,
+        encoded: &[u8],
+        mode: ImageDrawMode,
+        _: ImageAdjustments,
+        _: f32,
+        _: f32,
+        transform: Option<[f32; 6]>,
+        _: ImageBlendMode,
+        original_size: Option<[f32; 2]>,
+        tile_scale: f32,
+    ) {
+        self.images.push((rect, image_id, encoded.len()));
+        self.image_modes.push(mode);
+        self.image_transforms.push(transform);
+        self.image_original_sizes.push(original_size);
+        self.image_tile_scales.push(tile_scale);
     }
     fn resize(&mut self, _: u32, _: u32) {}
     fn dpi_scale(&self) -> f32 {

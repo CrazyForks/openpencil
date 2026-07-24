@@ -1284,6 +1284,9 @@ pub struct EditorUiState {
     pub property_color_variable_picker_open: Option<crate::ui_draft::ColorTarget>,
     /// Whether the image-fill editor popover is open.
     pub image_fill_popover_open: bool,
+    /// Image-fill node currently in Figma-style crop editing mode.
+    /// `None` keeps ordinary canvas drags moving the node itself.
+    pub image_crop_editing: Option<NodeId>,
     /// Text font-family picker select state.
     pub font_picker: jian_widgets::components::select::SelectState,
     pub font_picker_purpose: Option<FontPickerPurpose>,
@@ -1327,6 +1330,10 @@ pub struct EditorUiState {
     pub missing_fonts_scroll: jian_core::scroll::ScrollState,
     /// Detection was requested before system-font enumeration completed.
     pub missing_fonts_pending_detect: bool,
+    /// Whether the deferred detection may open the one-shot modal when font
+    /// enumeration completes. History navigation sets this to `false` so an
+    /// undo/redo refresh cannot resurrect a dismissed prompt.
+    pub missing_fonts_pending_open_modal: bool,
     /// Row whose choose-file action is waiting for a platform import drain.
     pub missing_fonts_import_row: Option<usize>,
     /// Hovered missing-fonts control (modal button / settings row) —
@@ -1658,6 +1665,7 @@ impl Default for EditorUiState {
             interaction_menu_hover: None,
             property_color_variable_picker_open: None,
             image_fill_popover_open: false,
+            image_crop_editing: None,
             font_picker: jian_widgets::components::select::SelectState::default(),
             font_picker_purpose: None,
             font_picker_import_hover: false,
@@ -1671,6 +1679,7 @@ impl Default for EditorUiState {
             missing_fonts_modal_open: false,
             missing_fonts_scroll: jian_core::scroll::ScrollState::default(),
             missing_fonts_pending_detect: false,
+            missing_fonts_pending_open_modal: false,
             missing_fonts_import_row: None,
             missing_fonts_hover: None,
             pending_font_import: false,
@@ -2101,6 +2110,7 @@ impl EditorUiState {
         self.stroke_mode_popover_open = false;
         self.stroke_mode_popover_hover = None;
         self.property_color_variable_picker_open = None;
+        self.image_crop_editing = None;
         self.axis_dropdown_open = None;
         self.variables_theme_rename_axis = None;
         self.variables_variant_rename_value = None;
