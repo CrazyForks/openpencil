@@ -13,6 +13,7 @@
 
 use op_editor_core::{EditorState, NodeId};
 
+use super::text_collision::push_text_collision_diagnostics;
 use super::{collect_diagnostics, resolved_rects, MAX_DIAGNOSTICS};
 
 /// Geometry diagnostics for exactly the subtrees rooted at `root_ids` —
@@ -42,6 +43,7 @@ pub(crate) fn geometry_diagnostics_for_roots(
         let Ok(v) = serde_json::to_value(root) else {
             continue;
         };
+        push_text_collision_diagnostics(&v, &rects, &mut out);
         collect_diagnostics(&v, &rects, &mut out);
     }
     out.truncate(MAX_DIAGNOSTICS);

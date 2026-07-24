@@ -34,7 +34,11 @@ use geometry_compact_status::{
     is_compact_status_badge_structure, stack_compact_status_header,
 };
 
-#[derive(Clone, Copy)]
+#[path = "text_collision.rs"]
+mod text_collision;
+use text_collision::push_text_collision_diagnostics;
+
+#[derive(Clone, Copy, Debug)]
 struct Rect {
     x: f64,
     /// Not read yet — vertical stacking-overlap detection will need it; kept
@@ -1045,6 +1049,7 @@ pub fn geometry_diagnostics(state: &EditorState) -> Vec<String> {
         if let Ok(v) = serde_json::to_value(root) {
             bottom_nav_root_containment_diagnostic(&v, &rects, &mut out);
             bottom_nav_order_diagnostic(&v, &mut out);
+            push_text_collision_diagnostics(&v, &rects, &mut out);
             collect_diagnostics(&v, &rects, &mut out);
         }
     }
