@@ -253,6 +253,17 @@ fn clip_row_stroke_padding_repair(node: &PenNode) -> Option<ClipRowStrokePadding
     padding[0] = padding[0].max(stroke_padding);
     padding[2] = padding[2].max(stroke_padding);
     padding[3] = padding[3].max(stroke_padding);
+    // A fill-width clipped row can be an intentional horizontal rail: keep
+    // its trailing edge flush so the next item may remain visibly cropped.
+    // A fit-content row, however, hugs its children and has no overflow
+    // affordance to preserve. Its trailing clip would only shave the outer
+    // half of the last child's stroke (notably a bordered avatar).
+    if matches!(
+        props.width.as_ref(),
+        Some(SizingBehavior::Keyword(SizingKeyword::FitContent))
+    ) {
+        padding[1] = padding[1].max(stroke_padding);
+    }
     Some(ClipRowStrokePaddingRepair {
         node_id: NodeId::new(node.id_str().to_string()),
         padding,

@@ -128,6 +128,52 @@ fn clipping_horizontal_row_preserves_zero_trailing_padding() {
 }
 
 #[test]
+fn fit_content_clipping_row_preserves_all_sides_of_child_strokes() {
+    let mut sink = VecDocSink::new();
+    insert_tree(
+        &mut sink,
+        r##"{
+            "type": "frame",
+            "id": "root",
+            "name": "Mobile Root",
+            "width": 390,
+            "height": 844,
+            "layout": "vertical",
+            "children": [{
+                "type": "frame",
+                "id": "actions",
+                "name": "Actions Group",
+                "width": "fit_content",
+                "height": "fit_content",
+                "layout": "horizontal",
+                "clipContent": true,
+                "children": [{
+                    "type": "frame",
+                    "id": "avatar",
+                    "name": "User Avatar",
+                    "width": 36,
+                    "height": 36,
+                    "cornerRadius": 18,
+                    "stroke": {
+                        "thickness": 2,
+                        "fill": [{"type": "solid", "color": "#FF6B6B"}]
+                    },
+                    "children": []
+                }]
+            }]
+        }"##,
+    );
+
+    pad_clipping_horizontal_row_for_stroke(&mut sink, "root");
+
+    assert_eq!(
+        node_json(&sink, "actions")["padding"],
+        json!([2.0, 2.0, 2.0, 2.0]),
+        "a hugging wrapper has no intentional trailing crop, so all four stroke edges need room"
+    );
+}
+
+#[test]
 fn non_clipping_row_untouched() {
     let mut sink = VecDocSink::new();
     insert_date_scroller(
