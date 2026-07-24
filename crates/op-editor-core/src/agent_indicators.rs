@@ -148,6 +148,20 @@ pub fn confirm_cursor_agent(epoch: u64, color: &str, name: &str) {
 static REGISTRY: LazyLock<Mutex<AgentIndicators>> =
     LazyLock::new(|| Mutex::new(AgentIndicators::default()));
 
+/// Serializes TESTS that mutate the process-global [`REGISTRY`]. Any test —
+/// in any crate — that calls [`clear`]/[`begin`]/[`add_reveal`]/… and then
+/// asserts on [`snapshot`] races every other such test in the same test
+/// binary (cargo runs them on parallel threads against this one global).
+/// Hold this guard for the test's whole body to serialize them. Poisoning is
+/// deliberately swallowed: a prior test's panic must not cascade.
+#[doc(hidden)]
+pub fn test_guard() -> std::sync::MutexGuard<'static, ()> {
+    static TEST_GUARD: Mutex<()> = Mutex::new(());
+    TEST_GUARD
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Tag a single node with its owning agent (dashed breathing border).
 ///
 /// Scoped to `epoch`: a registration whose epoch is no longer the active

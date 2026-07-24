@@ -1327,6 +1327,7 @@ mod tests {
 
     #[test]
     fn batch_design_apply_populates_the_scan_gate_frames_and_reveals() {
+        let _guard = op_editor_core::agent_indicators::test_guard();
         op_editor_core::agent_indicators::clear();
         let (req_tx, req_rx) = mpsc::channel();
         let (stop_tx, _stop_rx) = mpsc::channel();
@@ -1361,6 +1362,7 @@ mod tests {
 
     #[test]
     fn batch_design_apply_is_a_noop_when_nothing_new_landed() {
+        let _guard = op_editor_core::agent_indicators::test_guard();
         op_editor_core::agent_indicators::clear();
         let (req_tx, req_rx) = mpsc::channel();
         let (stop_tx, _stop_rx) = mpsc::channel();
@@ -1404,6 +1406,7 @@ mod tests {
     /// the instant the second call landed.
     #[test]
     fn back_to_back_batch_design_calls_coalesce_into_one_epoch_while_reveals_drain() {
+        let _guard = op_editor_core::agent_indicators::test_guard();
         op_editor_core::agent_indicators::clear();
         let (req_tx, req_rx) = mpsc::channel();
         let (stop_tx, _stop_rx) = mpsc::channel();

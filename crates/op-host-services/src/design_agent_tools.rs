@@ -1486,6 +1486,7 @@ mod tests {
     fn execute_design_batch_design_registers_reveals_when_epoch_is_set() {
         use op_editor_core::agent_indicators;
 
+        let _guard = agent_indicators::test_guard();
         agent_indicators::clear();
         let epoch = agent_indicators::begin();
         let mut state = EditorState::new();
