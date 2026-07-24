@@ -362,6 +362,44 @@ pub struct ChatToolResult {
 /// [`ChatToolExecutor::finalize`].
 pub const LOOP_FINALIZE_OP: &str = "__loop_finalize";
 
+/// Reserved pseudo-tool name a [`ChatToolExecutor`] forwards over its tool
+/// channel to ask the host for a read-only unresolved-blocker scan against
+/// the live `EditorState` — the completion-gate counterpart of
+/// [`LOOP_FINALIZE_OP`]'s promise-delivery check. Never mutates the
+/// document (mirrors the `checkOnly: true` half of `LOOP_FINALIZE_OP`, not
+/// the finalize half). Never a real model-visible tool — the loop sends it
+/// itself via [`ChatToolExecutor::check_blockers`].
+pub const CHECK_BLOCKERS_OP: &str = "__loop_check_blockers";
+
+/// One unresolved structural blocker found by the host's live blocker scan
+/// (`op_host_services::loop_blocker_ledger::detect_blockers`). `category` is
+/// a coarse bucket (`"structure"` / `"empty-shell"` / `"nav"` today) for
+/// grouping in a corrective message; `detail` is the same human-readable,
+/// node/screen-identifying line the per-batch `structureIssues` /
+/// `shellsRemaining` / `navIssues` tool-result fields already carry, so the
+/// loop-end nudge reads exactly like the per-batch hints the model has
+/// already been following all run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockerEntry {
+    pub category: String,
+    pub detail: String,
+}
+
+/// Unresolved-blocker scan result. Deliberately NOT an accumulating ledger —
+/// like [`UnfilledScreensReport`], this is always a fresh recompute against
+/// the CURRENT document, so an issue a later batch already fixed simply
+/// never appears again; there is nothing to prune or expire.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BlockerReport {
+    pub blockers: Vec<BlockerEntry>,
+}
+
+impl BlockerReport {
+    pub fn has_blockers(&self) -> bool {
+        !self.blockers.is_empty()
+    }
+}
+
 /// Promise-delivery snapshot: every top-level "screen" the run committed to
 /// (`committed`, filled or not) alongside the subset still empty (`unfilled`,
 /// always a subset of `committed`). Carries enough for the loop to build the
@@ -408,6 +446,18 @@ pub trait ChatToolExecutor: Send + Sync {
     fn check_unfilled_screens(&self) -> UnfilledScreensReport {
         UnfilledScreensReport::default()
     }
+
+    /// Cheap, read-only unresolved-blocker scan — the completion-gate
+    /// counterpart of [`Self::check_unfilled_screens`]. The loop calls this
+    /// whenever it's deciding whether to let a `calls.is_empty()` model stop
+    /// count as done: a document that still has an unbound primary-mobile
+    /// nav tab or a structural defect (duplicate status bar / broken ring /
+    /// empty shell) gets a corrective nudge instead of a silent finish. The
+    /// default no-op mirrors [`Self::check_unfilled_screens`]'s — only the
+    /// host executor that owns a live `EditorState` overrides it.
+    fn check_blockers(&self) -> BlockerReport {
+        BlockerReport::default()
+    }
 }
 
 /// Test double — replays a fixed delta script. Lets the chat widget
@@ -429,6 +479,33 @@ impl ChatProvider for EchoProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An executor that overrides NOTHING but the mandatory `execute` — the
+    /// shape of every host that hasn't wired up the unresolved-blocker scan
+    /// (web, any future non-desktop host). Anchors the zero-impact
+    /// requirement: an unwired host must behave EXACTLY as it did before
+    /// `check_blockers` existed, purely by inheriting the trait default.
+    struct BareExecutor;
+    impl ChatToolExecutor for BareExecutor {
+        fn execute(&self, _name: &str, _args_json: &str) -> ChatToolResult {
+            ChatToolResult {
+                content: "{}".into(),
+                is_error: false,
+            }
+        }
+    }
+
+    #[test]
+    fn unwired_executor_check_blockers_default_is_empty_and_never_blocks() {
+        let report = BareExecutor.check_blockers();
+        assert_eq!(report, BlockerReport::default());
+        assert!(
+            !report.has_blockers(),
+            "an executor that never overrides check_blockers must report no blockers, \
+             so the loop's completion gate takes the exact same path it did before \
+             this feature existed"
+        );
+    }
 
     #[test]
     fn cli_name_backend_table_matches_architecture_memo() {

@@ -6,8 +6,8 @@ use std::sync::Mutex;
 use std::thread;
 
 use op_ai::chat_provider::{
-    ChatDelta, ChatHistoryRole, ChatProvider, ChatRequest, ChatToolExecutor, ChatToolResult,
-    UnfilledScreensReport, LOOP_FINALIZE_OP,
+    BlockerReport, ChatDelta, ChatHistoryRole, ChatProvider, ChatRequest, ChatToolExecutor,
+    ChatToolResult, UnfilledScreensReport, CHECK_BLOCKERS_OP, LOOP_FINALIZE_OP,
 };
 use op_editor_core::{ChatMessage, ChatRole, ChatToolCall};
 
@@ -54,6 +54,14 @@ impl ChatToolExecutor for UiChatToolExecutor {
     fn check_unfilled_screens(&self) -> UnfilledScreensReport {
         unfilled_report_from_ack(&self.forward(LOOP_FINALIZE_OP, r#"{"checkOnly":true}"#))
     }
+
+    /// Forward the reserved [`CHECK_BLOCKERS_OP`] over the same tool
+    /// channel so the host runs a read-only unresolved-blocker scan
+    /// (`op_host_services::loop_blocker_ledger::detect_blockers`) against
+    /// the live `EditorState`. Never mutates the document.
+    fn check_blockers(&self) -> BlockerReport {
+        blocker_report_from_ack(&self.forward(CHECK_BLOCKERS_OP, "{}"))
+    }
 }
 
 /// Parse the `{"success":true,"committed":[...],"unfilled":[...]}` envelope
@@ -76,6 +84,31 @@ fn unfilled_report_from_ack(result: &ChatToolResult) -> UnfilledScreensReport {
         committed: names("committed"),
         unfilled: names("unfilled"),
     }
+}
+
+/// Parse the `{"success":true,"blockers":[{"category":...,"detail":...}]}`
+/// envelope the host's `CHECK_BLOCKERS_OP` interception acks with. Any other
+/// shape (transport error, an old host build that doesn't know this op)
+/// degrades to an empty report — same best-effort discipline as
+/// [`unfilled_report_from_ack`].
+fn blocker_report_from_ack(result: &ChatToolResult) -> BlockerReport {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&result.content) else {
+        return BlockerReport::default();
+    };
+    let blockers = v
+        .get("blockers")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|entry| {
+                    let category = entry.get("category")?.as_str()?.to_string();
+                    let detail = entry.get("detail")?.as_str()?.to_string();
+                    Some(op_ai::chat_provider::BlockerEntry { category, detail })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    BlockerReport { blockers }
 }
 
 impl UiChatToolExecutor {

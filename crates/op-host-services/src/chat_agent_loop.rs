@@ -30,6 +30,10 @@ use retry::{
     CORRECTIVE_WRITE_PROGRESS,
 };
 
+#[path = "chat_agent_loop_blockers.rs"]
+mod blockers;
+use blockers::{blocker_nudge_if_owed, report_blockers_if_any};
+
 /// Everything one agent-loop run needs. `max_turns` is the TS `maxTurns`
 /// cap — `MAX_TOOL_TURNS = 20` for plain chat, `DESIGN_LOOP_MAX_TURNS = 28`
 /// for the gated design-generation loop (`chat_builtin_http.rs`; the two
@@ -267,6 +271,26 @@ async fn report_unfilled_if_any(tx: &mpsc::Sender<ChatDelta>, names: &[String]) 
         names.join(", ")
     );
     let _ = tx.send(ChatDelta::TextDelta(text)).await;
+}
+
+/// Shared finalize + honest-report tail for every loop exit tier (turn-cap
+/// salvage-exhausted, salvage-nothing-eligible, and the ordinary
+/// voluntary-model-stop path) — replaces what used to be three near-identical
+/// `run_loop_finalize` + `report_unfilled_if_any` call sites per provider
+/// loop, and folds the unresolved-blocker report into the SAME tail so every
+/// exit unconditionally surfaces both: a run that spent its whole turn
+/// budget with blockers still open must never look, in the transcript, like
+/// a run that had nothing wrong with it.
+async fn finalize_and_report(
+    tx: &mpsc::Sender<ChatDelta>,
+    executor: &Arc<dyn ChatToolExecutor>,
+    enabled: bool,
+) -> UnfilledScreensReport {
+    let still_unfilled = run_loop_finalize(executor, enabled).await;
+    report_unfilled_if_any(tx, &still_unfilled.unfilled).await;
+    let blocker_report = blockers::check_blockers(executor, enabled).await;
+    report_blockers_if_any(tx, &blocker_report).await;
+    still_unfilled
 }
 
 /// Self-diagnostic signal for the finalize-lifecycle invariant (0718-1-k3-1
@@ -606,6 +630,11 @@ async fn run_anthropic_agent_loop_inner(
     // `fill_attempts` above (see `SALVAGE_MAX_ROUNDS`'s doc comment).
     let mut salvaged_screens: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut salvage_rounds_used = 0usize;
+    // Tier 2c — unresolved-blocker corrective-round budget. A SEPARATE pool
+    // from both of the above (see `chat_agent_loop_blockers::
+    // BLOCKER_NUDGE_MAX_ROUNDS`'s doc comment): blockers and unfilled
+    // screens are different failure modes with independent budgets.
+    let mut blocker_rounds_used = 0usize;
     let mut write_retry = CorrectiveWriteRetry::default();
     let turn_cap = cfg.max_turns.max(1);
     let mut turn = 0usize;
@@ -620,8 +649,7 @@ async fn run_anthropic_agent_loop_inner(
         // against `turn`; it draws from `SALVAGE_MAX_ROUNDS` instead.
         if turn >= turn_cap && !corrective_write_round {
             if salvage_rounds_used >= SALVAGE_MAX_ROUNDS {
-                let still_unfilled = run_loop_finalize(&cfg.executor, cfg.finalize_on_exit).await;
-                report_unfilled_if_any(tx, &still_unfilled.unfilled).await;
+                finalize_and_report(tx, &cfg.executor, cfg.finalize_on_exit).await;
                 let _ = tx
                     .send(ChatDelta::Done {
                         stop_reason: StopReason::MaxTokens,
@@ -637,8 +665,7 @@ async fn run_anthropic_agent_loop_inner(
                 // unfilled screen already spent its one salvage round. Still
                 // run the Step-4 structural backstop once over whatever the
                 // run assembled, and report unconditionally.
-                let still_unfilled = run_loop_finalize(&cfg.executor, cfg.finalize_on_exit).await;
-                report_unfilled_if_any(tx, &still_unfilled.unfilled).await;
+                finalize_and_report(tx, &cfg.executor, cfg.finalize_on_exit).await;
                 let _ = tx
                     .send(ChatDelta::Done {
                         stop_reason: StopReason::MaxTokens,
@@ -734,15 +761,32 @@ async fn run_anthropic_agent_loop_inner(
                 );
                 continue; // Does not count against `turn`.
             }
+            // No screen left to chase — try one dedicated corrective round
+            // for any unresolved structural blocker (duplicate root / broken
+            // ring / empty shell / unbound primary-mobile nav tab), bounded
+            // by its own `BLOCKER_NUDGE_MAX_ROUNDS` budget so this can never
+            // compound into an unbounded loop alongside the fill/salvage
+            // budgets above.
+            if let Some(nudge) = blocker_nudge_if_owed(
+                &cfg.executor,
+                cfg.finalize_on_exit,
+                &mut blocker_rounds_used,
+            )
+            .await
+            {
+                messages
+                    .push(json!({ "role": "assistant", "content": collector.assistant_content() }));
+                messages.push(json!({ "role": "user", "content": nudge }));
+                continue; // Does not count against `turn`.
+            }
             // Nothing committed is left worth trying for: run the Step-4
             // structural backstop ONCE over the assembled doc BEFORE the
             // Done delta, so the finalized document is what the UI
             // persists/displays for this turn. Tier 3 — honest report —
-            // fires unconditionally if anything is still unfilled (a screen
-            // outside this run's committed set, or the executor being a
-            // no-op).
-            let still_unfilled = run_loop_finalize(&cfg.executor, cfg.finalize_on_exit).await;
-            report_unfilled_if_any(tx, &still_unfilled.unfilled).await;
+            // fires unconditionally if anything is still unfilled/blocked (a
+            // screen outside this run's committed set, a blocker whose
+            // round budget ran out, or the executor being a no-op).
+            finalize_and_report(tx, &cfg.executor, cfg.finalize_on_exit).await;
             let _ = tx
                 .send(ChatDelta::Done {
                     stop_reason: reason,
@@ -997,6 +1041,11 @@ async fn run_openai_agent_loop_inner(
     let mut fill_attempts: HashMap<String, usize> = HashMap::new();
     let mut salvaged_screens: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut salvage_rounds_used = 0usize;
+    // Tier 2c — unresolved-blocker corrective-round budget. A SEPARATE pool
+    // from both of the above (see `chat_agent_loop_blockers::
+    // BLOCKER_NUDGE_MAX_ROUNDS`'s doc comment): blockers and unfilled
+    // screens are different failure modes with independent budgets.
+    let mut blocker_rounds_used = 0usize;
     let mut write_retry = CorrectiveWriteRetry::default();
     let turn_cap = cfg.max_turns.max(1);
     let mut turn = 0usize;
@@ -1006,8 +1055,7 @@ async fn run_openai_agent_loop_inner(
         let corrective_write_round = write_retry.begin_round();
         if turn >= turn_cap && !corrective_write_round {
             if salvage_rounds_used >= SALVAGE_MAX_ROUNDS {
-                let still_unfilled = run_loop_finalize(&cfg.executor, cfg.finalize_on_exit).await;
-                report_unfilled_if_any(tx, &still_unfilled.unfilled).await;
+                finalize_and_report(tx, &cfg.executor, cfg.finalize_on_exit).await;
                 let _ = tx
                     .send(ChatDelta::Done {
                         stop_reason: StopReason::MaxTokens,
@@ -1018,8 +1066,7 @@ async fn run_openai_agent_loop_inner(
             let report = check_unfilled(&cfg.executor, cfg.finalize_on_exit).await;
             let eligible = salvage_eligible(&report.unfilled, &salvaged_screens);
             if eligible.is_empty() {
-                let still_unfilled = run_loop_finalize(&cfg.executor, cfg.finalize_on_exit).await;
-                report_unfilled_if_any(tx, &still_unfilled.unfilled).await;
+                finalize_and_report(tx, &cfg.executor, cfg.finalize_on_exit).await;
                 let _ = tx
                     .send(ChatDelta::Done {
                         stop_reason: StopReason::MaxTokens,
@@ -1119,11 +1166,26 @@ async fn run_openai_agent_loop_inner(
                 );
                 continue; // Does not count against `turn`.
             }
+            // No screen left to chase — try one dedicated corrective round
+            // for any unresolved structural blocker, bounded by its own
+            // `BLOCKER_NUDGE_MAX_ROUNDS` budget (see the Anthropic loop
+            // above for the full rationale).
+            if let Some(nudge) = blocker_nudge_if_owed(
+                &cfg.executor,
+                cfg.finalize_on_exit,
+                &mut blocker_rounds_used,
+            )
+            .await
+            {
+                messages.push(json!({ "role": "assistant", "content": stop_content() }));
+                messages.push(json!({ "role": "user", "content": nudge }));
+                continue; // Does not count against `turn`.
+            }
             // Normal model-stop exit: run the Step-4 structural backstop ONCE
             // over the assembled doc BEFORE the Done delta. Tier 3 — honest
-            // report — fires unconditionally if anything is still unfilled.
-            let still_unfilled = run_loop_finalize(&cfg.executor, cfg.finalize_on_exit).await;
-            report_unfilled_if_any(tx, &still_unfilled.unfilled).await;
+            // report — fires unconditionally if anything is still
+            // unfilled/blocked.
+            finalize_and_report(tx, &cfg.executor, cfg.finalize_on_exit).await;
             let _ = tx
                 .send(ChatDelta::Done {
                     stop_reason: reason,
@@ -1248,6 +1310,13 @@ mod tests;
 #[cfg(test)]
 #[path = "chat_agent_loop_finalize_tests.rs"]
 mod finalize_tests;
+
+// Unresolved-blocker completion-gate tests — same split rationale as
+// `finalize_tests` above, reusing `chat_agent_loop_tests.rs`'s scripted-
+// executor + loopback-SSE infra via `pub(super)`.
+#[cfg(test)]
+#[path = "chat_agent_loop_blockers_tests.rs"]
+mod blockers_tests;
 
 #[cfg(test)]
 #[path = "chat_agent_loop_retry_tests.rs"]

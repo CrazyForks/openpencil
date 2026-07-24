@@ -293,6 +293,29 @@ fn execute_tool_requests(
             });
             continue;
         }
+        // Intercept the reserved unresolved-blocker scan op: the completion
+        // gate counterpart of `LOOP_FINALIZE_OP`'s `checkOnly` half. Always
+        // read-only — a live recompute against the current document, never
+        // an accumulating ledger (see
+        // `op_host_services::loop_blocker_ledger`'s module doc) — so an
+        // issue a later batch already fixed simply stops appearing here.
+        if req.name == op_ai::chat_provider::CHECK_BLOCKERS_OP {
+            let report = op_host_services::loop_blocker_ledger::detect_blockers(state);
+            let blockers: Vec<serde_json::Value> = report
+                .blockers
+                .iter()
+                .map(|b| serde_json::json!({ "category": b.category, "detail": b.detail }))
+                .collect();
+            let _ = req.ack.send(ChatToolResult {
+                content: serde_json::json!({
+                    "success": true,
+                    "blockers": blockers,
+                })
+                .to_string(),
+                is_error: false,
+            });
+            continue;
+        }
         // Intercept `spawn_agents`: parse the specs, stash them for the
         // host to launch after this (parent) pump, and ack immediately
         // (fire-and-forget). A SUB calling `spawn_agents` is refused —

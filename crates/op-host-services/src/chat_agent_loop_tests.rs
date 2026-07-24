@@ -14,7 +14,10 @@ use std::time::Duration;
 use super::*;
 use crate::chat_runtime::shared_runtime;
 use base64::Engine as _;
-use op_ai::chat_provider::{ChatToolDef, ChatToolExecutor, ChatToolResult, UnfilledScreensReport};
+use op_ai::chat_provider::{
+    BlockerEntry, BlockerReport, ChatToolDef, ChatToolExecutor, ChatToolResult,
+    UnfilledScreensReport,
+};
 
 /// Executor double — records calls + loop-finalize invocations, replays a
 /// fixed result.
@@ -29,6 +32,10 @@ pub(super) struct ScriptedExecutor {
     unfilled_checks: Mutex<VecDeque<UnfilledScreensReport>>,
     /// Scripted `finalize` return values, popped the same way.
     unfilled_finalizes: Mutex<VecDeque<UnfilledScreensReport>>,
+    /// Scripted `check_blockers` return values, popped in call order; once
+    /// exhausted, further calls return the default (empty) report.
+    blocker_checks: Mutex<VecDeque<BlockerReport>>,
+    blocker_check_calls: std::sync::atomic::AtomicUsize,
 }
 
 impl ScriptedExecutor {
@@ -52,6 +59,8 @@ impl ScriptedExecutor {
             ),
             unfilled_checks: Mutex::new(VecDeque::new()),
             unfilled_finalizes: Mutex::new(VecDeque::new()),
+            blocker_checks: Mutex::new(VecDeque::new()),
+            blocker_check_calls: std::sync::atomic::AtomicUsize::new(0),
         })
     }
 
@@ -89,12 +98,41 @@ impl ScriptedExecutor {
             .push_back(report_of(committed, unfilled));
         self
     }
+
+    /// Queue one scripted `check_blockers` return value. `entries` is
+    /// `(category, detail)` pairs.
+    pub(super) fn with_blocker_check(self: Arc<Self>, entries: &[(&str, &str)]) -> Arc<Self> {
+        self.blocker_checks
+            .lock()
+            .unwrap()
+            .push_back(blocker_report_of(entries));
+        self
+    }
+
+    /// How many times the loop ran the cheap read-only unresolved-blocker
+    /// probe (`check_blockers`).
+    pub(super) fn blocker_checks(&self) -> usize {
+        self.blocker_check_calls
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
 }
 
 fn report_of(committed: &[&str], unfilled: &[&str]) -> UnfilledScreensReport {
     UnfilledScreensReport {
         committed: committed.iter().map(|s| s.to_string()).collect(),
         unfilled: unfilled.iter().map(|s| s.to_string()).collect(),
+    }
+}
+
+fn blocker_report_of(entries: &[(&str, &str)]) -> BlockerReport {
+    BlockerReport {
+        blockers: entries
+            .iter()
+            .map(|(category, detail)| BlockerEntry {
+                category: category.to_string(),
+                detail: detail.to_string(),
+            })
+            .collect(),
     }
 }
 
@@ -126,6 +164,16 @@ impl ChatToolExecutor for ScriptedExecutor {
         self.unfilled_check_calls
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         self.unfilled_checks
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_default()
+    }
+
+    fn check_blockers(&self) -> BlockerReport {
+        self.blocker_check_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.blocker_checks
             .lock()
             .unwrap()
             .pop_front()
