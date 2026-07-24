@@ -203,6 +203,123 @@ fn section_wrapper_search_bar_role_stripped() {
 }
 
 #[test]
+fn nested_multi_block_front_card_under_roleless_stack_keeps_role() {
+    // 0724-1-gm: both wrappers intentionally have no semantic role
+    // ("... Stack ..."/"... Container" are container suffixes). Their nested
+    // Front Card is still a real card even though it has three structural
+    // child rows. Treating `parent_role == None` as "forest root" stripped its
+    // inferred role, so the later orphan-card surface repair could not give
+    // the transparent front card an occluding fill.
+    let mut forest = vec![node(serde_json::json!({
+        "type":"frame","id":"preview","name":"Word Card Stack Preview",
+        "layout":"vertical","children":[{
+            "type":"frame","id":"stack","name":"Card Stack Container",
+            "layout":"none","children":[{
+                "type":"frame","id":"front","name":"Front Card",
+                "width":345,"height":148,"layout":"vertical",
+                "cornerRadius":20,"fill":[],"children":[
+                    {"type":"frame","id":"top","name":"Front Top Row","children":[]},
+                    {"type":"frame","id":"center","name":"Front Center Block","children":[]},
+                    {"type":"frame","id":"bottom","name":"Front Bottom Row","children":[]}
+                ]
+            }]
+        }]
+    }))];
+
+    resolve_forest_roles(&mut forest, 375.0, Theme::Light);
+
+    let preview = &forest[0];
+    let stack = &preview.children().unwrap()[0];
+    let front = &stack.children().unwrap()[0];
+    assert_eq!(role_of(preview), None, "preview wrapper stays structural");
+    assert_eq!(role_of(stack), None, "absolute stack stays structural");
+    assert_eq!(
+        role_of(front).as_deref(),
+        Some("card"),
+        "a nested multi-block card must not be mistaken for a forest-root wrapper"
+    );
+}
+
+#[test]
+fn nested_ambiguous_multi_block_wrappers_under_roleless_parent_stay_structural() {
+    // A roleless wrapper can occur at any depth. Its ambiguous multi-block
+    // descendants still need the section-wrapper guard; otherwise nested
+    // section names become card/search controls merely because they are not
+    // direct forest roots.
+    let mut forest = vec![node(serde_json::json!({
+        "type":"frame","id":"outer","name":"Content Container","children":[
+            {
+                "type":"frame","id":"featured","name":"Categories & Featured Banner",
+                "children":[
+                    {"type":"frame","id":"chips","name":"Category Chips","children":[]},
+                    {"type":"frame","id":"banner","name":"Promo Banner","children":[]}
+                ]
+            },
+            {
+                "type":"frame","id":"search","name":"Location & Search",
+                "children":[
+                    {"type":"frame","id":"location","name":"Location & Actions","children":[]},
+                    {"type":"text_input","id":"input","placeholder":"Search"}
+                ]
+            }
+        ]
+    }))];
+
+    resolve_forest_roles(&mut forest, 375.0, Theme::Light);
+
+    let children = forest[0].children().unwrap();
+    assert_eq!(
+        role_of(&children[0]),
+        None,
+        "nested multi-block feature wrapper must not become a card"
+    );
+    assert_eq!(
+        role_of(&children[1]),
+        None,
+        "nested location/search wrapper must not become a search control"
+    );
+}
+
+#[test]
+fn terminal_control_names_under_roleless_parent_are_unambiguous_instances() {
+    // Explicit instance-shaped names are allowed to contain structural child
+    // frames: a real card commonly has header/body/footer, and compound search
+    // controls can group multiple internal frames.
+    let multi_block_children = || {
+        serde_json::json!([
+            {"type":"frame","id":"a","name":"Leading","children":[]},
+            {"type":"frame","id":"b","name":"Trailing","children":[]}
+        ])
+    };
+    let mut forest = vec![node(serde_json::json!({
+        "type":"frame","id":"outer","name":"Control Container","children":[
+            {
+                "type":"frame","id":"card","name":"Front Card",
+                "width":345,"height":148,"children":multi_block_children()
+            },
+            {
+                "type":"frame","id":"bar","name":"Header Search Bar",
+                "children":multi_block_children()
+            },
+            {
+                "type":"frame","id":"input","name":"Destination Search Input",
+                "children":multi_block_children()
+            }
+        ]
+    }))];
+
+    resolve_forest_roles(&mut forest, 375.0, Theme::Light);
+
+    let children = forest[0].children().unwrap();
+    assert_eq!(role_of(&children[0]).as_deref(), Some("card"));
+    assert_eq!(role_of(&children[1]).as_deref(), Some("search-bar"));
+    // The existing ordered name patterns classify compound "... Search Input"
+    // names as `input`; this assertion is about preserving that real control
+    // role, not changing the role taxonomy.
+    assert_eq!(role_of(&children[2]).as_deref(), Some("input"));
+}
+
+#[test]
 fn real_feature_card_with_leaf_content_keeps_role() {
     // Negative control: a genuine feature-card groups LEAF content (icon/title/
     // text), not sub-frames — the guard must leave its role + card fill intact.

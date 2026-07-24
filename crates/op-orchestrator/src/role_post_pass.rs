@@ -635,22 +635,110 @@ fn fix_structural_wrapper_transparency(node: &mut Value) {
     }
 }
 
-/// True when an immediate child container (frame/group) already paints a
-/// visible surface. Such a node is a redundant wrapper around the real card —
-/// it must NOT be whitewashed into its own surface, or the injected drop-shadow
-/// ghosts out around the colored child as a gray rounded box.
-fn has_filled_container_child(node: &Value) -> bool {
-    node.get("children")
-        .and_then(Value::as_array)
-        .map(|kids| {
-            kids.iter().any(|c| {
-                matches!(
-                    c.get("type").and_then(Value::as_str),
-                    Some("frame") | Some("group")
-                ) && has_visible_fill(c)
-            })
-        })
-        .unwrap_or(false)
+fn is_compact_control_semantics(node: &Value) -> bool {
+    if role_of(node).is_some_and(|role| {
+        matches!(
+            role,
+            "button"
+                | "icon-button"
+                | "badge"
+                | "pill"
+                | "tag"
+                | "status"
+                | "input"
+                | "form-input"
+                | "search-bar"
+        )
+    }) {
+        return true;
+    }
+    let words = name_words(node);
+    ["button", "badge", "pill", "tag", "input", "icon", "control"]
+        .iter()
+        .any(|word| has_name_word(&words, word))
+}
+
+fn has_no_positive_padding(node: &Value) -> bool {
+    match node.get("padding") {
+        None | Some(Value::Null) => true,
+        Some(Value::Number(value)) => value.as_f64().is_some_and(|padding| padding <= 0.0),
+        Some(Value::Array(values)) => values
+            .iter()
+            .all(|value| value.as_f64().is_some_and(|padding| padding <= 0.0)),
+        Some(_) => false,
+    }
+}
+
+fn absolute_child_covers_parent(parent: &Value, child: &Value) -> bool {
+    if parent.get("layout").and_then(Value::as_str) != Some("none") {
+        return false;
+    }
+    let (Some(parent_width), Some(parent_height)) = (
+        numeric_prop(parent, "width"),
+        numeric_prop(parent, "height"),
+    ) else {
+        return false;
+    };
+    let (Some(x), Some(y), Some(width), Some(height)) = (
+        numeric_prop(child, "x"),
+        numeric_prop(child, "y"),
+        numeric_prop(child, "width"),
+        numeric_prop(child, "height"),
+    ) else {
+        return false;
+    };
+    if parent_width <= 0.0 || parent_height <= 0.0 || width <= 0.0 || height <= 0.0 {
+        return false;
+    }
+    let tolerance = 2.0;
+    x >= -tolerance
+        && y >= -tolerance
+        && x <= tolerance
+        && y <= tolerance
+        && x + width >= parent_width - tolerance
+        && y + height >= parent_height - tolerance
+        && x + width <= parent_width + tolerance
+        && y + height <= parent_height + tolerance
+}
+
+fn flex_child_fills_parent(parent: &Value, child: &Value, child_count: usize) -> bool {
+    parent.get("layout").and_then(Value::as_str) != Some("none")
+        && child_count == 1
+        && has_no_positive_padding(parent)
+        && child.get("width").and_then(Value::as_str) == Some("fill_container")
+        && child.get("height").and_then(Value::as_str) == Some("fill_container")
+}
+
+/// A painted child suppresses orphan-card rescue only when it can reasonably
+/// be the wrapper's actual surface. In flow, this requires the sole child to
+/// fill both axes inside a zero-padding wrapper. In `layout:none`, explicit
+/// x/y/width/height must cover the parent bounds, so other children are true
+/// overlays. Small controls, direct or nested, never satisfy either proof.
+fn has_near_full_bleed_painted_container_child(node: &Value) -> bool {
+    let Some(children) = node.get("children").and_then(Value::as_array) else {
+        return false;
+    };
+
+    children.iter().any(|child| {
+        if !matches!(
+            child.get("type").and_then(Value::as_str),
+            Some("frame") | Some("group")
+        ) || !has_visible_fill(child)
+            || is_compact_control_semantics(child)
+        {
+            return false;
+        }
+
+        absolute_child_covers_parent(node, child)
+            || flex_child_fills_parent(node, child, children.len())
+    })
+}
+
+fn effects_missing_or_null(node: &Value) -> bool {
+    match node.get("effects") {
+        None | Some(Value::Null) => true,
+        Some(_) => false,
+    }
 }
 
 fn fix_orphan_container_contrast(node: &mut Value, parent_fill: Option<&Value>) {
@@ -674,12 +762,11 @@ fn fix_orphan_container_contrast(node: &mut Value, parent_fill: Option<&Value>) 
     {
         return;
     }
-    // A child container already paints the visible surface (e.g. glm wraps an
-    // orange promo banner in a bare `feature-card` frame). Whitewashing this
-    // redundant wrapper into a second card leaks the injected drop-shadow out
-    // around the colored child as a gray "ghost box" — the exact mysterious
-    // background + rounded border the user flagged. Let the child be the card.
-    if has_filled_container_child(node) {
+    // A near-full-bleed child already paints the visible surface (e.g. glm
+    // wraps an orange promo card plus an overlay badge in a bare
+    // `feature-card`). A compact tag/button is content, not a replacement
+    // surface, and must not suppress rescue of the outer card.
+    if has_near_full_bleed_painted_container_child(node) {
         return;
     }
     // Only rescue containers we POSITIVELY identify as card-like; structural
@@ -692,11 +779,17 @@ fn fix_orphan_container_contrast(node: &mut Value, parent_fill: Option<&Value>) 
     if STRUCTURAL_DENYLIST.contains(&role) || !CARD_LIKE_ALLOWLIST.contains(&role) {
         return;
     }
-    node["fill"] = solid_fill("#FFFFFF");
-    node["effects"] = json!([
-        { "type": "shadow", "offsetX": 0, "offsetY": 1, "blur": 3, "spread": 0, "color": "#0000001A" },
-        { "type": "shadow", "offsetX": 0, "offsetY": 1, "blur": 2, "spread": -1, "color": "#0000000F" }
-    ]);
+    // Use the semantic surface token directly. A literal #FFFFFF can bind to
+    // `$color-bg-deep` when both variables share the light-mode value; the
+    // later surface-discipline pass correctly strips page-bg tokens from inner
+    // nodes, making this rescued card transparent again.
+    node["fill"] = solid_fill("$color-surface");
+    if effects_missing_or_null(node) {
+        node["effects"] = json!([
+            { "type": "shadow", "offsetX": 0, "offsetY": 1, "blur": 3, "spread": 0, "color": "#0000001A" },
+            { "type": "shadow", "offsetX": 0, "offsetY": 1, "blur": 2, "spread": -1, "color": "#0000000F" }
+        ]);
+    }
 }
 
 // ── normalizeNestedSearchShell ──────────────────────────────────────────────

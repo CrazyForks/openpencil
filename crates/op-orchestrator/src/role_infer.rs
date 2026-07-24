@@ -222,6 +222,24 @@ fn is_absurdly_tiny_for_card_role(node: &PenNode) -> bool {
     }
 }
 
+/// A multi-block frame can still be an unambiguous control instance when its
+/// name ends in the exact control noun. This distinguishes `Front Card`
+/// (header/body/footer are legitimate card internals) from ambiguous section
+/// wrappers such as `Categories & Featured Banner` or `Location & Search`.
+fn has_terminal_control_name(node: &PenNode) -> bool {
+    let Some(name) = node.base().name.as_deref() else {
+        return false;
+    };
+    let normalized = name
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+    ["card", "search bar", "search input"]
+        .iter()
+        .any(|suffix| normalized == *suffix || normalized.ends_with(&format!(" {suffix}")))
+}
+
 /// Infer + write back a single node's role (I1 — no defaults injection).
 ///
 /// An explicit author role always wins and is left untouched. For an inferred
@@ -266,9 +284,9 @@ fn resolve_node_role(node: &mut PenNode, parent_role: Option<&str>) {
     }
 
     // Section-wrapper guard (BOTH explicit + inferred roles, like the tiny-card
-    // guard above). A card-like / search-bar / input role on a TOP-LEVEL section
-    // (`parent_role` None) that is actually a multi-block layout WRAPPER is a
-    // false positive from loose name matching: "Categories & Featured Banner"
+    // guard above). A card-like / search-bar / input role below a roleless
+    // parent that is a multi-block layout WRAPPER is a false positive from
+    // loose name matching: "Categories & Featured Banner"
     // hits `\bfeature` → feature-card, "Location & Search" hits `\bsearch` →
     // search-bar — but both are section wrappers, not a single card / search
     // field. Left in place, `apply_role_defaults` injects a card fill + border +
@@ -276,7 +294,7 @@ fn resolve_node_role(node: &mut PenNode, parent_role: Option<&str>) {
     // flagged). Heuristic: a real card groups LEAF content (icon/title/text); a
     // real search bar holds an icon + the input, not sub-frames. So ≥2 sub-frames
     // (card) or ≥1 sub-frame (search/input) means it's a wrapper → drop the role.
-    if parent_role.is_none() {
+    if parent_role.is_none() && !has_terminal_control_name(node) {
         let sub_frames = node
             .children()
             .map(|c| {

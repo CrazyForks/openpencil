@@ -125,7 +125,10 @@ fn orphan_card_gets_fill_and_shadow() {
     });
     // Parent exists (Some) but has no fill (Null) → orphan fix fires.
     fix_orphan_container_contrast(&mut card, Some(&Value::Null));
-    assert_eq!(card["fill"], json!([{"type":"solid","color":"#FFFFFF"}]));
+    assert_eq!(
+        card["fill"],
+        json!([{"type":"solid","color":"$color-surface"}])
+    );
     assert!(card["effects"].is_array());
 }
 
@@ -192,8 +195,10 @@ fn orphan_skipped_when_child_container_paints_surface() {
     // box around the orange child (the user's "mysterious bg + rounded border").
     let mut wrap = json!({
         "type":"frame","role":"feature-card","cornerRadius":12,
+        "width":320,"height":180,"layout":"vertical",
         "children":[{
             "type":"frame","role":"card",
+            "width":"fill_container","height":"fill_container",
             "fill":[{"type":"linear_gradient","angle":135,"stops":[
                 {"offset":0.0,"color":"#FB923C"},{"offset":1.0,"color":"#F97316"}]}],
             "children":[{"type":"text","content":"50% Off"}]
@@ -207,6 +212,162 @@ fn orphan_skipped_when_child_container_paints_surface() {
     assert!(
         wrap.get("effects").is_none(),
         "no ghost shadow injected onto the bare wrapper"
+    );
+}
+
+#[test]
+fn orphan_wrapper_skips_near_full_bleed_surface_with_overlay_badge() {
+    let mut wrap = json!({
+        "type":"frame","role":"feature-card","name":"Promo Wrapper",
+        "width":320,"height":180,"layout":"none","cornerRadius":16,
+        "children":[
+            {
+                "type":"frame","role":"card","name":"Promo Card",
+                "x":0,"y":0,"width":320,"height":180,
+                "fill":[{"type":"solid","color":"#F97316"}],
+                "children":[{"type":"text","content":"50% Off"}]
+            },
+            {
+                "type":"frame","role":"badge","name":"Promo Badge",
+                "x":16,"y":16,"width":"fit_content","height":24,
+                "fill":[{"type":"solid","color":"#FFFFFF"}],
+                "children":[{"type":"text","content":"NEW"}]
+            }
+        ]
+    });
+
+    fix_orphan_container_contrast(&mut wrap, Some(&Value::Null));
+    assert!(
+        wrap.get("fill").is_none(),
+        "a full-bleed painted card remains the wrapper surface even with an overlay badge"
+    );
+    assert!(
+        wrap.get("effects").is_none(),
+        "the transparent wrapper must not receive a ghost shadow"
+    );
+}
+
+#[test]
+fn orphan_card_with_only_small_filled_controls_still_gets_surface() {
+    // 0724-1-gm's front vocabulary card has three structural rows. A tiny tag
+    // and audio button paint their own fills, but neither is the card surface;
+    // their presence must not leave the outer rounded card transparent.
+    let mut card = json!({
+        "type":"frame","role":"card","name":"Front Card","cornerRadius":20,
+        "children":[
+            {"type":"frame","name":"Front Top Row","children":[
+                {"type":"icon_font","iconFontName":"bookmark"}
+            ]},
+            {"type":"frame","name":"Tag Pill",
+             "fill":[{"type":"solid","color":"#F3F4F6"}],
+             "children":[{"type":"text","content":"今日核心词"}]},
+            {"type":"frame","name":"Front Center Block","children":[
+                {"type":"text","content":"Resilient"}
+            ]},
+            {"type":"frame","role":"button","name":"Audio Button",
+             "fill":[{"type":"solid","color":"#FF6B6B"}],
+             "children":[{"type":"icon_font","iconFontName":"volume-2"}]},
+            {"type":"frame","name":"Front Bottom Row","children":[
+                {"type":"text","content":"adj. 保持韧性的；有适应力的"}
+            ]}
+        ]
+    });
+
+    fix_orphan_container_contrast(&mut card, Some(&Value::Null));
+    assert_eq!(
+        card["fill"],
+        json!([{"type":"solid","color":"$color-surface"}]),
+        "small filled descendants are controls, not a replacement card surface"
+    );
+    assert!(
+        card["effects"].is_array(),
+        "the restored card surface should carry the standard elevation"
+    );
+}
+
+#[test]
+fn padded_flex_wrapper_does_not_treat_fill_child_as_full_bleed() {
+    let mut card = json!({
+        "type":"frame","role":"card","name":"Padded Card",
+        "width":320,"height":180,"layout":"vertical","padding":16,"cornerRadius":16,
+        "children":[{
+            "type":"frame","role":"card","name":"Inset Content Card",
+            "width":"fill_container","height":"fill_container",
+            "fill":[{"type":"solid","color":"#F97316"}],
+            "children":[{"type":"text","content":"Inset content"}]
+        }]
+    });
+
+    fix_orphan_container_contrast(&mut card, Some(&Value::Null));
+    assert_eq!(
+        card["fill"],
+        json!([{"type":"solid","color":"$color-surface"}]),
+        "fill_container spans the padded content box, not the outer card bounds"
+    );
+}
+
+#[test]
+fn orphan_card_keeps_authored_effects_when_surface_is_restored() {
+    let authored_effects = json!([
+        {
+            "type":"shadow","offsetX":0,"offsetY":8,"blur":24,
+            "spread":0,"color":"#FF6B6B33"
+        }
+    ]);
+    let mut card = json!({
+        "type":"frame","role":"card","name":"Front Card",
+        "width":345,"height":148,"cornerRadius":20,
+        "stroke":{"thickness":1,"fill":[{"type":"solid","color":"#E5E5E5"}]},
+        "effects": authored_effects.clone(),
+        "children":[
+            {
+                "type":"frame","name":"Front Top Row",
+                "width":"fill_container","height":"fit_content",
+                "children":[{
+                    "type":"frame","name":"Tag Pill",
+                    "width":"fit_content","height":"fit_content",
+                    "fill":[{"type":"solid","color":"#F3F4F6"}]
+                }]
+            },
+            {
+                "type":"frame","name":"Front Center Block",
+                "width":"fill_container","height":"fit_content",
+                "children":[{
+                    "type":"frame","role":"button","name":"Audio Button",
+                    "width":36,"height":36,
+                    "fill":[{"type":"solid","color":"#FF6B6B"}]
+                }]
+            }
+        ]
+    });
+
+    fix_orphan_container_contrast(&mut card, Some(&Value::Null));
+    assert_eq!(
+        card["fill"],
+        json!([{"type":"solid","color":"$color-surface"}])
+    );
+    assert_eq!(
+        card["effects"], authored_effects,
+        "restoring the missing card fill must preserve authored elevation"
+    );
+}
+
+#[test]
+fn orphan_card_preserves_explicit_empty_effects() {
+    let mut card = json!({
+        "type":"frame","role":"card","cornerRadius":12,"effects":[],
+        "children":[{"type":"text","content":"Flat card"}]
+    });
+
+    fix_orphan_container_contrast(&mut card, Some(&Value::Null));
+    assert_eq!(
+        card["fill"],
+        json!([{"type":"solid","color":"$color-surface"}])
+    );
+    assert_eq!(
+        card["effects"],
+        json!([]),
+        "an explicit flat-card effect choice must not be replaced by default elevation"
     );
 }
 
@@ -1355,8 +1516,8 @@ fn post_pass_forest_round_trips_and_fills_orphan_card() {
     let v = serde_json::to_value(&nodes[0]).unwrap();
     assert_eq!(
         v["children"][0]["fill"],
-        json!([{"type":"solid","color":"#FFFFFF"}]),
-        "orphan card inside an unfilled section root gets a white fill"
+        json!([{"type":"solid","color":"$color-surface"}]),
+        "orphan card inside an unfilled section root gets a semantic surface fill"
     );
 }
 
