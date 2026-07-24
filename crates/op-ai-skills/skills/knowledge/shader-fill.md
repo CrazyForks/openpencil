@@ -5,7 +5,7 @@ phase: [generation]
 trigger:
   keywords: [shader, glsl, sksl, generative, noise, aurora]
 priority: 28
-budget: 700
+budget: 750
 category: knowledge
 ---
 
@@ -14,11 +14,12 @@ SHADER FILL (advanced — render-only):
 A node fill can be a native SkSL shader. Use it only for genuinely
 procedural surfaces (generative noise, aurora, animated-looking glow)
 where `linear_gradient` / `radial_gradient` / `mesh_gradient` can't get
-the look. For ordinary multi-hue panels, PREFER `mesh_gradient` — it is
-simpler, safer, and renders everywhere. WHEN UNSURE, fall back to
-`linear_gradient` or `mesh_gradient`. A shader that fails to compile
-degrades to a flat solid (first colour uniform, else gray), so a bad
-shader silently looks worse than a gradient.
+the look. For ordinary multi-hue panels PREFER `mesh_gradient` — simpler,
+safer, renders everywhere. WHEN UNSURE, fall back to `linear_gradient` or
+`mesh_gradient`. A shader that fails to compile degrades to a flat solid
+(first colour uniform, else gray) — a bad shader silently looks worse
+than a gradient. Do NOT hand-author exotic shaders for routine UI;
+reach for one only on explicit "generative/noise/aurora/shader" intent.
 
 SHAPE (one fill entry):
 
@@ -26,21 +27,20 @@ SHAPE (one fill entry):
 fill: [{ type: "shader", sksl: "<SkSL source>", uniforms: { name: value, ... } }]
 ```
 
-- `sksl` — RAW SkSL (Skia's GLSL dialect). The entrypoint MUST be the
-  exact signature `half4 main(float2 fragCoord)` and return a `half4`
-  RGBA colour. `fragCoord` is the pixel position inside the node box.
-- `uniforms` — OPTIONAL map of named uniforms. A shader may take none.
-  Supported value types:
-  - number → `float` uniform (declare `uniform float name;`)
-  - number array `[a,b]` / `[a,b,c]` / `[a,b,c,d]` → `vec2`/`vec3`/`vec4`
-  - hex string `"#rrggbb"` → `vec4` colour (premultiplied RGBA); declare
-    it `uniform half4 name;`. The first colour uniform also doubles as
-    the visible fallback if compilation fails — so always include one.
+- `sksl` — RAW SkSL (Skia's GLSL dialect). Entrypoint MUST be the exact
+  signature `half4 main(float2 fragCoord)`, returning a `half4` RGBA
+  colour. `fragCoord` is the pixel position inside the node box.
+- `uniforms` — OPTIONAL map of named uniforms (a shader may take none):
+  number → `float`; number array `[a,b]`/`[a,b,c]`/`[a,b,c,d]` →
+  `vec2`/`vec3`/`vec4`; hex string `"#rrggbb"` → `vec4` colour
+  (premultiplied RGBA, declare `uniform half4 name;`) — the first colour
+  uniform also doubles as the visible fallback if compilation fails, so
+  always include one.
 - Optional `opacity` (0..1) folds into the fill alpha.
 
 KNOWN-GOOD SNIPPETS (copy verbatim, tweak colours via uniforms):
 
-1) Vertical two-colour fade (top → bottom):
+1) Vertical fade (top → bottom):
 
 ```
 fill: [{ type: "shader",
@@ -71,6 +71,3 @@ RULES:
 - Pass the node's pixel size as a `float2 size` uniform when you need to
   normalise `fragCoord` (SkSL has no built-in resolution).
 - No external textures / images in v1 — colours + math only.
-- Do NOT hand-author exotic shaders for routine UI. Reach for a shader
-  only on explicit "generative / noise / aurora / shader" intent;
-  otherwise `mesh_gradient` or a gradient is the right tool.

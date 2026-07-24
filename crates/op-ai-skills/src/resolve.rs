@@ -182,12 +182,46 @@ mod tests {
             "design a login form",
             &ResolveOptions::default(),
         );
-        assert_eq!(ctx.budget_max, 8000);
+        assert_eq!(ctx.budget_max, 12000);
         assert!(ctx.budget_used <= ctx.budget_max);
         assert!(
             !ctx.skills.is_empty(),
             "generation phase should resolve skills"
         );
+    }
+
+    /// Regression guard for the 2026-07-24 budget audit: real-world
+    /// generation prompts (mobile app / SaaS landing page / admin
+    /// dashboard) used to silently truncate at least one Domain or
+    /// Knowledge skill via the Step 3 total-budget knapsack — even when
+    /// every skill fit its own per-skill budget — because the always-on
+    /// Base skills alone (~6000 tokens) left only ~2000 tokens of
+    /// headroom under the old 8000-token phase default (landing-page.md
+    /// was cut to 275 of its 1203 tokens; design-principles was dropped
+    /// from all three prompts entirely). The phase default is now 12000
+    /// (see `Phase::default_budget`'s doc comment); this locks in that no
+    /// resolved skill in these representative prompts gets truncated by
+    /// either mechanism (own-budget cap or total-budget tail cut).
+    #[test]
+    fn representative_generation_prompts_hit_zero_truncation() {
+        for prompt in [
+            "design a polished mobile app home screen for a fitness tracking app with bottom navigation",
+            "design a modern landing page for a SaaS product with hero, pricing, and testimonials",
+            "design an admin dashboard with a data table, charts, and analytics for a SaaS product",
+        ] {
+            let ctx = resolve_skills(Phase::Generation, prompt, &ResolveOptions::default());
+            let truncated: Vec<&str> = ctx
+                .skills
+                .iter()
+                .filter(|s| s.truncated)
+                .map(|s| s.meta.name.as_str())
+                .collect();
+            assert!(
+                truncated.is_empty(),
+                "prompt {prompt:?} truncated skills: {truncated:?}"
+            );
+            assert!(ctx.budget_used <= ctx.budget_max);
+        }
     }
 
     #[test]

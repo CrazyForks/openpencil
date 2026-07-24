@@ -37,15 +37,15 @@ Add `"persist": true` to survive app restarts:
 ```
 
 CROSS-SECTION SHARED STATE — use `$app.*` (document-root state) for values
-that two or more independently-generated sections must read or write. A
-counter button in one section and a display label in another section both
-reach `$app.count` without coupling their node trees. Per-section private
-values may use `$state.*`. When in doubt, prefer `$app.*`.
+two or more independently-generated sections must read or write (e.g. a
+counter button in one section and a display label in another both reach
+`$app.count` without coupling their node trees). Per-section private values
+may use `$state.*`. When in doubt, prefer `$app.*`.
 
 BINDINGS — declarative reads (`bind:value`, `content`):
 
-`bindings` is a map from property name to an expression string. Use it to
-keep node properties in sync with state automatically.
+`bindings` maps a property name to an expression string, keeping node
+properties in sync with state automatically.
 
 - Read-only bind: `"bindings": { "content": "\"Count: \" + $app.count" }`
   (the text node displays the live count, grounded in `full-jian-extensions.op:36`)
@@ -72,15 +72,15 @@ Supported event hook keys (camelCase, `#[serde(rename_all = "camelCase")]`):
 
 Action vocabulary (body shape per action):
 
-| Action    | Body                                                             | Effect                                   |
-|-----------|------------------------------------------------------------------|------------------------------------------|
-| `set`     | `{ "<path>": "<expr>" }` map of assignments                     | Write one or more state variables         |
-| `toggle`  | `"<path>"` — the bool variable to flip                           | Toggle a bool state variable              |
-| `toast`   | `"<message expr>"` string or template literal                    | Show a transient notification             |
-| `push`    | `"\"<route path>\""` — a JSON string whose VALUE is itself `"<route path>"`, quotes included | Drill into a screen (keeps the caller reachable via back/pop) |
-| `replace` | `"\"<route path>\""` — same quote-literal shape as `push`         | Switch to a sibling screen (tab bar / sidebar — no back entry) |
-| `pop`     | `null` — no body                                                  | Return to the previous screen             |
-| `if`      | `{ "expr": "<condition>", "then": [...], "else": [...] }`        | Conditional action branch (`else` optional) |
+| Action | Body | Effect |
+|---|---|---|
+| `set` | `{ "<path>": "<expr>" }` map of assignments | Write one or more state variables |
+| `toggle` | `"<path>"` — the bool variable to flip | Toggle a bool state variable |
+| `toast` | `"<message expr>"` string or template literal | Show a transient notification |
+| `push` | `"\"<route path>\""` — a JSON string whose VALUE is itself `"<route path>"`, quotes included | Drill into a screen (back/pop can return) |
+| `replace` | `"\"<route path>\""` — same quote-literal shape as `push` | Switch to a sibling screen (tab bar / sidebar — no back entry) |
+| `pop` | `null` — no body | Return to the previous screen |
+| `if` | `{ "expr": "<condition>", "then": [...], "else": [...] }` | Conditional branch (`else` optional) |
 
 `push` / `replace` bodies compile as a Tier-1 EXPRESSION, not a literal path — an unquoted `/stats` lexes as a division token and fails to compile. Always wrap the route path in an extra pair of escaped quotes: `{ "push": "\"/stats\"" }`, never `{ "push": "/stats" }`.
 
@@ -153,16 +153,15 @@ when tapped.
 PLACEMENT RULES:
 
 - Declare `state` on the **lowest common ancestor** node that all bindings /
-  event handlers need. For cross-section designs, declare on the document root.
+  event handlers need — the document root for cross-section designs.
 - `bindings` lives on the node whose property is driven (e.g. the `text`
   node whose `content` reflects a counter, or the `text_input` node whose
   `value` binds a form field).
 - `events` lives on the interactive node (button frame, input node, list
-  item) — NOT on a wrapper layout frame that has no tap/change semantics.
+  item) — NOT on a wrapper layout frame with no tap/change semantics.
 - Input nodes (`text_input`) use `bind:value` for two-way sync and
-  `onChange` to write `$event.value` back to state. Do not manually echo
-  `$event.value` into a display node — use a `bindings.content` expression
-  instead.
+  `onChange` to write `$event.value` back to state — don't manually echo
+  `$event.value` into a display node, use a `bindings.content` expression.
 
 CORRECTNESS CHECKLIST:
 

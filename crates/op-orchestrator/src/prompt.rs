@@ -1163,10 +1163,17 @@ CRITICAL LAYOUT CONSTRAINTS:\n\
 
     // Assemble the per-subtask skill-load report from the FINAL skill set
     // (post tier/dedup filtering). `budget_max` reflects the tier budget
-    // override. Full-tier defaults to 12000 because image-rich data-list
-    // sections (restaurants/products with ratings/prices) overflowed 8000
-    // tokens and truncated their scripts to zero generated nodes.
-    let budget_max = budget_override.unwrap_or(12000);
+    // override. Full-tier falls through to `Phase::Generation::default_budget()`
+    // (12000, raised from 8000 in op-ai-skills — see that constant's doc
+    // comment) because image-rich data-list sections (restaurants/products
+    // with ratings/prices) overflowed 8000 tokens and truncated their
+    // scripts to zero generated nodes. This used to be a bare `12000`
+    // literal that only affected this diagnostic number — `resolve_skills`
+    // (called above via `resolve_generation_skills`) independently fell
+    // back to the OLD 8000 default for a `None` override, so Full tier's
+    // real skill trimming silently ran at 8000 while this report claimed
+    // 12000. Deriving both from the same constant keeps them honest.
+    let budget_max = budget_override.unwrap_or_else(|| Phase::Generation.default_budget());
     let included: Vec<SkillLoadEntry> = filtered
         .iter()
         .map(|s| SkillLoadEntry {

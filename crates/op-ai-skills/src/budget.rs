@@ -39,6 +39,29 @@ fn warn_truncated(name: &str, budget_tokens: u32, actual_tokens: u32, dropped_ch
 #[cfg(target_arch = "wasm32")]
 fn warn_truncated(_name: &str, _budget_tokens: u32, _actual_tokens: u32, _dropped_chars: usize) {}
 
+/// Emit a diagnostic when a skill that fits comfortably within its OWN
+/// per-skill `budget` still gets its tail cut by the Step 3 domain-fill
+/// knapsack because the phase's TOTAL budget ran out. This is a distinct
+/// failure mode from [`warn_truncated`] above: the skill's author did
+/// nothing wrong (its content is within its declared budget), but the
+/// phase-level ceiling plus the skills that filled ahead of it left no
+/// room for the rest. Before this, the only Step 3 signal was the
+/// `truncated: true` flag on the returned [`ResolvedSkill`] — invisible
+/// unless a caller inspects the report, so a Domain skill could be
+/// silently chopped to a fragment of its content on every matching
+/// generation call with nothing printed anywhere.
+#[cfg(not(target_arch = "wasm32"))]
+fn warn_tail_truncated(name: &str, own_budget: u32, actual_tokens: u32, kept_tokens: u32) {
+    eprintln!(
+        "op-ai-skills: skill {name:?} fits its own budget ({actual_tokens} tokens <= {own_budget} budget) \
+         but was cut to {kept_tokens} tokens by the phase's total budget — raise the phase budget, \
+         lower a higher-priority skill's footprint, or re-prioritize this skill."
+    );
+}
+
+#[cfg(target_arch = "wasm32")]
+fn warn_tail_truncated(_name: &str, _own_budget: u32, _actual_tokens: u32, _kept_tokens: u32) {}
+
 /// Truncate `content` to roughly `max_tokens`, preferring to cut at a
 /// newline when one falls in the second half of the window (so the
 /// truncation lands on a clean line break).
@@ -189,6 +212,12 @@ pub fn trim_by_budget_pinned(
             // but only if it is at least as relevant as what already fit fully.
             let content = truncate_content(&skill.content, remaining as u32);
             let token_count = estimate_tokens(&content);
+            warn_tail_truncated(
+                &skill.meta.name,
+                skill.meta.budget,
+                skill.token_count,
+                token_count,
+            );
             used += token_count as i64;
             result.push(ResolvedSkill {
                 meta: skill.meta.clone(),
@@ -233,6 +262,40 @@ pub fn trim_by_budget_pinned(
 mod tests {
     use super::*;
     use crate::types::{Phase, SkillMeta, SkillTrigger};
+
+    /// Regression guard for the "skill content drifted over its declared
+    /// budget and got silently truncated" bug class (the 2026-07-24 budget
+    /// audit found `layout.md` had sat ~700 tokens over budget for months,
+    /// and caught five more in the same state: `overflow.md`,
+    /// `dashboard.md`, `variables.md`, `interactivity.md`,
+    /// `shader-fill.md` — each silently dropping content from the middle
+    /// or tail of a worked example, a correctness checklist, or a color
+    /// table). Every skill's actual token count must fit within its own
+    /// frontmatter `budget:`, so Step 1 of `trim_by_budget_pinned` never
+    /// needs to invoke [`truncate_content`] on it. Add content to a skill
+    /// → this test fails the moment it drifts over budget, instead of
+    /// failing silently in production prompts.
+    #[test]
+    fn no_skill_silently_exceeds_its_own_budget() {
+        let mut offenders = Vec::new();
+        for skill in crate::loader::get_skill_registry() {
+            let actual = estimate_tokens(&skill.content);
+            if actual > skill.meta.budget {
+                offenders.push(format!(
+                    "{} (budget={}, actual={}, over by {})",
+                    skill.meta.name,
+                    skill.meta.budget,
+                    actual,
+                    actual - skill.meta.budget
+                ));
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "skills exceed their own per-skill budget and would be silently \
+             truncated by trim_by_budget's Step 1 cap: {offenders:?}"
+        );
+    }
 
     fn skill(name: &str, category: SkillCategory, budget: u32, content: &str) -> SkillEntry {
         SkillEntry {

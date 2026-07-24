@@ -38,11 +38,29 @@ impl Phase {
         }
     }
 
-    /// Default token budget for this phase (TS `DEFAULT_BUDGETS`).
+    /// Default token budget for this phase. Planning/Validation/Maintenance
+    /// are the original TS `DEFAULT_BUDGETS` values (faithful port).
+    /// Generation was raised 8000 → 12000 (2026-07-24): the always-on Base
+    /// skills alone already use ~6000 tokens, so 8000 left only ~2000 for
+    /// Domain + Knowledge combined — routinely not enough for even one
+    /// well-matched Domain skill (`mobile-app` ~1950 tok, `dashboard` ~2250
+    /// tok), let alone a second Domain skill plus any Knowledge skill on
+    /// top. `op-orchestrator/src/prompt.rs` had already reached the same
+    /// number independently for its Full-tier reporting default (comment:
+    /// "image-rich data-list sections … overflowed 8000 tokens and
+    /// truncated their scripts to zero generated nodes") but never actually
+    /// wired it into `budget_override` for that tier, so real trimming
+    /// silently ran at 8000 while the diagnostics reported 12000. Raising
+    /// the shared default here makes every caller — orchestrator Full tier,
+    /// the builtin-agent chat preamble (`chat_runtime.rs`), and the direct
+    /// chat system prompt (`chat_system_prompt.rs`) — actually get the
+    /// headroom the codebase had already decided was correct. Tier-scaled
+    /// callers (Basic/Standard mobile/desktop) are unaffected: they pass an
+    /// explicit `budget_override` and never fall through to this default.
     pub fn default_budget(self) -> u32 {
         match self {
             Phase::Planning => 4000,
-            Phase::Generation => 8000,
+            Phase::Generation => 12000,
             Phase::Validation => 3000,
             Phase::Maintenance => 5000,
         }
@@ -52,7 +70,7 @@ impl Phase {
 /// Per-phase default token budgets — the TS `DEFAULT_BUDGETS` record.
 pub const DEFAULT_BUDGETS: [(Phase, u32); 4] = [
     (Phase::Planning, 4000),
-    (Phase::Generation, 8000),
+    (Phase::Generation, 12000),
     (Phase::Validation, 3000),
     (Phase::Maintenance, 5000),
 ];
@@ -305,7 +323,7 @@ mod tests {
     #[test]
     fn default_budget_table() {
         assert_eq!(Phase::Planning.default_budget(), 4000);
-        assert_eq!(Phase::Generation.default_budget(), 8000);
+        assert_eq!(Phase::Generation.default_budget(), 12000);
         assert_eq!(Phase::Validation.default_budget(), 3000);
         assert_eq!(Phase::Maintenance.default_budget(), 5000);
         // The const table agrees with the per-variant method.
