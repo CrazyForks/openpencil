@@ -363,29 +363,7 @@ impl PropertyPanel {
                 None,
             ));
         }
-        let (page_name, page_background) = match state.doc.pages.as_ref() {
-            Some(pages) if !pages.is_empty() => {
-                let index = state.ui.active_page_index.min(pages.len() - 1);
-                (
-                    pages[index].name.clone(),
-                    pages[index].background_color.clone(),
-                )
-            }
-            _ => ("Page 1".to_string(), None),
-        };
-        let mut panel = Self::build_from_snapshot(
-            state,
-            NodeSnapshot::empty_for_code_tab(),
-            op_editor_core::FillType::Solid,
-            now_ms,
-            false,
-            None,
-            None,
-        );
-        panel.page_only = true;
-        panel.page_name = page_name;
-        panel.page_background = page_background;
-        Some(panel)
+        None
     }
 
     /// Selection-driven panel builder — `None` when no selected id

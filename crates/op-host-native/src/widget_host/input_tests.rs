@@ -732,19 +732,25 @@ fn toolbar_panel_actions_open_variables_and_design_panels() {
         ))
     );
     // The VariablesPanel is a floating canvas overlay, not a right-rail
-    // tab. With no node selected the rail remains the active-page
-    // inspector, so toggling Variables must not affect its visibility.
-    assert!(host.editor_state().right_rail_visible());
+    // tab. With no node selected the rail stays hidden, so toggling
+    // Variables must not affect its visibility.
+    assert!(!host.editor_state().right_rail_visible());
+    let (canvas_left, _, canvas_width, _) = host.canvas_region(viewport_w, viewport_h);
+    assert_eq!(
+        canvas_width,
+        viewport_w - canvas_left,
+        "an empty Design selection must not reserve a blank right rail"
+    );
     assert!(host.apply_press(variables_x, variables_y, viewport_w, viewport_h));
     assert!(host.editor_state().editor_ui.variables_panel_open);
-    assert!(host.editor_state().right_rail_visible());
+    assert!(!host.editor_state().right_rail_visible());
     assert_eq!(
         host.editor_state().editor_ui.property_tab,
         op_editor_core::PropertyTab::Design
     );
     assert!(host.apply_press(variables_x, variables_y, viewport_w, viewport_h));
     assert!(!host.editor_state().editor_ui.variables_panel_open);
-    assert!(host.editor_state().right_rail_visible());
+    assert!(!host.editor_state().right_rail_visible());
 
     let (design_x, design_y) = toolbar_action_point_for_test(
         &host,
@@ -2577,4 +2583,68 @@ fn import_menu_routes_its_two_rows_to_figma_and_html() {
     assert!(host.apply_press(button_center.x, button_center.y, vw, vh));
     assert!(host.apply_press(button_center.x, button_center.y, vw, vh));
     assert!(!host.editor_state().editor_ui.import_menu_open);
+}
+
+#[test]
+fn right_rail_host_routing_tracks_design_selection_and_code_fallback() {
+    let mut host = WidgetHostNative::new();
+    seed(
+        &mut host,
+        r#"{"version":"1.0.0","children":[{"type":"rectangle","id":"n-rail","name":"Rail probe","x":0,"y":0,"width":100,"height":50}]}"#,
+    );
+    host.editor_state_mut().chat.collapsed = true;
+    host.editor_state_mut().editor_ui.property_tab = op_editor_core::PropertyTab::Design;
+    host.editor_state_mut().clear_selection();
+
+    let viewport_w = 1200.0;
+    let viewport_h = 800.0;
+    let property_width = host.editor_state().editor_ui.property_panel_width;
+    let old_property_gutter_x = viewport_w - property_width;
+    let press_y = TOP_BAR_HEIGHT + 180.0;
+
+    let (canvas_left, _, canvas_width, _) = host.canvas_region(viewport_w, viewport_h);
+    assert_eq!(
+        canvas_left + canvas_width,
+        viewport_w,
+        "empty Design selection must release the entire right rail to the canvas"
+    );
+    assert_eq!(
+        host.panel_resize_hover(old_property_gutter_x, press_y, viewport_w),
+        None,
+        "the former property-panel gutter must not remain interactive"
+    );
+
+    let right_edge_x = viewport_w - 2.0;
+    assert!(host.over_canvas(right_edge_x, press_y, viewport_w, viewport_h));
+    host.apply_press(right_edge_x, press_y, viewport_w, viewport_h);
+    assert!(
+        host.marquee_drag.is_some(),
+        "a blank press at the viewport's right edge must route to the canvas"
+    );
+    assert!(!host.is_resizing_panel());
+    assert!(host.apply_release_with_viewport(viewport_w, viewport_h));
+
+    host.editor_state_mut()
+        .set_single_selection(NodeId::new("n-rail"));
+    assert!(host.editor_state().right_rail_visible());
+    let (selected_left, _, selected_width, _) = host.canvas_region(viewport_w, viewport_h);
+    assert_eq!(selected_left + selected_width, old_property_gutter_x);
+    assert!(matches!(
+        host.panel_resize_hover(old_property_gutter_x, press_y, viewport_w),
+        Some(super::PanelResizeKind::PropertyLeft)
+    ));
+    assert!(!host.over_canvas(right_edge_x, press_y, viewport_w, viewport_h));
+
+    host.editor_state_mut().clear_selection();
+    host.editor_state_mut().editor_ui.property_tab = op_editor_core::PropertyTab::Code;
+    assert!(
+        host.editor_state().right_rail_visible(),
+        "Code remains selection-independent"
+    );
+    let (code_left, _, code_width, _) = host.canvas_region(viewport_w, viewport_h);
+    assert_eq!(code_left + code_width, old_property_gutter_x);
+    assert!(matches!(
+        host.panel_resize_hover(old_property_gutter_x, press_y, viewport_w),
+        Some(super::PanelResizeKind::PropertyLeft)
+    ));
 }

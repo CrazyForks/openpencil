@@ -232,7 +232,7 @@ mod tests {
     }
 
     #[test]
-    fn no_selection_page_inspector_preserves_rgba_and_hits_input_and_clear() {
+    fn no_selection_does_not_implicitly_open_page_inspector() {
         let doc = jian_ops_schema::load_str(
             r##"{
                 "version":"1.0.0",
@@ -247,27 +247,6 @@ mod tests {
         .expect("page fixture")
         .value;
         let state = op_editor_core::EditorState::from_document(doc);
-        let panel = PropertyPanel::for_selection(&state).expect("page inspector");
-        assert!(panel.page_only);
-        assert_eq!(panel.page_name, "Canvas A");
-        assert_eq!(panel.page_background.as_deref(), Some("#d7e4f380"));
-
-        let panel_rect = Rect::xywh(0.0, 0.0, 280.0, 500.0);
-        let input = background_input_rect(panel_rect, true);
-        assert_eq!(
-            panel.hit_test(
-                panel_rect,
-                Point2D::new(input.origin.x + 8.0, input.origin.y + 8.0)
-            ),
-            Some(PropertyFocus::PageBackgroundHex)
-        );
-        let clear = clear_rect(panel_rect, true).unwrap();
-        assert_eq!(
-            panel.hit_test_action(
-                panel_rect,
-                Point2D::new(clear.origin.x + 8.0, clear.origin.y + 8.0)
-            ),
-            Some(PropertyPanelAction::ClearPageBackground)
-        );
+        assert!(PropertyPanel::for_selection(&state).is_none());
     }
 }

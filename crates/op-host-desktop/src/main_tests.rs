@@ -168,10 +168,10 @@ fn fresh_app_fits_blank_frame_like_ts_canvas_init() {
     assert!(app.host.editor_state().selection.is_empty());
     let v = app.host.editor_state().viewport;
 
-    // The page-properties rail stays visible for background editing; fit uses its narrower canvas.
-    assert!((v.zoom - 0.68).abs() < 1e-3, "zoom {}", v.zoom);
+    // No implicit page inspector without a selection: fit uses the full canvas width.
+    assert!((v.zoom - 0.8933333).abs() < 1e-3, "zoom {}", v.zoom);
     assert!((v.pan_x - 64.0).abs() < 1e-2, "pan_x {}", v.pan_x);
-    assert!((v.pan_y - 158.0).abs() < 1e-2, "pan_y {}", v.pan_y);
+    assert!((v.pan_y - 72.66669).abs() < 1e-2, "pan_y {}", v.pan_y);
 }
 
 #[test]
@@ -182,9 +182,9 @@ fn fresh_app_refits_blank_frame_to_actual_window_size_once() {
 
     assert!(app.fit_initial_blank_frame_to_actual_viewport());
     let v = app.host.editor_state().viewport;
-    assert!((v.zoom - 0.31333333).abs() < 1e-3, "zoom {}", v.zoom);
+    assert!((v.zoom - 0.52666664).abs() < 1e-3, "zoom {}", v.zoom);
     assert!((v.pan_x - 64.0).abs() < 1e-2, "pan_x {}", v.pan_x);
-    assert!((v.pan_y - 204.66667).abs() < 1e-2, "pan_y {}", v.pan_y);
+    assert!((v.pan_y - 119.33334).abs() < 1e-2, "pan_y {}", v.pan_y);
 
     app.viewport_width = 1200.0;
     app.viewport_height = 800.0;

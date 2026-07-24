@@ -751,6 +751,46 @@ mod viewport_fit_tests {
     }
 
     #[test]
+    fn design_canvas_size_reserves_the_right_rail_only_when_the_panel_is_visible() {
+        const VIEWPORT_WIDTH: f32 = 1200.0;
+        const VIEWPORT_HEIGHT: f32 = 800.0;
+        const PROPERTY_PANEL_WIDTH: f32 = 280.0;
+
+        let mut state = state_with_root(844.0);
+        state.editor_ui.sidebar_open = false;
+        state.editor_ui.property_panel_width = PROPERTY_PANEL_WIDTH;
+        state.editor_ui.property_tab = op_editor_core::PropertyTab::Design;
+        state.clear_selection();
+
+        assert_eq!(
+            design_canvas_size(&state, VIEWPORT_WIDTH, VIEWPORT_HEIGHT),
+            (VIEWPORT_WIDTH, VIEWPORT_HEIGHT - TOP_BAR_HEIGHT),
+            "Design with no selection must use the full canvas width"
+        );
+
+        state.set_single_selection(op_editor_core::NodeId::new("root"));
+        assert_eq!(
+            design_canvas_size(&state, VIEWPORT_WIDTH, VIEWPORT_HEIGHT),
+            (
+                VIEWPORT_WIDTH - PROPERTY_PANEL_WIDTH,
+                VIEWPORT_HEIGHT - TOP_BAR_HEIGHT
+            ),
+            "Design with a live selection must reserve the property rail"
+        );
+
+        state.clear_selection();
+        state.editor_ui.property_tab = op_editor_core::PropertyTab::Code;
+        assert_eq!(
+            design_canvas_size(&state, VIEWPORT_WIDTH, VIEWPORT_HEIGHT),
+            (
+                VIEWPORT_WIDTH - PROPERTY_PANEL_WIDTH,
+                VIEWPORT_HEIGHT - TOP_BAR_HEIGHT
+            ),
+            "Code remains selection-independent and must reserve the property rail"
+        );
+    }
+
+    #[test]
     fn growth_past_the_viewport_triggers_refit_and_refit_restores_visibility() {
         let mut state = state_with_root(844.0);
         // Frame the initial root.

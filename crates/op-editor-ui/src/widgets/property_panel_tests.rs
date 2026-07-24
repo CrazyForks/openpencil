@@ -131,12 +131,9 @@ fn scene_aware_panel_keeps_unbounded_group_aggregate_dimensions() {
 }
 
 #[test]
-fn for_selection_without_selection_builds_page_inspector() {
+fn for_selection_without_selection_returns_none() {
     let state = EditorState::new();
-    let panel = PropertyPanel::for_selection(&state).expect("implicit page inspector");
-    assert!(panel.page_only);
-    assert_eq!(panel.page_name, "Page 1");
-    assert_eq!(panel.page_background, None);
+    assert!(PropertyPanel::for_selection(&state).is_none());
 }
 
 #[test]
@@ -164,12 +161,19 @@ fn for_selection_code_tab_builds_panel_without_selection() {
 }
 
 #[test]
-fn for_selection_design_tab_shows_page_inspector_without_selection() {
+fn for_selection_design_tab_still_hides_panel_without_selection() {
     let mut state = EditorState::sample();
     state.clear_selection();
     state.editor_ui.property_tab = PropertyTab::Design;
-    let panel = PropertyPanel::for_selection(&state).expect("page inspector");
-    assert!(panel.page_only);
+    assert!(PropertyPanel::for_selection(&state).is_none());
+}
+
+#[test]
+fn for_selection_interact_tab_still_hides_panel_without_selection() {
+    let mut state = EditorState::sample();
+    state.clear_selection();
+    state.editor_ui.property_tab = PropertyTab::Interact;
+    assert!(PropertyPanel::for_selection(&state).is_none());
 }
 
 #[test]
@@ -202,10 +206,10 @@ fn inactive_property_tab_hover_paints_pill_background() {
 }
 
 #[test]
-fn for_selection_with_stale_selection_falls_back_to_page_inspector() {
+fn for_selection_with_stale_selection_returns_none() {
     let mut state = EditorState::sample();
     state.set_single_selection(NodeId::new("n9999"));
-    assert!(PropertyPanel::for_selection(&state).is_some_and(|panel| panel.page_only));
+    assert!(PropertyPanel::for_selection(&state).is_none());
 }
 
 #[test]

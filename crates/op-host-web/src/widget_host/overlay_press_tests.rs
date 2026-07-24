@@ -66,6 +66,50 @@ fn painted_inside(backend: &CaptureBackend, target: Rect) -> bool {
         })
 }
 
+#[test]
+fn empty_design_selection_reclaims_property_rail_until_a_node_is_selected() {
+    let mut host = WidgetHost::new();
+    assert!(host.editor_state.selection.is_empty());
+    assert_eq!(
+        host.editor_state.editor_ui.property_tab,
+        op_editor_core::PropertyTab::Design
+    );
+
+    let property_width = host.editor_state.editor_ui.property_panel_width;
+    let property_rect = Rect::xywh(
+        W - property_width,
+        TOP_BAR_HEIGHT,
+        property_width,
+        H - TOP_BAR_HEIGHT,
+    );
+    let (canvas_left, _, canvas_width, _) = host.canvas_region(W, H);
+    assert!(
+        (canvas_left + canvas_width - W).abs() < f32::EPSILON,
+        "an empty Design selection must let the canvas reach the viewport edge"
+    );
+
+    let mut empty_backend = CaptureBackend::default();
+    host.paint_editor(&mut empty_backend, W, H);
+    assert!(
+        !painted_inside(&empty_backend, property_rect),
+        "an empty Design selection must not paint the PropertyPanel rail"
+    );
+
+    host.editor_state.set_single_selection(NodeId::new("n10"));
+    let (selected_left, _, selected_width, _) = host.canvas_region(W, H);
+    assert!(
+        (selected_left + selected_width - property_rect.origin.x).abs() < f32::EPSILON,
+        "a live selection must reserve exactly the PropertyPanel rail"
+    );
+
+    let mut selected_backend = CaptureBackend::default();
+    host.paint_editor(&mut selected_backend, W, H);
+    assert!(
+        painted_inside(&selected_backend, property_rect),
+        "a live selection must paint the PropertyPanel rail"
+    );
+}
+
 fn seed_layer_doc(host: &mut WidgetHost) {
     let doc = jian_ops_schema::load_str(
         r#"{"version":"1.0.0","children":[
