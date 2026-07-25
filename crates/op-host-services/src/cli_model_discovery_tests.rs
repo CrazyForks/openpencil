@@ -132,6 +132,12 @@ fn verified_catalogs_reject_empty_auth_and_unknown_output() {
 // contract, exercised in `cli_probe_support`'s own test module
 // (`bounded_cli_output_drains_large_stdout_and_stderr_before_exit`).
 
+/// Probe budget for the hung-CLI tests. Generous relative to spawning a
+/// fake CLI (milliseconds) so the timeout branch is reached with the
+/// script's output already captured, which is what these tests assert on.
+#[cfg(unix)]
+const PROBE_BUDGET: Duration = Duration::from_secs(2);
+
 /// Writes an executable `/bin/sh` script standing in for a real CLI so
 /// `*_models_from_exe` can be pointed at it directly — the discover
 /// chain's fixed `&["models"]` args rule out the `/bin/sh -c <script>`
@@ -164,7 +170,10 @@ fn antigravity_query_surfaces_auth_prompt_when_it_hangs_mid_oauth() {
         "agy-hang",
         "printf 'Authentication required. Please visit the URL to log in:\\n'; sleep 5",
     );
-    let message = antigravity_models_from_exe(&exe, Duration::from_millis(200)).unwrap_err();
+    // The budget must outlast spawning a just-written temp executable, not
+    // just the probe's own polling: a 200ms window let a cold exec reach the
+    // deadline before `printf` ran, so the assert flaked on an empty capture.
+    let message = antigravity_models_from_exe(&exe, PROBE_BUDGET).unwrap_err();
     assert_eq!(
         message,
         "Antigravity is not authenticated. Run `agy` once in a terminal."
@@ -178,8 +187,8 @@ fn grok_query_falls_back_to_truncated_tail_when_timeout_has_no_auth_marker() {
         "grok-hang",
         "printf 'initializing sandbox...\\nstill working\\n'; sleep 5",
     );
-    let message = grok_models_from_exe(&exe, Duration::from_millis(200)).unwrap_err();
-    assert!(message.contains("Grok Build CLI timed out after 0s"));
+    let message = grok_models_from_exe(&exe, PROBE_BUDGET).unwrap_err();
+    assert!(message.contains("Grok Build CLI timed out after 2s"));
     assert!(message.contains("`grok`"));
     assert!(message.contains("still working"));
 }

@@ -176,6 +176,13 @@ pub(crate) fn tail_snippet(stdout: &str, stderr: &str) -> String {
 mod tests {
     use super::*;
 
+    /// Probe budget for the hung-CLI tests. Generous relative to spawning a
+    /// shell (milliseconds) so the deadline is reached with the script's
+    /// output already captured, which is what these tests assert on — a
+    /// tighter window races process startup on a loaded machine.
+    #[cfg(unix)]
+    const PROBE_BUDGET: Duration = Duration::from_secs(2);
+
     #[test]
     fn tail_snippet_truncates_to_last_n_chars() {
         let long = "a".repeat(500);
@@ -260,7 +267,7 @@ mod tests {
             CliName::Antigravity,
             Path::new("/bin/sh"),
             &["-c", script],
-            Duration::from_millis(200),
+            PROBE_BUDGET,
         ) {
             BoundedProbe::TimedOut { stdout, .. } => {
                 assert!(String::from_utf8_lossy(&stdout).contains("Authentication required"));
@@ -325,7 +332,7 @@ mod tests {
         // must now name the fix.
         let script =
             "printf 'Authentication required. Please visit the URL to log in:\\n'; sleep 5";
-        let probe_timeout = Duration::from_millis(200);
+        let probe_timeout = PROBE_BUDGET;
         let probe = bounded_cli_output(
             CliName::Antigravity,
             Path::new("/bin/sh"),
