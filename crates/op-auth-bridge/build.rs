@@ -12,7 +12,14 @@ fn main() {
     let target = env::var("TARGET").unwrap_or_default();
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let prebuilt_dir = manifest_dir.join("prebuilt").join(&target);
-    if !prebuilt_dir.join("libop_auth.a").is_file() {
+    // MSVC static libraries follow the `<name>.lib` convention; every
+    // other target uses the Unix `lib<name>.a` archive name.
+    let artifact = if target.ends_with("-pc-windows-msvc") {
+        "op_auth.lib"
+    } else {
+        "libop_auth.a"
+    };
+    if !prebuilt_dir.join(artifact).is_file() {
         return;
     }
 
