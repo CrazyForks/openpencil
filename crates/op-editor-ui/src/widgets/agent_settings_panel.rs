@@ -46,6 +46,9 @@ pub(super) const SUB_FONT: f32 = 11.0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentSettingsPanelMode {
     Full,
+    /// `Full` plus the Account tab — selected when the host enabled the
+    /// runtime account gate (`EditorUiState::account_ui_available`).
+    FullWithAccount,
     WebBuiltinOnly,
     McpOnly,
 }
@@ -53,7 +56,8 @@ pub enum AgentSettingsPanelMode {
 impl AgentSettingsPanelMode {
     fn visible_tabs(self) -> &'static [AgentSettingsTab] {
         match self {
-            AgentSettingsPanelMode::Full => full_settings_tabs(),
+            AgentSettingsPanelMode::Full => full_settings_tabs(false),
+            AgentSettingsPanelMode::FullWithAccount => full_settings_tabs(true),
             AgentSettingsPanelMode::WebBuiltinOnly => &[
                 AgentSettingsTab::Agents,
                 AgentSettingsTab::Images,
@@ -73,13 +77,18 @@ impl AgentSettingsPanelMode {
     }
 
     fn shows_external_agents(self) -> bool {
-        matches!(self, AgentSettingsPanelMode::Full)
+        matches!(
+            self,
+            AgentSettingsPanelMode::Full | AgentSettingsPanelMode::FullWithAccount
+        )
     }
 }
 
 fn mode_for_ui(ui: &EditorUiState, base: AgentSettingsPanelMode) -> AgentSettingsPanelMode {
     if ui.embed == op_editor_core::EmbedHost::VsCode {
         AgentSettingsPanelMode::McpOnly
+    } else if base == AgentSettingsPanelMode::Full && ui.account_ui_available {
+        AgentSettingsPanelMode::FullWithAccount
     } else {
         base
     }

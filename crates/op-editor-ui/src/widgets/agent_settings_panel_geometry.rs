@@ -5,7 +5,6 @@ use crate::widgets::agent_settings_panel::{
     CARD_GAP, CARD_HEIGHT, CONNECT_BTN_H, CONNECT_BTN_W, NAV_ITEM_HEIGHT, NAV_ITEM_STEP, NAV_TOP,
     PAD, SECTION_GAP, SIDEBAR_WIDTH,
 };
-use crate::widgets::ACCOUNT_UI_AVAILABLE;
 use crate::widgets::{agent_settings_acp, agent_settings_builtin};
 use crate::{Point2D, Rect};
 use op_editor_core::agent_settings::{AgentSettings, AgentSettingsTab};
@@ -21,8 +20,8 @@ const FULL_TABS_WITHOUT_ACCOUNT: [AgentSettingsTab; 5] = [
     AgentSettingsTab::System,
 ];
 
-pub(super) fn full_settings_tabs() -> &'static [AgentSettingsTab] {
-    if ACCOUNT_UI_AVAILABLE {
+pub(super) fn full_settings_tabs(account_available: bool) -> &'static [AgentSettingsTab] {
+    if account_available {
         &AgentSettingsTab::ALL
     } else {
         &FULL_TABS_WITHOUT_ACCOUNT

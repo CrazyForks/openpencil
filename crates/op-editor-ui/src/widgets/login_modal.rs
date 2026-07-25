@@ -48,9 +48,12 @@ pub struct LoginModal {
     pub id: WidgetId,
     pub theme: Theme,
     locale: Locale,
-    /// Set after the primary button is clicked in a production build —
+    /// Set after the primary button is clicked in a stub build —
     /// replaces the security note with the honest availability status.
     stub_hint_shown: bool,
+    /// In-flight device-login progress — takes precedence over the
+    /// security note and the stub hint.
+    flow_status: Option<op_editor_core::LoginFlowStatus>,
     hover: Option<LoginModalButton>,
     pressed: Option<LoginModalButton>,
 }
@@ -62,6 +65,7 @@ impl LoginModal {
             theme: theme_for(&state.editor_ui),
             locale: state.editor_ui.locale,
             stub_hint_shown: state.editor_ui.login_modal_stub_hint_shown,
+            flow_status: state.editor_ui.login_modal_status,
             hover: state.editor_ui.login_modal_hover,
             pressed: match state.editor_ui.pressed_button {
                 Some(op_editor_core::ButtonPressTarget::LoginModal(button)) => Some(button),
@@ -302,9 +306,47 @@ fn paint_status_note(
     locale: Locale,
     panel: Rect,
     stub_hint_shown: bool,
+    flow_status: Option<op_editor_core::LoginFlowStatus>,
 ) {
+    use op_editor_core::{LoginFlowError, LoginFlowStatus};
     let status = status_rect(panel);
-    let (icon, text, background, border, color) = if stub_hint_shown {
+    let (icon, text, background, border, color) = if let Some(flow) = flow_status {
+        match flow {
+            LoginFlowStatus::WaitingBrowser => (
+                Icon::Globe,
+                t(locale, "account.waitingForBrowser"),
+                theme.row_selected_primary,
+                theme.primary.with_alpha(0.32),
+                theme.foreground,
+            ),
+            LoginFlowStatus::WaitingApproval => (
+                Icon::Globe,
+                t(locale, "account.waitingForApproval"),
+                theme.row_selected_primary,
+                theme.primary.with_alpha(0.32),
+                theme.foreground,
+            ),
+            LoginFlowStatus::Exchanging => (
+                Icon::Loader,
+                t(locale, "account.signingIn"),
+                theme.row_selected_primary,
+                theme.primary.with_alpha(0.32),
+                theme.foreground,
+            ),
+            LoginFlowStatus::Failed(error) => (
+                Icon::AlertTriangle,
+                match error {
+                    LoginFlowError::Denied => t(locale, "account.signInDenied"),
+                    LoginFlowError::Expired => t(locale, "account.signInExpired"),
+                    LoginFlowError::Canceled => t(locale, "account.signInCanceled"),
+                    LoginFlowError::Unavailable => t(locale, "account.signInFailed"),
+                },
+                theme.destructive.with_alpha(0.14),
+                theme.destructive.with_alpha(0.4),
+                theme.foreground,
+            ),
+        }
+    } else if stub_hint_shown {
         (
             Icon::Info,
             t(locale, "account.signInComingSoon"),
@@ -455,6 +497,7 @@ impl Widget for LoginModal {
             self.locale,
             rect,
             self.stub_hint_shown,
+            self.flow_status,
         );
     }
 

@@ -473,9 +473,12 @@ fn chip_with_only_builtin_agents_reserves_no_icon_cluster() {
 }
 
 #[test]
-fn account_button_release_gate_removes_hit_target_and_layout_slot() {
-    const { assert!(!ACCOUNT_BUTTON_AVAILABLE) };
+fn account_button_gate_off_removes_hit_target_and_layout_slot() {
     let bar = TopBar::untitled();
+    assert!(
+        !bar.account_button_visible,
+        "the account button must default to hidden"
+    );
     let rect = Rect {
         origin: Point2D::new(0.0, 0.0),
         size: Point2D::new(1000.0, TOP_BAR_HEIGHT),
@@ -484,7 +487,7 @@ fn account_button_release_gate_removes_hit_target_and_layout_slot() {
     let globe = bar.globe_rect(rect);
     assert!(
         nearly_eq(account.origin.x + account.size.x, globe.origin.x),
-        "dormant avatar geometry should stay ready for the next release"
+        "dormant avatar geometry should stay ready for the gated-on state"
     );
     assert!(
         nearly_eq(bar.chip_right_anchor_x(rect), globe.origin.x),
@@ -498,6 +501,26 @@ fn account_button_release_gate_removes_hit_target_and_layout_slot() {
             "hidden account control hit at x={x}"
         );
     }
+}
+
+#[test]
+fn account_button_gate_on_restores_hit_target_and_layout_slot() {
+    let mut bar = TopBar::untitled();
+    bar.account_button_visible = true;
+    let rect = Rect {
+        origin: Point2D::new(0.0, 0.0),
+        size: Point2D::new(1000.0, TOP_BAR_HEIGHT),
+    };
+    let account = bar.account_button_rect(rect);
+    assert!(
+        nearly_eq(bar.chip_right_anchor_x(rect), account.origin.x),
+        "an enabled avatar must reclaim its layout slot"
+    );
+    let center = Point2D::new(
+        account.origin.x + account.size.x / 2.0,
+        account.origin.y + account.size.y / 2.0,
+    );
+    assert_eq!(bar.hit_test(rect, center), Some(TopBarHit::Account));
 }
 
 #[test]

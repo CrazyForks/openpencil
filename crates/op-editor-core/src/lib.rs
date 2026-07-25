@@ -192,7 +192,9 @@ mod tests_pages;
 #[cfg(test)]
 mod translate_equivalence_tests;
 
-pub use account_state::{AccountMenuRow, AccountState, LoginModalButton};
+pub use account_state::{
+    AccountMenuRow, AccountState, LoginFlowError, LoginFlowStatus, LoginModalButton,
+};
 pub use agent_settings::{
     AcpAgentConfig, AcpAgentConnectOutcome, AcpAgentConnectPhase, AcpAgentConnection,
     AcpAgentField, AcpConnectionType, AgentSettings, AgentSettingsDrag, AgentSettingsTab,

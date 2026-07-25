@@ -1096,9 +1096,15 @@ pub struct EditorUiState {
     /// settings-modal input.
     pub settings_input: jian_core::text_input::TextInputState,
 
-    // --- Account (planned platform + zseven-sso user system) -------
-    /// Signed-in / signed-out identity. The backend (OIDC Auth Code +
-    /// PKCE via system browser) is not wired yet — see
+    // --- Account (platform + zseven-sso user system) ---------------
+    /// Runtime release gate for the account experience. Hosts set this
+    /// at startup when a working auth backend is linked (the
+    /// `op-auth-bridge` prebuilt library, or the dev fake-login env);
+    /// stub builds and the wasm host leave it false, hiding every
+    /// account entry point exactly like the old compile-time gate.
+    pub account_ui_available: bool,
+    /// Signed-in / signed-out identity, fed by the zseven-sso device
+    /// login flow (browser pairing + WebSocket push) — see
     /// `AccountState::dev_fake_signed_in` for the dev-only fast path.
     pub account: crate::account_state::AccountState,
     /// TopBar avatar-button dropdown (signed-in state) open.
@@ -1110,9 +1116,13 @@ pub struct EditorUiState {
     /// Which login-modal control the cursor is over.
     pub login_modal_hover: Option<crate::account_state::LoginModalButton>,
     /// Set after the production "Sign in with browser" button is
-    /// clicked — reveals the honest "coming soon" note instead of
-    /// pretending the OIDC flow ran. Untouched by the dev fake-login path.
+    /// clicked in a build without an auth backend — reveals the honest
+    /// "coming soon" note instead of pretending a flow ran. Untouched
+    /// by the dev fake-login and real device-login paths.
     pub login_modal_stub_hint_shown: bool,
+    /// Progress note for an in-flight browser device-login, painted in
+    /// the sign-in modal. `None` when no flow is running.
+    pub login_modal_status: Option<crate::account_state::LoginFlowStatus>,
 
     // --- Toolbar shape slot ----------------------------------------
     /// Toolbar shape-tool dropdown state.
@@ -1601,12 +1611,14 @@ impl Default for EditorUiState {
             agent_settings: crate::agent_settings::AgentSettings::default(),
             agent_settings_drag: None,
             settings_input: jian_core::text_input::TextInputState::default(),
+            account_ui_available: false,
             account: crate::account_state::AccountState::default(),
             account_menu_open: false,
             account_menu_hover: None,
             login_modal_open: false,
             login_modal_hover: None,
             login_modal_stub_hint_shown: false,
+            login_modal_status: None,
             shape_picker: jian_widgets::components::select::SelectState::default(),
             toolbar_hover: None,
             shape_tool: Tool::Rect,

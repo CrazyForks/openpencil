@@ -117,12 +117,13 @@ impl TopBar {
     }
 
     /// Left edge the agent chip's divider hangs off — the avatar
-    /// button's left edge when it's available (desktop), else directly
-    /// the Globe button's (web, where `ACCOUNT_BUTTON_AVAILABLE` is
-    /// false and the button doesn't paint). Shared by paint + hit-test
-    /// so the chip anchor can't drift from whichever layout is active.
+    /// button's left edge when it's available (desktop with an auth
+    /// backend), else directly the Globe button's (web, or stub builds
+    /// where `account_button_visible` is false and the button doesn't
+    /// paint). Shared by paint + hit-test so the chip anchor can't
+    /// drift from whichever layout is active.
     pub(super) fn chip_right_anchor_x(&self, top_bar_rect: Rect) -> f32 {
-        if ACCOUNT_BUTTON_AVAILABLE {
+        if self.account_button_visible {
             self.account_button_rect(top_bar_rect).origin.x
         } else {
             self.globe_rect(top_bar_rect).origin.x

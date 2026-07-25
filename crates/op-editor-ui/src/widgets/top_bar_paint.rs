@@ -320,9 +320,9 @@ impl TopBar {
 
         // User-avatar button — sits between the Globe and the agent
         // chip (TS layout spot: "between the agents chip and the
-        // globe/theme icons"). Desktop-only (`ACCOUNT_BUTTON_AVAILABLE`)
-        // — the web build has no sign-in flow to open yet.
-        if ACCOUNT_BUTTON_AVAILABLE {
+        // globe/theme icons"). Paints only when the host enabled the
+        // runtime account gate (desktop with an auth backend).
+        if self.account_button_visible {
             rx -= ICON_BUTTON;
             paint_account_button(
                 cx,

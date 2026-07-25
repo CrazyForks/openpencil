@@ -41,10 +41,6 @@ pub(super) const GIT_BUTTON_AVAILABLE: bool = !cfg!(target_arch = "wasm32");
 /// has no equivalent runtime/measurement bridge, so hide the button there
 /// rather than exposing a non-interactive preview flag.
 pub(super) const PREVIEW_BUTTON_AVAILABLE: bool = !cfg!(target_arch = "wasm32");
-/// The account button follows the shared release gate and remains
-/// desktop-only when that experience is enabled again.
-pub const ACCOUNT_BUTTON_AVAILABLE: bool =
-    super::ACCOUNT_UI_AVAILABLE && !cfg!(target_arch = "wasm32");
 /// Stacked agent-icon metrics — mirror TS `top-bar.tsx`
 /// (`w-5 h-5 rounded-md bg-foreground/10 ring-1 ring-card` chips
 /// overlapped by `-space-x-1.5`).
@@ -150,6 +146,10 @@ pub struct TopBar {
     /// Sign-in state — drives the avatar button's glyph (generic user
     /// outline when signed out, an initial-letter circle when signed in).
     pub account: op_editor_core::AccountState,
+    /// Whether the avatar button paints at all. Follows the host-set
+    /// runtime release gate (`EditorUiState::account_ui_available`) and
+    /// stays desktop-only — the wasm host has no auth backend.
+    pub account_button_visible: bool,
     /// Which embedding container the chrome renders inside. `VsCode` hides
     /// the file-scoped chrome (open menu, Figma import, centered file
     /// name/edited/git cluster) and the Maximize button — the host
@@ -181,6 +181,7 @@ impl TopBar {
             pressed: None,
             chip_text_w: None,
             account: op_editor_core::AccountState::Anonymous,
+            account_button_visible: false,
             embed: op_editor_core::EmbedHost::None,
         }
     }
@@ -244,6 +245,7 @@ impl TopBar {
             },
             chip_text_w: None,
             account: ui.account.clone(),
+            account_button_visible: ui.account_ui_available && !cfg!(target_arch = "wasm32"),
             embed: ui.embed,
         }
     }
@@ -410,7 +412,7 @@ impl TopBar {
         if (globe).contains(point) {
             return Some(TopBarHit::ToggleLocale);
         }
-        if ACCOUNT_BUTTON_AVAILABLE {
+        if self.account_button_visible {
             let account = self.account_button_rect(rect);
             if (account).contains(point) {
                 return Some(TopBarHit::Account);

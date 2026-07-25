@@ -1,9 +1,9 @@
-//! Account / sign-in state for the planned platform + zseven-sso user
-//! system. The real backend is not live yet — this module carries
-//! the state model plus a dev-only fake-login seam so the topbar avatar
-//! button, its dropdown, the sign-in modal, and the settings modal's
-//! Account tab can all be built and exercised end-to-end before the
-//! actual OIDC flow lands.
+//! Account / sign-in state for the platform + zseven-sso user system.
+//! The real device-login client lives behind `op-auth-bridge` (proprietary
+//! prebuilt library); this module carries only the display-state model
+//! plus a dev-only fake-login seam so the topbar avatar button, its
+//! dropdown, the sign-in modal, and the settings modal's Account tab can
+//! be exercised without the backend.
 //!
 //! Same wasm32-clean discipline as the other `*_state` mirrors — plain
 //! data only, no session/token material.
@@ -77,8 +77,36 @@ impl AccountMenuRow {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoginModalButton {
     Close,
-    /// The primary "Sign in with browser" action. Production builds show
-    /// an honest "coming soon" note on click (see
+    /// The primary "Sign in with browser" action. With an auth backend
+    /// linked it starts the device-login flow; stub builds show an
+    /// honest "coming soon" note instead (see
     /// `AccountState::dev_fake_signed_in` for the dev-only fast path).
     SignIn,
+}
+
+/// Progress of an in-flight browser device-login, mirrored into the
+/// sign-in modal's note row. Plain display data — the auth client owns
+/// the actual protocol state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoginFlowStatus {
+    /// Start request accepted; the system browser is being opened.
+    WaitingBrowser,
+    /// Browser open — waiting for the user to approve on the web page.
+    WaitingApproval,
+    /// Approved — exchanging the pairing for a device session.
+    Exchanging,
+    Failed(LoginFlowError),
+}
+
+/// Why a device-login attempt ended without a session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoginFlowError {
+    /// The user rejected the pairing on the approval page.
+    Denied,
+    /// The pairing expired before approval.
+    Expired,
+    /// Canceled locally (modal closed mid-flow).
+    Canceled,
+    /// Network / server / protocol trouble talking to the SSO service.
+    Unavailable,
 }

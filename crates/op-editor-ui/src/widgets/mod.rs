@@ -26,13 +26,6 @@ use crate::{Point2D, Rect, RenderBackend};
 /// `const MIN_RAIL_WIDTH` in each host).
 pub const MIN_RAIL_WIDTH: f32 = 80.0;
 
-/// Temporary release gate for the unfinished user-account experience.
-///
-/// Keep the account state, modal, menu, translations, and host dispatchers
-/// compiled and tested so a later release can restore every entry point from
-/// this one gate, then update the release-gate assertions.
-pub const ACCOUNT_UI_AVAILABLE: bool = false;
-
 // Phase B primitives.
 pub(crate) mod button;
 pub mod prop_row;

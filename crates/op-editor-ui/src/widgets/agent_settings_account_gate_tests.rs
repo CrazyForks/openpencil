@@ -3,9 +3,12 @@ use op_editor_core::agent_settings::AgentSettingsTab;
 use op_editor_core::EditorState;
 
 #[test]
-fn account_tab_release_gate_hides_nav_and_falls_back_from_stale_state() {
-    const { assert!(!crate::widgets::ACCOUNT_UI_AVAILABLE) };
+fn account_tab_gate_off_hides_nav_and_falls_back_from_stale_state() {
     let default_state = EditorState::default();
+    assert!(
+        !default_state.editor_ui.account_ui_available,
+        "the account gate must default to off"
+    );
     let default_panel = AgentSettingsPanel::for_editor(&default_state);
     let expected_agents_height = default_panel.content_total_height();
 
@@ -38,5 +41,24 @@ fn account_tab_release_gate_hides_nav_and_falls_back_from_stale_state() {
         panel.content_total_height(),
         expected_agents_height,
         "a persisted Account tab must fall back to the first visible tab"
+    );
+}
+
+#[test]
+fn account_tab_gate_on_restores_nav_row() {
+    let mut state = EditorState::default();
+    state.editor_ui.account_ui_available = true;
+    let panel = AgentSettingsPanel::for_editor(&state);
+    let rect = panel.rect(1200.0, 800.0);
+
+    let account_row_index = AgentSettingsTab::ALL.len() - 1;
+    let point = crate::Point2D::new(
+        rect.origin.x + 100.0,
+        rect.origin.y + 56.0 + account_row_index as f32 * 30.0 + 14.0,
+    );
+    assert_eq!(
+        panel.nav_at(rect, point),
+        Some(AgentSettingsTab::Account),
+        "enabling the runtime gate must add the Account nav row back"
     );
 }
