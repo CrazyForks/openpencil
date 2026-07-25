@@ -926,6 +926,7 @@ jobs:
           grep -q "$version" release-files/install-op.sh
           grep -q "$version" release-files/install-op.ps1
       - name: Prepare release body
+        id: body
         shell: bash
         run: |
           set -euo pipefail
@@ -935,7 +936,15 @@ jobs:
             echo "::error::missing release note: $note"
             exit 1
           fi
-          cp "$note" release-body.md
+          # The note's leading `# ` heading is the release title; the rest is
+          # the body, so the title is not repeated on the release page.
+          title="$(head -n 1 "$note")"
+          if [[ "$title" != "# "* ]]; then
+            echo "::error::release note must start with a '# ' title heading: $note"
+            exit 1
+          fi
+          echo "title=${title#\# }" >> "$GITHUB_OUTPUT"
+          tail -n +2 "$note" | sed '/./,$!d' > release-body.md
           {
             printf '\n## Web Docker Image\n\n'
             printf -- '- Image: `%s`\n' '${{ needs.web-docker.outputs.tag }}'
@@ -947,6 +956,7 @@ jobs:
           draft: false
           prerelease: true
           make_latest: false
+          name: ${{ steps.body.outputs.title }}
           body_path: release-body.md
           files: release-files/*
 
