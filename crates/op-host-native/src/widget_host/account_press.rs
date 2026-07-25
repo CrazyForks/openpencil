@@ -93,11 +93,6 @@ impl WidgetHostNative {
         let menu_rect = menu.rect_at(anchor);
         let point = Point2D::new(x, y);
         match menu.hit_test(menu_rect, point) {
-            Some(AccountMenuRow::Workspace) => {
-                // No submenu exists yet — a literal no-op. The menu
-                // stays open (unlike Settings / Sign Out, which both
-                // have a real action to complete).
-            }
             Some(AccountMenuRow::Settings) => {
                 self.close_account_menu();
                 self.editor_state.editor_ui.agent_settings_open = true;

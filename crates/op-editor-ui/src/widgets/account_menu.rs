@@ -1,8 +1,7 @@
 //! Signed-in account dropdown — anchored under the TopBar avatar button.
 //!
-//! Header (display name + `@handle`), divider, "Current workspace" row
-//! (chevron affordance, no submenu yet — click is a no-op), divider,
-//! "Settings" (opens the settings modal on the Account tab), "Sign Out".
+//! Header (display name + `@handle`), divider, "Settings" (opens the
+//! settings modal on the Account tab), "Sign Out".
 
 use crate::theme::Theme;
 use crate::widgets::editor_state_ext::theme_for;
@@ -64,12 +63,7 @@ impl<'a> AccountMenu<'a> {
     }
 
     fn height(&self) -> f32 {
-        HEADER_HEIGHT
-            + (DIVIDER_GAP * 2.0 + 1.0)
-            + ROW_HEIGHT
-            + (DIVIDER_GAP * 2.0 + 1.0)
-            + ROW_HEIGHT * 2.0
-            + DIVIDER_GAP
+        HEADER_HEIGHT + (DIVIDER_GAP * 2.0 + 1.0) + ROW_HEIGHT * 2.0 + DIVIDER_GAP
     }
 
     pub fn row_at(&self, panel: Rect, point: Point2D) -> Option<AccountMenuRow> {
@@ -77,10 +71,6 @@ impl<'a> AccountMenu<'a> {
             return None;
         }
         let mut y = panel.origin.y + HEADER_HEIGHT + DIVIDER_GAP * 2.0 + 1.0;
-        if row_hit(panel.origin.x, y, point) {
-            return Some(AccountMenuRow::Workspace);
-        }
-        y += ROW_HEIGHT + DIVIDER_GAP * 2.0 + 1.0;
         if row_hit(panel.origin.x, y, point) {
             return Some(AccountMenuRow::Settings);
         }
@@ -182,47 +172,6 @@ impl<'a> Widget for AccountMenu<'a> {
         let mut y = rect.origin.y + HEADER_HEIGHT;
         y = paint_divider(cx, &self.theme, rect, y);
 
-        // "Current workspace" — stacked label + value, chevron affordance.
-        let hovered_workspace = self.hover == Some(AccountMenuRow::Workspace);
-        if hovered_workspace {
-            paint_row_tint(cx, &self.theme, rect.origin.x, y);
-        }
-        let workspace_header = TextLayout::single_run(
-            t(self.ui.locale, "account.currentWorkspace"),
-            "system-ui",
-            10.0,
-            (self.theme.muted_foreground).to_jian(),
-            Point2D::new(0.0, 0.0),
-        );
-        cx.backend.draw_text(
-            &workspace_header,
-            Point2D::new(rect.origin.x + PAD_X, y + 13.0),
-        );
-        let workspace_value = TextLayout::single_run(
-            t(self.ui.locale, "account.personalWorkspace"),
-            "system-ui",
-            12.0,
-            (self.theme.foreground).to_jian(),
-            Point2D::new(0.0, 0.0),
-        );
-        cx.backend.draw_text(
-            &workspace_value,
-            Point2D::new(rect.origin.x + PAD_X, y + 27.0),
-        );
-        draw_icon(
-            cx.backend,
-            Icon::ChevronRight,
-            Point2D::new(
-                rect.origin.x + MENU_WIDTH - PAD_X - ICON_SIZE,
-                y + (ROW_HEIGHT - ICON_SIZE) / 2.0,
-            ),
-            ICON_SIZE,
-            self.theme.muted_foreground,
-            1.4,
-        );
-        y += ROW_HEIGHT;
-        y = paint_divider(cx, &self.theme, rect, y);
-
         paint_action_row(
             cx,
             &self.theme,
@@ -312,14 +261,7 @@ mod tests {
             origin: Point2D::new(100.0, 50.0),
             size: Point2D::new(MENU_WIDTH, menu.height()),
         };
-        let y = panel.origin.y
-            + HEADER_HEIGHT
-            + DIVIDER_GAP * 2.0
-            + 1.0
-            + ROW_HEIGHT
-            + DIVIDER_GAP * 2.0
-            + 1.0
-            + ROW_HEIGHT / 2.0;
+        let y = panel.origin.y + HEADER_HEIGHT + DIVIDER_GAP * 2.0 + 1.0 + ROW_HEIGHT / 2.0;
         let hit = menu.hit_test(panel, Point2D::new(panel.origin.x + 20.0, y));
         assert_eq!(hit, Some(AccountMenuRow::Settings));
     }

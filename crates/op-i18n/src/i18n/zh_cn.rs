@@ -596,8 +596,6 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "account.signInExpired" => "登录请求已过期，请重试。",
         "account.signInCanceled" => "登录已取消。",
         "account.signInFailed" => "登录失败，请检查网络后重试。",
-        "account.currentWorkspace" => "当前工作区",
-        "account.personalWorkspace" => "个人工作区",
         "account.settings" => "设置",
         "account.signOut" => "退出登录",
         "settings.agents.builtin" => "内置服务商",

@@ -592,8 +592,6 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "account.signInExpired" => "The sign-in request expired. Try again.",
         "account.signInCanceled" => "Sign-in was canceled.",
         "account.signInFailed" => "Sign-in failed. Check your connection and try again.",
-        "account.currentWorkspace" => "Current workspace",
-        "account.personalWorkspace" => "Personal workspace",
         "account.settings" => "Settings",
         "account.signOut" => "Sign out",
         "settings.agents.builtin" => "Built-in providers",

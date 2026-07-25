@@ -56,9 +56,6 @@ impl AccountState {
 /// avatar button).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccountMenuRow {
-    /// "Current workspace / Personal workspace" — chevron affordance,
-    /// no submenu yet (click is a no-op).
-    Workspace,
     /// Opens the settings modal on the Account tab.
     Settings,
     /// Clears `AccountState` back to `Anonymous`.
@@ -66,11 +63,7 @@ pub enum AccountMenuRow {
 }
 
 impl AccountMenuRow {
-    pub const ALL: [AccountMenuRow; 3] = [
-        AccountMenuRow::Workspace,
-        AccountMenuRow::Settings,
-        AccountMenuRow::SignOut,
-    ];
+    pub const ALL: [AccountMenuRow; 2] = [AccountMenuRow::Settings, AccountMenuRow::SignOut];
 }
 
 /// Which control in the sign-in modal the cursor is over / has pressed.
