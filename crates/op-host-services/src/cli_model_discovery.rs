@@ -1,29 +1,53 @@
 //! Model catalogs for external coding CLIs whose integrations are newer than
 //! the legacy provider set. Kept separate from `model_discovery.rs` so that
 //! file stays below the repository's 800-line cap.
+//!
+//! Catalog queries run through `cli_probe_support::bounded_cli_output`, the
+//! same bounded-subprocess runner `cli_provider_probe`'s connect probes use,
+//! so a catalog query that hangs mid first-run OAuth surfaces the same
+//! actionable `diagnose_timeout` message instead of silently discarding
+//! whatever the CLI had already printed.
 
 use std::collections::BTreeSet;
-use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Output, Stdio};
-use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use op_ai::agent_settings_state::AgentProvider;
 use op_ai::chat_models::ModelEntry;
 use op_ai::chat_provider::CliName;
 
+use crate::cli_probe_support::{bounded_cli_output, diagnose_timeout, BoundedProbe};
 use crate::model_discovery::resolve_cli;
 
 const MODEL_QUERY_TIMEOUT: Duration = Duration::from_secs(10);
-const MAX_COMMAND_OUTPUT_BYTES: usize = 1024 * 1024;
 
 /// Query the installed Antigravity catalog. `agy models` may print display
 /// names or kebab-case model IDs; both are accepted verbatim by `--model`.
 pub fn query_antigravity_models() -> Result<Vec<ModelEntry>, String> {
     let exe = resolve_cli("agy").ok_or_else(|| "Antigravity CLI not found".to_string())?;
-    let output = command_output(CliName::Antigravity, &exe, &["models"], MODEL_QUERY_TIMEOUT)
-        .ok_or_else(|| "Antigravity model query failed or timed out".to_string())?;
+    antigravity_models_from_exe(&exe, MODEL_QUERY_TIMEOUT)
+}
+
+/// Core of `query_antigravity_models`, with the executable path and timeout
+/// injected so tests can point it at a fake `agy` (a `/bin/sh` script)
+/// without waiting out the real `MODEL_QUERY_TIMEOUT`.
+fn antigravity_models_from_exe(exe: &Path, timeout: Duration) -> Result<Vec<ModelEntry>, String> {
+    let output = match bounded_cli_output(CliName::Antigravity, exe, &["models"], timeout) {
+        BoundedProbe::Completed(output) => output,
+        BoundedProbe::TimedOut { stdout, stderr } => {
+            return Err(diagnose_timeout(
+                CliName::Antigravity,
+                "Antigravity",
+                "`agy`",
+                timeout,
+                &stdout,
+                &stderr,
+            ))
+        }
+        BoundedProbe::Failed => {
+            return Err("Antigravity model query failed or timed out".to_string())
+        }
+    };
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(if stderr.is_empty() {
@@ -215,8 +239,29 @@ fn is_catalog_diagnostic(value: &str) -> bool {
 /// model discovery runs during startup and must never strand its worker.
 pub fn query_grok_models() -> Result<Vec<ModelEntry>, String> {
     let exe = resolve_cli("grok").ok_or_else(|| "Grok Build CLI not found".to_string())?;
-    let output = command_output(CliName::GrokBuild, &exe, &["models"], MODEL_QUERY_TIMEOUT)
-        .ok_or_else(|| "Grok Build model query failed or timed out".to_string())?;
+    grok_models_from_exe(&exe, MODEL_QUERY_TIMEOUT)
+}
+
+/// Core of `query_grok_models`, with the executable path and timeout
+/// injected so tests can point it at a fake `grok` (a `/bin/sh` script)
+/// without waiting out the real `MODEL_QUERY_TIMEOUT`.
+fn grok_models_from_exe(exe: &Path, timeout: Duration) -> Result<Vec<ModelEntry>, String> {
+    let output = match bounded_cli_output(CliName::GrokBuild, exe, &["models"], timeout) {
+        BoundedProbe::Completed(output) => output,
+        BoundedProbe::TimedOut { stdout, stderr } => {
+            return Err(diagnose_timeout(
+                CliName::GrokBuild,
+                "Grok Build",
+                "`grok`",
+                timeout,
+                &stdout,
+                &stderr,
+            ))
+        }
+        BoundedProbe::Failed => {
+            return Err("Grok Build model query failed or timed out".to_string())
+        }
+    };
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(if stderr.is_empty() {
@@ -559,232 +604,6 @@ fn strip_ansi(input: &str) -> String {
     out
 }
 
-pub(crate) fn command_output(
-    cli: CliName,
-    exe: &Path,
-    args: &[&str],
-    timeout: Duration,
-) -> Option<Output> {
-    let mut cmd = Command::new(exe);
-    cmd.args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .env_clear()
-        .envs(crate::chat_subprocess_safety::child_env(Some(cli))?);
-    crate::chat_spawn::hide_console_window(&mut cmd);
-    let mut child = cmd.spawn().ok()?;
-    let stdout = child.stdout.take()?;
-    let stderr = child.stderr.take()?;
-    // Drain both pipes while the process is running. Waiting for exit before
-    // reading can deadlock when a verbose CLI fills an OS pipe buffer.
-    let stdout_reader = read_pipe(stdout);
-    let stderr_reader = read_pipe(stderr);
-    let deadline = Instant::now() + timeout;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                return Some(Output {
-                    status,
-                    stdout: stdout_reader.join().unwrap_or_default(),
-                    stderr: stderr_reader.join().unwrap_or_default(),
-                });
-            }
-            Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = stdout_reader.join();
-                let _ = stderr_reader.join();
-                return None;
-            }
-            Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = stdout_reader.join();
-                let _ = stderr_reader.join();
-                return None;
-            }
-        }
-    }
-}
-
-fn read_pipe<R>(mut pipe: R) -> JoinHandle<Vec<u8>>
-where
-    R: Read + Send + 'static,
-{
-    std::thread::spawn(move || {
-        let mut output = Vec::new();
-        let mut chunk = [0_u8; 8192];
-        loop {
-            let Ok(count) = pipe.read(&mut chunk) else {
-                break;
-            };
-            if count == 0 {
-                break;
-            }
-            let remaining = MAX_COMMAND_OUTPUT_BYTES.saturating_sub(output.len());
-            output.extend_from_slice(&chunk[..count.min(remaining)]);
-        }
-        output
-    })
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_normal_grok_ids_and_custom_aliases_from_catalog_rows() {
-        let text = "Available models:\n\
-                    * grok-code-fast-1 (default)\n\
-                    * my-model (custom)\n\
-                    | grok-4.1-fast | ready |\n\
-                    | company/sonnet:prod | configured |";
-        let models = parse_grok_models(text);
-        assert_eq!(
-            models
-                .iter()
-                .map(|model| model.value.as_str())
-                .collect::<Vec<_>>(),
-            [
-                "company/sonnet:prod",
-                "grok-4.1-fast",
-                "grok-code-fast-1",
-                "my-model",
-            ]
-        );
-
-        let models =
-            parse_grok_models(r#"{"models":[{"id":"grok-code-fast-1"},{"alias":"my-model"}]}"#);
-        assert_eq!(
-            models
-                .iter()
-                .map(|model| model.value.as_str())
-                .collect::<Vec<_>>(),
-            ["grok-code-fast-1", "my-model"]
-        );
-    }
-
-    #[test]
-    fn parses_custom_aliases_from_headered_tables() {
-        let text = "Model | Status\n------|-------\nmy-model | default\ngrok-4.5 | ready";
-        let models = parse_grok_models(text);
-        assert_eq!(
-            models
-                .iter()
-                .map(|model| model.value.as_str())
-                .collect::<Vec<_>>(),
-            ["grok-4.5", "my-model"]
-        );
-    }
-
-    #[test]
-    fn parses_antigravity_display_names_without_losing_effort_suffixes() {
-        let text = "Available models:\n* Gemini 3.5 Flash (Medium)\n\
-                    * Claude Opus 4.6 (Thinking)\n* GPT-OSS 120B (Medium)";
-        let models = parse_antigravity_models(text);
-        assert_eq!(
-            models
-                .iter()
-                .map(|model| model.value.as_str())
-                .collect::<Vec<_>>(),
-            [
-                "Claude Opus 4.6 (Thinking)",
-                "GPT-OSS 120B (Medium)",
-                "Gemini 3.5 Flash (Medium)",
-            ]
-        );
-        assert!(models.iter().all(|model| model.value == model.display_name));
-    }
-
-    #[test]
-    fn parses_antigravity_v1_1_5_slug_catalog() {
-        let text = "gemini-3.6-flash-high\ngemini-3.6-flash-medium\ngemini-3.6-flash-low\ngemini-3.5-flash-high\ngemini-3.5-flash-medium\ngemini-3.5-flash-low\ngemini-3.1-pro-high\ngemini-3.1-pro-low\nclaude-sonnet-4-6\nclaude-opus-4-6-thinking\ngpt-oss-120b-medium";
-        let models = parse_antigravity_models(text);
-        assert_eq!(models.len(), 11);
-        assert!(models.iter().any(|m| m.value == "gemini-3.6-flash-high"));
-        assert!(models.iter().any(|m| m.value == "claude-opus-4-6-thinking"));
-    }
-
-    #[test]
-    fn parses_antigravity_json_and_ignores_auth_prose() {
-        let models = parse_antigravity_models(
-            r#"{"models":[{"displayName":"Gemini 3.1 Pro (High)"},{"name":"Claude Sonnet 4.6 (Thinking)"}]}"#,
-        );
-        assert_eq!(models.len(), 2);
-        assert!(parse_antigravity_models("Please sign in to view available models").is_empty());
-        assert!(parse_antigravity_models(
-            "Available models:\n* Gemini authentication required\n* Claude login failed"
-        )
-        .is_empty());
-        assert!(
-            parse_antigravity_models(r#"{"name":"Gemini authentication required"}"#).is_empty()
-        );
-    }
-
-    #[test]
-    fn human_catalog_does_not_resume_after_its_blank_terminator() {
-        let antigravity = parse_antigravity_models(
-            "Available models:\n* Gemini 3.5 Flash (High)\n\n* Claude CLI troubleshooting",
-        );
-        assert_eq!(antigravity.len(), 1);
-        assert_eq!(antigravity[0].value, "Gemini 3.5 Flash (High)");
-
-        let grok =
-            parse_grok_models("Available models:\n* grok-code-fast-1\n\n* release-notes-model");
-        assert_eq!(grok.len(), 1);
-        assert_eq!(grok[0].value, "grok-code-fast-1");
-    }
-
-    #[test]
-    fn ignores_catalog_headings_and_unrelated_prose() {
-        assert!(parse_grok_models("Available models:\nDefault model: automatic").is_empty());
-        assert!(parse_grok_models(
-            "Available models:\nStatus: ready\nconnected\nAuthentication required"
-        )
-        .is_empty());
-        assert!(parse_grok_models("Please sign in to continue").is_empty());
-        assert!(parse_grok_models(r#""connected""#).is_empty());
-        assert!(parse_grok_models(r#"{"name":"grok-diagnostic"}"#).is_empty());
-        assert!(
-            parse_grok_models("Available models:\n* request failed\n* loading-models").is_empty()
-        );
-    }
-
-    #[test]
-    fn verified_catalogs_reject_empty_auth_and_unknown_output() {
-        let empty = require_antigravity_models("", "").unwrap_err();
-        assert!(empty.contains("no model catalog"));
-
-        let auth = require_antigravity_models("", "Please sign in to continue").unwrap_err();
-        assert!(auth.contains("requires authentication"));
-
-        let unknown = require_grok_models("Available models:\nautomatic", "").unwrap_err();
-        assert!(unknown.contains("unrecognized model catalog"));
-
-        let auth = require_grok_models("", "Authentication required").unwrap_err();
-        assert!(auth.contains("requires authentication"));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn command_output_drains_large_stdout_and_stderr_before_exit() {
-        let script = "i=0; while [ $i -lt 40000 ]; do \
-                      printf '0123456789abcdef0123456789abcdef\\n'; \
-                      printf 'fedcba9876543210fedcba9876543210\\n' >&2; \
-                      i=$((i+1)); done";
-        let output = command_output(
-            CliName::GrokBuild,
-            Path::new("/bin/sh"),
-            &["-c", script],
-            Duration::from_secs(5),
-        )
-        .expect("large piped output should not deadlock");
-        assert!(output.status.success());
-        assert_eq!(output.stdout.len(), MAX_COMMAND_OUTPUT_BYTES);
-        assert_eq!(output.stderr.len(), MAX_COMMAND_OUTPUT_BYTES);
-    }
-}
+#[path = "cli_model_discovery_tests.rs"]
+mod tests;

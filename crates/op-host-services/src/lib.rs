@@ -43,6 +43,7 @@ mod chat_subprocess_safety;
 pub mod chat_system_prompt;
 mod chat_tool_result;
 pub mod cli_model_discovery;
+mod cli_probe_support;
 pub mod cli_provider_probe;
 mod cli_resolver_windows;
 mod design_agent_diagnostics;
