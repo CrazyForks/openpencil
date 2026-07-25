@@ -25,7 +25,11 @@ fn main() {
 
     println!("cargo:rustc-cfg=op_auth_prebuilt");
     println!("cargo:rustc-link-search=native={}", prebuilt_dir.display());
-    println!("cargo:rustc-link-lib=static=op_auth");
+    // `-bundle`: keep the archive out of this crate's rlib and hand it to
+    // the final link instead. Bundled foreign objects would otherwise be
+    // fed to thin-LTO in release builds, which fails with "failed to get
+    // bitcode from object file for LTO".
+    println!("cargo:rustc-link-lib=static:-bundle=op_auth");
 
     // System libraries the static library's TLS/network stack expects.
     if target.contains("apple-darwin") {
