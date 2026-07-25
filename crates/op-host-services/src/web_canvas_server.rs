@@ -506,8 +506,9 @@ pub fn handle_web_canvas_request(
         }
         // Device-login proxy: the wasm bundle ships no auth code and
         // drives the flow through the daemon's op-auth-bridge runtime.
+        // (`POST /api/auth/login/begin` is a streaming-tier route — it
+        // waits for the verification URI off the state lock.)
         ("GET", "/api/auth/status") => crate::web_auth::status(state),
-        ("POST", "/api/auth/login/begin") => crate::web_auth::login_begin(state),
         ("GET", "/api/auth/login/status") => crate::web_auth::login_status(state),
         ("POST", "/api/auth/login/cancel") => crate::web_auth::login_cancel(state),
         ("POST", "/api/auth/logout") => crate::web_auth::logout(state),
@@ -1736,6 +1737,17 @@ fn serve_one<S: Read + Write>(
                 .map(|()| false);
         }
     }
+    // Sign-in popup interstitial — same auth-exempt static surface as the
+    // bundle routes above (it renders a spinner and nothing else).
+    if req.method == "GET" && req.path == "/auth/loading" {
+        let reply = crate::web_static::StaticReply {
+            status: "200 OK",
+            content_type: "text/html; charset=utf-8",
+            body: crate::web_auth::LOADING_PAGE_HTML.as_bytes().to_vec(),
+        };
+        return crate::web_static::write_static_response(stream, &reply, cors_origin)
+            .map(|()| false);
+    }
     // Managed-mode token gate: everything below this point is a privileged
     // branch (SSE, AI streams, `/mcp`, `/api/*`, the `POST /` JSON-RPC
     // alias) — the static GET routes above and the `OPTIONS` preflight
@@ -1746,6 +1758,20 @@ fn serve_one<S: Read + Write>(
             stream,
             "401 Unauthorized",
             r#"{"ok":false,"error":"unauthorized"}"#,
+            cors_origin,
+        )
+        .map(|()| false);
+    }
+    // Device-login begin: waits (per-connection thread, off the state
+    // lock) for the pairing's verification URI so the popup can navigate
+    // straight from this response — handled here rather than in the
+    // whole-body REST tier, which runs under the state mutex.
+    if req.method == "POST" && req.path == "/api/auth/login/begin" {
+        let reply = crate::web_auth::login_begin_and_wait(state);
+        return crate::mcp_serve::write_mcp_http_response_with_origin(
+            stream,
+            reply.status,
+            &reply.body,
             cors_origin,
         )
         .map(|()| false);

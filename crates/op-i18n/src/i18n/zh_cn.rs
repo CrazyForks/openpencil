@@ -735,6 +735,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "a11y.aiChat" => "AI 聊天",
         "designMd.emptyHint" => "导入 .md 文件以附加设计说明",
         "componentBrowser.empty" => "未找到组件",
+        "account.signInSubtitle" => "使用 Zseven 账户继续",
+        "account.securityNoteBrowser" => "账户验证将在系统浏览器中完成",
+        "account.securityNotePopup" => "账户验证将在弹出的窗口中完成",
         _ => return super::zh_cn_git::lookup(key),
     })
 }

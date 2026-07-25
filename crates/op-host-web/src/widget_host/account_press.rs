@@ -44,7 +44,7 @@ impl WidgetHost {
             }
             LoginModalHit::SignIn => {
                 // A flow is already running — don't spawn another
-                // placeholder popup or re-begin; the poll owns the modal.
+                // loading popup or re-begin; the poll owns the modal.
                 if matches!(
                     self.editor_state.editor_ui.login_modal_status,
                     Some(
@@ -56,17 +56,15 @@ impl WidgetHost {
                     self.mark_dirty();
                     return;
                 }
-                // Open the placeholder popup NOW, inside the click's
-                // user-activation window — an async `window.open` later
-                // would be popup-blocked (the "click twice" bug).
-                crate::web_auth_sync::open_login_popup_placeholder();
-                // Optimistic status so the modal reacts on this frame;
-                // the daemon poll refines it (or reports the failure).
+                // Open the loading popup AND fire the begin request NOW,
+                // inside the click's user-activation window — an async
+                // `window.open` later would be popup-blocked, and going
+                // through the poll tick would add up to two poll cycles
+                // of latency before the sso page appears.
+                crate::web_auth_sync::begin_login_now();
                 self.editor_state.editor_ui.login_modal_status =
                     Some(LoginFlowStatus::WaitingBrowser);
                 self.editor_state.editor_ui.login_modal_stub_hint_shown = false;
-                self.pending_auth_actions
-                    .push(PendingAuthAction::BeginLogin);
             }
             LoginModalHit::Inside => {
                 self.blur_text_inputs_on_blank_press();

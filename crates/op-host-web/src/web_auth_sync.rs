@@ -1,15 +1,18 @@
 //! Drive the daemon's device-login proxy from the web shell.
 //!
-//! The wasm bundle ships no auth code: presses queue
-//! [`PendingAuthAction`]s on the host, and this module's poll tick turns
-//! them into `/api/auth/*` calls. While a login flow runs it polls
-//! `GET /api/auth/login/status`, opens the verification page in a popup
-//! exactly once, and folds progress into the same
-//! `login_modal_status` / `account` fields the desktop host uses — the
-//! login modal renders identically on both hosts.
+//! The wasm bundle ships no auth code. The SignIn press opens a
+//! same-origin loading popup and fires `POST /api/auth/login/begin`
+//! immediately (both inside the click's user-activation window); the
+//! daemon holds that request until the pairing's verification URI is
+//! known, and the response callback navigates the popup to it — no poll
+//! cycle sits between the click and the sso page. The interval tick then
+//! polls `GET /api/auth/login/status` for approval progress and folds it
+//! into the same `login_modal_status` / `account` fields the desktop
+//! host uses, so the login modal renders identically on both hosts.
 //!
 //! On startup one `GET /api/auth/status` seeds `account_ui_available`
-//! and (when the daemon restored a shared session) the signed-in state.
+//! and (when the daemon restored a shared session) the signed-in state;
+//! it re-runs every ~30 s as a session health check.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -29,35 +32,104 @@ const AUTH_POLL_INTERVAL_MS: i32 = 600;
 /// without a reload. Network failures change nothing (the callback
 /// simply never fires), so an offline blip can't sign the user out.
 const STATUS_REFRESH_TICKS: u32 = 50;
-
 /// Consecutive `idle` login-status answers tolerated before the flow is
-/// declared dead. A begin POST races the first status poll (the daemon
-/// may not have created the flow yet), so a single `idle` MUST be
-/// treated as transient — resetting on it immediately was the original
-/// "first click opens only a blank window" bug.
+/// declared dead. The begin request may still be in flight daemon-side,
+/// so a single `idle` MUST be treated as transient — resetting on it
+/// immediately was the original "first click opens only a blank window"
+/// bug.
 const MAX_IDLE_STREAK: u32 = 5;
 
-/// Shared latches for the login flow's async choreography.
+thread_local! {
+    /// Popup opened synchronously inside the SignIn click (the only
+    /// moment `window.open` is reliably allowed). It shows the
+    /// same-origin `/auth/loading` interstitial until navigated.
+    static PENDING_POPUP: RefCell<Option<web_sys::Window>> = const { RefCell::new(None) };
+    /// The popup has been pointed at a verification page for the
+    /// current flow — both the begin response and the status poll can
+    /// learn the URI, whichever lands first navigates, the other skips.
+    static POPUP_NAVIGATED: Cell<bool> = const { Cell::new(false) };
+    /// The begin POST is in flight — status polls are suppressed so they
+    /// can't observe the daemon's pre-begin `idle` state.
+    static BEGIN_INFLIGHT: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Shared latches for the interval tick.
 #[derive(Clone)]
 struct FlowCells {
     /// One status request in flight at a time.
     busy: Rc<Cell<bool>>,
-    /// The verification popup must be navigated exactly once per flow.
-    browser_opened: Rc<Cell<bool>>,
-    /// A begin POST is in flight — suppress status polls until it lands
-    /// so they can't observe the daemon's pre-begin `idle`.
-    begin_inflight: Rc<Cell<bool>>,
     /// Consecutive transient `idle` answers observed.
     idle_streak: Rc<Cell<u32>>,
 }
 
-impl FlowCells {
-    fn new() -> Self {
-        Self {
-            busy: Rc::new(Cell::new(false)),
-            browser_opened: Rc::new(Cell::new(false)),
-            begin_inflight: Rc::new(Cell::new(false)),
-            idle_streak: Rc::new(Cell::new(0)),
+/// Called synchronously from the SignIn press: open the loading popup
+/// and fire the begin request whose response carries the verification
+/// URI to navigate it to.
+pub(crate) fn begin_login_now() {
+    let base = crate::daemon_base::daemon_base();
+    let opened = web_sys::window()
+        .and_then(|window| {
+            window
+                .open_with_url_and_target(&format!("{base}/auth/loading"), "_blank")
+                .ok()
+        })
+        .flatten();
+    PENDING_POPUP.with(|slot| *slot.borrow_mut() = opened);
+    POPUP_NAVIGATED.set(false);
+    BEGIN_INFLIGHT.set(true);
+    let ok = live_sync::post_json(
+        &format!("{base}/api/auth/login/begin"),
+        "{}",
+        Some(Rc::new(move |body: String| {
+            BEGIN_INFLIGHT.set(false);
+            let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&body) else {
+                close_login_popup_placeholder();
+                return;
+            };
+            if !parsed["ok"].as_bool().unwrap_or(false) {
+                // Refused (stub daemon build / non-loopback bind) — the
+                // status poll shows the failure note; drop the popup.
+                close_login_popup_placeholder();
+                return;
+            }
+            if let Some(url) = parsed["verification_uri"].as_str() {
+                if !url.is_empty() && !POPUP_NAVIGATED.get() {
+                    POPUP_NAVIGATED.set(true);
+                    navigate_login_popup(url);
+                }
+            }
+        })),
+    );
+    if !ok {
+        BEGIN_INFLIGHT.set(false);
+        close_login_popup_placeholder();
+    }
+}
+
+/// Close a still-pending loading popup (flow canceled or failed before
+/// the verification page was known).
+pub(crate) fn close_login_popup_placeholder() {
+    PENDING_POPUP.with(|slot| {
+        if let Some(popup) = slot.borrow_mut().take() {
+            let _ = popup.close();
+        }
+    });
+}
+
+/// Point the loading popup at the verification page; when it is missing
+/// (blocked, or already consumed) fall back to a direct open — that may
+/// be blocked outside a gesture, but the approval also works from any
+/// logged-in browser tab, so the flow still completes.
+fn navigate_login_popup(url: &str) {
+    let pending = PENDING_POPUP.with(|slot| slot.borrow_mut().take());
+    match pending {
+        Some(popup) => {
+            let _ = popup.location().set_href(url);
+        }
+        None => {
+            if let Some(window) = web_sys::window() {
+                let _ = window.open_with_url_and_target(url, "_blank");
+            }
         }
     }
 }
@@ -68,11 +140,14 @@ pub(crate) fn start<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) {
     let base = crate::daemon_base::daemon_base();
     fetch_status(inner, &base);
 
-    let cells = FlowCells::new();
+    let cells = FlowCells {
+        busy: Rc::new(Cell::new(false)),
+        idle_streak: Rc::new(Cell::new(0)),
+    };
     let ticks = Rc::new(Cell::new(0u32));
     let inner = inner.clone();
     let tick: Rc<dyn Fn()> = Rc::new(move || {
-        drain_actions(&inner, &base, &cells);
+        drain_actions(&inner, &base);
         maybe_poll_login(&inner, &base, &cells);
         let count = ticks.get() + 1;
         if count >= STATUS_REFRESH_TICKS {
@@ -128,62 +203,17 @@ fn fetch_status<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, base: &str)
     );
 }
 
-fn drain_actions<C: RepaintContext + 'static>(
-    inner: &Rc<RefCell<C>>,
-    base: &str,
-    cells: &FlowCells,
-) {
+fn drain_actions<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, base: &str) {
     let actions = inner.borrow_mut().host_mut().take_pending_auth_actions();
     for action in actions {
         let path = match action {
-            PendingAuthAction::BeginLogin => {
-                cells.browser_opened.set(false);
-                cells.idle_streak.set(0);
-                cells.begin_inflight.set(true);
-                "/api/auth/login/begin"
+            PendingAuthAction::CancelLogin => {
+                close_login_popup_placeholder();
+                "/api/auth/login/cancel"
             }
-            PendingAuthAction::CancelLogin => "/api/auth/login/cancel",
             PendingAuthAction::SignOut => "/api/auth/logout",
         };
-        let inner_cb = inner.clone();
-        let begin_inflight = cells.begin_inflight.clone();
-        let is_begin = action == PendingAuthAction::BeginLogin;
-        let ok = live_sync::post_json(
-            &format!("{base}{path}"),
-            "{}",
-            Some(Rc::new(move |body: String| {
-                if is_begin {
-                    begin_inflight.set(false);
-                }
-                // Begin can be refused (stub daemon build) — surface it.
-                if body.contains(r#""ok":true"#) {
-                    return;
-                }
-                if is_begin {
-                    close_login_popup_placeholder();
-                }
-                let mut b = inner_cb.borrow_mut();
-                let ui = &mut b.host_mut().editor_state_mut().editor_ui;
-                if ui.login_modal_open {
-                    ui.login_modal_status =
-                        Some(LoginFlowStatus::Failed(LoginFlowError::Unavailable));
-                    b.host_mut().mark_editor_state_dirty();
-                    let _ = b.repaint();
-                }
-            })),
-        );
-        if action == PendingAuthAction::CancelLogin {
-            close_login_popup_placeholder();
-        }
-        if !ok && is_begin {
-            cells.begin_inflight.set(false);
-            close_login_popup_placeholder();
-            let mut b = inner.borrow_mut();
-            let ui = &mut b.host_mut().editor_state_mut().editor_ui;
-            ui.login_modal_status = Some(LoginFlowStatus::Failed(LoginFlowError::Unavailable));
-            b.host_mut().mark_editor_state_dirty();
-            let _ = b.repaint();
-        }
+        let _ = live_sync::post_json(&format!("{base}{path}"), "{}", None);
     }
 }
 
@@ -198,7 +228,7 @@ fn maybe_poll_login<C: RepaintContext + 'static>(
         let flow_active = ui.login_modal_open && ui.login_modal_status.is_some();
         // While the begin POST is in flight the daemon may not have the
         // flow yet — a poll now would observe a misleading `idle`.
-        if !flow_active || cells.busy.get() || cells.begin_inflight.get() {
+        if !flow_active || cells.busy.get() || BEGIN_INFLIGHT.get() {
             return;
         }
     }
@@ -238,10 +268,12 @@ fn apply_login_status<C: RepaintContext + 'static>(
         "starting" => ui.login_modal_status = Some(LoginFlowStatus::WaitingBrowser),
         "waiting_approval" => {
             ui.login_modal_status = Some(LoginFlowStatus::WaitingApproval);
-            if !cells.browser_opened.get() {
+            // Fallback navigation when the begin response missed the URI
+            // (daemon-side wait timed out under a slow sso round-trip).
+            if !POPUP_NAVIGATED.get() {
                 if let Some(url) = parsed["verification_uri"].as_str() {
                     if !url.is_empty() {
-                        cells.browser_opened.set(true);
+                        POPUP_NAVIGATED.set(true);
                         navigate_login_popup(url);
                     }
                 }
@@ -295,56 +327,5 @@ fn apply_login_status<C: RepaintContext + 'static>(
     if ui.login_modal_status != previous || !ui.login_modal_open {
         b.host_mut().mark_editor_state_dirty();
         let _ = b.repaint();
-    }
-}
-
-thread_local! {
-    /// Placeholder popup opened synchronously inside the SignIn click
-    /// (user-activation context — the only moment `window.open` is
-    /// reliably allowed). The poll callback later navigates it to the
-    /// verification page; opening from the async callback instead gets
-    /// popup-blocked, which is exactly the "have to click sign-in
-    /// twice" failure this design removes.
-    static PENDING_POPUP: RefCell<Option<web_sys::Window>> = const { RefCell::new(None) };
-}
-
-/// Open the placeholder popup. Must be called synchronously from a
-/// pointer-event handler (the web sign-in press dispatcher).
-pub(crate) fn open_login_popup_placeholder() {
-    let opened = web_sys::window()
-        .and_then(|window| {
-            window
-                .open_with_url_and_target("about:blank", "_blank")
-                .ok()
-        })
-        .flatten();
-    PENDING_POPUP.with(|slot| *slot.borrow_mut() = opened);
-}
-
-/// Close a still-pending placeholder (flow canceled or failed before
-/// the verification page was known).
-pub(crate) fn close_login_popup_placeholder() {
-    PENDING_POPUP.with(|slot| {
-        if let Some(popup) = slot.borrow_mut().take() {
-            let _ = popup.close();
-        }
-    });
-}
-
-/// Point the placeholder at the verification page; when the placeholder
-/// is missing (blocked, or an older flow) fall back to a direct open —
-/// it may be blocked outside a gesture, but the approval also works
-/// from any logged-in browser tab, so the flow still completes.
-fn navigate_login_popup(url: &str) {
-    let pending = PENDING_POPUP.with(|slot| slot.borrow_mut().take());
-    match pending {
-        Some(popup) => {
-            let _ = popup.location().set_href(url);
-        }
-        None => {
-            if let Some(window) = web_sys::window() {
-                let _ = window.open_with_url_and_target(url, "_blank");
-            }
-        }
     }
 }

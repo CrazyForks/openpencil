@@ -102,8 +102,71 @@ pub(crate) fn status(state: &mut WebCanvasState) -> WebReply {
     }
 }
 
-/// `POST /api/auth/login/begin` — start (or join) the browser pairing
-/// flow. Idempotent while a flow is running.
+/// Interstitial served at `GET /auth/loading` — the sign-in popup opens
+/// here (same origin, instant) and is navigated to the verification page
+/// as soon as the begin call returns it, so the user never stares at a
+/// bare `about:blank`.
+pub(crate) const LOADING_PAGE_HTML: &str = r#"<!doctype html>
+<html><head><meta charset="utf-8"><title>OpenPencil</title><style>
+  html,body{height:100%;margin:0;background:#111113;color:#e4e4e7;
+    font:14px/1.6 system-ui,-apple-system,sans-serif}
+  .wrap{height:100%;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;gap:14px}
+  .spin{width:28px;height:28px;border-radius:50%;border:3px solid #3f3f46;
+    border-top-color:#818cf8;animation:r .8s linear infinite}
+  @keyframes r{to{transform:rotate(360deg)}}
+  p{margin:0}.en{color:#a1a1aa;font-size:12px}
+</style></head><body><div class="wrap"><div class="spin"></div>
+<p>正在打开登录页…</p><p class="en">Opening the sign-in page…</p>
+</div></body></html>"#;
+
+/// How long `login_begin_and_wait` blocks its connection thread waiting
+/// for the pairing's verification URI (the sso `start` round-trip).
+const BEGIN_WAIT_STEPS: u32 = 50;
+const BEGIN_WAIT_STEP_MS: u64 = 100;
+
+/// `POST /api/auth/login/begin` (streaming tier) — start the flow, then
+/// wait (off the state lock; only this connection's thread blocks) until
+/// the verification URI is known and return it inline. The popup can
+/// then be navigated from the begin response itself instead of waiting
+/// out an extra poll cycle. On timeout/error the reply omits the URI and
+/// the browser's status polling takes over.
+pub(crate) fn login_begin_and_wait(state: &std::sync::Mutex<WebCanvasState>) -> WebReply {
+    let handle = {
+        let mut guard = state.lock().unwrap_or_else(|p| p.into_inner());
+        let reply = login_begin(&mut guard);
+        if reply.status != "200 OK" {
+            return reply;
+        }
+        match guard.auth_login_handle {
+            Some(handle) => handle,
+            None => return reply,
+        }
+    };
+    for _ in 0..BEGIN_WAIT_STEPS {
+        match op_auth_bridge::poll(handle) {
+            AuthStatus::WaitingApproval { verification_uri } if !verification_uri.is_empty() => {
+                return WebReply {
+                    status: "200 OK",
+                    body: serde_json::json!({
+                        "ok": true,
+                        "verification_uri": verification_uri,
+                    })
+                    .to_string(),
+                };
+            }
+            AuthStatus::Idle | AuthStatus::Starting | AuthStatus::WaitingApproval { .. } => {}
+            // Terminal already (fast failure / instant approval): let the
+            // status poll report it.
+            _ => break,
+        }
+        std::thread::sleep(std::time::Duration::from_millis(BEGIN_WAIT_STEP_MS));
+    }
+    ok()
+}
+
+/// Start (or join) the browser pairing flow. Idempotent while a flow is
+/// running.
 pub(crate) fn login_begin(state: &mut WebCanvasState) -> WebReply {
     // The editor flag is set only when `init` actually ran (auth backend
     // linked AND the bind is loopback/managed), so this also refuses the

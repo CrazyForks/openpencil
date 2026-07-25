@@ -126,27 +126,16 @@ fn t(locale: Locale, key: &'static str) -> &'static str {
 }
 
 fn subtitle(locale: Locale) -> &'static str {
-    match locale {
-        Locale::ZhCn => "使用 Zseven 账户继续",
-        Locale::ZhTw => "使用 Zseven 帳戶繼續",
-        _ => "Continue with your Zseven account",
-    }
+    t(locale, "account.signInSubtitle")
 }
 
 fn security_note(locale: Locale) -> &'static str {
     // The web editor already runs in a browser — its verification page
     // opens as a popup window, not "the system browser".
     if cfg!(target_arch = "wasm32") {
-        return match locale {
-            Locale::ZhCn => "账户验证将在弹出的窗口中完成",
-            Locale::ZhTw => "帳戶驗證將在彈出的視窗中完成",
-            _ => "Authentication continues in a popup window",
-        };
-    }
-    match locale {
-        Locale::ZhCn => "账户验证将在系统浏览器中完成",
-        Locale::ZhTw => "帳戶驗證將在系統瀏覽器中完成",
-        _ => "Authentication continues in your system browser",
+        t(locale, "account.securityNotePopup")
+    } else {
+        t(locale, "account.securityNoteBrowser")
     }
 }
 

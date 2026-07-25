@@ -727,6 +727,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "a11y.aiChat" => "AI chat",
         "designMd.emptyHint" => "Import a .md file to attach a design brief",
         "componentBrowser.empty" => "No components found",
+        "account.signInSubtitle" => "Continue with your Zseven account",
+        "account.securityNoteBrowser" => "Authentication continues in your system browser",
+        "account.securityNotePopup" => "Authentication continues in a popup window",
         _ => return super::en_git::lookup(key),
     })
 }

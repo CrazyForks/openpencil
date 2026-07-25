@@ -182,11 +182,11 @@ mod viewport_fit;
 mod web_fonts;
 
 /// Device-login side effects requested by press dispatchers and executed
-/// by `web_auth_sync` against the daemon's `/api/auth/*` proxy.
+/// by `web_auth_sync` against the daemon's `/api/auth/*` proxy. (Begin is
+/// NOT queued: it must fire inside the click's user-activation window so
+/// the sign-in popup isn't blocked — see `web_auth_sync::begin_login_now`.)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PendingAuthAction {
-    /// Start the browser pairing flow.
-    BeginLogin,
     /// Abort the in-flight flow (modal dismissed).
     CancelLogin,
     /// Drop the shared session and revoke the device token.
