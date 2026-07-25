@@ -86,7 +86,7 @@ const GUIDELINE_TOPICS: &[(&str, &[&str], &[&str])] = &[
     ),
     ("slides", &["deck", "presentation"], &["slides"]),
     ("form", &["form-ui"], &["form-ui"]),
-    ("design-system", &[], &["design-system"]),
+    ("design-system", &[], &["design-system-composition"]),
     ("interactivity", &[], &["interactivity"]),
 ];
 

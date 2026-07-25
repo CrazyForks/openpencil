@@ -1,5 +1,5 @@
 ---
-name: design-system
+name: design-system-composition
 description: Design-system composition depth — token roles, screen layout contracts, button hierarchy, spacing, composition recipes
 phase: [generation]
 trigger:

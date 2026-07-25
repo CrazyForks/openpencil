@@ -194,6 +194,30 @@ mod tests {
     }
 
     #[test]
+    fn every_skill_name_is_unique() {
+        // `get_skill_by_name` / `resolve_skills` / `SkillLoadReport` all key
+        // off frontmatter `name`; a duplicate makes lookup depend on
+        // registry (directory-traversal) order and collapses two distinct
+        // skills into one report entry. Two knowledge/generation skills
+        // both named "design-system" hit exactly this (fixed by renaming
+        // the knowledge one to "design-system-composition") — this test
+        // guards against the collision recurring under any name.
+        let reg = get_skill_registry();
+        let mut names: Vec<&str> = reg.iter().map(|e| e.meta.name.as_str()).collect();
+        names.sort_unstable();
+        let mut duplicates = Vec::new();
+        for pair in names.windows(2) {
+            if pair[0] == pair[1] && !duplicates.contains(&pair[0]) {
+                duplicates.push(pair[0]);
+            }
+        }
+        assert!(
+            duplicates.is_empty(),
+            "duplicate skill name(s) in registry: {duplicates:?}"
+        );
+    }
+
+    #[test]
     fn interactivity_skill_loads_as_always_domain() {
         let skill =
             get_skill_by_name("interactivity").expect("interactivity skill must embed + parse");
