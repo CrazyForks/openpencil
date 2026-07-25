@@ -72,6 +72,7 @@ pub mod provider_probe_host;
 pub mod provider_probe_models;
 pub mod settings_io;
 pub mod validation_providers;
+pub(crate) mod web_auth;
 pub mod web_canvas_server;
 pub mod web_chat_standard;
 pub mod web_credential_policy;

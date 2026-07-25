@@ -50,6 +50,9 @@ pub enum AgentSettingsPanelMode {
     /// runtime account gate (`EditorUiState::account_ui_available`).
     FullWithAccount,
     WebBuiltinOnly,
+    /// `WebBuiltinOnly` plus the Account tab (web with a daemon-side
+    /// auth backend).
+    WebBuiltinOnlyWithAccount,
     McpOnly,
 }
 
@@ -63,6 +66,13 @@ impl AgentSettingsPanelMode {
                 AgentSettingsTab::Images,
                 AgentSettingsTab::Fonts,
                 AgentSettingsTab::System,
+            ],
+            AgentSettingsPanelMode::WebBuiltinOnlyWithAccount => &[
+                AgentSettingsTab::Agents,
+                AgentSettingsTab::Images,
+                AgentSettingsTab::Fonts,
+                AgentSettingsTab::System,
+                AgentSettingsTab::Account,
             ],
             AgentSettingsPanelMode::McpOnly => &[AgentSettingsTab::Mcp],
         }
@@ -89,6 +99,8 @@ fn mode_for_ui(ui: &EditorUiState, base: AgentSettingsPanelMode) -> AgentSetting
         AgentSettingsPanelMode::McpOnly
     } else if base == AgentSettingsPanelMode::Full && ui.account_ui_available {
         AgentSettingsPanelMode::FullWithAccount
+    } else if base == AgentSettingsPanelMode::WebBuiltinOnly && ui.account_ui_available {
+        AgentSettingsPanelMode::WebBuiltinOnlyWithAccount
     } else {
         base
     }

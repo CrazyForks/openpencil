@@ -1965,6 +1965,10 @@ pub async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
     // Mirror the daemon's agent-indicator registry so design runs paint
     // their agent borders / badges / reveal animations on web too.
     crate::agent_indicator_sync::start(&inner);
+    // Device-login relay: seed `account_ui_available` + any session the
+    // daemon restored (shared with the desktop GUI), then drive login
+    // flows through the daemon's `/api/auth/*` proxy.
+    crate::web_auth_sync::start(&inner);
     // 4. Reset the daemon's transient sync document, THEN emit the managed
     //    `ready` reply and start the live-sync ticks. The reset must complete
     //    FIRST for two reasons:

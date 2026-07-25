@@ -39,6 +39,7 @@ use op_editor_ui::widgets::TOP_BAR_HEIGHT;
 use op_editor_ui::{Point2D, Rect, Theme};
 
 mod a11y_bridge;
+mod account_press;
 #[cfg(test)]
 mod agent_settings_acp_press_tests;
 #[cfg(test)]
@@ -180,6 +181,18 @@ mod variables_preset_press;
 mod viewport_fit;
 mod web_fonts;
 
+/// Device-login side effects requested by press dispatchers and executed
+/// by `web_auth_sync` against the daemon's `/api/auth/*` proxy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PendingAuthAction {
+    /// Start the browser pairing flow.
+    BeginLogin,
+    /// Abort the in-flight flow (modal dismissed).
+    CancelLogin,
+    /// Drop the shared session and revoke the device token.
+    SignOut,
+}
+
 pub(in crate::widget_host) const TOOLBAR_INSET_X: f32 = 12.0;
 pub(in crate::widget_host) const TOOLBAR_INSET_Y: f32 = 12.0;
 pub(in crate::widget_host) const STATUS_INSET: f32 = 16.0;
@@ -316,6 +329,10 @@ pub struct WidgetHost {
     /// browser IME candidate-window fallback instead of viewport (0, 0).
     pub(in crate::widget_host) last_cursor_x: f32,
     pub(in crate::widget_host) last_cursor_y: f32,
+    /// Queued device-login actions for the daemon auth proxy; the
+    /// `web_auth_sync` poll tick drains them into `/api/auth/*` calls.
+    /// Press dispatchers only enqueue — they never issue requests.
+    pub(in crate::widget_host) pending_auth_actions: Vec<PendingAuthAction>,
     /// Stable, process-unique id scoping this host's chat-panel transcript
     /// cache (mirrors native `WidgetHostNative::chat_panel_owner`). Stamped onto
     /// every `AIChatPlaceholder` this host builds so the thread-local canonical
@@ -591,10 +608,16 @@ impl WidgetHost {
             last_viewport_h: 0.0,
             last_cursor_x: 0.0,
             last_cursor_y: 0.0,
+            pending_auth_actions: Vec::new(),
             chat_panel_owner: op_editor_ui::widgets::AIChatPlaceholder::next_owner(),
             layer_panel_owner: op_editor_ui::widgets::LayerPanel::next_layer_panel_owner(),
             last_chat_session_index,
         }
+    }
+
+    /// Drain the device-login actions queued by press dispatchers.
+    pub fn take_pending_auth_actions(&mut self) -> Vec<PendingAuthAction> {
+        std::mem::take(&mut self.pending_auth_actions)
     }
 
     /// Rotate the chat-panel transcript-cache owner when the active chat session

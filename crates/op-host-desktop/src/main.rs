@@ -1140,15 +1140,7 @@ fn init_auth_runtime(host: &mut WidgetHostNative) {
     let mut backend_ready = false;
     if op_auth_bridge::available() {
         if let Ok(dir) = op_config_store::openpencil_dir() {
-            let config = op_auth_bridge::AuthInitConfig {
-                // Local-dev override: point the flow at a locally served
-                // zseven-sso (e.g. http://127.0.0.1:5173).
-                base_url: std::env::var("OPENPENCIL_SSO_URL")
-                    .unwrap_or_else(|_| "https://sso.zseven.cn".to_string()),
-                storage_dir: dir.join("auth"),
-                device_name: device_display_name(),
-                app_version: env!("CARGO_PKG_VERSION").to_string(),
-            };
+            let config = op_auth_bridge::desktop_init_config(&dir, env!("CARGO_PKG_VERSION"));
             if op_auth_bridge::init(&config) {
                 backend_ready = true;
                 if op_auth_bridge::restore() {
@@ -1169,40 +1161,6 @@ fn init_auth_runtime(host: &mut WidgetHostNative) {
         }
     }
     host.editor_state_mut().editor_ui.account_ui_available = backend_ready || dev_fake;
-}
-
-/// Human-readable machine name shown on the SSO approval page and in
-/// the account device list. The page itself labels the product and
-/// platform, so this must be just the machine — never "OpenPencil …".
-fn device_display_name() -> String {
-    #[cfg(target_os = "macos")]
-    {
-        if let Ok(output) = std::process::Command::new("scutil")
-            .args(["--get", "ComputerName"])
-            .output()
-        {
-            if output.status.success() {
-                let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !name.is_empty() {
-                    return name;
-                }
-            }
-        }
-    }
-    if let Ok(output) = std::process::Command::new("hostname").output() {
-        if output.status.success() {
-            let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !name.is_empty() {
-                return name;
-            }
-        }
-    }
-    // Windows sets COMPUTERNAME; some unix shells export HOSTNAME.
-    std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .ok()
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| "Desktop".to_string())
 }
 
 /// Pop a native dialog offering to open the download page when a

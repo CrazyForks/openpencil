@@ -56,7 +56,7 @@ impl WidgetHostNative {
     /// visible changed.
     pub fn poll_auth(&mut self) -> bool {
         let Some(handle) = self.auth_login_handle else {
-            return false;
+            return self.mirror_session_drop();
         };
         let ui = &mut self.editor_state.editor_ui;
         let previous = ui.login_modal_status;
@@ -112,5 +112,24 @@ impl WidgetHostNative {
             self.mark_dirty();
         }
         changed
+    }
+
+    /// Mirror a session the library dropped after the optimistic startup
+    /// restore (the background revalidation hit a 401/403) back into the
+    /// UI — otherwise the avatar would show a signed-in ghost until the
+    /// next launch. Cheap: one in-process status snapshot per drain pass.
+    fn mirror_session_drop(&mut self) -> bool {
+        if !self.editor_state.editor_ui.account.is_signed_in() || !op_auth_bridge::available() {
+            return false;
+        }
+        if matches!(
+            op_auth_bridge::poll(op_auth_bridge::SESSION_HANDLE),
+            AuthStatus::Idle
+        ) {
+            self.editor_state.editor_ui.account = AccountState::Anonymous;
+            self.mark_dirty();
+            return true;
+        }
+        false
     }
 }

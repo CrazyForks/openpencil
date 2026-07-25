@@ -3399,6 +3399,8 @@ dependencies = [
  "op-acp",
  "op-ai",
  "op-ai-skills",
+ "op-auth-bridge",
+ "op-config-store",
  "op-design-lint",
  "op-editor-core",
  "op-editor-host-core",

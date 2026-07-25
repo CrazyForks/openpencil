@@ -92,3 +92,51 @@ pub fn platform_id() -> &'static str {
         "desktop_linux"
     }
 }
+
+/// Human-readable machine name shown on the SSO approval page and in the
+/// account device list. The page itself labels the product and platform,
+/// so this must be just the machine — never "OpenPencil …". Shared by the
+/// desktop GUI and the serve-web daemon.
+pub fn device_display_name() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = std::process::Command::new("scutil")
+            .args(["--get", "ComputerName"])
+            .output()
+        {
+            if output.status.success() {
+                let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !name.is_empty() {
+                    return name;
+                }
+            }
+        }
+    }
+    if let Ok(output) = std::process::Command::new("hostname").output() {
+        if output.status.success() {
+            let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !name.is_empty() {
+                return name;
+            }
+        }
+    }
+    // Windows sets COMPUTERNAME; some unix shells export HOSTNAME.
+    std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .ok()
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "Desktop".to_string())
+}
+
+/// Standard [`AuthInitConfig`] shared by the desktop GUI and the serve-web
+/// daemon: sso base URL (override via `OPENPENCIL_SSO_URL`), credential
+/// store under `<openpencil_dir>/auth`, machine device name.
+pub fn desktop_init_config(openpencil_dir: &std::path::Path, app_version: &str) -> AuthInitConfig {
+    AuthInitConfig {
+        base_url: std::env::var("OPENPENCIL_SSO_URL")
+            .unwrap_or_else(|_| "https://sso.zseven.cn".to_string()),
+        storage_dir: openpencil_dir.join("auth"),
+        device_name: device_display_name(),
+        app_version: app_version.to_string(),
+    }
+}

@@ -364,6 +364,23 @@ impl WidgetHost {
             self.dispatch_figma_import_press(x, y, viewport_width, viewport_height);
             return true;
         }
+        // Sign-in modal / account dropdown — same overlay tier as native
+        // §0a/§0a' (before the TopBar so a re-click on the avatar closes
+        // instead of re-toggling).
+        if self.editor_state.editor_ui.account_ui_available
+            && self.editor_state.editor_ui.login_modal_open
+        {
+            self.close_image_popovers_for_higher_overlay();
+            self.dispatch_login_modal_press(x, y, viewport_width, viewport_height);
+            return true;
+        }
+        if self.editor_state.editor_ui.account_ui_available
+            && self.editor_state.editor_ui.account_menu_open
+        {
+            self.close_image_popovers_for_higher_overlay();
+            self.dispatch_account_menu_press(x, y, viewport_width, viewport_height);
+            return true;
+        }
 
         // 0a1. Image-fill popover. It is painted in the late property-overlay
         // pass, above VariablesPanel, chat, StatusBar, marquee, and ordinary
@@ -514,10 +531,15 @@ impl WidgetHost {
                     self.editor_state.editor_ui.toggle_preview();
                 }
                 TopBarHit::Account => {
-                    // Unreachable: `TopBar::account_button_visible` is
-                    // always false on wasm32 (the web host never sets
-                    // `account_ui_available`; the sign-in flow is
-                    // desktop-only), so the avatar never hit-tests here.
+                    if self.editor_state.editor_ui.account_ui_available {
+                        if self.editor_state.editor_ui.account.is_signed_in() {
+                            self.editor_state.editor_ui.account_menu_open = true;
+                            self.editor_state.editor_ui.account_menu_hover = None;
+                        } else {
+                            self.editor_state.editor_ui.login_modal_open = true;
+                            self.editor_state.editor_ui.login_modal_hover = None;
+                        }
+                    }
                 }
             }
             self.mark_dirty();

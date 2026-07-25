@@ -122,6 +122,9 @@ pub struct WebCanvasState {
     /// no-op `{"ok":true,"skipped":true,"version":<current>}` reply instead
     /// of touching the document again.
     pub(crate) reset_consumed: bool,
+    /// In-flight browser device-login flow driven through the auth proxy
+    /// endpoints (`/api/auth/login/*`); `None` when no login is running.
+    pub(crate) auth_login_handle: Option<u64>,
 }
 
 impl WebCanvasState {
@@ -171,6 +174,7 @@ impl WebCanvasState {
             managed_token: None,
             allow_origins: Vec::new(),
             reset_consumed: false,
+            auth_login_handle: None,
         }
     }
 
@@ -500,6 +504,13 @@ pub fn handle_web_canvas_request(
                 }
             }
         }
+        // Device-login proxy: the wasm bundle ships no auth code and
+        // drives the flow through the daemon's op-auth-bridge runtime.
+        ("GET", "/api/auth/status") => crate::web_auth::status(state),
+        ("POST", "/api/auth/login/begin") => crate::web_auth::login_begin(state),
+        ("GET", "/api/auth/login/status") => crate::web_auth::login_status(state),
+        ("POST", "/api/auth/login/cancel") => crate::web_auth::login_cancel(state),
+        ("POST", "/api/auth/logout") => crate::web_auth::logout(state),
         _ => WebReply {
             status: "404 Not Found",
             body: r#"{"ok":false,"error":"Not found. Use /api/mcp/document, /api/mcp/sync-reset, /api/mcp/server, /api/file/save, /api/export/raster, /api/export/pdf, or /mcp."}"#
@@ -1461,6 +1472,12 @@ pub fn run_web_canvas(options: ServeWebOptions) -> Result<(), String> {
         credential_persistence,
         crate::settings_io::save_checked,
     )?;
+    // Device-login proxy: init the shared auth runtime and restore the
+    // session the desktop GUI may already have persisted. Never on a
+    // non-loopback bind outside managed mode — the proxy session belongs
+    // to the daemon owner, not to whoever can reach the port.
+    let loopback_bind = matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1");
+    crate::web_auth::init(&mut editor, managed || loopback_bind);
     let listener =
         TcpListener::bind((host.as_str(), port)).map_err(|e| format!("bind {host}:{port}: {e}"))?;
     let local_addr = listener.local_addr().map_err(|e| e.to_string())?;
@@ -2059,6 +2076,7 @@ fn is_sensitive_browser_post(request: &crate::mcp_serve::HttpRequest) -> bool {
     request.method == "POST"
         && (request.path == "/api/settings/credentials"
             || request.path.starts_with("/api/ai/")
+            || request.path.starts_with("/api/auth/")
             || request.path.starts_with("/api/figma/"))
 }
 

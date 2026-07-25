@@ -41,8 +41,11 @@ mod live_sync;
 // Daemon → browser agent-indicator relay (poll + local mirror + rAF pump).
 #[cfg(feature = "canvaskit")]
 mod agent_indicator_sync;
+// Daemon device-login relay (action drain + login-status poll + popup).
 #[cfg(feature = "canvaskit")]
 mod live_sync_glue;
+#[cfg(feature = "canvaskit")]
+mod web_auth_sync;
 // Shared daemon base-URL resolution (page origin when served by the daemon,
 // localhost fallback for the dev smoke page).
 #[cfg(feature = "canvaskit")]

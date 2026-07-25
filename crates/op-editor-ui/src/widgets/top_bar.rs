@@ -147,8 +147,9 @@ pub struct TopBar {
     /// outline when signed out, an initial-letter circle when signed in).
     pub account: op_editor_core::AccountState,
     /// Whether the avatar button paints at all. Follows the host-set
-    /// runtime release gate (`EditorUiState::account_ui_available`) and
-    /// stays desktop-only — the wasm host has no auth backend.
+    /// runtime release gate (`EditorUiState::account_ui_available`):
+    /// desktop enables it when an auth backend is linked, web when the
+    /// serving daemon reports one over `/api/auth/status`.
     pub account_button_visible: bool,
     /// Which embedding container the chrome renders inside. `VsCode` hides
     /// the file-scoped chrome (open menu, Figma import, centered file
@@ -245,7 +246,7 @@ impl TopBar {
             },
             chip_text_w: None,
             account: ui.account.clone(),
-            account_button_visible: ui.account_ui_available && !cfg!(target_arch = "wasm32"),
+            account_button_visible: ui.account_ui_available,
             embed: ui.embed,
         }
     }

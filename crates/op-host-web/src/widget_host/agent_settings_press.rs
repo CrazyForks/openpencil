@@ -286,11 +286,15 @@ impl WidgetHost {
                     self.editor_state.ui.property_focus = None;
                 }
             }
-            AgentSettingsHit::OpenLoginModal | AgentSettingsHit::SignOutAccount => {
-                // Unreachable: `AgentSettingsPanelMode::WebBuiltinOnly`
-                // omits the Account tab from `visible_tabs` (the sign-in
-                // flow is desktop-only), so `hit_test` never
-                // resolves to these variants on the web build.
+            AgentSettingsHit::OpenLoginModal => {
+                self.editor_state.editor_ui.agent_settings_open = false;
+                self.editor_state.editor_ui.login_modal_open = true;
+                self.editor_state.editor_ui.login_modal_hover = None;
+            }
+            AgentSettingsHit::SignOutAccount => {
+                self.editor_state.editor_ui.account = op_editor_core::AccountState::Anonymous;
+                self.pending_auth_actions
+                    .push(crate::widget_host::PendingAuthAction::SignOut);
             }
             AgentSettingsHit::FocusMcpPort => {
                 self.commit_settings_focus();

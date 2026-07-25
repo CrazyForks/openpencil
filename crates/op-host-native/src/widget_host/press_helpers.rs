@@ -323,6 +323,8 @@ impl WidgetHostNative {
             }
             AgentSettingsHit::SignOutAccount => {
                 self.editor_state.editor_ui.account = op_editor_core::AccountState::Anonymous;
+                // Revoke the device session (inert no-op in stub builds).
+                op_auth_bridge::sign_out();
             }
             AgentSettingsHit::FocusMcpPort => {
                 self.commit_settings_focus_if_any();
