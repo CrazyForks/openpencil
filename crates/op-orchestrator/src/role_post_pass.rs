@@ -792,6 +792,88 @@ fn fix_orphan_container_contrast(node: &mut Value, parent_fill: Option<&Value>) 
     }
 }
 
+// ── fixDeckFrontCardTransparency ─────────────────────────────────────────────
+
+/// Explicit `x`/`y`/numeric `width`/`height` rect — only meaningful under
+/// `layout: none`, where children are absolutely positioned instead of flowed.
+fn deck_layer_rect(node: &Value) -> Option<(f64, f64, f64, f64)> {
+    let x = node.get("x").and_then(Value::as_f64)?;
+    let y = node.get("y").and_then(Value::as_f64)?;
+    let w = size_number(node, "width");
+    let h = size_number(node, "height");
+    if w <= 0.0 || h <= 0.0 {
+        return None;
+    }
+    Some((x, y, w, h))
+}
+
+/// Intersection area is at least half of EACH rect's own area — mirrors the
+/// empty-shell decorative-stack overlap threshold (`design_agent_tools.rs`)
+/// so the two structural checks agree on what "substantially overlapping"
+/// means for a `layout:none` card/deck stack.
+fn deck_rects_substantially_overlap(a: (f64, f64, f64, f64), b: (f64, f64, f64, f64)) -> bool {
+    let (ax, ay, aw, ah) = a;
+    let (bx, by, bw, bh) = b;
+    let iw = (ax + aw).min(bx + bw) - ax.max(bx);
+    let ih = (ay + ah).min(by + bh) - ay.max(by);
+    if iw <= 0.0 || ih <= 0.0 {
+        return false;
+    }
+    let overlap_area = iw * ih;
+    overlap_area >= 0.5 * (aw * ah) && overlap_area >= 0.5 * (bw * bh)
+}
+
+/// A `layout:none` deck/stack's topmost card (`children[0]` — the canvas
+/// scene paints siblings topmost-first, see `canvas_viewport_paint.rs`)
+/// carrying text but no fill lets a painted sibling beneath it show straight
+/// through the text whenever the two substantially overlap: a structural
+/// fact (an unfilled text-bearing card sitting over a solid-fill sibling of
+/// near-identical footprint always leaks), not a design-intent call, so it's
+/// safe to auto-repair. Measured: 0724-1-gm-3.op's Flashcard Deck Stack,
+/// where the front card's empty fill let "Back Layer 1"'s
+/// `$color-surface-3` bleed across the whole card. `frame`/`rectangle` only
+/// (never `ellipse`) — a ring/donut sibling behind a centered label is a
+/// deliberate see-through composition, not a leak.
+fn fix_deck_front_card_transparency(node: &mut Value) {
+    if node.get("layout").and_then(Value::as_str) != Some("none") {
+        return;
+    }
+    let Some(children) = node.get("children").and_then(Value::as_array) else {
+        return;
+    };
+    if children.len() < 2 {
+        return;
+    }
+    let front = &children[0];
+    if front.get("type").and_then(Value::as_str) != Some("frame") {
+        return;
+    }
+    if has_fill(front) || !has_text_descendant(front) {
+        return;
+    }
+    let Some(front_rect) = deck_layer_rect(front) else {
+        return;
+    };
+    let leaks_through = children.iter().skip(1).any(|sibling| {
+        matches!(
+            sibling.get("type").and_then(Value::as_str),
+            Some("frame") | Some("rectangle")
+        ) && has_visible_fill(sibling)
+            && deck_layer_rect(sibling)
+                .is_some_and(|rect| deck_rects_substantially_overlap(front_rect, rect))
+    });
+    if !leaks_through {
+        return;
+    }
+    let Some(children) = node.get_mut("children").and_then(Value::as_array_mut) else {
+        return;
+    };
+    // Semantic token, not a literal hex — same convention as
+    // `fix_orphan_container_contrast` (a later surface-discipline pass
+    // resolves `$color-surface` against the active theme).
+    children[0]["fill"] = solid_fill("$color-surface");
+}
+
 // ── normalizeNestedSearchShell ──────────────────────────────────────────────
 
 fn child_role(child: &Value) -> Option<&str> {
@@ -2018,6 +2100,7 @@ fn post_pass_value(node: &mut Value, parent_fill: Option<Value>, canvas_width: f
     fix_button_foreground_contrast(node);
     fix_section_alternation(node);
     fix_orphan_container_contrast(node, parent_fill.as_ref());
+    fix_deck_front_card_transparency(node);
     fix_container_text_contrast(node);
     fix_input_sibling_consistency(node);
 
@@ -2432,6 +2515,92 @@ fn round_count_badges(node: &mut Value) {
     }
 }
 
+/// True when `node` has at least one DIRECT child of type `text` — the
+/// structural line between a tappable LABEL surface (button/badge: icon +
+/// text, or text alone) and an icon-only tap target (avatar / icon-box),
+/// which must never be swept into pill-rounding by this pass.
+fn has_direct_text_child(node: &Value) -> bool {
+    node.get("children")
+        .and_then(Value::as_array)
+        .is_some_and(|children| {
+            children
+                .iter()
+                .any(|child| child.get("type").and_then(Value::as_str) == Some("text"))
+        })
+}
+
+/// Structural "compact painted capsule with text" shape shared by the
+/// corner-rounding consistency gate and the missing-radius candidate
+/// detector below. Reuses `is_compact_capsule_surface` — the same hug/size
+/// anatomy `round_count_badges` keys off, which already handles BOTH
+/// literal-pixel small frames AND `fit_content`-sized ones (real CTA
+/// buttons are almost always the latter: padding + content, no authored
+/// width/height) — plus an explicit text-child requirement so a text-less
+/// icon-box/avatar is never mistaken for a label surface. Radius state is
+/// checked separately by each caller — this only describes the anatomy.
+fn is_compact_painted_capsule_with_text(node: &Value) -> bool {
+    if node.get("type").and_then(Value::as_str) != Some("frame")
+        || !has_visible_fill(node)
+        || !has_direct_text_child(node)
+    {
+        return false;
+    }
+    let words = name_words(node);
+    is_compact_capsule_surface(node, &words, false)
+}
+
+/// Count `is_compact_painted_capsule_with_text` nodes that already carry an
+/// authored `cornerRadius >= 6` anywhere in `node`'s subtree — the evidence
+/// that THIS design's own convention is rounded compact surfaces.
+fn count_rounded_compact_capsules(node: &Value, out: &mut u32) {
+    if is_compact_painted_capsule_with_text(node) && corner_radius(node) >= 6.0 {
+        *out += 1;
+    }
+    if let Some(children) = node.get("children").and_then(Value::as_array) {
+        for child in children {
+            count_rounded_compact_capsules(child, out);
+        }
+    }
+}
+
+/// Structural fallback for CTA/pill corner rounding — a PAINTED, compact,
+/// hug-anatomy frame carrying a text child (button/badge/pill) reads as a
+/// tappable label surface, not a card or an icon-only tap target. No name
+/// matching: a text-less icon-box fails `has_direct_text_child`, and a
+/// large/loose container fails `is_compact_capsule_surface`'s own anatomy
+/// bounds.
+///
+/// Gated on document consistency: fires only when this screen root already
+/// has >= 2 OTHER compact painted capsules-with-text carrying an authored
+/// `cornerRadius >= 6` — proof the design's own convention is rounded
+/// compact surfaces, so an intentionally all-sharp-corners design system is
+/// never touched by this pass.
+fn round_missing_compact_pill_radius(root: &mut Value) {
+    let mut existing = 0u32;
+    count_rounded_compact_capsules(root, &mut existing);
+    if existing < 2 {
+        return;
+    }
+    fn walk(node: &mut Value) {
+        if node.get("cornerRadius").is_none() && is_compact_painted_capsule_with_text(node) {
+            // Height is usually `fit_content` (no literal number) for a hug
+            // button, matching the prompt guidance's "buttons 8-12" default;
+            // when a literal height IS authored, stay under half of it so a
+            // tall capsule doesn't get an accidental full-pill look.
+            let radius = numeric_prop(node, "height")
+                .map(|h| (h / 2.0).min(10.0))
+                .unwrap_or(10.0);
+            node["cornerRadius"] = json!(radius);
+        }
+        if let Some(children) = node.get_mut("children").and_then(Value::as_array_mut) {
+            for child in children.iter_mut() {
+                walk(child);
+            }
+        }
+    }
+    walk(root);
+}
+
 /// After a container's accidental text-token fill flips to a surface, its
 /// TEXT descendants styled for that light pill (dark literal hex) become
 /// unreadable on the dark surface — walk them onto the text ladder.
@@ -2476,6 +2645,7 @@ pub fn enforce_surface_color_discipline(nodes: &mut [PenNode]) {
         fix_surface_color_discipline(&mut v, true);
         round_missing_semantic_micro_surfaces(&mut v, false);
         round_count_badges(&mut v);
+        round_missing_compact_pill_radius(&mut v);
         if let Ok(new_node) = serde_json::from_value::<PenNode>(v) {
             *node = new_node;
         }
@@ -2642,3 +2812,11 @@ mod saturated_fill_contrast_tests {
 #[cfg(test)]
 #[path = "role_post_pass_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "role_post_pass_deck_tests.rs"]
+mod deck_tests;
+
+#[cfg(test)]
+#[path = "role_post_pass_pill_radius_tests.rs"]
+mod pill_radius_tests;

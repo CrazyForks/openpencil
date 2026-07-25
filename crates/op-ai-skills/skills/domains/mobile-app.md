@@ -27,7 +27,7 @@ The status bar (time, signal, wifi, battery) is **automatically pre-inserted** b
 
 ## 2) APP CONTENT (your layout)
 
-Chip rows (filter/date/guests pills): each chip HUGS (width fit_content, single-line text, height 36-44, cornerRadius=full); the ROW clips overflow (clipContent) instead of squeezing chips — never let a pill's text wrap. A badge/pill/button frame ALWAYS carries its content (text or icon) — an empty decorated frame renders as a mystery blob.
+Chip rows (filter/date/guests pills): each chip HUGS (width fit_content, single-line text, height 36-44, cornerRadius=full); the ROW clips overflow (clipContent) instead of squeezing chips — never let a pill's text wrap. A badge/pill/button frame ALWAYS carries its content (text or icon) — an empty decorated frame renders as a mystery blob. Every tappable CTA/button/pill frame also carries cornerRadius (buttons 8-12, pills/chips full) — omitting it reads as an unstyled placeholder.
 
 Keep the mobile root at 0 horizontal padding so status chrome, integrated bottom
 navigation, and intentional full-bleed media can remain full width. Emit ordinary

@@ -1014,30 +1014,115 @@ pub(crate) fn scan_header_icon_row_issues(nodes: &[PenNode]) -> Vec<String> {
 
 pub(crate) fn scan_empty_shells(nodes: &[PenNode]) -> Vec<String> {
     let mut out = Vec::new();
-    fn walk(nodes: &[PenNode], out: &mut Vec<String>) {
-        for node in nodes {
+    fn walk(nodes: &[PenNode], parent_layout_is_none: bool, out: &mut Vec<String>) {
+        for (index, node) in nodes.iter().enumerate() {
             if out.len() >= 12 {
                 return;
             }
             if let Some(children) = node.children() {
                 let named = node.base().name.as_deref().unwrap_or("");
-                if children.is_empty()
+                let is_candidate = children.is_empty()
                     && !named.is_empty()
-                    && node.base().role.as_deref() != Some("status-bar")
-                {
+                    && node.base().role.as_deref() != Some("status-bar");
+                if is_candidate {
+                    // A childless named frame under `layout:none` that
+                    // substantially overlaps a non-empty sibling of near-
+                    // identical size is a decorative deck/stack "peek" layer
+                    // (e.g. a flashcard's shadow layers behind the front
+                    // card), not an unfinished skeleton slot — skip it.
+                    if parent_layout_is_none && is_decorative_stack_layer(node, nodes, index) {
+                        continue;
+                    }
                     // Carry the node id alongside the name (matches the other
                     // structural scans' shape) so a loop-end corrective nudge
                     // can name a specific, D()-able / M()-able target instead
                     // of a possibly-ambiguous name alone.
                     out.push(format!("{named} ({})", node.id_str()));
                 } else {
-                    walk(children, out);
+                    walk(children, node_layout_is_none(node), out);
                 }
             }
         }
     }
-    walk(nodes, &mut out);
+    walk(nodes, false, &mut out);
     out
+}
+
+/// `layout: none` (or the field omitted — same default) positions children
+/// by explicit x/y instead of flowing them, which is the only regime where
+/// two siblings can legitimately occupy overlapping rects (a flowed
+/// vertical/horizontal container never stacks children on top of each
+/// other).
+fn node_layout_is_none(node: &PenNode) -> bool {
+    match node {
+        PenNode::Frame(n) => matches!(n.container.layout, None | Some(LayoutMode::None)),
+        PenNode::Group(n) => matches!(n.container.layout, None | Some(LayoutMode::None)),
+        PenNode::Rectangle(n) => matches!(n.container.layout, None | Some(LayoutMode::None)),
+        _ => false,
+    }
+}
+
+fn node_rect(node: &PenNode) -> Option<(f64, f64, f64, f64)> {
+    let x = node.base().x?;
+    let y = node.base().y?;
+    let w = node.width_px()?;
+    let h = node.height_px()?;
+    Some((x, y, w, h))
+}
+
+/// A sibling counts as "non-empty" for stack-layer detection when it isn't
+/// itself an empty shell: a container with at least one child, or any leaf
+/// node (text/image/icon/etc, which have no `children()` at all and always
+/// carry their own content).
+fn is_nonempty_sibling(node: &PenNode) -> bool {
+    match node.children() {
+        Some(children) => !children.is_empty(),
+        None => true,
+    }
+}
+
+/// Pure geometry/structure check — no name matching — so it can't be gamed
+/// by renaming and can't misfire on an ordinary empty section scaffold
+/// (which has no overlapping non-empty sibling to key off).
+fn is_decorative_stack_layer(node: &PenNode, siblings: &[PenNode], index: usize) -> bool {
+    let Some(rect) = node_rect(node) else {
+        return false;
+    };
+    siblings.iter().enumerate().any(|(j, sibling)| {
+        if j == index || !is_nonempty_sibling(sibling) {
+            return false;
+        }
+        let Some(other) = node_rect(sibling) else {
+            return false;
+        };
+        rects_substantially_overlap(rect, other) && rects_near_same_size(rect, other)
+    })
+}
+
+/// Intersection area is at least half of EACH rect's own area — a weak
+/// corner-touch doesn't count, only a genuine stacked-on-top overlap.
+fn rects_substantially_overlap(a: (f64, f64, f64, f64), b: (f64, f64, f64, f64)) -> bool {
+    let (ax, ay, aw, ah) = a;
+    let (bx, by, bw, bh) = b;
+    if aw <= 0.0 || ah <= 0.0 || bw <= 0.0 || bh <= 0.0 {
+        return false;
+    }
+    let iw = (ax + aw).min(bx + bw) - ax.max(bx);
+    let ih = (ay + ah).min(by + bh) - ay.max(by);
+    if iw <= 0.0 || ih <= 0.0 {
+        return false;
+    }
+    let overlap_area = iw * ih;
+    overlap_area >= 0.5 * (aw * ah) && overlap_area >= 0.5 * (bw * bh)
+}
+
+/// Width AND height each within 20% of one another.
+fn rects_near_same_size(a: (f64, f64, f64, f64), b: (f64, f64, f64, f64)) -> bool {
+    let (_, _, aw, ah) = a;
+    let (_, _, bw, bh) = b;
+    let w_diff = (aw - bw).abs() / aw.max(bw).max(1.0);
+    let h_diff = (ah - bh).abs() / ah.max(bh).max(1.0);
+    w_diff <= 0.2 && h_diff <= 0.2
 }
 
 pub(crate) fn scan_ring_issues(nodes: &[PenNode]) -> Vec<String> {
@@ -2244,5 +2329,87 @@ mod duplicate_root_tests {
         );
         assert!(issues[0].contains("M()") && issues[0].contains("D()"));
         assert!(!issues[0].contains("Profile"));
+    }
+}
+
+#[cfg(test)]
+mod empty_shell_decorative_stack_tests {
+    use super::*;
+
+    #[test]
+    fn deck_back_layers_are_exempted_as_decorative_stack() {
+        // 0724-1-gm-3.op shape: a Flashcard Deck Stack under layout:none —
+        // Front Flashcard (0,0,338x124, has text children) with two
+        // childless "peek" layers behind it (Back Layer 1 painted, Back
+        // Layer 2 unpainted), both offset a few px and near-identical size.
+        // Neither back layer is an unfinished skeleton slot; both must be
+        // exempted from the empty-shell blocker.
+        let nodes: Vec<PenNode> = serde_json::from_value(serde_json::json!([
+            { "type": "frame", "id": "deck", "name": "Flashcard Deck Stack", "layout": "none",
+              "width": 354, "height": 132,
+              "children": [
+                { "type": "frame", "id": "front", "name": "Front Flashcard",
+                  "x": 0, "y": 0, "width": 338, "height": 124,
+                  "children": [ { "type": "text", "id": "t1", "content": "Hello" } ] },
+                { "type": "frame", "id": "back1", "name": "Back Layer 1",
+                  "x": 8, "y": 4, "width": 338, "height": 124,
+                  "fill": [{"type": "solid", "color": "$color-surface-3"}],
+                  "children": [] },
+                { "type": "frame", "id": "back2", "name": "Back Layer 2",
+                  "x": 16, "y": 8, "width": 338, "height": 124,
+                  "children": [] }
+              ] }
+        ]))
+        .expect("nodes");
+        let issues = scan_empty_shells(&nodes);
+        assert!(
+            issues.is_empty(),
+            "deck back layers must be exempted as decorative stack, got {issues:?}"
+        );
+    }
+
+    #[test]
+    fn ordinary_empty_section_scaffold_still_reported() {
+        // A childless named section under layout:none with NO overlapping
+        // non-empty sibling — an unfinished skeleton slot, must still fire.
+        let nodes: Vec<PenNode> = serde_json::from_value(serde_json::json!([
+            { "type": "frame", "id": "root", "name": "Root", "layout": "none",
+              "width": 390, "height": 400,
+              "children": [
+                { "type": "frame", "id": "header", "name": "Header",
+                  "x": 0, "y": 0, "width": 390, "height": 60,
+                  "children": [ { "type": "text", "id": "t1", "content": "Title" } ] },
+                { "type": "frame", "id": "empty-section", "name": "Empty Section",
+                  "x": 0, "y": 200, "width": 390, "height": 120,
+                  "children": [] }
+              ] }
+        ]))
+        .expect("nodes");
+        let issues = scan_empty_shells(&nodes);
+        assert_eq!(issues.len(), 1, "{issues:?}");
+        assert!(issues[0].contains("Empty Section"));
+    }
+
+    #[test]
+    fn empty_frame_under_vertical_layout_still_reported() {
+        // Same overlap-shaped geometry, but the parent is auto-layout
+        // (layout:vertical) — the decorative-stack exemption never applies
+        // there since flowed children can't legitimately overlap.
+        let nodes: Vec<PenNode> = serde_json::from_value(serde_json::json!([
+            { "type": "frame", "id": "root", "name": "Root", "layout": "vertical",
+              "width": 390, "height": 400,
+              "children": [
+                { "type": "frame", "id": "front", "name": "Front Flashcard",
+                  "x": 0, "y": 0, "width": 338, "height": 124,
+                  "children": [ { "type": "text", "id": "t1", "content": "Hello" } ] },
+                { "type": "frame", "id": "back1", "name": "Back Layer 1",
+                  "x": 8, "y": 4, "width": 338, "height": 124,
+                  "children": [] }
+              ] }
+        ]))
+        .expect("nodes");
+        let issues = scan_empty_shells(&nodes);
+        assert_eq!(issues.len(), 1, "{issues:?}");
+        assert!(issues[0].contains("Back Layer 1"));
     }
 }
