@@ -102,6 +102,88 @@ Xuất từ một tệp `.op` duy nhất sang React + Tailwind, HTML + CSS, Vue,
 </tr>
 </table>
 
+## Cài đặt
+
+**macOS (Homebrew):**
+
+```bash
+brew tap zseven-w/openpencil
+brew install --cask openpencil
+```
+
+**Windows (Scoop):**
+
+```powershell
+scoop bucket add openpencil https://github.com/zseven-w/scoop-openpencil
+scoop install openpencil
+```
+
+**Tải trực tiếp cho Linux / Windows:** [GitHub Releases](https://github.com/ZSeven-W/openpencil/releases) — `.exe` (Windows), `.AppImage` / `.deb` (Linux)
+
+**Nix (Linux x86_64):**
+
+```bash
+nix develop
+nix run .                         # khởi chạy ứng dụng desktop
+nix build .#openpencil            # web host native + web bundle CanvasKit
+nix build .#op-cli                # CLI `op`
+nix build .#prebuilt              # dùng archive desktop upstream tương ứng
+nix build .#prebuilt-cli          # dùng archive CLI upstream tương ứng
+nix build .#web-server            # web server native không cần GL + web bundle
+nix build .#runtime-prebuilt      # runtime desktop dựng sẵn + CLI `op`
+nix build .#web-sdk-packages      # tarball npm cho các web SDK
+nix build .#appimage              # AppImage desktop di động
+```
+
+Flake dùng toolchain Rust được ghim trong `rust-toolchain.toml` và hiện được
+phát hành cho `x86_64-linux`. Flake chưa tạo gói Debian; hãy dùng các artifact
+của release upstream khi cần tệp `.deb`. Các output `prebuilt` dùng phiên bản
+release và hash được ghim trong `nix/release-manifest.json`, độc lập với phiên
+bản source của workspace. Sau khi phát hành release, workflow release sẽ mở PR
+để cập nhật manifest này. Trước khi PR được merge, các output dựng sẵn tiếp tục
+dùng release đã phát hành trước đó; các output dựng từ source luôn dùng source
+đang được checkout.
+
+**CLI (`op`):**
+
+```bash
+brew install zseven-w/openpencil/op
+```
+
+Hoặc dùng script cài đặt (macOS / Linux):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.sh | bash
+```
+
+Để cho phép bản pre-release mới nhất:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.sh | OP_PRERELEASE=1 bash
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.ps1 | iex
+```
+
+Để cho phép bản pre-release mới nhất:
+
+```powershell
+$env:OP_PRERELEASE = "1"; irm https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.ps1 | iex
+```
+
+## Clone (kèm submodule)
+
+```bash
+git clone --recurse-submodules https://github.com/ZSeven-W/openpencil.git
+# Nếu đã clone, hãy đồng bộ trước để URL submodule cũ nhận thay đổi từ .gitmodules:
+git submodule sync --recursive && git submodule update --init --recursive
+```
+
+Ba submodule nằm trong `vendor/`; tất cả đều công khai và được tải qua HTTPS (không cần khóa SSH): `jian` (framework UI GPU-Skia — widget/render/event), `casement` (fork của winit) và `agent` (`agent-rs` — runtime agent Rust dùng chung giữa các sản phẩm OP và Zode). `vendor/anthropic-agent-sdk` được theo dõi trực tiếp trong repository, không phải submodule.
+
 ## Bắt đầu nhanh
 
 ```bash

@@ -102,6 +102,87 @@ Web 應用程式 + macOS、Windows 和 Linux 上的原生桌面應用程式 — 
 </tr>
 </table>
 
+## 安裝
+
+**macOS（Homebrew）：**
+
+```bash
+brew tap zseven-w/openpencil
+brew install --cask openpencil
+```
+
+**Windows（Scoop）：**
+
+```powershell
+scoop bucket add openpencil https://github.com/zseven-w/scoop-openpencil
+scoop install openpencil
+```
+
+**Linux / Windows 直接下載：** [GitHub Releases](https://github.com/ZSeven-W/openpencil/releases) — `.exe`（Windows）、`.AppImage` / `.deb`（Linux）
+
+**Nix（Linux x86_64）：**
+
+```bash
+nix develop
+nix run .                         # 啟動桌面應用程式
+nix build .#openpencil            # 原生 Web host + CanvasKit Web bundle
+nix build .#op-cli                # `op` CLI
+nix build .#prebuilt              # 使用對應的 upstream 桌面封存檔
+nix build .#prebuilt-cli          # 使用對應的 upstream CLI 封存檔
+nix build .#web-server            # 不依賴 GL 的原生 Web server + Web bundle
+nix build .#runtime-prebuilt      # 預先建置的桌面端 + `op` CLI runtime
+nix build .#web-sdk-packages      # Web SDK 的 npm tarball
+nix build .#appimage              # 可攜式桌面 AppImage
+```
+
+flake 使用 `rust-toolchain.toml` 中固定的 Rust toolchain，目前發布於
+`x86_64-linux`。flake 尚未產生 Debian 套件；需要 `.deb` 時請使用
+upstream release artifact。`prebuilt` output 使用
+`nix/release-manifest.json` 中固定的 release 版本與 hash，不受 workspace
+原始碼版本影響。release 發布後，release workflow 會建立 PR 來更新此
+manifest。在 PR 合併前，預先建置的 output 仍使用上一個已發布的 release；
+從原始碼建置的 output 則始終使用目前 checkout 的原始碼。
+
+**CLI（`op`）：**
+
+```bash
+brew install zseven-w/openpencil/op
+```
+
+或使用安裝指令碼（macOS / Linux）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.sh | bash
+```
+
+若要允許最新的預發布版本：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.sh | OP_PRERELEASE=1 bash
+```
+
+Windows PowerShell：
+
+```powershell
+irm https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.ps1 | iex
+```
+
+若要允許最新的預發布版本：
+
+```powershell
+$env:OP_PRERELEASE = "1"; irm https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.ps1 | iex
+```
+
+## 複製（含子模組）
+
+```bash
+git clone --recurse-submodules https://github.com/ZSeven-W/openpencil.git
+# 若已複製，請先同步，讓舊的子模組 URL 套用 .gitmodules 的變更：
+git submodule sync --recursive && git submodule update --init --recursive
+```
+
+`vendor/` 下有三個子模組，全部公開並透過 HTTPS 取得（不需要 SSH 金鑰）：`jian`（GPU-Skia UI framework — widget/render/event）、`casement`（winit fork）以及 `agent`（`agent-rs` — OP 與 Zode 共用的跨產品 Rust agent runtime）。`vendor/anthropic-agent-sdk` 直接納入版本控制，並非子模組。
+
 ## 快速開始
 
 ```bash

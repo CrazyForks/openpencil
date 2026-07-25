@@ -102,6 +102,89 @@ Claude Code, Codex, OpenCode, Kiro, या Copilot CLIs में वन-क्�
 </tr>
 </table>
 
+## इंस्टॉल करें
+
+**macOS (Homebrew):**
+
+```bash
+brew tap zseven-w/openpencil
+brew install --cask openpencil
+```
+
+**Windows (Scoop):**
+
+```powershell
+scoop bucket add openpencil https://github.com/zseven-w/scoop-openpencil
+scoop install openpencil
+```
+
+**Linux / Windows सीधे डाउनलोड करें:** [GitHub Releases](https://github.com/ZSeven-W/openpencil/releases) — `.exe` (Windows), `.AppImage` / `.deb` (Linux)
+
+**Nix (Linux x86_64):**
+
+```bash
+nix develop
+nix run .                         # desktop app शुरू करें
+nix build .#openpencil            # native web host + CanvasKit web bundle
+nix build .#op-cli                # `op` CLI
+nix build .#prebuilt              # मेल खाने वाला upstream desktop archive उपयोग करें
+nix build .#prebuilt-cli          # मेल खाने वाला upstream CLI archive उपयोग करें
+nix build .#web-server            # GL-रहित native web server + web bundle
+nix build .#runtime-prebuilt      # prebuilt desktop + `op` CLI runtime
+nix build .#web-sdk-packages      # web SDK के npm tarball
+nix build .#appimage              # portable desktop AppImage
+```
+
+यह flake `rust-toolchain.toml` में pin की गई Rust toolchain का उपयोग करता है और
+अभी `x86_64-linux` के लिए प्रकाशित होता है। flake अभी Debian package नहीं
+बनाता; `.deb` की आवश्यकता होने पर upstream release artifacts का उपयोग करें।
+`prebuilt` outputs, workspace source version से स्वतंत्र होकर,
+`nix/release-manifest.json` में pin किए गए release version और hash का उपयोग
+करते हैं। release प्रकाशित होने के बाद release workflow इस manifest को update
+करने के लिए PR खोलता है। PR merge होने तक prebuilt outputs पिछले प्रकाशित
+release का उपयोग करते रहते हैं; source-built outputs हमेशा checkout किए गए
+source का उपयोग करते हैं।
+
+**CLI (`op`):**
+
+```bash
+brew install zseven-w/openpencil/op
+```
+
+या install script का उपयोग करें (macOS / Linux):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.sh | bash
+```
+
+नवीनतम pre-release की अनुमति देने के लिए:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.sh | OP_PRERELEASE=1 bash
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.ps1 | iex
+```
+
+नवीनतम pre-release की अनुमति देने के लिए:
+
+```powershell
+$env:OP_PRERELEASE = "1"; irm https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.ps1 | iex
+```
+
+## Clone करें (submodules सहित)
+
+```bash
+git clone --recurse-submodules https://github.com/ZSeven-W/openpencil.git
+# पहले से clone किया है? पुराने submodule URL में .gitmodules के बदलाव लागू करने के लिए पहले sync करें:
+git submodule sync --recursive && git submodule update --init --recursive
+```
+
+`vendor/` के अंतर्गत तीन submodules हैं; सभी public हैं और HTTPS से प्राप्त होते हैं (SSH key की आवश्यकता नहीं): `jian` (GPU-Skia UI framework — widget/render/event), `casement` (winit fork), और `agent` (`agent-rs` — OP और Zode द्वारा साझा किया गया cross-product Rust agent runtime)। `vendor/anthropic-agent-sdk` repository में सीधे track होता है और submodule नहीं है।
+
 ## त्वरित शुरुआत
 
 ```bash

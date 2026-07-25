@@ -102,6 +102,89 @@ Exporta desde un solo archivo `.op` a React + Tailwind, HTML + CSS, Vue, Svelte,
 </tr>
 </table>
 
+## Instalación
+
+**macOS (Homebrew):**
+
+```bash
+brew tap zseven-w/openpencil
+brew install --cask openpencil
+```
+
+**Windows (Scoop):**
+
+```powershell
+scoop bucket add openpencil https://github.com/zseven-w/scoop-openpencil
+scoop install openpencil
+```
+
+**Descarga directa para Linux / Windows:** [GitHub Releases](https://github.com/ZSeven-W/openpencil/releases) — `.exe` (Windows), `.AppImage` / `.deb` (Linux)
+
+**Nix (Linux x86_64):**
+
+```bash
+nix develop
+nix run .                         # iniciar la aplicación de escritorio
+nix build .#openpencil            # host web nativo + bundle web de CanvasKit
+nix build .#op-cli                # la CLI `op`
+nix build .#prebuilt              # usar el archivo de escritorio upstream correspondiente
+nix build .#prebuilt-cli          # usar el archivo CLI upstream correspondiente
+nix build .#web-server            # servidor web nativo sin GL + bundle web
+nix build .#runtime-prebuilt      # runtime precompilado de escritorio + CLI `op`
+nix build .#web-sdk-packages      # tarballs npm de los SDK web
+nix build .#appimage              # AppImage de escritorio portátil
+```
+
+El flake usa la toolchain de Rust fijada en `rust-toolchain.toml` y actualmente
+se publica para `x86_64-linux`. El flake todavía no produce un paquete Debian;
+usa los artefactos del release upstream cuando necesites un `.deb`. Las salidas
+`prebuilt` usan la versión del release y los hashes fijados en
+`nix/release-manifest.json`, independientemente de la versión del código fuente
+del workspace. Después de publicar un release, el workflow de release abre un
+PR para actualizar ese manifiesto. Hasta que se fusione, las salidas
+precompiladas siguen usando el release publicado anterior; las salidas
+compiladas desde el código fuente siempre usan el código checkout actual.
+
+**CLI (`op`):**
+
+```bash
+brew install zseven-w/openpencil/op
+```
+
+O usa el script de instalación (macOS / Linux):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.sh | bash
+```
+
+Para permitir el pre-release más reciente:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.sh | OP_PRERELEASE=1 bash
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.ps1 | iex
+```
+
+Para permitir el pre-release más reciente:
+
+```powershell
+$env:OP_PRERELEASE = "1"; irm https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.ps1 | iex
+```
+
+## Clonar (con submódulos)
+
+```bash
+git clone --recurse-submodules https://github.com/ZSeven-W/openpencil.git
+# Si ya lo clonaste, sincroniza primero para que las URL antiguas adopten los cambios de .gitmodules:
+git submodule sync --recursive && git submodule update --init --recursive
+```
+
+Hay tres submódulos en `vendor/`; todos son públicos y se descargan mediante HTTPS (no se necesita clave SSH): `jian` (framework de UI GPU-Skia — widgets/renderizado/eventos), `casement` (fork de winit) y `agent` (`agent-rs` — runtime de agentes Rust compartido entre productos, usado por OP y Zode). `vendor/anthropic-agent-sdk` se incluye directamente en el repositorio y no es un submódulo.
+
 ## Inicio Rápido
 
 ```bash

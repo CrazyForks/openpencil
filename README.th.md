@@ -102,6 +102,88 @@ Orchestrator แบ่งหน้าที่ซับซ้อนออกเ�
 </tr>
 </table>
 
+## การติดตั้ง
+
+**macOS (Homebrew):**
+
+```bash
+brew tap zseven-w/openpencil
+brew install --cask openpencil
+```
+
+**Windows (Scoop):**
+
+```powershell
+scoop bucket add openpencil https://github.com/zseven-w/scoop-openpencil
+scoop install openpencil
+```
+
+**ดาวน์โหลดโดยตรงสำหรับ Linux / Windows:** [GitHub Releases](https://github.com/ZSeven-W/openpencil/releases) — `.exe` (Windows), `.AppImage` / `.deb` (Linux)
+
+**Nix (Linux x86_64):**
+
+```bash
+nix develop
+nix run .                         # เปิดแอป desktop
+nix build .#openpencil            # native web host + CanvasKit web bundle
+nix build .#op-cli                # `op` CLI
+nix build .#prebuilt              # ใช้ upstream desktop archive ที่ตรงกัน
+nix build .#prebuilt-cli          # ใช้ upstream CLI archive ที่ตรงกัน
+nix build .#web-server            # native web server ที่ไม่ใช้ GL + web bundle
+nix build .#runtime-prebuilt      # prebuilt desktop + `op` CLI runtime
+nix build .#web-sdk-packages      # npm tarball สำหรับ web SDK
+nix build .#appimage              # desktop AppImage แบบพกพา
+```
+
+flake ใช้ Rust toolchain ที่ pin ไว้ใน `rust-toolchain.toml` และปัจจุบันเผยแพร่
+สำหรับ `x86_64-linux` โดย flake ยังไม่สร้างแพ็กเกจ Debian หากต้องการ `.deb`
+ให้ใช้ artifact จาก upstream release ส่วน output `prebuilt` จะใช้เวอร์ชัน
+release และ hash ที่ pin ไว้ใน `nix/release-manifest.json` โดยไม่ขึ้นกับเวอร์ชัน
+source ของ workspace หลังเผยแพร่ release แล้ว release workflow จะเปิด PR
+เพื่ออัปเดต manifest นี้ จนกว่า PR จะ merge output แบบ prebuilt จะยังใช้
+release ที่เผยแพร่ก่อนหน้า ส่วน output ที่ build จาก source จะใช้ source
+ที่ checkout อยู่เสมอ
+
+**CLI (`op`):**
+
+```bash
+brew install zseven-w/openpencil/op
+```
+
+หรือใช้สคริปต์ติดตั้ง (macOS / Linux):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.sh | bash
+```
+
+หากต้องการอนุญาต pre-release ล่าสุด:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.sh | OP_PRERELEASE=1 bash
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.ps1 | iex
+```
+
+หากต้องการอนุญาต pre-release ล่าสุด:
+
+```powershell
+$env:OP_PRERELEASE = "1"; irm https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.ps1 | iex
+```
+
+## Clone (พร้อม submodule)
+
+```bash
+git clone --recurse-submodules https://github.com/ZSeven-W/openpencil.git
+# หาก clone แล้ว ให้ sync ก่อนเพื่อให้ URL submodule เดิมรับการเปลี่ยนแปลงจาก .gitmodules:
+git submodule sync --recursive && git submodule update --init --recursive
+```
+
+มี submodule สามรายการภายใต้ `vendor/` ทั้งหมดเป็นสาธารณะและดึงผ่าน HTTPS (ไม่ต้องใช้ SSH key): `jian` (GPU-Skia UI framework — widget/render/event), `casement` (winit fork) และ `agent` (`agent-rs` — Rust agent runtime ข้ามผลิตภัณฑ์ที่ OP และ Zode ใช้ร่วมกัน) ส่วน `vendor/anthropic-agent-sdk` ถูกติดตามโดยตรงใน repository และไม่ใช่ submodule
+
 ## เริ่มต้นอย่างรวดเร็ว
 
 ```bash

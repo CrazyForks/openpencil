@@ -102,6 +102,89 @@ Ekspor dari satu file `.op` ke React + Tailwind, HTML + CSS, Vue, Svelte, Flutte
 </tr>
 </table>
 
+## Instalasi
+
+**macOS (Homebrew):**
+
+```bash
+brew tap zseven-w/openpencil
+brew install --cask openpencil
+```
+
+**Windows (Scoop):**
+
+```powershell
+scoop bucket add openpencil https://github.com/zseven-w/scoop-openpencil
+scoop install openpencil
+```
+
+**Unduh langsung untuk Linux / Windows:** [GitHub Releases](https://github.com/ZSeven-W/openpencil/releases) — `.exe` (Windows), `.AppImage` / `.deb` (Linux)
+
+**Nix (Linux x86_64):**
+
+```bash
+nix develop
+nix run .                         # jalankan aplikasi desktop
+nix build .#openpencil            # web host native + bundle web CanvasKit
+nix build .#op-cli                # CLI `op`
+nix build .#prebuilt              # gunakan arsip desktop upstream yang sesuai
+nix build .#prebuilt-cli          # gunakan arsip CLI upstream yang sesuai
+nix build .#web-server            # web server native tanpa GL + bundle web
+nix build .#runtime-prebuilt      # runtime desktop prebuilt + CLI `op`
+nix build .#web-sdk-packages      # tarball npm untuk web SDK
+nix build .#appimage              # AppImage desktop portabel
+```
+
+Flake menggunakan toolchain Rust yang dipatok di `rust-toolchain.toml` dan saat
+ini diterbitkan untuk `x86_64-linux`. Flake belum menghasilkan paket Debian;
+gunakan artefak rilis upstream bila memerlukan `.deb`. Output `prebuilt`
+menggunakan versi rilis dan hash yang dipatok di
+`nix/release-manifest.json`, terpisah dari versi source workspace. Setelah
+rilis diterbitkan, workflow rilis membuka PR untuk memperbarui manifest
+tersebut. Hingga PR digabungkan, output prebuilt tetap menggunakan rilis
+terdahulu; output yang dibangun dari source selalu menggunakan source yang
+sedang di-checkout.
+
+**CLI (`op`):**
+
+```bash
+brew install zseven-w/openpencil/op
+```
+
+Atau gunakan skrip instalasi (macOS / Linux):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.sh | bash
+```
+
+Untuk mengizinkan pre-release terbaru:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.sh | OP_PRERELEASE=1 bash
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.ps1 | iex
+```
+
+Untuk mengizinkan pre-release terbaru:
+
+```powershell
+$env:OP_PRERELEASE = "1"; irm https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.ps1 | iex
+```
+
+## Clone (dengan submodule)
+
+```bash
+git clone --recurse-submodules https://github.com/ZSeven-W/openpencil.git
+# Sudah di-clone? Sinkronkan dahulu agar URL submodule lama mengikuti perubahan .gitmodules:
+git submodule sync --recursive && git submodule update --init --recursive
+```
+
+Tiga submodule berada di bawah `vendor/`; semuanya publik dan diambil melalui HTTPS (tanpa kunci SSH): `jian` (framework UI GPU-Skia — widget/render/event), `casement` (fork winit), dan `agent` (`agent-rs` — runtime agen Rust lintas produk yang digunakan bersama oleh OP dan Zode). `vendor/anthropic-agent-sdk` dilacak langsung di repository dan bukan submodule.
+
 ## Mulai Cepat
 
 ```bash

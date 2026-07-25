@@ -102,6 +102,89 @@ Web アプリ + macOS・Windows・Linux ネイティブデスクトップ — �
 </tr>
 </table>
 
+## インストール
+
+**macOS（Homebrew）：**
+
+```bash
+brew tap zseven-w/openpencil
+brew install --cask openpencil
+```
+
+**Windows（Scoop）：**
+
+```powershell
+scoop bucket add openpencil https://github.com/zseven-w/scoop-openpencil
+scoop install openpencil
+```
+
+**Linux / Windows 直接ダウンロード：** [GitHub Releases](https://github.com/ZSeven-W/openpencil/releases) — `.exe`（Windows）、`.AppImage` / `.deb`（Linux）
+
+**Nix（Linux x86_64）：**
+
+```bash
+nix develop
+nix run .                         # デスクトップアプリを起動
+nix build .#openpencil            # ネイティブ Web ホスト + CanvasKit Web バンドル
+nix build .#op-cli                # `op` CLI
+nix build .#prebuilt              # 対応する upstream デスクトップアーカイブを使用
+nix build .#prebuilt-cli          # 対応する upstream CLI アーカイブを使用
+nix build .#web-server            # GL 不要のネイティブ Web サーバー + Web バンドル
+nix build .#runtime-prebuilt      # ビルド済みデスクトップ + `op` CLI ランタイム
+nix build .#web-sdk-packages      # Web SDK の npm tarball
+nix build .#appimage              # ポータブルなデスクトップ AppImage
+```
+
+この flake は `rust-toolchain.toml` で固定された Rust toolchain を使用し、
+現在は `x86_64-linux` 向けに公開されています。flake はまだ Debian
+パッケージを生成しないため、`.deb` が必要な場合は upstream release
+artifact を使用してください。`prebuilt` output は workspace のソース
+バージョンとは独立して、`nix/release-manifest.json` に固定された release
+バージョンと hash を使用します。release の公開後、release workflow が
+この manifest を更新する PR を作成します。merge されるまでは、ビルド済み
+output は以前に公開された release を引き続き使用し、ソースビルド output
+は常に checkout 中のソースを使用します。
+
+**CLI（`op`）：**
+
+```bash
+brew install zseven-w/openpencil/op
+```
+
+またはインストールスクリプトを使用します（macOS / Linux）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.sh | bash
+```
+
+最新のプレリリースを許可する場合：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.sh | OP_PRERELEASE=1 bash
+```
+
+Windows PowerShell：
+
+```powershell
+irm https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.ps1 | iex
+```
+
+最新のプレリリースを許可する場合：
+
+```powershell
+$env:OP_PRERELEASE = "1"; irm https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.ps1 | iex
+```
+
+## クローン（サブモジュールを含む）
+
+```bash
+git clone --recurse-submodules https://github.com/ZSeven-W/openpencil.git
+# クローン済みの場合、古いサブモジュール URL に .gitmodules の変更を反映するため、先に同期します：
+git submodule sync --recursive && git submodule update --init --recursive
+```
+
+`vendor/` 配下には 3 つのサブモジュールがあります。すべて公開され、HTTPS で取得されるため SSH キーは不要です：`jian`（GPU-Skia UI フレームワーク — widget/render/event）、`casement`（winit fork）、`agent`（`agent-rs` — OP と Zode で共有する製品横断 Rust agent runtime）。`vendor/anthropic-agent-sdk` はリポジトリ内で直接管理されており、サブモジュールではありません。
+
 ## クイックスタート
 
 ```bash

@@ -102,6 +102,88 @@ Claude Code, Codex, OpenCode, Kiro 또는 Copilot CLI에 원클릭 설치. 터�
 </tr>
 </table>
 
+## 설치
+
+**macOS (Homebrew):**
+
+```bash
+brew tap zseven-w/openpencil
+brew install --cask openpencil
+```
+
+**Windows (Scoop):**
+
+```powershell
+scoop bucket add openpencil https://github.com/zseven-w/scoop-openpencil
+scoop install openpencil
+```
+
+**Linux / Windows 직접 다운로드:** [GitHub Releases](https://github.com/ZSeven-W/openpencil/releases) — `.exe` (Windows), `.AppImage` / `.deb` (Linux)
+
+**Nix (Linux x86_64):**
+
+```bash
+nix develop
+nix run .                         # 데스크톱 앱 실행
+nix build .#openpencil            # 네이티브 웹 호스트 + CanvasKit 웹 번들
+nix build .#op-cli                # `op` CLI
+nix build .#prebuilt              # 일치하는 upstream 데스크톱 아카이브 사용
+nix build .#prebuilt-cli          # 일치하는 upstream CLI 아카이브 사용
+nix build .#web-server            # GL 없는 네이티브 웹 서버 + 웹 번들
+nix build .#runtime-prebuilt      # 사전 빌드 데스크톱 + `op` CLI 런타임
+nix build .#web-sdk-packages      # 웹 SDK용 npm tarball
+nix build .#appimage              # 휴대용 데스크톱 AppImage
+```
+
+flake는 `rust-toolchain.toml`에 고정된 Rust toolchain을 사용하며 현재
+`x86_64-linux`용으로 배포됩니다. 아직 Debian 패키지를 만들지 않으므로
+`.deb`가 필요하면 upstream release artifact를 사용하세요. `prebuilt`
+output은 workspace 소스 버전과 독립적으로 `nix/release-manifest.json`에
+고정된 release 버전과 hash를 사용합니다. release가 게시되면 release
+workflow가 이 manifest를 갱신하는 PR을 엽니다. PR이 merge되기 전까지 사전
+빌드 output은 이전에 게시된 release를 계속 사용하며, 소스 빌드 output은
+항상 현재 checkout된 소스를 사용합니다.
+
+**CLI (`op`):**
+
+```bash
+brew install zseven-w/openpencil/op
+```
+
+또는 설치 스크립트를 사용하세요 (macOS / Linux):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.sh | bash
+```
+
+최신 pre-release를 허용하려면:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.sh | OP_PRERELEASE=1 bash
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.ps1 | iex
+```
+
+최신 pre-release를 허용하려면:
+
+```powershell
+$env:OP_PRERELEASE = "1"; irm https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.ps1 | iex
+```
+
+## 복제 (서브모듈 포함)
+
+```bash
+git clone --recurse-submodules https://github.com/ZSeven-W/openpencil.git
+# 이미 복제했다면 오래된 서브모듈 URL에 .gitmodules 변경사항을 반영하도록 먼저 동기화하세요:
+git submodule sync --recursive && git submodule update --init --recursive
+```
+
+`vendor/` 아래에는 세 개의 서브모듈이 있습니다. 모두 공개되어 있고 HTTPS로 가져오므로 SSH 키가 필요하지 않습니다: `jian` (GPU-Skia UI 프레임워크 — widget/render/event), `casement` (winit fork), `agent` (`agent-rs` — OP와 Zode가 공유하는 제품 간 Rust agent runtime). `vendor/anthropic-agent-sdk`는 저장소에서 직접 추적되며 서브모듈이 아닙니다.
+
 ## 빠른 시작
 
 ```bash

@@ -102,6 +102,89 @@ Tek bir `.op` dosyasından React + Tailwind, HTML + CSS, Vue, Svelte, Flutter, S
 </tr>
 </table>
 
+## Kurulum
+
+**macOS (Homebrew):**
+
+```bash
+brew tap zseven-w/openpencil
+brew install --cask openpencil
+```
+
+**Windows (Scoop):**
+
+```powershell
+scoop bucket add openpencil https://github.com/zseven-w/scoop-openpencil
+scoop install openpencil
+```
+
+**Linux / Windows doğrudan indirme:** [GitHub Releases](https://github.com/ZSeven-W/openpencil/releases) — `.exe` (Windows), `.AppImage` / `.deb` (Linux)
+
+**Nix (Linux x86_64):**
+
+```bash
+nix develop
+nix run .                         # masaüstü uygulamasını başlat
+nix build .#openpencil            # yerel web host + CanvasKit web paketi
+nix build .#op-cli                # `op` CLI
+nix build .#prebuilt              # eşleşen upstream masaüstü arşivini kullan
+nix build .#prebuilt-cli          # eşleşen upstream CLI arşivini kullan
+nix build .#web-server            # GL gerektirmeyen yerel web sunucusu + web paketi
+nix build .#runtime-prebuilt      # önceden derlenmiş masaüstü + `op` CLI çalışma zamanı
+nix build .#web-sdk-packages      # web SDK'ları için npm tarball'ları
+nix build .#appimage              # taşınabilir masaüstü AppImage
+```
+
+Flake, `rust-toolchain.toml` dosyasında sabitlenen Rust toolchain'ini kullanır ve
+şu anda `x86_64-linux` için yayımlanır. Flake henüz Debian paketi üretmez; bir
+`.deb` gerektiğinde upstream release artefaktlarını kullanın. `prebuilt`
+çıktıları, workspace kaynak sürümünden bağımsız olarak
+`nix/release-manifest.json` içinde sabitlenen release sürümünü ve hash'leri
+kullanır. Bir release yayımlandıktan sonra release workflow'u bu manifesti
+yenilemek için PR açar. PR merge edilene kadar önceden derlenmiş çıktılar önceki
+yayımlanmış release'i kullanmaya devam eder; kaynaktan derlenen çıktılar her
+zaman checkout edilmiş kaynağı kullanır.
+
+**CLI (`op`):**
+
+```bash
+brew install zseven-w/openpencil/op
+```
+
+Ya da kurulum betiğini kullanın (macOS / Linux):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.sh | bash
+```
+
+En yeni ön sürüme izin vermek için:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.sh | OP_PRERELEASE=1 bash
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.ps1 | iex
+```
+
+En yeni ön sürüme izin vermek için:
+
+```powershell
+$env:OP_PRERELEASE = "1"; irm https://raw.githubusercontent.com/ZSeven-W/openpencil/main/scripts/install-op.ps1 | iex
+```
+
+## Klonlama (alt modüllerle)
+
+```bash
+git clone --recurse-submodules https://github.com/ZSeven-W/openpencil.git
+# Zaten klonladıysanız eski alt modül URL'lerinin .gitmodules değişikliklerini alması için önce eşitleyin:
+git submodule sync --recursive && git submodule update --init --recursive
+```
+
+`vendor/` altında üç alt modül bulunur; hepsi herkese açıktır ve HTTPS üzerinden alınır (SSH anahtarı gerekmez): `jian` (GPU-Skia UI framework'ü — widget/render/event), `casement` (winit fork'u) ve `agent` (`agent-rs` — OP ile Zode tarafından paylaşılan ürünler arası Rust agent çalışma zamanı). `vendor/anthropic-agent-sdk` doğrudan repository içinde izlenir ve alt modül değildir.
+
 ## Hızlı Başlangıç
 
 ```bash
