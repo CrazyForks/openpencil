@@ -165,9 +165,11 @@ nix build .#appimage              # portable desktop AppImage
 The flake uses the pinned Rust toolchain from `rust-toolchain.toml` and is
 currently published for `x86_64-linux`. A Debian package is not produced by
 the flake yet; use the upstream release artifacts when a `.deb` is required.
-The `prebuilt` outputs require the upstream GitHub release for the workspace
-version to publish matching Linux archives; otherwise use the source-built
-outputs above.
+The `prebuilt` outputs use the release version and hashes pinned in
+`nix/release-manifest.json`, independently of the workspace source version.
+After a release is published, the release workflow opens a PR to refresh that
+manifest. Until it is merged, the prebuilt outputs continue to use the prior
+published release; the source-built outputs always build the checked-out source.
 
 **CLI (`op`):**
 

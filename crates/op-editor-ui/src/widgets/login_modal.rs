@@ -310,18 +310,25 @@ fn paint_status_note(
 ) {
     use op_editor_core::{LoginFlowError, LoginFlowStatus};
     let status = status_rect(panel);
+    // The web build runs IN a browser: the approval happens in a popup
+    // window, so "waiting for your browser" would read as nonsense there.
+    let (waiting_key, approval_key) = if cfg!(target_arch = "wasm32") {
+        ("account.openingPopup", "account.approveInPopup")
+    } else {
+        ("account.waitingForBrowser", "account.waitingForApproval")
+    };
     let (icon, text, background, border, color) = if let Some(flow) = flow_status {
         match flow {
             LoginFlowStatus::WaitingBrowser => (
                 Icon::Globe,
-                t(locale, "account.waitingForBrowser"),
+                t(locale, waiting_key),
                 theme.row_selected_primary,
                 theme.primary.with_alpha(0.32),
                 theme.foreground,
             ),
             LoginFlowStatus::WaitingApproval => (
                 Icon::Globe,
-                t(locale, "account.waitingForApproval"),
+                t(locale, approval_key),
                 theme.row_selected_primary,
                 theme.primary.with_alpha(0.32),
                 theme.foreground,

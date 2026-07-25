@@ -591,6 +591,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "account.signInComingSoon" => "浏览器登录即将上线。",
         "account.waitingForBrowser" => "正在等待浏览器…",
         "account.waitingForApproval" => "请在浏览器中确认登录…",
+        "account.openingPopup" => "正在打开登录窗口…",
+        "account.approveInPopup" => "请在弹出的窗口中完成登录确认…",
         "account.signingIn" => "正在登录…",
         "account.signInDenied" => "登录请求在浏览器中被拒绝。",
         "account.signInExpired" => "登录请求已过期，请重试。",

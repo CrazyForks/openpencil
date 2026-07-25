@@ -587,6 +587,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "account.signInComingSoon" => "Browser sign-in is coming soon.",
         "account.waitingForBrowser" => "Waiting for your browser…",
         "account.waitingForApproval" => "Approve the sign-in in your browser…",
+        "account.openingPopup" => "Opening the sign-in window…",
+        "account.approveInPopup" => "Finish signing in in the popup window…",
         "account.signingIn" => "Signing you in…",
         "account.signInDenied" => "Sign-in was declined in the browser.",
         "account.signInExpired" => "The sign-in request expired. Try again.",

@@ -132,7 +132,11 @@ fn drain_actions<C: RepaintContext + 'static>(
                 }
             })),
         );
+        if action == PendingAuthAction::CancelLogin {
+            close_login_popup_placeholder();
+        }
         if !ok && action == PendingAuthAction::BeginLogin {
+            close_login_popup_placeholder();
             let mut b = inner.borrow_mut();
             let ui = &mut b.host_mut().editor_state_mut().editor_ui;
             ui.login_modal_status = Some(LoginFlowStatus::Failed(LoginFlowError::Unavailable));
@@ -194,7 +198,7 @@ fn apply_login_status<C: RepaintContext + 'static>(
                 if let Some(url) = parsed["verification_uri"].as_str() {
                     if !url.is_empty() {
                         browser_opened.set(true);
-                        open_popup(url);
+                        navigate_login_popup(url);
                     }
                 }
             }
@@ -217,6 +221,7 @@ fn apply_login_status<C: RepaintContext + 'static>(
             ui.login_modal_hover = None;
         }
         "error" => {
+            close_login_popup_placeholder();
             ui.login_modal_status = Some(LoginFlowStatus::Failed(
                 match parsed["code"].as_str().unwrap_or_default() {
                     "denied" => LoginFlowError::Denied,
@@ -227,7 +232,10 @@ fn apply_login_status<C: RepaintContext + 'static>(
         }
         // "idle" / "canceled": another tab or the daemon finished the
         // flow out from under us — reset the note, keep the modal.
-        _ => ui.login_modal_status = None,
+        _ => {
+            close_login_popup_placeholder();
+            ui.login_modal_status = None;
+        }
     }
     if ui.login_modal_status != previous || !ui.login_modal_open {
         b.host_mut().mark_editor_state_dirty();
@@ -235,12 +243,53 @@ fn apply_login_status<C: RepaintContext + 'static>(
     }
 }
 
-/// Open the verification page. A blocked popup falls back to a full
-/// navigation in a new tab via an anchor click, and if even that is
-/// unavailable the user can still see the URL-less waiting note (the
-/// approval also works from any logged-in browser tab).
-fn open_popup(url: &str) {
-    if let Some(window) = web_sys::window() {
-        let _ = window.open_with_url_and_target(url, "_blank");
+thread_local! {
+    /// Placeholder popup opened synchronously inside the SignIn click
+    /// (user-activation context — the only moment `window.open` is
+    /// reliably allowed). The poll callback later navigates it to the
+    /// verification page; opening from the async callback instead gets
+    /// popup-blocked, which is exactly the "have to click sign-in
+    /// twice" failure this design removes.
+    static PENDING_POPUP: RefCell<Option<web_sys::Window>> = const { RefCell::new(None) };
+}
+
+/// Open the placeholder popup. Must be called synchronously from a
+/// pointer-event handler (the web sign-in press dispatcher).
+pub(crate) fn open_login_popup_placeholder() {
+    let opened = web_sys::window()
+        .and_then(|window| {
+            window
+                .open_with_url_and_target("about:blank", "_blank")
+                .ok()
+        })
+        .flatten();
+    PENDING_POPUP.with(|slot| *slot.borrow_mut() = opened);
+}
+
+/// Close a still-pending placeholder (flow canceled or failed before
+/// the verification page was known).
+pub(crate) fn close_login_popup_placeholder() {
+    PENDING_POPUP.with(|slot| {
+        if let Some(popup) = slot.borrow_mut().take() {
+            let _ = popup.close();
+        }
+    });
+}
+
+/// Point the placeholder at the verification page; when the placeholder
+/// is missing (blocked, or an older flow) fall back to a direct open —
+/// it may be blocked outside a gesture, but the approval also works
+/// from any logged-in browser tab, so the flow still completes.
+fn navigate_login_popup(url: &str) {
+    let pending = PENDING_POPUP.with(|slot| slot.borrow_mut().take());
+    match pending {
+        Some(popup) => {
+            let _ = popup.location().set_href(url);
+        }
+        None => {
+            if let Some(window) = web_sys::window() {
+                let _ = window.open_with_url_and_target(url, "_blank");
+            }
+        }
     }
 }
