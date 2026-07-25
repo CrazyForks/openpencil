@@ -30,20 +30,50 @@ const AUTH_POLL_INTERVAL_MS: i32 = 600;
 /// simply never fires), so an offline blip can't sign the user out.
 const STATUS_REFRESH_TICKS: u32 = 50;
 
+/// Consecutive `idle` login-status answers tolerated before the flow is
+/// declared dead. A begin POST races the first status poll (the daemon
+/// may not have created the flow yet), so a single `idle` MUST be
+/// treated as transient — resetting on it immediately was the original
+/// "first click opens only a blank window" bug.
+const MAX_IDLE_STREAK: u32 = 5;
+
+/// Shared latches for the login flow's async choreography.
+#[derive(Clone)]
+struct FlowCells {
+    /// One status request in flight at a time.
+    busy: Rc<Cell<bool>>,
+    /// The verification popup must be navigated exactly once per flow.
+    browser_opened: Rc<Cell<bool>>,
+    /// A begin POST is in flight — suppress status polls until it lands
+    /// so they can't observe the daemon's pre-begin `idle`.
+    begin_inflight: Rc<Cell<bool>>,
+    /// Consecutive transient `idle` answers observed.
+    idle_streak: Rc<Cell<u32>>,
+}
+
+impl FlowCells {
+    fn new() -> Self {
+        Self {
+            busy: Rc::new(Cell::new(false)),
+            browser_opened: Rc::new(Cell::new(false)),
+            begin_inflight: Rc::new(Cell::new(false)),
+            idle_streak: Rc::new(Cell::new(0)),
+        }
+    }
+}
+
 /// Wire the auth relay onto the mounted shell. Called once from mount;
 /// the interval runs for the page lifetime.
 pub(crate) fn start<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) {
     let base = crate::daemon_base::daemon_base();
     fetch_status(inner, &base);
 
-    let busy = Rc::new(Cell::new(false));
-    // The verification popup must open exactly once per flow.
-    let browser_opened = Rc::new(Cell::new(false));
+    let cells = FlowCells::new();
     let ticks = Rc::new(Cell::new(0u32));
     let inner = inner.clone();
     let tick: Rc<dyn Fn()> = Rc::new(move || {
-        drain_actions(&inner, &base, &browser_opened);
-        maybe_poll_login(&inner, &base, &busy, &browser_opened);
+        drain_actions(&inner, &base, &cells);
+        maybe_poll_login(&inner, &base, &cells);
         let count = ticks.get() + 1;
         if count >= STATUS_REFRESH_TICKS {
             ticks.set(0);
@@ -101,26 +131,36 @@ fn fetch_status<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, base: &str)
 fn drain_actions<C: RepaintContext + 'static>(
     inner: &Rc<RefCell<C>>,
     base: &str,
-    browser_opened: &Rc<Cell<bool>>,
+    cells: &FlowCells,
 ) {
     let actions = inner.borrow_mut().host_mut().take_pending_auth_actions();
     for action in actions {
         let path = match action {
             PendingAuthAction::BeginLogin => {
-                browser_opened.set(false);
+                cells.browser_opened.set(false);
+                cells.idle_streak.set(0);
+                cells.begin_inflight.set(true);
                 "/api/auth/login/begin"
             }
             PendingAuthAction::CancelLogin => "/api/auth/login/cancel",
             PendingAuthAction::SignOut => "/api/auth/logout",
         };
         let inner_cb = inner.clone();
+        let begin_inflight = cells.begin_inflight.clone();
+        let is_begin = action == PendingAuthAction::BeginLogin;
         let ok = live_sync::post_json(
             &format!("{base}{path}"),
             "{}",
             Some(Rc::new(move |body: String| {
+                if is_begin {
+                    begin_inflight.set(false);
+                }
                 // Begin can be refused (stub daemon build) — surface it.
                 if body.contains(r#""ok":true"#) {
                     return;
+                }
+                if is_begin {
+                    close_login_popup_placeholder();
                 }
                 let mut b = inner_cb.borrow_mut();
                 let ui = &mut b.host_mut().editor_state_mut().editor_ui;
@@ -135,7 +175,8 @@ fn drain_actions<C: RepaintContext + 'static>(
         if action == PendingAuthAction::CancelLogin {
             close_login_popup_placeholder();
         }
-        if !ok && action == PendingAuthAction::BeginLogin {
+        if !ok && is_begin {
+            cells.begin_inflight.set(false);
             close_login_popup_placeholder();
             let mut b = inner.borrow_mut();
             let ui = &mut b.host_mut().editor_state_mut().editor_ui;
@@ -149,40 +190,40 @@ fn drain_actions<C: RepaintContext + 'static>(
 fn maybe_poll_login<C: RepaintContext + 'static>(
     inner: &Rc<RefCell<C>>,
     base: &str,
-    busy: &Rc<Cell<bool>>,
-    browser_opened: &Rc<Cell<bool>>,
+    cells: &FlowCells,
 ) {
     {
         let b = inner.borrow();
         let ui = &b.host().editor_state().editor_ui;
         let flow_active = ui.login_modal_open && ui.login_modal_status.is_some();
-        if !flow_active || busy.get() {
+        // While the begin POST is in flight the daemon may not have the
+        // flow yet — a poll now would observe a misleading `idle`.
+        if !flow_active || cells.busy.get() || cells.begin_inflight.get() {
             return;
         }
     }
-    busy.set(true);
+    cells.busy.set(true);
     let inner = inner.clone();
-    let busy_cb = busy.clone();
-    let browser_opened = browser_opened.clone();
+    let cells_cb = cells.clone();
     let ok = live_sync::get(
         &format!("{base}/api/auth/login/status"),
         Rc::new(move |body: String| {
-            busy_cb.set(false);
+            cells_cb.busy.set(false);
             let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&body) else {
                 return;
             };
-            apply_login_status(&inner, &parsed, &browser_opened);
+            apply_login_status(&inner, &parsed, &cells_cb);
         }),
     );
     if !ok {
-        busy.set(false);
+        cells.busy.set(false);
     }
 }
 
 fn apply_login_status<C: RepaintContext + 'static>(
     inner: &Rc<RefCell<C>>,
     parsed: &serde_json::Value,
-    browser_opened: &Rc<Cell<bool>>,
+    cells: &FlowCells,
 ) {
     let mut b = inner.borrow_mut();
     let ui = &mut b.host_mut().editor_state_mut().editor_ui;
@@ -190,14 +231,17 @@ fn apply_login_status<C: RepaintContext + 'static>(
         return; // dismissed while the request was in flight
     }
     let previous = ui.login_modal_status;
+    if parsed["state"].as_str() != Some("idle") {
+        cells.idle_streak.set(0);
+    }
     match parsed["state"].as_str().unwrap_or_default() {
         "starting" => ui.login_modal_status = Some(LoginFlowStatus::WaitingBrowser),
         "waiting_approval" => {
             ui.login_modal_status = Some(LoginFlowStatus::WaitingApproval);
-            if !browser_opened.get() {
+            if !cells.browser_opened.get() {
                 if let Some(url) = parsed["verification_uri"].as_str() {
                     if !url.is_empty() {
-                        browser_opened.set(true);
+                        cells.browser_opened.set(true);
                         navigate_login_popup(url);
                     }
                 }
@@ -230,8 +274,19 @@ fn apply_login_status<C: RepaintContext + 'static>(
                 },
             ));
         }
-        // "idle" / "canceled": another tab or the daemon finished the
-        // flow out from under us — reset the note, keep the modal.
+        "idle" => {
+            // Transient while the just-begun flow races our poll; only a
+            // sustained streak means the flow is really gone (daemon
+            // restarted, or another tab finished it).
+            let streak = cells.idle_streak.get() + 1;
+            cells.idle_streak.set(streak);
+            if streak >= MAX_IDLE_STREAK {
+                close_login_popup_placeholder();
+                ui.login_modal_status = None;
+            }
+        }
+        // "canceled": another tab or the daemon finished the flow out
+        // from under us — reset the note, keep the modal.
         _ => {
             close_login_popup_placeholder();
             ui.login_modal_status = None;
