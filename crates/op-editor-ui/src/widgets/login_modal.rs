@@ -134,6 +134,15 @@ fn subtitle(locale: Locale) -> &'static str {
 }
 
 fn security_note(locale: Locale) -> &'static str {
+    // The web editor already runs in a browser — its verification page
+    // opens as a popup window, not "the system browser".
+    if cfg!(target_arch = "wasm32") {
+        return match locale {
+            Locale::ZhCn => "账户验证将在弹出的窗口中完成",
+            Locale::ZhTw => "帳戶驗證將在彈出的視窗中完成",
+            _ => "Authentication continues in a popup window",
+        };
+    }
     match locale {
         Locale::ZhCn => "账户验证将在系统浏览器中完成",
         Locale::ZhTw => "帳戶驗證將在系統瀏覽器中完成",
@@ -254,7 +263,13 @@ fn paint_primary_action(
     backend.stroke_round_rect(button, 11.0, theme.primary_foreground.with_alpha(0.18), 1.0);
 
     let content_offset_y = if pressed { 1.0 } else { 0.0 };
-    let label = t(locale, "account.signInWithBrowser");
+    // Web: the plain "Sign in" label — "with browser" is redundant when
+    // the editor itself runs in one.
+    let label = if cfg!(target_arch = "wasm32") {
+        t(locale, "settings.account.signIn")
+    } else {
+        t(locale, "account.signInWithBrowser")
+    };
     let label_size = 13.5;
     let label_weight = 600;
     let label_width = backend.measure_text_weighted(label, label_size, label_weight);
