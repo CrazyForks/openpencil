@@ -868,6 +868,11 @@ impl ApplicationHandler<DesktopEvent> for DesktopApp {
                 if self.poll_update_probe() {
                     self.redraw_dirty = true;
                 }
+                // Drain the browser device-login flow (status + browser
+                // opens land here).
+                if self.poll_auth_flow() {
+                    self.redraw_dirty = true;
+                }
                 // Drain a finished background `git pull`.
                 if self.poll_git_pull_job() {
                     self.redraw_dirty = true;
@@ -1656,6 +1661,7 @@ impl DesktopApp {
             let deadline = self.clock_start + Duration::from_millis(deadline_ms);
             event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
         } else if self.update_probe.is_pending()
+            || self.host.auth_flow_active()
             || self.model_probe.is_pending()
             || self.image_search.is_pending()
             || self.image_panel.is_pending()
@@ -1726,6 +1732,7 @@ impl DesktopApp {
             || self.pending_html_paste.is_some()
             || self.host.next_animation_deadline_ms().is_some()
             || self.update_probe.is_pending()
+            || self.host.auth_flow_active()
             || self.model_probe.is_pending()
             || self.image_search.is_pending()
             || self.image_panel.is_pending()

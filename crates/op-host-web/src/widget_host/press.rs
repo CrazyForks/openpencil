@@ -514,9 +514,10 @@ impl WidgetHost {
                     self.editor_state.editor_ui.toggle_preview();
                 }
                 TopBarHit::Account => {
-                    // Unreachable: `ACCOUNT_BUTTON_AVAILABLE` gates the
-                    // avatar button out of the web build's hit-test (the
-                    // sign-in flow is desktop-only).
+                    // Unreachable: `TopBar::account_button_visible` is
+                    // always false on wasm32 (the web host never sets
+                    // `account_ui_available`; the sign-in flow is
+                    // desktop-only), so the avatar never hit-tests here.
                 }
             }
             self.mark_dirty();

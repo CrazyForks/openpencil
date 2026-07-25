@@ -103,8 +103,11 @@ fn account_release_gate_blocks_menu_for_signed_in_state() {
 
 #[test]
 fn stale_login_modal_state_does_not_dispatch_while_release_gate_is_hidden() {
-    const { assert!(!op_editor_ui::widgets::ACCOUNT_UI_AVAILABLE) };
     let mut host = WidgetHostNative::new();
+    assert!(
+        !host.editor_state().editor_ui.account_ui_available,
+        "the runtime account gate must default to off"
+    );
     host.editor_state_mut().editor_ui.login_modal_open = true;
 
     let modal = LoginModal::for_editor(host.editor_state());
@@ -124,8 +127,11 @@ fn stale_login_modal_state_does_not_dispatch_while_release_gate_is_hidden() {
 
 #[test]
 fn stale_account_menu_state_does_not_dispatch_while_release_gate_is_hidden() {
-    const { assert!(!op_editor_ui::widgets::ACCOUNT_UI_AVAILABLE) };
     let mut host = WidgetHostNative::new();
+    assert!(
+        !host.editor_state().editor_ui.account_ui_available,
+        "the runtime account gate must default to off"
+    );
     let signed_in = AccountState::SignedIn {
         display_name: "Fini".into(),
         handle: "fini".into(),
@@ -175,7 +181,17 @@ fn login_modal_sign_in_without_dev_flag_shows_honest_stub_hint() {
         AccountState::Anonymous
     );
     assert!(host.editor_state().editor_ui.login_modal_open);
-    assert!(host.editor_state().editor_ui.login_modal_stub_hint_shown);
+    if op_auth_bridge::available() {
+        // Real auth library linked: the press starts the browser flow
+        // instead of the stub hint. The runtime is uninitialized under
+        // test, so the flow settles into a failure note — never a session.
+        assert!(!host.editor_state().editor_ui.login_modal_stub_hint_shown);
+        assert!(host.editor_state().editor_ui.login_modal_status.is_some());
+    } else {
+        // Stub build: honest "coming soon" note, no flow started.
+        assert!(host.editor_state().editor_ui.login_modal_stub_hint_shown);
+        assert!(host.editor_state().editor_ui.login_modal_status.is_none());
+    }
     assert_eq!(
         host.editor_state().editor_ui.pressed_button,
         Some(ButtonPressTarget::LoginModal(LoginModalButton::SignIn))

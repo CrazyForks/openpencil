@@ -31,30 +31,35 @@ impl WidgetHostNative {
                 .map(op_editor_core::ButtonPressTarget::LoginModal);
         match hit {
             LoginModalHit::Close => {
+                self.cancel_auth_login();
                 self.editor_state.editor_ui.login_modal_open = false;
                 self.editor_state.editor_ui.login_modal_hover = None;
                 self.editor_state.editor_ui.login_modal_stub_hint_shown = false;
             }
             LoginModalHit::Outside => {
                 self.blur_text_inputs_on_blank_press();
+                self.cancel_auth_login();
                 self.editor_state.editor_ui.login_modal_open = false;
                 self.editor_state.editor_ui.login_modal_hover = None;
                 self.editor_state.editor_ui.login_modal_stub_hint_shown = false;
             }
             LoginModalHit::SignIn => {
-                // Dev/demo fast path — never reachable in a production
-                // build; the planned real flow uses OIDC Auth Code +
-                // PKCE via the system browser.
                 if dev_fake_login_enabled() {
+                    // Dev/demo fast path — exercises the signed-in UI
+                    // without a backend.
                     self.editor_state.editor_ui.account =
                         op_editor_core::AccountState::dev_fake_signed_in();
                     self.editor_state.editor_ui.login_modal_open = false;
                     self.editor_state.editor_ui.login_modal_hover = None;
                     self.editor_state.editor_ui.login_modal_stub_hint_shown = false;
+                } else if op_auth_bridge::available() {
+                    // Real flow: browser pairing against zseven-sso via
+                    // the proprietary client library; progress lands in
+                    // `login_modal_status` through `poll_auth`.
+                    self.begin_browser_login();
                 } else {
-                    // Honest stub: no session is created — just reveal
-                    // the "coming soon" note instead of pretending the
-                    // OIDC flow ran.
+                    // Honest stub (no auth library linked): no session is
+                    // created — just reveal the "coming soon" note.
                     self.editor_state.editor_ui.login_modal_stub_hint_shown = true;
                 }
             }
@@ -103,6 +108,9 @@ impl WidgetHostNative {
             Some(AccountMenuRow::SignOut) => {
                 self.close_account_menu();
                 self.editor_state.editor_ui.account = op_editor_core::AccountState::Anonymous;
+                // Revoke the device session (background thread inside the
+                // library; an inert no-op in stub builds).
+                op_auth_bridge::sign_out();
             }
             None => {
                 if !(menu_rect).contains(point) {

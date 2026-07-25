@@ -82,6 +82,8 @@ op-editor-core = { path = "../op-editor-core" }
 op-editor-host-core = { path = "../op-editor-host-core" }
 # Shared `~/.openpencil` well-known paths used by CLI and desktop discovery.
 op-config-store = { path = "../op-config-store" }
+# Device-login bridge (prebuilt proprietary library or inert stub).
+op-auth-bridge = { path = "../op-auth-bridge" }
 # D′ architecture: pre-validation adapter translates PlannedFix → EditorCommand.
 op-design-lint = { path = "../op-design-lint" }
 # AI code-generation pipeline. The `ai` feature compiles the pull-based

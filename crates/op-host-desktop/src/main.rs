@@ -393,6 +393,13 @@ impl DesktopApp {
         // — the picker paints the Import row + imported group here, and
         // web leaves the default `false` so those controls stay hidden.
         host.editor_state_mut().editor_ui.font_import_supported = true;
+        // Account gate + session restore. The bridge links the proprietary
+        // auth library when a prebuilt exists for this target; stub builds
+        // keep every account entry point hidden unless the dev fake-login
+        // env is set. Skipped under test like the update / model probes.
+        if !cfg!(test) {
+            init_auth_runtime(&mut host);
+        }
         let kit_browser_open_persisted = Some(host.editor_state().editor_ui.component_browser_open);
         if fit_blank_frame {
             host.fit_content_to_viewport(INITIAL_VIEWPORT_W, INITIAL_VIEWPORT_H);
@@ -870,6 +877,17 @@ impl DesktopApp {
         }
     }
 
+    /// Drain the browser device-login flow: fold bridge status polls
+    /// into UI state and open the verification page (exactly once per
+    /// flow) in the system browser.
+    fn poll_auth_flow(&mut self) -> bool {
+        let changed = self.host.poll_auth();
+        if let Some(url) = self.host.take_pending_browser_url() {
+            update_check::open_url(&url);
+        }
+        changed
+    }
+
     /// Drain the background auto-update probe into `update_status`.
     /// When the probe reports a newer release, offer to open the
     /// download page — once per check.
@@ -1111,6 +1129,46 @@ fn parse_live_mcp_port<I: Iterator<Item = String>>(args: I) -> Option<u16> {
         }
     }
     None
+}
+
+/// Initialize the device-login runtime (proprietary bridge library) and
+/// restore a persisted session, then set the runtime account gate. Stub
+/// builds (no prebuilt library for this target) leave the gate closed
+/// unless `OPENPENCIL_DEV_FAKE_LOGIN=1` re-opens it for UI work.
+fn init_auth_runtime(host: &mut WidgetHostNative) {
+    let dev_fake = std::env::var("OPENPENCIL_DEV_FAKE_LOGIN").as_deref() == Ok("1");
+    let mut backend_ready = false;
+    if op_auth_bridge::available() {
+        if let Ok(dir) = op_config_store::openpencil_dir() {
+            let config = op_auth_bridge::AuthInitConfig {
+                // Local-dev override: point the flow at a locally served
+                // zseven-sso (e.g. http://127.0.0.1:5173).
+                base_url: std::env::var("OPENPENCIL_SSO_URL")
+                    .unwrap_or_else(|_| "https://sso.zseven.cn".to_string()),
+                storage_dir: dir.join("auth"),
+                device_name: format!("OpenPencil Desktop ({})", std::env::consts::OS),
+                app_version: env!("CARGO_PKG_VERSION").to_string(),
+            };
+            if op_auth_bridge::init(&config) {
+                backend_ready = true;
+                if op_auth_bridge::restore() {
+                    if let op_auth_bridge::AuthStatus::SignedIn {
+                        display_name,
+                        primary_email,
+                        ..
+                    } = op_auth_bridge::poll(op_auth_bridge::SESSION_HANDLE)
+                    {
+                        host.editor_state_mut().editor_ui.account =
+                            op_editor_core::AccountState::SignedIn {
+                                handle: primary_email.unwrap_or_else(|| display_name.clone()),
+                                display_name,
+                            };
+                    }
+                }
+            }
+        }
+    }
+    host.editor_state_mut().editor_ui.account_ui_available = backend_ready || dev_fake;
 }
 
 /// Pop a native dialog offering to open the download page when a

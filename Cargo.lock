@@ -3169,6 +3169,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "op-auth-bridge"
+version = "0.8.2"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "op-cli"
 version = "0.8.2"
 dependencies = [
@@ -3315,6 +3322,7 @@ dependencies = [
  "op-acp",
  "op-ai",
  "op-ai-skills",
+ "op-auth-bridge",
  "op-codegen",
  "op-config-store",
  "op-design-lint",
@@ -3358,6 +3366,7 @@ dependencies = [
  "jian-skia",
  "khronos-egl",
  "libloading",
+ "op-auth-bridge",
  "op-editor-core",
  "op-editor-ui",
  "op-i18n",

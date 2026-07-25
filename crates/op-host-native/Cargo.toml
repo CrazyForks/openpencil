@@ -67,6 +67,9 @@ serde_json = { workspace = true }
 # `op_editor_core::EditorState`. The host derives a read-only paint
 # `Document` from it each frame (see `widget_host.rs`).
 op-editor-core = { path = "../op-editor-core" }
+# Device-login client bridge — links the proprietary prebuilt library when
+# one exists for the target, else compiles an inert stub (login hidden).
+op-auth-bridge = { path = "../op-auth-bridge" }
 op-i18n = { path = "../op-i18n" }
 
 # Native-only deps cfg-gated outside wasm32. This is critical (resolves codex round 2 B1 BLOCK):

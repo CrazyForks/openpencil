@@ -580,7 +580,7 @@ impl WidgetHostNative {
         }
         // Sign-in modal — owns the cursor while open. Hover the close
         // `✕` + the primary sign-in button.
-        if op_editor_ui::widgets::ACCOUNT_UI_AVAILABLE
+        if self.editor_state.editor_ui.account_ui_available
             && self.editor_state.editor_ui.login_modal_open
         {
             use op_editor_ui::widgets::login_modal::LoginModal;
@@ -597,7 +597,7 @@ impl WidgetHostNative {
             return changed;
         }
         // Signed-in account dropdown — owns the cursor while open.
-        if op_editor_ui::widgets::ACCOUNT_UI_AVAILABLE
+        if self.editor_state.editor_ui.account_ui_available
             && self.editor_state.editor_ui.account_menu_open
         {
             use op_editor_ui::widgets::account_menu::AccountMenu;

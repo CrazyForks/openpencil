@@ -52,6 +52,7 @@ mod agent_settings_image_gen_tests;
 mod agent_settings_tests;
 mod ai_chat_geometry;
 mod arc_drag;
+mod auth_flow;
 mod blur_inputs;
 #[cfg(test)]
 mod blur_inputs_tests;
@@ -396,6 +397,17 @@ pub struct WidgetHostNative {
     /// Last viewport size seen by paint/press. Used by handlers
     /// that don't receive viewport dims (e.g. apply_cursor_move
     /// driving the color-picker drag).
+    /// In-flight browser device-login flow handle from `op-auth-bridge`
+    /// (`None` = no login running). Polled by the desktop event loop via
+    /// [`Self::poll_auth`].
+    pub(in crate::widget_host) auth_login_handle: Option<u64>,
+    /// Verification URL waiting for the desktop host to open in the
+    /// system browser (drained by `take_pending_browser_url`).
+    pub(in crate::widget_host) auth_pending_browser_url: Option<String>,
+    /// Whether the current flow's verification URL was already queued —
+    /// the flow reports `WaitingApproval` every poll, but the browser
+    /// must open exactly once.
+    pub(in crate::widget_host) auth_browser_opened: bool,
     pub(in crate::widget_host) last_viewport_w: f32,
     pub(in crate::widget_host) last_viewport_h: f32,
     /// Live canvas Preview (Play) session — `Some` while
@@ -783,6 +795,9 @@ impl WidgetHostNative {
             chat_panel_owner: op_editor_ui::widgets::AIChatPlaceholder::next_owner(),
             layer_panel_owner: op_editor_ui::widgets::LayerPanel::next_layer_panel_owner(),
             last_chat_session_index,
+            auth_login_handle: None,
+            auth_pending_browser_url: None,
+            auth_browser_opened: false,
         }
     }
 
