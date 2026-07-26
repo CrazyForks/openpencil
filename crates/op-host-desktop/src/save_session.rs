@@ -229,7 +229,7 @@ impl SaveSession {
                 Err("background save worker stopped before reporting a result".to_string())
             }
         };
-        Some(self.finish_running(result))
+        self.finish_running(result)
     }
 
     /// Block only for close/reload confirmation. Ordinary Save never calls
@@ -239,7 +239,7 @@ impl SaveSession {
         let result = self.running.as_ref()?.rx.recv().unwrap_or_else(|_| {
             Err("background save worker stopped before reporting a result".to_string())
         });
-        Some(self.finish_running(result))
+        self.finish_running(result)
     }
 
     fn matches_pending(
@@ -300,7 +300,7 @@ impl SaveSession {
         let worker_path = path.clone();
         let worker_snapshot = Arc::clone(&snapshot);
         let (tx, rx) = mpsc::channel();
-        std::thread::Builder::new()
+        let spawned = std::thread::Builder::new()
             .name("op-document-save".to_string())
             .spawn(move || {
                 let started = Instant::now();
@@ -334,8 +334,13 @@ impl SaveSession {
                 if let Some(proxy) = wake {
                     let _ = proxy.send_event(DesktopEvent::SaveReady);
                 }
-            })
-            .expect("spawn document save worker");
+            });
+        if let Err(err) = spawned {
+            // The worker never started, so `tx` is gone and the rx below is
+            // disconnected — `poll`/`wait_next` surface that as a failed
+            // completion instead of the UI thread crashing mid-save.
+            eprintln!("[save] failed to spawn save worker: {err}");
+        }
         self.running = Some(RunningSave {
             snapshot,
             path,
@@ -347,8 +352,13 @@ impl SaveSession {
         });
     }
 
-    fn finish_running(&mut self, result: Result<(), String>) -> SaveCompletion {
-        let job = self.running.take().expect("running save exists");
+    fn finish_running(&mut self, result: Result<(), String>) -> Option<SaveCompletion> {
+        let Some(job) = self.running.take() else {
+            // Both callers check `running` before calling; an ordering bug
+            // here must not panic mid-save. Drop the stray result instead.
+            eprintln!("[save] finish_running called with no running job; result dropped");
+            return None;
+        };
         let completion = SaveCompletion {
             path: job.path,
             set_current_path: job.set_current_path,
@@ -360,7 +370,7 @@ impl SaveSession {
         if let Some(next) = self.queued.take() {
             self.start(next);
         }
-        completion
+        Some(completion)
     }
 }
 

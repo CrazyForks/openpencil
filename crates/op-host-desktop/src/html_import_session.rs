@@ -42,13 +42,19 @@ pub fn spawn(host: &mut WidgetHostNative, path: PathBuf) -> HtmlImportSession {
     ui.figma_import_in_progress = true;
 
     let path_for_thread = path.clone();
-    thread::Builder::new()
+    let worker_tx = tx.clone();
+    let spawned = thread::Builder::new()
         .name("op-html-import".into())
         .spawn(move || {
             let result = parse_path(&path_for_thread);
-            let _ = tx.send(result);
-        })
-        .expect("spawn op-html-import worker");
+            let _ = worker_tx.send(result);
+        });
+    if let Err(err) = spawned {
+        // Deliver the failure through the normal pump path (error
+        // dialog + overlay-flag clear) instead of crashing the app.
+        eprintln!("[import-html] failed to spawn worker: {err}");
+        let _ = tx.send(Err(format!("import worker failed to start: {err}")));
+    }
 
     HtmlImportSession { path, rx }
 }

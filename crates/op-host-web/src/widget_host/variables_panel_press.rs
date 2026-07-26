@@ -530,11 +530,15 @@ impl WidgetHost {
 }
 
 pub(in crate::widget_host) fn unique_numbered(base: &str, exists: impl Fn(&str) -> bool) -> String {
-    for idx in 1.. {
+    // Bounded scan — 10k collisions on one base never happens in practice,
+    // but a pathological document must not spin the UI thread forever.
+    for idx in 1u32..=10_000 {
         let candidate = format!("{base}-{idx}");
         if !exists(&candidate) {
             return candidate;
         }
     }
-    unreachable!()
+    // Deterministic fallback past the bound; a duplicate name is cosmetic
+    // while an unbounded loop would hang the editor.
+    format!("{base}-10001")
 }

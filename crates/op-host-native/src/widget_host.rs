@@ -1419,14 +1419,29 @@ impl WidgetHostNative {
         // clipboard paste decode) is dropped instead of applied here.
         self.document_epoch = self.document_epoch.wrapping_add(1);
         let old_scene = std::mem::take(&mut self.layout_scene);
-        std::thread::Builder::new()
+        // Take-once slot so the drop work runs exactly once: on the worker
+        // when the spawn succeeds, inline (blocking the UI thread briefly)
+        // when thread creation fails under FD/memory pressure.
+        let work: Box<dyn FnOnce() + Send> = Box::new(move || {
+            drop(old_state);
+            drop(old_scene);
+            after_drop();
+        });
+        let work = std::sync::Arc::new(std::sync::Mutex::new(Some(work)));
+        let worker_slot = std::sync::Arc::clone(&work);
+        let spawned = std::thread::Builder::new()
             .name("op-import-drop".into())
             .spawn(move || {
-                drop(old_state);
-                drop(old_scene);
-                after_drop();
-            })
-            .expect("spawn op-import-drop worker");
+                if let Some(f) = worker_slot.lock().unwrap_or_else(|p| p.into_inner()).take() {
+                    f();
+                }
+            });
+        if let Err(err) = spawned {
+            eprintln!("[widget-host] failed to spawn op-import-drop worker: {err}");
+            if let Some(f) = work.lock().unwrap_or_else(|p| p.into_inner()).take() {
+                f();
+            }
+        }
 
         // The imported document restarts at revision 0 / page 0, so its
         // LayerPanel row-model-cache key aliases the replaced document's.

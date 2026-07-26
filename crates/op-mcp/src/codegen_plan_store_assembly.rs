@@ -61,8 +61,9 @@ pub(crate) fn assemble_plan(plan_id: &str, _framework: &str) -> Result<Value, St
                 .is_some_and(|code| !code.trim().is_empty());
             let usable = matches!(status, "done" | "degraded") && has_code;
 
-            if usable {
-                let result = result.expect("usable result exists");
+            // `usable` implies `has_code`, which implies `result` is Some —
+            // bind it in the match so the guard is structural, not asserted.
+            if let (true, Some(result)) = (usable, result) {
                 chunks_out.push(result.clone());
                 contracts.push(result.get("contract").cloned().unwrap_or(Value::Null));
             } else {

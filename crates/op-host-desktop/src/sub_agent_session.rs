@@ -111,14 +111,17 @@ pub(crate) fn stash_pending_spawn(specs: Vec<SpawnSpec>, nested: bool) -> bool {
     if nested {
         return false;
     }
-    *PENDING_SPAWN.lock().unwrap() = Some(specs);
+    *PENDING_SPAWN.lock().unwrap_or_else(|p| p.into_inner()) = Some(specs);
     true
 }
 
 /// Take the stashed specs, if any. Called by `app_handler` each frame
 /// after the parent pump.
 pub(crate) fn take_pending_spawn() -> Option<Vec<SpawnSpec>> {
-    PENDING_SPAWN.lock().unwrap().take()
+    PENDING_SPAWN
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .take()
 }
 
 // ---------------------------------------------------------------------------
@@ -266,7 +269,10 @@ pub(crate) fn abort_all(subs: &mut Vec<SubAgentSession>, active: &mut usize) {
     // A spawn request can be stashed by the parent one frame before the host
     // launches it. Stop/New Chat must cancel that queued batch too, otherwise
     // it starts after the user has already ended the turn.
-    PENDING_SPAWN.lock().unwrap().take();
+    PENDING_SPAWN
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .take();
     SUB_AGENT_ACTIVE.store(false, Ordering::SeqCst);
     subs.clear();
     *active = 0;

@@ -324,15 +324,18 @@ impl McpTool for UpdateNode {
             Ok(v) => v,
             Err(e) => return e,
         };
-        let x = parse_opt_i32(&patch_args, "x");
-        let y = parse_opt_i32(&patch_args, "y");
-        let width = parse_opt_i32(&patch_args, "width");
-        let height = parse_opt_i32(&patch_args, "height");
-        for (lab, v) in [("x", &x), ("y", &y), ("width", &width), ("height", &height)] {
-            if let Err(e) = v {
-                return ToolOutcome::Err(ToolErrorCode::InvalidArgument, format!("{lab}: {e}"));
+        // Parse each dimension, rejecting the first invalid one; collecting
+        // the validated values here keeps the bindings below unwrap-free.
+        let mut dims = [None, None, None, None];
+        for (slot, key) in dims.iter_mut().zip(["x", "y", "width", "height"]) {
+            match parse_opt_i32(&patch_args, key) {
+                Ok(v) => *slot = v,
+                Err(e) => {
+                    return ToolOutcome::Err(ToolErrorCode::InvalidArgument, format!("{key}: {e}"))
+                }
             }
         }
+        let [x, y, width, height] = dims;
         let name = patch_args.get("name").cloned();
         let fill_hex = match patch_args.get("fill_hex") {
             None => None,
@@ -344,10 +347,6 @@ impl McpTool for UpdateNode {
             }
             Some(s) => Some(s.clone()),
         };
-        let x = x.unwrap();
-        let y = y.unwrap();
-        let width = width.unwrap();
-        let height = height.unwrap();
         let page_id = args
             .get("pageId")
             .or_else(|| args.get("page_id"))

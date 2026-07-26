@@ -63,12 +63,18 @@ impl JsonRpcEngine {
     ) -> Result<Value, AcpError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().unwrap().insert(id, tx);
+        self.pending
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(id, tx);
 
         let req = JsonRpcRequest::new(id, method, params);
         let frame = serde_json::to_value(&req).map_err(|e| AcpError::Protocol(e.to_string()))?;
         if self.out_tx.send(frame).is_err() {
-            self.pending.lock().unwrap().remove(&id);
+            self.pending
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .remove(&id);
             return Err(AcpError::Closed);
         }
 
@@ -77,7 +83,10 @@ impl JsonRpcEngine {
             // The reader task dropped the sender — connection died.
             Ok(Err(_)) => Err(AcpError::Closed),
             Err(_) => {
-                self.pending.lock().unwrap().remove(&id);
+                self.pending
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .remove(&id);
                 Err(AcpError::Transport(format!("request '{method}' timed out")))
             }
         }
@@ -117,7 +126,11 @@ pub fn dispatch_inbound(
 ) {
     match classify_inbound(&value) {
         Inbound::Response { id, result, error } => {
-            if let Some(tx) = pending.lock().unwrap().remove(&id) {
+            if let Some(tx) = pending
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .remove(&id)
+            {
                 let resolved = match error {
                     Some(e) => Err(AcpError::Rpc {
                         code: e.code,

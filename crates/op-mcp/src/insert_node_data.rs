@@ -58,7 +58,13 @@ pub(super) fn ts_data_node(
     let mut nodes = vec![node];
     let mut _notes = Vec::new();
     super::batch_design::promote_in_slice(&mut nodes, &mut _notes);
-    Ok(Some(nodes.into_iter().next().expect("single node")))
+    match nodes.into_iter().next() {
+        Some(node) => Ok(Some(node)),
+        None => Err(ToolOutcome::Err(
+            ToolErrorCode::Internal,
+            "data node normalization produced no node".into(),
+        )),
+    }
 }
 
 fn should_preserve_ts_data_node(obj: &serde_json::Map<String, Value>) -> bool {

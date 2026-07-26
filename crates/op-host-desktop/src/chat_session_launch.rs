@@ -334,7 +334,7 @@ fn launch_direct_modify_turn(
     *current_design = None;
     super::finalize_design_session_if_needed(host, current_chat, "teardown-backstop");
     *current_chat = Some(ChatSession::from_channels(chat_rx, Some(tool_rx)));
-    thread::Builder::new()
+    let spawned = thread::Builder::new()
         .name("op-chat-modify".into())
         .spawn(move || {
             op_host_services::chat_intent::run_modify_turn(
@@ -344,8 +344,14 @@ fn launch_direct_modify_turn(
                 &executor,
                 target_frame_ids,
             );
-        })
-        .expect("spawn op-chat-modify thread");
+        });
+    if let Err(err) = spawned {
+        // Worker never started — un-park the session and fall through
+        // to the honest-error path instead of crashing the UI thread.
+        eprintln!("openpencil-desktop: spawn op-chat-modify thread failed: {err}");
+        *current_chat = None;
+        return false;
+    }
     true
 }
 
@@ -465,12 +471,21 @@ fn launch_cli_standard_turn(
         abort: design_abort,
         model,
     };
-    thread::Builder::new()
+    let spawned = thread::Builder::new()
         .name("op-chat-intent".into())
         .spawn(move || {
             op_host_services::chat_intent::run_cli_turn(plan, chat_tx, executor, delta_tx, cmd_tx);
-        })
-        .expect("spawn op-chat-intent thread");
+        });
+    if let Err(err) = spawned {
+        // Worker never started — un-park both sessions, end the epoch
+        // begun above, and fall to the honest-error path instead of
+        // crashing the UI thread.
+        eprintln!("openpencil-desktop: spawn op-chat-intent thread failed: {err}");
+        *current_chat = None;
+        *current_design = None;
+        op_editor_core::agent_indicators::end_if_epoch(indicator_epoch);
+        return false;
+    }
     true
 }
 

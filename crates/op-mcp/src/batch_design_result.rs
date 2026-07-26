@@ -26,7 +26,7 @@ use super::batch_design::{
 use super::batch_direct_ops::is_direct_image_operation;
 use super::batch_page::optional_page_id;
 use super::read_nodes::{page_nodes_snapshots, PageNodes};
-use super::{EditorCommand, McpTool, ToolOutcome};
+use super::{EditorCommand, McpTool, ToolErrorCode, ToolOutcome};
 
 /// `batch_design` — insert a node forest in one shot. Holds a document snapshot
 /// (page node sets + the doc-wide id state) so the operations path can report
@@ -68,7 +68,12 @@ impl McpTool for BatchDesign {
         if input == BatchInputKind::NodesJson {
             return dispatch_batch_design(args, None);
         }
-        let operations = args.get("operations").expect("selected operations exists");
+        let Some(operations) = args.get("operations") else {
+            return ToolOutcome::Err(
+                ToolErrorCode::MissingArgument,
+                "operations argument is missing".into(),
+            );
+        };
         match parse_operations(operations) {
             Ok(ParsedOperations::Insert {
                 parent_id,

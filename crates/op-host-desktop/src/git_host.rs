@@ -913,12 +913,7 @@ impl DesktopApp {
             self.git_clone_job = None;
             return false;
         }
-        let Some(result) = self
-            .git_clone_job
-            .as_mut()
-            .expect("clone job present (checked above)")
-            .poll()
-        else {
+        let Some(result) = self.git_clone_job.as_mut().and_then(|job| job.poll()) else {
             return false;
         };
         self.git_clone_job = None;

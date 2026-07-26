@@ -22,6 +22,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
+use std::task::{Context, Poll, Wake, Waker};
 use std::time::Duration;
 
 use agent::abort::AbortController;
@@ -278,6 +279,13 @@ impl<T> Iterator for BlockingRecvIter<T> {
         if self.cancel.is_none() {
             return self.rx.blocking_recv();
         }
+        // Timed blocking bridge: tokio's mpsc has no blocking recv with a
+        // timeout, so poll the receiver with a waker that unparks this
+        // thread. A message (or channel close) ends the park immediately;
+        // the 20 ms cap keeps the cancel flag observed even when the
+        // provider is silent.
+        let waker = Waker::from(Arc::new(ThreadUnparker(std::thread::current())));
+        let mut cx = Context::from_waker(&waker);
         loop {
             if self
                 .cancel
@@ -289,14 +297,21 @@ impl<T> Iterator for BlockingRecvIter<T> {
                 }
                 return None;
             }
-            match self.rx.try_recv() {
-                Ok(value) => return Some(value),
-                Err(mpsc::error::TryRecvError::Disconnected) => return None,
-                Err(mpsc::error::TryRecvError::Empty) => {
-                    std::thread::sleep(Duration::from_millis(20));
-                }
+            match self.rx.poll_recv(&mut cx) {
+                Poll::Ready(Some(value)) => return Some(value),
+                Poll::Ready(None) => return None,
+                Poll::Pending => std::thread::park_timeout(Duration::from_millis(20)),
             }
         }
+    }
+}
+
+/// Wakes [`BlockingRecvIter::next`]'s park as soon as a message lands.
+struct ThreadUnparker(std::thread::Thread);
+
+impl Wake for ThreadUnparker {
+    fn wake(self: Arc<Self>) {
+        self.0.unpark();
     }
 }
 

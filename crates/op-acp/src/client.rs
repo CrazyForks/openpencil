@@ -93,7 +93,11 @@ impl AcpConnection {
             // Connection closed: fail every in-flight request now so
             // callers get `Closed` immediately instead of stalling
             // until the request timeout.
-            let waiters: Vec<_> = pending.lock().unwrap().drain().collect();
+            let waiters: Vec<_> = pending
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .drain()
+                .collect();
             for (_, waiter) in waiters {
                 let _ = waiter.send(Err(AcpError::Closed));
             }
@@ -316,7 +320,11 @@ async fn connect_remote(config: &AcpAgentConfig) -> Result<AcpConnection, AcpErr
             }
         }
         // Socket closed: fail in-flight requests immediately.
-        let waiters: Vec<_> = pending.lock().unwrap().drain().collect();
+        let waiters: Vec<_> = pending
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .drain()
+            .collect();
         for (_, waiter) in waiters {
             let _ = waiter.send(Err(AcpError::Closed));
         }

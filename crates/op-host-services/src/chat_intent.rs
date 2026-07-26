@@ -245,7 +245,7 @@ fn classify_intent_llm_with_timeout(
     // after a timeout makes its sends fail and the drain unwind.
     let iter = provider.send(req);
     let (tx, rx) = mpsc::channel::<ChatDelta>();
-    std::thread::Builder::new()
+    let spawned = std::thread::Builder::new()
         .name("op-chat-classify".into())
         .spawn(move || {
             for delta in iter {
@@ -253,8 +253,12 @@ fn classify_intent_llm_with_timeout(
                     return;
                 }
             }
-        })
-        .expect("spawn op-chat-classify thread");
+        });
+    if let Err(err) = spawned {
+        // TS: any classification failure falls back to { intent: 'new' }.
+        eprintln!("[chat-intent] failed to spawn classify drain thread: {err}");
+        return DesignIntent::New;
+    }
 
     let deadline = Instant::now() + timeout;
     let mut out = String::new();

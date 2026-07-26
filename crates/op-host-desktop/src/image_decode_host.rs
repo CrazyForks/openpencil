@@ -48,19 +48,26 @@ impl ImageDecodeHost {
         let (result_tx, result_rx) = mpsc::channel::<DecodeResult>();
         let job_rx = Arc::new(Mutex::new(job_rx));
         let wake_proxy = Arc::new(Mutex::new(None::<EventLoopProxy<DesktopEvent>>));
-        let workers = (0..WORKER_COUNT)
-            .map(|index| {
+        let workers: Vec<JoinHandle<()>> = (0..WORKER_COUNT)
+            .filter_map(|index| {
                 let job_rx = Arc::clone(&job_rx);
                 let result_tx = result_tx.clone();
                 let wake_proxy = Arc::clone(&wake_proxy);
                 std::thread::Builder::new()
                     .name(format!("op-image-decode-{index}"))
                     .spawn(move || decode_worker(job_rx, result_tx, wake_proxy))
-                    .expect("spawn image decode worker")
+                    .map_err(|err| {
+                        eprintln!("openpencil-desktop: spawn image decode worker failed: {err}");
+                    })
+                    .ok()
             })
             .collect();
+        // With no worker to drain the queue, disable submission entirely so
+        // `pump` retires pending decodes instead of parking them forever
+        // (images stay at thumbnail quality — degraded, not stuck).
+        let job_tx = (!workers.is_empty()).then_some(job_tx);
         Self {
-            job_tx: Some(job_tx),
+            job_tx,
             result_rx,
             workers,
             in_flight: 0,

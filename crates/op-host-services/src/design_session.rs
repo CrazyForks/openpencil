@@ -53,7 +53,8 @@ pub fn start<L: LlmClient + Send + 'static>(
     let abort = AbortFlag::new();
     let worker_abort = abort.clone();
 
-    thread::Builder::new()
+    let failure_tx = delta_tx.clone();
+    if let Err(err) = thread::Builder::new()
         .name("op-design-turn".into())
         .spawn(move || {
             run_design_worker(
@@ -67,7 +68,17 @@ pub fn start<L: LlmClient + Send + 'static>(
                 vision_provider,
             )
         })
-        .expect("spawn op-design-turn thread");
+    {
+        // Thread creation can fail under FD/memory pressure; surface a failed
+        // turn instead of panicking the UI thread.
+        eprintln!("[design-session] failed to spawn op-design-turn thread: {err}");
+        op_editor_core::agent_indicators::end_if_epoch(indicator_epoch);
+        let _ = failure_tx.send(DesignDelta::Done(Err(
+            op_orchestrator::OrchestratorError::Internal(format!(
+                "failed to spawn design worker thread: {err}"
+            )),
+        )));
+    }
 
     DesignSession::from_channels_with_epoch_and_abort(delta_rx, cmd_rx, indicator_epoch, abort)
 }
@@ -172,7 +183,8 @@ pub fn start_subtask_retry<L: LlmClient + Send + 'static>(
     let abort = AbortFlag::new();
     let worker_abort = abort.clone();
 
-    thread::Builder::new()
+    let failure_tx = delta_tx.clone();
+    if let Err(err) = thread::Builder::new()
         .name("op-subtask-retry".into())
         .spawn(move || {
             run_subtask_retry_worker(
@@ -186,7 +198,16 @@ pub fn start_subtask_retry<L: LlmClient + Send + 'static>(
                 worker_abort,
             )
         })
-        .expect("spawn op-subtask-retry thread");
+    {
+        // Same degrade-instead-of-panic path as `start` above.
+        eprintln!("[design-session] failed to spawn op-subtask-retry thread: {err}");
+        op_editor_core::agent_indicators::end_if_epoch(indicator_epoch);
+        let _ = failure_tx.send(DesignDelta::Done(Err(
+            op_orchestrator::OrchestratorError::Internal(format!(
+                "failed to spawn subtask-retry thread: {err}"
+            )),
+        )));
+    }
 
     DesignSession::from_channels_with_epoch_and_abort(delta_rx, cmd_rx, indicator_epoch, abort)
 }

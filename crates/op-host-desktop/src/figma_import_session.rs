@@ -179,7 +179,8 @@ pub(crate) fn spawn_approved(
 
     let path_for_thread = path.clone();
     let worker_cancellation = cancellation.clone();
-    thread::Builder::new()
+    let worker_tx = tx.clone();
+    let spawned = thread::Builder::new()
         .name("op-figma-import".into())
         .spawn(move || {
             let Some(_permit) = worker_cancellation.worker_permit() else {
@@ -189,10 +190,15 @@ pub(crate) fn spawn_approved(
             // Recv side may be gone if the user closed the app
             // mid-parse; tolerate the SendError silently.
             if !worker_cancellation.is_cancelled() {
-                let _ = tx.send(result);
+                let _ = worker_tx.send(result);
             }
-        })
-        .expect("spawn op-figma-import worker");
+        });
+    if let Err(err) = spawned {
+        // Deliver the failure through the normal pump path (error
+        // dialog + overlay-flag clear) instead of crashing the app.
+        eprintln!("[import-figma] failed to spawn worker: {err}");
+        let _ = tx.send(Err(format!("import worker failed to start: {err}")));
+    }
 
     FigmaImportSession {
         path,
@@ -288,7 +294,8 @@ fn conversion_receiver(
     output_mode: ImportOutputMode,
 ) -> Receiver<PersistResult> {
     let (tx, rx) = mpsc::channel();
-    thread::Builder::new()
+    let worker_tx = tx.clone();
+    let spawned = thread::Builder::new()
         .name("op-figma-convert".into())
         .spawn(move || {
             let Some(_permit) = cancellation.worker_permit() else {
@@ -298,10 +305,15 @@ fn conversion_receiver(
                 persist_import_next_to_source(prepared, &source_path, output_mode, &cancellation)
             });
             if !cancellation.is_cancelled() {
-                let _ = tx.send(result);
+                let _ = worker_tx.send(result);
             }
-        })
-        .expect("spawn op-figma-convert worker");
+        });
+    if let Err(err) = spawned {
+        // Deliver the failure through the normal pump path (error
+        // dialog + overlay-flag clear) instead of crashing the app.
+        eprintln!("[import-figma] failed to spawn convert worker: {err}");
+        let _ = tx.send(Err(format!("convert worker failed to start: {err}")));
+    }
     rx
 }
 

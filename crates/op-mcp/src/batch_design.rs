@@ -134,7 +134,12 @@ pub(crate) fn expand_script_arg(
         Ok(BatchInputKind::Operations | BatchInputKind::NodesJson) => return None,
         Err((code, message)) => return Some(Err(ToolOutcome::Err(code, message))),
     }
-    let script = args.get("script").expect("selected script exists");
+    let Some(script) = args.get("script") else {
+        return Some(Err(ToolOutcome::Err(
+            ToolErrorCode::MissingArgument,
+            "script argument is missing".into(),
+        )));
+    };
     #[cfg(feature = "script")]
     {
         let program = match crate::script_runner::run_script_to_program(script) {
@@ -172,7 +177,12 @@ pub(crate) fn dispatch_batch_design(
     };
     let page_id = optional_page_id(args);
     if input == BatchInputKind::Operations {
-        let operations = args.get("operations").expect("selected operations exists");
+        let Some(operations) = args.get("operations") else {
+            return ToolOutcome::Err(
+                ToolErrorCode::MissingArgument,
+                "operations argument is missing".into(),
+            );
+        };
         if let Some(phase) = phase.filter(|_| is_direct_image_operation(operations)) {
             return ToolOutcome::Err(
                 ToolErrorCode::InvalidArgument,
@@ -223,9 +233,12 @@ pub(crate) fn dispatch_batch_design(
             Err(e) => ToolOutcome::Err(ToolErrorCode::InvalidArgument, e),
         };
     }
-    let raw = args
-        .get("nodes_json")
-        .expect("selected nodes_json exists after script expansion");
+    let Some(raw) = args.get("nodes_json") else {
+        return ToolOutcome::Err(
+            ToolErrorCode::MissingArgument,
+            "nodes_json argument is missing".into(),
+        );
+    };
     match parse_batch_items(raw) {
         Ok(items) if items.is_empty() => ToolOutcome::Err(
             ToolErrorCode::InvalidArgument,
