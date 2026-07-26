@@ -1,7 +1,6 @@
 #[test]
 fn canvaskit_mount_suppresses_browser_context_menu() {
-    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/canvaskit.rs"))
-        .expect("canvaskit source is readable");
+    let source = canvaskit_source();
 
     assert!(
         source.contains("\"contextmenu\""),
@@ -15,8 +14,7 @@ fn canvaskit_mount_suppresses_browser_context_menu() {
 
 #[test]
 fn canvaskit_mount_listens_for_window_resize() {
-    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/canvaskit.rs"))
-        .expect("canvaskit source is readable");
+    let source = canvaskit_source();
 
     assert!(
         source.contains("\"resize\""),
@@ -30,8 +28,7 @@ fn canvaskit_mount_listens_for_window_resize() {
 
 #[test]
 fn canvaskit_mount_releases_drags_from_the_window() {
-    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/canvaskit.rs"))
-        .expect("canvaskit source is readable");
+    let source = canvaskit_source();
     let release = source
         .split("Window-level mouseup")
         .nth(1)
@@ -48,8 +45,7 @@ fn canvaskit_mount_releases_drags_from_the_window() {
 
 #[test]
 fn canvaskit_mount_syncs_window_size_before_first_repaint() {
-    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/canvaskit.rs"))
-        .expect("canvaskit source is readable");
+    let source = canvaskit_source();
     let start = source
         .find("let inner = Rc::new(RefCell::new(CkInner")
         .expect("mount creates CkInner");
@@ -67,8 +63,7 @@ fn canvaskit_mount_syncs_window_size_before_first_repaint() {
 
 #[test]
 fn canvaskit_mount_does_not_panic_if_a11y_mirror_borrow_is_busy() {
-    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/canvaskit.rs"))
-        .expect("canvaskit source is readable");
+    let source = canvaskit_source();
     let start = source
         .find("let mirror_target =")
         .expect("a11y mirror listener setup exists");
@@ -86,8 +81,7 @@ fn canvaskit_mount_does_not_panic_if_a11y_mirror_borrow_is_busy() {
 
 #[test]
 fn canvaskit_mount_loads_browser_settings_before_fingerprints_and_first_repaint() {
-    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/canvaskit.rs"))
-        .expect("canvaskit source is readable");
+    let source = canvaskit_source();
     let host = source.find("WidgetHost::new()").expect("host construction");
     let load = source[host..]
         .find("web_settings::load_into")
@@ -107,8 +101,7 @@ fn canvaskit_mount_loads_browser_settings_before_fingerprints_and_first_repaint(
 
 #[test]
 fn canvaskit_repaint_persists_local_settings_and_syncs_only_credential_changes() {
-    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/canvaskit.rs"))
-        .expect("canvaskit source is readable");
+    let source = canvaskit_source();
     let repaint_start = source.find("impl CkInner").expect("CkInner implementation");
     let repaint_end = source[repaint_start..]
         .find("fn sync_a11y")
@@ -146,8 +139,7 @@ fn canvaskit_repaint_persists_local_settings_and_syncs_only_credential_changes()
 
 #[test]
 fn canvaskit_mount_queues_an_initial_snapshot_only_when_local_credentials_exist() {
-    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/canvaskit.rs"))
-        .expect("canvaskit source is readable");
+    let source = canvaskit_source();
     let load = source
         .find("let credential_load = crate::web_settings::load_into")
         .expect("mount records whether an independent credential snapshot loaded");
@@ -219,8 +211,7 @@ fn canvaskit_bootstrap_completion_rechecks_bridge_token_live() {
     // Closes the late-init race: readiness is decided from the LIVE token at
     // completion time, not only the `managed` flag captured before the reset was
     // issued (a slow host's init can land anywhere in the reset's round-trip).
-    let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/canvaskit.rs"))
-        .expect("canvaskit source is readable");
+    let source = canvaskit_source();
     let managed = source
         .find("let managed = crate::live_sync::bridge_token().is_some();")
         .expect("bootstrap captures the pre-reset managed flag");
@@ -239,4 +230,22 @@ fn canvaskit_bootstrap_completion_rechecks_bridge_token_live() {
             && completion.contains("register_late_init_hook"),
         "both the inline and hook recovery paths must route through the shared run_late_init_recovery"
     );
+}
+
+/// The CanvasKit host source: the `canvaskit.rs` spine plus every sibling
+/// module under `canvaskit/` (the file was split at the 800-line ceiling).
+fn canvaskit_source() -> String {
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
+    let mut parts = vec![std::fs::read_to_string(format!("{root}/canvaskit.rs"))
+        .expect("canvaskit spine is readable")];
+    let mut siblings: Vec<std::path::PathBuf> = std::fs::read_dir(format!("{root}/canvaskit"))
+        .expect("canvaskit module directory is readable")
+        .map(|entry| entry.expect("canvaskit module entry").path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
+        .collect();
+    siblings.sort();
+    for path in siblings {
+        parts.push(std::fs::read_to_string(&path).expect("canvaskit module is readable"));
+    }
+    parts.join("\n")
 }

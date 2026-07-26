@@ -68,8 +68,7 @@ assert(opCkBuildMeshGradientData(0, 0, 10, 10, 256, 256, { length: 0 }) === null
 #[test]
 fn rounded_gradient_methods_use_real_canvaskit_shaders_and_vertices() {
     let bridge = bridge_source();
-    let rust = std::fs::read_to_string(format!("{}/src/canvaskit.rs", env!("CARGO_MANIFEST_DIR")))
-        .expect("CanvasKit Rust backend source is readable");
+    let rust = canvaskit_source();
 
     for method in [
         "fillRoundRectLinearGradient(",
@@ -124,4 +123,22 @@ fn rounded_gradient_methods_use_real_canvaskit_shaders_and_vertices() {
         radial_helper.contains("CK.TileMode.Clamp,\n        null,\n        1,"),
         "radial transparency must interpolate in premultiplied colour space"
     );
+}
+
+/// The CanvasKit host source: the `canvaskit.rs` spine plus every sibling
+/// module under `canvaskit/` (the file was split at the 800-line ceiling).
+fn canvaskit_source() -> String {
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
+    let mut parts = vec![std::fs::read_to_string(format!("{root}/canvaskit.rs"))
+        .expect("canvaskit spine is readable")];
+    let mut siblings: Vec<std::path::PathBuf> = std::fs::read_dir(format!("{root}/canvaskit"))
+        .expect("canvaskit module directory is readable")
+        .map(|entry| entry.expect("canvaskit module entry").path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
+        .collect();
+    siblings.sort();
+    for path in siblings {
+        parts.push(std::fs::read_to_string(&path).expect("canvaskit module is readable"));
+    }
+    parts.join("\n")
 }

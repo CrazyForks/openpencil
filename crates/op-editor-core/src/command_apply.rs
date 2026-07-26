@@ -21,6 +21,16 @@
 //! "changed" — see its doc comment for why a no-op merge must still
 //! return `true`.
 //!
+//! ### Module layout
+//!
+//! This file is the spine: [`EditorState::apply`] itself, the single
+//! `match` over every [`EditorCommand`] variant. The supporting code
+//! lives in sibling submodules (per the 800-line-per-file ceiling):
+//!
+//! - `helpers` — enum-string parsers, the dirty-marking classifier,
+//!   page-index resolution and the active-page insert shims
+//! - `app_state` — the `MergeAppState` merge with its ownership rules
+//!
 use crate::align::AlignAction;
 use crate::command::{EditorCommand, VariableScalarPayload};
 use crate::node_id::NodeId;
@@ -32,152 +42,14 @@ use crate::walkers::find_node;
 use jian_ops_schema::conversion::{ConversionEntry, ConversionKind};
 use jian_ops_schema::variable::{VariableKind, VariableScalar};
 
-/// Resolve an `align` action string into an [`AlignAction`].
-fn parse_align_action(s: &str) -> Option<AlignAction> {
-    match s {
-        "left" => Some(AlignAction::Left),
-        "center_h" => Some(AlignAction::CenterH),
-        "right" => Some(AlignAction::Right),
-        "top" => Some(AlignAction::Top),
-        "center_v" => Some(AlignAction::CenterV),
-        "bottom" => Some(AlignAction::Bottom),
-        "distribute_h" => Some(AlignAction::DistributeH),
-        "distribute_v" => Some(AlignAction::DistributeV),
-        _ => None,
-    }
-}
+mod app_state;
+mod helpers;
 
-/// Resolve a `tool` string into a [`Tool`]. Accepts each tool's
-/// stable [`Tool::ident`] token, so the form-widget tools select via
-/// their `snake_case` kind string (`text_input`, `slider`, …; the
-/// dropdown select widget uses `select_widget` to disambiguate from
-/// the `select` pointer tool).
-fn parse_tool(s: &str) -> Option<Tool> {
-    match s {
-        "select" => Some(Tool::Select),
-        "rect" => Some(Tool::Rect),
-        "ellipse" => Some(Tool::Ellipse),
-        "polygon" => Some(Tool::Polygon),
-        "line" => Some(Tool::Line),
-        "pen" => Some(Tool::Pen),
-        "text" => Some(Tool::Text),
-        "frame" => Some(Tool::Frame),
-        "hand" => Some(Tool::Hand),
-        "text_input" => Some(Tool::TextInput),
-        "text_area" => Some(Tool::TextArea),
-        "number_input" => Some(Tool::NumberInput),
-        "select_widget" => Some(Tool::Select_),
-        "radio_group" => Some(Tool::RadioGroup),
-        "switch" => Some(Tool::Switch),
-        "checkbox" => Some(Tool::Checkbox),
-        "slider" => Some(Tool::Slider),
-        "progress" => Some(Tool::Progress),
-        "tabs" => Some(Tool::Tabs),
-        _ => None,
-    }
-}
-
-/// Resolve a variable `kind` string into a [`VariableKind`].
-fn parse_variable_kind(s: &str) -> Option<VariableKind> {
-    match s {
-        "color" => Some(VariableKind::Color),
-        "number" => Some(VariableKind::Number),
-        "boolean" => Some(VariableKind::Boolean),
-        "string" => Some(VariableKind::String),
-        _ => None,
-    }
-}
-
-fn command_page_index(state: &EditorState, page_id: Option<&str>) -> Option<usize> {
-    let Some(raw) = page_id.map(str::trim).filter(|s| !s.is_empty()) else {
-        return Some(
-            state
-                .ui
-                .active_page_index
-                .min(state.page_count().saturating_sub(1)),
-        );
-    };
-    match state.doc.pages.as_ref() {
-        Some(pages) if !pages.is_empty() => pages
-            .iter()
-            .position(|page| page.id == raw)
-            .or_else(|| raw.parse::<usize>().ok().filter(|idx| *idx < pages.len())),
-        _ => raw.parse::<usize>().ok().filter(|idx| *idx == 0),
-    }
-}
-
-pub(crate) fn command_marks_document_dirty(cmd: &EditorCommand) -> bool {
-    use EditorCommand as C;
-    if let C::Batch { commands } = cmd {
-        return commands.iter().any(command_marks_document_dirty);
-    }
-    !matches!(
-        cmd,
-        C::SetActiveTool { .. }
-            | C::SetViewport { .. }
-            | C::Undo
-            | C::Redo
-            | C::CopySelected
-            | C::ClearSelection
-            | C::SetSelection { .. }
-            | C::SetSelectionSet { .. }
-            | C::ToggleNodeSelection { .. }
-            | C::SetActivePage { .. }
-            | C::SetActiveAxisValue { .. }
-            | C::CycleActiveAxisValue { .. }
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn apply_insert_node_on_active_page(
-    state: &mut EditorState,
-    kind: &str,
-    name: &str,
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-    fill_hex: &Option<String>,
-    target_parent: &NodeId,
-) -> bool {
-    state.cmd_insert_node(kind, name, x, y, width, height, fill_hex, target_parent)
-}
-
-fn apply_import_svg_on_active_page(
-    state: &mut EditorState,
-    svg: &str,
-    x: i32,
-    y: i32,
-    target_parent: &NodeId,
-) -> bool {
-    let Some(mut next_id) = state.next_node_id_seed() else {
-        return false;
-    };
-    if target_parent.is_real() {
-        match find_node(state.active_children(), target_parent) {
-            Some(parent) if parent.is_container() => {}
-            _ => return false,
-        }
-    }
-    // `import_svg` pushes its own history snapshot when it inserts ≥ 1
-    // node.
-    let count = state.import_svg(&mut next_id, svg, (x as f64, y as f64));
-    if count == 0 {
-        return false;
-    }
-    if target_parent.is_real() {
-        let Some(imported_root) = state
-            .active_children()
-            .last()
-            .map(|node| NodeId::new(node.id_str()))
-        else {
-            return false;
-        };
-        imported_root.is_real() && state.cmd_move_node(&imported_root, target_parent, None)
-    } else {
-        true
-    }
-}
+pub(crate) use helpers::command_marks_document_dirty;
+use helpers::{
+    apply_import_svg_on_active_page, apply_insert_node_on_active_page, command_page_index,
+    parse_align_action, parse_tool, parse_variable_kind,
+};
 
 impl EditorState {
     /// Apply one [`EditorCommand`]. Returns `true` when the command was
@@ -921,88 +793,5 @@ impl EditorState {
             self.mark_document_changed();
         }
         changed
-    }
-
-    /// Apply [`EditorCommand::MergeAppState`]. Backward-compat: never
-    /// overwrites a key that already lived in the document root before
-    /// this run; among generation-added keys the lower `plan_idx` wins.
-    ///
-    /// Order-independence is achieved via `self.app_state_owner`: a
-    /// side map of `key → owning_plan_idx` for every key written during
-    /// this session. On a new key the owner is recorded and the value is
-    /// inserted. On a conflicting key the incoming `plan_idx` is compared
-    /// to the registered owner; if it is strictly lower it replaces both
-    /// the owner record and the document value.
-    ///
-    /// ## Return contract
-    ///
-    /// The return value signals **"command processed"**, not **"keys
-    /// landed"**. `MergeAppState` is additive by design: doc-owned keys
-    /// always win, and among generation-added keys the lower `plan_idx`
-    /// wins. A run where every incoming key was skipped (already
-    /// doc-owned, or lost the `plan_idx` ownership race) is the designed
-    /// steady-state outcome, not a failure — it MUST return `true`.
-    ///
-    /// This matters beyond the local call site: `MergeAppState` rides
-    /// inside `EditorCommand::Batch` alongside a node insert/replace on
-    /// every generation path (`hoist_generation_state` +
-    /// `with_hoisted_state` in `op-mcp`), and `Batch`'s apply loop
-    /// (`command_batch.rs::cmd_batch`) treats the first sub-command that
-    /// returns `false` as a hard failure and rolls the ENTIRE batch back.
-    /// Returning `false` for a legitimate no-op merge would silently
-    /// reject an otherwise-valid insert/replace every time a regenerated
-    /// section declares a state key the document root already carries —
-    /// a completely normal flow, not a collision. There is currently no
-    /// invalid-command shape for `MergeAppState` (any `plan_idx` /
-    /// `StateEntry` payload is well-formed), so every path below returns
-    /// `true`.
-    fn merge_app_state(
-        &mut self,
-        plan_idx: usize,
-        incoming: std::collections::BTreeMap<String, jian_ops_schema::state::StateEntry>,
-    ) -> bool {
-        if incoming.is_empty() {
-            // Nothing to merge is a no-op, not a failure — see the
-            // return-contract note above. Kept as an early return
-            // (rather than falling into the loop) purely to skip the
-            // `get_or_insert_with` allocation on doc.state when there is
-            // nothing to write into it.
-            return true;
-        }
-        let root = self
-            .doc
-            .state
-            .get_or_insert_with(std::collections::BTreeMap::new);
-        for (key, entry) in incoming {
-            match self.app_state_owner.entry(key.clone()) {
-                std::collections::btree_map::Entry::Vacant(slot) => {
-                    // Pre-existing doc-root key: owned by the file, skip.
-                    // Not a failure — the file's value is authoritative
-                    // and is left untouched.
-                    if root.contains_key(&key) {
-                        continue;
-                    }
-                    root.insert(key, entry);
-                    slot.insert(plan_idx);
-                }
-                std::collections::btree_map::Entry::Occupied(mut slot) => {
-                    // Generation-added key: lower plan_idx wins. Losing
-                    // the race is not a failure — the earlier subtask's
-                    // value already won and stays in place.
-                    if plan_idx < *slot.get() {
-                        tracing::warn!(
-                            target: "op.skills",
-                            key = %key,
-                            winning_plan_idx = plan_idx,
-                            losing_plan_idx = *slot.get(),
-                            "MergeAppState key conflict — lower plan_idx wins"
-                        );
-                        root.insert(key, entry);
-                        slot.insert(plan_idx);
-                    }
-                }
-            }
-        }
-        true
     }
 }

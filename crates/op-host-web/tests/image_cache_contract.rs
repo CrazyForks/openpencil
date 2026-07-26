@@ -78,7 +78,7 @@ fn thumbnail_draw_is_linear_sampled_aspect_cover() {
 
 #[test]
 fn rust_and_js_expose_the_narrow_thumbnail_hook() {
-    let rust = source("src/canvaskit.rs");
+    let rust = canvaskit_source();
     let bridge = source("src/op_ck_bridge.js");
 
     assert!(rust.contains("js_name = drawImageThumb"));
@@ -91,7 +91,7 @@ fn rust_and_js_expose_the_narrow_thumbnail_hook() {
 
 #[test]
 fn wasm_bindgen_packages_the_extracted_cache_module() {
-    let rust = source("src/canvaskit.rs");
+    let rust = canvaskit_source();
     let bridge = source("src/op_ck_bridge.js");
 
     assert!(rust.contains("module = \"/src/op_ck_image_cache.js\""));
@@ -103,4 +103,22 @@ fn wasm_bindgen_packages_the_extracted_cache_module() {
         !bridge.contains("from './op_ck_image_cache.js'"),
         "wasm-bindgen does not recursively copy relative imports from local modules"
     );
+}
+
+/// The CanvasKit host source: the `canvaskit.rs` spine plus every sibling
+/// module under `canvaskit/` (the file was split at the 800-line ceiling).
+fn canvaskit_source() -> String {
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
+    let mut parts = vec![std::fs::read_to_string(format!("{root}/canvaskit.rs"))
+        .expect("canvaskit spine is readable")];
+    let mut siblings: Vec<std::path::PathBuf> = std::fs::read_dir(format!("{root}/canvaskit"))
+        .expect("canvaskit module directory is readable")
+        .map(|entry| entry.expect("canvaskit module entry").path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
+        .collect();
+    siblings.sort();
+    for path in siblings {
+        parts.push(std::fs::read_to_string(&path).expect("canvaskit module is readable"));
+    }
+    parts.join("\n")
 }

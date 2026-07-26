@@ -21,11 +21,18 @@
 use std::collections::BTreeMap;
 
 pub mod batch_design;
+mod batch_design_dsl;
+mod batch_design_normalize;
+#[cfg(test)]
+mod batch_design_ops_tests;
 #[cfg(test)]
 mod batch_design_ref_tests;
 pub mod batch_design_result;
 #[cfg(test)]
+mod batch_design_state_tests;
+#[cfg(test)]
 mod batch_design_tests;
+mod batch_design_wire;
 mod batch_direct_ops;
 #[cfg(test)]
 mod batch_direct_ops_tests;
@@ -38,7 +45,10 @@ mod batch_layered_tests;
 mod batch_page;
 mod batch_program;
 mod batch_program_error;
+mod batch_program_exec_ops;
 pub mod batch_program_objects;
+mod batch_program_parse;
+mod batch_program_resolve;
 #[cfg(test)]
 mod batch_program_tests;
 #[cfg(test)]

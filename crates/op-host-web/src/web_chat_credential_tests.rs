@@ -194,7 +194,8 @@ fn reconcile_models_hides_cli_models_from_the_builtin_only_web_surface() {
 
 #[test]
 fn canvaskit_reconciles_web_models_before_painting() {
-    let source = include_str!("canvaskit.rs");
+    // `CkInner` moved to the `canvaskit/` submodule split (spine + siblings).
+    let source = include_str!("canvaskit/inner.rs");
     let repaint = source
         .split("impl CkInner {")
         .nth(1)
