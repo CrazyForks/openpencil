@@ -1,8 +1,8 @@
-//! Image-panel popover strings for this locale.
+//! Overflow-shard strings for this locale.
 //!
-//! Overflow shard: the main table sits at the repo's 800-line
-//! file cap, so `tr_git` falls through here for the
-//! `imagePanel.*` keys.
+//! The main table sits at the repo's 800-line file cap, so `tr_git`
+//! falls through here for the `imagePanel.*` popover keys and the
+//! `providerProbe.*` keys the Antigravity / Grok Build CLI probes emit.
 
 pub fn lookup(key: &str) -> Option<&'static str> {
     Some(match key {
@@ -14,6 +14,13 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "imagePanel.genNotConfigured" => "Görsel oluşturma yapılandırılmamış",
         "imagePanel.openSettings" => "Ayarları Aç",
         "imagePanel.promptPlaceholder" => "Görseli tanımlayın…",
+        "providerProbe.connectedViaCli" => "{{name}} CLI üzerinden bağlanıldı",
+        "providerProbe.cliExitedWithError" => "{{name}} CLI bir hatayla sonlandı",
+        "providerProbe.cliNoVersionOutput" => "{{name}} CLI sürüm bilgisi üretmedi",
+        "providerProbe.modelQueryFailed" => "{{name}} model sorgusu başarısız oldu veya zaman aşımına uğradı",
+        "providerProbe.modelQueryFailedRunLogin" => "{{name}} model sorgusu başarısız oldu. Kimlik doğrulamak için {{command}} komutunu bir kez çalıştırın.",
+        "providerProbe.modelQueryNeedsAuth" => "{{name}} model sorgusu kimlik doğrulama gerektiriyor. Oturum açmak için {{command}} komutunu bir kez çalıştırın.",
+        "providerProbe.unrecognizedModelCatalog" => "{{name}} tanınmayan bir model kataloğu döndürdü",
         _ => return None,
     })
 }

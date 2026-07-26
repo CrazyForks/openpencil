@@ -26,7 +26,7 @@ use op_orchestrator::{
     ValidationProviders,
 };
 
-use crate::chat_runtime::shared_runtime;
+use crate::chat_runtime::block_on_anywhere;
 use crate::pre_validator::LintPreValidator;
 use crate::validation_providers::{
     validation_system_prompt, vision_validation_enabled, ChatVisionLlmClient,
@@ -136,7 +136,7 @@ pub fn run_design_worker<L: LlmClient + Send>(
         let mut on_progress = |p: Progress| {
             let _ = delta_tx.send(DesignDelta::Progress(p));
         };
-        shared_runtime().block_on(async {
+        block_on_anywhere(async {
             let mut request = request;
             maybe_generate_design_md_for_follow_on_screen(&llm, &mut request, &mut sink, &abort)
                 .await;
@@ -160,7 +160,7 @@ pub fn run_design_worker<L: LlmClient + Send>(
 /// a `RemoteDocSink` — the manual layer of the failed-subtask remediation
 /// feature (the progress panel's per-row "Retry" button, see
 /// `op_orchestrator::retry_subtask`). Mirrors [`start`]'s shape
-/// (channel-based `DesignSession`, `RemoteDocSink`, `shared_runtime`) but
+/// (channel-based `DesignSession`, `RemoteDocSink`, `block_on_anywhere`) but
 /// drives `retry_subtask` instead of the full `Orchestrator::run` pipeline:
 /// ONE attempt at full complexity, no 3-attempt ladder, no salvage pass —
 /// the user is in the loop here (they clicked) and will decide whether to
@@ -229,7 +229,7 @@ fn run_subtask_retry_worker<L: LlmClient + Send>(
         id: subtask.id.clone(),
         label: subtask.label.clone(),
     }));
-    let outcome = shared_runtime().block_on(op_orchestrator::retry_subtask::retry_subtask(
+    let outcome = block_on_anywhere(op_orchestrator::retry_subtask::retry_subtask(
         &subtask,
         &request,
         &llm,
@@ -266,7 +266,7 @@ fn run_subtask_retry_worker<L: LlmClient + Send>(
 /// (`op_orchestrator::run_spawned_agents_concurrent`).
 ///
 /// This is the loop-path `spawn_agents` bridge body: it owns the same
-/// cross-thread `RemoteDocSink` + `shared_runtime` machinery
+/// cross-thread `RemoteDocSink` + `block_on_anywhere` machinery
 /// [`run_design_worker`] uses, so each produced subtree merges into the live
 /// `EditorState` on the UI thread via the existing `pump_commands` drain — but
 /// the subtasks generate in parallel (bounded by `concurrency`) instead of the
@@ -288,7 +288,7 @@ pub fn run_spawned_agents_worker<L: LlmClient + Send>(
     let mut sink = RemoteDocSink::new(cmd_tx, initial_state);
     let abort = AbortFlag::new();
     let concurrency = request.concurrency.max(1);
-    shared_runtime().block_on(async {
+    block_on_anywhere(async {
         op_orchestrator::run_spawned_agents_concurrent(
             &specs,
             &request,

@@ -111,7 +111,7 @@ mod tests {
 
     #[test]
     fn public_only_client_builds_for_a_literal_public_ip() {
-        let client = crate::chat_runtime::shared_runtime().block_on(client_for(
+        let client = crate::chat_runtime::block_on_anywhere(client_for(
             EndpointDialPolicy::PublicOnly,
             "https://93.184.216.34/v1",
         ));
@@ -123,7 +123,7 @@ mod tests {
 
     #[test]
     fn public_only_client_rejects_a_literal_reserved_ip() {
-        let client = crate::chat_runtime::shared_runtime().block_on(client_for(
+        let client = crate::chat_runtime::block_on_anywhere(client_for(
             EndpointDialPolicy::PublicOnly,
             "http://169.254.169.254/v1",
         ));

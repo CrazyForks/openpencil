@@ -217,7 +217,6 @@ impl SubprocessProvider {
     /// Build a subprocess provider with a user-supplied binary path
     /// and argv (defaults to stdin prompt). Used when the settings
     /// modal needs to point at a non-PATH install.
-    #[allow(dead_code)]
     pub fn with_binary(
         binary: impl Into<String>,
         args: Vec<String>,
@@ -229,7 +228,6 @@ impl SubprocessProvider {
     /// Build a subprocess provider with an explicit prompt-routing
     /// mode. Required for CLIs like Claude Code that want the prompt
     /// as a positional argv rather than via stdin.
-    #[allow(dead_code)]
     pub fn with_binary_mode(
         binary: impl Into<String>,
         args: Vec<String>,

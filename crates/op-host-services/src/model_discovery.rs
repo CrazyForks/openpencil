@@ -56,6 +56,8 @@ pub fn discover_models_for_connected(connected: [bool; 6]) -> Vec<ModelEntry> {
         .into_iter()
         .enumerate()
         .filter(|(index, _)| connected[*index])
+        // Joined below — these workers are fanned out, not detached, so their
+        // deadline-bounded probes all complete before the catalog is returned.
         .map(|(_, provider)| std::thread::spawn(move || discover_provider(provider)))
         .collect();
     workers
@@ -249,6 +251,11 @@ pub fn codex_models_from_app_server() -> Option<Vec<ModelEntry>> {
     // Child has no timed read — a reader thread funnels stdout
     // lines through a channel so the main path can apply a
     // deadline and walk away from a hung server.
+    //
+    // Detached on purpose: a thread parked in a blocking pipe read cannot be
+    // signalled, so its ONLY shutdown path is the `child.kill()` below, which
+    // closes the child's stdout and ends the iterator. Every exit from here
+    // therefore has to reach that kill — see the `wrote` guard.
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
@@ -267,23 +274,29 @@ pub fn codex_models_from_app_server() -> Option<Vec<ModelEntry>> {
     );
     let initialized = r#"{"jsonrpc":"2.0","method":"initialized"}"#;
     let list = r#"{"jsonrpc":"2.0","id":2,"method":"model/list","params":{}}"#;
-    writeln!(stdin, "{init}").ok()?;
-    writeln!(stdin, "{initialized}").ok()?;
-    writeln!(stdin, "{list}").ok()?;
-    stdin.flush().ok();
+    // A failed handshake write must NOT `?` out of the function: that would
+    // leave both the child process and its blocked reader thread alive for
+    // the rest of the session. Fall through to the kill instead.
+    let wrote = writeln!(stdin, "{init}")
+        .and_then(|_| writeln!(stdin, "{initialized}"))
+        .and_then(|_| writeln!(stdin, "{list}"))
+        .and_then(|_| stdin.flush())
+        .is_ok();
 
-    let deadline = Instant::now() + CODEX_APP_SERVER_TIMEOUT;
     let mut models = None;
-    while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
-        match rx.recv_timeout(remaining) {
-            Ok(line) => {
-                if let Some(parsed) = parse_codex_model_list(&line) {
-                    models = Some(parsed);
-                    break;
+    if wrote {
+        let deadline = Instant::now() + CODEX_APP_SERVER_TIMEOUT;
+        while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+            match rx.recv_timeout(remaining) {
+                Ok(line) => {
+                    if let Some(parsed) = parse_codex_model_list(&line) {
+                        models = Some(parsed);
+                        break;
+                    }
                 }
+                // Timeout or the reader thread closed — give up.
+                Err(_) => break,
             }
-            // Timeout or the reader thread closed — give up.
-            Err(_) => break,
         }
     }
     let _ = child.kill();
@@ -394,6 +407,10 @@ fn copilot_models_from_stdio() -> Option<Vec<ModelEntry>> {
     let mut stdin = child.stdin.take()?;
     let stdout = child.stdout.take()?;
 
+    // Detached reader thread; same contract as `codex_models_from_app_server`
+    // — a blocking pipe read is uninterruptible, so `child.kill()` closing the
+    // child's stdout is its only shutdown signal and every exit path below
+    // must reach it.
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
@@ -410,21 +427,26 @@ fn copilot_models_from_stdio() -> Option<Vec<ModelEntry>> {
     // official copilot-sdk writes on `copilot --stdio`.
     let connect = r#"{"jsonrpc":"2.0","id":1,"method":"connect","params":{}}"#;
     let list = r#"{"jsonrpc":"2.0","id":2,"method":"models.list","params":{}}"#;
-    write_lsp_frame(&mut stdin, connect).ok()?;
-    write_lsp_frame(&mut stdin, list).ok()?;
-    stdin.flush().ok();
+    // Never `?` out on a write failure — see the codex path: it would strand
+    // the child process plus its blocked reader thread.
+    let wrote = write_lsp_frame(&mut stdin, connect)
+        .and_then(|_| write_lsp_frame(&mut stdin, list))
+        .and_then(|_| stdin.flush())
+        .is_ok();
 
-    let deadline = Instant::now() + COPILOT_STDIO_TIMEOUT;
     let mut models = None;
-    while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
-        match rx.recv_timeout(remaining) {
-            Ok(line) => {
-                if let Some(parsed) = parse_copilot_model_list(&line) {
-                    models = Some(parsed);
-                    break;
+    if wrote {
+        let deadline = Instant::now() + COPILOT_STDIO_TIMEOUT;
+        while let Some(remaining) = deadline.checked_duration_since(Instant::now()) {
+            match rx.recv_timeout(remaining) {
+                Ok(line) => {
+                    if let Some(parsed) = parse_copilot_model_list(&line) {
+                        models = Some(parsed);
+                        break;
+                    }
                 }
+                Err(_) => break,
             }
-            Err(_) => break,
         }
     }
     let _ = child.kill();

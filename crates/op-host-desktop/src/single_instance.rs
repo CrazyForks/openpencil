@@ -134,6 +134,12 @@ impl PrimaryHandle {
         let Some(listener) = self.listener else {
             return;
         };
+        // Detached with no shutdown path, deliberately: this listener IS the
+        // single-instance guard, so its purpose lasts exactly as long as the
+        // process. It is also parked in a blocking `accept()` that no flag can
+        // interrupt — the only way to stop it is to close the socket, which
+        // process exit does for us. Nothing here outlives its usefulness, so a
+        // join handle would only be ceremony.
         std::thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(stream) = stream else { continue };

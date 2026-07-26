@@ -31,7 +31,7 @@ use agent::query::QueryEngine;
 use agent::stream::Event;
 use futures::StreamExt;
 use op_ai::chat_provider::{ChatDelta, ChatProvider, ChatRequest, EffortLevel, StopReason};
-use tokio::runtime::{Builder, Runtime};
+use tokio::runtime::{Builder, Handle, Runtime, RuntimeFlavor};
 use tokio::sync::mpsc;
 
 /// Process-wide tokio runtime used for every BuiltIn chat turn. We
@@ -48,6 +48,56 @@ pub fn shared_runtime() -> &'static Runtime {
             .build()
             .expect("chat runtime build")
     })
+}
+
+/// Drive `fut` to completion from a **synchronous** function, wherever that
+/// function happens to be called from.
+///
+/// The workspace is full of sync entry points (probe workers, widget-host
+/// pumps, orchestrator worker threads) that need one `async` call. Writing
+/// `shared_runtime().block_on(fut)` there is a latent panic: the moment such a
+/// function is reached from inside a tokio worker, tokio aborts with
+/// *"Cannot start a runtime from within a runtime"*. This helper is the one
+/// sanctioned bridge; prefer it over any bare `Runtime::block_on` in a sync fn.
+///
+/// # Contract
+///
+/// * **No ambient runtime** (a plain `std::thread` worker, `main`, a test) —
+///   the future runs on the process-wide [`shared_runtime`]. Unchanged from
+///   the historical behavior.
+/// * **Ambient multi-thread runtime** — [`tokio::task::block_in_place`] hands
+///   this worker's queued tasks to a sibling worker and *exits* the runtime
+///   context, so the captured [`Handle`]'s `block_on` is legal and no other
+///   task on the runtime is starved while we block. The future keeps running
+///   on the ambient reactor, so any IO/timer it created stays valid.
+/// * **Ambient current-thread runtime** — panics with an actionable message.
+///   There is no sound rescue: `block_in_place` is rejected outright by tokio
+///   on that flavor, and blocking the scheduler's *only* thread with a foreign
+///   executor (`futures::executor::block_on`) parks its IO/timer driver, so
+///   any future doing real IO would hang forever. Failing loudly at the call
+///   site beats a silent deadlock. Callers that genuinely run on a
+///   current-thread runtime must `.await` instead of reaching for this bridge.
+///
+/// Deliberately unbounded by `Send` / `'static`: several call sites (the
+/// orchestrator's `RemoteDocSink` runs, which hold `&dyn` trait objects across
+/// the await points) pass borrowing, non-`Send` futures, so the helper can
+/// never offload work to another thread — it always blocks the caller.
+#[track_caller]
+pub fn block_on_anywhere<F: std::future::Future>(fut: F) -> F::Output {
+    match Handle::try_current() {
+        Ok(handle) if handle.runtime_flavor() == RuntimeFlavor::CurrentThread => {
+            panic!(
+                "block_on_anywhere was called from a current-thread tokio runtime; \
+                 blocking its only worker would park the IO/timer driver. \
+                 Await the future directly instead."
+            )
+        }
+        // Multi-thread runtime: shed the worker, then block on the ambient
+        // handle (block_in_place has exited the runtime context for us).
+        Ok(handle) => tokio::task::block_in_place(|| handle.block_on(fut)),
+        // No runtime on this thread — the plain, historical path.
+        Err(_) => shared_runtime().block_on(fut),
+    }
 }
 
 /// `ChatProvider` impl that drives `agent::QueryEngine` directly. The
@@ -524,6 +574,38 @@ mod tests {
         // a design prompt must yield a non-empty preamble.
         let preamble = resolved_skill_preamble("design a login form");
         assert!(!preamble.is_empty());
+    }
+
+    #[test]
+    fn block_on_anywhere_runs_without_an_ambient_runtime() {
+        assert_eq!(block_on_anywhere(async { 21 * 2 }), 42);
+    }
+
+    #[test]
+    fn block_on_anywhere_runs_inside_a_multi_thread_worker() {
+        // The regression this helper exists for: a sync function reached
+        // from a tokio worker used to abort with "Cannot start a runtime
+        // from within a runtime".
+        let value = shared_runtime().block_on(async {
+            tokio::spawn(async { block_on_anywhere(async { 7_u32 }) })
+                .await
+                .expect("worker task must not panic")
+        });
+        assert_eq!(value, 7);
+    }
+
+    #[test]
+    fn block_on_anywhere_accepts_a_borrowing_non_send_future() {
+        // Orchestrator call sites pass futures holding `&dyn Trait`, so the
+        // helper must not require `Send` / `'static`.
+        let owned = String::from("borrowed");
+        let borrowed: &str = &owned;
+        let marker = std::rc::Rc::new(1_u8);
+        let out = block_on_anywhere(async move {
+            let _not_send = marker;
+            borrowed.len()
+        });
+        assert_eq!(out, owned.len());
     }
 
     #[test]

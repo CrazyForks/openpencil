@@ -106,6 +106,10 @@ impl RemoteImageSession {
 
 fn spawn_fetch(id: u64, url: String, fetcher: Fetcher) -> FetchJob {
     let (tx, rx) = mpsc::channel();
+    // Detached one-shot, and safe to leave so: the fetch carries a 20 s reqwest
+    // timeout and a size cap, so the worker always returns. `MAX_CONCURRENT_FETCHES`
+    // bounds how many can exist at once, and a dropped `rx` only makes the
+    // final send a no-op.
     std::thread::spawn(move || {
         let _ = tx.send(fetcher(&url));
     });
@@ -113,16 +117,13 @@ fn spawn_fetch(id: u64, url: String, fetcher: Fetcher) -> FetchJob {
 }
 
 /// Blocking HTTPS fetch — only ever runs on a worker thread. `reqwest`
-/// is async-only in this workspace, so the worker spins a
-/// single-threaded tokio runtime for the one call (`update_check.rs`
-/// precedent). Validates the response is a plausible image (content
-/// type or magic bytes) and bounded in size.
+/// is async-only in this workspace, so the call is bridged through
+/// `chat_runtime::block_on_anywhere`: on the plain worker thread it uses the
+/// shared runtime, and it stays correct if this sync entry point is ever
+/// reached from a tokio worker. Validates the response is a plausible image
+/// (content type or magic bytes) and bounded in size.
 fn fetch_remote_image_blocking(url: &str) -> Result<Vec<u8>, String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| e.to_string())?;
-    runtime.block_on(async {
+    op_host_services::chat_runtime::block_on_anywhere(async {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(20))
             .user_agent(concat!("openpencil-desktop/", env!("CARGO_PKG_VERSION")))

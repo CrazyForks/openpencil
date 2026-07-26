@@ -11,7 +11,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use crate::jsonrpc::{dispatch_inbound, JsonRpcEngine};
+use crate::jsonrpc::{dispatch_inbound, JsonRpcEngine, NOTIFICATION_CAPACITY, OUTBOUND_CAPACITY};
 use crate::protocol::{
     InitializeResult, NewSessionResult, SessionNotification, METHOD_INITIALIZE, METHOD_SESSION_NEW,
     METHOD_SESSION_PROMPT, PROTOCOL_VERSION,
@@ -52,7 +52,7 @@ pub struct NewSessionOptions {
 /// A live ACP connection to one agent.
 pub struct AcpConnection {
     engine: JsonRpcEngine,
-    notifications: Option<mpsc::UnboundedReceiver<SessionNotification>>,
+    notifications: Option<mpsc::Receiver<SessionNotification>>,
     child: Option<Child>,
     tasks: Vec<JoinHandle<()>>,
     agent_info: AcpAgentInfo,
@@ -67,8 +67,8 @@ impl AcpConnection {
         R: AsyncRead + Unpin + Send + 'static,
         W: AsyncWrite + Unpin + Send + 'static,
     {
-        let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Value>();
-        let (notif_tx, notif_rx) = mpsc::unbounded_channel::<SessionNotification>();
+        let (out_tx, mut out_rx) = mpsc::channel::<Value>(OUTBOUND_CAPACITY);
+        let (notif_tx, notif_rx) = mpsc::channel::<SessionNotification>(NOTIFICATION_CAPACITY);
         let engine = JsonRpcEngine::new(out_tx);
         let pending = engine.pending();
         let reply_tx = engine.out_tx();
@@ -194,7 +194,7 @@ impl AcpConnection {
 
     /// Take the `session/update` notification receiver — callable
     /// once; subsequent calls return `None`.
-    pub fn take_notifications(&mut self) -> Option<mpsc::UnboundedReceiver<SessionNotification>> {
+    pub fn take_notifications(&mut self) -> Option<mpsc::Receiver<SessionNotification>> {
         self.notifications.take()
     }
 
@@ -288,8 +288,8 @@ async fn connect_remote(config: &AcpAgentConfig) -> Result<AcpConnection, AcpErr
         .map_err(|e| AcpError::Transport(e.to_string()))?;
     let (mut sink, mut stream) = ws.split();
 
-    let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Value>();
-    let (notif_tx, notif_rx) = mpsc::unbounded_channel::<SessionNotification>();
+    let (out_tx, mut out_rx) = mpsc::channel::<Value>(OUTBOUND_CAPACITY);
+    let (notif_tx, notif_rx) = mpsc::channel::<SessionNotification>(NOTIFICATION_CAPACITY);
     let engine = JsonRpcEngine::new(out_tx);
     let pending = engine.pending();
     let reply_tx = engine.out_tx();

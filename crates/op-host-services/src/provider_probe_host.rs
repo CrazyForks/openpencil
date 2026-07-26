@@ -22,6 +22,9 @@ impl ProviderConnectJob {
     pub fn spawn(provider: op_editor_core::AgentProvider) -> Self {
         let (tx, rx) = mpsc::channel();
         let sc_provider = provider_to_sc(provider);
+        // Detached one-shot: `connect_provider` runs deadline-bounded CLI
+        // probes and returns a single outcome, so the thread always finishes on
+        // its own. A dropped `rx` (modal closed) only makes the send a no-op.
         std::thread::spawn(move || {
             // Resolved on the worker (settings file + OS locale) so the
             // probe's status/error strings match the chrome language.

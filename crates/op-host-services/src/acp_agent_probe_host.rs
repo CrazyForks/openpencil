@@ -47,6 +47,9 @@ impl AcpAgentConnectJob {
         let id = agent.id.clone();
         let config = acp_config_for_probe(&agent);
         let (tx, rx) = mpsc::channel();
+        // Detached one-shot: the probe's handshake calls carry op-acp's
+        // 30 s `HANDSHAKE_TIMEOUT`, and `AcpConnection::drop` kills the spawned
+        // agent + aborts its IO tasks, so this thread always terminates.
         std::thread::spawn(move || {
             let outcome = probe_acp_agent_config(config);
             let _ = tx.send(outcome);
@@ -98,7 +101,9 @@ impl AcpAgentConnectJob {
 }
 
 pub fn probe_acp_agent_config(config: op_acp::AcpAgentConfig) -> AcpAgentProbeOutcome {
-    crate::chat_runtime::shared_runtime().block_on(async move {
+    // Reached from the probe worker thread today and from tokio workers via
+    // the web-canvas server, so bridge through the runtime-aware helper.
+    crate::chat_runtime::block_on_anywhere(async move {
         match op_acp::connect_acp_agent(&config).await {
             Ok(conn) => {
                 let info = format_acp_agent_info(conn.agent_info(), &config.display_name);

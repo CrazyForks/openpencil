@@ -23,11 +23,11 @@ pub(crate) fn run_generate_blocking(
     width: Option<f64>,
     height: Option<f64>,
 ) -> Result<String, String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| format!("tokio runtime: {e}"))?;
-    runtime.block_on(run_generate(prompt, profile, width, height))
+    // Runtime-aware bridge: this is called from the image-panel worker thread
+    // today, but a private current-thread runtime here would abort with
+    // "Cannot start a runtime from within a runtime" the moment the caller
+    // moves onto a tokio worker. See `chat_runtime::block_on_anywhere`.
+    op_host_services::chat_runtime::block_on_anywhere(run_generate(prompt, profile, width, height))
 }
 
 async fn run_generate(

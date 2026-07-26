@@ -482,7 +482,7 @@ mod catalog_integrity_tests {
     fn every_locale_has_exactly_the_english_key_set() {
         let all_tables = tables();
         let expected = table_keys(all_tables[0].0, all_tables[0].1, all_tables[0].2);
-        assert_eq!(expected.len(), 1098, "update the intentional catalog size");
+        assert_eq!(expected.len(), 1105, "update the intentional catalog size");
 
         for (name, main, git, lookup) in all_tables {
             let actual = table_keys(name, main, git);

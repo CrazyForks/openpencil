@@ -88,7 +88,6 @@ impl ClaudeCodeProvider {
     /// defaults). The CLI is discovered via the SDK's own `find_cli`
     /// (PATH + npm-global / yarn / Linux package locations) — no
     /// binary path needed up front.
-    #[allow(dead_code)]
     pub fn new() -> Self {
         Self {
             options: None,
@@ -113,7 +112,12 @@ impl ClaudeCodeProvider {
     /// allowlist, MCP servers, sandbox config, etc.). The settings
     /// modal calls this when the user has tuned options away from
     /// defaults.
-    #[allow(dead_code)]
+    ///
+    /// Retained despite having no in-tree caller yet: it is the only seam
+    /// that can put a `Some` into `self.options`, which `send` reads on every
+    /// turn through [`effective_options`]. Deleting it would strand that
+    /// field — and `effective_options`'s `base` argument — permanently at
+    /// `None`.
     pub fn with_options(options: ClaudeAgentOptions) -> Self {
         Self {
             options: Some(options),
@@ -462,15 +466,6 @@ fn map_result_subtype(s: &str) -> StopReason {
 // reach the SDK without re-importing.
 #[allow(unused_imports)]
 pub use anthropic_agent_sdk::{ClaudeAgentOptions as ClaudeOptions, ClaudeSDKClient};
-
-/// Returned by `ClaudeCodeProvider::new` / `with_options` chain
-/// for the rare smoke test where we want to confirm the wiring
-/// compiles end-to-end without a live `claude` binary on PATH.
-#[doc(hidden)]
-#[allow(dead_code)]
-pub fn _smoke_sdk_arc_send() -> Arc<dyn ChatProvider> {
-    Arc::new(ClaudeCodeProvider::new())
-}
 
 #[cfg(test)]
 mod tests {

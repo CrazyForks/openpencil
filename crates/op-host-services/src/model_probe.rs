@@ -32,6 +32,11 @@ impl ModelProbe {
             return Self::idle();
         }
         let (tx, rx) = mpsc::channel();
+        // Detached one-shot: the worker sends exactly one catalog and returns.
+        // `discover_models_for_connected` is itself deadline-bounded (every CLI
+        // probe under it runs against a timeout), so the thread cannot outlive
+        // its purpose — dropping `rx` on the UI side just makes the final send
+        // a no-op. Nothing to join, nothing to signal.
         std::thread::spawn(move || {
             let _ = tx.send(discover_models_for_connected(connected));
         });

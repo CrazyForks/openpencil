@@ -352,6 +352,9 @@ pub struct WidgetHost {
 }
 
 impl WidgetHost {
+    // Single-clock setters — retained for parity with the native host's
+    // `WidgetHostNative`, whose tests advance one clock at a time. The web
+    // mount only ever sets both together via `set_clocks`.
     #[allow(dead_code)]
     pub fn set_now_ms(&mut self, now_ms: u64) {
         self.now_ms = now_ms;
@@ -374,6 +377,8 @@ impl WidgetHost {
         self.editor_state.active_text_input().is_some()
     }
 
+    /// Companion to `caret_animation_active` — unwired for the same reason
+    /// (the CanvasKit mount has no deadline pump to feed it).
     #[allow(dead_code)]
     pub fn next_animation_deadline_ms(&self) -> Option<u64> {
         let mut next = op_editor_core::agent_indicators::next_reveal_deadline_ms(self.now_ms);

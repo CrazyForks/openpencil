@@ -13,6 +13,7 @@ use std::time::Duration;
 use op_ai::agent_settings_state::AgentProvider;
 use op_ai::chat_models::ModelEntry;
 use op_ai::chat_provider::CliName;
+use op_i18n::Locale;
 
 use crate::chat_subprocess_safety;
 use crate::cli_probe_support::{bounded_cli_output, diagnose_timeout, BoundedProbe};
@@ -21,11 +22,37 @@ use crate::provider_probe::ProbeOutcome;
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Translate one `providerProbe.*` key with named placeholders. Mirrors the
+/// private `tw` helper in `provider_probe.rs` — these probes produce the same
+/// Settings-card copy, so they resolve against the same catalog.
+fn tw(locale: Locale, key: &'static str, vars: &[(&str, &str)]) -> String {
+    op_i18n::translate_with(locale, key, vars)
+}
+
+/// Entry point kept argument-free so `provider_probe::connect_provider` calls
+/// it unchanged; the locale is resolved the same way the probe worker resolves
+/// it (settings file, then OS locale).
+///
+/// TODO(follow-up, needs `provider_probe.rs`): have `connect_provider` forward
+/// the `locale` it already holds instead of re-resolving here.
 pub fn connect_antigravity() -> ProbeOutcome {
+    connect_antigravity_localized(crate::provider_probe::resolved_ui_locale())
+}
+
+/// See [`connect_antigravity`]. Split out so tests can pin the locale.
+pub fn connect_antigravity_localized(locale: Locale) -> ProbeOutcome {
     let Some(exe) = resolve_cli("agy") else {
-        return not_installed("Antigravity CLI not found", AgentProvider::Antigravity);
+        return not_installed(
+            tw(
+                locale,
+                "providerProbe.cliNotFound",
+                &[("name", "Antigravity")],
+            ),
+            AgentProvider::Antigravity,
+        );
     };
     let version = match cli_version(
+        locale,
         CliName::Antigravity,
         &exe,
         &["--version"],
@@ -33,9 +60,10 @@ pub fn connect_antigravity() -> ProbeOutcome {
         "`agy`",
     ) {
         Ok(version) => version,
-        Err(error) => return failed(&error),
+        Err(error) => return failed(error),
     };
     let models = match query_models(
+        locale,
         CliName::Antigravity,
         &exe,
         "Antigravity",
@@ -43,23 +71,41 @@ pub fn connect_antigravity() -> ProbeOutcome {
         crate::cli_model_discovery::parse_antigravity_models,
     ) {
         Ok(models) => models,
-        Err(error) => return failed(&error),
+        Err(error) => return failed(error),
     };
     ProbeOutcome {
         connected: true,
         models,
-        connection_info: Some("Connected via Antigravity CLI".to_string()),
+        connection_info: Some(tw(
+            locale,
+            "providerProbe.connectedViaCli",
+            &[("name", "Antigravity")],
+        )),
         hint_path: Some("~/.gemini/antigravity-cli/settings.json".to_string()),
         version: Some(version),
         ..ProbeOutcome::default()
     }
 }
 
+/// See [`connect_antigravity`] for why this resolves its own locale.
 pub fn connect_grok_build() -> ProbeOutcome {
+    connect_grok_build_localized(crate::provider_probe::resolved_ui_locale())
+}
+
+/// See [`connect_grok_build`]. Split out so tests can pin the locale.
+pub fn connect_grok_build_localized(locale: Locale) -> ProbeOutcome {
     let Some(exe) = resolve_cli("grok") else {
-        return not_installed("Grok Build CLI not found", AgentProvider::GrokBuild);
+        return not_installed(
+            tw(
+                locale,
+                "providerProbe.cliNotFound",
+                &[("name", "Grok Build")],
+            ),
+            AgentProvider::GrokBuild,
+        );
     };
     let version = match cli_version(
+        locale,
         CliName::GrokBuild,
         &exe,
         &["version"],
@@ -67,9 +113,10 @@ pub fn connect_grok_build() -> ProbeOutcome {
         "`grok`",
     ) {
         Ok(version) => version,
-        Err(error) => return failed(&error),
+        Err(error) => return failed(error),
     };
     let models = match query_models(
+        locale,
         CliName::GrokBuild,
         &exe,
         "Grok Build",
@@ -77,35 +124,40 @@ pub fn connect_grok_build() -> ProbeOutcome {
         crate::cli_model_discovery::parse_grok_models,
     ) {
         Ok(models) => models,
-        Err(error) => return failed(&error),
+        Err(error) => return failed(error),
     };
     ProbeOutcome {
         connected: true,
         models,
-        connection_info: Some("Connected via Grok Build CLI".to_string()),
+        connection_info: Some(tw(
+            locale,
+            "providerProbe.connectedViaCli",
+            &[("name", "Grok Build")],
+        )),
         hint_path: Some("~/.grok/config.toml".to_string()),
         version: Some(version),
         ..ProbeOutcome::default()
     }
 }
 
-fn not_installed(error: &str, provider: AgentProvider) -> ProbeOutcome {
+fn not_installed(error: String, provider: AgentProvider) -> ProbeOutcome {
     ProbeOutcome {
-        error: Some(error.to_string()),
+        error: Some(error),
         not_installed: true,
         install_command: Some(crate::provider_probe::install_command(provider).to_string()),
         ..ProbeOutcome::default()
     }
 }
 
-fn failed(error: &str) -> ProbeOutcome {
+fn failed(error: String) -> ProbeOutcome {
     ProbeOutcome {
-        error: Some(error.to_string()),
+        error: Some(error),
         ..ProbeOutcome::default()
     }
 }
 
 fn cli_version(
+    locale: Locale,
     cli: CliName,
     exe: &Path,
     args: &[&str],
@@ -115,7 +167,11 @@ fn cli_version(
     match bounded_cli_output(cli, exe, args, PROBE_TIMEOUT) {
         BoundedProbe::Completed(output) => {
             if !output.status.success() {
-                return Err(format!("{provider} CLI exited with an error"));
+                return Err(tw(
+                    locale,
+                    "providerProbe.cliExitedWithError",
+                    &[("name", provider)],
+                ));
             }
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -125,11 +181,17 @@ fn cli_version(
                 stdout.trim()
             };
             if version.is_empty() {
-                Err(format!("{provider} CLI produced no version output"))
+                Err(tw(
+                    locale,
+                    "providerProbe.cliNoVersionOutput",
+                    &[("name", provider)],
+                ))
             } else {
                 Ok(version.to_string())
             }
         }
+        // `diagnose_timeout` echoes the CLI's own (English) auth prompt back to
+        // the user, so it stays untranslated on purpose — see its doc comment.
         BoundedProbe::TimedOut { stdout, stderr } => Err(diagnose_timeout(
             cli,
             provider,
@@ -138,11 +200,17 @@ fn cli_version(
             &stdout,
             &stderr,
         )),
-        BoundedProbe::Failed => Err(format!("{provider} CLI not responding")),
+        BoundedProbe::Failed => Err(tw(
+            locale,
+            "providerProbe.cliNotResponding",
+            &[("name", provider)],
+        )),
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn query_models(
+    locale: Locale,
     cli: CliName,
     exe: &Path,
     provider: &str,
@@ -161,7 +229,13 @@ fn query_models(
                 &stderr,
             ))
         }
-        BoundedProbe::Failed => return Err(format!("{provider} model query failed or timed out")),
+        BoundedProbe::Failed => {
+            return Err(tw(
+                locale,
+                "providerProbe.modelQueryFailed",
+                &[("name", provider)],
+            ))
+        }
     };
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -170,8 +244,13 @@ fn query_models(
             return Err(message);
         }
         return Err(if stderr.trim().is_empty() {
-            format!("{provider} model query failed. Run {login_command} once to authenticate.")
+            tw(
+                locale,
+                "providerProbe.modelQueryFailedRunLogin",
+                &[("name", provider), ("command", login_command)],
+            )
         } else {
+            // The CLI's own diagnostic — surfaced verbatim, not translated.
             stderr.trim().to_string()
         });
     }
@@ -180,10 +259,22 @@ fn query_models(
     if !models.is_empty() {
         return Ok(models);
     }
-    Err(catalog_error(provider, login_command, &stdout, &stderr))
+    Err(catalog_error(
+        locale,
+        provider,
+        login_command,
+        &stdout,
+        &stderr,
+    ))
 }
 
-fn catalog_error(provider: &str, login_command: &str, stdout: &str, stderr: &str) -> String {
+fn catalog_error(
+    locale: Locale,
+    provider: &str,
+    login_command: &str,
+    stdout: &str,
+    stderr: &str,
+) -> String {
     let diagnostics = format!("{stdout}\n{stderr}").to_ascii_lowercase();
     let auth_required = [
         "sign in",
@@ -199,13 +290,19 @@ fn catalog_error(provider: &str, login_command: &str, stdout: &str, stderr: &str
     .iter()
     .any(|marker| diagnostics.contains(marker));
     if auth_required {
-        format!(
-            "{provider} model query requires authentication. Run {login_command} once to sign in."
+        tw(
+            locale,
+            "providerProbe.modelQueryNeedsAuth",
+            &[("name", provider), ("command", login_command)],
         )
     } else if stdout.trim().is_empty() {
-        format!("{provider} model query returned no model catalog")
+        tw(locale, "providerProbe.noModelList", &[("name", provider)])
     } else {
-        format!("{provider} returned an unrecognized model catalog")
+        tw(
+            locale,
+            "providerProbe.unrecognizedModelCatalog",
+            &[("name", provider)],
+        )
     }
 }
 
@@ -216,7 +313,7 @@ mod tests {
 
     #[test]
     fn not_installed_outcome_carries_provider_guidance() {
-        let outcome = not_installed("missing", AgentProvider::Antigravity);
+        let outcome = not_installed("missing".to_string(), AgentProvider::Antigravity);
         assert!(outcome.not_installed);
         assert_eq!(outcome.error.as_deref(), Some("missing"));
         assert_eq!(
@@ -237,12 +334,64 @@ mod tests {
 
     #[test]
     fn empty_catalog_error_distinguishes_auth_from_bad_output() {
-        assert!(catalog_error("Grok Build", "`grok`", "", "login required")
-            .contains("requires authentication"));
+        assert!(
+            catalog_error(Locale::EnUs, "Grok Build", "`grok`", "", "login required")
+                .contains("requires authentication")
+        );
         assert_eq!(
-            catalog_error("Grok Build", "`grok`", "unexpected prose", ""),
+            catalog_error(Locale::EnUs, "Grok Build", "`grok`", "unexpected prose", ""),
             "Grok Build returned an unrecognized model catalog"
         );
+        // Empty stdout is a different failure shape: no catalog at all.
+        assert_eq!(
+            catalog_error(Locale::EnUs, "Antigravity", "`agy`", "", ""),
+            "No models found. Antigravity did not return a model list."
+        );
+    }
+
+    #[test]
+    fn probe_strings_resolve_through_the_locale_catalog() {
+        // The regression this replaced: hardcoded English in a Settings card
+        // that the rest of the modal renders in the chrome language.
+        assert_eq!(
+            tw(
+                Locale::ZhCn,
+                "providerProbe.connectedViaCli",
+                &[("name", "Antigravity")]
+            ),
+            "已通过 Antigravity CLI 连接"
+        );
+        assert_eq!(
+            tw(
+                Locale::Ja,
+                "providerProbe.connectedViaCli",
+                &[("name", "Grok Build")]
+            ),
+            "Grok Build CLI 経由で接続しました"
+        );
+        // Every new key must resolve directly (not via the English fallback)
+        // in every shipped locale.
+        for key in [
+            "providerProbe.connectedViaCli",
+            "providerProbe.cliExitedWithError",
+            "providerProbe.cliNoVersionOutput",
+            "providerProbe.modelQueryFailed",
+            "providerProbe.modelQueryFailedRunLogin",
+            "providerProbe.modelQueryNeedsAuth",
+            "providerProbe.unrecognizedModelCatalog",
+        ] {
+            for locale in Locale::ALL {
+                let rendered = tw(
+                    locale,
+                    key,
+                    &[("name", "Grok Build"), ("command", "`grok`")],
+                );
+                assert!(
+                    rendered.contains("Grok Build") && !rendered.contains("{{"),
+                    "locale {locale:?} left `{key}` unresolved: {rendered}"
+                );
+            }
+        }
     }
 
     // `BoundedProbe` / `bounded_cli_output` / `diagnose_timeout` /

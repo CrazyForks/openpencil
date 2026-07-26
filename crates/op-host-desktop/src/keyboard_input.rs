@@ -520,6 +520,10 @@ impl DesktopApp {
             return None;
         }
         let (tx, rx) = std::sync::mpsc::channel();
+        // Detached one-shot: a pure CPU decode over an owned `String` with no
+        // IO and no loop, so it always returns. The epoch guard below (not a
+        // thread signal) is what discards a stale result; a dropped `rx` just
+        // makes the send a no-op.
         std::thread::spawn(move || {
             let nodes = op_figma::extract_figma_clipboard_data(&html)
                 .map(|data| op_figma::figma_clipboard_to_nodes(&data.buffer, Some(&html)).nodes)
@@ -572,6 +576,8 @@ impl DesktopApp {
             return None;
         }
         let (tx, rx) = std::sync::mpsc::channel();
+        // Detached one-shot; same contract as `try_figma_clipboard_paste` — a
+        // self-terminating CPU decode, staleness handled by the epoch guard.
         std::thread::spawn(move || {
             let result = op_html::import_html(&html, &op_html::HtmlImportOptions::default());
             let _ = tx.send((result.nodes, result.warnings));
