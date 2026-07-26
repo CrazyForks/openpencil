@@ -6,26 +6,16 @@
 //! op-editor-core `NodeId`s before feeding mutators. Press-helper
 //! methods (`create_node_for_active_tool`,
 //! `dispatch_agent_settings_press`) live in `press_helpers.rs`.
+//!
+//! The `apply_press` tier bodies live in the `press_*_tiers.rs` siblings;
+//! `press_ctx.rs` carries the per-event state they share.
 
-use super::{
-    ChatDragState, ChatInputSelectionDragState, ChatResizeState, ChatTextSelectionDragState,
-    CodeSelectionDragState, CreateDragState, DragState, HandleDragState, PanelResize,
-    PanelResizeKind, RotateDragState, WidgetHostNative,
-};
-use op_editor_core::codegen::CodeSelection;
-use op_editor_core::host_press_transitions as core_press;
-use op_editor_core::pen_node_ext::PenNodeExt;
-use op_editor_ui::widgets::chat_click_flow;
-use op_editor_ui::widgets::host_canvas_geometry as canvas_geometry;
+use super::press_ctx::PressCtx;
+use super::WidgetHostNative;
 use op_editor_ui::widgets::press_flow::{
-    self, LayerContextMenuPress, LayerContextStep, LocalePickerPress, OpenLayerMenuPress,
-    PropertyOverlayPress, TopBarPress,
+    self, LayerContextMenuPress, LayerContextStep, PropertyOverlayPress,
 };
-use op_editor_ui::widgets::{
-    rotation_corner_at_point, selection_handle_at_point, AIChatHit, AIChatPlaceholder,
-    CanvasViewport, ImportMenu, ImportMenuChoice, PropertyPanel, Toolbar, TopBar, TopBarHit,
-    TOP_BAR_HEIGHT,
-};
+use op_editor_ui::widgets::TOP_BAR_HEIGHT;
 use op_editor_ui::{Point2D, Rect};
 
 impl WidgetHostNative {
@@ -60,7 +50,10 @@ impl WidgetHostNative {
     /// Platform tail for a press routed to an open property-panel
     /// popover (`press_flow::press_*`). Every outcome consumes the
     /// press.
-    fn finish_property_overlay_press(&mut self, press: PropertyOverlayPress) -> bool {
+    pub(in crate::widget_host) fn finish_property_overlay_press(
+        &mut self,
+        press: PropertyOverlayPress,
+    ) -> bool {
         match press {
             PropertyOverlayPress::Action(action) => self.apply_property_action(action),
             PropertyOverlayPress::Swallow => {}
@@ -117,6 +110,17 @@ impl WidgetHostNative {
     }
 
     /// Mouse-press handler. Returns whether anything visible changed.
+    /// Mouse-press handler. Returns whether anything visible changed.
+    ///
+    /// A strictly ordered hit-test ladder: overlays before panels before
+    /// canvas (see `crates/CLAUDE.md`). Each tier helper returns
+    /// `Option<bool>` — `None` means "declined, fall through to the next
+    /// tier", `Some(dirty)` means "claimed the press, and this is the
+    /// repaint signal".
+    ///
+    /// THE CALL ORDER BELOW *IS* THE BEHAVIOUR. The tier bodies live in
+    /// the `press_*_tiers.rs` siblings only to respect the per-file line
+    /// cap; reordering these calls changes which surface owns a click.
     pub fn apply_press(
         &mut self,
         x: f32,
@@ -147,107 +151,21 @@ impl WidgetHostNative {
             self.place_text_edit_caret(offset);
             return true;
         }
-        // Missing-font prompt is the absolute top-most modal. Outside presses
-        // are swallowed; only its explicit dismiss button closes it.
-        let missing_fonts_rect =
-            op_editor_ui::widgets::MissingFontsPanel::for_editor(&self.editor_state)
-                .map(|panel| panel.rect(viewport_width, viewport_height));
-        if let Some(panel_rect) = missing_fonts_rect {
-            if self.dispatch_missing_fonts_press(
-                panel_rect,
-                Rect {
-                    origin: Point2D::new(0.0, 0.0),
-                    size: Point2D::new(viewport_width, viewport_height),
-                },
-                Point2D::new(x, y),
-            ) {
-                self.close_image_popovers_for_higher_overlay();
-                return true;
-            }
-        }
-        // Floating Design-MD panel — painted top-most (`paint.rs`
-        // §12), so it hit-tests first: a click on its rect is the
-        // panel's before any lower layer can claim it (dispatch in
-        // `design_md_press.rs`).
-        if self.dispatch_design_md_press(x, y, viewport_width, viewport_height) {
-            self.close_image_popovers_for_higher_overlay();
-            return true;
-        }
-        if self.dispatch_icon_picker_press(x, y, viewport_width, viewport_height) {
-            self.close_image_popovers_for_higher_overlay();
-            return true;
-        }
-        // Floating Component-Browser panel — painted just under the
-        // Design-MD panel; hit-tests right after it.
-        if self.dispatch_component_browser_press(x, y, viewport_width, viewport_height) {
-            self.close_image_popovers_for_higher_overlay();
-            return true;
-        }
-        if self.editor_state.editor_ui.agent_settings_open
-            && self.dispatch_agent_settings_press(x, y, viewport_width, viewport_height)
-        {
-            self.close_image_popovers_for_higher_overlay();
-            return true;
-        }
-        // 0-color. Color picker overlay — top-most when open
-        //          (dispatch in `color_picker_press.rs`).
-        if self.dispatch_color_picker_press(x, y, viewport_width, viewport_height) {
-            self.close_image_popovers_for_higher_overlay();
-            return true;
-        }
-
-        // 0-git-modal. While a Git ready-state header popover (branch
-        // picker / overflow / its subview) is open it is MODAL: route
-        // every press to the Git panel first so a click anywhere
-        // outside the popover dismisses it. The popover extends past the
-        // panel rect, so the rail / top-bar / canvas blocks below cannot
-        // be relied on to forward an outside click — `hit_test` returns
-        // `DismissPopover` for any outside-popover point.
-        //
-        // IMPORTANT: fall through on `false`. If the popover flags are
-        // stale (set while the panel was ready, but it has since left
-        // the ready state — gone dirty / merging / loading, so
-        // `hit_test`'s ready-gated popover capture no longer fires),
-        // `dispatch_git_panel_press` returns `false` for an outside
-        // click. Returning that directly would dead-end EVERY press; so
-        // only consume when it actually handled the click.
-        {
-            let gp = &self.editor_state.editor_ui.git_panel;
-            if gp.open
-                && (gp.branch_picker_open || gp.overflow_open)
-                && self.dispatch_git_panel_press(x, y, viewport_width, viewport_height)
-            {
-                self.close_image_popovers_for_higher_overlay();
-                return true;
-            }
-        }
-
-        // Path-anchor context menu — a row hit dispatches + consumes;
-        // an outside press closes it and FALLS THROUGH (TS parity:
-        // the canvas mousedown still routes). `pen_press.rs`.
-        if self.dispatch_path_anchor_menu_press(x, y) {
-            return true;
-        }
-
-        if let Some(press) =
-            press_flow::press_open_layer_context_menu(&self.editor_state, Point2D::new(x, y))
-        {
-            match press {
-                OpenLayerMenuPress::Action { action, target } => {
-                    self.dispatch_layer_context_action(action, target);
-                    self.editor_state.editor_ui.layer_context_menu = None;
-                    self.mark_dirty();
-                }
-                OpenLayerMenuPress::Swallow => {}
-                OpenLayerMenuPress::Outside => {
-                    // Dismissing the menu on a miss is a blank press — blur
-                    // every text input along with it.
-                    self.blur_text_inputs_on_blank_press();
-                    self.editor_state.editor_ui.layer_context_menu = None;
-                    self.mark_dirty();
-                }
-            }
-            return true;
+        let mut ctx = PressCtx {
+            x,
+            y,
+            viewport_width,
+            viewport_height,
+            rename_committed,
+            text_edit_was_active,
+            text_edit_committed,
+            // Resolved below, at the exact point the flat ladder did.
+            in_git_panel: false,
+            in_chat_model_picker: false,
+        };
+        // Tier 1 — top-most modals / floating panels / context menus.
+        if let Some(consumed) = self.press_topmost_overlay_tiers(&ctx) {
+            return consumed;
         }
         // 0aa. Commit-on-blur for property-panel inputs +
         // variable-row inline editor.
@@ -268,900 +186,60 @@ impl WidgetHostNative {
         // to 620 px, which overlaps the property / variables rail
         // (and its resize gutter) on a narrow window. Hit-test order
         // must mirror paint Z-order: a click inside the Git-panel
-        // rect belongs to the Git panel (block 0.9 below), so every
-        // rail block in between skips a click it would otherwise own.
-        let in_git_panel = self
+        // rect belongs to the Git panel (tier 9 below), so every
+        // rail tier in between skips a click it would otherwise own.
+        ctx.in_git_panel = self
             .git_panel_outer_rect(viewport_width, viewport_height)
             .is_some_and(|r| (r).contains(Point2D::new(x, y)));
-        let in_chat_model_picker = self
+        ctx.in_chat_model_picker = self
             .chat_model_picker_rect(viewport_width, viewport_height)
             .is_some_and(|r| r.contains(Point2D::new(x, y)));
 
-        // 0ab. Shape picker overlay.
-        if self.dispatch_shape_picker_press(x, y, viewport_width, viewport_height) {
-            return true;
+        // Tier 2 — shape picker, file / export / figma / login / account
+        // modals, import + locale dropdowns.
+        if let Some(consumed) = self.press_menu_modal_tiers(&ctx) {
+            return consumed;
         }
-
-        if self.editor_state.editor_ui.file_menu_open {
-            self.close_image_popovers_for_higher_overlay();
-            self.dispatch_file_menu_press(x, y, viewport_width);
-            return true;
+        // Tier 3 — image-fill popover, StatusBar, resize gutter, and the
+        // model-picker slice that lifts above the TopBar.
+        if let Some(consumed) = self.press_rail_overlay_tiers(&ctx) {
+            return consumed;
         }
-        if self.editor_state.editor_ui.export_dialog_open {
-            self.close_image_popovers_for_higher_overlay();
-            self.dispatch_export_dialog_press(x, y, viewport_width, viewport_height);
-            return true;
+        // Tier 4 — TopBar chrome (and its blank-press gaps).
+        if let Some(consumed) = self.press_top_bar_tier(&ctx) {
+            return consumed;
         }
-        if self.editor_state.editor_ui.figma_import_open {
-            self.close_image_popovers_for_higher_overlay();
-            self.dispatch_figma_import_press(x, y, viewport_width, viewport_height);
-            return true;
+        // Tier 5 — Preview (Play) mode swallows everything else.
+        if let Some(consumed) = self.press_preview_tier(&ctx) {
+            return consumed;
         }
-        if self.editor_state.editor_ui.account_ui_available
-            && self.editor_state.editor_ui.login_modal_open
-        {
-            self.close_image_popovers_for_higher_overlay();
-            self.dispatch_login_modal_press(x, y, viewport_width, viewport_height);
-            return true;
+        // Tier 6 — property-panel popovers.
+        if let Some(consumed) = self.press_property_overlay_tiers(&ctx) {
+            return consumed;
         }
-
-        // 0a'. Account dropdown — anchored under the TopBar avatar
-        // button; must hit-test before the TopBar's own block so a
-        // re-click on the avatar closes rather than re-toggling.
-        if self.editor_state.editor_ui.account_ui_available
-            && self.editor_state.editor_ui.account_menu_open
-        {
-            self.close_image_popovers_for_higher_overlay();
-            self.dispatch_account_menu_press(x, y, viewport_width, viewport_height);
-            return true;
+        // Tier 7 — model picker, theme presets, VariablesPanel.
+        if let Some(consumed) = self.press_panel_dispatch_tiers(&ctx) {
+            return consumed;
         }
-
-        // 0a0. Import dropdown — same overlay tier as the locale picker.
-        if self.editor_state.editor_ui.import_menu_open {
-            self.refresh_layout_scene();
-            let (anchor, viewport) = self.import_menu_anchor(viewport_width, viewport_height);
-            let menu = ImportMenu::for_editor_ui(&self.editor_state.editor_ui);
-            let choice = menu.choice_at(anchor, viewport, Point2D::new(x, y));
-            let hit = menu.hit(anchor, viewport, Point2D::new(x, y));
-            if matches!(hit, op_editor_ui::widgets::import_menu::SelectHit::Inside) {
-                return true;
-            }
-            self.close_import_menu();
-            match choice {
-                Some(ImportMenuChoice::Figma) => {
-                    self.apply_open_figma_import();
-                }
-                Some(ImportMenuChoice::Html) => {
-                    self.apply_open_html_import();
-                }
-                None => {
-                    // Silent outside-close is a blank press — blur inputs too.
-                    self.blur_text_inputs_on_blank_press();
-                }
-            }
-            self.mark_dirty();
-            return true;
+        // Tier 8 — PropertyPanel input row.
+        if let Some(consumed) = self.press_property_panel_tier(&ctx) {
+            return consumed;
         }
-
-        // 0a. Locale picker overlay — top-most when open.
-        if self.editor_state.editor_ui.locale_picker.open {
-            self.refresh_layout_scene();
-            let panel_rect = self.locale_picker_rect(viewport_width);
-            match press_flow::press_locale_picker(
-                &mut self.editor_state,
-                panel_rect,
-                Point2D::new(x, y),
-            ) {
-                LocalePickerPress::Swallow => return true,
-                LocalePickerPress::Selected => {
-                    self.mark_dirty();
-                    return true;
-                }
-                LocalePickerPress::Outside => {
-                    // Silent outside-close is a blank press — blur inputs too.
-                    self.blur_text_inputs_on_blank_press();
-                    core_press::close_locale_picker(&mut self.editor_state.editor_ui);
-                    self.mark_dirty();
-                    return true;
-                }
-            }
+        // Tier 9 — floating Git panel, then the AI chat panel.
+        if let Some(consumed) = self.press_git_and_chat_tiers(&ctx) {
+            return consumed;
         }
-
-        // 0a1. Image-fill popover. Property overlays are painted after the
-        // VariablesPanel, chat, StatusBar, marquee, and rail chrome, so the
-        // visible popup must own their overlap before those lower surfaces.
-        // Git and the modal/menu overlays above already had first refusal.
-        if !in_git_panel
-            && self.dismiss_image_fill_popover_on_press(x, y, viewport_width, viewport_height)
-        {
-            return true;
+        // Tier 10 — toolbar + floating align toolbar.
+        if let Some(consumed) = self.press_toolbar_tiers(&ctx) {
+            return consumed;
         }
-
-        // StatusBar controls — Search frames content, `[-]` / `[+]`
-        // step the zoom. The bar paints above the canvas / toolbar but below
-        // the late PropertyPanel overlay pass.
-        if let Some(r) = self.status_bar_rect(viewport_width, viewport_height) {
-            use op_editor_core::StatusBarButton;
-            let bar = op_editor_ui::widgets::StatusBar::for_editor(&self.editor_state);
-            if let Some(btn) = bar.control_at(r, Point2D::new(x, y)) {
-                self.editor_state.editor_ui.pressed_button =
-                    Some(op_editor_core::ButtonPressTarget::StatusBar(btn));
-                match btn {
-                    StatusBarButton::Search => self.zoom_to_fit(viewport_width, viewport_height),
-                    StatusBarButton::ZoomOut => {
-                        self.status_bar_zoom(false, viewport_width, viewport_height)
-                    }
-                    StatusBarButton::ZoomIn => {
-                        self.status_bar_zoom(true, viewport_width, viewport_height)
-                    }
-                }
-                self.mark_dirty();
-                return true;
-            }
+        // Tier 11 — LayerPanel drag peek, then `apply_click`.
+        if let Some(consumed) = self.press_layer_and_click_tiers(&ctx) {
+            return consumed;
         }
-
-        // 0z. Panel-resize gutter — ±4 px from rail edges. The gutter is
-        // lower than the floating image-fill card even where their bounds
-        // overlap.
-        if y >= TOP_BAR_HEIGHT && !in_git_panel && !in_chat_model_picker {
-            if let Some(kind) = self.panel_resize_hover(x, y, viewport_width) {
-                let start_width = match kind {
-                    PanelResizeKind::LayerRight => self.editor_state.editor_ui.layer_panel_width,
-                    PanelResizeKind::PropertyLeft => {
-                        self.editor_state.editor_ui.property_panel_width
-                    }
-                };
-                self.panel_resize = Some(PanelResize {
-                    kind,
-                    start_x: x,
-                    start_width,
-                });
-                return true;
-            }
-        }
-
-        // Chat paints after the TopBar. A short/top-anchored chat can lift the
-        // upward model dropdown across the bar, so its visible overlap must be
-        // routed before the lower TopBar surface. Other dropdowns/modals above
-        // chat already had first refusal in the blocks above.
-        if y < TOP_BAR_HEIGHT
-            && !in_git_panel
-            && self.apply_chat_model_picker_overlay_press(x, y, viewport_width, viewport_height)
-        {
-            return true;
-        }
-
-        // 0b. TopBar — sidebar toggle button + theme + locale picker.
-        self.refresh_layout_scene();
-        let top_bar_rect = Rect {
-            origin: Point2D::new(0.0, 0.0),
-            size: Point2D::new(viewport_width, TOP_BAR_HEIGHT),
-        };
-        let mut top_bar = TopBar::for_editor_ui(&self.editor_state.editor_ui);
-        top_bar.chip_text_w = Some(self.topbar_chip_text_w(&top_bar));
-        if let Some(hit) = top_bar.hit_test(top_bar_rect, Point2D::new(x, y)) {
-            self.close_image_popovers_for_higher_overlay();
-            let pressed = op_editor_ui::widgets::editor_state_ext::topbar_button_hover(hit);
-            self.editor_state.editor_ui.pressed_button =
-                Some(op_editor_core::ButtonPressTarget::TopBar(pressed));
-            // Arms whose behaviour is identical on both hosts live in
-            // the shared flow; only the platform ones fall through.
-            match press_flow::apply_shared_top_bar_hit(&mut self.editor_state, hit, self.now_ms) {
-                TopBarPress::Handled => {
-                    self.mark_dirty();
-                    return true;
-                }
-                TopBarPress::FileMenuToggled => {
-                    self.clear_layer_panel_hover();
-                    self.mark_dirty();
-                    return true;
-                }
-                TopBarPress::Platform => {}
-            }
-            match hit {
-                // Handled by the shared flow above.
-                TopBarHit::ToggleSidebar
-                | TopBarHit::ToggleTheme
-                | TopBarHit::ToggleLocale
-                | TopBarHit::OpenAgentSettings
-                | TopBarHit::ToggleFileMenu
-                | TopBarHit::OpenImportMenu => return true,
-                TopBarHit::ToggleFullscreen => {
-                    // The widget host doesn't own the winit window — raise
-                    // an intent the desktop runner consumes next frame.
-                    self.editor_state.editor_ui.pending_fullscreen_toggle = true;
-                    self.mark_dirty();
-                    return true;
-                }
-                TopBarHit::TogglePreview => {
-                    // Enter / exit canvas Preview (Play) mode. Layout is
-                    // solved per-root from the document; the canvas region
-                    // is passed only for API compatibility (paint transform
-                    // uses the viewport, layout does not).
-                    let (_cx0, _cy0, cw, ch) = self.canvas_region(viewport_width, viewport_height);
-                    self.toggle_preview((cw, ch));
-                    return true;
-                }
-                TopBarHit::ToggleGitPanel => {
-                    // Mirror `main.rs` A::ToggleGitPanel bookkeeping; the
-                    // binary's per-frame `if git_panel.open { refresh }`
-                    // performs the actual repo scan.
-                    let panel = &mut self.editor_state.editor_ui.git_panel;
-                    let opening = !panel.open;
-                    panel.open = opening;
-                    if opening {
-                        panel.loading = true;
-                    } else {
-                        panel.defocus_commit_input(self.now_ms);
-                        panel.remote_focused = false;
-                        panel.https_focused = false;
-                        panel.diff = None;
-                        panel.merge_resolve = None;
-                        // Close the clone wizard synchronously so a rapid
-                        // close→reopen can't resurface a stale form before
-                        // the host's `poll_git_clone_job` runs (it then
-                        // abandons any in-flight job — `cloning` form gone).
-                        panel.clone_form = None;
-                    }
-                    self.mark_dirty();
-                    return true;
-                }
-                TopBarHit::Account => {
-                    if !self.editor_state.editor_ui.account_ui_available {
-                        return false;
-                    }
-                    if self.editor_state.editor_ui.account.is_signed_in() {
-                        self.editor_state.editor_ui.account_menu_open = true;
-                        self.editor_state.editor_ui.account_menu_hover = None;
-                    } else {
-                        self.editor_state.editor_ui.login_modal_open = true;
-                        self.editor_state.editor_ui.login_modal_hover = None;
-                    }
-                    self.mark_dirty();
-                    return true;
-                }
-            }
-        }
-        if (top_bar_rect).contains(Point2D::new(x, y)) {
-            // Other top-bar gaps eat clicks but don't act — still a
-            // blank press, so every text input blurs.
-            let image_closed = self.close_image_popovers_for_higher_overlay();
-            let blurred = self.blur_text_inputs_on_blank_press();
-            return image_closed || blurred || rename_committed || text_edit_committed;
-        }
-
-        // 0b'. Preview (Play) mode — the canvas belongs to the live
-        // runtime, not the editor. The TopBar Play/Stop button was
-        // already handled above; any other press routes into the
-        // runtime (taps on switches / buttons, caret placement) and is
-        // swallowed so no editor selection / node-creation fires.
-        if self.preview.is_some() {
-            if self.screen_switcher_press(x, y, viewport_width, viewport_height) {
-                return true;
-            }
-            if self.preview_switcher_press(x, y, viewport_width, viewport_height) {
-                return true;
-            }
-            self.preview_dispatch_press(x, y, viewport_width, viewport_height);
-            return true;
-        }
-
-        // 0c0. Fill-type picker — outside-click dismiss.
-        if self.editor_state.editor_ui.fill_type_picker.open && !in_git_panel {
-            self.refresh_layout_scene();
-            let press = press_flow::press_fill_type_picker(
-                &mut self.editor_state,
-                viewport_width,
-                viewport_height,
-                Point2D::new(x, y),
-            );
-            return self.finish_property_overlay_press(press);
-        }
-
-        // 0c0a. Layer / mask / fill-blend compositing picker. The popup is
-        // painted over the inspector body, so it owns both its rows and its
-        // padded chrome; the first outside press dismisses and is swallowed.
-        if self.editor_state.editor_ui.compositing_picker.open && !in_git_panel {
-            self.refresh_layout_scene();
-            let press = press_flow::press_compositing_picker(
-                &mut self.editor_state,
-                viewport_width,
-                viewport_height,
-                Point2D::new(x, y),
-            );
-            return self.finish_property_overlay_press(press);
-        }
-
-        // 0c1. Effects "+" add-menu — outside-click dismiss.
-        if self.editor_state.editor_ui.effect_add_picker_open && !in_git_panel {
-            self.refresh_layout_scene();
-            let press = press_flow::press_effect_add_menu(
-                &mut self.editor_state,
-                viewport_width,
-                viewport_height,
-                Point2D::new(x, y),
-            );
-            return self.finish_property_overlay_press(press);
-        }
-
-        // 0c1a. Interactions Navigate/Back/Remove popover — outside-click
-        // dismiss.
-        if self.editor_state.editor_ui.interaction_menu_open && !in_git_panel {
-            self.refresh_layout_scene();
-            if let Some(panel) = PropertyPanel::for_selection(&self.editor_state) {
-                let property_rect = Rect {
-                    origin: Point2D::new(
-                        viewport_width - self.editor_state.editor_ui.property_panel_width,
-                        TOP_BAR_HEIGHT,
-                    ),
-                    size: Point2D::new(
-                        self.editor_state.editor_ui.property_panel_width,
-                        (viewport_height - TOP_BAR_HEIGHT).max(0.0),
-                    ),
-                };
-                match panel.interaction_menu_hit(property_rect, Point2D::new(x, y)) {
-                    op_editor_ui::widgets::InteractionMenuHit::Row(action) => {
-                        self.apply_property_action(action);
-                        return true;
-                    }
-                    op_editor_ui::widgets::InteractionMenuHit::Inside => return true,
-                    op_editor_ui::widgets::InteractionMenuHit::Outside => {}
-                }
-            }
-            self.editor_state.editor_ui.close_interaction_menu();
-            self.mark_dirty();
-            return true;
-        }
-
-        // 0c0a0. Fill/stroke colour-variable picker — outside-click dismiss.
-        if self
-            .editor_state
-            .editor_ui
-            .property_color_variable_picker_open
-            .is_some()
-            && !in_git_panel
-        {
-            self.refresh_layout_scene();
-            let press = press_flow::press_color_variable_picker(
-                &mut self.editor_state,
-                viewport_width,
-                viewport_height,
-                Point2D::new(x, y),
-            );
-            return self.finish_property_overlay_press(press);
-        }
-
-        // 0c0a0a. Image-node Search / Generate popovers — overlay
-        // controls win; outside clicks dismiss.
-        if !in_git_panel
-            && self.dismiss_image_popovers_on_press(x, y, viewport_width, viewport_height)
-        {
-            return true;
-        }
-
-        // 0c0a1. Text font-family picker — outside-click dismiss.
-        if !in_git_panel && self.dismiss_font_picker_on_press(x, y, viewport_width, viewport_height)
-        {
-            return true;
-        }
-
-        // 0c0a2. Text font-weight picker — outside-click dismiss.
-        if !in_git_panel
-            && self.dismiss_font_weight_picker_on_press(x, y, viewport_width, viewport_height)
-        {
-            return true;
-        }
-
-        // 0c0a3. Padding mode-selector popover — outside-click dismiss.
-        if !in_git_panel
-            && self.dismiss_padding_mode_popover_on_press(x, y, viewport_width, viewport_height)
-        {
-            return true;
-        }
-
-        // 0c0b. Export scale / format inline select popup —
-        //       outside-click dismiss (`property_dispatch.rs`).
-        if !in_git_panel
-            && self.dismiss_export_picker_on_press(x, y, viewport_width, viewport_height)
-        {
-            return true;
-        }
-
-        // The model dropdown is painted with the chat above the base rails
-        // and can extend beyond the chat rect. Route its actual visible bounds
-        // before Variables/Property/Layer dispatch, while leaving the Git and
-        // property popovers painted above it in control of their overlap.
-        if !in_git_panel
-            && self.apply_chat_model_picker_overlay_press(x, y, viewport_width, viewport_height)
-        {
-            return true;
-        }
-
-        // 0b0. Theme-preset dropdown (#20) — floats above the
-        //       variables panel, so it must win before the panel's
-        //       stub menu mapping (variables_preset_press.rs).
-        if !in_git_panel
-            && self.dispatch_variables_preset_press(x, y, viewport_width, viewport_height)
-        {
-            return true;
-        }
-
-        // 0b1. VariablesPanel — tested before PropertyPanel.
-        if !in_git_panel
-            && self.dispatch_variables_panel_press(x, y, viewport_width, viewport_height)
-        {
-            return true;
-        }
-
-        // 0c. PropertyPanel input row.
-        self.refresh_layout_scene();
-        if let Some(panel) =
-            PropertyPanel::for_selection_with_scene(&self.editor_state, &self.layout_scene)
-                .filter(|_| !in_git_panel)
-        {
-            let property_rect = Rect {
-                origin: Point2D::new(
-                    viewport_width - self.editor_state.editor_ui.property_panel_width,
-                    TOP_BAR_HEIGHT,
-                ),
-                size: Point2D::new(
-                    self.editor_state.editor_ui.property_panel_width,
-                    (viewport_height - TOP_BAR_HEIGHT).max(0.0),
-                ),
-            };
-            if let Some(anchor) = self.code_text_offset_at_screen(x, y) {
-                self.commit_property_focus_if_any();
-                self.editor_state.codegen.code_selection = Some(CodeSelection {
-                    anchor,
-                    focus: anchor,
-                });
-                self.code_selection_drag = Some(CodeSelectionDragState { anchor });
-                self.editor_state.chat.transcript_selection = None;
-                self.editor_state.codegen.framework_hover = None;
-                self.editor_state.codegen.action_hover = None;
-                self.editor_state.chat.focused = false;
-                self.mark_dirty();
-                return true;
-            }
-            // Button / checkbox click first (flex modes + size flags).
-            let point = Point2D::new(x, y);
-            if let Some(action) = panel.hit_test_action(property_rect, point) {
-                self.editor_state.editor_ui.pressed_button =
-                    if let op_editor_ui::widgets::PropertyPanelAction::Codegen(codegen_action) =
-                        action
-                    {
-                        op_editor_ui::widgets::property_panel_code::codegen_hover_for_action(
-                            codegen_action,
-                        )
-                        .map(op_editor_core::ButtonPressTarget::Codegen)
-                    } else {
-                        panel
-                            .action_hover_index(property_rect, point)
-                            .map(op_editor_core::ButtonPressTarget::PropertyPanel)
-                    };
-                self.commit_property_focus_if_any();
-                if let op_editor_ui::widgets::PropertyPanelAction::OpenColorPicker(target) = action
-                {
-                    let _ = self
-                        .editor_state
-                        .open_color_picker(super::press_helpers::color_target(target), y);
-                    self.mark_dirty();
-                } else if let op_editor_ui::widgets::PropertyPanelAction::OpenFillColorPicker(
-                    index,
-                ) = action
-                {
-                    // Non-primary fill swatch — bind the picker to this
-                    // fill so HSV writes back to `fills[index]`.
-                    self.editor_state
-                        .editor_ui
-                        .property_color_variable_picker_open = None;
-                    let _ = self.editor_state.open_color_picker_for_fill(
-                        op_editor_core::ui_draft::ColorTarget::Fill,
-                        index,
-                        y,
-                    );
-                    self.mark_dirty();
-                } else if let op_editor_ui::widgets::PropertyPanelAction::OpenEffectColorPicker(
-                    index,
-                ) = action
-                {
-                    // Anchor the picker at the clicked swatch so it
-                    // pops next to the row, not at the panel top.
-                    let _ = self.editor_state.open_color_picker(
-                        op_editor_core::ui_draft::ColorTarget::EffectColor(index),
-                        y,
-                    );
-                    self.mark_dirty();
-                } else {
-                    self.apply_property_action(action);
-                }
-                return true;
-            }
-            if let Some(focus) = panel.hit_test(property_rect, Point2D::new(x, y)) {
-                self.commit_property_focus_if_any();
-                // Committing the previous W/H field can change layout. Rebuild
-                // the scene before seeding the newly focused field so Fill/Hug
-                // reads the concrete post-commit canvas size, not a stale one.
-                self.refresh_layout_scene();
-                let resolved_panel =
-                    PropertyPanel::for_selection_with_scene(&self.editor_state, &self.layout_scene);
-                let initial = resolved_panel
-                    .as_ref()
-                    .map(|panel| super::press_helpers::property_focus_initial(focus, panel))
-                    .unwrap_or_default();
-                // shell-core `PropertyFocus` → op-editor-core.
-                self.editor_state.ui.property_focus = Some(focus);
-                self.editor_state
-                    .ui
-                    .property_input
-                    .set_text(initial.clone());
-                self.editor_state.ui.property_input.touch(self.now_ms);
-                self.editor_state.ui.property_input_draft = initial;
-                // Caret starts at the end of the seeded draft.
-                self.editor_state.ui.property_caret_pos =
-                    self.editor_state.ui.property_input_draft.len();
-                self.editor_state.ui.property_caret_anchor_ms = self.now_ms;
-                self.editor_state.ui.property_draft_select_all = false;
-                self.editor_state.chat.focused = false;
-                self.mark_dirty();
-                return true;
-            }
-            if (property_rect).contains(point) {
-                self.blur_text_inputs_on_blank_press();
-                return true;
-            }
-        }
-
-        // 0.9. Floating Git panel — status + interactive actions
-        //      (dispatch in `git_press.rs`).
-        if self.dispatch_git_panel_press(x, y, viewport_width, viewport_height) {
-            self.close_image_popovers_for_higher_overlay();
-            return true;
-        }
-
-        // 1. AI chat panel — sits on top of the toolbar in paint
-        //    order. DragHandle starts a chat drag; other AI hits
-        //    defer to apply_click.
-        if let Some(chat_rect) = self.ai_chat_rect(viewport_width, viewport_height) {
-            let panel =
-                AIChatPlaceholder::from_editor(&self.editor_state).owned_by(self.chat_panel_owner);
-            if let Some(hit) = panel.hit_test(chat_rect, Point2D::new(x, y)) {
-                if let AIChatHit::Resize(edge) = hit {
-                    self.chat_resize = Some(ChatResizeState {
-                        edge,
-                        start_x: x,
-                        start_y: y,
-                        start_rect: chat_rect,
-                    });
-                    self.editor_state.chat.focused = false;
-                    self.mark_dirty();
-                    return true;
-                }
-                if let AIChatHit::SelectInputText(anchor) = hit {
-                    self.chat_input_selection_drag = Some(ChatInputSelectionDragState { anchor });
-                    chat_click_flow::begin_chat_input_selection(
-                        &mut self.editor_state,
-                        anchor,
-                        self.now_ms,
-                    );
-                    self.mark_dirty();
-                    return true;
-                }
-                if let AIChatHit::SelectTranscriptText(message_index, anchor) = hit {
-                    self.chat_text_selection_drag = Some(ChatTextSelectionDragState {
-                        message_index,
-                        anchor,
-                    });
-                    chat_click_flow::begin_chat_transcript_selection(
-                        &mut self.editor_state,
-                        message_index,
-                        anchor,
-                    );
-                    self.mark_dirty();
-                    return true;
-                }
-                if matches!(hit, AIChatHit::DragHandle) {
-                    self.chat_drag = Some(ChatDragState {
-                        grab_dx: x - chat_rect.origin.x,
-                        grab_dy: y - chat_rect.origin.y,
-                        pos_x: chat_rect.origin.x,
-                        pos_y: chat_rect.origin.y,
-                    });
-                    self.editor_state.chat.focused = false;
-                    self.mark_dirty();
-                    return true;
-                }
-                let _ = self.apply_click(x, y, viewport_width, viewport_height);
-                return true;
-            }
-        }
-
-        // 2. Toolbar — second-highest overlay.
-        let toolbar_rect = self.toolbar_rect(viewport_width, viewport_height);
-        let toolbar = Toolbar::for_editor(&self.editor_state);
-        if (toolbar_rect).contains(Point2D::new(x, y)) {
-            if let Some(hit) = toolbar.hit_test(toolbar_rect, Point2D::new(x, y)) {
-                match hit {
-                    op_editor_ui::widgets::ToolbarHit::Tool(tool) => {
-                        self.apply_set_tool(tool);
-                        core_press::close_shape_picker(&mut self.editor_state.editor_ui);
-                        return true;
-                    }
-                    op_editor_ui::widgets::ToolbarHit::Action(action) => {
-                        core_press::close_shape_picker(&mut self.editor_state.editor_ui);
-                        let acted = self.dispatch_toolbar_action(action);
-                        return acted || rename_committed || text_edit_committed;
-                    }
-                    op_editor_ui::widgets::ToolbarHit::ToggleShapePicker => {
-                        core_press::toggle_shape_picker(&mut self.editor_state.editor_ui);
-                        self.mark_dirty();
-                        return true;
-                    }
-                }
-            }
-            // Toolbar padding / gaps eat the click — blank press.
-            let blurred = self.blur_text_inputs_on_blank_press();
-            return blurred || rename_committed || text_edit_committed;
-        }
-
-        if let Some(hit) = self.selection_toolbar_hit(x, y, viewport_width, viewport_height) {
-            match hit {
-                op_editor_ui::widgets::AlignToolbarHit::Align(action) => {
-                    self.editor_state.align_selected(action);
-                    self.mark_dirty();
-                }
-                op_editor_ui::widgets::AlignToolbarHit::Boolean(op) => {
-                    let _ = self.apply_boolean_op(op);
-                }
-            }
-            return true;
-        }
-        // 3. apply_click — LayerPanel + chat-defocus. Peek the
-        //    LayerPanel hit-test for a drag-to-reorder candidate.
-        if self.editor_state.editor_ui.sidebar_open {
-            use op_editor_ui::widgets::LayerPanelHit;
-            let layer_rect = Rect {
-                origin: Point2D::new(0.0, TOP_BAR_HEIGHT),
-                size: Point2D::new(
-                    self.editor_state.editor_ui.layer_panel_width,
-                    (viewport_height - TOP_BAR_HEIGHT).max(0.0),
-                ),
-            };
-            let panel = self.layer_panel();
-            if let Some(LayerPanelHit::Layer(node_id)) =
-                panel.hit_test(layer_rect, Point2D::new(x, y))
-            {
-                self.layer_drag = Some(crate::widget_host::LayerDragState {
-                    source: node_id,
-                    start_y: y,
-                    current_x: x,
-                    current_y: y,
-                    active: false,
-                });
-            }
-        }
-        let consumed = self.apply_click(x, y, viewport_width, viewport_height);
-        if consumed {
-            return true;
-        }
-
-        // 4. Canvas click — branch on the active tool.
-        if self.over_canvas(x, y, viewport_width, viewport_height) {
-            use op_editor_core::Tool;
-            // Any canvas press blurs the chrome text inputs first —
-            // node hit or not, the pointer left every input (DOM
-            // parity: mousedown anywhere outside an input blurs it).
-            let blurred = self.blur_text_inputs_on_blank_press();
-            // A press on the canvas while the Git panel is open dismisses
-            // it — the panel is a popover (TS parity: clicking off a
-            // popover closes it), and a click inside it was already
-            // consumed at §0.9, so anything reaching here is genuinely
-            // outside. Swallow the press so the dismiss doesn't also
-            // select / pan / start drawing.
-            if self.editor_state.editor_ui.git_panel.open {
-                self.close_git_panel();
-                self.mark_dirty();
-                return true;
-            }
-            self.refresh_layout_scene();
-            if matches!(self.editor_state.tool, Tool::Hand) || self.space_pan {
-                self.drag = Some(DragState {
-                    last_x: x,
-                    last_y: y,
-                });
-                return blurred || rename_committed || text_edit_committed;
-            }
-            let (cx0, cy0, cw, ch) = self.canvas_region(viewport_width, viewport_height);
-            let canvas_rect = Rect {
-                origin: Point2D::new(cx0, cy0),
-                size: Point2D::new(cw, ch),
-            };
-            let doc_point = canvas_geometry::canvas_doc_point_unclamped(&self.editor_state, x, y);
-
-            if matches!(self.editor_state.tool, Tool::Select) {
-                if let Some(editing) = self.editor_state.editor_ui.image_crop_editing.clone() {
-                    if let Some(hit_path) = self
-                        .layout_scene
-                        .node_path_at_doc_point(doc_point, self.editor_state.viewport.zoom)
-                        .filter(|path| path.iter().any(|id| id == editing.as_str()))
-                    {
-                        let hit_path = hit_path
-                            .into_iter()
-                            .map(op_editor_core::NodeId::new)
-                            .collect();
-                        return self.apply_canvas_node_press(
-                            hit_path,
-                            x,
-                            y,
-                            text_edit_was_active,
-                            viewport_height,
-                        );
-                    }
-                    self.exit_image_crop_edit();
-                }
-                // Path controls hit-test FIRST (TS handleSelectMouseDown,
-                // skia-interaction.ts:277-306) — before arc / resize /
-                // rotation, so anchor dots near a corner stay grabbable.
-                if self.try_path_anchor_press(x, y, viewport_width, viewport_height) {
-                    return true;
-                }
-                // The selected anchor's resolved scene node — shared
-                // by the handle-drag + rotation-drag branches below.
-                let selected_anchor = self.editor_state.selection.anchor.as_str().to_string();
-                // Arc handles take priority over the 8 resize handles —
-                // the sweep handle can overlap the right-mid resize grip.
-                if let Some((node_id, handle)) =
-                    self.arc_handle_hit(x, y, viewport_width, viewport_height)
-                {
-                    let pre = self.editor_state.snapshot_for_history();
-                    self.arc_handle_drag = Some(super::ArcHandleDragState {
-                        node_id: op_editor_core::NodeId::new(&node_id),
-                        handle,
-                        start_doc: doc_point,
-                        moved: false,
-                        pre_drag_snapshot: pre,
-                    });
-                    return true;
-                }
-                if let Some(handle) = selection_handle_at_point(
-                    canvas_rect,
-                    &self.layout_scene,
-                    &self.editor_state,
-                    Point2D::new(x, y),
-                ) {
-                    let (start_authored_x, start_authored_y) = self
-                        .editor_state
-                        .selected_node()
-                        .map(|node| (node.base().x, node.base().y))
-                        .unwrap_or((None, None));
-                    if let Some(node) = self
-                        .layout_scene
-                        .active_page()
-                        .and_then(|p| p.find(&selected_anchor))
-                    {
-                        // Only handle-drag on nodes with real bounds.
-                        let raw = node.bounds;
-                        if raw.size.x > 0.0 || raw.size.y > 0.0 {
-                            self.editor_state.commit_history();
-                            self.handle_drag = Some(HandleDragState {
-                                handle,
-                                start_screen_x: x,
-                                start_screen_y: y,
-                                start_bounds: raw,
-                                start_authored_x,
-                                start_authored_y,
-                            });
-                            return true;
-                        }
-                    }
-                }
-                if rotation_corner_at_point(
-                    canvas_rect,
-                    &self.layout_scene,
-                    &self.editor_state,
-                    Point2D::new(x, y),
-                )
-                .is_some()
-                {
-                    if let Some(node) = self
-                        .layout_scene
-                        .active_page()
-                        .and_then(|p| p.find(&selected_anchor))
-                    {
-                        let bounds = node.aggregate_bounds();
-                        let cx_doc = bounds.origin.x + bounds.size.x / 2.0;
-                        let cy_doc = bounds.origin.y + bounds.size.y / 2.0;
-                        let center_screen_x = canvas_rect.origin.x
-                            + self.editor_state.viewport.pan_x
-                            + cx_doc * self.editor_state.viewport.zoom;
-                        let center_screen_y = canvas_rect.origin.y
-                            + self.editor_state.viewport.pan_y
-                            + cy_doc * self.editor_state.viewport.zoom;
-                        let start_cursor_angle = (y - center_screen_y).atan2(x - center_screen_x);
-                        let start_rotation = node.rotation;
-                        self.editor_state.commit_history();
-                        self.rotate_drag = Some(RotateDragState {
-                            center_screen_x,
-                            center_screen_y,
-                            start_cursor_angle,
-                            start_rotation,
-                        });
-                        return true;
-                    }
-                }
-                let canvas = CanvasViewport::from_editor(&self.editor_state, &self.layout_scene);
-                if let Some(node_id) = canvas.frame_label_at_point(canvas_rect, Point2D::new(x, y))
-                {
-                    let ec_id = op_editor_core::NodeId::new(&node_id);
-                    return self.apply_canvas_node_press(
-                        vec![ec_id],
-                        x,
-                        y,
-                        text_edit_was_active,
-                        viewport_height,
-                    );
-                }
-                if let Some(hit_path) = self
-                    .layout_scene
-                    .node_path_at_doc_point(doc_point, self.editor_state.viewport.zoom)
-                {
-                    // Relative-level selection / one-step drill / drag start —
-                    // see `canvas_select_drag.rs`.
-                    let hit_path = hit_path
-                        .into_iter()
-                        .map(op_editor_core::NodeId::new)
-                        .collect();
-                    return self.apply_canvas_node_press(
-                        hit_path,
-                        x,
-                        y,
-                        text_edit_was_active,
-                        viewport_height,
-                    );
-                }
-                // Empty canvas press — start a marquee.
-                self.editor_state.editor_ui.last_canvas_click = None;
-                let cleared_now = core_press::clear_selection_on_empty_canvas_press(
-                    &mut self.editor_state,
-                    self.shift_held,
-                );
-                if cleared_now {
-                    self.mark_dirty();
-                }
-                self.marquee_drag = Some(super::MarqueeDragState {
-                    start_screen_x: x,
-                    start_screen_y: y,
-                    current_screen_x: x,
-                    current_screen_y: y,
-                    additive: self.shift_held,
-                });
-                return cleared_now || blurred;
-            }
-
-            // Pen tool: anchor edit / author (`pen_press.rs`).
-            if matches!(self.editor_state.tool, Tool::Pen) {
-                return self.apply_pen_tool_press(x, y, viewport_width, viewport_height);
-            }
-
-            // Shape / Frame / Text tool: spawn a new node + drag.
-            let pre_create = self.editor_state.snapshot_for_history();
-            if let Some(node_id) = self.create_node_for_active_tool(doc_point) {
-                self.editor_state.history_push_past(pre_create);
-                self.editor_state.set_single_selection(node_id);
-                self.create_drag = Some(CreateDragState {
-                    start_doc_x: doc_point.x,
-                    start_doc_y: doc_point.y,
-                });
-                self.mark_dirty();
-                return true;
-            }
-
-            // Tool didn't accept this point — fall back to pan.
-            self.drag = Some(DragState {
-                last_x: x,
-                last_y: y,
-            });
-            return blurred || rename_committed || text_edit_committed;
+        // Tier 12 — the canvas, branching on the active tool.
+        if let Some(consumed) = self.press_canvas_tier(&ctx) {
+            return consumed;
         }
         // Final fall-through — the press hit no interactive chrome
         // (panel-rail gaps, property-panel padding, …): blank press.

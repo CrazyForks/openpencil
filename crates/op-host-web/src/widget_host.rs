@@ -147,6 +147,12 @@ mod pen_press;
 #[cfg(test)]
 mod pen_press_tests;
 mod press;
+mod press_canvas_tiers;
+mod press_chrome_tiers;
+mod press_ctx;
+mod press_overlay_tiers;
+mod press_property_tiers;
+mod press_surface_tiers;
 #[cfg(test)]
 mod property_compositing_tests;
 mod property_dispatch;

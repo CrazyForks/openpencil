@@ -78,6 +78,12 @@ mod codegen_framework_tests;
 mod color_picker_press;
 mod component_browser_press;
 mod cursor_hint;
+mod cursor_move_chrome;
+mod cursor_move_ctx;
+mod cursor_move_drags;
+mod cursor_move_modals;
+mod cursor_move_overlays;
+mod cursor_move_panels;
 #[cfg(test)]
 mod deferred_press_tests;
 mod design_md_press;
@@ -147,7 +153,13 @@ mod pen_press;
 #[cfg(test)]
 mod pen_press_tests;
 mod press;
+mod press_canvas_tiers;
+mod press_chrome_tiers;
+mod press_ctx;
 mod press_helpers;
+mod press_overlay_tiers;
+mod press_property_tiers;
+mod press_surface_tiers;
 mod preview_edge_swipe;
 #[cfg(all(test, not(target_os = "windows")))]
 mod preview_edge_swipe_tests;
@@ -166,6 +178,7 @@ mod property_panel_interactions_tests;
 #[cfg(test)]
 mod property_panel_press_tests;
 mod property_popovers;
+mod release;
 mod release_feedback;
 mod scene_state;
 mod screen_switcher;
