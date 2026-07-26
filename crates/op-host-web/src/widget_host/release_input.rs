@@ -5,7 +5,7 @@
 
 use op_editor_core::{agent_settings::ImageGenField, AgentSettingsButton, ButtonPressTarget};
 use op_editor_ui::widgets::{FontWeightChoice, PropertyPanelAction};
-use op_editor_ui::{Point2D, Rect};
+use op_editor_ui::Point2D;
 
 use super::{LayerDragState, MarqueeDragState, WidgetHost};
 
@@ -17,51 +17,15 @@ impl WidgetHost {
     pub(in crate::widget_host) fn commit_marquee_selection(
         &mut self,
         m: MarqueeDragState,
-        viewport_w: f32,
-        viewport_h: f32,
+        _viewport_w: f32,
+        _viewport_h: f32,
     ) {
-        // Near-zero marquee = a click without drag. Threshold is
-        // measured in SCREEN pixels (2 px) so it stays consistent
-        // regardless of canvas zoom — matches native.
-        let screen_dx = (m.current_screen_x - m.start_screen_x).abs();
-        let screen_dy = (m.current_screen_y - m.start_screen_y).abs();
-        if screen_dx < 2.0 && screen_dy < 2.0 {
+        use op_editor_ui::widgets::marquee_flow;
+        if !marquee_flow::marquee_dragged(&m) {
             return;
         }
-        let (cx0, cy0, _cw, _ch) = self.canvas_region(viewport_w, viewport_h);
-        let p0 = {
-            let local = Point2D::new(m.start_screen_x - cx0, m.start_screen_y - cy0);
-            self.editor_state.viewport.to_document(local)
-        };
-        let p1 = {
-            let local = Point2D::new(m.current_screen_x - cx0, m.current_screen_y - cy0);
-            self.editor_state.viewport.to_document(local)
-        };
-        let x = p0.x.min(p1.x);
-        let y = p0.y.min(p1.y);
-        let w = (p1.x - p0.x).abs();
-        let h = (p1.y - p0.y).abs();
-        let rect = Rect::xywh(x, y, w, h);
-        // `nodes_intersecting_doc_rect` queries the `LayoutScene` —
-        // it returns the resolved-scene node id strings.
         self.refresh_layout_scene();
-        let ids = self.layout_scene.nodes_intersecting_doc_rect(rect);
-        if m.additive {
-            // ADD-only: every hit joins the set; already-selected
-            // hits stay selected. Shift-marquee never removes.
-            for id in ids {
-                let ec_id = op_editor_core::NodeId::new(&id);
-                if !self.editor_state.is_selected(&ec_id) {
-                    self.editor_state.toggle_selection(ec_id);
-                }
-            }
-            self.mark_dirty();
-        } else if !ids.is_empty() {
-            let ec_ids: Vec<op_editor_core::NodeId> =
-                ids.iter().map(op_editor_core::NodeId::new).collect();
-            let anchor = ec_ids.last().unwrap().clone();
-            self.editor_state.selection.set = ec_ids;
-            self.editor_state.selection.anchor = anchor;
+        if marquee_flow::commit_marquee_selection(&mut self.editor_state, &self.layout_scene, &m) {
             self.mark_dirty();
         }
     }

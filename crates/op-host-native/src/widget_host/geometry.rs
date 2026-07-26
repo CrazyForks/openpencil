@@ -518,9 +518,7 @@ impl WidgetHostNative {
         if !self.over_canvas(x, y, viewport_w, viewport_h) {
             return false;
         }
-        let (cx0, cy0, _cw, _ch) = self.canvas_region(viewport_w, viewport_h);
-        let canvas_local = Point2D::new(x - cx0, y - cy0);
-        let doc_point = self.editor_state.viewport.to_document(canvas_local);
+        let doc_point = canvas_geometry::canvas_doc_point_unclamped(&self.editor_state, x, y);
         let zoom = self.editor_state.viewport.zoom;
         self.layout_scene
             .node_at_doc_point(doc_point, zoom)
@@ -530,11 +528,6 @@ impl WidgetHostNative {
     /// True while a node-drag is in flight.
     pub fn is_dragging_node(&self) -> bool {
         self.node_drag.is_some()
-    }
-
-    /// Canvas origin (logical px).
-    pub(in crate::widget_host) fn canvas_origin(&self) -> (f32, f32) {
-        canvas_geometry::canvas_origin(&self.editor_state)
     }
 
     /// Canvas region (logical px, viewport-relative). The math is
@@ -617,8 +610,8 @@ impl WidgetHostNative {
         &self,
         x: f32,
         y: f32,
-        viewport_w: f32,
-        viewport_h: f32,
+        _viewport_w: f32,
+        _viewport_h: f32,
     ) -> Option<(String, op_editor_ui::widgets::ArcHandle)> {
         if !matches!(self.editor_state.tool, op_editor_core::Tool::Select) {
             return None;
@@ -629,10 +622,8 @@ impl WidgetHostNative {
         let sel = self.editor_state.selection.anchor.as_str().to_string();
         let node = self.layout_scene.active_page()?.find(&sel)?;
         let handles = op_editor_ui::widgets::arc_handle_positions(node)?;
-        let (cx0, cy0, _cw, _ch) = self.canvas_region(viewport_w, viewport_h);
         let zoom = self.editor_state.viewport.zoom.max(0.0001);
-        let canvas_local = Point2D::new(x - cx0, y - cy0);
-        let mut doc_point = self.editor_state.viewport.to_document(canvas_local);
+        let mut doc_point = canvas_geometry::canvas_doc_point_unclamped(&self.editor_state, x, y);
         // Un-rotate the cursor into the ellipse's local frame.
         if node.rotation.abs() > f32::EPSILON {
             let b = node.bounds;

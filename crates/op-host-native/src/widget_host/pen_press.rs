@@ -27,6 +27,7 @@
 //! context menu edits point types only. Rust matches deliberately.
 
 use super::WidgetHostNative;
+use op_editor_ui::widgets::host_canvas_geometry as canvas_geometry;
 use op_editor_ui::widgets::path_anchor_context_menu::{
     MenuHit, PathAnchorContextMenu, PathAnchorMenuAction,
 };
@@ -56,9 +57,7 @@ impl WidgetHostNative {
         {
             return true;
         }
-        let (cx0, cy0, _cw, _ch) = self.canvas_region(viewport_w, viewport_h);
-        let canvas_local = Point2D::new(x - cx0, y - cy0);
-        let doc_point = self.editor_state.viewport.to_document(canvas_local);
+        let doc_point = canvas_geometry::canvas_doc_point_unclamped(&self.editor_state, x, y);
         let doc = (doc_point.x as f64, doc_point.y as f64);
         if self.editor_state.ui.pen_in_progress.is_some() {
             // 1. Click near the FIRST anchor (≥ 3 anchors) closes the
@@ -111,9 +110,7 @@ impl WidgetHostNative {
         else {
             return false;
         };
-        let (cx0, cy0, _cw, _ch) = self.canvas_region(viewport_w, viewport_h);
-        let canvas_local = Point2D::new(x - cx0, y - cy0);
-        let doc_point = self.editor_state.viewport.to_document(canvas_local);
+        let doc_point = canvas_geometry::canvas_doc_point_unclamped(&self.editor_state, x, y);
         let ec_id = op_editor_core::NodeId::new(&node_id);
         let scene_node = self
             .layout_scene
@@ -179,9 +176,7 @@ impl WidgetHostNative {
         if self.path_anchor_drag.is_none() {
             return false;
         }
-        let (cx0, cy0) = self.canvas_origin();
-        let canvas_local = Point2D::new(x - cx0, y - cy0);
-        let doc = self.editor_state.viewport.to_document(canvas_local);
+        let doc = canvas_geometry::canvas_doc_point_unclamped(&self.editor_state, x, y);
         let (id, idx, target, anchor_doc, start, grab, shift, already_moved) = {
             let d = self.path_anchor_drag.as_ref().unwrap();
             (
@@ -270,9 +265,7 @@ impl WidgetHostNative {
     /// updates.
     pub(in crate::widget_host) fn apply_pen_cursor_move(&mut self, x: f32, y: f32) -> Option<bool> {
         self.editor_state.ui.pen_in_progress.as_ref()?;
-        let (cx0, cy0) = self.canvas_origin();
-        let canvas_local = Point2D::new(x - cx0, y - cy0);
-        let doc = self.editor_state.viewport.to_document(canvas_local);
+        let doc = canvas_geometry::canvas_doc_point_unclamped(&self.editor_state, x, y);
         if self.editor_state.ui.pen_dragging_handle {
             let _ = self
                 .editor_state

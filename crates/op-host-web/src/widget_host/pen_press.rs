@@ -1,6 +1,7 @@
 //! Select-tool path-anchor context-menu dispatch for the web host.
 
 use super::WidgetHost;
+use op_editor_ui::widgets::host_canvas_geometry as canvas_geometry;
 use op_editor_ui::widgets::path_anchor_context_menu::{
     MenuHit, PathAnchorContextMenu, PathAnchorMenuAction,
 };
@@ -19,9 +20,7 @@ impl WidgetHost {
         else {
             return false;
         };
-        let (cx0, cy0, _cw, _ch) = self.canvas_region(viewport_w, viewport_h);
-        let canvas_local = Point2D::new(x - cx0, y - cy0);
-        let doc_point = self.editor_state.viewport.to_document(canvas_local);
+        let doc_point = canvas_geometry::canvas_doc_point_unclamped(&self.editor_state, x, y);
         let ec_id = op_editor_core::NodeId::new(&node_id);
         let scene_node = self
             .layout_scene
@@ -73,9 +72,7 @@ impl WidgetHost {
         if self.path_anchor_drag.is_none() {
             return false;
         }
-        let (cx0, cy0, _cw, _ch) = self.canvas_region(self.last_viewport_w, self.last_viewport_h);
-        let canvas_local = Point2D::new(x - cx0, y - cy0);
-        let doc = self.editor_state.viewport.to_document(canvas_local);
+        let doc = canvas_geometry::canvas_doc_point_unclamped(&self.editor_state, x, y);
         let (id, idx, target, anchor_doc, start, grab, shift, already_moved) = {
             let d = self.path_anchor_drag.as_ref().unwrap();
             (

@@ -5,6 +5,7 @@
 //! dispatchers in their own sibling modules (mirroring the native
 //! host's layout) so this file stays under the 800-line cap.
 use op_editor_ui::widgets::chat_click_flow;
+use op_editor_ui::widgets::host_canvas_geometry as canvas_geometry;
 use op_editor_ui::widgets::press_flow::{
     self, LayerContextMenuPress, LayerContextStep, LocalePickerPress, OpenLayerMenuPress,
     PropertyOverlayPress, TopBarPress,
@@ -886,9 +887,8 @@ impl WidgetHost {
             }
             if matches!(self.editor_state.tool, op_editor_core::Tool::Select) {
                 if let Some(editing) = self.editor_state.editor_ui.image_crop_editing.clone() {
-                    let (cx0, cy0, _cw, _ch) = self.canvas_region(viewport_width, viewport_height);
-                    let canvas_local = Point2D::new(x - cx0, y - cy0);
-                    let doc_point = self.editor_state.viewport.to_document(canvas_local);
+                    let doc_point =
+                        canvas_geometry::canvas_doc_point_unclamped(&self.editor_state, x, y);
                     if let Some(hit_path) = self
                         .layout_scene
                         .node_path_at_doc_point(doc_point, self.editor_state.viewport.zoom)
@@ -922,8 +922,8 @@ impl WidgetHost {
                     origin: Point2D::new(cx0, cy0),
                     size: Point2D::new(_cw, _ch),
                 };
-                let canvas_local = Point2D::new(x - cx0, y - cy0);
-                let doc_point = self.editor_state.viewport.to_document(canvas_local);
+                let doc_point =
+                    canvas_geometry::canvas_doc_point_unclamped(&self.editor_state, x, y);
                 let canvas = CanvasViewport::from_editor(&self.editor_state, &self.layout_scene);
                 if let Some(sc_node_id) =
                     canvas.frame_label_at_point(canvas_rect, Point2D::new(x, y))
@@ -980,9 +980,7 @@ impl WidgetHost {
                     || text_edit_committed
                     || property_focus_committed;
             }
-            let (cx0, cy0, _cw, _ch) = self.canvas_region(viewport_width, viewport_height);
-            let canvas_local = Point2D::new(x - cx0, y - cy0);
-            let doc_point = self.editor_state.viewport.to_document(canvas_local);
+            let doc_point = canvas_geometry::canvas_doc_point_unclamped(&self.editor_state, x, y);
             if self.start_create_drag_at(doc_point) {
                 return true;
             }

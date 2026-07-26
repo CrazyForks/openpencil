@@ -9,6 +9,7 @@
 //! the OP `RenderBackend` trait gets a real impl.
 
 mod frame_backend;
+mod frame_offscreen;
 pub mod skia;
 
 pub use frame_backend::NativeFrameBackend;

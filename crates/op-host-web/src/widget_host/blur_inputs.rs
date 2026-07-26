@@ -48,12 +48,18 @@ impl WidgetHost {
     /// open) so blank-press callers can report a visible change.
     pub(in crate::widget_host) fn blur_text_inputs_on_blank_press(&mut self) -> bool {
         let was_focused = self.any_text_input_focused();
-        self.commit_property_family_focus_if_any();
+        // Property-panel family — `commit_property_focus_if_any` chains
+        // the variables-header, variable-row, and effect-param commits
+        // ahead of the property-focus commit itself. Call the FULL chain
+        // (as native does), not the `commit_property_family_focus_if_any`
+        // gate: that variant only enters the chain when `property_focus`
+        // or `effect_param_focus` is set, so this path used to need two
+        // extra explicit variables commits behind it to cover a focused
+        // variables header / row. Same net effect, one seam.
+        self.commit_property_focus_if_any();
         // VariablesPanel drafts COMMIT on blur (header renames + row
         // cells), mirroring the native blur helper; the search box
         // just defocuses, keeping its typed filter.
-        self.commit_variables_panel_header_focus_if_any();
-        self.commit_variable_row_focus_if_any();
         self.editor_state.editor_ui.variables_search_focus = false;
         // Settings-modal inputs (MCP port, agent / image-gen fields).
         self.commit_settings_focus();

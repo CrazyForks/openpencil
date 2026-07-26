@@ -12,6 +12,7 @@
 use super::{TextEditSelectionDragState, WidgetHostNative};
 use op_editor_ui::layout_scene::SceneNode;
 use op_editor_ui::widgets::canvas_text_edit::{text_edit_layout, TextEditLayout};
+use op_editor_ui::widgets::host_canvas_geometry as canvas_geometry;
 use op_editor_ui::{Color, Point2D, Rect, RenderBackend, TextLayout};
 
 /// Measure-only [`RenderBackend`] facade over a [`crate::NativeBackend`].
@@ -135,9 +136,7 @@ impl WidgetHostNative {
     /// space (canvas-region origin + viewport pan/zoom + inverse node
     /// rotation).
     fn text_edit_doc_point(&self, x: f32, y: f32, node: &SceneNode) -> Point2D {
-        let (cx0, cy0) = self.canvas_origin();
-        let canvas_local = Point2D::new(x - cx0, y - cy0);
-        let doc = self.editor_state.viewport.to_document(canvas_local);
+        let doc = canvas_geometry::canvas_doc_point_unclamped(&self.editor_state, x, y);
         inverse_rotate_doc(doc, node)
     }
 

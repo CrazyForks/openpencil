@@ -6,10 +6,6 @@ use op_editor_core::host_ui_transitions as shared;
 use super::WidgetHostNative;
 
 impl WidgetHostNative {
-    pub(in crate::widget_host) fn set_settings_input_text(&mut self, text: impl Into<String>) {
-        shared::set_settings_input_text(&mut self.editor_state.editor_ui, text.into(), self.now_ms);
-    }
-
     pub(in crate::widget_host) fn apply_settings_text(&mut self, c: char) -> bool {
         if shared::settings_text(&mut self.editor_state.editor_ui, c, self.now_ms) {
             self.mark_dirty();

@@ -72,6 +72,7 @@ pub mod host_image_panel_transitions;
 pub mod host_keyboard_transitions;
 pub mod host_preset_name_draft;
 pub mod host_press_transitions;
+pub mod host_settings_commit;
 pub mod host_support;
 #[cfg(test)]
 mod host_support_tests;

@@ -8,68 +8,10 @@
 //! `queryLocalFonts` hand-off — and the `mark_dirty` tails.
 
 use super::WidgetHost;
-use op_editor_ui::widgets::agent_settings_fonts::FontsHit;
 use op_editor_ui::widgets::missing_fonts_flow as fonts_flow;
 use op_editor_ui::{Point2D, Rect};
 
 impl WidgetHost {
-    pub(in crate::widget_host) fn dispatch_settings_fonts_press(&mut self, hit: FontsHit) {
-        match hit {
-            FontsHit::ChooseFont(row) => self
-                .editor_state
-                .editor_ui
-                .open_missing_font_picker(row, op_editor_core::MissingFontSurface::Settings),
-            FontsHit::SelectFont(index) => {
-                let replacement = {
-                    let ui = &self.editor_state.editor_ui;
-                    op_editor_ui::widgets::property_panel_typography::font_picker_entries(
-                        &ui.imported_font_families,
-                        &ui.bundled_font_families,
-                        &ui.system_font_families,
-                        &ui.font_picker_search,
-                    )
-                    .get(index)
-                    .map(|entry| entry.family.clone())
-                };
-                let expected = match self.editor_state.editor_ui.font_picker_purpose {
-                    Some(op_editor_core::FontPickerPurpose::MissingFont { row, .. }) => self
-                        .editor_state
-                        .editor_ui
-                        .missing_fonts_prompt
-                        .as_ref()
-                        .and_then(|prompt| prompt.entries.get(row))
-                        .map(|entry| entry.family.clone()),
-                    _ => None,
-                };
-                if let (Some(from), Some(to)) = (expected, replacement) {
-                    let _ = self
-                        .editor_state
-                        .apply(op_editor_core::EditorCommand::ReplaceFontFamily { from, to });
-                }
-                self.editor_state.editor_ui.close_font_picker();
-                self.refresh_missing_fonts_for_settings();
-            }
-            FontsHit::ImportFont(row) => {
-                self.editor_state.editor_ui.missing_fonts_import_row = Some(row)
-            }
-            FontsHit::ClosePicker => {
-                self.editor_state.editor_ui.close_font_picker();
-            }
-            FontsHit::RemoveImportedFont(index) => {
-                if let Some(family) = self
-                    .editor_state
-                    .editor_ui
-                    .imported_font_families
-                    .get(index)
-                    .cloned()
-                {
-                    self.editor_state.editor_ui.pending_font_remove = Some(family);
-                }
-            }
-            FontsHit::PickerInside | FontsHit::None => {}
-        }
-    }
-
     pub(in crate::widget_host) fn try_scroll_missing_fonts_picker(
         &mut self,
         x: f32,

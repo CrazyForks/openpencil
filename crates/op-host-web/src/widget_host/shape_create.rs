@@ -2,6 +2,7 @@
 
 use super::WidgetHost;
 use op_editor_core::{DocRect, Tool};
+use op_editor_ui::widgets::host_canvas_geometry as canvas_geometry;
 use op_editor_ui::Point2D;
 
 #[derive(Debug, Clone, Copy)]
@@ -101,9 +102,7 @@ impl WidgetHost {
             return false;
         };
 
-        let (cx0, cy0, _, _) = self.canvas_region(self.last_viewport_w, self.last_viewport_h);
-        let canvas_local = Point2D::new(x - cx0, y - cy0);
-        let cur = self.editor_state.viewport.to_document(canvas_local);
+        let cur = canvas_geometry::canvas_doc_point_unclamped(&self.editor_state, x, y);
         let min_x = drag.start_doc_x.min(cur.x);
         let min_y = drag.start_doc_y.min(cur.y);
         let raw_w = (drag.start_doc_x - cur.x).abs();

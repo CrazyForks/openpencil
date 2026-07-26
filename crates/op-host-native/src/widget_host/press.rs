@@ -7,7 +7,6 @@
 //! methods (`create_node_for_active_tool`,
 //! `dispatch_agent_settings_press`) live in `press_helpers.rs`.
 
-use super::helpers::{TOOLBAR_INSET_X, TOOLBAR_INSET_Y};
 use super::{
     ChatDragState, ChatInputSelectionDragState, ChatResizeState, ChatTextSelectionDragState,
     CodeSelectionDragState, CreateDragState, DragState, HandleDragState, PanelResize,
@@ -17,14 +16,15 @@ use op_editor_core::codegen::CodeSelection;
 use op_editor_core::host_press_transitions as core_press;
 use op_editor_core::pen_node_ext::PenNodeExt;
 use op_editor_ui::widgets::chat_click_flow;
+use op_editor_ui::widgets::host_canvas_geometry as canvas_geometry;
 use op_editor_ui::widgets::press_flow::{
     self, LayerContextMenuPress, LayerContextStep, LocalePickerPress, OpenLayerMenuPress,
     PropertyOverlayPress, TopBarPress,
 };
 use op_editor_ui::widgets::{
     rotation_corner_at_point, selection_handle_at_point, AIChatHit, AIChatPlaceholder,
-    CanvasViewport, ImportMenu, ImportMenuChoice, LayoutCx, PropertyPanel, Toolbar, TopBar,
-    TopBarHit, Widget, TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
+    CanvasViewport, ImportMenu, ImportMenuChoice, PropertyPanel, Toolbar, TopBar, TopBarHit,
+    TOP_BAR_HEIGHT,
 };
 use op_editor_ui::{Point2D, Rect};
 
@@ -877,20 +877,8 @@ impl WidgetHostNative {
         }
 
         // 2. Toolbar — second-highest overlay.
-        let (cx0, _cy0, _cw, _ch) = self.canvas_region(viewport_width, viewport_height);
+        let toolbar_rect = self.toolbar_rect(viewport_width, viewport_height);
         let toolbar = Toolbar::for_editor(&self.editor_state);
-        let toolbar_h = toolbar
-            .layout(&LayoutCx {
-                available_width: TOOLBAR_WIDTH,
-                dpi: 1.0,
-            })
-            .rect
-            .size
-            .y;
-        let toolbar_rect = Rect {
-            origin: Point2D::new(cx0 + TOOLBAR_INSET_X, TOP_BAR_HEIGHT + TOOLBAR_INSET_Y),
-            size: Point2D::new(TOOLBAR_WIDTH, toolbar_h),
-        };
         if (toolbar_rect).contains(Point2D::new(x, y)) {
             if let Some(hit) = toolbar.hit_test(toolbar_rect, Point2D::new(x, y)) {
                 match hit {
@@ -988,8 +976,7 @@ impl WidgetHostNative {
                 origin: Point2D::new(cx0, cy0),
                 size: Point2D::new(cw, ch),
             };
-            let canvas_local = Point2D::new(x - cx0, y - cy0);
-            let doc_point = self.editor_state.viewport.to_document(canvas_local);
+            let doc_point = canvas_geometry::canvas_doc_point_unclamped(&self.editor_state, x, y);
 
             if matches!(self.editor_state.tool, Tool::Select) {
                 if let Some(editing) = self.editor_state.editor_ui.image_crop_editing.clone() {

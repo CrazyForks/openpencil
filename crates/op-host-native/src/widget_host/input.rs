@@ -4,6 +4,7 @@ use super::helpers::{resize_bounds, PANEL_MAX_WIDTH, PANEL_MIN_WIDTH};
 use super::{DragState, PanelResizeKind, WidgetHostNative};
 use op_editor_core::codegen::CodeSelection;
 use op_editor_ui::widgets::cursor_hover_flow as hover_flow;
+use op_editor_ui::widgets::host_canvas_geometry as canvas_geometry;
 use op_editor_ui::widgets::{
     AIChatHit, AIChatPlaceholder, ChatResizeEdge, PropertyPanel, AI_CHAT_MAX_RATIO,
     AI_CHAT_MIN_HEIGHT, AI_CHAT_MIN_WIDTH,
@@ -1335,9 +1336,7 @@ impl WidgetHostNative {
             return true;
         }
         if let Some(drag) = self.create_drag {
-            let (cx0, cy0) = self.canvas_origin();
-            let canvas_local = Point2D::new(x - cx0, y - cy0);
-            let cur = self.editor_state.viewport.to_document(canvas_local);
+            let cur = canvas_geometry::canvas_doc_point_unclamped(&self.editor_state, x, y);
             let min_x = drag.start_doc_x.min(cur.x);
             let min_y = drag.start_doc_y.min(cur.y);
             // Text needs room for placeholder glyphs.
@@ -1363,9 +1362,7 @@ impl WidgetHostNative {
         }
         // Ellipse arc-handle drag: recompute arc geometry from the cursor.
         if self.arc_handle_drag.is_some() {
-            let (cx0, cy0) = self.canvas_origin();
-            let canvas_local = Point2D::new(x - cx0, y - cy0);
-            let doc = self.editor_state.viewport.to_document(canvas_local);
+            let doc = canvas_geometry::canvas_doc_point_unclamped(&self.editor_state, x, y);
             let (id, handle, start, already_moved) = {
                 let d = self.arc_handle_drag.as_ref().unwrap();
                 (d.node_id.clone(), d.handle, d.start_doc, d.moved)

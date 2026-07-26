@@ -7,30 +7,22 @@
 //! sidebar-collapse-aware version (paint / press / click each
 //! inline equivalents against their own backend / dpi context).
 
-use super::helpers::{TOOLBAR_INSET_X, TOOLBAR_INSET_Y};
 use super::WidgetHostNative;
-use op_editor_ui::widgets::{LayoutCx, Toolbar, Widget, TOOLBAR_WIDTH, TOP_BAR_HEIGHT};
+use op_editor_ui::widgets::host_canvas_geometry as canvas_geometry;
+use op_editor_ui::widgets::Toolbar;
 use op_editor_ui::{Point2D, Rect};
 
 impl WidgetHostNative {
-    /// The on-screen rect of the floating tool column. Centralises
-    /// the inset + intrinsic-height math used by hover so paint /
-    /// press / click can hit-test against the same bounds.
-    pub(in crate::widget_host) fn toolbar_rect(&self, viewport_w: f32, viewport_h: f32) -> Rect {
-        let (cx0, _cy, _cw, _ch) = self.canvas_region(viewport_w, viewport_h);
-        let toolbar = Toolbar::for_editor(&self.editor_state);
-        let toolbar_h = toolbar
-            .layout(&LayoutCx {
-                available_width: TOOLBAR_WIDTH,
-                dpi: 1.0,
-            })
-            .rect
-            .size
-            .y;
-        Rect {
-            origin: Point2D::new(cx0 + TOOLBAR_INSET_X, TOP_BAR_HEIGHT + TOOLBAR_INSET_Y),
-            size: Point2D::new(TOOLBAR_WIDTH, toolbar_h),
-        }
+    /// The on-screen rect of the floating tool column. Forwards to the
+    /// shared `host_canvas_geometry` placement (which derives the origin
+    /// from `canvas_origin`, per the coordinate invariant) so paint /
+    /// press / click hit-test against the same bounds as the web host.
+    ///
+    /// The viewport arguments are vestigial — the placement only needs
+    /// the canvas origin — but the signature is part of this host's
+    /// internal surface, so it stays.
+    pub(in crate::widget_host) fn toolbar_rect(&self, _viewport_w: f32, _viewport_h: f32) -> Rect {
+        canvas_geometry::toolbar_rect_for(&self.editor_state)
     }
 
     /// Update the per-button hover wash on the vertical toolbar

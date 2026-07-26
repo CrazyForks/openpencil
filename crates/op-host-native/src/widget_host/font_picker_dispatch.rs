@@ -5,7 +5,6 @@
 
 use super::WidgetHostNative;
 use op_editor_ui::widgets::agent_settings_panel::AgentSettingsPanel;
-use op_editor_ui::widgets::property_panel_typography::font_picker_entries;
 use op_editor_ui::widgets::{PropertyPanel, TOP_BAR_HEIGHT};
 use op_editor_ui::{Point2D, Rect};
 
@@ -59,21 +58,6 @@ impl WidgetHostNative {
         self.editor_state.editor_ui.system_font_families = std::sync::Arc::new(families);
         self.editor_state.editor_ui.bundled_font_families = std::sync::Arc::new(bundled_families);
         self.editor_state.editor_ui.system_fonts_loaded = true;
-    }
-
-    /// Resolve a `SetFontFamilyIndex` / `RemoveImportedFont` against
-    /// the SAME entries list the panel painted / hit-tested (imported
-    /// + system lists + live search).
-    pub(in crate::widget_host) fn font_picker_family_at(&self, index: usize) -> Option<String> {
-        let ui = &self.editor_state.editor_ui;
-        font_picker_entries(
-            &ui.imported_font_families,
-            &ui.bundled_font_families,
-            &ui.system_font_families,
-            &ui.font_picker_search,
-        )
-        .get(index)
-        .map(|e| e.family.to_string())
     }
 
     /// Rebuild the imported-font snapshot from the live `jian-skia`

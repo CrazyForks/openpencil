@@ -317,7 +317,8 @@ fn cursor_move_tracks_canvas_hover_node() {
     host.last_viewport_w = 1200.0;
     host.last_viewport_h = 800.0;
 
-    let (cx0, cy0) = host.canvas_origin();
+    let (cx0, cy0) =
+        op_editor_ui::widgets::host_canvas_geometry::canvas_origin(host.editor_state());
     // Over the rect at doc (400, 300) — clear of the floating
     // toolbar column (over_topmost suppresses canvas hover).
     assert!(host.apply_cursor_move(cx0 + 450.0, cy0 + 325.0));

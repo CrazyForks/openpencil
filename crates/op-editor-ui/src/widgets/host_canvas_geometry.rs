@@ -107,6 +107,28 @@ pub fn toolbar_fits(canvas_w: f32) -> bool {
     canvas_w > TOOLBAR_WIDTH + TOOLBAR_INSET_X * 2.0
 }
 
+/// Intrinsic height of the floating tool column — the widget's own
+/// layout pass, which depends on how many tool slots are live. Both
+/// hosts used to re-spell this `LayoutCx` dance at every hit-test site.
+pub fn toolbar_layout_height(state: &EditorState) -> f32 {
+    use crate::widgets::{LayoutCx, Toolbar, Widget};
+    Toolbar::for_editor(state)
+        .layout(&LayoutCx {
+            available_width: TOOLBAR_WIDTH,
+            dpi: 1.0,
+        })
+        .rect
+        .size
+        .y
+}
+
+/// [`toolbar_rect`] measured against the live [`toolbar_layout_height`]
+/// — the form every hit-test / hover site wants (paint already has the
+/// height in hand from its own layout pass).
+pub fn toolbar_rect_for(state: &EditorState) -> Rect {
+    toolbar_rect(state, toolbar_layout_height(state))
+}
+
 /// Bottom-right floating StatusBar pill. `None` when the canvas is too
 /// narrow to float it — the hosts' paint guard and their event-time
 /// hit-test must agree, so both read this one answer.
@@ -151,6 +173,21 @@ pub fn over_canvas(state: &EditorState, x: f32, y: f32, viewport_w: f32, viewpor
     x >= cx0 && x <= cx0 + cw && y >= cy0 && y <= cy0 + ch
 }
 
+/// Screen → document point through the canvas region, WITHOUT the
+/// region bound-check.
+///
+/// Every path that has already established it owns the gesture — a pen
+/// session in flight, an anchor / handle drag, a shape-create drag, a
+/// press that passed its own `over_canvas` guard — needs the document
+/// point even when the cursor has wandered off the region, so it must
+/// not go through [`canvas_doc_point`]'s `None`. Both hosts used to
+/// re-spell the `(x - cx0, y - cy0)` offset inline at ~10 sites, which
+/// is exactly the drift the coordinate invariant forbids.
+pub fn canvas_doc_point_unclamped(state: &EditorState, x: f32, y: f32) -> Point2D {
+    let (cx0, cy0) = canvas_origin(state);
+    state.viewport.to_document(Point2D::new(x - cx0, y - cy0))
+}
+
 /// Screen → document point through the canvas region. `None` when the
 /// point is outside the region.
 pub fn canvas_doc_point(
@@ -160,11 +197,8 @@ pub fn canvas_doc_point(
     viewport_w: f32,
     viewport_h: f32,
 ) -> Option<Point2D> {
-    let (cx0, cy0, cw, ch) = canvas_region(state, viewport_w, viewport_h);
-    if x < cx0 || x > cx0 + cw || y < cy0 || y > cy0 + ch {
-        return None;
-    }
-    Some(state.viewport.to_document(Point2D::new(x - cx0, y - cy0)))
+    over_canvas(state, x, y, viewport_w, viewport_h)
+        .then(|| canvas_doc_point_unclamped(state, x, y))
 }
 
 /// Document point at the centre of the canvas region — where "insert

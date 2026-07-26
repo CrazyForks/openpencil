@@ -13,14 +13,11 @@
 //! host; only the platform tail (`mark_dirty`, transcript-cache owner
 //! rotation, viewport fits, chat transport) stays here.
 
-use super::helpers::{TOOLBAR_INSET_X, TOOLBAR_INSET_Y};
 use super::WidgetHostNative;
 use op_editor_core::host_press_transitions as core_press;
 use op_editor_ui::widgets::chat_click_flow::{self, ChatClickStep, ChatHostAction};
 use op_editor_ui::widgets::press_flow::{self, LayerPanelClick};
-use op_editor_ui::widgets::{
-    AIChatPlaceholder, LayoutCx, Toolbar, Widget, TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
-};
+use op_editor_ui::widgets::{AIChatPlaceholder, Toolbar, TOP_BAR_HEIGHT};
 use op_editor_ui::{Point2D, Rect};
 
 impl WidgetHostNative {
@@ -110,54 +107,17 @@ impl WidgetHostNative {
     pub(in crate::widget_host) fn commit_marquee_selection(
         &mut self,
         m: super::MarqueeDragState,
-        viewport_w: f32,
-        viewport_h: f32,
+        _viewport_w: f32,
+        _viewport_h: f32,
     ) {
-        // 2 screen-px marquee threshold (TS `useMarqueeStart`).
-        let screen_dx = (m.current_screen_x - m.start_screen_x).abs();
-        let screen_dy = (m.current_screen_y - m.start_screen_y).abs();
-        if screen_dx < 2.0 && screen_dy < 2.0 {
+        use op_editor_ui::widgets::marquee_flow;
+        if !marquee_flow::marquee_dragged(&m) {
             return;
         }
         self.refresh_layout_scene();
-        let (cx0, cy0, _cw, _ch) = self.canvas_region(viewport_w, viewport_h);
-        let to_doc = |sx: f32, sy: f32| -> Point2D {
-            let local = Point2D::new(sx - cx0, sy - cy0);
-            self.editor_state.viewport.to_document(local)
-        };
-        let p0 = to_doc(m.start_screen_x, m.start_screen_y);
-        let p1 = to_doc(m.current_screen_x, m.current_screen_y);
-        let x = p0.x.min(p1.x);
-        let y = p0.y.min(p1.y);
-        let w = (p1.x - p0.x).abs();
-        let h = (p1.y - p0.y).abs();
-        let rect = Rect::xywh(x, y, w, h);
-        // `nodes_intersecting_doc_rect` queries the `LayoutScene` —
-        // it returns the resolved-scene node id strings.
-        let ids = self.layout_scene.nodes_intersecting_doc_rect(rect);
-        if m.additive {
-            // ADD-only: every hit joins the set; already-selected
-            // hits stay selected (TS shift-marquee parity).
-            for id in ids {
-                let ec_id = op_editor_core::NodeId::new(&id);
-                if !self.editor_state.is_selected(&ec_id) {
-                    self.editor_state.toggle_selection(ec_id);
-                }
-            }
-            self.mark_dirty();
-        } else if !ids.is_empty() {
-            // Replace with the hit set; anchor = last hit.
-            let ec_ids: Vec<op_editor_core::NodeId> =
-                ids.iter().map(op_editor_core::NodeId::new).collect();
-            let anchor = ec_ids.last().unwrap().clone();
-            self.editor_state.selection.set = ec_ids;
-            self.editor_state.selection.anchor = anchor;
+        if marquee_flow::commit_marquee_selection(&mut self.editor_state, &self.layout_scene, &m) {
             self.mark_dirty();
         }
-        // Empty marquee on plain press already cleared at start.
-        // A marquee selection landing outside the entered container
-        // steps out of it (selection-outside-exits rule).
-        self.editor_state.sync_entered_container_with_selection();
     }
 
     /// Primary-button click — routes to AI chat / Toolbar / Layer.
@@ -182,20 +142,8 @@ impl WidgetHostNative {
         // central helper so a panel-gap click can't strand a focused
         // input behind this block's early-consume return.
         let was_focused = self.blur_text_inputs_on_blank_press();
-        let (cx0, _cy0, _cw, _ch) = self.canvas_region(viewport_width, viewport_height);
+        let toolbar_rect = self.toolbar_rect(viewport_width, viewport_height);
         let toolbar = Toolbar::for_editor(&self.editor_state);
-        let toolbar_h = toolbar
-            .layout(&LayoutCx {
-                available_width: TOOLBAR_WIDTH,
-                dpi: 1.0,
-            })
-            .rect
-            .size
-            .y;
-        let toolbar_rect = Rect {
-            origin: Point2D::new(cx0 + TOOLBAR_INSET_X, TOP_BAR_HEIGHT + TOOLBAR_INSET_Y),
-            size: Point2D::new(TOOLBAR_WIDTH, toolbar_h),
-        };
         if let Some(hit) = toolbar.hit_test(toolbar_rect, Point2D::new(x, y)) {
             self.editor_state.editor_ui.pressed_button =
                 Some(op_editor_core::ButtonPressTarget::Toolbar(

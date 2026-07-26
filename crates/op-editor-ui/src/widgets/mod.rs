@@ -224,6 +224,9 @@ mod agent_settings_panel_card;
 mod agent_settings_panel_geometry;
 #[cfg(test)]
 mod agent_settings_panel_tests;
+pub mod agent_settings_press_entries;
+pub mod agent_settings_press_flow;
+pub mod agent_settings_press_focus;
 mod agent_settings_switch;
 #[cfg(test)]
 mod agent_settings_switch_style_tests;
@@ -294,6 +297,7 @@ pub mod ime_preedit_overlay;
 pub mod import_menu;
 pub mod locale_picker;
 pub mod login_modal;
+pub mod marquee_flow;
 pub(crate) mod menu_paint;
 pub mod missing_fonts_flow;
 pub mod missing_fonts_panel;

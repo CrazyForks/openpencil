@@ -3,7 +3,7 @@
 use super::WidgetHost;
 use op_editor_ui::widgets::host_canvas_geometry as canvas_geometry;
 use op_editor_ui::widgets::host_overlay_geometry as overlay_geometry;
-use op_editor_ui::widgets::{LayoutCx, Toolbar, TopBar, Widget, TOOLBAR_WIDTH};
+use op_editor_ui::widgets::{Toolbar, TopBar};
 use op_editor_ui::{Point2D, Rect};
 
 impl WidgetHost {
@@ -64,16 +64,7 @@ impl WidgetHost {
 
     pub(in crate::widget_host) fn toolbar_rect(&mut self, _viewport_w: f32) -> Rect {
         self.refresh_layout_scene();
-        let toolbar = Toolbar::for_editor(&self.editor_state);
-        let h = toolbar
-            .layout(&LayoutCx {
-                available_width: TOOLBAR_WIDTH,
-                dpi: 1.0,
-            })
-            .rect
-            .size
-            .y;
-        canvas_geometry::toolbar_rect(&self.editor_state, h)
+        canvas_geometry::toolbar_rect_for(&self.editor_state)
     }
 
     /// Per-button hover wash on the floating toolbar. Mirrors
