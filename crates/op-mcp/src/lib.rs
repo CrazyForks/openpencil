@@ -40,6 +40,7 @@ pub mod batch_get;
 #[cfg(test)]
 mod batch_get_tests;
 mod batch_layered;
+mod batch_layered_guidelines;
 #[cfg(test)]
 mod batch_layered_tests;
 mod batch_page;
@@ -48,7 +49,11 @@ mod batch_program_error;
 mod batch_program_exec_ops;
 pub mod batch_program_objects;
 mod batch_program_parse;
+#[cfg(test)]
+mod batch_program_repair_tests;
 mod batch_program_resolve;
+#[cfg(test)]
+mod batch_program_test_support;
 #[cfg(test)]
 mod batch_program_tests;
 #[cfg(test)]
@@ -147,8 +152,10 @@ mod update_node_data;
 #[cfg(test)]
 mod update_node_data_tests;
 pub mod write_tools;
+mod write_tools_import_svg;
 #[cfg(test)]
 mod write_tools_tests;
+mod write_tools_variables;
 // Cross-cutting tests for the crate spine — stdio dispatch + parser
 // invariants + a few read-tool registry round-trips.
 #[cfg(test)]

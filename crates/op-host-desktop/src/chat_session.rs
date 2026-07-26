@@ -537,6 +537,10 @@ fn standard_base64_decoded_len(encoded: &str) -> Option<usize> {
 mod tests;
 
 #[cfg(test)]
+#[path = "chat_session_loop_tests.rs"]
+mod loop_tests;
+
+#[cfg(test)]
 #[path = "chat_session_transcript_tests.rs"]
 mod transcript_tests;
 

@@ -589,6 +589,9 @@ fn main() {
 mod chat_intent_host_tests;
 
 #[cfg(test)]
+mod main_mcp_tests;
+
+#[cfg(test)]
 mod main_tests;
 
 #[cfg(test)]

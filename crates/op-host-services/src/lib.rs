@@ -26,6 +26,7 @@ pub mod chat_attachment;
 #[cfg(test)]
 mod chat_avatar_modify_tests;
 pub mod chat_builtin_http;
+mod chat_builtin_http_wire;
 pub mod chat_canvas_tools;
 pub mod chat_claude;
 pub mod chat_copilot;

@@ -7,11 +7,9 @@
 //! canonical `.op` schema's string ids (`NodeId`), not the old `u64`.
 //! `parse_node_id` accepts any non-empty string.
 
-use std::{collections::BTreeMap, fs};
+use std::collections::BTreeMap;
 
 use jian_ops_schema::node::PenNode;
-use jian_ops_schema::variable::VariableKind;
-use op_editor_core::EditorState;
 use op_editor_core::NodeId;
 use serde_json::Value;
 
@@ -19,6 +17,12 @@ use super::{EditorCommand, McpTool, ToolErrorCode, ToolOutcome};
 use crate::insert_node_args::{insert_node_params, InsertNodeParams};
 use crate::insert_node_data::ts_data_node;
 use crate::update_node_data::ts_update_patch_json;
+
+pub use crate::write_tools_import_svg::{import_svg_snapshot, ImportSvg};
+pub use crate::write_tools_variables::{
+    set_active_axis_value_snapshot, set_variable_color_snapshot, SetActiveAxisValue,
+    SetVariableColor,
+};
 
 /// Parse a `node_id`-style argument into a `NodeId`. Node ids are
 /// canonical `.op` schema strings — any non-empty string is valid; an
@@ -42,93 +46,6 @@ pub(super) fn parse_node_id(
             format!("{key} must be a non-empty node id"),
         )
     })
-}
-
-/// First-party `set_variable_color` tool — validates that the variable
-/// exists + is Color-kind + the hex parses, then returns
-/// `OkWithCommand(SetVariableColor)`.
-pub struct SetVariableColor {
-    /// Snapshot of which Color variables exist. Validation only.
-    pub known_colors: BTreeMap<String, ()>,
-}
-
-impl McpTool for SetVariableColor {
-    fn name(&self) -> &str {
-        "set_variable_color"
-    }
-    fn call(&self, args: &BTreeMap<String, String>) -> ToolOutcome {
-        let Some(name) = args.get("name") else {
-            return ToolOutcome::Err(ToolErrorCode::MissingArgument, "name is required".into());
-        };
-        let Some(hex) = args.get("hex") else {
-            return ToolOutcome::Err(ToolErrorCode::MissingArgument, "hex is required".into());
-        };
-        if !self.known_colors.contains_key(name) {
-            return ToolOutcome::Err(
-                ToolErrorCode::ToolFailed,
-                format!("variable {name:?} not found or not Color-kind"),
-            );
-        }
-        if !validate_hex(hex) {
-            return ToolOutcome::Err(
-                ToolErrorCode::InvalidArgument,
-                format!("hex must be #rgb/#rrggbb/#rrggbbaa, got {hex:?}"),
-            );
-        }
-        let mut out = BTreeMap::new();
-        out.insert("wrote".into(), "true".into());
-        ToolOutcome::OkWithCommand(
-            out,
-            EditorCommand::SetVariableColor {
-                name: name.clone(),
-                hex: hex.clone(),
-            },
-        )
-    }
-}
-
-/// First-party `set_active_axis_value` tool — pins an axis to a value.
-pub struct SetActiveAxisValue {
-    /// Snapshot of axis → allowed-values. Validation only.
-    pub axes: BTreeMap<String, Vec<String>>,
-}
-
-impl McpTool for SetActiveAxisValue {
-    fn name(&self) -> &str {
-        "set_active_axis_value"
-    }
-    fn call(&self, args: &BTreeMap<String, String>) -> ToolOutcome {
-        let Some(axis) = args.get("axis") else {
-            return ToolOutcome::Err(ToolErrorCode::MissingArgument, "axis is required".into());
-        };
-        let Some(value) = args.get("value") else {
-            return ToolOutcome::Err(ToolErrorCode::MissingArgument, "value is required".into());
-        };
-        let Some(allowed) = self.axes.get(axis) else {
-            return ToolOutcome::Err(
-                ToolErrorCode::ToolFailed,
-                format!("axis {axis:?} not defined in themes"),
-            );
-        };
-        if !allowed.iter().any(|v| v == value) {
-            return ToolOutcome::Err(
-                ToolErrorCode::InvalidArgument,
-                format!(
-                    "value {value:?} not in axis {axis:?}; allowed: {}",
-                    allowed.join(", ")
-                ),
-            );
-        }
-        let mut out = BTreeMap::new();
-        out.insert("wrote".into(), "true".into());
-        ToolOutcome::OkWithCommand(
-            out,
-            EditorCommand::SetActiveAxisValue {
-                axis: axis.clone(),
-                value: value.clone(),
-            },
-        )
-    }
 }
 
 /// First-party `insert_node` tool — creates a fresh node on the active
@@ -691,114 +608,6 @@ fn parse_drop_children_arg(args: &BTreeMap<String, String>) -> Result<bool, Tool
             format!("drop_children must be \"true\" or \"false\", got {s:?}"),
         )),
     }
-}
-
-pub fn set_active_axis_value_snapshot(state: &EditorState) -> SetActiveAxisValue {
-    let axes = state
-        .doc
-        .themes
-        .as_ref()
-        .map(|themes| {
-            themes
-                .iter()
-                .map(|(name, values)| (name.clone(), values.clone()))
-                .collect()
-        })
-        .unwrap_or_default();
-    SetActiveAxisValue { axes }
-}
-
-pub fn set_variable_color_snapshot(state: &EditorState) -> SetVariableColor {
-    let known_colors = state
-        .doc
-        .variables
-        .as_ref()
-        .map(|vars| {
-            vars.iter()
-                .filter(|(_, def)| matches!(def.kind, VariableKind::Color))
-                .map(|(name, _)| (name.clone(), ()))
-                .collect()
-        })
-        .unwrap_or_default();
-    SetVariableColor { known_colors }
-}
-
-/// First-party `import_svg` tool — parse an SVG document + insert the
-/// resulting nodes on the active page. `x` / `y` (optional, default 0)
-/// offset the imported nodes in doc-px.
-pub struct ImportSvg;
-
-impl McpTool for ImportSvg {
-    fn name(&self) -> &str {
-        "import_svg"
-    }
-    fn call(&self, args: &BTreeMap<String, String>) -> ToolOutcome {
-        let svg = match args.get("svg") {
-            Some(svg) => svg.clone(),
-            None => {
-                let Some(path) = args.get("svgPath").or_else(|| args.get("svg_path")) else {
-                    return ToolOutcome::Err(
-                        ToolErrorCode::MissingArgument,
-                        "svg or svgPath is required".into(),
-                    );
-                };
-                match fs::read_to_string(path) {
-                    Ok(svg) => svg,
-                    Err(e) => {
-                        return ToolOutcome::Err(
-                            ToolErrorCode::ToolFailed,
-                            format!("failed to read svgPath {path:?}: {e}"),
-                        );
-                    }
-                }
-            }
-        };
-        if svg.trim().is_empty() {
-            return ToolOutcome::Err(
-                ToolErrorCode::InvalidArgument,
-                "svg must not be empty".into(),
-            );
-        }
-        // `x` / `y` are optional doc-px offsets — absent ⇒ 0, a
-        // malformed value rejects so the LLM sees a typed error.
-        let x = match parse_opt_i32(args, "x") {
-            Ok(v) => v.unwrap_or(0),
-            Err(e) => return ToolOutcome::Err(ToolErrorCode::InvalidArgument, format!("x: {e}")),
-        };
-        let y = match parse_opt_i32(args, "y") {
-            Ok(v) => v.unwrap_or(0),
-            Err(e) => return ToolOutcome::Err(ToolErrorCode::InvalidArgument, format!("y: {e}")),
-        };
-        let target_parent = args
-            .get("parent")
-            .or_else(|| args.get("parent_id"))
-            .or_else(|| args.get("target_parent_id"))
-            .map(|s| root_or_node_id(s))
-            .unwrap_or(NodeId::NONE);
-        let page_id = args
-            .get("pageId")
-            .or_else(|| args.get("page_id"))
-            .or_else(|| args.get("page"))
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(str::to_string);
-        let mut out = BTreeMap::new();
-        out.insert("wrote".into(), "true".into());
-        ToolOutcome::OkWithCommand(
-            out,
-            EditorCommand::ImportSvg {
-                svg,
-                x,
-                y,
-                target_parent,
-                page_id,
-            },
-        )
-    }
-}
-
-pub fn import_svg_snapshot() -> ImportSvg {
-    ImportSvg
 }
 
 /// `#rgb`, `#rrggbb`, `#rrggbbaa` — requires the leading `#`.
