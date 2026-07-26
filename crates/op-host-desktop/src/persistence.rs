@@ -12,6 +12,12 @@ use op_host_services::doc_io::{
     load_editor_state_with_report, preserve_app_preferences, save_to_path, set_file_name_display,
     ActionOutcome, ErrorKind,
 };
+
+/// Document extensions for the native file-dialog filter (`.op` is the
+/// canonical format, `.pen` the legacy alias). Order is cosmetic — save
+/// dialogs always seed an explicit `.op` file name.
+pub(crate) const DOCUMENT_EXTENSIONS: &[&str] = &["op", "pen"];
+
 /// Pop a Save dialog (rfd native) and write the current document to
 /// the chosen path. `Ok(Some(path))` on success, `Ok(None)` on user
 /// cancel, `Err` on IO / encode failure.
@@ -32,7 +38,7 @@ pub fn pick_save_as_path(state: &EditorState) -> Option<PathBuf> {
             state.editor_ui.locale,
             "dialog.pickerSaveTitle",
         ))
-        .add_filter("OpenPencil", &["pen", "op"])
+        .add_filter(op_editor_ui::PRODUCT_NAME, DOCUMENT_EXTENSIONS)
         .set_file_name("untitled.op")
         .save_file()
 }
@@ -151,7 +157,7 @@ pub fn handle_open(
             host.editor_state().editor_ui.locale,
             "dialog.pickerOpenTitle",
         ))
-        .add_filter("OpenPencil", &["pen", "op"])
+        .add_filter(op_editor_ui::PRODUCT_NAME, DOCUMENT_EXTENSIONS)
         .pick_file()
     {
         Some(p) => p,
@@ -394,8 +400,12 @@ pub fn run_action(
 fn refresh_title(current_path: &Option<PathBuf>, window: Option<&winit::window::Window>) {
     let Some(window) = window else { return };
     let title = match current_path.as_ref().and_then(|p| p.file_name()) {
-        Some(name) => format!("{} — OpenPencil", name.to_string_lossy()),
-        None => "OpenPencil".to_string(),
+        Some(name) => format!(
+            "{} — {}",
+            name.to_string_lossy(),
+            op_editor_ui::PRODUCT_NAME
+        ),
+        None => op_editor_ui::PRODUCT_NAME.to_string(),
     };
     window.set_title(&title);
 }

@@ -11,6 +11,7 @@ pub mod account_state;
 pub mod agent_indicators;
 mod agent_indicators_tests;
 mod agent_provider_wire;
+pub mod agent_reveals;
 pub mod agent_settings;
 pub mod agent_settings_acp_connection;
 pub mod agent_settings_builtin_presets;
@@ -18,6 +19,7 @@ pub mod agent_settings_button_state;
 pub mod agent_settings_connection;
 pub mod align;
 pub mod align_guides;
+pub mod auth_routes;
 pub mod bridge_protocol;
 pub mod button_press_state;
 pub mod chat;
@@ -66,6 +68,7 @@ pub mod hoist_app_state;
 pub mod host_support;
 #[cfg(test)]
 mod host_support_tests;
+pub mod host_ui_transitions;
 pub mod icon_picker_state;
 pub mod image_crop;
 mod image_fill_upload;
@@ -207,6 +210,10 @@ pub use agent_settings_builtin_presets::{
     BuiltinAgentPreset, BuiltinAgentPresetKey, BUILTIN_AGENT_PRESETS,
 };
 pub use agent_settings_button_state::AgentSettingsButton;
+pub use agent_settings_connection::{
+    local_daemon_origin, local_mcp_url, missing_models_connect_error, DEFAULT_LOCAL_DAEMON_ORIGIN,
+    DEFAULT_MCP_PORT,
+};
 pub use align::AlignAction;
 pub use button_press_state::ButtonPressTarget;
 pub use chat::{

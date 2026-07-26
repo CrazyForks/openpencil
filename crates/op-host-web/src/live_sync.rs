@@ -18,7 +18,10 @@ use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 
-const STATUS_REQUEST_TIMEOUT_MS: u32 = 15_000;
+/// Shared network budget for the web shell's XHR fetches (daemon status
+/// polls, Iconify search) — one crate-level timeout instead of per-module
+/// copies.
+pub(crate) const DAEMON_FETCH_TIMEOUT_MS: u32 = 15_000;
 
 thread_local! {
     /// Managed-daemon auth token supplied by the VS Code host over the
@@ -120,7 +123,7 @@ pub fn get_with_status(url: &str, on_response: Rc<dyn Fn(u16, String)>) -> bool 
         return false;
     }
     attach_daemon_headers(&xhr, url);
-    xhr.set_timeout(STATUS_REQUEST_TIMEOUT_MS);
+    xhr.set_timeout(DAEMON_FETCH_TIMEOUT_MS);
     let xhr_for_load = xhr.clone();
     let onloadend = Closure::<dyn FnMut()>::once_into_js(move || {
         let status = xhr_for_load.status().unwrap_or(0);
@@ -174,7 +177,7 @@ pub fn post_json_with_status(url: &str, body: &str, on_response: Rc<dyn Fn(u16, 
         return false;
     }
     attach_daemon_headers(&xhr, url);
-    xhr.set_timeout(STATUS_REQUEST_TIMEOUT_MS);
+    xhr.set_timeout(DAEMON_FETCH_TIMEOUT_MS);
     let _ = xhr.set_request_header("Content-Type", "application/json");
     let xhr_for_load = xhr.clone();
     let onloadend = Closure::<dyn FnMut()>::once_into_js(move || {

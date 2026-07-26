@@ -100,12 +100,18 @@ impl BuiltinAgentPreset {
     }
 }
 
+/// Default model for Anthropic-kind built-in agents — the Anthropic
+/// preset's model and the fallback whenever a draft flips (back) to the
+/// Anthropic kind. One source of truth so preset, kind-toggle, and
+/// add-with-defaults paths can't drift.
+pub const DEFAULT_ANTHROPIC_MODEL: &str = "claude-sonnet-5";
+
 pub const BUILTIN_AGENT_PRESETS: [BuiltinAgentPreset; 19] = [
     BuiltinAgentPreset {
         key: BuiltinAgentPresetKey::Anthropic,
         display_name: "Anthropic",
         kind: BuiltinAgentKind::Anthropic,
-        model: "claude-sonnet-5",
+        model: DEFAULT_ANTHROPIC_MODEL,
         base_url: "https://api.anthropic.com",
         alt_kind: None,
         alt_base_url: None,

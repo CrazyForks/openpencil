@@ -65,7 +65,7 @@ pub fn ping_response(id_raw: &str, token: Option<&str>) -> String {
 /// Restricted to safe chars so it embeds in the JSON reply without escaping;
 /// anything else is treated as absent.
 pub fn headless_token_from_env() -> Option<String> {
-    sanitize_token(std::env::var("OPENPENCIL_MCP_TOKEN").ok()?)
+    sanitize_token(std::env::var(op_config_store::env_vars::MCP_TOKEN).ok()?)
 }
 
 /// Accept a candidate token only when it is non-empty and `[A-Za-z0-9_-]`,

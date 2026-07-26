@@ -106,14 +106,15 @@ pub fn scale12(seed_hue: f64, cmax: f64, mode: Mode, neutral: bool) -> [String; 
 }
 
 pub(crate) fn parse_hex_rgb(hex: &str) -> Option<(u8, u8, u8)> {
-    let hex = hex.trim();
-    let hex = hex.strip_prefix('#').unwrap_or(hex);
-    if hex.len() != 6 || !hex.is_ascii() {
-        return None;
-    }
-    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    // Palette seeds are full 6-digit hex only (leading `#` optional);
+    // shorthand and alpha forms stay rejected. Delegates to op-util.
+    const OPTS: op_util::hex_color::HexOptions = op_util::hex_color::HexOptions {
+        require_hash: false,
+        allow_rgb_shorthand: false,
+        allow_rgba_shorthand: false,
+        allow_alpha: false,
+    };
+    let [r, g, b, _] = op_util::hex_color::parse_hex_rgba8(hex, OPTS)?;
     Some((r, g, b))
 }
 

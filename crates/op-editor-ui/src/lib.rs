@@ -28,6 +28,10 @@
 // paths inside the widgets keep resolving.
 pub use op_i18n as i18n;
 
+/// User-visible product name — window titles, the accessibility root
+/// label, and the desktop file-dialog filter all read this one const.
+pub const PRODUCT_NAME: &str = "OpenPencil";
+
 // The wasm-clean RenderBackend trait + facade types live in
 // op-editor-core; re-exported as `render_backend` and at the crate root.
 pub use op_editor_core::render_backend;
@@ -41,6 +45,7 @@ pub mod image_runtime;
 // including the dirty host crates that must not be edited.
 pub use jian_scene::{layout_scene, layout_scene_hit};
 pub use op_editor_core::scene_vars;
+pub mod scene_bounds;
 pub mod svg_export;
 pub mod theme;
 pub mod util;
@@ -56,7 +61,7 @@ pub use theme::Theme;
 // Brand-logo catalog registration, surfaced at the crate root so non-widget
 // host code (the web brand-catalog fetcher) can install the runtime-loaded
 // catalog without importing the boundary-restricted `widgets` facade.
-pub use widgets::icon_catalog::{brand_catalog_loaded, set_brand_catalog};
+pub use widgets::icon_catalog::{brand_catalog_loaded, set_brand_catalog, ICONIFY_BRANDS_ROUTE};
 
 /// Re-exports of Jian gesture / event types so widget code can use the
 /// canonical Jian types directly via the short `crate::` form.

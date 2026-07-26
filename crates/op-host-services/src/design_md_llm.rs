@@ -2,49 +2,25 @@ use std::time::Duration;
 
 use futures::StreamExt;
 use jian_ops_schema::DesignMdSpec;
+use op_ai::design_md::{
+    clean_ai_design_md_result, design_md_system_prompt_with_extra_rules, truncate_chars,
+    DESIGN_MD_MAX_TREE_CHARS, DESIGN_MD_MAX_VAR_CHARS,
+};
 use op_editor_core::EditorState;
 use op_orchestrator::{AbortFlag, CallRequest, LlmChunk, LlmClient};
 
-const DESIGN_MD_SYSTEM_PROMPT: &str = r##"You are a Design Systems Lead. Analyze the provided PenNode design tree and generate a comprehensive design.md in the Google Stitch format.
+/// Orchestrator-specific additions to the shared design.md system prompt
+/// (`op_ai::design_md::DESIGN_MD_SYSTEM_PROMPT`): the generated brief
+/// must capture the current canvas for reuse and route follow-on named
+/// pages to sibling screens instead of appending below.
+const DESIGN_MD_EXTRA_RULES: &[&str] = &[
+    "- Capture the current canvas style for future screens; do not redesign the requested next screen inside design.md.",
+    "- State that follow-on named app pages should be generated as a separate sibling/root screen beside the existing screen, not appended below it.",
+];
 
-OUTPUT FORMAT — a complete markdown document with these sections:
-
-# Design System: [Project Name]
-
-## 1. Visual Theme & Atmosphere
-Describe the mood, density, and aesthetic philosophy using evocative adjectives.
-
-## 2. Color Palette & Roles
-For each color found in the design:
-- **Descriptive Name** (#HEX) — Functional role (e.g. "Primary CTA", "Background", "Body text")
-
-## 3. Typography Rules
-- Font families used, weight hierarchy, size scale, line-height conventions.
-
-## 4. Component Stylings
-- **Buttons**: shape, colors, padding, states
-- **Cards**: corners, shadows, internal padding
-- **Inputs**: borders, backgrounds
-- **Navigation**: layout, spacing
-
-## 5. Layout Principles
-- Grid system, whitespace strategy, spacing units, responsive breakpoints.
-
-## 6. Design System Notes
-- Key language/terms to use when generating new designs in this style.
-
-RULES:
-- Use descriptive natural language, NOT technical jargon (e.g. "subtly rounded corners" not "rounded-lg").
-- Pair ALL colors with exact hex codes.
-- Explain functional roles for every design element.
-- Capture the current canvas style for future screens; do not redesign the requested next screen inside design.md.
-- State that follow-on named app pages should be generated as a separate sibling/root screen beside the existing screen, not appended below it.
-- Output ONLY the markdown document, starting with "# Design System:".
-- NO preamble, NO commentary, NO tool calls, NO code fences around the output.
-- Do NOT use <tool_call> tags or any tool invocations. Just output the markdown text directly."##;
-
-const DESIGN_MD_MAX_TREE_CHARS: usize = 24_000;
-const DESIGN_MD_MAX_VAR_CHARS: usize = 6_000;
+fn design_md_system_prompt() -> String {
+    design_md_system_prompt_with_extra_rules(DESIGN_MD_EXTRA_RULES)
+}
 const DESIGN_MD_TIMEOUT: Duration = Duration::from_secs(90);
 const DESIGN_MD_NO_TEXT_TIMEOUT: Duration = Duration::from_secs(25);
 const DESIGN_MD_FIRST_TEXT_TIMEOUT: Duration = Duration::from_secs(45);
@@ -84,7 +60,7 @@ pub async fn generate_design_md_spec(
     abort: &AbortFlag,
 ) -> Result<DesignMdSpec, String> {
     let req = CallRequest {
-        system_prompt: DESIGN_MD_SYSTEM_PROMPT.to_string(),
+        system_prompt: design_md_system_prompt(),
         user_prompt: build_design_md_user_prompt(state, user_request),
         model,
         provider,
@@ -113,70 +89,6 @@ pub async fn generate_design_md_spec(
         return Err("design.md generation did not return a Design System document".into());
     }
     Ok(spec)
-}
-
-fn truncate_chars(input: &str, max_chars: usize) -> String {
-    let mut chars = input.chars();
-    let mut out: String = chars.by_ref().take(max_chars).collect();
-    if chars.next().is_some() {
-        out.push_str("\n... [truncated]");
-    }
-    out
-}
-
-fn clean_ai_design_md_result(raw: &str) -> String {
-    let mut text = strip_tool_call_blocks(raw.trim());
-    text = strip_code_fence(text);
-    if let Some(start) = text.find("# ") {
-        text = text[start..].to_string();
-    }
-    text.lines()
-        .filter(|line| {
-            let trimmed = line.trim();
-            !trimmed.starts_with("{\"name\"")
-                && !trimmed.starts_with("{\"tool_use_id\"")
-                && !trimmed.starts_with("{\"file_path\"")
-                && trimmed != "<tool_call>"
-                && trimmed != "</tool_call>"
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        .replace("\n\n\n\n", "\n\n\n")
-        .trim()
-        .to_string()
-}
-
-fn strip_code_fence(mut text: String) -> String {
-    let trimmed = text.trim();
-    if !trimmed.starts_with("```") {
-        return text;
-    }
-    text = trimmed.to_string();
-    if let Some(idx) = text.find('\n') {
-        text = text[idx + 1..].to_string();
-    }
-    if let Some(idx) = text.rfind("```") {
-        text.truncate(idx);
-    }
-    text.trim().to_string()
-}
-
-fn strip_tool_call_blocks(text: &str) -> String {
-    let mut out = String::new();
-    let mut rest = text;
-    loop {
-        let Some(start) = rest.find("<tool_call>") else {
-            out.push_str(rest);
-            break;
-        };
-        out.push_str(&rest[..start]);
-        let after_start = &rest[start + "<tool_call>".len()..];
-        let Some(end) = after_start.find("</tool_call>") else {
-            break;
-        };
-        rest = &after_start[end + "</tool_call>".len()..];
-    }
-    out
 }
 
 #[cfg(test)]
@@ -209,6 +121,24 @@ mod tests {
             .active_children_mut()
             .push(frame("home", "Food App Home"));
         state
+    }
+
+    #[test]
+    fn system_prompt_keeps_orchestrator_rules_before_the_output_rules() {
+        let prompt = design_md_system_prompt();
+        let roles = prompt
+            .find("- Explain functional roles for every design element.")
+            .expect("shared rule");
+        let capture = prompt
+            .find("- Capture the current canvas style for future screens")
+            .expect("continuity rule");
+        let sibling = prompt
+            .find("- State that follow-on named app pages")
+            .expect("sibling-screen rule");
+        let output_only = prompt
+            .find("- Output ONLY the markdown document")
+            .expect("output rule");
+        assert!(roles < capture && capture < sibling && sibling < output_only);
     }
 
     #[test]

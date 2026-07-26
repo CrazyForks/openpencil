@@ -20,41 +20,11 @@ use jian_core::scroll::ScrollState;
 /// the next supported width (6 or 8) so a mid-edit commit like `#0000` /
 /// `#0000000` doesn't visibly reset the colour.
 pub fn parse_hex_color(s: &str) -> Option<Color> {
-    let trimmed = s.trim().trim_start_matches('#');
-    if trimmed.is_empty() || trimmed.len() > 8 {
-        return None;
-    }
-    if !trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
-        return None;
-    }
-    // Canonicalise to either 6 (`RRGGBB`) or 8 (`RRGGBBAA`) chars.
-    let canonical = match trimmed.len() {
-        3 => {
-            let mut out = String::with_capacity(6);
-            for c in trimmed.chars() {
-                out.push(c);
-                out.push(c);
-            }
-            out
-        }
-        8 => trimmed.to_string(),
-        7 => format!("{:0>8}", trimmed),
-        _ => format!("{:0>6}", trimmed),
-    };
-    let r = u8::from_str_radix(&canonical[0..2], 16).ok()?;
-    let g = u8::from_str_radix(&canonical[2..4], 16).ok()?;
-    let b = u8::from_str_radix(&canonical[4..6], 16).ok()?;
-    let a = if canonical.len() == 8 {
-        u8::from_str_radix(&canonical[6..8], 16).ok()? as f32 / 255.0
-    } else {
-        1.0
-    };
-    Some(Color {
-        r: r as f32 / 255.0,
-        g: g as f32 / 255.0,
-        b: b as f32 / 255.0,
-        a,
-    })
+    // The zero-padding semantics live in op-util's canonical "padded" mode
+    // (moved there verbatim so every crate shares one implementation).
+    let [r, g, b, a] =
+        op_util::hex_color::rgba8_to_f32(op_util::hex_color::parse_hex_rgba8_padded(s)?);
+    Some(Color { r, g, b, a })
 }
 
 /// Format a `Color` as `#RRGGBB`. Alpha is dropped — the solid fill / stroke

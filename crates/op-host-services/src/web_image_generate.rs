@@ -302,7 +302,10 @@ fn provider_error(provider: &str, status: reqwest::StatusCode, body: &str) -> St
     msg
 }
 
-async fn generate_openai(
+/// OpenAI / OpenAI-compatible `images/generations` request. Shared verbatim
+/// by the desktop Generate popover (its own client/UA) and the web daemon
+/// route.
+pub async fn generate_openai(
     client: &reqwest::Client,
     prompt: &str,
     profile: &ImageGenProfile,
@@ -351,7 +354,8 @@ async fn generate_openai(
         .ok_or_else(|| "OpenAI response missing image URL".to_string())
 }
 
-async fn generate_gemini(
+/// Gemini `generateContent` inline-image request (shared desktop + web).
+pub async fn generate_gemini(
     client: &reqwest::Client,
     prompt: &str,
     profile: &ImageGenProfile,
@@ -385,7 +389,8 @@ async fn generate_gemini(
         .await
         // `without_url`: the Gemini endpoint carries `?key=…`, and a plain
         // reqwest error Display would echo that URL — API key included —
-        // back to the browser.
+        // into the surfaced error string (shown in the popover / returned
+        // to the browser).
         .map_err(|e| format!("Gemini request failed: {}", e.without_url()))?;
     let (status, body) = read_provider_body("Gemini", resp).await?;
     if !status.is_success() {
@@ -421,7 +426,8 @@ async fn generate_gemini(
     Err("Gemini response missing inline image data".to_string())
 }
 
-async fn generate_replicate(
+/// Replicate prediction create + poll (shared desktop + web).
+pub async fn generate_replicate(
     client: &reqwest::Client,
     prompt: &str,
     profile: &ImageGenProfile,

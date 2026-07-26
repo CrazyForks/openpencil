@@ -2,6 +2,7 @@ use super::*;
 use crate::layout_scene::{
     SceneFillType, SceneGradient, SceneGradientStop, SceneStroke, SceneStrokeAlign,
 };
+use crate::Point2D;
 
 fn scene_with(children: Vec<SceneNode>) -> LayoutScene {
     LayoutScene {

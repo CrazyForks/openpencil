@@ -481,34 +481,15 @@ impl VariableTable {
 /// Parse `#rgb` / `#rrggbb` / `#rrggbbaa` into a `Color`. Mirrors the
 /// TS paint helpers — lenient on case, requires the leading `#`.
 fn parse_hex_color(s: &str) -> Option<crate::Color> {
-    let s = s.trim().strip_prefix('#')?;
-    let (r, g, b, a) = match s.len() {
-        3 => {
-            let r = u8::from_str_radix(&s[0..1].repeat(2), 16).ok()?;
-            let g = u8::from_str_radix(&s[1..2].repeat(2), 16).ok()?;
-            let b = u8::from_str_radix(&s[2..3].repeat(2), 16).ok()?;
-            (r, g, b, 255)
-        }
-        6 => (
-            u8::from_str_radix(&s[0..2], 16).ok()?,
-            u8::from_str_radix(&s[2..4], 16).ok()?,
-            u8::from_str_radix(&s[4..6], 16).ok()?,
-            255,
-        ),
-        8 => (
-            u8::from_str_radix(&s[0..2], 16).ok()?,
-            u8::from_str_radix(&s[2..4], 16).ok()?,
-            u8::from_str_radix(&s[4..6], 16).ok()?,
-            u8::from_str_radix(&s[6..8], 16).ok()?,
-        ),
-        _ => return None,
+    // Historical format set: 3/6/8 digits, leading `#` mandatory.
+    const OPTS: op_util::hex_color::HexOptions = op_util::hex_color::HexOptions {
+        require_hash: true,
+        allow_rgb_shorthand: true,
+        allow_rgba_shorthand: false,
+        allow_alpha: true,
     };
-    Some(crate::Color {
-        r: r as f32 / 255.0,
-        g: g as f32 / 255.0,
-        b: b as f32 / 255.0,
-        a: a as f32 / 255.0,
-    })
+    let [r, g, b, a] = op_util::hex_color::parse_hex_rgba_f32(s, OPTS)?;
+    Some(crate::Color { r, g, b, a })
 }
 
 #[cfg(test)]

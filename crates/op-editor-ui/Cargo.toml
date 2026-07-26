@@ -28,6 +28,8 @@ jian-scene = { path = "../../vendor/jian/crates/jian-scene", version = "0.0.1" }
 # i18n string tables + the canonical editor state model.
 op-i18n = { path = "../op-i18n" }
 op-editor-core = { path = "../op-editor-core" }
+# Canonical hex-color parsing + XML escaping (dependency-free, wasm-clean).
+op-util = { path = "../op-util" }
 
 # Decode `data:image/...;base64,...` URLs in the canvas painter so a
 # pasted / picked image lands on the canvas instead of the grey

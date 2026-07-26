@@ -1,4 +1,5 @@
 use super::{expand_declaration, Declaration};
+use crate::css::cascade_shared::is_ident;
 use std::collections::BTreeSet;
 
 pub(super) fn is_shorthand_with_var(name: &str, value: &str) -> bool {
@@ -109,10 +110,6 @@ fn contains_var_function(value: &str) -> bool {
         at += 1;
     }
     false
-}
-
-fn is_ident(ch: char) -> bool {
-    ch.is_alphanumeric() || matches!(ch, '-' | '_') || !ch.is_ascii()
 }
 
 #[cfg(test)]

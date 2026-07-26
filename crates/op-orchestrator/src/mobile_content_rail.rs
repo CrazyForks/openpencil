@@ -673,12 +673,8 @@ fn padding_with_leading_rail(node: &PenNode, rail: f64) -> Vec<f64> {
     vec![top, right, bottom, rail]
 }
 
-fn collect_node_ids(node: &PenNode, ids: &mut HashSet<String>) {
-    ids.insert(node.id_str().to_string());
-    for child in node.children().into_iter().flatten() {
-        collect_node_ids(child, ids);
-    }
-}
+// Single-sourced in op-editor-core (same walk as the reveal bookkeeping).
+use op_editor_core::agent_reveals::collect_node_ids;
 
 fn unique_wrapper_id(surface_id: &str, known_ids: &mut HashSet<String>) -> String {
     let base = format!("{surface_id}__content_rail");

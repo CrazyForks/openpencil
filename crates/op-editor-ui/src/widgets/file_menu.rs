@@ -7,6 +7,7 @@
 use crate::theme::Theme;
 use crate::widgets::editor_state_ext::theme_for;
 use crate::widgets::icons::{draw_icon, Icon};
+use crate::widgets::menu_paint;
 use crate::widgets::{LayoutBox, LayoutCx, PaintCx, Widget, WidgetId};
 use crate::{Color, Point2D, Rect, TextLayout};
 pub use jian_widgets::components::menu::MenuHit;
@@ -202,33 +203,15 @@ impl<'a> FileMenu<'a> {
     }
 }
 
-/// Paint the per-row hover tint — a 4-px-inset round-rect washed with
-/// `muted_foreground` at ~14% alpha (`#737373` light / `#9A9A9A` dark).
-/// Earlier passes used `muted` (a near-invisible `#F5F5F5`-on-`#FFFFFF` in
-/// light mode) then `button_hover` (a 6% overlay), but both were too faint
-/// to read behind a dense icon+label row — only the empty right gutter
-/// showed them, so the row looked un-hovered on the left. A 14% mid-grey
-/// wash reads clearly across the WHOLE row on either theme.
+// Shared menu-row geometry/paint bodies live in `menu_paint` (see its
+// doc for the hover-tint colour rationale); these thin wrappers bind
+// this menu's width/row/pad constants.
 fn paint_row_tint(cx: &mut PaintCx<'_>, theme: &Theme, x: f32, y: f32) {
-    let inset = 4.0;
-    let mut tint = theme.muted_foreground;
-    tint.a = 0.14;
-    cx.backend.fill_round_rect(
-        Rect {
-            origin: Point2D::new(x + inset, y + 2.0),
-            size: Point2D::new(MENU_WIDTH - inset * 2.0, ROW_HEIGHT - 4.0),
-        },
-        6.0,
-        tint,
-    );
+    menu_paint::paint_row_tint(cx, theme, x, y, MENU_WIDTH, ROW_HEIGHT);
 }
 
 fn row_hit(x: f32, y: f32, point: Point2D) -> bool {
-    (Rect {
-        origin: Point2D::new(x, y),
-        size: Point2D::new(MENU_WIDTH, ROW_HEIGHT),
-    })
-    .contains(point)
+    menu_paint::row_hit(x, y, point, MENU_WIDTH, ROW_HEIGHT)
 }
 
 impl<'a> Widget for FileMenu<'a> {
@@ -609,20 +592,7 @@ fn paint_header(cx: &mut PaintCx<'_>, theme: &Theme, x: f32, y: f32, label: &str
 }
 
 fn paint_divider(cx: &mut PaintCx<'_>, theme: &Theme, rect: Rect, y: f32) -> f32 {
-    let line_y = y + DIVIDER_GAP;
-    jian_widgets::components::separator::Separator {
-        orientation: jian_widgets::components::separator::Orientation::Horizontal,
-        thickness: 1.0,
-    }
-    .paint(
-        cx.backend,
-        Rect {
-            origin: Point2D::new(rect.origin.x + PAD_X, line_y),
-            size: Point2D::new(MENU_WIDTH - PAD_X * 2.0, 1.0),
-        },
-        theme.border,
-    );
-    y + DIVIDER_GAP * 2.0 + 1.0
+    menu_paint::paint_divider(cx, theme, rect, y, MENU_WIDTH, PAD_X, DIVIDER_GAP)
 }
 
 fn file_name(path: &str) -> String {

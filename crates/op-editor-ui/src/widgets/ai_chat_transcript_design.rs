@@ -211,11 +211,13 @@ pub(crate) fn applied_design_block_label(
     element_count: usize,
 ) -> String {
     let prefix = op_i18n::translate(locale, "ai.modificationApplied");
-    let unit = if element_count == 1 {
-        op_i18n::translate(locale, "ai.designElement")
-    } else {
-        op_i18n::translate(locale, "ai.designElements")
+    let count = i64::try_from(element_count).unwrap_or(i64::MAX);
+    let unit_key = match op_i18n::plural_category(locale, count) {
+        op_i18n::PluralCategory::One => "ai.designElement",
+        op_i18n::PluralCategory::Few => "ai.designElementsFew",
+        _ => "ai.designElements",
     };
+    let unit = op_i18n::translate(locale, unit_key);
     format!("{prefix} · {element_count} {unit}")
 }
 
@@ -633,5 +635,35 @@ pub(crate) fn paint_design_block(
         let text_x = apply.origin.x + (apply.size.x - 84.0).max(0.0) / 2.0;
         cx.backend
             .draw_text(&layout, Point2D::new(text_x, apply.origin.y + 20.0));
+    }
+}
+
+#[cfg(test)]
+mod applied_design_label_tests {
+    use super::applied_design_block_label;
+    use op_editor_core::Locale;
+
+    #[test]
+    fn russian_uses_the_correct_counted_noun_form() {
+        assert_eq!(
+            applied_design_block_label(Locale::Ru, 1),
+            "Изменено · 1 элемент"
+        );
+        assert_eq!(
+            applied_design_block_label(Locale::Ru, 2),
+            "Изменено · 2 элемента"
+        );
+        assert_eq!(
+            applied_design_block_label(Locale::Ru, 5),
+            "Изменено · 5 элементов"
+        );
+        assert_eq!(
+            applied_design_block_label(Locale::Ru, 21),
+            "Изменено · 21 элемент"
+        );
+        assert_eq!(
+            applied_design_block_label(Locale::Ru, 22),
+            "Изменено · 22 элемента"
+        );
     }
 }

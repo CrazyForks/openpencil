@@ -79,7 +79,7 @@ impl ApplicationHandler<DesktopEvent> for DesktopApp {
             return;
         }
         let mut attrs = Window::default_attributes()
-            .with_title("OpenPencil")
+            .with_title(op_editor_ui::PRODUCT_NAME)
             .with_inner_size(winit::dpi::LogicalSize::new(
                 INITIAL_VIEWPORT_W as u32,
                 INITIAL_VIEWPORT_H as u32,

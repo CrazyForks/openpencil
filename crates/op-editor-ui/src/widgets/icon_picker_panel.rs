@@ -483,56 +483,7 @@ fn truncate(text: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Color, RenderBackend};
-
-    #[derive(Default)]
-    struct CaptureBackend {
-        round_fills: Vec<(Rect, f32, Color)>,
-    }
-
-    impl RenderBackend for CaptureBackend {
-        fn begin_frame(&mut self) {}
-
-        fn end_frame(&mut self) {}
-
-        fn fill_rect(&mut self, _rect: Rect, _color: Color) {}
-
-        fn stroke_rect(&mut self, _rect: Rect, _color: Color, _width: f32) {}
-
-        fn draw_text(&mut self, _layout: &TextLayout, _origin: Point2D) {}
-
-        fn clip_rect(&mut self, _rect: Rect) {}
-
-        fn stroke_line(&mut self, _from: Point2D, _to: Point2D, _color: Color, _width: f32) {}
-
-        fn fill_round_rect(&mut self, rect: Rect, radius: f32, color: Color) {
-            self.round_fills.push((rect, radius, color));
-        }
-
-        fn stroke_round_rect(&mut self, _rect: Rect, _radius: f32, _color: Color, _width: f32) {}
-
-        fn stroke_svg_path(
-            &mut self,
-            _d: &str,
-            _top_left: Point2D,
-            _size: f32,
-            _color: Color,
-            _width: f32,
-        ) {
-        }
-
-        fn save(&mut self) {}
-
-        fn restore(&mut self) {}
-
-        fn translate(&mut self, _offset: Point2D) {}
-
-        fn resize(&mut self, _width: u32, _height: u32) {}
-
-        fn dpi_scale(&self) -> f32 {
-            1.0
-        }
-    }
+    use crate::widgets::test_capture_backend::CaptureBackend;
 
     #[test]
     fn hover_at_uses_select_state_indices_for_close_and_rows() {

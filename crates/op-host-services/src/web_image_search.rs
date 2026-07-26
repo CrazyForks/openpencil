@@ -164,13 +164,14 @@ const IMAGE_SEARCH_STOP_WORDS: &[&str] = &[
 ];
 
 #[derive(Clone, PartialEq, Eq)]
-pub(crate) struct WebOpenverseCredentials {
-    pub(crate) client_id: String,
-    pub(crate) client_secret: String,
+pub struct WebOpenverseCredentials {
+    pub client_id: String,
+    pub client_secret: String,
 }
 
 impl WebOpenverseCredentials {
-    fn from_parts(client_id: &str, client_secret: &str) -> Option<Self> {
+    /// `None` unless both parts are non-empty after trimming.
+    pub fn from_parts(client_id: &str, client_secret: &str) -> Option<Self> {
         let client_id = client_id.trim();
         let client_secret = client_secret.trim();
         if client_id.is_empty() || client_secret.is_empty() {
@@ -184,17 +185,17 @@ impl WebOpenverseCredentials {
     }
 }
 
-/// One search hit ready for the JSON reply.
-pub(crate) struct WebImageSearchHit {
-    pub(crate) id: String,
-    pub(crate) thumb_data_url: String,
-    pub(crate) attribution: String,
+/// One search hit ready for the JSON reply / the desktop popover.
+pub struct WebImageSearchHit {
+    pub id: String,
+    pub thumb_data_url: String,
+    pub attribution: String,
 }
 
-pub(crate) struct WebImageSearchOutcome {
-    pub(crate) results: Vec<WebImageSearchHit>,
+pub struct WebImageSearchOutcome {
+    pub results: Vec<WebImageSearchHit>,
     /// `"openverse"` / `"wikimedia"`, `None` when nothing landed.
-    pub(crate) source: Option<&'static str>,
+    pub source: Option<&'static str>,
 }
 
 /// Parse the request body and snapshot the daemon-side credential fallback.
@@ -281,26 +282,48 @@ async fn run_search(
     query: &str,
     credentials: Option<&WebOpenverseCredentials>,
 ) -> WebImageSearchOutcome {
-    let empty = WebImageSearchOutcome {
-        results: Vec::new(),
-        source: None,
-    };
     let Ok(client) = reqwest::Client::builder()
         .timeout(Duration::from_secs(8))
         .user_agent(concat!("openpencil-web-daemon/", env!("CARGO_PKG_VERSION")))
         .build()
     else {
-        return empty;
+        return WebImageSearchOutcome {
+            results: Vec::new(),
+            source: None,
+        };
     };
+    run_search_with_fetcher(&client, query, credentials, |url: String| {
+        let client = client.clone();
+        async move { fetch_image_data_url(&client, &url).await }
+    })
+    .await
+}
+
+/// The full search ladder over a caller-supplied client + thumbnail
+/// materializer. Shared by this daemon route (plain embed) and the desktop
+/// popover (its own user-agent + skia down-scale pass on each thumbnail).
+///
+/// `fetch_data_url` downloads one thumbnail URL into a `data:` URL; hits
+/// whose thumbnails fail to download are dropped.
+pub async fn run_search_with_fetcher<F, Fut>(
+    client: &reqwest::Client,
+    query: &str,
+    credentials: Option<&WebOpenverseCredentials>,
+    fetch_data_url: F,
+) -> WebImageSearchOutcome
+where
+    F: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = Option<String>>,
+{
     // Simplify verbose prompts into keywords (TS simplifySearchQuery).
     let query = simplify_search_query(query);
 
     // Openverse first; a zero-result answer retries with the first two
-    // keywords before falling through to Wikimedia (desktop parity).
-    let mut hits = fetch_openverse_list(&client, &query, credentials).await;
+    // keywords before falling through to Wikimedia.
+    let mut hits = fetch_openverse_list(client, &query, credentials).await;
     if hits.as_ref().is_some_and(Vec::is_empty) {
         if let Some(truncated) = two_keyword_retry(&query) {
-            if let Some(retry) = fetch_openverse_list(&client, &truncated, credentials).await {
+            if let Some(retry) = fetch_openverse_list(client, &truncated, credentials).await {
                 if !retry.is_empty() {
                     hits = Some(retry);
                 }
@@ -308,7 +331,7 @@ async fn run_search(
         }
     }
     if let Some(urls) = hits.filter(|h| !h.is_empty()) {
-        let results = materialize_thumbs(&client, urls).await;
+        let results = materialize_thumbs(urls, &fetch_data_url).await;
         if !results.is_empty() {
             return WebImageSearchOutcome {
                 results,
@@ -316,13 +339,13 @@ async fn run_search(
             };
         }
     }
-    let mut wiki = fetch_wikimedia_list(&client, &query).await;
+    let mut wiki = fetch_wikimedia_list(client, &query).await;
     if wiki.is_empty() {
         if let Some(truncated) = two_keyword_retry(&query) {
-            wiki = fetch_wikimedia_list(&client, &truncated).await;
+            wiki = fetch_wikimedia_list(client, &truncated).await;
         }
     }
-    let results = materialize_thumbs(&client, wiki).await;
+    let results = materialize_thumbs(wiki, &fetch_data_url).await;
     let source = (!results.is_empty()).then_some("wikimedia");
     WebImageSearchOutcome { results, source }
 }
@@ -476,12 +499,16 @@ pub(crate) fn parse_wikimedia_results(json: &serde_json::Value) -> Vec<RawHit> {
         .collect()
 }
 
-/// Download each hit's thumbnail into a `data:` URL. Hits whose thumbnails
-/// fail to download are dropped.
-async fn materialize_thumbs(client: &reqwest::Client, hits: Vec<RawHit>) -> Vec<WebImageSearchHit> {
+/// Download each hit's thumbnail into a `data:` URL through the caller's
+/// materializer. Hits whose thumbnails fail to download are dropped.
+async fn materialize_thumbs<F, Fut>(hits: Vec<RawHit>, fetch_data_url: &F) -> Vec<WebImageSearchHit>
+where
+    F: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = Option<String>>,
+{
     let mut out = Vec::with_capacity(hits.len());
     for hit in hits {
-        if let Some(data_url) = fetch_image_data_url(client, &hit.thumb_url).await {
+        if let Some(data_url) = fetch_data_url(hit.thumb_url.clone()).await {
             out.push(WebImageSearchHit {
                 id: hit.id,
                 thumb_data_url: data_url,
@@ -492,8 +519,9 @@ async fn materialize_thumbs(client: &reqwest::Client, hits: Vec<RawHit>) -> Vec<
     out
 }
 
-/// Simplify a verbose prompt into provider keywords (desktop parity).
-pub(crate) fn simplify_search_query(prompt: &str) -> String {
+/// Simplify a verbose prompt into provider keywords. Shared by the desktop
+/// image pipeline and the web daemon route.
+pub fn simplify_search_query(prompt: &str) -> String {
     let mut normalized = String::with_capacity(prompt.len());
     for ch in prompt.to_lowercase().chars() {
         if ch.is_ascii_alphanumeric() || ch.is_ascii_whitespace() || ch == '-' {
@@ -529,7 +557,7 @@ pub(crate) fn simplify_search_query(prompt: &str) -> String {
     }
 }
 
-pub(crate) async fn fetch_openverse_token(
+pub async fn fetch_openverse_token(
     client: &reqwest::Client,
     credentials: &WebOpenverseCredentials,
 ) -> Option<String> {
@@ -556,6 +584,21 @@ pub(crate) async fn fetch_openverse_token(
 
 /// Download `url` and embed it as a `data:` URL, subject to the 4 MiB cap.
 pub(crate) async fn fetch_image_data_url(client: &reqwest::Client, url: &str) -> Option<String> {
+    let (mime, bytes) = fetch_image_bytes(client, url, MAX_EMBEDDED_IMAGE_BYTES).await?;
+    use base64::engine::general_purpose::STANDARD as B64;
+    use base64::Engine as _;
+    Some(format!("data:{mime};base64,{}", B64.encode(&bytes)))
+}
+
+/// Download `url` and return its normalized image mime + raw bytes, subject
+/// to `cap` (streaming abort). `None` for failures, empty bodies, and
+/// non-embeddable mimes. Shared with the desktop, which layers its skia
+/// down-scale pass on the bytes before embedding.
+pub async fn fetch_image_bytes(
+    client: &reqwest::Client,
+    url: &str,
+    cap: usize,
+) -> Option<(String, Vec<u8>)> {
     let resp = client.get(url).send().await.ok()?;
     if !resp.status().is_success() {
         return None;
@@ -565,14 +608,12 @@ pub(crate) async fn fetch_image_data_url(client: &reqwest::Client, url: &str) ->
         .get(CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .and_then(normalize_image_mime_header);
-    let bytes = read_capped(resp, MAX_EMBEDDED_IMAGE_BYTES).await?;
+    let bytes = read_capped(resp, cap).await?;
     if bytes.is_empty() {
         return None;
     }
     let mime = header_mime.or_else(|| sniff_image_mime(&bytes).map(str::to_string))?;
-    use base64::engine::general_purpose::STANDARD as B64;
-    use base64::Engine as _;
-    Some(format!("data:{mime};base64,{}", B64.encode(&bytes)))
+    Some((mime, bytes))
 }
 
 /// Read a response body, aborting as soon as it exceeds `cap` — the cap must
@@ -593,7 +634,9 @@ pub(crate) async fn read_capped(mut resp: reqwest::Response, cap: usize) -> Opti
     Some(bytes)
 }
 
-fn normalize_image_mime_header(value: &str) -> Option<String> {
+/// Normalize a Content-Type header into an embeddable `image/*` mime
+/// (`image/jpg` alias folded, SVG rejected).
+pub fn normalize_image_mime_header(value: &str) -> Option<String> {
     let mime = value.split(';').next()?.trim().to_ascii_lowercase();
     if mime == "image/jpg" {
         return Some("image/jpeg".to_string());
@@ -605,7 +648,8 @@ fn normalize_image_mime_header(value: &str) -> Option<String> {
     }
 }
 
-fn sniff_image_mime(bytes: &[u8]) -> Option<&'static str> {
+/// Magic-byte sniff for the embeddable raster formats.
+pub fn sniff_image_mime(bytes: &[u8]) -> Option<&'static str> {
     if bytes.starts_with(b"\x89PNG\r\n\x1A\n") {
         return Some("image/png");
     }
@@ -622,154 +666,5 @@ fn sniff_image_mime(bytes: &[u8]) -> Option<&'static str> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn simplify_search_query_mirrors_the_desktop_adapter() {
-        assert_eq!(
-            simplify_search_query("A beautiful sunset over the mountains"),
-            "beautiful sunset over mountains"
-        );
-        // Artifact words drop only when aesthetic words remain.
-        assert_eq!(
-            simplify_search_query("synthwave album cover neon"),
-            "synthwave neon"
-        );
-        assert_eq!(simplify_search_query("logo"), "logo");
-        // Empty keyword set falls back to a 30-char prefix.
-        assert_eq!(simplify_search_query("の"), "の");
-    }
-
-    #[test]
-    fn parse_search_request_reads_query_and_prefers_request_credentials() {
-        let mut state = op_editor_core::EditorState::default();
-        state.editor_ui.agent_settings.openverse_client_id = "persisted-id".into();
-        state.editor_ui.agent_settings.openverse_client_secret = "persisted-secret".into();
-        let (query, cred) = parse_search_request(
-            r#"{"query":"cat","openverse":{"client_id":"req-id","client_secret":"req-secret"}}"#,
-            &state,
-        )
-        .expect("parses");
-        assert_eq!(query, "cat");
-        assert_eq!(cred.expect("cred").client_id, "req-id");
-        // No request credential → daemon-persisted fallback.
-        let (_, cred) = parse_search_request(r#"{"query":"cat"}"#, &state).expect("parses");
-        assert_eq!(cred.expect("cred").client_id, "persisted-id");
-        // Neither → anonymous.
-        let empty = op_editor_core::EditorState::default();
-        let (_, cred) = parse_search_request(r#"{"query":"cat"}"#, &empty).expect("parses");
-        assert!(cred.is_none());
-    }
-
-    #[test]
-    fn parse_search_request_rejects_bad_bodies() {
-        let state = op_editor_core::EditorState::default();
-        assert!(parse_search_request("", &state).is_err());
-        assert!(parse_search_request("{}", &state).is_err());
-        assert!(parse_search_request(r#"{"query":"  "}"#, &state).is_err());
-    }
-
-    #[test]
-    fn parse_openverse_results_maps_thumbnail_license_and_cap() {
-        let json = serde_json::json!({
-            "results": [
-                {"id": "a", "thumbnail": "https://x/a.jpg", "attribution": "By A"},
-                {"id": "b", "url": "https://x/b.jpg", "license": "cc0", "license_version": "1.0"},
-                {"id": "c"},
-                {"id": "d", "thumbnail": "https://x/d.jpg"},
-                {"id": "e", "thumbnail": "https://x/e.jpg"},
-                {"id": "f", "thumbnail": "https://x/f.jpg"},
-                {"id": "g", "thumbnail": "https://x/g.jpg"}
-            ]
-        });
-        let hits = parse_openverse_results(&json);
-        assert_eq!(hits.len(), SEARCH_RESULT_COUNT); // "c" dropped, capped at 5
-        assert_eq!(hits[0].id, "a");
-        assert_eq!(hits[0].attribution, "By A");
-        assert_eq!(hits[1].thumb_url, "https://x/b.jpg");
-        assert_eq!(hits[1].attribution, "cc0 1.0");
-    }
-
-    #[test]
-    fn parse_wikimedia_results_maps_thumburl_and_license() {
-        let json = serde_json::json!({
-            "query": {"pages": {
-                "1": {"pageid": 1, "imageinfo": [{
-                    "thumburl": "https://c/w1.jpg",
-                    "extmetadata": {"LicenseShortName": {"value": "CC BY-SA 4.0"}}
-                }]},
-                "2": {"pageid": 2, "imageinfo": [{"url": "https://c/w2.jpg"}]},
-                "3": {"pageid": 3}
-            }}
-        });
-        let mut hits = parse_wikimedia_results(&json);
-        hits.sort_by(|a, b| a.id.cmp(&b.id));
-        assert_eq!(hits.len(), 2);
-        assert_eq!(hits[0].thumb_url, "https://c/w1.jpg");
-        assert_eq!(hits[0].attribution, "CC BY-SA 4.0");
-        assert_eq!(hits[1].thumb_url, "https://c/w2.jpg");
-    }
-
-    #[test]
-    fn search_outcome_json_shape() {
-        let outcome = WebImageSearchOutcome {
-            results: vec![WebImageSearchHit {
-                id: "a".into(),
-                thumb_data_url: "data:image/png;base64,AA==".into(),
-                attribution: "By A".into(),
-            }],
-            source: Some("openverse"),
-        };
-        let json: serde_json::Value =
-            serde_json::from_str(&search_outcome_to_json(&outcome)).expect("valid json");
-        assert_eq!(json["ok"], true);
-        assert_eq!(json["source"], "openverse");
-        assert_eq!(json["results"][0]["id"], "a");
-        assert_eq!(
-            json["results"][0]["thumb_data_url"],
-            "data:image/png;base64,AA=="
-        );
-        let empty = WebImageSearchOutcome {
-            results: Vec::new(),
-            source: None,
-        };
-        let json: serde_json::Value =
-            serde_json::from_str(&search_outcome_to_json(&empty)).expect("valid json");
-        assert!(json["source"].is_null());
-    }
-
-    #[test]
-    fn image_job_slot_caps_concurrency_and_releases_on_drop() {
-        let held: Vec<_> = (0..MAX_IN_FLIGHT_IMAGE_JOBS)
-            .map(|_| ImageJobSlot::acquire().expect("slot under the cap"))
-            .collect();
-        assert!(
-            ImageJobSlot::acquire().is_none(),
-            "cap reached — acquire must fail"
-        );
-        drop(held);
-        assert!(
-            ImageJobSlot::acquire().is_some(),
-            "drop must release the slots"
-        );
-    }
-
-    #[test]
-    fn sniff_image_mime_recognizes_the_embeddable_formats() {
-        assert_eq!(sniff_image_mime(b"\x89PNG\r\n\x1A\nxx"), Some("image/png"));
-        assert_eq!(sniff_image_mime(b"\xFF\xD8\xFFxx"), Some("image/jpeg"));
-        assert_eq!(sniff_image_mime(b"GIF89a"), Some("image/gif"));
-        assert_eq!(
-            sniff_image_mime(b"RIFF\0\0\0\0WEBPVP8 "),
-            Some("image/webp")
-        );
-        assert_eq!(sniff_image_mime(b"<svg>"), None);
-        assert_eq!(
-            normalize_image_mime_header("image/jpg"),
-            Some("image/jpeg".into())
-        );
-        assert_eq!(normalize_image_mime_header("image/svg+xml"), None);
-        assert_eq!(normalize_image_mime_header("text/html"), None);
-    }
-}
+#[path = "web_image_search_tests.rs"]
+mod tests;

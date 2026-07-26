@@ -101,20 +101,8 @@ pub(super) fn btree_to_json(m: &BTreeMap<String, String>) -> String {
     out
 }
 
+/// Serialize `s` as a complete JSON string literal (quotes included).
+/// Delegates to the canonical op-util escaper.
 pub(super) fn json_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
+    op_util::json_escape::escape_json_quoted(s)
 }

@@ -1,6 +1,7 @@
 pub mod cascade;
 mod cascade_conditions;
 mod cascade_parser;
+mod cascade_shared;
 pub mod declarations;
 pub mod selectors;
 mod selectors_parser;

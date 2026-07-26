@@ -11,6 +11,9 @@
 //! - [`chat_models`] — the `ModelEntry` model-catalog type.
 //! - [`agent_settings_state`] — state types for the Cmd+, settings
 //!   modal (`AgentSettingsTab`, `AgentProvider`, …).
+//! - [`design_md`] — the shared design.md generation system prompt +
+//!   LLM-output cleanup helpers used by the desktop / web / serve-web
+//!   design.md generators.
 //!
 //! The crate is dependency-free and wasm32-clean so both the native
 //! and web shells can build against it.
@@ -19,3 +22,4 @@ pub mod agent_settings_state;
 pub mod chat_history;
 pub mod chat_models;
 pub mod chat_provider;
+pub mod design_md;

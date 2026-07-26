@@ -5,6 +5,11 @@
 //! cache. Keeping the state in core lets native and web hosts share
 //! the same UI contract without putting network code in widgets.
 
+/// Iconify API origin the remote icon search queries (CORS-open, same
+/// service the retired TS app used). Shared by the desktop worker and
+/// the web fetch path.
+pub const ICONIFY_API_BASE: &str = "https://api.iconify.design";
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct IconPickerRemoteIcon {
     pub collection: String,

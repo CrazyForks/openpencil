@@ -30,14 +30,16 @@ use crate::repaint_ctx::RepaintContext;
 
 type DoneFn = Box<dyn FnOnce(Result<String, String>)>;
 
-const ICONIFY_API: &str = "https://api.iconify.design";
+/// Shared with the desktop worker (`op-host-desktop/src/iconify_host.rs`).
+const ICONIFY_API: &str = op_editor_core::icon_picker_state::ICONIFY_API_BASE;
 /// Same budget as the desktop worker's reqwest client.
-const FETCH_TIMEOUT_MS: u32 = 15_000;
+const FETCH_TIMEOUT_MS: u32 = crate::live_sync::DAEMON_FETCH_TIMEOUT_MS;
 
-/// Daemon route serving the brand-logo catalog (simple-icons). MUST match
-/// `op-host-desktop`'s `web_static::ICONIFY_BRANDS_PATH` — the daemon embeds the
-/// asset the wasm bundle omits, like `/api/ai/models` for model discovery.
-const BRAND_CATALOG_PATH: &str = "/assets/iconify-catalog-brands.json";
+/// Daemon route serving the brand-logo catalog (simple-icons) — the shared
+/// const `op-host-services`' `web_static` serves, so client and daemon can't
+/// drift. The daemon embeds the asset the wasm bundle omits, like
+/// `/api/ai/models` for model discovery.
+const BRAND_CATALOG_PATH: &str = op_editor_ui::ICONIFY_BRANDS_ROUTE;
 
 /// Fetch the brand-logo catalog from the daemon once at mount and register it
 /// with the shared icon catalog. The wasm bundle omits these ~3700 simple-icons

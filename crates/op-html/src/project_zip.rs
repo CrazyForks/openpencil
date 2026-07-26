@@ -14,8 +14,40 @@ use crate::resources::ImageTransform;
 use crate::{wrap_imported_document, HtmlDocumentResult, HtmlImportOptions, HtmlImportResult};
 
 pub const MAX_ZIP_ENTRIES: usize = 32_768;
-const EOCD_MIN_BYTES: usize = 22;
+pub(crate) const EOCD_MIN_BYTES: usize = 22;
 const MAX_ZIP_COMMENT_BYTES: usize = u16::MAX as usize;
+
+/// Fields of one end-of-central-directory record found in an archive tail.
+/// Shared with the range-based reader in `project_zip_range`.
+pub(crate) struct ZipEocdRecord {
+    pub(crate) local_offset: usize,
+    pub(crate) disk: u16,
+    pub(crate) directory_disk: u16,
+    pub(crate) disk_entries: u16,
+    pub(crate) total_entries: u16,
+    pub(crate) directory_size: u32,
+    pub(crate) directory_offset: u32,
+}
+
+/// Scans `tail` backwards for the EOCD signature whose comment length reaches
+/// exactly the end of the slice, then reads its fixed fields.
+pub(crate) fn find_zip_eocd(tail: &[u8]) -> Option<ZipEocdRecord> {
+    let last = tail.len().checked_sub(EOCD_MIN_BYTES)?;
+    let local_offset = (0..=last).rev().find(|offset| {
+        tail[*offset..].starts_with(b"PK\x05\x06")
+            && read_u16(tail, *offset + 20)
+                .is_some_and(|length| *offset + EOCD_MIN_BYTES + length as usize == tail.len())
+    })?;
+    Some(ZipEocdRecord {
+        local_offset,
+        disk: read_u16(tail, local_offset + 4)?,
+        directory_disk: read_u16(tail, local_offset + 6)?,
+        disk_entries: read_u16(tail, local_offset + 8)?,
+        total_entries: read_u16(tail, local_offset + 10)?,
+        directory_size: read_u32(tail, local_offset + 12)?,
+        directory_offset: read_u32(tail, local_offset + 16)?,
+    })
+}
 
 struct ZipManifestEntry {
     relative_path: String,
@@ -282,84 +314,78 @@ fn preflight_zip_directory<R: Read + Seek>(reader: &mut R) -> Result<(), HtmlPro
     reader
         .read_exact(&mut tail)
         .map_err(|error| HtmlProjectError::InvalidZip(error.to_string()))?;
-    let last = tail.len() - EOCD_MIN_BYTES;
-    let Some(local_offset) = (0..=last).rev().find(|offset| {
-        tail[*offset..].starts_with(b"PK\x05\x06")
-            && read_u16(&tail, *offset + 20)
-                .is_some_and(|length| *offset + EOCD_MIN_BYTES + length as usize == tail.len())
-    }) else {
+    let Some(eocd) = find_zip_eocd(&tail) else {
         return Err(HtmlProjectError::InvalidZip(
             "end-of-central-directory record is missing or malformed".to_string(),
         ));
     };
-    let disk = read_u16(&tail, local_offset + 4).expect("EOCD fields are in bounds");
-    let directory_disk = read_u16(&tail, local_offset + 6).expect("EOCD fields are in bounds");
-    let disk_entries = read_u16(&tail, local_offset + 8).expect("EOCD fields are in bounds");
-    let total_entries = read_u16(&tail, local_offset + 10).expect("EOCD fields are in bounds");
-    let directory_size = read_u32(&tail, local_offset + 12).expect("EOCD fields are in bounds");
-    let directory_offset = read_u32(&tail, local_offset + 16).expect("EOCD fields are in bounds");
-    if disk != 0 || directory_disk != 0 || disk_entries != total_entries {
+    if eocd.disk != 0 || eocd.directory_disk != 0 || eocd.disk_entries != eocd.total_entries {
         return Err(HtmlProjectError::InvalidZip(
             "multi-disk ZIP archives are not supported".to_string(),
         ));
     }
-    if total_entries == u16::MAX || directory_size == u32::MAX || directory_offset == u32::MAX {
+    if eocd.total_entries == u16::MAX
+        || eocd.directory_size == u32::MAX
+        || eocd.directory_offset == u32::MAX
+    {
         return Err(HtmlProjectError::InvalidZip(
             "ZIP64 archives are not supported for HTML import".to_string(),
         ));
     }
-    let eocd_offset = archive_len - tail_len as u64 + local_offset as u64;
-    if (directory_offset as u64)
-        .checked_add(directory_size as u64)
+    let eocd_offset = archive_len - tail_len as u64 + eocd.local_offset as u64;
+    if (eocd.directory_offset as u64)
+        .checked_add(eocd.directory_size as u64)
         .is_none_or(|end| end > eocd_offset)
     {
         return Err(HtmlProjectError::InvalidZip(
             "central-directory bounds are invalid".to_string(),
         ));
     }
-    if total_entries as usize > MAX_ZIP_ENTRIES {
+    if eocd.total_entries as usize > MAX_ZIP_ENTRIES {
         return Err(HtmlProjectError::TooManyFiles {
-            count: total_entries as usize,
+            count: eocd.total_entries as usize,
             limit: MAX_ZIP_ENTRIES,
         });
     }
     Ok(())
 }
 
-fn read_u16(bytes: &[u8], offset: usize) -> Option<u16> {
+pub(crate) fn read_u16(bytes: &[u8], offset: usize) -> Option<u16> {
     Some(u16::from_le_bytes(
         bytes.get(offset..offset + 2)?.try_into().ok()?,
     ))
 }
 
-fn read_u32(bytes: &[u8], offset: usize) -> Option<u32> {
+pub(crate) fn read_u32(bytes: &[u8], offset: usize) -> Option<u32> {
     Some(u32::from_le_bytes(
         bytes.get(offset..offset + 4)?.try_into().ok()?,
     ))
 }
 
+/// Builds an in-memory ZIP archive for tests; shared with `project_zip_range`.
+#[cfg(test)]
+pub(crate) fn test_archive(entries: &[(&str, &[u8], CompressionMethod)]) -> Vec<u8> {
+    use std::io::Write;
+
+    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for (path, bytes, method) in entries {
+        writer
+            .start_file(
+                *path,
+                zip::write::SimpleFileOptions::default().compression_method(*method),
+            )
+            .unwrap();
+        writer.write_all(bytes).unwrap();
+    }
+    writer.finish().unwrap().into_inner()
+}
+
 #[cfg(test)]
 mod tests {
-    use std::io::{Cursor, Write};
-
-    use zip::write::SimpleFileOptions;
-    use zip::ZipWriter;
+    use std::io::Cursor;
 
     use super::*;
-
-    fn archive(entries: &[(&str, &[u8], CompressionMethod)]) -> Vec<u8> {
-        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
-        for (path, bytes, method) in entries {
-            writer
-                .start_file(
-                    *path,
-                    SimpleFileOptions::default().compression_method(*method),
-                )
-                .unwrap();
-            writer.write_all(bytes).unwrap();
-        }
-        writer.finish().unwrap().into_inner()
-    }
+    use crate::project_zip::test_archive as archive;
 
     fn central_offsets(bytes: &[u8]) -> Vec<usize> {
         bytes

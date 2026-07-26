@@ -113,7 +113,10 @@ impl DesktopApp {
         let locale = state.editor_ui.locale;
         let picked = rfd::FileDialog::new()
             .set_title(op_i18n::translate(locale, "componentBrowser.exportKit"))
-            .add_filter("OpenPencil", &["op", "pen"])
+            .add_filter(
+                op_editor_ui::PRODUCT_NAME,
+                crate::persistence::DOCUMENT_EXTENSIONS,
+            )
             .set_file_name(uikit_io::kit_export_file_name(&kit_name))
             .save_file();
         let Some(path) = picked else {

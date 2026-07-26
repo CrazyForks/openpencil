@@ -25,9 +25,8 @@
 //! [`MAX_RASTER_TOTAL_PX`]) so a huge document or screenshot padding
 //! can't force a giant UI-thread allocation.
 
-use op_editor_ui::layout_scene::NodeKind;
 use op_editor_ui::layout_scene::{LayoutScene, SceneNode, ScenePage};
-use op_editor_ui::{Point2D, Rect};
+use op_editor_ui::Rect;
 use skia_safe::{Canvas, EncodedImageFormat};
 use std::path::Path as StdPath;
 
@@ -318,38 +317,21 @@ pub fn page_bounds(page: &ScenePage) -> Option<Rect> {
     acc.into_rect()
 }
 
-pub(crate) struct BoundsAcc {
-    min_x: f32,
-    min_y: f32,
-    max_x: f32,
-    max_y: f32,
-}
+// BoundsAcc / normalize_rect / the per-NodeKind own-paint corner rules are
+// single-sourced in op-editor-ui's `scene_bounds` (shared with the SVG
+// exporter). This raster path keeps its own `collect_bounds` traversal:
+// a clip_content container contributes its full rect and skips the
+// subtree (surface sizing mirrors the painter), unlike the SVG exporter
+// which intersects the child union with the clip rect.
+use op_editor_ui::scene_bounds::PaintCornerRules;
+pub(crate) use op_editor_ui::scene_bounds::{normalize_rect, BoundsAcc};
 
-impl BoundsAcc {
-    pub(crate) fn new() -> Self {
-        Self {
-            min_x: f32::INFINITY,
-            min_y: f32::INFINITY,
-            max_x: f32::NEG_INFINITY,
-            max_y: f32::NEG_INFINITY,
-        }
-    }
-    pub(crate) fn add(&mut self, x0: f32, y0: f32, x1: f32, y1: f32) {
-        self.min_x = self.min_x.min(x0);
-        self.min_y = self.min_y.min(y0);
-        self.max_x = self.max_x.max(x1);
-        self.max_y = self.max_y.max(y1);
-    }
-    pub(crate) fn into_rect(self) -> Option<Rect> {
-        if !self.min_x.is_finite() {
-            return None;
-        }
-        Some(Rect {
-            origin: Point2D::new(self.min_x, self.min_y),
-            size: Point2D::new(self.max_x - self.min_x, self.max_y - self.min_y),
-        })
-    }
-}
+/// Raster export counts solid fill / stroke as own paint only (the SVG
+/// exporter also counts gradient + image fills).
+const RASTER_PAINT_RULES: PaintCornerRules = PaintCornerRules {
+    gradient_paints: false,
+    image_paints: false,
+};
 
 /// Mirror of `paint_node`'s traversal — visits the SAME nodes paint
 /// visits, in the SAME order, threading the cumulative parent
@@ -408,136 +390,8 @@ pub(crate) fn collect_bounds(n: &SceneNode, parent_xform: glam::Affine2, acc: &m
     }
 }
 
-/// Local-space corner points that bound `n`'s own paint (NOT its
-/// children — those visit through `collect_bounds`). The caller
-/// applies the cumulative parent+self transform; each returned point
-/// gets pushed into the BoundsAcc as a world-space coord.
-///
-/// Returns `None` for invisible kinds: Group never paints own
-/// content; Frame/Other contribute only when fill or stroke is set;
-/// Path with empty `points` is invisible.
 fn own_paint_corners(n: &SceneNode) -> Option<Vec<glam::Vec2>> {
-    let stroke_pad = n.stroke.map(|s| s.width * 0.5).unwrap_or(0.0);
-    let (x0, y0, x1, y1) = match &n.kind {
-        NodeKind::Rect | NodeKind::Ellipse | NodeKind::Polygon | NodeKind::Line => {
-            let nr = normalize_rect(n.bounds);
-            (
-                nr.origin.x,
-                nr.origin.y,
-                nr.origin.x + nr.size.x,
-                nr.origin.y + nr.size.y,
-            )
-        }
-        NodeKind::Frame => {
-            if n.fill.is_none() && n.stroke.is_none() {
-                return None;
-            }
-            let nr = normalize_rect(n.bounds);
-            (
-                nr.origin.x,
-                nr.origin.y,
-                nr.origin.x + nr.size.x,
-                nr.origin.y + nr.size.y,
-            )
-        }
-        NodeKind::Other(tag) if tag == "icon_font" => {
-            if n.text.as_ref().is_none_or(|s| s.trim().is_empty()) {
-                return None;
-            }
-            let nr = normalize_rect(n.bounds);
-            (
-                nr.origin.x,
-                nr.origin.y,
-                nr.origin.x + nr.size.x,
-                nr.origin.y + nr.size.y,
-            )
-        }
-        NodeKind::Other(_) => {
-            // Unknown tagged kinds paint no own silhouette in export;
-            // their bounds still contribute when authored with fill/stroke.
-            if n.fill.is_none() && n.stroke.is_none() {
-                return None;
-            }
-            let nr = normalize_rect(n.bounds);
-            (
-                nr.origin.x,
-                nr.origin.y,
-                nr.origin.x + nr.size.x,
-                nr.origin.y + nr.size.y,
-            )
-        }
-        NodeKind::Text => {
-            // Text bounds are the layout-resolved "where the glyphs
-            // sit" rect. Real glyph extents can overshoot for tails /
-            // accents, but `bounds` is the right approximation
-            // without doing a per-glyph metric pass.
-            let has_text = n.text.as_ref().is_some_and(|s| !s.is_empty());
-            if !has_text {
-                return None;
-            }
-            let nr = normalize_rect(n.bounds);
-            (
-                nr.origin.x,
-                nr.origin.y,
-                nr.origin.x + nr.size.x.max(1.0),
-                nr.origin.y + nr.size.y.max(1.0),
-            )
-        }
-        NodeKind::Path => {
-            if n.svg_path.is_some() && (n.fill.is_some() || n.stroke.is_some()) {
-                let nr = normalize_rect(n.bounds);
-                return Some(vec![
-                    glam::Vec2::new(nr.origin.x - stroke_pad, nr.origin.y - stroke_pad),
-                    glam::Vec2::new(
-                        nr.origin.x + nr.size.x + stroke_pad,
-                        nr.origin.y - stroke_pad,
-                    ),
-                    glam::Vec2::new(
-                        nr.origin.x + nr.size.x + stroke_pad,
-                        nr.origin.y + nr.size.y + stroke_pad,
-                    ),
-                    glam::Vec2::new(
-                        nr.origin.x - stroke_pad,
-                        nr.origin.y + nr.size.y + stroke_pad,
-                    ),
-                ]);
-            }
-            if n.points.is_empty() {
-                return None;
-            }
-            // Each polyline anchor + stroke-pad cardinal offsets so
-            // the cumulative parent transform doesn't clip them.
-            let mut out = Vec::with_capacity(n.points.len() * 4);
-            for p in &n.points {
-                out.push(glam::Vec2::new(p.x - stroke_pad, p.y - stroke_pad));
-                out.push(glam::Vec2::new(p.x + stroke_pad, p.y - stroke_pad));
-                out.push(glam::Vec2::new(p.x - stroke_pad, p.y + stroke_pad));
-                out.push(glam::Vec2::new(p.x + stroke_pad, p.y + stroke_pad));
-            }
-            return Some(out);
-        }
-        NodeKind::Group => return None,
-    };
-    if (x1 - x0).abs() == 0.0 && (y1 - y0).abs() == 0.0 {
-        return None;
-    }
-    Some(vec![
-        glam::Vec2::new(x0 - stroke_pad, y0 - stroke_pad),
-        glam::Vec2::new(x1 + stroke_pad, y0 - stroke_pad),
-        glam::Vec2::new(x1 + stroke_pad, y1 + stroke_pad),
-        glam::Vec2::new(x0 - stroke_pad, y1 + stroke_pad),
-    ])
-}
-
-/// Defensive normalisation — the layout pass yields positive-extent
-/// rects, but a negative size would otherwise paint nothing.
-fn normalize_rect(r: Rect) -> Rect {
-    let x0 = r.origin.x.min(r.origin.x + r.size.x);
-    let y0 = r.origin.y.min(r.origin.y + r.size.y);
-    Rect {
-        origin: Point2D::new(x0, y0),
-        size: Point2D::new(r.size.x.abs(), r.size.y.abs()),
-    }
+    op_editor_ui::scene_bounds::own_paint_corners(n, RASTER_PAINT_RULES)
 }
 
 #[cfg(test)]

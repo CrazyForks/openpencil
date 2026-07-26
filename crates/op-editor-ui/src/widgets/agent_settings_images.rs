@@ -8,7 +8,7 @@ use crate::widgets::agent_settings_images_parts::{
 };
 use crate::widgets::icons::{draw_icon, Icon};
 use crate::widgets::PaintCx;
-use crate::{Color, Point2D, Rect, TextLayout};
+use crate::{Point2D, Rect, TextLayout};
 use op_editor_core::agent_settings::{
     AgentSettings, ImageGenField, ImageGenProfile, ImageGenProvider, ImageSearchField,
     ImageTestStatus, SettingsFocus,
@@ -369,12 +369,7 @@ pub(super) fn paint_images_tab(
     let title_w = cx.backend.measure_text(title_str, 15.0);
     let ready = settings.images_search_ready;
     let dot_color = if ready {
-        Color {
-            r: 0.34,
-            g: 0.78,
-            b: 0.45,
-            a: 1.0,
-        }
+        theme.status_success
     } else {
         theme.muted_foreground
     };

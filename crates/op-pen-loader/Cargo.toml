@@ -28,6 +28,8 @@ jian-scene = { path = "../../vendor/jian/crates/jian-scene" }
 # in op-pen-loader, NOT op-editor-core, so op-editor-core stays free of
 # any shell-core (`VariableTable`) dependency and wasm-clean.
 op-editor-core = { path = "../op-editor-core" }
+# Canonical hex-color parsing (dependency-free, wasm-clean).
+op-util = { path = "../op-util" }
 # Payload DTOs round-trip through serde JSON.
 serde = { workspace = true }
 serde_json = { workspace = true }

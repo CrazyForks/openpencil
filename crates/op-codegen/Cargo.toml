@@ -13,6 +13,8 @@ path = "src/lib.rs"
 [dependencies]
 jian-ops-schema = { path = "../../vendor/jian/crates/jian-ops-schema" }
 op-editor-core = { path = "../op-editor-core" }
+# Canonical HTML escaping (dependency-free, wasm-clean).
+op-util = { path = "../op-util" }
 
 # AI pipeline deps — optional, pulled in only by the `ai` feature so
 # non-AI consumers (and the deterministic generators) stay lean. op-ai

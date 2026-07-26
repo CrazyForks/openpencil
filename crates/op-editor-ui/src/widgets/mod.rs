@@ -81,6 +81,7 @@ mod property_panel_instance_tests;
 pub mod property_panel_interactions;
 pub mod property_panel_layer;
 pub mod property_panel_layout;
+pub(crate) mod property_panel_mode_popover;
 #[cfg(test)]
 mod property_panel_multi_select_tests;
 mod property_panel_overlay_hit;
@@ -276,8 +277,10 @@ pub mod ime_preedit_overlay;
 pub mod import_menu;
 pub mod locale_picker;
 pub mod login_modal;
+pub(crate) mod menu_paint;
 pub mod missing_fonts_panel;
 mod property_panel_color_variables;
+pub(crate) mod settings_form;
 pub mod shape_picker;
 pub mod status_bar;
 pub mod top_bar;
@@ -289,6 +292,10 @@ mod top_bar_title;
 mod top_bar_window_control;
 pub mod variables_panel;
 mod variables_preset_menu;
+
+// Test-support: shared RenderBackend stubs (never ships in non-test builds).
+#[cfg(test)]
+pub(crate) mod test_capture_backend;
 
 pub use prop_row::PropertyRow;
 pub use text_input::TextInputWidget;

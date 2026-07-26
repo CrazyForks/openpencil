@@ -186,7 +186,7 @@ fn run_start_web(
     if let Some(host) = host {
         command.arg("--host").arg(host);
     }
-    command.env("OPENPENCIL_MCP_TOKEN", &token);
+    command.env(op_config_store::env_vars::MCP_TOKEN, &token);
     let mut child = spawn_null(&mut command)
         .map_err(|e| format!("spawn {} --serve-web: {e}", binary.display()))?;
 
@@ -269,8 +269,8 @@ fn start_web_json(pid: u32, port: u16, document_path: Option<&Path>, host: Optio
         "mode": "web",
         "pid": pid,
         "port": port,
-        "url": format!("http://127.0.0.1:{port}"),
-        "mcpUrl": format!("http://127.0.0.1:{port}/mcp"),
+        "url": op_editor_core::local_daemon_origin(port),
+        "mcpUrl": op_editor_core::local_mcp_url(port),
     });
     if let Some(host) = host {
         value["host"] = json!(host);
@@ -300,7 +300,7 @@ fn run_start_headless(port: u16, document_path: Option<&str>) -> Result<String, 
         .arg("--mcp-http")
         .arg(port.to_string())
         .arg(&document)
-        .env("OPENPENCIL_MCP_TOKEN", &token);
+        .env(op_config_store::env_vars::MCP_TOKEN, &token);
     let mut child = spawn_null(&mut command)
         .map_err(|e| format!("spawn {} --mcp-http: {e}", binary.display()))?;
 
@@ -514,8 +514,8 @@ fn start_json(pid: u32, port: u16, document_path: Option<&Path>) -> String {
         "running": true,
         "pid": pid,
         "port": port,
-        "url": format!("http://127.0.0.1:{port}"),
-        "mcpUrl": format!("http://127.0.0.1:{port}/mcp"),
+        "url": op_editor_core::local_daemon_origin(port),
+        "mcpUrl": op_editor_core::local_mcp_url(port),
     });
     if let Some(path) = document_path {
         value["documentPath"] = json!(path.display().to_string());
@@ -537,7 +537,7 @@ fn running_mcp_from_pid_file() -> Option<RunningMcp> {
     let port = fs::read_to_string(&port_file)
         .ok()
         .and_then(|text| text.trim().parse::<u16>().ok())
-        .unwrap_or(3100);
+        .unwrap_or(op_editor_core::DEFAULT_MCP_PORT);
     let token = fs::read_to_string(&token_file)
         .map(|text| text.trim().to_string())
         .unwrap_or_default();

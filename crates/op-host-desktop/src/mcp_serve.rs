@@ -1,14 +1,11 @@
 //! Argv dispatcher for the headless CLI server modes.
 //!
-//! The MCP stdio / HTTP server runners live in
-//! [`op_host_services::mcp_serve`] and the headless web-canvas daemon in
-//! `crate::web_canvas_server`; this residual just inspects `argv` and
-//! routes `--mcp` / `--mcp-http` / `--serve-web` to them. `main` calls
-//! it before opening the GUI window.
-
-use std::path::PathBuf;
-
-use op_host_services::mcp_serve::{run, run_http};
+//! The `--mcp` / `--mcp-http` / `--serve-web` dispatch itself is shared
+//! with the `op-host-web-server` binary via
+//! [`op_host_services::cli_modes::run_cli_mode`]; this residual only
+//! decides the desktop policy around it: an unknown / missing leading
+//! arg falls through to GUI mode instead of being a usage error.
+//! `main` calls it before opening the GUI window.
 
 /// If argv requests a headless server mode, run it and return `true` —
 /// the caller (`main`) should then exit. Returns `false` for normal
@@ -26,53 +23,10 @@ pub fn run_cli_if_requested() -> bool {
     let Some(first) = args.next() else {
         return false;
     };
-    if first == "--mcp" {
-        let Some(path) = args.next() else {
-            eprintln!("openpencil-desktop --mcp: missing <path> arg");
-            std::process::exit(2);
-        };
-        if let Err(e) = run(PathBuf::from(path)) {
-            eprintln!("openpencil-desktop --mcp: {e}");
-            std::process::exit(1);
-        }
-        return true;
+    match op_host_services::cli_modes::run_cli_mode("openpencil-desktop", &first, args) {
+        Some(0) => true,
+        Some(code) => std::process::exit(code),
+        // Unknown leading arg → fall through to GUI mode for now.
+        None => false,
     }
-    if first == "--mcp-http" {
-        let Some(port_arg) = args.next() else {
-            eprintln!("openpencil-desktop --mcp-http: missing <port> arg");
-            std::process::exit(2);
-        };
-        let Ok(port) = port_arg.parse::<u16>() else {
-            eprintln!("openpencil-desktop --mcp-http: <port> must be a u16, got {port_arg:?}");
-            std::process::exit(2);
-        };
-        let Some(path) = args.next() else {
-            eprintln!("openpencil-desktop --mcp-http: missing <path> arg");
-            std::process::exit(2);
-        };
-        if let Err(e) = run_http(PathBuf::from(path), port) {
-            eprintln!("openpencil-desktop --mcp-http: {e}");
-            std::process::exit(1);
-        }
-        return true;
-    }
-    if first == "--serve-web" {
-        // `--serve-web <port> [doc] [--host <addr>]`: doc optional (empty
-        // document otherwise); `--host` opts in to a non-loopback bind. The
-        // desktop binary never spawns the managed (`--managed`/handshake)
-        // form itself — that's this same parser's flag syntax, used by a
-        // supervising process spawning the binary directly.
-        let options = op_host_services::web_canvas_server::parse_serve_web_args(args)
-            .unwrap_or_else(|e| {
-                eprintln!("openpencil-desktop --serve-web: {e}");
-                std::process::exit(2);
-            });
-        if let Err(e) = op_host_services::web_canvas_server::run_web_canvas(options) {
-            eprintln!("openpencil-desktop --serve-web: {e}");
-            std::process::exit(1);
-        }
-        return true;
-    }
-    // Unknown leading arg → fall through to GUI mode for now.
-    false
 }

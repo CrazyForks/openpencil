@@ -42,8 +42,9 @@ const SMOKE_HTML: &str = include_str!("../../op-host-web/smoke/step-1b.html");
 pub const ICONIFY_BRANDS_JSON: &str =
     include_str!("../../op-editor-ui/assets/iconify-catalog-brands.json");
 
-/// Route the web client fetches to load the brand-logo catalog at runtime.
-pub(crate) const ICONIFY_BRANDS_PATH: &str = "/assets/iconify-catalog-brands.json";
+/// Route the web client fetches to load the brand-logo catalog at runtime
+/// (shared const, so the wasm client's fetch path can't drift).
+pub(crate) const ICONIFY_BRANDS_PATH: &str = op_editor_ui::ICONIFY_BRANDS_ROUTE;
 
 /// The wasm-bindgen JS entry the host page imports; its presence marks a
 /// directory as a usable bundle.
@@ -280,11 +281,11 @@ fn missing_bundle_reply() -> StaticReply {
     }
 }
 
-/// Minimal HTML escaping for path text interpolated into the help page.
+/// HTML escaping for path text interpolated into the help page. Delegates
+/// to the canonical op-util escaper — which also escapes `"` (the old
+/// local copy missed it, leaving an attribute-injection gap).
 fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
+    op_util::xml_escape::escape_html(s)
 }
 
 /// Write a static reply with its own Content-Type (binary-safe body) — the

@@ -5,7 +5,8 @@ use serde_json::json;
 
 use super::{flag_value, pair, push_file_path, required_pos, tool_call, Command, Flags};
 
-const LOCAL_RESOURCE_ORIGIN: &str = "https://openpencil.local/";
+/// The virtual origin `op-html` rebases project-local resources onto.
+const LOCAL_RESOURCE_ORIGIN: &str = op_html::VIRTUAL_PROJECT_ORIGIN;
 
 pub(super) fn map_import_svg(positionals: &[String], flags: &Flags) -> Result<Command, String> {
     let path = required_pos(

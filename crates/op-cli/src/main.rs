@@ -33,8 +33,8 @@ use mcp_http_cli::{http_request, status_json_from_running};
 #[cfg(test)]
 use figma_cli::figma_default_out_path;
 
-/// Default HTTP MCP port, matching TS `@zseven-w/pen-mcp`.
-const DEFAULT_PORT: u16 = 3100;
+/// Default HTTP MCP port — the workspace-wide shared const.
+const DEFAULT_PORT: u16 = op_editor_core::DEFAULT_MCP_PORT;
 
 const USAGE: &str = include_str!("usage.txt");
 

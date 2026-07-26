@@ -206,34 +206,7 @@ fn parse_css_color(s: &str) -> Option<[f32; 4]> {
 }
 
 fn parse_hex(s: &str) -> Option<[f32; 4]> {
-    let s = s.trim().trim_start_matches('#');
-    let (r, g, b, a) = match s.len() {
-        3 => (
-            u8::from_str_radix(&s[0..1].repeat(2), 16).ok()?,
-            u8::from_str_radix(&s[1..2].repeat(2), 16).ok()?,
-            u8::from_str_radix(&s[2..3].repeat(2), 16).ok()?,
-            255u8,
-        ),
-        6 => (
-            u8::from_str_radix(&s[0..2], 16).ok()?,
-            u8::from_str_radix(&s[2..4], 16).ok()?,
-            u8::from_str_radix(&s[4..6], 16).ok()?,
-            255u8,
-        ),
-        8 => (
-            u8::from_str_radix(&s[0..2], 16).ok()?,
-            u8::from_str_radix(&s[2..4], 16).ok()?,
-            u8::from_str_radix(&s[4..6], 16).ok()?,
-            u8::from_str_radix(&s[6..8], 16).ok()?,
-        ),
-        _ => return None,
-    };
-    Some([
-        r as f32 / 255.0,
-        g as f32 / 255.0,
-        b as f32 / 255.0,
-        a as f32 / 255.0,
-    ])
+    crate::style_payload::parse_hex(s)
 }
 
 #[cfg(test)]

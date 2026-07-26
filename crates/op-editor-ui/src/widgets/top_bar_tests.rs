@@ -147,14 +147,14 @@ fn zero_width_title_slot_paints_no_filename_or_git_target() {
 }
 
 #[test]
-fn untitled_carries_default_chinese_label() {
-    let bar = TopBar::untitled();
-    assert_eq!(bar.file_name, "未命名");
+fn new_carries_the_supplied_file_name() {
+    let bar = TopBar::new("Untitled");
+    assert_eq!(bar.file_name, "Untitled");
 }
 
 #[test]
 fn layout_reports_full_width_and_top_bar_height() {
-    let bar = TopBar::untitled();
+    let bar = TopBar::new("Untitled");
     let cx = super::LayoutCx {
         available_width: 1000.0,
         dpi: 1.0,
@@ -166,7 +166,7 @@ fn layout_reports_full_width_and_top_bar_height() {
 
 #[test]
 fn access_node_advertises_header_role() {
-    let node = TopBar::untitled().access_node();
+    let node = TopBar::new("Untitled").access_node();
     assert_eq!(node.role(), accesskit::Role::Header);
 }
 
@@ -234,7 +234,7 @@ fn maximize_button_hit_tests_to_toggle_fullscreen() {
     // The Play button is unconditionally available (desktop-only, not
     // experimental-gated); this test asserts the full Maximize | Play |
     // Sun cluster layout.
-    let bar = TopBar::untitled();
+    let bar = TopBar::new("Untitled");
     let rect = Rect {
         origin: Point2D::new(0.0, 0.0),
         size: Point2D::new(1000.0, TOP_BAR_HEIGHT),
@@ -278,14 +278,14 @@ fn preview_button_is_always_visible_regardless_of_experimental_toggle() {
     let play_cx = 1000.0 - PAD - ICON_BUTTON - ICON_BUTTON / 2.0;
     let probe = Point2D::new(play_cx, cy);
 
-    let bar = TopBar::untitled();
+    let bar = TopBar::new("Untitled");
     assert!(bar.preview_button_visible());
     assert_eq!(bar.hit_test(rect, probe), Some(TopBarHit::TogglePreview));
 }
 
 #[test]
 fn icon_only_git_button_centers_glyph_in_hover_rect() {
-    let mut bar = TopBar::untitled();
+    let mut bar = TopBar::new("Untitled");
     bar.git_branch = None;
     let rect = Rect {
         origin: Point2D::new(0.0, 0.0),
@@ -474,7 +474,7 @@ fn chip_with_only_builtin_agents_reserves_no_icon_cluster() {
 
 #[test]
 fn account_button_gate_off_removes_hit_target_and_layout_slot() {
-    let bar = TopBar::untitled();
+    let bar = TopBar::new("Untitled");
     assert!(
         !bar.account_button_visible,
         "the account button must default to hidden"
@@ -505,7 +505,7 @@ fn account_button_gate_off_removes_hit_target_and_layout_slot() {
 
 #[test]
 fn account_button_gate_on_restores_hit_target_and_layout_slot() {
-    let mut bar = TopBar::untitled();
+    let mut bar = TopBar::new("Untitled");
     bar.account_button_visible = true;
     let rect = Rect {
         origin: Point2D::new(0.0, 0.0),
@@ -525,7 +525,7 @@ fn account_button_gate_on_restores_hit_target_and_layout_slot() {
 
 #[test]
 fn vscode_embed_hides_file_figma_title_and_fullscreen() {
-    let mut bar = TopBar::untitled().with_traffic_controls(false);
+    let mut bar = TopBar::new("Untitled").with_traffic_controls(false);
     bar.embed = op_editor_core::EmbedHost::VsCode;
     // No hit anywhere may resolve to the hidden controls.
     let rect = Rect {
@@ -548,7 +548,7 @@ fn vscode_embed_hides_file_figma_title_and_fullscreen() {
 
 #[test]
 fn vscode_embed_keeps_sidebar_locale_theme_and_chip() {
-    let mut bar = TopBar::untitled().with_traffic_controls(false);
+    let mut bar = TopBar::new("Untitled").with_traffic_controls(false);
     bar.embed = op_editor_core::EmbedHost::VsCode;
     let rect = Rect {
         origin: Point2D::new(0.0, 0.0),

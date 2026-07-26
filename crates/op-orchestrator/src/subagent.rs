@@ -11,10 +11,9 @@ use crate::plan::{OrchestratorPlan, Subtask};
 use crate::prompt::build_subagent_prompt;
 use crate::types::{AbortFlag, DesignRequest, DocSink, LlmChunk, LlmClient, SubtaskOutcome};
 use futures::StreamExt;
-use jian_ops_schema::node::{ContainerProps, PenNode};
+use jian_ops_schema::node::PenNode;
 use jian_ops_schema::sizing::{SizingBehavior, SizingKeyword};
 use op_editor_core::{EditorCommand, NodeId, PenNodeExt};
-use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// 执行一个 subtask。总是返回 [`SubtaskOutcome`];调用方据
@@ -407,136 +406,12 @@ pub(crate) fn apply_insert_subtree_with_reveal(
     Some(root_ids)
 }
 
-fn collect_active_node_ids(state: &op_editor_core::EditorState) -> HashSet<String> {
-    let mut out = HashSet::new();
-    for node in state.active_children() {
-        collect_node_ids(node, &mut out);
-    }
-    out
-}
-
-fn collect_node_ids(node: &PenNode, out: &mut HashSet<String>) {
-    out.insert(node.id_str().to_string());
-    if let Some(children) = node.children() {
-        for child in children {
-            collect_node_ids(child, out);
-        }
-    }
-}
-
-pub(crate) fn register_new_node_reveals(
-    ids_before: &HashSet<String>,
-    state: &op_editor_core::EditorState,
-    indicator_epoch: Option<u64>,
-    reveal_started_ms: u64,
-) {
-    let Some(epoch) = indicator_epoch else {
-        return;
-    };
-    let mut stream = RevealStream {
-        index: 0,
-        next_start_ms: reveal_started_ms,
-    };
-    for node in state.active_children() {
-        register_node_reveals(
-            node,
-            ids_before,
-            epoch,
-            reveal_started_ms,
-            0,
-            None,
-            &mut stream,
-        );
-    }
-}
-
-struct RevealStream {
-    index: u64,
-    next_start_ms: u64,
-}
-
-fn register_node_reveals(
-    node: &PenNode,
-    ids_before: &HashSet<String>,
-    epoch: u64,
-    reveal_started_ms: u64,
-    depth: u64,
-    parent_reveal_start_ms: Option<u64>,
-    stream: &mut RevealStream,
-) {
-    let id = node.id_str();
-    let mut own_reveal_start_ms = parent_reveal_start_ms;
-    if !ids_before.contains(id) && should_reveal_node(node, depth) {
-        let own_stream_index = stream.index;
-        stream.index += 1;
-        let base_start = reveal_started_ms
-            + op_editor_core::agent_indicators::reveal_offset_ms(depth, own_stream_index);
-        let child_runway_start = parent_reveal_start_ms
-            .map(|started_at| {
-                started_at.saturating_add(op_editor_core::agent_indicators::REVEAL_CHILD_RUNWAY_MS)
-            })
-            .unwrap_or(reveal_started_ms);
-        let started_at = base_start.max(child_runway_start).max(stream.next_start_ms);
-        op_editor_core::agent_indicators::add_reveal(epoch, id, started_at);
-        stream.next_start_ms =
-            started_at.saturating_add(op_editor_core::agent_indicators::REVEAL_STAGGER_MS);
-        own_reveal_start_ms = Some(started_at);
-    }
-    if let Some(children) = node.children() {
-        for child in children {
-            register_node_reveals(
-                child,
-                ids_before,
-                epoch,
-                reveal_started_ms,
-                depth + 1,
-                own_reveal_start_ms,
-                stream,
-            );
-        }
-    }
-}
-
-fn should_reveal_node(node: &PenNode, depth: u64) -> bool {
-    depth == 0 || node_has_own_visual(node) || node_is_named_structure(node)
-}
-
-fn node_has_own_visual(node: &PenNode) -> bool {
-    match node {
-        PenNode::Frame(n) => {
-            container_has_own_visual(&n.container) || n.image_search_query.is_some()
-        }
-        PenNode::Group(n) => container_has_own_visual(&n.container),
-        PenNode::Rectangle(n) => container_has_own_visual(&n.container),
-        PenNode::Ref(_) => false,
-        PenNode::Text(n) => match &n.content {
-            jian_ops_schema::node::TextContent::Plain(s) => !s.is_empty(),
-            jian_ops_schema::node::TextContent::Styled(segments) => !segments.is_empty(),
-        },
-        _ => true,
-    }
-}
-
-fn container_has_own_visual(container: &ContainerProps) -> bool {
-    container
-        .fill
-        .as_ref()
-        .is_some_and(|fills| !fills.is_empty())
-        || container.stroke.is_some()
-        || container
-            .effects
-            .as_ref()
-            .is_some_and(|effects| !effects.is_empty())
-}
-
-fn node_is_named_structure(node: &PenNode) -> bool {
-    if !node.is_container() {
-        return false;
-    }
-    let base = node.base();
-    base.role.as_deref().is_some_and(|role| !role.is_empty())
-        || base.name.as_deref().is_some_and(|name| !name.is_empty())
-}
+// The reveal walk (before/after id diff + staggered reveal registration)
+// is single-sourced in op-editor-core; re-exported so sibling modules and
+// the reveal tests keep their `crate::subagent::*` paths.
+pub(crate) use op_editor_core::agent_reveals::{
+    collect_active_node_ids, register_new_node_reveals,
+};
 
 fn is_blank_container_forest(nodes: &[PenNode]) -> bool {
     !nodes.iter().any(has_content_node)

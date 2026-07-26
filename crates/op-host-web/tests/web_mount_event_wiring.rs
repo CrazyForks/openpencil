@@ -181,8 +181,8 @@ fn credential_status_requests_use_a_finite_timeout() {
         .nth(1)
         .expect("status-aware POST implementation");
 
-    assert!(get_with_status.contains("xhr.set_timeout(STATUS_REQUEST_TIMEOUT_MS)"));
-    assert!(post_with_status.contains("xhr.set_timeout(STATUS_REQUEST_TIMEOUT_MS)"));
+    assert!(get_with_status.contains("xhr.set_timeout(DAEMON_FETCH_TIMEOUT_MS)"));
+    assert!(post_with_status.contains("xhr.set_timeout(DAEMON_FETCH_TIMEOUT_MS)"));
 }
 
 #[test]

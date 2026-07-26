@@ -527,7 +527,8 @@ impl WidgetHostNative {
                 }
                 let panel = AgentSettingsPanel::for_editor(&self.editor_state);
                 let total = panel.content_total_height();
-                let viewport_h_inner = panel_rect.size.y - 48.0;
+                let viewport_h_inner = panel_rect.size.y
+                    - op_editor_ui::widgets::agent_settings_panel::CONTENT_VERTICAL_INSET;
                 let max_scroll = (total - viewport_h_inner).max(0.0);
                 self.editor_state
                     .editor_ui
@@ -705,7 +706,8 @@ impl WidgetHostNative {
                 }
                 let panel = AgentSettingsPanel::for_editor(&self.editor_state);
                 let total = panel.content_total_height();
-                let viewport_h_inner = panel_rect.size.y - 48.0;
+                let viewport_h_inner = panel_rect.size.y
+                    - op_editor_ui::widgets::agent_settings_panel::CONTENT_VERTICAL_INSET;
                 let max_scroll = (total - viewport_h_inner).max(0.0);
                 self.editor_state
                     .editor_ui

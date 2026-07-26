@@ -175,11 +175,7 @@ impl WidgetHostNative {
             }
             AgentSettingsHit::OpenImageRegisterLink => {
                 self.commit_settings_focus_if_any();
-                // The raw `auth_tokens/register/` endpoint only accepts POST, so
-                // opening it in a browser (GET) lands on a 405 page. Point at the
-                // API reference's auth section, which documents how to register an
-                // application for credentials.
-                open_external_url("https://api.openverse.org/v1/#tag/auth");
+                open_external_url(op_editor_core::agent_settings::OPENVERSE_AUTH_DOCS_URL);
             }
             AgentSettingsHit::TestImageSearch => {
                 self.commit_settings_focus_if_any();

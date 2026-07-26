@@ -10,33 +10,28 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use op_editor_core::editor_ui_state::{RecentFile, RECENT_FILE_CAP};
 use op_editor_core::{
-    AcpAgentConfig, AcpConnectionType, BuiltinAgentConfig, BuiltinAgentKind, BuiltinAgentPresetKey,
-    EditorState, ImageGenProfile, ImageGenProvider, Locale, ThemeMode,
+    AcpAgentConfig, AcpConnectionType, BuiltinAgentConfig, BuiltinAgentPresetKey, EditorState,
+    ImageGenProfile, ThemeMode,
 };
+// Shared settings payload shapes + conversions — single-sourced in
+// op-editor-host-core so the desktop `settings.json` and the browser
+// `web_settings` snapshots cannot drift field-by-field.
+use op_editor_host_core::settings_payload::{
+    builtin_agent_from_payload, builtin_agent_to_payload, dedupe_builtin_agents,
+    image_gen_profile_from_payload, image_gen_profile_to_payload, migrate_mcp_cli_flags,
+    next_builtin_agent_id, next_image_gen_profile_id, openverse_oauth_to_payload, str_to_theme,
+    theme_to_str, BuiltinAgentPayload, ImageGenProfilePayload, OpenverseOAuthPayload,
+    RecentFilePayload,
+};
+use op_i18n::Locale;
 use serde::{Deserialize, Serialize};
+
+// The sibling test files reach these enums through `use super::*`.
+#[cfg(test)]
+use op_editor_core::{BuiltinAgentKind, ImageGenProvider};
 
 #[path = "settings_io_checked.rs"]
 mod settings_io_checked;
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct RecentFilePayload {
-    path: String,
-    modified_at: u64,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct BuiltinAgentPayload {
-    id: String,
-    #[serde(default)]
-    preset: Option<String>,
-    display_name: String,
-    kind: String,
-    #[serde(default)]
-    api_key: String,
-    model: String,
-    base_url: String,
-    enabled: bool,
-}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct AcpAgentPayload {
@@ -52,23 +47,6 @@ struct AcpAgentPayload {
     #[serde(default)]
     url: Option<String>,
     enabled: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct ImageGenProfilePayload {
-    id: String,
-    name: String,
-    provider: String,
-    api_key: String,
-    model: String,
-    #[serde(default)]
-    base_url: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct OpenverseOAuthPayload {
-    client_id: String,
-    client_secret: String,
 }
 
 /// Cheap snapshot of every persisted field. Captured before each
@@ -184,7 +162,7 @@ fn to_payload(state: &EditorState) -> SettingsPayload {
     SettingsPayload {
         version: SETTINGS_VERSION,
         theme: Some(theme_to_str(eui.theme_mode).into()),
-        locale: Some(locale_to_str(eui.locale).into()),
+        locale: Some(eui.locale.code().into()),
         mcp_port: Some(eui.agent_settings.mcp_server.port),
         mcp_cli_enabled: Some(eui.agent_settings.mcp_cli_enabled.to_vec()),
         images_advanced_open: Some(eui.agent_settings.images_advanced_open),
@@ -378,79 +356,6 @@ fn migrate_connected_provider_flags(flags: Vec<bool>) -> [bool; 6] {
     migrated
 }
 
-/// Remove the retired Gemini CLI MCP slot from positional v1 settings.
-/// Historical layouts had six or eight slots; the current seven-slot layout
-/// keeps every other CLI in its original relative order.
-fn migrate_mcp_cli_flags(flags: Vec<bool>) -> [bool; 7] {
-    let mut migrated = [false; 7];
-    match flags.len() {
-        7 => migrated.copy_from_slice(&flags),
-        8.. => {
-            migrated[0] = flags[0];
-            migrated[1] = flags[1];
-            migrated[2..].copy_from_slice(&flags[3..8]);
-        }
-        3..=6 => {
-            migrated[0] = flags[0];
-            migrated[1] = flags[1];
-            migrated[2..flags.len() - 1].copy_from_slice(&flags[3..]);
-        }
-        _ => {
-            migrated[..flags.len()].copy_from_slice(&flags);
-        }
-    }
-    migrated
-}
-
-fn builtin_agent_to_payload(agent: &BuiltinAgentConfig) -> BuiltinAgentPayload {
-    BuiltinAgentPayload {
-        id: agent.id.clone(),
-        preset: Some(agent.preset.as_str().into()),
-        display_name: agent.display_name.clone(),
-        kind: match agent.kind {
-            BuiltinAgentKind::Anthropic => "anthropic",
-            BuiltinAgentKind::OpenAiCompat => "openai-compat",
-        }
-        .into(),
-        api_key: agent.api_key.clone(),
-        model: agent.model.clone(),
-        base_url: agent.base_url.clone(),
-        enabled: agent.enabled,
-    }
-}
-
-fn builtin_agent_from_payload(payload: BuiltinAgentPayload) -> Option<BuiltinAgentConfig> {
-    let kind = match payload.kind.as_str() {
-        "anthropic" => BuiltinAgentKind::Anthropic,
-        "openai" | "openai-compat" | "openai_compat" => BuiltinAgentKind::OpenAiCompat,
-        _ => return None,
-    };
-    Some(BuiltinAgentConfig {
-        id: payload.id,
-        preset: payload
-            .preset
-            .as_deref()
-            .and_then(BuiltinAgentPresetKey::from_str)
-            .map(|saved| {
-                op_editor_core::normalize_builtin_agent_preset(
-                    saved,
-                    kind,
-                    &payload.base_url,
-                    &payload.model,
-                )
-            })
-            .unwrap_or_else(|| {
-                op_editor_core::infer_builtin_agent_preset(kind, &payload.base_url, &payload.model)
-            }),
-        display_name: payload.display_name,
-        kind,
-        api_key: payload.api_key,
-        model: payload.model,
-        base_url: payload.base_url,
-        enabled: payload.enabled,
-    })
-}
-
 fn acp_agent_to_payload(agent: &AcpAgentConfig) -> AcpAgentPayload {
     AcpAgentPayload {
         id: agent.id.clone(),
@@ -487,98 +392,10 @@ fn acp_agent_from_payload(payload: AcpAgentPayload) -> Option<AcpAgentConfig> {
     })
 }
 
-fn openverse_oauth_to_payload(
-    settings: &op_editor_core::agent_settings::AgentSettings,
-) -> Option<OpenverseOAuthPayload> {
-    let client_id = settings.openverse_client_id.trim();
-    let client_secret = settings.openverse_client_secret.trim();
-    if client_id.is_empty() && client_secret.is_empty() {
-        None
-    } else {
-        Some(OpenverseOAuthPayload {
-            client_id: client_id.to_string(),
-            client_secret: client_secret.to_string(),
-        })
-    }
-}
-
-fn image_gen_profile_to_payload(profile: &ImageGenProfile) -> ImageGenProfilePayload {
-    ImageGenProfilePayload {
-        id: profile.id.clone(),
-        name: profile.name.clone(),
-        provider: match profile.provider {
-            ImageGenProvider::OpenAi => "openai",
-            ImageGenProvider::Gemini => "gemini",
-            ImageGenProvider::Replicate => "replicate",
-            ImageGenProvider::Custom => "custom",
-        }
-        .into(),
-        api_key: profile.api_key.clone(),
-        model: profile.model.clone(),
-        base_url: profile.base_url.clone(),
-    }
-}
-
-fn image_gen_profile_from_payload(payload: ImageGenProfilePayload) -> Option<ImageGenProfile> {
-    let provider = match payload.provider.as_str() {
-        "openai" => ImageGenProvider::OpenAi,
-        "gemini" => ImageGenProvider::Gemini,
-        "replicate" => ImageGenProvider::Replicate,
-        "custom" => ImageGenProvider::Custom,
-        _ => return None,
-    };
-    Some(ImageGenProfile {
-        id: payload.id,
-        name: payload.name,
-        provider,
-        api_key: payload.api_key,
-        model: payload.model,
-        base_url: payload.base_url,
-        test_status: op_editor_core::agent_settings::ImageTestStatus::Idle,
-    })
-}
-
-fn next_builtin_agent_id(agents: &[BuiltinAgentConfig]) -> u64 {
-    agents
-        .iter()
-        .filter_map(|agent| agent.id.strip_prefix("builtin-")?.parse::<u64>().ok())
-        .max()
-        .unwrap_or(0)
-        .saturating_add(1)
-}
-
-fn dedupe_builtin_agents(agents: Vec<BuiltinAgentConfig>) -> Vec<BuiltinAgentConfig> {
-    let mut deduped: Vec<BuiltinAgentConfig> = Vec::new();
-    for agent in agents {
-        let is_duplicate = deduped.iter().any(|existing| {
-            existing.matches_add_candidate(
-                &agent.display_name,
-                &agent.api_key,
-                &agent.model,
-                agent.kind,
-                &agent.base_url,
-            )
-        });
-        if !is_duplicate {
-            deduped.push(agent);
-        }
-    }
-    deduped
-}
-
 fn next_acp_agent_id(agents: &[AcpAgentConfig]) -> u64 {
     agents
         .iter()
         .filter_map(|agent| agent.id.strip_prefix("acp-")?.parse::<u64>().ok())
-        .max()
-        .unwrap_or(0)
-        .saturating_add(1)
-}
-
-fn next_image_gen_profile_id(profiles: &[ImageGenProfile]) -> u64 {
-    profiles
-        .iter()
-        .filter_map(|profile| profile.id.strip_prefix("igp-")?.parse::<u64>().ok())
         .max()
         .unwrap_or(0)
         .saturating_add(1)
@@ -613,9 +430,7 @@ fn load_checked_from_path(state: &mut EditorState, path: &Path) -> Result<(), St
 /// model catalog must reflect web/OpenPencil settings only, rather than expose
 /// machine-local Zode providers that the browser settings UI cannot manage.
 pub fn load_checked(state: &mut EditorState) -> Result<(), String> {
-    if let Some(detected) = detect_system_locale() {
-        state.editor_ui.locale = detected;
-    }
+    seed_system_locale(state);
     let path = settings_path().ok_or_else(|| "failed to resolve settings file path".to_string())?;
     load_checked_from_path(state, &path)?;
     Ok(())
@@ -630,9 +445,7 @@ pub fn load(state: &mut EditorState) {
     // `apply_payload`'s persisted-locale arm overrides this when a
     // saved choice exists; first-run / missing-file lands the
     // detected locale instead of leaving the EnUs default.
-    if let Some(detected) = detect_system_locale() {
-        state.editor_ui.locale = detected;
-    }
+    seed_system_locale(state);
     if let Some(path) = settings_path() {
         if let Ok(bytes) = std::fs::read(&path) {
             if let Ok(payload) = serde_json::from_slice::<SettingsPayload>(&bytes) {
@@ -642,44 +455,14 @@ pub fn load(state: &mut EditorState) {
     }
 }
 
-/// Read the host OS's preferred locale (env-var driven, no extra
-/// crate dependency) and map it onto the supported [`Locale`] set.
-/// Returns `None` when nothing resolves so the caller can keep its
-/// fallback. Order matches POSIX precedence: `LC_ALL` overrides
-/// `LANG` which overrides `LC_MESSAGES`.
-fn detect_system_locale() -> Option<Locale> {
-    for var in ["LC_ALL", "LANG", "LC_MESSAGES"] {
-        let Ok(raw) = std::env::var(var) else {
-            continue;
-        };
-        if let Some(loc) = locale_from_tag(&raw) {
-            return Some(loc);
-        }
+/// Seed the first-run locale through the shared i18n environment resolver.
+///
+/// `Locale::from_environment` owns POSIX precedence and parsing semantics, so
+/// desktop and web-server startup cannot drift from the translation layer.
+fn seed_system_locale(state: &mut EditorState) {
+    if let Some(locale) = Locale::from_environment() {
+        state.editor_ui.locale = locale;
     }
-    None
-}
-
-/// Parse a POSIX / IETF locale tag (`zh_CN.UTF-8`, `zh-CN`,
-/// `pt_BR`, `en`, …) onto the supported `Locale` set. Falls back to
-/// the language subtag when the full tag is unknown so `pt_BR` still
-/// lands `Locale::Pt` rather than rejecting.
-fn locale_from_tag(raw: &str) -> Option<Locale> {
-    let tag = raw.split('.').next().unwrap_or(raw).replace('_', "-");
-    // Try the full tag first (handles `zh-CN` / `zh-TW`); fall back
-    // to the language subtag (`zh-CN` → `zh`).
-    if let Some(loc) = str_to_locale(&tag) {
-        return Some(loc);
-    }
-    // Heuristic: zh-Hans → zh-CN, zh-Hant → zh-TW.
-    let lower = tag.to_ascii_lowercase();
-    if lower.starts_with("zh") {
-        if lower.contains("hant") || lower.contains("tw") || lower.contains("hk") {
-            return Some(Locale::ZhTw);
-        }
-        return Some(Locale::ZhCn);
-    }
-    let lang = tag.split('-').next().unwrap_or(&tag);
-    str_to_locale(lang)
 }
 
 /// Persist settings and report any failure to the caller.
@@ -789,63 +572,8 @@ pub fn save(state: &EditorState) {
     let _ = save_checked(state);
 }
 
-fn theme_to_str(t: ThemeMode) -> &'static str {
-    match t {
-        ThemeMode::Dark => "dark",
-        ThemeMode::Light => "light",
-    }
-}
-
-fn str_to_theme(s: &str) -> ThemeMode {
-    match s {
-        "light" => ThemeMode::Light,
-        _ => ThemeMode::Dark,
-    }
-}
-
-fn locale_to_str(l: Locale) -> &'static str {
-    match l {
-        Locale::EnUs => "en-US",
-        Locale::ZhCn => "zh-CN",
-        Locale::ZhTw => "zh-TW",
-        Locale::Ja => "ja",
-        Locale::Ko => "ko",
-        Locale::Fr => "fr",
-        Locale::Es => "es",
-        Locale::De => "de",
-        Locale::Pt => "pt",
-        Locale::Ru => "ru",
-        Locale::Hi => "hi",
-        Locale::Tr => "tr",
-        Locale::Th => "th",
-        Locale::Vi => "vi",
-        Locale::Id => "id",
-    }
-}
-
-fn str_to_locale(s: &str) -> Option<Locale> {
-    Some(match s {
-        "en-US" | "en" => Locale::EnUs,
-        "zh-CN" | "zh" => Locale::ZhCn,
-        "zh-TW" => Locale::ZhTw,
-        "ja" => Locale::Ja,
-        "ko" => Locale::Ko,
-        "fr" => Locale::Fr,
-        "es" => Locale::Es,
-        "de" => Locale::De,
-        "pt" => Locale::Pt,
-        "ru" => Locale::Ru,
-        "hi" => Locale::Hi,
-        "tr" => Locale::Tr,
-        "th" => Locale::Th,
-        "vi" => Locale::Vi,
-        "id" => Locale::Id,
-        _ => return None,
-    })
-}
-
 fn resolve_persisted_locale(current: Locale, persisted: Option<&str>) -> Locale {
-    persisted.and_then(str_to_locale).unwrap_or(current)
+    persisted.and_then(Locale::from_tag).unwrap_or(current)
 }
 
 #[cfg(test)]

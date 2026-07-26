@@ -92,7 +92,7 @@ impl PropertyPanel {
                 matches!(action, A::TogglePaddingModePopover).then_some(gear)
             })
             .map(|gear| {
-                crate::widgets::property_panel_flex::padding_mode_popover_rect_from_gear(
+                crate::widgets::property_panel_mode_popover::mode_popover_rect_from_gear(
                     gear,
                     panel_rect.size.x,
                 )
@@ -112,7 +112,7 @@ impl PropertyPanel {
             .into_iter()
             .find_map(|(action, gear)| matches!(action, A::ToggleStrokeModePopover).then_some(gear))
             .map(|gear| {
-                crate::widgets::property_panel_stroke::stroke_mode_popover_rect_from_gear(
+                crate::widgets::property_panel_mode_popover::mode_popover_rect_from_gear(
                     gear,
                     panel_rect.size.x,
                 )

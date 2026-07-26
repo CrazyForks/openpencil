@@ -187,10 +187,6 @@ impl TopBar {
         }
     }
 
-    pub fn untitled() -> Self {
-        Self::new("未命名")
-    }
-
     pub fn for_editor_ui(ui: &EditorUiState) -> Self {
         let file_name = ui
             .file_name_display

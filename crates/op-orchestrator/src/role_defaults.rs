@@ -138,20 +138,14 @@ pub fn detect_theme_from_fill(fill: Option<&str>) -> Theme {
 }
 
 fn parse_hex_rgb(hex: &str) -> Option<(u8, u8, u8)> {
-    let h = hex.strip_prefix('#')?;
-    // Reject non-ASCII before byte-slicing below (a multi-byte char could make
-    // `h[0..2]` land mid-codepoint and panic).
-    if !h.is_ascii() {
-        return None;
-    }
-    let h = match h.len() {
-        3 => h.chars().flat_map(|c| [c, c]).collect::<String>(),
-        6 | 8 => h.to_string(),
-        _ => return None,
+    // `#` required; 3/6/8 digits; alpha byte ignored. Delegates to op-util.
+    const OPTS: op_util::hex_color::HexOptions = op_util::hex_color::HexOptions {
+        require_hash: true,
+        allow_rgb_shorthand: true,
+        allow_rgba_shorthand: false,
+        allow_alpha: true,
     };
-    let r = u8::from_str_radix(&h[0..2], 16).ok()?;
-    let g = u8::from_str_radix(&h[2..4], 16).ok()?;
-    let b = u8::from_str_radix(&h[4..6], 16).ok()?;
+    let [r, g, b, _] = op_util::hex_color::parse_hex_rgba8(hex, OPTS)?;
     Some((r, g, b))
 }
 

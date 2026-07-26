@@ -508,10 +508,10 @@ pub fn handle_web_canvas_request(
         // drives the flow through the daemon's op-auth-bridge runtime.
         // (`POST /api/auth/login/begin` is a streaming-tier route — it
         // waits for the verification URI off the state lock.)
-        ("GET", "/api/auth/status") => crate::web_auth::status(state),
-        ("GET", "/api/auth/login/status") => crate::web_auth::login_status(state),
-        ("POST", "/api/auth/login/cancel") => crate::web_auth::login_cancel(state),
-        ("POST", "/api/auth/logout") => crate::web_auth::logout(state),
+        ("GET", op_editor_core::auth_routes::STATUS) => crate::web_auth::status(state),
+        ("GET", op_editor_core::auth_routes::LOGIN_STATUS) => crate::web_auth::login_status(state),
+        ("POST", op_editor_core::auth_routes::LOGIN_CANCEL) => crate::web_auth::login_cancel(state),
+        ("POST", op_editor_core::auth_routes::LOGOUT) => crate::web_auth::logout(state),
         _ => WebReply {
             status: "404 Not Found",
             body: r#"{"ok":false,"error":"Not found. Use /api/mcp/document, /api/mcp/sync-reset, /api/mcp/server, /api/file/save, /api/export/raster, /api/export/pdf, or /mcp."}"#
@@ -1739,7 +1739,7 @@ fn serve_one<S: Read + Write>(
     }
     // Sign-in popup interstitial — same auth-exempt static surface as the
     // bundle routes above (it renders a spinner and nothing else).
-    if req.method == "GET" && req.path == "/auth/loading" {
+    if req.method == "GET" && req.path == op_editor_core::auth_routes::LOADING_PAGE {
         let reply = crate::web_static::StaticReply {
             status: "200 OK",
             content_type: "text/html; charset=utf-8",
@@ -1766,7 +1766,7 @@ fn serve_one<S: Read + Write>(
     // lock) for the pairing's verification URI so the popup can navigate
     // straight from this response — handled here rather than in the
     // whole-body REST tier, which runs under the state mutex.
-    if req.method == "POST" && req.path == "/api/auth/login/begin" {
+    if req.method == "POST" && req.path == op_editor_core::auth_routes::LOGIN_BEGIN {
         let reply = crate::web_auth::login_begin_and_wait(state);
         return crate::mcp_serve::write_mcp_http_response_with_origin(
             stream,
@@ -2102,7 +2102,9 @@ fn is_sensitive_browser_post(request: &crate::mcp_serve::HttpRequest) -> bool {
     request.method == "POST"
         && (request.path == "/api/settings/credentials"
             || request.path.starts_with("/api/ai/")
-            || request.path.starts_with("/api/auth/")
+            || request
+                .path
+                .starts_with(op_editor_core::auth_routes::API_PREFIX)
             || request.path.starts_with("/api/figma/"))
 }
 

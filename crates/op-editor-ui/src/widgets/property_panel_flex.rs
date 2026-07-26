@@ -11,6 +11,7 @@ use crate::widgets::property_panel_inputs::{
     paint_section_divider, paint_section_label, INPUT_HEIGHT, INPUT_RADIUS, PAD_X, SECTION_GAP,
     SECTION_HEADER_HEIGHT,
 };
+use crate::widgets::property_panel_mode_popover as mode_popover;
 use crate::widgets::property_panel_sections::{EditContext, PropertyLabels};
 use crate::widgets::PaintCx;
 use crate::{Point2D, Rect, TextLayout};
@@ -77,28 +78,8 @@ fn padding_mode_popover_layout(x0: f32, y: f32, width: f32) -> (Rect, Rect, [Rec
         origin: Point2D::new(x0 + width - PAD_X - 18.0, sublabel_y - 2.0),
         size: Point2D::new(18.0, 18.0),
     };
-    let pop_box = padding_mode_popover_rect_from_gear(gear, width);
-    let pop_w = pop_box.size.x;
-    let pop_x = pop_box.origin.x;
-    let pad = 6.0;
-    let title_h = 22.0;
-    let row_h = 26.0;
-    let first_row = pop_box.origin.y + pad + title_h;
-    let row = |i: usize| Rect {
-        origin: Point2D::new(pop_x + pad, first_row + i as f32 * row_h),
-        size: Point2D::new(pop_w - pad * 2.0, row_h),
-    };
-    (gear, pop_box, [row(0), row(1), row(2)])
-}
-
-/// Popup chrome derived from the padding gear emitted by the shared
-/// action walker. Paint and host containment both call this helper.
-pub(crate) fn padding_mode_popover_rect_from_gear(gear: Rect, width: f32) -> Rect {
-    let pop_w = 190.0_f32.min(width - PAD_X * 2.0);
-    Rect {
-        origin: Point2D::new(gear.origin.x + gear.size.x - pop_w, gear.origin.y + 22.0),
-        size: Point2D::new(pop_w, 6.0 * 2.0 + 22.0 + 26.0 * 3.0),
-    }
+    let pop_box = mode_popover::mode_popover_rect_from_gear(gear, width);
+    (gear, pop_box, mode_popover::mode_popover_rows(pop_box))
 }
 
 pub fn flex_section_height(active: FlexLayout, padding_mode: PaddingEditMode) -> f32 {
@@ -571,48 +552,18 @@ pub fn paint_padding_mode_popover(
     width: f32,
 ) {
     let (_gear, pop_box, rows) = padding_mode_popover_layout(x0, y, width);
-    cx.backend.fill_round_rect(pop_box, 8.0, theme.popover);
-    cx.backend
-        .stroke_round_rect(pop_box, 8.0, theme.border, 1.0);
-    let title = TextLayout::single_run(
-        op_i18n::translate(locale, "padding.paddingValues"),
-        "system-ui",
-        11.0,
-        (theme.muted_foreground).to_jian(),
-        Point2D::new(0.0, 0.0),
+    mode_popover::paint_mode_popover(
+        cx,
+        theme,
+        locale,
+        "padding.paddingValues",
+        active_mode,
+        hover,
+        pop_box,
+        &rows,
+        RADIO_SIZE,
+        RADIO_GUTTER,
     );
-    cx.backend.draw_text(
-        &title,
-        Point2D::new(pop_box.origin.x + 12.0, pop_box.origin.y + 16.0),
-    );
-    for (i, rect) in rows.iter().enumerate() {
-        let mode = PaddingEditMode::ALL[i];
-        if hover == Some(i) {
-            // jian-standard button_hover row wash, matching the other dropdowns.
-            cx.backend.fill_round_rect(*rect, 6.0, theme.button_hover);
-        }
-        paint_radio_circle(
-            cx,
-            theme,
-            rect.origin.x + 4.0,
-            rect.origin.y + (rect.size.y - RADIO_SIZE) / 2.0,
-            mode == active_mode,
-        );
-        let label = TextLayout::single_run(
-            op_i18n::translate(locale, mode.label_key()),
-            "system-ui",
-            11.0,
-            (theme.foreground).to_jian(),
-            Point2D::new(0.0, 0.0),
-        );
-        cx.backend.draw_text(
-            &label,
-            Point2D::new(
-                rect.origin.x + 4.0 + RADIO_GUTTER,
-                rect.origin.y + rect.size.y / 2.0 + 4.0,
-            ),
-        );
-    }
 }
 
 fn paint_alignment_grid(
@@ -687,25 +638,10 @@ fn paint_alignment_grid(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-/// 14px radio circle — a 1.5px ring (primary when selected, else
-/// muted) plus an 8px filled primary dot when selected. Drawn with
-/// `stroke/fill_round_rect` at full radius (a circle) to stay
-/// dependency-free.
+/// Compact radio circle at this section's `RADIO_SIZE` — the shared
+/// jian `Radio` paint lives in `property_panel_mode_popover`.
 fn paint_radio_circle(cx: &mut PaintCx<'_>, theme: &Theme, x: f32, y: f32, selected: bool) {
-    let ring = Rect {
-        origin: Point2D::new(x, y),
-        size: Point2D::new(RADIO_SIZE, RADIO_SIZE),
-    };
-    jian_widgets::components::radio::Radio {
-        selected,
-        enabled: true,
-    }
-    .paint(
-        cx.backend,
-        ring,
-        &crate::widgets::button::tokens_from_theme(theme),
-    );
+    mode_popover::paint_radio_circle(cx, theme, x, y, RADIO_SIZE, selected);
 }
 
 /// 10px muted label vertically centred in a `GAP_ROW_H` radio row.

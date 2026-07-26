@@ -1,0 +1,195 @@
+//! Chrome-state transitions shared verbatim by the native and web
+//! widget hosts (their `widget_host/` twins used to carry these as
+//! copy-pasted impl blocks). Hosts stay thin: they map widget-facade
+//! types to core types, call these, and `mark_dirty()` when a
+//! transition reports a change.
+
+use jian_ops_schema::node::PenNode;
+
+use crate::agent_settings::SettingsFocus;
+use crate::editor_ui_state::{CompositingPickerTarget, EditorUiState};
+use crate::state::EditorState;
+use crate::{EditorCommand, NodeId};
+
+impl EditorUiState {
+    /// Close the PropertyPanel compositing picker and clear its
+    /// transient hover/press state.
+    pub fn close_compositing_picker(&mut self) {
+        self.compositing_picker.open = false;
+        self.compositing_picker.hover = None;
+        self.compositing_picker.pressed = None;
+        self.compositing_picker_target = None;
+    }
+
+    /// Toggle the compositing picker for `target`, closing every other
+    /// property-panel popover when it opens.
+    pub fn toggle_compositing_picker(&mut self, target: CompositingPickerTarget) {
+        let opening = !self.compositing_picker.open
+            || self.compositing_picker_target.as_ref() != Some(&target);
+        self.compositing_picker.open = opening;
+        self.compositing_picker.hover = None;
+        self.compositing_picker.pressed = None;
+        self.compositing_picker.scroll.offset = 0.0;
+        self.compositing_picker_target = opening.then_some(target);
+        if opening {
+            self.close_fill_type_picker();
+            self.image_fill_popover_open = false;
+            self.close_font_picker();
+            self.font_weight_picker_open = false;
+            self.padding_mode_popover_open = false;
+            self.stroke_mode_popover_open = false;
+            self.export_scale_picker_open = false;
+            self.export_format_picker_open = false;
+            self.property_color_variable_picker_open = None;
+        }
+    }
+
+    /// Toggle the variables panel (closes the Design.md panel — the two
+    /// share the left rail slot).
+    pub fn toggle_variables_panel(&mut self) {
+        self.variables_panel_open = !self.variables_panel_open;
+        if !self.variables_panel_open {
+            self.variables_panel_hover = None;
+            self.axis_dropdown_open = None;
+        }
+        self.design_md_panel_open = false;
+        self.design_md_hover = None;
+    }
+
+    /// Toggle the Design.md panel.
+    pub fn toggle_design_md_panel(&mut self) {
+        self.design_md_panel_open = !self.design_md_panel_open;
+        if !self.design_md_panel_open {
+            self.design_md_hover = None;
+        }
+    }
+}
+
+// ─── Chat model-picker filter input ────────────────────────────────────
+
+/// Insert `c` into the chat model-picker filter. Returns `true` when the
+/// keystroke was consumed (picker open, printable char).
+pub fn chat_model_picker_text(ui: &mut EditorUiState, c: char, now_ms: u64) -> bool {
+    if !ui.chat_model_picker.open || c.is_control() {
+        return false;
+    }
+    let mut s = [0u8; 4];
+    ui.chat_model_picker_input
+        .insert_str(c.encode_utf8(&mut s), now_ms);
+    ui.chat_model_picker.scroll.offset = 0.0;
+    ui.chat_model_picker.hover = None;
+    ui.chat_model_picker.pressed = None;
+    true
+}
+
+/// Backspace in the chat model-picker filter.
+pub fn chat_model_picker_backspace(ui: &mut EditorUiState, now_ms: u64) -> bool {
+    if !ui.chat_model_picker.open {
+        return false;
+    }
+    ui.chat_model_picker_input.backspace(now_ms);
+    ui.chat_model_picker_input.touch(now_ms);
+    ui.chat_model_picker.scroll.offset = 0.0;
+    ui.chat_model_picker.hover = None;
+    ui.chat_model_picker.pressed = None;
+    true
+}
+
+/// Move the chat model-picker caret left/right.
+pub fn chat_model_picker_caret(ui: &mut EditorUiState, forward: bool, now_ms: u64) -> bool {
+    if !ui.chat_model_picker.open {
+        return false;
+    }
+    if forward {
+        ui.chat_model_picker_input.move_right(false, now_ms);
+    } else {
+        ui.chat_model_picker_input.move_left(false, now_ms);
+    }
+    true
+}
+
+// ─── Settings-modal focused input ──────────────────────────────────────
+
+/// Seed the settings input with `text` (focus/edit handoff).
+pub fn set_settings_input_text(ui: &mut EditorUiState, text: String, now_ms: u64) {
+    ui.settings_input.set_text(text);
+    ui.settings_input.touch(now_ms);
+}
+
+/// Insert `c` into the focused settings input, honoring the per-focus
+/// accept rules (digits-only + length cap for the port field, etc.).
+pub fn settings_text(ui: &mut EditorUiState, c: char, now_ms: u64) -> bool {
+    let Some(focus) = ui.agent_settings.focus else {
+        return false;
+    };
+    if !settings_accepts(focus, &ui.settings_input, c) {
+        return false;
+    }
+    let mut buf = [0; 4];
+    ui.settings_input
+        .insert_str(c.encode_utf8(&mut buf), now_ms);
+    true
+}
+
+/// Backspace in the focused settings input.
+pub fn settings_backspace(ui: &mut EditorUiState, now_ms: u64) -> bool {
+    if ui.agent_settings.focus.is_none() {
+        return false;
+    }
+    ui.settings_input.backspace(now_ms);
+    true
+}
+
+/// Move the focused settings-input caret left/right.
+pub fn settings_caret(ui: &mut EditorUiState, forward: bool, now_ms: u64) -> bool {
+    if ui.agent_settings.focus.is_none() {
+        return false;
+    }
+    if forward {
+        ui.settings_input.move_right(false, now_ms);
+    } else {
+        ui.settings_input.move_left(false, now_ms);
+    }
+    true
+}
+
+fn settings_accepts(
+    focus: SettingsFocus,
+    input: &jian_core::text_input::TextInputState,
+    c: char,
+) -> bool {
+    match focus {
+        SettingsFocus::McpPort => {
+            c.is_ascii_digit() && (input.is_select_all() || input.text().len() < 5)
+        }
+        SettingsFocus::ImageSearch(_)
+        | SettingsFocus::BuiltinAgent { .. }
+        | SettingsFocus::BuiltinAgentDraft(_)
+        | SettingsFocus::AcpAgent { .. }
+        | SettingsFocus::AcpAgentDraft(_)
+        | SettingsFocus::ImageGenProfile { .. } => {
+            !c.is_control() && (input.is_select_all() || input.text().len() < 512)
+        }
+    }
+}
+
+// ─── Chat design-block apply ───────────────────────────────────────────
+
+/// Insert a chat design block's parsed nodes onto the active page and
+/// mark the source message applied. Returns `true` when the document
+/// changed (the host should mark dirty).
+pub fn apply_chat_design_block(
+    state: &mut EditorState,
+    message_index: usize,
+    nodes: Vec<PenNode>,
+) -> bool {
+    if state.apply(EditorCommand::InsertSubtree {
+        nodes,
+        parent_id: NodeId::NONE,
+        page_id: None,
+    }) {
+        state.chat.mark_message_design_applied(message_index);
+        return true;
+    }
+    false
+}

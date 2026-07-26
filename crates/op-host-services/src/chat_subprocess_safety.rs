@@ -411,7 +411,9 @@ fn validate_openpencil_url(input: &str) -> io::Result<u16> {
 /// identity proof. Accept only the port record published by this exact GUI
 /// process. We intentionally do not copy its shutdown token into the child.
 fn validate_live_mcp_record(host_home: &Path, expected_port: u16) -> io::Result<()> {
-    let path = host_home.join(".openpencil").join(".op-mcp-port");
+    let path = host_home
+        .join(op_config_store::OPENPENCIL_DIR_NAME)
+        .join(op_config_store::well_known::LIVE_MCP_PORT);
     let record: serde_json::Value = serde_json::from_slice(&fs::read(path)?).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,

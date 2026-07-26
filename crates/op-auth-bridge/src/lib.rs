@@ -33,6 +33,13 @@ pub const REQUIRED_ABI_VERSION: u32 = 1;
 /// `poll` handle that reports the signed-in session instead of a flow.
 pub const SESSION_HANDLE: u64 = 0;
 
+/// Env var overriding the SSO base URL (local development).
+pub const ENV_SSO_URL: &str = "OPENPENCIL_SSO_URL";
+
+/// Env var (`=1`) enabling the hosts' dev/demo fake-login fast path —
+/// declared here so every host gates on the same name.
+pub const ENV_DEV_FAKE_LOGIN: &str = "OPENPENCIL_DEV_FAKE_LOGIN";
+
 /// Everything the runtime needs at startup.
 #[derive(Clone, Debug)]
 pub struct AuthInitConfig {
@@ -133,7 +140,7 @@ pub fn device_display_name() -> String {
 /// store under `<openpencil_dir>/auth`, machine device name.
 pub fn desktop_init_config(openpencil_dir: &std::path::Path, app_version: &str) -> AuthInitConfig {
     AuthInitConfig {
-        base_url: std::env::var("OPENPENCIL_SSO_URL")
+        base_url: std::env::var(ENV_SSO_URL)
             .unwrap_or_else(|_| "https://sso.zseven.cn".to_string()),
         storage_dir: openpencil_dir.join("auth"),
         device_name: device_display_name(),

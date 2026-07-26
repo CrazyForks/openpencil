@@ -84,11 +84,48 @@ pub struct McpServer {
     pub port: u16,
 }
 
+/// Default HTTP MCP / serve-web daemon port, mirroring the retired TS
+/// `@zseven-w/pen-mcp` default. Single source of truth for the CLI,
+/// the settings modal, and the web shell's daemon fallback.
+pub const DEFAULT_MCP_PORT: u16 = 3100;
+
+/// Default local daemon origin (`local_daemon_origin(DEFAULT_MCP_PORT)`
+/// as a `const` — the web shell needs a `&'static str` fallback).
+pub const DEFAULT_LOCAL_DAEMON_ORIGIN: &str = "http://127.0.0.1:3100";
+
+/// Local daemon origin for `port` (`http://127.0.0.1:<port>`).
+pub fn local_daemon_origin(port: u16) -> String {
+    format!("http://127.0.0.1:{port}")
+}
+
+/// Local HTTP MCP endpoint for `port` (`http://127.0.0.1:<port>/mcp`).
+pub fn local_mcp_url(port: u16) -> String {
+    format!("http://127.0.0.1:{port}/mcp")
+}
+
+/// Canonical "connected but returned no models" error for a provider,
+/// localized via the `providerProbe.*` catalog. Single source for the
+/// web host (real UI locale) and the services probe pump (pinned EnUs).
+pub fn missing_models_connect_error(locale: crate::Locale, provider: AgentProvider) -> String {
+    let name = match provider {
+        AgentProvider::ClaudeCode => "Claude Code",
+        AgentProvider::CodexCli => "Codex CLI",
+        AgentProvider::OpenCode => "OpenCode",
+        AgentProvider::GithubCopilot => "GitHub Copilot",
+        AgentProvider::Antigravity => {
+            return op_i18n::translate(locale, "providerProbe.noDefaultModelAntigravity")
+                .to_string();
+        }
+        AgentProvider::GrokBuild => "Grok Build",
+    };
+    op_i18n::translate_with(locale, "providerProbe.noModelList", &[("name", name)])
+}
+
 impl Default for McpServer {
     fn default() -> Self {
         Self {
             running: false,
-            port: 3100,
+            port: DEFAULT_MCP_PORT,
         }
     }
 }
@@ -96,15 +133,15 @@ impl Default for McpServer {
 impl McpServer {
     pub fn client_config_display_text(self) -> String {
         format!(
-            r#"{{ "type": "http", "url": "http://127.0.0.1:{}/mcp" }}"#,
-            self.port
+            r#"{{ "type": "http", "url": "{}" }}"#,
+            local_mcp_url(self.port)
         )
     }
 
     pub fn client_config_clipboard_text(self) -> String {
         format!(
-            "{{\n  \"type\": \"http\",\n  \"url\": \"http://127.0.0.1:{}/mcp\"\n}}",
-            self.port
+            "{{\n  \"type\": \"http\",\n  \"url\": \"{}\"\n}}",
+            local_mcp_url(self.port)
         )
     }
 }
@@ -364,6 +401,23 @@ mod embed_mcp_url_tests {
         assert!(settings
             .mcp_client_config_clipboard_text()
             .contains("\"url\": \"http://127.0.0.1:63655/mcp\""));
+    }
+}
+
+#[cfg(test)]
+mod mcp_defaults_tests {
+    use super::*;
+
+    #[test]
+    fn default_origin_const_matches_the_port_const() {
+        assert_eq!(
+            DEFAULT_LOCAL_DAEMON_ORIGIN,
+            local_daemon_origin(DEFAULT_MCP_PORT)
+        );
+        assert_eq!(
+            local_mcp_url(DEFAULT_MCP_PORT),
+            format!("{DEFAULT_LOCAL_DAEMON_ORIGIN}/mcp")
+        );
     }
 }
 

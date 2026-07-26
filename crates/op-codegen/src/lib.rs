@@ -357,10 +357,7 @@ pub(crate) fn color_to_css(s: &str) -> String {
 }
 
 pub(crate) fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+    op_util::xml_escape::escape_html(s)
 }
 
 fn scalar_to_css(s: &VariableScalar) -> String {

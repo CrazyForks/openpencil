@@ -122,9 +122,11 @@ pub(super) fn validate_lossless_payload(payload: &SettingsPayload) -> Result<(),
     {
         return Err(lossy());
     }
-    if payload.locale.as_deref().is_some_and(|saved| {
-        str_to_locale(saved).is_none_or(|locale| locale_to_str(locale) != saved)
-    }) {
+    if payload
+        .locale
+        .as_deref()
+        .is_some_and(|saved| Locale::from_tag(saved).is_none_or(|locale| locale.code() != saved))
+    {
         return Err(lossy());
     }
     if payload.mcp_port.is_some_and(|port| port < 1024)

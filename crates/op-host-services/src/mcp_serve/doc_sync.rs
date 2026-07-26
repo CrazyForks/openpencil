@@ -243,19 +243,10 @@ pub fn rest_error_body(message: &str) -> String {
     format!(r#"{{"ok":false,"error":"{}"}}"#, json_escape(message))
 }
 
-/// Minimal JSON string escaping for embedding a message in a JSON reply body.
+/// JSON string escaping for embedding a message in a JSON reply body.
+/// Delegates to the canonical op-util escaper. (The old local copy lossily
+/// replaced control characters with spaces; they now get proper `\uXXXX`
+/// escapes, so the message round-trips instead of being mangled.)
 pub fn json_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if c.is_control() => out.push(' '),
-            c => out.push(c),
-        }
-    }
-    out
+    op_util::json_escape::escape_json(s)
 }

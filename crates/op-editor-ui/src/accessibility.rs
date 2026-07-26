@@ -78,7 +78,7 @@ fn to_accesskit_rect(r: Rect) -> accesskit::Rect {
 /// the supplied widget node ids, sized to the window bounds.
 fn build_root(window_bounds: Rect, children: &[accesskit::NodeId]) -> accesskit::Node {
     let mut root = accesskit::Node::new(accesskit::Role::Window);
-    root.set_label("OpenPencil");
+    root.set_label(crate::PRODUCT_NAME);
     root.set_bounds(to_accesskit_rect(window_bounds));
     root.set_children(children.to_vec());
     root

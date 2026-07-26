@@ -277,13 +277,15 @@ const ROUNDED_COLLAR: [(f32, f32); 5] = [
 /// Parse a `#RRGGBB` hex string into an opaque [`Color`]. Returns `None`
 /// for malformed / non-ASCII input.
 pub(crate) fn parse_hex(hex: &str) -> Option<Color> {
-    let h = hex.strip_prefix('#').unwrap_or(hex);
-    if !h.is_ascii() || h.len() < 6 {
-        return None;
-    }
-    let r = u8::from_str_radix(&h[0..2], 16).ok()? as f32 / 255.0;
-    let g = u8::from_str_radix(&h[2..4], 16).ok()? as f32 / 255.0;
-    let b = u8::from_str_radix(&h[4..6], 16).ok()? as f32 / 255.0;
+    // Agent tag colors are full `#RRGGBB` (an `AA` tail parses but is
+    // ignored — cursors always paint opaque). Delegates to op-util.
+    const OPTS: op_util::hex_color::HexOptions = op_util::hex_color::HexOptions {
+        require_hash: false,
+        allow_rgb_shorthand: false,
+        allow_rgba_shorthand: false,
+        allow_alpha: true,
+    };
+    let [r, g, b, _] = op_util::hex_color::parse_hex_rgba_f32(hex, OPTS)?;
     Some(Color { r, g, b, a: 1.0 })
 }
 

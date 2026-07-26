@@ -1,10 +1,14 @@
 //! Sibling-temp creation and atomic destination replacement for `.op` saves.
+//!
+//! Public: op-host-desktop's `mcp_config_io` reuses these primitives for its
+//! crash-safe MCP-integration config writes instead of keeping its own copy
+//! of the Windows ReplaceFileW/MoveFileExW FFI.
 
 use std::path::{Path, PathBuf};
 
 /// Create a unique sibling with `create_new`, so overlapping saves and stale
 /// files from a recycled PID can never truncate one another.
-pub(super) fn create_sibling_temp(path: &Path) -> Result<(PathBuf, std::fs::File), String> {
+pub fn create_sibling_temp(path: &Path) -> Result<(PathBuf, std::fs::File), String> {
     for _ in 0..128 {
         let candidate = unique_sibling_temp_path(path);
         match std::fs::OpenOptions::new()
@@ -35,7 +39,7 @@ fn unique_sibling_temp_path(path: &Path) -> PathBuf {
 }
 
 #[cfg(not(windows))]
-pub(super) fn replace_file(tmp: &Path, path: &Path) -> Result<(), String> {
+pub fn replace_file(tmp: &Path, path: &Path) -> Result<(), String> {
     std::fs::rename(tmp, path)
         .map_err(|error| format!("replace {} with {}: {error}", path.display(), tmp.display()))
 }
@@ -43,7 +47,7 @@ pub(super) fn replace_file(tmp: &Path, path: &Path) -> Result<(), String> {
 /// Windows `std::fs::rename` cannot replace an existing destination. These OS
 /// primitives preserve the old file until the completed sibling temp commits.
 #[cfg(windows)]
-pub(super) fn replace_file(tmp: &Path, path: &Path) -> Result<(), String> {
+pub fn replace_file(tmp: &Path, path: &Path) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
     use std::ptr;
 

@@ -19,12 +19,7 @@ use op_editor_core::image_panel_state::{
 use op_host_native::widget_host::WidgetHostNative;
 
 use crate::image_generate_host::run_generate_blocking;
-use crate::image_search_session::{
-    fetch_image_data_url, fetch_openverse_token, simplify_search_query, OpenverseCredentials,
-};
-
-/// TS popover requests `count: 5`.
-const SEARCH_RESULT_COUNT: usize = 5;
+use crate::image_search_session::{fetch_image_data_url, OpenverseCredentials};
 
 struct SearchOutcome {
     results: Vec<ImageSearchHit>,
@@ -289,6 +284,14 @@ fn normalize_path(value: &str) -> String {
 }
 
 // --- Search backend (TS image-search.ts) -----------------------------
+//
+// The provider ladder (Openverse → two-keyword retry → Wikimedia, result
+// parsing, thumbnail materialization) is single-sourced in
+// `op_host_services::web_image_search`. The desktop supplies its own
+// client (desktop user-agent) and its own thumbnail fetcher so each
+// downloaded thumb still goes through the skia down-scale pass before it
+// becomes a `data:` URL the panel painter renders (and writes into
+// `ImageNode.src` on select).
 
 fn run_search_blocking(query: &str, credentials: Option<&OpenverseCredentials>) -> SearchOutcome {
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
@@ -304,203 +307,41 @@ fn run_search_blocking(query: &str, credentials: Option<&OpenverseCredentials>) 
 }
 
 async fn run_search(query: &str, credentials: Option<&OpenverseCredentials>) -> SearchOutcome {
-    let empty = SearchOutcome {
-        results: Vec::new(),
-        source: None,
-    };
     let Ok(client) = reqwest::Client::builder()
         .timeout(Duration::from_secs(8))
         .user_agent(concat!("openpencil-desktop/", env!("CARGO_PKG_VERSION")))
         .build()
     else {
-        return empty;
+        return SearchOutcome {
+            results: Vec::new(),
+            source: None,
+        };
     };
-    // Simplify verbose prompts into keywords (TS simplifySearchQuery).
-    let query = simplify_search_query(query);
-
-    // Openverse first; a zero-result answer retries with the first
-    // two keywords before falling through to Wikimedia (TS:429 /
-    // zero-results fallback ladder).
-    let mut hits = fetch_openverse_list(&client, &query, credentials).await;
-    if hits.as_ref().is_some_and(Vec::is_empty) {
-        if let Some(truncated) = two_keyword_retry(&query) {
-            if let Some(retry) = fetch_openverse_list(&client, &truncated, credentials).await {
-                if !retry.is_empty() {
-                    hits = Some(retry);
-                }
-            }
-        }
-    }
-    if let Some(urls) = hits.filter(|h| !h.is_empty()) {
-        let results = materialize_thumbs(&client, urls).await;
-        if !results.is_empty() {
-            return SearchOutcome {
-                results,
-                source: Some(ImageSearchSource::Openverse),
-            };
-        }
-    }
-    let mut wiki = fetch_wikimedia_list(&client, &query).await;
-    if wiki.is_empty() {
-        if let Some(truncated) = two_keyword_retry(&query) {
-            wiki = fetch_wikimedia_list(&client, &truncated).await;
-        }
-    }
-    let results = materialize_thumbs(&client, wiki).await;
-    let source = (!results.is_empty()).then_some(ImageSearchSource::Wikimedia);
-    SearchOutcome { results, source }
-}
-
-fn two_keyword_retry(query: &str) -> Option<String> {
-    let words: Vec<&str> = query.split_whitespace().filter(|w| !w.is_empty()).collect();
-    (words.len() > 2).then(|| words[..2].join(" "))
-}
-
-struct RawHit {
-    id: String,
-    thumb_url: String,
-    attribution: String,
-}
-
-/// `None` = request-level failure (429 / network), `Some([])` = the
-/// catalogue answered with zero hits (TS distinguishes the two).
-async fn fetch_openverse_list(
-    client: &reqwest::Client,
-    query: &str,
-    credentials: Option<&OpenverseCredentials>,
-) -> Option<Vec<RawHit>> {
-    let url = reqwest::Url::parse_with_params(
-        "https://api.openverse.org/v1/images/",
-        &[
-            ("q", query),
-            ("page_size", &SEARCH_RESULT_COUNT.to_string()),
-        ],
+    let outcome = op_host_services::web_image_search::run_search_with_fetcher(
+        &client,
+        query,
+        credentials.map(OpenverseCredentials::as_web),
+        |url: String| {
+            let client = client.clone();
+            async move { fetch_image_data_url(&client, &url).await }
+        },
     )
-    .ok()?;
-    let mut request = client.get(url);
-    if let Some(credentials) = credentials {
-        if let Some(token) = fetch_openverse_token(client, credentials).await {
-            request = request.bearer_auth(token);
-        }
-    }
-    let resp = request.send().await.ok()?;
-    if !resp.status().is_success() {
-        return None;
-    }
-    let json: serde_json::Value = resp.json().await.ok()?;
-    let results = json.get("results")?.as_array()?;
-    Some(
-        results
-            .iter()
-            .filter_map(|r| {
-                let thumb = r
-                    .get("thumbnail")
-                    .and_then(serde_json::Value::as_str)
-                    .or_else(|| r.get("url").and_then(serde_json::Value::as_str))?;
-                let license = format!(
-                    "{} {}",
-                    r.get("license")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or(""),
-                    r.get("license_version")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or(""),
-                );
-                Some(RawHit {
-                    id: r
-                        .get("id")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or_default()
-                        .to_string(),
-                    thumb_url: thumb.to_string(),
-                    attribution: r
-                        .get("attribution")
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_string)
-                        .unwrap_or_else(|| license.trim().to_string()),
-                })
-            })
-            .take(SEARCH_RESULT_COUNT)
-            .collect(),
-    )
-}
-
-async fn fetch_wikimedia_list(client: &reqwest::Client, query: &str) -> Vec<RawHit> {
-    let Ok(url) = reqwest::Url::parse_with_params(
-        "https://commons.wikimedia.org/w/api.php",
-        &[
-            ("action", "query"),
-            ("generator", "search"),
-            ("gsrsearch", query),
-            ("gsrnamespace", "6"),
-            ("gsrlimit", &SEARCH_RESULT_COUNT.to_string()),
-            ("prop", "imageinfo"),
-            ("iiprop", "url|size|mime|extmetadata"),
-            ("iiurlwidth", "800"),
-            ("format", "json"),
-            ("origin", "*"),
-        ],
-    ) else {
-        return Vec::new();
-    };
-    let Ok(resp) = client.get(url).send().await else {
-        return Vec::new();
-    };
-    if !resp.status().is_success() {
-        return Vec::new();
-    }
-    let Ok(json) = resp.json::<serde_json::Value>().await else {
-        return Vec::new();
-    };
-    let Some(pages) = json
-        .get("query")
-        .and_then(|q| q.get("pages"))
-        .and_then(serde_json::Value::as_object)
-    else {
-        return Vec::new();
-    };
-    pages
-        .values()
-        .filter_map(|page| {
-            let info = page.get("imageinfo")?.as_array()?.first()?;
-            let thumb = info
-                .get("thumburl")
-                .and_then(serde_json::Value::as_str)
-                .or_else(|| info.get("url").and_then(serde_json::Value::as_str))?;
-            Some(RawHit {
-                id: page
-                    .get("pageid")
-                    .map(|v| v.to_string())
-                    .unwrap_or_default(),
-                thumb_url: thumb.to_string(),
-                attribution: info
-                    .get("extmetadata")
-                    .and_then(|m| m.get("LicenseShortName"))
-                    .and_then(|l| l.get("value"))
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or("")
-                    .to_string(),
-            })
-        })
-        .take(SEARCH_RESULT_COUNT)
-        .collect()
-}
-
-/// Download each hit's thumbnail into a `data:` URL the wasm-clean
-/// panel painter can render (and write into `ImageNode.src` on
-/// select). Hits whose thumbnails fail to download are dropped.
-async fn materialize_thumbs(client: &reqwest::Client, hits: Vec<RawHit>) -> Vec<ImageSearchHit> {
-    let mut out = Vec::with_capacity(hits.len());
-    for hit in hits {
-        if let Some(data_url) = fetch_image_data_url(client, &hit.thumb_url).await {
-            out.push(ImageSearchHit {
+    .await;
+    SearchOutcome {
+        results: outcome
+            .results
+            .into_iter()
+            .map(|hit| ImageSearchHit {
                 id: hit.id,
-                thumb_data_url: Arc::new(data_url),
+                thumb_data_url: Arc::new(hit.thumb_data_url),
                 attribution: hit.attribution,
-            });
-        }
+            })
+            .collect(),
+        source: outcome.source.map(|source| match source {
+            "openverse" => ImageSearchSource::Openverse,
+            _ => ImageSearchSource::Wikimedia,
+        }),
     }
-    out
 }
 
 #[cfg(test)]

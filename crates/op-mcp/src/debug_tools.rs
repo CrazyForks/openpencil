@@ -341,10 +341,10 @@ pub fn debug_screenshot_snapshot() -> DebugScreenshot {
 }
 
 fn default_log_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".openpencil")
+    // Shared `~/.openpencil` resolution; fall back to a cwd-relative dir
+    // (matching the old behavior) when no home directory is available.
+    op_config_store::openpencil_dir()
+        .unwrap_or_else(|_| PathBuf::from(".").join(op_config_store::OPENPENCIL_DIR_NAME))
         .join("logs")
 }
 

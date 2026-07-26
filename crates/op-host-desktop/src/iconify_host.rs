@@ -9,7 +9,8 @@ use serde::Deserialize;
 
 use crate::DesktopApp;
 
-const ICONIFY_API: &str = "https://api.iconify.design";
+/// Shared with the web fetch path (`op-host-web/src/iconify_web.rs`).
+const ICONIFY_API: &str = op_editor_core::icon_picker_state::ICONIFY_API_BASE;
 
 pub struct IconifyJob {
     rx: Option<Receiver<IconifyResult>>,

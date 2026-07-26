@@ -85,14 +85,8 @@ fn connected_card_paints_probe_connection_info_in_green() {
     let capture = paint_panel(&mut state);
     let (_, color) = find_text(&capture, "✓ Connected via pro (a@b.c)")
         .expect("probe connectionInfo should replace the static subtitle");
-    let green = (Color {
-        r: 0.34,
-        g: 0.78,
-        b: 0.45,
-        a: 1.0,
-    })
-    .to_jian();
-    assert_eq!(*color, green, "connected info renders in the TS green");
+    let green = (crate::theme::Theme::dark().status_success).to_jian();
+    assert_eq!(*color, green, "connected info renders in the success green");
 }
 
 #[test]
@@ -180,13 +174,7 @@ fn not_installed_card_paints_amber_install_guidance() {
         text.contains("npm install -g @openai/codex"),
         "guidance line should carry the install command prefix, got: {text}"
     );
-    let amber = (Color {
-        r: 0.96,
-        g: 0.62,
-        b: 0.04,
-        a: 1.0,
-    })
-    .to_jian();
+    let amber = (crate::theme::Theme::dark().status_warning).to_jian();
     assert_eq!(*color, amber);
 }
 
@@ -204,13 +192,7 @@ fn connected_card_with_warning_paints_amber_warning() {
     // info line (TS renders both on separate lines).
     let (_, color) =
         find_text(&capture, "No models found").expect("warning should paint on the card");
-    let amber = (Color {
-        r: 0.96,
-        g: 0.62,
-        b: 0.04,
-        a: 1.0,
-    })
-    .to_jian();
+    let amber = (crate::theme::Theme::dark().status_warning).to_jian();
     assert_eq!(*color, amber);
     assert!(find_text(&capture, "✓ Connected via Codex CLI").is_none());
 }

@@ -19,6 +19,8 @@ op-ai-skills = { path = "../op-ai-skills" }
 op-pen-loader = { path = "../op-pen-loader" }
 jian-scene = { path = "../../vendor/jian/crates/jian-scene" }
 jian-ops-schema = { path = "../../vendor/jian/crates/jian-ops-schema" }
+# Canonical hex-color parsing (dependency-free).
+op-util = { path = "../op-util" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 futures = "0.3"

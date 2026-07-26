@@ -78,6 +78,7 @@ pub mod extra_read_tools;
 #[cfg(test)]
 mod extra_read_tools_tests;
 pub mod guidelines_tools;
+pub mod import_common;
 pub mod import_html_tool;
 #[cfg(test)]
 mod import_html_tool_tests;

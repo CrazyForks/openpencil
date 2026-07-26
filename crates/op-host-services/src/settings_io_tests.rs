@@ -31,6 +31,122 @@ fn missing_or_invalid_persisted_locale_preserves_system_locale_seed() {
 }
 
 #[test]
+fn persisted_locale_parsing_uses_shared_bcp47_rules() {
+    assert_eq!(
+        resolve_persisted_locale(Locale::Ru, Some("EN_us.UTF-8")),
+        Locale::EnUs
+    );
+    assert_eq!(
+        resolve_persisted_locale(Locale::Ru, Some("zh-Hant-HK")),
+        Locale::ZhTw
+    );
+    assert_eq!(
+        resolve_persisted_locale(Locale::Ru, Some("in-ID")),
+        Locale::Id
+    );
+}
+
+#[test]
+fn settings_payload_uses_shared_stable_locale_codes() {
+    for locale in Locale::ALL {
+        let mut state = EditorState::new();
+        state.editor_ui.locale = locale;
+        assert_eq!(to_payload(&state).locale.as_deref(), Some(locale.code()));
+    }
+}
+
+#[test]
+fn host_locale_seed_respects_process_environment_precedence() {
+    let cases = [
+        (
+            "lc-all",
+            Some("fr_FR.UTF-8"),
+            Some("de_DE"),
+            Some("ja_JP"),
+            Locale::Fr,
+        ),
+        (
+            "lc-messages",
+            None,
+            Some("zh_Hant.UTF-8"),
+            Some("ja_JP"),
+            Locale::ZhTw,
+        ),
+        (
+            "empty-lc-all",
+            Some(""),
+            Some("tr_TR"),
+            Some("ja_JP"),
+            Locale::Tr,
+        ),
+        (
+            "c-stops-fallback",
+            Some("C"),
+            Some("zh_CN"),
+            Some("ja_JP"),
+            Locale::EnUs,
+        ),
+        (
+            "posix-stops-fallback",
+            None,
+            Some("POSIX"),
+            Some("ja_JP"),
+            Locale::EnUs,
+        ),
+        (
+            "unsupported-stops-fallback",
+            Some("xx_ZZ"),
+            Some("zh_CN"),
+            Some("ja_JP"),
+            Locale::EnUs,
+        ),
+    ];
+
+    for (case, lc_all, lc_messages, lang, expected) in cases {
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .arg("--exact")
+            .arg("settings_io::settings_io_tests::system_locale_environment_probe")
+            .arg("--ignored")
+            .env_remove("LC_ALL")
+            .env_remove("LC_MESSAGES")
+            .env_remove("LANG")
+            .env("OPENPENCIL_EXPECTED_SYSTEM_LOCALE", expected.code());
+        if let Some(value) = lc_all {
+            command.env("LC_ALL", value);
+        }
+        if let Some(value) = lc_messages {
+            command.env("LC_MESSAGES", value);
+        }
+        if let Some(value) = lang {
+            command.env("LANG", value);
+        }
+
+        let output = command.output().expect("locale probe process starts");
+        assert!(
+            output.status.success(),
+            "case={case}\nstdout={}\nstderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+#[ignore = "executed in isolated subprocesses by host_locale_seed_respects_process_environment_precedence"]
+fn system_locale_environment_probe() {
+    let Ok(expected) = std::env::var("OPENPENCIL_EXPECTED_SYSTEM_LOCALE") else {
+        return;
+    };
+    let mut state = EditorState::new();
+    state.editor_ui.locale = Locale::Ru;
+
+    seed_system_locale(&mut state);
+
+    assert_eq!(state.editor_ui.locale, Locale::from_tag(&expected).unwrap());
+}
+
+#[test]
 fn apply_payload_persisted_locale_overrides_system_locale_seed() {
     let payload: SettingsPayload =
         serde_json::from_str(r#"{"version":1,"locale":"en-US"}"#).unwrap();

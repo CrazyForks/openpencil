@@ -12,5 +12,7 @@ path = "src/lib.rs"
 
 [dependencies]
 jian-ops-schema = { path = "../../vendor/jian/crates/jian-ops-schema" }
+# Canonical hex-color parsing (dependency-free, wasm-clean).
+op-util = { path = "../op-util" }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -21,10 +21,15 @@ script = ["dep:rquickjs", "dep:tracing"]
 jian-ops-schema = { path = "../../vendor/jian/crates/jian-ops-schema" }
 jian-scene = { path = "../../vendor/jian/crates/jian-scene" }
 op-ai-skills = { path = "../op-ai-skills" }
+# `~/.openpencil` resolution for the debug-tools log reader (single source
+# of truth for the config-dir path; tiny serde-only crate).
+op-config-store = { path = "../op-config-store" }
 op-design-lint = { path = "../op-design-lint" }
 op-editor-core = { path = "../op-editor-core" }
 op-html = { path = "../op-html" }
 op-pen-loader = { path = "../op-pen-loader" }
+# Canonical JSON string escaping (dependency-free, wasm-clean).
+op-util = { path = "../op-util" }
 regex = "1"
 rquickjs = { version = "0.12", optional = true }
 serde = { workspace = true }

@@ -416,8 +416,8 @@ impl ComponentBrowserPanel<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::widgets::test_capture_backend::CaptureBackend;
     use crate::widgets::{COMPONENT_BROWSER_PANEL_H, COMPONENT_BROWSER_PANEL_W};
-    use crate::{Color, RenderBackend, TextLayout};
     use op_editor_core::uikit::{KitComponent, UIKit};
     use op_editor_core::ButtonPressTarget;
     use op_editor_core::EditorState;
@@ -463,55 +463,6 @@ mod tests {
 
     fn centre(r: Rect) -> Point2D {
         Point2D::new(r.origin.x + r.size.x / 2.0, r.origin.y + r.size.y / 2.0)
-    }
-
-    #[derive(Default)]
-    struct CaptureBackend {
-        round_fills: Vec<(Rect, f32, Color)>,
-    }
-
-    impl RenderBackend for CaptureBackend {
-        fn begin_frame(&mut self) {}
-
-        fn end_frame(&mut self) {}
-
-        fn fill_rect(&mut self, _rect: Rect, _color: Color) {}
-
-        fn stroke_rect(&mut self, _rect: Rect, _color: Color, _width: f32) {}
-
-        fn draw_text(&mut self, _layout: &TextLayout, _origin: Point2D) {}
-
-        fn clip_rect(&mut self, _rect: Rect) {}
-
-        fn stroke_line(&mut self, _from: Point2D, _to: Point2D, _color: Color, _width: f32) {}
-
-        fn fill_round_rect(&mut self, rect: Rect, radius: f32, color: Color) {
-            self.round_fills.push((rect, radius, color));
-        }
-
-        fn stroke_round_rect(&mut self, _rect: Rect, _radius: f32, _color: Color, _width: f32) {}
-
-        fn stroke_svg_path(
-            &mut self,
-            _d: &str,
-            _top_left: Point2D,
-            _size: f32,
-            _color: Color,
-            _width: f32,
-        ) {
-        }
-
-        fn save(&mut self) {}
-
-        fn restore(&mut self) {}
-
-        fn translate(&mut self, _offset: Point2D) {}
-
-        fn resize(&mut self, _width: u32, _height: u32) {}
-
-        fn dpi_scale(&self) -> f32 {
-            1.0
-        }
     }
 
     #[test]

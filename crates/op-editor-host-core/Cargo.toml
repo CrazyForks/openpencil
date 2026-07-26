@@ -13,6 +13,9 @@ op-ai-skills = { path = "../op-ai-skills", optional = true }
 op-codegen = { path = "../op-codegen", features = ["ai"], optional = true }
 op-editor-core = { path = "../op-editor-core" }
 op-orchestrator = { path = "../op-orchestrator", optional = true }
+# Non-optional: `settings_payload` (shared settings serde shapes) is part of
+# the crate baseline and stays wasm32-clean.
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 

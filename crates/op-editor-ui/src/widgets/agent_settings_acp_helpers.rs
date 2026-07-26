@@ -1,8 +1,9 @@
-//! Small paint/text helpers for the ACP agent-settings section, split out of
-//! `agent_settings_acp.rs` to keep that file under the 800-line cap.
+//! Card-form geometry helpers for the ACP agent-settings section, split out of
+//! `agent_settings_acp.rs` to keep that file under the 800-line cap. The text
+//! paint helpers formerly here (`draw_text` / `ellipsize`) moved to the shared
+//! `settings_form` module.
 
-use crate::widgets::PaintCx;
-use crate::{Color, Point2D, Rect, TextLayout};
+use crate::{Point2D, Rect};
 use op_editor_core::agent_settings::{AcpAgentField, AcpConnectionType};
 
 // Card-form geometry constants (split out with the geometry helpers below to
@@ -50,26 +51,4 @@ pub(super) fn form_actions_y(kind: AcpConnectionType) -> f32 {
 /// Full DRAFT card height — fields PLUS the Save/Cancel action row.
 pub(super) fn form_card_h(kind: AcpConnectionType) -> f32 {
     form_actions_y(kind) + (DRAFT_CARD_H - EXPANDED_CARD_H)
-}
-
-pub(super) fn draw_text(cx: &mut PaintCx<'_>, text: &str, size: f32, color: Color, x: f32, y: f32) {
-    let layout = TextLayout::single_run(
-        text,
-        "system-ui",
-        size,
-        (color).to_jian(),
-        Point2D::new(0.0, 0.0),
-    );
-    cx.backend.draw_text(&layout, Point2D::new(x, y));
-}
-
-pub(super) fn ellipsize(cx: &mut PaintCx<'_>, value: &str, max_w: f32, size: f32) -> String {
-    if cx.backend.measure_text(value, size) <= max_w {
-        return value.to_string();
-    }
-    let mut out = value.to_string();
-    while !out.is_empty() && cx.backend.measure_text(&format!("{out}..."), size) > max_w {
-        out.pop();
-    }
-    format!("{out}...")
 }

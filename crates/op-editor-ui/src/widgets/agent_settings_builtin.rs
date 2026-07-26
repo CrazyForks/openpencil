@@ -7,7 +7,7 @@ use crate::widgets::agent_settings_builtin_layout::{
     sync_error_height, CARD_GAP, EMPTY_HEIGHT, HEADER_HEIGHT, SUBTITLE_HEIGHT,
 };
 use crate::widgets::agent_settings_builtin_parts;
-use crate::widgets::agent_settings_caret::{paint_settings_input_view, settings_input_text};
+use crate::widgets::agent_settings_caret::settings_input_text;
 use crate::widgets::agent_settings_form_actions::{
     cancel_button_rect, paint_form_actions, save_button_rect,
 };
@@ -20,8 +20,9 @@ use crate::widgets::brand_icons::{paint_brand_logo, BrandLogo};
 use crate::widgets::button::paint_ghost_button_feedback;
 use crate::widgets::button::tokens_from_theme;
 use crate::widgets::icons::{draw_icon, Icon};
+use crate::widgets::settings_form::{self, draw_text, ellipsize, paint_action};
 use crate::widgets::PaintCx;
-use crate::{Color, Point2D, Rect, TextLayout};
+use crate::{Point2D, Rect, TextLayout};
 use jian_widgets::components::card::Card;
 use op_editor_core::agent_settings::{
     AgentSettings, BuiltinAgentConfig, BuiltinAgentField, BuiltinAgentKind,
@@ -188,21 +189,14 @@ pub fn hit_test(content: Rect, settings: &AgentSettings, point: Point2D) -> Buil
 }
 
 pub fn card_at(content: Rect, settings: &AgentSettings, point: Point2D) -> Option<usize> {
-    let mut card_y =
-        content.origin.y + 12.0 + HEADER_HEIGHT + SUBTITLE_HEIGHT + sync_error_height(settings);
-    for (index, _) in settings.builtin_agents.iter().enumerate() {
-        let card = card_rect(
-            content.origin.x,
-            card_y,
-            content.size.x,
-            card_height(settings, index),
-        );
-        if (card).contains(point) {
-            return Some(index);
-        }
-        card_y += card.size.y + CARD_GAP;
-    }
-    None
+    settings_form::card_index_at(
+        content.origin.x,
+        content.size.x,
+        content.origin.y + 12.0 + HEADER_HEIGHT + SUBTITLE_HEIGHT + sync_error_height(settings),
+        CARD_GAP,
+        (0..settings.builtin_agents.len()).map(|index| card_height(settings, index)),
+        point,
+    )
 }
 
 pub fn preset_hover_at(
@@ -284,7 +278,7 @@ pub fn paint_builtin_section(
             AgentSettingsButton::AddProvider,
         )),
     );
-    y = paint_subtitle(
+    y = settings_form::paint_subtitle(
         cx,
         theme,
         t_settings(ui, "settings.agents.builtinSubtitle"),
@@ -305,7 +299,7 @@ pub fn paint_builtin_section(
         y += sync_error_height(settings);
     }
     if settings.builtin_agents.is_empty() && settings.builtin_agent_draft.is_none() {
-        return paint_empty(
+        return settings_form::paint_empty(
             cx,
             theme,
             t_settings(ui, "settings.agents.builtinEmpty"),
@@ -404,32 +398,6 @@ fn paint_header(
     frame.y + HEADER_HEIGHT
 }
 
-fn paint_subtitle(cx: &mut PaintCx<'_>, theme: &Theme, text: &str, x: f32, y: f32) -> f32 {
-    let layout = TextLayout::single_run(
-        text,
-        "system-ui",
-        12.0,
-        (theme.muted_foreground).to_jian(),
-        Point2D::new(0.0, 0.0),
-    );
-    cx.backend.draw_text(&layout, Point2D::new(x, y + 16.0));
-    y + SUBTITLE_HEIGHT
-}
-
-fn paint_empty(cx: &mut PaintCx<'_>, theme: &Theme, text: &str, x: f32, y: f32, w: f32) -> f32 {
-    let text_w = cx.backend.measure_text(text, 13.0);
-    let layout = TextLayout::single_run(
-        text,
-        "system-ui",
-        13.0,
-        (theme.muted_foreground).to_jian(),
-        Point2D::new(0.0, 0.0),
-    );
-    cx.backend
-        .draw_text(&layout, Point2D::new(x + (w - text_w) / 2.0, y + 44.0));
-    y + EMPTY_HEIGHT
-}
-
 #[allow(clippy::too_many_arguments)]
 fn paint_builtin_agent_card(
     cx: &mut PaintCx<'_>,
@@ -484,12 +452,7 @@ fn paint_builtin_agent_form(
     let ready = agent.ready();
     let status = if ready { "ready" } else { "api key required" };
     let status_color = if ready {
-        Color {
-            r: 0.34,
-            g: 0.78,
-            b: 0.45,
-            a: 1.0,
-        }
+        theme.status_success
     } else {
         theme.muted_foreground
     };
@@ -605,12 +568,7 @@ fn paint_compact_builtin_agent_card(
         card.origin.y + 38.0,
     );
     if agent.ready() {
-        let green = Color {
-            r: 0.34,
-            g: 0.78,
-            b: 0.45,
-            a: 1.0,
-        };
+        let green = theme.status_success;
         draw_icon(
             cx.backend,
             Icon::Check,
@@ -688,44 +646,20 @@ fn paint_field(
     };
     let input = field_input_rect(settings, card, index, row);
     let editable = field != BuiltinAgentField::BaseUrl || agent.base_url_editable();
-    let label_y = input.origin.y + 16.0;
-    draw_text(
-        cx,
-        label,
-        11.0,
-        theme.muted_foreground,
-        card.origin.x + 12.0,
-        label_y,
-    );
-    cx.backend.fill_round_rect(
-        input,
-        6.0,
-        if focused {
-            theme.background
-        } else {
-            theme.card
-        },
-    );
-    cx.backend.stroke_round_rect(
-        input,
-        6.0,
-        if focused { theme.primary } else { theme.border },
-        1.0,
-    );
     let text_x = input.origin.x + 6.0;
-    if focused {
-        paint_settings_input_view(
-            cx,
-            theme,
-            ui,
-            input,
-            11.0,
-            text_x - input.origin.x,
-            input.origin.y + 16.0,
-            now_ms,
-            "",
-        );
-    } else {
+    let painted_focused = settings_form::paint_field_frame(
+        cx,
+        theme,
+        ui,
+        label,
+        card.origin.x + 12.0,
+        input.origin.y + 16.0,
+        input,
+        focused,
+        "",
+        now_ms,
+    );
+    if !painted_focused {
         let clipped = ellipsize(cx, value, input.size.x - 12.0, 11.0);
         draw_text(
             cx,
@@ -742,46 +676,8 @@ fn paint_field(
     }
 }
 
-fn draw_text(cx: &mut PaintCx<'_>, text: &str, size: f32, color: Color, x: f32, y: f32) {
-    let layout = TextLayout::single_run(
-        text,
-        "system-ui",
-        size,
-        (color).to_jian(),
-        Point2D::new(0.0, 0.0),
-    );
-    cx.backend.draw_text(&layout, Point2D::new(x, y));
-}
-
-fn paint_action(
-    cx: &mut PaintCx<'_>,
-    theme: &Theme,
-    rect: Rect,
-    icon: Icon,
-    color: Color,
-    pressed: bool,
-) {
-    paint_ghost_button_feedback(cx.backend, theme, rect, true, pressed);
-    draw_icon(
-        cx.backend,
-        icon,
-        Point2D::new(rect.origin.x + 6.0, rect.origin.y + 6.0),
-        12.0,
-        color,
-        1.4,
-    );
-}
-
-fn ellipsize(cx: &mut PaintCx<'_>, value: &str, max_w: f32, size: f32) -> String {
-    if cx.backend.measure_text(value, size) <= max_w {
-        return value.to_string();
-    }
-    let mut out = value.to_string();
-    while !out.is_empty() && cx.backend.measure_text(&format!("{out}..."), size) > max_w {
-        out.pop();
-    }
-    format!("{out}...")
-}
+// `draw_text` / `ellipsize` / `paint_action` live in the shared
+// `settings_form` module.
 
 fn mask_key(api_key: &str) -> String {
     if api_key.len() > 12 {

@@ -1,3 +1,4 @@
+use crate::css::cascade_shared::{is_ident, matching, top_level_delimiter};
 use crate::css::declarations::{parse_declarations, resolve_deferred_shorthand, Declaration};
 use crate::css::selectors::{matches, matches_for_pseudo, specificity, PseudoElement, Selector};
 use crate::dom::DomElement;
@@ -519,7 +520,7 @@ fn resolve_vars(
         let start = at + relative;
         output.push_str(&value[at..start]);
         let open = start + 3;
-        let close = matching_paren(value, open)?;
+        let close = matching(value, open, b'(', b')', value.len())?;
         let (name, fallback) = split_var_body(&value[open + 1..close]);
         let name = name.trim();
         if !valid_custom_name(name) {
@@ -572,72 +573,16 @@ fn find_var(value: &str) -> Option<usize> {
     None
 }
 
-fn matching_paren(value: &str, open: usize) -> Option<usize> {
-    let (mut depth, mut quote, mut escaped) = (0u32, None, false);
-    for (at, ch) in value[open..].char_indices().map(|(at, ch)| (at + open, ch)) {
-        if let Some(active) = quote {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == active {
-                quote = None;
-            }
-            continue;
-        }
-        match ch {
-            '\'' | '"' => quote = Some(ch),
-            '(' => depth += 1,
-            ')' => {
-                depth = depth.saturating_sub(1);
-                if depth == 0 {
-                    return Some(at);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
 fn split_var_body(body: &str) -> (&str, Option<&str>) {
-    let (mut parens, mut brackets, mut braces) = (0u32, 0u32, 0u32);
-    let (mut quote, mut escaped) = (None, false);
-    for (at, ch) in body.char_indices() {
-        if let Some(active) = quote {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == active {
-                quote = None;
-            }
-            continue;
-        }
-        match ch {
-            '\'' | '"' => quote = Some(ch),
-            '(' => parens += 1,
-            ')' => parens = parens.saturating_sub(1),
-            '[' => brackets += 1,
-            ']' => brackets = brackets.saturating_sub(1),
-            '{' => braces += 1,
-            '}' => braces = braces.saturating_sub(1),
-            ',' if parens == 0 && brackets == 0 && braces == 0 => {
-                return (&body[..at], Some(&body[at + 1..]));
-            }
-            _ => {}
-        }
+    match top_level_delimiter(body, ',') {
+        Some(at) => (&body[..at], Some(&body[at + 1..])),
+        None => (body, None),
     }
-    (body, None)
 }
 
 fn valid_custom_name(name: &str) -> bool {
     name.strip_prefix("--")
         .is_some_and(|rest| !rest.is_empty() && rest.chars().all(is_ident))
-}
-
-fn is_ident(ch: char) -> bool {
-    ch.is_alphanumeric() || matches!(ch, '-' | '_') || !ch.is_ascii()
 }
 
 fn resolve_font_size(

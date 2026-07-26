@@ -298,12 +298,13 @@ impl GitPanel<'_> {
         }
     }
 
-    /// Pick the `_one` / `_other` plural form (TS i18next English rule: 1 →
-    /// one) and substitute `{{count}}`. Both keys are `&'static` so they
-    /// satisfy [`GitPanel::t`]'s static-key contract.
+    /// Pick the catalog's literal-one form only for `1`; every locale's
+    /// `_other` form is written to remain grammatical for all remaining
+    /// integer counts. Then substitute the canonical `{{count}}` token.
     fn plural(&self, one_key: &'static str, other_key: &'static str, count: u32) -> String {
         let key = if count == 1 { one_key } else { other_key };
-        self.t(key).replace("{{count}}", &count.to_string())
+        let count = count.to_string();
+        op_i18n::interpolate(self.t(key), &[("count", &count)])
     }
 }
 

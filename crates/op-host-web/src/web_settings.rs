@@ -7,10 +7,23 @@
 
 use op_editor_core::editor_ui_state::{RecentFile, RECENT_FILE_CAP};
 use op_editor_core::{
-    BuiltinAgentConfig, BuiltinAgentKind, BuiltinAgentPresetKey, EditorState, ImageGenProfile,
-    ImageGenProvider, Locale, ThemeMode,
+    BuiltinAgentConfig, BuiltinAgentPresetKey, EditorState, ImageGenProfile, Locale, ThemeMode,
+};
+// Shared settings payload shapes + conversions — single-sourced in
+// op-editor-host-core so the browser snapshots and the desktop/daemon
+// `settings.json` cannot drift field-by-field.
+use op_editor_host_core::settings_payload::{
+    builtin_agent_from_payload, builtin_agent_to_payload, dedupe_builtin_agents,
+    image_gen_profile_from_payload, image_gen_profile_to_payload, migrate_mcp_cli_flags,
+    next_builtin_agent_id, next_image_gen_profile_id, openverse_oauth_to_payload, str_to_theme,
+    theme_to_str, BuiltinAgentPayload, ImageGenProfilePayload, OpenverseOAuthPayload,
+    RecentFilePayload,
 };
 use serde::{Deserialize, Serialize};
+
+// The sibling test files reach these enums through `use super::*`.
+#[cfg(test)]
+use op_editor_core::{BuiltinAgentKind, ImageGenProvider};
 
 const SETTINGS_VERSION: u32 = 1;
 const CREDENTIAL_PAYLOAD_VERSION: u32 = 2;
@@ -32,43 +45,6 @@ use storage::{
 pub(crate) use storage::{
     credential_migration_pending, load_into, save_credentials_if_changed, save_if_changed,
 };
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct RecentFilePayload {
-    path: String,
-    modified_at: u64,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct BuiltinAgentPayload {
-    id: String,
-    #[serde(default)]
-    preset: Option<String>,
-    display_name: String,
-    kind: String,
-    #[serde(default)]
-    api_key: String,
-    model: String,
-    base_url: String,
-    enabled: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct ImageGenProfilePayload {
-    id: String,
-    name: String,
-    provider: String,
-    api_key: String,
-    model: String,
-    #[serde(default)]
-    base_url: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct OpenverseOAuthPayload {
-    client_id: String,
-    client_secret: String,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Fingerprint {
@@ -318,29 +294,6 @@ fn apply_payload(state: &mut EditorState, payload: SettingsPayload) {
     state.rebuild_chat_models();
 }
 
-/// Remove the retired Gemini CLI slot from positional browser settings.
-/// Released snapshots used six or eight entries; current snapshots use seven.
-fn migrate_mcp_cli_flags(flags: Vec<bool>) -> [bool; 7] {
-    let mut migrated = [false; 7];
-    match flags.len() {
-        7 => migrated.copy_from_slice(&flags),
-        8.. => {
-            migrated[0] = flags[0];
-            migrated[1] = flags[1];
-            migrated[2..].copy_from_slice(&flags[3..8]);
-        }
-        3..=6 => {
-            migrated[0] = flags[0];
-            migrated[1] = flags[1];
-            migrated[2..flags.len() - 1].copy_from_slice(&flags[3..]);
-        }
-        _ => {
-            migrated[..flags.len()].copy_from_slice(&flags);
-        }
-    }
-    migrated
-}
-
 fn apply_credential_payload(state: &mut EditorState, payload: CredentialPayload) {
     let settings = &mut state.editor_ui.agent_settings;
     settings.builtin_agents = dedupe_builtin_agents(
@@ -379,157 +332,6 @@ fn apply_credential_payload(state: &mut EditorState, payload: CredentialPayload)
         settings.openverse_client_secret.clear();
     }
     state.rebuild_chat_models();
-}
-
-fn builtin_agent_to_payload(agent: &BuiltinAgentConfig) -> BuiltinAgentPayload {
-    BuiltinAgentPayload {
-        id: agent.id.clone(),
-        preset: Some(agent.preset.as_str().into()),
-        display_name: agent.display_name.clone(),
-        kind: match agent.kind {
-            BuiltinAgentKind::Anthropic => "anthropic",
-            BuiltinAgentKind::OpenAiCompat => "openai-compat",
-        }
-        .into(),
-        api_key: agent.api_key.clone(),
-        model: agent.model.clone(),
-        base_url: agent.base_url.clone(),
-        enabled: agent.enabled,
-    }
-}
-
-fn builtin_agent_from_payload(payload: BuiltinAgentPayload) -> Option<BuiltinAgentConfig> {
-    let kind = match payload.kind.as_str() {
-        "anthropic" => BuiltinAgentKind::Anthropic,
-        "openai" | "openai-compat" | "openai_compat" => BuiltinAgentKind::OpenAiCompat,
-        _ => return None,
-    };
-    Some(BuiltinAgentConfig {
-        id: payload.id,
-        preset: payload
-            .preset
-            .as_deref()
-            .and_then(BuiltinAgentPresetKey::from_str)
-            .map(|saved| {
-                op_editor_core::normalize_builtin_agent_preset(
-                    saved,
-                    kind,
-                    &payload.base_url,
-                    &payload.model,
-                )
-            })
-            .unwrap_or_else(|| {
-                op_editor_core::infer_builtin_agent_preset(kind, &payload.base_url, &payload.model)
-            }),
-        display_name: payload.display_name,
-        kind,
-        api_key: payload.api_key,
-        model: payload.model,
-        base_url: payload.base_url,
-        enabled: payload.enabled,
-    })
-}
-
-fn image_gen_profile_to_payload(profile: &ImageGenProfile) -> ImageGenProfilePayload {
-    ImageGenProfilePayload {
-        id: profile.id.clone(),
-        name: profile.name.clone(),
-        provider: match profile.provider {
-            ImageGenProvider::OpenAi => "openai",
-            ImageGenProvider::Gemini => "gemini",
-            ImageGenProvider::Replicate => "replicate",
-            ImageGenProvider::Custom => "custom",
-        }
-        .into(),
-        api_key: profile.api_key.clone(),
-        model: profile.model.clone(),
-        base_url: profile.base_url.clone(),
-    }
-}
-
-fn image_gen_profile_from_payload(payload: ImageGenProfilePayload) -> Option<ImageGenProfile> {
-    let provider = match payload.provider.as_str() {
-        "openai" => ImageGenProvider::OpenAi,
-        "gemini" => ImageGenProvider::Gemini,
-        "replicate" => ImageGenProvider::Replicate,
-        "custom" => ImageGenProvider::Custom,
-        _ => return None,
-    };
-    Some(ImageGenProfile {
-        id: payload.id,
-        name: payload.name,
-        provider,
-        api_key: payload.api_key,
-        model: payload.model,
-        base_url: payload.base_url,
-        test_status: op_editor_core::agent_settings::ImageTestStatus::Idle,
-    })
-}
-
-fn openverse_oauth_to_payload(
-    settings: &op_editor_core::agent_settings::AgentSettings,
-) -> Option<OpenverseOAuthPayload> {
-    let client_id = settings.openverse_client_id.trim();
-    let client_secret = settings.openverse_client_secret.trim();
-    if client_id.is_empty() && client_secret.is_empty() {
-        None
-    } else {
-        Some(OpenverseOAuthPayload {
-            client_id: client_id.to_string(),
-            client_secret: client_secret.to_string(),
-        })
-    }
-}
-
-fn dedupe_builtin_agents(agents: Vec<BuiltinAgentConfig>) -> Vec<BuiltinAgentConfig> {
-    let mut deduped: Vec<BuiltinAgentConfig> = Vec::new();
-    for agent in agents {
-        let is_duplicate = deduped.iter().any(|existing| {
-            existing.matches_add_candidate(
-                &agent.display_name,
-                &agent.api_key,
-                &agent.model,
-                agent.kind,
-                &agent.base_url,
-            )
-        });
-        if !is_duplicate {
-            deduped.push(agent);
-        }
-    }
-    deduped
-}
-
-fn next_builtin_agent_id(agents: &[BuiltinAgentConfig]) -> u64 {
-    agents
-        .iter()
-        .filter_map(|agent| agent.id.strip_prefix("builtin-")?.parse::<u64>().ok())
-        .max()
-        .unwrap_or(0)
-        .saturating_add(1)
-}
-
-fn next_image_gen_profile_id(profiles: &[ImageGenProfile]) -> u64 {
-    profiles
-        .iter()
-        .filter_map(|profile| profile.id.strip_prefix("igp-")?.parse::<u64>().ok())
-        .max()
-        .unwrap_or(0)
-        .saturating_add(1)
-}
-
-fn theme_to_str(t: ThemeMode) -> &'static str {
-    match t {
-        ThemeMode::Dark => "dark",
-        ThemeMode::Light => "light",
-    }
-}
-
-fn str_to_theme(s: &str) -> ThemeMode {
-    match s {
-        "light" => ThemeMode::Light,
-        _ => ThemeMode::Dark,
-    }
 }
 
 fn locale_to_str(l: Locale) -> &'static str {

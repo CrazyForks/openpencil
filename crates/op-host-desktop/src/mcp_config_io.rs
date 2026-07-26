@@ -1,14 +1,12 @@
 //! Lossless TOML editing and crash-safe config writes for MCP integrations.
 
-use std::fs::{self, File, OpenOptions, Permissions};
+use std::fs::{self, File, Permissions};
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::Path;
 
 use toml_edit::{value, DocumentMut, InlineTable, Item, Table, Value};
 
 const SERVER_NAME: &str = "openpencil";
-static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug)]
 pub(crate) struct FileSnapshot {
@@ -55,23 +53,24 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     atomic_write_with_permissions(path, bytes, permissions)
 }
 
+/// Crash-safe write: sibling temp + fsync + atomic replace. The temp
+/// creation and the (Windows FFI) destination swap delegate to
+/// `op_host_services::doc_io::atomic_file` — the desktop crate no longer
+/// keeps its own ReplaceFileW/MoveFileExW copy.
 fn atomic_write_with_permissions(
     path: &Path,
     bytes: &[u8],
     permissions: Option<Permissions>,
 ) -> Result<(), String> {
+    use op_host_services::doc_io::atomic_file;
+
     let parent = path
         .parent()
         .ok_or_else(|| format!("{} has no parent directory", path.display()))?;
     fs::create_dir_all(parent).map_err(|error| format!("create {}: {error}", parent.display()))?;
 
-    let temp_path = unique_temp_path(path, parent);
+    let (temp_path, mut temp) = atomic_file::create_sibling_temp(path)?;
     let result = (|| {
-        let mut temp = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temp_path)
-            .map_err(|error| format!("create {}: {error}", temp_path.display()))?;
         temp.write_all(bytes)
             .map_err(|error| format!("write {}: {error}", temp_path.display()))?;
         temp.sync_all()
@@ -82,7 +81,7 @@ fn atomic_write_with_permissions(
             fs::set_permissions(&temp_path, permissions)
                 .map_err(|error| format!("permissions {}: {error}", temp_path.display()))?;
         }
-        replace_file(&temp_path, path)?;
+        atomic_file::replace_file(&temp_path, path)?;
         sync_parent(parent);
         Ok(())
     })();
@@ -90,103 +89,6 @@ fn atomic_write_with_permissions(
         let _ = fs::remove_file(&temp_path);
     }
     result
-}
-
-#[cfg(not(windows))]
-fn replace_file(temp_path: &Path, path: &Path) -> Result<(), String> {
-    fs::rename(temp_path, path).map_err(|error| {
-        format!(
-            "replace {} with {}: {error}",
-            path.display(),
-            temp_path.display()
-        )
-    })
-}
-
-/// Windows `std::fs::rename` cannot replace an existing destination. Use the
-/// OS replace primitives instead; unlike remove-then-rename, neither path
-/// leaves a window where the user's config file is absent.
-#[cfg(windows)]
-fn replace_file(temp_path: &Path, path: &Path) -> Result<(), String> {
-    use std::os::windows::ffi::OsStrExt;
-    use std::ptr;
-
-    const REPLACEFILE_IGNORE_MERGE_ERRORS: u32 = 0x2;
-    const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
-    const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
-
-    #[link(name = "Kernel32")]
-    #[allow(non_snake_case)]
-    extern "system" {
-        fn ReplaceFileW(
-            replaced_file_name: *const u16,
-            replacement_file_name: *const u16,
-            backup_file_name: *const u16,
-            replace_flags: u32,
-            exclude: *mut std::ffi::c_void,
-            reserved: *mut std::ffi::c_void,
-        ) -> i32;
-        fn MoveFileExW(
-            existing_file_name: *const u16,
-            new_file_name: *const u16,
-            flags: u32,
-        ) -> i32;
-    }
-
-    fn wide(path: &Path) -> Vec<u16> {
-        path.as_os_str().encode_wide().chain(Some(0)).collect()
-    }
-
-    let temp = wide(temp_path);
-    let destination = wide(path);
-    // SAFETY: both buffers are NUL-terminated and live for the duration of the
-    // calls. The optional pointer parameters are documented as nullable.
-    let replaced = unsafe {
-        ReplaceFileW(
-            destination.as_ptr(),
-            temp.as_ptr(),
-            ptr::null(),
-            REPLACEFILE_IGNORE_MERGE_ERRORS,
-            ptr::null_mut(),
-            ptr::null_mut(),
-        )
-    };
-    if replaced != 0 {
-        return Ok(());
-    }
-
-    // ReplaceFileW requires the destination to exist. MoveFileExW covers a
-    // first write and races where the destination appeared/disappeared, while
-    // still asking Windows for an atomic replacement and write-through flush.
-    let moved = unsafe {
-        MoveFileExW(
-            temp.as_ptr(),
-            destination.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if moved != 0 {
-        Ok(())
-    } else {
-        Err(format!(
-            "replace {} with {}: {}",
-            path.display(),
-            temp_path.display(),
-            io::Error::last_os_error()
-        ))
-    }
-}
-
-fn unique_temp_path(path: &Path, parent: &Path) -> PathBuf {
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("config");
-    let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    parent.join(format!(
-        ".{file_name}.openpencil-tmp-{}-{sequence}",
-        std::process::id()
-    ))
 }
 
 fn sync_parent(parent: &Path) {
@@ -285,6 +187,11 @@ fn is_usable_http_url(input: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// Distinguishes the per-test scratch directories.
+    static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
     fn temp_path(name: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(

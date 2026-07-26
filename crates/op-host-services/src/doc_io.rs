@@ -36,7 +36,7 @@ use std::path::PathBuf;
 
 use op_editor_core::EditorState;
 
-mod atomic_file;
+pub mod atomic_file;
 mod canonical_save;
 mod clean_copy;
 #[cfg(test)]

@@ -3,8 +3,9 @@ use std::net::IpAddr;
 use std::time::Duration;
 
 use jian_ops_schema::node::PenNode;
-use op_editor_core::{EditorCommand, NodeId};
+use op_editor_core::EditorCommand;
 use op_html::{import_html_with_resources, HtmlImportOptions};
+use op_mcp::import_common::{count_subtree_nodes, parse_import_placement};
 use op_mcp::{McpTool, ToolErrorCode, ToolOutcome};
 use reqwest::header::{CONTENT_TYPE, LOCATION};
 
@@ -28,31 +29,10 @@ impl McpTool for ImportHtmlUrl {
         let Some(raw_url) = args.get("url") else {
             return ToolOutcome::Err(ToolErrorCode::MissingArgument, "url is required".into());
         };
-        let x = match parse_opt_i32(args, "x") {
-            Ok(value) => value.unwrap_or(0),
-            Err(error) => {
-                return ToolOutcome::Err(ToolErrorCode::InvalidArgument, format!("x: {error}"));
-            }
+        let placement = match parse_import_placement(args) {
+            Ok(placement) => placement,
+            Err((code, message)) => return ToolOutcome::Err(code, message),
         };
-        let y = match parse_opt_i32(args, "y") {
-            Ok(value) => value.unwrap_or(0),
-            Err(error) => {
-                return ToolOutcome::Err(ToolErrorCode::InvalidArgument, format!("y: {error}"));
-            }
-        };
-        let target_parent = args
-            .get("parent")
-            .or_else(|| args.get("parent_id"))
-            .or_else(|| args.get("target_parent_id"))
-            .map(|value| root_or_node_id(value))
-            .unwrap_or(NodeId::NONE);
-        let page_id = args
-            .get("pageId")
-            .or_else(|| args.get("page_id"))
-            .or_else(|| args.get("page"))
-            .map(|value| value.trim())
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
 
         let allowlist = std::env::var(ALLOWLIST_ENV).ok();
         let initial_url = match screen_import_url_with_allowlist(raw_url, allowlist.as_deref()) {
@@ -124,15 +104,17 @@ impl McpTool for ImportHtmlUrl {
             );
         }
         let mut nodes = result.nodes;
-        if x != 0 || y != 0 {
+        if placement.x != 0 || placement.y != 0 {
             if let PenNode::Frame(frame) = &mut nodes[0] {
-                frame.base.x = Some(x as f64);
-                frame.base.y = Some(y as f64);
+                frame.base.x = Some(placement.x as f64);
+                frame.base.y = Some(placement.y as f64);
             }
         }
+        // Diverges from `op_mcp::import_common::import_result_to_outcome`
+        // only by the extra `sourceUrl` output entry.
         let mut output = BTreeMap::new();
         output.insert("wrote".into(), "true".into());
-        output.insert("nodeCount".into(), count_nodes(&nodes).to_string());
+        output.insert("nodeCount".into(), count_subtree_nodes(&nodes).to_string());
         output.insert("sourceUrl".into(), page.final_url.to_string());
         if !result.warnings.is_empty() {
             output.insert("warnings".into(), result.warnings.join("\n"));
@@ -141,8 +123,8 @@ impl McpTool for ImportHtmlUrl {
             output,
             EditorCommand::InsertSubtree {
                 nodes,
-                parent_id: target_parent,
-                page_id,
+                parent_id: placement.parent_id,
+                page_id: placement.page_id,
             },
         )
     }
@@ -273,55 +255,6 @@ fn dial_policy(url: &str, allowlist: Option<&str>) -> EndpointDialPolicy {
     } else {
         EndpointDialPolicy::PublicOnly
     }
-}
-
-fn parse_opt_i32(args: &BTreeMap<String, String>, key: &str) -> Result<Option<i32>, String> {
-    match args.get(key) {
-        None => Ok(None),
-        Some(value) => value
-            .parse::<i32>()
-            .map(Some)
-            .map_err(|_| format!("expected decimal i32, got {value:?}")),
-    }
-}
-
-fn root_or_node_id(raw: &str) -> NodeId {
-    let trimmed = raw.trim();
-    if trimmed.is_empty()
-        || trimmed == "0"
-        || trimmed.eq_ignore_ascii_case("root")
-        || trimmed.eq_ignore_ascii_case("null")
-    {
-        NodeId::NONE
-    } else {
-        NodeId::new(trimmed)
-    }
-}
-
-fn count_nodes(nodes: &[PenNode]) -> usize {
-    nodes
-        .iter()
-        .map(|node| {
-            1 + match node {
-                PenNode::Frame(node) => node
-                    .children
-                    .as_deref()
-                    .map(count_nodes)
-                    .unwrap_or_default(),
-                PenNode::Group(node) => node
-                    .children
-                    .as_deref()
-                    .map(count_nodes)
-                    .unwrap_or_default(),
-                PenNode::Rectangle(node) => node
-                    .children
-                    .as_deref()
-                    .map(count_nodes)
-                    .unwrap_or_default(),
-                _ => 0,
-            }
-        })
-        .sum()
 }
 
 pub(crate) fn import_html_url_snapshot() -> ImportHtmlUrl {

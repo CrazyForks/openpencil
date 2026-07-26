@@ -131,5 +131,5 @@ impl WidgetHostNative {
 /// end-to-end before the real OIDC backend lands. Never read outside
 /// this native host, so it can't leak into the wasm web build.
 fn dev_fake_login_enabled() -> bool {
-    std::env::var("OPENPENCIL_DEV_FAKE_LOGIN").as_deref() == Ok("1")
+    std::env::var(op_auth_bridge::ENV_DEV_FAKE_LOGIN).as_deref() == Ok("1")
 }

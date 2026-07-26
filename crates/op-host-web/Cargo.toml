@@ -25,12 +25,15 @@ op-editor-ui = { path = "../op-editor-ui" }
 # single source of truth; `op-pen-loader` bridges it into the
 # read-only paint `Document` the shared widgets consume.
 #
+# op-editor-core is non-optional: it is wasm32-clean and already always
+# compiled through the unconditional op-editor-ui dep, and the baseline
+# `daemon_base` module reads its shared MCP-port/daemon-origin consts.
+op-editor-core = { path = "../op-editor-core" }
 # These stay optional and are pulled only by `canvaskit`, so the wasm32-clean
 # stub baseline (`--no-default-features --features web`) never compiles the
 # full editor pipeline. `op-pen-loader` disables `skia-measure` below; the web
 # shell uses CanvasKit/browser text measurement instead of the native Skia
 # measurement path.
-op-editor-core = { path = "../op-editor-core", optional = true }
 op-editor-host-core = { path = "../op-editor-host-core", optional = true, default-features = false }
 # default-features = false drops `skia-measure` for the browser bundle.
 op-pen-loader = { path = "../op-pen-loader", optional = true, default-features = false }
@@ -147,7 +150,6 @@ web = []
 # CanvasKit via the `op_ck_bridge.js` FFI; all widget/draw logic stays in Rust.
 canvaskit = [
   "dep:wasm-bindgen-futures",
-  "dep:op-editor-core",
   "dep:op-pen-loader",
   "dep:jian-ops-schema",
   "dep:serde",

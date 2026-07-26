@@ -109,19 +109,8 @@ pub(super) fn paint_agent_card(
     let connected = settings.provider_verified_connected_at(index);
     let conn = &settings.provider_connection[index];
     let sub_localized = t_settings(ui, provider.subtitle_key());
-    let green = Color {
-        r: 0.34,
-        g: 0.78,
-        b: 0.45,
-        a: 1.0,
-    };
-    // amber-500 — the TS notInstalled / warning text color.
-    let amber = Color {
-        r: 0.96,
-        g: 0.62,
-        b: 0.04,
-        a: 1.0,
-    };
+    let green = theme.status_success;
+    let amber = theme.status_warning;
     // Subtitle mirrors the TS card's status line
     // (agent-settings-providers-tab.tsx:242-269), collapsed onto the
     // single line this card reserves: probe in flight → muted

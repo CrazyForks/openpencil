@@ -485,35 +485,17 @@ pub(crate) fn apply_alpha(rgba: [f32; 4], opacity: Option<f32>) -> [f32; 4] {
     [rgba[0], rgba[1], rgba[2], rgba[3] * a]
 }
 
+/// `#RGB` / `#RRGGBB` / `#RRGGBBAA` (leading `#` optional) → normalized
+/// RGBA. Delegates to the canonical op-util parser; the historical 3/6/8
+/// digit set is kept (no 4-digit `#RGBA` shorthand).
 pub(crate) fn parse_hex(s: &str) -> Option<[f32; 4]> {
-    let s = s.trim().trim_start_matches('#');
-    let (r, g, b, a) = match s.len() {
-        3 => (
-            u8::from_str_radix(&s[0..1].repeat(2), 16).ok()?,
-            u8::from_str_radix(&s[1..2].repeat(2), 16).ok()?,
-            u8::from_str_radix(&s[2..3].repeat(2), 16).ok()?,
-            255u8,
-        ),
-        6 => (
-            u8::from_str_radix(&s[0..2], 16).ok()?,
-            u8::from_str_radix(&s[2..4], 16).ok()?,
-            u8::from_str_radix(&s[4..6], 16).ok()?,
-            255u8,
-        ),
-        8 => (
-            u8::from_str_radix(&s[0..2], 16).ok()?,
-            u8::from_str_radix(&s[2..4], 16).ok()?,
-            u8::from_str_radix(&s[4..6], 16).ok()?,
-            u8::from_str_radix(&s[6..8], 16).ok()?,
-        ),
-        _ => return None,
+    const OPTS: op_util::hex_color::HexOptions = op_util::hex_color::HexOptions {
+        require_hash: false,
+        allow_rgb_shorthand: true,
+        allow_rgba_shorthand: false,
+        allow_alpha: true,
     };
-    Some([
-        r as f32 / 255.0,
-        g as f32 / 255.0,
-        b as f32 / 255.0,
-        a as f32 / 255.0,
-    ])
+    op_util::hex_color::parse_hex_rgba_f32(s, OPTS)
 }
 
 pub(crate) fn short_src(src: &str) -> String {

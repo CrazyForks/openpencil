@@ -11,7 +11,17 @@ use jian_ops_schema::sizing::{SizingBehavior, SizingKeyword};
 use jian_ops_schema::style::{ImageFillBody, ImageFillMode, PenFill};
 use op_editor_core::agent_settings::ImageGenProfile;
 use op_editor_core::{walkers, EditorState, NodeId, PenNodeExt as _};
-use reqwest::header::CONTENT_TYPE;
+// Provider plumbing shared with the web daemon (single-sourced in
+// op-host-services): keyword simplification, Openverse token exchange, and
+// image mime handling. The desktop keeps its own `fetch_image_data_url`
+// on top of `fetch_image_bytes` so the skia down-scale pass still runs.
+pub(crate) use op_host_services::web_image_search::{
+    fetch_openverse_token, normalize_image_mime_header, simplify_search_query,
+    WebOpenverseCredentials,
+};
+// Only the sibling test file exercises the sniffing directly.
+#[cfg(test)]
+pub(crate) use op_host_services::web_image_search::sniff_image_mime;
 
 const MAX_EMBEDDED_IMAGE_BYTES: usize = 4 * 1024 * 1024;
 
@@ -21,122 +31,6 @@ const MAX_EMBEDDED_IMAGE_BYTES: usize = 4 * 1024 * 1024;
 /// failed slot reads as "image goes here" instead of a bare grey box. The
 /// bound query stays on the node for manual re-search.
 pub(crate) const SEARCH_FAILED_PLACEHOLDER_SRC: &str = "placeholder://image-search-failed";
-/// Design-artifact words that are pure noise against a PHOTO library: an
-/// open-license corpus has no "album covers" or "playlist art" — those are
-/// design deliverables, not photographed subjects. Stripping them turns
-/// "synthwave album cover neon" into "synthwave neon", which the corpus DOES
-/// cover (measured: the artifact words matched magazine covers, flowers and
-/// a van sticker across a whole music screen, test0711-22). The full prompt
-/// stays on the node for the image-GEN path, which wants the artifact words.
-const IMAGE_SEARCH_ARTIFACT_WORDS: &[&str] = &[
-    "album",
-    "cover",
-    "playlist",
-    "artwork",
-    "poster",
-    "thumbnail",
-    "logo",
-    "icon",
-    "banner",
-    "mockup",
-    "screenshot",
-    "wallpaper",
-];
-
-const IMAGE_SEARCH_STOP_WORDS: &[&str] = &[
-    "a",
-    "an",
-    "the",
-    "and",
-    "or",
-    "but",
-    "in",
-    "on",
-    "at",
-    "to",
-    "for",
-    "of",
-    "with",
-    "by",
-    "from",
-    "is",
-    "are",
-    "was",
-    "were",
-    "be",
-    "been",
-    "being",
-    "have",
-    "has",
-    "had",
-    "do",
-    "does",
-    "did",
-    "will",
-    "would",
-    "could",
-    "should",
-    "may",
-    "might",
-    "shall",
-    "can",
-    "that",
-    "this",
-    "these",
-    "those",
-    "it",
-    "its",
-    "very",
-    "really",
-    "just",
-    "also",
-    "about",
-    "above",
-    "after",
-    "before",
-    "between",
-    "into",
-    "through",
-    "during",
-    "each",
-    "some",
-    "such",
-    "no",
-    "not",
-    "only",
-    "same",
-    "so",
-    "than",
-    "too",
-    "up",
-    "out",
-    "if",
-    "then",
-    "once",
-    "here",
-    "there",
-    "when",
-    "where",
-    "how",
-    "all",
-    "both",
-    "few",
-    "more",
-    "most",
-    "other",
-    "any",
-    "as",
-    "while",
-    "using",
-    "showing",
-    "featuring",
-    "looking",
-    "style",
-    "styled",
-    "inspired",
-    "based",
-];
-
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ImageSearchTarget {
     pub node_id: NodeId,
@@ -177,25 +71,23 @@ impl ImageAspectRatio {
     }
 }
 
+/// Desktop wrapper over the shared credential pair — adds the
+/// `EditorState` snapshot constructor the daemon side has no use for.
 #[derive(Clone, PartialEq, Eq)]
-pub(crate) struct OpenverseCredentials {
-    client_id: String,
-    client_secret: String,
-}
+pub(crate) struct OpenverseCredentials(WebOpenverseCredentials);
 
 impl OpenverseCredentials {
     pub(crate) fn from_state(state: &EditorState) -> Option<Self> {
         let settings = &state.editor_ui.agent_settings;
-        let client_id = settings.openverse_client_id.trim();
-        let client_secret = settings.openverse_client_secret.trim();
-        if client_id.is_empty() || client_secret.is_empty() {
-            None
-        } else {
-            Some(Self {
-                client_id: client_id.to_string(),
-                client_secret: client_secret.to_string(),
-            })
-        }
+        WebOpenverseCredentials::from_parts(
+            &settings.openverse_client_id,
+            &settings.openverse_client_secret,
+        )
+        .map(Self)
+    }
+
+    pub(crate) fn as_web(&self) -> &WebOpenverseCredentials {
+        &self.0
     }
 }
 
@@ -1521,42 +1413,6 @@ async fn fetch_first_image_url(
     fetch_wikimedia(&client, &query, used_urls).await
 }
 
-pub(crate) fn simplify_search_query(prompt: &str) -> String {
-    let mut normalized = String::with_capacity(prompt.len());
-    for ch in prompt.to_lowercase().chars() {
-        if ch.is_ascii_alphanumeric() || ch.is_ascii_whitespace() || ch == '-' {
-            normalized.push(ch);
-        } else {
-            normalized.push(' ');
-        }
-    }
-    let keywords: Vec<&str> = normalized
-        .split_whitespace()
-        .filter(|word| word.len() > 2 && !IMAGE_SEARCH_STOP_WORDS.contains(word))
-        .take(6)
-        .collect();
-    // Drop artifact words ONLY when aesthetic words remain — "logo" alone
-    // must not become an empty query.
-    let non_artifact: Vec<&str> = keywords
-        .iter()
-        .copied()
-        .filter(|word| !IMAGE_SEARCH_ARTIFACT_WORDS.contains(word))
-        .collect();
-    let keywords: Vec<&str> = if non_artifact.is_empty() {
-        keywords
-    } else {
-        non_artifact
-    }
-    .into_iter()
-    .take(4)
-    .collect();
-    if keywords.is_empty() {
-        prompt.chars().take(30).collect()
-    } else {
-        keywords.join(" ")
-    }
-}
-
 async fn fetch_openverse(
     client: &reqwest::Client,
     query: &str,
@@ -1567,7 +1423,7 @@ async fn fetch_openverse(
     let url = openverse_search_url(query, aspect_ratio)?;
     let mut request = client.get(url);
     if let Some(credentials) = credentials {
-        if let Some(token) = fetch_openverse_token(client, credentials).await {
+        if let Some(token) = fetch_openverse_token(client, credentials.as_web()).await {
             request = request.bearer_auth(token);
         }
     }
@@ -1706,31 +1562,6 @@ fn openverse_search_url(
             .append_pair("aspect_ratio", aspect_ratio.as_openverse_param());
     }
     Some(url)
-}
-
-pub(crate) async fn fetch_openverse_token(
-    client: &reqwest::Client,
-    credentials: &OpenverseCredentials,
-) -> Option<String> {
-    let resp = client
-        .post("https://api.openverse.org/v1/auth_tokens/token/")
-        .form(&[
-            ("grant_type", "client_credentials"),
-            ("client_id", credentials.client_id.as_str()),
-            ("client_secret", credentials.client_secret.as_str()),
-        ])
-        .send()
-        .await
-        .ok()?;
-    if !resp.status().is_success() {
-        return None;
-    }
-    let json: serde_json::Value = resp.json().await.ok()?;
-    json.get("access_token")
-        .and_then(serde_json::Value::as_str)
-        .map(str::trim)
-        .filter(|token| !token.is_empty())
-        .map(str::to_string)
 }
 
 async fn fetch_wikimedia(
@@ -1882,26 +1713,12 @@ fn claim_unused_image_src(used_urls: &Mutex<HashSet<String>>, src: &str) -> bool
 }
 
 pub(crate) async fn fetch_image_data_url(client: &reqwest::Client, url: &str) -> Option<String> {
-    let resp = client.get(url).send().await.ok()?;
-    if !resp.status().is_success() {
-        return None;
-    }
-    if resp
-        .content_length()
-        .is_some_and(|len| len > MAX_EMBEDDED_IMAGE_BYTES as u64)
-    {
-        return None;
-    }
-    let header_mime = resp
-        .headers()
-        .get(CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .and_then(normalize_image_mime_header);
-    let bytes = resp.bytes().await.ok()?;
-    if bytes.is_empty() || bytes.len() > MAX_EMBEDDED_IMAGE_BYTES {
-        return None;
-    }
-    let mime = header_mime.or_else(|| sniff_image_mime(&bytes).map(str::to_string))?;
+    let (mime, bytes) = op_host_services::web_image_search::fetch_image_bytes(
+        client,
+        url,
+        MAX_EMBEDDED_IMAGE_BYTES,
+    )
+    .await?;
     image_bytes_to_data_url(&mime, &bytes)
 }
 
@@ -1918,34 +1735,6 @@ fn image_bytes_to_data_url(mime: &str, bytes: &[u8]) -> Option<String> {
         return Some(format!("data:{scaled_mime};base64,{}", B64.encode(&scaled)));
     }
     Some(format!("data:{mime};base64,{}", B64.encode(bytes)))
-}
-
-fn normalize_image_mime_header(value: &str) -> Option<String> {
-    let mime = value.split(';').next()?.trim().to_ascii_lowercase();
-    if mime == "image/jpg" {
-        return Some("image/jpeg".to_string());
-    }
-    if mime.starts_with("image/") && mime != "image/svg+xml" {
-        Some(mime)
-    } else {
-        None
-    }
-}
-
-fn sniff_image_mime(bytes: &[u8]) -> Option<&'static str> {
-    if bytes.starts_with(b"\x89PNG\r\n\x1A\n") {
-        return Some("image/png");
-    }
-    if bytes.starts_with(b"\xFF\xD8\xFF") {
-        return Some("image/jpeg");
-    }
-    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
-        return Some("image/gif");
-    }
-    if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
-        return Some("image/webp");
-    }
-    None
 }
 
 #[cfg(test)]

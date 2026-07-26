@@ -521,6 +521,9 @@ fn serialize_element(element: &DomElement) -> String {
     source
 }
 
+// Intentionally local: op-html keeps a minimal op-* dep set, so this stays a
+// private copy of the canonical `op_util::xml_escape::escape_html` (same four
+// entities). Keep the two in sync.
 fn escape_xml(value: &str) -> String {
     value
         .replace('&', "&amp;")

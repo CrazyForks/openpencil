@@ -9,49 +9,14 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
 
 use op_ai::chat_provider::{ChatDelta, ChatProvider, ChatRequest, EffortLevel, ThinkingMode};
+use op_ai::design_md::{
+    clean_ai_design_md_result, truncate_chars, DESIGN_MD_MAX_TREE_CHARS, DESIGN_MD_MAX_VAR_CHARS,
+    DESIGN_MD_SYSTEM_PROMPT,
+};
 use op_editor_core::EditorState;
 
 use crate::chat_session::{provider_for_selected_model, selected_cli_model_id};
 use crate::DesktopApp;
-
-const DESIGN_MD_SYSTEM_PROMPT: &str = r##"You are a Design Systems Lead. Analyze the provided PenNode design tree and generate a comprehensive design.md in the Google Stitch format.
-
-OUTPUT FORMAT — a complete markdown document with these sections:
-
-# Design System: [Project Name]
-
-## 1. Visual Theme & Atmosphere
-Describe the mood, density, and aesthetic philosophy using evocative adjectives.
-
-## 2. Color Palette & Roles
-For each color found in the design:
-- **Descriptive Name** (#HEX) — Functional role (e.g. "Primary CTA", "Background", "Body text")
-
-## 3. Typography Rules
-- Font families used, weight hierarchy, size scale, line-height conventions.
-
-## 4. Component Stylings
-- **Buttons**: shape, colors, padding, states
-- **Cards**: corners, shadows, internal padding
-- **Inputs**: borders, backgrounds
-- **Navigation**: layout, spacing
-
-## 5. Layout Principles
-- Grid system, whitespace strategy, spacing units, responsive breakpoints.
-
-## 6. Design System Notes
-- Key language/terms to use when generating new designs in this style.
-
-RULES:
-- Use descriptive natural language, NOT technical jargon (e.g. "subtly rounded corners" not "rounded-lg").
-- Pair ALL colors with exact hex codes.
-- Explain functional roles for every design element.
-- Output ONLY the markdown document, starting with "# Design System:".
-- NO preamble, NO commentary, NO tool calls, NO code fences around the output.
-- Do NOT use <tool_call> tags or any tool invocations. Just output the markdown text directly."##;
-
-const DESIGN_MD_MAX_TREE_CHARS: usize = 24_000;
-const DESIGN_MD_MAX_VAR_CHARS: usize = 6_000;
 
 pub(crate) struct DesignMdSession {
     rx: Receiver<Result<String, String>>,
@@ -61,12 +26,18 @@ impl DesignMdSession {
     fn start(provider: Box<dyn ChatProvider>, model: Option<String>, state: &EditorState) -> Self {
         let request = build_design_md_chat_request(state, model);
         let (tx, rx) = mpsc::channel();
-        thread::Builder::new()
+        let worker_tx = tx.clone();
+        let spawned = thread::Builder::new()
             .name("op-design-md".into())
             .spawn(move || {
-                let _ = tx.send(run_design_md_provider_blocking(provider, request));
-            })
-            .expect("spawn op-design-md thread");
+                let _ = worker_tx.send(run_design_md_provider_blocking(provider, request));
+            });
+        if let Err(err) = spawned {
+            // Deliver the failure through the normal poll path so the
+            // generating flag clears instead of the app crashing.
+            eprintln!("openpencil-desktop: spawn op-design-md thread failed: {err}");
+            let _ = tx.send(Err(format!("design.md worker failed to start: {err}")));
+        }
         Self { rx }
     }
 }
@@ -108,15 +79,6 @@ fn build_design_md_user_prompt(state: &EditorState) -> String {
     )
 }
 
-fn truncate_chars(input: &str, max_chars: usize) -> String {
-    let mut chars = input.chars();
-    let mut out: String = chars.by_ref().take(max_chars).collect();
-    if chars.next().is_some() {
-        out.push_str("\n... [truncated]");
-    }
-    out
-}
-
 fn run_design_md_provider_blocking(
     provider: Box<dyn ChatProvider>,
     request: ChatRequest,
@@ -136,61 +98,6 @@ fn run_design_md_provider_blocking(
     } else {
         Ok(cleaned)
     }
-}
-
-fn clean_ai_design_md_result(raw: &str) -> String {
-    let mut text = strip_tool_call_blocks(raw.trim());
-    text = strip_code_fence(text);
-    if let Some(start) = text.find("# ") {
-        text = text[start..].to_string();
-    }
-    text.lines()
-        .filter(|line| {
-            let trimmed = line.trim();
-            !trimmed.starts_with("{\"name\"")
-                && !trimmed.starts_with("{\"tool_use_id\"")
-                && !trimmed.starts_with("{\"file_path\"")
-                && trimmed != "<tool_call>"
-                && trimmed != "</tool_call>"
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        .replace("\n\n\n\n", "\n\n\n")
-        .trim()
-        .to_string()
-}
-
-fn strip_code_fence(mut text: String) -> String {
-    let trimmed = text.trim();
-    if !trimmed.starts_with("```") {
-        return text;
-    }
-    text = trimmed.to_string();
-    if let Some(idx) = text.find('\n') {
-        text = text[idx + 1..].to_string();
-    }
-    if let Some(idx) = text.rfind("```") {
-        text.truncate(idx);
-    }
-    text.trim().to_string()
-}
-
-fn strip_tool_call_blocks(text: &str) -> String {
-    let mut out = String::new();
-    let mut rest = text;
-    loop {
-        let Some(start) = rest.find("<tool_call>") else {
-            out.push_str(rest);
-            break;
-        };
-        out.push_str(&rest[..start]);
-        let after_start = &rest[start + "<tool_call>".len()..];
-        let Some(end) = after_start.find("</tool_call>") else {
-            break;
-        };
-        rest = &after_start[end + "</tool_call>".len()..];
-    }
-    out
 }
 
 impl DesktopApp {

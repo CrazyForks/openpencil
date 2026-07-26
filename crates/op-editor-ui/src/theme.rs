@@ -88,6 +88,10 @@ pub struct Theme {
     /// Success green for the ✓ ring on completed tool/step cards
     /// (#27 reference: ~#3FB950, matches GitHub's success green).
     pub status_success: Color,
+    /// Warning amber for advisory text (provider not-installed /
+    /// probe-warning lines) — tailwind amber-500 `#F59E0B`, the TS
+    /// notInstalled / warning text color.
+    pub status_warning: Color,
     /// Gold accent for the speed/effort chip in the AI chat bottom
     /// toolbar (#27: ⚡ icon + "2x" label in this color, no bg).
     /// ~#FFD93D (warm yellow, readable on dark panels).
@@ -128,6 +132,8 @@ impl Theme {
             user_bubble_foreground: rgb(0xff, 0xff, 0xff),
             // GitHub-style success green ~#3FB950 for completed ✓ rings.
             status_success: rgb(0x3f, 0xb9, 0x50),
+            // Warning amber is the same in both themes (amber-500).
+            status_warning: rgb(0xf5, 0x9e, 0x0b),
             // #FFD93D — warm yellow for the ⚡ speed chip icon + label.
             speed_accent: rgb(0xff, 0xd9, 0x3d),
         }
@@ -166,6 +172,8 @@ impl Theme {
             user_bubble_foreground: rgb(0xff, 0xff, 0xff),
             // Success green is the same in both themes.
             status_success: rgb(0x3f, 0xb9, 0x50),
+            // Warning amber is the same in both themes (amber-500).
+            status_warning: rgb(0xf5, 0x9e, 0x0b),
             // Slightly muted gold for light backgrounds (same hue as dark).
             speed_accent: rgb(0xd4, 0xa0, 0x10),
         }

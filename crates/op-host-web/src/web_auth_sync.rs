@@ -17,7 +17,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use op_editor_core::{AccountState, LoginFlowError, LoginFlowStatus};
+use op_editor_core::{auth_routes, AccountState, LoginFlowError, LoginFlowStatus};
 
 use crate::live_sync;
 use crate::repaint_ctx::RepaintContext;
@@ -70,7 +70,7 @@ pub(crate) fn begin_login_now() {
     let opened = web_sys::window()
         .and_then(|window| {
             window
-                .open_with_url_and_target(&format!("{base}/auth/loading"), "_blank")
+                .open_with_url_and_target(&format!("{base}{}", auth_routes::LOADING_PAGE), "_blank")
                 .ok()
         })
         .flatten();
@@ -78,7 +78,7 @@ pub(crate) fn begin_login_now() {
     POPUP_NAVIGATED.set(false);
     BEGIN_INFLIGHT.set(true);
     let ok = live_sync::post_json(
-        &format!("{base}/api/auth/login/begin"),
+        &format!("{base}{}", auth_routes::LOGIN_BEGIN),
         "{}",
         Some(Rc::new(move |body: String| {
             BEGIN_INFLIGHT.set(false);
@@ -163,7 +163,7 @@ pub(crate) fn start<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) {
 fn fetch_status<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, base: &str) {
     let inner = inner.clone();
     let _ = live_sync::get(
-        &format!("{base}/api/auth/status"),
+        &format!("{base}{}", auth_routes::STATUS),
         Rc::new(move |body: String| {
             let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&body) else {
                 return;
@@ -209,9 +209,9 @@ fn drain_actions<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, base: &str
         let path = match action {
             PendingAuthAction::CancelLogin => {
                 close_login_popup_placeholder();
-                "/api/auth/login/cancel"
+                auth_routes::LOGIN_CANCEL
             }
-            PendingAuthAction::SignOut => "/api/auth/logout",
+            PendingAuthAction::SignOut => auth_routes::LOGOUT,
         };
         let _ = live_sync::post_json(&format!("{base}{path}"), "{}", None);
     }
@@ -236,7 +236,7 @@ fn maybe_poll_login<C: RepaintContext + 'static>(
     let inner = inner.clone();
     let cells_cb = cells.clone();
     let ok = live_sync::get(
-        &format!("{base}/api/auth/login/status"),
+        &format!("{base}{}", auth_routes::LOGIN_STATUS),
         Rc::new(move |body: String| {
             cells_cb.busy.set(false);
             let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&body) else {

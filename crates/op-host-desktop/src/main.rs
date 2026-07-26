@@ -1136,7 +1136,7 @@ fn parse_live_mcp_port<I: Iterator<Item = String>>(args: I) -> Option<u16> {
 /// builds (no prebuilt library for this target) leave the gate closed
 /// unless `OPENPENCIL_DEV_FAKE_LOGIN=1` re-opens it for UI work.
 fn init_auth_runtime(host: &mut WidgetHostNative) {
-    let dev_fake = std::env::var("OPENPENCIL_DEV_FAKE_LOGIN").as_deref() == Ok("1");
+    let dev_fake = std::env::var(op_auth_bridge::ENV_DEV_FAKE_LOGIN).as_deref() == Ok("1");
     let mut backend_ready = false;
     if op_auth_bridge::available() {
         if let Ok(dir) = op_config_store::openpencil_dir() {

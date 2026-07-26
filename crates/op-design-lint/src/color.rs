@@ -15,22 +15,15 @@ pub struct Rgb {
 /// Parse `#rgb` / `#rrggbb` / `#rrggbbaa` to `Rgb` (alpha dropped).
 /// Returns `None` on parse failure — mirrors TS `parseHexColor`.
 pub fn parse_hex_color(s: &str) -> Option<Rgb> {
-    let hex = s.trim().strip_prefix('#')?;
-    if !(3..=8).contains(&hex.len()) || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return None;
-    }
-    let expanded: String = if hex.len() == 3 {
-        hex.chars().flat_map(|c| [c, c]).collect()
-    } else {
-        hex.to_string()
+    // TS parity: `#` required; 3 (shorthand) / 6 / 8 digits only — the
+    // 4-digit `#rgba` shorthand stays rejected. Delegates to op-util.
+    const OPTS: op_util::hex_color::HexOptions = op_util::hex_color::HexOptions {
+        require_hash: true,
+        allow_rgb_shorthand: true,
+        allow_rgba_shorthand: false,
+        allow_alpha: true,
     };
-    // TS rejects lengths 4/5/7 here — only 6 (rrggbb) or 8 (rrggbbaa) pass.
-    if expanded.len() != 6 && expanded.len() != 8 {
-        return None;
-    }
-    let r = u8::from_str_radix(&expanded[0..2], 16).ok()?;
-    let g = u8::from_str_radix(&expanded[2..4], 16).ok()?;
-    let b = u8::from_str_radix(&expanded[4..6], 16).ok()?;
+    let [r, g, b, _] = op_util::hex_color::parse_hex_rgba8(s, OPTS)?;
     Some(Rgb { r, g, b })
 }
 

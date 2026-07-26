@@ -1,4 +1,5 @@
-//! Shared toolbar action dispatch for web press/click paths.
+//! Toolbar action dispatch for web press/click paths — panel toggles
+//! delegate to the shared `EditorUiState` transitions.
 
 use super::WidgetHost;
 
@@ -26,23 +27,12 @@ impl WidgetHost {
                 acted
             }
             ToolbarAction::ToggleVariablesPanel => {
-                let ui = &mut self.editor_state.editor_ui;
-                ui.variables_panel_open = !ui.variables_panel_open;
-                if !ui.variables_panel_open {
-                    ui.variables_panel_hover = None;
-                    ui.axis_dropdown_open = None;
-                }
-                ui.design_md_panel_open = false;
-                ui.design_md_hover = None;
+                self.editor_state.editor_ui.toggle_variables_panel();
                 self.mark_dirty();
                 true
             }
             ToolbarAction::ToggleDesignPanel => {
-                let ui = &mut self.editor_state.editor_ui;
-                ui.design_md_panel_open = !ui.design_md_panel_open;
-                if !ui.design_md_panel_open {
-                    ui.design_md_hover = None;
-                }
+                self.editor_state.editor_ui.toggle_design_md_panel();
                 self.mark_dirty();
                 true
             }

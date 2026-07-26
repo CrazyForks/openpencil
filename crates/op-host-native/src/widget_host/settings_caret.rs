@@ -1,73 +1,40 @@
+//! Thin wrappers over the shared settings-modal input transitions
+//! (`op_editor_core::host_ui_transitions`).
+
+use op_editor_core::host_ui_transitions as shared;
+
 use super::WidgetHostNative;
-use op_editor_core::agent_settings::SettingsFocus;
 
 impl WidgetHostNative {
     pub(in crate::widget_host) fn set_settings_input_text(&mut self, text: impl Into<String>) {
-        let input = &mut self.editor_state.editor_ui.settings_input;
-        input.set_text(text);
-        input.touch(self.now_ms);
+        shared::set_settings_input_text(&mut self.editor_state.editor_ui, text.into(), self.now_ms);
     }
 
     pub(in crate::widget_host) fn apply_settings_text(&mut self, c: char) -> bool {
-        let Some(focus) = self.editor_state.editor_ui.agent_settings.focus else {
-            return false;
-        };
-        let ui = &mut self.editor_state.editor_ui;
-        if !settings_accepts(focus, &ui.settings_input, c) {
-            return false;
+        if shared::settings_text(&mut self.editor_state.editor_ui, c, self.now_ms) {
+            self.mark_dirty();
+            return true;
         }
-        let mut buf = [0; 4];
-        ui.settings_input
-            .insert_str(c.encode_utf8(&mut buf), self.now_ms);
-        self.mark_dirty();
-        true
+        false
     }
 
     pub(in crate::widget_host) fn apply_settings_backspace(&mut self) -> bool {
-        if self.editor_state.editor_ui.agent_settings.focus.is_none() {
-            return false;
-        };
-        let ui = &mut self.editor_state.editor_ui;
-        ui.settings_input.backspace(self.now_ms);
-        self.mark_dirty();
-        true
+        if shared::settings_backspace(&mut self.editor_state.editor_ui, self.now_ms) {
+            self.mark_dirty();
+            return true;
+        }
+        false
     }
 
     pub fn apply_settings_caret(&mut self, forward: bool) -> bool {
-        if self.editor_state.editor_ui.agent_settings.focus.is_none() {
-            return false;
-        };
-        let ui = &mut self.editor_state.editor_ui;
-        if forward {
-            ui.settings_input.move_right(false, self.now_ms);
-        } else {
-            ui.settings_input.move_left(false, self.now_ms);
+        if shared::settings_caret(&mut self.editor_state.editor_ui, forward, self.now_ms) {
+            self.mark_dirty();
+            return true;
         }
-        self.mark_dirty();
-        true
+        false
     }
 
     pub(in crate::widget_host) fn clear_settings_caret(&mut self) {
         self.editor_state.editor_ui.settings_input.set_text("");
-    }
-}
-
-fn settings_accepts(
-    focus: SettingsFocus,
-    input: &jian_core::text_input::TextInputState,
-    c: char,
-) -> bool {
-    match focus {
-        SettingsFocus::McpPort => {
-            c.is_ascii_digit() && (input.is_select_all() || input.text().len() < 5)
-        }
-        SettingsFocus::ImageSearch(_)
-        | SettingsFocus::BuiltinAgent { .. }
-        | SettingsFocus::BuiltinAgentDraft(_)
-        | SettingsFocus::AcpAgent { .. }
-        | SettingsFocus::AcpAgentDraft(_)
-        | SettingsFocus::ImageGenProfile { .. } => {
-            !c.is_control() && (input.is_select_all() || input.text().len() < 512)
-        }
     }
 }

@@ -4,7 +4,7 @@ use crate::layout_scene::{
     regular_polygon_points, LayoutScene, NodeKind, SceneGradient, SceneImageFit, SceneNode,
     ScenePage,
 };
-use crate::{Color, Point2D, Rect};
+use crate::{Color, Rect};
 use std::fmt::Write as _;
 
 mod image_metadata;
@@ -227,40 +227,13 @@ fn page_bounds(page: &ScenePage) -> Option<Rect> {
     acc.into_rect()
 }
 
-struct BoundsAcc {
-    min_x: f32,
-    min_y: f32,
-    max_x: f32,
-    max_y: f32,
-}
+use crate::scene_bounds::{normalize_rect, BoundsAcc, PaintCornerRules};
 
-impl BoundsAcc {
-    fn new() -> Self {
-        Self {
-            min_x: f32::INFINITY,
-            min_y: f32::INFINITY,
-            max_x: f32::NEG_INFINITY,
-            max_y: f32::NEG_INFINITY,
-        }
-    }
-
-    fn add(&mut self, x0: f32, y0: f32, x1: f32, y1: f32) {
-        self.min_x = self.min_x.min(x0);
-        self.min_y = self.min_y.min(y0);
-        self.max_x = self.max_x.max(x1);
-        self.max_y = self.max_y.max(y1);
-    }
-
-    fn into_rect(self) -> Option<Rect> {
-        if !self.min_x.is_finite() {
-            return None;
-        }
-        Some(Rect {
-            origin: Point2D::new(self.min_x, self.min_y),
-            size: Point2D::new(self.max_x - self.min_x, self.max_y - self.min_y),
-        })
-    }
-}
+/// SVG export counts gradient and image fills as own paint.
+const SVG_PAINT_RULES: PaintCornerRules = PaintCornerRules {
+    gradient_paints: true,
+    image_paints: true,
+};
 
 fn collect_bounds(n: &SceneNode, parent_xform: glam::Affine2, acc: &mut BoundsAcc) {
     if n.hidden {
@@ -297,114 +270,7 @@ fn collect_bounds(n: &SceneNode, parent_xform: glam::Affine2, acc: &mut BoundsAc
 }
 
 fn own_paint_corners(n: &SceneNode) -> Option<Vec<glam::Vec2>> {
-    let stroke_pad = n.stroke.map(|s| s.width * 0.5).unwrap_or(0.0);
-    let (x0, y0, x1, y1) = match &n.kind {
-        NodeKind::Rect | NodeKind::Ellipse | NodeKind::Polygon | NodeKind::Line => {
-            let nr = normalize_rect(n.bounds);
-            (
-                nr.origin.x,
-                nr.origin.y,
-                nr.origin.x + nr.size.x,
-                nr.origin.y + nr.size.y,
-            )
-        }
-        NodeKind::Frame => {
-            if n.fill.is_none() && n.gradient.is_none() && n.stroke.is_none() {
-                return None;
-            }
-            let nr = normalize_rect(n.bounds);
-            (
-                nr.origin.x,
-                nr.origin.y,
-                nr.origin.x + nr.size.x,
-                nr.origin.y + nr.size.y,
-            )
-        }
-        NodeKind::Other(tag) if tag == "icon_font" => {
-            if n.text.as_ref().is_none_or(|s| s.trim().is_empty()) {
-                return None;
-            }
-            let nr = normalize_rect(n.bounds);
-            (
-                nr.origin.x,
-                nr.origin.y,
-                nr.origin.x + nr.size.x,
-                nr.origin.y + nr.size.y,
-            )
-        }
-        NodeKind::Other(_) => {
-            if n.fill.is_none()
-                && n.gradient.is_none()
-                && n.stroke.is_none()
-                && n.image_src.is_none()
-            {
-                return None;
-            }
-            let nr = normalize_rect(n.bounds);
-            (
-                nr.origin.x,
-                nr.origin.y,
-                nr.origin.x + nr.size.x,
-                nr.origin.y + nr.size.y,
-            )
-        }
-        NodeKind::Text => {
-            let has_text = n.text.as_ref().is_some_and(|s| !s.is_empty());
-            if !has_text {
-                return None;
-            }
-            let nr = normalize_rect(n.bounds);
-            (
-                nr.origin.x,
-                nr.origin.y,
-                nr.origin.x + nr.size.x.max(1.0),
-                nr.origin.y + nr.size.y.max(1.0),
-            )
-        }
-        NodeKind::Path => {
-            if n.svg_path.is_some()
-                && (n.fill.is_some() || n.gradient.is_some() || n.stroke.is_some())
-            {
-                let nr = normalize_rect(n.bounds);
-                return Some(vec![
-                    glam::Vec2::new(nr.origin.x - stroke_pad, nr.origin.y - stroke_pad),
-                    glam::Vec2::new(
-                        nr.origin.x + nr.size.x + stroke_pad,
-                        nr.origin.y - stroke_pad,
-                    ),
-                    glam::Vec2::new(
-                        nr.origin.x + nr.size.x + stroke_pad,
-                        nr.origin.y + nr.size.y + stroke_pad,
-                    ),
-                    glam::Vec2::new(
-                        nr.origin.x - stroke_pad,
-                        nr.origin.y + nr.size.y + stroke_pad,
-                    ),
-                ]);
-            }
-            if n.points.is_empty() {
-                return None;
-            }
-            let mut out = Vec::with_capacity(n.points.len() * 4);
-            for p in &n.points {
-                out.push(glam::Vec2::new(p.x - stroke_pad, p.y - stroke_pad));
-                out.push(glam::Vec2::new(p.x + stroke_pad, p.y - stroke_pad));
-                out.push(glam::Vec2::new(p.x - stroke_pad, p.y + stroke_pad));
-                out.push(glam::Vec2::new(p.x + stroke_pad, p.y + stroke_pad));
-            }
-            return Some(out);
-        }
-        NodeKind::Group => return None,
-    };
-    if (x1 - x0).abs() == 0.0 && (y1 - y0).abs() == 0.0 {
-        return None;
-    }
-    Some(vec![
-        glam::Vec2::new(x0 - stroke_pad, y0 - stroke_pad),
-        glam::Vec2::new(x1 + stroke_pad, y0 - stroke_pad),
-        glam::Vec2::new(x1 + stroke_pad, y1 + stroke_pad),
-        glam::Vec2::new(x0 - stroke_pad, y1 + stroke_pad),
-    ])
+    crate::scene_bounds::own_paint_corners(n, SVG_PAINT_RULES)
 }
 
 fn emit_node(out: &mut String, n: &SceneNode) {
@@ -713,28 +579,8 @@ fn text_decoration_attr(n: &SceneNode) -> &'static str {
     }
 }
 
-fn normalize_rect(r: Rect) -> Rect {
-    let x0 = r.origin.x.min(r.origin.x + r.size.x);
-    let y0 = r.origin.y.min(r.origin.y + r.size.y);
-    Rect {
-        origin: Point2D::new(x0, y0),
-        size: Point2D::new(r.size.x.abs(), r.size.y.abs()),
-    }
-}
-
 fn xml_escape(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for c in text.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&apos;"),
-            other => out.push(other),
-        }
-    }
-    out
+    op_util::xml_escape::escape_xml(text)
 }
 
 fn fill_stroke_attrs(n: &SceneNode) -> String {

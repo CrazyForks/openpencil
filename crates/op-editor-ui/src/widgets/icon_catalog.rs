@@ -6,6 +6,12 @@ use std::sync::OnceLock;
 
 use serde::Deserialize;
 
+/// Daemon route serving the brand-logo catalog (simple-icons). The wasm
+/// bundle omits the ~4.8 MB asset to keep the first load small; the
+/// serve-web daemon embeds it and serves it here, and the web shell
+/// fetches it at mount. One const so client and server can't drift.
+pub const ICONIFY_BRANDS_ROUTE: &str = "/assets/iconify-catalog-brands.json";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum IconRenderStyle {

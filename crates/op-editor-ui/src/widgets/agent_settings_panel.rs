@@ -30,6 +30,11 @@ pub const PANEL_WIDTH: f32 = 720.0;
 pub const PANEL_HEIGHT: f32 = 720.0;
 pub(super) const SIDEBAR_WIDTH: f32 = 200.0;
 pub(super) const PAD: f32 = 24.0;
+/// Total vertical inset (top + bottom `PAD`) between the panel rect and
+/// its scrollable content viewport. Hosts subtract this from the panel
+/// height to derive the scroll viewport (`content_rect` height) instead
+/// of hardcoding the value.
+pub const CONTENT_VERTICAL_INSET: f32 = PAD * 2.0;
 pub(super) const NAV_ITEM_STEP: f32 = 30.0;
 pub(super) const NAV_ITEM_HEIGHT: f32 = 28.0;
 pub(super) const NAV_TOP: f32 = 56.0;

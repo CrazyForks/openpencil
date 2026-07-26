@@ -23,8 +23,9 @@ pub(crate) fn status_json(port: u16) -> String {
         if let Some((file_port, pid, timestamp)) = crate::app_control_cli::live_status_fields() {
             if file_port == port {
                 let uptime = now_millis().saturating_sub(timestamp) / 1000;
+                let url = op_editor_core::local_daemon_origin(port);
                 return format!(
-                    r#"{{"running":true,"port":{port},"pid":{pid},"url":"http://127.0.0.1:{port}","uptime":{uptime}}}"#
+                    r#"{{"running":true,"port":{port},"pid":{pid},"url":"{url}","uptime":{uptime}}}"#
                 );
             }
         }
@@ -34,7 +35,8 @@ pub(crate) fn status_json(port: u16) -> String {
 
 pub(crate) fn status_json_from_running(port: u16, running: bool) -> String {
     if running {
-        format!(r#"{{"running":true,"port":{port},"url":"http://127.0.0.1:{port}"}}"#)
+        let url = op_editor_core::local_daemon_origin(port);
+        format!(r#"{{"running":true,"port":{port},"url":"{url}"}}"#)
     } else {
         r#"{"running":false}"#.to_string()
     }
@@ -82,23 +84,10 @@ pub(crate) fn args_to_json(pairs: &[(String, String)]) -> String {
     out
 }
 
-/// Escape a string for inclusion in a JSON string literal.
+/// Escape a string for inclusion in a JSON string literal (no surrounding
+/// quotes). Delegates to the canonical op-util escaper.
 pub(crate) fn json_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => {
-                out.push_str(&format!("\\u{:04x}", c as u32));
-            }
-            c => out.push(c),
-        }
-    }
-    out
+    op_util::json_escape::escape_json(s)
 }
 
 #[cfg(test)]

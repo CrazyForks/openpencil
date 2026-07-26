@@ -878,8 +878,8 @@ fn openverse_credentials_require_both_fields() {
 
     state.editor_ui.agent_settings.openverse_client_secret = " secret ".into();
     let credentials = OpenverseCredentials::from_state(&state).expect("complete credentials");
-    assert_eq!(credentials.client_id, "client");
-    assert_eq!(credentials.client_secret, "secret");
+    assert_eq!(credentials.as_web().client_id, "client");
+    assert_eq!(credentials.as_web().client_secret, "secret");
 }
 
 #[test]

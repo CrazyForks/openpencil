@@ -1199,22 +1199,17 @@ fn relative_luminance_from_rgb(r: u8, g: u8, b: u8) -> f64 {
 }
 
 fn parse_hex_rgb(hex: &str) -> Option<(u8, u8, u8)> {
-    let raw = hex.trim().trim_start_matches('#');
-    match raw.len() {
-        3 => {
-            let r = u8::from_str_radix(&raw[0..1].repeat(2), 16).ok()?;
-            let g = u8::from_str_radix(&raw[1..2].repeat(2), 16).ok()?;
-            let b = u8::from_str_radix(&raw[2..3].repeat(2), 16).ok()?;
-            Some((r, g, b))
-        }
-        6 | 8 => {
-            let r = u8::from_str_radix(&raw[0..2], 16).ok()?;
-            let g = u8::from_str_radix(&raw[2..4], 16).ok()?;
-            let b = u8::from_str_radix(&raw[4..6], 16).ok()?;
-            Some((r, g, b))
-        }
-        _ => None,
-    }
+    // Delegates to the canonical op-util parser. This also fixes a panic:
+    // the old copy byte-sliced without an is_ascii guard, so non-ASCII
+    // input like "#é1" split a codepoint and panicked; it now returns None.
+    const OPTS: op_util::hex_color::HexOptions = op_util::hex_color::HexOptions {
+        require_hash: false,
+        allow_rgb_shorthand: true,
+        allow_rgba_shorthand: false,
+        allow_alpha: true,
+    };
+    let [r, g, b, _] = op_util::hex_color::parse_hex_rgba8(hex, OPTS)?;
+    Some((r, g, b))
 }
 
 /// Find a node by id anywhere in the active-page tree (recursive).

@@ -8,6 +8,20 @@ use std::ffi::OsString;
 use std::io::{Error, ErrorKind, Write};
 use std::path::{Component, Path, PathBuf};
 
+/// Name of the per-user config directory under the home directory
+/// (`~/.openpencil`). Exposed for callers that must resolve the
+/// directory under an explicit home (e.g. subprocess-safety checks
+/// against a caller-supplied `$HOME`); everything else should go
+/// through [`openpencil_dir`].
+pub const OPENPENCIL_DIR_NAME: &str = ".openpencil";
+
+/// Environment variables shared across OpenPencil processes.
+pub mod env_vars {
+    /// Per-instance MCP identity/shutdown token the spawning CLI passes
+    /// to the host process (echoed in the server's `ping` reply).
+    pub const MCP_TOKEN: &str = "OPENPENCIL_MCP_TOKEN";
+}
+
 pub mod well_known {
     /// Existing Rust git credential store file.
     pub const GIT_AUTH: &str = "git-auth.json";
@@ -92,7 +106,7 @@ pub fn write_json_path<T: Serialize>(path: &Path, value: &T) -> std::io::Result<
 }
 
 fn default_openpencil_dir() -> std::io::Result<PathBuf> {
-    home_dir().map(|home| home.join(".openpencil"))
+    home_dir().map(|home| home.join(OPENPENCIL_DIR_NAME))
 }
 
 pub fn home_dir() -> std::io::Result<PathBuf> {

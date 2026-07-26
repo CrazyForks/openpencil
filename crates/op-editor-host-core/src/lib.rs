@@ -8,3 +8,4 @@ pub mod codegen;
 pub mod codegen_session;
 #[cfg(feature = "design")]
 pub mod design;
+pub mod settings_payload;

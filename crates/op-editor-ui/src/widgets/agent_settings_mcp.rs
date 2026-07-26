@@ -9,7 +9,7 @@ use crate::widgets::agent_settings_switch::{
 use crate::widgets::button::tokens_from_theme;
 use crate::widgets::icons::{draw_icon, Icon};
 use crate::widgets::PaintCx;
-use crate::{Color, Point2D, Rect, TextLayout};
+use crate::{Point2D, Rect, TextLayout};
 use jian_widgets::components::card::Card;
 use op_editor_core::agent_settings::{AgentSettings, McpCli, SettingsFocus};
 use op_editor_core::editor_ui_state::EditorUiState;
@@ -33,12 +33,6 @@ const PORT_FIELD_W: f32 = 64.0;
 const PORT_FIELD_H: f32 = 28.0;
 const CLIENT_COPY_BTN: f32 = 20.0;
 const CLIENT_COPY_ICON: f32 = 10.0;
-const COPY_FEEDBACK_GREEN: Color = Color {
-    r: 0.13,
-    g: 0.77,
-    b: 0.37,
-    a: 1.0,
-};
 
 fn server_card_top(content: Rect) -> f32 {
     content.origin.y + TITLE_H
@@ -273,12 +267,7 @@ fn paint_server_card(
         size: Point2D::new(8.0, 8.0),
     };
     let dot_color = if running {
-        Color {
-            r: 0.34,
-            g: 0.78,
-            b: 0.45,
-            a: 1.0,
-        }
+        theme.status_success
     } else {
         theme.muted_foreground
     };
@@ -452,7 +441,7 @@ fn paint_client_config(
     );
     let copied = mcp_client_config_copy_feedback_active(settings, now_ms);
     let (icon, icon_color) = if copied {
-        (Icon::Check, COPY_FEEDBACK_GREEN)
+        (Icon::Check, theme.status_success)
     } else {
         (Icon::Copy, theme.muted_foreground)
     };

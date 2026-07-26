@@ -15,8 +15,9 @@
 #![allow(dead_code)]
 
 /// Default daemon origin — `op start --web`'s default port, and the
-/// target the dev smoke page polls.
-pub const DEFAULT_DAEMON_BASE: &str = "http://127.0.0.1:3100";
+/// target the dev smoke page polls. Sourced from the shared MCP-port
+/// constants in `op-editor-core` so client and CLI can't drift.
+pub const DEFAULT_DAEMON_BASE: &str = op_editor_core::DEFAULT_LOCAL_DAEMON_ORIGIN;
 
 /// Pick the daemon base from the page's `location.origin` + `pathname`.
 ///

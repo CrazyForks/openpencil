@@ -271,7 +271,7 @@ impl BuiltinAgentConfig {
         if kind == BuiltinAgentKind::OpenAiCompat && self.model.starts_with("claude-") {
             self.model = "gpt-5.4".into();
         } else if kind == BuiltinAgentKind::Anthropic && self.model.starts_with("gpt-") {
-            self.model = "claude-sonnet-5".into();
+            self.model = crate::agent_settings_builtin_presets::DEFAULT_ANTHROPIC_MODEL.into();
         }
     }
 
@@ -408,6 +408,13 @@ pub struct ImageGenProfile {
     pub base_url: Option<String>,
     pub test_status: ImageTestStatus,
 }
+
+/// Openverse credential-registration help page opened from the Images
+/// tab's Register link. The raw `auth_tokens/register/` endpoint only
+/// accepts POST, so opening it in a browser (GET) lands on a 405 page —
+/// point at the API reference's auth section instead, which documents
+/// how to register an application for credentials.
+pub const OPENVERSE_AUTH_DOCS_URL: &str = "https://api.openverse.org/v1/#tag/auth";
 
 /// State for the floating agent-settings modal.
 #[derive(Debug, Clone, PartialEq)]
@@ -622,7 +629,11 @@ impl AgentSettings {
         }
         let n = self.next_builtin_agent_id.max(1);
         let name = format!("Built-in Agent {n}");
-        self.add_builtin_agent_with_defaults(&name, "", "claude-sonnet-4-5")
+        self.add_builtin_agent_with_defaults(
+            &name,
+            "",
+            crate::agent_settings_builtin_presets::DEFAULT_ANTHROPIC_MODEL,
+        )
     }
 
     pub fn begin_builtin_agent_draft(&mut self) {
