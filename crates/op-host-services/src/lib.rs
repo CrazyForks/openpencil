@@ -75,6 +75,7 @@ pub mod settings_io;
 pub mod validation_providers;
 pub(crate) mod web_auth;
 pub mod web_canvas_server;
+mod web_canvas_server_error;
 pub mod web_chat_standard;
 pub mod web_credential_policy;
 pub mod web_credentials;

@@ -1,3 +1,4 @@
+use crate::cli_error::CliError;
 use op_process_io::{spawn_null, wait_for_child_or, wait_until_false, WaitOutcome};
 use serde_json::json;
 use std::env;
@@ -47,7 +48,7 @@ pub(crate) fn run_start(
     headless: bool,
     web: bool,
     host: Option<&str>,
-) -> Result<String, String> {
+) -> Result<String, CliError> {
     if web {
         return run_start_web(port, document_path, host);
     }
@@ -96,7 +97,7 @@ fn editor_will_open(path: &str) -> bool {
 /// Launch the visible editor with `--live-mcp <port>` and wait for it to
 /// publish the discovery port file. No `$TMPDIR` manager files: the
 /// editor owns `~/.openpencil/.op-mcp-port` and removes it on exit.
-fn run_start_live(port: u16, document_path: Option<&str>) -> Result<String, String> {
+fn run_start_live(port: u16, document_path: Option<&str>) -> Result<String, CliError> {
     let binary = find_desktop_binary()?;
     let mut command = Command::new(&binary);
     command.arg("--live-mcp").arg(port.to_string());
@@ -106,7 +107,7 @@ fn run_start_live(port: u16, document_path: Option<&str>) -> Result<String, Stri
         command.arg(path);
     }
     let mut child = spawn_null(&mut command)
-        .map_err(|e| format!("spawn {} --live-mcp: {e}", binary.display()))?;
+        .map_err(|e| CliError::Daemon(format!("spawn {} --live-mcp: {e}", binary.display())))?;
 
     // Only report a `documentPath` the editor will ACTUALLY open: its
     // `initial_file_from_argv` gate ignores a missing / unsupported path
@@ -117,15 +118,15 @@ fn run_start_live(port: u16, document_path: Option<&str>) -> Result<String, Stri
     match wait_for_child_or(&mut child, 150, Duration::from_millis(100), || {
         reachable_live_port_file()
     })
-    .map_err(|e| format!("wait for {} --live-mcp: {e}", binary.display()))?
+    .map_err(|e| CliError::Daemon(format!("wait for {} --live-mcp: {e}", binary.display())))?
     {
         WaitOutcome::Ready((live_port, live_pid)) => {
             return Ok(start_json(live_pid, live_port, opened.map(Path::new)));
         }
         WaitOutcome::Exited(status) => {
-            return Err(format!(
+            return Err(CliError::Daemon(format!(
                 "OpenPencil editor exited before serving the live MCP server: {status}"
-            ));
+            )));
         }
         WaitOutcome::TimedOut => {}
     }
@@ -133,10 +134,10 @@ fn run_start_live(port: u16, document_path: Option<&str>) -> Result<String, Stri
     // rather than a fabricated success on the requested port — the editor
     // process is left running and may still come up, but we cannot
     // confirm the canvas is live yet.
-    Err(format!(
+    Err(CliError::Daemon(format!(
         "OpenPencil editor did not publish a live MCP server within 15s \
          (expected ~/.openpencil/{LIVE_PORT_FILE_NAME}); it may still be starting"
-    ))
+    )))
 }
 
 /// `op start --web` — spawn the `--serve-web` daemon (headless: static wasm
@@ -149,7 +150,7 @@ fn run_start_web(
     port: u16,
     document_path: Option<&str>,
     host: Option<&str>,
-) -> Result<String, String> {
+) -> Result<String, CliError> {
     // Reuse only an already-running WEB daemon (token-verified ping +
     // `mode:"web-canvas"` health). A plain `--mcp-http` server answers the
     // ping too but serves no editor, so reusing it would hand the user a
@@ -160,10 +161,10 @@ fn run_start_web(
             open_in_browser(&url);
             return Ok(start_web_json(existing.pid, existing.port, None, host));
         }
-        return Err(format!(
+        return Err(CliError::Daemon(format!(
             "a non-web MCP server (pid {}) already owns port {}; run `op stop` first",
             existing.pid, existing.port
-        ));
+        )));
     }
 
     let binary = find_desktop_binary()?;
@@ -188,7 +189,7 @@ fn run_start_web(
     }
     command.env(op_config_store::env_vars::MCP_TOKEN, &token);
     let mut child = spawn_null(&mut command)
-        .map_err(|e| format!("spawn {} --serve-web: {e}", binary.display()))?;
+        .map_err(|e| CliError::Daemon(format!("spawn {} --serve-web: {e}", binary.display())))?;
 
     let pid = child.id();
     write_manager_files(pid, port, &token)?;
@@ -199,7 +200,7 @@ fn run_start_web(
     match wait_for_child_or(&mut child, 50, Duration::from_millis(100), || {
         crate::mcp_http_cli::mcp_ping_headless(port, &token).then_some(())
     })
-    .map_err(|e| format!("wait for {} --serve-web: {e}", binary.display()))?
+    .map_err(|e| CliError::Daemon(format!("wait for {} --serve-web: {e}", binary.display())))?
     {
         WaitOutcome::Ready(()) => {
             let url = format!("http://127.0.0.1:{port}");
@@ -208,15 +209,15 @@ fn run_start_web(
         }
         WaitOutcome::Exited(status) => {
             remove_manager_files();
-            return Err(format!(
+            return Err(CliError::Daemon(format!(
                 "OpenPencil web daemon exited before accepting connections: {status}"
-            ));
+            )));
         }
         WaitOutcome::TimedOut => {}
     }
-    Err(format!(
+    Err(CliError::Daemon(format!(
         "OpenPencil web daemon did not respond on 127.0.0.1:{port} within 5s"
-    ))
+    )))
 }
 
 /// Best-effort default-browser launch, per OS: `open` (macOS),
@@ -283,7 +284,7 @@ fn start_web_json(pid: u32, port: u16, document_path: Option<&Path>, host: Optio
 
 /// Legacy windowless mode: spawn `--mcp-http` against a `.op` file and
 /// track it via the `$TMPDIR` pid/port manager files.
-fn run_start_headless(port: u16, document_path: Option<&str>) -> Result<String, String> {
+fn run_start_headless(port: u16, document_path: Option<&str>) -> Result<String, CliError> {
     let document = match document_path {
         Some(path) => PathBuf::from(path),
         None => default_document_path()?,
@@ -302,7 +303,7 @@ fn run_start_headless(port: u16, document_path: Option<&str>) -> Result<String, 
         .arg(&document)
         .env(op_config_store::env_vars::MCP_TOKEN, &token);
     let mut child = spawn_null(&mut command)
-        .map_err(|e| format!("spawn {} --mcp-http: {e}", binary.display()))?;
+        .map_err(|e| CliError::Daemon(format!("spawn {} --mcp-http: {e}", binary.display())))?;
 
     let pid = child.id();
     write_manager_files(pid, port, &token)?;
@@ -313,26 +314,26 @@ fn run_start_headless(port: u16, document_path: Option<&str>) -> Result<String, 
     match wait_for_child_or(&mut child, 30, Duration::from_millis(100), || {
         crate::mcp_http_cli::mcp_ping_headless(port, &token).then_some(())
     })
-    .map_err(|e| format!("wait for {} --mcp-http: {e}", binary.display()))?
+    .map_err(|e| CliError::Daemon(format!("wait for {} --mcp-http: {e}", binary.display())))?
     {
         WaitOutcome::Ready(()) => {
             return Ok(start_json(pid, port, Some(&document)));
         }
         WaitOutcome::Exited(status) => {
             remove_manager_files();
-            return Err(format!(
+            return Err(CliError::Daemon(format!(
                 "OpenPencil MCP server exited before accepting connections: {status}"
-            ));
+            )));
         }
         WaitOutcome::TimedOut => {}
     }
 
-    Err(format!(
+    Err(CliError::Daemon(format!(
         "OpenPencil MCP server did not respond on 127.0.0.1:{port} within 3s"
-    ))
+    )))
 }
 
-pub(crate) fn run_stop() -> Result<String, String> {
+pub(crate) fn run_stop() -> Result<String, CliError> {
     // `op stop` asks the server to quit ITSELF via a token-authed
     // `openpencil/shutdown`. This NEVER signals a pid, so there is no
     // recycled-pid / wrong-process race anywhere — and the live editor
@@ -461,17 +462,22 @@ pub(crate) fn discover_running_port() -> Option<u16> {
     reachable_headless_server().map(|info| info.port)
 }
 
-pub(crate) fn ensure_document_file(path: &Path) -> Result<(), String> {
+pub(crate) fn ensure_document_file(path: &Path) -> Result<(), CliError> {
     if path.exists() {
         if path.is_file() {
             return Ok(());
         }
-        return Err(format!("{} exists but is not a file", path.display()));
+        return Err(CliError::Io(format!(
+            "{} exists but is not a file",
+            path.display()
+        )));
     }
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
+        fs::create_dir_all(parent)
+            .map_err(|e| CliError::Io(format!("create {}: {e}", parent.display())))?;
     }
-    fs::write(path, MINIMAL_DOCUMENT).map_err(|e| format!("write {}: {e}", path.display()))
+    fs::write(path, MINIMAL_DOCUMENT)
+        .map_err(|e| CliError::Io(format!("write {}: {e}", path.display())))
 }
 
 /// Verify `path` holds a document the headless MCP server can actually load,
@@ -485,26 +491,27 @@ pub(crate) fn ensure_document_file(path: &Path) -> Result<(), String> {
 /// bare "connection refused" — with no hint that the file is the cause. The
 /// check never mutates the file, so a corrupt-but-valuable document is
 /// preserved rather than silently replaced.
-fn preflight_document(path: &Path) -> Result<(), String> {
-    let bytes = fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+fn preflight_document(path: &Path) -> Result<(), CliError> {
+    let bytes =
+        fs::read(path).map_err(|e| CliError::Io(format!("read {}: {e}", path.display())))?;
     // A `.op` document is UTF-8 JSON; a real `.fig` / `.pen` is a binary ZIP
     // archive (invalid UTF-8). Reject the binary case here as a wrong file type
     // rather than letting the server's `read_to_string` fail with an IO-flavored
     // error that reads like the file is unreadable.
     let src = std::str::from_utf8(&bytes).map_err(|_| {
-        format!(
+        CliError::Document(format!(
             "{} is not a valid OpenPencil document: not UTF-8 text \
              (looks like a binary archive). Only .op (JSON) documents open \
              directly; legacy .pen / .fig files must be imported.",
             path.display()
-        )
+        ))
     })?;
     op_pen_loader::load_canonical(src).map(|_| ()).map_err(|e| {
-        format!(
+        CliError::Document(format!(
             "{} is not a valid OpenPencil document: {e}\n\
              Only .op (JSON) documents open directly; legacy .pen / .fig files must be imported.",
             path.display()
-        )
+        ))
     })
 }
 
@@ -544,13 +551,14 @@ fn running_mcp_from_pid_file() -> Option<RunningMcp> {
     Some(RunningMcp { pid, port, token })
 }
 
-fn write_manager_files(pid: u32, port: u16, token: &str) -> Result<(), String> {
+fn write_manager_files(pid: u32, port: u16, token: &str) -> Result<(), CliError> {
     let (pid_file, port_file, token_file) = manager_files();
     fs::write(&pid_file, pid.to_string())
-        .map_err(|e| format!("write {}: {e}", pid_file.display()))?;
+        .map_err(|e| CliError::Io(format!("write {}: {e}", pid_file.display())))?;
     fs::write(&port_file, port.to_string())
-        .map_err(|e| format!("write {}: {e}", port_file.display()))?;
-    fs::write(&token_file, token).map_err(|e| format!("write {}: {e}", token_file.display()))
+        .map_err(|e| CliError::Io(format!("write {}: {e}", port_file.display())))?;
+    fs::write(&token_file, token)
+        .map_err(|e| CliError::Io(format!("write {}: {e}", token_file.display())))
 }
 
 fn remove_manager_files() {
@@ -581,29 +589,29 @@ fn make_token() -> String {
     format!("{pid:x}-{nanos:x}")
 }
 
-fn default_document_path() -> Result<PathBuf, String> {
-    let store = op_config_store::ConfigStore::user().map_err(|e| e.to_string())?;
-    default_document_path_in(&store).map_err(|e| e.to_string())
+fn default_document_path() -> Result<PathBuf, CliError> {
+    let store = op_config_store::ConfigStore::user().map_err(|e| CliError::Io(e.to_string()))?;
+    default_document_path_in(&store).map_err(|e| CliError::Io(e.to_string()))
 }
 
 fn default_document_path_in(store: &op_config_store::ConfigStore) -> std::io::Result<PathBuf> {
     store.path(op_config_store::well_known::CLI_SESSION)
 }
 
-fn home_dir() -> Result<PathBuf, String> {
+fn home_dir() -> Result<PathBuf, CliError> {
     op_config_store::home_dir()
-        .map_err(|_| "home directory not available; pass --file <path.op>".to_string())
+        .map_err(|_| CliError::Io("home directory not available; pass --file <path.op>".into()))
 }
 
-fn find_desktop_binary() -> Result<PathBuf, String> {
+fn find_desktop_binary() -> Result<PathBuf, CliError> {
     if let Some(path) = env::var_os("OPENPENCIL_DESKTOP_BIN").map(PathBuf::from) {
         if path.is_file() {
             return Ok(path);
         }
-        return Err(format!(
+        return Err(CliError::Daemon(format!(
             "OPENPENCIL_DESKTOP_BIN points to a missing file: {}",
             path.display()
-        ));
+        )));
     }
 
     for path in desktop_binary_candidates() {
@@ -611,7 +619,10 @@ fn find_desktop_binary() -> Result<PathBuf, String> {
             return Ok(path);
         }
     }
-    Err("OpenPencil desktop binary not found; set OPENPENCIL_DESKTOP_BIN or build openpencil-desktop".into())
+    Err(CliError::Daemon(
+        "OpenPencil desktop binary not found; set OPENPENCIL_DESKTOP_BIN or build openpencil-desktop"
+            .into(),
+    ))
 }
 
 fn desktop_binary_candidates() -> Vec<PathBuf> {

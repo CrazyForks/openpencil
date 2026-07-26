@@ -1,6 +1,7 @@
 use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::cli_error::CliError;
 use op_rpc_transport::{JsonRpcRequest, TcpJsonRpc, PING_TIMEOUT, POST_TIMEOUT, SHUTDOWN_TIMEOUT};
 
 /// OpenPencil MCP identity marker reported in the `ping` reply's `result`
@@ -99,10 +100,18 @@ pub(crate) fn http_request(body: &str) -> String {
 /// return `(http_status, body)`. `http_status` is 0 when no recognizable
 /// status line was returned. The deadlines stop a stale port whose
 /// service accepts but never replies from hanging the CLI indefinitely.
-fn post_raw(port: u16, body: &str, timeout: std::time::Duration) -> Result<(u16, String), String> {
+fn post_raw(
+    port: u16,
+    body: &str,
+    timeout: std::time::Duration,
+) -> Result<(u16, String), CliError> {
+    // `op-rpc-transport` is a shared crate outside this conversion's scope and
+    // still reports failures as `String`; adapt it here so the stringly-typed
+    // error never escapes into the CLI's own call graph.
     TcpJsonRpc::local_mcp(port)
         .post_raw(body, timeout)
         .map(|reply| (reply.status, reply.body))
+        .map_err(CliError::Transport)
 }
 
 /// POST `body` to the HTTP MCP server on `127.0.0.1:port` and return the
@@ -111,12 +120,12 @@ fn post_raw(port: u16, body: &str, timeout: std::time::Duration) -> Result<(u16,
 /// `tools/call` content envelope is unwrapped to the raw tool result, and an
 /// `isError` tool result (or a JSON-RPC transport error) is surfaced as an
 /// error — so `op` exits non-zero on a failed tool, like the TS CLI.
-pub(crate) fn post(port: u16, body: &str) -> Result<String, String> {
+pub(crate) fn post(port: u16, body: &str) -> Result<String, CliError> {
     let (status, reply) = post_raw(port, body, POST_TIMEOUT)?;
     if !(200..300).contains(&status) {
-        return Err(format!(
+        return Err(CliError::Transport(format!(
             "MCP server on 127.0.0.1:{port} returned HTTP {status}: {reply}"
-        ));
+        )));
     }
     unwrap_mcp_reply(&reply)
 }
@@ -127,7 +136,7 @@ pub(crate) fn post(port: u16, body: &str) -> Result<String, String> {
 ///   an `isError:true` result → `Err(text)`.
 /// - a JSON-RPC transport `error` → `Err(message)`.
 /// - anything else (e.g. a `tools/list` reply) → the raw reply unchanged.
-fn unwrap_mcp_reply(reply: &str) -> Result<String, String> {
+fn unwrap_mcp_reply(reply: &str) -> Result<String, CliError> {
     let Ok(value) = serde_json::from_str::<Value>(reply) else {
         return Ok(reply.to_string());
     };
@@ -136,7 +145,7 @@ fn unwrap_mcp_reply(reply: &str) -> Result<String, String> {
         .and_then(|err| err.get("message"))
         .and_then(Value::as_str)
     {
-        return Err(message.to_string());
+        return Err(CliError::Tool(message.to_string()));
     }
     let Some(result) = value.get("result") else {
         return Ok(reply.to_string());
@@ -148,7 +157,7 @@ fn unwrap_mcp_reply(reply: &str) -> Result<String, String> {
             .collect::<Vec<_>>()
             .join("\n");
         if result.get("isError").and_then(Value::as_bool) == Some(true) {
-            return Err(text);
+            return Err(CliError::Tool(text));
         }
         return Ok(text);
     }
@@ -161,10 +170,11 @@ fn http_get_raw(
     port: u16,
     path: &str,
     timeout: std::time::Duration,
-) -> Result<(u16, String), String> {
+) -> Result<(u16, String), CliError> {
     TcpJsonRpc::local_mcp(port)
         .get_raw(path, timeout)
         .map(|reply| (reply.status, reply.body))
+        .map_err(CliError::Transport)
 }
 
 /// True when `127.0.0.1:port` is the `--serve-web` web-canvas daemon —
@@ -279,13 +289,16 @@ mod tests {
     #[test]
     fn unwrap_surfaces_iserror_result_as_err() {
         let reply = r#"{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"Error: boom"}],"isError":true}}"#;
-        assert_eq!(unwrap_mcp_reply(reply), Err("Error: boom".to_string()));
+        assert_eq!(
+            unwrap_mcp_reply(reply).unwrap_err().to_string(),
+            "Error: boom"
+        );
     }
 
     #[test]
     fn unwrap_surfaces_transport_error_as_err() {
         let reply = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"bad args"}}"#;
-        assert_eq!(unwrap_mcp_reply(reply), Err("bad args".to_string()));
+        assert_eq!(unwrap_mcp_reply(reply).unwrap_err().to_string(), "bad args");
     }
 
     #[test]

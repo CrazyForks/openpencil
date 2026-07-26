@@ -3,8 +3,9 @@ use std::path::Path;
 use serde_json::json;
 
 use super::{flag_value, required_pos, Command, Flags};
+use crate::cli_error::CliError;
 
-pub(super) fn map_import_figma(positionals: &[String], flags: &Flags) -> Result<Command, String> {
+pub(super) fn map_import_figma(positionals: &[String], flags: &Flags) -> Result<Command, CliError> {
     let fig_path = required_pos(
         positionals,
         1,
@@ -21,22 +22,23 @@ pub(super) fn figma_default_out_path(fig_path: &str) -> String {
         .unwrap_or_else(|| fig_path.to_string())
 }
 
-pub(super) fn run_import_figma(fig_path: &str, out_path: &str) -> Result<String, String> {
-    let bytes = std::fs::read(fig_path).map_err(|e| format!("read {fig_path:?}: {e}"))?;
+pub(super) fn run_import_figma(fig_path: &str, out_path: &str) -> Result<String, CliError> {
+    let bytes =
+        std::fs::read(fig_path).map_err(|e| CliError::Io(format!("read {fig_path:?}: {e}")))?;
     let file_name = Path::new(fig_path)
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("Figma Import");
     let import = op_figma::parse_fig_binary(&bytes, file_name, op_figma::FigLayoutMode::OpenPencil)
-        .map_err(|e| format!("import {fig_path:?}: {e}"))?;
+        .map_err(|e| CliError::Document(format!("import {fig_path:?}: {e}")))?;
     // Dedup shared image payloads into the `images` table — an
     // image-heavy `.fig` references the same bitmap from many fills,
     // and the inline form writes one full copy per reference.
     let mut value = serde_json::to_value(&import.document)
-        .map_err(|e| format!("serialize {out_path:?}: {e}"))?;
+        .map_err(|e| CliError::Payload(format!("serialize {out_path:?}: {e}")))?;
     jian_ops_schema::image_table::externalize_images(&mut value);
     let raw = value.to_string();
-    std::fs::write(out_path, raw).map_err(|e| format!("write {out_path:?}: {e}"))?;
+    std::fs::write(out_path, raw).map_err(|e| CliError::Io(format!("write {out_path:?}: {e}")))?;
     let page_count = import.document.pages.as_ref().map_or(1, Vec::len);
     let node_count = import
         .document

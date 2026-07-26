@@ -28,7 +28,11 @@ use base64::Engine as _;
 use op_editor_core::agent_settings::{AcpAgentConnectOutcome, ProviderConnectOutcome};
 use op_editor_core::{AgentSettings, EditorState};
 
+use crate::web_canvas_server_error::WebCanvasError;
 use crate::web_credential_policy::WebCredentialPersistence;
+
+/// Every fallible step of this module fails with [`WebCanvasError`].
+type Result<T> = std::result::Result<T, WebCanvasError>;
 
 /// Slow/stalled-peer bound — bodies can be large (whole documents with embedded
 /// images), so a connection that opens and dribbles must not pin a thread.
@@ -188,9 +192,10 @@ impl WebCanvasState {
 
     /// Clear the transient web-sync document back to the same starter document a
     /// fresh browser shell paints before the daemon applies updates.
-    pub(crate) fn reset_document(&mut self) -> Result<u64, String> {
+    pub(crate) fn reset_document(&mut self) -> Result<u64> {
         if let Some(path) = self.current_path.clone() {
-            let mut next = crate::mcp_serve::load_editor_state(&path)?;
+            let mut next =
+                crate::mcp_serve::load_editor_state(&path).map_err(WebCanvasError::Document)?;
             preserve_web_canvas_preferences(&self.editor, &mut next);
             set_file_name_display(&mut next, &path);
             self.editor = next;
@@ -209,7 +214,7 @@ impl WebCanvasState {
     /// retryable, and the document/version are left exactly as
     /// `reset_document`'s own `?`-early-return already guarantees (nothing
     /// touched before the fallible load succeeds).
-    pub(crate) fn reset_document_guarded(&mut self) -> Result<ResetOutcome, String> {
+    pub(crate) fn reset_document_guarded(&mut self) -> Result<ResetOutcome> {
         if self.reset_consumed {
             return Ok(ResetOutcome { skipped: true });
         }
@@ -233,8 +238,9 @@ impl WebCanvasState {
         &mut self,
         body: &str,
         base_version_override: Option<u64>,
-    ) -> Result<PushOutcome, String> {
-        let request = crate::mcp_serve::parse_document_sync_request(body)?;
+    ) -> Result<PushOutcome> {
+        let request = crate::mcp_serve::parse_document_sync_request(body)
+            .map_err(WebCanvasError::BadRequest)?;
         let base_version = base_version_override.or(request.base_version);
         if let Some(expected) = base_version {
             if expected != self.version {
@@ -258,8 +264,8 @@ impl WebCanvasState {
         }
         // Load via the same proven path as desktop file-open. A load failure
         // is a client fault → 400, like the TS validation 400s.
-        let loaded =
-            op_pen_loader::load_canonical(request.document_json).map_err(|e| e.to_string())?;
+        let loaded = op_pen_loader::load_canonical(request.document_json)
+            .map_err(|e| WebCanvasError::Document(e.to_string()))?;
         for w in &loaded.warnings {
             eprintln!("openpencil-desktop --serve-web: schema warning: {w:?}");
         }
@@ -306,7 +312,9 @@ fn persist_api_settings<F>(
     save_credentials: F,
 ) -> WebReply
 where
-    F: FnOnce(&EditorState) -> Result<(), String>,
+    // `settings_io::save_checked` is outside this conversion's scope and still
+    // reports `String`; only its success/failure is consulted here.
+    F: FnOnce(&EditorState) -> std::result::Result<(), String>,
 {
     if method == "POST" && path == "/api/settings/credentials" && reply.status == "200 OK" {
         if save_credentials(&state.editor).is_err() {
@@ -396,9 +404,9 @@ pub fn handle_web_canvas_request(
                 })
                 .to_string(),
             },
-            Err(message) => WebReply {
-                status: "400 Bad Request",
-                body: crate::mcp_serve::rest_error_body(&message),
+            Err(error) => WebReply {
+                status: error.http_status(),
+                body: crate::mcp_serve::rest_error_body(&error.to_string()),
             },
         },
         ("GET", "/api/mcp/version") => WebReply {
@@ -424,7 +432,7 @@ pub fn handle_web_canvas_request(
                 body: crate::mcp_serve::document_sync_ok(state.version),
             },
             Err(e) => WebReply {
-                status: "400 Bad Request",
+                status: e.http_status(),
                 body: crate::mcp_serve::rest_error_body(&format!("sync reset failed: {e}")),
             },
         },
@@ -539,13 +547,13 @@ fn export_raster_download(body: &str, state: &WebCanvasState) -> WebReply {
             .to_string(),
         },
         Err(e) => WebReply {
-            status: "400 Bad Request",
+            status: e.http_status(),
             body: crate::mcp_serve::rest_error_body(&format!("export raster failed: {e}")),
         },
     }
 }
 
-fn build_raster_download(body: &str, fallback: &EditorState) -> Result<RasterDownload, String> {
+fn build_raster_download(body: &str, fallback: &EditorState) -> Result<RasterDownload> {
     let parsed = parse_export_body(body)?;
     let editor = export_editor_from_value(parsed.as_ref(), fallback)?;
     let (format, file_name, mime, ext) = raster_format_from_export_body(parsed.as_ref())?;
@@ -564,9 +572,9 @@ fn build_raster_download(body: &str, fallback: &EditorState) -> Result<RasterDow
     };
     if let Err(e) = result {
         let _ = std::fs::remove_file(&tmp);
-        return Err(e);
+        return Err(WebCanvasError::Export(e));
     }
-    let bytes = std::fs::read(&tmp).map_err(|e| e.to_string())?;
+    let bytes = std::fs::read(&tmp).map_err(|e| WebCanvasError::Io(e.to_string()))?;
     let _ = std::fs::remove_file(&tmp);
     Ok(RasterDownload {
         file_name,
@@ -577,15 +585,12 @@ fn build_raster_download(body: &str, fallback: &EditorState) -> Result<RasterDow
 
 fn raster_format_from_export_body(
     body: Option<&serde_json::Value>,
-) -> Result<
-    (
-        crate::export::RasterFormat,
-        &'static str,
-        &'static str,
-        &'static str,
-    ),
-    String,
-> {
+) -> Result<(
+    crate::export::RasterFormat,
+    &'static str,
+    &'static str,
+    &'static str,
+)> {
     let format = body
         .and_then(|body| body.get("format"))
         .and_then(|format| format.as_str())
@@ -609,7 +614,9 @@ fn raster_format_from_export_body(
             "image/webp",
             "webp",
         )),
-        other => Err(format!("unsupported raster format: {other}")),
+        other => Err(WebCanvasError::BadRequest(format!(
+            "unsupported raster format: {other}"
+        ))),
     }
 }
 
@@ -643,23 +650,23 @@ fn export_pdf_download(body: &str, state: &WebCanvasState) -> WebReply {
             .to_string(),
         },
         Err(e) => WebReply {
-            status: "400 Bad Request",
+            status: e.http_status(),
             body: crate::mcp_serve::rest_error_body(&format!("export PDF failed: {e}")),
         },
     }
 }
 
-fn build_pdf_download(body: &str, fallback: &EditorState) -> Result<Vec<u8>, String> {
+fn build_pdf_download(body: &str, fallback: &EditorState) -> Result<Vec<u8>> {
     let editor = export_editor_from_body(body, fallback)?;
     let scene = op_pen_loader::editor_state_to_layout_scene(&editor);
     let tmp = tmp_export_path("pdf");
-    crate::export_pdf::export_pdf(&scene, &tmp)?;
-    let bytes = std::fs::read(&tmp).map_err(|e| e.to_string())?;
+    crate::export_pdf::export_pdf(&scene, &tmp).map_err(WebCanvasError::Export)?;
+    let bytes = std::fs::read(&tmp).map_err(|e| WebCanvasError::Io(e.to_string()))?;
     let _ = std::fs::remove_file(&tmp);
     Ok(bytes)
 }
 
-fn export_editor_from_body(body: &str, fallback: &EditorState) -> Result<EditorState, String> {
+fn export_editor_from_body(body: &str, fallback: &EditorState) -> Result<EditorState> {
     let parsed = parse_export_body(body)?;
     export_editor_from_value(parsed.as_ref(), fallback)
 }
@@ -667,16 +674,19 @@ fn export_editor_from_body(body: &str, fallback: &EditorState) -> Result<EditorS
 fn export_editor_from_value(
     body: Option<&serde_json::Value>,
     fallback: &EditorState,
-) -> Result<EditorState, String> {
+) -> Result<EditorState> {
     let Some(doc) = body.and_then(|body| body.get("document")) else {
         return Ok(fallback.clone());
     };
     if !doc.is_object() {
-        return Err("document must be an object".into());
+        return Err(WebCanvasError::BadRequest(
+            "document must be an object".into(),
+        ));
     }
-    let src = serde_json::to_string(doc).map_err(|e| e.to_string())?;
+    let src = serde_json::to_string(doc).map_err(|e| WebCanvasError::BadRequest(e.to_string()))?;
     let editor_meta = op_pen_loader::extract_editor_meta(&src);
-    let loaded = op_pen_loader::load_canonical(&src).map_err(|e| e.to_string())?;
+    let loaded =
+        op_pen_loader::load_canonical(&src).map_err(|e| WebCanvasError::Document(e.to_string()))?;
     let mut editor = EditorState::from_document(loaded.value);
     if let Some(meta) = editor_meta {
         op_pen_loader::apply_editor_meta(&mut editor, meta);
@@ -698,13 +708,13 @@ fn export_editor_from_value(
     Ok(editor)
 }
 
-fn parse_export_body(body: &str) -> Result<Option<serde_json::Value>, String> {
+fn parse_export_body(body: &str) -> Result<Option<serde_json::Value>> {
     if body.trim().is_empty() {
         return Ok(None);
     }
     serde_json::from_str(body)
         .map(Some)
-        .map_err(|e| format!("parse request body: {e}"))
+        .map_err(|e| WebCanvasError::BadRequest(format!("parse request body: {e}")))
 }
 
 fn tmp_export_path(ext: &str) -> PathBuf {
@@ -741,7 +751,7 @@ fn save_current_file(body: &str, state: &mut WebCanvasState) -> WebReply {
             }
         }
         Err(e) => WebReply {
-            status: "400 Bad Request",
+            status: e.http_status(),
             body: crate::mcp_serve::rest_error_body(&format!("save failed: {e}")),
         },
     }
@@ -751,7 +761,7 @@ fn save_editor_from_body(
     body: &str,
     previous: &EditorState,
     path: &std::path::Path,
-) -> Result<EditorState, String> {
+) -> Result<EditorState> {
     let (doc, active_page_index, editor_meta) = document_and_active_page_from_body(body)?;
     let mut next = previous.clone();
     next.replace_document(doc);
@@ -769,30 +779,30 @@ fn save_editor_from_body(
         next.ui.active_page_index = index.min(page_count - 1);
     }
     set_file_name_display(&mut next, path);
-    crate::doc_io::save_to_path(&next, path)?;
+    crate::doc_io::save_to_path(&next, path).map_err(WebCanvasError::Io)?;
     Ok(next)
 }
 
 fn document_and_active_page_from_body(
     body: &str,
-) -> Result<
-    (
-        jian_ops_schema::PenDocument,
-        Option<usize>,
-        Option<op_pen_loader::EditorMeta>,
-    ),
-    String,
-> {
-    let parsed =
-        crate::mcp_serve::parse_borrowed_document_envelope(body).map_err(|e| e.to_string())?;
+) -> Result<(
+    jian_ops_schema::PenDocument,
+    Option<usize>,
+    Option<op_pen_loader::EditorMeta>,
+)> {
+    let parsed = crate::mcp_serve::parse_borrowed_document_envelope(body)
+        .map_err(|e| WebCanvasError::BadRequest(e.to_string()))?;
     let Some(doc_json) = parsed.document_json else {
-        return Err("missing document".into());
+        return Err(WebCanvasError::BadRequest("missing document".into()));
     };
     if !doc_json.trim_start().starts_with('{') {
-        return Err("document must be an object".into());
+        return Err(WebCanvasError::BadRequest(
+            "document must be an object".into(),
+        ));
     }
     let editor_meta = op_pen_loader::extract_editor_meta(doc_json);
-    let loaded = op_pen_loader::load_canonical(doc_json).map_err(|e| e.to_string())?;
+    let loaded = op_pen_loader::load_canonical(doc_json)
+        .map_err(|e| WebCanvasError::Document(e.to_string()))?;
     for w in &loaded.warnings {
         eprintln!("openpencil-desktop --serve-web: schema warning: {w:?}");
     }
@@ -1269,22 +1279,33 @@ pub struct ServeWebOptions {
 /// The host defaults to loopback; `--host 0.0.0.0` is the LAN/Docker opt-in
 /// (no TLS — deploy behind a proxy for anything beyond a trusted network).
 pub fn parse_serve_web_args<I: Iterator<Item = String>>(
-    mut args: I,
-) -> Result<ServeWebOptions, String> {
+    args: I,
+) -> std::result::Result<ServeWebOptions, String> {
+    // Public entry point consumed by `cli_modes.rs` and the host binaries,
+    // which are outside this conversion's scope — keep the `String` contract
+    // and adapt the typed error here rather than rippling outward.
+    parse_serve_web_args_typed(args).map_err(|e| e.to_string())
+}
+
+fn parse_serve_web_args_typed<I: Iterator<Item = String>>(mut args: I) -> Result<ServeWebOptions> {
     let Some(first) = args.next() else {
-        return Err("missing <port> arg".into());
+        return Err(WebCanvasError::Config("missing <port> arg".into()));
     };
     if first.starts_with("--") {
         return parse_serve_web_args_managed(first, args);
     }
     let Ok(port) = first.parse::<u16>() else {
-        return Err(format!("<port> must be a u16, got {first:?}"));
+        return Err(WebCanvasError::Config(format!(
+            "<port> must be a u16, got {first:?}"
+        )));
     };
     let mut path: Option<PathBuf> = None;
     let mut host = "127.0.0.1".to_string();
     while let Some(arg) = args.next() {
         if arg == "--host" {
-            host = args.next().ok_or("--host needs a value (e.g. 0.0.0.0)")?;
+            host = args.next().ok_or_else(|| {
+                WebCanvasError::Config("--host needs a value (e.g. 0.0.0.0)".into())
+            })?;
         } else if let Some(value) = arg.strip_prefix("--host=") {
             host = value.to_string();
         } else if path.is_none() {
@@ -1292,11 +1313,11 @@ pub fn parse_serve_web_args<I: Iterator<Item = String>>(
             // from the same starter document the web shell paints locally.
             path = Some(PathBuf::from(arg));
         } else {
-            return Err(format!("unexpected arg {arg:?}"));
+            return Err(WebCanvasError::Config(format!("unexpected arg {arg:?}")));
         }
     }
     if host.is_empty() {
-        return Err("--host must not be empty".into());
+        return Err(WebCanvasError::Config("--host must not be empty".into()));
     }
     Ok(ServeWebOptions {
         port,
@@ -1315,7 +1336,7 @@ pub fn parse_serve_web_args<I: Iterator<Item = String>>(
 fn parse_serve_web_args_managed<I: Iterator<Item = String>>(
     first_flag: String,
     mut args: I,
-) -> Result<ServeWebOptions, String> {
+) -> Result<ServeWebOptions> {
     let mut managed = false;
     let mut port: Option<u16> = None;
     let mut path: Option<PathBuf> = None;
@@ -1326,30 +1347,36 @@ fn parse_serve_web_args_managed<I: Iterator<Item = String>>(
         match arg.as_str() {
             "--managed" => managed = true,
             "--port" => {
-                let value = args.next().ok_or("--port needs a value")?;
-                port = Some(
-                    value
-                        .parse::<u16>()
-                        .map_err(|_| format!("--port must be a u16, got {value:?}"))?,
-                );
+                let value = args
+                    .next()
+                    .ok_or_else(|| WebCanvasError::Config("--port needs a value".into()))?;
+                port = Some(value.parse::<u16>().map_err(|_| {
+                    WebCanvasError::Config(format!("--port must be a u16, got {value:?}"))
+                })?);
             }
             "--file" => {
-                path = Some(PathBuf::from(args.next().ok_or("--file needs a value")?));
+                path = Some(PathBuf::from(args.next().ok_or_else(|| {
+                    WebCanvasError::Config("--file needs a value".into())
+                })?));
             }
             "--host" => {
-                host = args.next().ok_or("--host needs a value (e.g. 0.0.0.0)")?;
+                host = args.next().ok_or_else(|| {
+                    WebCanvasError::Config("--host needs a value (e.g. 0.0.0.0)".into())
+                })?;
             }
             "--allow-origin" => {
-                allow_origins.push(args.next().ok_or("--allow-origin needs a value")?);
+                allow_origins.push(args.next().ok_or_else(|| {
+                    WebCanvasError::Config("--allow-origin needs a value".into())
+                })?);
             }
-            other => return Err(format!("unexpected arg {other:?}")),
+            other => return Err(WebCanvasError::Config(format!("unexpected arg {other:?}"))),
         }
     }
     let Some(port) = port else {
-        return Err("missing --port <n>".into());
+        return Err(WebCanvasError::Config("missing --port <n>".into()));
     };
     if host.is_empty() {
-        return Err("--host must not be empty".into());
+        return Err(WebCanvasError::Config("--host must not be empty".into()));
     }
     Ok(ServeWebOptions {
         port,
@@ -1397,10 +1424,11 @@ fn random_token() -> String {
 fn startup_editor_from_base_for_web_canvas(
     base: EditorState,
     path: Option<PathBuf>,
-) -> Result<EditorState, String> {
+) -> Result<EditorState> {
     match path {
         Some(p) => {
-            let mut next = crate::mcp_serve::load_editor_state(&p)?;
+            let mut next =
+                crate::mcp_serve::load_editor_state(&p).map_err(WebCanvasError::Document)?;
             preserve_web_canvas_preferences(&base, &mut next);
             set_file_name_display(&mut next, &p);
             next.editor_ui.touch_recent_file(
@@ -1420,24 +1448,31 @@ fn startup_editor_for_web_canvas_with_loader<Checked>(
     path: Option<PathBuf>,
     _policy: WebCredentialPersistence,
     checked_load: Checked,
-) -> Result<EditorState, String>
+) -> Result<EditorState>
 where
-    Checked: FnOnce(&mut EditorState) -> Result<(), String>,
+    // `settings_io::load_checked` is outside this conversion's scope and
+    // still reports `String`; keep its shape and adapt at the call.
+    Checked: FnOnce(&mut EditorState) -> std::result::Result<(), String>,
 {
     let mut base = EditorState::starter();
-    checked_load(&mut base)?;
+    checked_load(&mut base).map_err(WebCanvasError::Config)?;
     startup_editor_from_base_for_web_canvas(base, path)
 }
 
 fn startup_editor_for_web_canvas_with_policy(
     path: Option<PathBuf>,
     policy: WebCredentialPersistence,
-) -> Result<EditorState, String> {
+) -> Result<EditorState> {
     startup_editor_for_web_canvas_with_loader(path, policy, crate::settings_io::load_checked)
 }
 
-pub fn startup_editor_for_web_canvas(path: Option<PathBuf>) -> Result<EditorState, String> {
+/// Public entry point (host binaries) — keeps the `String` contract and
+/// adapts the typed error at the boundary.
+pub fn startup_editor_for_web_canvas(
+    path: Option<PathBuf>,
+) -> std::result::Result<EditorState, String> {
     startup_editor_for_web_canvas_with_policy(path, crate::web_credential_policy::from_env())
+        .map_err(|e| e.to_string())
 }
 
 /// Run the web-canvas daemon per `options` (host/port default `127.0.0.1`),
@@ -1457,7 +1492,12 @@ pub fn startup_editor_for_web_canvas(path: Option<PathBuf>) -> Result<EditorStat
 /// path uses, waking the accept loop by connecting back to the bound
 /// address. Non-managed mode is untouched: no token, no handshake output, no
 /// stdin thread.
-pub fn run_web_canvas(options: ServeWebOptions) -> Result<(), String> {
+pub fn run_web_canvas(options: ServeWebOptions) -> std::result::Result<(), String> {
+    // Public entry point (`cli_modes.rs`) — `String` contract preserved.
+    run_web_canvas_typed(options).map_err(|e| e.to_string())
+}
+
+fn run_web_canvas_typed(options: ServeWebOptions) -> Result<()> {
     let ServeWebOptions {
         port,
         path,
@@ -1479,9 +1519,11 @@ pub fn run_web_canvas(options: ServeWebOptions) -> Result<(), String> {
     // to the daemon owner, not to whoever can reach the port.
     let loopback_bind = matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1");
     crate::web_auth::init(&mut editor, managed || loopback_bind);
-    let listener =
-        TcpListener::bind((host.as_str(), port)).map_err(|e| format!("bind {host}:{port}: {e}"))?;
-    let local_addr = listener.local_addr().map_err(|e| e.to_string())?;
+    let listener = TcpListener::bind((host.as_str(), port))
+        .map_err(|e| WebCanvasError::Config(format!("bind {host}:{port}: {e}")))?;
+    let local_addr = listener
+        .local_addr()
+        .map_err(|e| WebCanvasError::Config(e.to_string()))?;
     let bound = local_addr.port();
     eprintln!("openpencil-desktop --serve-web: listening on {host}:{bound}");
     match crate::web_static::resolve_bundle_dir() {
@@ -1521,17 +1563,36 @@ pub fn run_web_canvas(options: ServeWebOptions) -> Result<(), String> {
         let _ = out.flush();
         drop(out);
         let shutdown_stdin = Arc::clone(&shutdown);
-        std::thread::spawn(move || {
-            let mut sink = [0u8; 64];
-            let mut stdin = std::io::stdin();
-            while matches!(stdin.read(&mut sink), Ok(n) if n > 0) {}
-            shutdown_stdin.store(true, Ordering::Release);
-            // Wake the (possibly blocked) accept loop — reconnect to the
-            // bound address exactly (works for IPv6 / custom --host, unlike
-            // the loopback-only wake used by the token-authed shutdown
-            // path below).
-            let _ = std::net::TcpStream::connect(local_addr);
-        });
+        // Detached on purpose — there is NO portable way to cancel a thread
+        // parked in a blocking `Stdin::read`. A channel or flag can only be
+        // observed between reads, and putting fd 0 into non-blocking mode
+        // would need platform `fcntl`/`SetNamedPipeHandleState` calls (a new
+        // dependency or unsafe per-OS code) AND would change what "EOF" means
+        // for the parent-death lease, which is this thread's whole purpose.
+        // So the exit path is: (a) the parent closes stdin — the loop ends and
+        // raises `shutdown` itself, or (b) some other path raised `shutdown`
+        // first, in which case the checks below make this thread a no-op and
+        // the process exit reaps it. The flag check per iteration is what
+        // makes (b) prompt rather than "whenever the parent next writes".
+        let _ = std::thread::Builder::new()
+            .name("op-serve-web-stdin".into())
+            .spawn(move || {
+                let mut sink = [0u8; 64];
+                let mut stdin = std::io::stdin();
+                while !shutdown_stdin.load(Ordering::Acquire)
+                    && matches!(stdin.read(&mut sink), Ok(n) if n > 0)
+                {}
+                // Only raise + wake when nobody else already shut the daemon
+                // down; a redundant wake connect against an already-closed
+                // listener is harmless but pointlessly noisy.
+                if !shutdown_stdin.swap(true, Ordering::AcqRel) {
+                    // Wake the (possibly blocked) accept loop — reconnect to
+                    // the bound address exactly (works for IPv6 / custom
+                    // --host, unlike the loopback-only wake used by the
+                    // token-authed shutdown path below).
+                    let _ = std::net::TcpStream::connect(local_addr);
+                }
+            });
     }
     // Stash the managed token + allow-origins on the shared state. `serve_one`
     // reads them via `RequestAuth` gate (token) and `cors_origin_for` (CORS
@@ -1596,16 +1657,20 @@ fn enforce_credential_persistence_policy<F>(
     editor: &mut EditorState,
     policy: WebCredentialPersistence,
     save: F,
-) -> Result<(), String>
+) -> Result<()>
 where
-    F: FnOnce(&EditorState) -> Result<(), String>,
+    // `settings_io::save_checked`'s `String` shape is preserved (unowned);
+    // only the outcome is retyped.
+    F: FnOnce(&EditorState) -> std::result::Result<(), String>,
 {
     if !policy.server_persistence()
         && crate::web_credentials::remove_browser_owned_credentials(editor)
     {
         save(editor).map_err(|_| {
-            "failed to remove browser-owned credentials while server persistence is disabled"
-                .to_string()
+            WebCanvasError::Config(
+                "failed to remove browser-owned credentials while server persistence is disabled"
+                    .into(),
+            )
         })?;
     }
     Ok(())
@@ -1678,8 +1743,8 @@ fn serve_one<S: Read + Write>(
     stream: &mut S,
     state: &Mutex<WebCanvasState>,
     hub: &SseHub,
-) -> Result<bool, String> {
-    let req = crate::mcp_serve::read_http_request(stream)?;
+) -> Result<bool> {
+    let req = crate::mcp_serve::read_http_request(stream).map_err(WebCanvasError::Transport)?;
     let (auth, allow_origins) = {
         let guard = state.lock().unwrap_or_else(|p| p.into_inner());
         let auth = RequestAuth {
@@ -1701,6 +1766,7 @@ fn serve_one<S: Read + Write>(
             "",
             cors_origin,
         )
+        .map_err(WebCanvasError::Transport)
         .map(|()| false);
     }
     if is_sensitive_browser_post(&req) && !credential_request_origin_allowed(&req) {
@@ -1710,6 +1776,7 @@ fn serve_one<S: Read + Write>(
             &crate::mcp_serve::rest_error_body("cross-origin sensitive request is forbidden"),
             cors_origin,
         )
+        .map_err(WebCanvasError::Transport)
         .map(|()| false);
     }
     // Sensitive JSON routes refuse CORS "simple request" content types
@@ -1724,6 +1791,7 @@ fn serve_one<S: Read + Write>(
             ),
             cors_origin,
         )
+        .map_err(WebCanvasError::Transport)
         .map(|()| false);
     }
     // Static serving: the host page (`/`) and the wasm-bindgen bundle
@@ -1734,6 +1802,7 @@ fn serve_one<S: Read + Write>(
             crate::web_static::handle_static_request(&req.path, bundle_dir.as_deref())
         {
             return crate::web_static::write_static_response(stream, &reply, cors_origin)
+                .map_err(WebCanvasError::Transport)
                 .map(|()| false);
         }
     }
@@ -1746,6 +1815,7 @@ fn serve_one<S: Read + Write>(
             body: crate::web_auth::LOADING_PAGE_HTML.as_bytes().to_vec(),
         };
         return crate::web_static::write_static_response(stream, &reply, cors_origin)
+            .map_err(WebCanvasError::Transport)
             .map(|()| false);
     }
     // Managed-mode token gate: everything below this point is a privileged
@@ -1760,6 +1830,7 @@ fn serve_one<S: Read + Write>(
             r#"{"ok":false,"error":"unauthorized"}"#,
             cors_origin,
         )
+        .map_err(WebCanvasError::Transport)
         .map(|()| false);
     }
     // Device-login begin: waits (per-connection thread, off the state
@@ -1774,6 +1845,7 @@ fn serve_one<S: Read + Write>(
             &reply.body,
             cors_origin,
         )
+        .map_err(WebCanvasError::Transport)
         .map(|()| false);
     }
     // SSE live-update stream: the browser shell subscribes and re-syncs whenever
@@ -1795,7 +1867,7 @@ fn serve_one<S: Read + Write>(
     if req.method == "POST" && req.path == "/api/ai/stream" {
         let Some(ai_req) = crate::ai_proxy::parse_ai_stream_body(&req.body) else {
             return crate::ai_proxy::write_sse_error(stream, "invalid request body", cors_origin)
-                .map_err(|e| format!("ai stream error: {e}"))
+                .map_err(|e| WebCanvasError::Transport(format!("ai stream error: {e}")))
                 .map(|()| false);
         };
         let provider = {
@@ -1814,17 +1886,17 @@ fn serve_one<S: Read + Write>(
                     "no model configured",
                     cors_origin,
                 )
-                .map_err(|e| format!("ai stream error: {e}"))
+                .map_err(|e| WebCanvasError::Transport(format!("ai stream error: {e}")))
                 .map(|()| false);
             }
             Err(message) => {
                 return crate::ai_proxy::write_sse_error(stream, &message, cors_origin)
-                    .map_err(|e| format!("ai stream error: {e}"))
+                    .map_err(|e| WebCanvasError::Transport(format!("ai stream error: {e}")))
                     .map(|()| false);
             }
         };
         return crate::ai_proxy::stream_ai_response(stream, ai_req, provider.as_ref(), cors_origin)
-            .map_err(|e| format!("ai stream: {e}"))
+            .map_err(|e| WebCanvasError::Transport(format!("ai stream: {e}")))
             .map(|()| false);
     }
     // Standard web chat/design turn: same external-CLI routing shape as
@@ -1834,7 +1906,7 @@ fn serve_one<S: Read + Write>(
         let Some(standard_req) = crate::web_chat_standard::parse_standard_turn_body(&req.body)
         else {
             return crate::ai_proxy::write_sse_error(stream, "invalid request body", cors_origin)
-                .map_err(|e| format!("ai standard error: {e}"))
+                .map_err(|e| WebCanvasError::Transport(format!("ai standard error: {e}")))
                 .map(|()| false);
         };
         return crate::web_chat_standard::stream_standard_turn(
@@ -1844,7 +1916,7 @@ fn serve_one<S: Read + Write>(
             hub,
             cors_origin,
         )
-        .map_err(|e| format!("ai standard: {e}"))
+        .map_err(|e| WebCanvasError::Transport(format!("ai standard: {e}")))
         .map(|()| false);
     }
     // Image panel Search popover (desktop `image_panel_host` parity). Long
@@ -1891,6 +1963,7 @@ fn serve_one<S: Read + Write>(
             &body,
             cors_origin,
         )
+        .map_err(WebCanvasError::Transport)
         .map(|()| false);
     }
     // Image panel Generate popover (desktop `image_generate_host` parity).
@@ -1927,6 +2000,7 @@ fn serve_one<S: Read + Write>(
             &body,
             cors_origin,
         )
+        .map_err(WebCanvasError::Transport)
         .map(|()| false);
     }
     // Offline `.fig` -> `.op` convert for the VS Code plugin: it can't parse
@@ -1949,6 +2023,7 @@ fn serve_one<S: Read + Write>(
             &body,
             cors_origin,
         )
+        .map_err(WebCanvasError::Transport)
         .map(|()| false);
     }
     // All `/api/mcp/*` REST paths go to the REST handler — including ones this
@@ -1988,6 +2063,7 @@ fn serve_one<S: Read + Write>(
             &reply.body,
             cors_origin,
         )
+        .map_err(WebCanvasError::Transport)
         .map(|()| false);
     }
     // JSON-RPC tool dispatch is served ONLY as a POST to `/` or `/mcp`. An
@@ -2001,6 +2077,7 @@ fn serve_one<S: Read + Write>(
             r#"{"ok":false,"error":"Not found. Use /, /pkg/*, /api/mcp/document, /api/mcp/sync-reset, /api/mcp/server, /api/mcp/events, /api/file/save, /api/export/raster, /api/export/pdf, or /mcp."}"#,
             cors_origin,
         )
+        .map_err(WebCanvasError::Transport)
         .map(|()| false);
     }
     if req.method != "POST" {
@@ -2010,6 +2087,7 @@ fn serve_one<S: Read + Write>(
             r#"{"ok":false,"error":"Method not allowed. POST a JSON-RPC message to /mcp."}"#,
             cors_origin,
         )
+        .map_err(WebCanvasError::Transport)
         .map(|()| false);
     }
     // Token-authed graceful shutdown (`op stop`): same contract as the
@@ -2025,7 +2103,8 @@ fn serve_one<S: Read + Write>(
             "200 OK",
             &crate::mcp_serve::shutdown_ok_response(&id),
             cors_origin,
-        )?;
+        )
+        .map_err(WebCanvasError::Transport)?;
         return Ok(true);
     }
     // `debug_screenshot` for `--serve-web`: the browser shell mirrors this
@@ -2051,6 +2130,7 @@ fn serve_one<S: Read + Write>(
             &response,
             cors_origin,
         )
+        .map_err(WebCanvasError::Transport)
         .map(|()| false);
     }
     // JSON-RPC `/mcp` dispatch against the in-memory document. A mutating apply
@@ -2075,7 +2155,8 @@ fn serve_one<S: Read + Write>(
                 applied_any |= ok;
                 ok
             },
-        )?
+        )
+        .map_err(WebCanvasError::BadRequest)?
         .unwrap_or_default();
         if applied_any {
             guard.version += 1;
@@ -2093,6 +2174,7 @@ fn serve_one<S: Read + Write>(
         "200 OK"
     };
     crate::mcp_serve::write_mcp_http_response_with_origin(stream, status, &response, cors_origin)
+        .map_err(WebCanvasError::Transport)
         .map(|()| false)
 }
 
@@ -2218,7 +2300,7 @@ fn serve_sse<S: Write>(
     rx: Receiver<u64>,
     current_version: u64,
     cors_origin: Option<&str>,
-) -> Result<(), String> {
+) -> Result<()> {
     let cors_line = cors_origin
         .map(|origin| format!("Access-Control-Allow-Origin: {origin}\r\n"))
         .unwrap_or_default();
@@ -2231,7 +2313,7 @@ fn serve_sse<S: Write>(
     );
     stream
         .write_all(headers.as_bytes())
-        .map_err(|e| format!("sse headers: {e}"))?;
+        .map_err(|e| WebCanvasError::Transport(format!("sse headers: {e}")))?;
     write_sse_event(stream, current_version)?;
     loop {
         match rx.recv_timeout(SSE_HEARTBEAT) {
@@ -2250,8 +2332,10 @@ fn serve_sse<S: Write>(
                 // write here is how we notice it disconnected.
                 stream
                     .write_all(b": ping\n\n")
-                    .map_err(|e| format!("sse heartbeat: {e}"))?;
-                stream.flush().map_err(|e| format!("sse flush: {e}"))?;
+                    .map_err(|e| WebCanvasError::Transport(format!("sse heartbeat: {e}")))?;
+                stream
+                    .flush()
+                    .map_err(|e| WebCanvasError::Transport(format!("sse flush: {e}")))?;
             }
             Err(RecvTimeoutError::Disconnected) => return Ok(()),
         }
@@ -2259,12 +2343,14 @@ fn serve_sse<S: Write>(
 }
 
 /// Format + write one SSE `data:` event carrying the document version.
-fn write_sse_event<S: Write>(stream: &mut S, version: u64) -> Result<(), String> {
+fn write_sse_event<S: Write>(stream: &mut S, version: u64) -> Result<()> {
     let event = format!("data: {{\"version\":{version}}}\n\n");
     stream
         .write_all(event.as_bytes())
-        .map_err(|e| format!("sse write: {e}"))?;
-    stream.flush().map_err(|e| format!("sse flush: {e}"))
+        .map_err(|e| WebCanvasError::Transport(format!("sse write: {e}")))?;
+    stream
+        .flush()
+        .map_err(|e| WebCanvasError::Transport(format!("sse flush: {e}")))
 }
 
 #[cfg(test)]

@@ -230,7 +230,8 @@ fn browser_only_startup_propagates_credential_scrub_save_failure() {
         crate::web_credential_policy::WebCredentialPersistence::BrowserOnly,
         |_| Err("simulated disk failure".into()),
     )
-    .expect_err("startup must fail when scrubbed settings cannot be saved");
+    .expect_err("startup must fail when scrubbed settings cannot be saved")
+    .to_string();
 
     assert_eq!(
         error,
@@ -478,7 +479,9 @@ fn every_web_persistence_policy_propagates_strict_settings_load_failures() {
             Err("invalid existing settings".into())
         });
 
-        let error = result.expect_err("all web policies must fail closed on invalid settings");
+        let error = result
+            .expect_err("all web policies must fail closed on invalid settings")
+            .to_string();
         assert_eq!(error, "invalid existing settings");
         assert_eq!(checked_calls.get(), 1, "policy={policy:?}");
     }

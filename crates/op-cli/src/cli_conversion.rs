@@ -3,11 +3,12 @@
 use std::fs;
 
 use super::{flag_value, pair, tool_call, Command, Flags};
+use crate::cli_error::CliError;
 
 pub(crate) fn map_design_conversion(
     positionals: &[String],
     flags: &Flags,
-) -> Result<Command, String> {
+) -> Result<Command, CliError> {
     match positionals[0].as_str() {
         "design:upsert-vars" => map_upsert_variables(flags),
         "design:upsert-component" => map_upsert_component(flags),
@@ -18,7 +19,7 @@ pub(crate) fn map_design_conversion(
     }
 }
 
-fn map_upsert_variables(flags: &Flags) -> Result<Command, String> {
+fn map_upsert_variables(flags: &Flags) -> Result<Command, CliError> {
     let key = required_flag(
         flags,
         "key",
@@ -33,7 +34,7 @@ fn map_upsert_variables(flags: &Flags) -> Result<Command, String> {
     tool_call("upsert_variables", args)
 }
 
-fn map_upsert_component(flags: &Flags) -> Result<Command, String> {
+fn map_upsert_component(flags: &Flags) -> Result<Command, CliError> {
     let key = required_flag(
         flags,
         "key",
@@ -57,7 +58,7 @@ fn map_upsert_component(flags: &Flags) -> Result<Command, String> {
     tool_call("upsert_component", args)
 }
 
-fn map_upsert_screen(flags: &Flags) -> Result<Command, String> {
+fn map_upsert_screen(flags: &Flags) -> Result<Command, CliError> {
     let key = required_flag(
         flags,
         "key",
@@ -72,18 +73,20 @@ fn map_upsert_screen(flags: &Flags) -> Result<Command, String> {
     tool_call("upsert_screen", args)
 }
 
-fn map_status(flags: &Flags) -> Result<Command, String> {
+fn map_status(flags: &Flags) -> Result<Command, CliError> {
     let mut args = Vec::new();
     if let Some(kind) = flag_value(flags, "kind") {
         if !matches!(kind.as_str(), "token" | "component" | "screen") {
-            return Err("--kind must be token, component, or screen".into());
+            return Err(CliError::usage(
+                "--kind must be token, component, or screen",
+            ));
         }
         args.push(pair("kind", kind));
     }
     tool_call("conversion_status", args)
 }
 
-fn map_lint(flags: &Flags) -> Result<Command, String> {
+fn map_lint(flags: &Flags) -> Result<Command, CliError> {
     let mut args = Vec::new();
     if let Some(node_id) = flag_value(flags, "node") {
         args.push(pair("nodeId", node_id));
@@ -91,15 +94,15 @@ fn map_lint(flags: &Flags) -> Result<Command, String> {
     tool_call("lint_document", args)
 }
 
-fn required_flag(flags: &Flags, name: &str, usage: &str) -> Result<String, String> {
-    flag_value(flags, name).ok_or_else(|| usage.to_string())
+fn required_flag(flags: &Flags, name: &str, usage: &str) -> Result<String, CliError> {
+    flag_value(flags, name).ok_or_else(|| CliError::usage(usage))
 }
 
-fn read_payload_file(flags: &Flags, usage: &str) -> Result<String, String> {
+fn read_payload_file(flags: &Flags, usage: &str) -> Result<String, CliError> {
     let path = required_flag(flags, "file", usage)?;
     fs::read_to_string(&path)
         .map(|contents| contents.trim().to_string())
-        .map_err(|e| format!("cannot read --file {path:?}: {e}"))
+        .map_err(|e| CliError::Io(format!("cannot read --file {path:?}: {e}")))
 }
 
 fn push_source_fields(args: &mut Vec<(String, String)>, flags: &Flags) {

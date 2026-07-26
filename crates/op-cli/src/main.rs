@@ -8,6 +8,7 @@ use std::io::{self, Read};
 
 mod app_control_cli;
 mod cli_conversion;
+mod cli_error;
 mod codegen_cli;
 mod command_helpers;
 mod export_cli;
@@ -18,6 +19,9 @@ mod page_theme_cli;
 mod path_args;
 mod skill_export_cli;
 mod skill_install_cli;
+mod skill_install_error;
+
+use cli_error::CliError;
 
 use command_helpers::{
     flag_value, pair, push_file_path, tool_call, tool_call_with_file, version_json,
@@ -52,7 +56,7 @@ fn main() {
 }
 
 /// Parse `args`, perform the request, return the text to print.
-fn run(args: &[String]) -> Result<String, String> {
+fn run(args: &[String]) -> Result<String, CliError> {
     let Parsed {
         port,
         port_explicit,
@@ -203,7 +207,7 @@ type Flags = BTreeMap<String, Option<String>>;
 /// Parse command-line args. `--port`, `--pretty`, `--help`, and
 /// `--version` are global; the rest are left for command aliases or
 /// low-level MCP tool arguments.
-fn parse_args(args: &[String]) -> Result<Parsed, String> {
+fn parse_args(args: &[String]) -> Result<Parsed, CliError> {
     let mut port = DEFAULT_PORT;
     let mut port_explicit = false;
     let mut pretty = false;
@@ -237,16 +241,16 @@ fn parse_args(args: &[String]) -> Result<Parsed, String> {
                     let raw_port = match inline_value {
                         Some(v) => v,
                         None => {
-                            let next = args
-                                .get(i + 1)
-                                .ok_or("--port needs a value (e.g. --port 3100)")?;
+                            let next = args.get(i + 1).ok_or_else(|| {
+                                CliError::usage("--port needs a value (e.g. --port 3100)")
+                            })?;
                             i += 1;
                             next.clone()
                         }
                     };
-                    port = raw_port
-                        .parse::<u16>()
-                        .map_err(|_| format!("--port must be a u16, got {raw_port:?}"))?;
+                    port = raw_port.parse::<u16>().map_err(|_| {
+                        CliError::Usage(format!("--port must be a u16, got {raw_port:?}"))
+                    })?;
                     port_explicit = true;
                 }
                 "pretty" => pretty = true,
@@ -291,7 +295,7 @@ fn parse_args(args: &[String]) -> Result<Parsed, String> {
     })
 }
 
-fn command_from_positionals(positionals: &[String], flags: &Flags) -> Result<Command, String> {
+fn command_from_positionals(positionals: &[String], flags: &Flags) -> Result<Command, CliError> {
     match positionals[0].as_str() {
         "help" | "-h" | "--help" => Ok(Command::Help),
         "version" => Ok(Command::Version),
@@ -301,13 +305,15 @@ fn command_from_positionals(positionals: &[String], flags: &Flags) -> Result<Com
             let headless = flags.contains_key("headless");
             let web = flags.contains_key("web");
             if headless && web {
-                return Err("--headless and --web are mutually exclusive".into());
+                return Err(CliError::usage(
+                    "--headless and --web are mutually exclusive",
+                ));
             }
             let host = flag_value(flags, "host");
             if host.is_some() && !web {
-                return Err(
-                    "--host requires --web (only the web daemon binds non-loopback)".into(),
-                );
+                return Err(CliError::usage(
+                    "--host requires --web (only the web daemon binds non-loopback)",
+                ));
             }
             Ok(Command::StartMcp {
                 document_path: flag_value(flags, "file"),
@@ -387,7 +393,7 @@ fn command_from_positionals(positionals: &[String], flags: &Flags) -> Result<Com
     }
 }
 
-fn map_get(flags: &Flags) -> Result<Command, String> {
+fn map_get(flags: &Flags) -> Result<Command, CliError> {
     let mut pairs = Vec::new();
     if let Some(id) = flag_value(flags, "id") {
         pairs.push(pair("nodeIds", format!(r#"["{}"]"#, json_escape(&id))));
@@ -415,7 +421,7 @@ fn map_get(flags: &Flags) -> Result<Command, String> {
     tool_call("batch_get", pairs)
 }
 
-fn map_selection(flags: &Flags) -> Result<Command, String> {
+fn map_selection(flags: &Flags) -> Result<Command, CliError> {
     let mut pairs = Vec::new();
     if let Some(depth) = flag_value(flags, "depth") {
         pairs.push(pair("readDepth", depth));
@@ -424,7 +430,7 @@ fn map_selection(flags: &Flags) -> Result<Command, String> {
     tool_call("get_selection", pairs)
 }
 
-fn map_insert(positionals: &[String], flags: &Flags) -> Result<Command, String> {
+fn map_insert(positionals: &[String], flags: &Flags) -> Result<Command, CliError> {
     let raw = resolve_arg(positionals.get(1).map(String::as_str))?;
     let mut pairs = data_pairs(&raw)?;
     if let Some(parent) = flag_value(flags, "parent") {
@@ -440,7 +446,7 @@ fn map_insert(positionals: &[String], flags: &Flags) -> Result<Command, String> 
     tool_call("insert_node", pairs)
 }
 
-fn map_update(positionals: &[String], flags: &Flags) -> Result<Command, String> {
+fn map_update(positionals: &[String], flags: &Flags) -> Result<Command, CliError> {
     let node_id = required_pos(positionals, 1, "Usage: op update <node-id> <json>")?;
     let raw = resolve_arg(positionals.get(2).map(String::as_str))?;
     let mut pairs = vec![pair("nodeId", node_id)];
@@ -455,7 +461,7 @@ fn map_update(positionals: &[String], flags: &Flags) -> Result<Command, String> 
     tool_call("update_node", pairs)
 }
 
-fn map_replace(positionals: &[String], flags: &Flags) -> Result<Command, String> {
+fn map_replace(positionals: &[String], flags: &Flags) -> Result<Command, CliError> {
     let node_id = required_pos(positionals, 1, "Usage: op replace <node-id> <json>")?;
     let raw = resolve_arg(positionals.get(2).map(String::as_str))?;
     let mut pairs = vec![pair("nodeId", node_id)];
@@ -470,7 +476,7 @@ fn map_replace(positionals: &[String], flags: &Flags) -> Result<Command, String>
     tool_call("replace_node", pairs)
 }
 
-fn map_delete(positionals: &[String], flags: &Flags) -> Result<Command, String> {
+fn map_delete(positionals: &[String], flags: &Flags) -> Result<Command, CliError> {
     let id = required_pos(positionals, 1, "Usage: op delete <node-id>")?;
     let mut pairs = vec![pair("nodeId", id)];
     if let Some(page) = flag_value(flags, "page") {
@@ -480,7 +486,7 @@ fn map_delete(positionals: &[String], flags: &Flags) -> Result<Command, String> 
     tool_call("delete_node", pairs)
 }
 
-fn map_read_nodes(positionals: &[String], flags: &Flags) -> Result<Command, String> {
+fn map_read_nodes(positionals: &[String], flags: &Flags) -> Result<Command, CliError> {
     let mut pairs = Vec::new();
     if let Some(ids) = positionals.get(1) {
         pairs.push(pair("nodeIds", ids.clone()));
@@ -498,7 +504,7 @@ fn map_read_nodes(positionals: &[String], flags: &Flags) -> Result<Command, Stri
     tool_call("read_nodes", pairs)
 }
 
-fn map_reparent(tool: &str, positionals: &[String], flags: &Flags) -> Result<Command, String> {
+fn map_reparent(tool: &str, positionals: &[String], flags: &Flags) -> Result<Command, CliError> {
     let id = required_pos(
         positionals,
         1,
@@ -528,7 +534,7 @@ fn map_design_like(
     payload: Option<&String>,
     flags: &Flags,
     default_post_process: bool,
-) -> Result<Command, String> {
+) -> Result<Command, CliError> {
     let raw = resolve_arg(payload.map(String::as_str))?;
     let trimmed = raw.trim();
     let script_requested = flags.contains_key("script")
@@ -556,7 +562,7 @@ fn map_design_like(
     tool_call(tool, pairs)
 }
 
-fn map_design_content(positionals: &[String], flags: &Flags) -> Result<Command, String> {
+fn map_design_content(positionals: &[String], flags: &Flags) -> Result<Command, CliError> {
     let section_id = required_pos(
         positionals,
         1,
@@ -564,21 +570,25 @@ fn map_design_content(positionals: &[String], flags: &Flags) -> Result<Command, 
     )?;
     let raw = resolve_arg(positionals.get(2).map(String::as_str))?;
     let payload: Value = serde_json::from_str(raw.trim())
-        .map_err(|e| format!("invalid design:content JSON payload: {e}"))?;
-    let children = payload
-        .get("children")
-        .ok_or("design:content JSON payload must contain a children array")?;
+        .map_err(|e| CliError::Payload(format!("invalid design:content JSON payload: {e}")))?;
+    let children = payload.get("children").ok_or_else(|| {
+        CliError::Payload("design:content JSON payload must contain a children array".into())
+    })?;
     if !children.is_array() {
-        return Err("design:content children must be an array".into());
+        return Err(CliError::Payload(
+            "design:content children must be an array".into(),
+        ));
     }
 
     let mut args = serde_json::Map::new();
     args.insert("sectionId".into(), Value::String(section_id));
     args.insert("children".into(), children.clone());
     if let Some(canvas_width) = flag_value(flags, "canvas-width") {
-        let width = canvas_width
-            .parse::<i64>()
-            .map_err(|_| format!("--canvas-width must be an integer, got {canvas_width:?}"))?;
+        let width = canvas_width.parse::<i64>().map_err(|_| {
+            CliError::Usage(format!(
+                "--canvas-width must be an integer, got {canvas_width:?}"
+            ))
+        })?;
         args.insert("canvasWidth".into(), Value::Number(width.into()));
     }
     if let Some(page) = flag_value(flags, "page") {
@@ -588,28 +598,32 @@ fn map_design_content(positionals: &[String], flags: &Flags) -> Result<Command, 
         args.insert("filePath".into(), resolve_file_path_value(&file));
     }
     let args_json = serde_json::to_string(&Value::Object(args))
-        .map_err(|e| format!("cannot serialize design:content args: {e}"))?;
+        .map_err(|e| CliError::Payload(format!("cannot serialize design:content args: {e}")))?;
     Ok(Command::ToolCallJson {
         tool: "design_content".into(),
         args_json,
     })
 }
 
-fn map_design_skeleton(positionals: &[String], flags: &Flags) -> Result<Command, String> {
+fn map_design_skeleton(positionals: &[String], flags: &Flags) -> Result<Command, CliError> {
     let raw = resolve_arg(positionals.get(1).map(String::as_str))?;
     let payload: Value = serde_json::from_str(raw.trim())
-        .map_err(|e| format!("invalid design:skeleton JSON payload: {e}"))?;
-    let root_frame = payload
-        .get("rootFrame")
-        .ok_or("design:skeleton JSON payload must contain rootFrame")?;
+        .map_err(|e| CliError::Payload(format!("invalid design:skeleton JSON payload: {e}")))?;
+    let root_frame = payload.get("rootFrame").ok_or_else(|| {
+        CliError::Payload("design:skeleton JSON payload must contain rootFrame".into())
+    })?;
     if !root_frame.is_object() {
-        return Err("design:skeleton rootFrame must be an object".into());
+        return Err(CliError::Payload(
+            "design:skeleton rootFrame must be an object".into(),
+        ));
     }
-    let sections = payload
-        .get("sections")
-        .ok_or("design:skeleton JSON payload must contain sections")?;
+    let sections = payload.get("sections").ok_or_else(|| {
+        CliError::Payload("design:skeleton JSON payload must contain sections".into())
+    })?;
     if !sections.is_array() {
-        return Err("design:skeleton sections must be an array".into());
+        return Err(CliError::Payload(
+            "design:skeleton sections must be an array".into(),
+        ));
     }
 
     let mut args = serde_json::Map::new();
@@ -617,14 +631,18 @@ fn map_design_skeleton(positionals: &[String], flags: &Flags) -> Result<Command,
     args.insert("sections".into(), sections.clone());
     if let Some(style_guide) = payload.get("styleGuide") {
         if !style_guide.is_object() {
-            return Err("design:skeleton styleGuide must be an object".into());
+            return Err(CliError::Payload(
+                "design:skeleton styleGuide must be an object".into(),
+            ));
         }
         args.insert("styleGuide".into(), style_guide.clone());
     }
     if let Some(canvas_width) = flag_value(flags, "canvas-width") {
-        let width = canvas_width
-            .parse::<i64>()
-            .map_err(|_| format!("--canvas-width must be an integer, got {canvas_width:?}"))?;
+        let width = canvas_width.parse::<i64>().map_err(|_| {
+            CliError::Usage(format!(
+                "--canvas-width must be an integer, got {canvas_width:?}"
+            ))
+        })?;
         args.insert("canvasWidth".into(), Value::Number(width.into()));
     }
     if let Some(page) = flag_value(flags, "page") {
@@ -634,15 +652,16 @@ fn map_design_skeleton(positionals: &[String], flags: &Flags) -> Result<Command,
         args.insert("filePath".into(), resolve_file_path_value(&file));
     }
     let args_json = serde_json::to_string(&Value::Object(args))
-        .map_err(|e| format!("cannot serialize design:skeleton args: {e}"))?;
+        .map_err(|e| CliError::Payload(format!("cannot serialize design:skeleton args: {e}")))?;
     Ok(Command::ToolCallJson {
         tool: "design_skeleton".into(),
         args_json,
     })
 }
 
-fn map_design_refine(flags: &Flags) -> Result<Command, String> {
-    let root_id = flag_value(flags, "root-id").ok_or("Usage: op design:refine --root-id <id>")?;
+fn map_design_refine(flags: &Flags) -> Result<Command, CliError> {
+    let root_id = flag_value(flags, "root-id")
+        .ok_or_else(|| CliError::usage("Usage: op design:refine --root-id <id>"))?;
     let mut pairs = vec![pair("rootId", root_id)];
     if let Some(canvas_width) = flag_value(flags, "canvas-width") {
         pairs.push(pair("canvasWidth", canvas_width));
@@ -654,7 +673,7 @@ fn map_design_refine(flags: &Flags) -> Result<Command, String> {
     tool_call("design_refine", pairs)
 }
 
-fn map_layout(flags: &Flags) -> Result<Command, String> {
+fn map_layout(flags: &Flags) -> Result<Command, CliError> {
     let mut pairs = Vec::new();
     if let Some(parent) = flag_value(flags, "parent") {
         pairs.push(pair("parentId", parent));
@@ -669,7 +688,7 @@ fn map_layout(flags: &Flags) -> Result<Command, String> {
     tool_call("snapshot_layout", pairs)
 }
 
-fn map_find_space(flags: &Flags) -> Result<Command, String> {
+fn map_find_space(flags: &Flags) -> Result<Command, CliError> {
     let direction = flag_value(flags, "direction").unwrap_or_else(|| "right".into());
     let width = flag_value(flags, "width").unwrap_or_else(|| "400".into());
     let height = flag_value(flags, "height").unwrap_or_else(|| "300".into());
@@ -694,14 +713,16 @@ fn map_find_space(flags: &Flags) -> Result<Command, String> {
     tool_call("find_empty_space", pairs)
 }
 
-fn generic_tool_call(tool: &str, rest: &[String], flags: &Flags) -> Result<Command, String> {
+fn generic_tool_call(tool: &str, rest: &[String], flags: &Flags) -> Result<Command, CliError> {
     let mut pairs = Vec::new();
     for kv in rest {
         let (k, v) = kv
             .split_once('=')
-            .ok_or_else(|| format!("argument must be key=value, got {kv:?}"))?;
+            .ok_or_else(|| CliError::Usage(format!("argument must be key=value, got {kv:?}")))?;
         if k.is_empty() {
-            return Err(format!("argument has an empty key: {kv:?}"));
+            return Err(CliError::Usage(format!(
+                "argument has an empty key: {kv:?}"
+            )));
         }
         pairs.push(pair(k, v));
     }
@@ -719,29 +740,29 @@ fn is_global_compat_flag(key: &str) -> bool {
     ["file", "page", "post-process", "canvas-width", "depth"].contains(&key)
 }
 
-fn parse_json_object(raw: &str) -> Result<Value, String> {
-    let value: Value =
-        serde_json::from_str(raw.trim()).map_err(|e| format!("invalid JSON payload: {e}"))?;
+fn parse_json_object(raw: &str) -> Result<Value, CliError> {
+    let value: Value = serde_json::from_str(raw.trim())
+        .map_err(|e| CliError::Payload(format!("invalid JSON payload: {e}")))?;
     if !value.is_object() {
-        return Err("JSON payload must be an object".into());
+        return Err(CliError::Payload("JSON payload must be an object".into()));
     }
     Ok(value)
 }
 
-fn data_pairs(raw: &str) -> Result<Vec<(String, String)>, String> {
+fn data_pairs(raw: &str) -> Result<Vec<(String, String)>, CliError> {
     parse_json_object(raw)?;
     Ok(vec![pair("data", raw.trim())])
 }
 
-fn resolve_arg(arg: Option<&str>) -> Result<String, String> {
+fn resolve_arg(arg: Option<&str>) -> Result<String, CliError> {
     match arg {
         Some("-") => {
             let mut input = String::new();
             io::stdin()
                 .read_to_string(&mut input)
-                .map_err(|e| format!("stdin read failed: {e}"))?;
+                .map_err(|e| CliError::Io(format!("stdin read failed: {e}")))?;
             if input.trim().is_empty() {
-                Err("No data received from stdin".into())
+                Err(CliError::usage("No data received from stdin"))
             } else {
                 Ok(input.trim().to_string())
             }
@@ -750,18 +771,20 @@ fn resolve_arg(arg: Option<&str>) -> Result<String, String> {
             let path = &path[1..];
             fs::read_to_string(path)
                 .map(|s| s.trim().to_string())
-                .map_err(|e| format!("cannot read file {path:?}: {e}"))
+                .map_err(|e| CliError::Io(format!("cannot read file {path:?}: {e}")))
         }
         Some(value) => Ok(value.to_string()),
-        None => Err("No data provided. Pass as argument, @filepath, or '-' for stdin".into()),
+        None => Err(CliError::usage(
+            "No data provided. Pass as argument, @filepath, or '-' for stdin",
+        )),
     }
 }
 
-fn required_pos(positionals: &[String], index: usize, usage: &str) -> Result<String, String> {
+fn required_pos(positionals: &[String], index: usize, usage: &str) -> Result<String, CliError> {
     positionals
         .get(index)
         .cloned()
-        .ok_or_else(|| usage.to_string())
+        .ok_or_else(|| CliError::usage(usage))
 }
 
 #[cfg(test)]

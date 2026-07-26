@@ -98,7 +98,10 @@ fn export_rejects_conflicting_target_and_format_flags() {
         "--output",
         "/tmp/node.png",
     ]));
-    assert!(target.unwrap_err().contains("--item and --selection"));
+    assert!(target
+        .unwrap_err()
+        .to_string()
+        .contains("--item and --selection"));
 
     let format = parse_args(&args(&[
         "export",
@@ -109,7 +112,10 @@ fn export_rejects_conflicting_target_and_format_flags() {
         "--formats",
         "jpeg",
     ]));
-    assert!(format.unwrap_err().contains("--format and --formats"));
+    assert!(format
+        .unwrap_err()
+        .to_string()
+        .contains("--format and --formats"));
 }
 
 #[test]

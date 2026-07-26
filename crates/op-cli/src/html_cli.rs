@@ -4,11 +4,12 @@ use jian_ops_schema::node::PenNode;
 use serde_json::json;
 
 use super::{flag_value, pair, push_file_path, required_pos, tool_call, Command, Flags};
+use crate::cli_error::CliError;
 
 /// The virtual origin `op-html` rebases project-local resources onto.
 const LOCAL_RESOURCE_ORIGIN: &str = op_html::VIRTUAL_PROJECT_ORIGIN;
 
-pub(super) fn map_import_svg(positionals: &[String], flags: &Flags) -> Result<Command, String> {
+pub(super) fn map_import_svg(positionals: &[String], flags: &Flags) -> Result<Command, CliError> {
     let path = required_pos(
         positionals,
         1,
@@ -29,7 +30,7 @@ pub(super) fn map_import_svg(positionals: &[String], flags: &Flags) -> Result<Co
     tool_call("import_svg", pairs)
 }
 
-pub(super) fn map_import_html(positionals: &[String], flags: &Flags) -> Result<Command, String> {
+pub(super) fn map_import_html(positionals: &[String], flags: &Flags) -> Result<Command, CliError> {
     let source = required_pos(
         positionals,
         1,
@@ -38,7 +39,9 @@ pub(super) fn map_import_html(positionals: &[String], flags: &Flags) -> Result<C
     let is_url = source.starts_with("http://") || source.starts_with("https://");
     if let Some(out_path) = flag_value(flags, "out") {
         if is_url {
-            return Err("--out requires a local file; URL import needs a running editor".into());
+            return Err(CliError::usage(
+                "--out requires a local file; URL import needs a running editor",
+            ));
         }
         return Ok(Command::ImportHtml {
             html_path: source,
@@ -75,7 +78,7 @@ pub(super) fn map_import_html(positionals: &[String], flags: &Flags) -> Result<C
 pub(super) fn map_import_snapshot(
     positionals: &[String],
     flags: &Flags,
-) -> Result<Command, String> {
+) -> Result<Command, CliError> {
     let json_path = required_pos(
         positionals,
         1,
@@ -103,9 +106,9 @@ pub(super) fn map_import_snapshot(
     tool_call("import_web_snapshot", pairs)
 }
 
-pub(super) fn run_import_html(html_path: &str, out_path: &str) -> Result<String, String> {
-    let source_bytes =
-        std::fs::read(html_path).map_err(|error| format!("read {html_path:?}: {error}"))?;
+pub(super) fn run_import_html(html_path: &str, out_path: &str) -> Result<String, CliError> {
+    let source_bytes = std::fs::read(html_path)
+        .map_err(|error| CliError::Io(format!("read {html_path:?}: {error}")))?;
     let source = op_html::html_encoding::decode_html_bytes(&source_bytes);
     let source_path = Path::new(html_path);
     let resource_dir = source_path.parent().unwrap_or_else(|| Path::new("."));
@@ -130,12 +133,14 @@ pub(super) fn run_import_html(html_path: &str, out_path: &str) -> Result<String,
             .first()
             .map(String::as_str)
             .unwrap_or("input produced no nodes");
-        return Err(format!("no importable content: {detail}"));
+        return Err(CliError::Document(format!(
+            "no importable content: {detail}"
+        )));
     }
     let value = serde_json::to_value(&imported.document)
-        .map_err(|error| format!("serialize {out_path:?}: {error}"))?;
+        .map_err(|error| CliError::Payload(format!("serialize {out_path:?}: {error}")))?;
     std::fs::write(out_path, value.to_string())
-        .map_err(|error| format!("write {out_path:?}: {error}"))?;
+        .map_err(|error| CliError::Io(format!("write {out_path:?}: {error}")))?;
     Ok(json!({
         "ok": true,
         "filePath": out_path,
@@ -145,9 +150,9 @@ pub(super) fn run_import_html(html_path: &str, out_path: &str) -> Result<String,
     .to_string())
 }
 
-pub(super) fn run_import_snapshot(json_path: &str, out_path: &str) -> Result<String, String> {
+pub(super) fn run_import_snapshot(json_path: &str, out_path: &str) -> Result<String, CliError> {
     let source = std::fs::read_to_string(json_path)
-        .map_err(|error| format!("read {json_path:?}: {error}"))?;
+        .map_err(|error| CliError::Io(format!("read {json_path:?}: {error}")))?;
     let imported =
         op_html::import_snapshot_document(&source, &op_html::HtmlImportOptions::default());
     if imported.document.children.is_empty() {
@@ -156,12 +161,14 @@ pub(super) fn run_import_snapshot(json_path: &str, out_path: &str) -> Result<Str
             .first()
             .map(String::as_str)
             .unwrap_or("input produced no nodes");
-        return Err(format!("no importable content: {detail}"));
+        return Err(CliError::Document(format!(
+            "no importable content: {detail}"
+        )));
     }
     let value = serde_json::to_value(&imported.document)
-        .map_err(|error| format!("serialize {out_path:?}: {error}"))?;
+        .map_err(|error| CliError::Payload(format!("serialize {out_path:?}: {error}")))?;
     std::fs::write(out_path, value.to_string())
-        .map_err(|error| format!("write {out_path:?}: {error}"))?;
+        .map_err(|error| CliError::Io(format!("write {out_path:?}: {error}")))?;
     Ok(json!({
         "ok": true,
         "filePath": out_path,

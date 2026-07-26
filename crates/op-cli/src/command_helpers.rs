@@ -1,3 +1,4 @@
+use crate::cli_error::CliError;
 use crate::path_args::resolve_file_path_arg;
 use crate::{Command, Flags};
 
@@ -15,13 +16,13 @@ pub(crate) fn pair(key: impl Into<String>, value: impl Into<String>) -> (String,
     (key.into(), value.into())
 }
 
-pub(crate) fn tool_call_with_file(tool: &str, flags: &Flags) -> Result<Command, String> {
+pub(crate) fn tool_call_with_file(tool: &str, flags: &Flags) -> Result<Command, CliError> {
     let mut pairs = Vec::new();
     push_file_path(&mut pairs, flags);
     tool_call(tool, pairs)
 }
 
-pub(crate) fn tool_call(tool: &str, args: Vec<(String, String)>) -> Result<Command, String> {
+pub(crate) fn tool_call(tool: &str, args: Vec<(String, String)>) -> Result<Command, CliError> {
     Ok(Command::ToolCall {
         tool: tool.to_string(),
         args,

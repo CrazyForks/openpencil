@@ -17,7 +17,9 @@ fn preflight_rejects_malformed_documents_and_accepts_a_valid_one() {
     // (which would exit(1) before binding → opaque "connection refused").
     let archive = dir.join("archive.op");
     fs::write(&archive, b"PK\x03\x04\xff\xfe\x00\x01binary\x80\x81").expect("write archive");
-    let err = preflight_document(&archive).expect_err("binary archive must be rejected");
+    let err = preflight_document(&archive)
+        .expect_err("binary archive must be rejected")
+        .to_string();
     assert!(
         err.contains("is not a valid OpenPencil document"),
         "unexpected error text: {err}"
@@ -27,7 +29,9 @@ fn preflight_rejects_malformed_documents_and_accepts_a_valid_one() {
     // JSON parse-error path (distinct from the invalid-UTF-8 path above).
     let garbage = dir.join("garbage.op");
     fs::write(&garbage, b"this is not a .op document").expect("write garbage");
-    let err = preflight_document(&garbage).expect_err("non-document text must be rejected");
+    let err = preflight_document(&garbage)
+        .expect_err("non-document text must be rejected")
+        .to_string();
     assert!(
         err.contains("is not a valid OpenPencil document"),
         "unexpected error text: {err}"

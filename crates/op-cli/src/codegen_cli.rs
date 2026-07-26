@@ -4,8 +4,9 @@ use super::{
     flag_value, json_escape, pair, required_pos, resolve_arg, resolve_file_path_arg, tool_call,
     Command, Flags,
 };
+use crate::cli_error::CliError;
 
-pub(super) fn map_codegen(positionals: &[String], flags: &Flags) -> Result<Command, String> {
+pub(super) fn map_codegen(positionals: &[String], flags: &Flags) -> Result<Command, CliError> {
     match positionals[0].as_str() {
         "codegen:plan" => map_codegen_plan(positionals, flags),
         "codegen:submit" => map_codegen_submit(positionals, flags),
@@ -15,7 +16,7 @@ pub(super) fn map_codegen(positionals: &[String], flags: &Flags) -> Result<Comma
     }
 }
 
-fn map_codegen_plan(positionals: &[String], flags: &Flags) -> Result<Command, String> {
+fn map_codegen_plan(positionals: &[String], flags: &Flags) -> Result<Command, CliError> {
     let raw =
         resolve_codegen_payload(positionals, 1, "Usage: op codegen:plan <plan-json|@file|->")?;
     let plan = compact_json_object(&raw, "plan-json")?;
@@ -31,7 +32,7 @@ fn map_codegen_plan(positionals: &[String], flags: &Flags) -> Result<Command, St
     raw_json_tool_call("codegen_plan", fields)
 }
 
-fn map_codegen_submit(positionals: &[String], flags: &Flags) -> Result<Command, String> {
+fn map_codegen_submit(positionals: &[String], flags: &Flags) -> Result<Command, CliError> {
     let plan_id = required_pos(
         positionals,
         1,
@@ -53,7 +54,7 @@ fn map_codegen_submit(positionals: &[String], flags: &Flags) -> Result<Command, 
     raw_json_tool_call("codegen_submit_chunk", fields)
 }
 
-fn map_codegen_assemble(positionals: &[String], flags: &Flags) -> Result<Command, String> {
+fn map_codegen_assemble(positionals: &[String], flags: &Flags) -> Result<Command, CliError> {
     let plan_id = required_pos(
         positionals,
         1,
@@ -66,7 +67,7 @@ fn map_codegen_assemble(positionals: &[String], flags: &Flags) -> Result<Command
     )
 }
 
-fn map_codegen_clean(positionals: &[String]) -> Result<Command, String> {
+fn map_codegen_clean(positionals: &[String]) -> Result<Command, CliError> {
     let plan_id = required_pos(positionals, 1, "Usage: op codegen:clean <planId>")?;
     tool_call("codegen_clean", vec![pair("planId", plan_id)])
 }
@@ -75,28 +76,29 @@ fn resolve_codegen_payload(
     positionals: &[String],
     index: usize,
     usage: &str,
-) -> Result<String, String> {
+) -> Result<String, CliError> {
     let arg = positionals
         .get(index)
         .map(String::as_str)
-        .ok_or_else(|| usage.to_string())?;
+        .ok_or_else(|| CliError::usage(usage))?;
     resolve_arg(Some(arg))
 }
 
-fn compact_json_object(raw: &str, label: &str) -> Result<String, String> {
+fn compact_json_object(raw: &str, label: &str) -> Result<String, CliError> {
     let value: Value = serde_json::from_str(raw.trim())
-        .map_err(|e| format!("invalid {label} JSON payload: {e}"))?;
+        .map_err(|e| CliError::Payload(format!("invalid {label} JSON payload: {e}")))?;
     if !value.is_object() {
-        return Err(format!("{label} must be a JSON object"));
+        return Err(CliError::Payload(format!("{label} must be a JSON object")));
     }
-    serde_json::to_string(&value).map_err(|e| format!("cannot serialize {label}: {e}"))
+    serde_json::to_string(&value)
+        .map_err(|e| CliError::Payload(format!("cannot serialize {label}: {e}")))
 }
 
 fn json_string_field(key: &str, value: &str) -> String {
     format!(r#""{}":"{}""#, json_escape(key), json_escape(value))
 }
 
-fn raw_json_tool_call(tool: &str, fields: Vec<String>) -> Result<Command, String> {
+fn raw_json_tool_call(tool: &str, fields: Vec<String>) -> Result<Command, CliError> {
     Ok(Command::ToolCallJson {
         tool: tool.to_string(),
         args_json: format!("{{{}}}", fields.join(",")),

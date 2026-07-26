@@ -67,7 +67,11 @@ use super::batch_design::{
 };
 use super::batch_direct_ops::{split_top_level_args, update_command_from_value};
 use super::batch_page::optional_page_id;
+use super::batch_program_error::ProgramError;
 use super::{EditorCommand, ToolOutcome};
+
+/// Every fallible step of the executor fails with [`ProgramError`].
+type Result<T> = std::result::Result<T, ProgramError>;
 
 /// Run a mixed multi-op DSL program against the document snapshot and
 /// return the TS `handleBatchDesign` envelope:
@@ -120,7 +124,7 @@ pub(crate) fn run_batch_design_program(
     for (line_index, line) in lines.into_iter().enumerate() {
         ctx.current_line = line_index;
         if let Err(error) = execute_line(&line, &mut ctx) {
-            errors.push(json!({ "line": line_preview(&line), "error": error }));
+            errors.push(json!({ "line": line_preview(&line), "error": error.to_string() }));
         }
     }
 
@@ -189,9 +193,9 @@ struct ProgramCtx {
 impl ProgramCtx {
     /// Emit `cmd` AND apply it to the sim. The sim apply is the line's
     /// final validation gate — the host will run the same code.
-    fn emit(&mut self, cmd: EditorCommand, failure: &str) -> Result<(), String> {
+    fn emit(&mut self, cmd: EditorCommand, failure: &str) -> Result<()> {
         if !self.sim.apply(cmd.clone()) {
-            return Err(failure.to_string());
+            return Err(ProgramError::ApplyRejected(failure.to_string()));
         }
         self.commands.push(cmd);
         Ok(())
@@ -218,14 +222,14 @@ impl ProgramCtx {
     /// Assign fresh sim-allocator ids to `nodes` (in place); returns
     /// the (authored → final) map. Authored ids are recorded into the
     /// alias table so slash paths keep resolving TS-style.
-    fn remap(&mut self, nodes: &mut [PenNode]) -> Result<Vec<(String, String)>, String> {
+    fn remap(&mut self, nodes: &mut [PenNode]) -> Result<Vec<(String, String)>> {
         let mut seed = self
             .sim
             .next_node_id_seed()
-            .ok_or("node id space exhausted")?;
+            .ok_or(ProgramError::IdSpaceExhausted)?;
         let mut taken = self.sim.collect_node_ids();
         let map = remap_subtree_ids_mapping(nodes, &mut seed, &mut taken)
-            .ok_or("node id space exhausted")?;
+            .ok_or(ProgramError::IdSpaceExhausted)?;
         for (old, new) in &map {
             if !old.starts_with("__op_tmp_") {
                 self.alias.entry(old.clone()).or_insert_with(|| new.clone());
@@ -236,7 +240,7 @@ impl ProgramCtx {
 }
 
 /// TS `executeLine` — one DSL operation.
-fn execute_line(line: &str, ctx: &mut ProgramCtx) -> Result<(), String> {
+fn execute_line(line: &str, ctx: &mut ProgramCtx) -> Result<()> {
     // TS line grammar (dotAll `s` flag — pretty-printed JSON bodies
     // carry literal newlines inside the arg list):
     //   binding=OP(args)  for I/C/K/R/M/G
@@ -272,7 +276,7 @@ fn execute_line(line: &str, ctx: &mut ProgramCtx) -> Result<(), String> {
             _ => unreachable!(),
         };
     }
-    Err(format!("Cannot parse operation: {line}"))
+    Err(ProgramError::UnparsableLine(line.to_string()))
 }
 
 /// Return append-G line indexes that are robustly sized by later U() calls in
@@ -368,7 +372,7 @@ fn positive_json_number(value: &Value) -> bool {
         .is_some_and(|number| number.is_finite() && number > 0.0)
 }
 
-fn execute_assign(op: &str, binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<(), String> {
+fn execute_assign(op: &str, binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<()> {
     match op {
         "I" => execute_insert(binding, args, ctx),
         "C" => execute_copy(binding, args, ctx),
@@ -385,8 +389,9 @@ fn execute_assign(op: &str, binding: &str, args: &str, ctx: &mut ProgramCtx) -> 
 }
 
 /// `binding=I(parent, data)` — insert a (possibly nested) node.
-fn execute_insert(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<(), String> {
-    let comma = find_top_level_char(args, ',').ok_or("Insert requires parent and node data")?;
+fn execute_insert(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<()> {
+    let comma = find_top_level_char(args, ',')
+        .ok_or_else(|| ProgramError::Syntax("Insert requires parent and node data".into()))?;
     let parent_raw = args[..comma].trim();
     let parent = resolve_parent_ref(parent_raw, &ctx.bindings);
     let mut node = parse_node_json(&args[comma + 1..], ctx.post_process)?;
@@ -419,7 +424,7 @@ fn execute_insert(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<(),
     let root_id = map
         .first()
         .map(|(_, new)| new.clone())
-        .ok_or("Insert produced no node")?;
+        .ok_or(ProgramError::ProducedNoNode("Insert"))?;
     for (cmd, failure) in pre_commands {
         ctx.emit(cmd, failure)?;
     }
@@ -461,8 +466,9 @@ fn execute_insert(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<(),
 }
 
 /// `binding=C(sourceId, parent[, overrides])` — clone with fresh ids.
-fn execute_copy(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<(), String> {
-    let first = find_top_level_char(args, ',').ok_or("Copy requires sourceId, parent, and data")?;
+fn execute_copy(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<()> {
+    let first = find_top_level_char(args, ',')
+        .ok_or_else(|| ProgramError::Syntax("Copy requires sourceId, parent, and data".into()))?;
     let source_raw = args[..first].trim();
     let rest = args[first + 1..].trim();
     let (parent_raw, data_str) = match find_top_level_char(rest, ',') {
@@ -473,15 +479,19 @@ fn execute_copy(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<(), S
     let Some(source) =
         op_editor_core::walkers::find_node(ctx.sim.active_children(), &NodeId::new(&source_id))
     else {
-        return Err(format!("Copy source not found: {source_id}"));
+        return Err(ProgramError::NotFound(format!(
+            "Copy source not found: {source_id}"
+        )));
     };
-    let mut cloned_value =
-        serde_json::to_value(source).map_err(|e| format!("Copy source unserializable: {e}"))?;
+    let mut cloned_value = serde_json::to_value(source)
+        .map_err(|e| ProgramError::InvalidNode(format!("Copy source unserializable: {e}")))?;
     // TS `Object.assign(cloned, data)` minus `id` (never overridden)
     // and `descendants` (a TS no-op — see module docs).
     let overrides = parse_json_arg(data_str)?;
     let Some(overrides) = overrides.as_object() else {
-        return Err("C() overrides JSON must be an object".into());
+        return Err(ProgramError::Syntax(
+            "C() overrides JSON must be an object".into(),
+        ));
     };
     if let Some(obj) = cloned_value.as_object_mut() {
         for (key, value) in overrides {
@@ -492,8 +502,9 @@ fn execute_copy(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<(), S
         }
     }
     normalize_node_shape(&mut cloned_value);
-    let mut node: PenNode = serde_json::from_value(cloned_value)
-        .map_err(|e| format!("C() overrides produce an invalid node: {e}"))?;
+    let mut node: PenNode = serde_json::from_value(cloned_value).map_err(|e| {
+        ProgramError::InvalidNode(format!("C() overrides produce an invalid node: {e}"))
+    })?;
     if ctx.post_process {
         let _ = op_editor_core::command_refine::refine_subtree(&mut node);
     }
@@ -508,7 +519,7 @@ fn execute_copy(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<(), S
     let clone_id = map
         .first()
         .map(|(_, new)| new.clone())
-        .ok_or("Copy produced no node")?;
+        .ok_or(ProgramError::ProducedNoNode("Copy"))?;
     let parent = resolve_parent_ref(parent_raw, &ctx.bindings);
     ctx.emit(
         EditorCommand::InsertAuthoredSubtree {
@@ -532,10 +543,12 @@ fn execute_copy(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<(), S
 /// `shadcn-<short-id>` (for example `shadcn/btn-primary` →
 /// `shadcn-ui` / `shadcn-btn-primary`). Exact `<kit-id>/<component-id>`
 /// pairs are also accepted for imported/future kits.
-fn execute_kit_instantiate(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<(), String> {
+fn execute_kit_instantiate(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<()> {
     let parts = split_top_level_args(args);
     if !(2..=3).contains(&parts.len()) {
-        return Err("K() requires kitComponentId, parent, and optional overrides".into());
+        return Err(ProgramError::Syntax(
+            "K() requires kitComponentId, parent, and optional overrides".into(),
+        ));
     }
     let kit_component_id = parse_string_arg(parts[0].trim(), "K() kitComponentId")?;
     let (kit_id, component_id) = resolve_kit_component_id(&kit_component_id, &ctx.sim)?;
@@ -550,7 +563,9 @@ fn execute_kit_instantiate(binding: &str, args: &str, ctx: &mut ProgramCtx) -> R
         Some(raw) => {
             let value = parse_json_arg(raw)?;
             if !value.is_object() {
-                return Err("K() overrides JSON must be an object".into());
+                return Err(ProgramError::Syntax(
+                    "K() overrides JSON must be an object".into(),
+                ));
             }
             Some(value.to_string())
         }
@@ -571,7 +586,9 @@ fn execute_kit_instantiate(binding: &str, args: &str, ctx: &mut ProgramCtx) -> R
     if !node_id.is_real()
         || op_editor_core::walkers::find_node(ctx.sim.active_children(), &node_id).is_none()
     {
-        return Err("K() did not produce a selected node".into());
+        return Err(ProgramError::Rejected(
+            "K() did not produce a selected node".into(),
+        ));
     }
     ctx.bind(binding, node_id.as_str());
     Ok(())
@@ -579,12 +596,15 @@ fn execute_kit_instantiate(binding: &str, args: &str, ctx: &mut ProgramCtx) -> R
 
 /// `binding=R(path, data)` — replace the node at `path` with a fresh
 /// node built from `data` (same slot, fresh id, children dropped).
-fn execute_replace(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<(), String> {
-    let comma = find_top_level_char(args, ',').ok_or("Replace requires path and node data")?;
+fn execute_replace(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<()> {
+    let comma = find_top_level_char(args, ',')
+        .ok_or_else(|| ProgramError::Syntax("Replace requires path and node data".into()))?;
     let path_raw = args[..comma].trim();
     let path = resolve_path_expr(path_raw, &ctx.bindings);
     let Some(old) = find_node_by_path(ctx.sim.active_children(), &path, &ctx.alias) else {
-        return Err(format!("Replace target not found: {path}"));
+        return Err(ProgramError::NotFound(format!(
+            "Replace target not found: {path}"
+        )));
     };
     let old_id = old.id_str().to_string();
     let mut node = parse_node_json(&args[comma + 1..], ctx.post_process)?;
@@ -603,7 +623,7 @@ fn execute_replace(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<()
     let new_id = map
         .first()
         .map(|(_, new)| new.clone())
-        .ok_or("Replace produced no node")?;
+        .ok_or(ProgramError::ProducedNoNode("Replace"))?;
     ctx.emit(
         EditorCommand::ReplaceSubtree {
             node_id: NodeId::new(&old_id),
@@ -638,10 +658,10 @@ fn execute_replace(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<()
 /// hatch allows a new sibling only under a horizontal/vertical flow parent.
 /// No fetcher at this layer — `src` stays empty (browser-caller parity);
 /// the host's own image pipeline enriches later.
-fn execute_image(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<(), String> {
+fn execute_image(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<()> {
     let parts = split_top_level_args(args);
     if !matches!(parts.len(), 3 | 4) {
-        return Err(format!("Invalid G() syntax: {args}"));
+        return Err(ProgramError::Syntax(format!("Invalid G() syntax: {args}")));
     }
     let parent_raw = parts[0].trim();
     let parent = if matches!(parent_raw, "null" | "undefined" | "0" | "\"\"" | "\"0\"") {
@@ -650,21 +670,23 @@ fn execute_image(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<(), 
         resolve_path_expr(parent_raw, &ctx.bindings)
     };
     let mode = serde_json::from_str::<String>(parts[1].trim())
-        .map_err(|_| format!("Invalid G() syntax: {args}"))?;
+        .map_err(|_| ProgramError::Syntax(format!("Invalid G() syntax: {args}")))?;
     if !matches!(mode.as_str(), "search" | "generate") {
-        return Err(format!("G() mode must be search or generate: {mode}"));
+        return Err(ProgramError::Rejected(format!(
+            "G() mode must be search or generate: {mode}"
+        )));
     }
     let prompt = serde_json::from_str::<String>(parts[2].trim())
-        .map_err(|_| format!("Invalid G() syntax: {args}"))?;
+        .map_err(|_| ProgramError::Syntax(format!("Invalid G() syntax: {args}")))?;
     let placement = match parts.get(3) {
         None => "slot".to_string(),
         Some(raw) => serde_json::from_str::<String>(raw.trim())
-            .map_err(|_| format!("Invalid G() syntax: {args}"))?,
+            .map_err(|_| ProgramError::Syntax(format!("Invalid G() syntax: {args}")))?,
     };
     if !matches!(placement.as_str(), "slot" | "append") {
-        return Err(format!(
+        return Err(ProgramError::Rejected(format!(
             "G() placement must be \"slot\" or \"append\", got {placement:?}"
-        ));
+        )));
     }
     let name: String = prompt.chars().take(40).collect();
     let mut value = json!({
@@ -682,18 +704,21 @@ fn execute_image(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<(), 
         value["imageSearchQuery"] = json!(prompt);
     }
     if parent.trim().is_empty() || parent.trim() == "0" {
-        return Err(format!(
+        return Err(ProgramError::Rejected(format!(
             "G() placement {placement:?} requires an explicit frame/rectangle target id; create the target first instead of using null"
-        ));
+        )));
     }
-    let target = find_node_by_path(ctx.sim.active_children(), &parent, &ctx.alias)
-        .ok_or_else(|| format!("G() parent not found or not a container: {parent}"))?;
+    let target =
+        find_node_by_path(ctx.sim.active_children(), &parent, &ctx.alias).ok_or_else(|| {
+            ProgramError::NotFound(format!("G() parent not found or not a container: {parent}"))
+        })?;
     // `parent` may be a slash path or an authored id that `find_node_by_path`
     // translated through `ctx.alias`. The emitted insert must target the live
     // resolved node id, never the caller's path/alias spelling.
     let target_id = target.id_str().to_string();
-    let container = node_container(target)
-        .ok_or_else(|| format!("G() parent not found or not a container: {parent}"))?;
+    let container = node_container(target).ok_or_else(|| {
+        ProgramError::NotFound(format!("G() parent not found or not a container: {parent}"))
+    })?;
     // Placement is an explicit structural contract. Slot-fill accepts only an
     // EMPTY target; append accepts only an explicitly-authored flow parent.
     // Never recover intent from names, dimensions, child kinds, or position.
@@ -706,29 +731,29 @@ fn execute_image(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<(), 
                 .map(PenNode::id_str)
                 .collect::<Vec<_>>();
             if !child_ids.is_empty() {
-                return Err(format!(
+                return Err(ProgramError::Rejected(format!(
                     "G() slot target {} must be empty, but it has children [{}]. Pass the exact empty frame/rectangle slot id; use \"append\" only for an intentional child of an explicit horizontal/vertical flow parent",
                     target.id_str(),
                     child_ids.join(", ")
-                ));
+                )));
             }
         }
         "append" => {
             if explicit_flow_layout(container).is_none() {
-                return Err(format!(
+                return Err(ProgramError::Rejected(format!(
                     "G() append target {} must declare layout \"horizontal\" or \"vertical\"; got {}. Append means a new flow sibling and is never an absolute overlay",
                     target.id_str(),
                     layout_label(container)
-                ));
+                )));
             }
             if !ctx
                 .explicitly_sized_append_lines
                 .contains(&ctx.current_line)
             {
-                return Err(
+                return Err(ProgramError::Rejected(
                     "G() append requires a result binding followed in the same batch by U(binding, {\"width\": <positive number>, \"height\": <positive number>}); refusing an unsized flow child with default fill_container width and height"
                         .into(),
-                );
+                ));
             }
         }
         _ => unreachable!("placement validated above"),
@@ -741,14 +766,14 @@ fn execute_image(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<(), 
         let width = target.width_px().or_else(|| resolved.map(|size| size.0));
         let height = target.height_px().or_else(|| resolved.map(|size| size.1));
         let (Some(width), Some(height)) = (width, height) else {
-            return Err(format!(
+            return Err(ProgramError::Rejected(format!(
                     "G() target {target_id} uses layout none, so it needs declared width and height that resolve above zero before an image can fill it"
-                ));
+                )));
         };
         if width <= 0.0 || height <= 0.0 {
-            return Err(format!(
+            return Err(ProgramError::Rejected(format!(
                     "G() target {target_id} uses layout none, so it needs declared width and height that resolve above zero before an image can fill it"
-                ));
+                )));
         }
         value["x"] = json!(0);
         value["y"] = json!(0);
@@ -761,14 +786,14 @@ fn execute_image(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<(), 
         value["width"] = json!("fill_container");
         value["height"] = json!("fill_container");
     }
-    let node: PenNode =
-        serde_json::from_value(value).map_err(|e| format!("invalid G() image node: {e}"))?;
+    let node: PenNode = serde_json::from_value(value)
+        .map_err(|e| ProgramError::InvalidNode(format!("invalid G() image node: {e}")))?;
     let mut nodes = vec![node];
     let map = ctx.remap(&mut nodes)?;
     let image_id = map
         .first()
         .map(|(_, new)| new.clone())
-        .ok_or("G() produced no node")?;
+        .ok_or(ProgramError::ProducedNoNode("G()"))?;
     ctx.emit(
         EditorCommand::InsertAuthoredSubtree {
             nodes,
@@ -829,23 +854,29 @@ fn resolved_node_size(state: &EditorState, node_id: &str) -> Option<(f64, f64)> 
 
 /// `U(path, data)` — shallow-patch the node at `path`. No result entry
 /// (TS call-form ops don't push results).
-fn execute_update(args: &str, ctx: &mut ProgramCtx) -> Result<(), String> {
-    let comma = find_top_level_char(args, ',').ok_or("Update requires path and update data")?;
+fn execute_update(args: &str, ctx: &mut ProgramCtx) -> Result<()> {
+    let comma = find_top_level_char(args, ',')
+        .ok_or_else(|| ProgramError::Syntax("Update requires path and update data".into()))?;
     let path = resolve_path_expr(args[..comma].trim(), &ctx.bindings);
     let mut value = parse_json_arg(&args[comma + 1..])?;
     normalize_node_shape(&mut value);
     let Some(target) = find_node_by_path(ctx.sim.active_children(), &path, &ctx.alias) else {
-        return Err(format!("Update target not found: {path}"));
+        return Err(ProgramError::NotFound(format!(
+            "Update target not found: {path}"
+        )));
     };
     let node_id = NodeId::new(target.id_str());
-    let cmd = update_command_from_value(node_id, &value)?;
+    // `batch_direct_ops` is shared with the non-program write paths and is
+    // outside this conversion's scope; adapt its `String` at the boundary
+    // rather than rippling the change into it.
+    let cmd = update_command_from_value(node_id, &value).map_err(ProgramError::Rejected)?;
     let cmd = with_page_id(cmd, ctx.page_id.clone());
     ctx.emit(cmd, &format!("Update failed for: {path}"))
 }
 
 /// `D(ref)` — delete. TS `removeNodeFromTree` silently no-ops on an
 /// unknown id: no error, no result.
-fn execute_delete(args: &str, ctx: &mut ProgramCtx) -> Result<(), String> {
+fn execute_delete(args: &str, ctx: &mut ProgramCtx) -> Result<()> {
     let raw = strip_outer_quotes(args.trim());
     let node_id = lookup_id(&resolve_ref(&raw, &ctx.bindings), &ctx.alias);
     if op_editor_core::walkers::find_node(ctx.sim.active_children(), &NodeId::new(&node_id))
@@ -864,16 +895,20 @@ fn execute_delete(args: &str, ctx: &mut ProgramCtx) -> Result<(), String> {
 
 /// `M(nodeId, parent[, index])` (call or bound form) — reparent.
 /// Returns the moved node's id so the bound form can record it.
-fn execute_move(args: &str, ctx: &mut ProgramCtx) -> Result<String, String> {
+fn execute_move(args: &str, ctx: &mut ProgramCtx) -> Result<String> {
     let parts = split_top_level_args(args);
     if parts.len() < 2 {
-        return Err("Move requires nodeId and parent".into());
+        return Err(ProgramError::Syntax(
+            "Move requires nodeId and parent".into(),
+        ));
     }
     let node_id = lookup_id(&resolve_ref(parts[0].trim(), &ctx.bindings), &ctx.alias);
     if op_editor_core::walkers::find_node(ctx.sim.active_children(), &NodeId::new(&node_id))
         .is_none()
     {
-        return Err(format!("Move target not found: {node_id}"));
+        return Err(ProgramError::NotFound(format!(
+            "Move target not found: {node_id}"
+        )));
     }
     let parent_raw = parts[1].trim();
     let parent = resolve_parent_ref(parent_raw, &ctx.bindings);
@@ -882,7 +917,11 @@ fn execute_move(args: &str, ctx: &mut ProgramCtx) -> Result<String, String> {
         Some(raw) => Some(
             strip_outer_quotes(raw.trim())
                 .parse::<usize>()
-                .map_err(|_| format!("M() index must be a non-negative integer, got {raw:?}"))?,
+                .map_err(|_| {
+                    ProgramError::Syntax(format!(
+                        "M() index must be a non-negative integer, got {raw:?}"
+                    ))
+                })?,
         ),
     };
     ctx.emit(
@@ -963,16 +1002,16 @@ fn find_node_with_parent<'a>(
 
 /// Parse + normalize an I()/R() node body into a `PenNode` with
 /// authored ids filled in (the caller remaps them to final ids).
-fn parse_node_json(raw: &str, post_process: bool) -> Result<PenNode, String> {
+fn parse_node_json(raw: &str, post_process: bool) -> Result<PenNode> {
     let mut value = parse_json_arg(raw)?;
     if !value.is_object() {
-        return Err("node data must be a JSON object".into());
+        return Err(ProgramError::Json("node data must be a JSON object".into()));
     }
     normalize_node_shape(&mut value);
     let mut tmp = 1usize;
     ensure_node_ids(&mut value, &mut tmp);
-    let mut node: PenNode =
-        serde_json::from_value(value).map_err(|e| format!("invalid PenNode payload: {e}"))?;
+    let mut node: PenNode = serde_json::from_value(value)
+        .map_err(|e| ProgramError::InvalidNode(format!("invalid PenNode payload: {e}")))?;
     if post_process {
         // TS postProcess hooks (emoji strip, unique ids, layout-child
         // position sanitize, screen-bounds clamp) — the deterministic
@@ -985,7 +1024,7 @@ fn parse_node_json(raw: &str, post_process: bool) -> Result<PenNode, String> {
 /// TS `parseJsonArg` — strict JSON first, then the lenient agent-typo
 /// pipeline: quote unquoted keys, single→double quote delimiters,
 /// strip empty-key artifacts and trailing commas.
-fn parse_json_arg(raw: &str) -> Result<Value, String> {
+fn parse_json_arg(raw: &str) -> Result<Value> {
     let trimmed = raw.trim();
     if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
         return Ok(value);
@@ -1039,24 +1078,24 @@ fn parse_json_arg(raw: &str) -> Result<Value, String> {
         .map_err(|e| {
             let snippet: String = raw.chars().take(300).collect();
             let ellipsis = if raw.chars().count() > 300 { "..." } else { "" };
-            format!("Failed to parse JSON ({e}): {snippet}{ellipsis}")
+            ProgramError::Json(format!("Failed to parse JSON ({e}): {snippet}{ellipsis}"))
         })
 }
 
-fn parse_string_arg(raw: &str, label: &str) -> Result<String, String> {
+fn parse_string_arg(raw: &str, label: &str) -> Result<String> {
     let value = parse_json_arg(raw)?;
     value
         .as_str()
         .map(str::to_string)
-        .ok_or_else(|| format!("{label} must be a JSON string"))
+        .ok_or_else(|| ProgramError::Syntax(format!("{label} must be a JSON string")))
 }
 
-fn resolve_kit_component_id(raw: &str, state: &EditorState) -> Result<(String, String), String> {
+fn resolve_kit_component_id(raw: &str, state: &EditorState) -> Result<(String, String)> {
     let Some((kit_part, component_part)) = raw.split_once('/') else {
-        return Err(
+        return Err(ProgramError::Syntax(
             "K() kitComponentId must be starter/<id>, shadcn/<id>, or <kit-id>/<component-id>"
                 .into(),
-        );
+        ));
     };
     let kit_id = match kit_part {
         "starter" => "openpencil-starter".to_string(),
@@ -1069,17 +1108,19 @@ fn resolve_kit_component_id(raw: &str, state: &EditorState) -> Result<(String, S
         component_part.to_string()
     };
     let Some(kit) = state.ui_kits.iter().find(|kit| kit.id == kit_id) else {
-        return Err(format!("K() kit not found: {kit_part}"));
+        return Err(ProgramError::NotFound(format!(
+            "K() kit not found: {kit_part}"
+        )));
     };
     if !kit
         .components
         .iter()
         .any(|component| component.id == component_id)
     {
-        return Err(format!(
+        return Err(ProgramError::NotFound(format!(
             "K() component not found: {raw} (resolved to {}/{})",
             kit.id, component_id
-        ));
+        )));
     }
     Ok((kit.id.clone(), component_id))
 }
