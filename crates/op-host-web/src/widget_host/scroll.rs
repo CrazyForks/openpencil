@@ -120,7 +120,7 @@ impl WidgetHost {
         };
         let max = panel.max_scroll(panel_rect);
         if scroll_by_max(
-            &mut self.editor_state.editor_ui.design_md_scroll,
+            &mut self.editor_state.editor_ui.design_md_panel.scroll,
             -delta_y,
             max,
         ) {

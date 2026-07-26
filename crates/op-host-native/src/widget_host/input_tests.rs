@@ -759,7 +759,7 @@ fn toolbar_panel_actions_open_variables_and_design_panels() {
         viewport_h,
     );
     assert!(host.apply_press(design_x, design_y, viewport_w, viewport_h));
-    assert!(host.editor_state().editor_ui.design_md_panel_open);
+    assert!(host.editor_state().editor_ui.design_md_panel.open);
 }
 
 #[test]

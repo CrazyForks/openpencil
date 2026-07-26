@@ -218,7 +218,7 @@ struct DesktopApp {
     /// `editor_state.codegen` each frame.
     current_codegen: Option<codegen_session::CodegenSession>,
     /// In-flight Design-MD auto-generation turn, if any. The floating
-    /// design-system panel raises `design_md_request`; the host
+    /// design-system panel raises `design_md_panel.request`; the host
     /// resolves the selected model and lands the generated markdown
     /// back into `doc.design_md` when the worker completes.
     current_design_md: Option<design_md_host::DesignMdSession>,

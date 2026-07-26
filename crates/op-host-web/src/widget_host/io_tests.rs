@@ -235,8 +235,8 @@ fn drain_file_action_clear_recent_matches_desktop_state_change() {
 fn drain_design_md_auto_generate_consumes_empty_document_request() {
     let mut host = WidgetHost::new();
     host.editor_state.doc.children.clear();
-    host.editor_state.editor_ui.design_md_request = Some(DesignMdRequest::AutoGenerate);
-    host.editor_state.editor_ui.design_md_generating = false;
+    host.editor_state.editor_ui.design_md_panel.request = Some(DesignMdRequest::AutoGenerate);
+    host.editor_state.editor_ui.design_md_panel.generating = false;
     let inner = Rc::new(RefCell::new(TestRepaintContext::new(host)));
 
     crate::web_design_md::drain_design_md_action(&inner);
@@ -246,9 +246,17 @@ fn drain_design_md_auto_generate_consumes_empty_document_request() {
         .host
         .editor_state
         .editor_ui
-        .design_md_request
+        .design_md_panel
+        .request
         .is_none());
-    assert!(!borrowed.host.editor_state.editor_ui.design_md_generating);
+    assert!(
+        !borrowed
+            .host
+            .editor_state
+            .editor_ui
+            .design_md_panel
+            .generating
+    );
     assert_eq!(borrowed.repaint_count, 0);
 }
 

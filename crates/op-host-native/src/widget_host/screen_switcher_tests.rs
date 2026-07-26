@@ -103,15 +103,22 @@ fn press_hover_release_navigates_to_the_pressed_pill() {
     let (px, py) = center(rects[1]); // "/profile" pill
 
     assert!(host.screen_switcher_press(px, py, viewport_w, viewport_h));
-    assert_eq!(host.editor_state.editor_ui.screen_switcher_pressed, Some(1));
+    assert_eq!(
+        host.editor_state.editor_ui.preview.screen_switcher_pressed,
+        Some(1)
+    );
 
     host.screen_switcher_hover(px, py, viewport_w, viewport_h);
-    assert_eq!(host.editor_state.editor_ui.screen_switcher_hover, Some(1));
+    assert_eq!(
+        host.editor_state.editor_ui.preview.screen_switcher_hover,
+        Some(1)
+    );
 
     assert!(host.screen_switcher_release());
     assert!(host
         .editor_state
         .editor_ui
+        .preview
         .screen_switcher_pressed
         .is_none());
 
@@ -153,9 +160,15 @@ fn release_off_the_pressed_pill_does_not_navigate() {
 fn exit_preview_clears_switcher_press_and_hover_state() {
     let _guard = test_lock();
     let mut host = app_mode_host();
-    host.editor_state.editor_ui.screen_switcher_hover = Some(1);
-    host.editor_state.editor_ui.screen_switcher_pressed = Some(1);
+    host.editor_state.editor_ui.preview.screen_switcher_hover = Some(1);
+    host.editor_state.editor_ui.preview.screen_switcher_pressed = Some(1);
     host.exit_preview();
-    assert_eq!(host.editor_state.editor_ui.screen_switcher_hover, None);
-    assert_eq!(host.editor_state.editor_ui.screen_switcher_pressed, None);
+    assert_eq!(
+        host.editor_state.editor_ui.preview.screen_switcher_hover,
+        None
+    );
+    assert_eq!(
+        host.editor_state.editor_ui.preview.screen_switcher_pressed,
+        None
+    );
 }

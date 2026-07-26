@@ -66,7 +66,7 @@ impl RenderBackend for CaptureBackend {
 
 fn open_state() -> EditorState {
     let mut state = EditorState::default();
-    state.editor_ui.design_md_panel_open = true;
+    state.editor_ui.design_md_panel.open = true;
     state.doc.design_md = Some(op_editor_core::parse_design_md(
         "# Brief\n\n## Visual Theme\nWarm system",
     ));
@@ -81,14 +81,14 @@ fn long_palette_state() -> EditorState {
         ));
     }
     let mut state = EditorState::default();
-    state.editor_ui.design_md_panel_open = true;
+    state.editor_ui.design_md_panel.open = true;
     state.doc.design_md = Some(op_editor_core::parse_design_md(&markdown));
     state
 }
 
 fn empty_open_state() -> EditorState {
     let mut state = EditorState::default();
-    state.editor_ui.design_md_panel_open = true;
+    state.editor_ui.design_md_panel.open = true;
     state.doc.design_md = None;
     state
 }
@@ -165,7 +165,7 @@ fn content_paint_uses_design_md_scroll_offset() {
     assert!(panel.max_scroll(rect) > 96.0);
     let unscrolled_y = painted_text_y(&state, "color-12");
 
-    state.editor_ui.design_md_scroll.offset = 96.0;
+    state.editor_ui.design_md_panel.scroll.offset = 96.0;
     let scrolled_y = painted_text_y(&state, "color-12");
 
     assert!((unscrolled_y - scrolled_y - 96.0).abs() < 0.01);

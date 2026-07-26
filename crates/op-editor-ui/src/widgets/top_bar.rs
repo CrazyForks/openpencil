@@ -234,7 +234,7 @@ impl TopBar {
             fullscreen: ui.window_fullscreen,
             theme_mode: ui.theme_mode,
             git_branch: ui.git_panel.branch.clone(),
-            preview_active: ui.preview_mode,
+            preview_active: ui.preview.mode,
             hover: ui.topbar_button_hover,
             pressed: match ui.pressed_button {
                 Some(op_editor_core::ButtonPressTarget::TopBar(button)) => Some(button),

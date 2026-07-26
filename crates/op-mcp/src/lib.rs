@@ -37,6 +37,7 @@ mod batch_layered;
 mod batch_layered_tests;
 mod batch_page;
 mod batch_program;
+mod batch_program_error;
 pub mod batch_program_objects;
 #[cfg(test)]
 mod batch_program_tests;

@@ -195,20 +195,20 @@ impl DesktopApp {
             }
             A::ToggleDesignMdPanel => {
                 let ui = &mut self.host.editor_state_mut().editor_ui;
-                let opening = !ui.design_md_panel_open;
+                let opening = !ui.design_md_panel.open;
                 if opening {
                     ui.image_panel.close_popovers();
                     // Centre the floating panel on the viewport the
                     // first time it opens (and re-centre on reopen so
                     // it never strands off-screen after a resize).
-                    ui.design_md_panel_pos = Some((
+                    ui.design_md_panel.pos = Some((
                         ((self.viewport_width - op_editor_ui::widgets::DESIGN_MD_PANEL_W) / 2.0)
                             .max(0.0),
                         ((self.viewport_height - op_editor_ui::widgets::DESIGN_MD_PANEL_H) / 2.0)
                             .max(0.0),
                     ));
                 }
-                ui.design_md_panel_open = opening;
+                ui.design_md_panel.open = opening;
                 self.host.mark_editor_state_dirty();
                 true
             }

@@ -676,7 +676,7 @@ fn disabling_experimental_leaves_active_preview_running() {
         host.preview_active(),
         "disabling experimental must NOT exit the live preview session"
     );
-    assert!(host.editor_state().editor_ui.preview_mode);
+    assert!(host.editor_state().editor_ui.preview.mode);
 }
 
 #[test]

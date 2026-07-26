@@ -39,7 +39,7 @@ fn web_topbar_preview_button_toggles_preview_mode_like_native() {
     let mut host = WidgetHost::new();
     host.last_viewport_w = 1440.0;
     host.last_viewport_h = 900.0;
-    assert!(!host.editor_state.editor_ui.preview_mode);
+    assert!(!host.editor_state.editor_ui.preview.mode);
     // The canvas Preview (Play) button graduated out of the
     // experimental-features gate (2026-07) — it's a regular always-on
     // button now, no opt-in flag needed before probing for its hit target.
@@ -60,11 +60,11 @@ fn web_topbar_preview_button_toggles_preview_mode_like_native() {
 
     assert!(host.apply_press(point.x, point.y, 1440.0, 900.0));
 
-    assert!(host.editor_state.editor_ui.preview_mode);
+    assert!(host.editor_state.editor_ui.preview.mode);
 
     assert!(host.apply_press(point.x, point.y, 1440.0, 900.0));
 
-    assert!(!host.editor_state.editor_ui.preview_mode);
+    assert!(!host.editor_state.editor_ui.preview.mode);
 }
 
 #[derive(Default)]

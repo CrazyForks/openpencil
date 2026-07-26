@@ -52,15 +52,15 @@ impl EditorUiState {
             self.variables_panel_hover = None;
             self.axis_dropdown_open = None;
         }
-        self.design_md_panel_open = false;
-        self.design_md_hover = None;
+        self.design_md_panel.open = false;
+        self.design_md_panel.hover = None;
     }
 
     /// Toggle the Design.md panel.
     pub fn toggle_design_md_panel(&mut self) {
-        self.design_md_panel_open = !self.design_md_panel_open;
-        if !self.design_md_panel_open {
-            self.design_md_hover = None;
+        self.design_md_panel.open = !self.design_md_panel.open;
+        if !self.design_md_panel.open {
+            self.design_md_panel.hover = None;
         }
     }
 }

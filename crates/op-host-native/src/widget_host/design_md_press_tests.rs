@@ -4,7 +4,7 @@ use super::WidgetHostNative;
 fn design_md_import_press_sets_and_release_clears_pressed_button() {
     let mut host = WidgetHostNative::new();
     let (viewport_w, viewport_h) = (1440.0, 900.0);
-    host.editor_state_mut().editor_ui.design_md_panel_open = true;
+    host.editor_state_mut().editor_ui.design_md_panel.open = true;
 
     let panel_rect = host
         .design_md_panel_rect(viewport_w, viewport_h)
@@ -46,7 +46,7 @@ fn design_md_import_press_sets_and_release_clears_pressed_button() {
 fn design_md_auto_generate_press_queues_auto_generate_request() {
     let mut host = WidgetHostNative::new();
     let (viewport_w, viewport_h) = (1440.0, 900.0);
-    host.editor_state_mut().editor_ui.design_md_panel_open = true;
+    host.editor_state_mut().editor_ui.design_md_panel.open = true;
 
     let panel_rect = host
         .design_md_panel_rect(viewport_w, viewport_h)
@@ -74,7 +74,7 @@ fn design_md_auto_generate_press_queues_auto_generate_request() {
 
     assert!(host.apply_press(point.x, point.y, viewport_w, viewport_h));
     assert_eq!(
-        host.editor_state().editor_ui.design_md_request,
+        host.editor_state().editor_ui.design_md_panel.request,
         Some(op_editor_core::DesignMdRequest::AutoGenerate)
     );
     assert_eq!(

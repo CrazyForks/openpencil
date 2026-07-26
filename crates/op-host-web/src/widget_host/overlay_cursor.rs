@@ -148,13 +148,13 @@ impl WidgetHost {
         }
         // Top-most floating panel drags own cursor movement.
         if let Some(d) = self.design_md_drag {
-            self.editor_state.editor_ui.design_md_panel_pos = Some((x - d.grab_dx, y - d.grab_dy));
+            self.editor_state.editor_ui.design_md_panel.pos = Some((x - d.grab_dx, y - d.grab_dy));
             self.mark_dirty();
             return true;
         }
         // Design-MD panel hover (close / import / export / remove /
         // section headers).
-        if self.editor_state.editor_ui.design_md_panel_open {
+        if self.editor_state.editor_ui.design_md_panel.open {
             use op_editor_ui::widgets::design_md_panel::DesignMdPanel;
             if let Some(panel_rect) =
                 self.design_md_panel_rect(self.last_viewport_w, self.last_viewport_h)
@@ -162,9 +162,9 @@ impl WidgetHost {
                 let point = Point2D::new(x, y);
                 let new_hover = DesignMdPanel::for_editor(&self.editor_state)
                     .and_then(|p| p.hover_at(panel_rect, point));
-                let changed = new_hover != self.editor_state.editor_ui.design_md_hover;
+                let changed = new_hover != self.editor_state.editor_ui.design_md_panel.hover;
                 if changed {
-                    self.editor_state.editor_ui.design_md_hover = new_hover;
+                    self.editor_state.editor_ui.design_md_panel.hover = new_hover;
                     self.mark_dirty();
                 }
                 if panel_rect.contains(point) {

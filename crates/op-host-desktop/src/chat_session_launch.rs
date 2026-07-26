@@ -115,7 +115,12 @@ pub fn launch_if_pending(
                 host.editor_state(),
                 &user_text,
             );
-            let initial_state = host.editor_state().clone();
+            // Narrowed clone — this becomes the design worker's
+            // `RemoteDocSink` mirror, which is only ever read through
+            // `DocSink::state()` (`active_children` / `doc` / `components`).
+            // See `op_editor_core::request_snapshot` for the field audit.
+            let initial_state =
+                op_editor_core::request_snapshot::narrowed_snapshot(host.editor_state_mut());
             let request = build_design_request(user_text, &initial_state, append_context);
             // Persist the request onto the turn's assistant bubble (already
             // pushed by `begin_send`) BEFORE it moves into the worker — the
@@ -404,7 +409,12 @@ fn launch_cli_standard_turn(
     let system_prompt = build_chat_system_prompt(state, user_text);
     let modify_plan = op_host_services::chat_intent::build_modify_plan(state, user_text);
     let append_context = op_host_services::chat_intent::detect_append_intent(state, user_text);
-    let initial_state = state.clone();
+    // Narrowed clone — `CliTurnPlan::initial_state` ends up as the design
+    // worker's `RemoteDocSink` mirror, read only through `DocSink::state()`.
+    // See `op_editor_core::request_snapshot` for the field audit. Takes the
+    // mutable borrow, so it must come after the last read of `state`.
+    let initial_state =
+        op_editor_core::request_snapshot::narrowed_snapshot(host.editor_state_mut());
     let design_request =
         build_design_request(user_text.to_string(), &initial_state, append_context);
     // Same stash as the builtin/design-intent path above — this turn may or

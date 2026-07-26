@@ -116,9 +116,9 @@ fn cursor_move_tracks_chat_footer_buttons() {
 
     host.editor_state.editor_ui.canvas_hover_node = Some(NodeId::new("stale-canvas"));
     host.editor_state.editor_ui.property_action_hover = Some(3);
-    host.editor_state.editor_ui.design_md_panel_open = true;
-    host.editor_state.editor_ui.design_md_panel_pos = Some((0.0, 0.0));
-    host.editor_state.editor_ui.design_md_hover = Some(op_editor_core::DesignMdButton::Close);
+    host.editor_state.editor_ui.design_md_panel.open = true;
+    host.editor_state.editor_ui.design_md_panel.pos = Some((0.0, 0.0));
+    host.editor_state.editor_ui.design_md_panel.hover = Some(op_editor_core::DesignMdButton::Close);
 
     assert!(host.apply_cursor_move(attach.x, attach.y));
     assert_eq!(
@@ -127,7 +127,7 @@ fn cursor_move_tracks_chat_footer_buttons() {
     );
     assert_eq!(host.editor_state.editor_ui.canvas_hover_node, None);
     assert_eq!(host.editor_state.editor_ui.property_action_hover, None);
-    assert_eq!(host.editor_state.editor_ui.design_md_hover, None);
+    assert_eq!(host.editor_state.editor_ui.design_md_panel.hover, None);
 
     assert!(host.apply_cursor_move(send.x, send.y));
     assert_eq!(
@@ -202,9 +202,9 @@ fn entering_chat_clears_stale_higher_and_lower_hover_in_one_move() {
         chat_rect.origin.y + chat_rect.size.y / 2.0,
     );
 
-    host.editor_state.editor_ui.design_md_panel_open = true;
-    host.editor_state.editor_ui.design_md_panel_pos = Some((0.0, 0.0));
-    host.editor_state.editor_ui.design_md_hover = Some(op_editor_core::DesignMdButton::Close);
+    host.editor_state.editor_ui.design_md_panel.open = true;
+    host.editor_state.editor_ui.design_md_panel.pos = Some((0.0, 0.0));
+    host.editor_state.editor_ui.design_md_panel.hover = Some(op_editor_core::DesignMdButton::Close);
     host.editor_state.editor_ui.import_menu_open = true;
     host.editor_state.editor_ui.import_menu.open = true;
     host.editor_state.editor_ui.import_menu.hover = Some(0);
@@ -238,7 +238,7 @@ fn entering_chat_clears_stale_higher_and_lower_hover_in_one_move() {
 
     assert!(host.apply_cursor_move(point.x, point.y));
     let ui = &host.editor_state.editor_ui;
-    assert_eq!(ui.design_md_hover, None);
+    assert_eq!(ui.design_md_panel.hover, None);
     assert_eq!(ui.import_menu.hover, None);
     assert_eq!(ui.hovered_layer_id, None);
     assert_eq!(ui.canvas_hover_node, None);
@@ -633,9 +633,9 @@ fn leaving_higher_floating_panel_updates_model_picker_in_same_move() {
     host.last_viewport_w = viewport_w;
     host.last_viewport_h = viewport_h;
     open_model_picker(&mut host);
-    host.editor_state.editor_ui.design_md_panel_open = true;
-    host.editor_state.editor_ui.design_md_panel_pos = Some((0.0, 0.0));
-    host.editor_state.editor_ui.design_md_hover = Some(op_editor_core::DesignMdButton::Close);
+    host.editor_state.editor_ui.design_md_panel.open = true;
+    host.editor_state.editor_ui.design_md_panel.pos = Some((0.0, 0.0));
+    host.editor_state.editor_ui.design_md_panel.hover = Some(op_editor_core::DesignMdButton::Close);
     let picker = host
         .chat_model_picker_rect(viewport_w, viewport_h)
         .expect("model picker rect");
@@ -652,7 +652,7 @@ fn leaving_higher_floating_panel_updates_model_picker_in_same_move() {
     );
 
     assert!(host.apply_cursor_move(point.x, point.y));
-    assert_eq!(host.editor_state.editor_ui.design_md_hover, None);
+    assert_eq!(host.editor_state.editor_ui.design_md_panel.hover, None);
     assert_eq!(host.editor_state.editor_ui.chat_model_picker.hover, Some(0));
 }
 

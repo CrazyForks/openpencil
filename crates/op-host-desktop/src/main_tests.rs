@@ -217,7 +217,8 @@ fn design_md_auto_generate_does_not_fall_back_to_local_extraction() {
         state.doc.design_md = Some(op_editor_core::parse_design_md(
             "# Design System: Existing\n\n## Visual Theme\nOld brief",
         ));
-        state.editor_ui.design_md_request = Some(op_editor_core::DesignMdRequest::AutoGenerate);
+        state.editor_ui.design_md_panel.request =
+            Some(op_editor_core::DesignMdRequest::AutoGenerate);
     }
     app.set_design_md_test_provider(Box::new(EchoProvider {
         script: vec![
@@ -236,7 +237,7 @@ fn design_md_auto_generate_does_not_fall_back_to_local_extraction() {
     }));
 
     assert!(app.drain_design_md_action());
-    assert!(app.host.editor_state().editor_ui.design_md_generating);
+    assert!(app.host.editor_state().editor_ui.design_md_panel.generating);
 
     let spec = app
         .host
@@ -271,7 +272,7 @@ fn design_md_auto_generate_does_not_fall_back_to_local_extraction() {
     assert_eq!(spec.project_name.as_deref(), Some("LLM Brief"));
     assert!(spec.raw.contains("#F97316"));
     assert!(!spec.raw.contains("#2563EB"));
-    assert!(!app.host.editor_state().editor_ui.design_md_generating);
+    assert!(!app.host.editor_state().editor_ui.design_md_panel.generating);
 
     assert!(app.host.editor_state_mut().undo());
     let restored = app

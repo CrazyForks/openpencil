@@ -123,7 +123,7 @@ impl PreviewSession {
     /// screen whose nav tab Track A never bound to `on_tap`. A no-op
     /// outside APP MODE. `path` need not be valid: the router itself
     /// validates and records an unknown-path rejection the next
-    /// `reconcile` drains into `preview_warnings`, exactly like a runtime
+    /// `reconcile` drains into `preview.warnings`, exactly like a runtime
     /// tap on an unwired nav button would.
     pub fn navigate_to_screen(&self, path: &str) {
         if let Some(app) = &self.app {

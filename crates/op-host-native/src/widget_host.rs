@@ -273,7 +273,7 @@ pub struct WidgetHostNative {
     pub(in crate::widget_host) chat_resize: Option<ChatResizeState>,
     /// Active Design-MD panel drag — present while the user drags the
     /// floating panel by its header bar. The live top-left is written
-    /// straight back into `editor_ui.design_md_panel_pos`.
+    /// straight back into `editor_ui.design_md_panel.pos`.
     pub(in crate::widget_host) design_md_drag: Option<DesignMdDragState>,
     /// Active Component-Browser panel drag.
     pub(in crate::widget_host) component_browser_drag: Option<ComponentBrowserDragState>,
@@ -411,7 +411,7 @@ pub struct WidgetHostNative {
     pub(in crate::widget_host) last_viewport_w: f32,
     pub(in crate::widget_host) last_viewport_h: f32,
     /// Live canvas Preview (Play) session — `Some` while
-    /// `editor_state.editor_ui.preview_mode` is set. Owns the jian
+    /// `editor_state.editor_ui.preview.mode` is set. Owns the jian
     /// `Runtime` (host-local; `!Send`). Built on enter from the
     /// document JSON, dropped on exit so the document stays untouched.
     pub(in crate::widget_host) preview: Option<crate::preview::PreviewSession>,

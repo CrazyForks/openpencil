@@ -44,8 +44,8 @@ impl WidgetHostNative {
         }
         match hit {
             DesignMdHit::Close => {
-                self.editor_state.editor_ui.design_md_panel_open = false;
-                self.editor_state.editor_ui.design_md_hover = None;
+                self.editor_state.editor_ui.design_md_panel.open = false;
+                self.editor_state.editor_ui.design_md_panel.hover = None;
             }
             DesignMdHit::DragHeader => {
                 self.design_md_drag = Some(DesignMdDragState {
@@ -54,18 +54,18 @@ impl WidgetHostNative {
                 });
             }
             DesignMdHit::ToggleSection(index) => {
-                self.editor_state.editor_ui.design_md_expanded ^= 1u8 << index;
+                self.editor_state.editor_ui.design_md_panel.expanded ^= 1u8 << index;
             }
             DesignMdHit::Import => {
-                self.editor_state.editor_ui.design_md_request =
+                self.editor_state.editor_ui.design_md_panel.request =
                     Some(op_editor_core::DesignMdRequest::Import);
             }
             DesignMdHit::AutoGenerate => {
-                self.editor_state.editor_ui.design_md_request =
+                self.editor_state.editor_ui.design_md_panel.request =
                     Some(op_editor_core::DesignMdRequest::AutoGenerate);
             }
             DesignMdHit::Export => {
-                self.editor_state.editor_ui.design_md_request =
+                self.editor_state.editor_ui.design_md_panel.request =
                     Some(op_editor_core::DesignMdRequest::Export);
             }
             DesignMdHit::Remove => {
@@ -73,7 +73,7 @@ impl WidgetHostNative {
                 // first so a stray remove is undoable.
                 let snap = self.editor_state.snapshot_for_history();
                 self.editor_state.doc.design_md = None;
-                self.editor_state.editor_ui.design_md_scroll.offset = 0.0;
+                self.editor_state.editor_ui.design_md_panel.scroll.offset = 0.0;
                 self.editor_state.history_push_past(snap);
             }
             DesignMdHit::Inside => {

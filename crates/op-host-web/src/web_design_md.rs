@@ -1,7 +1,7 @@
 //! Browser-side Design-MD action drain.
 //!
 //! The widget layer mirrors native and only raises
-//! `editor_ui.design_md_request`; this module consumes that request from the
+//! `editor_ui.design_md_panel.request`; this module consumes that request from the
 //! CanvasKit event loop and performs the web host work.
 
 use std::cell::{Cell, RefCell};
@@ -37,7 +37,8 @@ pub(crate) fn drain_design_md_action<C: RepaintContext + 'static>(inner: &InnerR
         .host_mut()
         .editor_state_mut()
         .editor_ui
-        .design_md_request
+        .design_md_panel
+        .request
         .take();
     match request {
         Some(DesignMdRequest::Import) => import_design_md(inner),
@@ -76,7 +77,7 @@ fn apply_imported_design_md<C: RepaintContext + 'static>(inner: &InnerRc<C>, mar
     let snap = b.host().editor_state().snapshot_for_history();
     let state = b.host_mut().editor_state_mut();
     state.doc.design_md = Some(spec);
-    state.editor_ui.design_md_scroll.offset = 0.0;
+    state.editor_ui.design_md_panel.scroll.offset = 0.0;
     state.history_push_past(snap);
     b.host_mut().mark_editor_state_dirty();
     let _ = b.repaint();
@@ -118,7 +119,8 @@ fn auto_generate_design_md<C: RepaintContext + 'static>(inner: &InnerRc<C>) {
         b.host_mut()
             .editor_state_mut()
             .editor_ui
-            .design_md_generating = true;
+            .design_md_panel
+            .generating = true;
         b.host_mut().mark_editor_state_dirty();
         let _ = b.repaint();
         body
@@ -223,8 +225,8 @@ fn apply_generated_design_md<C: RepaintContext + 'static>(inner: &InnerRc<C>, ma
     let snap = b.host().editor_state().snapshot_for_history();
     let state = b.host_mut().editor_state_mut();
     state.doc.design_md = Some(spec);
-    state.editor_ui.design_md_scroll.offset = 0.0;
-    state.editor_ui.design_md_generating = false;
+    state.editor_ui.design_md_panel.scroll.offset = 0.0;
+    state.editor_ui.design_md_panel.generating = false;
     state.history_push_past(snap);
     b.host_mut().mark_editor_state_dirty();
     let _ = b.repaint();
@@ -234,13 +236,14 @@ fn set_generating<C: RepaintContext + 'static>(inner: &InnerRc<C>, generating: b
     let Ok(mut b) = inner.try_borrow_mut() else {
         return;
     };
-    if b.host().editor_state().editor_ui.design_md_generating == generating {
+    if b.host().editor_state().editor_ui.design_md_panel.generating == generating {
         return;
     }
     b.host_mut()
         .editor_state_mut()
         .editor_ui
-        .design_md_generating = generating;
+        .design_md_panel
+        .generating = generating;
     b.host_mut().mark_editor_state_dirty();
     let _ = b.repaint();
 }

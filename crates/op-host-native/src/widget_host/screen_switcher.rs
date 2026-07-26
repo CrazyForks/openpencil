@@ -37,7 +37,7 @@ impl super::WidgetHostNative {
         let switcher = ScreenSwitcherPills {
             labels: &labels,
             active: session.current_screen_index(),
-            hover: self.editor_state.editor_ui.screen_switcher_hover,
+            hover: self.editor_state.editor_ui.preview.screen_switcher_hover,
         };
         let mut cx = PaintCx {
             backend: frame_backend,
@@ -65,7 +65,7 @@ impl super::WidgetHostNative {
         let count = session.screen_switcher_entries().len();
         let canvas = self.preview_canvas_rect(viewport_w, viewport_h);
         let hit = ScreenSwitcherPills::hit_test(canvas, count, Point2D::new(x, y));
-        self.editor_state.editor_ui.screen_switcher_pressed = hit;
+        self.editor_state.editor_ui.preview.screen_switcher_pressed = hit;
         hit.is_some()
     }
 
@@ -73,11 +73,16 @@ impl super::WidgetHostNative {
     /// the pressed index (mirrors `preview_switcher_release`), then
     /// dispatches `router.replace(path)` through the session.
     pub(crate) fn screen_switcher_release(&mut self) -> bool {
-        let pressed = self.editor_state.editor_ui.screen_switcher_pressed.take();
+        let pressed = self
+            .editor_state
+            .editor_ui
+            .preview
+            .screen_switcher_pressed
+            .take();
         let Some(pressed) = pressed else {
             return false;
         };
-        if self.editor_state.editor_ui.screen_switcher_hover == Some(pressed) {
+        if self.editor_state.editor_ui.preview.screen_switcher_hover == Some(pressed) {
             if let Some(session) = self.preview.as_ref() {
                 if let Some((path, _)) = session.screen_switcher_entries().get(pressed) {
                     session.navigate_to_screen(path);
@@ -88,7 +93,7 @@ impl super::WidgetHostNative {
         true
     }
 
-    /// Hover tracking, mirroring `preview_switcher_hover`. Clears (rather
+    /// Hover tracking, mirroring `preview.switcher_hover`. Clears (rather
     /// than no-ops) when APP MODE just ended so a stale hover index can't
     /// linger into a later single-screen preview.
     pub(crate) fn screen_switcher_hover(
@@ -102,8 +107,14 @@ impl super::WidgetHostNative {
             return;
         };
         if !session.is_app_mode() {
-            if self.editor_state.editor_ui.screen_switcher_hover.is_some() {
-                self.editor_state.editor_ui.screen_switcher_hover = None;
+            if self
+                .editor_state
+                .editor_ui
+                .preview
+                .screen_switcher_hover
+                .is_some()
+            {
+                self.editor_state.editor_ui.preview.screen_switcher_hover = None;
                 self.mark_dirty();
             }
             return;
@@ -111,8 +122,8 @@ impl super::WidgetHostNative {
         let count = session.screen_switcher_entries().len();
         let canvas = self.preview_canvas_rect(viewport_w, viewport_h);
         let hit = ScreenSwitcherPills::hit_test(canvas, count, Point2D::new(x, y));
-        if self.editor_state.editor_ui.screen_switcher_hover != hit {
-            self.editor_state.editor_ui.screen_switcher_hover = hit;
+        if self.editor_state.editor_ui.preview.screen_switcher_hover != hit {
+            self.editor_state.editor_ui.preview.screen_switcher_hover = hit;
             self.mark_dirty();
         }
     }

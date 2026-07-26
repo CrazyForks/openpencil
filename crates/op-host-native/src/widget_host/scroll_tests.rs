@@ -75,7 +75,7 @@ fn design_md_panel_wheel_scrolls_content_without_zooming_canvas() {
             "- **color-{index:02}** (#{index:02X}{index:02X}{index:02X}) - role {index}\n"
         ));
     }
-    host.editor_state_mut().editor_ui.design_md_panel_open = true;
+    host.editor_state_mut().editor_ui.design_md_panel.open = true;
     host.editor_state_mut().doc.design_md = Some(op_editor_core::parse_design_md(&markdown));
     let panel_rect = host
         .design_md_panel_rect(viewport_w, viewport_h)
@@ -93,7 +93,7 @@ fn design_md_panel_wheel_scrolls_content_without_zooming_canvas() {
         viewport_h
     ));
 
-    assert!(host.editor_state().editor_ui.design_md_scroll.offset > 0.0);
+    assert!(host.editor_state().editor_ui.design_md_panel.scroll.offset > 0.0);
     assert_eq!(host.editor_state().viewport.zoom, zoom);
 }
 

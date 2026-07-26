@@ -77,18 +77,18 @@ impl WidgetHostNative {
         self.settle_mode_transition();
 
         // APP MODE per-frame reconcile: drain rejected navs into
-        // `preview_warnings` and, on a screen switch, re-center the
+        // `preview.warnings` and, on a screen switch, re-center the
         // viewport on the newly-mounted screen. Runs before the `ui`
         // borrow below (and before the preview paint branch further
         // down) so the switched screen paints this same frame, not one
-        // frame late, and so the `preview_warnings` write here doesn't
+        // frame late, and so the `preview.warnings` write here doesn't
         // conflict with `ui`'s borrow of `self.editor_state.editor_ui`.
         let mut preview_switched = false;
         let mut switched_screen_rect = None;
         if let Some(preview) = self.preview.as_mut() {
             let outcome = preview.reconcile(self.now_ms);
             if outcome.repaint {
-                self.editor_state.editor_ui.preview_warnings = preview.warnings().to_vec();
+                self.editor_state.editor_ui.preview.warnings = preview.warnings().to_vec();
             }
             if outcome.switched {
                 preview_switched = true;

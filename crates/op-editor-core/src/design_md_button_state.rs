@@ -2,7 +2,7 @@
 //!
 //! Mirrors the hoverable subset of `DesignMdHit` (the widget crate's
 //! click enum) for the hover wash stored on
-//! `EditorUiState.design_md_hover`. Drag-header / inside hits never
+//! `EditorUiState.design_md_panel.hover`. Drag-header / inside hits never
 //! hover. Same wasm32-clean discipline as the other `*_state` mirrors.
 
 /// Which design-md-panel button the cursor is over. `None` = no hover.

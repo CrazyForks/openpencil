@@ -631,9 +631,9 @@ fn leaving_higher_floating_panel_updates_model_picker_in_same_move() {
     open_populated_model_picker(&mut host);
     {
         let ui = &mut host.editor_state_mut().editor_ui;
-        ui.design_md_panel_open = true;
-        ui.design_md_panel_pos = Some((0.0, 0.0));
-        ui.design_md_hover = Some(op_editor_core::DesignMdButton::Close);
+        ui.design_md_panel.open = true;
+        ui.design_md_panel.pos = Some((0.0, 0.0));
+        ui.design_md_panel.hover = Some(op_editor_core::DesignMdButton::Close);
     }
     let picker = host
         .chat_model_picker_rect(viewport_w, viewport_h)
@@ -655,7 +655,7 @@ fn leaving_higher_floating_panel_updates_model_picker_in_same_move() {
     );
 
     assert!(host.apply_cursor_move(point.x, point.y));
-    assert_eq!(host.editor_state().editor_ui.design_md_hover, None);
+    assert_eq!(host.editor_state().editor_ui.design_md_panel.hover, None);
     assert_eq!(
         host.editor_state().editor_ui.chat_model_picker.hover,
         Some(0),

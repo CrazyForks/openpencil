@@ -101,7 +101,7 @@ fn run_design_md_provider_blocking(
 }
 
 impl DesktopApp {
-    /// Run a queued Design-MD request — `design_md_request`, set by a
+    /// Run a queued Design-MD request — `design_md_panel.request`, set by a
     /// panel click. A no-op when nothing is queued.
     pub(crate) fn drain_design_md_action(&mut self) -> bool {
         use op_editor_core::DesignMdRequest;
@@ -109,7 +109,8 @@ impl DesktopApp {
             .host
             .editor_state_mut()
             .editor_ui
-            .design_md_request
+            .design_md_panel
+            .request
             .take()
         else {
             return false;
@@ -144,7 +145,7 @@ impl DesktopApp {
         let snap = self.host.editor_state().snapshot_for_history();
         let state = self.host.editor_state_mut();
         state.doc.design_md = Some(spec);
-        state.editor_ui.design_md_scroll.offset = 0.0;
+        state.editor_ui.design_md_panel.scroll.offset = 0.0;
         state.history_push_past(snap);
         self.host.mark_editor_state_dirty();
         true
@@ -155,7 +156,11 @@ impl DesktopApp {
     /// after the model returns markdown.
     fn auto_generate_design_md(&mut self) -> bool {
         if self.current_design_md.take().is_some() {
-            self.host.editor_state_mut().editor_ui.design_md_generating = false;
+            self.host
+                .editor_state_mut()
+                .editor_ui
+                .design_md_panel
+                .generating = false;
             self.host.mark_editor_state_dirty();
             return true;
         }
@@ -169,7 +174,11 @@ impl DesktopApp {
         let model = selected_cli_model_id(&self.host);
         let initial_state = self.host.editor_state().clone();
         self.current_design_md = Some(DesignMdSession::start(provider, model, &initial_state));
-        self.host.editor_state_mut().editor_ui.design_md_generating = true;
+        self.host
+            .editor_state_mut()
+            .editor_ui
+            .design_md_panel
+            .generating = true;
         self.host.mark_editor_state_dirty();
         true
     }
@@ -199,7 +208,11 @@ impl DesktopApp {
             }
         };
         self.current_design_md = None;
-        self.host.editor_state_mut().editor_ui.design_md_generating = false;
+        self.host
+            .editor_state_mut()
+            .editor_ui
+            .design_md_panel
+            .generating = false;
         match outcome {
             Ok(markdown) => {
                 self.apply_generated_design_md(markdown);
@@ -217,7 +230,7 @@ impl DesktopApp {
         let snap = self.host.editor_state().snapshot_for_history();
         let state = self.host.editor_state_mut();
         state.doc.design_md = Some(spec);
-        state.editor_ui.design_md_scroll.offset = 0.0;
+        state.editor_ui.design_md_panel.scroll.offset = 0.0;
         state.history_push_past(snap);
         self.host.mark_editor_state_dirty();
     }

@@ -14,7 +14,7 @@ fn long_design_md() -> String {
 }
 
 fn open_long_design_md(host: &mut WidgetHost) -> op_editor_ui::Rect {
-    host.editor_state.editor_ui.design_md_panel_open = true;
+    host.editor_state.editor_ui.design_md_panel.open = true;
     host.editor_state.doc.design_md = Some(op_editor_core::parse_design_md(&long_design_md()));
     host.design_md_panel_rect(VIEWPORT_W, VIEWPORT_H)
         .expect("design md panel rect")
@@ -24,7 +24,7 @@ fn open_long_design_md(host: &mut WidgetHost) -> op_editor_ui::Rect {
 fn design_md_import_press_sets_and_release_clears_pressed_button() {
     let mut host = WidgetHost::new();
     let (viewport_w, viewport_h) = (VIEWPORT_W, VIEWPORT_H);
-    host.editor_state.editor_ui.design_md_panel_open = true;
+    host.editor_state.editor_ui.design_md_panel.open = true;
 
     let panel_rect = host
         .design_md_panel_rect(viewport_w, viewport_h)
@@ -79,7 +79,7 @@ fn design_md_panel_wheel_scrolls_content_without_zooming_canvas() {
         VIEWPORT_H
     ));
 
-    assert!(host.editor_state.editor_ui.design_md_scroll.offset > 0.0);
+    assert!(host.editor_state.editor_ui.design_md_panel.scroll.offset > 0.0);
     assert_eq!(host.editor_state.viewport.zoom, zoom);
 }
 
@@ -102,7 +102,7 @@ fn design_md_panel_trackpad_pan_scrolls_content_without_panning_canvas() {
         VIEWPORT_H
     ));
 
-    assert!(host.editor_state.editor_ui.design_md_scroll.offset > 0.0);
+    assert!(host.editor_state.editor_ui.design_md_panel.scroll.offset > 0.0);
     assert_eq!(host.editor_state.viewport.pan_x, pan_x);
     assert_eq!(host.editor_state.viewport.pan_y, pan_y);
 }
@@ -114,7 +114,7 @@ fn design_md_remove_press_clears_scroll_offset() {
     let max_scroll = op_editor_ui::widgets::DesignMdPanel::for_editor(&host.editor_state)
         .expect("open design md panel");
     let max_scroll = max_scroll.max_scroll(panel_rect);
-    host.editor_state.editor_ui.design_md_scroll.offset = max_scroll;
+    host.editor_state.editor_ui.design_md_panel.scroll.offset = max_scroll;
     let panel = op_editor_ui::widgets::DesignMdPanel::for_editor(&host.editor_state)
         .expect("open design md panel");
 
@@ -140,5 +140,8 @@ fn design_md_remove_press_clears_scroll_offset() {
     assert!(host.apply_press(point.x, point.y, VIEWPORT_W, VIEWPORT_H));
 
     assert!(host.editor_state.doc.design_md.is_none());
-    assert_eq!(host.editor_state.editor_ui.design_md_scroll.offset, 0.0);
+    assert_eq!(
+        host.editor_state.editor_ui.design_md_panel.scroll.offset,
+        0.0
+    );
 }

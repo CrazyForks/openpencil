@@ -266,7 +266,7 @@ pub(crate) fn scroll_max(frame: &DeviceFrame) -> f32 {
 impl super::WidgetHostNative {
     pub(crate) fn initialize_device_preview(&mut self) {
         let kind = self.infer_device_kind();
-        self.editor_state.editor_ui.preview_device = Some(kind);
+        self.editor_state.editor_ui.preview.device = Some(kind);
         self.preview_scroll_y = 0.0;
         self.recompute_device_frame(self.last_viewport_w, self.last_viewport_h);
     }
@@ -320,7 +320,7 @@ impl super::WidgetHostNative {
     pub(crate) fn device_mode_active(&self) -> bool {
         self.preview.is_some()
             && matches!(
-                self.editor_state.editor_ui.preview_device,
+                self.editor_state.editor_ui.preview.device,
                 Some(PreviewDeviceKind::Phone) | Some(PreviewDeviceKind::Desktop)
             )
     }
@@ -344,7 +344,7 @@ impl super::WidgetHostNative {
             self.preview_device_frame = None;
             return;
         }
-        let Some(kind) = self.editor_state.editor_ui.preview_device else {
+        let Some(kind) = self.editor_state.editor_ui.preview.device else {
             self.preview_device_frame = None;
             return;
         };
@@ -416,7 +416,7 @@ impl super::WidgetHostNative {
         viewport_h: f32,
     ) {
         self.preview_manual_pick = Some(kind);
-        self.editor_state.editor_ui.preview_device = Some(kind);
+        self.editor_state.editor_ui.preview.device = Some(kind);
         self.preview_scroll_y = 0.0;
         self.preview_surface_capture = None;
         if kind == PreviewDeviceKind::Canvas {
@@ -438,7 +438,7 @@ impl super::WidgetHostNative {
     pub(crate) fn on_preview_screen_switched(&mut self, viewport_w: f32, viewport_h: f32) {
         if self.preview_manual_pick.is_none() {
             let kind = self.infer_device_kind();
-            self.editor_state.editor_ui.preview_device = Some(kind);
+            self.editor_state.editor_ui.preview.device = Some(kind);
         }
         self.preview_scroll_y = 0.0;
         self.preview_surface_capture = None;
@@ -595,9 +595,9 @@ impl super::WidgetHostNative {
         use op_editor_ui::widgets::{PaintCx, PreviewDeviceSwitcher};
         let switcher = PreviewDeviceSwitcher {
             labels: self.preview_switcher_labels(),
-            selected: self.editor_state.editor_ui.preview_device,
-            hover: self.editor_state.editor_ui.preview_switcher_hover,
-            pressed: self.editor_state.editor_ui.preview_switcher_pressed,
+            selected: self.editor_state.editor_ui.preview.device,
+            hover: self.editor_state.editor_ui.preview.switcher_hover,
+            pressed: self.editor_state.editor_ui.preview.switcher_pressed,
         };
         let mut cx = PaintCx {
             backend: frame_backend,
@@ -618,17 +618,17 @@ impl super::WidgetHostNative {
         }
         let canvas = self.preview_canvas_rect(viewport_w, viewport_h);
         let hit = PreviewDeviceSwitcher::hit_test(canvas, Point2D::new(x, y));
-        self.editor_state.editor_ui.preview_switcher_pressed = hit;
+        self.editor_state.editor_ui.preview.switcher_pressed = hit;
         hit.is_some()
     }
 
     /// Activate on release when the maintained hover matches the press.
     pub(crate) fn preview_switcher_release(&mut self) -> bool {
-        let pressed = self.editor_state.editor_ui.preview_switcher_pressed.take();
+        let pressed = self.editor_state.editor_ui.preview.switcher_pressed.take();
         let Some(pressed) = pressed else {
             return false;
         };
-        if self.editor_state.editor_ui.preview_switcher_hover == Some(pressed) {
+        if self.editor_state.editor_ui.preview.switcher_hover == Some(pressed) {
             let (viewport_w, viewport_h) = (self.last_viewport_w, self.last_viewport_h);
             self.set_preview_device(pressed, viewport_w, viewport_h);
         }
@@ -649,8 +649,8 @@ impl super::WidgetHostNative {
         }
         let canvas = self.preview_canvas_rect(viewport_w, viewport_h);
         let hit = PreviewDeviceSwitcher::hit_test(canvas, Point2D::new(x, y));
-        if self.editor_state.editor_ui.preview_switcher_hover != hit {
-            self.editor_state.editor_ui.preview_switcher_hover = hit;
+        if self.editor_state.editor_ui.preview.switcher_hover != hit {
+            self.editor_state.editor_ui.preview.switcher_hover = hit;
             self.mark_dirty();
         }
     }

@@ -46,7 +46,7 @@ const CHAR_W: f32 = 6.0;
 const BODY_INDENT: f32 = 12.0;
 
 /// The 6 design-md sections, in display order. The index doubles as
-/// the `EditorUiState.design_md_expanded` bitmask position.
+/// the `EditorUiState.design_md_panel.expanded` bitmask position.
 const SECTION_COUNT: usize = 6;
 
 /// What a click landed on inside the Design-MD panel.
@@ -136,17 +136,17 @@ struct SectionLayout {
 impl<'a> DesignMdPanel<'a> {
     /// Build the panel for the editor, or `None` when it is closed.
     pub fn for_editor(state: &'a EditorState) -> Option<DesignMdPanel<'a>> {
-        if !state.editor_ui.design_md_panel_open {
+        if !state.editor_ui.design_md_panel.open {
             return None;
         }
         Some(DesignMdPanel {
             spec: state.doc.design_md.as_ref(),
             theme: theme_for(&state.editor_ui),
             locale: state.editor_ui.locale,
-            expanded: state.editor_ui.design_md_expanded,
-            scroll: state.editor_ui.design_md_scroll.offset,
-            generating: state.editor_ui.design_md_generating,
-            hover: state.editor_ui.design_md_hover,
+            expanded: state.editor_ui.design_md_panel.expanded,
+            scroll: state.editor_ui.design_md_panel.scroll.offset,
+            generating: state.editor_ui.design_md_panel.generating,
+            hover: state.editor_ui.design_md_panel.hover,
             pressed: match state.editor_ui.pressed_button {
                 Some(ButtonPressTarget::DesignMd(button)) => Some(button),
                 _ => None,

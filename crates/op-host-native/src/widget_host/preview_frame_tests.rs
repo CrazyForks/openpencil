@@ -92,11 +92,11 @@ fn enter_preview_infers_and_writes_back_kind() {
     let mut host = host_with_doc(phone_doc(800));
     host.enter_preview((800.0, 600.0));
     assert_eq!(
-        host.editor_state.editor_ui.preview_device,
+        host.editor_state.editor_ui.preview.device,
         Some(PreviewDeviceKind::Phone)
     );
     host.exit_preview();
-    assert_eq!(host.editor_state.editor_ui.preview_device, None);
+    assert_eq!(host.editor_state.editor_ui.preview.device, None);
 }
 
 #[test]
@@ -130,7 +130,7 @@ fn manual_pick_wins_until_exit_then_reinfers() {
     host.exit_preview();
     host.enter_preview((800.0, 600.0));
     assert_eq!(
-        host.editor_state.editor_ui.preview_device,
+        host.editor_state.editor_ui.preview.device,
         Some(PreviewDeviceKind::Phone),
         "re-enter re-infers"
     );
@@ -145,7 +145,7 @@ fn device_scroll_divides_by_fit_and_clamps() {
     assert!(
         host.enter_preview((800.0, 400.0)),
         "preview entry failed: {:?}",
-        host.editor_state().editor_ui.preview_warnings
+        host.editor_state().editor_ui.preview.warnings
     );
     host.recompute_device_frame(800.0, 400.0);
     let fit = host.preview_device_frame.as_ref().unwrap().fit;
@@ -293,7 +293,7 @@ fn tab_switch_animates_across_real_frames_through_the_production_paint_path() {
         "two authored screens must enter APP MODE"
     );
     assert_eq!(
-        host.editor_state.editor_ui.preview_device,
+        host.editor_state.editor_ui.preview.device,
         Some(PreviewDeviceKind::Phone)
     );
 

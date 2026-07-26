@@ -219,7 +219,17 @@ impl McpLiveServer {
         for _ in 0..UI_PUMP_REQUEST_BUDGET {
             match self.req_rx.try_recv() {
                 Ok(UiRequest::Snapshot { ack }) => {
-                    let _ = ack.send(state.clone());
+                    // Narrowed clone: the MCP registry + applier never read
+                    // `chat` / `codegen` / `theme_presets`, and those are the
+                    // sub-states that grow with SESSION length (transcripts,
+                    // generated source, saved preset tables) rather than with
+                    // the document — so copying them into every tool call's
+                    // snapshot is pure UI-thread stall. See
+                    // `op_editor_core::request_snapshot` for the field audit
+                    // and for why an `Arc` can't replace this clone (the
+                    // connection thread re-applies the ack'd command to its
+                    // own copy, and the live state keeps mutating here).
+                    let _ = ack.send(op_editor_core::request_snapshot::narrowed_snapshot(state));
                 }
                 Ok(UiRequest::ListPages { ack }) => {
                     let _ = ack.send(op_mcp::list_pages_snapshot(state));

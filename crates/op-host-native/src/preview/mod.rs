@@ -13,7 +13,7 @@
 //! is `!Send`. `op-editor-core` must stay wasm32-clean + does not hold
 //! the runtime. The session therefore lives on the native host
 //! (`WidgetHostNative`), which is already UI-thread-local (it owns skia
-//! handles). The editor state only carries the `preview_mode` flag +
+//! handles). The editor state only carries the `preview.mode` flag +
 //! warning list (`EditorUiState::{enter,exit}_preview`).
 //!
 //! ## Render — reuse the design-canvas renderer
@@ -151,7 +151,7 @@ pub struct PreviewSession {
     /// preview must too or every element shifts.
     preserve_authored_geometry: bool,
     /// Non-fatal load warnings (e.g. legacy role promotions), formatted
-    /// for display in the editor's `preview_warnings`.
+    /// for display in the editor's `preview.warnings`.
     warnings: Vec<String>,
     /// Compiled non-`bind:value` bindings from the promoted document,
     /// re-evaluated against the live state graph each overlay pass (see
@@ -413,7 +413,7 @@ impl PreviewSession {
     }
 
     /// The formatted load warnings collected on `enter` (for the
-    /// editor's `preview_warnings` diagnostics surface).
+    /// editor's `preview.warnings` diagnostics surface).
     pub fn warnings(&self) -> &[String] {
         &self.warnings
     }

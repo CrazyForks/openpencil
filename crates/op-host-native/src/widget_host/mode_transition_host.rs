@@ -18,7 +18,7 @@ impl WidgetHostNative {
     /// Whether the canvas is currently in Preview (Play) mode with a
     /// live runtime.
     pub fn preview_active(&self) -> bool {
-        self.preview.is_some() && self.editor_state.editor_ui.preview_mode
+        self.preview.is_some() && self.editor_state.editor_ui.preview.mode
     }
 
     /// Enter Preview (Play) mode: flip the editor flag + build a live
@@ -29,7 +29,7 @@ impl WidgetHostNative {
     /// compatibility; the visible viewport affects paint transform
     /// (pan / zoom / clip), not layout. On a build failure the editor
     /// stays in design mode and the error is recorded in
-    /// `preview_warnings`. Returns `true` on success.
+    /// `preview.warnings`. Returns `true` on success.
     ///
     /// Track M-1: the screen's CURRENT canvas-space rect (before any
     /// state changes below touch it) is captured first so the merge
@@ -68,7 +68,7 @@ impl WidgetHostNative {
                 });
                 session.set_now_ms(self.now_ms);
                 self.editor_state.editor_ui.enter_preview();
-                self.editor_state.editor_ui.preview_warnings = session.warnings().to_vec();
+                self.editor_state.editor_ui.preview.warnings = session.warnings().to_vec();
                 self.preview = Some(session);
                 self.initialize_device_preview();
                 // APP MODE: center the viewport on the entry screen (a
@@ -92,8 +92,8 @@ impl WidgetHostNative {
             }
             Err(message) => {
                 // Stay in design mode; surface the failure.
-                self.editor_state.editor_ui.preview_mode = false;
-                self.editor_state.editor_ui.preview_warnings = vec![format!("preview: {message}")];
+                self.editor_state.editor_ui.preview.mode = false;
+                self.editor_state.editor_ui.preview.warnings = vec![format!("preview: {message}")];
                 self.mark_dirty();
                 false
             }

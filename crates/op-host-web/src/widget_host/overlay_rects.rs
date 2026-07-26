@@ -149,7 +149,7 @@ impl WidgetHost {
     }
 
     /// Floating Design-MD panel rect — `None` when the panel is
-    /// closed. The top-left comes from `editor_ui.design_md_panel_pos`
+    /// closed. The top-left comes from `editor_ui.design_md_panel.pos`
     /// (centred on open), clamped so the header bar stays reachable
     /// after a viewport resize. Mirrors the native host.
     pub(in crate::widget_host) fn design_md_panel_rect(
@@ -159,10 +159,10 @@ impl WidgetHost {
     ) -> Option<Rect> {
         use op_editor_ui::widgets::{DESIGN_MD_PANEL_H, DESIGN_MD_PANEL_W};
         let ui = &self.editor_state.editor_ui;
-        if !ui.design_md_panel_open {
+        if !ui.design_md_panel.open {
             return None;
         }
-        let (px, py) = ui.design_md_panel_pos.unwrap_or_else(|| {
+        let (px, py) = ui.design_md_panel.pos.unwrap_or_else(|| {
             (
                 ((viewport_w - DESIGN_MD_PANEL_W) / 2.0).max(0.0),
                 ((viewport_h - DESIGN_MD_PANEL_H) / 2.0).max(0.0),

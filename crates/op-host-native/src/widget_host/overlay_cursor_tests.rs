@@ -33,8 +33,8 @@ fn topmost_design_panel_cursor_move_does_not_hover_path_anchor_menu_underneath()
         "fixture point should hover the lower path-anchor menu"
     );
 
-    host.editor_state_mut().editor_ui.design_md_panel_open = true;
-    host.editor_state_mut().editor_ui.design_md_panel_pos = Some((110.0, 80.0));
+    host.editor_state_mut().editor_ui.design_md_panel.open = true;
+    host.editor_state_mut().editor_ui.design_md_panel.pos = Some((110.0, 80.0));
     let panel_rect = host
         .design_md_panel_rect(VIEWPORT_W, VIEWPORT_H)
         .expect("design-md panel rect");
@@ -44,7 +44,7 @@ fn topmost_design_panel_cursor_move_does_not_hover_path_anchor_menu_underneath()
     );
     let design_hover = DesignMdPanel::for_editor(host.editor_state())
         .and_then(|panel| panel.hover_at(panel_rect, point));
-    host.editor_state_mut().editor_ui.design_md_hover = design_hover;
+    host.editor_state_mut().editor_ui.design_md_panel.hover = design_hover;
 
     let _ = host.apply_cursor_move(point.x, point.y);
 
@@ -80,13 +80,13 @@ fn topmost_design_panel_cursor_move_clears_stale_path_anchor_menu_hover() {
         .expect("menu open")
         .menu
         .hover = Some(0);
-    host.editor_state_mut().editor_ui.design_md_panel_open = true;
-    host.editor_state_mut().editor_ui.design_md_panel_pos = Some((110.0, 80.0));
+    host.editor_state_mut().editor_ui.design_md_panel.open = true;
+    host.editor_state_mut().editor_ui.design_md_panel.pos = Some((110.0, 80.0));
     let panel_rect = host
         .design_md_panel_rect(VIEWPORT_W, VIEWPORT_H)
         .expect("design-md panel rect");
     assert!(panel_rect.contains(point));
-    host.editor_state_mut().editor_ui.design_md_hover =
+    host.editor_state_mut().editor_ui.design_md_panel.hover =
         DesignMdPanel::for_editor(host.editor_state())
             .and_then(|panel| panel.hover_at(panel_rect, point));
 

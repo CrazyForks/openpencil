@@ -41,9 +41,9 @@ fn enter_exit_preview_leaves_document_byte_identical() {
     let before = serde_json::to_string(&s.doc).expect("serialize before");
 
     s.editor_ui.enter_preview();
-    assert!(s.editor_ui.preview_mode);
+    assert!(s.editor_ui.preview.mode);
     s.editor_ui.exit_preview();
-    assert!(!s.editor_ui.preview_mode);
+    assert!(!s.editor_ui.preview.mode);
 
     let after = serde_json::to_string(&s.doc).expect("serialize after");
     assert_eq!(before, after, "preview enter→exit must not touch doc");

@@ -32,7 +32,7 @@ fn panel_toggle_shortcuts_flip_their_flags() {
     assert!(!host.editor_state().editor_ui.variables_panel_open);
 
     assert!(host.apply_toggle_design_md_panel());
-    assert!(host.editor_state().editor_ui.design_md_panel_open);
+    assert!(host.editor_state().editor_ui.design_md_panel.open);
 
     assert!(host.apply_toggle_component_browser());
     assert!(host.editor_state().editor_ui.component_browser_open);
