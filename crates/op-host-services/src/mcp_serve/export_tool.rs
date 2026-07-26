@@ -140,7 +140,7 @@ fn render_raster(
                 // multi-node batches than an all-or-nothing failure.
                 files.push(serde_json::json!({
                     "nodeId": id,
-                    "error": e,
+                    "error": e.to_string(),
                     "format": format_label,
                 }));
             }
@@ -194,10 +194,14 @@ fn render_pdf(scene: &LayoutScene, node_ids: &[String], scale: f32) -> ToolOutco
     }
 
     // Call the shared PDF renderer with valid ids only.
+    // `NoNodeIdsRequested` is exactly this case in the shared renderer's
+    // vocabulary, but its wording is the renderer's; this tool has always
+    // reported its own sentence here, so keep the message and only the
+    // message.
     let pdf_result = if valid_ids.is_empty() {
-        Err("no valid node ids to render".into())
+        Err("no valid node ids to render".to_string())
     } else {
-        render_nodes_pdf_bytes(scene, &valid_ids, scale)
+        render_nodes_pdf_bytes(scene, &valid_ids, scale).map_err(String::from)
     };
 
     match pdf_result {

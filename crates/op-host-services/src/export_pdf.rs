@@ -16,12 +16,14 @@ use op_editor_ui::layout_scene::{LayoutScene, ScenePage};
 use op_editor_ui::Rect;
 use std::path::Path as StdPath;
 
+use crate::export::ExportError;
+
 const PDF_MARGIN: f32 = 16.0;
 
 fn render_pdf_item(
     bounds: Rect,
     paint: impl FnOnce(&skia_safe::Canvas),
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<u8>, ExportError> {
     let mut buf = Vec::new();
     {
         let mut pdf = skia_safe::pdf::new_document(&mut buf, None);
@@ -37,34 +39,45 @@ fn render_pdf_item(
         pdf.close();
     }
     if buf.is_empty() {
-        Err("PDF encoder returned no bytes".into())
+        Err(ExportError::PdfEncoderEmpty)
     } else {
         Ok(buf)
     }
 }
 
 /// Render one resolved page as a single tightly cropped PDF page.
-pub fn render_page_pdf_bytes(page: &ScenePage) -> Result<Vec<u8>, String> {
-    let bounds = crate::export::page_bounds(page)
-        .ok_or_else(|| format!("page {} has no visible content to export", page.id))?;
+pub fn render_page_pdf_bytes(page: &ScenePage) -> Result<Vec<u8>, ExportError> {
+    let bounds = crate::export::page_bounds(page).ok_or_else(|| ExportError::PageEmpty {
+        page_id: page.id.clone(),
+    })?;
     render_pdf_item(bounds, |canvas| {
         crate::export::paint_nodes(canvas, &page.children)
     })
 }
 
 /// Render one node from its resolved containing page as a single PDF page.
-pub fn render_node_on_page_pdf_bytes(page: &ScenePage, node_id: &str) -> Result<Vec<u8>, String> {
+pub fn render_node_on_page_pdf_bytes(
+    page: &ScenePage,
+    node_id: &str,
+) -> Result<Vec<u8>, ExportError> {
     let node = page
         .find(node_id)
-        .ok_or_else(|| format!("node {node_id} not found on page {}", page.id))?;
+        .ok_or_else(|| ExportError::NodeNotFoundOnPage {
+            node_id: node_id.to_string(),
+            page_id: page.id.clone(),
+        })?;
     if node.hidden {
-        return Err(format!("node {node_id} is hidden and cannot be exported"));
+        return Err(ExportError::NodeHidden {
+            node_id: node_id.to_string(),
+        });
     }
     let mut acc = crate::export::BoundsAcc::new();
     crate::export::collect_bounds(node, glam::Affine2::IDENTITY, &mut acc);
     let bounds = acc
         .into_rect()
-        .ok_or_else(|| format!("node {node_id} paints nothing"))?;
+        .ok_or_else(|| ExportError::NodePaintsNothing {
+            node_id: node_id.to_string(),
+        })?;
     render_pdf_item(bounds, |canvas| crate::export::paint_node(canvas, node))
 }
 
@@ -79,10 +92,10 @@ pub fn render_nodes_pdf_bytes(
     scene: &LayoutScene,
     node_ids: &[&str],
     _scale: f32,
-) -> Result<Vec<u8>, String> {
-    let page = scene.active_page().ok_or("no active page")?;
+) -> Result<Vec<u8>, ExportError> {
+    let page = scene.active_page().ok_or(ExportError::NoActivePage)?;
     if node_ids.is_empty() {
-        return Err("no node ids provided".into());
+        return Err(ExportError::NoNodeIdsRequested);
     }
     // Collect (node, bounds) pairs for requested ids — skip unknowns and
     // nodes that paint nothing (mirrors export_node_raster's approach).
@@ -97,7 +110,7 @@ pub fn render_nodes_pdf_bytes(
         pairs.push((node, bounds));
     }
     if pairs.is_empty() {
-        return Err("no requested nodes have paintable content on the active page".into());
+        return Err(ExportError::NoRequestedNodesPaint);
     }
     // Find a common page size: the largest single-node bounds + margin on each
     // side, so every page in the PDF is the same dimensions.
@@ -133,11 +146,21 @@ pub fn render_nodes_pdf_bytes(
 /// sizes on scroll/zoom. Each page's content is positioned within
 /// that frame at its own `(origin.x, origin.y)`; empty pages are
 /// skipped. Returns Err when no page has paintable content.
+/// Reports `String` at the boundary: `op-host-desktop`'s
+/// `persistence::export_editor_state_to_path` returns this `Result` directly
+/// from its own `Result<(), String>` signature. The byte-level entry points
+/// above are typed.
 pub fn export_pdf(scene: &LayoutScene, target: &StdPath) -> Result<(), String> {
+    export_pdf_typed(scene, target).map_err(String::from)
+}
+
+/// Typed twin of [`export_pdf`] for in-crate callers (the `--serve-web`
+/// daemon's export routes).
+pub(crate) fn export_pdf_typed(scene: &LayoutScene, target: &StdPath) -> Result<(), ExportError> {
     let bounds_per_page: Vec<_> = scene.pages.iter().map(crate::export::page_bounds).collect();
     let any_some = bounds_per_page.iter().any(Option::is_some);
     if !any_some {
-        return Err("nothing to export".into());
+        return Err(ExportError::NothingToExport);
     }
     let (page_w, page_h) = {
         let mut max_w = 0.0_f32;
@@ -161,7 +184,7 @@ pub fn export_pdf(scene: &LayoutScene, target: &StdPath) -> Result<(), String> {
         }
         pdf.close();
     }
-    std::fs::write(target, &buf).map_err(|e| e.to_string())
+    std::fs::write(target, &buf).map_err(|e| ExportError::Write(e.to_string()))
 }
 
 #[cfg(test)]

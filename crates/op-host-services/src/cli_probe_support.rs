@@ -176,12 +176,69 @@ pub(crate) fn tail_snippet(stdout: &str, stderr: &str) -> String {
 mod tests {
     use super::*;
 
-    /// Probe budget for the hung-CLI tests. Generous relative to spawning a
-    /// shell (milliseconds) so the deadline is reached with the script's
-    /// output already captured, which is what these tests assert on — a
-    /// tighter window races process startup on a loaded machine.
+    /// Starting probe budget for the hung-CLI tests, and the ceiling
+    /// [`timed_out_probe_with_output`] may escalate to.
+    ///
+    /// Test-harness numbers only — no production timeout reads them. These
+    /// tests assert that the deadline is reached WITH the script's output
+    /// already captured, which races process startup: a tight window lets a
+    /// loaded machine reach the deadline before the shell's `printf` runs,
+    /// and the capture comes back empty. So the tests start at the floor and
+    /// retry with a doubled budget while the capture is empty, up to the cap
+    /// (same approach as `cli_model_discovery_tests`).
     #[cfg(unix)]
-    const PROBE_BUDGET: Duration = Duration::from_secs(2);
+    const PROBE_BUDGET: Duration = Duration::from_secs(4);
+    #[cfg(unix)]
+    const PROBE_BUDGET_CAP: Duration = Duration::from_secs(16);
+
+    /// How long the fake CLI hangs after printing — comfortably past
+    /// `PROBE_BUDGET_CAP` so the timeout branch is guaranteed even at full
+    /// escalation, but finite so nothing can outlive the test run.
+    ///
+    /// The hang is spelled `exec sleep N`, not `sleep N`, on purpose: a
+    /// forked `sleep` INHERITS the stdout/stderr pipes, so `child.kill()`
+    /// would not close them and `bounded_cli_output`'s reader-thread `join`
+    /// would block until the grandchild exited on its own — the probe would
+    /// return after N seconds instead of at its deadline. `exec` replaces the
+    /// shell with `sleep`, so the pid the probe kills IS the process holding
+    /// the pipes.
+    #[cfg(unix)]
+    const FAKE_CLI_HANG_SECS: u32 = 30;
+
+    /// Run the auth-prompt-then-hang script under an escalating deadline
+    /// until the retained stdout actually holds the prompt, then hand back
+    /// the captured streams plus the budget that produced them.
+    ///
+    /// Each attempt asserts the probe returned on its own deadline instead of
+    /// outlasting the `FAKE_CLI_HANG_SECS` child, so "the probe is
+    /// deadline-bounded" stays under test.
+    #[cfg(unix)]
+    fn timed_out_probe_with_output(cli: CliName) -> (Vec<u8>, Vec<u8>, Duration) {
+        let script = format!(
+            "printf 'Authentication required. Please visit the URL to log in:\\n'; \
+             exec sleep {FAKE_CLI_HANG_SECS}"
+        );
+        let mut budget = PROBE_BUDGET;
+        loop {
+            let started = Instant::now();
+            let probe = bounded_cli_output(cli, Path::new("/bin/sh"), &["-c", &script], budget);
+            let elapsed = started.elapsed();
+            let BoundedProbe::TimedOut { stdout, stderr } = probe else {
+                panic!("expected the sleep to outlast the timeout");
+            };
+            assert!(
+                elapsed < budget * 4,
+                "probe must return on its own deadline ({budget:?}), not outlast the \
+                 {FAKE_CLI_HANG_SECS}s script; took {elapsed:?}"
+            );
+            if String::from_utf8_lossy(&stdout).contains("Authentication required")
+                || budget >= PROBE_BUDGET_CAP
+            {
+                return (stdout, stderr, budget);
+            }
+            budget = (budget * 2).min(PROBE_BUDGET_CAP);
+        }
+    }
 
     #[test]
     fn tail_snippet_truncates_to_last_n_chars() {
@@ -261,20 +318,8 @@ mod tests {
         // A CLI mid first-run OAuth: prints its prompt, then hangs well
         // past the probe budget. The kill-on-deadline path must not throw
         // away what the reader threads already captured.
-        let script =
-            "printf 'Authentication required. Please visit the URL to log in:\\n'; sleep 5";
-        match bounded_cli_output(
-            CliName::Antigravity,
-            Path::new("/bin/sh"),
-            &["-c", script],
-            PROBE_BUDGET,
-        ) {
-            BoundedProbe::TimedOut { stdout, .. } => {
-                assert!(String::from_utf8_lossy(&stdout).contains("Authentication required"));
-            }
-            BoundedProbe::Completed(_) => panic!("expected the sleep to outlast the timeout"),
-            BoundedProbe::Failed => panic!("expected a running process to observe"),
-        }
+        let (stdout, _stderr, _budget) = timed_out_probe_with_output(CliName::Antigravity);
+        assert!(String::from_utf8_lossy(&stdout).contains("Authentication required"));
     }
 
     #[cfg(unix)]
@@ -291,7 +336,10 @@ mod tests {
             CliName::GrokBuild,
             Path::new("/bin/sh"),
             &["-c", script],
-            Duration::from_secs(5),
+            // The script exits on its own, so a generous ceiling costs
+            // nothing and keeps machine load from turning this
+            // completed-output assertion into a timeout.
+            PROBE_BUDGET_CAP,
         ) {
             BoundedProbe::Completed(output) => {
                 assert!(output.status.success());
@@ -311,7 +359,7 @@ mod tests {
             CliName::GrokBuild,
             Path::new("/bin/sh"),
             &["-c", "echo hello"],
-            Duration::from_secs(5),
+            PROBE_BUDGET_CAP,
         ) {
             BoundedProbe::Completed(output) => {
                 assert!(output.status.success());
@@ -330,18 +378,7 @@ mod tests {
         // TimedOut branch): a CLI stuck on first-run OAuth during
         // `agy --version` used to surface only "CLI not responding"; it
         // must now name the fix.
-        let script =
-            "printf 'Authentication required. Please visit the URL to log in:\\n'; sleep 5";
-        let probe_timeout = PROBE_BUDGET;
-        let probe = bounded_cli_output(
-            CliName::Antigravity,
-            Path::new("/bin/sh"),
-            &["-c", script],
-            probe_timeout,
-        );
-        let BoundedProbe::TimedOut { stdout, stderr } = probe else {
-            panic!("expected the sleep to outlast the timeout");
-        };
+        let (stdout, stderr, probe_timeout) = timed_out_probe_with_output(CliName::Antigravity);
         let message = diagnose_timeout(
             CliName::Antigravity,
             "Antigravity",

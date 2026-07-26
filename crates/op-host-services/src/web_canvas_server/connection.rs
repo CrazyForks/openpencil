@@ -29,7 +29,7 @@ pub(super) fn serve_one<S: Read + Write>(
     state: &Mutex<WebCanvasState>,
     hub: &SseHub,
 ) -> Result<bool> {
-    let req = crate::mcp_serve::read_http_request(stream).map_err(WebCanvasError::Transport)?;
+    let req = crate::mcp_serve::read_http_request(stream)?;
     let (auth, allow_origins) = {
         let guard = state.lock().unwrap_or_else(|p| p.into_inner());
         let auth = RequestAuth {
@@ -45,39 +45,36 @@ pub(super) fn serve_one<S: Read + Write>(
     };
     let cors_origin = cors_origin.as_deref();
     if req.method == "OPTIONS" {
-        return crate::mcp_serve::write_mcp_http_response_with_origin(
+        crate::mcp_serve::write_mcp_http_response_with_origin(
             stream,
             "204 No Content",
             "",
             cors_origin,
-        )
-        .map_err(WebCanvasError::Transport)
-        .map(|()| false);
+        )?;
+        return Ok(false);
     }
     if is_sensitive_browser_post(&req) && !credential_request_origin_allowed(&req) {
-        return crate::mcp_serve::write_mcp_http_response_with_origin(
+        crate::mcp_serve::write_mcp_http_response_with_origin(
             stream,
             "403 Forbidden",
             &crate::mcp_serve::rest_error_body("cross-origin sensitive request is forbidden"),
             cors_origin,
-        )
-        .map_err(WebCanvasError::Transport)
-        .map(|()| false);
+        )?;
+        return Ok(false);
     }
     // Sensitive JSON routes refuse CORS "simple request" content types
     // (text/plain, form-encoded, or none): a drive-by page can fire those
     // without a preflight, and unmanaged daemons have no token gate.
     if is_sensitive_browser_post(&req) && !content_type_is_json(req.content_type.as_deref()) {
-        return crate::mcp_serve::write_mcp_http_response_with_origin(
+        crate::mcp_serve::write_mcp_http_response_with_origin(
             stream,
             "415 Unsupported Media Type",
             &crate::mcp_serve::rest_error_body(
                 "this route requires Content-Type: application/json",
             ),
             cors_origin,
-        )
-        .map_err(WebCanvasError::Transport)
-        .map(|()| false);
+        )?;
+        return Ok(false);
     }
     // Static serving: the host page (`/`) and the wasm-bindgen bundle
     // (`/pkg/*`). Owns only those paths — everything else falls through.
@@ -109,14 +106,13 @@ pub(super) fn serve_one<S: Read + Write>(
     // already returned. Unmanaged mode's `allows` always returns true, so
     // this is a no-op there.
     if !auth.allows(&req.method, &req.path, req.token.as_deref()) {
-        return crate::mcp_serve::write_mcp_http_response_with_origin(
+        crate::mcp_serve::write_mcp_http_response_with_origin(
             stream,
             "401 Unauthorized",
             r#"{"ok":false,"error":"unauthorized"}"#,
             cors_origin,
-        )
-        .map_err(WebCanvasError::Transport)
-        .map(|()| false);
+        )?;
+        return Ok(false);
     }
     // Device-login begin: waits (per-connection thread, off the state
     // lock) for the pairing's verification URI so the popup can navigate
@@ -124,14 +120,13 @@ pub(super) fn serve_one<S: Read + Write>(
     // whole-body REST tier, which runs under the state mutex.
     if req.method == "POST" && req.path == op_editor_core::auth_routes::LOGIN_BEGIN {
         let reply = crate::web_auth::login_begin_and_wait(state);
-        return crate::mcp_serve::write_mcp_http_response_with_origin(
+        crate::mcp_serve::write_mcp_http_response_with_origin(
             stream,
             reply.status,
             &reply.body,
             cors_origin,
-        )
-        .map_err(WebCanvasError::Transport)
-        .map(|()| false);
+        )?;
+        return Ok(false);
     }
     // SSE live-update stream: the browser shell subscribes and re-syncs whenever
     // the document version advances. Subscribe BEFORE reading the current
@@ -242,14 +237,8 @@ pub(super) fn serve_one<S: Read + Write>(
                 serde_json::json!({ "ok": false, "error": message }).to_string(),
             ),
         };
-        return crate::mcp_serve::write_mcp_http_response_with_origin(
-            stream,
-            status,
-            &body,
-            cors_origin,
-        )
-        .map_err(WebCanvasError::Transport)
-        .map(|()| false);
+        crate::mcp_serve::write_mcp_http_response_with_origin(stream, status, &body, cors_origin)?;
+        return Ok(false);
     }
     // Image panel Generate popover (desktop `image_generate_host` parity).
     // Same threading rules as the search route; Replicate polling can run
@@ -279,14 +268,8 @@ pub(super) fn serve_one<S: Read + Write>(
                 crate::web_image_generate::generate_error_json(&message),
             ),
         };
-        return crate::mcp_serve::write_mcp_http_response_with_origin(
-            stream,
-            status,
-            &body,
-            cors_origin,
-        )
-        .map_err(WebCanvasError::Transport)
-        .map(|()| false);
+        crate::mcp_serve::write_mcp_http_response_with_origin(stream, status, &body, cors_origin)?;
+        return Ok(false);
     }
     // Offline `.fig` -> `.op` convert for the VS Code plugin: it can't parse
     // fig-kiwi itself, so it POSTs the raw bytes here and boots the returned
@@ -302,14 +285,8 @@ pub(super) fn serve_one<S: Read + Write>(
                 serde_json::json!({ "ok": false, "error": message }).to_string(),
             ),
         };
-        return crate::mcp_serve::write_mcp_http_response_with_origin(
-            stream,
-            status,
-            &body,
-            cors_origin,
-        )
-        .map_err(WebCanvasError::Transport)
-        .map(|()| false);
+        crate::mcp_serve::write_mcp_http_response_with_origin(stream, status, &body, cors_origin)?;
+        return Ok(false);
     }
     // All `/api/mcp/*` REST paths go to the REST handler — including ones this
     // daemon doesn't implement yet, which it answers with 404 rather than
@@ -342,38 +319,35 @@ pub(super) fn serve_one<S: Read + Write>(
             }
             reply
         };
-        return crate::mcp_serve::write_mcp_http_response_with_origin(
+        crate::mcp_serve::write_mcp_http_response_with_origin(
             stream,
             reply.status,
             &reply.body,
             cors_origin,
-        )
-        .map_err(WebCanvasError::Transport)
-        .map(|()| false);
+        )?;
+        return Ok(false);
     }
     // JSON-RPC tool dispatch is served ONLY as a POST to `/` or `/mcp`. An
     // unknown path is 404; a known path with the wrong method (e.g. `GET /mcp`)
     // is 405 — never silently dispatched as a tool call.
     let is_jsonrpc_path = req.path == "/" || req.path == "/mcp";
     if !is_jsonrpc_path {
-        return crate::mcp_serve::write_mcp_http_response_with_origin(
+        crate::mcp_serve::write_mcp_http_response_with_origin(
             stream,
             "404 Not Found",
             r#"{"ok":false,"error":"Not found. Use /, /pkg/*, /api/mcp/document, /api/mcp/sync-reset, /api/mcp/server, /api/mcp/events, /api/file/save, /api/export/raster, /api/export/pdf, or /mcp."}"#,
             cors_origin,
-        )
-        .map_err(WebCanvasError::Transport)
-        .map(|()| false);
+        )?;
+        return Ok(false);
     }
     if req.method != "POST" {
-        return crate::mcp_serve::write_mcp_http_response_with_origin(
+        crate::mcp_serve::write_mcp_http_response_with_origin(
             stream,
             "405 Method Not Allowed",
             r#"{"ok":false,"error":"Method not allowed. POST a JSON-RPC message to /mcp."}"#,
             cors_origin,
-        )
-        .map_err(WebCanvasError::Transport)
-        .map(|()| false);
+        )?;
+        return Ok(false);
     }
     // Token-authed graceful shutdown (`op stop`): same contract as the
     // `--mcp-http` server — only the exact per-instance token passed by the
@@ -388,8 +362,7 @@ pub(super) fn serve_one<S: Read + Write>(
             "200 OK",
             &crate::mcp_serve::shutdown_ok_response(&id),
             cors_origin,
-        )
-        .map_err(WebCanvasError::Transport)?;
+        )?;
         return Ok(true);
     }
     // `debug_screenshot` for `--serve-web`: the browser shell mirrors this
@@ -409,14 +382,13 @@ pub(super) fn serve_one<S: Read + Write>(
             },
         )
     } {
-        return crate::mcp_serve::write_mcp_http_response_with_origin(
+        crate::mcp_serve::write_mcp_http_response_with_origin(
             stream,
             "200 OK",
             &response,
             cors_origin,
-        )
-        .map_err(WebCanvasError::Transport)
-        .map(|()| false);
+        )?;
+        return Ok(false);
     }
     // JSON-RPC `/mcp` dispatch against the in-memory document. A mutating apply
     // bumps the sync version, broadcast to SSE subscribers so the browser shell
@@ -440,8 +412,7 @@ pub(super) fn serve_one<S: Read + Write>(
                 applied_any |= ok;
                 ok
             },
-        )
-        .map_err(WebCanvasError::BadRequest)?
+        )?
         .unwrap_or_default();
         if applied_any {
             guard.version += 1;
@@ -458,9 +429,8 @@ pub(super) fn serve_one<S: Read + Write>(
     } else {
         "200 OK"
     };
-    crate::mcp_serve::write_mcp_http_response_with_origin(stream, status, &response, cors_origin)
-        .map_err(WebCanvasError::Transport)
-        .map(|()| false)
+    crate::mcp_serve::write_mcp_http_response_with_origin(stream, status, &response, cors_origin)?;
+    Ok(false)
 }
 
 /// Stream Server-Sent Events to a subscribed client: write the SSE headers,

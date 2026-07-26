@@ -183,8 +183,7 @@ pub(super) fn startup_editor_from_base_for_web_canvas(
 ) -> Result<EditorState> {
     match path {
         Some(p) => {
-            let mut next =
-                crate::mcp_serve::load_editor_state(&p).map_err(WebCanvasError::Document)?;
+            let mut next = crate::mcp_serve::load_editor_state(&p)?;
             preserve_web_canvas_preferences(&base, &mut next);
             set_file_name_display(&mut next, &p);
             next.editor_ui.touch_recent_file(

@@ -64,7 +64,12 @@ use op_mcp::{
     debug_logs_tail_snapshot, debug_screenshot_snapshot, debug_validation_report_snapshot,
 };
 
+pub mod error;
 pub mod file_path;
+mod sniff;
+
+pub use error::McpServeError;
+use sniff::{sniff_id_raw, sniff_method};
 
 /// Unwrap an MCP `tools/call` reply to the inner tool-result JSON text,
 /// so tests assert on the flat result fields directly. Strips an HTTP
@@ -86,15 +91,15 @@ pub fn tool_text(response: &str) -> String {
 }
 
 /// Load a `.op` file into an `EditorState` via the schema compat layer.
-pub fn load_editor_state(path: &Path) -> Result<EditorState, String> {
+pub fn load_editor_state(path: &Path) -> Result<EditorState, McpServeError> {
     crate::doc_io::load_editor_state(path, op_editor_core::Locale::EnUs)
-        .map_err(|error| format!("load {}: {error}", path.display()))
+        .map_err(|error| McpServeError::Document(format!("load {}: {error}", path.display())))
 }
 
 /// Serialize through the same streaming, atomic path as desktop Save.
-fn save_editor_state(state: &EditorState, path: &Path) -> Result<(), String> {
+fn save_editor_state(state: &EditorState, path: &Path) -> Result<(), McpServeError> {
     crate::doc_io::save_to_path(state, path)
-        .map_err(|error| format!("save {}: {error}", path.display()))
+        .map_err(|error| McpServeError::Document(format!("save {}: {error}", path.display())))
 }
 
 /// Process one JSON-RPC message line against the editor state.
@@ -102,7 +107,7 @@ fn process_message(
     state: &mut EditorState,
     path: &Path,
     line: &str,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, McpServeError> {
     if let Some(response) = file_path::process_message_for_file_path_arg(Some(path), line)? {
         return Ok(Some(response));
     }
@@ -133,7 +138,7 @@ pub fn process_message_with_applier<F>(
     state: &mut EditorState,
     line: &str,
     mut apply: F,
-) -> Result<Option<String>, String>
+) -> Result<Option<String>, McpServeError>
 where
     F: FnMut(&str, &mut EditorState, &EditorCommand) -> bool,
 {
@@ -164,9 +169,14 @@ where
     // borrows it once the applier closure mutates it.
     let requested_tool = op_mcp::parse_tool_call(trimmed).map(|call| call.tool);
     let registry = rebuild_registry(state, requested_tool.as_deref());
+    // `process_tool_message_with_registry` keeps a `String` error for
+    // `mcp_live`'s sake (see its doc comment); the sentence it produces
+    // already carries the `dispatch: ` prefix, so re-wrapping it here is
+    // text-preserving.
     process_tool_message_with_registry(&registry, line, |tool_name, cmd| {
         apply(tool_name, state, cmd)
     })
+    .map_err(McpServeError::Dispatch)
 }
 
 /// Dispatch one already-classified tool call through a caller-provided
@@ -174,6 +184,13 @@ where
 /// much smaller than an [`EditorState`] (for example `list_pages`) or that do
 /// not need state at all (`set_active_page`). The parser, command-application
 /// contract, and wire serializer remain the same as the general path above.
+///
+/// Keeps a `String` error for the same reason
+/// [`write_mcp_http_response`] does: `mcp_live.rs`'s lightweight-tool path
+/// `return`s this call's `Result` directly from a `Result<_, String>`
+/// signature. Callers wanting the typed error wrap it in
+/// [`McpServeError::Dispatch`], which is text-preserving because the
+/// `dispatch: ` prefix is already part of the message.
 pub(crate) fn process_tool_message_with_registry<F>(
     registry: &ToolRegistry,
     line: &str,
@@ -197,7 +214,7 @@ where
 /// Run the stdio MCP server against `path`. Returns Ok(()) on EOF,
 /// Err on unrecoverable IO. Blocks the calling thread for the
 /// lifetime of the stdio connection.
-pub fn run(path: PathBuf) -> Result<(), String> {
+pub fn run(path: PathBuf) -> Result<(), McpServeError> {
     let mut state = load_editor_state(&path)?;
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
@@ -208,13 +225,16 @@ pub fn run(path: PathBuf) -> Result<(), String> {
         line.clear();
         let n = reader
             .read_line(&mut line)
-            .map_err(|e| format!("stdin read: {e}"))?;
+            .map_err(|e| McpServeError::Io(format!("stdin read: {e}")))?;
         if n == 0 {
             return Ok(()); // EOF
         }
         if let Some(resp) = process_message(&mut state, &path, &line)? {
-            writeln!(writer, "{resp}").map_err(|e| format!("stdout write: {e}"))?;
-            writer.flush().map_err(|e| format!("stdout flush: {e}"))?;
+            writeln!(writer, "{resp}")
+                .map_err(|e| McpServeError::Io(format!("stdout write: {e}")))?;
+            writer
+                .flush()
+                .map_err(|e| McpServeError::Io(format!("stdout flush: {e}")))?;
         }
     }
 }
@@ -224,7 +244,7 @@ pub fn run(path: PathBuf) -> Result<(), String> {
 /// the JSON-RPC reply as `application/json`. A minimal non-streaming
 /// Streamable-HTTP transport — enough for HTTP MCP clients that POST
 /// one request per connection. Blocks for the listener's lifetime.
-pub fn run_http(path: PathBuf, port: u16) -> Result<(), String> {
+pub fn run_http(path: PathBuf, port: u16) -> Result<(), McpServeError> {
     // Bound a slow/stalled peer: with bodies now up to 256 MiB, a connection
     // that opens and then dribbles (or never finishes) its body must not pin
     // this thread indefinitely. The live server sets the same kind of timeout
@@ -232,7 +252,7 @@ pub fn run_http(path: PathBuf, port: u16) -> Result<(), String> {
     const HTTP_IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
     let mut state = load_editor_state(&path)?;
     let listener = std::net::TcpListener::bind(("127.0.0.1", port))
-        .map_err(|e| format!("bind 127.0.0.1:{port}: {e}"))?;
+        .map_err(|e| McpServeError::Config(format!("bind 127.0.0.1:{port}: {e}")))?;
     eprintln!("openpencil-desktop --mcp-http: listening on 127.0.0.1:{port}");
     for stream in listener.incoming() {
         match stream {
@@ -265,17 +285,23 @@ fn serve_http_connection<S: std::io::Read + std::io::Write>(
     stream: &mut S,
     state: &mut EditorState,
     path: &std::path::Path,
-) -> Result<bool, String> {
+) -> Result<bool, McpServeError> {
+    // Routes through the `_with_origin` primitive with the same permissive
+    // `*` value `write_mcp_http_response` supplies; that wrapper keeps a
+    // `String` error for `mcp_live`'s sake (see its doc comment), and this
+    // server reports typed errors.
+    let reply = |stream: &mut S, status: &str, body: &str| {
+        write_mcp_http_response_with_origin(stream, status, body, Some("*"))
+    };
     let req = read_http_request(stream)?;
     if req.method == "OPTIONS" {
-        return write_mcp_http_response(stream, "204 No Content", "").map(|()| false);
+        return reply(stream, "204 No Content", "").map(|()| false);
     }
     if req.path != "/mcp" && req.path != "/" {
-        return write_mcp_http_response(stream, "404 Not Found", r#"{"error":"Not found"}"#)
-            .map(|()| false);
+        return reply(stream, "404 Not Found", r#"{"error":"Not found"}"#).map(|()| false);
     }
     if req.method != "POST" {
-        return write_mcp_http_response(
+        return reply(
             stream,
             "400 Bad Request",
             r#"{"jsonrpc":"2.0","error":{"code":-32000,"message":"Invalid or missing session ID"},"id":null}"#,
@@ -284,12 +310,12 @@ fn serve_http_connection<S: std::io::Read + std::io::Write>(
     }
     if let Some(id) = shutdown_request_id(&req.body, &headless_token_from_env().unwrap_or_default())
     {
-        write_mcp_http_response(stream, "200 OK", &shutdown_ok_response(&id))?;
+        reply(stream, "200 OK", &shutdown_ok_response(&id))?;
         return Ok(true);
     }
     match process_message(state, path, &req.body)? {
-        Some(response) => write_mcp_http_response(stream, "200 OK", &response).map(|()| false),
-        None => write_mcp_http_response(stream, "202 Accepted", "").map(|()| false),
+        Some(response) => reply(stream, "200 OK", &response).map(|()| false),
+        None => reply(stream, "202 Accepted", "").map(|()| false),
     }
 }
 
@@ -312,7 +338,7 @@ pub struct HttpRequest {
 
 /// Parse a capped HTTP header and then read exactly its declared body length.
 /// Query strings are stripped from the path before routing.
-pub fn read_http_request<S: std::io::Read>(stream: &mut S) -> Result<HttpRequest, String> {
+pub fn read_http_request<S: std::io::Read>(stream: &mut S) -> Result<HttpRequest, McpServeError> {
     const MAX_HEADER: usize = 64 * 1024;
     // Whole-document sync can carry embedded images, so retain the 64 MiB
     // ceiling while reading incrementally to avoid allocating from a claimed
@@ -323,33 +349,37 @@ pub fn read_http_request<S: std::io::Read>(stream: &mut S) -> Result<HttpRequest
     loop {
         let n = stream
             .read(&mut byte)
-            .map_err(|e| format!("http read: {e}"))?;
+            .map_err(|e| McpServeError::Io(format!("http read: {e}")))?;
         if n == 0 {
-            return Err("connection closed before headers completed".into());
+            return Err(McpServeError::Protocol(
+                "connection closed before headers completed".into(),
+            ));
         }
         head.push(byte[0]);
         if head.ends_with(b"\r\n\r\n") {
             break;
         }
         if head.len() > MAX_HEADER {
-            return Err("request headers exceed 64 KiB".into());
+            return Err(McpServeError::Protocol(
+                "request headers exceed 64 KiB".into(),
+            ));
         }
     }
     let headers = String::from_utf8_lossy(&head);
     let mut lines = headers.lines();
     let request_line = lines
         .next()
-        .ok_or_else(|| "request line missing".to_string())?;
+        .ok_or_else(|| McpServeError::Protocol("request line missing".into()))?;
     let mut request_parts = request_line.split_whitespace();
     let method = request_parts
         .next()
-        .ok_or_else(|| "request method missing".to_string())?
+        .ok_or_else(|| McpServeError::Protocol("request method missing".into()))?
         .to_ascii_uppercase();
     // Strip any `?query` from the request target so exact-path routing
     // (`/api/mcp/document`, `/mcp`, …) isn't defeated by `/api/mcp/document?x=1`.
     let path = request_parts
         .next()
-        .ok_or_else(|| "request path missing".to_string())?
+        .ok_or_else(|| McpServeError::Protocol("request path missing".into()))?
         .split('?')
         .next()
         .unwrap_or("")
@@ -371,7 +401,9 @@ pub fn read_http_request<S: std::io::Read>(stream: &mut S) -> Result<HttpRequest
     if path == "/api/settings/credentials"
         && content_length > crate::web_credentials::MAX_CREDENTIAL_BODY_BYTES
     {
-        return Err("credential settings body exceeds 256 KiB".into());
+        return Err(McpServeError::Protocol(
+            "credential settings body exceeds 256 KiB".into(),
+        ));
     }
     let header_value = |wanted: &str| {
         headers.lines().skip(1).find_map(|line| {
@@ -385,10 +417,10 @@ pub fn read_http_request<S: std::io::Read>(stream: &mut S) -> Result<HttpRequest
     let token = header_value("x-openpencil-token");
     let content_type = header_value("content-type");
     if content_length > MAX_BODY {
-        return Err(format!(
+        return Err(McpServeError::Protocol(format!(
             "request body exceeds {} MiB",
             MAX_BODY / (1024 * 1024)
-        ));
+        )));
     }
     // Grow the body from bytes actually received, not the declared length;
     // socket timeouts bound a stalled peer.
@@ -399,9 +431,11 @@ pub fn read_http_request<S: std::io::Read>(stream: &mut S) -> Result<HttpRequest
         let want = remaining.min(chunk.len());
         let n = stream
             .read(&mut chunk[..want])
-            .map_err(|e| format!("http body read: {e}"))?;
+            .map_err(|e| McpServeError::Io(format!("http body read: {e}")))?;
         if n == 0 {
-            return Err("connection closed before body completed".into());
+            return Err(McpServeError::Protocol(
+                "connection closed before body completed".into(),
+            ));
         }
         body.extend_from_slice(&chunk[..n]);
         remaining -= n;
@@ -420,16 +454,26 @@ pub fn read_http_request<S: std::io::Read>(stream: &mut S) -> Result<HttpRequest
 /// Compatibility wrapper for older tests/callers that only care about
 /// the JSON-RPC body.
 #[cfg(test)]
-pub fn read_http_request_body<S: std::io::Read>(stream: &mut S) -> Result<String, String> {
+pub fn read_http_request_body<S: std::io::Read>(stream: &mut S) -> Result<String, McpServeError> {
     read_http_request(stream).map(|req| req.body)
 }
 
+/// Permissive-CORS (`*`) response writer.
+///
+/// Deliberately keeps a `String` error while
+/// [`write_mcp_http_response_with_origin`] below reports
+/// [`McpServeError`]: `mcp_live.rs`'s per-connection handlers `return` this
+/// call's `Result` DIRECTLY from their own `Result<(), String>` signatures,
+/// so a typed error here would not convert through `?` — it would force a
+/// rewrite of a module this pass does not own. Callers that want the typed
+/// error (this module's own `--mcp-http` server, the `--serve-web` daemon)
+/// go through the `_with_origin` primitive.
 pub fn write_mcp_http_response<S: std::io::Write>(
     stream: &mut S,
     status: &str,
     body: &str,
 ) -> Result<(), String> {
-    write_mcp_http_response_with_origin(stream, status, body, Some("*"))
+    write_mcp_http_response_with_origin(stream, status, body, Some("*")).map_err(String::from)
 }
 
 /// Like [`write_mcp_http_response`], but lets the caller supply the exact
@@ -445,7 +489,7 @@ pub(crate) fn write_mcp_http_response_with_origin<S: std::io::Write>(
     status: &str,
     body: &str,
     cors_origin: Option<&str>,
-) -> Result<(), String> {
+) -> Result<(), McpServeError> {
     let cors_line = cors_origin
         .map(|origin| format!("Access-Control-Allow-Origin: {origin}\r\n"))
         .unwrap_or_default();
@@ -464,8 +508,10 @@ pub(crate) fn write_mcp_http_response_with_origin<S: std::io::Write>(
     );
     stream
         .write_all(http.as_bytes())
-        .map_err(|e| format!("http write: {e}"))?;
-    stream.flush().map_err(|e| format!("http flush: {e}"))
+        .map_err(|e| McpServeError::Io(format!("http write: {e}")))?;
+    stream
+        .flush()
+        .map_err(|e| McpServeError::Io(format!("http flush: {e}")))
 }
 
 fn rebuild_registry(doc: &EditorState, requested_tool: Option<&str>) -> ToolRegistry {
@@ -642,172 +688,6 @@ fn should_register(requested_tool: Option<&str>, tool_name: &str) -> bool {
     requested_tool
         .map(|requested| requested == tool_name)
         .unwrap_or(true)
-}
-
-/// Cheap top-level "method" field extractor. Returns the unquoted
-/// string value; None if the field is missing or unparseable.
-/// Walks the line key by key so a nested or string-valued
-/// "method" in another field can't shadow the real top-level
-/// method (mirrors `arguments_field`'s discipline in shell-core).
-fn sniff_method(line: &str) -> Option<String> {
-    let bytes = line.as_bytes();
-    // Skip past the leading `{` if present.
-    let mut i = 0usize;
-    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
-        i += 1;
-    }
-    if i >= bytes.len() || bytes[i] != b'{' {
-        return None;
-    }
-    i += 1;
-    walk_top_level_for_string_value(bytes, &mut i, "method")
-}
-
-/// Return the JSON token (verbatim — with quotes if string) that
-/// follows `"id":` at the top level. Preserves the original
-/// representation so the response carries the same id type the
-/// client sent.
-fn sniff_id_raw(line: &str) -> Option<String> {
-    let bytes = line.as_bytes();
-    let mut i = 0usize;
-    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
-        i += 1;
-    }
-    if i >= bytes.len() || bytes[i] != b'{' {
-        return None;
-    }
-    i += 1;
-    walk_top_level_for_raw_value(bytes, &mut i, "id")
-}
-
-/// Generic top-level key walker — returns the value for `target`
-/// when seen at depth 0 of the object body starting at `*i`.
-/// `string_only` extracts the inner contents (without quotes);
-/// the verbatim variant returns the full literal.
-fn walk_top_level_for_string_value(bytes: &[u8], i: &mut usize, target: &str) -> Option<String> {
-    walk_top_level(bytes, i, target, /*string_only=*/ true)
-}
-
-fn walk_top_level_for_raw_value(bytes: &[u8], i: &mut usize, target: &str) -> Option<String> {
-    walk_top_level(bytes, i, target, /*string_only=*/ false)
-}
-
-fn walk_top_level(bytes: &[u8], i: &mut usize, target: &str, string_only: bool) -> Option<String> {
-    loop {
-        // Skip whitespace + commas.
-        while *i < bytes.len() && (bytes[*i].is_ascii_whitespace() || bytes[*i] == b',') {
-            *i += 1;
-        }
-        if *i >= bytes.len() || bytes[*i] == b'}' {
-            return None;
-        }
-        if bytes[*i] != b'"' {
-            return None;
-        }
-        *i += 1;
-        let key_start = *i;
-        while *i < bytes.len() && bytes[*i] != b'"' {
-            if bytes[*i] == b'\\' {
-                *i = i.saturating_add(2);
-            } else {
-                *i += 1;
-            }
-        }
-        if *i >= bytes.len() {
-            return None;
-        }
-        let key = std::str::from_utf8(&bytes[key_start..*i]).ok()?;
-        *i += 1;
-        while *i < bytes.len() && bytes[*i].is_ascii_whitespace() {
-            *i += 1;
-        }
-        if *i >= bytes.len() || bytes[*i] != b':' {
-            return None;
-        }
-        *i += 1;
-        while *i < bytes.len() && bytes[*i].is_ascii_whitespace() {
-            *i += 1;
-        }
-        if *i >= bytes.len() {
-            return None;
-        }
-        let val_start = *i;
-        match bytes[*i] {
-            b'"' => {
-                *i += 1;
-                let inner_start = *i;
-                while *i < bytes.len() && bytes[*i] != b'"' {
-                    if bytes[*i] == b'\\' {
-                        *i = i.saturating_add(2);
-                    } else {
-                        *i += 1;
-                    }
-                }
-                if *i >= bytes.len() {
-                    return None;
-                }
-                let inner_end = *i;
-                *i += 1;
-                if key == target {
-                    if string_only {
-                        return std::str::from_utf8(&bytes[inner_start..inner_end])
-                            .ok()
-                            .map(|s| s.to_string());
-                    } else {
-                        return std::str::from_utf8(&bytes[val_start..*i])
-                            .ok()
-                            .map(|s| s.to_string());
-                    }
-                }
-            }
-            b'{' | b'[' => {
-                // Walk past structured value, depth-tracked.
-                let open = bytes[*i];
-                let close = if open == b'{' { b'}' } else { b']' };
-                let mut depth = 1i32;
-                *i += 1;
-                let mut in_str = false;
-                let mut escape = false;
-                while *i < bytes.len() && depth > 0 {
-                    let c = bytes[*i];
-                    if in_str {
-                        if escape {
-                            escape = false;
-                        } else if c == b'\\' {
-                            escape = true;
-                        } else if c == b'"' {
-                            in_str = false;
-                        }
-                    } else if c == b'"' {
-                        in_str = true;
-                    } else if c == open {
-                        depth += 1;
-                    } else if c == close {
-                        depth -= 1;
-                    }
-                    *i += 1;
-                }
-                if key == target {
-                    // Structured value where caller asked for a
-                    // scalar. Treat as absent — caller may fall
-                    // back to a default response shape.
-                    return None;
-                }
-            }
-            _ => {
-                while *i < bytes.len()
-                    && !matches!(bytes[*i], b',' | b'}' | b' ' | b'\t' | b'\n' | b'\r')
-                {
-                    *i += 1;
-                }
-                if key == target {
-                    return std::str::from_utf8(&bytes[val_start..*i])
-                        .ok()
-                        .map(|s| s.to_string());
-                }
-            }
-        }
-    }
 }
 
 mod wire;

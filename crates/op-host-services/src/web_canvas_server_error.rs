@@ -10,11 +10,14 @@
 //! [`WebCanvasError::http_status`], which turns "which status does this
 //! failure answer with" from a per-call-site literal into one table.
 //!
-//! Several dependencies of this module (`mcp_serve`, `doc_io`, `export`,
-//! `settings_io`, `op_pen_loader`) still report `String`; they are outside
-//! this conversion's scope, so their errors are adapted into a variant at the
-//! call site instead of rippling the change into them. The daemon's three
-//! public entry points (`parse_serve_web_args`, `startup_editor_for_web_canvas`,
+//! `mcp_serve` now reports [`crate::mcp_serve::McpServeError`], so its
+//! failures reach this enum through the [`From`] impl at the bottom of this
+//! file and the routes just use `?` — no per-call-site re-labelling. The
+//! remaining dependencies (`doc_io`, `settings_io`, `op_pen_loader`, and the
+//! file-writing `export` / `export_pdf` entry points, which are consumed
+//! directly by `op-host-desktop::persistence`) still report `String` and are
+//! adapted into a variant at the call site. The daemon's three public entry
+//! points (`parse_serve_web_args`, `startup_editor_for_web_canvas`,
 //! `run_web_canvas`) likewise keep their `Result<_, String>` signatures — they
 //! are consumed by `cli_modes.rs` and the host binaries — and convert at the
 //! boundary.
@@ -77,3 +80,43 @@ impl fmt::Display for WebCanvasError {
 }
 
 impl std::error::Error for WebCanvasError {}
+
+/// Single-table mapping from the shared MCP transport's failures onto this
+/// daemon's classification, replacing the per-call-site `.map_err(...)`
+/// re-labelling every route used to carry. Both `Display` impls are
+/// transparent, so the resulting HTTP body / log line is byte-identical to
+/// the pre-conversion text.
+impl From<crate::mcp_serve::McpServeError> for WebCanvasError {
+    fn from(error: crate::mcp_serve::McpServeError) -> WebCanvasError {
+        use crate::mcp_serve::McpServeError as E;
+        match error {
+            // The daemon's document authority failed to load the file it was
+            // pointed at — the same 400 the route reported before.
+            E::Document(m) => WebCanvasError::Document(m),
+            // A rejected JSON-RPC message is a client fault: the parser or
+            // registry refused it and nothing was applied.
+            E::Dispatch(m) => WebCanvasError::BadRequest(m),
+            // Malformed framing and socket failures alike leave the
+            // connection unusable, so both land on `Transport` — which the
+            // accept loop logs instead of answering with. Matches the
+            // pre-conversion `.map_err(WebCanvasError::Transport)` exactly.
+            E::Protocol(m) | E::Io(m) => WebCanvasError::Transport(m),
+            E::Config(m) => WebCanvasError::Config(m),
+        }
+    }
+}
+
+/// Same idea for the raster/PDF export core. Every export failure answered
+/// `400` before this conversion, and `Export` / `Io` both still do (see
+/// [`WebCanvasError::http_status`]), so routing the write failure to `Io`
+/// sharpens the classification without moving a single status code or byte
+/// of the response body.
+impl From<crate::export::ExportError> for WebCanvasError {
+    fn from(error: crate::export::ExportError) -> WebCanvasError {
+        use crate::export::ExportError as E;
+        match error {
+            E::Write(m) => WebCanvasError::Io(m),
+            other => WebCanvasError::Export(other.to_string()),
+        }
+    }
+}

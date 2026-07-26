@@ -1,15 +1,25 @@
 //! Single-line TS batch_design operations that map to existing editor commands.
+//!
+//! Failures report [`ProgramError`] — the same enum the multi-op DSL executor
+//! (`batch_program.rs`) uses — so a `U()` typo is classified identically
+//! whether it arrived as a lone line here or as one step of a program. See
+//! `batch_program_error.rs` for why that matters: this module used to return
+//! `String`, and the executor blanket-labelled every one of those as
+//! `ProgramError::Rejected`.
 
 use jian_ops_schema::node::PenNode;
 use op_editor_core::{EditorCommand, NodeId};
 use std::collections::BTreeMap;
 
 use super::batch_design::{find_top_level_char, normalize_node_shape};
+use super::batch_program_error::ProgramError;
 use super::insert_node_args::{insert_node_params, InsertNodeParams};
 use super::update_node_data::ts_update_patch_json_value;
 use super::ToolOutcome;
 
-pub(crate) fn parse_single_direct_operation(line: &str) -> Result<Option<EditorCommand>, String> {
+type Result<T> = std::result::Result<T, ProgramError>;
+
+pub(crate) fn parse_single_direct_operation(line: &str) -> Result<Option<EditorCommand>> {
     let line = line.trim().trim_end_matches(';').trim();
     let line = strip_bound_direct_operation(line);
     for op in ["U", "D", "M", "C", "R", "G"] {
@@ -61,13 +71,15 @@ fn strip_bound_direct_operation(line: &str) -> &str {
     }
 }
 
-fn parse_update_operation(body: &str) -> Result<EditorCommand, String> {
+fn parse_update_operation(body: &str) -> Result<EditorCommand> {
     let Some(comma) = find_top_level_char(body, ',') else {
-        return Err("U() requires node id and update JSON".into());
+        return Err(ProgramError::Syntax(
+            "U() requires node id and update JSON".into(),
+        ));
     };
     let node_id = NodeId::new(&parse_ref_token(body[..comma].trim())?);
     let mut value: serde_json::Value = serde_json::from_str(body[comma + 1..].trim())
-        .map_err(|e| format!("invalid U JSON: {e}"))?;
+        .map_err(|e| ProgramError::Json(format!("invalid U JSON: {e}")))?;
     normalize_node_shape(&mut value);
     update_command_from_value(node_id, &value)
 }
@@ -80,11 +92,15 @@ fn parse_update_operation(body: &str) -> Result<EditorCommand, String> {
 pub(crate) fn update_command_from_value(
     node_id: NodeId,
     value: &serde_json::Value,
-) -> Result<EditorCommand, String> {
+) -> Result<EditorCommand> {
     let Some(obj) = value.as_object() else {
-        return Err("U() update JSON must be an object".into());
+        return Err(ProgramError::Syntax(
+            "U() update JSON must be an object".into(),
+        ));
     };
-    if let Some(patch_json) = ts_update_patch_json_value(value)? {
+    // `update_node_data` still reports `String`; its failures are all
+    // malformed-patch reports, so they classify as `Json`.
+    if let Some(patch_json) = ts_update_patch_json_value(value).map_err(ProgramError::Json)? {
         return Ok(EditorCommand::PatchNodeData {
             node_id,
             patch_json,
@@ -108,13 +124,15 @@ pub(crate) fn update_command_from_value(
         && name.is_none()
         && fill_hex.is_none()
     {
-        return Err("U() must set at least one supported field".into());
+        return Err(ProgramError::Rejected(
+            "U() must set at least one supported field".into(),
+        ));
     }
     if let Some(hex) = &fill_hex {
         if !validate_hex(hex) {
-            return Err(format!(
+            return Err(ProgramError::InvalidValue(format!(
                 "fill_hex must be #rgb/#rrggbb/#rrggbbaa, got {hex:?}"
-            ));
+            )));
         }
     }
     Ok(EditorCommand::UpdateNode {
@@ -129,18 +147,22 @@ pub(crate) fn update_command_from_value(
     })
 }
 
-fn parse_move_operation(body: &str) -> Result<EditorCommand, String> {
+fn parse_move_operation(body: &str) -> Result<EditorCommand> {
     let Some(comma) = find_top_level_char(body, ',') else {
-        return Err("M() requires node id and parent id".into());
+        return Err(ProgramError::Syntax(
+            "M() requires node id and parent id".into(),
+        ));
     };
     let rest = body[comma + 1..].trim();
     let (parent_raw, index) = if let Some(index_comma) = find_top_level_char(rest, ',') {
         let raw_index = rest[index_comma + 1..]
             .trim()
             .trim_matches(|c| c == '"' || c == '\'');
-        let index = raw_index
-            .parse::<usize>()
-            .map_err(|_| format!("M() index must be a non-negative integer, got {raw_index:?}"))?;
+        let index = raw_index.parse::<usize>().map_err(|_| {
+            ProgramError::ValueOutOfRange(format!(
+                "M() index must be a non-negative integer, got {raw_index:?}"
+            ))
+        })?;
         (rest[..index_comma].trim(), Some(index))
     } else {
         (rest, None)
@@ -153,18 +175,22 @@ fn parse_move_operation(body: &str) -> Result<EditorCommand, String> {
     })
 }
 
-fn parse_copy_operation(body: &str) -> Result<EditorCommand, String> {
+fn parse_copy_operation(body: &str) -> Result<EditorCommand> {
     let Some(comma) = find_top_level_char(body, ',') else {
-        return Err("C() requires source id and parent id".into());
+        return Err(ProgramError::Syntax(
+            "C() requires source id and parent id".into(),
+        ));
     };
     let rest = body[comma + 1..].trim();
     let (parent_raw, overrides_json) = if let Some(overrides_comma) = find_top_level_char(rest, ',')
     {
         let mut value: serde_json::Value = serde_json::from_str(rest[overrides_comma + 1..].trim())
-            .map_err(|e| format!("invalid C overrides JSON: {e}"))?;
+            .map_err(|e| ProgramError::Json(format!("invalid C overrides JSON: {e}")))?;
         normalize_node_shape(&mut value);
         if !value.is_object() {
-            return Err("C() overrides JSON must be an object".into());
+            return Err(ProgramError::Syntax(
+                "C() overrides JSON must be an object".into(),
+            ));
         }
         (rest[..overrides_comma].trim(), Some(value.to_string()))
     } else {
@@ -178,15 +204,17 @@ fn parse_copy_operation(body: &str) -> Result<EditorCommand, String> {
     })
 }
 
-fn parse_replace_operation(body: &str) -> Result<EditorCommand, String> {
+fn parse_replace_operation(body: &str) -> Result<EditorCommand> {
     let Some(comma) = find_top_level_char(body, ',') else {
-        return Err("R() requires node id and node JSON".into());
+        return Err(ProgramError::Syntax(
+            "R() requires node id and node JSON".into(),
+        ));
     };
     let node_id = NodeId::new(&parse_ref_token(body[..comma].trim())?);
     let raw_data = body[comma + 1..].trim();
     let mut args = BTreeMap::new();
     args.insert("data".into(), raw_data.to_string());
-    let params = insert_node_params(&args).map_err(tool_outcome_message)?;
+    let params = insert_node_params(&args).map_err(tool_outcome_error)?;
     let InsertNodeParams {
         kind,
         name,
@@ -210,25 +238,27 @@ fn parse_replace_operation(body: &str) -> Result<EditorCommand, String> {
     })
 }
 
-fn parse_image_operation(body: &str) -> Result<EditorCommand, String> {
+fn parse_image_operation(body: &str) -> Result<EditorCommand> {
     let parts = split_top_level_args(body);
     if !matches!(parts.len(), 3 | 4) {
-        return Err("G() requires parent id, mode, prompt, and optional placement".into());
+        return Err(ProgramError::Syntax(
+            "G() requires parent id, mode, prompt, and optional placement".into(),
+        ));
     }
     let parent_id = parse_parent_node_id(parts[0])?;
     let mode = parse_ref_token(parts[1])?;
     if !matches!(mode.as_str(), "search" | "generate") {
-        return Err(format!(
+        return Err(ProgramError::InvalidValue(format!(
             "G() mode must be \"search\" or \"generate\", got {mode:?}"
-        ));
+        )));
     }
     let prompt = parse_ref_token(parts[2])?;
     if let Some(raw) = parts.get(3) {
         let placement = parse_ref_token(raw)?;
         if !matches!(placement.as_str(), "slot" | "append") {
-            return Err(format!(
+            return Err(ProgramError::InvalidValue(format!(
                 "G() placement must be \"slot\" or \"append\", got {placement:?}"
-            ));
+            )));
         }
     }
     let name = prompt.chars().take(40).collect::<String>();
@@ -254,8 +284,8 @@ fn parse_image_operation(body: &str) -> Result<EditorCommand, String> {
     } else {
         value["imageSearchQuery"] = serde_json::json!(prompt);
     }
-    let node: PenNode =
-        serde_json::from_value(value).map_err(|e| format!("invalid G() image node: {e}"))?;
+    let node: PenNode = serde_json::from_value(value)
+        .map_err(|e| ProgramError::InvalidNode(format!("invalid G() image node: {e}")))?;
     Ok(EditorCommand::InsertSubtree {
         nodes: vec![node],
         parent_id,
@@ -263,7 +293,7 @@ fn parse_image_operation(body: &str) -> Result<EditorCommand, String> {
     })
 }
 
-fn parse_parent_node_id(raw: &str) -> Result<NodeId, String> {
+fn parse_parent_node_id(raw: &str) -> Result<NodeId> {
     let raw = raw.trim();
     if matches!(raw, "null" | "undefined" | "\"\"" | "''" | "0" | "\"0\"") {
         return Ok(NodeId::NONE);
@@ -271,10 +301,11 @@ fn parse_parent_node_id(raw: &str) -> Result<NodeId, String> {
     Ok(NodeId::new(&parse_ref_token(raw)?))
 }
 
-fn parse_ref_token(raw: &str) -> Result<String, String> {
+fn parse_ref_token(raw: &str) -> Result<String> {
     let raw = raw.trim();
     if raw.starts_with('"') {
-        return serde_json::from_str::<String>(raw).map_err(|e| format!("invalid string ref: {e}"));
+        return serde_json::from_str::<String>(raw)
+            .map_err(|e| ProgramError::Json(format!("invalid string ref: {e}")));
     }
     if raw.starts_with('\'') && raw.ends_with('\'') && raw.len() >= 2 {
         return Ok(raw[1..raw.len() - 1].to_string());
@@ -301,16 +332,16 @@ pub(crate) fn split_top_level_args(mut raw: &str) -> Vec<&str> {
 fn parse_i32_json(
     obj: &serde_json::Map<String, serde_json::Value>,
     key: &str,
-) -> Result<Option<i32>, String> {
+) -> Result<Option<i32>> {
     let Some(value) = obj.get(key) else {
         return Ok(None);
     };
     let Some(raw) = value.as_i64() else {
-        return Err(format!("{key} must be an integer"));
+        return Err(ProgramError::Syntax(format!("{key} must be an integer")));
     };
     i32::try_from(raw)
         .map(Some)
-        .map_err(|_| format!("{key} is outside i32 range"))
+        .map_err(|_| ProgramError::ValueOutOfRange(format!("{key} is outside i32 range")))
 }
 
 fn fill_hex_from_value(value: &serde_json::Value) -> Option<String> {
@@ -329,9 +360,13 @@ fn validate_hex(s: &str) -> bool {
     matches!(rest.len(), 3 | 6 | 8) && rest.chars().all(|c| c.is_ascii_hexdigit())
 }
 
-fn tool_outcome_message(outcome: ToolOutcome) -> String {
+/// `insert_node_args` speaks the tool-outcome vocabulary, not this parser's.
+/// Its rejections are all "that node JSON is not a node", so they classify as
+/// `InvalidNode` — including the fallback sentence for a non-`Err` outcome,
+/// which is what the pre-conversion code produced too.
+fn tool_outcome_error(outcome: ToolOutcome) -> ProgramError {
     match outcome {
-        ToolOutcome::Err(_, message) => message,
-        _ => "invalid R() node JSON".into(),
+        ToolOutcome::Err(_, message) => ProgramError::InvalidNode(message),
+        _ => ProgramError::InvalidNode("invalid R() node JSON".into()),
     }
 }

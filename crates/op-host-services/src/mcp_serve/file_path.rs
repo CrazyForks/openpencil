@@ -7,6 +7,8 @@
 
 use std::path::{Path, PathBuf};
 
+use super::McpServeError;
+
 const LIVE_CANVAS_SENTINELS: &[&str] = &["live://canvas", "live://canvas/current"];
 
 struct TargetFileCall {
@@ -17,7 +19,7 @@ struct TargetFileCall {
 pub fn process_message_for_file_path_arg(
     current_path: Option<&Path>,
     line: &str,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, McpServeError> {
     let Some(target) = target_file_call(line, current_path)? else {
         return Ok(None);
     };
@@ -46,7 +48,7 @@ pub fn process_message_for_file_path_arg(
 fn target_file_call(
     line: &str,
     current_path: Option<&Path>,
-) -> Result<Option<TargetFileCall>, String> {
+) -> Result<Option<TargetFileCall>, McpServeError> {
     let Some(call) = op_mcp::parse_tool_call(line.trim()) else {
         return Ok(None);
     };
@@ -76,15 +78,16 @@ fn target_file_call(
     }))
 }
 
-fn create_empty_document(path: &Path) -> Result<(), String> {
+fn create_empty_document(path: &Path) -> Result<(), McpServeError> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
+        std::fs::create_dir_all(parent)
+            .map_err(|e| McpServeError::Document(format!("create {}: {e}", parent.display())))?;
     }
     std::fs::write(
         path,
         "{\n  \"version\": \"1.0.0\",\n  \"children\": []\n}\n",
     )
-    .map_err(|e| format!("write {}: {e}", path.display()))
+    .map_err(|e| McpServeError::Document(format!("write {}: {e}", path.display())))
 }
 
 fn same_path(target: &Path, current: &Path) -> bool {

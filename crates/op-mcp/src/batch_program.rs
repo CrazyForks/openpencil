@@ -492,7 +492,7 @@ fn execute_update(args: &str, ctx: &mut ProgramCtx) -> Result<()> {
     // `batch_direct_ops` is shared with the non-program write paths and is
     // outside this conversion's scope; adapt its `String` at the boundary
     // rather than rippling the change into it.
-    let cmd = update_command_from_value(node_id, &value).map_err(ProgramError::Rejected)?;
+    let cmd = update_command_from_value(node_id, &value)?;
     let cmd = with_page_id(cmd, ctx.page_id.clone());
     ctx.emit(cmd, &format!("Update failed for: {path}"))
 }

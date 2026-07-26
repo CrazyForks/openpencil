@@ -446,7 +446,10 @@ fn http_request_still_rejects_an_over_cap_content_length() {
     let request = "POST /mcp HTTP/1.1\r\nHost: x\r\nContent-Length: 314572800\r\n\r\n";
     let mut cur = std::io::Cursor::new(request.as_bytes().to_vec());
     let err = read_http_request(&mut cur).expect_err("over-cap body must be rejected");
-    assert!(err.contains("exceeds"), "{err}");
+    // Framing rejected before any handler ran — a client fault, not a socket
+    // failure, so it must classify as `Protocol`.
+    assert!(matches!(err, McpServeError::Protocol(_)), "{err:?}");
+    assert!(err.to_string().contains("exceeds"), "{err}");
 }
 
 #[test]
@@ -461,8 +464,10 @@ fn credential_settings_request_rejects_over_256_kib_before_reading_body() {
 
     let err = read_http_request(&mut cur).expect_err("oversized credential body must be rejected");
 
+    assert!(matches!(err, McpServeError::Protocol(_)), "{err:?}");
     assert!(
-        err.contains("credential settings body exceeds 256 KiB"),
+        err.to_string()
+            .contains("credential settings body exceeds 256 KiB"),
         "{err}"
     );
 }

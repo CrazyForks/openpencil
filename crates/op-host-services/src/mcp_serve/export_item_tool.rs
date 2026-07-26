@@ -98,7 +98,7 @@ impl McpTool for ExportItem {
                 })
                 .to_string(),
             ),
-            Err(message) => ToolOutcome::Err(ToolErrorCode::ToolFailed, message),
+            Err(error) => ToolOutcome::Err(ToolErrorCode::ToolFailed, error.to_string()),
         }
     }
 }

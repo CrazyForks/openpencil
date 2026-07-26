@@ -11,6 +11,15 @@
 //! and anything downstream, e.g. a future retry ladder in `program_gen.rs` —
 //! can now tell a grammar mistake from a missing node from an id-space
 //! exhaustion without pattern-matching prose.
+//!
+//! `batch_direct_ops.rs` (the single-line `U`/`D`/`M`/`C`/`R`/`G` parser)
+//! reports this enum too, so the two paths classify the same failure the
+//! same way. It used to hand the executor a bare `String` that
+//! `batch_program.rs` re-labelled as [`ProgramError::Rejected`] wholesale —
+//! which mislabelled its grammar and JSON failures as protocol rejections.
+//! Those now arrive already classified (`Syntax` / `Json` / `InvalidNode` /
+//! `InvalidValue` / `ValueOutOfRange` / `Rejected`), and `Rejected` is once
+//! again reserved for a genuine semantic refusal.
 
 use std::fmt;
 
@@ -28,6 +37,14 @@ pub(crate) enum ProgramError {
     InvalidNode(String),
     /// A referenced node, path, kit, or component does not exist.
     NotFound(String),
+    /// A scalar argument parsed but its VALUE is outside the accepted set
+    /// (a bad hex spelling, a mode/placement keyword that is not one of the
+    /// allowed literals). Distinct from `Syntax`, which is about shape, and
+    /// from `Rejected`, which is about the design protocol.
+    InvalidValue(String),
+    /// A numeric argument parsed but does not fit the command's field
+    /// (`i32` geometry, a `usize` sibling index).
+    ValueOutOfRange(String),
     /// The operation parsed and resolved, but a structural / semantic rule
     /// of the design protocol refuses it (placement contracts, sizing
     /// requirements, layout preconditions).
@@ -52,6 +69,8 @@ impl fmt::Display for ProgramError {
             | ProgramError::Json(m)
             | ProgramError::InvalidNode(m)
             | ProgramError::NotFound(m)
+            | ProgramError::InvalidValue(m)
+            | ProgramError::ValueOutOfRange(m)
             | ProgramError::Rejected(m)
             | ProgramError::ApplyRejected(m) => f.write_str(m),
             ProgramError::ProducedNoNode(op) => write!(f, "{op} produced no node"),
@@ -61,3 +80,15 @@ impl fmt::Display for ProgramError {
 }
 
 impl std::error::Error for ProgramError {}
+
+/// Boundary bridge for the callers that still report `String` — today
+/// `batch_design.rs`'s `parse_operations`, which `?`s the single-line direct
+/// parser from a `Result<_, String>` signature that the tool-outcome layer
+/// consumes. `Display` reproduces the exact sentence, so the message the
+/// model receives is unchanged. Delete it once `batch_design.rs` carries a
+/// typed error of its own.
+impl From<ProgramError> for String {
+    fn from(error: ProgramError) -> String {
+        error.to_string()
+    }
+}

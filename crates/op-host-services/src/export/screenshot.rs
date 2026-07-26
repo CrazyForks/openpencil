@@ -106,6 +106,12 @@ pub fn capture_scene(scene: &LayoutScene, spec: &CaptureSpec) -> Result<Screensh
     })
 }
 
+/// Boundary adapter onto the typed raster core: this module's public
+/// `Result<_, String>` is baked into `mcp_live.rs`'s screenshot
+/// `SyncSender` type and its `maybe_serve` closure bound, so the `String`
+/// stays until that module converts. `ExportError`'s `Display` reproduces
+/// the same sentence, so the "Renderer reported failure: …" envelope the
+/// live glue builds is unchanged.
 fn render(
     bounds: Rect,
     scale: f32,
@@ -113,6 +119,7 @@ fn render(
     paint: impl FnOnce(&skia_safe::Canvas),
 ) -> Result<Vec<u8>, String> {
     super::render_raster_bytes(bounds, RasterFormat::Png, scale, padding, paint)
+        .map_err(String::from)
 }
 
 #[cfg(test)]

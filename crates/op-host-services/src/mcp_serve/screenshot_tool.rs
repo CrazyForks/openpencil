@@ -67,7 +67,7 @@ impl McpTool for GetScreenshot {
         // Render to PNG bytes via the shared raster pipeline.
         let bytes = match render_node_raster_bytes(&self.scene, node_id, RasterFormat::Png, 1.0) {
             Ok(b) => b,
-            Err(e) => return ToolOutcome::Err(ToolErrorCode::ToolFailed, e),
+            Err(e) => return ToolOutcome::Err(ToolErrorCode::ToolFailed, e.to_string()),
         };
 
         // Base64-encode using the same engine used elsewhere in this crate

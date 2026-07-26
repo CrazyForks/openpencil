@@ -625,7 +625,11 @@ fn render_raster_bytes_rejects_oversized_outputs() {
         |_| {},
     )
     .unwrap_err();
-    assert!(err.contains("exceeds the size cap"), "{err}");
+    // Typed reason AND the exact sentence: the wording ships to the model
+    // through the MCP screenshot/export tools, so both are part of the
+    // contract.
+    assert!(matches!(err, ExportError::OutputTooLarge { .. }), "{err:?}");
+    assert!(err.to_string().contains("exceeds the size cap"), "{err}");
     // Total-pixel cap with both sides under the per-side cap:
     // 10 000 × 10 000 = 100 MPx > 64 MPx.
     let err = render_raster_bytes(
@@ -636,7 +640,8 @@ fn render_raster_bytes_rejects_oversized_outputs() {
         |_| {},
     )
     .unwrap_err();
-    assert!(err.contains("exceeds the size cap"), "{err}");
+    assert!(matches!(err, ExportError::OutputTooLarge { .. }), "{err:?}");
+    assert!(err.to_string().contains("exceeds the size cap"), "{err}");
     // Sanity: a normal surface still renders.
     assert!(render_raster_bytes(
         Rect::xywh(0.0, 0.0, 64.0, 64.0),

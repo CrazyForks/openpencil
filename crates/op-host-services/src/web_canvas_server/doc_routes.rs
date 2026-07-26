@@ -57,7 +57,7 @@ pub(super) fn open_recent_file(body: &str, state: &mut WebCanvasState) -> WebRep
                 body: serde_json::json!({
                     "ok": false,
                     "pruned": pruned,
-                    "error": e,
+                    "error": e.to_string(),
                 })
                 .to_string(),
             }

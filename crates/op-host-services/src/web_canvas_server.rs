@@ -194,8 +194,7 @@ impl WebCanvasState {
     /// fresh browser shell paints before the daemon applies updates.
     pub(crate) fn reset_document(&mut self) -> Result<u64> {
         if let Some(path) = self.current_path.clone() {
-            let mut next =
-                crate::mcp_serve::load_editor_state(&path).map_err(WebCanvasError::Document)?;
+            let mut next = crate::mcp_serve::load_editor_state(&path)?;
             preserve_web_canvas_preferences(&self.editor, &mut next);
             set_file_name_display(&mut next, &path);
             self.editor = next;

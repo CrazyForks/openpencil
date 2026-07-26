@@ -30,6 +30,7 @@ use op_editor_ui::Rect;
 use skia_safe::{Canvas, EncodedImageFormat};
 use std::path::Path as StdPath;
 
+mod error;
 mod export_svg;
 mod scene_painter;
 // `capture_scene` / `CaptureSpec` / `ScreenshotPng` here back BOTH the
@@ -39,6 +40,7 @@ mod scene_painter;
 // → scene convenience `capture()` inside it stays `mcp-debug-tools`-gated.
 pub mod screenshot;
 
+pub use error::ExportError;
 pub use export_svg::{export_node_svg, export_svg};
 pub use scene_painter::{paint_node, paint_nodes};
 
@@ -109,17 +111,32 @@ impl RasterFormat {
 /// Raster export with explicit format + scale. Scale clamped to
 /// [0.5, 8.0] to keep surface allocation sane; NaN / inf fall back
 /// to 2× (NaN reaching `canvas.scale` produces a garbage transform).
+///
+/// Reports `String` at the boundary: `op-host-desktop`'s
+/// `persistence::export_editor_state_to_path` returns this `Result`
+/// directly from its own `Result<(), String>` signature, so a typed error
+/// here would not convert through `?`. In-crate callers use
+/// [`export_raster_typed`] and get the [`ExportError`] reason.
 pub fn export_raster(
     scene: &LayoutScene,
     target: &StdPath,
     format: RasterFormat,
     scale: f32,
 ) -> Result<(), String> {
+    export_raster_typed(scene, target, format, scale).map_err(String::from)
+}
+
+/// Typed twin of [`export_raster`] for in-crate callers (the `--serve-web`
+/// daemon's export routes).
+pub(crate) fn export_raster_typed(
+    scene: &LayoutScene,
+    target: &StdPath,
+    format: RasterFormat,
+    scale: f32,
+) -> Result<(), ExportError> {
     let scale = clamp_scale(scale);
-    let Some(page) = scene.active_page() else {
-        return Err("no active page".into());
-    };
-    let bounds = page_bounds(page).ok_or("nothing to export")?;
+    let page = scene.active_page().ok_or(ExportError::NoActivePage)?;
+    let bounds = page_bounds(page).ok_or(ExportError::NothingToExport)?;
     render_raster(bounds, target, format, scale, MARGIN, |canvas| {
         paint_nodes(canvas, &page.children);
     })
@@ -130,6 +147,9 @@ pub fn export_raster(
 /// cropped to the node's painted bounds via the same `collect_bounds`
 /// traversal `export_raster` uses for the whole page. Errors when the
 /// id is unknown on the active page or the node paints nothing.
+///
+/// Same boundary-`String` rationale as [`export_raster`]; the typed twin is
+/// [`export_node_raster_typed`].
 pub fn export_node_raster(
     scene: &LayoutScene,
     node_id: &str,
@@ -137,6 +157,19 @@ pub fn export_node_raster(
     format: RasterFormat,
     scale: f32,
 ) -> Result<(), String> {
+    export_node_raster_typed(scene, node_id, target, format, scale).map_err(String::from)
+}
+
+/// Typed twin of [`export_node_raster`] for in-crate callers (the
+/// `--serve-web` daemon's export routes), so they classify through
+/// [`ExportError`] instead of re-wrapping a string.
+pub(crate) fn export_node_raster_typed(
+    scene: &LayoutScene,
+    node_id: &str,
+    target: &StdPath,
+    format: RasterFormat,
+    scale: f32,
+) -> Result<(), ExportError> {
     export_node_raster_with_margin(scene, node_id, target, format, scale, MARGIN)
 }
 
@@ -152,19 +185,21 @@ pub fn export_node_raster_with_margin(
     format: RasterFormat,
     scale: f32,
     margin: f32,
-) -> Result<(), String> {
+) -> Result<(), ExportError> {
     let scale = clamp_scale(scale);
-    let Some(page) = scene.active_page() else {
-        return Err("no active page".into());
-    };
+    let page = scene.active_page().ok_or(ExportError::NoActivePage)?;
     let node = page
         .find(node_id)
-        .ok_or_else(|| format!("node {node_id} not found on the active page"))?;
+        .ok_or_else(|| ExportError::NodeNotFoundOnActivePage {
+            node_id: node_id.to_string(),
+        })?;
     let mut acc = BoundsAcc::new();
     collect_bounds(node, glam::Affine2::IDENTITY, &mut acc);
     let bounds = acc
         .into_rect()
-        .ok_or_else(|| format!("node {node_id} paints nothing"))?;
+        .ok_or_else(|| ExportError::NodePaintsNothing {
+            node_id: node_id.to_string(),
+        })?;
     render_raster(bounds, target, format, scale, margin.max(0.0), |canvas| {
         paint_node(canvas, node);
     })
@@ -180,10 +215,8 @@ pub fn render_node_raster_bytes(
     node_id: &str,
     format: RasterFormat,
     scale: f32,
-) -> Result<Vec<u8>, String> {
-    let Some(page) = scene.active_page() else {
-        return Err("no active page".into());
-    };
+) -> Result<Vec<u8>, ExportError> {
+    let page = scene.active_page().ok_or(ExportError::NoActivePage)?;
     render_node_on_page_raster_bytes(page, node_id, format, scale)
 }
 
@@ -193,9 +226,10 @@ pub fn render_page_raster_bytes(
     page: &ScenePage,
     format: RasterFormat,
     scale: f32,
-) -> Result<Vec<u8>, String> {
-    let bounds = page_bounds(page)
-        .ok_or_else(|| format!("page {} has no visible content to export", page.id))?;
+) -> Result<Vec<u8>, ExportError> {
+    let bounds = page_bounds(page).ok_or_else(|| ExportError::PageEmpty {
+        page_id: page.id.clone(),
+    })?;
     render_raster_bytes(bounds, format, clamp_scale(scale), MARGIN, |canvas| {
         paint_nodes(canvas, &page.children);
     })
@@ -207,18 +241,25 @@ pub fn render_node_on_page_raster_bytes(
     node_id: &str,
     format: RasterFormat,
     scale: f32,
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<u8>, ExportError> {
     let node = page
         .find(node_id)
-        .ok_or_else(|| format!("node {node_id} not found on page {}", page.id))?;
+        .ok_or_else(|| ExportError::NodeNotFoundOnPage {
+            node_id: node_id.to_string(),
+            page_id: page.id.clone(),
+        })?;
     if node.hidden {
-        return Err(format!("node {node_id} is hidden and cannot be exported"));
+        return Err(ExportError::NodeHidden {
+            node_id: node_id.to_string(),
+        });
     }
     let mut acc = BoundsAcc::new();
     collect_bounds(node, glam::Affine2::IDENTITY, &mut acc);
     let bounds = acc
         .into_rect()
-        .ok_or_else(|| format!("node {node_id} paints nothing"))?;
+        .ok_or_else(|| ExportError::NodePaintsNothing {
+            node_id: node_id.to_string(),
+        })?;
     render_raster_bytes(bounds, format, clamp_scale(scale), MARGIN, |canvas| {
         paint_node(canvas, node);
     })
@@ -245,9 +286,9 @@ fn render_raster(
     scale: f32,
     margin: f32,
     paint: impl FnOnce(&Canvas),
-) -> Result<(), String> {
+) -> Result<(), ExportError> {
     let data = render_raster_bytes(bounds, format, scale, margin, paint)?;
-    std::fs::write(target, data).map_err(|e| e.to_string())?;
+    std::fs::write(target, data).map_err(|e| ExportError::Write(e.to_string()))?;
     Ok(())
 }
 
@@ -261,11 +302,11 @@ pub fn render_raster_bytes(
     scale: f32,
     margin: f32,
     paint: impl FnOnce(&Canvas),
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<u8>, ExportError> {
     let width_f = ((bounds.size.x + margin * 2.0) * scale).round();
     let height_f = ((bounds.size.y + margin * 2.0) * scale).round();
     if !width_f.is_finite() || !height_f.is_finite() {
-        return Err("raster output size is not finite (corrupt bounds / scale)".into());
+        return Err(ExportError::NonFiniteOutputSize);
     }
     // `as i64` saturates, so an absurd-but-finite f32 still lands on a
     // comparable integer instead of UB / wraparound.
@@ -275,11 +316,10 @@ pub fn render_raster_bytes(
         || height_px > MAX_RASTER_SIDE_PX
         || width_px.saturating_mul(height_px) > MAX_RASTER_TOTAL_PX
     {
-        return Err(format!(
-            "raster output {width_px}x{height_px} px exceeds the size cap \
-             ({MAX_RASTER_SIDE_PX} px per side, {MAX_RASTER_TOTAL_PX} px total) — \
-             lower the scale / padding or export a smaller node"
-        ));
+        return Err(ExportError::OutputTooLarge {
+            width_px,
+            height_px,
+        });
     }
     let info = skia_safe::ImageInfo::new(
         (width_px as i32, height_px as i32),
@@ -287,7 +327,8 @@ pub fn render_raster_bytes(
         skia_safe::AlphaType::Premul,
         None,
     );
-    let mut surface = skia_safe::surfaces::raster(&info, None, None).ok_or("alloc surface")?;
+    let mut surface =
+        skia_safe::surfaces::raster(&info, None, None).ok_or(ExportError::SurfaceAlloc)?;
     let canvas = surface.canvas();
     if format.supports_alpha() {
         canvas.clear(skia_safe::Color::TRANSPARENT);
@@ -300,7 +341,9 @@ pub fn render_raster_bytes(
     let image = surface.image_snapshot();
     let data = image
         .encode(None, format.skia(), format.quality())
-        .ok_or_else(|| format!("encode {} failed", format.user_label()))?;
+        .ok_or(ExportError::Encode {
+            format: format.user_label(),
+        })?;
     Ok(data.as_bytes().to_vec())
 }
 
