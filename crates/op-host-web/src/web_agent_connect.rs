@@ -98,7 +98,10 @@ pub(crate) fn apply_provider_connect_response(
     if connected && models.is_empty() {
         connected = false;
         info = None;
-        error = Some(missing_models_connect_error(provider));
+        error = Some(op_editor_core::missing_models_connect_error(
+            state.editor_ui.locale,
+            provider,
+        ));
     }
 
     state
@@ -184,29 +187,6 @@ fn sort_discovered_models(state: &mut EditorState) {
             .position(|p| *p == m.provider)
             .unwrap_or(usize::MAX)
     });
-}
-
-fn missing_models_connect_error(provider: AgentProvider) -> String {
-    match provider {
-        AgentProvider::ClaudeCode => {
-            "No models found. Claude Code did not return a model list.".to_string()
-        }
-        AgentProvider::CodexCli => {
-            "No models found. Codex CLI did not return a model list.".to_string()
-        }
-        AgentProvider::OpenCode => {
-            "No models found. OpenCode did not return a model list.".to_string()
-        }
-        AgentProvider::GithubCopilot => {
-            "No models found. GitHub Copilot did not return a model list.".to_string()
-        }
-        AgentProvider::Antigravity => {
-            "No model available. Antigravity did not expose its default model.".to_string()
-        }
-        AgentProvider::GrokBuild => {
-            "No models found. Grok Build did not return a model list.".to_string()
-        }
-    }
 }
 
 fn provider_key(provider: AgentProvider) -> &'static str {

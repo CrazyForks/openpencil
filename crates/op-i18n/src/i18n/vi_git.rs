@@ -331,6 +331,6 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "git.gitError.io" => "Lỗi tiến trình git: {{detail}}",
         "git.empty.openNotARepo" => "Thư mục đó không phải là kho Git.",
         "git.empty.cloneComingSoon" => "Sao chép cần URL từ xa — biểu mẫu sao chép trong bảng điều khiển sắp ra mắt.",
-        _ => return None,
+        _ => return super::vi_panel::lookup(key),
     })
 }

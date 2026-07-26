@@ -251,11 +251,7 @@ fn paint_avatar_tile(cx: &mut PaintCx<'_>, theme: &Theme, rect: Rect) {
 }
 
 fn signed_out_hint(locale: Locale) -> &'static str {
-    match locale {
-        Locale::ZhCn => "登录后即可同步你的设置与偏好",
-        Locale::ZhTw => "登入後即可同步你的設定與偏好",
-        _ => "Sign in to sync your settings and preferences",
-    }
+    op_i18n::translate(locale, "account.signedOutHint")
 }
 
 fn mix(a: Color, b: Color, amount: f32) -> Color {

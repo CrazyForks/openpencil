@@ -331,6 +331,6 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "git.gitError.io" => "ข้อผิดพลาดกระบวนการ Git: {{detail}}",
         "git.empty.openNotARepo" => "โฟลเดอร์นี้ไม่ใช่ที่เก็บ Git",
         "git.empty.cloneComingSoon" => "การโคลนต้องใช้ URL ระยะไกล — ฟอร์มโคลนในแผงกำลังจะมาเร็ว ๆ นี้",
-        _ => return None,
+        _ => return super::th_panel::lookup(key),
     })
 }

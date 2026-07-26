@@ -337,6 +337,6 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "git.gitError.workingTreeDirty" => "工作区有未提交的更改 — 合并前请先提交或暂存。",
         "git.gitError.io" => "Git 进程错误:{{detail}}",
         "git.empty.cloneComingSoon" => "克隆需要远程仓库 URL — 面板内克隆表单即将推出。",
-        _ => return None,
+        _ => return super::zh_cn_panel::lookup(key),
     })
 }

@@ -47,36 +47,22 @@ impl ImportProgressOverlay {
     }
 }
 
-/// Headline + subtitle fallbacks stay local until the canonical locale tables
-/// gain source-specific progress keys.
+/// Headline + subtitle come from the canonical locale tables
+/// (`importProgress.*` — full 15-locale coverage).
 fn parsing_title(locale: Locale, source: ImportSource) -> &'static str {
-    match (source, locale) {
-        (ImportSource::Figma, Locale::ZhCn) => "正在解析 Figma 文件…",
-        (ImportSource::Figma, Locale::ZhTw) => "正在解析 Figma 檔案…",
-        (ImportSource::Figma, Locale::Ja) => "Figma ファイルを解析しています…",
-        (ImportSource::Figma, Locale::Ko) => "Figma 파일 분석 중…",
-        (ImportSource::Figma, _) => "Parsing Figma file…",
-        (ImportSource::Html, Locale::ZhCn) => "正在解析 HTML 和页面资源…",
-        (ImportSource::Html, Locale::ZhTw) => "正在解析 HTML 和頁面資源…",
-        (ImportSource::Html, Locale::Ja) => "HTML とページ素材を解析しています…",
-        (ImportSource::Html, Locale::Ko) => "HTML 및 페이지 리소스 분석 중…",
-        (ImportSource::Html, _) => "Parsing HTML and page resources…",
-    }
+    let key = match source {
+        ImportSource::Figma => "importProgress.figmaTitle",
+        ImportSource::Html => "importProgress.htmlTitle",
+    };
+    op_i18n::translate(locale, key)
 }
 
 fn parsing_subtitle(locale: Locale, source: ImportSource) -> &'static str {
-    match (source, locale) {
-        (ImportSource::Html, Locale::ZhCn) => "正在读取样式和图片，请稍候",
-        (ImportSource::Html, Locale::ZhTw) => "正在讀取樣式和圖片，請稍候",
-        (ImportSource::Html, Locale::Ja) => "スタイルと画像を読み込んでいます。",
-        (ImportSource::Html, Locale::Ko) => "스타일과 이미지를 불러오는 중입니다.",
-        (ImportSource::Html, _) => "Loading styles and images. Please wait.",
-        (_, Locale::ZhCn) => "大型文件需要几秒钟，请稍候",
-        (_, Locale::ZhTw) => "大型檔案需要幾秒，請稍候",
-        (_, Locale::Ja) => "大きなファイルは数秒かかります。お待ちください。",
-        (_, Locale::Ko) => "큰 파일은 몇 초가 걸립니다. 잠시만 기다려 주세요.",
-        _ => "Large files take a few seconds. Please wait.",
-    }
+    let key = match source {
+        ImportSource::Html => "importProgress.htmlSubtitle",
+        _ => "importProgress.largeFileSubtitle",
+    };
+    op_i18n::translate(locale, key)
 }
 
 impl Widget for ImportProgressOverlay {

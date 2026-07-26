@@ -132,7 +132,7 @@ fn publish_numbered_copy(staging_path: &Path, source_path: &Path) -> Result<Path
     let stem = source_path
         .file_stem()
         .map(|stem| stem.to_string_lossy())
-        .unwrap_or_else(|| "OpenPencil".into());
+        .unwrap_or_else(|| op_editor_ui::PRODUCT_NAME.into());
     for suffix in 1..=10_000 {
         let candidate = parent.join(format!("{stem} ({suffix}).op"));
         match std::fs::hard_link(staging_path, &candidate) {
@@ -427,14 +427,14 @@ mod tests {
     }
 
     #[test]
-    fn untranslated_upgrade_prompt_falls_back_to_english() {
-        assert_eq!(
-            op_i18n::translate(op_editor_core::Locale::Ja, "dialog.upgradeOpTitle"),
-            op_i18n::translate(op_editor_core::Locale::EnUs, "dialog.upgradeOpTitle")
-        );
-        assert_eq!(
-            op_i18n::translate(op_editor_core::Locale::Ja, "dialog.upgradeOpBody"),
-            op_i18n::translate(op_editor_core::Locale::EnUs, "dialog.upgradeOpBody")
-        );
+    fn upgrade_prompt_resolves_localized_copy() {
+        // The upgrade dialog keys are translated (they used to fall back
+        // to English; the catalogs have since gained real translations).
+        for key in ["dialog.upgradeOpTitle", "dialog.upgradeOpBody"] {
+            let en = op_i18n::translate(op_editor_core::Locale::EnUs, key);
+            let ja = op_i18n::translate(op_editor_core::Locale::Ja, key);
+            assert_ne!(en, key, "English copy exists for {key}");
+            assert_ne!(ja, en, "Japanese copy is a real translation for {key}");
+        }
     }
 }

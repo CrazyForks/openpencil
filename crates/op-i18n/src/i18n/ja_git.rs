@@ -331,6 +331,6 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "git.gitError.io" => "Git プロセスエラー: {{detail}}",
         "git.empty.openNotARepo" => "そのフォルダは Git リポジトリではありません。",
         "git.empty.cloneComingSoon" => "クローンにはリモート URL が必要です — パネル内のクローンフォームは近日公開予定です。",
-        _ => return None,
+        _ => return super::ja_panel::lookup(key),
     })
 }

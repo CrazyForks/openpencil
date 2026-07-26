@@ -21,7 +21,7 @@ fn codex_auth_info_reads_email_and_plan_from_jwt() {
     );
     let auth = format!(r#"{{"auth_mode":"chatgpt","tokens":{{"id_token":"{token}"}}}}"#);
     assert_eq!(
-        codex_connection_info_from_auth(Some(&auth)),
+        codex_connection_info_from_auth(Locale::EnUs, Some(&auth)),
         "Connected via pro (dev@example.com)"
     );
 }
@@ -32,17 +32,17 @@ fn codex_auth_info_falls_back_to_auth_mode_then_generic() {
     let token = jwt_with_payload(r#"{"email":"dev@example.com"}"#);
     let auth = format!(r#"{{"auth_mode":"chatgpt","tokens":{{"id_token":"{token}"}}}}"#);
     assert_eq!(
-        codex_connection_info_from_auth(Some(&auth)),
+        codex_connection_info_from_auth(Locale::EnUs, Some(&auth)),
         "Connected via chatgpt (dev@example.com)"
     );
     // No tokens → bare auth_mode.
     assert_eq!(
-        codex_connection_info_from_auth(Some(r#"{"auth_mode":"api-key"}"#)),
+        codex_connection_info_from_auth(Locale::EnUs, Some(r#"{"auth_mode":"api-key"}"#)),
         "Connected via api-key"
     );
     // No auth.json at all.
     assert_eq!(
-        codex_connection_info_from_auth(None),
+        codex_connection_info_from_auth(Locale::EnUs, None),
         "Connected via Codex CLI"
     );
 }
@@ -71,15 +71,15 @@ fn opencode_summary_lists_first_three_providers() {
         mk("mistral/large"),
     ];
     assert_eq!(
-        opencode_provider_summary(&models),
+        opencode_provider_summary(Locale::EnUs, &models),
         "Connected (anthropic, openai, google +1)"
     );
     assert_eq!(
-        opencode_provider_summary(&models[..3]),
+        opencode_provider_summary(Locale::EnUs, &models[..3]),
         "Connected (anthropic, openai)"
     );
     assert_eq!(
-        opencode_provider_summary(&[]),
+        opencode_provider_summary(Locale::EnUs, &[]),
         "Connected via OpenCode server"
     );
 }
@@ -87,6 +87,7 @@ fn opencode_summary_lists_first_three_providers() {
 #[test]
 fn connected_probe_outcome_rejects_empty_model_list() {
     let outcome = connected_probe_outcome(
+        Locale::EnUs,
         AgentProvider::CodexCli,
         Vec::new(),
         Some("Connected via Codex CLI".to_string()),
@@ -127,7 +128,7 @@ fn copilot_connection_info_mirrors_ts_branches() {
         status_message: None,
     };
     assert_eq!(
-        copilot_connection_info(Some(&full)),
+        copilot_connection_info(Locale::EnUs, Some(&full)),
         "Connected as @octocat (oauth)"
     );
     let message_only = CopilotAuth {
@@ -136,23 +137,30 @@ fn copilot_connection_info_mirrors_ts_branches() {
         status_message: Some("Signed in via device flow".into()),
     };
     assert_eq!(
-        copilot_connection_info(Some(&message_only)),
+        copilot_connection_info(Locale::EnUs, Some(&message_only)),
         "Signed in via device flow"
     );
-    assert_eq!(copilot_connection_info(None), "Connected via GitHub");
+    assert_eq!(
+        copilot_connection_info(Locale::EnUs, None),
+        "Connected via GitHub"
+    );
 }
 
 #[test]
 fn friendly_error_mappers_match_ts_tables() {
-    assert!(friendly_claude_error("process exited with code 1").contains("claude login"));
+    assert!(
+        friendly_claude_error(Locale::EnUs, "process exited with code 1").contains("claude login")
+    );
     assert_eq!(
-        friendly_claude_error("process exited with code 7"),
+        friendly_claude_error(Locale::EnUs, "process exited with code 7"),
         "Unable to connect. Claude Code process exited unexpectedly."
     );
-    assert!(friendly_copilot_error("spawn ENOENT").contains("not found"));
-    assert!(friendly_copilot_error("not authenticated yet").contains("copilot login"));
+    assert!(friendly_copilot_error(Locale::EnUs, "spawn ENOENT").contains("not found"));
+    assert!(
+        friendly_copilot_error(Locale::EnUs, "not authenticated yet").contains("copilot login")
+    );
     assert_eq!(
-        friendly_copilot_error("Connection timed out"),
+        friendly_copilot_error(Locale::EnUs, "Connection timed out"),
         // "timed out" also matches the auth branch's bare "auth"?
         // No — it doesn't contain "auth"; the timeout branch wins.
         "Connection timed out. Please try again."
@@ -205,8 +213,10 @@ fn antigravity_and_grok_install_commands_are_platform_native() {
 
 #[test]
 fn not_installed_outcome_carries_guidance() {
-    let outcome =
-        ProbeOutcome::not_installed(AgentProvider::ClaudeCode, "Claude Code CLI not found");
+    let outcome = ProbeOutcome::not_installed(
+        AgentProvider::ClaudeCode,
+        "Claude Code CLI not found".to_string(),
+    );
     assert!(outcome.not_installed);
     assert!(!outcome.connected);
     assert_eq!(

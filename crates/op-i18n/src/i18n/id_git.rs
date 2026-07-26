@@ -331,6 +331,6 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "git.gitError.io" => "Galat proses git: {{detail}}",
         "git.empty.openNotARepo" => "Folder tersebut bukan repositori Git.",
         "git.empty.cloneComingSoon" => "Kloning memerlukan URL jarak jauh — formulir kloning di panel akan segera hadir.",
-        _ => return None,
+        _ => return super::id_panel::lookup(key),
     })
 }

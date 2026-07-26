@@ -187,7 +187,7 @@ pub fn paint_image_node_section(
                 size: Point2D::new(half_w, IMAGE_BUTTON_H),
             },
             Icon::Search,
-            "Search",
+            op_i18n::translate(locale, "common.search"),
         );
         paint_outline_button(
             cx,
@@ -197,7 +197,7 @@ pub fn paint_image_node_section(
                 size: Point2D::new(half_w, IMAGE_BUTTON_H),
             },
             Icon::Sparkles,
-            "Generate",
+            op_i18n::translate(locale, "common.generate"),
         );
         y += IMAGE_BUTTON_H;
     }

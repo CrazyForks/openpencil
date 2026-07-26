@@ -331,6 +331,6 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "git.gitError.io" => "Git işlem hatası: {{detail}}",
         "git.empty.openNotARepo" => "Bu klasör bir Git deposu değil.",
         "git.empty.cloneComingSoon" => "Klonlama için uzak bir URL gerekir — panel içi klonlama formu yakında geliyor.",
-        _ => return None,
+        _ => return super::tr_panel::lookup(key),
     })
 }

@@ -1,8 +1,20 @@
-//! Canonical chrome-string table for this locale.
-//!
-//! Formerly generated from `apps/web/src/i18n/locales/*.ts` via
-//! `tools/convert-locales.py`; that TS pipeline is retired and
-//! these tables are now hand-maintained directly.
+//! Canonical hand-maintained OpenPencil locale catalog.
+
+const LOGIN_SCREEN_PROMPT: &str =
+    "设计一个现代的移动端登录页面，包含邮箱输入框、密码输入框、登录按钮和社交登录选项";
+const BOTTOM_NAV_PROMPT: &str =
+    "设计一个包含 5 个标签的移动应用底部导航栏：首页、搜索、添加、消息、个人";
+const TEAM_DESCRIPTION: &str =
+    "选择用于设计生成的模型。设置后，设计任务将自动委派给使用此模型的专业 Agent。";
+const MCP_TERMINAL_SUBTITLE_2: &str = "升级 OpenPencil 版本后，请重新安装 MCP 集成以确保兼容性。";
+const CLOSE_DIALOG_BODY: &str =
+    "“{{name}}”有未保存的更改。\n\n是 = 保存,否 = 不保存,取消 = 返回继续编辑。";
+const UPGRADE_DIALOG_BODY: &str = "打开“{{name}}”时已兼容修复旧格式。\n\n是 = 用新格式覆盖原文件 · 否 = 保留原文件并生成编号副本 · 取消 = 暂不转换。";
+const PLANNED_ONE: &str = "页面已拆分为 1 个区块。我会先完成它，再统一润色整个页面。";
+const PLANNED_MANY: &str = "页面已拆分为 {{count}} 个区块。我会逐一完成，再统一润色整个页面。";
+const POLISHING: &str = "主要区块已就位。我正在润色间距、层级和整体一致性。";
+const CHECKING: &str = "布局已完成。我正在检查溢出、对齐和视觉平衡。";
+const VISUAL_REFERENCE: &str = "我正在准备视觉参考，然后再开始构建页面。";
 
 pub fn lookup(key: &str) -> Option<&'static str> {
     Some(match key {
@@ -326,16 +338,13 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "ai.modificationApplied" => "已修改",
         "ai.designElement" => "元素",
         "ai.designElements" => "元素",
+        "ai.designElementsFew" => "元素",
         "ai.quickAction.loginScreen" => "设计一个移动端登录页面",
-        "ai.quickAction.loginScreenPrompt" => {
-            "设计一个现代的移动端登录页面，包含邮箱输入框、密码输入框、登录按钮和社交登录选项"
-        }
+        "ai.quickAction.loginScreenPrompt" => LOGIN_SCREEN_PROMPT,
         "ai.quickAction.foodApp" => "美食App首页",
         "ai.quickAction.foodAppPrompt" => "生成一个设计精良的美食应用移动端首页",
         "ai.quickAction.bottomNav" => "设计一个底部导航栏",
-        "ai.quickAction.bottomNavPrompt" => {
-            "设计一个包含 5 个标签的移动应用底部导航栏：首页、搜索、添加、消息、个人"
-        }
+        "ai.quickAction.bottomNavPrompt" => BOTTOM_NAV_PROMPT,
         "ai.quickAction.colorPalette" => "为我的应用推荐配色方案",
         "ai.quickAction.colorPalettePrompt" => "为一个宠物护理应用推荐一套现代配色方案",
         "ai.quickAction.dashboard" => "暗色音乐流媒体 App 首页",
@@ -488,9 +497,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "builtin.errorApiKeyEmpty" => "API 密钥为空，请在设置中添加您的 API 密钥。",
         "builtin.parallelAgents" => "并行子代理：{{count}}x（点击切换）",
         "builtin.baseUrlPlaceholder" => "https://api.example.com/v1",
-        "builtin.teamDescription" => {
-            "选择用于设计生成的模型。设置后，设计任务将自动委派给使用此模型的专业 Agent。"
-        }
+        "builtin.teamDescription" => TEAM_DESCRIPTION,
         "builtin.teamDesignModel" => "设计模型",
         "builtin.teamSelectModel" => "无（单 Agent）",
         "acp.title" => "ACP Agent",
@@ -623,9 +630,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "settings.mcp.stop" => "停止",
         "settings.mcp.terminalIntegrations" => "终端中的 MCP 集成",
         "settings.mcp.terminalSubtitle1" => "MCP 集成将在重启终端后生效。",
-        "settings.mcp.terminalSubtitle2" => {
-            "升级 OpenPencil 版本后，请重新安装 MCP 集成以确保兼容性。"
-        }
+        "settings.mcp.terminalSubtitle2" => MCP_TERMINAL_SUBTITLE_2,
         "settings.images.search" => "图片搜索",
         "settings.images.ready" => "已就绪",
         "settings.images.notConfigured" => "尚未配置",
@@ -660,38 +665,24 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "settings.system.errorDescription" => "无法连接发布服务器，请检查网络连接。",
         "settings.system.currentVersion" => "当前版本",
         "dialog.unsavedTitle" => "有未保存的更改",
-        "dialog.closeBody" => {
-            "“{{name}}”有未保存的更改。\n\n是 = 保存,否 = 不保存,取消 = 返回继续编辑。"
-        }
+        "dialog.closeBody" => CLOSE_DIALOG_BODY,
         "dialog.untitledDocument" => "未命名文档",
         "dialog.openErrorTitle" => "无法打开文件",
         "dialog.openErrorLead" => "OpenPencil 无法解析该文件。",
         "dialog.saveErrorTitle" => "保存失败",
         "dialog.saveErrorLead" => "写入文件时出错。",
         "dialog.upgradeOpTitle" => "转换为新版 OpenPencil 文件?",
-        "dialog.upgradeOpBody" => {
-            "打开“{{name}}”时已兼容修复旧格式。\n\n是 = 用新格式覆盖原文件 · 否 = 保留原文件并生成编号副本 · 取消 = 暂不转换。"
-        }
+        "dialog.upgradeOpBody" => UPGRADE_DIALOG_BODY,
         "dialog.exportErrorTitle" => "导出失败",
         "dialog.exportErrorLead" => "渲染图像时出错。",
         "ai.thinkingProcess" => "思考过程",
         "ai.toolCalls" => "{{count}} 个工具调用",
         "ai.designProgress.narration.planning" => "我正在把需求整理成清晰的页面结构。",
-        "ai.designProgress.narration.plannedOne" => {
-            "页面已拆分为 1 个区块。我会先完成它，再统一润色整个页面。"
-        }
-        "ai.designProgress.narration.plannedMany" => {
-            "页面已拆分为 {{count}} 个区块。我会逐一完成，再统一润色整个页面。"
-        }
-        "ai.designProgress.narration.polishing" => {
-            "主要区块已就位。我正在润色间距、层级和整体一致性。"
-        }
-        "ai.designProgress.narration.checking" => {
-            "布局已完成。我正在检查溢出、对齐和视觉平衡。"
-        }
-        "ai.designProgress.narration.visualReference" => {
-            "我正在准备视觉参考，然后再开始构建页面。"
-        }
+        "ai.designProgress.narration.plannedOne" => PLANNED_ONE,
+        "ai.designProgress.narration.plannedMany" => PLANNED_MANY,
+        "ai.designProgress.narration.polishing" => POLISHING,
+        "ai.designProgress.narration.checking" => CHECKING,
+        "ai.designProgress.narration.visualReference" => VISUAL_REFERENCE,
         "ai.designProgress.activity.planning" => "规划设计",
         "ai.designProgress.activity.polishing" => "润色布局",
         "ai.designProgress.activity.checking" => "检查设计",
@@ -738,6 +729,72 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "account.signInSubtitle" => "使用 Zseven 账户继续",
         "account.securityNoteBrowser" => "账户验证将在系统浏览器中完成",
         "account.securityNotePopup" => "账户验证将在弹出的窗口中完成",
+        "rightPanel.interact" => "交互",
+        "widget.title" => "控件",
+        "widget.checked" => "已勾选",
+        "fill.mesh" => "网格渐变",
+        "fill.shader" => "着色器",
+        "common.apply" => "应用",
+        "common.retry" => "重试",
+        "common.search" => "搜索",
+        "common.generate" => "生成",
+        "menu.file" => "文件",
+        "menu.edit" => "编辑",
+        "menu.view" => "视图",
+        "menu.help" => "帮助",
+        "menu.quit" => "退出 OpenPencil",
+        "menu.new" => "新建",
+        "menu.open" => "打开…",
+        "menu.openRecent" => "打开最近文件",
+        "menu.noRecentDocuments" => "没有最近打开的文档",
+        "menu.saveAs" => "另存为…",
+        "menu.exportImage" => "导出图片…",
+        "menu.cut" => "剪切",
+        "menu.copy" => "复制",
+        "menu.paste" => "粘贴",
+        "menu.selectAll" => "全选",
+        "menu.group" => "编组",
+        "menu.ungroup" => "取消编组",
+        "menu.toggleFullScreen" => "切换全屏",
+        "menu.gitPanel" => "Git 面板",
+        "menu.designMdPanel" => "Design.md 面板",
+        "menu.checkForUpdates" => "检查更新…",
+        "menu.githubLink" => "在 GitHub 上查看 OpenPencil",
+        "providerProbe.cliNotFound" => "未找到 {{name}} CLI",
+        "providerProbe.cliNotResponding" => "{{name}} CLI 无响应",
+        "providerProbe.noModelsClaude" => "未找到模型。Claude Code 未返回模型列表。请运行“claude login”登录，或在 ~/.claude/settings.json 中设置 ANTHROPIC_API_KEY。",
+        "providerProbe.noModelsCodex" => "未找到模型。请运行“codex login”或设置 OPENAI_API_KEY，然后运行一次 codex 以生成模型缓存。",
+        "providerProbe.noModelsOpenCode" => "OpenCode 中未配置模型。请运行“opencode”配置提供商。",
+        "providerProbe.noModelsCopilot" => "未找到模型。请先运行“copilot login”登录。",
+        "providerProbe.noModelsAntigravity" => "没有可用模型。请运行一次“agy”完成登录。",
+        "providerProbe.noModelsGrok" => "未找到模型。请运行一次“grok”完成登录。",
+        "providerProbe.noModelList" => "未找到模型。{{name}} 未返回模型列表。",
+        "providerProbe.noDefaultModelAntigravity" => "没有可用模型。Antigravity 未提供默认模型。",
+        "providerProbe.notAuthenticatedCodex" => "尚未登录。请先运行“codex login”或设置 OPENAI_API_KEY。",
+        "providerProbe.notAuthenticatedCopilot" => "尚未登录。请先在终端中运行“copilot login”。",
+        "providerProbe.claudeExitCode1" => "Claude Code 以代码 1 退出。请运行“claude login”登录，或在 ~/.claude/settings.json 中设置 ANTHROPIC_API_KEY。",
+        "providerProbe.claudeExitedUnexpectedly" => "无法连接。Claude Code 进程意外退出。",
+        "providerProbe.claudeNotFoundInstall" => "未找到 Claude Code CLI。请先安装。",
+        "providerProbe.timedOut" => "连接超时，请重试。",
+        "providerProbe.copilotNotFoundInstall" => "未找到 GitHub Copilot CLI。请从 https://docs.github.com/copilot/how-tos/copilot-cli 安装",
+        "providerProbe.connectedViaPlan" => "已通过 {{plan}} 连接（{{email}}）",
+        "providerProbe.connectedViaApiKey" => "已通过 API 密钥连接（{{key}}）",
+        "providerProbe.connectedViaApiKeyCustomBase" => "已通过 API 密钥连接（自定义 Base URL）",
+        "providerProbe.connectedViaSubscription" => "已通过订阅连接",
+        "providerProbe.connectedViaCodexCli" => "已通过 Codex CLI 连接",
+        "providerProbe.connectedViaMode" => "已通过 {{mode}} 连接",
+        "providerProbe.connectedProviders" => "已连接（{{providers}}）",
+        "providerProbe.connectedProvidersMore" => "已连接（{{providers}} +{{count}}）",
+        "providerProbe.connectedViaOpenCodeServer" => "已通过 OpenCode 服务连接",
+        "providerProbe.connectedAs" => "已以 @{{login}}{{method}} 身份连接",
+        "providerProbe.connectedViaGithub" => "已通过 GitHub 连接",
+        "importProgress.figmaTitle" => "正在解析 Figma 文件…",
+        "importProgress.htmlTitle" => "正在解析 HTML 和页面资源…",
+        "importProgress.htmlSubtitle" => "正在读取样式和图片，请稍候",
+        "importProgress.largeFileSubtitle" => "大型文件需要几秒钟，请稍候",
+        "account.signedOutHint" => "登录后即可同步你的设置与偏好",
+        "code.noUsableCode" => "AI 未返回可用代码。请重试，或切换 AI 模型后再试。",
+        "code.previousResultKept" => "上次生成的代码仍已保留",
         _ => return super::zh_cn_git::lookup(key),
     })
 }

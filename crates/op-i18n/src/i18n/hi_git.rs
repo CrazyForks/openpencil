@@ -331,6 +331,6 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "git.gitError.io" => "Git प्रोसेस त्रुटि: {{detail}}",
         "git.empty.openNotARepo" => "यह फ़ोल्डर Git रिपॉज़िटरी नहीं है।",
         "git.empty.cloneComingSoon" => "क्लोन करने के लिए रिमोट URL चाहिए — पैनल में क्लोन फ़ॉर्म जल्द आ रहा है।",
-        _ => return None,
+        _ => return super::hi_panel::lookup(key),
     })
 }

@@ -23,7 +23,10 @@ impl ProviderConnectJob {
         let (tx, rx) = mpsc::channel();
         let sc_provider = provider_to_sc(provider);
         std::thread::spawn(move || {
-            let _ = tx.send(connect_provider(sc_provider));
+            // Resolved on the worker (settings file + OS locale) so the
+            // probe's status/error strings match the chrome language.
+            let locale = crate::provider_probe::resolved_ui_locale();
+            let _ = tx.send(connect_provider(sc_provider, locale));
         });
         Self {
             provider,
@@ -102,24 +105,11 @@ pub fn normalize_provider_probe_outcome(
 }
 
 pub fn missing_models_connect_error(provider: op_editor_core::AgentProvider) -> String {
-    match provider {
-        op_editor_core::AgentProvider::ClaudeCode => {
-            "No models found. Claude Code did not return a model list.".to_string()
-        }
-        op_editor_core::AgentProvider::CodexCli => {
-            "No models found. Codex CLI did not return a model list.".to_string()
-        }
-        op_editor_core::AgentProvider::OpenCode => {
-            "No models found. OpenCode did not return a model list.".to_string()
-        }
-        op_editor_core::AgentProvider::GithubCopilot => {
-            "No models found. GitHub Copilot did not return a model list.".to_string()
-        }
-        op_editor_core::AgentProvider::Antigravity => {
-            "No model available. Antigravity did not expose its default model.".to_string()
-        }
-        op_editor_core::AgentProvider::GrokBuild => {
-            "No models found. Grok Build did not return a model list.".to_string()
-        }
-    }
+    // Pinned to English: this normalization is a belt-and-suspenders
+    // guard the pump applies on the UI thread (its callers pass no
+    // locale, and reading the settings file here would make the desktop
+    // pump tests depend on the machine's ambient locale). The probe
+    // itself already produces fully localized no-model errors in
+    // `connect_provider`.
+    op_editor_core::missing_models_connect_error(op_i18n::Locale::EnUs, provider)
 }

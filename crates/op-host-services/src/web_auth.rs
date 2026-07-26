@@ -106,19 +106,62 @@ pub(crate) fn status(state: &mut WebCanvasState) -> WebReply {
 /// here (same origin, instant) and is navigated to the verification page
 /// as soon as the begin call returns it, so the user never stares at a
 /// bare `about:blank`.
-pub(crate) const LOADING_PAGE_HTML: &str = r#"<!doctype html>
+///
+/// The daemon cannot know the browser tab's editor locale, so the page
+/// embeds the `account.openingPopup` string for every locale and picks
+/// one from `navigator.languages` client-side (English no-JS fallback).
+pub(crate) static LOADING_PAGE_HTML: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    let mut messages = serde_json::Map::new();
+    for locale in op_i18n::Locale::ALL {
+        messages.insert(
+            locale.code().to_ascii_lowercase(),
+            serde_json::Value::String(
+                op_i18n::translate(locale, "account.openingPopup").to_string(),
+            ),
+        );
+    }
+    let messages = serde_json::Value::Object(messages).to_string();
+    let fallback = op_i18n::translate(op_i18n::Locale::EnUs, "account.openingPopup");
+    format!(
+        r#"<!doctype html>
 <html><head><meta charset="utf-8"><title>OpenPencil</title><style>
-  html,body{height:100%;margin:0;background:#111113;color:#e4e4e7;
-    font:14px/1.6 system-ui,-apple-system,sans-serif}
-  .wrap{height:100%;display:flex;flex-direction:column;align-items:center;
-    justify-content:center;gap:14px}
-  .spin{width:28px;height:28px;border-radius:50%;border:3px solid #3f3f46;
-    border-top-color:#818cf8;animation:r .8s linear infinite}
-  @keyframes r{to{transform:rotate(360deg)}}
-  p{margin:0}.en{color:#a1a1aa;font-size:12px}
+  html,body{{height:100%;margin:0;background:#111113;color:#e4e4e7;
+    font:14px/1.6 system-ui,-apple-system,sans-serif}}
+  .wrap{{height:100%;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;gap:14px}}
+  .spin{{width:28px;height:28px;border-radius:50%;border:3px solid #3f3f46;
+    border-top-color:#818cf8;animation:r .8s linear infinite}}
+  @keyframes r{{to{{transform:rotate(360deg)}}}}
+  p{{margin:0}}
 </style></head><body><div class="wrap"><div class="spin"></div>
-<p>正在打开登录页…</p><p class="en">Opening the sign-in page…</p>
-</div></body></html>"#;
+<p id="msg">{fallback}</p></div><script>
+(function () {{
+  var messages = {messages};
+  var langs = navigator.languages || [navigator.language || "en"];
+  for (var i = 0; i < langs.length; i++) {{
+    var tag = String(langs[i]).replace(/_/g, "-").toLowerCase();
+    var pick = messages[tag];
+    if (!pick && tag.indexOf("zh") === 0) {{
+      if (/(^|-)hans($|-)/.test(tag)) {{
+        pick = messages["zh-cn"];
+      }} else if (/(^|-)hant($|-)/.test(tag)) {{
+        pick = messages["zh-tw"];
+      }} else {{
+        pick = /(^|-)(tw|hk|mo)($|-)/.test(tag)
+          ? messages["zh-tw"] : messages["zh-cn"];
+      }}
+    }}
+    if (!pick) {{ pick = messages[tag.split("-")[0]]; }}
+    if (!pick && tag.indexOf("en") === 0) {{ pick = messages["en-us"]; }}
+    if (pick) {{
+      document.getElementById("msg").textContent = pick;
+      break;
+    }}
+  }}
+}})();
+</script></body></html>"#
+    )
+});
 
 /// How long `login_begin_and_wait` blocks its connection thread waiting
 /// for the pairing's verification URI (the sso `start` round-trip).
@@ -255,4 +298,43 @@ pub(crate) fn logout(state: &mut WebCanvasState) -> WebReply {
     op_auth_bridge::sign_out();
     state.editor.editor_ui.account = AccountState::Anonymous;
     ok()
+}
+
+#[cfg(test)]
+mod loading_page_i18n_tests {
+    use super::LOADING_PAGE_HTML;
+
+    #[test]
+    fn loading_interstitial_embeds_every_locale_and_an_english_fallback() {
+        let html = LOADING_PAGE_HTML.as_str();
+        let fallback = op_i18n::translate(op_i18n::Locale::EnUs, "account.openingPopup");
+        assert!(html.contains(&format!(r#"<p id="msg">{fallback}</p>"#)));
+        assert!(!html.contains("<p>正在打开登录页…</p>"));
+
+        for locale in op_i18n::Locale::ALL {
+            let key = locale.code().to_ascii_lowercase();
+            let value = serde_json::to_string(op_i18n::translate(locale, "account.openingPopup"))
+                .expect("translation serializes");
+            assert!(
+                html.contains(&format!(r#""{key}":{value}"#)),
+                "loading page omits locale {}",
+                locale.code()
+            );
+        }
+    }
+
+    #[test]
+    fn loading_interstitial_prefers_explicit_chinese_script_tags() {
+        let html = LOADING_PAGE_HTML.as_str();
+        let hans = html
+            .find(r#"/(^|-)hans($|-)/"#)
+            .expect("Hans selector is embedded");
+        let hant = html
+            .find(r#"/(^|-)hant($|-)/"#)
+            .expect("Hant selector is embedded");
+        let region = html
+            .find(r#"/(^|-)(tw|hk|mo)($|-)/"#)
+            .expect("Chinese region fallback is embedded");
+        assert!(hans < region && hant < region);
+    }
 }

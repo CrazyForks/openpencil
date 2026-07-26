@@ -333,6 +333,6 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "git.gitError.mergeInProgress" => "A merge is already in progress — resolve or abort it first.",
         "git.gitError.workingTreeDirty" => "The working tree has uncommitted changes — commit or stash them before merging.",
         "git.gitError.io" => "Git process error: {{detail}}",
-        _ => return None,
+        _ => return super::en_panel::lookup(key),
     })
 }

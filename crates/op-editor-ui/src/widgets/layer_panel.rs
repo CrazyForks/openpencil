@@ -259,8 +259,11 @@ impl LayerPanel {
             pages: Rc::new(Vec::new()),
             items: Rc::new(Vec::new()),
             theme: Theme::dark(),
-            pages_label: "Pages",
-            layers_label: "Layers",
+            // No editor state (and therefore no locale) is reachable in
+            // the empty skeleton — route through the canonical English
+            // table instead of hardcoding literals.
+            pages_label: op_i18n::translate(op_editor_core::Locale::EnUs, "pages.title"),
+            layers_label: op_i18n::translate(op_editor_core::Locale::EnUs, "layers.title"),
             drop_target: None,
             drag_ghost: None,
             now_ms: 0,

@@ -1956,6 +1956,7 @@ impl PropertyPanel {
                 scrolled,
                 self.visible_sections(),
                 &self.image_panel,
+                self.locale,
                 self.now_ms,
             );
         }
@@ -1967,6 +1968,7 @@ impl PropertyPanel {
                 self.visible_sections(),
                 &self.image_panel,
                 self.image_gen_profile.as_ref(),
+                self.locale,
                 self.now_ms,
             );
         }

@@ -331,6 +331,6 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "git.gitError.io" => "Git 程序錯誤:{{detail}}",
         "git.empty.openNotARepo" => "該資料夾不是 Git 儲存庫。",
         "git.empty.cloneComingSoon" => "複製需要遠端儲存庫 URL — 面板內複製表單即將推出。",
-        _ => return None,
+        _ => return super::zh_tw_panel::lookup(key),
     })
 }

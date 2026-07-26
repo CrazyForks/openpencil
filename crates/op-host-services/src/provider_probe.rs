@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 use base64::Engine;
 use op_ai::agent_settings_state::AgentProvider;
 use op_ai::chat_models::ModelEntry;
+use op_i18n::Locale;
 
 use crate::model_discovery::{
     codex_models_from_app_server, codex_models_from_cache, discover_opencode, extract_json_object,
@@ -47,10 +48,10 @@ pub struct ProbeOutcome {
 }
 
 impl ProbeOutcome {
-    fn not_installed(provider: AgentProvider, error: &str) -> Self {
+    fn not_installed(provider: AgentProvider, error: String) -> Self {
         Self {
             not_installed: true,
-            error: Some(error.to_string()),
+            error: Some(error),
             install_command: Some(install_command(provider).to_string()),
             ..Self::default()
         }
@@ -64,30 +65,38 @@ impl ProbeOutcome {
     }
 }
 
-fn no_models_error(provider: AgentProvider) -> String {
-    match provider {
-        AgentProvider::ClaudeCode => {
-            "No models found. Claude Code did not return a model list. Run \"claude login\" to authenticate, or set ANTHROPIC_API_KEY in ~/.claude/settings.json.".to_string()
-        }
-        AgentProvider::CodexCli => {
-            "No models found. Run \"codex login\" or set OPENAI_API_KEY, then run codex once to populate the model cache.".to_string()
-        }
-        AgentProvider::OpenCode => {
-            "No models configured in OpenCode. Run \"opencode\" to set up providers.".to_string()
-        }
-        AgentProvider::GithubCopilot => {
-            "No models found. Run \"copilot login\" to authenticate first.".to_string()
-        }
-        AgentProvider::Antigravity => {
-            "No model available. Run \"agy\" once to authenticate.".to_string()
-        }
-        AgentProvider::GrokBuild => {
-            "No models found. Run \"grok\" once to authenticate.".to_string()
-        }
-    }
+/// Resolve the UI locale for probe messages the same way app startup
+/// does: OS locale first, overridden by the persisted settings file.
+/// The probe worker has no handle on the live editor state, and locale
+/// changes are persisted on change, so this stays in sync in practice.
+pub fn resolved_ui_locale() -> Locale {
+    let mut state = op_editor_core::EditorState::new();
+    crate::settings_io::load(&mut state);
+    state.editor_ui.locale
+}
+
+fn t(locale: Locale, key: &'static str) -> String {
+    op_i18n::translate(locale, key).to_string()
+}
+
+fn tw(locale: Locale, key: &'static str, vars: &[(&str, &str)]) -> String {
+    op_i18n::translate_with(locale, key, vars)
+}
+
+fn no_models_error(locale: Locale, provider: AgentProvider) -> String {
+    let key = match provider {
+        AgentProvider::ClaudeCode => "providerProbe.noModelsClaude",
+        AgentProvider::CodexCli => "providerProbe.noModelsCodex",
+        AgentProvider::OpenCode => "providerProbe.noModelsOpenCode",
+        AgentProvider::GithubCopilot => "providerProbe.noModelsCopilot",
+        AgentProvider::Antigravity => "providerProbe.noModelsAntigravity",
+        AgentProvider::GrokBuild => "providerProbe.noModelsGrok",
+    };
+    t(locale, key)
 }
 
 fn connected_probe_outcome(
+    locale: Locale,
     provider: AgentProvider,
     models: Vec<ModelEntry>,
     connection_info: Option<String>,
@@ -96,7 +105,7 @@ fn connected_probe_outcome(
     version: Option<String>,
 ) -> ProbeOutcome {
     if models.is_empty() {
-        return ProbeOutcome::failed(no_models_error(provider));
+        return ProbeOutcome::failed(no_models_error(locale, provider));
     }
     ProbeOutcome {
         connected: true,
@@ -109,13 +118,15 @@ fn connected_probe_outcome(
     }
 }
 
-/// Run the connect probe for one provider. Blocking.
-pub fn connect_provider(provider: AgentProvider) -> ProbeOutcome {
+/// Run the connect probe for one provider. Blocking. Status/error
+/// strings are produced in `locale` at construction time — the display
+/// layer shows them verbatim.
+pub fn connect_provider(provider: AgentProvider, locale: Locale) -> ProbeOutcome {
     match provider {
-        AgentProvider::ClaudeCode => connect_claude_code(),
-        AgentProvider::CodexCli => connect_codex_cli(),
-        AgentProvider::OpenCode => connect_opencode(),
-        AgentProvider::GithubCopilot => connect_copilot(),
+        AgentProvider::ClaudeCode => connect_claude_code(locale),
+        AgentProvider::CodexCli => connect_codex_cli(locale),
+        AgentProvider::OpenCode => connect_opencode(locale),
+        AgentProvider::GithubCopilot => connect_copilot(locale),
         AgentProvider::Antigravity => crate::cli_provider_probe::connect_antigravity(),
         AgentProvider::GrokBuild => crate::cli_provider_probe::connect_grok_build(),
     }
@@ -244,14 +255,22 @@ fn cli_version(exe: &Path, timeout: Duration) -> Option<String> {
 // Claude Code (connect-agent.ts:147-262)
 // ---------------------------------------------------------------
 
-fn connect_claude_code() -> ProbeOutcome {
+fn connect_claude_code(locale: Locale) -> ProbeOutcome {
     if resolve_cli("claude").is_none() {
-        return ProbeOutcome::not_installed(AgentProvider::ClaudeCode, "Claude Code CLI not found");
+        return ProbeOutcome::not_installed(
+            AgentProvider::ClaudeCode,
+            tw(
+                locale,
+                "providerProbe.cliNotFound",
+                &[("name", "Claude Code")],
+            ),
+        );
     }
     match claude_initialize_query() {
         ClaudeInitResult::Answered(models, account) => {
-            let (info, hint) = build_claude_connection_info(account.as_ref());
+            let (info, hint) = build_claude_connection_info(locale, account.as_ref());
             connected_probe_outcome(
+                locale,
                 AgentProvider::ClaudeCode,
                 models,
                 Some(info),
@@ -261,10 +280,11 @@ fn connect_claude_code() -> ProbeOutcome {
             )
         }
         ClaudeInitResult::ExitedWithError(code) => ProbeOutcome::failed(friendly_claude_error(
+            locale,
             &format!("process exited with code {code}"),
         )),
         ClaudeInitResult::NoAnswer => {
-            ProbeOutcome::failed(no_models_error(AgentProvider::ClaudeCode))
+            ProbeOutcome::failed(no_models_error(locale, AgentProvider::ClaudeCode))
         }
     }
 }
@@ -321,7 +341,10 @@ fn claude_env_var_resolved(name: &str) -> Option<String> {
 }
 
 /// TS `buildClaudeConnectionInfo` (connect-agent.ts:270-295).
-fn build_claude_connection_info(account: Option<&ClaudeAccount>) -> (String, String) {
+fn build_claude_connection_info(
+    locale: Locale,
+    account: Option<&ClaudeAccount>,
+) -> (String, String) {
     let hint = config_path(
         "~/.claude/settings.json",
         "%USERPROFILE%\\.claude\\settings.json",
@@ -330,34 +353,51 @@ fn build_claude_connection_info(account: Option<&ClaudeAccount>) -> (String, Str
         let sub = account
             .and_then(|a| a.subscription_type.as_deref())
             .unwrap_or("subscription");
-        return (format!("Connected via {sub} ({email})"), hint);
+        return (
+            tw(
+                locale,
+                "providerProbe.connectedViaPlan",
+                &[("plan", sub), ("email", email)],
+            ),
+            hint,
+        );
     }
     let api_key = claude_env_var("ANTHROPIC_API_KEY");
     let base_url = claude_env_var("ANTHROPIC_BASE_URL");
     match (api_key, base_url) {
-        (Some(_), Some(_)) => ("Connected via API key (custom base URL)".to_string(), hint),
-        (Some(key), None) => (format!("Connected via API key ({})", mask_key(&key)), hint),
-        _ => ("Connected via subscription".to_string(), hint),
+        (Some(_), Some(_)) => (
+            t(locale, "providerProbe.connectedViaApiKeyCustomBase"),
+            hint,
+        ),
+        (Some(key), None) => (
+            tw(
+                locale,
+                "providerProbe.connectedViaApiKey",
+                &[("key", &mask_key(&key))],
+            ),
+            hint,
+        ),
+        _ => (t(locale, "providerProbe.connectedViaSubscription"), hint),
     }
 }
 
 /// TS `friendlyClaudeError` (connect-agent.ts:357-371).
-fn friendly_claude_error(raw: &str) -> String {
+fn friendly_claude_error(locale: Locale, raw: &str) -> String {
     let lower = raw.to_ascii_lowercase();
     if lower.contains("process exited with code 1")
         || lower.contains("invalid model")
         || lower.contains("unknown model")
     {
-        return "Claude Code exited with code 1. Run \"claude login\" to authenticate, or set ANTHROPIC_API_KEY in ~/.claude/settings.json.".to_string();
+        return t(locale, "providerProbe.claudeExitCode1");
     }
     if lower.contains("exited with code") {
-        return "Unable to connect. Claude Code process exited unexpectedly.".to_string();
+        return t(locale, "providerProbe.claudeExitedUnexpectedly");
     }
     if lower.contains("not found") || lower.contains("enoent") {
-        return "Claude Code CLI not found. Please install it first.".to_string();
+        return t(locale, "providerProbe.claudeNotFoundInstall");
     }
     if lower.contains("timed out") || lower.contains("timedout") {
-        return "Connection timed out. Please try again.".to_string();
+        return t(locale, "providerProbe.timedOut");
     }
     raw.to_string()
 }
@@ -366,14 +406,21 @@ fn friendly_claude_error(raw: &str) -> String {
 // Codex CLI (connect-agent.ts:416-576)
 // ---------------------------------------------------------------
 
-fn connect_codex_cli() -> ProbeOutcome {
+fn connect_codex_cli(locale: Locale) -> ProbeOutcome {
     let Some(exe) = resolve_cli("codex") else {
-        return ProbeOutcome::not_installed(AgentProvider::CodexCli, "Codex CLI not found");
+        return ProbeOutcome::not_installed(
+            AgentProvider::CodexCli,
+            tw(locale, "providerProbe.cliNotFound", &[("name", "Codex")]),
+        );
     };
     // Responsiveness gate — TS runs `codex --version` with a 5 s
     // budget (connect-agent.ts:512-522).
     let Some(version) = cli_version(&exe, Duration::from_secs(5)) else {
-        return ProbeOutcome::failed("Codex CLI not responding".to_string());
+        return ProbeOutcome::failed(tw(
+            locale,
+            "providerProbe.cliNotResponding",
+            &[("name", "Codex")],
+        ));
     };
     // Model list: app-server protocol (the approved no-hardcoded-
     // lists design; a superset of TS, which reads only the cache),
@@ -388,12 +435,11 @@ fn connect_codex_cli() -> ProbeOutcome {
         }
     }
     if !codex_has_auth() {
-        return ProbeOutcome::failed(
-            "Not authenticated. Run \"codex login\" or set OPENAI_API_KEY first.".to_string(),
-        );
+        return ProbeOutcome::failed(t(locale, "providerProbe.notAuthenticatedCodex"));
     }
-    let (info, hint) = build_codex_connection_info();
+    let (info, hint) = build_codex_connection_info(locale);
     connected_probe_outcome(
+        locale,
         AgentProvider::CodexCli,
         models,
         Some(info),
@@ -405,23 +451,33 @@ fn connect_codex_cli() -> ProbeOutcome {
 
 /// TS `buildCodexConnectionInfo` (connect-agent.ts:312-354) —
 /// `OPENAI_API_KEY` first, then the `auth.json` JWT.
-fn build_codex_connection_info() -> (String, String) {
+fn build_codex_connection_info(locale: Locale) -> (String, String) {
     let hint = config_path("~/.codex/config.toml", "%USERPROFILE%\\.codex\\config.toml");
     if let Ok(key) = std::env::var("OPENAI_API_KEY") {
         if !key.is_empty() {
-            return (format!("Connected via API key ({})", mask_key(&key)), hint);
+            return (
+                tw(
+                    locale,
+                    "providerProbe.connectedViaApiKey",
+                    &[("key", &mask_key(&key))],
+                ),
+                hint,
+            );
         }
     }
     let auth_raw = codex_home()
         .map(|home| home.join("auth.json"))
         .and_then(|path| std::fs::read_to_string(path).ok());
-    (codex_connection_info_from_auth(auth_raw.as_deref()), hint)
+    (
+        codex_connection_info_from_auth(locale, auth_raw.as_deref()),
+        hint,
+    )
 }
 
 /// Pure half of the Codex auth-info builder so the JWT/auth.json
 /// parsing is unit-testable.
-fn codex_connection_info_from_auth(auth_raw: Option<&str>) -> String {
-    let fallback = "Connected via Codex CLI".to_string();
+fn codex_connection_info_from_auth(locale: Locale, auth_raw: Option<&str>) -> String {
+    let fallback = t(locale, "providerProbe.connectedViaCodexCli");
     let Some(raw) = auth_raw else { return fallback };
     let Ok(auth) = serde_json::from_str::<serde_json::Value>(raw) else {
         return fallback;
@@ -440,12 +496,16 @@ fn codex_connection_info_from_auth(auth_raw: Option<&str>) -> String {
                 .and_then(|v| v.as_str());
             if let Some(email) = email {
                 let label = plan.or(auth_mode).unwrap_or("subscription");
-                return format!("Connected via {label} ({email})");
+                return tw(
+                    locale,
+                    "providerProbe.connectedViaPlan",
+                    &[("plan", label), ("email", email)],
+                );
             }
         }
     }
     if let Some(mode) = auth_mode {
-        return format!("Connected via {mode}");
+        return tw(locale, "providerProbe.connectedViaMode", &[("mode", mode)]);
     }
     fallback
 }
@@ -482,20 +542,21 @@ fn codex_auth_present(auth_raw: Option<&str>) -> bool {
 // OpenCode (connect-agent.ts:673-740)
 // ---------------------------------------------------------------
 
-fn connect_opencode() -> ProbeOutcome {
+fn connect_opencode(locale: Locale) -> ProbeOutcome {
     if resolve_cli("opencode").is_none() {
-        return ProbeOutcome::not_installed(AgentProvider::OpenCode, "OpenCode CLI not found");
+        return ProbeOutcome::not_installed(
+            AgentProvider::OpenCode,
+            tw(locale, "providerProbe.cliNotFound", &[("name", "OpenCode")]),
+        );
     }
     // Model query via `opencode models` — Rust's sanctioned
     // transport divergence from the TS `opencode serve` SDK round
     // trip (the listing is equivalent: `provider/model` slugs).
     let models = discover_opencode();
     if models.is_empty() {
-        return ProbeOutcome::failed(
-            "No models configured in OpenCode. Run \"opencode\" to set up providers.".to_string(),
-        );
+        return ProbeOutcome::failed(t(locale, "providerProbe.noModelsOpenCode"));
     }
-    let info = opencode_provider_summary(&models);
+    let info = opencode_provider_summary(locale, &models);
     ProbeOutcome {
         connected: true,
         models,
@@ -512,7 +573,7 @@ fn connect_opencode() -> ProbeOutcome {
 /// summary (connect-agent.ts:723-727), derived here from the
 /// distinct `provider/` slug prefixes instead of the serve-API's
 /// provider display names.
-fn opencode_provider_summary(models: &[ModelEntry]) -> String {
+fn opencode_provider_summary(locale: Locale, models: &[ModelEntry]) -> String {
     let mut names: Vec<&str> = Vec::new();
     for m in models {
         if let Some((provider, _)) = m.value.split_once('/') {
@@ -522,13 +583,24 @@ fn opencode_provider_summary(models: &[ModelEntry]) -> String {
         }
     }
     if names.is_empty() {
-        return "Connected via OpenCode server".to_string();
+        return t(locale, "providerProbe.connectedViaOpenCodeServer");
     }
     let shown = names[..names.len().min(3)].join(", ");
     if names.len() > 3 {
-        format!("Connected ({shown} +{})", names.len() - 3)
+        tw(
+            locale,
+            "providerProbe.connectedProvidersMore",
+            &[
+                ("providers", &shown),
+                ("count", &(names.len() - 3).to_string()),
+            ],
+        )
     } else {
-        format!("Connected ({shown})")
+        tw(
+            locale,
+            "providerProbe.connectedProviders",
+            &[("providers", &shown)],
+        )
     }
 }
 
@@ -547,26 +619,28 @@ struct CopilotAuth {
 
 const COPILOT_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 
-fn connect_copilot() -> ProbeOutcome {
+fn connect_copilot(locale: Locale) -> ProbeOutcome {
     let Some(exe) = resolve_cli("copilot") else {
         return ProbeOutcome::not_installed(
             AgentProvider::GithubCopilot,
-            "GitHub Copilot CLI not found",
+            tw(
+                locale,
+                "providerProbe.cliNotFound",
+                &[("name", "GitHub Copilot")],
+            ),
         );
     };
     let Some((models, auth)) = copilot_probe_stdio(&exe) else {
-        return ProbeOutcome::failed(friendly_copilot_error("Connection timed out"));
+        return ProbeOutcome::failed(friendly_copilot_error(locale, "Connection timed out"));
     };
     if models.is_empty() {
-        return ProbeOutcome::failed(
-            "No models found. Run \"copilot login\" to authenticate first.".to_string(),
-        );
+        return ProbeOutcome::failed(t(locale, "providerProbe.noModelsCopilot"));
     }
     let hint = config_path(
         "~/.config/github-copilot/config.json",
         "%USERPROFILE%\\.config\\github-copilot\\config.json",
     );
-    let info = copilot_connection_info(auth.as_ref());
+    let info = copilot_connection_info(locale, auth.as_ref());
     ProbeOutcome {
         connected: true,
         models,
@@ -577,7 +651,7 @@ fn connect_copilot() -> ProbeOutcome {
 }
 
 /// TS connectCopilot's status mapping (connect-agent.ts:799-819).
-fn copilot_connection_info(auth: Option<&CopilotAuth>) -> String {
+fn copilot_connection_info(locale: Locale, auth: Option<&CopilotAuth>) -> String {
     if let Some(auth) = auth {
         if let Some(login) = auth.login.as_deref() {
             let method = auth
@@ -585,13 +659,17 @@ fn copilot_connection_info(auth: Option<&CopilotAuth>) -> String {
                 .as_deref()
                 .map(|t| format!(" ({t})"))
                 .unwrap_or_default();
-            return format!("Connected as @{login}{method}");
+            return tw(
+                locale,
+                "providerProbe.connectedAs",
+                &[("login", login), ("method", &method)],
+            );
         }
         if let Some(message) = auth.status_message.as_deref() {
             return message.to_string();
         }
     }
-    "Connected via GitHub".to_string()
+    t(locale, "providerProbe.connectedViaGithub")
 }
 
 /// One `copilot --stdio` session: `connect` (id 1) → `models.list`
@@ -680,10 +758,10 @@ fn parse_copilot_auth_status(line: &str) -> Option<CopilotAuth> {
 }
 
 /// TS `friendlyCopilotError` (connect-agent.ts:842-853).
-fn friendly_copilot_error(raw: &str) -> String {
+fn friendly_copilot_error(locale: Locale, raw: &str) -> String {
     let lower = raw.to_ascii_lowercase();
     if lower.contains("not found") || lower.contains("enoent") {
-        return "GitHub Copilot CLI not found. Install it from https://docs.github.com/copilot/how-tos/copilot-cli".to_string();
+        return t(locale, "providerProbe.copilotNotFoundInstall");
     }
     if lower.contains("not authenticated")
         || lower.contains("authenticate first")
@@ -691,10 +769,10 @@ fn friendly_copilot_error(raw: &str) -> String {
         || lower.contains("unauthenticated")
         || lower.contains("login")
     {
-        return "Not authenticated. Run \"copilot login\" in your terminal first.".to_string();
+        return t(locale, "providerProbe.notAuthenticatedCopilot");
     }
     if lower.contains("timed out") || lower.contains("timedout") {
-        return "Connection timed out. Please try again.".to_string();
+        return t(locale, "providerProbe.timedOut");
     }
     raw.to_string()
 }

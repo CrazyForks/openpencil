@@ -331,6 +331,6 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "git.gitError.io" => "Error de proceso git: {{detail}}",
         "git.empty.openNotARepo" => "Esa carpeta no es un repositorio Git.",
         "git.empty.cloneComingSoon" => "La clonación necesita una URL remota — el formulario de clonación en el panel llegará pronto.",
-        _ => return None,
+        _ => return super::es_panel::lookup(key),
     })
 }

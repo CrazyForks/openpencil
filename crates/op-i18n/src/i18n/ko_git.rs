@@ -331,6 +331,6 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "git.gitError.io" => "Git 프로세스 오류: {{detail}}",
         "git.empty.openNotARepo" => "해당 폴더는 Git 저장소가 아닙니다.",
         "git.empty.cloneComingSoon" => "복제하려면 원격 URL이 필요합니다 — 패널 내 복제 양식은 곧 제공됩니다.",
-        _ => return None,
+        _ => return super::ko_panel::lookup(key),
     })
 }

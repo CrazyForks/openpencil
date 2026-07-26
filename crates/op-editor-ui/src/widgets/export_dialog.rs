@@ -98,12 +98,13 @@ impl ExportDialog {
     }
 
     pub fn paint(&self, backend: &mut dyn RenderBackend, theme: &Theme, ui: &EditorUiState) {
+        let tr = |key: &'static str| op_i18n::translate(ui.locale, key);
         backend.fill_round_rect(self.rect, CORNER, theme.popover);
         backend.stroke_round_rect(self.rect, CORNER, theme.border, 1.0);
 
-        // Header "Export" label.
+        // Header label.
         let header = TextLayout::single_run(
-            "Export",
+            tr("export.title"),
             FONT_FAMILY,
             15.0,
             (theme.foreground).to_jian(),
@@ -118,7 +119,7 @@ impl ExportDialog {
 
         // Format row label.
         let fmt_label = TextLayout::single_run(
-            "Format",
+            tr("export.format"),
             FONT_FAMILY,
             12.0,
             (theme.muted_foreground).to_jian(),
@@ -151,7 +152,7 @@ impl ExportDialog {
         // Scale row label + pills.
         let scale_label_y = body_y + 16.0 + PILL_HEIGHT + ROW_GAP;
         let scale_label = TextLayout::single_run(
-            "Scale",
+            tr("export.scale"),
             FONT_FAMILY,
             12.0,
             (theme.muted_foreground).to_jian(),
@@ -185,7 +186,7 @@ impl ExportDialog {
         use jian_widgets::components::button::{Button, ButtonVariant};
         use op_editor_core::ExportDialogButton;
         Button {
-            label: "Cancel",
+            label: tr("common.cancel"),
             icon_paths: None,
             variant: ButtonVariant::Outline,
             enabled: true,
@@ -195,7 +196,7 @@ impl ExportDialog {
         }
         .paint(backend, cancel, &tokens);
         Button {
-            label: "Export",
+            label: tr("common.export"),
             icon_paths: None,
             variant: ButtonVariant::Primary,
             enabled: true,
@@ -414,7 +415,13 @@ mod tests {
         let footer_gap = cancel.origin.y - (scale.origin.y + scale.size.y);
         let mut backend = CaptureBackend::default();
 
-        dlg.paint(&mut backend, &Theme::dark(), &EditorUiState::default());
+        // Pin English so the "Export" title assertion below is
+        // locale-independent (the default EditorUiState locale is ZhCn).
+        let ui = EditorUiState {
+            locale: op_editor_core::Locale::EnUs,
+            ..Default::default()
+        };
+        dlg.paint(&mut backend, &Theme::dark(), &ui);
 
         let title = backend
             .texts

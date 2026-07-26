@@ -27,6 +27,18 @@ impl DesktopApp {
     /// in-canvas File menu, or Finder open) touched the recent list. No-op
     /// off macOS.
     pub(crate) fn refresh_recent_menu(&mut self) {
+        // Menu-item labels are baked at build time, so a locale switch
+        // needs a full rebuild (replaces the NSApp main menu). Cheap
+        // equality check per loop iteration; rebuilds only on change.
+        let locale = self.host.editor_state().editor_ui.locale;
+        if let (Some(menu), Some(window)) = (self.app_menu.as_ref(), self.window.as_ref()) {
+            if menu.locale() != locale {
+                self.app_menu = Some(menu::AppMenu::install_with_locale(window, locale));
+                // Force a reseed of the fresh menu's recent submenu below.
+                self.recent_menu_paths.clear();
+                self.recent_menu_labels.clear();
+            }
+        }
         let Some(menu) = self.app_menu.as_ref() else {
             return;
         };

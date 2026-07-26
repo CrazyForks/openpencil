@@ -57,6 +57,19 @@ mod backend {
     use super::MenuAction;
     use muda::accelerator::{Accelerator, Code, Modifiers};
     use muda::{Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
+    use op_editor_core::Locale;
+
+    /// Resolve the UI locale the same way app startup does (persisted
+    /// settings override the OS locale). The menu is built before the
+    /// live editor state is reachable from here, and locale changes are
+    /// persisted on change, so this matches what the chrome shows.
+    fn startup_locale() -> Locale {
+        op_host_services::provider_probe::resolved_ui_locale()
+    }
+
+    fn tr(locale: Locale, key: &'static str) -> &'static str {
+        op_i18n::translate(locale, key)
+    }
 
     // Stable menu-item ids — the wire between the `muda` menu and
     // `action_for_id`. Kept as `&str` consts so the build + the
@@ -126,6 +139,9 @@ mod backend {
     pub struct AppMenu {
         _menu: Menu,
         recent_submenu: Submenu,
+        /// Locale resolved at build time — reused when the recent-file
+        /// submenu is rebuilt so its empty-state row stays translated.
+        locale: Locale,
     }
 
     fn primary() -> Modifiers {
@@ -150,6 +166,14 @@ mod backend {
         /// Must be called from `resumed`, after window creation — macOS
         /// needs the NSApp to exist.
         pub fn install(window: &winit::window::Window) -> Self {
+            Self::install_with_locale(window, startup_locale())
+        }
+
+        /// Build the menu for an explicit locale. The runner calls this
+        /// again when `EditorUiState.locale` changes so the native menu
+        /// re-labels live instead of waiting for the next launch
+        /// (`init_for_nsapp` replaces the previous NSApp main menu).
+        pub fn install_with_locale(window: &winit::window::Window, locale: Locale) -> Self {
             let menu = Menu::new();
 
             // macOS app menu — About / Services / Hide / Quit, the
@@ -167,7 +191,7 @@ mod backend {
                     &PredefinedMenuItem::hide_others(None),
                     &PredefinedMenuItem::show_all(None),
                     &PredefinedMenuItem::separator(),
-                    &item(ID_QUIT, "Quit OpenPencil", Some(accel(Code::KeyQ))),
+                    &item(ID_QUIT, tr(locale, "menu.quit"), Some(accel(Code::KeyQ))),
                 ]);
                 let _ = menu.append(&app_menu);
             }
@@ -175,19 +199,23 @@ mod backend {
             // File menu. The Open Recent submenu is populated later via
             // `set_recent_files` (empty at build time → a disabled
             // placeholder until the runner seeds it from the recent list).
-            let recent_submenu = Submenu::new("Open Recent", true);
-            let file = Submenu::new("File", true);
+            let recent_submenu = Submenu::new(tr(locale, "menu.openRecent"), true);
+            let file = Submenu::new(tr(locale, "menu.file"), true);
             let _ = file.append_items(&[
-                &item(ID_NEW, "New", Some(accel(Code::KeyN))),
-                &item(ID_OPEN, "Open\u{2026}", Some(accel(Code::KeyO))),
+                &item(ID_NEW, tr(locale, "menu.new"), Some(accel(Code::KeyN))),
+                &item(ID_OPEN, tr(locale, "menu.open"), Some(accel(Code::KeyO))),
                 &recent_submenu,
                 &PredefinedMenuItem::separator(),
-                &item(ID_SAVE, "Save", Some(accel(Code::KeyS))),
-                &item(ID_SAVE_AS, "Save As\u{2026}", Some(accel_shift(Code::KeyS))),
+                &item(ID_SAVE, tr(locale, "common.save"), Some(accel(Code::KeyS))),
+                &item(
+                    ID_SAVE_AS,
+                    tr(locale, "menu.saveAs"),
+                    Some(accel_shift(Code::KeyS)),
+                ),
                 &PredefinedMenuItem::separator(),
                 &item(
                     ID_EXPORT,
-                    "Export Image\u{2026}",
+                    tr(locale, "menu.exportImage"),
                     Some(accel_shift(Code::KeyP)),
                 ),
             ]);
@@ -197,43 +225,63 @@ mod backend {
             // selection / clipboard ops (the canvas is not a native
             // text field, so `PredefinedMenuItem` copy/paste would be
             // inert here).
-            let edit = Submenu::new("Edit", true);
+            let edit = Submenu::new(tr(locale, "menu.edit"), true);
             let _ = edit.append_items(&[
-                &item(ID_UNDO, "Undo", Some(accel(Code::KeyZ))),
-                &item(ID_REDO, "Redo", Some(accel_shift(Code::KeyZ))),
+                &item(ID_UNDO, tr(locale, "toolbar.undo"), Some(accel(Code::KeyZ))),
+                &item(
+                    ID_REDO,
+                    tr(locale, "toolbar.redo"),
+                    Some(accel_shift(Code::KeyZ)),
+                ),
                 &PredefinedMenuItem::separator(),
-                &item(ID_CUT, "Cut", Some(accel(Code::KeyX))),
-                &item(ID_COPY, "Copy", Some(accel(Code::KeyC))),
-                &item(ID_PASTE, "Paste", Some(accel(Code::KeyV))),
-                &item(ID_SELECT_ALL, "Select All", Some(accel(Code::KeyA))),
+                &item(ID_CUT, tr(locale, "menu.cut"), Some(accel(Code::KeyX))),
+                &item(ID_COPY, tr(locale, "menu.copy"), Some(accel(Code::KeyC))),
+                &item(ID_PASTE, tr(locale, "menu.paste"), Some(accel(Code::KeyV))),
+                &item(
+                    ID_SELECT_ALL,
+                    tr(locale, "menu.selectAll"),
+                    Some(accel(Code::KeyA)),
+                ),
                 &PredefinedMenuItem::separator(),
-                &item(ID_DUPLICATE, "Duplicate", Some(accel(Code::KeyD))),
-                &item(ID_GROUP, "Group", Some(accel(Code::KeyG))),
-                &item(ID_UNGROUP, "Ungroup", Some(accel_shift(Code::KeyG))),
+                &item(
+                    ID_DUPLICATE,
+                    tr(locale, "common.duplicate"),
+                    Some(accel(Code::KeyD)),
+                ),
+                &item(ID_GROUP, tr(locale, "menu.group"), Some(accel(Code::KeyG))),
+                &item(
+                    ID_UNGROUP,
+                    tr(locale, "menu.ungroup"),
+                    Some(accel_shift(Code::KeyG)),
+                ),
             ]);
             let _ = menu.append(&edit);
 
             // View menu.
-            let view = Submenu::new("View", true);
+            let view = Submenu::new(tr(locale, "menu.view"), true);
             let fullscreen_accel =
                 Accelerator::new(Some(Modifiers::META | Modifiers::CONTROL), Code::KeyF);
             let _ = view.append(&item(
                 ID_FULLSCREEN,
-                "Toggle Full Screen",
+                tr(locale, "menu.toggleFullScreen"),
                 Some(fullscreen_accel),
             ));
             let _ = view.append(&PredefinedMenuItem::separator());
-            let _ = view.append(&item(ID_GIT_PANEL, "Git Panel", None));
-            let _ = view.append(&item(ID_DESIGN_MD, "Design.md Panel", None));
-            let _ = view.append(&item(ID_COMPONENT_BROWSER, "UIKit Browser", None));
+            let _ = view.append(&item(ID_GIT_PANEL, tr(locale, "menu.gitPanel"), None));
+            let _ = view.append(&item(ID_DESIGN_MD, tr(locale, "menu.designMdPanel"), None));
+            let _ = view.append(&item(
+                ID_COMPONENT_BROWSER,
+                tr(locale, "componentBrowser.title"),
+                None,
+            ));
             let _ = menu.append(&view);
 
             // Help menu.
-            let help = Submenu::new("Help", true);
+            let help = Submenu::new(tr(locale, "menu.help"), true);
             let _ = help.append_items(&[
-                &item(ID_CHECK_UPDATES, "Check for Updates\u{2026}", None),
+                &item(ID_CHECK_UPDATES, tr(locale, "menu.checkForUpdates"), None),
                 &PredefinedMenuItem::separator(),
-                &item(ID_GITHUB, "OpenPencil on GitHub", None),
+                &item(ID_GITHUB, tr(locale, "menu.githubLink"), None),
             ]);
             let _ = menu.append(&help);
 
@@ -244,9 +292,15 @@ mod backend {
             let this = Self {
                 _menu: menu,
                 recent_submenu,
+                locale,
             };
             this.set_recent_files(&[]); // seed the disabled placeholder
             this
+        }
+
+        /// Locale the menu labels were built with.
+        pub fn locale(&self) -> Locale {
+            self.locale
         }
 
         /// Rebuild the File ▸ Open Recent submenu from `labels` (newest
@@ -256,7 +310,12 @@ mod backend {
         pub fn set_recent_files(&self, labels: &[String]) {
             while self.recent_submenu.remove_at(0).is_some() {}
             if labels.is_empty() {
-                let none = MenuItem::with_id(ID_RECENT_NONE, "No Recent Documents", false, None);
+                let none = MenuItem::with_id(
+                    ID_RECENT_NONE,
+                    tr(self.locale, "menu.noRecentDocuments"),
+                    false,
+                    None,
+                );
                 let _ = self.recent_submenu.append(&none);
                 return;
             }
@@ -347,12 +406,25 @@ mod backend {
 #[cfg(not(target_os = "macos"))]
 mod backend {
     use super::MenuAction;
+    use op_editor_core::Locale;
 
-    pub struct AppMenu;
+    pub struct AppMenu {
+        locale: Locale,
+    }
 
     impl AppMenu {
-        pub fn install(_window: &winit::window::Window) -> Self {
-            Self
+        pub fn install(window: &winit::window::Window) -> Self {
+            Self::install_with_locale(window, Locale::EnUs)
+        }
+
+        /// No native menu off macOS — stores the locale so the runner's
+        /// change detection settles after one no-op rebuild.
+        pub fn install_with_locale(_window: &winit::window::Window, locale: Locale) -> Self {
+            Self { locale }
+        }
+
+        pub fn locale(&self) -> Locale {
+            self.locale
         }
 
         /// No native menu off macOS — the in-canvas File menu shows recents.

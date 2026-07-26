@@ -1,7 +1,7 @@
 //! Paint for the image-node Search / Generate popovers — split out
 //! of `property_panel_image_assets.rs` (geometry + hit-testing) to
-//! honor the 800-line cap. Strings are literal English to match the
-//! TS components verbatim (they hardcode them, no i18n keys).
+//! honor the 800-line cap. Labels resolve through `op-i18n`
+//! (`imagePanel.*` + shared `common.*` / `ai.*` keys).
 
 use crate::theme::Theme;
 use crate::widgets::icons::{draw_icon, Icon};
@@ -16,6 +16,10 @@ use crate::{Color, ImageAdjustments, ImageDrawMode, Point2D, Rect, TextLayout};
 use op_editor_core::image_panel_state::{ImageGeneratePhase, ImagePanelState, ImageSearchSource};
 
 // --- Paint ------------------------------------------------------------
+
+fn tr(locale: op_editor_core::Locale, key: &'static str) -> &'static str {
+    op_i18n::translate(locale, key)
+}
 
 fn hex_color(rgb: u32, a: f32) -> Color {
     Color {
@@ -87,6 +91,7 @@ pub fn paint_search_popover(
     panel_rect: Rect,
     visible: VisibleSections,
     state: &ImagePanelState,
+    locale: op_editor_core::Locale,
     now_ms: u64,
 ) {
     let Some(layout) = search_popover_layout(panel_rect, visible, state) else {
@@ -111,7 +116,7 @@ pub fn paint_search_popover(
         8.0,
         baseline,
         now_ms,
-        "Search images...",
+        tr(locale, "imagePanel.searchPlaceholder"),
         true,
     );
 
@@ -145,7 +150,7 @@ pub fn paint_search_popover(
         paint_centered_label(
             cx,
             theme.muted_foreground,
-            "Searching...",
+            tr(locale, "imagePanel.searching"),
             11.0,
             centre_x,
             layout.body.origin.y + 58.0,
@@ -163,9 +168,9 @@ pub fn paint_search_popover(
             cx,
             theme.muted_foreground,
             if state.search_has_searched {
-                "No results found"
+                tr(locale, "imagePanel.noResults")
             } else {
-                "Search for images"
+                tr(locale, "imagePanel.searchPrompt")
             },
             11.0,
             centre_x,
@@ -185,12 +190,12 @@ pub fn paint_search_popover(
                 },
                 theme.border,
             );
-            let label = format!(
-                "Images from {}. Freely licensed — verify license before use.",
+            let label = tr(locale, "imagePanel.sourceNotice").replace(
+                "{{source}}",
                 match source {
                     ImageSearchSource::Openverse => "Openverse",
                     ImageSearchSource::Wikimedia => "Wikimedia Commons",
-                }
+                },
             );
             let layout_text = TextLayout::single_run(
                 &label,
@@ -216,6 +221,7 @@ pub fn paint_generate_popover(
     visible: VisibleSections,
     state: &ImagePanelState,
     profile: Option<&ImageGenProfileView>,
+    locale: op_editor_core::Locale,
     now_ms: u64,
 ) {
     let Some(layout) = generate_popover_layout(panel_rect, visible, state, profile) else {
@@ -236,7 +242,7 @@ pub fn paint_generate_popover(
             paint_centered_label(
                 cx,
                 theme.muted_foreground,
-                "Image generation not configured",
+                tr(locale, "imagePanel.genNotConfigured"),
                 11.0,
                 centre_x,
                 layout.popup.origin.y + POPOVER_PAD + 32.0 + 10.0 + 12.0,
@@ -247,7 +253,7 @@ pub fn paint_generate_popover(
                 paint_centered_label(
                     cx,
                     theme.foreground,
-                    "Open Settings",
+                    tr(locale, "imagePanel.openSettings"),
                     11.0,
                     btn.origin.x + btn.size.x / 2.0,
                     btn.origin.y + btn.size.y / 2.0 + 4.0,
@@ -265,7 +271,7 @@ pub fn paint_generate_popover(
             paint_centered_label(
                 cx,
                 theme.muted_foreground,
-                "Generating...",
+                tr(locale, "ai.generating"),
                 11.0,
                 centre_x,
                 layout.popup.origin.y + POPOVER_PAD + 48.0,
@@ -280,7 +286,7 @@ pub fn paint_generate_popover(
             let tokens = crate::widgets::button::tokens_from_theme(theme);
             if let Some(btn) = layout.primary {
                 jian_widgets::components::button::Button {
-                    label: "Apply",
+                    label: tr(locale, "common.apply"),
                     icon_paths: None,
                     variant: jian_widgets::components::button::ButtonVariant::Primary,
                     enabled: true,
@@ -292,7 +298,7 @@ pub fn paint_generate_popover(
             }
             if let Some(btn) = layout.secondary {
                 jian_widgets::components::button::Button {
-                    label: "Retry",
+                    label: tr(locale, "common.retry"),
                     icon_paths: None,
                     variant: jian_widgets::components::button::ButtonVariant::Outline,
                     enabled: true,
@@ -321,7 +327,7 @@ pub fn paint_generate_popover(
                     10.0,
                     ta.origin.y + 18.0,
                     now_ms,
-                    "Describe the image...",
+                    tr(locale, "imagePanel.promptPlaceholder"),
                     true,
                 );
             }
@@ -330,7 +336,7 @@ pub fn paint_generate_popover(
                     &state.generate_error,
                     "system-ui",
                     10.0,
-                    (hex_color(0xef4444, 1.0)).to_jian(), // destructive
+                    theme.destructive.to_jian(),
                     Point2D::new(0.0, 0.0),
                 );
                 cx.backend.draw_text(
@@ -353,7 +359,8 @@ pub fn paint_generate_popover(
                 } else {
                     theme.muted_foreground
                 };
-                let label_w = cx.backend.measure_text("Generate", 11.0);
+                let generate_label = tr(locale, "common.generate");
+                let label_w = cx.backend.measure_text(generate_label, 11.0);
                 let start_x = btn.origin.x + (btn.size.x - label_w - 18.0) / 2.0;
                 draw_icon(
                     cx.backend,
@@ -364,7 +371,7 @@ pub fn paint_generate_popover(
                     1.5,
                 );
                 let label = TextLayout::single_run(
-                    "Generate",
+                    generate_label,
                     "system-ui",
                     11.0,
                     (fg).to_jian(),
