@@ -4,6 +4,8 @@
 
 use super::WidgetHost;
 use op_editor_core::figma_import_state::ImportSource;
+use op_editor_core::host_keyboard_transitions as shared;
+use op_editor_core::host_preset_name_draft as preset_name;
 
 impl WidgetHost {
     /// Copy `text` for the current surface. The VS Code embed relays the
@@ -24,22 +26,13 @@ impl WidgetHost {
     /// hover outline, and syncs the toolbar shape slot for shape variants.
     pub(crate) fn apply_set_tool(&mut self, tool: op_editor_core::Tool) {
         self.exit_image_crop_edit();
-        self.editor_state.editor_ui.canvas_hover_node = None;
         self.commit_variable_row_focus_if_any();
+        // Pen-path discard stays host-side: the native twin routes it
+        // through its own `cancel_pen_on_tool_switch` helper.
         if !matches!(tool, op_editor_core::Tool::Pen) {
             let _ = self.editor_state.cancel_pen_path();
         }
-        self.editor_state.tool = tool;
-        if matches!(
-            tool,
-            op_editor_core::Tool::Rect
-                | op_editor_core::Tool::Ellipse
-                | op_editor_core::Tool::Polygon
-                | op_editor_core::Tool::Line
-                | op_editor_core::Tool::Pen
-        ) {
-            self.editor_state.editor_ui.shape_tool = tool;
-        }
+        shared::set_active_tool(&mut self.editor_state, tool);
         self.mark_dirty();
     }
 
@@ -129,14 +122,7 @@ impl WidgetHost {
         if self.input_active() {
             return false;
         }
-        if self.editor_state.selection.is_empty() {
-            return false;
-        }
-        self.editor_state.commit_history();
-        let dup = self
-            .editor_state
-            .duplicate_selected(&mut self.next_node_id, 10.0)
-            .is_some();
+        let dup = shared::duplicate_selection(&mut self.editor_state, &mut self.next_node_id);
         if dup {
             self.mark_dirty();
         }
@@ -147,15 +133,8 @@ impl WidgetHost {
     /// caret one character. Returns whether a rename is active, so the
     /// caller falls back to node-nudge when it isn't.
     pub fn apply_rename_caret(&mut self, forward: bool) -> bool {
-        let moved = if forward {
-            self.editor_state.rename_caret_right()
-        } else {
-            self.editor_state.rename_caret_left()
-        };
+        let moved = shared::rename_caret(&mut self.editor_state, forward, self.now_ms);
         if moved {
-            if let Some(rename) = self.editor_state.ui.layer_rename.as_mut() {
-                rename.input.touch(self.now_ms);
-            }
             self.mark_dirty();
         }
         moved
@@ -168,20 +147,7 @@ impl WidgetHost {
         if self.input_active() {
             return false;
         }
-        if self.editor_state.selection.is_empty() {
-            return false;
-        }
-        let snap = self.editor_state.snapshot_for_history();
-        if self
-            .editor_state
-            .move_selected_in_layout_direction(dx as f64, dy as f64)
-        {
-            self.editor_state.history_push_past(snap);
-            self.mark_dirty();
-            return true;
-        }
-        if self.editor_state.translate_selected(dx as f64, dy as f64) {
-            self.editor_state.history_push_past(snap);
+        if shared::nudge_selection(&mut self.editor_state, dx, dy) {
             self.mark_dirty();
             return true;
         }
@@ -221,77 +187,10 @@ impl WidgetHost {
         if let Some(consumed) = self.apply_git_input_select_all() {
             return consumed;
         }
-        if let Some(rename) = self.editor_state.ui.layer_rename.as_mut() {
-            rename.input.select_all();
-            rename.input.touch(self.now_ms);
-            self.mark_dirty();
-            return true;
-        }
-        if self.editor_state.ui.text_editing.is_some() {
-            let _ = self.editor_state.text_edit_select_all_now(self.now_ms);
-            self.mark_dirty();
-            return true;
-        }
-        if self.editor_state.ui.property_focus.is_some()
-            || self.editor_state.editor_ui.effect_param_focus.is_some()
-        {
-            self.editor_state.ui.property_input.select_all();
-            self.editor_state.ui.property_input.touch(self.now_ms);
-            self.sync_property_input_legacy(true);
-            self.mark_dirty();
-            return true;
-        }
-        let variable_header_focus = self
-            .editor_state
-            .editor_ui
-            .variables_theme_rename_axis
-            .is_some()
-            || self
-                .editor_state
-                .editor_ui
-                .variables_variant_rename_value
-                .is_some();
-        if variable_header_focus || self.editor_state.editor_ui.variable_row_focus.is_some() {
-            if variable_header_focus {
-                self.editor_state
-                    .editor_ui
-                    .variables_header_input
-                    .select_all();
-                self.editor_state
-                    .editor_ui
-                    .variables_header_input
-                    .touch(self.now_ms);
-                self.sync_variables_header_input_legacy(true);
-            } else {
-                self.editor_state.editor_ui.variable_row_input.select_all();
-                self.editor_state
-                    .editor_ui
-                    .variable_row_input
-                    .touch(self.now_ms);
-                self.sync_variable_row_input_legacy(true);
-            }
-            self.mark_dirty();
-            return true;
-        }
-        if self.editor_state.editor_ui.icon_picker.open {
-            self.editor_state.editor_ui.icon_picker_select_all = true;
-            self.mark_dirty();
-            return true;
-        }
-        if self.editor_state.editor_ui.component_browser_open {
-            self.editor_state.editor_ui.component_browser_select_all = true;
-            self.mark_dirty();
-            return true;
-        }
-        if self.editor_state.editor_ui.chat_model_picker.open {
-            let ui = &mut self.editor_state.editor_ui;
-            ui.chat_model_picker_input.select_all();
-            ui.chat_model_picker_input.touch(self.now_ms);
-            self.mark_dirty();
-            return true;
-        }
-        if self.editor_state.chat.focused {
-            self.editor_state.chat.select_all_input(self.now_ms);
+        // Rename → canvas text edit → property / effect-param →
+        // variables header / row → icon picker → model picker →
+        // component browser → chat input.
+        if shared::select_all_focused_input(&mut self.editor_state, self.now_ms) {
             self.mark_dirty();
             return true;
         }
@@ -299,95 +198,33 @@ impl WidgetHost {
     }
 
     pub fn apply_property_caret(&mut self, forward: bool) -> bool {
-        if self.editor_state.ui.property_focus.is_none()
-            && self.editor_state.editor_ui.effect_param_focus.is_none()
-            && self
-                .editor_state
-                .editor_ui
-                .variables_theme_rename_axis
-                .is_none()
-            && self
-                .editor_state
-                .editor_ui
-                .variables_variant_rename_value
-                .is_none()
-            && self.editor_state.editor_ui.variable_row_focus.is_none()
-        {
-            return false;
-        }
-        if self.editor_state.ui.property_focus.is_some()
-            || self.editor_state.editor_ui.effect_param_focus.is_some()
-        {
-            if forward {
-                self.editor_state
-                    .ui
-                    .property_input
-                    .move_right(false, self.now_ms);
-            } else {
-                self.editor_state
-                    .ui
-                    .property_input
-                    .move_left(false, self.now_ms);
-            }
-            self.sync_property_input_legacy(false);
+        if shared::property_caret_move(&mut self.editor_state, forward, self.now_ms) {
             self.mark_dirty();
             return true;
         }
-        if self
-            .editor_state
-            .editor_ui
-            .variables_theme_rename_axis
-            .is_some()
-            || self
-                .editor_state
-                .editor_ui
-                .variables_variant_rename_value
-                .is_some()
+        // #20: the preset-name input rides the flat legacy draft, not a
+        // `TextInputState`, so it has its own caret module. Consumed
+        // even when the caret can't move — an arrow over a focused
+        // input must never fall through to nudging the selected node.
+        if let Some(moved) =
+            preset_name::preset_name_caret_move(&mut self.editor_state, forward, self.now_ms)
         {
-            if forward {
-                self.editor_state
-                    .editor_ui
-                    .variables_header_input
-                    .move_right(false, self.now_ms);
-            } else {
-                self.editor_state
-                    .editor_ui
-                    .variables_header_input
-                    .move_left(false, self.now_ms);
+            if moved {
+                self.mark_dirty();
             }
-            self.sync_variables_header_input_legacy(false);
-            self.mark_dirty();
             return true;
         }
-        if forward {
-            self.editor_state
-                .editor_ui
-                .variable_row_input
-                .move_right(false, self.now_ms);
-        } else {
-            self.editor_state
-                .editor_ui
-                .variable_row_input
-                .move_left(false, self.now_ms);
-        }
-        self.sync_variable_row_input_legacy(false);
-        self.mark_dirty();
-        true
+        false
     }
 
     /// Left / Right arrow on the focused chat input. Consumes the key
     /// even at text boundaries so it never falls through to canvas nudge.
     pub fn apply_chat_input_caret(&mut self, forward: bool) -> bool {
-        if !self.editor_state.chat.focused {
-            return false;
+        if shared::chat_input_caret(&mut self.editor_state, forward, self.now_ms) {
+            self.mark_dirty();
+            return true;
         }
-        if forward {
-            self.editor_state.chat.input.move_right(false, self.now_ms);
-        } else {
-            self.editor_state.chat.input.move_left(false, self.now_ms);
-        }
-        self.mark_dirty();
-        true
+        false
     }
 
     /// Cmd/Ctrl+C — copy the selection into the clipboard.
@@ -522,14 +359,10 @@ impl WidgetHost {
         if self.input_active() {
             return false;
         }
-        if self.editor_state.clipboard.is_empty() {
-            return false;
-        }
-        self.editor_state.commit_history();
-        let pasted = !self
-            .editor_state
-            .paste_clipboard(&mut self.next_node_id, 10.0)
-            .is_empty();
+        let pasted = shared::paste_clipboard_at_default_offset(
+            &mut self.editor_state,
+            &mut self.next_node_id,
+        );
         if pasted {
             self.mark_dirty();
         }
@@ -605,17 +438,7 @@ impl WidgetHost {
         // settings/Git input. An existing higher modal keeps ownership too;
         // otherwise the import modal would open invisibly beneath it and
         // unexpectedly appear only after that modal closes.
-        let ui = &self.editor_state.editor_ui;
-        if ui.figma_import_in_progress
-            || !ui.figma_import_pages.is_empty()
-            || ui.export_dialog_open
-            || (ui.account_ui_available && ui.login_modal_open)
-            || ui.agent_settings_open
-            || (ui.missing_fonts_modal_open
-                && ui
-                    .missing_fonts_prompt
-                    .as_ref()
-                    .is_some_and(|prompt| !prompt.entries.is_empty()))
+        if shared::import_modal_blocked_by_overlay(&self.editor_state.editor_ui)
             || self.git_commit_focus_active()
             || self.git_remote_focus_active()
             || self.git_https_focus_active()
@@ -630,25 +453,11 @@ impl WidgetHost {
         // layer editing, then reuse the canonical chrome-input blur path so a
         // hidden property, chat, or model-picker input cannot keep receiving
         // keyboard/IME events behind the scrim.
-        let _ = self.editor_state.rename_commit();
-        let _ = self.editor_state.text_edit_commit();
-        self.editor_state.color_picker_blur_hex();
-        self.editor_state.color_picker_blur_rgb();
-        let _ = self.editor_state.close_color_picker();
+        shared::commit_editing_for_modal(&mut self.editor_state);
         self.blur_text_inputs_on_blank_press();
         self.close_image_popovers_for_higher_overlay();
         self.close_import_menu();
-        let ui = &mut self.editor_state.editor_ui;
-        ui.close_font_picker();
-        ui.close_icon_picker();
-        ui.component_browser_open = false;
-        ui.component_browser_kit_picker_open = false;
-        ui.component_browser_confirm_delete_kit = None;
-        ui.component_browser_hover = None;
-        ui.ime_preedit = None;
-        ui.import_source = source;
-        ui.figma_import_open = true;
-        ui.figma_import_hover = None;
+        shared::open_import_modal(&mut self.editor_state.editor_ui, source);
         self.mark_dirty();
         true
     }
@@ -660,11 +469,7 @@ impl WidgetHost {
         if self.input_active() {
             return false;
         }
-        if self.editor_state.selection.is_empty() {
-            return false;
-        }
-        self.editor_state.commit_history();
-        if self.editor_state.reorder_selected(direction) {
+        if shared::reorder_selection(&mut self.editor_state, direction) {
             self.mark_dirty();
             return true;
         }

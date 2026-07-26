@@ -14,11 +14,17 @@ use super::{
     PanelResizeKind, RotateDragState, WidgetHostNative,
 };
 use op_editor_core::codegen::CodeSelection;
+use op_editor_core::host_press_transitions as core_press;
 use op_editor_core::pen_node_ext::PenNodeExt;
+use op_editor_ui::widgets::chat_click_flow;
+use op_editor_ui::widgets::press_flow::{
+    self, LayerContextMenuPress, LayerContextStep, LocalePickerPress, OpenLayerMenuPress,
+    PropertyOverlayPress, TopBarPress,
+};
 use op_editor_ui::widgets::{
     rotation_corner_at_point, selection_handle_at_point, AIChatHit, AIChatPlaceholder,
-    CanvasViewport, ImportMenu, ImportMenuChoice, LayoutCx, LocalePicker, PropertyPanel, Toolbar,
-    TopBar, TopBarHit, Widget, TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
+    CanvasViewport, ImportMenu, ImportMenuChoice, LayoutCx, PropertyPanel, Toolbar, TopBar,
+    TopBarHit, Widget, TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
 };
 use op_editor_ui::{Point2D, Rect};
 
@@ -30,103 +36,37 @@ impl WidgetHostNative {
         action: op_editor_ui::widgets::layer_context_menu::LayerContextAction,
         target: op_editor_core::ui_draft::LayerContextTarget,
     ) {
-        use op_editor_core::ui_draft::LayerContextTarget as T;
-        use op_editor_ui::widgets::layer_context_menu::LayerContextAction as A;
-        match (action, target) {
-            (A::Duplicate, T::Layer(id)) => {
-                // Act on the whole multi-selection when the right-clicked
-                // row is part of it; otherwise retarget to just this row.
-                if !self.editor_state.is_selected(&id) {
-                    self.editor_state.set_single_selection(id);
-                }
-                self.editor_state.commit_history();
-                let _ = self
-                    .editor_state
-                    .duplicate_selected(&mut self.next_node_id, 10.0);
-            }
-            (A::Delete, T::Layer(id)) => {
-                // Keep the multi-selection so Delete removes every selected
-                // layer, not just the right-clicked one.
-                if !self.editor_state.is_selected(&id) {
-                    self.editor_state.set_single_selection(id);
-                }
-                self.editor_state.commit_history();
-                let _ = self.editor_state.delete_selected();
-            }
-            (A::GroupSelection, T::Layer(_)) => {
+        match press_flow::apply_layer_context_action(
+            &mut self.editor_state,
+            &mut self.next_node_id,
+            action,
+            target,
+            self.now_ms,
+        ) {
+            LayerContextStep::Done => {}
+            LayerContextStep::Group => {
                 let _ = self.apply_group();
             }
-            // TS boolean rows act on the current selection and push
-            // history explicitly (`layer-panel.tsx:389-407`); the
-            // host's `apply_boolean_op` does both.
-            (
-                A::BooleanUnion | A::BooleanSubtract | A::BooleanIntersect | A::BooleanExclude,
-                T::Layer(_),
-            ) => {
-                use op_editor_core::BooleanOp;
-                let op = match action {
-                    A::BooleanSubtract => BooleanOp::Subtract,
-                    A::BooleanIntersect => BooleanOp::Intersect,
-                    A::BooleanExclude => BooleanOp::Exclude,
-                    _ => BooleanOp::Union,
-                };
+            LayerContextStep::Boolean(op) => {
                 let _ = self.apply_boolean_op(op);
             }
-            (A::ToggleLock, T::Layer(id)) => {
-                // TS toggleLock runs through mutateWithHistory
-                // (document-store-node-actions.ts:176-188).
-                self.with_doc_history(|s| s.toggle_node_locked(&id));
+            LayerContextStep::Refit => {
+                self.fit_active_page_after_switch(self.last_viewport_w, self.last_viewport_h);
             }
-            (A::ToggleVisibility, T::Layer(id)) => {
-                // TS toggleVisibility runs through mutateWithHistory
-                // (document-store-node-actions.ts:162-174).
-                self.with_doc_history(|s| s.toggle_node_hidden(&id));
-            }
-            (A::CreateComponent, T::Layer(id)) => {
-                let _ = self.editor_state.create_component_from_node_name(&id);
-            }
-            (A::DetachComponent | A::DetachInstance, T::Layer(id)) => {
-                // Reusable component sheds its flag; a Ref instance
-                // materializes into an independent subtree (#22).
-                let _ = self.editor_state.detach_component(&id);
-            }
-            // Page CRUD pushes history in TS
-            // (document-store-pages.ts:19-121) — snapshot-before-
-            // mutate, skipped when the guard rejects the op.
-            (A::DuplicatePage, T::Page(idx)) => {
-                if self.with_doc_history(|s| s.duplicate_page(idx).is_some()) {
-                    self.fit_active_page_after_switch(self.last_viewport_w, self.last_viewport_h);
-                }
-            }
-            (A::MovePageUp, T::Page(idx)) => {
-                self.with_doc_history(|s| s.move_page_up(idx));
-            }
-            (A::MovePageDown, T::Page(idx)) => {
-                self.with_doc_history(|s| s.move_page_down(idx));
-            }
-            (A::DeletePage, T::Page(idx)) => {
-                let deleting_active = idx == self.editor_state.ui.active_page_index;
-                if self.with_doc_history(|s| s.remove_page(idx)) && deleting_active {
-                    self.fit_active_page_after_switch(self.last_viewport_w, self.last_viewport_h);
-                }
-            }
-            (A::RenamePage, T::Page(idx)) => {
-                if self.editor_state.start_rename_page(idx) {
-                    if let Some(rename) = self.editor_state.ui.layer_rename.as_mut() {
-                        rename.input.touch(self.now_ms);
-                    }
-                }
-            }
-            (A::RenameLayer, T::Layer(id)) => {
-                if self.editor_state.start_rename_layer(id) {
-                    if let Some(rename) = self.editor_state.ui.layer_rename.as_mut() {
-                        rename.input.touch(self.now_ms);
-                    }
-                }
-            }
-            _ => {} // mismatched action/target — no-op
         }
         self.mark_dirty();
+    }
+
+    /// Platform tail for a press routed to an open property-panel
+    /// popover (`press_flow::press_*`). Every outcome consumes the
+    /// press.
+    fn finish_property_overlay_press(&mut self, press: PropertyOverlayPress) -> bool {
+        match press {
+            PropertyOverlayPress::Action(action) => self.apply_property_action(action),
+            PropertyOverlayPress::Swallow => {}
+            PropertyOverlayPress::Dismissed => self.mark_dirty(),
+        }
+        true
     }
 
     /// Right-click handler — opens the LayerPanel context menu on
@@ -160,9 +100,6 @@ impl WidgetHostNative {
             // blur inputs like the sidebar-open fall-through below.
             return self.blur_text_inputs_on_blank_press();
         }
-        use op_editor_core::editor_ui_state::LayerContextMenuState;
-        use op_editor_core::ui_draft::LayerContextTarget;
-        use op_editor_ui::widgets::LayerPanelHit;
         let layer_rect = Rect {
             origin: Point2D::new(0.0, TOP_BAR_HEIGHT),
             size: Point2D::new(
@@ -171,44 +108,12 @@ impl WidgetHostNative {
             ),
         };
         let panel = self.layer_panel();
-        match panel.hit_test(layer_rect, Point2D::new(x, y)) {
-            Some(LayerPanelHit::Layer(id)) => {
-                let ec_id = id.clone();
-                if !(self.editor_state.is_selected(&ec_id)
-                    && self.editor_state.selection_count() > 1)
-                {
-                    self.editor_state.set_single_selection(ec_id.clone());
-                }
-                self.editor_state.editor_ui.layer_context_menu = Some(LayerContextMenuState {
-                    target: LayerContextTarget::Layer(ec_id),
-                    anchor_x: x,
-                    anchor_y: y,
-                    menu: Default::default(),
-                });
-                return true;
-            }
-            Some(LayerPanelHit::Page(idx)) => {
-                self.editor_state.editor_ui.layer_context_menu = Some(LayerContextMenuState {
-                    target: LayerContextTarget::Page(idx),
-                    anchor_x: x,
-                    anchor_y: y,
-                    menu: Default::default(),
-                });
-                return true;
-            }
-            _ => {}
+        let hit = panel.hit_test(layer_rect, Point2D::new(x, y));
+        match press_flow::open_layer_context_menu(&mut self.editor_state, hit, x, y) {
+            LayerContextMenuPress::Opened | LayerContextMenuPress::Dismissed => true,
+            // Right-press on blank chrome — blur inputs like a left press.
+            LayerContextMenuPress::Missed => self.blur_text_inputs_on_blank_press(),
         }
-        if self
-            .editor_state
-            .editor_ui
-            .layer_context_menu
-            .take()
-            .is_some()
-        {
-            return true;
-        }
-        // Right-press on blank chrome — blur inputs like a left press.
-        self.blur_text_inputs_on_blank_press()
     }
 
     /// Mouse-press handler. Returns whether anything visible changed.
@@ -324,28 +229,24 @@ impl WidgetHostNative {
             return true;
         }
 
-        if let Some(state) = self.editor_state.editor_ui.layer_context_menu.clone() {
-            use op_editor_ui::widgets::layer_context_menu::{LayerContextMenu, MenuHit};
-            let menu = LayerContextMenu::for_state(&self.editor_state, state.clone());
-            match menu.hit(Point2D::new(x, y)) {
-                MenuHit::Row(_) => {
-                    if let Some(action) = menu.hit_test(Point2D::new(x, y)) {
-                        self.dispatch_layer_context_action(action, state.target.clone());
-                        self.editor_state.editor_ui.layer_context_menu = None;
-                        self.mark_dirty();
-                    }
-                    return true;
+        if let Some(press) =
+            press_flow::press_open_layer_context_menu(&self.editor_state, Point2D::new(x, y))
+        {
+            match press {
+                OpenLayerMenuPress::Action { action, target } => {
+                    self.dispatch_layer_context_action(action, target);
+                    self.editor_state.editor_ui.layer_context_menu = None;
+                    self.mark_dirty();
                 }
-                MenuHit::Inside => {
-                    return true;
+                OpenLayerMenuPress::Swallow => {}
+                OpenLayerMenuPress::Outside => {
+                    // Dismissing the menu on a miss is a blank press — blur
+                    // every text input along with it.
+                    self.blur_text_inputs_on_blank_press();
+                    self.editor_state.editor_ui.layer_context_menu = None;
+                    self.mark_dirty();
                 }
-                MenuHit::Outside => {}
             }
-            // Dismissing the menu on a miss is a blank press — blur
-            // every text input along with it.
-            self.blur_text_inputs_on_blank_press();
-            self.editor_state.editor_ui.layer_context_menu = None;
-            self.mark_dirty();
             return true;
         }
         // 0aa. Commit-on-blur for property-panel inputs +
@@ -446,26 +347,24 @@ impl WidgetHostNative {
         if self.editor_state.editor_ui.locale_picker.open {
             self.refresh_layout_scene();
             let panel_rect = self.locale_picker_rect(viewport_width);
-            let picker = LocalePicker::for_editor_ui(&self.editor_state.editor_ui);
-            match picker.hit_popup(panel_rect, Point2D::new(x, y)) {
-                op_editor_ui::widgets::locale_picker::SelectHit::Row(idx) => {
-                    if let Some(locale) = LocalePicker::locale_at(idx) {
-                        self.editor_state.editor_ui.locale = locale;
-                    }
-                    self.editor_state.editor_ui.locale_picker.open = false;
-                    self.editor_state.editor_ui.locale_picker.hover = None;
+            match press_flow::press_locale_picker(
+                &mut self.editor_state,
+                panel_rect,
+                Point2D::new(x, y),
+            ) {
+                LocalePickerPress::Swallow => return true,
+                LocalePickerPress::Selected => {
                     self.mark_dirty();
                     return true;
                 }
-                op_editor_ui::widgets::locale_picker::SelectHit::Inside => return true,
-                op_editor_ui::widgets::locale_picker::SelectHit::Outside => {}
+                LocalePickerPress::Outside => {
+                    // Silent outside-close is a blank press — blur inputs too.
+                    self.blur_text_inputs_on_blank_press();
+                    core_press::close_locale_picker(&mut self.editor_state.editor_ui);
+                    self.mark_dirty();
+                    return true;
+                }
             }
-            // Silent outside-close is a blank press — blur inputs too.
-            self.blur_text_inputs_on_blank_press();
-            self.editor_state.editor_ui.locale_picker.open = false;
-            self.editor_state.editor_ui.locale_picker.hover = None;
-            self.mark_dirty();
-            return true;
         }
 
         // 0a1. Image-fill popover. Property overlays are painted after the
@@ -545,43 +444,28 @@ impl WidgetHostNative {
             let pressed = op_editor_ui::widgets::editor_state_ext::topbar_button_hover(hit);
             self.editor_state.editor_ui.pressed_button =
                 Some(op_editor_core::ButtonPressTarget::TopBar(pressed));
-            match hit {
-                TopBarHit::ToggleSidebar => {
-                    let v = &mut self.editor_state.editor_ui.sidebar_open;
-                    *v = !*v;
+            // Arms whose behaviour is identical on both hosts live in
+            // the shared flow; only the platform ones fall through.
+            match press_flow::apply_shared_top_bar_hit(&mut self.editor_state, hit, self.now_ms) {
+                TopBarPress::Handled => {
                     self.mark_dirty();
                     return true;
                 }
-                TopBarHit::ToggleTheme => {
-                    self.editor_state.editor_ui.theme_mode =
-                        self.editor_state.editor_ui.theme_mode.flipped();
-                    self.mark_dirty();
-                    return true;
-                }
-                TopBarHit::ToggleLocale => {
-                    let picker = &mut self.editor_state.editor_ui.locale_picker;
-                    picker.open = !picker.open;
-                    picker.hover = None;
-                    picker.pressed = None;
-                    if picker.open {
-                        picker.scroll.offset = 0.0;
-                    }
-                    self.mark_dirty();
-                    return true;
-                }
-                TopBarHit::OpenAgentSettings => {
-                    self.editor_state.editor_ui.agent_settings_open = true;
-                    self.editor_state.chat.blur_input(self.now_ms);
-                    self.mark_dirty();
-                    return true;
-                }
-                TopBarHit::ToggleFileMenu => {
-                    self.editor_state.editor_ui.file_menu_open ^= true;
-                    self.editor_state.editor_ui.file_menu.hover = None;
+                TopBarPress::FileMenuToggled => {
                     self.clear_layer_panel_hover();
                     self.mark_dirty();
                     return true;
                 }
+                TopBarPress::Platform => {}
+            }
+            match hit {
+                // Handled by the shared flow above.
+                TopBarHit::ToggleSidebar
+                | TopBarHit::ToggleTheme
+                | TopBarHit::ToggleLocale
+                | TopBarHit::OpenAgentSettings
+                | TopBarHit::ToggleFileMenu
+                | TopBarHit::OpenImportMenu => return true,
                 TopBarHit::ToggleFullscreen => {
                     // The widget host doesn't own the winit window — raise
                     // an intent the desktop runner consumes next frame.
@@ -596,16 +480,6 @@ impl WidgetHostNative {
                     // uses the viewport, layout does not).
                     let (_cx0, _cy0, cw, ch) = self.canvas_region(viewport_width, viewport_height);
                     self.toggle_preview((cw, ch));
-                    return true;
-                }
-                TopBarHit::OpenImportMenu => {
-                    // Toggle: a second click on the button closes the
-                    // menu rather than re-opening it under the cursor.
-                    let open = !self.editor_state.editor_ui.import_menu_open;
-                    self.editor_state.editor_ui.import_menu_open = open;
-                    self.editor_state.editor_ui.import_menu.open = open;
-                    self.editor_state.editor_ui.import_menu.hover = None;
-                    self.mark_dirty();
                     return true;
                 }
                 TopBarHit::ToggleGitPanel => {
@@ -675,39 +549,13 @@ impl WidgetHostNative {
         // 0c0. Fill-type picker — outside-click dismiss.
         if self.editor_state.editor_ui.fill_type_picker.open && !in_git_panel {
             self.refresh_layout_scene();
-            if let Some(panel) = PropertyPanel::for_selection(&self.editor_state) {
-                let property_rect = Rect {
-                    origin: Point2D::new(
-                        viewport_width - self.editor_state.editor_ui.property_panel_width,
-                        TOP_BAR_HEIGHT,
-                    ),
-                    size: Point2D::new(
-                        self.editor_state.editor_ui.property_panel_width,
-                        (viewport_height - TOP_BAR_HEIGHT).max(0.0),
-                    ),
-                };
-                match panel.fill_type_picker_hit(property_rect, Point2D::new(x, y)) {
-                    op_editor_ui::widgets::property_panel_fill::SelectHit::Row(idx) => {
-                        if let Some(fill_type) =
-                            op_editor_ui::widgets::property_panel_fill::fill_type_at(idx)
-                        {
-                            let index = self.editor_state.editor_ui.fill_type_picker_index;
-                            self.apply_property_action(
-                                op_editor_ui::widgets::PropertyPanelAction::SetFillType {
-                                    index,
-                                    fill_type,
-                                },
-                            );
-                            return true;
-                        }
-                    }
-                    op_editor_ui::widgets::property_panel_fill::SelectHit::Inside => return true,
-                    op_editor_ui::widgets::property_panel_fill::SelectHit::Outside => {}
-                }
-            }
-            self.editor_state.editor_ui.close_fill_type_picker();
-            self.mark_dirty();
-            return true;
+            let press = press_flow::press_fill_type_picker(
+                &mut self.editor_state,
+                viewport_width,
+                viewport_height,
+                Point2D::new(x, y),
+            );
+            return self.finish_property_overlay_press(press);
         }
 
         // 0c0a. Layer / mask / fill-blend compositing picker. The popup is
@@ -715,57 +563,25 @@ impl WidgetHostNative {
         // padded chrome; the first outside press dismisses and is swallowed.
         if self.editor_state.editor_ui.compositing_picker.open && !in_git_panel {
             self.refresh_layout_scene();
-            if let Some(panel) = PropertyPanel::for_selection(&self.editor_state) {
-                let property_rect = Rect {
-                    origin: Point2D::new(
-                        viewport_width - self.editor_state.editor_ui.property_panel_width,
-                        TOP_BAR_HEIGHT,
-                    ),
-                    size: Point2D::new(
-                        self.editor_state.editor_ui.property_panel_width,
-                        (viewport_height - TOP_BAR_HEIGHT).max(0.0),
-                    ),
-                };
-                let point = Point2D::new(x, y);
-                if let Some(action) = panel.compositing_picker_action_at(property_rect, point) {
-                    self.apply_property_action(action);
-                    return true;
-                }
-                if panel.compositing_picker_contains(property_rect, point) {
-                    return true;
-                }
-            }
-            self.close_compositing_picker();
-            self.mark_dirty();
-            return true;
+            let press = press_flow::press_compositing_picker(
+                &mut self.editor_state,
+                viewport_width,
+                viewport_height,
+                Point2D::new(x, y),
+            );
+            return self.finish_property_overlay_press(press);
         }
 
         // 0c1. Effects "+" add-menu — outside-click dismiss.
         if self.editor_state.editor_ui.effect_add_picker_open && !in_git_panel {
             self.refresh_layout_scene();
-            if let Some(panel) = PropertyPanel::for_selection(&self.editor_state) {
-                let property_rect = Rect {
-                    origin: Point2D::new(
-                        viewport_width - self.editor_state.editor_ui.property_panel_width,
-                        TOP_BAR_HEIGHT,
-                    ),
-                    size: Point2D::new(
-                        self.editor_state.editor_ui.property_panel_width,
-                        (viewport_height - TOP_BAR_HEIGHT).max(0.0),
-                    ),
-                };
-                match panel.effect_add_menu_hit(property_rect, Point2D::new(x, y)) {
-                    op_editor_ui::widgets::EffectAddMenuHit::Row(action) => {
-                        self.apply_property_action(action);
-                        return true;
-                    }
-                    op_editor_ui::widgets::EffectAddMenuHit::Inside => return true,
-                    op_editor_ui::widgets::EffectAddMenuHit::Outside => {}
-                }
-            }
-            self.editor_state.editor_ui.close_effect_add_picker();
-            self.mark_dirty();
-            return true;
+            let press = press_flow::press_effect_add_menu(
+                &mut self.editor_state,
+                viewport_width,
+                viewport_height,
+                Point2D::new(x, y),
+            );
+            return self.finish_property_overlay_press(press);
         }
 
         // 0c1a. Interactions Navigate/Back/Remove popover — outside-click
@@ -806,34 +622,13 @@ impl WidgetHostNative {
             && !in_git_panel
         {
             self.refresh_layout_scene();
-            if let Some(panel) = PropertyPanel::for_selection(&self.editor_state) {
-                let property_rect = Rect {
-                    origin: Point2D::new(
-                        viewport_width - self.editor_state.editor_ui.property_panel_width,
-                        TOP_BAR_HEIGHT,
-                    ),
-                    size: Point2D::new(
-                        self.editor_state.editor_ui.property_panel_width,
-                        (viewport_height - TOP_BAR_HEIGHT).max(0.0),
-                    ),
-                };
-                if let Some(action) = panel.hit_test_action(property_rect, Point2D::new(x, y)) {
-                    if matches!(
-                        action,
-                        op_editor_ui::widgets::PropertyPanelAction::ToggleColorVariablePicker(_)
-                            | op_editor_ui::widgets::PropertyPanelAction::BindColorVariable { .. }
-                            | op_editor_ui::widgets::PropertyPanelAction::UnbindColorVariable(_)
-                    ) {
-                        self.apply_property_action(action);
-                        return true;
-                    }
-                }
-            }
-            self.editor_state
-                .editor_ui
-                .property_color_variable_picker_open = None;
-            self.mark_dirty();
-            return true;
+            let press = press_flow::press_color_variable_picker(
+                &mut self.editor_state,
+                viewport_width,
+                viewport_height,
+                Point2D::new(x, y),
+            );
+            return self.finish_property_overlay_press(press);
         }
 
         // 0c0a0a. Image-node Search / Generate popovers — overlay
@@ -1044,10 +839,11 @@ impl WidgetHostNative {
                 }
                 if let AIChatHit::SelectInputText(anchor) = hit {
                     self.chat_input_selection_drag = Some(ChatInputSelectionDragState { anchor });
-                    self.editor_state.chat.focused = true;
-                    self.editor_state.chat.set_input_caret(anchor, self.now_ms);
-                    self.editor_state.chat.transcript_selection = None;
-                    self.editor_state.codegen.code_selection = None;
+                    chat_click_flow::begin_chat_input_selection(
+                        &mut self.editor_state,
+                        anchor,
+                        self.now_ms,
+                    );
                     self.mark_dirty();
                     return true;
                 }
@@ -1056,14 +852,11 @@ impl WidgetHostNative {
                         message_index,
                         anchor,
                     });
-                    self.editor_state.chat.transcript_selection =
-                        Some(op_editor_core::chat::ChatTranscriptSelection {
-                            message_index,
-                            anchor,
-                            focus: anchor,
-                        });
-                    self.editor_state.codegen.code_selection = None;
-                    self.editor_state.chat.focused = false;
+                    chat_click_flow::begin_chat_transcript_selection(
+                        &mut self.editor_state,
+                        message_index,
+                        anchor,
+                    );
                     self.mark_dirty();
                     return true;
                 }
@@ -1103,26 +896,16 @@ impl WidgetHostNative {
                 match hit {
                     op_editor_ui::widgets::ToolbarHit::Tool(tool) => {
                         self.apply_set_tool(tool);
-                        self.editor_state.editor_ui.shape_picker.open = false;
-                        self.editor_state.editor_ui.shape_picker.hover = None;
-                        self.editor_state.editor_ui.shape_picker.pressed = None;
+                        core_press::close_shape_picker(&mut self.editor_state.editor_ui);
                         return true;
                     }
                     op_editor_ui::widgets::ToolbarHit::Action(action) => {
-                        self.editor_state.editor_ui.shape_picker.open = false;
-                        self.editor_state.editor_ui.shape_picker.hover = None;
-                        self.editor_state.editor_ui.shape_picker.pressed = None;
+                        core_press::close_shape_picker(&mut self.editor_state.editor_ui);
                         let acted = self.dispatch_toolbar_action(action);
                         return acted || rename_committed || text_edit_committed;
                     }
                     op_editor_ui::widgets::ToolbarHit::ToggleShapePicker => {
-                        let picker = &mut self.editor_state.editor_ui.shape_picker;
-                        picker.open = !picker.open;
-                        picker.hover = None;
-                        picker.pressed = None;
-                        if picker.open {
-                            picker.scroll.offset = 0.0;
-                        }
+                        core_press::toggle_shape_picker(&mut self.editor_state.editor_ui);
                         self.mark_dirty();
                         return true;
                     }
@@ -1351,24 +1134,13 @@ impl WidgetHostNative {
                 }
                 // Empty canvas press — start a marquee.
                 self.editor_state.editor_ui.last_canvas_click = None;
-                let cleared_now = if !self.shift_held {
-                    let was_set = !self.editor_state.selection.set.is_empty();
-                    let had_scope = self.editor_state.editor_ui.entered_container.is_some();
-                    if was_set {
-                        self.editor_state.clear_selection();
-                    }
-                    // Clicking blank canvas steps out of the entered
-                    // container (clearing-exits rule).
-                    self.editor_state.sync_entered_container_with_selection();
-                    let exited_scope =
-                        had_scope && self.editor_state.editor_ui.entered_container.is_none();
-                    if was_set || exited_scope {
-                        self.mark_dirty();
-                    }
-                    was_set || exited_scope
-                } else {
-                    false
-                };
+                let cleared_now = core_press::clear_selection_on_empty_canvas_press(
+                    &mut self.editor_state,
+                    self.shift_held,
+                );
+                if cleared_now {
+                    self.mark_dirty();
+                }
                 self.marquee_drag = Some(super::MarqueeDragState {
                     start_screen_x: x,
                     start_screen_y: y,

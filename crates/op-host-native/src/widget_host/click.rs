@@ -6,11 +6,20 @@
 //! hit-tests query the layout-resolved `LayoutScene`. Resolved-scene
 //! node ids are wrapped into op-editor-core `NodeId`s before feeding
 //! `EditorState` mutators.
+//!
+//! The chat-panel and LayerPanel click dispatches themselves are
+//! host-independent — they live in `op_editor_ui::widgets::
+//! chat_click_flow` / `press_flow` and are shared verbatim with the web
+//! host; only the platform tail (`mark_dirty`, transcript-cache owner
+//! rotation, viewport fits, chat transport) stays here.
 
 use super::helpers::{TOOLBAR_INSET_X, TOOLBAR_INSET_Y};
 use super::WidgetHostNative;
+use op_editor_core::host_press_transitions as core_press;
+use op_editor_ui::widgets::chat_click_flow::{self, ChatClickStep, ChatHostAction};
+use op_editor_ui::widgets::press_flow::{self, LayerPanelClick};
 use op_editor_ui::widgets::{
-    AIChatHit, AIChatPlaceholder, LayoutCx, Toolbar, Widget, TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
+    AIChatPlaceholder, LayoutCx, Toolbar, Widget, TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
 };
 use op_editor_ui::{Point2D, Rect};
 
@@ -165,282 +174,7 @@ impl WidgetHostNative {
             let panel =
                 AIChatPlaceholder::from_editor(&self.editor_state).owned_by(self.chat_panel_owner);
             if let Some(hit) = panel.hit_test(chat_rect, Point2D::new(x, y)) {
-                if let Some(target) = chat_button_press_target(&hit) {
-                    self.editor_state.editor_ui.pressed_button = Some(target);
-                }
-                match hit {
-                    AIChatHit::Inside => {
-                        // Panel chrome that hit no control — blank
-                        // press: blur every input (the chat's own
-                        // textarea included, DOM parity).
-                        self.blur_text_inputs_on_blank_press();
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::FocusInput => {
-                        self.editor_state.chat.focus_input_at_end(self.now_ms);
-                        self.editor_state.chat.transcript_selection = None;
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::SelectInputText(offset) => {
-                        self.editor_state.chat.focused = true;
-                        self.editor_state.chat.set_input_caret(offset, self.now_ms);
-                        self.editor_state.chat.transcript_selection = None;
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::Send => {
-                        self.editor_state.chat.begin_send();
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::Stop => {
-                        self.editor_state.chat.stop_streaming();
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::Example { prompt, .. } => {
-                        self.editor_state.chat.set_input_text(prompt);
-                        self.editor_state.chat.focus_input_at_end(self.now_ms);
-                        self.editor_state.chat.transcript_selection = None;
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::DragHandle => {
-                        // Drag handle handled in apply_press ahead of
-                        // this; reaching here is a path bypass.
-                        return false;
-                    }
-                    AIChatHit::Resize(_) => {
-                        // Resize handles are press-drag only.
-                        return false;
-                    }
-                    AIChatHit::ToggleCollapse => {
-                        self.editor_state.chat.toggle_collapsed();
-                        self.editor_state.editor_ui.close_chat_model_picker();
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::ToggleMaximize => {
-                        self.editor_state.chat.maximized = !self.editor_state.chat.maximized;
-                        self.editor_state.chat.collapsed = false;
-                        self.editor_state.editor_ui.close_chat_model_picker();
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::NewChat => {
-                        // "+" opens a fresh, PRESERVED tab — the old tab keeps
-                        // its transcript intact (MT.1-review regression fix:
-                        // `new_chat()` reset/wiped the active tab in place,
-                        // and `drain_new_chat_request` then pushed a SECOND
-                        // tab → one "+" click double-created + wiped history).
-                        // `new_tab()` pushes one blank tab and activates it;
-                        // `pending_new_chat` rides to the host so its
-                        // `drain_new_chat_request` aborts in-flight workers and
-                        // forgets any resumable provider session — WITHOUT
-                        // creating another tab.
-                        self.editor_state.chat.new_tab();
-                        self.editor_state.chat.pending_new_chat = true;
-                        self.editor_state.editor_ui.close_chat_model_picker();
-                        // Session set mutated: rotate the transcript-cache owner
-                        // NOW so a pre-paint CursorMoved hint can't cross-pair the
-                        // old tab's geometry with the new tab's messages.
-                        self.force_rotate_chat_owner();
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::ToggleModelPicker => {
-                        let opening = self.editor_state.editor_ui.toggle_chat_model_picker();
-                        if opening {
-                            // Close the parallel-agents picker when model picker opens.
-                            self.editor_state.editor_ui.close_parallel_agents_picker();
-                            self.editor_state
-                                .editor_ui
-                                .chat_model_picker_input
-                                .touch(self.now_ms);
-                            // Opening can be painted before the deferred cursor-move
-                            // queue runs. Clear covered hover state now so the first
-                            // picker frame never carries a stale canvas/panel wash.
-                            self.clear_hover_below_chat_model_picker();
-                        }
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::FocusModelSearch => {
-                        self.editor_state
-                            .editor_ui
-                            .chat_model_picker_input
-                            .touch(self.now_ms);
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::ClearModelSearch => {
-                        self.editor_state
-                            .editor_ui
-                            .chat_model_picker_input
-                            .set_text("");
-                        self.editor_state.editor_ui.chat_model_picker.scroll.offset = 0.0;
-                        self.editor_state.editor_ui.chat_model_picker.hover = None;
-                        self.editor_state.editor_ui.chat_model_picker.pressed = None;
-                        self.editor_state
-                            .editor_ui
-                            .chat_model_picker_input
-                            .touch(self.now_ms);
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::SelectModel(idx) => {
-                        // Commit on press so the selected model and closed
-                        // picker appear in the first repaint. A deferred bare
-                        // index could also target the wrong row if an async
-                        // catalog refresh landed before pointer release.
-                        self.editor_state.select_chat_model(idx);
-                        // Returning `true` schedules the repaint. Do not mark
-                        // the document layout scene stale for this UI-only
-                        // preference change.
-                        return true;
-                    }
-                    AIChatHit::CycleThinking => {
-                        self.editor_state.chat.cycle_thinking_mode();
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::CycleEffort => {
-                        self.editor_state.chat.cycle_effort_level();
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::CycleAgentTeam => {
-                        self.editor_state.cycle_agent_team_size();
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::ToggleParallelAgentsPicker => {
-                        // Toggle the Parallel Agents picker open/closed.
-                        // Also closes the model picker when opening this one.
-                        if !self.editor_state.editor_ui.parallel_agents_picker_open {
-                            self.editor_state.editor_ui.close_chat_model_picker();
-                        }
-                        self.editor_state.editor_ui.toggle_parallel_agents_picker();
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::SetParallelAgents(n) => {
-                        // Set the agent_team_size (mirrors into the sticky
-                        // `preferred_agent_team_size` preference) and close
-                        // the picker.
-                        self.editor_state.set_agent_team_size(n);
-                        self.editor_state.editor_ui.close_parallel_agents_picker();
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::AddAttachment => {
-                        // The desktop event loop drains this flag,
-                        // opens a native file picker, and stages the
-                        // chosen file via `ChatState::add_attachment`.
-                        self.editor_state.chat.pending_attachment_pick = true;
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::RemoveAttachment(idx) => {
-                        self.editor_state.chat.remove_attachment(idx);
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::ClearSelection => {
-                        self.editor_state.clear_selection();
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::ToggleThinking(idx) => {
-                        self.editor_state.chat.toggle_message_thinking(idx);
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::ToggleToolCalls(idx) => {
-                        self.editor_state.chat.toggle_message_tool_calls(idx);
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::SetToolCallCardExpanded(msg_idx, tool_idx, expanded) => {
-                        self.editor_state
-                            .chat
-                            .set_message_tool_call_expanded(msg_idx, tool_idx, expanded);
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::SetDesignBlockExpanded(msg_idx, block_idx, expanded) => {
-                        self.editor_state
-                            .chat
-                            .set_message_design_block_expanded(msg_idx, block_idx, expanded);
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::SetActionStepExpanded(msg_idx, step_idx, expanded) => {
-                        self.editor_state
-                            .chat
-                            .set_message_action_step_expanded(msg_idx, step_idx, expanded);
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::RetrySubtask(msg_idx, source_index) => {
-                        // Flips the row to Running + raises
-                        // `pending_subtask_retry`; the desktop host drains it
-                        // next frame (see `design_session::
-                        // launch_subtask_retry_if_pending`). No-ops when the
-                        // row has no persisted spec.
-                        self.editor_state
-                            .chat
-                            .begin_subtask_retry(msg_idx, source_index);
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::CopyDesignBlock(text) => {
-                        self.editor_state.chat.queue_copy_text(text);
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::ApplyDesignBlock(msg_idx, text) => {
-                        return self.apply_chat_design_block(msg_idx, &text);
-                    }
-                    AIChatHit::SelectTranscriptText(message_index, offset) => {
-                        self.editor_state.chat.transcript_selection =
-                            Some(op_editor_core::chat::ChatTranscriptSelection {
-                                message_index,
-                                anchor: offset,
-                                focus: offset,
-                            });
-                        self.editor_state.codegen.code_selection = None;
-                        self.editor_state.chat.focused = false;
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::SwitchTab(idx) => {
-                        // Pure editor-state change — a switch does NOT touch
-                        // the run binding (a run keeps streaming into its own
-                        // tab; see the host's `chat_running_tab`).
-                        self.editor_state.chat.switch_to(idx);
-                        self.editor_state.editor_ui.close_chat_model_picker();
-                        // Active session changed: rotate the transcript-cache owner
-                        // synchronously so a CursorMoved arriving before the next
-                        // paint reads None (default arrow) instead of pairing the
-                        // previous tab's cached geometry with this tab's messages.
-                        self.force_rotate_chat_owner();
-                        self.mark_dirty();
-                        return true;
-                    }
-                    AIChatHit::CloseTab(idx) => {
-                        // Closing a tab can need to abort an in-flight run
-                        // bound to it (a session the widget layer can't reach),
-                        // so defer to the host runner: raise the request and
-                        // let `DesktopApp::close_chat_tab` do the close +
-                        // run-binding fix-up next frame.
-                        self.editor_state.editor_ui.pending_close_chat_tab = Some(idx);
-                        self.mark_dirty();
-                        return true;
-                    }
-                }
+                return self.dispatch_chat_click(hit);
             }
         }
         // Click outside the chat panel — blank press for the chat
@@ -476,13 +210,7 @@ impl WidgetHostNative {
                     return self.dispatch_toolbar_action(action);
                 }
                 op_editor_ui::widgets::ToolbarHit::ToggleShapePicker => {
-                    let picker = &mut self.editor_state.editor_ui.shape_picker;
-                    picker.open = !picker.open;
-                    picker.hover = None;
-                    picker.pressed = None;
-                    if picker.open {
-                        picker.scroll.offset = 0.0;
-                    }
+                    core_press::toggle_shape_picker(&mut self.editor_state.editor_ui);
                     self.mark_dirty();
                     return true;
                 }
@@ -501,129 +229,87 @@ impl WidgetHostNative {
         };
         let panel = self.layer_panel();
         if let Some(hit) = panel.hit_test(layer_rect, Point2D::new(x, y)) {
-            use op_editor_core::ui_draft::LayerContextTarget;
-            use op_editor_ui::widgets::LayerPanelHit as H;
-            // Build the op-editor-core context target for the
-            // double-click rename detection.
-            let target_for_dbl = match &hit {
-                H::Layer(id) => Some(LayerContextTarget::Layer(id.clone())),
-                H::Page(idx) => Some(LayerContextTarget::Page(*idx)),
-                _ => None,
+            return match press_flow::apply_layer_panel_click(
+                &mut self.editor_state,
+                hit,
+                self.now_ms,
+                self.shift_held,
+            ) {
+                LayerPanelClick::Consumed => true,
+                LayerPanelClick::Dirty => {
+                    self.mark_dirty();
+                    true
+                }
+                LayerPanelClick::Refit => {
+                    self.fit_active_page_after_switch(viewport_width, viewport_height);
+                    true
+                }
+                // Native repaints off the consumed press alone (the web
+                // host additionally marks dirty here — see its wrapper).
+                LayerPanelClick::SelectionChanged => true,
             };
-            if let Some(target) = target_for_dbl {
-                if let Some((prev, prev_ms)) = self.editor_state.editor_ui.last_layer_click.clone()
-                {
-                    if prev == target && self.now_ms.saturating_sub(prev_ms) < 400 {
-                        let started = match &target {
-                            LayerContextTarget::Layer(id) => {
-                                self.editor_state.start_rename_layer(id.clone())
-                            }
-                            LayerContextTarget::Page(idx) => {
-                                self.editor_state.start_rename_page(*idx)
-                            }
-                        };
-                        if started {
-                            if let Some(rename) = self.editor_state.ui.layer_rename.as_mut() {
-                                rename.input.touch(self.now_ms);
-                            }
-                        }
-                        self.editor_state.editor_ui.last_layer_click = None;
-                        self.mark_dirty();
-                        return true;
-                    }
-                }
-                self.editor_state.editor_ui.last_layer_click = Some((target, self.now_ms));
-            }
-            match hit {
-                H::Page(idx) => {
-                    let page_changed = idx != self.editor_state.ui.active_page_index;
-                    let _ = self.editor_state.set_active_page(idx);
-                    self.editor_state.clear_selection();
-                    if page_changed {
-                        // Land centered on the new page's content instead
-                        // of keeping the previous page's pan/zoom.
-                        self.fit_active_page_after_switch(viewport_width, viewport_height);
-                    } else {
-                        // Clicking the already-active page may clear selection,
-                        // but must preserve the user's current canvas view.
-                        self.mark_dirty();
-                    }
-                    return true;
-                }
-                H::Layer(node_id) => {
-                    let ec_id = node_id.clone();
-                    if self.shift_held {
-                        self.editor_state.toggle_selection(ec_id);
-                    } else {
-                        self.editor_state.set_single_selection(ec_id);
-                    }
-                    return true;
-                }
-                H::ToggleHidden(node_id) => {
-                    // TS toggleVisibility → mutateWithHistory
-                    // (document-store-node-actions.ts:162-174).
-                    self.with_doc_history(|s| s.toggle_node_hidden(&node_id.clone()));
-                    self.mark_dirty();
-                    return true;
-                }
-                H::ToggleLocked(node_id) => {
-                    // TS toggleLock → mutateWithHistory
-                    // (document-store-node-actions.ts:176-188).
-                    self.with_doc_history(|s| s.toggle_node_locked(&node_id.clone()));
-                    self.mark_dirty();
-                    return true;
-                }
-                H::ToggleCollapsed(node_id) => {
-                    self.editor_state.toggle_node_collapsed(&node_id.clone());
-                    self.mark_dirty();
-                    return true;
-                }
-                H::AddPage => {
-                    // TS addPage pushes history before the insert
-                    // (document-store-pages.ts:19-49).
-                    if self.with_doc_history(|s| s.add_page().is_some()) {
-                        self.fit_active_page_after_switch(viewport_width, viewport_height);
-                    }
-                    return true;
-                }
-                H::DeletePage(idx) => {
-                    // TS removePage pushes history after its
-                    // last-page guard (document-store-pages.ts:51-63)
-                    // — `with_doc_history` skips the push when the
-                    // guard rejects the delete.
-                    let deleting_active = idx == self.editor_state.ui.active_page_index;
-                    if self.with_doc_history(|s| s.remove_page(idx)) {
-                        if deleting_active {
-                            self.fit_active_page_after_switch(viewport_width, viewport_height);
-                        } else {
-                            self.mark_dirty();
-                        }
-                    }
-                    return true;
-                }
-            }
         }
         // Click hit no chrome — repaint if focus changed.
         was_focused
     }
-}
 
-fn chat_button_press_target(hit: &AIChatHit) -> Option<op_editor_core::ButtonPressTarget> {
-    if let Some(header) = op_editor_ui::widgets::editor_state_ext::chat_header_hover(hit) {
-        return Some(op_editor_core::ButtonPressTarget::ChatHeader(header));
+    /// Platform tail for the shared chat-panel click dispatch.
+    fn dispatch_chat_click(&mut self, hit: op_editor_ui::widgets::AIChatHit) -> bool {
+        match chat_click_flow::apply_chat_hit(&mut self.editor_state, hit, self.now_ms) {
+            // Drag handle / resize handles are press-drag only; the
+            // press path claimed them before reaching apply_click.
+            ChatClickStep::Unhandled => false,
+            ChatClickStep::Clean => true,
+            ChatClickStep::Dirty => {
+                self.mark_dirty();
+                true
+            }
+            ChatClickStep::BlankPress => {
+                self.blur_text_inputs_on_blank_press();
+                self.mark_dirty();
+                true
+            }
+            ChatClickStep::RotateChatOwner => {
+                // Rotate the transcript-cache owner NOW so a pre-paint
+                // CursorMoved hint can't cross-pair the old tab's
+                // geometry with the new tab's messages.
+                self.force_rotate_chat_owner();
+                self.mark_dirty();
+                true
+            }
+            ChatClickStep::ModelPickerToggled { opening } => {
+                if opening {
+                    // Opening can be painted before the deferred cursor-move
+                    // queue runs. Clear covered hover state now so the first
+                    // picker frame never carries a stale canvas/panel wash.
+                    self.clear_hover_below_chat_model_picker();
+                }
+                self.mark_dirty();
+                true
+            }
+            ChatClickStep::Host(ChatHostAction::Send) => {
+                self.editor_state.chat.begin_send();
+                self.mark_dirty();
+                true
+            }
+            ChatClickStep::Host(ChatHostAction::ApplyDesignBlock {
+                message_index,
+                text,
+            }) => self.apply_chat_design_block(message_index, &text),
+            ChatClickStep::Host(ChatHostAction::RetrySubtask {
+                message_index,
+                source_index,
+            }) => {
+                // Flips the row to Running + raises `pending_subtask_retry`;
+                // the desktop host drains it next frame (see
+                // `design_session::launch_subtask_retry_if_pending`). No-ops
+                // when the row has no persisted spec.
+                self.editor_state
+                    .chat
+                    .begin_subtask_retry(message_index, source_index);
+                self.mark_dirty();
+                true
+            }
+        }
     }
-    if let AIChatHit::Example { index, .. } = hit {
-        return Some(op_editor_core::ButtonPressTarget::ChatExample(*index));
-    }
-    let footer = match hit {
-        AIChatHit::ToggleModelPicker => op_editor_core::ChatFooterButton::ModelPicker,
-        // The ⚡ chip is now the Parallel Agents chip — pressed state uses SpeedChip.
-        AIChatHit::ToggleParallelAgentsPicker => op_editor_core::ChatFooterButton::SpeedChip,
-        AIChatHit::CycleAgentTeam => op_editor_core::ChatFooterButton::AgentTeam,
-        AIChatHit::AddAttachment => op_editor_core::ChatFooterButton::AddAttachment,
-        AIChatHit::Send => op_editor_core::ChatFooterButton::Send,
-        AIChatHit::Stop => op_editor_core::ChatFooterButton::Stop,
-        _ => return None,
-    };
-    Some(op_editor_core::ButtonPressTarget::ChatFooter(footer))
 }

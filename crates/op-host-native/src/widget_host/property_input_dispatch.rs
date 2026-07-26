@@ -1,9 +1,8 @@
 //! Native property/modal dispatchers extracted from the main action match.
 
-use super::super::helpers::parse_hex_color;
 use super::super::WidgetHostNative;
-use super::current_stop_alpha;
 use op_editor_core::PropertyFocus;
+use op_editor_ui::widgets::property_panel_commit as commit;
 
 impl WidgetHostNative {
     /// Commit the floating image-fill editor's numeric draft before an action
@@ -195,37 +194,9 @@ impl WidgetHostNative {
     /// editable value box). Parses the shared draft and writes it
     /// via `SetEffectParam`; a non-numeric draft is discarded.
     pub(in crate::widget_host) fn commit_effect_param_focus_if_any(&mut self) {
-        let Some(focus) = self.editor_state.editor_ui.effect_param_focus.take() else {
-            return;
-        };
-        self.editor_state.ui.property_draft_select_all = false;
-        let draft = self.editor_state.ui.property_input.text().to_owned();
-        self.editor_state.ui.property_input.set_text("");
-        self.editor_state.ui.property_input_draft.clear();
-        self.editor_state.ui.property_caret_pos = 0;
-        if let Ok(value) = draft.trim().parse::<f32>() {
-            if value.is_finite() {
-                let id = self.editor_state.selection.anchor.clone();
-                if id.is_real() {
-                    // Instance-write redirect (GAP #10) — see
-                    // `apply_property_action` for the choke-point note.
-                    let instance_scope = self.editor_state.begin_instance_write_for_anchor();
-                    self.editor_state.commit_history();
-                    let _ =
-                        self.editor_state
-                            .apply(op_editor_core::EditorCommand::SetEffectParam {
-                                node_id: id,
-                                index: focus.effect as u32,
-                                field: focus.field,
-                                value,
-                            });
-                    if let Some(scope) = instance_scope {
-                        self.editor_state.finish_instance_write(scope);
-                    }
-                }
-            }
+        if commit::commit_effect_param_focus(&mut self.editor_state) {
+            self.mark_dirty();
         }
-        self.mark_dirty();
     }
 
     pub(in crate::widget_host) fn commit_property_focus_if_any(&mut self) {
@@ -233,145 +204,8 @@ impl WidgetHostNative {
         self.commit_variables_panel_header_focus_if_any();
         self.commit_variable_row_focus_if_any();
         self.commit_effect_param_focus_if_any();
-        let Some(focus) = self.editor_state.ui.property_focus.take() else {
-            return;
-        };
-        self.editor_state.ui.property_draft_select_all = false;
-        let draft = self.editor_state.ui.property_input.text().to_owned();
-        self.editor_state.ui.property_input.set_text("");
-        self.editor_state.ui.property_input_draft.clear();
-        self.editor_state.ui.property_caret_pos = 0;
-        // Instance-write redirect (GAP #10) — see `apply_property_action`
-        // for the choke-point note.
-        let before = self.editor_state.snapshot_for_history();
-        let instance_scope = self.editor_state.begin_instance_write_for_anchor();
-        match focus {
-            PropertyFocus::PageBackgroundHex => {
-                let authored = draft.trim();
-                // A page with no authored background seeds an empty draft.
-                // Empty/unchanged blur is deliberately a no-op; clearing is
-                // an explicit panel action so focus alone cannot inflate an
-                // old document with a new background field.
-                if self.editor_state.active_page_background_color() != Some(authored) {
-                    if let Some(hex) = normalized_page_background_hex(authored) {
-                        let _ = self
-                            .editor_state
-                            .set_active_page_background_color(Some(hex));
-                    }
-                }
-            }
-            PropertyFocus::ImageTileScale => {
-                if let Ok(value) = draft.trim().parse::<f32>() {
-                    let _ = self.editor_state.set_selected_image_tile_scale(value);
-                }
-            }
-            PropertyFocus::FillHex(index) => {
-                let stripped = draft.trim().trim_start_matches('#');
-                if !stripped.is_empty() {
-                    if let Some(color) = parse_hex_color(draft.trim()) {
-                        let hex = super::super::helpers::color_to_hex_with_alpha(color);
-                        // The primary fill (index 0) keeps `set_selected_color`
-                        // (prepends a solid + colour-variable-aware); a
-                        // non-primary row writes its own solid fill by index.
-                        if index == 0 {
-                            let _ = self.editor_state.set_selected_color(true, &hex);
-                        } else {
-                            let _ = self.editor_state.set_selected_fill_hex_at(index, &hex);
-                        }
-                    }
-                }
-            }
-            PropertyFocus::StrokeHex => {
-                let stripped = draft.trim().trim_start_matches('#');
-                if !stripped.is_empty() {
-                    if let Some(color) = parse_hex_color(draft.trim()) {
-                        let _ = self
-                            .editor_state
-                            .set_selected_color(false, &super::super::helpers::color_to_hex(color));
-                    }
-                }
-            }
-            PropertyFocus::GradientStopHex(index) => {
-                let stripped = draft.trim().trim_start_matches('#');
-                if !stripped.is_empty() {
-                    if let Some(color) = parse_hex_color(draft.trim()) {
-                        // The input pill never paints alpha digits,
-                        // so re-attach the stop's existing alpha here
-                        // — a transparent stop must stay transparent
-                        // after the user edits its RGB.
-                        let existing_alpha = self
-                            .editor_state
-                            .selected_node()
-                            .and_then(|n| current_stop_alpha(n, index))
-                            .unwrap_or(1.0);
-                        let with_alpha = op_editor_ui::Color {
-                            r: color.r,
-                            g: color.g,
-                            b: color.b,
-                            a: existing_alpha,
-                        };
-                        let _ = self.editor_state.set_selected_gradient_stop_hex(
-                            index,
-                            &super::super::helpers::color_to_hex_with_alpha(with_alpha),
-                        );
-                    }
-                }
-            }
-            PropertyFocus::WidgetPlaceholder => {
-                let _ = self.editor_state.set_selected_widget_text(
-                    op_editor_core::WidgetTextField::Placeholder,
-                    draft.trim(),
-                );
-            }
-            PropertyFocus::WidgetValue => {
-                let _ = self
-                    .editor_state
-                    .set_selected_widget_text(op_editor_core::WidgetTextField::Value, draft.trim());
-            }
-            PropertyFocus::WidgetLabel => {
-                let _ = self
-                    .editor_state
-                    .set_selected_widget_text(op_editor_core::WidgetTextField::Label, draft.trim());
-            }
-            PropertyFocus::WidgetLeadingIcon => {
-                let _ = self.editor_state.set_selected_widget_text(
-                    op_editor_core::WidgetTextField::LeadingIcon,
-                    draft.trim(),
-                );
-            }
-            PropertyFocus::WidgetTrailingIcon => {
-                let _ = self.editor_state.set_selected_widget_text(
-                    op_editor_core::WidgetTextField::TrailingIcon,
-                    draft.trim(),
-                );
-            }
-            PropertyFocus::WidgetBindKey => {
-                let _ = self
-                    .editor_state
-                    .set_selected_widget_bind_value(draft.trim());
-            }
-            _ => {
-                if let Ok(value) = draft.trim().parse::<f32>() {
-                    let _ = self.editor_state.commit_property_edit(focus, value);
-                }
-            }
+        if commit::commit_property_focus(&mut self.editor_state) {
+            self.mark_dirty();
         }
-        if let Some(scope) = instance_scope {
-            self.editor_state.finish_instance_write(scope);
-        }
-        if self.editor_state.snapshot_for_history() != before {
-            self.editor_state.history_push_past(before);
-        }
-        self.mark_dirty();
     }
-}
-
-/// Validate and canonicalize an authored page colour without routing it
-/// through the RGB-only helper (which would discard an imported alpha byte).
-fn normalized_page_background_hex(value: &str) -> Option<String> {
-    let digits = value.strip_prefix('#')?;
-    if !matches!(digits.len(), 6 | 8) || !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
-    }
-    Some(format!("#{}", digits.to_ascii_uppercase()))
 }

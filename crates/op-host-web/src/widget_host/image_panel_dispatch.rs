@@ -1,105 +1,53 @@
 //! Image-node property dispatch for the web host.
 //!
-//! Mirrors the native host's state-machine pieces: popover toggles,
-//! search / generate epoch intents, result application, and the browser
-//! Relink file-picker intent. Actual network / file IO is drained by
-//! the web shell outside this dispatch layer.
+//! The state machine is shared with the native host in
+//! `op_editor_core::host_image_panel_transitions`; what stays here is
+//! the platform glue — popover-input selection drag, chrome-input blur,
+//! the property-focus commit, and the layout-scene-backed hit-test.
+//! Actual network / file IO is drained by the web shell outside this
+//! dispatch layer.
 
 use super::WidgetHost;
-use jian_ops_schema::node::PenNode;
-use op_editor_core::image_panel_state::ImageGeneratePhase;
+use op_editor_core::host_image_panel_transitions as image_ops;
 use op_editor_ui::widgets::{PropertyPanel, TOP_BAR_HEIGHT};
 use op_editor_ui::{Point2D, Rect};
 
 impl WidgetHost {
-    fn selected_image_seed(&self, prompt: bool) -> String {
-        match self.editor_state.selected_node() {
-            Some(PenNode::Image(image)) => {
-                let authored = if prompt {
-                    image.image_prompt.as_deref()
-                } else {
-                    image.image_search_query.as_deref()
-                };
-                authored
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string)
-                    .or_else(|| image.base.name.clone())
-                    .unwrap_or_default()
-            }
-            _ => String::new(),
-        }
-    }
-
     pub(in crate::widget_host) fn toggle_image_search_popover(&mut self) {
         let opening = !self.editor_state.editor_ui.image_panel.search_open;
-        let seed = self.selected_image_seed(false);
+        // Seed from the pre-blur selection.
+        let seed = image_ops::selected_image_seed(&self.editor_state, false);
         self.clear_image_input_selection_drag();
         if opening {
             self.blur_text_inputs_on_blank_press();
         }
-        let panel = &mut self.editor_state.editor_ui.image_panel;
-        panel.close_popovers();
-        if opening {
-            panel.search_open = true;
-            panel.search_query.set_text(seed);
-            panel.search_query.touch(self.now_ms);
-        }
+        image_ops::apply_image_search_toggle(&mut self.editor_state, opening, seed, self.now_ms);
         self.close_other_property_popovers_for_image();
     }
 
     pub(in crate::widget_host) fn toggle_image_generate_popover(&mut self) {
         let opening = !self.editor_state.editor_ui.image_panel.generate_open;
-        let seed = self.selected_image_seed(true);
+        let seed = image_ops::selected_image_seed(&self.editor_state, true);
         self.clear_image_input_selection_drag();
         if opening {
             self.blur_text_inputs_on_blank_press();
         }
-        let panel = &mut self.editor_state.editor_ui.image_panel;
-        panel.close_popovers();
-        if opening {
-            panel.generate_open = true;
-            panel.generate_prompt.set_text(seed);
-            panel.generate_prompt.touch(self.now_ms);
-            panel.generate_phase = ImageGeneratePhase::Idle;
-            panel.generate_preview = None;
-            panel.generate_error.clear();
-        }
+        image_ops::apply_image_generate_toggle(&mut self.editor_state, opening, seed, self.now_ms);
         self.close_other_property_popovers_for_image();
     }
 
+    /// Close the property pickers that would overlap the popovers.
     fn close_other_property_popovers_for_image(&mut self) {
         self.commit_image_tile_scale_focus_if_any();
-        let ui = &mut self.editor_state.editor_ui;
-        ui.close_fill_type_picker();
-        ui.image_fill_popover_open = false;
-        ui.font_weight_picker_open = false;
-        ui.export_scale_picker_open = false;
-        ui.export_format_picker_open = false;
-        ui.property_color_variable_picker_open = None;
-        ui.close_font_picker();
+        image_ops::close_other_property_popovers_for_image(&mut self.editor_state.editor_ui);
     }
 
     pub(in crate::widget_host) fn run_image_search(&mut self) {
-        let panel = &mut self.editor_state.editor_ui.image_panel;
-        if !panel.search_open || panel.search_loading || panel.search_query.text().trim().is_empty()
-        {
-            return;
-        }
-        panel.search_loading = true;
-        panel.search_has_searched = true;
-        panel.search_epoch = panel.search_epoch.wrapping_add(1);
+        image_ops::run_image_search(&mut self.editor_state);
     }
 
     pub(in crate::widget_host) fn select_image_search_result(&mut self, index: usize) {
-        let Some(url) = self
-            .editor_state
-            .editor_ui
-            .image_panel
-            .search_results
-            .get(index)
-            .map(|hit| hit.thumb_data_url.as_ref().clone())
-        else {
+        let Some(url) = image_ops::image_search_result_url(&self.editor_state, index) else {
             return;
         };
         self.write_selected_image_src(&url);
@@ -108,38 +56,11 @@ impl WidgetHost {
     }
 
     pub(in crate::widget_host) fn run_image_generate(&mut self) {
-        let configured = {
-            let settings = &self.editor_state.editor_ui.agent_settings;
-            settings
-                .image_gen_profiles
-                .iter()
-                .find(|p| Some(&p.id) == settings.active_image_gen_profile_id.as_ref())
-                .or_else(|| settings.image_gen_profiles.first())
-                .is_some_and(|p| !p.api_key.trim().is_empty())
-        };
-        let panel = &mut self.editor_state.editor_ui.image_panel;
-        if !panel.generate_open
-            || !configured
-            || panel.generate_prompt.text().trim().is_empty()
-            || panel.generate_phase == ImageGeneratePhase::Loading
-        {
-            return;
-        }
-        panel.generate_phase = ImageGeneratePhase::Loading;
-        panel.generate_error.clear();
-        panel.generate_preview = None;
-        panel.generate_epoch = panel.generate_epoch.wrapping_add(1);
+        image_ops::run_image_generate(&mut self.editor_state);
     }
 
     pub(in crate::widget_host) fn apply_generated_image(&mut self) {
-        let Some(url) = self
-            .editor_state
-            .editor_ui
-            .image_panel
-            .generate_preview
-            .as_ref()
-            .map(|u| u.as_ref().clone())
-        else {
+        let Some(url) = image_ops::generated_preview_url(&self.editor_state) else {
             return;
         };
         self.write_selected_image_src(&url);
@@ -148,169 +69,58 @@ impl WidgetHost {
     }
 
     pub(in crate::widget_host) fn retry_image_generate(&mut self) {
-        let panel = &mut self.editor_state.editor_ui.image_panel;
-        panel.generate_phase = ImageGeneratePhase::Idle;
-        panel.generate_preview = None;
-        panel.generate_error.clear();
+        image_ops::retry_image_generate(&mut self.editor_state);
     }
 
     pub(in crate::widget_host) fn open_image_gen_settings(&mut self) {
         self.clear_image_input_selection_drag();
-        self.editor_state.editor_ui.image_panel.close_popovers();
-        self.editor_state.editor_ui.agent_settings_open = true;
-        self.editor_state.editor_ui.agent_settings.tab =
-            op_editor_core::agent_settings::AgentSettingsTab::Images;
+        image_ops::open_image_gen_settings(&mut self.editor_state);
     }
 
     pub(in crate::widget_host) fn write_selected_image_src(&mut self, src: &str) {
-        let id = self.editor_state.selection.anchor.clone();
-        if !id.is_real() || src.is_empty() {
-            return;
+        if image_ops::write_selected_image_src(&mut self.editor_state, src) {
+            self.mark_dirty();
         }
-        self.editor_state.commit_history();
-        if let Some(PenNode::Image(image)) =
-            op_editor_core::walkers::find_node_mut(self.editor_state.active_children_mut(), &id)
-        {
-            image.src = src.into();
-        }
-        self.mark_dirty();
     }
 
     pub(in crate::widget_host) fn apply_image_panel_text(&mut self, c: char) -> bool {
-        if c.is_control() {
-            return false;
-        }
-        let generate_configured = self
-            .editor_state
-            .editor_ui
-            .agent_settings
-            .image_generation_configured();
-        let panel = &mut self.editor_state.editor_ui.image_panel;
-        if panel.search_open {
-            let mut text = [0u8; 4];
-            panel
-                .search_query
-                .insert_str(c.encode_utf8(&mut text), self.now_ms);
-            self.mark_dirty();
-            return true;
-        }
-        if panel.generate_open {
-            if let Some(input) = panel.active_input_mut(generate_configured) {
-                let mut text = [0u8; 4];
-                input.insert_str(c.encode_utf8(&mut text), self.now_ms);
-                self.mark_dirty();
-            }
-            return true;
-        }
-        false
+        let effect = image_ops::image_panel_text(&mut self.editor_state, c, self.now_ms);
+        self.finish_image_panel_input(effect)
     }
 
     pub(in crate::widget_host) fn apply_image_panel_backspace(&mut self) -> bool {
-        let generate_configured = self
-            .editor_state
-            .editor_ui
-            .agent_settings
-            .image_generation_configured();
-        let panel = &mut self.editor_state.editor_ui.image_panel;
-        if panel.search_open {
-            let before = panel.search_query.text().to_owned();
-            panel.search_query.backspace(self.now_ms);
-            if panel.search_query.text() != before {
-                self.mark_dirty();
-            }
-            return true;
-        }
-        if panel.generate_open {
-            if let Some(input) = panel.active_input_mut(generate_configured) {
-                let before = input.text().to_owned();
-                input.backspace(self.now_ms);
-                if input.text() != before {
-                    self.mark_dirty();
-                }
-            }
-            return true;
-        }
-        false
+        let effect = image_ops::image_panel_backspace(&mut self.editor_state, self.now_ms);
+        self.finish_image_panel_input(effect)
     }
 
     pub(in crate::widget_host) fn apply_image_panel_delete(&mut self) -> bool {
-        let generate_configured = self
-            .editor_state
-            .editor_ui
-            .agent_settings
-            .image_generation_configured();
-        let panel = &mut self.editor_state.editor_ui.image_panel;
-        if !panel.search_open && !panel.generate_open {
-            return false;
-        }
-        if let Some(input) = panel.active_input_mut(generate_configured) {
-            let before = input.text().to_owned();
-            input.delete_forward(self.now_ms);
-            if input.text() != before {
-                self.mark_dirty();
-            }
-        }
-        true
+        let effect = image_ops::image_panel_delete(&mut self.editor_state, self.now_ms);
+        self.finish_image_panel_input(effect)
     }
 
     pub fn apply_image_panel_caret(&mut self, forward: bool, extend: bool) -> bool {
-        let generate_configured = self
-            .editor_state
-            .editor_ui
-            .agent_settings
-            .image_generation_configured();
-        let panel = &mut self.editor_state.editor_ui.image_panel;
-        if !panel.search_open && !panel.generate_open {
-            return false;
-        }
-        if let Some(input) = panel.active_input_mut(generate_configured) {
-            if forward {
-                input.move_right(extend, self.now_ms);
-            } else {
-                input.move_left(extend, self.now_ms);
-            }
-            self.mark_dirty();
-        }
-        true
+        let effect =
+            image_ops::image_panel_caret(&mut self.editor_state, forward, extend, self.now_ms);
+        self.finish_image_panel_input(effect)
     }
 
     pub fn apply_image_panel_edge(&mut self, end: bool, extend: bool) -> bool {
-        let configured = self
-            .editor_state
-            .editor_ui
-            .agent_settings
-            .image_generation_configured();
-        let panel = &mut self.editor_state.editor_ui.image_panel;
-        if !panel.search_open && !panel.generate_open {
-            return false;
-        }
-        if let Some(input) = panel.active_input_mut(configured) {
-            if end {
-                input.move_end(extend, self.now_ms);
-            } else {
-                input.move_home(extend, self.now_ms);
-            }
-            self.mark_dirty();
-        }
-        true
+        let effect = image_ops::image_panel_edge(&mut self.editor_state, end, extend, self.now_ms);
+        self.finish_image_panel_input(effect)
     }
 
     pub(in crate::widget_host) fn apply_image_panel_select_all(&mut self) -> bool {
-        let configured = self
-            .editor_state
-            .editor_ui
-            .agent_settings
-            .image_generation_configured();
-        let panel = &mut self.editor_state.editor_ui.image_panel;
-        if !panel.search_open && !panel.generate_open {
-            return false;
-        }
-        if let Some(input) = panel.active_input_mut(configured) {
-            input.select_all();
-            input.touch(self.now_ms);
+        let effect = image_ops::image_panel_select_all(&mut self.editor_state, self.now_ms);
+        self.finish_image_panel_input(effect)
+    }
+
+    /// Repaint when the shared routing changed a draft, and report
+    /// whether the popover consumed the key.
+    fn finish_image_panel_input(&mut self, effect: image_ops::ImageInputEffect) -> bool {
+        if effect.changed {
             self.mark_dirty();
         }
-        true
+        effect.consumed
     }
 
     pub(in crate::widget_host) fn apply_image_panel_send(&mut self) -> bool {
@@ -319,31 +129,18 @@ impl WidgetHost {
             self.mark_dirty();
             return true;
         }
-        if self.editor_state.editor_ui.image_panel.generate_open {
-            return true;
-        }
-        false
+        self.editor_state.editor_ui.image_panel.generate_open
     }
 
     pub(in crate::widget_host) fn close_image_popovers_for_higher_overlay(&mut self) -> bool {
         self.clear_image_input_selection_drag();
-        let mut changed = false;
-        {
-            let panel = &mut self.editor_state.editor_ui.image_panel;
-            if panel.search_open || panel.generate_open {
-                panel.close_popovers();
-                changed = true;
-            }
-        }
+        // Hoisted ahead of the shared close: the tile-scale commit runs
+        // through host-owned variable/effect commits, and it touches
+        // state disjoint from the popover flags below.
         if self.editor_state.editor_ui.image_fill_popover_open {
             self.commit_image_tile_scale_focus_if_any();
-            self.editor_state.editor_ui.image_fill_popover_open = false;
-            changed = true;
         }
-        if self.editor_state.editor_ui.compositing_picker.open {
-            self.close_compositing_picker();
-            changed = true;
-        }
+        let changed = image_ops::close_image_popovers_for_higher_overlay(&mut self.editor_state);
         if changed {
             self.mark_dirty();
         }

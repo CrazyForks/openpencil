@@ -2,6 +2,7 @@
 //! `input.rs` to stay under the 800-line cap.
 
 use super::WidgetHostNative;
+use op_editor_core::host_keyboard_transitions as shared;
 use op_editor_core::{figma_import_state::ImportSource, ReorderDirection};
 
 impl WidgetHostNative {
@@ -102,14 +103,10 @@ impl WidgetHostNative {
         if self.input_active() {
             return false;
         }
-        if self.editor_state.clipboard.is_empty() {
-            return false;
-        }
-        self.editor_state.commit_history();
-        let pasted = !self
-            .editor_state
-            .paste_clipboard(&mut self.next_node_id, 10.0)
-            .is_empty();
+        let pasted = shared::paste_clipboard_at_default_offset(
+            &mut self.editor_state,
+            &mut self.next_node_id,
+        );
         if pasted {
             self.mark_dirty();
         }
@@ -205,76 +202,10 @@ impl WidgetHostNative {
             self.mark_dirty();
             return true;
         }
-        if let Some(rename) = self.editor_state.ui.layer_rename.as_mut() {
-            rename.input.select_all();
-            rename.input.touch(self.now_ms);
-            self.mark_dirty();
-            return true;
-        }
-        if self.editor_state.ui.text_editing.is_some() {
-            let _ = self.editor_state.text_edit_select_all_now(self.now_ms);
-            self.mark_dirty();
-            return true;
-        }
-        let variable_header_focus = self
-            .editor_state
-            .editor_ui
-            .variables_theme_rename_axis
-            .is_some()
-            || self
-                .editor_state
-                .editor_ui
-                .variables_variant_rename_value
-                .is_some();
-        if variable_header_focus
-            || self.editor_state.editor_ui.variable_row_focus.is_some()
-            || self.editor_state.editor_ui.effect_param_focus.is_some()
-            || self.editor_state.ui.property_focus.is_some()
-        {
-            if self.editor_state.ui.property_focus.is_some()
-                || self.editor_state.editor_ui.effect_param_focus.is_some()
-            {
-                let input = &mut self.editor_state.ui.property_input;
-                input.select_all();
-                input.touch(self.now_ms);
-                let ui = &mut self.editor_state.ui;
-                ui.property_input_draft = ui.property_input.text().to_owned();
-                ui.property_caret_pos = ui.property_input.caret();
-                ui.property_draft_select_all = true;
-                ui.property_caret_anchor_ms = self.now_ms;
-            } else if variable_header_focus {
-                let input = &mut self.editor_state.editor_ui.variables_header_input;
-                input.select_all();
-                input.touch(self.now_ms);
-                self.sync_variables_header_input_legacy(true);
-            } else {
-                let input = &mut self.editor_state.editor_ui.variable_row_input;
-                input.select_all();
-                input.touch(self.now_ms);
-                self.sync_variable_row_input_legacy(true);
-            }
-            self.mark_dirty();
-            return true;
-        }
-        if self.editor_state.editor_ui.icon_picker.open {
-            self.editor_state.editor_ui.icon_picker_select_all = true;
-            self.mark_dirty();
-            return true;
-        }
-        if self.editor_state.editor_ui.chat_model_picker.open {
-            let ui = &mut self.editor_state.editor_ui;
-            ui.chat_model_picker_input.select_all();
-            ui.chat_model_picker_input.touch(self.now_ms);
-            self.mark_dirty();
-            return true;
-        }
-        if self.editor_state.editor_ui.component_browser_open {
-            self.editor_state.editor_ui.component_browser_select_all = true;
-            self.mark_dirty();
-            return true;
-        }
-        if self.editor_state.chat.focused {
-            self.editor_state.chat.select_all_input(self.now_ms);
+        // Rename → canvas text edit → property / effect-param →
+        // variables header / row → icon picker → model picker →
+        // component browser → chat input.
+        if shared::select_all_focused_input(&mut self.editor_state, self.now_ms) {
             self.mark_dirty();
             return true;
         }
@@ -439,18 +370,7 @@ impl WidgetHostNative {
         // existing higher modal must also keep ownership: opening the import
         // modal underneath it would look like a no-op, then surface later when
         // the original modal closes.
-        let ui = &self.editor_state.editor_ui;
-        if ui.figma_import_in_progress
-            || !ui.figma_import_pages.is_empty()
-            || ui.export_dialog_open
-            || (ui.account_ui_available && ui.login_modal_open)
-            || ui.agent_settings_open
-            || (ui.missing_fonts_modal_open
-                && ui
-                    .missing_fonts_prompt
-                    .as_ref()
-                    .is_some_and(|prompt| !prompt.entries.is_empty()))
-            || self.settings_focus_active()
+        if shared::import_modal_blocked_by_overlay(&self.editor_state.editor_ui)
             || self.git_commit_focus_active()
             || self.git_remote_focus_active()
             || self.git_https_focus_active()
@@ -465,25 +385,11 @@ impl WidgetHostNative {
         // layer editing, then reuse the canonical chrome-input blur path so a
         // hidden property, chat, or model-picker input cannot keep receiving
         // keyboard/IME events behind the scrim.
-        let _ = self.editor_state.rename_commit();
-        let _ = self.editor_state.text_edit_commit();
-        self.editor_state.color_picker_blur_hex();
-        self.editor_state.color_picker_blur_rgb();
-        let _ = self.editor_state.close_color_picker();
+        shared::commit_editing_for_modal(&mut self.editor_state);
         self.blur_text_inputs_on_blank_press();
         self.close_image_popovers_for_higher_overlay();
         self.close_import_menu();
-        let ui = &mut self.editor_state.editor_ui;
-        ui.close_font_picker();
-        ui.close_icon_picker();
-        ui.component_browser_open = false;
-        ui.component_browser_kit_picker_open = false;
-        ui.component_browser_confirm_delete_kit = None;
-        ui.component_browser_hover = None;
-        ui.ime_preedit = None;
-        ui.import_source = source;
-        ui.figma_import_open = true;
-        ui.figma_import_hover = None;
+        shared::open_import_modal(&mut self.editor_state.editor_ui, source);
         self.mark_dirty();
         true
     }
@@ -536,21 +442,9 @@ impl WidgetHostNative {
     /// pen preview without committing, `skia-pen-tool.ts:38-50`).
     pub fn apply_set_tool(&mut self, tool: op_editor_core::Tool) {
         self.exit_image_crop_edit();
-        // Leaving Select must drop the hover outline immediately —
-        // cursor moves stop updating it for other tools.
-        self.editor_state.editor_ui.canvas_hover_node = None;
         self.commit_variable_row_focus_if_any();
         self.cancel_pen_on_tool_switch(tool);
-        let ec_tool = tool;
-        self.editor_state.tool = ec_tool;
-        if let op_editor_core::Tool::Rect
-        | op_editor_core::Tool::Ellipse
-        | op_editor_core::Tool::Polygon
-        | op_editor_core::Tool::Line
-        | op_editor_core::Tool::Pen = tool
-        {
-            self.editor_state.editor_ui.shape_tool = ec_tool;
-        }
+        shared::set_active_tool(&mut self.editor_state, tool);
         self.mark_dirty();
     }
 
@@ -586,17 +480,13 @@ impl WidgetHostNative {
         if self.input_active() {
             return false;
         }
-        if self.editor_state.selection.is_empty() {
-            return false;
-        }
-        self.editor_state.commit_history();
         // Translate the shell-core reorder direction (kept as the
         // public API type) into the op-editor-core equivalent.
         let ec_dir = match direction {
             ReorderDirection::Up => op_editor_core::walkers::ReorderDirection::Up,
             ReorderDirection::Down => op_editor_core::walkers::ReorderDirection::Down,
         };
-        let ok = self.editor_state.reorder_selected(ec_dir);
+        let ok = shared::reorder_selection(&mut self.editor_state, ec_dir);
         if ok {
             self.mark_dirty();
         }

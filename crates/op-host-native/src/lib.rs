@@ -161,7 +161,20 @@ pub(crate) mod font_registry_test_support {
     }
 }
 
-#[cfg(test)]
+// All remaining users live in gl-host-gated `widget_host` test files,
+// so the lock must share that gate or a plain `cargo clippy` (no
+// gl-host) sees it as dead code.
+#[cfg(all(
+    test,
+    feature = "gl-host",
+    any(
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "windows",
+        target_os = "ios",
+        target_os = "android"
+    )
+))]
 pub(crate) mod agent_indicator_test_support {
     use std::sync::{LazyLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 

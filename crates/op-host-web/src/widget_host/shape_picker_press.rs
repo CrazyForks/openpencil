@@ -1,7 +1,9 @@
-//! Shape-picker dropdown press dispatch — mirror of the native host's
-//! `widget_host/shape_picker_press.rs`.
+//! Shape-picker dropdown press dispatch — a thin wrapper over the
+//! host-shared `op_editor_ui::widgets::press_flow::press_shape_picker`
+//! (mirror of the native host's `widget_host/shape_picker_press.rs`).
 
-use op_editor_ui::widgets::{ShapeChoice, ShapePicker};
+use op_editor_core::host_press_transitions as core_press;
+use op_editor_ui::widgets::press_flow::{self, ShapePickerPress};
 use op_editor_ui::Point2D;
 
 use super::WidgetHost;
@@ -19,37 +21,17 @@ impl WidgetHost {
         }
         self.refresh_layout_scene();
         let panel_rect = self.shape_picker_rect(viewport_width, viewport_height);
-        let picker = ShapePicker::for_editor_ui(&self.editor_state.editor_ui);
-        match picker.hit_popup(panel_rect, Point2D::new(x, y)) {
-            op_editor_ui::widgets::shape_picker::SelectHit::Row(idx) => {
-                match picker.choice_at(idx) {
-                    Some(choice) => match choice {
-                        ShapeChoice::Tool(tool) => {
-                            self.apply_set_tool(tool);
-                        }
-                        ShapeChoice::OpenIconPicker => {
-                            self.editor_state.editor_ui.open_icon_picker(false);
-                        }
-                        ShapeChoice::ImportImageOrSvg => {
-                            // No file-picker service on web yet — raise the same
-                            // pending flag the native host does; the consumer is
-                            // host-level.
-                            self.editor_state.editor_ui.pending_file_action =
-                                Some(op_editor_core::editor_ui_state::FileAction::ImportImageOrSvg);
-                        }
-                    },
-                    None => return true,
-                }
-            }
-            op_editor_ui::widgets::shape_picker::SelectHit::Inside => return true,
-            op_editor_ui::widgets::shape_picker::SelectHit::Outside => {
+        match press_flow::press_shape_picker(&mut self.editor_state, panel_rect, Point2D::new(x, y))
+        {
+            ShapePickerPress::SetTool(tool) => self.apply_set_tool(tool),
+            ShapePickerPress::Close => {}
+            ShapePickerPress::Swallow => return true,
+            ShapePickerPress::Outside => {
                 // Miss — the dismissing click is a blank press.
                 self.blur_text_inputs_on_blank_press();
             }
         }
-        self.editor_state.editor_ui.shape_picker.open = false;
-        self.editor_state.editor_ui.shape_picker.hover = None;
-        self.editor_state.editor_ui.shape_picker.pressed = None;
+        core_press::close_shape_picker(&mut self.editor_state.editor_ui);
         self.mark_dirty();
         true
     }

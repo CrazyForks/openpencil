@@ -48,8 +48,11 @@ pub mod path_anchor_context_menu;
 pub mod property_panel;
 pub mod property_panel_action;
 pub mod property_panel_code;
+pub mod property_panel_commit;
 pub mod property_panel_compositing;
 pub mod property_panel_corner;
+pub mod property_panel_dispatch;
+pub mod property_panel_dispatch_support;
 pub mod property_panel_effects;
 pub mod property_panel_export;
 #[cfg(test)]
@@ -81,6 +84,7 @@ mod property_panel_instance_tests;
 pub mod property_panel_interactions;
 pub mod property_panel_layer;
 pub mod property_panel_layout;
+pub mod property_panel_layout_ops;
 pub(crate) mod property_panel_mode_popover;
 #[cfg(test)]
 mod property_panel_multi_select_tests;
@@ -157,6 +161,10 @@ pub mod screen_switcher_pills;
 // Phase 6 — shell-core-side `theme()` / `t()` derivations over
 // `op_editor_core::EditorUiState` for widgets ported off `Document`.
 pub mod editor_state_ext;
+
+// Host-shared press/click dispatch flows (native + web widget hosts).
+pub mod chat_click_flow;
+pub mod press_flow;
 
 // Step 4 — icon glyph drawer for editor chrome (lucide-flavored line art).
 pub mod icon_catalog;

@@ -198,37 +198,23 @@ impl WidgetHost {
         None
     }
 
-    pub(in crate::widget_host) fn sync_property_input_legacy(&mut self, select_all: bool) {
-        let ui = &mut self.editor_state.ui;
-        ui.property_input_draft = ui.property_input.text().to_owned();
-        ui.property_caret_pos = ui.property_input.caret();
-        ui.property_draft_select_all = select_all;
-        ui.property_caret_anchor_ms = self.now_ms;
-    }
+    // The keyboard routers publish the legacy caret mirror through
+    // `op_editor_core::host_keyboard_transitions` directly; these two
+    // wrappers remain for the variables-panel PRESS paths.
 
     pub(in crate::widget_host) fn sync_variables_header_input_legacy(&mut self, select_all: bool) {
-        self.editor_state.ui.property_input_draft = self
-            .editor_state
-            .editor_ui
-            .variables_header_input
-            .text()
-            .to_owned();
-        self.editor_state.ui.property_caret_pos =
-            self.editor_state.editor_ui.variables_header_input.caret();
-        self.editor_state.ui.property_draft_select_all = select_all;
-        self.editor_state.ui.property_caret_anchor_ms = self.now_ms;
+        op_editor_core::host_keyboard_transitions::mirror_variables_header_input_legacy(
+            &mut self.editor_state,
+            select_all,
+            self.now_ms,
+        );
     }
 
     pub(in crate::widget_host) fn sync_variable_row_input_legacy(&mut self, select_all: bool) {
-        self.editor_state.ui.property_input_draft = self
-            .editor_state
-            .editor_ui
-            .variable_row_input
-            .text()
-            .to_owned();
-        self.editor_state.ui.property_caret_pos =
-            self.editor_state.editor_ui.variable_row_input.caret();
-        self.editor_state.ui.property_draft_select_all = select_all;
-        self.editor_state.ui.property_caret_anchor_ms = self.now_ms;
+        op_editor_core::host_keyboard_transitions::mirror_variable_row_input_legacy(
+            &mut self.editor_state,
+            select_all,
+            self.now_ms,
+        );
     }
 }

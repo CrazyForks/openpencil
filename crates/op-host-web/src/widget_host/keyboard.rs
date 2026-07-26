@@ -8,6 +8,8 @@
 //! the paint snapshot dirty.
 
 use super::WidgetHost;
+use op_editor_core::host_keyboard_transitions as shared;
+use op_editor_core::host_preset_name_draft as preset_name;
 
 impl WidgetHost {
     /// Push a typed character into the focused chat / settings input.
@@ -37,166 +39,48 @@ impl WidgetHost {
         if let Some(consumed) = self.apply_git_text(c) {
             return consumed;
         }
-        if self.editor_state.ui.layer_rename.is_some() && !c.is_control() {
-            let mut s = [0u8; 4];
-            if self.editor_state.rename_append(c.encode_utf8(&mut s)) {
-                if let Some(rename) = self.editor_state.ui.layer_rename.as_mut() {
-                    rename.input.touch(self.now_ms);
-                }
+        if let Some(changed) = shared::rename_text(&mut self.editor_state, c, self.now_ms) {
+            if changed {
                 self.mark_dirty();
-                return true;
             }
-            return false;
+            return changed;
         }
-        if self.editor_state.ui.text_editing.is_some() && !c.is_control() {
-            let mut s = [0u8; 4];
-            if self
-                .editor_state
-                .text_edit_insert(c.encode_utf8(&mut s), self.now_ms)
-            {
+        if let Some(changed) = shared::text_edit_text(&mut self.editor_state, c, self.now_ms) {
+            if changed {
                 self.mark_dirty();
-                return true;
             }
-            return false;
+            return changed;
         }
-        // Variables-panel search filter — live append (mirrors the
-        // native host's append/pop discipline).
-        if self.variables_search_active() && !c.is_control() {
-            self.editor_state.editor_ui.variables_search.push(c);
-            self.editor_state.ui.property_caret_anchor_ms = self.now_ms;
-            self.editor_state.editor_ui.variables_scroll.offset = 0.0;
+        // Variables-panel search filter — live append.
+        if shared::variables_search_text(&mut self.editor_state, c, self.now_ms) {
             self.mark_dirty();
             return true;
         }
         // Variables-panel theme/variant header rename drafts.
-        if (self
-            .editor_state
-            .editor_ui
-            .variables_theme_rename_axis
-            .is_some()
-            || self
-                .editor_state
-                .editor_ui
-                .variables_variant_rename_value
-                .is_some())
-            && !c.is_control()
-        {
-            let mut s = [0u8; 4];
-            self.editor_state
-                .editor_ui
-                .variables_header_input
-                .insert_str(c.encode_utf8(&mut s), self.now_ms);
-            self.sync_variables_header_input_legacy(false);
+        if shared::variables_header_text(&mut self.editor_state, c, self.now_ms) {
             self.mark_dirty();
             return true;
         }
-        // #20: the variables preset dropdown's save-as-name input. Types into
-        // the shared `property_input_draft` the ThemePresetMenu widget paints
-        // (native parity, `keyboard.rs::apply_text`). Web keeps the caret at the
-        // end of the draft (no mid-string editing wired for this field).
-        if self.editor_state.editor_ui.preset_name_input_active() && !c.is_control() {
-            let ui = &mut self.editor_state.ui;
-            if ui.property_draft_select_all {
-                ui.property_input_draft.clear();
-                ui.property_draft_select_all = false;
-            }
-            ui.property_input_draft.push(c);
-            ui.property_caret_pos = ui.property_input_draft.len();
-            ui.property_caret_anchor_ms = self.now_ms;
+        // #20: the variables preset dropdown's save-as-name input types into
+        // the flat `property_input_draft` the ThemePresetMenu widget paints.
+        if preset_name::preset_name_text(&mut self.editor_state, c, self.now_ms) {
             self.mark_dirty();
             return true;
         }
         // Variables-panel row/cell drafts — per-kind char gates
-        // mirror the native host (numeric / free text / hex).
-        if let Some(focus) = self.editor_state.editor_ui.variable_row_focus {
-            use op_editor_core::editor_ui_state::VariableRowFocus;
-            let input = &self.editor_state.editor_ui.variable_row_input;
-            let replacing_all = input.is_select_all();
-            let draft = input.text();
-            let pos = if replacing_all {
-                0
-            } else {
-                input.caret().min(draft.len())
-            };
-            let len_after_clear = if replacing_all { 0 } else { draft.len() };
-            let allowed = match focus {
-                VariableRowFocus::Name(_) => !c.is_control(),
-                VariableRowFocus::Number(_) | VariableRowFocus::NumberCell { .. } => {
-                    c.is_ascii_digit()
-                        || (c == '-' && (replacing_all || (pos == 0 && !draft.starts_with('-'))))
-                        || (c == '.' && (replacing_all || !draft.contains('.')))
-                }
-                VariableRowFocus::String(_) | VariableRowFocus::StringCell { .. } => {
-                    !c.is_control()
-                }
-                // Inline color hex — `#` only at the front, hex digits
-                // after, capped at `#rrggbb`.
-                VariableRowFocus::ColorCell { .. } => {
-                    if c == '#' {
-                        len_after_clear == 0
-                    } else {
-                        c.is_ascii_hexdigit() && len_after_clear < 7
-                    }
-                }
-            };
-            if !allowed {
-                return false;
+        // (numeric / free text / hex) live in the shared router.
+        if let Some(changed) = shared::variable_row_text(&mut self.editor_state, c, self.now_ms) {
+            if changed {
+                self.mark_dirty();
             }
-            let mut s = [0u8; 4];
-            self.editor_state
-                .editor_ui
-                .variable_row_input
-                .insert_str(c.encode_utf8(&mut s), self.now_ms);
-            self.sync_variable_row_input_legacy(false);
-            self.mark_dirty();
-            return true;
+            return changed;
         }
-        if self.editor_state.ui.property_focus.is_some()
-            || self.editor_state.editor_ui.effect_param_focus.is_some()
-        {
-            if c.is_control() {
-                return false;
+        // Property-panel + effect-param inputs share `ui.property_input`.
+        if let Some(changed) = shared::property_input_text(&mut self.editor_state, c, self.now_ms) {
+            if changed {
+                self.mark_dirty();
             }
-            let input = &self.editor_state.ui.property_input;
-            let replacing_all = input.is_select_all();
-            let draft = input.text();
-            let pos = if replacing_all {
-                0
-            } else {
-                input.caret().min(draft.len())
-            };
-            let allowed = if let Some(focus) = self.editor_state.ui.property_focus {
-                if focus.is_free_text() {
-                    // Widget text rows (placeholder / value / label /
-                    // icon names / bind key) take any non-control char.
-                    !c.is_control()
-                } else if focus.is_hex() {
-                    (replacing_all || draft.len() < focus.hex_max_len().unwrap_or(7))
-                        && (c.is_ascii_hexdigit()
-                            || (c == '#' && pos == 0 && !draft.starts_with('#')))
-                } else {
-                    c.is_ascii_digit()
-                        || (c == '-' && pos == 0 && (replacing_all || !draft.starts_with('-')))
-                        || (c == '.'
-                            && focus.accepts_decimal()
-                            && (replacing_all || !draft.contains('.')))
-                }
-            } else {
-                c.is_ascii_digit()
-                    || (c == '-' && pos == 0 && (replacing_all || !draft.starts_with('-')))
-                    || (c == '.' && (replacing_all || !draft.contains('.')))
-            };
-            if !allowed {
-                return false;
-            }
-            let mut s = [0u8; 4];
-            self.editor_state
-                .ui
-                .property_input
-                .insert_str(c.encode_utf8(&mut s), self.now_ms);
-            self.sync_property_input_legacy(false);
-            self.mark_dirty();
-            return true;
+            return changed;
         }
         // Icon-picker / component-browser search boxes own typing
         // while their panels are open (mirrors native routing order:
@@ -211,18 +95,11 @@ impl WidgetHost {
         if let Some(changed) = self.component_browser_text(c) {
             return changed;
         }
-        if !self.editor_state.chat.focused {
-            return false;
+        if shared::chat_input_text(&mut self.editor_state, c, self.now_ms) {
+            self.mark_dirty();
+            return true;
         }
-        if c.is_control() {
-            return false;
-        }
-        let mut s = [0u8; 4];
-        self.editor_state
-            .chat
-            .insert_input_text(c.encode_utf8(&mut s), self.now_ms);
-        self.mark_dirty();
-        true
+        false
     }
 
     pub fn apply_backspace(&mut self) -> bool {
@@ -249,137 +126,59 @@ impl WidgetHost {
         if let Some(consumed) = self.apply_git_backspace() {
             return consumed;
         }
-        if self.editor_state.ui.layer_rename.is_some() {
-            let ok = self.editor_state.rename_backspace();
-            if ok {
-                if let Some(rename) = self.editor_state.ui.layer_rename.as_mut() {
-                    rename.input.touch(self.now_ms);
-                }
+        if let Some(changed) = shared::rename_backspace(&mut self.editor_state, self.now_ms) {
+            if changed {
                 self.mark_dirty();
             }
-            return ok;
+            return changed;
         }
-        if self.editor_state.ui.text_editing.is_some() {
-            let ok = self.editor_state.text_edit_backspace(self.now_ms);
-            if ok {
+        if let Some(changed) = shared::text_edit_backspace(&mut self.editor_state, self.now_ms) {
+            if changed {
                 self.mark_dirty();
             }
-            return ok;
+            return changed;
         }
         // Variables-panel search filter — pop one char.
-        if self.variables_search_active() {
-            if self.editor_state.editor_ui.variables_search.pop().is_some() {
-                self.editor_state.ui.property_caret_anchor_ms = self.now_ms;
-                self.editor_state.editor_ui.variables_scroll.offset = 0.0;
-                self.mark_dirty();
-                return true;
-            }
-            return false;
-        }
-        // #20: preset save-as-name input — pop the last char (or clear a
-        // select-all draft), native parity.
-        if self.editor_state.editor_ui.preset_name_input_active() {
-            let ui = &mut self.editor_state.ui;
-            if ui.property_draft_select_all {
-                ui.property_input_draft.clear();
-                ui.property_caret_pos = 0;
-                ui.property_draft_select_all = false;
-                ui.property_caret_anchor_ms = self.now_ms;
-                self.mark_dirty();
-                return true;
-            }
-            if ui.property_input_draft.pop().is_some() {
-                ui.property_caret_pos = ui.property_input_draft.len();
-                ui.property_caret_anchor_ms = self.now_ms;
-                self.mark_dirty();
-                return true;
-            }
-            return false;
-        }
-        if self
-            .editor_state
-            .editor_ui
-            .variables_theme_rename_axis
-            .is_some()
-            || self
-                .editor_state
-                .editor_ui
-                .variables_variant_rename_value
-                .is_some()
+        if let Some(changed) =
+            shared::variables_search_backspace(&mut self.editor_state, self.now_ms)
         {
-            let before = (
-                self.editor_state
-                    .editor_ui
-                    .variables_header_input
-                    .text()
-                    .to_owned(),
-                self.editor_state.editor_ui.variables_header_input.caret(),
-            );
-            self.editor_state
-                .editor_ui
-                .variables_header_input
-                .backspace(self.now_ms);
-            let after = (
-                self.editor_state
-                    .editor_ui
-                    .variables_header_input
-                    .text()
-                    .to_owned(),
-                self.editor_state.editor_ui.variables_header_input.caret(),
-            );
-            if after != before {
-                self.sync_variables_header_input_legacy(false);
+            if changed {
                 self.mark_dirty();
-                return true;
             }
-            return false;
+            return changed;
+        }
+        // #20: preset save-as-name input — delete before the caret (or
+        // clear a select-all draft).
+        if let Some(changed) =
+            preset_name::preset_name_backspace(&mut self.editor_state, self.now_ms)
+        {
+            if changed {
+                self.mark_dirty();
+            }
+            return changed;
+        }
+        if self.editor_state.editor_ui.variables_header_rename_active() {
+            let changed = shared::variables_header_backspace(&mut self.editor_state, self.now_ms);
+            if changed {
+                self.mark_dirty();
+            }
+            return changed;
         }
         if self.editor_state.editor_ui.variable_row_focus.is_some() {
-            let before = (
-                self.editor_state
-                    .editor_ui
-                    .variable_row_input
-                    .text()
-                    .to_owned(),
-                self.editor_state.editor_ui.variable_row_input.caret(),
-            );
-            self.editor_state
-                .editor_ui
-                .variable_row_input
-                .backspace(self.now_ms);
-            let after = (
-                self.editor_state
-                    .editor_ui
-                    .variable_row_input
-                    .text()
-                    .to_owned(),
-                self.editor_state.editor_ui.variable_row_input.caret(),
-            );
-            if after != before {
-                self.sync_variable_row_input_legacy(false);
+            let changed = shared::variable_row_backspace(&mut self.editor_state, self.now_ms);
+            if changed {
                 self.mark_dirty();
-                return true;
             }
-            return false;
+            return changed;
         }
         if self.editor_state.ui.property_focus.is_some()
             || self.editor_state.editor_ui.effect_param_focus.is_some()
         {
-            let before = (
-                self.editor_state.ui.property_input.text().to_owned(),
-                self.editor_state.ui.property_input.caret(),
-            );
-            self.editor_state.ui.property_input.backspace(self.now_ms);
-            let after = (
-                self.editor_state.ui.property_input.text().to_owned(),
-                self.editor_state.ui.property_input.caret(),
-            );
-            if after != before {
-                self.sync_property_input_legacy(false);
+            let changed = shared::property_input_backspace(&mut self.editor_state, self.now_ms);
+            if changed {
                 self.mark_dirty();
-                return true;
             }
-            return false;
+            return changed;
         }
         if let Some(changed) = self.icon_picker_backspace() {
             return changed;
@@ -390,19 +189,13 @@ impl WidgetHost {
         if let Some(changed) = self.component_browser_backspace() {
             return changed;
         }
-        if self.editor_state.chat.focused {
-            if self.editor_state.chat.backspace_input(self.now_ms) {
+        if let Some(changed) = shared::chat_input_backspace(&mut self.editor_state, self.now_ms) {
+            if changed {
                 self.mark_dirty();
-                return true;
             }
-            return false;
+            return changed;
         }
-        if self.editor_state.selection.is_empty() {
-            return false;
-        }
-        let snap = self.editor_state.snapshot_for_history();
-        if self.editor_state.delete_selected() {
-            self.editor_state.history_push_past(snap);
+        if shared::delete_selection_with_history(&mut self.editor_state) {
             self.mark_dirty();
             return true;
         }
@@ -448,24 +241,13 @@ impl WidgetHost {
         if self.commit_variables_preset_name_if_any() {
             return true;
         }
-        // Enter in the variables search box just blurs it (the
-        // filter is already live).
-        if self.variables_search_active() {
-            self.editor_state.editor_ui.variables_search_focus = false;
+        // Enter in the variables search box just blurs it (the filter
+        // is already live) — the same transition Escape runs.
+        if self.editor_state.editor_ui.blur_variables_search() {
             self.mark_dirty();
             return true;
         }
-        if self
-            .editor_state
-            .editor_ui
-            .variables_theme_rename_axis
-            .is_some()
-            || self
-                .editor_state
-                .editor_ui
-                .variables_variant_rename_value
-                .is_some()
-        {
+        if self.editor_state.editor_ui.variables_header_rename_active() {
             self.commit_variables_panel_header_focus_if_any();
             return true;
         }
@@ -507,132 +289,62 @@ impl WidgetHost {
         if self.editor_state.editor_ui.font_picker.open {
             return true;
         }
-        if self.editor_state.ui.layer_rename.is_some() {
-            let ok = self.editor_state.rename_backspace();
-            if ok {
-                if let Some(rename) = self.editor_state.ui.layer_rename.as_mut() {
-                    rename.input.touch(self.now_ms);
-                }
+        // The rename draft has no forward deletion — Delete pops the
+        // char before the caret, same as Backspace.
+        if let Some(changed) = shared::rename_backspace(&mut self.editor_state, self.now_ms) {
+            if changed {
                 self.mark_dirty();
             }
-            return ok;
+            return changed;
         }
-        if self.editor_state.ui.text_editing.is_some() {
-            let ok = self.editor_state.text_edit_delete_forward(self.now_ms);
-            if ok {
-                self.mark_dirty();
-            }
-            return ok;
-        }
-        // Don't delete the selected node when a text input owns the
-        // keyboard — the model-picker search, property focus, or chat
-        // input. Their own backspace handlers run earlier; falling
-        // through to `delete_selected` would drop the node behind the
-        // focused field.
-        if self.editor_state.ui.property_focus.is_some()
-            || self.editor_state.editor_ui.effect_param_focus.is_some()
-            || self.editor_state.editor_ui.variable_row_focus.is_some()
-            || self.variables_search_active()
-            || self
-                .editor_state
-                .editor_ui
-                .variables_theme_rename_axis
-                .is_some()
-            || self
-                .editor_state
-                .editor_ui
-                .variables_variant_rename_value
-                .is_some()
-            || self.editor_state.editor_ui.chat_model_picker.open
-            || self.editor_state.chat.focused
+        if let Some(changed) = shared::text_edit_delete_forward(&mut self.editor_state, self.now_ms)
         {
+            if changed {
+                self.mark_dirty();
+            }
+            return changed;
+        }
+        // #20: the preset save-as-name draft takes forward-delete too
+        // (native parity) — without this arm Delete fell through and
+        // destroyed the selected node behind the open dropdown.
+        if let Some(changed) =
+            preset_name::preset_name_delete_forward(&mut self.editor_state, self.now_ms)
+        {
+            if changed {
+                self.mark_dirty();
+            }
+            return changed;
+        }
+        // Don't delete the selected node when a chrome text input or
+        // search overlay owns the keyboard. The arms inside route
+        // Delete into whichever draft is focused; everything else the
+        // predicate covers simply swallows the key.
+        if shared::delete_owned_by_chrome_input(&self.editor_state) {
             if self.editor_state.ui.property_focus.is_some()
                 || self.editor_state.editor_ui.effect_param_focus.is_some()
             {
-                let before = (
-                    self.editor_state.ui.property_input.text().to_owned(),
-                    self.editor_state.ui.property_input.caret(),
-                );
-                self.editor_state
-                    .ui
-                    .property_input
-                    .delete_forward(self.now_ms);
-                let after = (
-                    self.editor_state.ui.property_input.text().to_owned(),
-                    self.editor_state.ui.property_input.caret(),
-                );
-                if after != before {
-                    self.sync_property_input_legacy(false);
+                let changed =
+                    shared::property_input_delete_forward(&mut self.editor_state, self.now_ms);
+                if changed {
                     self.mark_dirty();
-                    return true;
                 }
-                return false;
+                return changed;
             }
-            if self
-                .editor_state
-                .editor_ui
-                .variables_theme_rename_axis
-                .is_some()
-                || self
-                    .editor_state
-                    .editor_ui
-                    .variables_variant_rename_value
-                    .is_some()
-            {
-                let before = (
-                    self.editor_state
-                        .editor_ui
-                        .variables_header_input
-                        .text()
-                        .to_owned(),
-                    self.editor_state.editor_ui.variables_header_input.caret(),
-                );
-                self.editor_state
-                    .editor_ui
-                    .variables_header_input
-                    .delete_forward(self.now_ms);
-                let after = (
-                    self.editor_state
-                        .editor_ui
-                        .variables_header_input
-                        .text()
-                        .to_owned(),
-                    self.editor_state.editor_ui.variables_header_input.caret(),
-                );
-                if after != before {
-                    self.sync_variables_header_input_legacy(false);
+            if self.editor_state.editor_ui.variables_header_rename_active() {
+                let changed =
+                    shared::variables_header_delete_forward(&mut self.editor_state, self.now_ms);
+                if changed {
                     self.mark_dirty();
-                    return true;
                 }
-                return false;
+                return changed;
             }
             if self.editor_state.editor_ui.variable_row_focus.is_some() {
-                let before = (
-                    self.editor_state
-                        .editor_ui
-                        .variable_row_input
-                        .text()
-                        .to_owned(),
-                    self.editor_state.editor_ui.variable_row_input.caret(),
-                );
-                self.editor_state
-                    .editor_ui
-                    .variable_row_input
-                    .delete_forward(self.now_ms);
-                let after = (
-                    self.editor_state
-                        .editor_ui
-                        .variable_row_input
-                        .text()
-                        .to_owned(),
-                    self.editor_state.editor_ui.variable_row_input.caret(),
-                );
-                if after != before {
-                    self.sync_variable_row_input_legacy(false);
+                let changed =
+                    shared::variable_row_delete_forward(&mut self.editor_state, self.now_ms);
+                if changed {
                     self.mark_dirty();
-                    return true;
                 }
-                return false;
+                return changed;
             }
             if self.editor_state.chat.focused
                 && self.editor_state.chat.delete_input_selection(self.now_ms)
@@ -642,12 +354,7 @@ impl WidgetHost {
             }
             return false;
         }
-        if self.editor_state.selection.is_empty() {
-            return false;
-        }
-        let snap = self.editor_state.snapshot_for_history();
-        if self.editor_state.delete_selected() {
-            self.editor_state.history_push_past(snap);
+        if shared::delete_selection_with_history(&mut self.editor_state) {
             self.mark_dirty();
             return true;
         }

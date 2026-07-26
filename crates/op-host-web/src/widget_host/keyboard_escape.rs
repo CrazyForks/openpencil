@@ -1,12 +1,18 @@
 //! Web `WidgetHost::apply_escape` — the Escape-key overlay-dismiss
-//! cascade (one layer per press, native priority order). Split from
-//! `keyboard.rs` to keep each file under the 800-line ceiling.
+//! cascade (one layer per press). Split from `keyboard.rs` to keep each
+//! file under the 800-line ceiling.
+//!
+//! What each rung *does* is single-sourced in
+//! `op_editor_core::host_escape_transitions`; the ORDER is host-side
+//! because the browser bundle has no preview mode, pen tool, or Git
+//! sub-forms to step through. The two documented behavioural
+//! divergences from the native ladder are commented inline below.
 
 use super::WidgetHost;
+use op_editor_core::host_escape_transitions as escape;
 
 impl WidgetHost {
-    /// Escape — handles one layer per press, matching the native
-    /// host's priority order.
+    /// Escape — handles one layer per press.
     pub fn apply_escape(&mut self) -> bool {
         // The property-panel image popover owns Escape before any stale input
         // underneath. Keep the image selected; only dismiss the top layer.
@@ -37,33 +43,21 @@ impl WidgetHost {
         }
         // Modal overlays close one per press (mirrors native order:
         // export dialog → figma import → file menu).
-        if self.editor_state.editor_ui.export_dialog_open {
-            self.editor_state.editor_ui.export_dialog_open = false;
-            self.editor_state.editor_ui.export_dialog_hover = None;
+        if self.editor_state.editor_ui.escape_export_dialog() {
             self.mark_dirty();
             return true;
         }
-        if self.editor_state.editor_ui.figma_import_open {
-            self.editor_state.editor_ui.figma_import_open = false;
-            self.editor_state.editor_ui.figma_import_hover = None;
+        // No Cancel post-back here: the multi-page Figma picker only
+        // runs in the native shell (see `keyboard.rs::apply_escape`).
+        if self.editor_state.editor_ui.escape_import_modal() {
             self.mark_dirty();
             return true;
         }
-        if self.editor_state.editor_ui.file_menu_open {
-            self.editor_state.editor_ui.file_menu_open = false;
-            self.editor_state.editor_ui.file_menu.hover = None;
+        if self.editor_state.editor_ui.escape_file_menu() {
             self.mark_dirty();
             return true;
         }
-        // Escape closes an open layer/page right-click context menu
-        // (layer-context-menu.tsx:101 — keydown Escape → onClose).
-        if self
-            .editor_state
-            .editor_ui
-            .layer_context_menu
-            .take()
-            .is_some()
-        {
+        if self.editor_state.editor_ui.escape_layer_context_menu() {
             self.mark_dirty();
             return true;
         }
@@ -79,8 +73,7 @@ impl WidgetHost {
             self.mark_dirty();
             return true;
         }
-        if self.editor_state.editor_ui.effect_add_picker_open {
-            self.editor_state.editor_ui.close_effect_add_picker();
+        if self.editor_state.editor_ui.escape_effect_add_picker() {
             self.mark_dirty();
             return true;
         }
@@ -89,60 +82,32 @@ impl WidgetHost {
             self.mark_dirty();
             return true;
         }
-        if self
-            .editor_state
-            .editor_ui
-            .effect_param_focus
-            .take()
-            .is_some()
-        {
-            self.editor_state.ui.property_input.set_text("");
-            self.editor_state.ui.property_input_draft.clear();
-            self.editor_state.ui.property_draft_select_all = false;
+        if escape::escape_effect_param_focus(&mut self.editor_state) {
             self.mark_dirty();
             return true;
         }
-        if self.editor_state.ui.property_focus.take().is_some() {
-            self.editor_state.ui.property_input.set_text("");
-            self.editor_state.ui.property_input_draft.clear();
-            self.editor_state.ui.property_draft_select_all = false;
+        if escape::escape_property_focus(&mut self.editor_state) {
             self.mark_dirty();
             return true;
         }
-        // Escape blurs the variables search box (the typed filter is
-        // kept — clearing it would surprise mid-search).
-        if self.variables_search_active() {
-            self.editor_state.editor_ui.variables_search_focus = false;
+        // Escape blurs the variables search box, keeping the filter.
+        if self.editor_state.editor_ui.blur_variables_search() {
             self.mark_dirty();
             return true;
         }
-        // Escape closes an open variable-row `⋯` menu.
-        if self
-            .editor_state
-            .editor_ui
-            .variables_row_menu
-            .take()
-            .is_some()
-        {
+        if self.editor_state.editor_ui.escape_variables_row_menu() {
             self.mark_dirty();
             return true;
         }
         if let Some(consumed) = self.apply_git_escape() {
             return consumed;
         }
-        // Escape COMMITS variables header renames + row drafts
-        // (mirrors the native host's escape behavior).
-        if self
-            .editor_state
-            .editor_ui
-            .variables_theme_rename_axis
-            .is_some()
-            || self
-                .editor_state
-                .editor_ui
-                .variables_variant_rename_value
-                .is_some()
-        {
+        // Divergence kept on purpose: the web ladder COMMITS the
+        // variables header rename + row drafts, while the native ladder
+        // DISCARDS them (`escape::escape_variable_row_focus`). Both are
+        // covered by their host's own tests; the web behavior is the
+        // one the browser chrome ships.
+        if self.editor_state.editor_ui.variables_header_rename_active() {
             self.commit_variables_panel_header_focus_if_any();
             return true;
         }
@@ -156,9 +121,7 @@ impl WidgetHost {
             self.mark_dirty();
             return true;
         }
-        if self.editor_state.editor_ui.agent_settings_open {
-            self.editor_state.editor_ui.agent_settings_open = false;
-            self.editor_state.editor_ui.agent_settings_drag = None;
+        if self.editor_state.editor_ui.escape_agent_settings_modal() {
             self.mark_dirty();
             return true;
         }
@@ -167,79 +130,50 @@ impl WidgetHost {
             self.mark_dirty();
             return true;
         }
-        if self.editor_state.editor_ui.locale_picker.open {
-            self.editor_state.editor_ui.locale_picker.open = false;
-            self.editor_state.editor_ui.locale_picker.hover = None;
+        if self.editor_state.editor_ui.escape_locale_picker() {
             self.mark_dirty();
             return true;
         }
-        if self.editor_state.editor_ui.shape_picker.open {
-            self.editor_state.editor_ui.shape_picker.open = false;
-            self.editor_state.editor_ui.shape_picker.hover = None;
-            self.editor_state.editor_ui.shape_picker.pressed = None;
+        if self.editor_state.editor_ui.escape_shape_picker() {
             self.mark_dirty();
             return true;
         }
-        if self.editor_state.editor_ui.icon_picker.open {
-            self.editor_state.editor_ui.close_icon_picker();
+        if self.editor_state.editor_ui.escape_icon_picker() {
             self.mark_dirty();
             return true;
         }
-        if self.editor_state.editor_ui.component_browser_open {
-            // One layer per press: an open kit-filter popover closes
-            // before the panel itself does (mirrors the native host).
-            if self
-                .editor_state
-                .editor_ui
-                .component_browser_kit_picker_open
-            {
-                self.editor_state
-                    .editor_ui
-                    .component_browser_kit_picker_open = false;
-                self.mark_dirty();
-                return true;
-            }
-            self.editor_state.editor_ui.component_browser_open = false;
-            self.editor_state.editor_ui.component_browser_select_all = false;
-            self.editor_state.editor_ui.component_browser_hover = None;
-            self.editor_state
-                .editor_ui
-                .component_browser_confirm_delete_kit = None;
+        if self.editor_state.editor_ui.escape_component_browser() {
             self.mark_dirty();
             return true;
         }
-        if self.editor_state.editor_ui.instance_component_picker_open {
-            self.editor_state
-                .editor_ui
-                .close_instance_component_picker();
+        if self
+            .editor_state
+            .editor_ui
+            .escape_instance_component_picker()
+        {
             self.mark_dirty();
             return true;
         }
-        if self.editor_state.editor_ui.fill_type_picker.open {
-            self.editor_state.editor_ui.close_fill_type_picker();
+        if self.editor_state.editor_ui.escape_fill_type_picker() {
             self.mark_dirty();
             return true;
         }
-        if self.editor_state.editor_ui.image_fill_popover_open {
-            self.editor_state.editor_ui.image_fill_popover_open = false;
+        if self.editor_state.editor_ui.escape_image_fill_popover() {
             self.mark_dirty();
             return true;
         }
         if self.exit_image_crop_edit() {
             return true;
         }
-        if self.editor_state.editor_ui.chat_model_picker.open {
-            self.editor_state.editor_ui.close_chat_model_picker();
+        if self.editor_state.editor_ui.escape_chat_model_picker() {
             self.mark_dirty();
             return true;
         }
-        if self.editor_state.chat.focused {
-            self.editor_state.chat.blur_input(self.now_ms);
+        if escape::escape_chat_focus(&mut self.editor_state, self.now_ms) {
             self.mark_dirty();
             return true;
         }
-        if !self.editor_state.selection.is_empty() {
-            self.editor_state.deselect_all();
+        if escape::escape_selection(&mut self.editor_state) {
             self.mark_dirty();
             return true;
         }
