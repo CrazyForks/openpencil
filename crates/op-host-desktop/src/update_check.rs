@@ -120,15 +120,13 @@ fn check_latest_release() -> UpdateStatus {
 }
 
 /// Run the HTTPS request. `reqwest` is async-only in this
-/// workspace (no `blocking` feature), so the worker spins up a
-/// single-threaded tokio runtime for the one call. `None` on any
-/// transport / parse failure.
+/// workspace (no `blocking` feature), so the worker bridges onto the
+/// shared runtime for the one call — a private per-call runtime aborts
+/// with "Cannot start a runtime from within a runtime" whenever this
+/// probe is reached from a tokio worker. `None` on any transport /
+/// parse failure.
 fn fetch_latest_tag() -> Option<String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .ok()?;
-    runtime.block_on(async {
+    op_host_services::chat_runtime::block_on_anywhere(async {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(15))
             // GitHub's API rejects requests without a User-Agent.
@@ -225,14 +223,8 @@ fn download_and_open_blocking(version: &str) -> bool {
         "https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases/download/v{version}/{name}"
     );
     let dest = std::env::temp_dir().join(&name);
-    let runtime = match tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    {
-        Ok(rt) => rt,
-        Err(_) => return false,
-    };
-    let downloaded = runtime.block_on(async {
+    // Shared runtime, not a private one — see `fetch_latest_tag`.
+    let downloaded = op_host_services::chat_runtime::block_on_anywhere(async {
         let client = reqwest::Client::builder()
             // Installers run tens of MB — allow a long transfer.
             .timeout(std::time::Duration::from_secs(600))

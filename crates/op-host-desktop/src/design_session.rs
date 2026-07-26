@@ -60,7 +60,10 @@ pub fn pump_commands(
             // functionally correct, just finer-grained than ideal.
             DesignCmdOp::BeginUndoBatch | DesignCmdOp::EndUndoBatch => true,
         };
-        let snapshot = state.clone();
+        // Narrowed: drops chat/codegen/theme_presets, which grow with
+        // session length and are read by nothing in the worker's mirror
+        // (see op_editor_core::request_snapshot's consumer audit).
+        let snapshot = op_editor_core::request_snapshot::narrowed_snapshot(state);
         let ack = DesignCmdAck {
             applied,
             new_state: snapshot,
@@ -228,7 +231,8 @@ pub fn launch_subtask_retry_if_pending(
         std::sync::Arc::from(provider);
     let llm = op_host_services::chat_provider_llm::ChatProviderLlmClient::new(provider_arc)
         .with_model(crate::chat_session::selected_cli_model_id(host));
-    let initial_state = host.editor_state().clone();
+    let initial_state =
+        op_editor_core::request_snapshot::narrowed_snapshot(host.editor_state_mut());
     *current_design = Some(op_host_services::design_session::start_subtask_retry(
         llm,
         request,

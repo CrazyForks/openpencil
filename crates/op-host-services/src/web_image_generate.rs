@@ -145,11 +145,10 @@ fn daemon_active_profile(state: &op_editor_core::EditorState) -> Option<ImageGen
 /// Run one generation on the calling thread (the connection's own thread —
 /// the caller must NOT hold the state lock). Returns the final `data:` URL.
 pub(crate) fn run_generate_blocking(request: &WebImageGenerateRequest) -> Result<String, String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| format!("tokio runtime: {e}"))?;
-    runtime.block_on(run_generate(request))
+    // Same reasoning as `web_image_search::run_search_blocking`: a private
+    // current-thread runtime panics when this sync helper is called from a
+    // tokio worker, so the generation future rides the shared runtime.
+    crate::chat_runtime::block_on_anywhere(run_generate(request))
 }
 
 async fn run_generate(request: &WebImageGenerateRequest) -> Result<String, String> {

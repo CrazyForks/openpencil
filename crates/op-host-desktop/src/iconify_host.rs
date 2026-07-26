@@ -143,11 +143,10 @@ impl DesktopApp {
 }
 
 fn fetch_iconify_page(request: &IconifyLoadMoreRequest) -> Result<IconifyPage, String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| e.to_string())?;
-    runtime.block_on(async {
+    // Bridge through the shared runtime instead of building a private one:
+    // a nested `Runtime::new` aborts with "Cannot start a runtime from within
+    // a runtime" the moment this helper is reached from a tokio worker.
+    op_host_services::chat_runtime::block_on_anywhere(async {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(15))
             .user_agent(concat!("openpencil-desktop/", env!("CARGO_PKG_VERSION")))

@@ -9,6 +9,7 @@ use op_mcp::import_common::{count_subtree_nodes, parse_import_placement};
 use op_mcp::{McpTool, ToolErrorCode, ToolOutcome};
 use reqwest::header::{CONTENT_TYPE, LOCATION};
 
+use crate::chat_runtime::block_on_anywhere;
 use crate::provider_dial::{client_for, EndpointDialPolicy};
 use crate::web_image_search::{read_capped, ImageJobSlot};
 
@@ -45,19 +46,12 @@ impl McpTool for ImportHtmlUrl {
                 "too many concurrent import jobs".into(),
             );
         };
-        let runtime = match tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        {
-            Ok(runtime) => runtime,
-            Err(error) => {
-                return ToolOutcome::Err(
-                    ToolErrorCode::ToolFailed,
-                    format!("failed to start import runtime: {error}"),
-                );
-            }
-        };
-        let page = match runtime.block_on(fetch_capped(
+        // `call` is a synchronous MCP tool that can be reached either from a
+        // plain worker thread (CLI / stdio server) or from a tokio worker (the
+        // web daemon's connection pool). A private runtime built here would
+        // panic on `block_on` in the latter case, so both fetch paths below go
+        // through the one sanctioned bridge, which sheds the worker instead.
+        let page = match block_on_anywhere(fetch_capped(
             initial_url,
             PAGE_BYTES_CAP,
             allowlist.as_deref(),
@@ -78,14 +72,13 @@ impl McpTool for ImportHtmlUrl {
         let fetcher = |resource_url: &str| {
             let resource_url =
                 screen_import_url_with_allowlist(resource_url, allowlist.as_deref()).ok()?;
-            runtime
-                .block_on(fetch_capped(
-                    resource_url,
-                    RESOURCE_BYTES_CAP,
-                    allowlist.as_deref(),
-                ))
-                .ok()
-                .map(|resource| resource.bytes)
+            block_on_anywhere(fetch_capped(
+                resource_url,
+                RESOURCE_BYTES_CAP,
+                allowlist.as_deref(),
+            ))
+            .ok()
+            .map(|resource| resource.bytes)
         };
         let options = HtmlImportOptions {
             base_url: Some(page.final_url.to_string()),

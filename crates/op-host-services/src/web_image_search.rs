@@ -265,17 +265,11 @@ pub(crate) fn run_search_blocking(
     query: &str,
     credentials: Option<&WebOpenverseCredentials>,
 ) -> WebImageSearchOutcome {
-    let empty = WebImageSearchOutcome {
-        results: Vec::new(),
-        source: None,
-    };
-    let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-    else {
-        return empty;
-    };
-    runtime.block_on(run_search(query, credentials))
+    // A private runtime here would panic the moment this sync helper is
+    // reached from a tokio worker; `block_on_anywhere` runs the ladder on the
+    // shared (enable_all) runtime instead — same IO/timer drivers, no
+    // runtime-in-runtime hazard.
+    crate::chat_runtime::block_on_anywhere(run_search(query, credentials))
 }
 
 async fn run_search(

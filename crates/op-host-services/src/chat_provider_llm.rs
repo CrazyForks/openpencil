@@ -204,7 +204,7 @@ mod tests {
             first_text_timeout: None,
         };
         let mut stream = client.call(req);
-        futures::executor::block_on(async {
+        crate::chat_runtime::block_on_anywhere(async {
             use futures::StreamExt;
             while stream.next().await.is_some() {}
         });
@@ -297,7 +297,7 @@ mod tests {
             no_text_timeout: None,
             first_text_timeout: None,
         };
-        futures::executor::block_on(async {
+        crate::chat_runtime::block_on_anywhere(async {
             use futures::StreamExt;
             client.call(req).collect().await
         })

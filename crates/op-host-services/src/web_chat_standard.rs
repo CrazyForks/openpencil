@@ -523,16 +523,14 @@ fn stream_new_design_route<W: Write>(
         let mut on_progress = move |p: Progress| {
             let _ = write_thinking_event(out_ref, &format!("\n{}", progress_label(&p)));
         };
-        crate::chat_runtime::shared_runtime().block_on(
-            Orchestrator::new().with_indicator_epoch(epoch).run(
-                request,
-                &mut sink,
-                &llm,
-                &mut on_progress,
-                &abort,
-                &providers,
-            ),
-        )
+        crate::chat_runtime::block_on_anywhere(Orchestrator::new().with_indicator_epoch(epoch).run(
+            request,
+            &mut sink,
+            &llm,
+            &mut on_progress,
+            &abort,
+            &providers,
+        ))
     };
     // Natural completion drains the queued reveals gracefully; an
     // aborted turn tears the overlay down at once.
