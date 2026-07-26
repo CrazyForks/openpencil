@@ -2,17 +2,16 @@
 //! Pulled out of `widget_host.rs` to keep the spine file under
 //! the 800-line ceiling.
 
-use super::helpers::{
-    GIT_PANEL_CARET_H, GIT_PANEL_CARET_HALF, STATUS_INSET, TOOLBAR_INSET_X, TOOLBAR_INSET_Y,
-};
+use super::helpers::{GIT_PANEL_CARET_H, GIT_PANEL_CARET_HALF};
 use super::WidgetHostNative;
 use crate::backend::NativeFrameBackend;
 use op_editor_ui::widgets::editor_state_ext::theme_for;
+use op_editor_ui::widgets::host_canvas_geometry as canvas_geometry;
 use op_editor_ui::widgets::{
     variables_panel::VariablesPanel, AIChatPlaceholder, AlignToolbar, CanvasViewport,
     ComponentBrowserPanel, DesignMdPanel, GitPanel, IconPickerPanel, LayerPanel, LayoutCx,
     LocalePicker, PaintCx, PropertyPanel, ShapePicker, StatusBar, Toolbar, TopBar, Widget,
-    STATUS_BAR_HEIGHT, STATUS_BAR_WIDTH, TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
+    TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
 };
 use op_editor_ui::{Point2D, Rect, RenderBackend};
 
@@ -131,13 +130,8 @@ impl WidgetHostNative {
         if ui.sidebar_open {
             // Compute the active drop target so the panel can paint
             // the drop-indicator line during a drag-to-reorder.
-            let layer_panel_rect = Rect {
-                origin: Point2D::new(0.0, TOP_BAR_HEIGHT),
-                size: Point2D::new(
-                    ui.layer_panel_width,
-                    (viewport_height - TOP_BAR_HEIGHT).max(0.0),
-                ),
-            };
+            let layer_panel_rect =
+                canvas_geometry::layer_panel_rect(&self.editor_state, viewport_height);
             // Build the panel for paint. While a drag is active,
             // exclude the source's subtree so the rendered row stack
             // mirrors the post-commit layout — both the visible rows
@@ -300,13 +294,11 @@ impl WidgetHostNative {
         let property_panel_width = ui.property_panel_width;
         let right_rail_x = viewport_width - property_panel_width;
         if let Some(panel) = property_panel.as_ref() {
-            let property_rect = Rect {
-                origin: Point2D::new(right_rail_x, TOP_BAR_HEIGHT),
-                size: Point2D::new(
-                    property_panel_width,
-                    (viewport_height - TOP_BAR_HEIGHT).max(0.0),
-                ),
-            };
+            let property_rect = canvas_geometry::property_panel_rect(
+                &self.editor_state,
+                viewport_width,
+                viewport_height,
+            );
             let mut cx = PaintCx {
                 backend: &mut *frame,
             };
@@ -345,14 +337,8 @@ impl WidgetHostNative {
             .rect
             .size
             .y;
-        let toolbar_rect = Rect {
-            origin: Point2D::new(
-                canvas_left + TOOLBAR_INSET_X,
-                TOP_BAR_HEIGHT + TOOLBAR_INSET_Y,
-            ),
-            size: Point2D::new(TOOLBAR_WIDTH, toolbar_h),
-        };
-        if canvas_w > TOOLBAR_WIDTH + TOOLBAR_INSET_X * 2.0 {
+        let toolbar_rect = canvas_geometry::toolbar_rect(&self.editor_state, toolbar_h);
+        if canvas_geometry::toolbar_fits(canvas_w) {
             let mut cx = PaintCx {
                 backend: &mut *frame,
             };
@@ -374,16 +360,10 @@ impl WidgetHostNative {
         }
 
         // 8. StatusBar — floating bottom-right.
-        let canvas_right = canvas_left + canvas_w;
-        if canvas_w > STATUS_BAR_WIDTH + STATUS_INSET * 2.0 {
+        if let Some(status_rect) =
+            canvas_geometry::status_bar_rect(&self.editor_state, viewport_width, viewport_height)
+        {
             let status = StatusBar::for_editor(&self.editor_state);
-            let status_rect = Rect {
-                origin: Point2D::new(
-                    canvas_right - STATUS_BAR_WIDTH - STATUS_INSET,
-                    TOP_BAR_HEIGHT + canvas_h - STATUS_BAR_HEIGHT - STATUS_INSET,
-                ),
-                size: Point2D::new(STATUS_BAR_WIDTH, STATUS_BAR_HEIGHT),
-            };
             let mut cx = PaintCx {
                 backend: &mut *frame,
             };
@@ -410,16 +390,13 @@ impl WidgetHostNative {
         //      below the floating pickers / status. Visible only
         //      while the user is dragging a rect-select on empty
         //      canvas (Select tool). Never in preview mode.
-        if let Some(m) = self.marquee_drag.filter(|_| self.preview.is_none()) {
-            let x0 = m.start_screen_x.min(m.current_screen_x);
-            let y0 = m.start_screen_y.min(m.current_screen_y);
-            let w = (m.current_screen_x - m.start_screen_x).abs();
-            let h = (m.current_screen_y - m.start_screen_y).abs();
-            if w >= 1.0 && h >= 1.0 {
-                let rect = Rect {
-                    origin: Point2D::new(x0, y0),
-                    size: Point2D::new(w, h),
-                };
+        if let Some(rect) = self
+            .marquee_drag
+            .filter(|_| self.preview.is_none())
+            .as_ref()
+            .and_then(canvas_geometry::marquee_rect)
+        {
+            {
                 let primary = self.theme.primary;
                 // 10% primary-tinted fill so the rect reads as a
                 // selection band without obscuring the canvas.
@@ -782,283 +759,5 @@ impl WidgetHostNative {
                 self.now_ms,
             );
         }
-    }
-}
-
-impl WidgetHostNative {
-    /// Serve the canvas region from the pan bitmap cache: a pure-pan
-    /// frame blits the resident layer; past the scroll threshold the
-    /// layer first scrolls in place and repaints only the exposed
-    /// strips (so a long pan never pays a full re-render hitch).
-    /// Returns whether the frame was painted here.
-    fn serve_canvas_from_pan_cache(
-        &mut self,
-        frame: &mut NativeFrameBackend<'_>,
-        canvas_rect: Rect,
-    ) -> bool {
-        use super::canvas_pan_cache::PAN_CACHE_SCROLL_THRESHOLD;
-        if !self.fast_interaction_active() {
-            // Gesture over: restore quality progressively (one tile per
-            // frame) while the layer keeps blitting, then keep serving
-            // the sharp layer until any invalidation. The layer is KEPT
-            // across gestures so the next pan skips the expanded rebuild.
-            return self.serve_rest_restore(frame, canvas_rect);
-        }
-        // A live gesture supersedes any in-flight restore.
-        self.pan_cache_restore = None;
-        if !self.pan_cache_usable() {
-            self.drop_pan_cache();
-            return false;
-        }
-        let dpi = frame.dpi_scale();
-        let Some(offset) = self.pan_cache_offset(canvas_rect, dpi) else {
-            // Zoom gesture with a retained layer: serve an approximate
-            // SCALED blit (soft zoom); the gesture-end repaint restores
-            // sharpness. Only zoom gestures take this path — a pan
-            // whose cache mismatches must rebuild sharp content.
-            if self.last_gesture_was_zoom {
-                if let Some(dst) = self.pan_cache_zoom_dst(canvas_rect, dpi) {
-                    self.blit_pan_cache_scaled(frame, canvas_rect, dst);
-                    return true;
-                }
-            }
-            return false;
-        };
-        let offset = if offset.x.abs().max(offset.y.abs()) > PAN_CACHE_SCROLL_THRESHOLD {
-            match self.scroll_refresh_pan_cache(frame, canvas_rect, dpi) {
-                Some(residual) => residual,
-                None => return false,
-            }
-        } else {
-            offset
-        };
-        self.blit_pan_cache(frame, canvas_rect, offset);
-        true
-    }
-
-    /// Scroll the cached layer by the whole-device-pixel part of the
-    /// accumulated pan and repaint ONLY the strips scrolling exposed
-    /// (nodes culled to each strip — a fraction of a full frame).
-    /// Returns the residual sub-pixel blit offset.
-    fn scroll_refresh_pan_cache(
-        &mut self,
-        frame: &mut NativeFrameBackend<'_>,
-        canvas_rect: Rect,
-        dpi: f32,
-    ) -> Option<Point2D> {
-        use super::canvas_pan_cache::PAN_CACHE_MARGIN as M;
-        let mut cache = self.pan_cache.take()?;
-        let snap = |v: f32| (v * dpi).round() / dpi;
-        let dx = self.editor_state.viewport.pan_x - cache.pan.x;
-        let dy = self.editor_state.viewport.pan_y - cache.pan.y;
-        // Refresh only the DOMINANT axis: one strip = one scene
-        // traversal + one render-target pass per refresh. A diagonal
-        // fling whose minor axis also crosses the threshold simply
-        // refreshes it on the next frame — same total work, half the
-        // single-frame budget.
-        let (sdx, sdy) = if dx.abs() >= dy.abs() {
-            (snap(dx), 0.0)
-        } else {
-            (0.0, snap(dy))
-        };
-        // 1. Shift the surviving pixels by a whole device-pixel delta —
-        //    a lossless copy, so repeated refreshes never accumulate
-        //    resampling blur.
-        let snapshot = cache.surface.image_snapshot();
-        {
-            let offscreen = cache.surface.canvas();
-            let save = offscreen.save();
-            offscreen.reset_matrix();
-            let mut paint = skia_safe::Paint::default();
-            paint.set_blend_mode(skia_safe::BlendMode::Src);
-            offscreen.draw_image(&snapshot, (sdx * dpi, sdy * dpi), Some(&paint));
-            offscreen.restore_to_count(save);
-        }
-        cache.pan = Point2D::new(cache.pan.x + sdx, cache.pan.y + sdy);
-        // 2. Repaint only the exposed strips. Shifting content right
-        //    (sdx > 0) exposes the left edge, and vice versa; the
-        //    vertical strip runs full height and the horizontal strip
-        //    full width so a diagonal pan's L-shape is fully covered.
-        let expanded = Rect {
-            origin: Point2D::new(canvas_rect.origin.x - M, canvas_rect.origin.y - M),
-            size: Point2D::new(canvas_rect.size.x + M * 2.0, canvas_rect.size.y + M * 2.0),
-        };
-        let mut strips: Vec<Rect> = Vec::new();
-        if sdx > 0.0 {
-            strips.push(Rect {
-                origin: expanded.origin,
-                size: Point2D::new(sdx, expanded.size.y),
-            });
-        } else if sdx < 0.0 {
-            strips.push(Rect {
-                origin: Point2D::new(expanded.origin.x + expanded.size.x + sdx, expanded.origin.y),
-                size: Point2D::new(-sdx, expanded.size.y),
-            });
-        }
-        if sdy > 0.0 {
-            strips.push(Rect {
-                origin: expanded.origin,
-                size: Point2D::new(expanded.size.x, sdy),
-            });
-        } else if sdy < 0.0 {
-            strips.push(Rect {
-                origin: Point2D::new(expanded.origin.x, expanded.origin.y + expanded.size.y + sdy),
-                size: Point2D::new(expanded.size.x, -sdy),
-            });
-        }
-        if !strips.is_empty() {
-            let mut canvas = CanvasViewport::from_editor(&self.editor_state, &self.layout_scene);
-            canvas.now_ms = self.now_ms;
-            canvas.fast_interaction = true;
-            canvas.offset_paint_origin(M, M);
-            for strip in strips {
-                canvas.cull_override = Some(strip);
-                frame.paint_offscreen_region(
-                    &mut cache.surface,
-                    canvas_rect,
-                    M,
-                    Some(strip),
-                    |off| {
-                        let mut cx = PaintCx { backend: off };
-                        canvas.paint(&mut cx, expanded);
-                    },
-                );
-            }
-        }
-        self.pan_cache_scrolls = self.pan_cache_scrolls.wrapping_add(1);
-        // Strips paint in degrade mode — the layer needs a fresh
-        // progressive restore once the gesture ends.
-        cache.sharp = false;
-        let residual = Point2D::new(
-            self.editor_state.viewport.pan_x - cache.pan.x,
-            self.editor_state.viewport.pan_y - cache.pan.y,
-        );
-        self.pan_cache = Some(cache);
-        Some(residual)
-    }
-
-    /// Rest-time serve: progressively restore the visible region to
-    /// full quality (one tile per frame) into the retained layer, then
-    /// keep blitting the sharp layer until any invalidation. Returns
-    /// whether this frame was painted here.
-    fn serve_rest_restore(
-        &mut self,
-        frame: &mut NativeFrameBackend<'_>,
-        canvas_rect: Rect,
-    ) -> bool {
-        use super::canvas_pan_cache::{PAN_CACHE_MARGIN as M, PAN_CACHE_RESTORE_TILES};
-        // Rest blits must never freeze time-driven canvas visuals.
-        let rest_usable = self.preview.is_none()
-            && self
-                .layout_transition
-                .as_ref()
-                .is_none_or(|transition| !transition.is_active(self.now_ms))
-            && op_editor_core::agent_indicators::snapshot_at_if_active(self.now_ms).is_none()
-            && self.node_drag.is_none()
-            && self.marquee_drag.is_none()
-            && self.editor_state.editor_ui.starter_ghost.is_none()
-            && self.editor_state.ui.text_editing.is_none();
-        if !rest_usable {
-            self.pan_cache_restore = None;
-            return false;
-        }
-        let dpi = frame.dpi_scale();
-        let hovered_now = self.editor_state.editor_ui.canvas_hover_node.clone();
-        {
-            let Some(cache) = self.pan_cache.as_ref() else {
-                self.pan_cache_restore = None;
-                return false;
-            };
-            // Hover is baked into the layer, and some hover clears skip
-            // `mark_dirty` — a stamp mismatch must repaint direct.
-            if cache.hovered != hovered_now {
-                self.drop_pan_cache();
-                return false;
-            }
-        }
-        let Some(offset) = self.pan_cache_offset(canvas_rect, dpi) else {
-            self.pan_cache_restore = None;
-            return false;
-        };
-        if self.pan_cache.as_ref().is_some_and(|cache| cache.sharp)
-            && self.pan_cache_restore.is_none()
-        {
-            self.blit_pan_cache(frame, canvas_rect, offset);
-            return true;
-        }
-        // Start the restore: rebase the layer onto the exact current
-        // pan (one resampled shift of the degraded content) so tiles
-        // repaint at identity alignment and the final blit is 1:1.
-        if self.pan_cache_restore.is_none() {
-            if offset.x != 0.0 || offset.y != 0.0 {
-                if let Some(cache) = self.pan_cache.as_mut() {
-                    let snapshot = cache.surface.image_snapshot();
-                    let offscreen = cache.surface.canvas();
-                    let save = offscreen.save();
-                    offscreen.reset_matrix();
-                    let mut paint = skia_safe::Paint::default();
-                    paint.set_blend_mode(skia_safe::BlendMode::Src);
-                    offscreen.draw_image(&snapshot, (offset.x * dpi, offset.y * dpi), Some(&paint));
-                    offscreen.restore_to_count(save);
-                    cache.pan = Point2D::new(
-                        self.editor_state.viewport.pan_x,
-                        self.editor_state.viewport.pan_y,
-                    );
-                }
-            }
-            let tile_h = (canvas_rect.size.y / PAN_CACHE_RESTORE_TILES as f32).ceil();
-            let tiles = (0..PAN_CACHE_RESTORE_TILES)
-                .map(|i| Rect {
-                    origin: Point2D::new(
-                        canvas_rect.origin.x,
-                        canvas_rect.origin.y + i as f32 * tile_h,
-                    ),
-                    size: Point2D::new(canvas_rect.size.x, tile_h),
-                })
-                .collect();
-            self.pan_cache_restore =
-                Some(super::canvas_pan_cache::PanCacheRestore { tiles, next: 0 });
-        }
-        // Repaint the next tile at FULL quality into the layer.
-        if let Some(restore) = self.pan_cache_restore.take() {
-            let mut restore = restore;
-            if let (Some(tile), Some(mut cache)) = (
-                restore.tiles.get(restore.next).copied(),
-                self.pan_cache.take(),
-            ) {
-                let expanded = Rect {
-                    origin: Point2D::new(canvas_rect.origin.x - M, canvas_rect.origin.y - M),
-                    size: Point2D::new(canvas_rect.size.x + M * 2.0, canvas_rect.size.y + M * 2.0),
-                };
-                {
-                    let mut canvas =
-                        CanvasViewport::from_editor(&self.editor_state, &self.layout_scene);
-                    canvas.now_ms = self.now_ms;
-                    canvas.fast_interaction = false;
-                    canvas.offset_paint_origin(M, M);
-                    canvas.cull_override = Some(tile);
-                    frame.paint_offscreen_region(
-                        &mut cache.surface,
-                        canvas_rect,
-                        M,
-                        Some(tile),
-                        |off| {
-                            let mut cx = PaintCx { backend: off };
-                            canvas.paint(&mut cx, expanded);
-                        },
-                    );
-                }
-                restore.next += 1;
-                if restore.next >= restore.tiles.len() {
-                    cache.sharp = true;
-                    self.pan_cache = Some(cache);
-                } else {
-                    self.pan_cache = Some(cache);
-                    self.pan_cache_restore = Some(restore);
-                }
-            }
-        }
-        self.blit_pan_cache(frame, canvas_rect, Point2D::new(0.0, 0.0));
-        true
     }
 }

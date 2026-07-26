@@ -164,7 +164,15 @@ pub mod editor_state_ext;
 
 // Host-shared press/click dispatch flows (native + web widget hosts).
 pub mod chat_click_flow;
+pub mod cursor_hover_flow;
+pub mod drag_flow;
+pub mod host_canvas_geometry;
+pub mod host_frame_bookkeeping;
+pub mod host_overlay_geometry;
+pub mod image_crop_flow;
+pub mod image_popover_input_flow;
 pub mod press_flow;
+pub mod scroll_flow;
 
 // Step 4 — icon glyph drawer for editor chrome (lucide-flavored line art).
 pub mod icon_catalog;
@@ -182,6 +190,7 @@ pub mod brand_icons;
 
 // Step 4 — extra editor-chrome widgets (TS app parity).
 pub mod account_menu;
+pub mod account_press_flow;
 pub mod agent_settings_account;
 #[cfg(test)]
 mod agent_settings_account_gate_tests;
@@ -286,6 +295,7 @@ pub mod import_menu;
 pub mod locale_picker;
 pub mod login_modal;
 pub(crate) mod menu_paint;
+pub mod missing_fonts_flow;
 pub mod missing_fonts_panel;
 mod property_panel_color_variables;
 pub(crate) mod settings_form;
@@ -299,6 +309,7 @@ mod top_bar_tests;
 mod top_bar_title;
 mod top_bar_window_control;
 pub mod variables_panel;
+pub mod variables_panel_geometry_flow;
 mod variables_preset_menu;
 
 // Test-support: shared RenderBackend stubs (never ships in non-test builds).

@@ -1,37 +1,23 @@
 //! Accessibility region tree for the native host (#67).
 //!
-//! Builds an `accesskit::TreeUpdate` over the SAME top-level widgets the
-//! paint pass (`widget_host/paint.rs`) composes, so a screen reader sees
-//! the editor's always-present regions — top bar, layer panel, toolbar,
-//! canvas, property panel, chat, status bar — plus any cheap open
-//! overlays, each at the rect the host painted it at.
-//!
-//! The actual tree shape / node-id mapping / focus resolution lives in
-//! the platform-free assembler `op_editor_ui::accessibility`; this file
-//! is only the host-side enumeration that pairs each widget with its
-//! placement rect. Keeping the geometry here (reusing the same
-//! `canvas_region` / `*_rect` helpers paint uses) means the a11y tree and
+//! The region set / ordering / focus rules and the action routing live in
+//! the platform-free `op_editor_ui::accessibility_regions` (shared with
+//! the web host's `a11y_bridge.rs`); the tree shape / node-id mapping
+//! lives one layer below in `op_editor_ui::accessibility`. This file is
+//! only the native geometry hand-off: it reuses the very same
+//! `canvas_region` / `*_rect` helpers paint uses, so the a11y tree and
 //! the painted frame never drift.
 
 use super::helpers::{TOOLBAR_INSET_X, TOOLBAR_INSET_Y};
 use super::WidgetHostNative;
-use op_editor_ui::accessibility::{assemble_tree_update, PlacedWidget};
-use op_editor_ui::widgets::{
-    AIChatPlaceholder, CanvasViewport, LayoutCx, PropertyPanel, StatusBar, Toolbar, TopBar, Widget,
-    WidgetId, ROOT_WIDGET_ID, TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
-};
-use op_editor_ui::{Point2D, Rect};
+use op_editor_ui::accessibility_regions::{self as a11y_regions, RegionPlacement};
 
 impl WidgetHostNative {
     /// Assemble the accessibility tree for the current editor frame.
     ///
     /// Hosts call this on the same cadence they paint (initial publish +
     /// every dirty frame); the assembler suppresses no-op events on the
-    /// adapter side. The widget set mirrors `paint.rs`'s always-present
-    /// regions; transient overlays (pickers, modals, context menus) are
-    /// intentionally omitted for v1 — they come and go every frame and
-    /// their `access_node()`s are not yet richly labelled, so adding them
-    /// would churn the tree without improving navigability.
+    /// adapter side.
     ///
     /// Takes `&mut self` because the canvas region reads the
     /// layout-resolved scene, which `refresh_layout_scene` lazily rebuilds
@@ -46,187 +32,53 @@ impl WidgetHostNative {
         // with what paint draws.
         self.refresh_layout_scene();
 
-        let window_bounds = Rect {
-            origin: Point2D::new(0.0, 0.0),
-            size: Point2D::new(viewport_width, viewport_height),
-        };
-
-        let ui = &self.editor_state.editor_ui;
-        let dpi = self.dpi_scale_hint();
-
-        // 1. TopBar — full-width top strip.
-        let top_bar = TopBar::for_editor_ui(ui);
-        let top_bar_rect = Rect {
-            origin: Point2D::new(0.0, 0.0),
-            size: Point2D::new(viewport_width, TOP_BAR_HEIGHT),
-        };
-
-        // 2. LayerPanel — left rail, only when the sidebar is open.
-        let layer_panel = self.layer_panel();
-        let layer_panel_rect = Rect {
-            origin: Point2D::new(0.0, TOP_BAR_HEIGHT),
-            size: Point2D::new(
-                ui.layer_panel_width,
-                (viewport_height - TOP_BAR_HEIGHT).max(0.0),
-            ),
-        };
-
-        // 3. CanvasViewport — middle band (sidebar/right-rail aware).
         let (canvas_left, _canvas_y, canvas_w, canvas_h) =
             self.canvas_region(viewport_width, viewport_height);
-        let canvas = CanvasViewport::from_editor(&self.editor_state, &self.layout_scene);
-        let canvas_rect = Rect {
-            origin: Point2D::new(canvas_left, TOP_BAR_HEIGHT),
-            size: Point2D::new(canvas_w, canvas_h),
+        let placement = RegionPlacement {
+            viewport_width,
+            viewport_height,
+            canvas_left,
+            canvas_width: canvas_w,
+            canvas_height: canvas_h,
+            ai_chat_rect: self.ai_chat_rect(viewport_width, viewport_height),
+            status_bar_rect: self.status_bar_rect(viewport_width, viewport_height),
+            toolbar_inset_x: TOOLBAR_INSET_X,
+            toolbar_inset_y: TOOLBAR_INSET_Y,
         };
-
-        // 4. PropertyPanel — right rail, only with a selection.
-        let property_panel = PropertyPanel::for_selection_at(&self.editor_state, self.now_ms);
-        let property_panel_width = ui.property_panel_width;
-        let property_rect = Rect {
-            origin: Point2D::new(viewport_width - property_panel_width, TOP_BAR_HEIGHT),
-            size: Point2D::new(
-                property_panel_width,
-                (viewport_height - TOP_BAR_HEIGHT).max(0.0),
-            ),
-        };
-
-        // 5. Toolbar — floating vertical column over the canvas.
-        let toolbar = Toolbar::for_editor(&self.editor_state);
-        let toolbar_h = toolbar
-            .layout(&LayoutCx {
-                available_width: TOOLBAR_WIDTH,
-                dpi,
-            })
-            .rect
-            .size
-            .y;
-        let toolbar_rect = Rect {
-            origin: Point2D::new(
-                canvas_left + TOOLBAR_INSET_X,
-                TOP_BAR_HEIGHT + TOOLBAR_INSET_Y,
-            ),
-            size: Point2D::new(TOOLBAR_WIDTH, toolbar_h),
-        };
-        let toolbar_visible = canvas_w > TOOLBAR_WIDTH + TOOLBAR_INSET_X * 2.0;
-
-        // 6. AIChatPlaceholder — floating chat panel.
-        let chat = AIChatPlaceholder::from_editor_at(&self.editor_state, self.now_ms);
-        let chat_rect = self.ai_chat_rect(viewport_width, viewport_height);
-
-        // 7. StatusBar — floating bottom-right zoom pill.
-        let status = StatusBar::for_editor(&self.editor_state);
-        let status_rect = self.status_bar_rect(viewport_width, viewport_height);
-
-        // Assemble the ordered, present set. Order = reading order.
-        let mut placed: Vec<PlacedWidget<'_>> = Vec::with_capacity(8);
-        placed.push(PlacedWidget::new(&top_bar, top_bar_rect));
-        if ui.sidebar_open {
-            placed.push(PlacedWidget::new(&layer_panel, layer_panel_rect));
-        }
-        if canvas_w > 0.0 && canvas_h > 0.0 {
-            placed.push(PlacedWidget::new(&canvas, canvas_rect));
-        }
-        if let Some(panel) = property_panel.as_ref() {
-            placed.push(PlacedWidget::new(panel, property_rect));
-        }
-        if toolbar_visible {
-            placed.push(PlacedWidget::new(&toolbar, toolbar_rect));
-        }
-        if let Some(rect) = chat_rect {
-            placed.push(PlacedWidget::new(&chat, rect));
-        }
-        if let Some(rect) = status_rect {
-            placed.push(PlacedWidget::new(&status, rect));
-        }
-
-        let focus = self.accessibility_focus_target(canvas_w, canvas_h, property_panel.is_some());
-
-        assemble_tree_update(window_bounds, &placed, focus)
-    }
-
-    /// Pick a sensible default focus target for the a11y tree.
-    ///
-    /// Order: focused chat input → property panel (when an editable
-    /// selection is up) → canvas (the editor's primary work surface) →
-    /// top bar → root. The chosen id must be a region actually present
-    /// this frame, which the assembler re-checks before emitting.
-    fn accessibility_focus_target(
-        &self,
-        canvas_w: f32,
-        canvas_h: f32,
-        property_panel_present: bool,
-    ) -> WidgetId {
-        if self.editor_state.chat.focused {
-            return WidgetId::new(AI_CHAT_WIDGET_ID);
-        }
-        if property_panel_present && self.editor_state.ui.property_focus.is_some() {
-            return WidgetId::new(PROPERTY_PANEL_WIDGET_ID);
-        }
-        if canvas_w > 0.0 && canvas_h > 0.0 {
-            return WidgetId::new(CANVAS_WIDGET_ID);
-        }
-        ROOT_WIDGET_ID
-    }
-
-    /// DPI scale used for the toolbar layout pass. The toolbar layout is
-    /// dpi-independent (fixed button metrics), so a 1.0 fallback is
-    /// exact; the real value is only threaded for parity with paint.
-    fn dpi_scale_hint(&self) -> f32 {
-        1.0
+        let layer_panel = self.layer_panel();
+        a11y_regions::editor_tree_update(
+            &self.editor_state,
+            &self.layout_scene,
+            &layer_panel,
+            self.now_ms,
+            placement,
+        )
     }
 
     /// Route an accesskit action targeting a known editor region back
     /// into host state. Returns `true` when the action changed state (so
-    /// the runner repaints + re-publishes the tree). Mirrors the web
-    /// `a11y_bridge` action handlers.
+    /// the runner repaints + re-publishes the tree).
     ///
     /// `target` is the raw `accesskit::NodeId.0` (== `WidgetId.0`), and
     /// `is_focus` distinguishes a `Focus` request from a `Click` /
-    /// `Default` activation. v1 handles the two regions the web bridge
-    /// covered — focusing the chat input and activating it — plus
-    /// blurring the chat when focus moves to the canvas / a panel.
+    /// `Default` activation.
     pub fn apply_a11y_action(&mut self, target: u64, is_focus: bool) -> bool {
-        match target {
-            // AIChat panel — Focus or Click/Default both focus + ready
-            // the chat input (TS click.rs `AIChatHit::FocusInput`).
-            AI_CHAT_WIDGET_ID => {
-                let now = self.now_ms;
-                self.editor_state.chat.focus_input_at_end(now);
-                self.editor_state.chat.transcript_selection = None;
-                self.mark_editor_state_dirty();
-                true
-            }
-            // Canvas / Toolbar / Property panel — moving a11y focus off
-            // the chat blurs the chat input so caret + send routing
-            // follow the screen reader's focus. Only meaningful when the
-            // chat currently holds focus.
-            CANVAS_WIDGET_ID | TOOLBAR_WIDGET_ID | PROPERTY_PANEL_WIDGET_ID if is_focus => {
-                if self.editor_state.chat.focused {
-                    self.editor_state.chat.focused = false;
-                    self.mark_editor_state_dirty();
-                    true
-                } else {
-                    false
-                }
-            }
-            _ => false,
+        if a11y_regions::apply_region_action(&mut self.editor_state, target, is_focus, self.now_ms)
+        {
+            self.mark_editor_state_dirty();
+            true
+        } else {
+            false
         }
     }
 }
-
-// Stable widget ids of the always-present regions, mirrored from each
-// widget's constructor (`WidgetId::new(..)`). Used for focus targeting
-// without constructing the widget twice.
-const AI_CHAT_WIDGET_ID: u64 = 7000;
-const PROPERTY_PANEL_WIDGET_ID: u64 = 2000;
-const CANVAS_WIDGET_ID: u64 = 4000;
-const TOOLBAR_WIDGET_ID: u64 = 3000;
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use op_editor_ui::accessibility::node_id;
+    use op_editor_ui::accessibility_regions::{AI_CHAT_WIDGET_ID, CANVAS_WIDGET_ID};
+    use op_editor_ui::widgets::{WidgetId, ROOT_WIDGET_ID};
 
     fn host() -> WidgetHostNative {
         WidgetHostNative::new()

@@ -80,9 +80,11 @@ impl WidgetHost {
             max_x = 0.0;
             max_y = 0.0;
         }
-        let (_cx0, _cy0, cw, ch) = self.canvas_region(viewport_w, viewport_h);
-        let canvas_local = op_editor_ui::Point2D::new(cw / 2.0, ch / 2.0);
-        let centre = self.editor_state.viewport.to_document(canvas_local);
+        let centre = op_editor_ui::widgets::host_canvas_geometry::canvas_centre_doc_point(
+            &self.editor_state,
+            viewport_w,
+            viewport_h,
+        );
         let dx = centre.x as f64 - (min_x + max_x) / 2.0;
         let dy = centre.y as f64 - (min_y + max_y) / 2.0;
 

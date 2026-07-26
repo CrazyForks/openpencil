@@ -5,7 +5,8 @@
 //! the spine under the repo's 800-line cap (mirrors the native
 //! host's `widget_host/input.rs` split).
 
-use op_editor_ui::widgets::{CanvasViewport, PropertyPanel, TOP_BAR_HEIGHT};
+use op_editor_ui::widgets::cursor_hover_flow as hover_flow;
+use op_editor_ui::widgets::{PropertyPanel, TOP_BAR_HEIGHT};
 use op_editor_ui::{Point2D, Rect};
 
 use super::WidgetHost;
@@ -401,38 +402,13 @@ impl WidgetHost {
         // Missing-fonts modal — owns the cursor while open. Hover the
         // per-row choose-file buttons + the dismiss action.
         if self.editor_state.editor_ui.missing_fonts_modal_open {
-            use op_editor_ui::widgets::missing_fonts_panel::MissingFontsPanel;
-            let viewport = Rect {
-                origin: Point2D::new(0.0, 0.0),
-                size: Point2D::new(self.last_viewport_w, self.last_viewport_h),
-            };
-            let (new_hover, picker_hover, import_hover) =
-                MissingFontsPanel::for_editor(&self.editor_state)
-                    .map(|panel| {
-                        let rect = panel.rect(self.last_viewport_w, self.last_viewport_h);
-                        if panel.picker_layout(rect, viewport).is_some() {
-                            let (entry, import) =
-                                panel.picker_hover(rect, viewport, Point2D::new(x, y));
-                            (None, entry, import)
-                        } else {
-                            (
-                                op_editor_ui::widgets::editor_state_ext::missing_fonts_button(
-                                    panel.hit_test(rect, viewport, Point2D::new(x, y)),
-                                ),
-                                None,
-                                false,
-                            )
-                        }
-                    })
-                    .unwrap_or((None, None, false));
-            let changed = new_hover != self.editor_state.editor_ui.missing_fonts_hover
-                || picker_hover != self.editor_state.editor_ui.font_picker.hover
-                || import_hover != self.editor_state.editor_ui.font_picker_import_hover;
+            let changed = hover_flow::missing_fonts_modal_hover(
+                &mut self.editor_state,
+                self.last_viewport_w,
+                self.last_viewport_h,
+                Point2D::new(x, y),
+            );
             if changed {
-                let ui = &mut self.editor_state.editor_ui;
-                ui.missing_fonts_hover = new_hover;
-                ui.font_picker.hover = picker_hover;
-                ui.font_picker_import_hover = import_hover;
                 self.mark_dirty();
             }
             return changed;
@@ -441,15 +417,13 @@ impl WidgetHost {
         if self.editor_state.editor_ui.account_ui_available
             && self.editor_state.editor_ui.login_modal_open
         {
-            use op_editor_ui::widgets::login_modal::LoginModal;
-            let modal = LoginModal::for_editor(&self.editor_state);
-            let panel = modal.rect(self.last_viewport_w, self.last_viewport_h);
-            let new_hover = op_editor_ui::widgets::editor_state_ext::login_modal_button(
-                modal.hit_test(panel, Point2D::new(x, y)),
+            let changed = hover_flow::login_modal_hover(
+                &mut self.editor_state,
+                self.last_viewport_w,
+                self.last_viewport_h,
+                Point2D::new(x, y),
             );
-            let changed = new_hover != self.editor_state.editor_ui.login_modal_hover;
             if changed {
-                self.editor_state.editor_ui.login_modal_hover = new_hover;
                 self.mark_dirty();
             }
             return changed;
@@ -458,23 +432,12 @@ impl WidgetHost {
         if self.editor_state.editor_ui.account_ui_available
             && self.editor_state.editor_ui.account_menu_open
         {
-            use op_editor_ui::widgets::account_menu::AccountMenu;
-            use op_editor_ui::widgets::top_bar::TopBar;
-            use op_editor_ui::widgets::TOP_BAR_HEIGHT;
-            let top_bar_rect = Rect {
-                origin: Point2D::new(0.0, 0.0),
-                size: Point2D::new(self.last_viewport_w, TOP_BAR_HEIGHT),
-            };
-            let top_bar = TopBar::for_editor_ui(&self.editor_state.editor_ui);
-            let anchor = top_bar.account_button_rect(top_bar_rect);
-            let new_hover =
-                AccountMenu::for_editor_ui(&self.editor_state.editor_ui).and_then(|menu| {
-                    let panel = menu.rect_at(anchor);
-                    menu.row_at(panel, Point2D::new(x, y))
-                });
-            let changed = new_hover != self.editor_state.editor_ui.account_menu_hover;
+            let changed = hover_flow::account_menu_hover(
+                &mut self.editor_state,
+                self.last_viewport_w,
+                Point2D::new(x, y),
+            );
             if changed {
-                self.editor_state.editor_ui.account_menu_hover = new_hover;
                 self.mark_dirty();
             }
             return changed;
@@ -531,20 +494,8 @@ impl WidgetHost {
         ) {
             return true;
         }
-        let over_path_menu = self
-            .editor_state
-            .ui
-            .path_anchor_menu
-            .clone()
-            .map(|state| {
-                op_editor_ui::widgets::path_anchor_context_menu::PathAnchorContextMenu::for_state(
-                    &self.editor_state,
-                    state,
-                )
-                .rect()
-                .contains(Point2D::new(x, y))
-            })
-            .unwrap_or(false);
+        let over_path_menu =
+            hover_flow::path_anchor_menu_contains(&self.editor_state, Point2D::new(x, y));
         let path_menu_changed = self.update_path_anchor_menu_hover(x, y);
         if over_path_menu {
             let lower_cleared = self.clear_chat_and_lower_hover();
@@ -1131,65 +1082,17 @@ impl WidgetHost {
             None
         };
         let inside_property_panel = over_property_panel && property_panel.is_some();
-        if let Some(panel) = property_panel {
-            let new_tab_hover = panel.tab_hover_at(property_rect, point);
-            if new_tab_hover != self.editor_state.editor_ui.property_tab_hover {
-                self.editor_state.editor_ui.property_tab_hover = new_tab_hover;
-                property_hover_changed = true;
-            }
-            let new_fill_type_hover = panel.fill_type_picker_row_at(property_rect, point);
-            if new_fill_type_hover != self.editor_state.editor_ui.fill_type_picker.hover {
-                self.editor_state.editor_ui.fill_type_picker.hover = new_fill_type_hover;
-                property_hover_changed = true;
-            }
-            let new_compositing_hover = panel.compositing_picker_row_at(property_rect, point);
-            if new_compositing_hover != self.editor_state.editor_ui.compositing_picker.hover {
-                self.editor_state.editor_ui.compositing_picker.hover = new_compositing_hover;
-                property_hover_changed = true;
-            }
-            let new_action_hover = panel.action_hover_index(property_rect, point);
-            if new_action_hover != self.editor_state.editor_ui.property_action_hover {
-                self.editor_state.editor_ui.property_action_hover = new_action_hover;
-                property_hover_changed = true;
-            }
-        } else {
-            let ui = &mut self.editor_state.editor_ui;
-            property_hover_changed |= ui.property_tab_hover.take().is_some();
-            property_hover_changed |= ui.fill_type_picker.hover.take().is_some();
-            property_hover_changed |= ui.compositing_picker.hover.take().is_some();
-            property_hover_changed |= ui.property_action_hover.take().is_some();
-        }
+        property_hover_changed |= hover_flow::property_base_hover(
+            &mut self.editor_state,
+            property_panel,
+            property_rect,
+            point,
+        );
         // Code-panel hover wash. Reuses the panel's click geometry for
-        // framework chips, scroll chevrons, and body actions.
-        let (new_fw_hover, new_action_hover) = if self.editor_state.property_panel_visible()
-            && matches!(
-                self.editor_state.editor_ui.property_tab,
-                op_editor_core::PropertyTab::Code
-            ) {
-            let pw = self.editor_state.editor_ui.property_panel_width;
-            let panel_x = self.last_viewport_w - pw;
-            let panel_rect = Rect {
-                origin: Point2D::new(panel_x, TOP_BAR_HEIGHT),
-                size: Point2D::new(pw, (self.last_viewport_h - TOP_BAR_HEIGHT).max(0.0)),
-            };
-            if x >= panel_x && x <= self.last_viewport_w {
-                op_editor_ui::widgets::property_panel_code::code_hover_at_with_locale(
-                    panel_rect,
-                    &self.editor_state.codegen,
-                    Point2D::new(x, y),
-                    self.editor_state.editor_ui.locale,
-                )
-            } else {
-                (None, None)
-            }
-        } else {
-            (None, None)
-        };
-        if new_fw_hover != self.editor_state.codegen.framework_hover
-            || new_action_hover != self.editor_state.codegen.action_hover
-        {
-            self.editor_state.codegen.framework_hover = new_fw_hover;
-            self.editor_state.codegen.action_hover = new_action_hover;
+        // framework chips, scroll chevrons, and body actions. Web has no
+        // `over_topmost` gate here (native does) — the floating panels that
+        // would suppress it are already handled by `apply_overlay_cursor_move`.
+        if hover_flow::code_panel_hover(&mut self.editor_state, property_rect, point, true) {
             self.mark_dirty();
             return true;
         }
@@ -1217,26 +1120,12 @@ impl WidgetHost {
                 origin: Point2D::new(cx0, cy0),
                 size: Point2D::new(cw, ch),
             };
-            let canvas = CanvasViewport::from_editor(&self.editor_state, &self.layout_scene);
-            if let Some(root) = canvas.frame_label_at_point(canvas_rect, Point2D::new(x, y)) {
-                Some(op_editor_core::NodeId::new(root))
-            } else {
-                let local = Point2D::new(x - cx0, y - cy0);
-                let doc = self.editor_state.viewport.to_document(local);
-                self.layout_scene
-                    .node_path_at_doc_point(doc, self.editor_state.viewport.zoom)
-                    .and_then(|path| {
-                        let path = path
-                            .into_iter()
-                            .map(op_editor_core::NodeId::new)
-                            .collect::<Vec<_>>();
-                        op_editor_core::selection_resolve::resolve_canvas_depth_targets(
-                            &path,
-                            self.editor_state.editor_ui.entered_container.as_ref(),
-                        )
-                        .map(|targets| targets.primary)
-                    })
-            }
+            hover_flow::canvas_hover_target(
+                &self.editor_state,
+                &self.layout_scene,
+                canvas_rect,
+                Point2D::new(x, y),
+            )
         } else {
             None
         };

@@ -199,16 +199,9 @@ impl WidgetHost {
     }
 
     // The keyboard routers publish the legacy caret mirror through
-    // `op_editor_core::host_keyboard_transitions` directly; these two
-    // wrappers remain for the variables-panel PRESS paths.
-
-    pub(in crate::widget_host) fn sync_variables_header_input_legacy(&mut self, select_all: bool) {
-        op_editor_core::host_keyboard_transitions::mirror_variables_header_input_legacy(
-            &mut self.editor_state,
-            select_all,
-            self.now_ms,
-        );
-    }
+    // `op_editor_core::host_keyboard_transitions` directly, and the
+    // variables-panel header renames now ride the shared press
+    // transitions; this wrapper remains for the row-cell PRESS paths.
 
     pub(in crate::widget_host) fn sync_variable_row_input_legacy(&mut self, select_all: bool) {
         op_editor_core::host_keyboard_transitions::mirror_variable_row_input_legacy(

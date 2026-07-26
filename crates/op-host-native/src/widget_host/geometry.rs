@@ -7,12 +7,11 @@
 //! input-dispatch contract keeps `layout_scene` fresh before any
 //! hit-testing input event (see `widget_host.rs`).
 
-use super::helpers::{PANEL_RESIZE_GUTTER, STATUS_INSET};
-use super::{cursor_for_handle, CursorHint, PanelResizeKind, WidgetHostNative};
-use op_editor_ui::widgets::{
-    rotation_corner_at_point, selection_handle_at_point, AIChatHit, AIChatPlaceholder,
-    ChatResizeEdge, STATUS_BAR_HEIGHT, STATUS_BAR_WIDTH, TOP_BAR_HEIGHT,
-};
+use super::helpers::PANEL_RESIZE_GUTTER;
+use super::{PanelResizeKind, WidgetHostNative};
+use op_editor_ui::widgets::host_canvas_geometry as canvas_geometry;
+use op_editor_ui::widgets::host_overlay_geometry as overlay_geometry;
+use op_editor_ui::widgets::{AIChatPlaceholder, ChatResizeEdge, TOP_BAR_HEIGHT};
 use op_editor_ui::{Point2D, Rect};
 
 impl WidgetHostNative {
@@ -26,8 +25,7 @@ impl WidgetHostNative {
         viewport_w: f32,
         viewport_h: f32,
     ) -> bool {
-        let (cx0, cy0, cw, ch) = self.canvas_region(viewport_w, viewport_h);
-        x >= cx0 && x <= cx0 + cw && y >= cy0 && y <= cy0 + ch
+        canvas_geometry::over_canvas(&self.editor_state, x, y, viewport_w, viewport_h)
     }
 
     /// True when the cursor is over either resize gutter — used by
@@ -92,15 +90,6 @@ impl WidgetHostNative {
         AIChatPlaceholder::from_editor(&self.editor_state)
             .resize_edge_at(rect, point)
             .is_some()
-    }
-
-    fn chat_resize_cursor(edge: ChatResizeEdge) -> CursorHint {
-        match edge {
-            ChatResizeEdge::E | ChatResizeEdge::W => CursorHint::ResizeEw,
-            ChatResizeEdge::N | ChatResizeEdge::S => CursorHint::ResizeNs,
-            ChatResizeEdge::Nw | ChatResizeEdge::Se => CursorHint::ResizeNwse,
-            ChatResizeEdge::Ne | ChatResizeEdge::Sw => CursorHint::ResizeNesw,
-        }
     }
 
     /// Clear every lower-overlay hover highlight — file menu, locale
@@ -543,244 +532,20 @@ impl WidgetHostNative {
         self.node_drag.is_some()
     }
 
-    pub fn cursor_hint(&self, x: f32, y: f32, viewport_w: f32, viewport_h: f32) -> CursorHint {
-        use op_editor_core::Tool;
-        // Modal overlays — keep the pointer the OS default.
-        if self.editor_state.editor_ui.agent_settings_open
-            || self.editor_state.ui.color_picker.is_some()
-        {
-            return CursorHint::Default;
-        }
-        // The disabled empty-state Init card shows a not-allowed cursor
-        // (TS `cursor-not-allowed`) — checked before the overlay block
-        // so it wins over the Git popover's neutral Default.
-        if self.over_disabled_init_card(x, y, viewport_w, viewport_h) {
-            return CursorHint::NotAllowed;
-        }
-        if let Some(resize) = self.chat_resize {
-            return Self::chat_resize_cursor(resize.edge);
-        }
-        // Keep an in-flight Variables resize gesture authoritative even if a
-        // different overlay opens before the next pointer event.
-        if let Some(edge) = self.variables_resize {
-            use op_editor_ui::widgets::variables_panel::VariablesResizeEdge;
-            return match edge {
-                VariablesResizeEdge::Right => CursorHint::ResizeEw,
-                VariablesResizeEdge::Bottom => CursorHint::ResizeNs,
-                VariablesResizeEdge::Corner => CursorHint::ResizeNwse,
-            };
-        }
-        // Image popovers paint above Chat. Their editor gets an I-beam; the
-        // rest of the popup stays neutral before the model picker applies its
-        // modal cursor gate.
-        let image_panel = &self.editor_state.editor_ui.image_panel;
-        if image_panel.search_open || image_panel.generate_open {
-            if let Some(panel) =
-                op_editor_ui::widgets::PropertyPanel::for_selection(&self.editor_state)
-            {
-                let property_rect = self.property_rect(viewport_w, viewport_h);
-                let point = Point2D::new(x, y);
-                if panel.image_popover_input_at(property_rect, point).is_some() {
-                    return CursorHint::Text;
-                }
-                if panel.image_popovers_contain(property_rect, point) {
-                    return CursorHint::Default;
-                }
-            }
-        }
-        // The model picker is modal below the overlays handled above. Stop
-        // before probing Chat/Variables resize and transcript geometry: those
-        // controls are visually covered or intentionally inactive, and each
-        // probe used to rebuild AIChatPlaceholder on every raw mouse move.
-        if self.editor_state.editor_ui.chat_model_picker.open {
-            return CursorHint::Default;
-        }
-
-        // Build Chat once for both resize and transcript cursor probes.
-        let chat_panel = self.ai_chat_rect(viewport_w, viewport_h).map(|rect| {
-            (
-                rect,
-                AIChatPlaceholder::from_editor(&self.editor_state).owned_by(self.chat_panel_owner),
-            )
-        });
-        if let Some((rect, panel)) = chat_panel.as_ref() {
-            if let Some(edge) = panel.resize_edge_at(*rect, Point2D::new(x, y)) {
-                return Self::chat_resize_cursor(edge);
-            }
-        }
-        // Floating VariablesPanel resize affordances (TS ew/ns/nwse cursor
-        // strips). The panel is below Chat/model-picker in paint order.
-        if let Some(edge) = self
-            .variables_panel_rect(viewport_w, viewport_h)
-            .and_then(|rect| {
-                use op_editor_ui::widgets::variables_panel::VariablesPanel;
-                VariablesPanel::for_editor(&self.editor_state)
-                    .resize_edge_at(rect, Point2D::new(x, y))
-            })
-        {
-            use op_editor_ui::widgets::variables_panel::VariablesResizeEdge;
-            return match edge {
-                VariablesResizeEdge::Right => CursorHint::ResizeEw,
-                VariablesResizeEdge::Bottom => CursorHint::ResizeNs,
-                VariablesResizeEdge::Corner => CursorHint::ResizeNwse,
-            };
-        }
-        // Cursor-shape probe against the LAST BUILT (= last painted) transcript
-        // layout: the user points at what is on screen, so a pure geometric hit
-        // over the displayed build is the correct question — and it hashes
-        // nothing. `hit_test` would re-resolve + re-fingerprint the live
-        // transcript here (a second hash for the same physical move);
-        // `hit_test_current_build` reuses the stored build instead. The
-        // redraw-time `cursor_probe` (the single hash per cursor move)
-        // re-resolves the build and self-corrects any staleness on the next
-        // painted frame. Before the first paint no build exists and this yields
-        // the default arrow, which is acceptable.
-        if let Some((chat_rect, panel)) = chat_panel.as_ref() {
-            if let Some(AIChatHit::SelectInputText(_) | AIChatHit::SelectTranscriptText(_, _)) =
-                panel.hit_test_current_build(*chat_rect, Point2D::new(x, y))
-            {
-                return CursorHint::Text;
-            }
-        }
-        // Any floating overlay (panels, Git popover, Toolbar /
-        // StatusBar / chat, open dropdowns) — a neutral cursor over
-        // them, never a canvas action cursor (Move / Crosshair)
-        // bleeding through from a node underneath.
-        if self.over_floating_overlay(x, y, viewport_w, viewport_h) {
-            return CursorHint::Default;
-        }
-        // The floating Git panel paints on top of the right-rail
-        // resize gutter (and in diff mode is wide enough to cover
-        // it), so don't show the resize cursor over the panel.
-        let over_git_panel = self
-            .git_panel_outer_rect(viewport_w, viewport_h)
-            .is_some_and(|r| (r).contains(Point2D::new(x, y)));
-        if self.is_resizing_panel()
-            || (!over_git_panel && self.panel_resize_hover(x, y, viewport_w).is_some())
-        {
-            return CursorHint::ResizeEw;
-        }
-        if self.image_crop_drag.is_some() {
-            return CursorHint::Grabbing;
-        }
-        if self.is_dragging_node() {
-            return CursorHint::Default;
-        }
-        if self.rotate_drag.is_some() {
-            return CursorHint::Rotate;
-        }
-        if let Some(handle) = self.handle_drag.map(|d| d.handle) {
-            return cursor_for_handle(handle);
-        }
-        if !self.over_canvas(x, y, viewport_w, viewport_h) {
-            return CursorHint::Default;
-        }
-        let (cx0, cy0, cw, ch) = self.canvas_region(viewport_w, viewport_h);
-        let canvas_local = Point2D::new(x - cx0, y - cy0);
-        let doc_point = self.editor_state.viewport.to_document(canvas_local);
-        let zoom = self.editor_state.viewport.zoom;
-        let over_canvas_node = self
-            .layout_scene
-            .node_at_doc_point(doc_point, zoom)
-            .is_some();
-        match self.editor_state.tool {
-            Tool::Hand => CursorHint::Grab,
-            // Shapes / Frame / Form-widget tools all place a node on
-            // click — a placement crosshair reads the same for each.
-            Tool::Rect
-            | Tool::Ellipse
-            | Tool::Polygon
-            | Tool::Line
-            | Tool::Pen
-            | Tool::Frame
-            | Tool::TextInput
-            | Tool::TextArea
-            | Tool::NumberInput
-            | Tool::Select_
-            | Tool::RadioGroup
-            | Tool::Switch
-            | Tool::Checkbox
-            | Tool::Slider
-            | Tool::Progress
-            | Tool::Tabs => {
-                if over_canvas_node {
-                    CursorHint::Default
-                } else {
-                    CursorHint::Crosshair
-                }
-            }
-            Tool::Text => CursorHint::Text,
-            Tool::Select => {
-                if let Some(editing) = self.editor_state.editor_ui.image_crop_editing.as_ref() {
-                    let over_editing_node = self
-                        .layout_scene
-                        .node_path_at_doc_point(doc_point, zoom)
-                        .is_some_and(|path| path.iter().any(|id| id == editing.as_str()));
-                    if over_editing_node {
-                        return CursorHint::Grab;
-                    }
-                }
-                let canvas_rect = Rect {
-                    origin: Point2D::new(cx0, cy0),
-                    size: Point2D::new(cw, ch),
-                };
-                let point = Point2D::new(x, y);
-                if let Some(handle) = selection_handle_at_point(
-                    canvas_rect,
-                    &self.layout_scene,
-                    &self.editor_state,
-                    point,
-                ) {
-                    return cursor_for_handle(handle);
-                }
-                if rotation_corner_at_point(
-                    canvas_rect,
-                    &self.layout_scene,
-                    &self.editor_state,
-                    point,
-                )
-                .is_some()
-                {
-                    return CursorHint::Rotate;
-                }
-                if over_canvas_node {
-                    return CursorHint::Default;
-                }
-                CursorHint::Default
-            }
-        }
-    }
-
     /// Canvas origin (logical px).
     pub(in crate::widget_host) fn canvas_origin(&self) -> (f32, f32) {
-        let cx0 = if self.editor_state.editor_ui.sidebar_open {
-            self.editor_state.editor_ui.layer_panel_width
-        } else {
-            0.0
-        };
-        (cx0, TOP_BAR_HEIGHT)
+        canvas_geometry::canvas_origin(&self.editor_state)
     }
 
-    /// Canvas region (logical px, viewport-relative).
+    /// Canvas region (logical px, viewport-relative). The math is
+    /// single-sourced with the web host — see the coordinate invariant in
+    /// `op_editor_ui::widgets::host_canvas_geometry`.
     pub(in crate::widget_host) fn canvas_region(
         &self,
         viewport_w: f32,
         viewport_h: f32,
     ) -> (f32, f32, f32, f32) {
-        let canvas_left = if self.editor_state.editor_ui.sidebar_open {
-            self.editor_state.editor_ui.layer_panel_width
-        } else {
-            0.0
-        };
-        let rail_occupied = self.editor_state.right_rail_visible();
-        let canvas_right = if rail_occupied {
-            viewport_w - self.editor_state.editor_ui.property_panel_width
-        } else {
-            viewport_w
-        };
-        let canvas_w = (canvas_right - canvas_left).max(0.0);
-        let canvas_h = (viewport_h - TOP_BAR_HEIGHT).max(0.0);
-        (canvas_left, TOP_BAR_HEIGHT, canvas_w, canvas_h)
+        canvas_geometry::canvas_region(&self.editor_state, viewport_w, viewport_h)
     }
 
     /// Bottom-right floating StatusBar rect — mirrors the placement in
@@ -791,41 +556,23 @@ impl WidgetHostNative {
         viewport_w: f32,
         viewport_h: f32,
     ) -> Option<Rect> {
-        let (canvas_left, _top, canvas_w, canvas_h) = self.canvas_region(viewport_w, viewport_h);
-        if canvas_w <= STATUS_BAR_WIDTH + STATUS_INSET * 2.0 {
-            return None;
-        }
-        let canvas_right = canvas_left + canvas_w;
-        Some(Rect {
-            origin: Point2D::new(
-                canvas_right - STATUS_BAR_WIDTH - STATUS_INSET,
-                TOP_BAR_HEIGHT + canvas_h - STATUS_BAR_HEIGHT - STATUS_INSET,
-            ),
-            size: Point2D::new(STATUS_BAR_WIDTH, STATUS_BAR_HEIGHT),
-        })
+        canvas_geometry::status_bar_rect(&self.editor_state, viewport_w, viewport_h)
     }
 
     /// Step the canvas zoom from a StatusBar `[-]` / `[+]` click,
     /// anchored at the canvas-region centre so the visible content
     /// scales in place. `zoom_in` picks the sign; the magnitude maps
     /// to ≈ ±20 % per click through `Viewport::zoom_at`.
+    /// Step the canvas zoom from a StatusBar `[-]` / `[+]` click.
+    /// Shared with the web host — see
+    /// `op_editor_ui::widgets::host_overlay_geometry::status_bar_zoom`.
     pub(in crate::widget_host) fn status_bar_zoom(
         &mut self,
         zoom_in: bool,
         viewport_w: f32,
         viewport_h: f32,
     ) {
-        // `zoom_at` factor is `exp(delta * 0.0015)`; ±120 ≈ ±20 %.
-        const STEP: f32 = 120.0;
-        // `Viewport::zoom_at` works in CANVAS-LOCAL coordinates (every
-        // other call feeds it `window_pt - canvas_origin`), so the
-        // anchor is the canvas-region centre relative to the canvas
-        // origin — NOT the window-space centre.
-        let (_cx0, _cy0, cw, ch) = self.canvas_region(viewport_w, viewport_h);
-        let center = op_editor_ui::Point2D::new(cw / 2.0, ch / 2.0);
-        self.editor_state
-            .viewport
-            .zoom_at(center, if zoom_in { STEP } else { -STEP });
+        overlay_geometry::status_bar_zoom(&mut self.editor_state, zoom_in, viewport_w, viewport_h);
         self.mark_dirty();
     }
 
@@ -834,21 +581,18 @@ impl WidgetHostNative {
     /// page.
     pub(in crate::widget_host) fn zoom_to_fit(&mut self, viewport_w: f32, viewport_h: f32) {
         self.refresh_layout_scene();
-        if let Some(content) = self.layout_scene.content_bounds() {
-            let (_l, _t, canvas_w, canvas_h) = self.canvas_region(viewport_w, viewport_h);
-            self.editor_state
-                .viewport
-                .fit_to_with_max_zoom(content, canvas_w, canvas_h, 64.0, 1.0);
-        }
+        overlay_geometry::zoom_to_fit(
+            &mut self.editor_state,
+            &self.layout_scene,
+            viewport_w,
+            viewport_h,
+        );
         self.mark_dirty();
     }
 
-    /// When the active selection is a single Path node + the Pen OR
-    /// Select tool is active (TS edits path controls with Select —
-    /// `skia-hit-handlers.ts::hitTestPathControl`), hit-test whether
-    /// `(x, y)` lands on an anchor or one of its bezier handles.
-    /// Handles are checked before anchors (TS order); returns the
-    /// node id, anchor index, and which target.
+    /// Anchor / bezier-handle hit-test for the selected Path node.
+    /// The math is shared with the web host — see
+    /// `op_editor_ui::widgets::host_canvas_geometry::path_anchor_hit`.
     pub(in crate::widget_host) fn path_anchor_hit(
         &self,
         x: f32,
@@ -856,72 +600,14 @@ impl WidgetHostNative {
         viewport_w: f32,
         viewport_h: f32,
     ) -> Option<(String, usize, super::AnchorDragTarget)> {
-        use super::AnchorDragTarget;
-        use op_editor_core::pen::PathHandleSide;
-        use op_editor_ui::layout_scene::NodeKind;
-        use op_editor_ui::widgets::path_handle_positions;
-        if !matches!(
-            self.editor_state.tool,
-            op_editor_core::Tool::Pen | op_editor_core::Tool::Select
-        ) {
-            return None;
-        }
-        if self.editor_state.selection_count() != 1 {
-            return None;
-        }
-        let sel = self.editor_state.selection.anchor.as_str().to_string();
-        let node = self.layout_scene.active_page()?.find(&sel)?;
-        if !matches!(node.kind, NodeKind::Path) {
-            return None;
-        }
-        let (cx0, cy0, _cw, _ch) = self.canvas_region(viewport_w, viewport_h);
-        let zoom = self.editor_state.viewport.zoom.max(0.0001);
-        let canvas_local = Point2D::new(x - cx0, y - cy0);
-        let mut doc = self.editor_state.viewport.to_document(canvas_local);
-        // Un-rotate the cursor into the node's local frame — handle
-        // positions are stored unrotated but the path paints rotated.
-        if node.rotation.abs() > f32::EPSILON {
-            let b = node.aggregate_bounds();
-            let centre = Point2D::new(b.origin.x + b.size.x / 2.0, b.origin.y + b.size.y / 2.0);
-            doc = op_editor_ui::widgets::rotate_point(doc, centre, -node.rotation);
-        }
-        // 8 screen-px grab radius (TS `PATH_CONTROL_HIT_RADIUS`),
-        // expressed in doc space.
-        let r2 = 64.0 / (zoom * zoom);
-        let hit = |p: Point2D| (doc.x - p.x).powi(2) + (doc.y - p.y).powi(2) <= r2;
-        // Handles hit-test before anchors — TS `hitTestPathControl`
-        // walks handleOut → handleIn across all anchors first
-        // (`skia-hit-handlers.ts:136-159`). Ghost (unset) handles are
-        // grabbable only with the Pen tool — the Select-tool editor
-        // shows existing handles only (TS overlay parity).
-        let pen_tool = matches!(self.editor_state.tool, op_editor_core::Tool::Pen);
-        for (i, a) in node.path_anchors.iter().enumerate() {
-            let (hin, hout) = path_handle_positions(a, zoom);
-            if (a.handle_out.is_some() || pen_tool) && hit(hout) {
-                return Some((
-                    sel.clone(),
-                    i,
-                    AnchorDragTarget::Handle(PathHandleSide::Out),
-                ));
-            }
-            if (a.handle_in.is_some() || pen_tool) && hit(hin) {
-                return Some((sel.clone(), i, AnchorDragTarget::Handle(PathHandleSide::In)));
-            }
-        }
-        for (i, a) in node.path_anchors.iter().enumerate() {
-            if hit(a.pos) {
-                return Some((sel.clone(), i, AnchorDragTarget::Anchor));
-            }
-        }
-        // Paths without resolved anchor data fall back to `points`.
-        if node.path_anchors.is_empty() {
-            for (i, p) in node.points.iter().enumerate() {
-                if hit(*p) {
-                    return Some((sel.clone(), i, AnchorDragTarget::Anchor));
-                }
-            }
-        }
-        None
+        canvas_geometry::path_anchor_hit(
+            &self.editor_state,
+            &self.layout_scene,
+            x,
+            y,
+            viewport_w,
+            viewport_h,
+        )
     }
 
     /// When a single Ellipse is selected with the Select tool,

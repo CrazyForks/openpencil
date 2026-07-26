@@ -35,6 +35,7 @@
 //! Functions that pull in `op_editor_ui::widgets::*` MUST live
 //! in this file (per spec §1.4). Phase B4 boundary check enforces.
 
+use op_editor_ui::widgets::host_frame_bookkeeping as bookkeeping;
 use op_editor_ui::widgets::TOP_BAR_HEIGHT;
 use op_editor_ui::{Point2D, Rect, Theme};
 
@@ -193,11 +194,13 @@ pub enum PendingAuthAction {
     SignOut,
 }
 
-pub(in crate::widget_host) const TOOLBAR_INSET_X: f32 = 12.0;
-pub(in crate::widget_host) const TOOLBAR_INSET_Y: f32 = 12.0;
-pub(in crate::widget_host) const STATUS_INSET: f32 = 16.0;
-const AICHAT_INSET_BOTTOM: f32 = 12.0;
-const AICHAT_INSET_LEFT: f32 = 12.0;
+// Floating-chrome insets live with the canvas-region math they are
+// measured from, so the native + web hosts can't drift on where the
+// chat pill / toolbar / status pill sit.
+#[allow(unused_imports)]
+pub(in crate::widget_host) use op_editor_ui::widgets::host_canvas_geometry::{
+    AICHAT_INSET_BOTTOM, AICHAT_INSET_LEFT, STATUS_INSET, TOOLBAR_INSET_X, TOOLBAR_INSET_Y,
+};
 
 pub struct WidgetHost {
     /// **The host's single source of truth.** All input handlers
@@ -381,22 +384,14 @@ impl WidgetHost {
     /// (the CanvasKit mount has no deadline pump to feed it).
     #[allow(dead_code)]
     pub fn next_animation_deadline_ms(&self) -> Option<u64> {
-        let mut next = op_editor_core::agent_indicators::next_reveal_deadline_ms(self.now_ms);
-        if let Some(deadline) =
-            op_editor_core::agent_indicators::next_generation_scan_deadline_ms(self.now_ms)
-        {
-            next = Some(next.map_or(deadline, |current| current.min(deadline)));
-        }
-        if let Some(transition) = self.layout_transition.as_ref() {
-            if let Some(deadline) = transition.next_deadline_ms(self.now_ms) {
-                next = Some(next.map_or(deadline, |current| current.min(deadline)));
-            }
-        }
-        if let Some(input) = self.editor_state.active_text_input() {
-            let deadline = input.next_blink_flip_ms(self.now_ms);
-            next = Some(next.map_or(deadline, |current| current.min(deadline)));
-        }
-        next
+        // The web host contributes no platform clauses of its own — the
+        // native spine folds gesture-degrade / pan-cache / preview / git-clone
+        // wake-ups onto this same base.
+        bookkeeping::base_animation_deadline_ms(
+            &self.editor_state,
+            self.layout_transition.as_ref(),
+            self.now_ms,
+        )
     }
 
     pub fn layout_transition_active(&self) -> bool {
@@ -475,92 +470,16 @@ impl WidgetHost {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-struct DragState {
-    last_x: f32,
-    last_y: f32,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ChatDragState {
-    grab_dx: f32,
-    grab_dy: f32,
-    pos_x: f32,
-    pos_y: f32,
-}
-
-/// Header drag on a floating panel (Design-MD / Component-Browser /
-/// Icon-picker) — the panel's top-left follows the cursor minus the
-/// grab offset. Mirrors the native host's `*DragState` trio.
-#[derive(Debug, Clone, Copy)]
-pub(in crate::widget_host) struct PanelDragState {
-    pub(in crate::widget_host) grab_dx: f32,
-    pub(in crate::widget_host) grab_dy: f32,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct CodeSelectionDragState {
-    anchor: usize,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ChatInputSelectionDragState {
-    anchor: usize,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ChatTextSelectionDragState {
-    message_index: usize,
-    anchor: usize,
-}
-
-/// Active marquee rect-select state, mirroring the native host.
-/// Endpoints are SCREEN coords so paint can draw without re-
-/// deriving the canvas→screen transform; release converts to doc
-/// space once to ask the document which nodes overlap.
-#[derive(Debug, Clone, Copy)]
-pub(in crate::widget_host) struct MarqueeDragState {
-    pub(in crate::widget_host) start_screen_x: f32,
-    pub(in crate::widget_host) start_screen_y: f32,
-    pub(in crate::widget_host) current_screen_x: f32,
-    pub(in crate::widget_host) current_screen_y: f32,
-    /// Whether shift was held at press time. Drives whether
-    /// release REPLACES the selection or adds intersecting nodes
-    /// to the existing set (ADD-only — never removes).
-    pub(in crate::widget_host) additive: bool,
-}
-
-/// Active LayerPanel drag-to-reorder gesture. Mirrors the native
-/// host's `LayerDragState` — `source` is a shell-core `NodeId`
-/// (the LayerPanel hit-test mints it) and is translated to an
-/// op-editor-core id only at the commit site.
-#[derive(Debug, Clone)]
-pub(in crate::widget_host) struct LayerDragState {
-    pub(in crate::widget_host) source: op_editor_core::NodeId,
-    pub(in crate::widget_host) start_y: f32,
-    pub(in crate::widget_host) current_x: f32,
-    pub(in crate::widget_host) current_y: f32,
-    pub(in crate::widget_host) active: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::widget_host) enum AnchorDragTarget {
-    Anchor,
-    Handle(op_editor_core::pen::PathHandleSide),
-}
-
-#[derive(Debug, Clone)]
-pub(in crate::widget_host) struct PathAnchorDragState {
-    pub(in crate::widget_host) node_id: op_editor_core::NodeId,
-    pub(in crate::widget_host) anchor_index: usize,
-    pub(in crate::widget_host) target: AnchorDragTarget,
-    pub(in crate::widget_host) anchor_doc: op_editor_ui::Point2D,
-    pub(in crate::widget_host) start_doc: op_editor_ui::Point2D,
-    pub(in crate::widget_host) grab_offset: Option<op_editor_ui::Point2D>,
-    pub(in crate::widget_host) shift: bool,
-    pub(in crate::widget_host) moved: bool,
-    pub(in crate::widget_host) pre_drag_snapshot: op_editor_core::EditorSnapshot,
-}
+// Transient pointer-drag records that carry no platform types are
+// single-sourced in `op_editor_core::host_drag_state` (the native spine
+// declared byte-identical copies). Re-exported here under their
+// historical `widget_host` names so every submodule's `use super::{…}`
+// and struct-literal site stays unchanged.
+pub(in crate::widget_host) use op_editor_core::host_drag_state::{
+    AnchorDragTarget, ChatDragState, ChatInputSelectionDragState, ChatTextSelectionDragState,
+    CodeSelectionDragState, DragState, LayerDragState, MarqueeDragState, PanelDragState,
+    PathAnchorDragState,
+};
 
 impl WidgetHost {
     pub fn new() -> Self {
@@ -630,11 +549,11 @@ impl WidgetHost {
     /// then stamped with a fresh owner so it never cross-pairs with the previous
     /// tab's cached geometry. Called at the top of the paint / cursor-move entry.
     pub(in crate::widget_host) fn rotate_chat_owner_if_session_changed(&mut self) {
-        let active = self.editor_state.chat.active_index();
-        if active != self.last_chat_session_index {
-            self.last_chat_session_index = active;
-            self.chat_panel_owner = op_editor_ui::widgets::AIChatPlaceholder::next_owner();
-        }
+        bookkeeping::rotate_chat_owner_if_session_changed(
+            &self.editor_state,
+            &mut self.chat_panel_owner,
+            &mut self.last_chat_session_index,
+        );
     }
 
     /// Force a chat-panel transcript-cache owner rotation NOW, unconditionally —
@@ -648,8 +567,11 @@ impl WidgetHost {
     /// `pub(crate)` because the tab-close path runs in `crate::web_chat`, outside
     /// the `widget_host` module.
     pub(crate) fn force_rotate_chat_owner(&mut self) {
-        self.chat_panel_owner = op_editor_ui::widgets::AIChatPlaceholder::next_owner();
-        self.last_chat_session_index = self.editor_state.chat.active_index();
+        bookkeeping::force_rotate_chat_owner(
+            &self.editor_state,
+            &mut self.chat_panel_owner,
+            &mut self.last_chat_session_index,
+        );
     }
 
     /// Force a LayerPanel row-model-cache owner rotation NOW (mirrors native
@@ -721,11 +643,8 @@ impl WidgetHost {
         before: op_editor_ui::layout_scene::LayoutScene,
     ) {
         self.refresh_layout_scene();
-        self.layout_transition = op_editor_ui::widgets::CanvasLayoutTransition::between(
-            &before,
-            &self.layout_scene,
-            self.now_ms,
-        );
+        self.layout_transition =
+            bookkeeping::transition_between(&before, &self.layout_scene, self.now_ms);
     }
 
     pub(in crate::widget_host) fn start_layout_transition_from_scene_excluding(
@@ -734,11 +653,11 @@ impl WidgetHost {
         excluded_id: &op_editor_core::NodeId,
     ) {
         self.refresh_layout_scene();
-        self.layout_transition = op_editor_ui::widgets::CanvasLayoutTransition::between_excluding(
+        self.layout_transition = bookkeeping::transition_between_excluding(
             &before,
             &self.layout_scene,
             self.now_ms,
-            Some(excluded_id.as_str()),
+            excluded_id,
         );
     }
 
@@ -747,10 +666,8 @@ impl WidgetHost {
         node_id: &op_editor_core::NodeId,
         bounds: Rect,
     ) {
-        let mut starts = std::collections::HashMap::new();
-        starts.insert(node_id.as_str().to_string(), bounds);
         self.layout_transition =
-            op_editor_ui::widgets::CanvasLayoutTransition::from_start_bounds(starts, self.now_ms);
+            bookkeeping::transition_from_single_bounds(node_id, bounds, self.now_ms);
     }
 
     /// Mark `editor_state` as mutated so the next `refresh_layout_scene()`

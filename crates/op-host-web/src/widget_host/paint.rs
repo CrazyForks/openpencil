@@ -9,15 +9,14 @@
 //! canvas reads the render scene.
 
 use super::WidgetHost;
+use op_editor_ui::widgets::host_canvas_geometry as canvas_geometry;
 use op_editor_ui::widgets::variables_panel::VariablesPanel;
 use op_editor_ui::widgets::{
     AIChatPlaceholder, CanvasViewport, ComponentBrowserPanel, DesignMdPanel, IconPickerPanel,
     LayerPanel, LayoutCx, LocalePicker, PaintCx, PropertyPanel, ShapePicker, StatusBar, Toolbar,
-    Widget, STATUS_BAR_HEIGHT, STATUS_BAR_WIDTH, TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
+    Widget, TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
 };
 use op_editor_ui::{Point2D, Rect, RenderBackend};
-
-use super::{STATUS_INSET, TOOLBAR_INSET_X, TOOLBAR_INSET_Y};
 
 impl WidgetHost {
     /// Backend-generic public paint entry (used by the CanvasKit host).
@@ -111,13 +110,8 @@ impl WidgetHost {
         }
 
         if ui.sidebar_open {
-            let layer_panel_rect = Rect {
-                origin: Point2D::new(0.0, TOP_BAR_HEIGHT),
-                size: Point2D::new(
-                    ui.layer_panel_width,
-                    (viewport_height - TOP_BAR_HEIGHT).max(0.0),
-                ),
-            };
+            let layer_panel_rect =
+                canvas_geometry::layer_panel_rect(&self.editor_state, viewport_height);
             // While a drag is active, paint against a panel with the
             // source's subtree excluded — see native paint.rs. The
             // panel walks the canonical `PenNode` tree off
@@ -187,13 +181,11 @@ impl WidgetHost {
             self.now_ms,
         );
         if let Some(panel) = property_panel.as_ref() {
-            let property_rect = Rect {
-                origin: Point2D::new(viewport_width - ui.property_panel_width, TOP_BAR_HEIGHT),
-                size: Point2D::new(
-                    ui.property_panel_width,
-                    (viewport_height - TOP_BAR_HEIGHT).max(0.0),
-                ),
-            };
+            let property_rect = canvas_geometry::property_panel_rect(
+                &self.editor_state,
+                viewport_width,
+                viewport_height,
+            );
             let mut cx = PaintCx {
                 backend: &mut *backend,
             };
@@ -233,14 +225,8 @@ impl WidgetHost {
             .rect
             .size
             .y;
-        let toolbar_rect = Rect {
-            origin: Point2D::new(
-                canvas_left + TOOLBAR_INSET_X,
-                TOP_BAR_HEIGHT + TOOLBAR_INSET_Y,
-            ),
-            size: Point2D::new(TOOLBAR_WIDTH, toolbar_h),
-        };
-        if canvas_w > TOOLBAR_WIDTH + TOOLBAR_INSET_X * 2.0 {
+        let toolbar_rect = canvas_geometry::toolbar_rect(&self.editor_state, toolbar_h);
+        if canvas_geometry::toolbar_fits(canvas_w) {
             let mut cx = PaintCx {
                 backend: &mut *backend,
             };
@@ -258,16 +244,10 @@ impl WidgetHost {
             chat.paint(&mut cx, chat_rect);
         }
 
-        let canvas_right = canvas_left + canvas_w;
-        if canvas_w > STATUS_BAR_WIDTH + STATUS_INSET * 2.0 {
+        if let Some(status_rect) =
+            canvas_geometry::status_bar_rect(&self.editor_state, viewport_width, viewport_height)
+        {
             let status = StatusBar::for_editor(&self.editor_state);
-            let status_rect = Rect {
-                origin: Point2D::new(
-                    canvas_right - STATUS_BAR_WIDTH - STATUS_INSET,
-                    TOP_BAR_HEIGHT + canvas_h - STATUS_BAR_HEIGHT - STATUS_INSET,
-                ),
-                size: Point2D::new(STATUS_BAR_WIDTH, STATUS_BAR_HEIGHT),
-            };
             let mut cx = PaintCx {
                 backend: &mut *backend,
             };
@@ -292,39 +272,33 @@ impl WidgetHost {
         // Marquee selection rect — between StatusBar and the
         // floating pickers in z-order, only while a marquee
         // drag is active.
-        if let Some(m) = self.marquee_drag {
-            let x0 = m.start_screen_x.min(m.current_screen_x);
-            let y0 = m.start_screen_y.min(m.current_screen_y);
-            let w = (m.current_screen_x - m.start_screen_x).abs();
-            let h = (m.current_screen_y - m.start_screen_y).abs();
-            if w >= 1.0 && h >= 1.0 {
-                let rect = Rect {
-                    origin: Point2D::new(x0, y0),
-                    size: Point2D::new(w, h),
-                };
-                let primary = self.theme.primary;
-                let fill = op_editor_ui::Color {
-                    r: primary.r,
-                    g: primary.g,
-                    b: primary.b,
-                    a: primary.a * 0.12,
-                };
-                backend.fill_rect(rect, fill);
-                backend.stroke_rect(rect, primary, 1.0);
-            }
+        if let Some(rect) = self
+            .marquee_drag
+            .as_ref()
+            .and_then(canvas_geometry::marquee_rect)
+        {
+            let primary = self.theme.primary;
+            // 12% primary-tinted fill so the rect reads as a selection
+            // band without obscuring the canvas.
+            let fill = op_editor_ui::Color {
+                r: primary.r,
+                g: primary.g,
+                b: primary.b,
+                a: primary.a * 0.12,
+            };
+            backend.fill_rect(rect, fill);
+            backend.stroke_rect(rect, primary, 1.0);
         }
 
         // PropertyPanel overlays — painted after canvas floating
         // controls so the image-fill popover can cover the zoom
         // status pill when it extends into the canvas.
         if let Some(panel) = property_panel.as_ref() {
-            let property_rect = Rect {
-                origin: Point2D::new(viewport_width - ui.property_panel_width, TOP_BAR_HEIGHT),
-                size: Point2D::new(
-                    ui.property_panel_width,
-                    (viewport_height - TOP_BAR_HEIGHT).max(0.0),
-                ),
-            };
+            let property_rect = canvas_geometry::property_panel_rect(
+                &self.editor_state,
+                viewport_width,
+                viewport_height,
+            );
             let mut cx = PaintCx {
                 backend: &mut *backend,
             };

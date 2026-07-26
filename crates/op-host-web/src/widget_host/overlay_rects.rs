@@ -6,11 +6,9 @@
 //! overlay's on-screen rect. Keeping these in a sibling module keeps
 //! `press.rs` under the repo's 800-line cap.
 
-use super::{WidgetHost, STATUS_INSET, TOOLBAR_INSET_X, TOOLBAR_INSET_Y};
-use op_editor_ui::widgets::{
-    LayoutCx, ShapePicker, Toolbar, Widget, ICON_PICKER_PANEL_H, ICON_PICKER_PANEL_W,
-    SHAPE_PICKER_WIDTH, STATUS_BAR_HEIGHT, STATUS_BAR_WIDTH, TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
-};
+use super::WidgetHost;
+use op_editor_ui::widgets::host_canvas_geometry as canvas_geometry;
+use op_editor_ui::widgets::host_overlay_geometry as overlay_geometry;
 use op_editor_ui::{Point2D, Rect};
 
 impl WidgetHost {
@@ -21,18 +19,7 @@ impl WidgetHost {
         viewport_w: f32,
         viewport_h: f32,
     ) -> Option<Rect> {
-        let (canvas_left, _top, canvas_w, canvas_h) = self.canvas_region(viewport_w, viewport_h);
-        if canvas_w <= STATUS_BAR_WIDTH + STATUS_INSET * 2.0 {
-            return None;
-        }
-        let canvas_right = canvas_left + canvas_w;
-        Some(Rect {
-            origin: Point2D::new(
-                canvas_right - STATUS_BAR_WIDTH - STATUS_INSET,
-                TOP_BAR_HEIGHT + canvas_h - STATUS_BAR_HEIGHT - STATUS_INSET,
-            ),
-            size: Point2D::new(STATUS_BAR_WIDTH, STATUS_BAR_HEIGHT),
-        })
+        canvas_geometry::status_bar_rect(&self.editor_state, viewport_w, viewport_h)
     }
 
     /// Step the canvas zoom from a StatusBar `[-]` / `[+]` click,
@@ -44,28 +31,19 @@ impl WidgetHost {
         viewport_w: f32,
         viewport_h: f32,
     ) {
-        const STEP: f32 = 120.0;
-        // `Viewport::zoom_at` works in CANVAS-LOCAL coords (the wheel
-        // path feeds it `window_pt - canvas_origin`), so the anchor is
-        // the canvas-region centre relative to the canvas origin — not
-        // the window-space centre.
-        let (_cx0, _cy0, cw, ch) = self.canvas_region(viewport_w, viewport_h);
-        let center = Point2D::new(cw / 2.0, ch / 2.0);
-        self.editor_state
-            .viewport
-            .zoom_at(center, if zoom_in { STEP } else { -STEP });
+        overlay_geometry::status_bar_zoom(&mut self.editor_state, zoom_in, viewport_w, viewport_h);
         self.mark_dirty();
     }
 
     /// Zoom + pan so the active page's content is framed within the canvas.
     pub(in crate::widget_host) fn zoom_to_fit(&mut self, viewport_w: f32, viewport_h: f32) {
         self.refresh_layout_scene();
-        if let Some(content) = self.layout_scene.content_bounds() {
-            let (_l, _t, canvas_w, canvas_h) = self.canvas_region(viewport_w, viewport_h);
-            self.editor_state
-                .viewport
-                .fit_to_with_max_zoom(content, canvas_w, canvas_h, 64.0, 1.0);
-        }
+        overlay_geometry::zoom_to_fit(
+            &mut self.editor_state,
+            &self.layout_scene,
+            viewport_w,
+            viewport_h,
+        );
         self.mark_dirty();
     }
 
@@ -77,32 +55,7 @@ impl WidgetHost {
         viewport_w: f32,
         viewport_h: f32,
     ) -> Rect {
-        let (cx0, _cy, cw, _ch) = self.canvas_region(viewport_w, viewport_h);
-        let toolbar = Toolbar::for_editor(&self.editor_state);
-        let toolbar_h = toolbar
-            .layout(&LayoutCx {
-                available_width: TOOLBAR_WIDTH,
-                dpi: 1.0,
-            })
-            .rect
-            .size
-            .y;
-        let toolbar_rect = Rect {
-            origin: Point2D::new(cx0 + TOOLBAR_INSET_X, TOP_BAR_HEIGHT + TOOLBAR_INSET_Y),
-            size: Point2D::new(TOOLBAR_WIDTH, toolbar_h),
-        };
-        let slot = toolbar
-            .shape_slot_rect(toolbar_rect)
-            .unwrap_or(toolbar_rect);
-        let panel_h = ShapePicker::panel_height();
-        let max_x = cx0 + cw - SHAPE_PICKER_WIDTH - 4.0;
-        let toolbar_right = toolbar_rect.origin.x + toolbar_rect.size.x;
-        let x = (toolbar_right + 8.0).min(max_x);
-        let y = slot.origin.y;
-        Rect {
-            origin: Point2D::new(x, y),
-            size: Point2D::new(SHAPE_PICKER_WIDTH, panel_h),
-        }
+        overlay_geometry::shape_picker_rect(&self.editor_state, viewport_w, viewport_h)
     }
 
     /// The open File-menu dropdown rect, or `None` when closed.
@@ -143,9 +96,7 @@ impl WidgetHost {
         viewport_w: f32,
         viewport_h: f32,
     ) -> Rect {
-        use op_editor_ui::widgets::ImportMenu;
-        let (anchor, viewport) = self.import_menu_anchor(viewport_w, viewport_h);
-        ImportMenu::for_editor_ui(&self.editor_state.editor_ui).popup_rect(anchor, viewport)
+        overlay_geometry::import_menu_rect(&self.editor_state, viewport_w, viewport_h)
     }
 
     /// Floating Design-MD panel rect — `None` when the panel is
@@ -157,24 +108,7 @@ impl WidgetHost {
         viewport_w: f32,
         viewport_h: f32,
     ) -> Option<Rect> {
-        use op_editor_ui::widgets::{DESIGN_MD_PANEL_H, DESIGN_MD_PANEL_W};
-        let ui = &self.editor_state.editor_ui;
-        if !ui.design_md_panel.open {
-            return None;
-        }
-        let (px, py) = ui.design_md_panel.pos.unwrap_or_else(|| {
-            (
-                ((viewport_w - DESIGN_MD_PANEL_W) / 2.0).max(0.0),
-                ((viewport_h - DESIGN_MD_PANEL_H) / 2.0).max(0.0),
-            )
-        });
-        // Keep at least the header bar on-screen.
-        let x = px.clamp(0.0, (viewport_w - 80.0).max(0.0));
-        let y = py.clamp(0.0, (viewport_h - 40.0).max(0.0));
-        Some(Rect {
-            origin: Point2D::new(x, y),
-            size: Point2D::new(DESIGN_MD_PANEL_W, DESIGN_MD_PANEL_H),
-        })
+        overlay_geometry::design_md_panel_rect(&self.editor_state, viewport_w, viewport_h)
     }
 
     /// Floating Component-Browser panel rect — `None` when closed.
@@ -184,23 +118,7 @@ impl WidgetHost {
         viewport_w: f32,
         viewport_h: f32,
     ) -> Option<Rect> {
-        use op_editor_ui::widgets::{COMPONENT_BROWSER_PANEL_H, COMPONENT_BROWSER_PANEL_W};
-        let ui = &self.editor_state.editor_ui;
-        if !ui.component_browser_open {
-            return None;
-        }
-        let (px, py) = ui.component_browser_pos.unwrap_or_else(|| {
-            (
-                ((viewport_w - COMPONENT_BROWSER_PANEL_W) / 2.0).max(0.0),
-                ((viewport_h - COMPONENT_BROWSER_PANEL_H) / 2.0).max(0.0),
-            )
-        });
-        let x = px.clamp(0.0, (viewport_w - 80.0).max(0.0));
-        let y = py.clamp(0.0, (viewport_h - 40.0).max(0.0));
-        Some(Rect {
-            origin: Point2D::new(x, y),
-            size: Point2D::new(COMPONENT_BROWSER_PANEL_W, COMPONENT_BROWSER_PANEL_H),
-        })
+        overlay_geometry::component_browser_panel_rect(&self.editor_state, viewport_w, viewport_h)
     }
 
     /// Floating Icon-picker panel rect — `None` when closed. Centred
@@ -210,22 +128,7 @@ impl WidgetHost {
         viewport_w: f32,
         viewport_h: f32,
     ) -> Option<Rect> {
-        if !self.editor_state.editor_ui.icon_picker.open {
-            return None;
-        }
-        let ui = &self.editor_state.editor_ui;
-        let (px, py) = ui.icon_picker_panel_pos.unwrap_or_else(|| {
-            (
-                ((viewport_w - ICON_PICKER_PANEL_W) / 2.0).max(0.0),
-                ((viewport_h - ICON_PICKER_PANEL_H) / 2.0).max(0.0),
-            )
-        });
-        let x = px.clamp(0.0, (viewport_w - 80.0).max(0.0));
-        let y = py.clamp(0.0, (viewport_h - 40.0).max(0.0));
-        Some(Rect {
-            origin: Point2D::new(x, y),
-            size: Point2D::new(ICON_PICKER_PANEL_W, ICON_PICKER_PANEL_H),
-        })
+        overlay_geometry::icon_picker_panel_rect(&self.editor_state, viewport_w, viewport_h)
     }
 
     /// Whether `point` is inside ANY top-most floating panel

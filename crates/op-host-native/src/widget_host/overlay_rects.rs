@@ -8,12 +8,11 @@
 //! cursor hint never bleed a canvas action (Move / Crosshair) through a
 //! floating overlay onto a node underneath.
 
-use super::helpers::{GIT_PANEL_CARET_GAP, TOOLBAR_INSET_X, TOOLBAR_INSET_Y};
+use super::helpers::GIT_PANEL_CARET_GAP;
 use super::WidgetHostNative;
+use op_editor_ui::widgets::host_overlay_geometry as overlay_geometry;
 use op_editor_ui::widgets::{
-    AIChatPlaceholder, AlignToolbar, GitPanel, GitPanelHit, LayoutCx, LocalePicker, ShapePicker,
-    Toolbar, TopBar, Widget, GIT_PANEL_INSET, ICON_PICKER_PANEL_H, ICON_PICKER_PANEL_W,
-    IMPORT_MENU_WIDTH, LOCALE_PICKER_WIDTH, SHAPE_PICKER_WIDTH, TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
+    AIChatPlaceholder, AlignToolbar, GitPanel, GitPanelHit, TopBar, GIT_PANEL_INSET, TOP_BAR_HEIGHT,
 };
 use op_editor_ui::{Point2D, Rect};
 
@@ -210,23 +209,7 @@ impl WidgetHostNative {
         viewport_w: f32,
         viewport_h: f32,
     ) -> Option<Rect> {
-        use op_editor_ui::widgets::{COMPONENT_BROWSER_PANEL_H, COMPONENT_BROWSER_PANEL_W};
-        let ui = &self.editor_state.editor_ui;
-        if !ui.component_browser_open {
-            return None;
-        }
-        let (px, py) = ui.component_browser_pos.unwrap_or_else(|| {
-            (
-                ((viewport_w - COMPONENT_BROWSER_PANEL_W) / 2.0).max(0.0),
-                ((viewport_h - COMPONENT_BROWSER_PANEL_H) / 2.0).max(0.0),
-            )
-        });
-        let x = px.clamp(0.0, (viewport_w - 80.0).max(0.0));
-        let y = py.clamp(0.0, (viewport_h - 40.0).max(0.0));
-        Some(Rect {
-            origin: Point2D::new(x, y),
-            size: Point2D::new(COMPONENT_BROWSER_PANEL_W, COMPONENT_BROWSER_PANEL_H),
-        })
+        overlay_geometry::component_browser_panel_rect(&self.editor_state, viewport_w, viewport_h)
     }
 
     /// Floating Icon-picker panel rect — `None` when closed.
@@ -237,22 +220,7 @@ impl WidgetHostNative {
         viewport_w: f32,
         viewport_h: f32,
     ) -> Option<Rect> {
-        if !self.editor_state.editor_ui.icon_picker.open {
-            return None;
-        }
-        let ui = &self.editor_state.editor_ui;
-        let (px, py) = ui.icon_picker_panel_pos.unwrap_or_else(|| {
-            (
-                ((viewport_w - ICON_PICKER_PANEL_W) / 2.0).max(0.0),
-                ((viewport_h - ICON_PICKER_PANEL_H) / 2.0).max(0.0),
-            )
-        });
-        let x = px.clamp(0.0, (viewport_w - 80.0).max(0.0));
-        let y = py.clamp(0.0, (viewport_h - 40.0).max(0.0));
-        Some(Rect {
-            origin: Point2D::new(x, y),
-            size: Point2D::new(ICON_PICKER_PANEL_W, ICON_PICKER_PANEL_H),
-        })
+        overlay_geometry::icon_picker_panel_rect(&self.editor_state, viewport_w, viewport_h)
     }
 
     /// Whether `point` is inside ANY top-most floating panel
@@ -328,9 +296,7 @@ impl WidgetHostNative {
         viewport_w: f32,
         viewport_h: f32,
     ) -> Rect {
-        use op_editor_ui::widgets::ImportMenu;
-        let (anchor, viewport) = self.import_menu_anchor(viewport_w, viewport_h);
-        ImportMenu::for_editor_ui(&self.editor_state.editor_ui).popup_rect(anchor, viewport)
+        overlay_geometry::import_menu_rect(&self.editor_state, viewport_w, viewport_h)
     }
 
     /// The chat model dropdown extends above the chat panel, so the chat
@@ -401,24 +367,7 @@ impl WidgetHostNative {
         viewport_w: f32,
         viewport_h: f32,
     ) -> Option<Rect> {
-        use op_editor_ui::widgets::{DESIGN_MD_PANEL_H, DESIGN_MD_PANEL_W};
-        let ui = &self.editor_state.editor_ui;
-        if !ui.design_md_panel.open {
-            return None;
-        }
-        let (px, py) = ui.design_md_panel.pos.unwrap_or_else(|| {
-            (
-                ((viewport_w - DESIGN_MD_PANEL_W) / 2.0).max(0.0),
-                ((viewport_h - DESIGN_MD_PANEL_H) / 2.0).max(0.0),
-            )
-        });
-        // Keep at least the header bar on-screen.
-        let x = px.clamp(0.0, (viewport_w - 80.0).max(0.0));
-        let y = py.clamp(0.0, (viewport_h - 40.0).max(0.0));
-        Some(Rect {
-            origin: Point2D::new(x, y),
-            size: Point2D::new(DESIGN_MD_PANEL_W, DESIGN_MD_PANEL_H),
-        })
+        overlay_geometry::design_md_panel_rect(&self.editor_state, viewport_w, viewport_h)
     }
 
     pub(in crate::widget_host) fn shape_picker_rect(
@@ -426,32 +375,7 @@ impl WidgetHostNative {
         viewport_w: f32,
         viewport_h: f32,
     ) -> Rect {
-        let (cx0, _cy, cw, _ch) = self.canvas_region(viewport_w, viewport_h);
-        let toolbar = Toolbar::for_editor(&self.editor_state);
-        let toolbar_h = toolbar
-            .layout(&LayoutCx {
-                available_width: TOOLBAR_WIDTH,
-                dpi: 1.0,
-            })
-            .rect
-            .size
-            .y;
-        let toolbar_rect = Rect {
-            origin: Point2D::new(cx0 + TOOLBAR_INSET_X, TOP_BAR_HEIGHT + TOOLBAR_INSET_Y),
-            size: Point2D::new(TOOLBAR_WIDTH, toolbar_h),
-        };
-        let slot = toolbar
-            .shape_slot_rect(toolbar_rect)
-            .unwrap_or(toolbar_rect);
-        let panel_h = ShapePicker::panel_height();
-        let max_x = cx0 + cw - SHAPE_PICKER_WIDTH - 4.0;
-        let toolbar_right = toolbar_rect.origin.x + toolbar_rect.size.x;
-        let x = (toolbar_right + 8.0).min(max_x);
-        let y = slot.origin.y;
-        Rect {
-            origin: Point2D::new(x, y),
-            size: Point2D::new(SHAPE_PICKER_WIDTH, panel_h),
-        }
+        overlay_geometry::shape_picker_rect(&self.editor_state, viewport_w, viewport_h)
     }
 
     /// `(anchor, viewport)` for the top-bar import dropdown. The
@@ -462,45 +386,16 @@ impl WidgetHostNative {
         viewport_w: f32,
         viewport_h: f32,
     ) -> (Rect, Rect) {
-        let top_bar_rect = Rect {
-            origin: Point2D::new(0.0, 0.0),
-            size: Point2D::new(viewport_w, TOP_BAR_HEIGHT),
-        };
-        let button =
-            TopBar::for_editor_ui(&self.editor_state.editor_ui).import_button_rect(top_bar_rect);
-        let anchor = Rect {
-            origin: button.origin,
-            size: Point2D::new(IMPORT_MENU_WIDTH, button.size.y),
-        };
-        let viewport = Rect {
-            origin: Point2D::new(0.0, 0.0),
-            size: Point2D::new(viewport_w, viewport_h),
-        };
-        (anchor, viewport)
+        overlay_geometry::import_menu_anchor(&self.editor_state, viewport_w, viewport_h)
     }
 
     /// Close the import dropdown and clear its hover row.
     pub(in crate::widget_host) fn close_import_menu(&mut self) {
-        self.editor_state.editor_ui.import_menu_open = false;
-        self.editor_state.editor_ui.import_menu.open = false;
-        self.editor_state.editor_ui.import_menu.hover = None;
+        overlay_geometry::close_import_menu(&mut self.editor_state);
     }
 
     pub(in crate::widget_host) fn locale_picker_rect(&self, viewport_w: f32) -> Rect {
-        let top_bar_rect = Rect {
-            origin: Point2D::new(0.0, 0.0),
-            size: Point2D::new(viewport_w, TOP_BAR_HEIGHT),
-        };
-        let globe = TopBar::for_editor_ui(&self.editor_state.editor_ui).globe_rect(top_bar_rect);
-        let panel_h = LocalePicker::panel_height();
-        let x = (globe.origin.x + globe.size.x / 2.0 - LOCALE_PICKER_WIDTH / 2.0)
-            .max(8.0)
-            .min(viewport_w - LOCALE_PICKER_WIDTH - 8.0);
-        let y = globe.origin.y + globe.size.y + 6.0;
-        Rect {
-            origin: Point2D::new(x, y),
-            size: Point2D::new(LOCALE_PICKER_WIDTH, panel_h),
-        }
+        overlay_geometry::locale_picker_rect(&self.editor_state, viewport_w)
     }
 
     /// The floating AlignToolbar's rect, or `None` when fewer than two

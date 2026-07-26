@@ -11,15 +11,13 @@ pub(in crate::widget_host) use op_editor_ui::util::{
     color_to_hex, color_to_hex_with_alpha, parse_hex_color, resize_bounds,
 };
 
-/// Small breathing room from the canvas corner so the chat pill
-/// doesn't visually touch the canvas edge (per 2026-05-10 user
-/// note to add just a little vertical spacing).
-pub(in crate::widget_host) const AICHAT_INSET_BOTTOM: f32 = 12.0;
-pub(in crate::widget_host) const AICHAT_INSET_LEFT: f32 = 12.0;
-
-pub(in crate::widget_host) const TOOLBAR_INSET_X: f32 = 12.0;
-pub(in crate::widget_host) const TOOLBAR_INSET_Y: f32 = 12.0;
-pub(in crate::widget_host) const STATUS_INSET: f32 = 16.0;
+// Floating-chrome insets live with the canvas-region math they are
+// measured from, so the native + web hosts can't drift on where the
+// chat pill / toolbar / status pill sit.
+#[allow(unused_imports)]
+pub(in crate::widget_host) use op_editor_ui::widgets::host_canvas_geometry::{
+    AICHAT_INSET_BOTTOM, AICHAT_INSET_LEFT, STATUS_INSET, TOOLBAR_INSET_X, TOOLBAR_INSET_Y,
+};
 
 /// Floating Git panel — gap below the TopBar (room for the caret that
 /// connects the panel to its toggle button) + the caret's height and

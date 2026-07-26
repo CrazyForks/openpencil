@@ -1,58 +1,36 @@
 //! Mouse selection for Search / Generate popover text inputs.
+//!
+//! The state walk lives in the shared
+//! `op_editor_ui::widgets::image_popover_input_flow` (the web twin drives
+//! the same functions); this file only threads the host's geometry cache
+//! + active drag through it.
 
 use super::WidgetHostNative;
+use op_editor_ui::widgets::image_popover_input_flow as input_flow;
 use op_editor_ui::widgets::property_panel_image_assets::ImagePopoverInputKind;
 use op_editor_ui::widgets::PropertyPanel;
-use op_editor_ui::Point2D;
+use op_editor_ui::{Point2D, Rect};
 
-#[derive(Debug, Clone, Copy)]
-pub(in crate::widget_host) struct ImageInputSelectionDragState {
-    pub(in crate::widget_host) kind: ImagePopoverInputKind,
-    pub(in crate::widget_host) anchor: usize,
-}
+pub(in crate::widget_host) type ImageInputSelectionDragState = input_flow::ImageInputSelectionDrag;
 
 impl WidgetHostNative {
-    fn cached_image_input_is_visible(&self, kind: ImagePopoverInputKind) -> bool {
-        let panel = &self.editor_state.editor_ui.image_panel;
-        match kind {
-            ImagePopoverInputKind::Search => panel.search_open,
-            ImagePopoverInputKind::Generate => {
-                panel.generate_open
-                    && self
-                        .editor_state
-                        .editor_ui
-                        .agent_settings
-                        .image_generation_configured()
-                    && panel.active_input(true).is_some()
-            }
-        }
-    }
-
     pub(in crate::widget_host) fn image_popover_input_at(
         &self,
         panel: &PropertyPanel,
-        rect: op_editor_ui::Rect,
+        rect: Rect,
         point: Point2D,
     ) -> Option<(ImagePopoverInputKind, usize)> {
-        if let Some(geometry) = self.image_input_geometry.as_ref() {
-            if self.cached_image_input_is_visible(geometry.kind) {
-                if let Some(offset) =
-                    geometry.byte_offset_at(&self.editor_state.editor_ui.image_panel, point, false)
-                {
-                    return Some((geometry.kind, offset));
-                }
-            }
-        }
-        panel.image_popover_input_at(rect, point)
+        input_flow::input_at(
+            &self.editor_state,
+            self.image_input_geometry.as_ref(),
+            panel,
+            rect,
+            point,
+        )
     }
 
-    pub(in crate::widget_host) fn cached_image_input_caret_rect(
-        &self,
-    ) -> Option<op_editor_ui::Rect> {
-        let geometry = self.image_input_geometry.as_ref()?;
-        self.cached_image_input_is_visible(geometry.kind)
-            .then_some(())?;
-        geometry.caret_rect(&self.editor_state.editor_ui.image_panel)
+    pub(in crate::widget_host) fn cached_image_input_caret_rect(&self) -> Option<Rect> {
+        input_flow::cached_caret_rect(&self.editor_state, self.image_input_geometry.as_ref())
     }
 
     pub(in crate::widget_host) fn begin_image_input_selection_drag(
@@ -60,28 +38,14 @@ impl WidgetHostNative {
         kind: ImagePopoverInputKind,
         offset: usize,
     ) -> bool {
-        let configured = self
-            .editor_state
-            .editor_ui
-            .agent_settings
-            .image_generation_configured();
         let extend = self.shift_held;
         let now_ms = self.now_ms;
-        let panel = &mut self.editor_state.editor_ui.image_panel;
-        let input = match kind {
-            ImagePopoverInputKind::Search if panel.search_open => &mut panel.search_query,
-            ImagePopoverInputKind::Generate if panel.generate_open && configured => {
-                &mut panel.generate_prompt
-            }
-            _ => return false,
+        let Some(drag) =
+            input_flow::begin_selection_drag(&mut self.editor_state, kind, offset, extend, now_ms)
+        else {
+            return false;
         };
-        if extend {
-            input.drag_to(offset, now_ms);
-        } else {
-            input.set_caret(offset, now_ms);
-        }
-        let anchor = input.selection().anchor;
-        self.image_input_selection_drag = Some(ImageInputSelectionDragState { kind, anchor });
+        self.image_input_selection_drag = Some(drag);
         self.mark_dirty();
         true
     }
@@ -92,21 +56,23 @@ impl WidgetHostNative {
         x: f32,
         y: f32,
     ) -> Option<usize> {
-        if let Some(geometry) = self.image_input_geometry.as_ref() {
-            if geometry.kind == kind && self.cached_image_input_is_visible(kind) {
-                if let Some(offset) = geometry.byte_offset_at(
-                    &self.editor_state.editor_ui.image_panel,
-                    Point2D::new(x, y),
-                    true,
-                ) {
-                    return Some(offset);
-                }
-            }
+        let point = Point2D::new(x, y);
+        if let Some(offset) = input_flow::cached_drag_offset(
+            &self.editor_state,
+            self.image_input_geometry.as_ref(),
+            kind,
+            point,
+        ) {
+            return Some(offset);
         }
         self.refresh_layout_scene();
-        let rect = self.property_rect(self.last_viewport_w, self.last_viewport_h);
+        let rect = op_editor_ui::widgets::press_flow::property_panel_rect(
+            &self.editor_state,
+            self.last_viewport_w,
+            self.last_viewport_h,
+        );
         let panel = PropertyPanel::for_selection(&self.editor_state)?;
-        panel.image_popover_input_drag_offset_at(rect, kind, Point2D::new(x, y))
+        panel.image_popover_input_drag_offset_at(rect, kind, point)
     }
 
     pub(in crate::widget_host) fn apply_image_input_selection_drag_cursor_move(
@@ -130,16 +96,12 @@ impl WidgetHostNative {
         focus: usize,
     ) -> bool {
         let now_ms = self.now_ms;
-        let panel = &mut self.editor_state.editor_ui.image_panel;
-        let input = match drag.kind {
-            ImagePopoverInputKind::Search if panel.search_open => &mut panel.search_query,
-            ImagePopoverInputKind::Generate if panel.generate_open => &mut panel.generate_prompt,
-            _ => return false,
+        let Some(changed) =
+            input_flow::drag_selection_to(&mut self.editor_state, drag, focus, now_ms)
+        else {
+            return false;
         };
-        let before = input.selection();
-        input.set_caret(drag.anchor, now_ms);
-        input.drag_to(focus, now_ms);
-        if input.selection() != before {
+        if changed {
             self.mark_dirty();
         }
         true

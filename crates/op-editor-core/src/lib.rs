@@ -65,6 +65,8 @@ pub mod grouping;
 pub mod history;
 pub mod history_snapshot;
 pub mod hoist_app_state;
+pub mod host_drag_state;
+pub mod host_drag_transitions;
 pub mod host_escape_transitions;
 pub mod host_image_panel_transitions;
 pub mod host_keyboard_transitions;
@@ -74,6 +76,8 @@ pub mod host_support;
 #[cfg(test)]
 mod host_support_tests;
 pub mod host_ui_transitions;
+pub mod host_variables_commit;
+pub mod host_variables_transitions;
 pub mod icon_picker_state;
 pub mod image_crop;
 mod image_fill_upload;

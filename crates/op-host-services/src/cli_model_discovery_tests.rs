@@ -132,11 +132,74 @@ fn verified_catalogs_reject_empty_auth_and_unknown_output() {
 // contract, exercised in `cli_probe_support`'s own test module
 // (`bounded_cli_output_drains_large_stdout_and_stderr_before_exit`).
 
-/// Probe budget for the hung-CLI tests. Generous relative to spawning a
-/// fake CLI (milliseconds) so the timeout branch is reached with the
-/// script's output already captured, which is what these tests assert on.
+/// Starting probe budget for the hung-CLI tests, and the ceiling the
+/// escalation in [`probe_until_captured`] may reach.
+///
+/// These are TEST HARNESS numbers only — no production timeout is derived
+/// from them. What the hung-CLI tests prove is that a probe (a) reaches its
+/// timeout branch and (b) still carries the output the CLI printed before the
+/// deadline. Both are races against process startup: spawning a
+/// just-written temp executable is milliseconds idle, but under concurrent
+/// cargo builds the exec can stall long enough that a tight deadline fires
+/// with an EMPTY capture, and the assert flakes. A 200 ms window flaked, then
+/// 2 s flaked.
+///
+/// Rather than pick a bigger fixed number and hope, the tests start here and
+/// RETRY with a doubled budget whenever the capture came back empty, up to
+/// the cap. Idle machines pay the floor; loaded ones escalate. The cap keeps
+/// a genuinely broken probe failing instead of looping, and stays well under
+/// the fake CLI's own sleep so the timeout branch is still guaranteed.
 #[cfg(unix)]
-const PROBE_BUDGET: Duration = Duration::from_secs(2);
+const PROBE_BUDGET: Duration = Duration::from_secs(4);
+#[cfg(unix)]
+const PROBE_BUDGET_CAP: Duration = Duration::from_secs(16);
+
+/// How long the fake CLIs hang after printing. Must outlast
+/// `PROBE_BUDGET_CAP` by a wide margin — otherwise a slow escalation could
+/// see the script EXIT and the probe would report success where the test
+/// demands a timeout.
+///
+/// Spelled `exec sleep N` by the script builders below: a forked `sleep`
+/// inherits the probe's stdout/stderr pipes, so killing the shell on the
+/// deadline would leave them open and the probe's reader-thread `join` would
+/// block for the whole hang. `exec` makes the sleeping process the very pid
+/// the probe kills, so the probe really does return on its deadline (and
+/// nothing outlives the test).
+#[cfg(unix)]
+const FAKE_CLI_HANG_SECS: u32 = 30;
+
+/// Run `probe` under an escalating deadline until its message shows the
+/// script's output actually made it into the capture (`captured_marker`), or
+/// the budget hits [`PROBE_BUDGET_CAP`]. Returns the message and the budget
+/// that produced it, because the timeout wording embeds that budget's
+/// seconds.
+///
+/// Each attempt also asserts the probe returned on its OWN deadline rather
+/// than by waiting out the child: the fake CLI hangs for
+/// [`FAKE_CLI_HANG_SECS`], so a return inside a small multiple of the budget
+/// is proof the deadline — not the process — ended the probe. That keeps
+/// "probes are deadline-bounded" under test even though the budget moved.
+#[cfg(unix)]
+fn probe_until_captured(
+    mut probe: impl FnMut(Duration) -> String,
+    captured_marker: &str,
+) -> (String, Duration) {
+    let mut budget = PROBE_BUDGET;
+    loop {
+        let started = std::time::Instant::now();
+        let message = probe(budget);
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < budget * 4,
+            "probe must return on its own deadline ({budget:?}), not outlast the \
+             {FAKE_CLI_HANG_SECS}s script; took {elapsed:?}"
+        );
+        if message.contains(captured_marker) || budget >= PROBE_BUDGET_CAP {
+            return (message, budget);
+        }
+        budget = (budget * 2).min(PROBE_BUDGET_CAP);
+    }
+}
 
 /// Writes an executable `/bin/sh` script standing in for a real CLI so
 /// `*_models_from_exe` can be pointed at it directly — the discover
@@ -168,12 +231,19 @@ fn antigravity_query_surfaces_auth_prompt_when_it_hangs_mid_oauth() {
     // Routed through the shared `diagnose_timeout` it now names the fix.
     let exe = write_fake_cli(
         "agy-hang",
-        "printf 'Authentication required. Please visit the URL to log in:\\n'; sleep 5",
+        &format!(
+            "printf 'Authentication required. Please visit the URL to log in:\\n'; \
+             exec sleep {FAKE_CLI_HANG_SECS}"
+        ),
     );
     // The budget must outlast spawning a just-written temp executable, not
     // just the probe's own polling: a 200ms window let a cold exec reach the
     // deadline before `printf` ran, so the assert flaked on an empty capture.
-    let message = antigravity_models_from_exe(&exe, PROBE_BUDGET).unwrap_err();
+    // `probe_until_captured` escalates instead of guessing — see its docs.
+    let (message, _budget) = probe_until_captured(
+        |budget| antigravity_models_from_exe(&exe, budget).unwrap_err(),
+        "not authenticated",
+    );
     assert_eq!(
         message,
         "Antigravity is not authenticated. Run `agy` once in a terminal."
@@ -185,10 +255,24 @@ fn antigravity_query_surfaces_auth_prompt_when_it_hangs_mid_oauth() {
 fn grok_query_falls_back_to_truncated_tail_when_timeout_has_no_auth_marker() {
     let exe = write_fake_cli(
         "grok-hang",
-        "printf 'initializing sandbox...\\nstill working\\n'; sleep 5",
+        &format!(
+            "printf 'initializing sandbox...\\nstill working\\n'; exec sleep {FAKE_CLI_HANG_SECS}"
+        ),
     );
-    let message = grok_models_from_exe(&exe, PROBE_BUDGET).unwrap_err();
-    assert!(message.contains("Grok Build CLI timed out after 2s"));
+    let (message, budget) = probe_until_captured(
+        |budget| grok_models_from_exe(&exe, budget).unwrap_err(),
+        "still working",
+    );
+    // The reported duration is the budget the probe actually ran under, so
+    // read it back from the attempt that produced this message rather than
+    // hardcoding it.
+    assert!(
+        message.contains(&format!(
+            "Grok Build CLI timed out after {}s",
+            budget.as_secs()
+        )),
+        "{message}"
+    );
     assert!(message.contains("`grok`"));
     assert!(message.contains("still working"));
 }
@@ -199,7 +283,10 @@ fn grok_query_success_path_parses_catalog_unchanged_when_process_exits_in_time()
     // Pins the completed-output branch (parse + non-empty-catalog check)
     // exactly as it behaved before the shared bounded-probe migration.
     let exe = write_fake_cli("grok-ok", "printf 'Available models:\\n* grok-4.5\\n'");
-    let models = grok_models_from_exe(&exe, Duration::from_secs(5)).unwrap();
+    // The script exits immediately, so the probe returns as soon as it does —
+    // a generous budget costs nothing here and removes the last way machine
+    // load can turn this success-path assertion into a timeout.
+    let models = grok_models_from_exe(&exe, PROBE_BUDGET_CAP).unwrap();
     assert_eq!(models.len(), 1);
     assert_eq!(models[0].value, "grok-4.5");
 }

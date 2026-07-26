@@ -2,7 +2,7 @@
 //! `widget_host.rs` so the spine stays under the 800-line cap.
 //! Mirrors the native host's `widget_host/scroll.rs`.
 
-use op_editor_ui::util::scroll_by_max;
+use op_editor_ui::widgets::scroll_flow;
 use op_editor_ui::widgets::{PropertyPanel, TOP_BAR_HEIGHT};
 use op_editor_ui::{Point2D, Rect};
 
@@ -53,23 +53,16 @@ impl WidgetHost {
         viewport_width: f32,
         viewport_height: f32,
     ) -> bool {
-        if !self.editor_state.editor_ui.variables_panel_open {
-            return false;
-        }
-        let Some(panel_rect) = self.variables_panel_rect(viewport_width, viewport_height) else {
+        let panel_rect = self.variables_panel_rect(viewport_width, viewport_height);
+        let Some(dirty) = scroll_flow::scroll_variables_panel(
+            &mut self.editor_state,
+            panel_rect,
+            Point2D::new(x, y),
+            delta_y,
+        ) else {
             return false;
         };
-        if !(panel_rect).contains(Point2D::new(x, y)) {
-            return false;
-        }
-        use op_editor_ui::widgets::variables_panel::VariablesPanel;
-        let panel = VariablesPanel::for_editor(&self.editor_state);
-        let max = panel.max_scroll(panel_rect);
-        if scroll_by_max(
-            &mut self.editor_state.editor_ui.variables_scroll,
-            -delta_y,
-            max,
-        ) {
+        if dirty {
             self.mark_dirty();
         }
         true
@@ -82,19 +75,16 @@ impl WidgetHost {
         delta_y: f32,
         viewport_width: f32,
     ) -> bool {
-        if !self.editor_state.editor_ui.locale_picker.open {
+        let picker_rect = self.locale_picker_rect(viewport_width);
+        let Some(dirty) = scroll_flow::scroll_locale_picker(
+            &mut self.editor_state,
+            picker_rect,
+            Point2D::new(x, y),
+            delta_y,
+        ) else {
             return false;
-        }
-        if !(self.locale_picker_rect(viewport_width)).contains(Point2D::new(x, y)) {
-            return false;
-        }
-        let ui = &mut self.editor_state.editor_ui.locale_picker;
-        let next = (ui.scroll.offset - delta_y)
-            .clamp(0.0, op_editor_ui::widgets::LocalePicker::max_scroll());
-        let changed = next != ui.scroll.offset || ui.hover.is_some();
-        ui.scroll.offset = next;
-        ui.hover = None;
-        if changed {
+        };
+        if dirty {
             self.mark_dirty();
         }
         true
@@ -108,22 +98,16 @@ impl WidgetHost {
         viewport_width: f32,
         viewport_height: f32,
     ) -> bool {
-        let Some(panel_rect) = self.design_md_panel_rect(viewport_width, viewport_height) else {
+        let panel_rect = self.design_md_panel_rect(viewport_width, viewport_height);
+        let Some(dirty) = scroll_flow::scroll_design_md_panel(
+            &mut self.editor_state,
+            panel_rect,
+            Point2D::new(x, y),
+            delta_y,
+        ) else {
             return false;
         };
-        if !(panel_rect).contains(Point2D::new(x, y)) {
-            return false;
-        }
-        let Some(panel) = op_editor_ui::widgets::DesignMdPanel::for_editor(&self.editor_state)
-        else {
-            return false;
-        };
-        let max = panel.max_scroll(panel_rect);
-        if scroll_by_max(
-            &mut self.editor_state.editor_ui.design_md_panel.scroll,
-            -delta_y,
-            max,
-        ) {
+        if dirty {
             self.mark_dirty();
         }
         true
@@ -140,24 +124,17 @@ impl WidgetHost {
         viewport_width: f32,
         viewport_height: f32,
     ) -> bool {
-        if !self.editor_state.editor_ui.icon_picker.open {
-            return false;
-        }
-        use op_editor_ui::widgets::icon_picker_panel::IconPickerPanel;
-        let Some(rect) = self.icon_picker_panel_rect(viewport_width, viewport_height) else {
+        let panel_rect = self.icon_picker_panel_rect(viewport_width, viewport_height);
+        let Some(dirty) = scroll_flow::scroll_icon_picker(
+            &mut self.editor_state,
+            panel_rect,
+            Point2D::new(x, y),
+            delta_y,
+        ) else {
             return false;
         };
-        if !(rect).contains(Point2D::new(x, y)) {
-            return false;
-        }
-        if let Some(panel) = IconPickerPanel::for_editor(&self.editor_state) {
-            let max = panel.icon_picker_max_scroll(rect);
-            let scroll = &mut self.editor_state.editor_ui.icon_picker.scroll;
-            let next = (scroll.offset - delta_y).clamp(0.0, max);
-            if next != scroll.offset {
-                scroll.offset = next;
-                self.mark_dirty();
-            }
+        if dirty {
+            self.mark_dirty();
         }
         true
     }
@@ -200,50 +177,16 @@ impl WidgetHost {
             }
             return true;
         }
-        if !(property_rect).contains(Point2D::new(x, y)) {
+        let Some(dirty) = scroll_flow::scroll_property_panel_body(
+            &mut self.editor_state,
+            &panel,
+            property_rect,
+            Point2D::new(x, y),
+            delta_y,
+        ) else {
             return false;
-        }
-        if matches!(
-            self.editor_state.editor_ui.property_tab,
-            op_editor_core::PropertyTab::Code
-        ) {
-            let point = Point2D::new(x, y);
-            let (band_top, band_bottom) =
-                op_editor_ui::widgets::property_panel_code::framework_row_band(
-                    property_rect.origin.y,
-                );
-            if y >= band_top && y <= band_bottom {
-                let max = op_editor_ui::widgets::property_panel_code::framework_row_overflow(pw);
-                let cg = &mut self.editor_state.codegen;
-                if scroll_by_max(&mut cg.framework_scroll, -delta_y, max) {
-                    self.mark_dirty();
-                }
-                return true;
-            }
-            if op_editor_ui::widgets::property_panel_code::code_preview_rect(
-                property_rect,
-                &self.editor_state.codegen,
-            )
-            .is_some_and(|rect| (rect).contains(point))
-            {
-                let max = op_editor_ui::widgets::property_panel_code::code_preview_max_scroll(
-                    property_rect,
-                    &self.editor_state.codegen,
-                )
-                .unwrap_or(0.0);
-                let cg = &mut self.editor_state.codegen;
-                if scroll_by_max(&mut cg.code_scroll, -delta_y, max) {
-                    self.mark_dirty();
-                }
-                return true;
-            }
-        }
-        let max = (panel.content_height(property_rect) - property_rect.size.y).max(0.0);
-        if scroll_by_max(
-            &mut self.editor_state.editor_ui.property_panel_scroll,
-            -delta_y,
-            max,
-        ) {
+        };
+        if dirty {
             self.mark_dirty();
         }
         true
@@ -260,59 +203,19 @@ impl WidgetHost {
         delta_y: f32,
         viewport_height: f32,
     ) -> bool {
-        if !self.editor_state.editor_ui.sidebar_open {
+        let rect = self.layer_panel_rect(viewport_height);
+        let panel = self.layer_panel();
+        let Some(dirty) = scroll_flow::scroll_layer_panel(
+            &mut self.editor_state,
+            &panel,
+            rect,
+            Point2D::new(x, y),
+            delta_x,
+            delta_y,
+        ) else {
             return false;
-        }
-        let pw = self.editor_state.editor_ui.layer_panel_width;
-        let rect = Rect {
-            origin: Point2D::new(0.0, TOP_BAR_HEIGHT),
-            size: Point2D::new(pw, (viewport_height - TOP_BAR_HEIGHT).max(0.0)),
         };
-        if !(rect).contains(Point2D::new(x, y)) {
-            return false;
-        }
-        let r = self.layer_panel().regions(rect);
-        let mut changed = false;
-        if y >= r.layers_rows_top {
-            if delta_y != 0.0
-                && scroll_by_max(
-                    &mut self.editor_state.editor_ui.layer_layers_scroll,
-                    -delta_y,
-                    r.layers.max_offset,
-                )
-            {
-                changed = true;
-            }
-            if delta_x != 0.0
-                && scroll_by_max(
-                    &mut self.editor_state.editor_ui.layer_layers_h_scroll,
-                    -delta_x,
-                    r.layers.max_horizontal_offset,
-                )
-            {
-                changed = true;
-            }
-        } else {
-            if delta_y != 0.0
-                && scroll_by_max(
-                    &mut self.editor_state.editor_ui.layer_pages_scroll,
-                    -delta_y,
-                    r.pages.max_offset,
-                )
-            {
-                changed = true;
-            }
-            if delta_x != 0.0
-                && scroll_by_max(
-                    &mut self.editor_state.editor_ui.layer_pages_h_scroll,
-                    -delta_x,
-                    r.pages.max_horizontal_offset,
-                )
-            {
-                changed = true;
-            }
-        }
-        if changed {
+        if dirty {
             self.mark_dirty();
         }
         true
@@ -322,23 +225,11 @@ impl WidgetHost {
         &mut self,
         viewport_height: f32,
     ) -> bool {
-        if !self.editor_state.editor_ui.sidebar_open {
-            return false;
-        }
-        let selected = self.editor_state.selection.anchor.clone();
-        if !selected.is_real() {
-            return false;
-        }
         let rect = self.layer_panel_rect(viewport_height);
         let panel = self.layer_panel();
-        let Some(next) = panel.layers_offset_revealing(rect, &selected) else {
-            return false;
-        };
-        let scroll = &mut self.editor_state.editor_ui.layer_layers_scroll;
-        if (scroll.offset - next).abs() <= f32::EPSILON {
+        if !scroll_flow::reveal_layer_panel_selection(&mut self.editor_state, &panel, rect) {
             return false;
         }
-        scroll.offset = next;
         self.mark_dirty();
         true
     }

@@ -10,7 +10,9 @@
 mod property_compositing_dispatch;
 #[path = "property_input_dispatch.rs"]
 mod property_input_dispatch;
-pub(in crate::widget_host) use property_input_dispatch::property_focus_initial;
+// Draft seeding is shared with the native host; re-exported here so the
+// web press / focus call sites keep their historical path.
+pub(in crate::widget_host) use op_editor_ui::widgets::property_panel_commit::property_focus_initial;
 
 use super::WidgetHost;
 use op_editor_ui::widgets::property_panel_dispatch as dispatch;

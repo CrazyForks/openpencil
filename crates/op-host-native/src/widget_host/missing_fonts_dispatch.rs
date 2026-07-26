@@ -1,8 +1,14 @@
 //! Native missing-font modal dispatch and detection lifecycle.
+//!
+//! The modal's scroll + press dispatch and the detection/refresh
+//! bookkeeping live in the shared
+//! `op_editor_ui::widgets::missing_fonts_flow` (driven by the web host
+//! too); this file keeps the native platform arms — synchronous system
+//! font enumeration through `ensure_system_fonts_loaded` — plus the
+//! `mark_dirty` tails.
 
 use super::WidgetHostNative;
-use op_editor_core::missing_fonts::detect_missing_fonts;
-use op_editor_ui::widgets::{MissingFontsHit, MissingFontsPanel};
+use op_editor_ui::widgets::missing_fonts_flow as fonts_flow;
 use op_editor_ui::{Point2D, Rect};
 
 impl WidgetHostNative {
@@ -14,45 +20,18 @@ impl WidgetHostNative {
         viewport_width: f32,
         viewport_height: f32,
     ) -> bool {
-        if !self.editor_state.editor_ui.missing_fonts_modal_open {
+        let Some(changed) = fonts_flow::scroll_picker(
+            &mut self.editor_state,
+            x,
+            y,
+            delta_y,
+            viewport_width,
+            viewport_height,
+        ) else {
             return false;
-        }
-        let viewport = Rect {
-            origin: Point2D::new(0.0, 0.0),
-            size: Point2D::new(viewport_width, viewport_height),
         };
-        let point = Point2D::new(x, y);
-        let resolved = MissingFontsPanel::for_editor(&self.editor_state).map(|panel| {
-            let panel_rect = panel.rect(viewport_width, viewport_height);
-            let picker = panel.picker_layout(panel_rect, viewport);
-            let picker_scroll = picker
-                .as_ref()
-                .filter(|layout| layout.popup.contains(point))
-                .map(|layout| layout.max_scroll);
-            let rows_scroll = if picker.is_none() && panel.rows_rect(panel_rect).contains(point) {
-                Some(panel.max_rows_scroll(panel_rect))
-            } else {
-                None
-            };
-            (picker_scroll, rows_scroll)
-        });
-        if let Some((Some(max_scroll), _)) = resolved {
-            let ui = &mut self.editor_state.editor_ui;
-            let next = (ui.font_picker.scroll.offset - delta_y).clamp(0.0, max_scroll);
-            if next != ui.font_picker.scroll.offset {
-                ui.font_picker.scroll.offset = next;
-                ui.font_picker.hover = None;
-                ui.font_picker_import_hover = false;
-                self.mark_dirty();
-            }
-        } else if let Some((_, Some(max_scroll))) = resolved {
-            let ui = &mut self.editor_state.editor_ui;
-            let next = (ui.missing_fonts_scroll.offset - delta_y).clamp(0.0, max_scroll);
-            if next != ui.missing_fonts_scroll.offset {
-                ui.missing_fonts_scroll.offset = next;
-                ui.missing_fonts_hover = None;
-                self.mark_dirty();
-            }
+        if changed {
+            self.mark_dirty();
         }
         true
     }
@@ -64,52 +43,8 @@ impl WidgetHostNative {
         viewport_rect: Rect,
         point: Point2D,
     ) -> bool {
-        let Some(hit) = MissingFontsPanel::for_editor(&self.editor_state)
-            .map(|panel| panel.hit_test(panel_rect, viewport_rect, point))
-        else {
+        if !fonts_flow::press(&mut self.editor_state, panel_rect, viewport_rect, point) {
             return false;
-        };
-        match hit {
-            MissingFontsHit::ChooseFont(row) => {
-                self.editor_state
-                    .editor_ui
-                    .open_missing_font_picker(row, op_editor_core::MissingFontSurface::Prompt);
-                self.editor_state.editor_ui.missing_fonts_hover = None;
-            }
-            MissingFontsHit::SelectFont(index) => {
-                let replacement = MissingFontsPanel::for_editor(&self.editor_state)
-                    .and_then(|panel| panel.picker_entries().get(index).cloned())
-                    .map(|entry| entry.family);
-                let expected = match self.editor_state.editor_ui.font_picker_purpose {
-                    Some(op_editor_core::FontPickerPurpose::MissingFont { row, .. }) => self
-                        .editor_state
-                        .editor_ui
-                        .missing_fonts_prompt
-                        .as_ref()
-                        .and_then(|prompt| prompt.entries.get(row))
-                        .map(|entry| entry.family.clone()),
-                    _ => None,
-                };
-                if let (Some(from), Some(to)) = (expected, replacement) {
-                    let _ = self
-                        .editor_state
-                        .apply(op_editor_core::EditorCommand::ReplaceFontFamily { from, to });
-                }
-                self.editor_state.editor_ui.close_font_picker();
-                self.replace_missing_fonts_data(true);
-            }
-            MissingFontsHit::ImportFont(row) => {
-                self.editor_state.editor_ui.missing_fonts_import_row = Some(row);
-            }
-            MissingFontsHit::ClosePicker => {
-                self.editor_state.editor_ui.close_font_picker();
-            }
-            MissingFontsHit::Dismiss => {
-                self.editor_state.editor_ui.missing_fonts_modal_open = false;
-                self.editor_state.editor_ui.missing_fonts_hover = None;
-                self.editor_state.editor_ui.close_font_picker();
-            }
-            MissingFontsHit::PickerInside | MissingFontsHit::Inside | MissingFontsHit::Outside => {}
         }
         self.mark_dirty();
         true
@@ -125,26 +60,24 @@ impl WidgetHostNative {
     /// fallback if enumeration ever becomes asynchronous.
     pub fn arm_missing_fonts_detection(&mut self) {
         if !self.editor_state.editor_ui.system_fonts_loaded {
-            let ui = &mut self.editor_state.editor_ui;
-            ui.missing_fonts_pending_detect = true;
-            ui.missing_fonts_pending_open_modal = true;
+            fonts_flow::arm_pending_detection(&mut self.editor_state, true);
             self.ensure_system_fonts_loaded();
         }
         if self.editor_state.editor_ui.system_fonts_loaded {
-            self.replace_missing_fonts_data(true);
+            fonts_flow::replace_data(&mut self.editor_state, true);
+            self.mark_dirty();
         }
     }
 
     /// Recompute the Settings Fonts-tab data without opening the one-shot modal.
     pub(in crate::widget_host) fn refresh_missing_fonts_for_settings(&mut self) {
         if !self.editor_state.editor_ui.system_fonts_loaded {
-            let ui = &mut self.editor_state.editor_ui;
-            ui.missing_fonts_pending_detect = true;
-            ui.missing_fonts_pending_open_modal = false;
+            fonts_flow::arm_pending_detection(&mut self.editor_state, false);
             self.ensure_system_fonts_loaded();
         }
         if self.editor_state.editor_ui.system_fonts_loaded {
-            self.replace_missing_fonts_data(false);
+            fonts_flow::replace_data(&mut self.editor_state, false);
+            self.mark_dirty();
         }
     }
 
@@ -153,26 +86,18 @@ impl WidgetHostNative {
     /// its rows leaves it visible.
     pub(in crate::widget_host) fn refresh_missing_fonts_after_history_change(&mut self) {
         if !self.editor_state.editor_ui.system_fonts_loaded {
-            let ui = &mut self.editor_state.editor_ui;
-            ui.missing_fonts_pending_detect = true;
-            ui.missing_fonts_pending_open_modal = ui.missing_fonts_modal_open;
+            let open_modal = self.editor_state.editor_ui.missing_fonts_modal_open;
+            fonts_flow::arm_pending_detection(&mut self.editor_state, open_modal);
             self.ensure_system_fonts_loaded();
         }
         if self.editor_state.editor_ui.system_fonts_loaded {
-            let ui = &mut self.editor_state.editor_ui;
-            ui.missing_fonts_pending_detect = false;
-            ui.missing_fonts_pending_open_modal = false;
+            fonts_flow::clear_pending_detection(&mut self.editor_state);
             self.refresh_missing_fonts_prompt();
         }
     }
 
     pub(in crate::widget_host) fn refresh_missing_fonts_after_document_change(&mut self) {
-        let settings_fonts_open = self.editor_state.editor_ui.agent_settings_open
-            && matches!(
-                self.editor_state.editor_ui.agent_settings.tab,
-                op_editor_core::AgentSettingsTab::Fonts
-            );
-        if settings_fonts_open {
+        if fonts_flow::settings_fonts_open(&self.editor_state) {
             self.refresh_missing_fonts_for_settings();
         } else {
             self.arm_missing_fonts_detection();
@@ -182,79 +107,22 @@ impl WidgetHostNative {
     /// Finish a deferred font scan using the open/silent intent captured when
     /// it was scheduled.
     pub fn complete_pending_missing_fonts_detection(&mut self) {
-        if !self.editor_state.editor_ui.missing_fonts_pending_detect
-            || !self.editor_state.editor_ui.system_fonts_loaded
-        {
-            return;
+        if fonts_flow::complete_pending_detection(&mut self.editor_state) {
+            self.mark_dirty();
         }
-        let settings_fonts_open = self.editor_state.editor_ui.agent_settings_open
-            && matches!(
-                self.editor_state.editor_ui.agent_settings.tab,
-                op_editor_core::AgentSettingsTab::Fonts
-            );
-        let open_modal =
-            self.editor_state.editor_ui.missing_fonts_pending_open_modal && !settings_fonts_open;
-        self.replace_missing_fonts_data(open_modal);
-    }
-
-    fn replace_missing_fonts_data(&mut self, open_modal: bool) {
-        let prompt = detect_missing_fonts(&self.editor_state);
-        let ui = &mut self.editor_state.editor_ui;
-        ui.missing_fonts_pending_detect = false;
-        ui.missing_fonts_pending_open_modal = false;
-        ui.missing_fonts_modal_open = open_modal && prompt.is_some();
-        if open_modal {
-            ui.missing_fonts_scroll.offset = 0.0;
-        }
-        ui.missing_fonts_prompt = prompt;
-        self.mark_dirty();
     }
 
     /// Reconcile existing rows against the latest system/imported snapshots.
     pub fn refresh_missing_fonts_prompt(&mut self) {
-        let previous = self.editor_state.editor_ui.missing_fonts_prompt.take();
-        let mut next = detect_missing_fonts(&self.editor_state);
-        if let (Some(previous), Some(next)) = (previous.as_ref(), next.as_mut()) {
-            for entry in &mut next.entries {
-                if let Some(old) = previous
-                    .entries
-                    .iter()
-                    .find(|old| old.family.eq_ignore_ascii_case(&entry.family))
-                {
-                    entry.mismatch_note = old.mismatch_note.clone();
-                }
-            }
-        }
-        self.editor_state.editor_ui.missing_fonts_prompt = next;
-        if self.editor_state.editor_ui.missing_fonts_prompt.is_none() {
-            let ui = &mut self.editor_state.editor_ui;
-            ui.missing_fonts_modal_open = false;
-            ui.missing_fonts_hover = None;
-            ui.close_font_picker();
-        }
+        fonts_flow::refresh_prompt(&mut self.editor_state);
         self.mark_dirty();
     }
 
     /// Record whether the supplied file declared the row's expected family,
     /// then refresh resolution from the live imported-font snapshot.
     pub fn note_missing_font_supplied(&mut self, row: usize, actual_family: Option<&str>) {
-        let locale = self.editor_state.editor_ui.locale;
-        if let Some(entry) = self
-            .editor_state
-            .editor_ui
-            .missing_fonts_prompt
-            .as_mut()
-            .and_then(|prompt| prompt.entries.get_mut(row))
-        {
-            entry.mismatch_note = actual_family
-                .filter(|actual| !actual.eq_ignore_ascii_case(&entry.family))
-                .map(|actual| {
-                    op_i18n::translate(locale, "missingFonts.mismatch")
-                        .replace("{actual}", actual)
-                        .replace("{expected}", &entry.family)
-                });
-        }
-        self.refresh_missing_fonts_prompt();
+        fonts_flow::note_font_supplied(&mut self.editor_state, row, actual_family);
+        self.mark_dirty();
     }
 }
 

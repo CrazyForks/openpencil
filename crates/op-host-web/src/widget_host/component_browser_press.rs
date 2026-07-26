@@ -134,9 +134,11 @@ impl WidgetHost {
         let Some((cw_comp, ch_comp)) = dims else {
             return false;
         };
-        let (_cx0, _cy0, cw, ch) = self.canvas_region(viewport_w, viewport_h);
-        let canvas_local = Point2D::new(cw / 2.0, ch / 2.0);
-        let doc = self.editor_state.viewport.to_document(canvas_local);
+        let doc = op_editor_ui::widgets::host_canvas_geometry::canvas_centre_doc_point(
+            &self.editor_state,
+            viewport_w,
+            viewport_h,
+        );
         let dx = doc.x as f64 - cw_comp / 2.0;
         let dy = doc.y as f64 - ch_comp / 2.0;
         if self
