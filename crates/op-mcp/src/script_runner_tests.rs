@@ -102,14 +102,16 @@ fn script_with_no_inserts_is_an_error() {
 #[test]
 fn oversized_source_is_rejected_before_eval() {
     let big = format!("// {}\nI(null, {{}});", "x".repeat(MAX_SCRIPT_BYTES));
-    let err = run_script_to_program(&big).unwrap_err();
+    let err = run_script_to_program(&big).unwrap_err().to_string();
     assert!(err.contains("script too large"), "got: {err}");
 }
 
 #[test]
 fn infinite_loop_is_interrupted_not_hung() {
     let start = std::time::Instant::now();
-    let err = run_script_to_program("while (true) {}").unwrap_err();
+    let err = run_script_to_program("while (true) {}")
+        .unwrap_err()
+        .to_string();
     assert!(
         start.elapsed() < std::time::Duration::from_secs(10),
         "interrupt fired"
@@ -119,7 +121,9 @@ fn infinite_loop_is_interrupted_not_hung() {
 
 #[test]
 fn memory_bomb_is_rejected() {
-    let err = run_script_to_program("let s = 'x'; while (true) { s += s; }").unwrap_err();
+    let err = run_script_to_program("let s = 'x'; while (true) { s += s; }")
+        .unwrap_err()
+        .to_string();
     assert!(!err.is_empty());
 }
 
@@ -171,7 +175,8 @@ fn oversized_first_line_is_refused_and_recording_latches() {
 I(null, {type: "text", content: big});
 I(null, {type: "frame"});"#,
     )
-    .unwrap_err();
+    .unwrap_err()
+    .to_string();
     assert!(
         err.contains("no I(...) operations"),
         "expected the empty-program error, got: {err}"
@@ -226,7 +231,8 @@ fn unsupported_mutations_are_rejected_instead_of_silently_dropped() {
         r#"const root = I(null, {type: "frame", name: "Root"});
 U(root, {x: 10});"#,
     )
-    .expect_err("U() must not look successful while doing nothing");
+    .expect_err("U() must not look successful while doing nothing")
+    .to_string();
     assert!(error.contains("OP_SCRIPT_MODE_UNSUPPORTED"), "{error}");
     assert!(error.contains("operations mode"), "{error}");
 }

@@ -18,9 +18,18 @@ use crate::export::screenshot::{CaptureSpec, ScreenshotPng};
 /// gate is open, produce the full JSON-RPC response via `fulfill`.
 /// `None` ⇒ not a screenshot call (or gate closed) — the caller falls
 /// through to the generic dispatch.
-pub fn maybe_serve<F>(body: &str, debug_enabled: bool, fulfill: F) -> Option<String>
+///
+/// The fulfiller's error type is generic over `Display` rather than fixed,
+/// because the two production fulfillers fail differently: the live desktop
+/// pump can also fail in TRANSPORT (`McpLiveError` — UI ack timeout / closed
+/// channel), while the `--serve-web` daemon renders inline and can only fail
+/// in the raster core (`ExportError`). All this glue needs is the sentence
+/// for the "Renderer reported failure: …" envelope, so `Display` is the
+/// honest bound — and it keeps the envelope text byte-identical either way.
+pub fn maybe_serve<F, E>(body: &str, debug_enabled: bool, fulfill: F) -> Option<String>
 where
-    F: FnOnce(ScreenshotRequest) -> Result<ScreenshotPng, String>,
+    F: FnOnce(ScreenshotRequest) -> Result<ScreenshotPng, E>,
+    E: std::fmt::Display,
 {
     let call = op_mcp::parse_tool_call(body.trim())?;
     if call.tool != "debug_screenshot" || !debug_enabled {
@@ -128,16 +137,16 @@ mod tests {
     #[test]
     fn non_screenshot_calls_and_closed_gate_fall_through() {
         let other = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_selection","arguments":{}}}"#;
-        assert!(maybe_serve(other, true, |_| Ok(shot(None))).is_none());
+        assert!(maybe_serve(other, true, |_| Ok::<_, String>(shot(None))).is_none());
         // Gate closed → None even for a real screenshot call, so the
         // generic dispatch reports UnknownTool like the headless
         // registry that never registered the tool.
-        assert!(
-            maybe_serve(&call_body(r#"{"target":"root"}"#), false, |_| Ok(shot(
-                None
-            )))
-            .is_none()
-        );
+        assert!(maybe_serve(
+            &call_body(r#"{"target":"root"}"#),
+            false,
+            |_| Ok::<_, String>(shot(None))
+        )
+        .is_none());
     }
 
     #[test]
@@ -145,7 +154,7 @@ mod tests {
         let response = maybe_serve(&call_body(r#"{"target":"root"}"#), true, |req| {
             assert_eq!(req.target, ScreenshotTarget::Root);
             assert_eq!(req.timeout_ms, 15_000);
-            Ok(shot(None))
+            Ok::<_, String>(shot(None))
         })
         .expect("intercepted");
         let v: Value = serde_json::from_str(&response).expect("valid JSON-RPC");
@@ -173,7 +182,7 @@ mod tests {
             assert_eq!(spec.node_id.as_deref(), Some("n9"));
             assert_eq!(spec.padding, 4.0);
             assert_eq!(spec.scale, 2.0);
-            Ok(shot(Some((100.0, 50.0, 40.0, 30.0))))
+            Ok::<_, String>(shot(Some((100.0, 50.0, 40.0, 30.0))))
         })
         .expect("intercepted");
         let v: Value = serde_json::from_str(&response).expect("valid JSON-RPC");
@@ -191,8 +200,12 @@ mod tests {
 
     #[test]
     fn invalid_arguments_report_the_shared_validation_error() {
+        // The cast only pins `maybe_serve`'s generic error parameter, which a
+        // diverging closure body leaves unconstrained; `ExportError` is the
+        // type the `--serve-web` fulfiller really uses.
         let response = maybe_serve(&call_body(r#"{"target":"node"}"#), true, |_| {
             panic!("validation failures must never reach the fulfiller")
+                as Result<ScreenshotPng, crate::export::ExportError>
         })
         .expect("intercepted");
         let v: Value = serde_json::from_str(&response).expect("valid JSON-RPC");
@@ -206,7 +219,7 @@ mod tests {
     #[test]
     fn fulfiller_failures_surface_as_renderer_errors() {
         let response = maybe_serve(&call_body(r#"{"target":"root"}"#), true, |_| {
-            Err("timed out waiting for UI screenshot ack".into())
+            Err::<ScreenshotPng, _>("timed out waiting for UI screenshot ack".to_string())
         })
         .expect("intercepted");
         let v: Value = serde_json::from_str(&response).expect("valid JSON-RPC");

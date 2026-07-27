@@ -6,6 +6,7 @@
 
 use crate::{git_jobs, persistence, DesktopApp};
 
+use super::auth_error::GitAuthError;
 use super::{build_hunk_patch, build_merge_resolve, merge_conflict_detail};
 
 impl DesktopApp {
@@ -151,28 +152,24 @@ impl DesktopApp {
     /// through `authed_repo` with that key.
     pub(super) fn setup_ssh_auth(&mut self) {
         use op_git::Credential;
-        let outcome: Result<(String, String), String> = (|| {
+        let outcome: Result<(String, String), GitAuthError> = (|| {
             let (auth, ssh) = self
                 .git_session
                 .auth_stores()
-                .ok_or_else(|| "credential stores are unavailable".to_string())?;
-            let repo = self
-                .git_session
-                .repo()
-                .ok_or_else(|| "no repository is bound".to_string())?;
-            let host = repo
-                .origin_host()
-                .ok_or_else(|| "no `origin` remote — set one first".to_string())?;
+                .ok_or(GitAuthError::CredentialStoresUnavailable)?;
+            let repo = self.git_session.repo().ok_or(GitAuthError::NoRepository)?;
+            let host = repo.origin_host().ok_or(GitAuthError::NoOriginRemote)?;
             let key_name = format!("op-{}", host.replace(['/', '\\', ':'], "-"));
             // Reuse an existing key of that name, else generate one.
             let key = match ssh.load(&key_name) {
                 Ok(key) => key,
+                // `op-git` is not ours to type; carry its message.
                 Err(_) => ssh
                     .generate(&key_name, &format!("openpencil@{host}"))
-                    .map_err(|e| e.to_string())?,
+                    .map_err(|e| GitAuthError::KeyGeneration(e.to_string()))?,
             };
             auth.set(&host, Credential::Ssh { key_name })
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| GitAuthError::StoreCredential(e.to_string()))?;
             Ok((host, key.public_key))
         })();
         match outcome {
@@ -187,23 +184,20 @@ impl DesktopApp {
     /// only on success, so a failure leaves it for a retry.
     pub(super) fn store_https_credential(&mut self, credential: &str) {
         use op_git::Credential;
-        let result: Result<(), String> = (|| {
+        let result: Result<(), GitAuthError> = (|| {
             let (username, token) = credential
                 .split_once(':')
-                .ok_or_else(|| "credential must be `username:token`".to_string())?;
+                .ok_or(GitAuthError::CredentialFormat)?;
             let username = username.trim().to_string();
             let token = token.trim().to_string();
             if username.is_empty() || token.is_empty() {
-                return Err("both a username and a token are required".to_string());
+                return Err(GitAuthError::MissingCredentialFields);
             }
             let (auth, _ssh) = self
                 .git_session
                 .auth_stores()
-                .ok_or_else(|| "credential store is unavailable".to_string())?;
-            let repo = self
-                .git_session
-                .repo()
-                .ok_or_else(|| "no repository is bound".to_string())?;
+                .ok_or(GitAuthError::CredentialStoreUnavailable)?;
+            let repo = self.git_session.repo().ok_or(GitAuthError::NoRepository)?;
             // An HTTPS credential only belongs on an HTTPS remote —
             // storing one for an SSH `origin` would shadow (and
             // break) its SSH credential, since the store is
@@ -212,17 +206,13 @@ impl DesktopApp {
                 .remote_url("origin")
                 .ok()
                 .flatten()
-                .ok_or_else(|| "no `origin` remote — set one first".to_string())?;
+                .ok_or(GitAuthError::NoOriginRemote)?;
             if !url.starts_with("https://") && !url.starts_with("http://") {
-                return Err(
-                    "the origin remote is not HTTPS — use the SSH button instead".to_string(),
-                );
+                return Err(GitAuthError::OriginNotHttps);
             }
-            let host = repo
-                .origin_host()
-                .ok_or_else(|| "the origin URL has no host".to_string())?;
+            let host = repo.origin_host().ok_or(GitAuthError::OriginHasNoHost)?;
             auth.set(&host, Credential::Https { username, token })
-                .map_err(|e| e.to_string())
+                .map_err(|e| GitAuthError::StoreCredential(e.to_string()))
         })();
         match result {
             Ok(()) => {

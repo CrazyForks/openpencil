@@ -19,12 +19,16 @@ use op_editor_core::editor_ui_state::ExportFormat;
 use op_editor_core::{uikit_io, EditorState, UIKit};
 
 mod drop_plan;
+mod export_error;
 mod image_fill_upload;
+mod ingest_error;
 mod save_payload;
 mod save_queue;
 
 pub use drop_plan::{drop_batch_plan, drop_kind, DropBatchPlan, DropKind};
+pub use export_error::DocumentExportError;
 pub use image_fill_upload::apply_fill_image_data_url;
+pub use ingest_error::DocumentIngestError;
 pub use save_payload::{
     acknowledge_browser_download, parse_save_response, save_ack_matches_document, save_file_name,
     save_snapshot_matches_document, serialize_save_payload, SavePayloadTarget,
@@ -41,12 +45,15 @@ pub struct IngestedDoc {
     pub warnings: Vec<String>,
 }
 
-pub fn export_svg_document(state: &EditorState) -> Result<String, String> {
+pub fn export_svg_document(state: &EditorState) -> Result<String, DocumentExportError> {
     let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
     if state.selection_count() == 1 && state.selection.anchor.is_real() {
-        op_editor_ui::svg_export::serialize_node_svg(&scene, state.selection.anchor.as_str())
+        Ok(op_editor_ui::svg_export::serialize_node_svg(
+            &scene,
+            state.selection.anchor.as_str(),
+        )?)
     } else {
-        op_editor_ui::svg_export::serialize_active_page_svg(&scene)
+        Ok(op_editor_ui::svg_export::serialize_active_page_svg(&scene)?)
     }
 }
 
@@ -64,10 +71,13 @@ pub struct RasterDownload {
     pub bytes: Vec<u8>,
 }
 
-fn document_value_with_editor_meta(state: &EditorState) -> Result<serde_json::Value, String> {
-    let mut document = serde_json::to_value(&state.doc).map_err(|e| e.to_string())?;
+fn document_value_with_editor_meta(
+    state: &EditorState,
+) -> Result<serde_json::Value, DocumentExportError> {
+    let mut document = serde_json::to_value(&state.doc)
+        .map_err(|e| DocumentExportError::SerializeDocument(e.to_string()))?;
     let Some(object) = document.as_object_mut() else {
-        return Err("canonical document must serialize as an object".to_string());
+        return Err(DocumentExportError::DocumentNotObject);
     };
     object.insert(
         "editorMeta".to_string(),
@@ -75,28 +85,29 @@ fn document_value_with_editor_meta(state: &EditorState) -> Result<serde_json::Va
             active_page_index: state.ui.active_page_index,
             preserve_authored_geometry: state.editor_ui.preserve_authored_geometry,
         })
-        .map_err(|e| e.to_string())?,
+        .map_err(|e| DocumentExportError::SerializeEditorMeta(e.to_string()))?,
     );
     Ok(document)
 }
 
-pub fn export_pdf_request_body(state: &EditorState) -> Result<String, String> {
+pub fn export_pdf_request_body(state: &EditorState) -> Result<String, DocumentExportError> {
     let document = document_value_with_editor_meta(state)?;
     serde_json::to_string(&serde_json::json!({
         "document": document,
         "activePageIndex": state.ui.active_page_index,
     }))
-    .map_err(|e| e.to_string())
+    .map_err(|e| DocumentExportError::SerializeRequest(e.to_string()))
 }
 
-pub fn parse_pdf_download_response(response: &str) -> Result<PdfDownload, String> {
-    let parsed: serde_json::Value = serde_json::from_str(response).map_err(|e| e.to_string())?;
+pub fn parse_pdf_download_response(response: &str) -> Result<PdfDownload, DocumentExportError> {
+    let parsed: serde_json::Value = serde_json::from_str(response)
+        .map_err(|e| DocumentExportError::ResponseParse(e.to_string()))?;
     if !parsed.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
         let message = parsed
             .get("error")
             .and_then(|v| v.as_str())
             .unwrap_or("PDF export failed");
-        return Err(message.to_string());
+        return Err(DocumentExportError::Daemon(message.to_string()));
     }
     let file_name = parsed
         .get("fileName")
@@ -113,10 +124,10 @@ pub fn parse_pdf_download_response(response: &str) -> Result<PdfDownload, String
     let data = parsed
         .get("dataBase64")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "PDF export response missing dataBase64".to_string())?;
+        .ok_or(DocumentExportError::PdfMissingData)?;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data)
-        .map_err(|e| format!("decode PDF response failed: {e}"))?;
+        .map_err(|e| DocumentExportError::PdfDecode(e.to_string()))?;
     Ok(PdfDownload {
         file_name,
         mime,
@@ -124,13 +135,13 @@ pub fn parse_pdf_download_response(response: &str) -> Result<PdfDownload, String
     })
 }
 
-pub fn export_raster_request_body(state: &EditorState) -> Result<String, String> {
+pub fn export_raster_request_body(state: &EditorState) -> Result<String, DocumentExportError> {
     let format = match state.editor_ui.export_format {
         ExportFormat::Png => "png",
         ExportFormat::Jpeg => "jpeg",
         ExportFormat::Webp => "webp",
         ExportFormat::Svg | ExportFormat::Pdf => {
-            return Err("raster export requires PNG, JPEG, or WEBP".to_string());
+            return Err(DocumentExportError::RasterFormatUnsupported);
         }
     };
     let document = document_value_with_editor_meta(state)?;
@@ -144,17 +155,20 @@ pub fn export_raster_request_body(state: &EditorState) -> Result<String, String>
         body["selectedNodeId"] =
             serde_json::Value::String(state.selection.anchor.as_str().to_string());
     }
-    serde_json::to_string(&body).map_err(|e| e.to_string())
+    serde_json::to_string(&body).map_err(|e| DocumentExportError::SerializeRequest(e.to_string()))
 }
 
-pub fn parse_raster_download_response(response: &str) -> Result<RasterDownload, String> {
-    let parsed: serde_json::Value = serde_json::from_str(response).map_err(|e| e.to_string())?;
+pub fn parse_raster_download_response(
+    response: &str,
+) -> Result<RasterDownload, DocumentExportError> {
+    let parsed: serde_json::Value = serde_json::from_str(response)
+        .map_err(|e| DocumentExportError::ResponseParse(e.to_string()))?;
     if !parsed.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
         let message = parsed
             .get("error")
             .and_then(|v| v.as_str())
             .unwrap_or("Raster export failed");
-        return Err(message.to_string());
+        return Err(DocumentExportError::Daemon(message.to_string()));
     }
     let file_name = parsed
         .get("fileName")
@@ -171,10 +185,10 @@ pub fn parse_raster_download_response(response: &str) -> Result<RasterDownload, 
     let data = parsed
         .get("dataBase64")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "Raster export response missing dataBase64".to_string())?;
+        .ok_or(DocumentExportError::RasterMissingData)?;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data)
-        .map_err(|e| format!("decode raster response failed: {e}"))?;
+        .map_err(|e| DocumentExportError::RasterDecode(e.to_string()))?;
     Ok(RasterDownload {
         file_name,
         mime,
@@ -220,7 +234,7 @@ pub struct KitExport {
     pub json: String,
 }
 
-pub fn export_kit_document(state: &EditorState) -> Result<Option<KitExport>, String> {
+pub fn export_kit_document(state: &EditorState) -> Result<Option<KitExport>, DocumentExportError> {
     let kit_name = state
         .doc
         .name
@@ -229,15 +243,17 @@ pub fn export_kit_document(state: &EditorState) -> Result<Option<KitExport>, Str
     let Some(kit_doc) = uikit_io::build_kit_document(&state.doc, &[], &kit_name) else {
         return Ok(None);
     };
-    let json = serde_json::to_string_pretty(&kit_doc).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string_pretty(&kit_doc)
+        .map_err(|e| DocumentExportError::SerializeKit(e.to_string()))?;
     Ok(Some(KitExport {
         file_name: uikit_io::kit_export_file_name(&kit_name),
         json,
     }))
 }
 
-pub fn import_kit_source(src: &str, kit_id: String) -> Result<Option<UIKit>, String> {
-    let loaded = op_pen_loader::load_canonical(src).map_err(|e| e.to_string())?;
+pub fn import_kit_source(src: &str, kit_id: String) -> Result<Option<UIKit>, DocumentIngestError> {
+    let loaded = op_pen_loader::load_canonical(src)
+        .map_err(|e| DocumentIngestError::LoadCanonical(e.to_string()))?;
     Ok(uikit_io::import_kit_from_document(&loaded.value, kit_id))
 }
 
@@ -248,9 +264,13 @@ pub fn import_kit_source(src: &str, kit_id: String) -> Result<Option<UIKit>, Str
 /// pair, minus the legacy `.opmeta` sidecar. Embedded `editorMeta`
 /// restores the active page and Figma Preserve geometry mode; older files
 /// without it open on their first non-empty page, matching desktop.
-pub fn ingest_op_source(src: &str, previous: &EditorState) -> Result<IngestedDoc, String> {
+pub fn ingest_op_source(
+    src: &str,
+    previous: &EditorState,
+) -> Result<IngestedDoc, DocumentIngestError> {
     let editor_meta = op_pen_loader::extract_editor_meta(src);
-    let loaded = op_pen_loader::load_canonical(src).map_err(|e| e.to_string())?;
+    let loaded = op_pen_loader::load_canonical(src)
+        .map_err(|e| DocumentIngestError::LoadCanonical(e.to_string()))?;
     let warnings = loaded.warnings.iter().map(|w| format!("{w:?}")).collect();
     let mut state = EditorState::from_document(loaded.value);
     op_pen_loader::apply_editor_meta_or_legacy_fallback(&mut state, editor_meta);
@@ -263,9 +283,12 @@ pub fn ingest_op_source(src: &str, previous: &EditorState) -> Result<IngestedDoc
 /// (Preserve layout mode + `preserve_authored_geometry`); the wasm32
 /// build has no worker threads, so the caller runs this on the main
 /// thread after the async `FileReader` read completes.
-pub fn ingest_figma_bytes(bytes: &[u8], file_name: &str) -> Result<IngestedDoc, String> {
+pub fn ingest_figma_bytes(
+    bytes: &[u8],
+    file_name: &str,
+) -> Result<IngestedDoc, DocumentIngestError> {
     let import = op_figma::parse_fig_binary(bytes, file_name, op_figma::FigLayoutMode::Preserve)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| DocumentIngestError::FigmaParse(e.to_string()))?;
     let mut state = EditorState::from_document(import.document);
     state.editor_ui.preserve_authored_geometry = true;
     Ok(IngestedDoc {
@@ -284,10 +307,11 @@ pub fn ingest_figma_bytes(bytes: &[u8], file_name: &str) -> Result<IngestedDoc, 
 pub fn ingest_figma_temp_source(
     source: &str,
     worker_warnings_json: &str,
-) -> Result<IngestedDoc, String> {
-    let loaded = op_pen_loader::load_canonical(source).map_err(|error| error.to_string())?;
+) -> Result<IngestedDoc, DocumentIngestError> {
+    let loaded = op_pen_loader::load_canonical(source)
+        .map_err(|error| DocumentIngestError::LoadCanonical(error.to_string()))?;
     let mut warnings: Vec<String> = serde_json::from_str(worker_warnings_json)
-        .map_err(|error| format!("decode Figma Worker warnings failed: {error}"))?;
+        .map_err(|error| DocumentIngestError::WorkerWarningsParse(error.to_string()))?;
     warnings.extend(loaded.warnings.iter().map(|warning| format!("{warning:?}")));
     let mut state = EditorState::from_document(loaded.value);
     state.editor_ui.preserve_authored_geometry = true;
@@ -295,11 +319,13 @@ pub fn ingest_figma_temp_source(
 }
 
 #[cfg(test)]
-fn ingest_html_project(files: &[op_html::HtmlProjectFile]) -> Result<IngestedDoc, String> {
+fn ingest_html_project(
+    files: &[op_html::HtmlProjectFile],
+) -> Result<IngestedDoc, DocumentIngestError> {
     let imported = op_html::import_html_project_document(files, &Default::default())
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| DocumentIngestError::HtmlProject(error.to_string()))?;
     if imported.document.children.is_empty() {
-        return Err("HTML project contains no importable content".to_string());
+        return Err(DocumentIngestError::HtmlProjectEmpty);
     }
     Ok(IngestedDoc {
         state: EditorState::from_document(imported.document),
@@ -510,7 +536,7 @@ mod tests {
         let err = parse_save_response(r#"{"ok":false,"error":"No file path"}"#)
             .expect_err("daemon error should fail");
 
-        assert_eq!(err, "No file path");
+        assert_eq!(err.to_string(), "No file path");
     }
 
     #[test]
@@ -564,7 +590,7 @@ mod tests {
         let err = parse_pdf_download_response(r#"{"ok":false,"error":"nothing to export"}"#)
             .expect_err("daemon error should fail");
 
-        assert_eq!(err, "nothing to export");
+        assert_eq!(err.to_string(), "nothing to export");
     }
 
     #[test]
@@ -615,7 +641,7 @@ mod tests {
         let err = parse_raster_download_response(r#"{"ok":false,"error":"nothing to export"}"#)
             .expect_err("daemon error should fail");
 
-        assert_eq!(err, "nothing to export");
+        assert_eq!(err.to_string(), "nothing to export");
     }
 
     #[test]

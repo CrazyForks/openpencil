@@ -39,6 +39,29 @@ use op_editor_core::{EditorCommand, NodeId};
 use op_orchestrator::plan::{build_fallback_plan, OrchestratorPlan};
 use op_orchestrator::types::DesignRequest;
 
+/// Why the minimal scaffold seed could not be built.
+///
+/// Only one failure mode exists today, and it is an implementation bug (the
+/// hand-built root-frame JSON stopped matching the canonical `PenNode`
+/// schema) rather than anything the prompt can cause — the enum exists so the
+/// caller can branch on the kind instead of on the message text. `Display` is
+/// byte-identical to the `String` this module used to return.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SeedBuildError {
+    /// `serde_json::from_value` rejected the generated root-frame template.
+    RootFrame(String),
+}
+
+impl std::fmt::Display for SeedBuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SeedBuildError::RootFrame(error) => write!(f, "seed root frame: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for SeedBuildError {}
+
 /// Build the minimal seed as ONE `EditorCommand::InsertSubtree`: a
 /// page-root frame carrying a small number of EMPTY named section-stub
 /// child frames, derived from the orchestrator's heuristic fallback plan.
@@ -46,7 +69,7 @@ use op_orchestrator::types::DesignRequest;
 /// Returns `Err` only when the root-frame JSON template fails to
 /// deserialize (an implementation bug, never a prompt problem) — the
 /// caller treats that as "skip the seed, run the pure loop".
-pub fn build_seed_command(prompt: &str) -> Result<EditorCommand, String> {
+pub fn build_seed_command(prompt: &str) -> Result<EditorCommand, SeedBuildError> {
     let req = DesignRequest {
         prompt: prompt.to_string(),
         model: None,
@@ -102,7 +125,7 @@ fn section_stub_json(plan: &OrchestratorPlan, index: usize) -> serde_json::Value
 /// per plan subtask. Mirrors `scaffold::build_root_frame_node`'s
 /// build-JSON-then-deserialize idiom so the canonical parse path (not a
 /// hand-written struct literal) validates the shape.
-fn build_seed_subtree(plan: &OrchestratorPlan) -> Result<PenNode, String> {
+fn build_seed_subtree(plan: &OrchestratorPlan) -> Result<PenNode, SeedBuildError> {
     let rf = &plan.root_frame;
     let layout = rf.layout.as_deref().unwrap_or("vertical");
     let fill_hex = rf
@@ -128,7 +151,7 @@ fn build_seed_subtree(plan: &OrchestratorPlan) -> Result<PenNode, String> {
         "children": sections,
     });
 
-    serde_json::from_value(root).map_err(|e| format!("seed root frame: {e}"))
+    serde_json::from_value(root).map_err(|e| SeedBuildError::RootFrame(e.to_string()))
 }
 
 /// Augment the design-agent system prompt so the model knows a scaffold

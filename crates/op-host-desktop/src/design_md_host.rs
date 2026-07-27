@@ -16,10 +16,11 @@ use op_ai::design_md::{
 use op_editor_core::EditorState;
 
 use crate::chat_session::{provider_for_selected_model, selected_cli_model_id};
+use crate::design_md_error::DesignMdError;
 use crate::DesktopApp;
 
 pub(crate) struct DesignMdSession {
-    rx: Receiver<Result<String, String>>,
+    rx: Receiver<Result<String, DesignMdError>>,
 }
 
 impl DesignMdSession {
@@ -36,7 +37,7 @@ impl DesignMdSession {
             // Deliver the failure through the normal poll path so the
             // generating flag clears instead of the app crashing.
             eprintln!("openpencil-desktop: spawn op-design-md thread failed: {err}");
-            let _ = tx.send(Err(format!("design.md worker failed to start: {err}")));
+            let _ = tx.send(Err(DesignMdError::WorkerSpawn(err.to_string())));
         }
         Self { rx }
     }
@@ -82,19 +83,21 @@ fn build_design_md_user_prompt(state: &EditorState) -> String {
 fn run_design_md_provider_blocking(
     provider: Box<dyn ChatProvider>,
     request: ChatRequest,
-) -> Result<String, String> {
+) -> Result<String, DesignMdError> {
     let mut out = String::new();
     for delta in provider.send(request) {
         match delta {
             ChatDelta::TextDelta(text) => out.push_str(&text),
             ChatDelta::Thinking(_) | ChatDelta::ToolUse { .. } => {}
             ChatDelta::Done { .. } => break,
-            ChatDelta::Error(message) => return Err(message),
+            // `ChatDelta::Error` carries a `String` from a trait this pass
+            // does not own; store it verbatim.
+            ChatDelta::Error(message) => return Err(DesignMdError::Provider(message)),
         }
     }
     let cleaned = clean_ai_design_md_result(&out);
     if cleaned.is_empty() {
-        Err("design.md generation returned empty output".into())
+        Err(DesignMdError::EmptyOutput)
     } else {
         Ok(cleaned)
     }
@@ -203,9 +206,7 @@ impl DesktopApp {
         let outcome = match session.rx.try_recv() {
             Ok(outcome) => outcome,
             Err(TryRecvError::Empty) => return false,
-            Err(TryRecvError::Disconnected) => {
-                Err("design.md generation worker vanished".to_string())
-            }
+            Err(TryRecvError::Disconnected) => Err(DesignMdError::WorkerVanished),
         };
         self.current_design_md = None;
         self.host

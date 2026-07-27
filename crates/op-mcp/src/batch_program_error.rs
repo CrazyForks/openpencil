@@ -81,12 +81,12 @@ impl fmt::Display for ProgramError {
 
 impl std::error::Error for ProgramError {}
 
-/// Boundary bridge for the callers that still report `String` — today
-/// `batch_design.rs`'s `parse_operations`, which `?`s the single-line direct
-/// parser from a `Result<_, String>` signature that the tool-outcome layer
-/// consumes. `Display` reproduces the exact sentence, so the message the
-/// model receives is unchanged. Delete it once `batch_design.rs` carries a
-/// typed error of its own.
+/// Boundary bridge kept for the tool-outcome layer, which still hands the
+/// model a `String` payload. Nothing in-crate needs it to `?` any more —
+/// `batch_design.rs`'s `parse_operations` now carries
+/// `OperationsError`, which wraps this enum directly — but the conversion
+/// stays available (and `Display`-faithful) so a new boundary can render a
+/// `ProgramError` without reaching for `to_string()` by hand.
 impl From<ProgramError> for String {
     fn from(error: ProgramError) -> String {
         error.to_string()

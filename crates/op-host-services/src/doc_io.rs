@@ -41,6 +41,7 @@ mod canonical_save;
 mod clean_copy;
 #[cfg(test)]
 mod editor_meta_roundtrip_tests;
+mod error;
 mod load;
 mod load_report;
 #[cfg(test)]
@@ -51,6 +52,7 @@ pub use canonical_save::{write_canonical_document, CanonicalSaveSnapshot, Stream
 pub use clean_copy::{
     copy_clean_document_with_editor_meta_to_path, copy_document_to_current_schema_path,
 };
+pub use error::DocIoError;
 #[cfg(test)]
 use load::looks_like_legacy_doc_payload;
 pub use load::{load_editor_state, load_editor_state_from_source, load_editor_state_with_report};
@@ -74,7 +76,7 @@ pub fn sidecar_path(path: &std::path::Path) -> PathBuf {
 /// Editor metadata is embedded under the top-level `editorMeta` extension so
 /// the active page and Preserve-import geometry mode survive the round-trip
 /// without a separate sidecar.
-pub fn save_to_path(state: &EditorState, path: &std::path::Path) -> Result<(), String> {
+pub fn save_to_path(state: &EditorState, path: &std::path::Path) -> Result<(), DocIoError> {
     let thumbnails = jian_ops_schema::image_thumbs::capture_snapshot();
     save_document_with_thumbnails_to_path(
         &state.doc,
@@ -93,7 +95,7 @@ pub fn save_document_to_path(
     document: &jian_ops_schema::PenDocument,
     active_page_index: usize,
     path: &std::path::Path,
-) -> Result<(), String> {
+) -> Result<(), DocIoError> {
     let thumbnails = jian_ops_schema::image_thumbs::capture_snapshot();
     // This document-only compatibility entry point predates the authored-
     // geometry latch. Without an EditorState there is no truthful value to
@@ -105,7 +107,7 @@ pub fn save_document_to_path(
 pub fn save_snapshot_to_path(
     snapshot: &CanonicalSaveSnapshot,
     path: &std::path::Path,
-) -> Result<(), String> {
+) -> Result<(), DocIoError> {
     save_serializable_document_with_thumbnails_to_path(
         snapshot.document(),
         snapshot.active_page_index(),
@@ -121,7 +123,7 @@ fn save_document_with_thumbnails_to_path(
     preserve_authored_geometry: bool,
     thumbnails: &jian_ops_schema::image_thumbs::ImageThumbSnapshot,
     path: &std::path::Path,
-) -> Result<(), String> {
+) -> Result<(), DocIoError> {
     save_serializable_document_with_thumbnails_to_path(
         document,
         active_page_index,
@@ -139,7 +141,7 @@ fn save_serializable_document_with_thumbnails_to_path<
     preserve_authored_geometry: bool,
     thumbnails: &jian_ops_schema::image_thumbs::ImageThumbSnapshot,
     path: &std::path::Path,
-) -> Result<(), String> {
+) -> Result<(), DocIoError> {
     // Write through a sibling temp file so a crash mid-write doesn't
     // leave a half-written file on disk.
     let (tmp, file) = create_sibling_temp(path)?;
@@ -152,7 +154,7 @@ fn save_serializable_document_with_thumbnails_to_path<
             preserve_authored_geometry,
             thumbnails,
         )?;
-        std::io::Write::flush(&mut writer).map_err(|e| e.to_string())?;
+        std::io::Write::flush(&mut writer).map_err(|e| DocIoError::Io(e.to_string()))?;
         drop(writer);
         commit_staged_document(&tmp, path)
     })();
@@ -171,7 +173,7 @@ fn save_serializable_document_with_thumbnails_to_path<
 pub fn commit_staged_document(
     staging_path: &std::path::Path,
     destination: &std::path::Path,
-) -> Result<(), String> {
+) -> Result<(), DocIoError> {
     replace_file(staging_path, destination)?;
     // Old builds wrote `<path>.opmeta`. New saves are single-file, so
     // remove any stale sidecar after the document write has committed.
@@ -598,7 +600,7 @@ mod tests {
         // The legacy detector surfaces the `dialog.loadErrorOldVersion`
         // localised message rather than an opaque schema error.
         assert_eq!(
-            err,
+            err.to_string(),
             op_i18n::translate(op_editor_core::Locale::EnUs, "dialog.loadErrorOldVersion")
         );
 

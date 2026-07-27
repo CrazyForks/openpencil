@@ -21,7 +21,9 @@ use crate::chat_agent_context::{
     elide_inline_screenshots, prepare_screenshot_for_context, PreparedScreenshot,
     OMITTED_SCREENSHOT_TEXT, TEXT_ONLY_SCREENSHOT_TEXT,
 };
-use crate::chat_builtin_http::{map_anthropic_stop_reason, map_openai_stop_reason};
+use crate::chat_builtin_http::{
+    map_anthropic_stop_reason, map_openai_stop_reason, BuiltinHttpError,
+};
 
 #[path = "chat_agent_loop_retry.rs"]
 mod retry;
@@ -335,7 +337,7 @@ async fn pump_sse<C: SseCollector>(
     resp: reqwest::Response,
     tx: &mpsc::Sender<ChatDelta>,
     collector: &mut C,
-) -> Result<(), String> {
+) -> Result<(), BuiltinHttpError> {
     let mut stream = resp.bytes_stream();
     let mut buf: Vec<u8> = Vec::new();
     let mut event_data = String::new();
@@ -344,7 +346,9 @@ async fn pump_sse<C: SseCollector>(
         if tx.is_closed() {
             return Ok(());
         }
-        let bytes = chunk.map_err(|e| format!("sse stream: {e}"))?;
+        let bytes = chunk.map_err(|e| BuiltinHttpError::SseStream {
+            message: e.to_string(),
+        })?;
         buf.extend_from_slice(&bytes);
         while let Some(nl_pos) = buf.iter().position(|&b| b == b'\n') {
             let line: Vec<u8> = buf.drain(..=nl_pos).collect();

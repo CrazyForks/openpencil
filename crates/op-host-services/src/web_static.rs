@@ -25,6 +25,8 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::web_canvas_server_error::WebCanvasError;
+
 /// Host page served at `/` (embedded so the daemon serves it from any cwd).
 const INDEX_HTML: &str = include_str!("web_static/index.html");
 
@@ -294,11 +296,16 @@ fn html_escape(s: &str) -> String {
 /// (see `web_canvas_server::cors_origin_for`): `Some(origin)` echoes it,
 /// `None` omits the header — static GET routes are the auth-exempt
 /// surface, but managed mode still restricts which origins may read them.
+///
+/// Reports [`WebCanvasError::Transport`] directly: a failed write leaves the
+/// socket unusable, so the accept loop logs it rather than answering with it
+/// — exactly the classification its only caller
+/// (`web_canvas_server/connection.rs`) used to apply by hand.
 pub fn write_static_response<S: std::io::Write>(
     stream: &mut S,
     reply: &StaticReply,
     cors_origin: Option<&str>,
-) -> Result<(), String> {
+) -> Result<(), WebCanvasError> {
     let cors_line = cors_origin
         .map(|origin| format!("Access-Control-Allow-Origin: {origin}\r\n"))
         .unwrap_or_default();
@@ -315,11 +322,13 @@ pub fn write_static_response<S: std::io::Write>(
     );
     stream
         .write_all(head.as_bytes())
-        .map_err(|e| format!("http write: {e}"))?;
+        .map_err(|e| WebCanvasError::Transport(format!("http write: {e}")))?;
     stream
         .write_all(&reply.body)
-        .map_err(|e| format!("http write: {e}"))?;
-    stream.flush().map_err(|e| format!("http flush: {e}"))
+        .map_err(|e| WebCanvasError::Transport(format!("http write: {e}")))?;
+    stream
+        .flush()
+        .map_err(|e| WebCanvasError::Transport(format!("http flush: {e}")))
 }
 
 #[cfg(test)]

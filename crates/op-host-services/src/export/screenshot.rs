@@ -16,7 +16,9 @@ use op_editor_core::EditorState;
 use op_editor_ui::layout_scene::LayoutScene;
 use op_editor_ui::Rect;
 
-use super::{collect_bounds, page_bounds, paint_node, paint_nodes, BoundsAcc, RasterFormat};
+use super::{
+    collect_bounds, page_bounds, paint_node, paint_nodes, BoundsAcc, ExportError, RasterFormat,
+};
 
 /// Capture parameters — decoupled from `op_mcp::ScreenshotRequest` so
 /// this module compiles (and tests) without the `mcp-debug-tools`
@@ -50,16 +52,19 @@ pub struct ScreenshotPng {
 /// feature-gated `mcp_live` UI pump, so gate it identically to keep
 /// the default build warning-free.
 #[cfg(feature = "mcp-debug-tools")]
-pub fn capture(state: &EditorState, spec: &CaptureSpec) -> Result<ScreenshotPng, String> {
+pub fn capture(state: &EditorState, spec: &CaptureSpec) -> Result<ScreenshotPng, ExportError> {
     let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
     capture_scene(&scene, spec)
 }
 
 /// Scene-level capture — split out so tests can drive a hand-built
 /// scene without an `EditorState`.
-pub fn capture_scene(scene: &LayoutScene, spec: &CaptureSpec) -> Result<ScreenshotPng, String> {
+pub fn capture_scene(
+    scene: &LayoutScene,
+    spec: &CaptureSpec,
+) -> Result<ScreenshotPng, ExportError> {
     let Some(page) = scene.active_page() else {
-        return Err("no active page".into());
+        return Err(ExportError::NoActivePage);
     };
     let scale = if spec.scale.is_finite() {
         spec.scale.clamp(0.5, 8.0)
@@ -73,7 +78,7 @@ pub fn capture_scene(scene: &LayoutScene, spec: &CaptureSpec) -> Result<Screensh
     };
     let (actual_bounds, png) = match &spec.node_id {
         None => {
-            let bounds: Rect = page_bounds(page).ok_or("nothing to capture on the active page")?;
+            let bounds: Rect = page_bounds(page).ok_or(ExportError::NothingToCapture)?;
             let png = render(bounds, scale, padding, |canvas| {
                 paint_nodes(canvas, &page.children);
             })?;
@@ -82,12 +87,16 @@ pub fn capture_scene(scene: &LayoutScene, spec: &CaptureSpec) -> Result<Screensh
         Some(node_id) => {
             let node = page
                 .find(node_id)
-                .ok_or_else(|| format!("node {node_id} not found on the active page"))?;
+                .ok_or_else(|| ExportError::NodeNotFoundOnActivePage {
+                    node_id: node_id.clone(),
+                })?;
             let mut acc = BoundsAcc::new();
             collect_bounds(node, glam::Affine2::IDENTITY, &mut acc);
             let bounds = acc
                 .into_rect()
-                .ok_or_else(|| format!("node {node_id} paints nothing"))?;
+                .ok_or_else(|| ExportError::NodePaintsNothing {
+                    node_id: node_id.clone(),
+                })?;
             let png = render(bounds, scale, padding, |canvas| paint_node(canvas, node))?;
             (
                 Some((
@@ -106,20 +115,18 @@ pub fn capture_scene(scene: &LayoutScene, spec: &CaptureSpec) -> Result<Screensh
     })
 }
 
-/// Boundary adapter onto the typed raster core: this module's public
-/// `Result<_, String>` is baked into `mcp_live.rs`'s screenshot
-/// `SyncSender` type and its `maybe_serve` closure bound, so the `String`
-/// stays until that module converts. `ExportError`'s `Display` reproduces
-/// the same sentence, so the "Renderer reported failure: …" envelope the
-/// live glue builds is unchanged.
+/// Thin alias onto the shared raster core, kept so the two capture arms
+/// read the same. `mcp_live.rs` now carries the typed error end to end
+/// (`McpLiveError::Screenshot`), so nothing here converts to `String`; the
+/// "Renderer reported failure: …" envelope the live glue builds formats the
+/// same sentence through `Display`.
 fn render(
     bounds: Rect,
     scale: f32,
     padding: f32,
     paint: impl FnOnce(&skia_safe::Canvas),
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<u8>, ExportError> {
     super::render_raster_bytes(bounds, RasterFormat::Png, scale, padding, paint)
-        .map_err(String::from)
 }
 
 #[cfg(test)]
@@ -190,7 +197,7 @@ mod tests {
             },
         )
         .unwrap_err();
-        assert!(err.contains("not found"), "{err}");
+        assert!(err.to_string().contains("not found"), "{err}");
     }
 
     /// Output-size cap (export::MAX_RASTER_*) reaches the screenshot
@@ -209,7 +216,7 @@ mod tests {
             },
         )
         .unwrap_err();
-        assert!(err.contains("exceeds the size cap"), "{err}");
+        assert!(err.to_string().contains("exceeds the size cap"), "{err}");
     }
 
     #[test]
@@ -224,6 +231,6 @@ mod tests {
             },
         )
         .unwrap_err();
-        assert!(err.contains("nothing to capture"), "{err}");
+        assert!(err.to_string().contains("nothing to capture"), "{err}");
     }
 }

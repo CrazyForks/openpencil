@@ -110,7 +110,7 @@ pub use backend::{
     target_os = "ios",
     target_os = "android"
 ))]
-pub use preview::PreviewSession;
+pub use preview::{PreviewEnterError, PreviewLayoutError, PreviewSession};
 #[cfg(feature = "gl-host")]
 #[cfg(any(
     target_os = "macos",

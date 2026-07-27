@@ -7,6 +7,7 @@ use std::time::Duration;
 use op_editor_core::{IconPickerRemoteIcon, IconifyLoadMoreRequest};
 use serde::Deserialize;
 
+use crate::asset_fetch_error::AssetFetchError;
 use crate::DesktopApp;
 
 /// Shared with the web fetch path (`op-host-web/src/iconify_web.rs`).
@@ -18,7 +19,7 @@ pub struct IconifyJob {
 
 struct IconifyResult {
     request: IconifyLoadMoreRequest,
-    result: Result<IconifyPage, String>,
+    result: Result<IconifyPage, AssetFetchError>,
 }
 
 struct IconifyPage {
@@ -134,7 +135,9 @@ impl DesktopApp {
                 ui.icon_picker_remote.error = None;
             }
             Err(err) => {
-                ui.icon_picker_remote.error = Some(err);
+                // `icon_picker_remote.error` is an `Option<String>` field on
+                // `op-editor-core`, a crate this pass does not own.
+                ui.icon_picker_remote.error = Some(err.to_string());
             }
         }
         self.host.mark_editor_state_dirty();
@@ -142,7 +145,7 @@ impl DesktopApp {
     }
 }
 
-fn fetch_iconify_page(request: &IconifyLoadMoreRequest) -> Result<IconifyPage, String> {
+fn fetch_iconify_page(request: &IconifyLoadMoreRequest) -> Result<IconifyPage, AssetFetchError> {
     // Bridge through the shared runtime instead of building a private one:
     // a nested `Runtime::new` aborts with "Cannot start a runtime from within
     // a runtime" the moment this helper is reached from a tokio worker.
@@ -151,7 +154,7 @@ fn fetch_iconify_page(request: &IconifyLoadMoreRequest) -> Result<IconifyPage, S
             .timeout(Duration::from_secs(15))
             .user_agent(concat!("openpencil-desktop/", env!("CARGO_PKG_VERSION")))
             .build()
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| AssetFetchError::HttpClient(e.to_string()))?;
         let search_url = format!(
             "{ICONIFY_API}/search?query={}&limit={}&start={}",
             encode_component(&request.query),
@@ -162,12 +165,12 @@ fn fetch_iconify_page(request: &IconifyLoadMoreRequest) -> Result<IconifyPage, S
             .get(search_url)
             .send()
             .await
-            .map_err(|e| e.to_string())?
+            .map_err(|e| AssetFetchError::Request(e.to_string()))?
             .error_for_status()
-            .map_err(|e| e.to_string())?
+            .map_err(|e| AssetFetchError::Request(e.to_string()))?
             .json()
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| AssetFetchError::Request(e.to_string()))?;
         let grouped = group_icon_ids(&search.icons);
         let mut loaded = HashMap::new();
         for (collection, names) in grouped {
@@ -184,12 +187,12 @@ fn fetch_iconify_page(request: &IconifyLoadMoreRequest) -> Result<IconifyPage, S
                 .get(url)
                 .send()
                 .await
-                .map_err(|e| e.to_string())?
+                .map_err(|e| AssetFetchError::Request(e.to_string()))?
                 .error_for_status()
-                .map_err(|e| e.to_string())?
+                .map_err(|e| AssetFetchError::Request(e.to_string()))?
                 .json()
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| AssetFetchError::Request(e.to_string()))?;
             for (name, icon) in data.icons {
                 let w = icon.width.or(data.width).unwrap_or(24.0);
                 let h = icon.height.or(data.height).unwrap_or(24.0);

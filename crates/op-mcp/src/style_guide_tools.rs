@@ -42,7 +42,7 @@ impl McpTool for GetStyleGuide {
     fn call(&self, args: &BTreeMap<String, String>) -> ToolOutcome {
         let tags = match parse_tags(args.get("tags").map(String::as_str)) {
             Ok(tags) => tags,
-            Err(msg) => return ToolOutcome::Err(ToolErrorCode::InvalidArgument, msg),
+            Err(e) => return ToolOutcome::Err(ToolErrorCode::InvalidArgument, e.to_string()),
         };
         let platform = args
             .get("platform")
@@ -87,13 +87,33 @@ pub fn get_style_guide_snapshot() -> GetStyleGuide {
     GetStyleGuide
 }
 
-fn parse_tags(raw: Option<&str>) -> Result<Vec<String>, String> {
+/// The `tags` arg looked like a JSON array but did not deserialize into
+/// one. One-variant enum: the comma-separated spelling cannot fail, so this
+/// is the only way `parse_tags` refuses. `Display` reproduces the previous
+/// message byte-for-byte.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TagsParseError {
+    /// The serde error text.
+    pub detail: String,
+}
+
+impl std::fmt::Display for TagsParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let detail = &self.detail;
+        write!(f, "tags must be a string array: {detail}")
+    }
+}
+
+impl std::error::Error for TagsParseError {}
+
+fn parse_tags(raw: Option<&str>) -> Result<Vec<String>, TagsParseError> {
     let Some(raw) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(Vec::new());
     };
     if raw.starts_with('[') {
-        return serde_json::from_str::<Vec<String>>(raw)
-            .map_err(|e| format!("tags must be a string array: {e}"));
+        return serde_json::from_str::<Vec<String>>(raw).map_err(|e| TagsParseError {
+            detail: e.to_string(),
+        });
     }
     Ok(raw
         .split(',')

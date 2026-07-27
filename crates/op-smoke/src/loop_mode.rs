@@ -64,6 +64,50 @@ use op_host_services::design_agent_tools::{
     design_tool_defs, design_tool_level, execute_agent_tool_with_root_seed_guard, RootSeedGuard,
 };
 
+use crate::loop_seed::SeedBuildError;
+
+/// Why the headless agentic loop could not be set up.
+///
+/// Every variant is a pre-flight failure — the loop itself never fails, it
+/// drains to exhaustion. `Display` reproduces the exact sentences [`run_loop`]
+/// used to return as `String`, so `[LOOP] setup error: …` lines in the ab-v9
+/// benchmark logs are unchanged byte-for-byte.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoopSetupError {
+    /// `OPENPENCIL_LLM_*` did not describe a usable builtin provider.
+    ProviderNotReady,
+    /// `OPENPENCIL_SMOKE_LIBRARY` named a library that failed to merge.
+    /// Payload is the rendered `op_pen_loader::LibraryMergeError`.
+    LibraryLoad(String),
+    /// The minimal scaffold seed subtree could not be built.
+    Seed(SeedBuildError),
+    /// The seed subtree built but `EditorState::apply` refused it.
+    SeedApply,
+}
+
+impl std::fmt::Display for LoopSetupError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LoopSetupError::ProviderNotReady => {
+                f.write_str("builtin provider not ready (need non-empty api_key + model)")
+            }
+            LoopSetupError::LibraryLoad(error) => write!(f, "library load failed: {error}"),
+            LoopSetupError::Seed(error) => write!(f, "{error}"),
+            LoopSetupError::SeedApply => {
+                f.write_str("minimal scaffold seed failed to apply to EditorState")
+            }
+        }
+    }
+}
+
+impl std::error::Error for LoopSetupError {}
+
+impl From<SeedBuildError> for LoopSetupError {
+    fn from(error: SeedBuildError) -> Self {
+        LoopSetupError::Seed(error)
+    }
+}
+
 /// Headless [`ChatToolExecutor`] owning the live `EditorState` behind a
 /// `Mutex`. Each `execute` applies one design tool to the state via the
 /// production transport-free apply path; `finalize` runs the loop-end
@@ -208,7 +252,7 @@ fn build_design_provider(
     api_key: String,
     model: String,
     executor: Arc<HeadlessExecutor>,
-) -> Result<ConfiguredBuiltinProvider, String> {
+) -> Result<ConfiguredBuiltinProvider, LoopSetupError> {
     let config = BuiltinAgentConfig {
         id: "smoke-loop".into(),
         preset: BuiltinAgentPresetKey::Custom,
@@ -220,7 +264,7 @@ fn build_design_provider(
         enabled: true,
     };
     let provider = ConfiguredBuiltinProvider::from_builtin_agent(&config)
-        .ok_or_else(|| "builtin provider not ready (need non-empty api_key + model)".to_string())?;
+        .ok_or(LoopSetupError::ProviderNotReady)?;
     Ok(provider
         .with_canvas_tools(design_tool_defs(), executor)
         .with_loop_finalize())
@@ -258,7 +302,7 @@ pub fn run_loop(
     dump: bool,
     library_path: Option<String>,
     seed: bool,
-) -> Result<Arc<Mutex<EditorState>>, String> {
+) -> Result<Arc<Mutex<EditorState>>, LoopSetupError> {
     // `OPENPENCIL_SMOKE_STARTER=1` seeds the fresh-canvas starter frame so the
     // loop exercises the same `replaceEmptyFrame` reuse path the desktop GUI
     // carries; default stays the empty `new()` doc (matches orchestrator mode).
@@ -275,7 +319,7 @@ pub fn run_loop(
     // loaded masters. `None` ⇒ no merge, byte-for-byte unchanged.
     if let Some(path) = library_path.as_deref() {
         let report = op_pen_loader::merge_library_into_state(&mut initial, path)
-            .map_err(|e| format!("library load failed: {e}"))?;
+            .map_err(|e| LoopSetupError::LibraryLoad(e.to_string()))?;
         eprintln!(
             "[LOOP] library merged from {path}: +{} master(s), {} component(s) total, \
              +{} variable(s), +{} theme axis(es)",
@@ -294,7 +338,7 @@ pub fn run_loop(
         let cmd = crate::loop_seed::build_seed_command(&user_prompt)?;
         let applied = initial.apply(cmd);
         if !applied {
-            return Err("minimal scaffold seed failed to apply to EditorState".into());
+            return Err(LoopSetupError::SeedApply);
         }
         system_prompt.push_str(&crate::loop_seed::seed_system_prompt_suffix(&user_prompt));
         eprintln!(

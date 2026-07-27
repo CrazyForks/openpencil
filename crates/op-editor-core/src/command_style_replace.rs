@@ -9,6 +9,73 @@ use jian_ops_schema::node::container::{ContainerProps, CornerRadius, Padding};
 use jian_ops_schema::node::{FontWeight, PenNode};
 use jian_ops_schema::style::{PenFill, PenStroke, StrokeThickness};
 
+/// A rejected style-property replacement request.
+///
+/// `Display` reproduces the previous ad-hoc `String` messages byte for byte,
+/// so MCP `invalid_argument` payloads are unchanged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StyleReplaceError {
+    /// The property only accepts string values (colors, font families).
+    NotString { property: String },
+    /// The property only accepts finite numbers.
+    NotFiniteNumber { property: String },
+    /// A stored numeric value was NaN/infinite and cannot be compared.
+    NumberNotFinite,
+    /// `gap` accepts a number or a variable expression string.
+    InvalidGap,
+    /// `strokeThickness` accepts a number or a four-number array.
+    InvalidStrokeThickness,
+    /// `cornerRadius` accepts a number or a four-number array.
+    InvalidCornerRadius,
+    /// `padding` accepts a number, a two/four-number array, or a string.
+    InvalidPadding,
+    /// `fontWeight` accepts a non-negative number or a keyword string.
+    InvalidFontWeight,
+}
+
+impl std::fmt::Display for StyleReplaceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StyleReplaceError::NotString { property } => {
+                write!(f, "{property} replacement values must be strings")
+            }
+            StyleReplaceError::NotFiniteNumber { property } => {
+                write!(f, "{property} replacement values must be finite numbers")
+            }
+            StyleReplaceError::NumberNotFinite => write!(f, "number is not finite"),
+            StyleReplaceError::InvalidGap => {
+                write!(f, "gap replacement values must be numbers or strings")
+            }
+            StyleReplaceError::InvalidStrokeThickness => write!(
+                f,
+                "strokeThickness values must be a number or four-number array"
+            ),
+            StyleReplaceError::InvalidCornerRadius => write!(
+                f,
+                "cornerRadius values must be a number or four-number array"
+            ),
+            StyleReplaceError::InvalidPadding => write!(
+                f,
+                "padding values must be a number, two/four-number array, or string"
+            ),
+            StyleReplaceError::InvalidFontWeight => {
+                write!(
+                    f,
+                    "fontWeight replacement target must be a number or string"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for StyleReplaceError {}
+
+impl From<StyleReplaceError> for String {
+    fn from(error: StyleReplaceError) -> String {
+        error.to_string()
+    }
+}
+
 impl EditorState {
     pub(crate) fn cmd_replace_all_matching_properties(
         &mut self,
@@ -29,7 +96,7 @@ pub fn replace_matching_properties_in_roots(
     roots: &mut [PenNode],
     parent_ids: &[NodeId],
     replacements: &[StylePropertyReplacement],
-) -> Result<usize, String> {
+) -> Result<usize, StyleReplaceError> {
     validate_replacements(replacements)?;
     let mut count = 0;
     for parent_id in parent_ids {
@@ -60,7 +127,9 @@ fn page_children_mut<'a>(
     }
 }
 
-fn validate_replacements(replacements: &[StylePropertyReplacement]) -> Result<(), String> {
+fn validate_replacements(
+    replacements: &[StylePropertyReplacement],
+) -> Result<(), StyleReplaceError> {
     for replacement in replacements {
         match replacement.property.as_str() {
             "fillColor" | "textColor" | "strokeColor" | "fontFamily" => {
@@ -449,39 +518,46 @@ fn number_or_expression_value(value: &NumberOrExpression) -> StylePropValue {
     }
 }
 
-fn require_string<'a>(value: &'a StylePropValue, property: &str) -> Result<&'a str, String> {
+fn require_string<'a>(
+    value: &'a StylePropValue,
+    property: &str,
+) -> Result<&'a str, StyleReplaceError> {
     match value {
         StylePropValue::String(s) => Ok(s),
-        _ => Err(format!("{property} replacement values must be strings")),
+        _ => Err(StyleReplaceError::NotString {
+            property: property.to_string(),
+        }),
     }
 }
 
-fn number_from_value(value: &StylePropValue, property: &str) -> Result<f64, String> {
+fn number_from_value(value: &StylePropValue, property: &str) -> Result<f64, StyleReplaceError> {
     match value {
         StylePropValue::Number(v) if v.is_finite() => Ok(*v),
-        _ => Err(format!(
-            "{property} replacement values must be finite numbers"
-        )),
+        _ => Err(StyleReplaceError::NotFiniteNumber {
+            property: property.to_string(),
+        }),
     }
 }
 
-fn finite_number_value(value: f64) -> Result<StylePropValue, String> {
+fn finite_number_value(value: f64) -> Result<StylePropValue, StyleReplaceError> {
     if value.is_finite() {
         Ok(StylePropValue::Number(value))
     } else {
-        Err("number is not finite".into())
+        Err(StyleReplaceError::NumberNotFinite)
     }
 }
 
-fn number_or_expression_from_value(value: &StylePropValue) -> Result<NumberOrExpression, String> {
+fn number_or_expression_from_value(
+    value: &StylePropValue,
+) -> Result<NumberOrExpression, StyleReplaceError> {
     match value {
         StylePropValue::Number(v) if v.is_finite() => Ok(NumberOrExpression::Number(*v)),
         StylePropValue::String(s) => Ok(NumberOrExpression::Expression(s.clone())),
-        _ => Err("gap replacement values must be numbers or strings".into()),
+        _ => Err(StyleReplaceError::InvalidGap),
     }
 }
 
-fn thickness_from_value(value: &StylePropValue) -> Result<StrokeThickness, String> {
+fn thickness_from_value(value: &StylePropValue) -> Result<StrokeThickness, StyleReplaceError> {
     match value {
         StylePropValue::Number(v) if v.is_finite() => Ok(StrokeThickness::Uniform(*v as f32)),
         StylePropValue::NumberArray(v) if v.len() == 4 && v.iter().all(|n| n.is_finite()) => {
@@ -495,21 +571,21 @@ fn thickness_from_value(value: &StylePropValue) -> Result<StrokeThickness, Strin
         StylePropValue::NumberArray(v) if v.len() == 1 && v[0].is_finite() => {
             Ok(StrokeThickness::Uniform(v[0] as f32))
         }
-        _ => Err("strokeThickness values must be a number or four-number array".into()),
+        _ => Err(StyleReplaceError::InvalidStrokeThickness),
     }
 }
 
-fn corner_radius_from_value(value: &StylePropValue) -> Result<CornerRadius, String> {
+fn corner_radius_from_value(value: &StylePropValue) -> Result<CornerRadius, StyleReplaceError> {
     match value {
         StylePropValue::Number(v) if v.is_finite() => Ok(CornerRadius::Uniform(*v)),
         StylePropValue::NumberArray(v) if v.len() == 4 && v.iter().all(|n| n.is_finite()) => {
             Ok(CornerRadius::PerCorner([v[0], v[1], v[2], v[3]]))
         }
-        _ => Err("cornerRadius values must be a number or four-number array".into()),
+        _ => Err(StyleReplaceError::InvalidCornerRadius),
     }
 }
 
-fn padding_from_value(value: &StylePropValue) -> Result<Padding, String> {
+fn padding_from_value(value: &StylePropValue) -> Result<Padding, StyleReplaceError> {
     match value {
         StylePropValue::Number(v) if v.is_finite() => Ok(Padding::Uniform(*v)),
         StylePropValue::NumberArray(v) if v.len() == 2 && v.iter().all(|n| n.is_finite()) => {
@@ -519,17 +595,17 @@ fn padding_from_value(value: &StylePropValue) -> Result<Padding, String> {
             Ok(Padding::LtrB([v[0], v[1], v[2], v[3]]))
         }
         StylePropValue::String(s) => Ok(Padding::Expression(s.clone())),
-        _ => Err("padding values must be a number, two/four-number array, or string".into()),
+        _ => Err(StyleReplaceError::InvalidPadding),
     }
 }
 
-fn font_weight_from_value(value: &StylePropValue) -> Result<FontWeight, String> {
+fn font_weight_from_value(value: &StylePropValue) -> Result<FontWeight, StyleReplaceError> {
     match value {
         StylePropValue::Number(v) if v.is_finite() && *v >= 0.0 => {
             Ok(FontWeight::Number(*v as u32))
         }
         StylePropValue::String(s) => Ok(FontWeight::Keyword(s.clone())),
-        _ => Err("fontWeight replacement target must be a number or string".into()),
+        _ => Err(StyleReplaceError::InvalidFontWeight),
     }
 }
 

@@ -22,12 +22,7 @@ use super::*;
 /// path uses, waking the accept loop by connecting back to the bound
 /// address. Non-managed mode is untouched: no token, no handshake output, no
 /// stdin thread.
-pub fn run_web_canvas(options: ServeWebOptions) -> std::result::Result<(), String> {
-    // Public entry point (`cli_modes.rs`) — `String` contract preserved.
-    run_web_canvas_typed(options).map_err(|e| e.to_string())
-}
-
-pub(super) fn run_web_canvas_typed(options: ServeWebOptions) -> Result<()> {
+pub fn run_web_canvas(options: ServeWebOptions) -> Result<()> {
     let ServeWebOptions {
         port,
         path,
@@ -189,9 +184,10 @@ pub(super) fn enforce_credential_persistence_policy<F>(
     save: F,
 ) -> Result<()>
 where
-    // `settings_io::save_checked`'s `String` shape is preserved (unowned);
-    // only the outcome is retyped.
-    F: FnOnce(&EditorState) -> std::result::Result<(), String>,
+    // `settings_io::save_checked` reports its own typed `SettingsIoError`
+    // now. Only the outcome is consulted — the fixed sentence below is the
+    // policy verdict, not the IO detail, and predates this conversion.
+    F: FnOnce(&EditorState) -> std::result::Result<(), crate::settings_io::SettingsIoError>,
 {
     if !policy.server_persistence()
         && crate::web_credentials::remove_browser_owned_credentials(editor)

@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 
 use jian_core::layout::measure::FontStyleKind;
 use op_config_store::ConfigStore;
+
+use crate::fonts_error::FontStoreError;
 use serde::{Deserialize, Serialize};
 
 /// Reject absurd font files early. A normal face is well under 1 MiB; a large
@@ -116,23 +118,21 @@ impl FontStore {
     /// first would leave a live-but-unpersisted font — visible + rendered
     /// this session but gone on restart — if a disk write then failed while
     /// the caller reported the import as failed.
-    pub fn import(&self, bytes: Vec<u8>) -> Result<jian_skia::FontBlob, String> {
+    pub fn import(&self, bytes: Vec<u8>) -> Result<jian_skia::FontBlob, FontStoreError> {
         if bytes.len() > MAX_FONT_BYTES {
-            return Err(format!(
-                "font file is too large ({:.1} MiB; max {} MiB)",
-                bytes.len() as f64 / (1024.0 * 1024.0),
-                MAX_FONT_BYTES / (1024 * 1024)
-            ));
+            return Err(FontStoreError::TooLarge { bytes: bytes.len() });
         }
         // Parse WITHOUT registering — validates the bytes and yields the
         // family/style/weight/hash the on-disk entry is keyed on.
-        let meta = jian_skia::parse_imported_font_meta(&bytes)
-            .ok_or_else(|| "not a valid ttf/otf font file".to_string())?;
+        let meta =
+            jian_skia::parse_imported_font_meta(&bytes).ok_or(FontStoreError::NotAFontFile)?;
 
+        // `std::io::Error` and `jian-skia`'s error belong to code this pass
+        // does not own, so their messages ride along as text.
         let file = format!("{:016x}.ttf", meta.hash);
-        std::fs::create_dir_all(&self.dir).map_err(|e| format!("create fonts dir: {e}"))?;
+        std::fs::create_dir_all(&self.dir).map_err(|e| FontStoreError::CreateDir(e.to_string()))?;
         std::fs::write(self.dir.join(&file), &bytes)
-            .map_err(|e| format!("write font file: {e}"))?;
+            .map_err(|e| FontStoreError::WriteFile(e.to_string()))?;
 
         let italic = matches!(meta.style, FontStyleKind::Italic);
         let mut index = self.load_index();
@@ -157,7 +157,7 @@ impl FontStore {
             file,
         });
         self.save_index(&index)
-            .map_err(|e| format!("write font index: {e}"))?;
+            .map_err(|e| FontStoreError::WriteIndex(e.to_string()))?;
 
         // The new index is durable — only now is it safe to prune the files
         // it no longer references.
@@ -168,7 +168,8 @@ impl FontStore {
         // Persistence is durable — now commit the live registration. This
         // re-parses the same bytes, so it cannot fail after `parse_*` above
         // succeeded, but propagate any error rather than unwrap.
-        jian_skia::register_imported_font(bytes).map_err(|e| format!("register font: {e}"))
+        jian_skia::register_imported_font(bytes)
+            .map_err(|e| FontStoreError::Register(e.to_string()))
     }
 
     /// Remove every imported face of `family` from the live registry and disk.

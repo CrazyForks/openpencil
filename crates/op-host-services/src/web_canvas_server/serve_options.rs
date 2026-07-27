@@ -32,18 +32,7 @@ pub struct ServeWebOptions {
 ///
 /// The host defaults to loopback; `--host 0.0.0.0` is the LAN/Docker opt-in
 /// (no TLS — deploy behind a proxy for anything beyond a trusted network).
-pub fn parse_serve_web_args<I: Iterator<Item = String>>(
-    args: I,
-) -> std::result::Result<ServeWebOptions, String> {
-    // Public entry point consumed by `cli_modes.rs` and the host binaries,
-    // which are outside this conversion's scope — keep the `String` contract
-    // and adapt the typed error here rather than rippling outward.
-    parse_serve_web_args_typed(args).map_err(|e| e.to_string())
-}
-
-pub(super) fn parse_serve_web_args_typed<I: Iterator<Item = String>>(
-    mut args: I,
-) -> Result<ServeWebOptions> {
+pub fn parse_serve_web_args<I: Iterator<Item = String>>(mut args: I) -> Result<ServeWebOptions> {
     let Some(first) = args.next() else {
         return Err(WebCanvasError::Config("missing <port> arg".into()));
     };
@@ -205,12 +194,14 @@ pub(super) fn startup_editor_for_web_canvas_with_loader<Checked>(
     checked_load: Checked,
 ) -> Result<EditorState>
 where
-    // `settings_io::load_checked` is outside this conversion's scope and
-    // still reports `String`; keep its shape and adapt at the call.
-    Checked: FnOnce(&mut EditorState) -> std::result::Result<(), String>,
+    // `settings_io::load_checked` reports its own typed `SettingsIoError`
+    // now; a settings file the daemon cannot round-trip aborts start-up, so
+    // it lands on `Config` exactly as the pre-conversion `String` did.
+    Checked:
+        FnOnce(&mut EditorState) -> std::result::Result<(), crate::settings_io::SettingsIoError>,
 {
     let mut base = EditorState::starter();
-    checked_load(&mut base).map_err(WebCanvasError::Config)?;
+    checked_load(&mut base).map_err(|error| WebCanvasError::Config(error.to_string()))?;
     startup_editor_from_base_for_web_canvas(base, path)
 }
 
@@ -221,11 +212,8 @@ pub(super) fn startup_editor_for_web_canvas_with_policy(
     startup_editor_for_web_canvas_with_loader(path, policy, crate::settings_io::load_checked)
 }
 
-/// Public entry point (host binaries) — keeps the `String` contract and
-/// adapts the typed error at the boundary.
-pub fn startup_editor_for_web_canvas(
-    path: Option<PathBuf>,
-) -> std::result::Result<EditorState, String> {
+/// Public entry point: resolve the daemon's start-up document under the
+/// environment's credential-persistence policy.
+pub fn startup_editor_for_web_canvas(path: Option<PathBuf>) -> Result<EditorState> {
     startup_editor_for_web_canvas_with_policy(path, crate::web_credential_policy::from_env())
-        .map_err(|e| e.to_string())
 }

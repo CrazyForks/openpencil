@@ -26,6 +26,8 @@ use op_editor_host_core::settings_payload::{
 use op_i18n::Locale;
 use serde::{Deserialize, Serialize};
 
+pub use crate::settings_io_error::SettingsIoError;
+
 // The sibling test files reach these enums through `use super::*`.
 #[cfg(test)]
 use op_editor_core::{BuiltinAgentKind, ImageGenProvider};
@@ -401,22 +403,30 @@ fn next_acp_agent_id(agents: &[AcpAgentConfig]) -> u64 {
         .saturating_add(1)
 }
 
-fn load_checked_from_path(state: &mut EditorState, path: &Path) -> Result<(), String> {
+fn load_checked_from_path(state: &mut EditorState, path: &Path) -> Result<(), SettingsIoError> {
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(format!("failed to read settings file: {error}")),
+        Err(error) => {
+            return Err(SettingsIoError::Read {
+                detail: error.to_string(),
+            })
+        }
     };
-    let raw: serde_json::Value = serde_json::from_slice(&bytes)
-        .map_err(|error| format!("failed to parse settings file: {error}"))?;
+    let raw: serde_json::Value =
+        serde_json::from_slice(&bytes).map_err(|error| SettingsIoError::Parse {
+            detail: error.to_string(),
+        })?;
     settings_io_checked::validate_payload_fields(&raw)?;
-    let payload: SettingsPayload = serde_json::from_value(raw)
-        .map_err(|error| format!("failed to parse settings file: {error}"))?;
+    let payload: SettingsPayload =
+        serde_json::from_value(raw).map_err(|error| SettingsIoError::Parse {
+            detail: error.to_string(),
+        })?;
     if payload.version != SETTINGS_VERSION {
-        return Err(format!(
-            "unsupported settings file version {}; expected {SETTINGS_VERSION}",
-            payload.version
-        ));
+        return Err(SettingsIoError::UnsupportedVersion {
+            found: payload.version,
+            expected: SETTINGS_VERSION,
+        });
     }
     settings_io_checked::validate_lossless_payload(&payload)?;
     apply_payload_with_options(state, payload, false);
@@ -429,9 +439,9 @@ fn load_checked_from_path(state: &mut EditorState, path: &Path) -> Result<(), St
 /// External application configs are intentionally not imported here: the web
 /// model catalog must reflect web/OpenPencil settings only, rather than expose
 /// machine-local Zode providers that the browser settings UI cannot manage.
-pub fn load_checked(state: &mut EditorState) -> Result<(), String> {
+pub fn load_checked(state: &mut EditorState) -> Result<(), SettingsIoError> {
     seed_system_locale(state);
-    let path = settings_path().ok_or_else(|| "failed to resolve settings file path".to_string())?;
+    let path = settings_path().ok_or(SettingsIoError::PathUnresolved)?;
     load_checked_from_path(state, &path)?;
     Ok(())
 }
@@ -466,8 +476,8 @@ fn seed_system_locale(state: &mut EditorState) {
 }
 
 /// Persist settings and report any failure to the caller.
-pub fn save_checked(state: &EditorState) -> Result<(), String> {
-    let path = settings_path().ok_or_else(|| "settings path is unavailable".to_string())?;
+pub fn save_checked(state: &EditorState) -> Result<(), SettingsIoError> {
+    let path = settings_path().ok_or(SettingsIoError::PathUnavailable)?;
     save_checked_to_path(state, &path)
 }
 
@@ -495,7 +505,7 @@ impl Drop for PendingSettingsFile {
     }
 }
 
-fn create_unique_settings_temp(path: &Path) -> Result<PendingSettingsFile, String> {
+fn create_unique_settings_temp(path: &Path) -> Result<PendingSettingsFile, SettingsIoError> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let file_name = path
         .file_name()
@@ -531,37 +541,45 @@ fn create_unique_settings_temp(path: &Path) -> Result<PendingSettingsFile, Strin
                         .as_ref()
                         .expect("new settings file must be open")
                         .set_permissions(std::fs::Permissions::from_mode(0o600))
-                        .map_err(|error| {
-                            format!("failed to secure temporary settings file: {error}")
+                        .map_err(|error| SettingsIoError::SecureTemp {
+                            detail: error.to_string(),
                         })?;
                 }
                 return Ok(pending);
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => {
-                return Err(format!("failed to create temporary settings file: {error}"));
+                return Err(SettingsIoError::CreateTemp {
+                    detail: error.to_string(),
+                });
             }
         }
     }
 
-    Err("failed to allocate a unique temporary settings file".to_string())
+    Err(SettingsIoError::TempAllocExhausted)
 }
 
-fn save_checked_to_path(state: &EditorState, path: &Path) -> Result<(), String> {
+fn save_checked_to_path(state: &EditorState, path: &Path) -> Result<(), SettingsIoError> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|error| format!("failed to create settings directory: {error}"))?;
+        std::fs::create_dir_all(parent).map_err(|error| SettingsIoError::CreateDir {
+            detail: error.to_string(),
+        })?;
     }
     let payload = to_payload(state);
-    let json = serde_json::to_string_pretty(&payload)
-        .map_err(|error| format!("failed to encode settings: {error}"))?;
+    let json = serde_json::to_string_pretty(&payload).map_err(|error| SettingsIoError::Encode {
+        detail: error.to_string(),
+    })?;
     let mut tmp = create_unique_settings_temp(path)?;
     if let Err(error) = tmp.file_mut().write_all(json.as_bytes()) {
-        return Err(format!("failed to write temporary settings: {error}"));
+        return Err(SettingsIoError::WriteTemp {
+            detail: error.to_string(),
+        });
     }
     tmp.close();
     if let Err(error) = std::fs::rename(&tmp.path, path) {
-        return Err(format!("failed to replace settings file: {error}"));
+        return Err(SettingsIoError::Replace {
+            detail: error.to_string(),
+        });
     }
     Ok(())
 }

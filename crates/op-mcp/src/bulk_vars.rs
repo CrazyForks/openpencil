@@ -66,7 +66,7 @@ impl McpTool for SetVariables {
         };
         let replace = match parse_replace(args) {
             Ok(v) => v,
-            Err(msg) => return ToolOutcome::Err(ToolErrorCode::InvalidArgument, msg),
+            Err(e) => return ToolOutcome::Err(ToolErrorCode::InvalidArgument, e.to_string()),
         };
         let mut out = BTreeMap::new();
         out.insert("wrote".into(), "true".into());
@@ -101,7 +101,7 @@ impl McpTool for SetThemes {
         };
         let replace = match parse_replace(args) {
             Ok(v) => v,
-            Err(msg) => return ToolOutcome::Err(ToolErrorCode::InvalidArgument, msg),
+            Err(e) => return ToolOutcome::Err(ToolErrorCode::InvalidArgument, e.to_string()),
         };
         let mut out = BTreeMap::new();
         out.insert("wrote".into(), "true".into());
@@ -114,12 +114,32 @@ pub fn set_themes_snapshot() -> SetThemes {
     SetThemes
 }
 
-fn parse_replace(args: &BTreeMap<String, String>) -> Result<bool, String> {
+/// The `replace` arg is neither `"true"` nor `"false"`. One-variant enum:
+/// absence defaults to `false`, so this is the only refusal. `Display`
+/// reproduces the previous message byte-for-byte.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplaceArgError {
+    /// The raw arg value, rendered with `{:?}` in the message.
+    pub raw: String,
+}
+
+impl std::fmt::Display for ReplaceArgError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let raw = &self.raw;
+        write!(f, "replace must be true or false, got {raw:?}")
+    }
+}
+
+impl std::error::Error for ReplaceArgError {}
+
+fn parse_replace(args: &BTreeMap<String, String>) -> Result<bool, ReplaceArgError> {
     match args.get("replace").map(String::as_str) {
         None => Ok(false),
         Some("true") => Ok(true),
         Some("false") => Ok(false),
-        Some(other) => Err(format!("replace must be true or false, got {other:?}")),
+        Some(other) => Err(ReplaceArgError {
+            raw: other.to_string(),
+        }),
     }
 }
 

@@ -30,6 +30,55 @@ use op_editor_core::{ComponentLibrary, EditorState};
 
 use crate::payload::load_canonical;
 
+/// Why a component-library merge could not run.
+///
+/// Variants carry the structured pieces (which file, which underlying
+/// failure) instead of a pre-formatted sentence; `Display` reproduces the
+/// exact strings this module used to return so log lines and callers that
+/// interpolate the error do not move by a byte.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LibraryMergeError {
+    /// The `.lib.op` file could not be read off disk.
+    Read {
+        /// Path the caller asked for.
+        path: String,
+        /// The underlying `std::io::Error`, rendered.
+        error: String,
+    },
+    /// The file was read but its canonical `.op` JSON did not load.
+    Load {
+        /// Path the caller asked for.
+        path: String,
+        /// The [`LibraryMergeError::Parse`] message from the source-string core.
+        error: String,
+    },
+    /// An in-memory library source failed the canonical `.op` parse.
+    Parse {
+        /// The `jian_ops_schema` load error, rendered.
+        error: String,
+    },
+}
+
+impl std::fmt::Display for LibraryMergeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LibraryMergeError::Read { path, error } => write!(f, "read library {path}: {error}"),
+            LibraryMergeError::Load { path, error } => write!(f, "load library {path}: {error}"),
+            LibraryMergeError::Parse { error } => f.write_str(error),
+        }
+    }
+}
+
+impl std::error::Error for LibraryMergeError {}
+
+/// Keeps `?` working for callers that still collect failures as `String`
+/// (e.g. `op-smoke`'s loop setup and the desktop import path).
+impl From<LibraryMergeError> for String {
+    fn from(error: LibraryMergeError) -> String {
+        error.to_string()
+    }
+}
+
 /// Outcome of a successful library merge — counts for logging / tests.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LibraryMergeReport {
@@ -49,14 +98,20 @@ pub struct LibraryMergeReport {
 /// preserved; masters/variables/themes whose ids already exist are skipped so
 /// re-importing the same library is idempotent.
 ///
-/// Returns the merge report on success, or a human-readable error string when
-/// the file can't be read or parsed. On error `state` is left unchanged.
+/// Returns the merge report on success, or a [`LibraryMergeError`] when the
+/// file can't be read or parsed. On error `state` is left unchanged.
 pub fn merge_library_into_state(
     state: &mut EditorState,
     path: &str,
-) -> Result<LibraryMergeReport, String> {
-    let src = std::fs::read_to_string(path).map_err(|e| format!("read library {path}: {e}"))?;
-    merge_library_src_into_state(state, &src).map_err(|e| format!("load library {path}: {e}"))
+) -> Result<LibraryMergeReport, LibraryMergeError> {
+    let src = std::fs::read_to_string(path).map_err(|e| LibraryMergeError::Read {
+        path: path.to_string(),
+        error: e.to_string(),
+    })?;
+    merge_library_src_into_state(state, &src).map_err(|e| LibraryMergeError::Load {
+        path: path.to_string(),
+        error: e.to_string(),
+    })
 }
 
 /// Source-string variant of [`merge_library_into_state`] — parses canonical
@@ -65,8 +120,10 @@ pub fn merge_library_into_state(
 pub fn merge_library_src_into_state(
     state: &mut EditorState,
     src: &str,
-) -> Result<LibraryMergeReport, String> {
-    let loaded = load_canonical(src).map_err(|e| e.to_string())?;
+) -> Result<LibraryMergeReport, LibraryMergeError> {
+    let loaded = load_canonical(src).map_err(|e| LibraryMergeError::Parse {
+        error: e.to_string(),
+    })?;
     let lib_doc = loaded.value;
 
     // Harvest reusable masters from the library document (top-level + pages).
@@ -275,7 +332,7 @@ mod tests {
     fn bad_source_leaves_state_unchanged() {
         let mut state = EditorState::new();
         let err = merge_library_src_into_state(&mut state, "not json").unwrap_err();
-        assert!(!err.is_empty());
+        assert!(!err.to_string().is_empty());
         assert!(state.doc.children.is_empty());
         assert!(state.components.is_empty());
     }

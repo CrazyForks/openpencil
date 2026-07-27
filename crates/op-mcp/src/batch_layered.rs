@@ -9,6 +9,7 @@ use op_editor_core::{NodeId, PenNodeExt};
 use serde_json::{json, Value};
 
 use super::batch_design::normalize_node_shape;
+use super::batch_layered_error::LayeredError;
 use super::batch_layered_guidelines::generate_section_guidelines;
 use super::batch_page::optional_page_id;
 use super::{EditorCommand, ToolErrorCode, ToolOutcome};
@@ -80,7 +81,9 @@ pub(crate) fn dispatch_design_skeleton(args: &BTreeMap<String, String>) -> ToolO
     let (root, section_rows) =
         match build_skeleton_root(root_frame, sections, canvas_width, style_guide.as_ref()) {
             Ok(value) => value,
-            Err(message) => return ToolOutcome::Err(ToolErrorCode::InvalidArgument, message),
+            Err(error) => {
+                return ToolOutcome::Err(ToolErrorCode::InvalidArgument, error.to_string())
+            }
         };
     let root_id = root.id_str().to_string();
     let section_ids = section_rows
@@ -140,7 +143,7 @@ pub(crate) fn dispatch_design_content(args: &BTreeMap<String, String>) -> ToolOu
     };
     let mut parsed = match parse_children(children) {
         Ok(parsed) => parsed,
-        Err(message) => return ToolOutcome::Err(ToolErrorCode::InvalidArgument, message),
+        Err(error) => return ToolOutcome::Err(ToolErrorCode::InvalidArgument, error.to_string()),
     };
     if parsed.nodes.is_empty() {
         return ToolOutcome::Err(
@@ -282,12 +285,12 @@ fn build_skeleton_root(
     sections: Vec<Value>,
     canvas_width: i32,
     style_guide: Option<&Value>,
-) -> Result<(PenNode, Vec<Value>), String> {
+) -> Result<(PenNode, Vec<Value>), LayeredError> {
     let Value::Object(mut root) = root_frame else {
-        return Err("rootFrame must be a JSON object".into());
+        return Err(LayeredError::RootFrameNotObject);
     };
     if !root.contains_key("width") || !root.contains_key("height") {
-        return Err("rootFrame must contain width and height".into());
+        return Err(LayeredError::RootFrameMissingSize);
     }
     root.insert("type".into(), Value::String("frame".into()));
     root.entry("id")
@@ -305,7 +308,7 @@ fn build_skeleton_root(
     let mut section_rows = Vec::new();
     for (index, section) in sections.into_iter().enumerate() {
         let Value::Object(mut obj) = section else {
-            return Err(format!("sections[{index}] must be a JSON object"));
+            return Err(LayeredError::SectionNotObject { index });
         };
         let Some(name) = obj
             .get("name")
@@ -314,7 +317,7 @@ fn build_skeleton_root(
             .filter(|s| !s.is_empty())
             .map(str::to_string)
         else {
-            return Err(format!("sections[{index}].name is required"));
+            return Err(LayeredError::SectionMissingName { index });
         };
         let id = obj
             .get("id")
@@ -354,7 +357,7 @@ fn build_skeleton_root(
     let mut root_value = Value::Object(root);
     normalize_node_shape(&mut root_value);
     let root = serde_json::from_value(root_value)
-        .map_err(|e| format!("rootFrame/sections must form valid PenNode objects: {e}"))?;
+        .map_err(|e| LayeredError::InvalidSkeletonNodes(e.to_string()))?;
     Ok((root, section_rows))
 }
 
@@ -402,11 +405,11 @@ struct ParsedChildren {
     warnings: Vec<String>,
 }
 
-fn parse_children(raw: &str) -> Result<ParsedChildren, String> {
+fn parse_children(raw: &str) -> Result<ParsedChildren, LayeredError> {
     let mut value: Value =
-        serde_json::from_str(raw).map_err(|e| format!("children must be a JSON array: {e}"))?;
+        serde_json::from_str(raw).map_err(|e| LayeredError::ChildrenNotJson(e.to_string()))?;
     let Some(children) = value.as_array_mut() else {
-        return Err("children must be a JSON array".into());
+        return Err(LayeredError::ChildrenNotArray);
     };
     let mut next_id = 1usize;
     let mut warnings = Vec::new();
@@ -418,7 +421,7 @@ fn parse_children(raw: &str) -> Result<ParsedChildren, String> {
     }
     let count = count_json_nodes(&value);
     let nodes = serde_json::from_value(value)
-        .map_err(|e| format!("children must contain valid PenNode objects: {e}"))?;
+        .map_err(|e| LayeredError::InvalidChildNodes(e.to_string()))?;
     Ok(ParsedChildren {
         nodes,
         count,

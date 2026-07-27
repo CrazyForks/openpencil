@@ -378,7 +378,9 @@ fn provider_auth_failures_never_enter_semantic_correction() {
             false,
         );
 
-        let error = outcome.expect_err("provider auth status must abort before tools");
+        let error = outcome
+            .expect_err("provider auth status must abort before tools")
+            .to_string();
         assert!(error.contains(&format!("http {code}")));
         assert!(executor.calls().is_empty());
         assert_eq!(text_count(&deltas, "Retrying failed design write"), 0);

@@ -337,11 +337,15 @@ impl DesktopApp {
                                         Err(err) => self.show_git_op_error_dialog("commit", &err),
                                     }
                                 }
+                                // `show_error_dialog_public` takes an
+                                // already-rendered `&str` detail; render
+                                // through `Display` so this stays valid
+                                // whichever error type `doc_io` reports.
                                 Err(detail) => persistence::show_error_dialog_public(
                                     &self.host,
                                     op_host_services::doc_io::ErrorKind::Save,
                                     Some(&path),
-                                    &detail,
+                                    &detail.to_string(),
                                 ),
                             }
                         }
@@ -504,6 +508,7 @@ impl DesktopApp {
     }
 }
 
+mod auth_error;
 mod patch;
 mod repo_ops;
 

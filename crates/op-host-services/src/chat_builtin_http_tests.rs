@@ -172,7 +172,8 @@ fn provider_endpoint_rejects_queries_and_fragments() {
         "https://example.com/v1#chat",
     ] {
         let error = normalize_provider_base_url(endpoint)
-            .expect_err("query and fragment endpoints must be rejected");
+            .expect_err("query and fragment endpoints must be rejected")
+            .to_string();
         assert!(
             error.starts_with("Invalid provider endpoint:"),
             "unexpected validation error for {endpoint}: {error}"

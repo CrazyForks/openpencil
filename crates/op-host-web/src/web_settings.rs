@@ -169,16 +169,24 @@ fn credential_payload(state: &EditorState) -> CredentialPayload {
 }
 
 #[cfg(test)]
-fn apply_json(state: &mut EditorState, raw: &str) -> Result<(), String> {
-    let value: serde_json::Value = serde_json::from_str(raw).map_err(|e| e.to_string())?;
+fn apply_json(
+    state: &mut EditorState,
+    raw: &str,
+) -> Result<(), validation::SettingsValidationError> {
+    let value: serde_json::Value = serde_json::from_str(raw)
+        .map_err(|e| validation::SettingsValidationError::Json(e.to_string()))?;
     let payload = validation::settings_payload(&value)?;
     apply_payload(state, payload);
     Ok(())
 }
 
 #[cfg(test)]
-fn apply_credential_json(state: &mut EditorState, raw: &str) -> Result<(), String> {
-    let value: serde_json::Value = serde_json::from_str(raw).map_err(|error| error.to_string())?;
+fn apply_credential_json(
+    state: &mut EditorState,
+    raw: &str,
+) -> Result<(), validation::SettingsValidationError> {
+    let value: serde_json::Value = serde_json::from_str(raw)
+        .map_err(|error| validation::SettingsValidationError::Json(error.to_string()))?;
     let payload = validation::credential_payload(&value)?;
     apply_credential_payload(state, payload);
     Ok(())

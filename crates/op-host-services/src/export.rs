@@ -111,24 +111,7 @@ impl RasterFormat {
 /// Raster export with explicit format + scale. Scale clamped to
 /// [0.5, 8.0] to keep surface allocation sane; NaN / inf fall back
 /// to 2× (NaN reaching `canvas.scale` produces a garbage transform).
-///
-/// Reports `String` at the boundary: `op-host-desktop`'s
-/// `persistence::export_editor_state_to_path` returns this `Result`
-/// directly from its own `Result<(), String>` signature, so a typed error
-/// here would not convert through `?`. In-crate callers use
-/// [`export_raster_typed`] and get the [`ExportError`] reason.
 pub fn export_raster(
-    scene: &LayoutScene,
-    target: &StdPath,
-    format: RasterFormat,
-    scale: f32,
-) -> Result<(), String> {
-    export_raster_typed(scene, target, format, scale).map_err(String::from)
-}
-
-/// Typed twin of [`export_raster`] for in-crate callers (the `--serve-web`
-/// daemon's export routes).
-pub(crate) fn export_raster_typed(
     scene: &LayoutScene,
     target: &StdPath,
     format: RasterFormat,
@@ -147,23 +130,7 @@ pub(crate) fn export_raster_typed(
 /// cropped to the node's painted bounds via the same `collect_bounds`
 /// traversal `export_raster` uses for the whole page. Errors when the
 /// id is unknown on the active page or the node paints nothing.
-///
-/// Same boundary-`String` rationale as [`export_raster`]; the typed twin is
-/// [`export_node_raster_typed`].
 pub fn export_node_raster(
-    scene: &LayoutScene,
-    node_id: &str,
-    target: &StdPath,
-    format: RasterFormat,
-    scale: f32,
-) -> Result<(), String> {
-    export_node_raster_typed(scene, node_id, target, format, scale).map_err(String::from)
-}
-
-/// Typed twin of [`export_node_raster`] for in-crate callers (the
-/// `--serve-web` daemon's export routes), so they classify through
-/// [`ExportError`] instead of re-wrapping a string.
-pub(crate) fn export_node_raster_typed(
     scene: &LayoutScene,
     node_id: &str,
     target: &StdPath,

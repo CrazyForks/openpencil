@@ -9,6 +9,8 @@ use op_ai::design_md::{
 use op_editor_core::EditorState;
 use op_orchestrator::{AbortFlag, CallRequest, LlmChunk, LlmClient};
 
+pub use crate::design_md_llm_error::DesignMdError;
+
 /// Orchestrator-specific additions to the shared design.md system prompt
 /// (`op_ai::design_md::DESIGN_MD_SYSTEM_PROMPT`): the generated brief
 /// must capture the current canvas for reuse and route follow-on named
@@ -58,7 +60,7 @@ pub async fn generate_design_md_spec(
     model: Option<String>,
     provider: Option<String>,
     abort: &AbortFlag,
-) -> Result<DesignMdSpec, String> {
+) -> Result<DesignMdSpec, DesignMdError> {
     let req = CallRequest {
         system_prompt: design_md_system_prompt(),
         user_prompt: build_design_md_user_prompt(state, user_request),
@@ -76,17 +78,19 @@ pub async fn generate_design_md_spec(
         match chunk {
             Ok(LlmChunk::Text(text)) => out.push_str(&text),
             Ok(LlmChunk::Thinking(_)) => {}
-            Err(err) => return Err(err.message),
+            // `op_orchestrator::LlmError` is not owned by this pass; carry
+            // its message verbatim.
+            Err(err) => return Err(DesignMdError::Llm(err.message)),
         }
     }
 
     let markdown = clean_ai_design_md_result(&out);
     if markdown.is_empty() {
-        return Err("design.md generation returned empty output".into());
+        return Err(DesignMdError::EmptyOutput);
     }
     let spec = op_editor_core::parse_design_md(&markdown);
     if !spec.raw.trim_start().starts_with("# Design System:") {
-        return Err("design.md generation did not return a Design System document".into());
+        return Err(DesignMdError::NotADesignSystemDocument);
     }
     Ok(spec)
 }

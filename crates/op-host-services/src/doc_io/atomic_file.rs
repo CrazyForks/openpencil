@@ -6,9 +6,11 @@
 
 use std::path::{Path, PathBuf};
 
+use super::DocIoError;
+
 /// Create a unique sibling with `create_new`, so overlapping saves and stale
 /// files from a recycled PID can never truncate one another.
-pub fn create_sibling_temp(path: &Path) -> Result<(PathBuf, std::fs::File), String> {
+pub fn create_sibling_temp(path: &Path) -> Result<(PathBuf, std::fs::File), DocIoError> {
     for _ in 0..128 {
         let candidate = unique_sibling_temp_path(path);
         match std::fs::OpenOptions::new()
@@ -18,13 +20,17 @@ pub fn create_sibling_temp(path: &Path) -> Result<(PathBuf, std::fs::File), Stri
         {
             Ok(file) => return Ok((candidate, file)),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(format!("create {}: {error}", candidate.display())),
+            Err(error) => {
+                return Err(DocIoError::CreateTemp {
+                    path: candidate.display().to_string(),
+                    detail: error.to_string(),
+                })
+            }
         }
     }
-    Err(format!(
-        "could not create a unique save file beside {}",
-        path.display()
-    ))
+    Err(DocIoError::TempAllocExhausted {
+        path: path.display().to_string(),
+    })
 }
 
 fn unique_sibling_temp_path(path: &Path) -> PathBuf {
@@ -39,15 +45,18 @@ fn unique_sibling_temp_path(path: &Path) -> PathBuf {
 }
 
 #[cfg(not(windows))]
-pub fn replace_file(tmp: &Path, path: &Path) -> Result<(), String> {
-    std::fs::rename(tmp, path)
-        .map_err(|error| format!("replace {} with {}: {error}", path.display(), tmp.display()))
+pub fn replace_file(tmp: &Path, path: &Path) -> Result<(), DocIoError> {
+    std::fs::rename(tmp, path).map_err(|error| DocIoError::Replace {
+        destination: path.display().to_string(),
+        temp: tmp.display().to_string(),
+        detail: error.to_string(),
+    })
 }
 
 /// Windows `std::fs::rename` cannot replace an existing destination. These OS
 /// primitives preserve the old file until the completed sibling temp commits.
 #[cfg(windows)]
-pub fn replace_file(tmp: &Path, path: &Path) -> Result<(), String> {
+pub fn replace_file(tmp: &Path, path: &Path) -> Result<(), DocIoError> {
     use std::os::windows::ffi::OsStrExt;
     use std::ptr;
 
@@ -115,11 +124,10 @@ pub fn replace_file(tmp: &Path, path: &Path) -> Result<(), String> {
     if moved != 0 {
         Ok(())
     } else {
-        Err(format!(
-            "replace {} with {}: {}",
-            path.display(),
-            tmp.display(),
-            std::io::Error::last_os_error()
-        ))
+        Err(DocIoError::Replace {
+            destination: path.display().to_string(),
+            temp: tmp.display().to_string(),
+            detail: std::io::Error::last_os_error().to_string(),
+        })
     }
 }

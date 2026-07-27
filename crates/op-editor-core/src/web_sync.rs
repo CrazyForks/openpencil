@@ -16,6 +16,10 @@
 
 use jian_ops_schema::PenDocument;
 
+#[path = "web_sync_error.rs"]
+mod web_sync_error;
+pub use web_sync_error::WebSyncError;
+
 /// A whole-document live-sync payload plus editor-only view state carried by
 /// the response wrapper. These fields intentionally stay outside
 /// [`PenDocument`] so older schema bindings remain valid.
@@ -104,7 +108,7 @@ impl WebSyncClient {
     /// [`mark_applied`](Self::mark_applied). That decide-then-commit split means
     /// a failed apply/repaint doesn't lose the update — the next poll re-offers
     /// the same (still-newer) version until it is committed.
-    pub fn next_document(&self, body: &str) -> Result<Option<(PenDocument, u64)>, String> {
+    pub fn next_document(&self, body: &str) -> Result<Option<(PenDocument, u64)>, WebSyncError> {
         self.next_document_with_metadata(body)
             .map(|next| next.map(|next| (next.document, next.version)))
     }
@@ -118,20 +122,18 @@ impl WebSyncClient {
     pub fn next_document_with_metadata(
         &self,
         body: &str,
-    ) -> Result<Option<WebSyncDocument>, String> {
+    ) -> Result<Option<WebSyncDocument>, WebSyncError> {
         let value: serde_json::Value =
-            serde_json::from_str(body).map_err(|e| format!("sync response parse: {e}"))?;
+            serde_json::from_str(body).map_err(|e| WebSyncError::ResponseParse(e.to_string()))?;
         let version = value
             .get("version")
             .and_then(serde_json::Value::as_u64)
-            .ok_or_else(|| "sync response missing numeric `version`".to_string())?;
+            .ok_or(WebSyncError::MissingVersion)?;
         // Already up to date (and past the first sync) → nothing to apply.
         if self.initialized && version <= self.applied_version {
             return Ok(None);
         }
-        let document = value
-            .get("document")
-            .ok_or_else(|| "sync response missing `document`".to_string())?;
+        let document = value.get("document").ok_or(WebSyncError::MissingDocument)?;
         let nested_meta = document
             .get("editorMeta")
             .and_then(|meta| serde_json::from_value::<WireEditorMeta>(meta.clone()).ok())
@@ -148,7 +150,7 @@ impl WebSyncClient {
             .or(nested_meta.preserve_authored_geometry)
             .unwrap_or(false);
         let doc: PenDocument = serde_json::from_value(document.clone())
-            .map_err(|e| format!("sync response document parse: {e}"))?;
+            .map_err(|e| WebSyncError::DocumentParse(e.to_string()))?;
         Ok(Some(WebSyncDocument {
             document: doc,
             version,
@@ -174,7 +176,7 @@ impl WebSyncClient {
     /// `Ok(false)` when nothing newer arrived or `apply` reported failure (then
     /// the version stays un-committed and is retried next poll). The committed
     /// version is always the one just applied+painted — never a stale/newer one.
-    pub fn sync<F>(&mut self, body: &str, apply: F) -> Result<bool, String>
+    pub fn sync<F>(&mut self, body: &str, apply: F) -> Result<bool, WebSyncError>
     where
         F: FnOnce(PenDocument, u64) -> bool,
     {
@@ -187,7 +189,7 @@ impl WebSyncClient {
     /// committed together with the exact document/version by the caller's
     /// apply closure, avoiding a typed `PenDocument` replacement that silently
     /// resets Preserve-mode Figma imports.
-    pub fn sync_with_metadata<F>(&mut self, body: &str, apply: F) -> Result<bool, String>
+    pub fn sync_with_metadata<F>(&mut self, body: &str, apply: F) -> Result<bool, WebSyncError>
     where
         F: FnOnce(PenDocument, u64, bool) -> bool,
     {
@@ -199,7 +201,7 @@ impl WebSyncClient {
     /// Full editor-metadata companion to [`sync`](Self::sync). Active page and
     /// authored-geometry mode are applied as one versioned snapshot while the
     /// preserve-only helper above remains source compatible.
-    pub fn sync_with_editor_meta<F>(&mut self, body: &str, apply: F) -> Result<bool, String>
+    pub fn sync_with_editor_meta<F>(&mut self, body: &str, apply: F) -> Result<bool, WebSyncError>
     where
         F: FnOnce(PenDocument, u64, usize, bool) -> bool,
     {
@@ -225,8 +227,9 @@ impl WebSyncClient {
     /// Build the `POST /api/mcp/document` request body for pushing a local edit
     /// to the daemon — the `{document}` wrapper it expects (mirrors the TS web
     /// app's `setSyncDocument` push shape).
-    pub fn build_push_body(doc: &PenDocument) -> Result<String, String> {
-        let doc_json = serde_json::to_string(doc).map_err(|e| e.to_string())?;
+    pub fn build_push_body(doc: &PenDocument) -> Result<String, WebSyncError> {
+        let doc_json = serde_json::to_string(doc)
+            .map_err(|e| WebSyncError::SerializeDocument(e.to_string()))?;
         Ok(Self::wrap_push_body(&doc_json))
     }
 

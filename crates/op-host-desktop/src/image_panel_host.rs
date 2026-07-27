@@ -18,6 +18,7 @@ use op_editor_core::image_panel_state::{
 };
 use op_host_native::widget_host::WidgetHostNative;
 
+use crate::asset_fetch_error::AssetFetchError;
 use crate::image_generate_host::run_generate_blocking;
 use crate::image_search_session::{fetch_image_data_url, OpenverseCredentials};
 
@@ -31,7 +32,7 @@ pub struct ImagePanelJobs {
     search_spawned: u64,
     search_job: Option<Receiver<SearchOutcome>>,
     generate_spawned: u64,
-    generate_job: Option<Receiver<Result<String, String>>>,
+    generate_job: Option<Receiver<Result<String, AssetFetchError>>>,
     /// `(node_id, src)` the asset check last ran for.
     asset_checked: Option<(String, String)>,
 }
@@ -161,7 +162,12 @@ impl ImagePanelJobs {
         let (width, height) = selected_image_dimensions(host);
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let _ = tx.send(run_generate_blocking(&prompt, &profile, width, height));
+            // `run_generate_blocking` reports its provider's own message;
+            // carry it so the panel's error text is unchanged.
+            let _ = tx.send(
+                run_generate_blocking(&prompt, &profile, width, height)
+                    .map_err(|error| AssetFetchError::Generate(error.to_string())),
+            );
         });
         self.generate_job = Some(rx);
         false
@@ -174,7 +180,7 @@ impl ImagePanelJobs {
         let outcome = match rx.try_recv() {
             Ok(outcome) => outcome,
             Err(TryRecvError::Empty) => return false,
-            Err(TryRecvError::Disconnected) => Err("image generation worker vanished".to_string()),
+            Err(TryRecvError::Disconnected) => Err(AssetFetchError::GenerateWorkerVanished),
         };
         self.generate_job = None;
         let panel = &mut host.editor_state_mut().editor_ui.image_panel;
@@ -184,9 +190,9 @@ impl ImagePanelJobs {
                     panel.generate_preview = Some(Arc::new(url));
                     panel.generate_phase = ImageGeneratePhase::Preview;
                 }
-                Err(message) => {
+                Err(error) => {
                     // TS truncates the surfaced message to 200 chars.
-                    panel.generate_error = message.chars().take(200).collect();
+                    panel.generate_error = error.to_string().chars().take(200).collect();
                     panel.generate_phase = ImageGeneratePhase::Error;
                 }
             }

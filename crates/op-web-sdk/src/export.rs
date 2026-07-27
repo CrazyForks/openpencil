@@ -4,6 +4,7 @@
 // daemon; calling `export("png")` returns an explicit error message so
 // callers get a clear signal rather than a silent panic or opaque failure.
 
+use crate::error::ViewerExportError;
 use crate::Viewer;
 use wasm_bindgen::prelude::*;
 
@@ -12,12 +13,9 @@ impl Viewer {
     ///
     /// Returns `Err` when no document has been loaded, `rebuild_scene` has
     /// not been called yet, or the scene has no renderable content.
-    pub fn export_svg(&self) -> Result<String, String> {
-        let scene = self
-            .scene
-            .as_ref()
-            .ok_or_else(|| "no scene — call load() then rebuild_scene() first".to_string())?;
-        op_editor_ui::svg_export::serialize_active_page_svg(scene)
+    pub fn export_svg(&self) -> Result<String, ViewerExportError> {
+        let scene = self.scene.as_ref().ok_or(ViewerExportError::NoScene)?;
+        Ok(op_editor_ui::svg_export::serialize_active_page_svg(scene)?)
     }
 }
 
@@ -31,7 +29,7 @@ pub fn export(viewer: &Viewer, format: String) -> Result<Vec<u8>, JsValue> {
         "svg" => viewer
             .export_svg()
             .map(|s| s.into_bytes())
-            .map_err(|e| JsValue::from_str(&e)),
+            .map_err(|e| JsValue::from_str(&e.to_string())),
         _ => Err(JsValue::from_str(
             "format not available in standalone v1; use SVG or a daemon",
         )),

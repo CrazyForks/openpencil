@@ -84,7 +84,6 @@ pub(super) fn serve_one<S: Read + Write>(
             crate::web_static::handle_static_request(&req.path, bundle_dir.as_deref())
         {
             return crate::web_static::write_static_response(stream, &reply, cors_origin)
-                .map_err(WebCanvasError::Transport)
                 .map(|()| false);
         }
     }
@@ -97,7 +96,6 @@ pub(super) fn serve_one<S: Read + Write>(
             body: crate::web_auth::LOADING_PAGE_HTML.as_bytes().to_vec(),
         };
         return crate::web_static::write_static_response(stream, &reply, cors_origin)
-            .map_err(WebCanvasError::Transport)
             .map(|()| false);
     }
     // Managed-mode token gate: everything below this point is a privileged
@@ -169,8 +167,8 @@ pub(super) fn serve_one<S: Read + Write>(
                 .map_err(|e| WebCanvasError::Transport(format!("ai stream error: {e}")))
                 .map(|()| false);
             }
-            Err(message) => {
-                return crate::ai_proxy::write_sse_error(stream, &message, cors_origin)
+            Err(error) => {
+                return crate::ai_proxy::write_sse_error(stream, &error.to_string(), cors_origin)
                     .map_err(|e| WebCanvasError::Transport(format!("ai stream error: {e}")))
                     .map(|()| false);
             }
@@ -232,9 +230,9 @@ pub(super) fn serve_one<S: Read + Write>(
                     ),
                 }
             }
-            Err(message) => (
+            Err(error) => (
                 "400 Bad Request",
-                serde_json::json!({ "ok": false, "error": message }).to_string(),
+                serde_json::json!({ "ok": false, "error": error.to_string() }).to_string(),
             ),
         };
         crate::mcp_serve::write_mcp_http_response_with_origin(stream, status, &body, cors_origin)?;
@@ -280,9 +278,9 @@ pub(super) fn serve_one<S: Read + Write>(
     if req.method == "POST" && req.path == "/api/figma/convert" {
         let (status, body) = match crate::figma_convert::convert_fig_json(&req.body) {
             Ok(body) => ("200 OK", body),
-            Err(message) => (
+            Err(error) => (
                 "400 Bad Request",
-                serde_json::json!({ "ok": false, "error": message }).to_string(),
+                serde_json::json!({ "ok": false, "error": error.to_string() }).to_string(),
             ),
         };
         crate::mcp_serve::write_mcp_http_response_with_origin(stream, status, &body, cors_origin)?;

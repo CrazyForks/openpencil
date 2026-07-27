@@ -41,23 +41,70 @@ fn usize_field(value: &JsValue, name: &str) -> usize {
         .map_or(0, |number| number as usize)
 }
 
-fn parse_result(value: JsValue) -> Result<FigmaTempResult, String> {
+/// A Worker completion that could not be accepted.
+///
+/// `Display` reproduces the ad-hoc `String` messages this enum replaced byte
+/// for byte, so the `[import-figma] isolated Worker unavailable (…)` warning
+/// reads exactly the same. `Worker` is the JS-side message shown verbatim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum FigmaTempBridgeError {
+    /// The Worker reported a failure with its own message.
+    Worker(String),
+    /// The Worker reported a failure with no message at all.
+    WorkerSilent,
+    /// The success payload carries no `sessionId`.
+    MissingSessionId,
+    /// The success payload converted zero pages.
+    NoPages,
+    /// The success payload carries no `fullDocumentJson`.
+    MissingDocumentJson,
+}
+
+impl std::fmt::Display for FigmaTempBridgeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FigmaTempBridgeError::Worker(message) => write!(f, "{message}"),
+            FigmaTempBridgeError::WorkerSilent => {
+                write!(f, "Figma Worker failed without an error message")
+            }
+            FigmaTempBridgeError::MissingSessionId => {
+                write!(f, "Figma Worker result is missing sessionId")
+            }
+            FigmaTempBridgeError::NoPages => write!(f, "Figma Worker result contains no pages"),
+            FigmaTempBridgeError::MissingDocumentJson => {
+                write!(f, "Figma Worker result is missing canonical JSON")
+            }
+        }
+    }
+}
+
+impl std::error::Error for FigmaTempBridgeError {}
+
+impl From<FigmaTempBridgeError> for String {
+    fn from(error: FigmaTempBridgeError) -> String {
+        error.to_string()
+    }
+}
+
+fn parse_result(value: JsValue) -> Result<FigmaTempResult, FigmaTempBridgeError> {
     let ok = js_sys::Reflect::get(&value, &JsValue::from_str("ok"))
         .ok()
         .and_then(|field| field.as_bool())
         .unwrap_or(false);
     if !ok {
         return Err(string_field(&value, "error")
-            .unwrap_or_else(|| "Figma Worker failed without an error message".to_string()));
+            .map_or(FigmaTempBridgeError::WorkerSilent, |message| {
+                FigmaTempBridgeError::Worker(message)
+            }));
     }
-    let session_id = string_field(&value, "sessionId")
-        .ok_or_else(|| "Figma Worker result is missing sessionId".to_string())?;
+    let session_id =
+        string_field(&value, "sessionId").ok_or(FigmaTempBridgeError::MissingSessionId)?;
     let page_count = usize_field(&value, "pageCount");
     if page_count == 0 {
-        return Err("Figma Worker result contains no pages".to_string());
+        return Err(FigmaTempBridgeError::NoPages);
     }
     let full_document_json = string_field(&value, "fullDocumentJson")
-        .ok_or_else(|| "Figma Worker result is missing canonical JSON".to_string())?;
+        .ok_or(FigmaTempBridgeError::MissingDocumentJson)?;
     let warnings_json = string_field(&value, "warningsJson").unwrap_or_else(|| "[]".to_string());
     Ok(FigmaTempResult {
         session_id,
@@ -73,7 +120,7 @@ pub(crate) fn start(
     file: &web_sys::File,
     file_name: &str,
     session_id: &str,
-    done: impl FnOnce(Result<FigmaTempResult, String>) + 'static,
+    done: impl FnOnce(Result<FigmaTempResult, FigmaTempBridgeError>) + 'static,
 ) -> Result<(), JsValue> {
     let done = Closure::<dyn FnMut(JsValue)>::once(move |value| done(parse_result(value)));
     let result =
@@ -112,6 +159,6 @@ mod tests {
             Ok(_) => panic!("failure result must not parse as success"),
             Err(error) => error,
         };
-        assert_eq!(error, "quota exceeded");
+        assert_eq!(error.to_string(), "quota exceeded");
     }
 }

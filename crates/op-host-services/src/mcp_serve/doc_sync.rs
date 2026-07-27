@@ -9,6 +9,8 @@ use serde::Deserialize;
 use serde_json::value::RawValue;
 use std::fmt;
 
+use super::McpServeError;
+
 /// True for the TS live-canvas whole-document sync route
 /// (`POST /api/mcp/document`). Any other method/path falls through to the
 /// JSON-RPC `/mcp` handling.
@@ -199,19 +201,18 @@ pub(crate) fn parse_borrowed_document_envelope(
 /// present (else "Missing document in request body"), carry a non-empty
 /// `version`, and have an array `children` OR `pages` (else "Invalid document
 /// format").
-pub fn parse_document_sync_request(body: &str) -> Result<DocumentSyncRequest<'_>, String> {
-    let envelope = parse_borrowed_document_envelope(body)
-        .map_err(|_| "Invalid document format".to_string())?;
+pub fn parse_document_sync_request(body: &str) -> Result<DocumentSyncRequest<'_>, McpServeError> {
+    let invalid = || McpServeError::Validation("Invalid document format".to_string());
+    let envelope = parse_borrowed_document_envelope(body).map_err(|_| invalid())?;
     let document_json = envelope
         .document_json
-        .ok_or_else(|| "Missing document in request body".to_string())?;
-    let document =
-        borrowed_json_fields(document_json).map_err(|_| "Invalid document format".to_string())?;
+        .ok_or_else(|| McpServeError::Validation("Missing document in request body".to_string()))?;
+    let document = borrowed_json_fields(document_json).map_err(|_| invalid())?;
     let has_version = raw_is_nonempty_string(document.version);
     let has_children = raw_is_array(document.children);
     let has_pages = raw_is_array(document.pages);
     if !document.is_object || !has_version || (!has_children && !has_pages) {
-        return Err("Invalid document format".to_string());
+        return Err(invalid());
     }
     Ok(DocumentSyncRequest {
         document_json,
@@ -228,7 +229,7 @@ pub fn parse_document_sync_request(body: &str) -> Result<DocumentSyncRequest<'_>
 }
 
 /// Compatibility helper for callers that only need the canonical document.
-pub fn parse_document_sync_body(body: &str) -> Result<&str, String> {
+pub fn parse_document_sync_body(body: &str) -> Result<&str, McpServeError> {
     parse_document_sync_request(body).map(|request| request.document_json)
 }
 

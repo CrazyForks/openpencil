@@ -114,6 +114,43 @@ impl Serialize for ImageTables<'_> {
     }
 }
 
+/// A Worker payload that could not be built or serialized.
+///
+/// `Display` reproduces the ad-hoc `String` messages this enum replaced byte
+/// for byte; the JS side still receives them as plain `JsValue` strings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FigmaTempError {
+    /// The converted Figma document could not be serialized to a JSON value.
+    SerializeDocument(String),
+    /// The requested page index is outside the converted document.
+    PageOutOfRange { index: usize, count: usize },
+    /// One of the JSON views could not be serialized.
+    Serialize(String),
+}
+
+impl std::fmt::Display for FigmaTempError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FigmaTempError::SerializeDocument(error) => write!(f, "{error}"),
+            FigmaTempError::PageOutOfRange { index, count } => {
+                write!(
+                    f,
+                    "Figma page index {index} is out of range (count {count})"
+                )
+            }
+            FigmaTempError::Serialize(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for FigmaTempError {}
+
+impl From<FigmaTempError> for String {
+    fn from(error: FigmaTempError) -> String {
+        error.to_string()
+    }
+}
+
 /// Canonical JSON retained only inside the short-lived import Worker.
 struct FigmaTempPayload {
     document: serde_json::Value,
@@ -121,9 +158,10 @@ struct FigmaTempPayload {
 }
 
 impl FigmaTempPayload {
-    fn from_import(import: op_figma::FigImport) -> Result<Self, String> {
+    fn from_import(import: op_figma::FigImport) -> Result<Self, FigmaTempError> {
         let op_figma::FigImport { document, warnings } = import;
-        let mut document = serde_json::to_value(document).map_err(|error| error.to_string())?;
+        let mut document = serde_json::to_value(document)
+            .map_err(|error| FigmaTempError::SerializeDocument(error.to_string()))?;
         // This also snapshots the Worker's thumbnail registry into
         // `imageThumbs`, so loading the returned canonical JSON on the main
         // thread restores blur-up thumbnails through the normal loader path.
@@ -139,13 +177,13 @@ impl FigmaTempPayload {
         self.pages().map_or(0, Vec::len)
     }
 
-    fn page_json(&self, index: usize) -> Result<String, String> {
+    fn page_json(&self, index: usize) -> Result<String, FigmaTempError> {
         let count = self.page_count();
         let page = self
             .pages()
             .and_then(|pages| pages.get(index))
-            .ok_or_else(|| format!("Figma page index {index} is out of range (count {count})"))?;
-        serde_json::to_string(page).map_err(|error| error.to_string())
+            .ok_or(FigmaTempError::PageOutOfRange { index, count })?;
+        serde_json::to_string(page).map_err(|error| FigmaTempError::Serialize(error.to_string()))
     }
 
     fn page_string_field(&self, index: usize, field: &str) -> Option<String> {
@@ -156,20 +194,24 @@ impl FigmaTempPayload {
             .map(ToOwned::to_owned)
     }
 
-    fn full_document_json(&self) -> Result<String, String> {
-        serde_json::to_string(&self.document).map_err(|error| error.to_string())
+    fn full_document_json(&self) -> Result<String, FigmaTempError> {
+        serde_json::to_string(&self.document)
+            .map_err(|error| FigmaTempError::Serialize(error.to_string()))
     }
 
-    fn skeleton_json(&self) -> Result<String, String> {
-        serde_json::to_string(&DocumentSkeleton(&self.document)).map_err(|error| error.to_string())
+    fn skeleton_json(&self) -> Result<String, FigmaTempError> {
+        serde_json::to_string(&DocumentSkeleton(&self.document))
+            .map_err(|error| FigmaTempError::Serialize(error.to_string()))
     }
 
-    fn image_tables_json(&self) -> Result<String, String> {
-        serde_json::to_string(&ImageTables(&self.document)).map_err(|error| error.to_string())
+    fn image_tables_json(&self) -> Result<String, FigmaTempError> {
+        serde_json::to_string(&ImageTables(&self.document))
+            .map_err(|error| FigmaTempError::Serialize(error.to_string()))
     }
 
-    fn warnings_json(&self) -> Result<String, String> {
-        serde_json::to_string(&self.warnings).map_err(|error| error.to_string())
+    fn warnings_json(&self) -> Result<String, FigmaTempError> {
+        serde_json::to_string(&self.warnings)
+            .map_err(|error| FigmaTempError::Serialize(error.to_string()))
     }
 }
 
@@ -191,8 +233,8 @@ impl FigmaTempWriter {
         let import =
             op_figma::parse_fig_binary(bytes, file_name, op_figma::FigLayoutMode::Preserve)
                 .map_err(|error| JsValue::from_str(&error.to_string()))?;
-        let payload =
-            FigmaTempPayload::from_import(import).map_err(|error| JsValue::from_str(&error))?;
+        let payload = FigmaTempPayload::from_import(import)
+            .map_err(|error| JsValue::from_str(&error.to_string()))?;
         Ok(Self { payload })
     }
 
@@ -214,14 +256,14 @@ impl FigmaTempWriter {
     pub fn page_json(&self, index: usize) -> Result<String, JsValue> {
         self.payload
             .page_json(index)
-            .map_err(|error| JsValue::from_str(&error))
+            .map_err(|error| JsValue::from_str(&error.to_string()))
     }
 
     /// Complete canonical `.op` JSON used by the existing eager install path.
     pub fn full_document_json(&self) -> Result<String, JsValue> {
         self.payload
             .full_document_json()
-            .map_err(|error| JsValue::from_str(&error))
+            .map_err(|error| JsValue::from_str(&error.to_string()))
     }
 
     /// Document-global metadata plus page metadata, without page node trees or
@@ -230,20 +272,20 @@ impl FigmaTempWriter {
     pub fn skeleton_json(&self) -> Result<String, JsValue> {
         self.payload
             .skeleton_json()
-            .map_err(|error| JsValue::from_str(&error))
+            .map_err(|error| JsValue::from_str(&error.to_string()))
     }
 
     /// Shared `images` and `imageThumbs` tables referenced by page shards.
     pub fn image_tables_json(&self) -> Result<String, JsValue> {
         self.payload
             .image_tables_json()
-            .map_err(|error| JsValue::from_str(&error))
+            .map_err(|error| JsValue::from_str(&error.to_string()))
     }
 
     pub fn warnings_json(&self) -> Result<String, JsValue> {
         self.payload
             .warnings_json()
-            .map_err(|error| JsValue::from_str(&error))
+            .map_err(|error| JsValue::from_str(&error.to_string()))
     }
 }
 

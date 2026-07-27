@@ -19,14 +19,17 @@ pub(super) fn serve_document_sync<S: std::io::Read + std::io::Write>(
     wake_ui: &UiWake,
     stateful_lock: &Mutex<()>,
     body: &str,
-) -> Result<(), String> {
+) -> Result<(), McpLiveError> {
     let request = match crate::mcp_serve::parse_document_sync_request(body) {
         Ok(request) => request,
-        Err(message) => {
-            return crate::mcp_serve::write_mcp_http_response(
+        // A refused envelope is a client fault → 400, matching the TS
+        // validation 400s in `document.post.ts`. `Display` is transparent,
+        // so the body text is unchanged.
+        Err(e) => {
+            return write_http(
                 stream,
                 "400 Bad Request",
-                &crate::mcp_serve::rest_error_body(&message),
+                &crate::mcp_serve::rest_error_body(&e.to_string()),
             );
         }
     };
@@ -36,15 +39,15 @@ pub(super) fn serve_document_sync<S: std::io::Read + std::io::Write>(
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
         return match request_update_editor_meta(req_tx, wake_ui, editor_meta) {
-            Ok(()) => crate::mcp_serve::write_mcp_http_response(
+            Ok(()) => write_http(
                 stream,
                 "200 OK",
                 &crate::mcp_serve::document_sync_ok(LIVE_SYNC_VERSION.load(Ordering::Relaxed)),
             ),
-            Err(transport_err) => crate::mcp_serve::write_mcp_http_response(
+            Err(transport_err) => write_http(
                 stream,
                 "500 Internal Server Error",
-                &crate::mcp_serve::rest_error_body(&transport_err),
+                &crate::mcp_serve::rest_error_body(&transport_err.to_string()),
             ),
         };
     }
@@ -55,7 +58,7 @@ pub(super) fn serve_document_sync<S: std::io::Read + std::io::Write>(
     let loaded = match op_pen_loader::load_canonical(request.document_json) {
         Ok(loaded) => loaded,
         Err(e) => {
-            return crate::mcp_serve::write_mcp_http_response(
+            return write_http(
                 stream,
                 "400 Bad Request",
                 &crate::mcp_serve::rest_error_body(&e.to_string()),
@@ -75,7 +78,7 @@ pub(super) fn serve_document_sync<S: std::io::Read + std::io::Write>(
     match request_replace(req_tx, wake_ui, loaded.value, editor_meta) {
         Ok(()) => {
             let version = LIVE_SYNC_VERSION.fetch_add(1, Ordering::Relaxed) + 1;
-            crate::mcp_serve::write_mcp_http_response(
+            write_http(
                 stream,
                 "200 OK",
                 &crate::mcp_serve::document_sync_ok(version),
@@ -83,10 +86,10 @@ pub(super) fn serve_document_sync<S: std::io::Read + std::io::Write>(
         }
         // The UI thread is gone or didn't ack in time — a server fault, mapped
         // to 500 (TS throws → 500 for server-side failures).
-        Err(transport_err) => crate::mcp_serve::write_mcp_http_response(
+        Err(transport_err) => write_http(
             stream,
             "500 Internal Server Error",
-            &crate::mcp_serve::rest_error_body(&transport_err),
+            &crate::mcp_serve::rest_error_body(&transport_err.to_string()),
         ),
     }
 }
@@ -94,10 +97,25 @@ pub(super) fn serve_document_sync<S: std::io::Read + std::io::Write>(
 pub(super) fn write_json_rpc_response<S: std::io::Write>(
     stream: &mut S,
     response: &str,
-) -> Result<(), String> {
+) -> Result<(), McpLiveError> {
     if response.is_empty() {
-        crate::mcp_serve::write_mcp_http_response(stream, "202 Accepted", "")
+        write_http(stream, "202 Accepted", "")
     } else {
-        crate::mcp_serve::write_mcp_http_response(stream, "200 OK", response)
+        write_http(stream, "200 OK", response)
     }
+}
+
+/// `mcp_serve::write_mcp_http_response` lifted into this module's error type.
+/// Every handler here answers by `return`ing a write, so without the lift each
+/// one would spell out `Ok(mcp_serve::write_mcp_http_response(..)?)` — this
+/// keeps them one-liners and puts the `McpServeError` → [`McpLiveError`] hop
+/// in exactly one place.
+pub(super) fn write_http<S: std::io::Write>(
+    stream: &mut S,
+    status: &str,
+    body: &str,
+) -> Result<(), McpLiveError> {
+    Ok(crate::mcp_serve::write_mcp_http_response(
+        stream, status, body,
+    )?)
 }

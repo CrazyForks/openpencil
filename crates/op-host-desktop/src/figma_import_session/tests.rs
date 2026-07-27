@@ -1,3 +1,4 @@
+use super::publish::PersistedFile;
 use super::*;
 
 fn temp_import_dir(tag: &str) -> PathBuf {
@@ -564,7 +565,10 @@ fn failed_adjacent_save_installs_unsaved_import_and_requests_save_as() {
             state: imported,
             warnings: Vec::new(),
         },
-        persisted: Err("source directory is read-only".to_string()),
+        persisted: Err(FigmaImportError::WriteStaged {
+            source_path: PathBuf::from("/fixtures/design.fig"),
+            message: "source directory is read-only".to_string(),
+        }),
     };
     let mut host = WidgetHostNative::new();
     let mut current_path = Some(PathBuf::from("/old/document.op"));

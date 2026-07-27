@@ -11,6 +11,10 @@
 
 use std::net::SocketAddr;
 
+#[path = "provider_dial_error.rs"]
+mod error;
+pub(crate) use error::ProviderDialError;
+
 /// How a provider endpoint may be dialed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EndpointDialPolicy {
@@ -39,32 +43,34 @@ pub(crate) fn web_dial_policy_for(base_url: &str, allowlist: Option<&str>) -> En
 pub(crate) async fn client_for(
     policy: EndpointDialPolicy,
     url: &str,
-) -> Result<reqwest::Client, String> {
+) -> Result<reqwest::Client, ProviderDialError> {
     match policy {
         EndpointDialPolicy::Trusted => crate::chat_builtin_http::builtin_http_client(),
         EndpointDialPolicy::PublicOnly => pinned_public_client(url).await,
     }
 }
 
-async fn pinned_public_client(url: &str) -> Result<reqwest::Client, String> {
-    let parsed =
-        reqwest::Url::parse(url).map_err(|_| "provider endpoint is not a valid URL".to_string())?;
+async fn pinned_public_client(url: &str) -> Result<reqwest::Client, ProviderDialError> {
+    let parsed = reqwest::Url::parse(url).map_err(|_| ProviderDialError::NotAUrl)?;
     let host = parsed
         .host_str()
-        .ok_or_else(|| "provider endpoint has no host".to_string())?
+        .ok_or(ProviderDialError::MissingHost)?
         .trim_start_matches('[')
         .trim_end_matches(']')
         .to_string();
     let port = parsed
         .port_or_known_default()
-        .ok_or_else(|| "provider endpoint has no port".to_string())?;
+        .ok_or(ProviderDialError::MissingPort)?;
     let addrs = if let Ok(ip) = host.parse::<std::net::IpAddr>() {
         // Literal address: nothing to resolve, screening alone suffices.
         vec![SocketAddr::new(ip, port)]
     } else {
         tokio::net::lookup_host((host.as_str(), port))
             .await
-            .map_err(|error| format!("provider endpoint {host} did not resolve: {error}"))?
+            .map_err(|error| ProviderDialError::ResolveFailed {
+                host: host.clone(),
+                message: error.to_string(),
+            })?
             .collect()
     };
     let addrs = screen_resolved_addrs(&host, addrs)?;
@@ -77,7 +83,9 @@ async fn pinned_public_client(url: &str) -> Result<reqwest::Client, String> {
         .no_proxy()
         .resolve_to_addrs(&host, &addrs)
         .build()
-        .map_err(|error| format!("Failed to configure provider HTTP client: {error}"))
+        .map_err(|error| ProviderDialError::ClientBuild {
+            message: error.to_string(),
+        })
 }
 
 /// Screen a resolved address set for a `PublicOnly` dial. Empty resolutions
@@ -86,17 +94,19 @@ async fn pinned_public_client(url: &str) -> Result<reqwest::Client, String> {
 pub(crate) fn screen_resolved_addrs(
     host: &str,
     addrs: Vec<SocketAddr>,
-) -> Result<Vec<SocketAddr>, String> {
+) -> Result<Vec<SocketAddr>, ProviderDialError> {
     if addrs.is_empty() {
-        return Err(format!("provider endpoint {host} did not resolve"));
+        return Err(ProviderDialError::Unresolved {
+            host: host.to_string(),
+        });
     }
     if addrs
         .iter()
         .any(|addr| crate::web_credentials::is_restricted_ip(addr.ip()))
     {
-        return Err(format!(
-            "provider endpoint {host} resolves to a reserved address"
-        ));
+        return Err(ProviderDialError::Reserved {
+            host: host.to_string(),
+        });
     }
     Ok(addrs)
 }

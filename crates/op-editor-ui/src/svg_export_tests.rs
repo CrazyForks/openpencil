@@ -60,7 +60,9 @@ fn active_page_svg_contains_vector_markup() {
 #[test]
 fn active_page_svg_fails_on_empty_scene() {
     assert_eq!(
-        serialize_active_page_svg(&scene_with(Vec::new())).unwrap_err(),
+        serialize_active_page_svg(&scene_with(Vec::new()))
+            .unwrap_err()
+            .to_string(),
         "nothing to export"
     );
 }

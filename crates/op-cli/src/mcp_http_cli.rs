@@ -105,13 +105,13 @@ fn post_raw(
     body: &str,
     timeout: std::time::Duration,
 ) -> Result<(u16, String), CliError> {
-    // `op-rpc-transport` is a shared crate outside this conversion's scope and
-    // still reports failures as `String`; adapt it here so the stringly-typed
-    // error never escapes into the CLI's own call graph.
+    // `op_rpc_transport::HttpTransportError` is the transport's own typed
+    // failure domain; flatten it into the CLI's `Transport` variant, whose
+    // payload is the exact sentence `op:` prints.
     TcpJsonRpc::local_mcp(port)
         .post_raw(body, timeout)
         .map(|reply| (reply.status, reply.body))
-        .map_err(CliError::Transport)
+        .map_err(|e| CliError::Transport(e.to_string()))
 }
 
 /// POST `body` to the HTTP MCP server on `127.0.0.1:port` and return the
@@ -174,7 +174,7 @@ fn http_get_raw(
     TcpJsonRpc::local_mcp(port)
         .get_raw(path, timeout)
         .map(|reply| (reply.status, reply.body))
-        .map_err(CliError::Transport)
+        .map_err(|e| CliError::Transport(e.to_string()))
 }
 
 /// True when `127.0.0.1:port` is the `--serve-web` web-canvas daemon —

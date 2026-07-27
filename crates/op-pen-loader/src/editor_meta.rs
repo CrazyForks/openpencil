@@ -5,6 +5,8 @@
 //! This scanner finds only the top-level value and deserializes that small
 //! slice; it never materializes or rewrites the document-sized JSON tree.
 
+use crate::editor_meta_error::EditorMetaWriteError;
+
 /// Editor state that affects how a canonical document is reopened.
 ///
 /// Both fields default to their legacy behavior, so files written before a
@@ -83,15 +85,17 @@ pub fn write_source_with_editor_meta<W: std::io::Write>(
     writer: &mut W,
     src: &str,
     meta: EditorMeta,
-) -> Result<(), String> {
-    let scan = scan_top_level(src, "editorMeta")
-        .ok_or_else(|| "source document is not a valid top-level JSON object".to_string())?;
+) -> Result<(), EditorMetaWriteError> {
+    let scan = scan_top_level(src, "editorMeta").ok_or(EditorMetaWriteError::NotTopLevelObject)?;
     let src_bytes = src.as_bytes();
-    let write = |result: std::io::Result<()>| result.map_err(|error| error.to_string());
+    let write = |result: std::io::Result<()>| {
+        result.map_err(|error| EditorMetaWriteError::Write(error.to_string()))
+    };
+    let serialize = |error: serde_json::Error| EditorMetaWriteError::Serialize(error.to_string());
 
     if let Some((value_start, value_end)) = scan.value_range {
         write(writer.write_all(&src_bytes[..value_start]))?;
-        serde_json::to_writer(&mut *writer, &meta).map_err(|error| error.to_string())?;
+        serde_json::to_writer(&mut *writer, &meta).map_err(serialize)?;
         write(writer.write_all(&src_bytes[value_end..]))?;
         return Ok(());
     }
@@ -102,7 +106,7 @@ pub fn write_source_with_editor_meta<W: std::io::Write>(
     } else {
         write(writer.write_all(b"\"editorMeta\":"))?;
     }
-    serde_json::to_writer(&mut *writer, &meta).map_err(|error| error.to_string())?;
+    serde_json::to_writer(&mut *writer, &meta).map_err(serialize)?;
     write(writer.write_all(&src_bytes[scan.root_close..]))
 }
 
@@ -113,17 +117,20 @@ pub fn write_source_with_current_schema<W: std::io::Write>(
     writer: &mut W,
     src: &str,
     meta: EditorMeta,
-) -> Result<(), String> {
+) -> Result<(), EditorMetaWriteError> {
     #[derive(Clone, Copy)]
     enum Replacement {
         FormatVersion,
         EditorMeta,
     }
 
-    let meta_scan = scan_top_level(src, "editorMeta")
-        .ok_or_else(|| "source document is not a valid top-level JSON object".to_string())?;
-    let format_scan = scan_top_level(src, "formatVersion")
-        .ok_or_else(|| "source document is not a valid top-level JSON object".to_string())?;
+    let meta_scan =
+        scan_top_level(src, "editorMeta").ok_or(EditorMetaWriteError::NotTopLevelObject)?;
+    let format_scan =
+        scan_top_level(src, "formatVersion").ok_or(EditorMetaWriteError::NotTopLevelObject)?;
+    let write_err = |error: std::io::Error| EditorMetaWriteError::Write(error.to_string());
+    let serialize_err =
+        |error: serde_json::Error| EditorMetaWriteError::Serialize(error.to_string());
     let src_bytes = src.as_bytes();
     let mut replacements = Vec::with_capacity(2);
     if let Some((start, end)) = format_scan.value_range {
@@ -138,54 +145,50 @@ pub fn write_source_with_current_schema<W: std::io::Write>(
     for (start, end, replacement) in replacements {
         writer
             .write_all(&src_bytes[cursor..start])
-            .map_err(|error| error.to_string())?;
+            .map_err(write_err)?;
         match replacement {
             Replacement::FormatVersion => {
                 serde_json::to_writer(
                     &mut *writer,
                     jian_ops_schema::version::FORMAT_VERSION_CURRENT,
                 )
-                .map_err(|error| error.to_string())?;
+                .map_err(serialize_err)?;
             }
             Replacement::EditorMeta => {
-                serde_json::to_writer(&mut *writer, &meta).map_err(|error| error.to_string())?;
+                serde_json::to_writer(&mut *writer, &meta).map_err(serialize_err)?;
             }
         }
         cursor = end;
     }
     writer
         .write_all(&src_bytes[cursor..meta_scan.root_close])
-        .map_err(|error| error.to_string())?;
+        .map_err(write_err)?;
 
     let missing_format = format_scan.value_range.is_none();
     let missing_meta = meta_scan.value_range.is_none();
     let mut needs_comma = meta_scan.has_members;
     if missing_format {
         if needs_comma {
-            writer.write_all(b",").map_err(|error| error.to_string())?;
+            writer.write_all(b",").map_err(write_err)?;
         }
-        writer
-            .write_all(b"\"formatVersion\":")
-            .map_err(|error| error.to_string())?;
+        writer.write_all(b"\"formatVersion\":").map_err(write_err)?;
         serde_json::to_writer(
             &mut *writer,
             jian_ops_schema::version::FORMAT_VERSION_CURRENT,
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(serialize_err)?;
         needs_comma = true;
     }
     if missing_meta {
         if needs_comma {
-            writer.write_all(b",").map_err(|error| error.to_string())?;
+            writer.write_all(b",").map_err(write_err)?;
         }
-        writer
-            .write_all(b"\"editorMeta\":")
-            .map_err(|error| error.to_string())?;
-        serde_json::to_writer(&mut *writer, &meta).map_err(|error| error.to_string())?;
+        writer.write_all(b"\"editorMeta\":").map_err(write_err)?;
+        serde_json::to_writer(&mut *writer, &meta).map_err(serialize_err)?;
     }
     writer
         .write_all(&src_bytes[meta_scan.root_close..])
-        .map_err(|error| error.to_string())
+        .map_err(write_err)
 }
 
 /// Apply embedded editor metadata to a freshly loaded editor state.

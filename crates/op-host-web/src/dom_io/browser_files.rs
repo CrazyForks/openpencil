@@ -215,6 +215,63 @@ pub(crate) fn read_file(file: web_sys::File, mode: ReadMode, on_done: Box<dyn Fn
     }
 }
 
+/// A `Blob.slice()` range read that could not be completed.
+///
+/// `Display` reproduces the ad-hoc `String` messages this enum replaced byte
+/// for byte, so the `[import-html] …` console lines stay identical.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum BlobReadError {
+    /// `offset + length` does not fit in a `u64`.
+    RangeOverflow,
+    /// The range end is outside JavaScript's exactly representable integers.
+    RangeNotExact,
+    /// The range end is past the end of the source Blob.
+    RangeExceedsSource { offset: u64, end: u64, size: u64 },
+    /// `Blob.slice` threw.
+    SliceFailed(String),
+    /// `new FileReader()` threw.
+    ReaderCreateFailed(String),
+    /// The reader completed with an error result.
+    ReadFailed(String),
+    /// The reader completed with something other than an `ArrayBuffer`.
+    NotArrayBuffer,
+    /// `FileReader.readAsArrayBuffer` threw before any read began.
+    ReadCouldNotStart(String),
+}
+
+impl std::fmt::Display for BlobReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BlobReadError::RangeOverflow => write!(f, "Blob range end overflows u64"),
+            BlobReadError::RangeNotExact => {
+                write!(f, "Blob range exceeds JavaScript's exact integer range")
+            }
+            BlobReadError::RangeExceedsSource { offset, end, size } => {
+                write!(f, "Blob range {offset}..{end} exceeds source size {size}")
+            }
+            BlobReadError::SliceFailed(error) => write!(f, "Blob.slice failed: {error}"),
+            BlobReadError::ReaderCreateFailed(error) => {
+                write!(f, "FileReader creation failed: {error}")
+            }
+            BlobReadError::ReadFailed(error) => write!(f, "Blob range read failed: {error}"),
+            BlobReadError::NotArrayBuffer => {
+                write!(f, "Blob range read did not produce an ArrayBuffer")
+            }
+            BlobReadError::ReadCouldNotStart(error) => {
+                write!(f, "Blob range read could not start: {error}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for BlobReadError {}
+
+impl From<BlobReadError> for String {
+    fn from(error: BlobReadError) -> String {
+        error.to_string()
+    }
+}
+
 /// Read one byte range from a browser `Blob` without copying the whole source.
 /// The callback is completed exactly once for setup errors, read failures,
 /// aborts, and successful reads.
@@ -222,28 +279,28 @@ pub(crate) fn read_blob_range(
     blob: &web_sys::Blob,
     offset: u64,
     length: u64,
-    on_done: Box<dyn FnOnce(Result<Vec<u8>, String>)>,
+    on_done: Box<dyn FnOnce(Result<Vec<u8>, BlobReadError>)>,
 ) {
-    let callback: CallbackSlot<Result<Vec<u8>, String>> = Rc::new(RefCell::new(Some(on_done)));
+    let callback: CallbackSlot<Result<Vec<u8>, BlobReadError>> =
+        Rc::new(RefCell::new(Some(on_done)));
     let Some(end) = offset.checked_add(length) else {
-        complete_once(&callback, Err("Blob range end overflows u64".to_string()));
+        complete_once(&callback, Err(BlobReadError::RangeOverflow));
         return;
     };
     const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
     if end > MAX_SAFE_INTEGER {
-        complete_once(
-            &callback,
-            Err("Blob range exceeds JavaScript's exact integer range".to_string()),
-        );
+        complete_once(&callback, Err(BlobReadError::RangeNotExact));
         return;
     }
     let blob_size = blob.size() as u64;
     if end > blob_size {
         complete_once(
             &callback,
-            Err(format!(
-                "Blob range {offset}..{end} exceeds source size {blob_size}"
-            )),
+            Err(BlobReadError::RangeExceedsSource {
+                offset,
+                end,
+                size: blob_size,
+            }),
         );
         return;
     }
@@ -252,7 +309,7 @@ pub(crate) fn read_blob_range(
         Err(error) => {
             complete_once(
                 &callback,
-                Err(format!("Blob.slice failed: {}", js_error_message(&error))),
+                Err(BlobReadError::SliceFailed(js_error_message(&error))),
             );
             return;
         }
@@ -262,10 +319,7 @@ pub(crate) fn read_blob_range(
         Err(error) => {
             complete_once(
                 &callback,
-                Err(format!(
-                    "FileReader creation failed: {}",
-                    js_error_message(&error)
-                )),
+                Err(BlobReadError::ReaderCreateFailed(js_error_message(&error))),
             );
             return;
         }
@@ -278,11 +332,8 @@ pub(crate) fn read_blob_range(
     *closure_slot.borrow_mut() = Some(Closure::new(move || {
         let result = reader_cb
             .result()
-            .map_err(|error| format!("Blob range read failed: {}", js_error_message(&error)))
-            .and_then(|value| {
-                js_bytes(&value)
-                    .ok_or_else(|| "Blob range read did not produce an ArrayBuffer".to_string())
-            });
+            .map_err(|error| BlobReadError::ReadFailed(js_error_message(&error)))
+            .and_then(|value| js_bytes(&value).ok_or(BlobReadError::NotArrayBuffer));
         reader_cb.set_onloadend(None);
         complete_once(&callback_cb, result);
         let _ = closure_slot_cb.borrow_mut().take();
@@ -297,10 +348,7 @@ pub(crate) fn read_blob_range(
         reader.set_onloadend(None);
         complete_once(
             &callback,
-            Err(format!(
-                "Blob range read could not start: {}",
-                js_error_message(&error)
-            )),
+            Err(BlobReadError::ReadCouldNotStart(js_error_message(&error))),
         );
         let _ = closure_slot.borrow_mut().take();
     }
@@ -348,13 +396,13 @@ mod tests {
     fn range_completion_callback_is_exactly_once() {
         let calls = Rc::new(Cell::new(0));
         let calls_cb = calls.clone();
-        let slot: CallbackSlot<Result<Vec<u8>, String>> =
+        let slot: CallbackSlot<Result<Vec<u8>, BlobReadError>> =
             Rc::new(RefCell::new(Some(Box::new(move |_| {
                 calls_cb.set(calls_cb.get() + 1)
             }))));
 
         complete_once(&slot, Ok(vec![1, 2, 3]));
-        complete_once(&slot, Err("late error".to_string()));
+        complete_once(&slot, Err(BlobReadError::NotArrayBuffer));
 
         assert_eq!(calls.get(), 1);
         assert!(slot.borrow().is_none());

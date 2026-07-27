@@ -4,6 +4,11 @@
 
 use base64::Engine;
 
+use crate::figma_convert_error::FigmaConvertError;
+
+/// Every fallible step of this module fails with [`FigmaConvertError`].
+type Result<T> = std::result::Result<T, FigmaConvertError>;
+
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ConvertRequest {
@@ -11,10 +16,12 @@ struct ConvertRequest {
     bytes_b64: String,
 }
 
-fn decode_b64(s: &str) -> Result<Vec<u8>, String> {
+fn decode_b64(s: &str) -> Result<Vec<u8>> {
     base64::engine::general_purpose::STANDARD
         .decode(s)
-        .map_err(|e| format!("bad base64: {e}"))
+        .map_err(|e| FigmaConvertError::BadBase64 {
+            detail: e.to_string(),
+        })
 }
 
 /// Same STANDARD alphabet `op_figma::image_resolver::blob_to_data_url` uses
@@ -27,12 +34,19 @@ fn base64_encode(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
-pub(crate) fn convert_fig_json(body: &str) -> Result<String, String> {
+pub(crate) fn convert_fig_json(body: &str) -> Result<String> {
     let req: ConvertRequest =
-        serde_json::from_str(body).map_err(|e| format!("bad convert request: {e}"))?;
+        serde_json::from_str(body).map_err(|e| FigmaConvertError::BadRequest {
+            detail: e.to_string(),
+        })?;
     let bytes = decode_b64(&req.bytes_b64)?;
+    // `op_figma` is not owned by this pass; its `Debug` rendering is what the
+    // pre-conversion `{e:?}` emitted, so it is carried verbatim.
     let import = op_figma::parse_fig_binary(&bytes, &req.name, op_figma::FigLayoutMode::Preserve)
-        .map_err(|e| format!("parse {}: {e:?}", req.name))?;
+        .map_err(|e| FigmaConvertError::Parse {
+        name: req.name.clone(),
+        detail: format!("{e:?}"),
+    })?;
     let thumbnails = jian_ops_schema::image_thumbs::capture_snapshot();
     let mut response = Vec::new();
     response.extend_from_slice(br#"{"ok":true,"doc":"#);
@@ -46,11 +60,19 @@ pub(crate) fn convert_fig_json(body: &str) -> Result<String, String> {
             preserve_authored_geometry: true,
         },
     )
-    .map_err(|error| error.to_string())?;
+    .map_err(|error| FigmaConvertError::Encode {
+        detail: error.to_string(),
+    })?;
     response.extend_from_slice(br#", "warnings":"#);
-    serde_json::to_writer(&mut response, &import.warnings).map_err(|error| error.to_string())?;
+    serde_json::to_writer(&mut response, &import.warnings).map_err(|error| {
+        FigmaConvertError::Encode {
+            detail: error.to_string(),
+        }
+    })?;
     response.push(b'}');
-    String::from_utf8(response).map_err(|error| error.to_string())
+    String::from_utf8(response).map_err(|error| FigmaConvertError::Encode {
+        detail: error.to_string(),
+    })
 }
 
 // Happy-path coverage: op-figma's only fig-kiwi fixture builder

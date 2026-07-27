@@ -12,13 +12,86 @@ use std::rc::Rc;
 use url::Url;
 use wasm_bindgen::JsCast;
 
-use super::browser_files::read_blob_range;
+use super::browser_files::{read_blob_range, BlobReadError};
 use super::drop_entries::DroppedProjectFile;
 use crate::file_actions::IngestedDoc;
 
-type DirectoryImportResult = Result<IngestedDoc, String>;
+type DirectoryImportResult = Result<IngestedDoc, DirectoryImportError>;
 type DirectoryImportDone = Box<dyn FnOnce(DirectoryImportResult)>;
-type EntryLoaded = Box<dyn FnOnce(Result<(), String>)>;
+type EntryLoaded = Box<dyn FnOnce(Result<(), DirectoryImportError>)>;
+
+/// A lazy HTML directory import that could not be completed.
+///
+/// `Display` reproduces the ad-hoc `String` messages this enum replaced byte
+/// for byte, so the `[import-html] …` console lines stay identical.
+/// `SelectEntry` carries `op_html`'s own typed error already rendered, exactly
+/// as the previous `error.to_string()` adapter did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum DirectoryImportError {
+    /// The shared HTML entry selector rejected the file set.
+    SelectEntry(String),
+    /// A project-relative path is empty, absolute, or escapes the root.
+    InvalidPath(String),
+    /// Two entries normalize to the same project-relative path.
+    DuplicatePath(String),
+    /// The selected entry vanished while the index was being built.
+    SelectedEntryMissing,
+    /// A requested entry index is outside the index.
+    EntryIndexInvalid(usize),
+    /// The browser `File` behind an index entry is gone.
+    SourceUnavailable(String),
+    /// A `File.size` value cannot drive a range read.
+    InvalidFileSize(String),
+    /// A range read of a project file failed.
+    ReadFailed { path: String, source: BlobReadError },
+    /// The selected HTML entry has not been read yet.
+    HtmlEntryUnavailable(String),
+    /// The HTML entry parsed but produced no nodes.
+    NoImportableContent,
+}
+
+impl std::fmt::Display for DirectoryImportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DirectoryImportError::SelectEntry(error) => write!(f, "{error}"),
+            DirectoryImportError::InvalidPath(path) => {
+                write!(f, "invalid project path `{path}`")
+            }
+            DirectoryImportError::DuplicatePath(path) => {
+                write!(f, "duplicate project path `{path}`")
+            }
+            DirectoryImportError::SelectedEntryMissing => {
+                write!(f, "selected HTML entry is missing from directory index")
+            }
+            DirectoryImportError::EntryIndexInvalid(index) => {
+                write!(f, "directory entry index {index} is invalid")
+            }
+            DirectoryImportError::SourceUnavailable(path) => {
+                write!(f, "directory source for `{path}` is unavailable")
+            }
+            DirectoryImportError::InvalidFileSize(path) => {
+                write!(f, "invalid file size for `{path}`")
+            }
+            DirectoryImportError::ReadFailed { path, source } => {
+                write!(f, "failed to read `{path}`: {source}")
+            }
+            DirectoryImportError::HtmlEntryUnavailable(path) => {
+                write!(f, "HTML entry `{path}` is unavailable")
+            }
+            DirectoryImportError::NoImportableContent => {
+                write!(f, "HTML directory entry contains no importable content")
+            }
+        }
+    }
+}
+
+impl std::error::Error for DirectoryImportError {}
+
+impl From<DirectoryImportError> for String {
+    fn from(error: DirectoryImportError) -> String {
+        error.to_string()
+    }
+}
 type IsActive = Box<dyn Fn() -> bool>;
 type SessionRef = Rc<RefCell<DirectoryImportSession>>;
 
@@ -48,13 +121,13 @@ struct DirectoryProjectIndex {
 }
 
 impl DirectoryProjectIndex {
-    fn prepare(paths: &[String]) -> Result<Self, String> {
+    fn prepare(paths: &[String]) -> Result<Self, DirectoryImportError> {
         let placeholders: Vec<_> = paths
             .iter()
             .map(|path| op_html::HtmlProjectFile::new(path, Vec::new()))
             .collect();
-        let selected_path =
-            op_html::select_html_entry(&placeholders).map_err(|error| error.to_string())?;
+        let selected_path = op_html::select_html_entry(&placeholders)
+            .map_err(|error| DirectoryImportError::SelectEntry(error.to_string()))?;
 
         let mut prepared = Vec::with_capacity(paths.len());
         for (source_index, path) in paths.iter().enumerate() {
@@ -71,7 +144,7 @@ impl DirectoryProjectIndex {
         let mut resource_by_url = HashMap::with_capacity(prepared.len());
         for (source_index, relative_path) in prepared {
             if !seen.insert(relative_path.clone()) {
-                return Err(format!("duplicate project path `{relative_path}`"));
+                return Err(DirectoryImportError::DuplicatePath(relative_path));
             }
             let virtual_url = virtual_project_url(&relative_path);
             let entry_index = entries.len();
@@ -85,7 +158,7 @@ impl DirectoryProjectIndex {
         let html_entry_index = entries
             .iter()
             .position(|entry| entry.relative_path == selected_path)
-            .ok_or_else(|| "selected HTML entry is missing from directory index".to_string())?;
+            .ok_or(DirectoryImportError::SelectedEntryMissing)?;
         let html_entry_count = entries
             .iter()
             .filter(|entry| is_html_path(&entry.relative_path))
@@ -153,13 +226,12 @@ fn load_entry(session: SessionRef, index: usize, done: EntryLoaded) {
     let (file, path) = {
         let session = session.borrow();
         let Some(entry) = session.index.entries.get(index) else {
-            done(Err(format!("directory entry index {index} is invalid")));
+            done(Err(DirectoryImportError::EntryIndexInvalid(index)));
             return;
         };
         let Some(source) = session.files.get(entry.source_index) else {
-            done(Err(format!(
-                "directory source for `{}` is unavailable",
-                entry.relative_path
+            done(Err(DirectoryImportError::SourceUnavailable(
+                entry.relative_path.clone(),
             )));
             return;
         };
@@ -167,7 +239,7 @@ fn load_entry(session: SessionRef, index: usize, done: EntryLoaded) {
     };
     let size = file.size();
     if !size.is_finite() || !(0.0..=MAX_SAFE_FILE_SIZE).contains(&size) || size.fract() != 0.0 {
-        done(Err(format!("invalid file size for `{path}`")));
+        done(Err(DirectoryImportError::InvalidFileSize(path)));
         return;
     }
 
@@ -185,7 +257,10 @@ fn load_entry(session: SessionRef, index: usize, done: EntryLoaded) {
                     session2.borrow_mut().loaded_entries.insert(index, bytes);
                     done(Ok(()));
                 }
-                Err(error) => done(Err(format!("failed to read `{path}`: {error}"))),
+                Err(error) => done(Err(DirectoryImportError::ReadFailed {
+                    path,
+                    source: error,
+                })),
             }
         }),
     );
@@ -208,10 +283,7 @@ fn import_until_resolved(session: SessionRef) {
         return;
     }
     if imported.document.children.is_empty() {
-        finish(
-            &session,
-            Err("HTML directory entry contains no importable content".to_string()),
-        );
+        finish(&session, Err(DirectoryImportError::NoImportableContent));
         return;
     }
 
@@ -242,11 +314,11 @@ fn import_until_resolved(session: SessionRef) {
 fn probe_import(
     index: &DirectoryProjectIndex,
     loaded_entries: &HashMap<usize, Vec<u8>>,
-) -> Result<(op_html::HtmlDocumentResult, Vec<usize>), String> {
+) -> Result<(op_html::HtmlDocumentResult, Vec<usize>), DirectoryImportError> {
     let entry = &index.entries[index.html_entry_index];
     let html_bytes = loaded_entries
         .get(&index.html_entry_index)
-        .ok_or_else(|| format!("HTML entry `{}` is unavailable", entry.relative_path))?;
+        .ok_or_else(|| DirectoryImportError::HtmlEntryUnavailable(entry.relative_path.clone()))?;
     let html = op_html::html_encoding::decode_html_bytes(html_bytes);
     let requested = RefCell::new(BTreeSet::new());
     let fetcher = |url: &str| {
@@ -325,9 +397,9 @@ fn apply_entry_name_fallback(imported: &mut op_html::HtmlDocumentResult, entry_p
     }
 }
 
-fn normalize_relative_path(path: &str) -> Result<String, String> {
+fn normalize_relative_path(path: &str) -> Result<String, DirectoryImportError> {
     if path.is_empty() || path.contains('\0') || path.starts_with(['/', '\\']) {
-        return Err(format!("invalid project path `{path}`"));
+        return Err(DirectoryImportError::InvalidPath(path.to_string()));
     }
     let unified = path.replace('\\', "/");
     if unified
@@ -335,18 +407,18 @@ fn normalize_relative_path(path: &str) -> Result<String, String> {
         .get(1)
         .is_some_and(|byte| *byte == b':' && unified.as_bytes()[0].is_ascii_alphabetic())
     {
-        return Err(format!("invalid project path `{path}`"));
+        return Err(DirectoryImportError::InvalidPath(path.to_string()));
     }
     let mut components = Vec::new();
     for component in unified.split('/') {
         match component {
             "" | "." => {}
-            ".." => return Err(format!("invalid project path `{path}`")),
+            ".." => return Err(DirectoryImportError::InvalidPath(path.to_string())),
             value => components.push(value),
         }
     }
     if components.is_empty() {
-        return Err(format!("invalid project path `{path}`"));
+        return Err(DirectoryImportError::InvalidPath(path.to_string()));
     }
     Ok(components.join("/"))
 }

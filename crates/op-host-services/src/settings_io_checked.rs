@@ -1,6 +1,11 @@
 use super::*;
 
-pub(super) fn validate_payload_fields(raw: &serde_json::Value) -> Result<(), String> {
+/// Every validation verdict in this module reports [`SettingsIoError`]; the
+/// four variants used here are exactly the ones
+/// [`SettingsIoError::is_lossless_violation`] names.
+type Result<T> = std::result::Result<T, SettingsIoError>;
+
+pub(super) fn validate_payload_fields(raw: &serde_json::Value) -> Result<()> {
     let Some(root) = raw.as_object() else {
         return Ok(());
     };
@@ -76,7 +81,7 @@ fn validate_optional_object_fields(
     value: Option<&serde_json::Value>,
     allowed: &[&str],
     context: &str,
-) -> Result<(), String> {
+) -> Result<()> {
     if let Some(object) = value.and_then(serde_json::Value::as_object) {
         validate_known_fields(object, allowed, context)?;
     }
@@ -87,7 +92,7 @@ fn validate_array_object_fields(
     value: Option<&serde_json::Value>,
     allowed: &[&str],
     context: &str,
-) -> Result<(), String> {
+) -> Result<()> {
     if let Some(entries) = value.and_then(serde_json::Value::as_array) {
         for entry in entries {
             if let Some(object) = entry.as_object() {
@@ -102,18 +107,20 @@ fn validate_known_fields(
     object: &serde_json::Map<String, serde_json::Value>,
     allowed: &[&str],
     context: &str,
-) -> Result<(), String> {
+) -> Result<()> {
     if object
         .keys()
         .any(|field| !allowed.contains(&field.as_str()))
     {
-        return Err(format!("unknown settings field in {context}"));
+        return Err(SettingsIoError::UnknownField {
+            context: context.to_string(),
+        });
     }
     Ok(())
 }
 
-pub(super) fn validate_lossless_payload(payload: &SettingsPayload) -> Result<(), String> {
-    let lossy = || "settings file cannot be loaded losslessly".to_string();
+pub(super) fn validate_lossless_payload(payload: &SettingsPayload) -> Result<()> {
+    let lossy = || SettingsIoError::Lossy;
     validate_credential_entries(payload)?;
     if payload
         .theme
@@ -180,12 +187,12 @@ pub(super) fn validate_lossless_payload(payload: &SettingsPayload) -> Result<(),
     Ok(())
 }
 
-fn validate_credential_entries(payload: &SettingsPayload) -> Result<(), String> {
-    fn invalid() -> String {
-        "unsupported settings credential entry".to_string()
+fn validate_credential_entries(payload: &SettingsPayload) -> Result<()> {
+    fn invalid() -> SettingsIoError {
+        SettingsIoError::UnsupportedCredentialEntry
     }
-    fn lossy() -> String {
-        "settings file cannot be loaded losslessly".to_string()
+    fn lossy() -> SettingsIoError {
+        SettingsIoError::Lossy
     }
     if let Some(agents) = payload.builtin_agents.as_ref() {
         for agent in agents {

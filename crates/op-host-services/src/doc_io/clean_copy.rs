@@ -1,6 +1,6 @@
 //! Allocation-bounded Save As for an unchanged, already-bound `.op` file.
 
-use super::{commit_staged_document, create_sibling_temp};
+use super::{commit_staged_document, create_sibling_temp, DocIoError};
 use op_pen_loader::EditorMeta;
 use std::path::Path;
 
@@ -18,31 +18,46 @@ pub fn copy_clean_document_with_editor_meta_to_path(
     target_path: &Path,
     active_page_index: usize,
     preserve_authored_geometry: bool,
-) -> Result<(), String> {
-    let source_file = std::fs::File::open(source_path)
-        .map_err(|error| format!("open {}: {error}", source_path.display()))?;
+) -> Result<(), DocIoError> {
+    let source_file = std::fs::File::open(source_path).map_err(|error| DocIoError::Open {
+        path: source_path.display().to_string(),
+        detail: error.to_string(),
+    })?;
     if source_file
         .metadata()
-        .map_err(|error| format!("stat {}: {error}", source_path.display()))?
+        .map_err(|error| DocIoError::Stat {
+            path: source_path.display().to_string(),
+            detail: error.to_string(),
+        })?
         .len()
         == 0
     {
-        return Err(format!(
-            "source document {} is empty",
-            source_path.display()
-        ));
+        return Err(DocIoError::SourceEmpty {
+            path: source_path.display().to_string(),
+        });
     }
     // SAFETY: The source mapping is read-only and remains alive until the
     // sibling-temp write completes. OpenPencil replaces files atomically
     // instead of mutating mapped inodes in place.
-    let source_bytes = unsafe { memmap2::MmapOptions::new().map(&source_file) }
-        .map_err(|error| format!("map {}: {error}", source_path.display()))?;
-    let source = std::str::from_utf8(source_bytes.as_ref())
-        .map_err(|error| format!("{} is not UTF-8 JSON: {error}", source_path.display()))?;
+    let source_bytes =
+        unsafe { memmap2::MmapOptions::new().map(&source_file) }.map_err(|error| {
+            DocIoError::Map {
+                path: source_path.display().to_string(),
+                detail: error.to_string(),
+            }
+        })?;
+    let source =
+        std::str::from_utf8(source_bytes.as_ref()).map_err(|error| DocIoError::SourceNotUtf8 {
+            path: source_path.display().to_string(),
+            detail: error.to_string(),
+        })?;
 
     let (tmp, file) = create_sibling_temp(target_path)?;
     let write_result = (|| {
         let mut writer = std::io::BufWriter::with_capacity(1024 * 1024, file);
+        // `op_pen_loader::EditorMetaWriteError` belongs to a crate this pass
+        // does not own; render it with `to_string` so the adapter survives if
+        // that crate reshapes its error.
         op_pen_loader::write_source_with_editor_meta(
             &mut writer,
             source,
@@ -50,8 +65,9 @@ pub fn copy_clean_document_with_editor_meta_to_path(
                 active_page_index,
                 preserve_authored_geometry,
             },
-        )?;
-        std::io::Write::flush(&mut writer).map_err(|error| error.to_string())?;
+        )
+        .map_err(|error| DocIoError::Serialize(error.to_string()))?;
+        std::io::Write::flush(&mut writer).map_err(|error| DocIoError::Io(error.to_string()))?;
         drop(writer);
         commit_staged_document(&tmp, target_path)
     })();
@@ -71,26 +87,38 @@ pub fn copy_document_to_current_schema_path(
     active_page_index: usize,
     preserve_authored_geometry: bool,
     normalize_legacy: bool,
-) -> Result<(), String> {
-    let source_file = std::fs::File::open(source_path)
-        .map_err(|error| format!("open {}: {error}", source_path.display()))?;
+) -> Result<(), DocIoError> {
+    let source_file = std::fs::File::open(source_path).map_err(|error| DocIoError::Open {
+        path: source_path.display().to_string(),
+        detail: error.to_string(),
+    })?;
     if source_file
         .metadata()
-        .map_err(|error| format!("stat {}: {error}", source_path.display()))?
+        .map_err(|error| DocIoError::Stat {
+            path: source_path.display().to_string(),
+            detail: error.to_string(),
+        })?
         .len()
         == 0
     {
-        return Err(format!(
-            "source document {} is empty",
-            source_path.display()
-        ));
+        return Err(DocIoError::SourceEmpty {
+            path: source_path.display().to_string(),
+        });
     }
     // SAFETY: The read-only map pins the source inode through the complete
     // sibling write; publication happens separately after fingerprint review.
-    let source_bytes = unsafe { memmap2::MmapOptions::new().map(&source_file) }
-        .map_err(|error| format!("map {}: {error}", source_path.display()))?;
-    let source = std::str::from_utf8(source_bytes.as_ref())
-        .map_err(|error| format!("{} is not UTF-8 JSON: {error}", source_path.display()))?;
+    let source_bytes =
+        unsafe { memmap2::MmapOptions::new().map(&source_file) }.map_err(|error| {
+            DocIoError::Map {
+                path: source_path.display().to_string(),
+                detail: error.to_string(),
+            }
+        })?;
+    let source =
+        std::str::from_utf8(source_bytes.as_ref()).map_err(|error| DocIoError::SourceNotUtf8 {
+            path: source_path.display().to_string(),
+            detail: error.to_string(),
+        })?;
     let meta = EditorMeta {
         active_page_index,
         preserve_authored_geometry,
@@ -99,12 +127,15 @@ pub fn copy_document_to_current_schema_path(
     let (tmp, file) = create_sibling_temp(target_path)?;
     let write_result = (|| {
         let mut writer = std::io::BufWriter::with_capacity(1024 * 1024, file);
+        // Same unowned-`op_pen_loader` seam as above.
         if normalize_legacy {
-            op_pen_loader::write_normalized_source_with_current_schema(&mut writer, source, meta)?;
+            op_pen_loader::write_normalized_source_with_current_schema(&mut writer, source, meta)
+                .map_err(|error| DocIoError::Serialize(error.to_string()))?;
         } else {
-            op_pen_loader::write_source_with_current_schema(&mut writer, source, meta)?;
+            op_pen_loader::write_source_with_current_schema(&mut writer, source, meta)
+                .map_err(|error| DocIoError::Serialize(error.to_string()))?;
         }
-        std::io::Write::flush(&mut writer).map_err(|error| error.to_string())?;
+        std::io::Write::flush(&mut writer).map_err(|error| DocIoError::Io(error.to_string()))?;
         drop(writer);
         commit_staged_document(&tmp, target_path)
     })();

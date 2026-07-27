@@ -4,6 +4,7 @@
 //! in the interactive host.
 
 use crate::figma_import_session::{capture_output_state, OutputEntryState};
+use crate::legacy_op_upgrade_error::LegacyUpgradeError;
 use op_editor_core::EditorState;
 use op_host_services::doc_io::{
     commit_staged_document, copy_document_to_current_schema_path, DocumentLoadReport,
@@ -27,7 +28,7 @@ pub(crate) fn prompt_and_save(
     source_path: &Path,
     report: &DocumentLoadReport,
     loaded_source_state: OutputEntryState,
-) -> Result<PathBuf, String> {
+) -> Result<PathBuf, LegacyUpgradeError> {
     if !is_op(source_path) || !report.needs_schema_upgrade() {
         if report.rewrite_blocked_by_schema_warning {
             eprintln!(
@@ -68,12 +69,11 @@ fn save_decision(
     report: &DocumentLoadReport,
     decision: UpgradeDecision,
     loaded_source_state: OutputEntryState,
-) -> Result<PathBuf, String> {
+) -> Result<PathBuf, LegacyUpgradeError> {
     if capture_output_state(source_path)? != loaded_source_state {
-        return Err(format!(
-            "{} changed while it was opening; reload it before upgrading",
-            source_path.display()
-        ));
+        return Err(LegacyUpgradeError::SourceChangedWhileOpening {
+            source_path: source_path.to_path_buf(),
+        });
     }
     let staging_path = upgrade_staging_path(source_path)?;
     if let Err(error) = copy_document_to_current_schema_path(
@@ -84,7 +84,11 @@ fn save_decision(
         report.normalized_legacy,
     ) {
         remove_file_if_present(&staging_path);
-        return Err(error);
+        // `copy_document_to_current_schema_path` reports `doc_io::DocIoError`;
+        // this variant is a flat message because the staging-write failure is
+        // reported to the user as one sentence, and `DocIoError`'s `Display`
+        // already produces exactly it.
+        return Err(LegacyUpgradeError::WriteStaged(error.to_string()));
     }
     if report.normalized_legacy {
         crate::heap_pressure::schedule_relief("legacy OP upgrade");
@@ -114,10 +118,11 @@ fn publish_staged_upgrade(
     source_path: &Path,
     decision: UpgradeDecision,
     loaded_source_state: OutputEntryState,
-) -> Result<PathBuf, String> {
+) -> Result<PathBuf, LegacyUpgradeError> {
     if decision == UpgradeDecision::ReplaceOriginal {
         if capture_output_state(source_path)? == loaded_source_state {
-            commit_staged_document(staging_path, source_path)?;
+            commit_staged_document(staging_path, source_path)
+                .map_err(|error| LegacyUpgradeError::CommitOverOriginal(error.to_string()))?;
             return Ok(source_path.to_path_buf());
         }
         eprintln!(
@@ -127,7 +132,10 @@ fn publish_staged_upgrade(
     publish_numbered_copy(staging_path, source_path)
 }
 
-fn publish_numbered_copy(staging_path: &Path, source_path: &Path) -> Result<PathBuf, String> {
+fn publish_numbered_copy(
+    staging_path: &Path,
+    source_path: &Path,
+) -> Result<PathBuf, LegacyUpgradeError> {
     let parent = source_path.parent().unwrap_or_else(|| Path::new(""));
     let stem = source_path
         .file_stem()
@@ -142,20 +150,19 @@ fn publish_numbered_copy(staging_path: &Path, source_path: &Path) -> Result<Path
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(error) => {
-                return Err(format!(
-                    "could not publish numbered OpenPencil file {}: {error}",
-                    candidate.display()
-                ));
+                return Err(LegacyUpgradeError::PublishNumbered {
+                    path: candidate,
+                    message: error.to_string(),
+                });
             }
         }
     }
-    Err(format!(
-        "could not find an unused OP file name beside {}",
-        source_path.display()
-    ))
+    Err(LegacyUpgradeError::OutputNamesExhausted {
+        source_path: source_path.to_path_buf(),
+    })
 }
 
-fn upgrade_staging_path(source_path: &Path) -> Result<PathBuf, String> {
+fn upgrade_staging_path(source_path: &Path) -> Result<PathBuf, LegacyUpgradeError> {
     let parent = source_path.parent().unwrap_or_else(|| Path::new(""));
     let name = source_path
         .file_name()
@@ -167,19 +174,19 @@ fn upgrade_staging_path(source_path: &Path) -> Result<PathBuf, String> {
             ".{name}.op-upgrade-{}-{sequence}",
             std::process::id()
         ));
-        if !candidate.try_exists().map_err(|error| {
-            format!(
-                "could not inspect OP upgrade staging path {}: {error}",
-                candidate.display()
-            )
-        })? {
+        if !candidate
+            .try_exists()
+            .map_err(|error| LegacyUpgradeError::StagingProbe {
+                path: candidate.clone(),
+                message: error.to_string(),
+            })?
+        {
             return Ok(candidate);
         }
     }
-    Err(format!(
-        "could not allocate an OP upgrade staging file beside {}",
-        source_path.display()
-    ))
+    Err(LegacyUpgradeError::StagingNamesExhausted {
+        source_path: source_path.to_path_buf(),
+    })
 }
 
 fn remove_file_if_present(path: &Path) {
@@ -356,7 +363,8 @@ mod tests {
             UpgradeDecision::NumberedCopy,
             source_state,
         )
-        .expect_err("external source change must abort migration");
+        .expect_err("external source change must abort migration")
+        .to_string();
         assert!(error.contains("changed while it was opening"));
         assert!(!dir.join("Legacy (1).op").exists());
 

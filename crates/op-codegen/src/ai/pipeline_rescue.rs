@@ -80,8 +80,10 @@ impl CodegenPipeline {
                 self.phase = Phase::Terminal(step.clone());
                 step
             }
-            Err(message) => {
-                self.record_failure("deterministic fallback", message);
+            Err(error) => {
+                // `record_failure` takes `impl AsRef<str>`; render the typed
+                // error to keep the recorded text byte-identical.
+                self.record_failure("deterministic fallback", error.to_string());
                 self.fail_with_history("Code generation failed after every fallback")
             }
         }

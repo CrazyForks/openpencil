@@ -10,6 +10,7 @@ use op_mcp::{McpTool, ToolErrorCode, ToolOutcome};
 use reqwest::header::{CONTENT_TYPE, LOCATION};
 
 use crate::chat_runtime::block_on_anywhere;
+use crate::import_html_url_error::ImportHtmlUrlError;
 use crate::provider_dial::{client_for, EndpointDialPolicy};
 use crate::web_image_search::{read_capped, ImageJobSlot};
 
@@ -38,7 +39,9 @@ impl McpTool for ImportHtmlUrl {
         let allowlist = std::env::var(ALLOWLIST_ENV).ok();
         let initial_url = match screen_import_url_with_allowlist(raw_url, allowlist.as_deref()) {
             Ok(url) => url,
-            Err(error) => return ToolOutcome::Err(ToolErrorCode::InvalidArgument, error),
+            // The code now rides on the error itself instead of a literal
+            // chosen here — same `InvalidArgument` for both URL verdicts.
+            Err(error) => return ToolOutcome::Err(error.tool_error_code(), error.to_string()),
         };
         let Some(_job_slot) = ImageJobSlot::acquire() else {
             return ToolOutcome::Err(
@@ -57,7 +60,7 @@ impl McpTool for ImportHtmlUrl {
             allowlist.as_deref(),
         )) {
             Ok(page) => page,
-            Err(error) => return ToolOutcome::Err(ToolErrorCode::ToolFailed, error),
+            Err(error) => return ToolOutcome::Err(error.tool_error_code(), error.to_string()),
         };
         let content_type_is_html = page
             .content_type
@@ -133,33 +136,44 @@ async fn fetch_capped(
     mut url: reqwest::Url,
     cap: usize,
     allowlist: Option<&str>,
-) -> Result<FetchedResource, String> {
+) -> Result<FetchedResource, ImportHtmlUrlError> {
     for redirect_count in 0..=MAX_REDIRECTS {
         url = screen_import_url_with_allowlist(url.as_str(), allowlist)?;
         let policy = dial_policy(url.as_str(), allowlist);
-        let client = client_for(policy, url.as_str()).await?;
+        // `provider_dial::ProviderDialError` belongs to a sibling module this
+        // pass does not own; render it with `to_string` so the adapter
+        // survives if that module reshapes its error.
+        let client = client_for(policy, url.as_str())
+            .await
+            .map_err(|error| ImportHtmlUrlError::Dial(error.to_string()))?;
         let response = client
             .get(url.clone())
             .timeout(REQUEST_TIMEOUT)
             .send()
             .await
-            .map_err(|error| format!("failed to fetch {url}: {error}"))?;
+            .map_err(|error| ImportHtmlUrlError::Fetch {
+                url: url.to_string(),
+                detail: error.to_string(),
+            })?;
         if response.status().is_redirection() {
             if redirect_count == MAX_REDIRECTS {
-                return Err("too many redirects while fetching html".into());
+                return Err(ImportHtmlUrlError::TooManyRedirects);
             }
             let location = response
                 .headers()
                 .get(LOCATION)
                 .and_then(|value| value.to_str().ok())
-                .ok_or_else(|| "redirect response is missing a valid Location".to_string())?;
+                .ok_or(ImportHtmlUrlError::RedirectMissingLocation)?;
             url = url
                 .join(location)
-                .map_err(|_| "redirect Location is not a valid URL".to_string())?;
+                .map_err(|_| ImportHtmlUrlError::RedirectLocationInvalid)?;
             continue;
         }
         if !response.status().is_success() {
-            return Err(format!("failed to fetch {url}: HTTP {}", response.status()));
+            return Err(ImportHtmlUrlError::HttpStatus {
+                url: url.to_string(),
+                status: response.status().to_string(),
+            });
         }
         let final_url = screen_import_url_with_allowlist(response.url().as_str(), allowlist)?;
         let content_type = response
@@ -167,20 +181,22 @@ async fn fetch_capped(
             .get(CONTENT_TYPE)
             .and_then(|value| value.to_str().ok())
             .map(str::to_string);
-        let bytes = read_capped(response, cap)
-            .await
-            .ok_or_else(|| format!("response from {final_url} exceeds the size cap"))?;
+        let bytes = read_capped(response, cap).await.ok_or_else(|| {
+            ImportHtmlUrlError::ResponseTooLarge {
+                url: final_url.to_string(),
+            }
+        })?;
         return Ok(FetchedResource {
             bytes,
             content_type,
             final_url,
         });
     }
-    Err("too many redirects while fetching html".into())
+    Err(ImportHtmlUrlError::TooManyRedirects)
 }
 
 #[cfg(test)]
-fn screen_import_url(url: &str) -> Result<reqwest::Url, String> {
+fn screen_import_url(url: &str) -> Result<reqwest::Url, ImportHtmlUrlError> {
     let allowlist = std::env::var(ALLOWLIST_ENV).ok();
     screen_import_url_with_allowlist(url, allowlist.as_deref())
 }
@@ -188,15 +204,14 @@ fn screen_import_url(url: &str) -> Result<reqwest::Url, String> {
 fn screen_import_url_with_allowlist(
     url: &str,
     allowlist: Option<&str>,
-) -> Result<reqwest::Url, String> {
-    let parsed =
-        reqwest::Url::parse(url.trim()).map_err(|_| "import URL is invalid".to_string())?;
+) -> Result<reqwest::Url, ImportHtmlUrlError> {
+    let parsed = reqwest::Url::parse(url.trim()).map_err(|_| ImportHtmlUrlError::UrlInvalid)?;
     if !matches!(parsed.scheme(), "http" | "https")
         || parsed.host_str().is_none()
         || !parsed.username().is_empty()
         || parsed.password().is_some()
     {
-        return Err("import URL is not allowed".into());
+        return Err(ImportHtmlUrlError::UrlNotAllowed);
     }
     if crate::web_credentials::base_url_is_explicitly_allowlisted(parsed.as_str(), allowlist) {
         return Ok(parsed);
@@ -213,7 +228,7 @@ fn screen_import_url_with_allowlist(
         .is_ok_and(crate::web_credentials::is_restricted_ip)
         || is_restricted_hostname(&host)
     {
-        return Err("import URL is not allowed".into());
+        return Err(ImportHtmlUrlError::UrlNotAllowed);
     }
     Ok(parsed)
 }

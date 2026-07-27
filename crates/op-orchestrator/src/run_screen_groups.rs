@@ -7,11 +7,45 @@
 
 use crate::agent_identity::AgentIdentity;
 use crate::plan::OrchestratorPlan;
-use crate::scaffold::build_screen_group_scaffold;
+use crate::scaffold::{build_screen_group_scaffold, ScaffoldError};
 use crate::screen_groups::ScreenGroup;
 use crate::subagent::{apply_command_with_reveal, reveal_now_millis};
 use crate::types::DocSink;
 use op_editor_core::PenNodeExt;
+
+/// Failure of the multi-root screen-group scaffold insertion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ScreenGroupScaffoldError {
+    /// A per-group root template failed to build (implementation bug).
+    Scaffold(ScaffoldError),
+    /// The document rejected one of the `InsertSubtree` commands.
+    InsertRejected,
+    /// The post-insert root diff did not yield one new root per group.
+    RootCountMismatch { expected: usize, actual: usize },
+}
+
+impl std::fmt::Display for ScreenGroupScaffoldError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Scaffold(error) => write!(f, "{error}"),
+            Self::InsertRejected => {
+                write!(f, "screen-group scaffold insert rejected by document")
+            }
+            Self::RootCountMismatch { expected, actual } => write!(
+                f,
+                "expected {expected} screen-group scaffold roots, got {actual}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ScreenGroupScaffoldError {}
+
+impl From<ScaffoldError> for ScreenGroupScaffoldError {
+    fn from(error: ScaffoldError) -> Self {
+        Self::Scaffold(error)
+    }
+}
 
 /// Insert one scaffold root PER screen group (multiscreen-fanout-break fix,
 /// item A) and reassign every subtask's `parent_frame_id` from
@@ -48,7 +82,7 @@ pub(crate) fn insert_screen_group_roots(
     scaffold_root_ids_before: &[String],
     agent_indicator_epoch: Option<u64>,
     identities: &[AgentIdentity],
-) -> Result<(Vec<String>, Vec<usize>), String> {
+) -> Result<(Vec<String>, Vec<usize>), ScreenGroupScaffoldError> {
     let (insert_x, insert_y) =
         super::next_root_insert_position(sink.state(), plan.root_frame.width);
     let (cmds, _placeholder_ids, baselines) =
@@ -56,7 +90,7 @@ pub(crate) fn insert_screen_group_roots(
 
     for cmd in cmds {
         if !apply_command_with_reveal(sink, cmd, agent_indicator_epoch, reveal_now_millis()) {
-            return Err("screen-group scaffold insert rejected by document".into());
+            return Err(ScreenGroupScaffoldError::InsertRejected);
         }
     }
 
@@ -73,11 +107,10 @@ pub(crate) fn insert_screen_group_roots(
         .map(|n| n.id_str().to_string())
         .collect();
     if new_root_ids.len() != groups.len() {
-        return Err(format!(
-            "expected {} screen-group scaffold roots, got {}",
-            groups.len(),
-            new_root_ids.len()
-        ));
+        return Err(ScreenGroupScaffoldError::RootCountMismatch {
+            expected: groups.len(),
+            actual: new_root_ids.len(),
+        });
     }
 
     for (group, real_id) in groups.iter().zip(new_root_ids.iter()) {

@@ -6,13 +6,68 @@ use crate::length::{parse_length, LengthCtx};
 
 const MAX_CONDITION_DEPTH: usize = 64;
 
+/// A single `@media` query that could not be evaluated. Every variant is a
+/// non-fatal "ignored" condition: [`media_list`] renders it into the
+/// import's warning list, so the `Display` text is user-visible and must
+/// stay byte-identical to the strings this replaced.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum MediaQueryError {
+    /// `@media` with no condition parts at all.
+    EmptyQuery,
+    /// A media TYPE (`all`/`screen`/`print`/…) that is not recognised.
+    UnsupportedType(String),
+    /// A condition that is not a parenthesised feature.
+    UnsupportedCondition(String),
+    /// `(orientation: …)` with a value that is neither portrait nor landscape.
+    InvalidOrientation(String),
+    /// A `(name: value)` feature outside the supported width/height family.
+    UnsupportedFeature(String),
+    /// A range condition whose operand/operator shape is not supported.
+    UnsupportedRange(String),
+    /// A range condition with an empty operand.
+    InvalidRange(String),
+    /// A length operand that does not parse; carries the TRIMMED input.
+    InvalidLength(String),
+}
+
+impl std::fmt::Display for MediaQueryError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EmptyQuery => formatter.write_str("empty @media query ignored"),
+            Self::UnsupportedType(name) => {
+                write!(formatter, "unsupported @media type '{name}' ignored")
+            }
+            Self::UnsupportedCondition(input) => {
+                write!(formatter, "unsupported @media condition '{input}' ignored")
+            }
+            Self::InvalidOrientation(value) => {
+                write!(formatter, "invalid @media orientation '{value}' ignored")
+            }
+            Self::UnsupportedFeature(name) => {
+                write!(formatter, "unsupported @media feature '{name}' ignored")
+            }
+            Self::UnsupportedRange(input) => {
+                write!(formatter, "unsupported @media range '({input})' ignored")
+            }
+            Self::InvalidRange(input) => {
+                write!(formatter, "invalid @media range '({input})' ignored")
+            }
+            Self::InvalidLength(value) => {
+                write!(formatter, "invalid @media length '{value}' ignored")
+            }
+        }
+    }
+}
+
+impl std::error::Error for MediaQueryError {}
+
 pub(super) fn media_list(input: &str, viewport: (f64, f64)) -> (bool, Vec<String>) {
     let mut warnings = Vec::new();
     let applies = split_top_level(input, ",").into_iter().any(|query| {
         match media_query(query.trim(), viewport) {
             Ok(value) => value,
             Err(reason) => {
-                warnings.push(reason);
+                warnings.push(reason.to_string());
                 false
             }
         }
@@ -20,7 +75,7 @@ pub(super) fn media_list(input: &str, viewport: (f64, f64)) -> (bool, Vec<String
     (applies, warnings)
 }
 
-fn media_query(input: &str, viewport: (f64, f64)) -> Result<bool, String> {
+fn media_query(input: &str, viewport: (f64, f64)) -> Result<bool, MediaQueryError> {
     let mut query = input.trim();
     let mut negate = false;
     if let Some(rest) = strip_keyword(query, "not") {
@@ -31,7 +86,7 @@ fn media_query(input: &str, viewport: (f64, f64)) -> Result<bool, String> {
     }
     let parts = split_top_level(query, "and");
     if parts.is_empty() {
-        return Err("empty @media query ignored".into());
+        return Err(MediaQueryError::EmptyQuery);
     }
     let mut result = true;
     for (index, part) in parts.iter().enumerate() {
@@ -40,7 +95,9 @@ fn media_query(input: &str, viewport: (f64, f64)) -> Result<bool, String> {
             result &= match part.to_ascii_lowercase().as_str() {
                 "all" | "screen" => true,
                 "print" | "speech" => false,
-                other => return Err(format!("unsupported @media type '{other}' ignored")),
+                other => {
+                    return Err(MediaQueryError::UnsupportedType(other.to_string()));
+                }
             };
         } else {
             result &= media_feature(part, viewport)?;
@@ -49,23 +106,27 @@ fn media_query(input: &str, viewport: (f64, f64)) -> Result<bool, String> {
     Ok(if negate { !result } else { result })
 }
 
-fn media_feature(input: &str, viewport: (f64, f64)) -> Result<bool, String> {
+fn media_feature(input: &str, viewport: (f64, f64)) -> Result<bool, MediaQueryError> {
     let inner = strip_outer_parens(input)
-        .ok_or_else(|| format!("unsupported @media condition '{input}' ignored"))?;
+        .ok_or_else(|| MediaQueryError::UnsupportedCondition(input.to_string()))?;
     if let Some((name, value)) = split_once_top_level(inner, ':') {
         return media_colon_feature(name, value, viewport);
     }
     media_range_feature(inner, viewport)
 }
 
-fn media_colon_feature(name: &str, value: &str, viewport: (f64, f64)) -> Result<bool, String> {
+fn media_colon_feature(
+    name: &str,
+    value: &str,
+    viewport: (f64, f64),
+) -> Result<bool, MediaQueryError> {
     let name = name.trim().to_ascii_lowercase();
     let value = value.trim();
     if name == "orientation" {
         return match value.to_ascii_lowercase().as_str() {
             "portrait" => Ok(viewport.1 >= viewport.0),
             "landscape" => Ok(viewport.0 > viewport.1),
-            _ => Err(format!("invalid @media orientation '{value}' ignored")),
+            _ => Err(MediaQueryError::InvalidOrientation(value.to_string())),
         };
     }
     let (axis, minimum, maximum) = match name.as_str() {
@@ -75,7 +136,7 @@ fn media_colon_feature(name: &str, value: &str, viewport: (f64, f64)) -> Result<
         "height" => (viewport.1, false, false),
         "min-height" => (viewport.1, true, false),
         "max-height" => (viewport.1, false, true),
-        _ => return Err(format!("unsupported @media feature '{name}' ignored")),
+        _ => return Err(MediaQueryError::UnsupportedFeature(name.clone())),
     };
     let target = media_length(value, axis, viewport)?;
     Ok(if minimum {
@@ -87,10 +148,10 @@ fn media_colon_feature(name: &str, value: &str, viewport: (f64, f64)) -> Result<
     })
 }
 
-fn media_range_feature(input: &str, viewport: (f64, f64)) -> Result<bool, String> {
+fn media_range_feature(input: &str, viewport: (f64, f64)) -> Result<bool, MediaQueryError> {
     let (operands, operators) = range_tokens(input)?;
     if !(operators.len() == 1 || operators.len() == 2) || operands.len() != operators.len() + 1 {
-        return Err(format!("unsupported @media range '({input})' ignored"));
+        return Err(MediaQueryError::UnsupportedRange(input.to_string()));
     }
     let feature_count = operands
         .iter()
@@ -102,7 +163,7 @@ fn media_range_feature(input: &str, viewport: (f64, f64)) -> Result<bool, String
         })
         .count();
     if feature_count != 1 {
-        return Err(format!("unsupported @media range '({input})' ignored"));
+        return Err(MediaQueryError::UnsupportedRange(input.to_string()));
     }
     let axis = if operands
         .iter()
@@ -131,7 +192,7 @@ fn media_range_feature(input: &str, viewport: (f64, f64)) -> Result<bool, String
         .all(|(index, operator)| compare_range(values[index], operator, values[index + 1])))
 }
 
-fn range_tokens(input: &str) -> Result<(Vec<&str>, Vec<&str>), String> {
+fn range_tokens(input: &str) -> Result<(Vec<&str>, Vec<&str>), MediaQueryError> {
     let mut operands = Vec::new();
     let mut operators = Vec::new();
     let mut start = 0;
@@ -150,7 +211,7 @@ fn range_tokens(input: &str) -> Result<(Vec<&str>, Vec<&str>), String> {
     }
     operands.push(input[start..].trim());
     if operands.iter().any(|operand| operand.is_empty()) {
-        return Err(format!("invalid @media range '({input})' ignored"));
+        return Err(MediaQueryError::InvalidRange(input.to_string()));
     }
     Ok((operands, operators))
 }
@@ -166,7 +227,7 @@ fn compare_range(left: f64, operator: &str, right: f64) -> bool {
     }
 }
 
-fn media_length(value: &str, axis: f64, viewport: (f64, f64)) -> Result<f64, String> {
+fn media_length(value: &str, axis: f64, viewport: (f64, f64)) -> Result<f64, MediaQueryError> {
     let context = LengthCtx {
         font_size: 16.0,
         root_font_size: 16.0,
@@ -175,7 +236,7 @@ fn media_length(value: &str, axis: f64, viewport: (f64, f64)) -> Result<f64, Str
     };
     parse_length(value.trim(), &context)
         .map(|length| length.resolve(axis))
-        .ok_or_else(|| format!("invalid @media length '{}' ignored", value.trim()))
+        .ok_or_else(|| MediaQueryError::InvalidLength(value.trim().to_string()))
 }
 
 pub(super) fn supports_condition(input: &str, depth: usize) -> Option<bool> {

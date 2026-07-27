@@ -22,12 +22,64 @@ const MAX_SNAPSHOT_BYTES: usize = 32 * 1024 * 1024;
 
 pub const SNAPSHOT_EXTRACTOR_JS: &str = include_str!("../assets/snapshot-extractor.js");
 
+/// A browser-snapshot payload that could not be imported. `import_snapshot`
+/// surfaces the `Display` text as the import's single warning, so the
+/// rendering must stay byte-identical to the strings this replaced.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SnapshotError {
+    /// Payload exceeds [`MAX_SNAPSHOT_BYTES`].
+    TooLarge,
+    /// The payload is not parseable JSON; carries the serde message
+    /// (`serde_json::Error` is neither `Clone` nor `Eq`).
+    InvalidJson(String),
+    /// The payload parsed but is not a JSON object.
+    NotAnObject,
+    /// A `version` field that this importer does not understand.
+    UnsupportedVersion(u64),
+    /// No `version` field at all.
+    MissingVersion,
+    /// No `root` object.
+    MissingRoot,
+    /// The root node's `rect` is absent or non-finite.
+    InvalidRootRect,
+    /// The root element produced no `PenNode`.
+    RootConversionFailed,
+}
+
+impl std::fmt::Display for SnapshotError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TooLarge => formatter.write_str("snapshot JSON exceeds the 32 MiB input limit"),
+            Self::InvalidJson(detail) => write!(formatter, "invalid snapshot JSON: {detail}"),
+            Self::NotAnObject => formatter.write_str("snapshot JSON must be an object"),
+            Self::UnsupportedVersion(version) => {
+                write!(
+                    formatter,
+                    "unsupported snapshot version {version}; expected 1"
+                )
+            }
+            Self::MissingVersion => {
+                formatter.write_str("snapshot version is required and must equal 1")
+            }
+            Self::MissingRoot => formatter.write_str("snapshot root is required"),
+            Self::InvalidRootRect => {
+                formatter.write_str("snapshot root rect is missing or invalid")
+            }
+            Self::RootConversionFailed => {
+                formatter.write_str("snapshot root could not be converted")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SnapshotError {}
+
 pub fn import_snapshot(json: &str, opts: &HtmlImportOptions) -> HtmlImportResult {
     match import_snapshot_inner(json, opts) {
         Ok(result) => result,
         Err(error) => HtmlImportResult {
             nodes: Vec::new(),
-            warnings: vec![error],
+            warnings: vec![error.to_string()],
         },
     }
 }
@@ -36,30 +88,26 @@ pub fn import_snapshot_document(json: &str, opts: &HtmlImportOptions) -> HtmlDoc
     wrap_imported_document(import_snapshot(json, opts))
 }
 
-fn import_snapshot_inner(json: &str, opts: &HtmlImportOptions) -> Result<HtmlImportResult, String> {
+fn import_snapshot_inner(
+    json: &str,
+    opts: &HtmlImportOptions,
+) -> Result<HtmlImportResult, SnapshotError> {
     if json.len() > MAX_SNAPSHOT_BYTES {
-        return Err("snapshot JSON exceeds the 32 MiB input limit".into());
+        return Err(SnapshotError::TooLarge);
     }
-    let value: Value =
-        serde_json::from_str(json).map_err(|error| format!("invalid snapshot JSON: {error}"))?;
-    let object = value
-        .as_object()
-        .ok_or_else(|| "snapshot JSON must be an object".to_string())?;
+    let value: Value = serde_json::from_str(json)
+        .map_err(|error| SnapshotError::InvalidJson(error.to_string()))?;
+    let object = value.as_object().ok_or(SnapshotError::NotAnObject)?;
     match object.get("version").and_then(Value::as_u64) {
         Some(1) => {}
-        Some(version) => {
-            return Err(format!(
-                "unsupported snapshot version {version}; expected 1"
-            ))
-        }
-        None => return Err("snapshot version is required and must equal 1".into()),
+        Some(version) => return Err(SnapshotError::UnsupportedVersion(version)),
+        None => return Err(SnapshotError::MissingVersion),
     }
     let root = object
         .get("root")
         .and_then(Value::as_object)
-        .ok_or_else(|| "snapshot root is required".to_string())?;
-    let root_rect = Rect::from_node(root)
-        .ok_or_else(|| "snapshot root rect is missing or invalid".to_string())?;
+        .ok_or(SnapshotError::MissingRoot)?;
+    let root_rect = Rect::from_node(root).ok_or(SnapshotError::InvalidRootRect)?;
     let title = object
         .get("title")
         .and_then(Value::as_str)
@@ -69,7 +117,7 @@ fn import_snapshot_inner(json: &str, opts: &HtmlImportOptions) -> Result<HtmlImp
     let mut context = SnapshotCtx::new(opts);
     let root_node = context
         .map_element(root, root_rect, None, Some(title))
-        .ok_or_else(|| "snapshot root could not be converted".to_string())?;
+        .ok_or(SnapshotError::RootConversionFailed)?;
     if object
         .get("truncated")
         .and_then(Value::as_bool)

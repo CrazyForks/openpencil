@@ -22,6 +22,7 @@ use std::collections::BTreeMap;
 
 pub mod batch_design;
 mod batch_design_dsl;
+mod batch_design_dsl_error;
 mod batch_design_normalize;
 #[cfg(test)]
 mod batch_design_ops_tests;
@@ -33,6 +34,7 @@ mod batch_design_state_tests;
 #[cfg(test)]
 mod batch_design_tests;
 mod batch_design_wire;
+mod batch_design_wire_error;
 mod batch_direct_ops;
 #[cfg(test)]
 mod batch_direct_ops_tests;
@@ -40,6 +42,7 @@ pub mod batch_get;
 #[cfg(test)]
 mod batch_get_tests;
 mod batch_layered;
+mod batch_layered_error;
 mod batch_layered_guidelines;
 #[cfg(test)]
 mod batch_layered_tests;
@@ -258,6 +261,7 @@ pub use selected_ops_tools::{
     DuplicateSelected, GroupSelected, NudgeSelected, PasteClipboard, ReorderSelected,
     UngroupSelected,
 };
+pub mod spawn_agents_error;
 pub mod spawn_agents_tool;
 pub use spawn_agents_tool::{spawn_agents_snapshot, SpawnAgents, SpawnSpec};
 pub mod tool_search;

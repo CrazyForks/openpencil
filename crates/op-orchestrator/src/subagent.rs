@@ -181,7 +181,7 @@ pub(crate) async fn run_subtask_with_reveal_at(
                 raw = %text,
                 "subagent script-gen parse failed"
             );
-            return fail(e);
+            return fail(e.to_string());
         }
     };
     if is_blank_container_forest(&nodes) {

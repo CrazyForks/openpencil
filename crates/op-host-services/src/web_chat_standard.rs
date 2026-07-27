@@ -26,6 +26,10 @@ use crate::chat_provider_llm::ChatProviderLlmClient;
 use crate::pre_validator::LintPreValidator;
 use crate::web_canvas_server::{SseHub, WebCanvasState};
 
+#[path = "web_chat_standard_error.rs"]
+mod error;
+use error::WebChatStandardError;
+
 const STANDARD_MODIFY_STEP: &str =
     r#"<step title="Checking guidelines">Analyzing modification request...</step>"#;
 
@@ -158,8 +162,10 @@ pub fn stream_standard_turn<W: Write>(
 
     let mut snapshot = match apply_request_snapshot(&req, state, hub) {
         Ok(snapshot) => snapshot,
-        Err(message) => {
-            return write_error_event(out, &message);
+        Err(error) => {
+            // `write_error_event` feeds `op-ai`'s `ChatDelta::Error(String)`
+            // SSE frame; render the typed failure at that boundary only.
+            return write_error_event(out, &error.to_string());
         }
     };
 
@@ -188,21 +194,25 @@ pub fn stream_standard_turn<W: Write>(
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .credential_persistence;
-    let providers = (|| -> Result<_, String> {
+    let providers = (|| -> Result<_, WebChatStandardError> {
         let resolve = |chat_session| {
             crate::ai_proxy::proxy_provider_for_request_with_chat_session(
                 &snapshot,
                 &req.ai,
                 chat_session,
                 credential_persistence,
-            )?
-            .ok_or_else(|| "no model configured".to_string())
+            )
+            // `ProxyProviderError` is transparent, so the sentence the SSE
+            // `error` event carries is unchanged; this variant is flat
+            // because the resolve step reports one sentence to the browser.
+            .map_err(|error| WebChatStandardError::ProviderResolve(error.to_string()))?
+            .ok_or(WebChatStandardError::NoModelConfigured)
         };
         Ok((resolve(false)?, resolve(true)?, resolve(false)?))
     })();
     let (classify_provider, chat_provider, design_provider) = match providers {
         Ok(providers) => providers,
-        Err(message) => return write_error_event(out, &message),
+        Err(error) => return write_error_event(out, &error.to_string()),
     };
 
     let classified = crate::chat_intent::classify_intent_for_standard_route(
@@ -233,21 +243,24 @@ fn apply_request_snapshot(
     req: &WebStandardTurnRequest,
     state: &Mutex<WebCanvasState>,
     hub: &SseHub,
-) -> Result<EditorState, String> {
+) -> Result<EditorState, WebChatStandardError> {
     let mut broadcast_version = None;
     let mut snapshot = {
         let mut guard = state.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(agent) = req.transient_builtin.as_ref() {
             if agent.model.trim() != req.ai.model.trim() {
-                return Err("transient credential model does not match the request".into());
+                return Err(WebChatStandardError::TransientModelMismatch);
             }
-            crate::web_credentials::validate_web_provider_base_url(&agent.base_url)?;
+            // `web_credentials` is outside this pass; carry its verdict text.
+            crate::web_credentials::validate_web_provider_base_url(&agent.base_url)
+                .map_err(|error| WebChatStandardError::EndpointRejected(error.to_string()))?;
             if !crate::web_credentials::public_demo_transient_endpoint_allowed(agent) {
-                return Err("provider endpoint is not allowed: private, loopback, and reserved addresses require an OPENPENCIL_WEB_AI_ENDPOINT_ALLOWLIST entry".into());
+                return Err(WebChatStandardError::EndpointNotAllowlisted);
             }
         }
         if let Some(doc_json) = req.document_json.as_deref() {
-            let loaded = op_pen_loader::load_canonical(doc_json).map_err(|e| e.to_string())?;
+            let loaded = op_pen_loader::load_canonical(doc_json)
+                .map_err(|e| WebChatStandardError::Document(e.to_string()))?;
             if guard.editor.doc != loaded.value {
                 let version = guard.replace_document(loaded.value);
                 broadcast_version = Some(version);

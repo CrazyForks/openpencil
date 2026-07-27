@@ -44,6 +44,85 @@ struct PageSummary {
     all_nodes: usize,
 }
 
+/// A malformed command line. `main` prints the `Display` text after
+/// `error: `, so the rendering must stay byte-identical to the strings it
+/// replaced.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum OptionsError {
+    /// `--page` given without its index argument.
+    MissingPageIndex,
+    /// `--page` given a value that is not a `usize`.
+    InvalidPageIndex(String),
+    /// `--layout` given without its mode argument.
+    MissingLayoutMode,
+    /// `--layout` given a mode outside `preserve` / `openpencil`.
+    InvalidLayoutMode(String),
+    /// An unrecognised `-…` flag.
+    UnknownOption(String),
+    /// More than one positional `.fig` path.
+    DuplicateInputPath,
+    /// No positional `.fig` path at all.
+    MissingInputPath,
+}
+
+impl std::fmt::Display for OptionsError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingPageIndex => formatter.write_str("--page requires an index"),
+            Self::InvalidPageIndex(value) => write!(formatter, "invalid page index {value:?}"),
+            Self::MissingLayoutMode => formatter.write_str("--layout requires a mode"),
+            Self::InvalidLayoutMode(value) => write!(formatter, "invalid layout mode {value:?}"),
+            Self::UnknownOption(value) => write!(formatter, "unknown option {value:?}"),
+            Self::DuplicateInputPath => {
+                formatter.write_str("only one input .fig path may be supplied")
+            }
+            Self::MissingInputPath => formatter.write_str("missing input .fig path"),
+        }
+    }
+}
+
+impl std::error::Error for OptionsError {}
+
+/// A benchmark stage that could not run. Detail payloads carry the upstream
+/// error's display text so this enum stays `Clone`/`Eq`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RunError {
+    /// The input `.fig` file could not be read.
+    ReadInput { path: String, detail: String },
+    /// The first `prepare_fig_binary` call failed.
+    Prepare(String),
+    /// `--page INDEX` is past the prepared page count.
+    PageOutOfRange { index: usize, count: usize },
+    /// `PreparedFig::into_page` failed.
+    SinglePageConversion(String),
+    /// The second (all-pages) `prepare_fig_binary` call failed.
+    RePrepare(String),
+    /// `PreparedFig::into_all_pages` failed.
+    AllPagesConversion(String),
+}
+
+impl std::fmt::Display for RunError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ReadInput { path, detail } => write!(formatter, "cannot read {path}: {detail}"),
+            Self::Prepare(detail) => write!(formatter, "prepare failed: {detail}"),
+            Self::PageOutOfRange { index, count } => write!(
+                formatter,
+                "page index {index} is out of range (page count: {count})"
+            ),
+            Self::SinglePageConversion(detail) => {
+                write!(formatter, "single-page conversion failed: {detail}")
+            }
+            Self::RePrepare(detail) => write!(formatter, "re-prepare failed: {detail}"),
+            Self::AllPagesConversion(detail) => {
+                write!(formatter, "all-pages conversion failed: {detail}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for RunError {}
+
 fn main() {
     match parse_options(std::env::args().skip(1)) {
         Ok(Some(options)) => {
@@ -60,7 +139,7 @@ fn main() {
     }
 }
 
-fn parse_options(args: impl IntoIterator<Item = String>) -> Result<Option<Options>, String> {
+fn parse_options(args: impl IntoIterator<Item = String>) -> Result<Option<Options>, OptionsError> {
     let mut args = args.into_iter();
     let mut path = None;
     let mut page_index = 0;
@@ -70,31 +149,32 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<Option<Option
         match arg.as_str() {
             "-h" | "--help" => return Ok(None),
             "--page" => {
-                let value = args.next().ok_or("--page requires an index")?;
-                page_index = value
-                    .parse()
-                    .map_err(|_| format!("invalid page index {value:?}"))?;
+                let value = args.next().ok_or(OptionsError::MissingPageIndex)?;
+                page_index = match value.parse() {
+                    Ok(index) => index,
+                    Err(_) => return Err(OptionsError::InvalidPageIndex(value)),
+                };
             }
             "--layout" => {
-                let value = args.next().ok_or("--layout requires a mode")?;
+                let value = args.next().ok_or(OptionsError::MissingLayoutMode)?;
                 layout_mode = match value.as_str() {
                     "preserve" => FigLayoutMode::Preserve,
                     "openpencil" => FigLayoutMode::OpenPencil,
-                    _ => return Err(format!("invalid layout mode {value:?}")),
+                    _ => return Err(OptionsError::InvalidLayoutMode(value)),
                 };
             }
             value if value.starts_with('-') => {
-                return Err(format!("unknown option {value:?}"));
+                return Err(OptionsError::UnknownOption(value.to_string()));
             }
             value => {
                 if path.replace(PathBuf::from(value)).is_some() {
-                    return Err("only one input .fig path may be supplied".to_string());
+                    return Err(OptionsError::DuplicateInputPath);
                 }
             }
         }
     }
 
-    let path = path.ok_or("missing input .fig path")?;
+    let path = path.ok_or(OptionsError::MissingInputPath)?;
     Ok(Some(Options {
         path,
         page_index,
@@ -102,9 +182,11 @@ fn parse_options(args: impl IntoIterator<Item = String>) -> Result<Option<Option
     }))
 }
 
-fn run(options: Options) -> Result<(), String> {
-    let bytes = std::fs::read(&options.path)
-        .map_err(|error| format!("cannot read {}: {error}", options.path.display()))?;
+fn run(options: Options) -> Result<(), RunError> {
+    let bytes = std::fs::read(&options.path).map_err(|error| RunError::ReadInput {
+        path: options.path.display().to_string(),
+        detail: error.to_string(),
+    })?;
     let file_name = options
         .path
         .file_stem()
@@ -115,7 +197,7 @@ fn run(options: Options) -> Result<(), String> {
 
     let started = Instant::now();
     let prepared = prepare_fig_binary(&bytes, file_name, options.layout_mode)
-        .map_err(|error| format!("prepare failed: {error}"))?;
+        .map_err(|error| RunError::Prepare(error.to_string()))?;
     let prepare_elapsed = started.elapsed();
     let pages = prepared.pages().to_vec();
     println!("prepare: {}", elapsed(prepare_elapsed));
@@ -127,17 +209,16 @@ fn run(options: Options) -> Result<(), String> {
         );
     }
 
-    let selected = pages.get(options.page_index).ok_or_else(|| {
-        format!(
-            "page index {} is out of range (page count: {})",
-            options.page_index,
-            pages.len()
-        )
-    })?;
+    let selected = pages
+        .get(options.page_index)
+        .ok_or(RunError::PageOutOfRange {
+            index: options.page_index,
+            count: pages.len(),
+        })?;
     let started = Instant::now();
     let single = prepared
         .into_page(options.page_index)
-        .map_err(|error| format!("single-page conversion failed: {error}"))?;
+        .map_err(|error| RunError::SinglePageConversion(error.to_string()))?;
     let single_elapsed = started.elapsed();
     let single_warnings = single.warnings.len();
     let single_pages = summarize_pages(single.document.pages.as_deref().unwrap_or(&[]));
@@ -153,14 +234,14 @@ fn run(options: Options) -> Result<(), String> {
 
     let started = Instant::now();
     let prepared = prepare_fig_binary(&bytes, file_name, options.layout_mode)
-        .map_err(|error| format!("re-prepare failed: {error}"))?;
+        .map_err(|error| RunError::RePrepare(error.to_string()))?;
     let reprepare_elapsed = started.elapsed();
     println!("re-prepare for all pages: {}", elapsed(reprepare_elapsed));
 
     let started = Instant::now();
     let all = prepared
         .into_all_pages()
-        .map_err(|error| format!("all-pages conversion failed: {error}"))?;
+        .map_err(|error| RunError::AllPagesConversion(error.to_string()))?;
     let all_elapsed = started.elapsed();
     let all_warnings = all.warnings.len();
     let all_pages = summarize_pages(all.document.pages.as_deref().unwrap_or(&[]));

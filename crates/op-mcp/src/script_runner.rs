@@ -13,6 +13,11 @@ use std::time::{Duration, Instant};
 
 use rquickjs::{Context, Function, Runtime};
 
+#[path = "script_runner_error.rs"]
+mod error;
+
+pub use error::ScriptError;
+
 pub const MAX_SCRIPT_BYTES: usize = 262_144;
 pub const MAX_RECORDED_LINES: usize = 4096;
 /// Bounds recorded-line *bytes*, independent of the line-count cap: a script
@@ -51,23 +56,23 @@ globalThis.console = { log: __noop, warn: __noop, error: __noop, info: __noop, d
 /// Retries once with `repair_truncated_script` when the first eval fails,
 /// so a model-truncated script salvages its complete-statement prefix
 /// instead of losing the whole section to a trailing SyntaxError.
-pub fn run_script_to_program(text: &str) -> Result<String, String> {
+pub fn run_script_to_program(text: &str) -> Result<String, ScriptError> {
     let script = strip_fences(text);
     if script.trim().is_empty() {
-        return Err("script is empty after stripping fences".into());
+        return Err(ScriptError::EmptySource);
     }
     if script.len() > MAX_SCRIPT_BYTES {
-        return Err(format!(
-            "script too large: {} bytes (max {MAX_SCRIPT_BYTES})",
-            script.len()
-        ));
+        return Err(ScriptError::SourceTooLarge {
+            bytes: script.len(),
+            max: MAX_SCRIPT_BYTES,
+        });
     }
     let program = match eval_to_program(&script) {
         Ok(p) => p,
         Err(first_err) => eval_after_initial_failure(&script, first_err)?,
     };
     if program.trim().is_empty() {
-        return Err("script emitted no I(...) operations".into());
+        return Err(ScriptError::NoOperations);
     }
     Ok(program)
 }
@@ -90,7 +95,7 @@ fn truncate_duplicate_script(script: &str) -> Option<String> {
     Some(script[..after + second_rel].to_string())
 }
 
-fn eval_after_initial_failure(script: &str, first_err: String) -> Result<String, String> {
+fn eval_after_initial_failure(script: &str, first_err: ScriptError) -> Result<String, ScriptError> {
     // GLM-5.2 commonly drops the outer `}` when `stroke:{...}` is the final
     // property of an I() object, so QuickJS reaches `)` with `{` still open.
     let balanced = balance_brackets(script);
@@ -140,13 +145,13 @@ fn eval_after_initial_failure(script: &str, first_err: String) -> Result<String,
 /// Eval in a fresh limited QuickJS context. Ok(program) on success OR on a
 /// mid-run throw with a non-empty recording (partial salvage); Err only when
 /// nothing was recorded.
-fn eval_to_program(script: &str) -> Result<String, String> {
-    let rt = Runtime::new().map_err(|e| format!("js runtime: {e}"))?;
+fn eval_to_program(script: &str) -> Result<String, ScriptError> {
+    let rt = Runtime::new().map_err(|e| ScriptError::RuntimeInit(e.to_string()))?;
     rt.set_memory_limit(MEMORY_LIMIT_BYTES);
     let deadline = Instant::now() + EVAL_BUDGET;
     rt.set_interrupt_handler(Some(Box::new(move || Instant::now() > deadline)));
 
-    let ctx = Context::full(&rt).map_err(|e| format!("js context: {e}"))?;
+    let ctx = Context::full(&rt).map_err(|e| ScriptError::ContextInit(e.to_string()))?;
     let lines: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
     let counter: Rc<Cell<usize>> = Rc::new(Cell::new(0));
     let bytes_used: Rc<Cell<usize>> = Rc::new(Cell::new(0));
@@ -157,13 +162,16 @@ fn eval_to_program(script: &str) -> Result<String, String> {
     let counter_rec_k = counter.clone();
     let bytes_rec_k = bytes_used.clone();
 
-    let outcome: Result<(), String> = ctx.with(|ctx| {
+    let outcome: Result<(), ScriptError> = ctx.with(|ctx| {
         let record = Function::new(ctx.clone(), move |parent: String, json: String| -> String {
             push_recorded_line(&lines_rec, &counter_rec, &bytes_rec, |bind| {
                 format!("{bind}=I({parent}, {json})")
             })
         })
-        .map_err(|e| format!("bind __record: {e}"))?;
+        .map_err(|e| ScriptError::BindHostFn {
+            name: "__record",
+            detail: e.to_string(),
+        })?;
         let record_k = Function::new(
             ctx.clone(),
             move |kit: String, parent: String, json: String| -> String {
@@ -172,15 +180,24 @@ fn eval_to_program(script: &str) -> Result<String, String> {
                 })
             },
         )
-        .map_err(|e| format!("bind __recordK: {e}"))?;
+        .map_err(|e| ScriptError::BindHostFn {
+            name: "__recordK",
+            detail: e.to_string(),
+        })?;
         ctx.globals()
             .set("__record", record)
-            .map_err(|e| format!("set __record: {e}"))?;
+            .map_err(|e| ScriptError::SetGlobal {
+                name: "__record",
+                detail: e.to_string(),
+            })?;
         ctx.globals()
             .set("__recordK", record_k)
-            .map_err(|e| format!("set __recordK: {e}"))?;
+            .map_err(|e| ScriptError::SetGlobal {
+                name: "__recordK",
+                detail: e.to_string(),
+            })?;
         ctx.eval::<(), _>(PRELUDE)
-            .map_err(|e| format!("prelude: {e}"))?;
+            .map_err(|e| ScriptError::Prelude(e.to_string()))?;
         ctx.eval::<(), _>(script)
             .map_err(|e| describe_js_error(&ctx, e))
     });
@@ -194,7 +211,11 @@ fn eval_to_program(script: &str) -> Result<String, String> {
     }
     match outcome {
         Ok(()) => Ok(program),
-        Err(e) if e.contains("OP_SCRIPT_MODE_UNSUPPORTED") => Err(e),
+        // Matched on the rendered message (not the variant) so the guard
+        // keeps the exact reach the `String` version had: the sentinel is
+        // raised by the prelude's `__unsupported` thrower, so it can only
+        // ever arrive inside a script-throw payload.
+        Err(e) if e.to_string().contains("OP_SCRIPT_MODE_UNSUPPORTED") => Err(e),
         Err(e) if program.trim().is_empty() => Err(e),
         Err(e) => {
             tracing::warn!(
@@ -435,16 +456,15 @@ pub(crate) fn repair_truncated_script(script: &str) -> Option<String> {
 /// is gone — the model must reference that node by its id STRING. Say so
 /// (measured 2026-07-12: a batch died on `header is not defined`, where
 /// `header` was a `const` from the previous batch's script).
-fn explain_reference_error(msg: &str) -> Option<String> {
+fn explain_reference_error(msg: &str) -> Option<ScriptError> {
     let name = msg.strip_suffix(" is not defined")?;
-    Some(format!(
-        "script error: {msg}. Each script runs in a FRESH sandbox — a variable \
-         from an earlier batch no longer exists. Reference nodes created in an \
-         earlier batch by their id STRING instead: I(\"n12\", {{…}}), not I({name}, {{…}})."
-    ))
+    Some(ScriptError::StaleReference {
+        message: msg.to_string(),
+        name: name.to_string(),
+    })
 }
 
-fn describe_js_error(ctx: &rquickjs::Ctx<'_>, err: rquickjs::Error) -> String {
+fn describe_js_error(ctx: &rquickjs::Ctx<'_>, err: rquickjs::Error) -> ScriptError {
     if err.is_exception() {
         let caught = ctx.catch();
         if let Some(exc) = caught.as_exception() {
@@ -453,15 +473,15 @@ fn describe_js_error(ctx: &rquickjs::Ctx<'_>, err: rquickjs::Error) -> String {
                 if let Some(explained) = explain_reference_error(&msg) {
                     return explained;
                 }
-                return format!("script error: {msg}");
+                return ScriptError::Threw(msg);
             }
         }
         if let Some(s) = caught.as_string().and_then(|s| s.to_string().ok()) {
-            return format!("script error: {s}");
+            return ScriptError::Threw(s);
         }
-        return "script error: uncaught JS exception".to_string();
+        return ScriptError::UncaughtException;
     }
-    format!("script error: {err}")
+    ScriptError::Threw(err.to_string())
 }
 
 /// Strip reasoning-model `<think>…</think>` blocks, returning the real

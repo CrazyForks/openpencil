@@ -17,8 +17,11 @@ use jian_ops_schema::node::PenNode;
 use op_editor_core::pen_node_ext::PenNodeExt;
 use op_editor_core::{EditorCommand, EditorState};
 
+pub mod error;
 #[cfg(feature = "mcp-debug-tools")]
 pub mod screenshot;
+
+pub use error::McpLiveError;
 
 /// Per-request budget for a UI-thread snapshot/apply ack. Sized to cover a
 /// large single editor operation without the connection giving up; the CLI
@@ -141,29 +144,31 @@ enum UiRequest {
     #[cfg(feature = "mcp-debug-tools")]
     Screenshot {
         spec: crate::export::screenshot::CaptureSpec,
-        ack: SyncSender<Result<crate::export::screenshot::ScreenshotPng, String>>,
+        ack: SyncSender<
+            Result<crate::export::screenshot::ScreenshotPng, crate::export::ExportError>,
+        >,
     },
 }
 
 impl McpLiveServer {
     #[doc(hidden)]
-    pub fn start(port: u16) -> Result<Self, String> {
+    pub fn start(port: u16) -> Result<Self, McpLiveError> {
         Self::start_with_wake(port, || {})
     }
 
-    pub fn start_with_wake<F>(port: u16, wake_ui: F) -> Result<Self, String>
+    pub fn start_with_wake<F>(port: u16, wake_ui: F) -> Result<Self, McpLiveError>
     where
         F: Fn() + Send + Sync + 'static,
     {
         let listener = TcpListener::bind(("127.0.0.1", port))
-            .map_err(|e| format!("bind 127.0.0.1:{port}: {e}"))?;
+            .map_err(|e| McpLiveError::Startup(format!("bind 127.0.0.1:{port}: {e}")))?;
         let bound_port = listener
             .local_addr()
-            .map_err(|e| format!("read bound MCP port: {e}"))?
+            .map_err(|e| McpLiveError::Startup(format!("read bound MCP port: {e}")))?
             .port();
         listener
             .set_nonblocking(true)
-            .map_err(|e| format!("set nonblocking: {e}"))?;
+            .map_err(|e| McpLiveError::Startup(format!("set nonblocking: {e}")))?;
         let (req_tx, req_rx) = mpsc::channel();
         let (stop_tx, stop_rx) = mpsc::channel();
         let token = make_live_token();
@@ -186,7 +191,7 @@ impl McpLiveServer {
                     server_identity,
                 )
             })
-            .map_err(|e| format!("spawn MCP live server: {e}"))?;
+            .map_err(|e| McpLiveError::Startup(format!("spawn MCP live server: {e}")))?;
         eprintln!("openpencil-desktop mcp: listening on 127.0.0.1:{bound_port}/mcp");
         Ok(Self {
             port: bound_port,

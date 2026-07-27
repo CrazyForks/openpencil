@@ -633,18 +633,48 @@ impl EditorState {
 
     /// Light invariant check — Err on first violation: out-of-range
     /// active page index, or a duplicate node id.
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), EditorStateInvariant> {
         if let Some(dup) = self.find_duplicate_id() {
-            return Err(format!("duplicate NodeId: {dup:?}"));
+            return Err(EditorStateInvariant::DuplicateNodeId(dup));
         }
         if self.ui.active_page_index >= self.page_count() {
-            return Err(format!(
-                "active_page_index {} out of range (page_count={})",
-                self.ui.active_page_index,
-                self.page_count()
-            ));
+            return Err(EditorStateInvariant::ActivePageIndexOutOfRange {
+                index: self.ui.active_page_index,
+                page_count: self.page_count(),
+            });
         }
         Ok(())
+    }
+}
+
+/// A violated [`EditorState`] invariant reported by
+/// [`EditorState::validate`]. `Display` reproduces the previous ad-hoc
+/// `String` messages byte for byte.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EditorStateInvariant {
+    /// The same node id appears more than once in the tree.
+    DuplicateNodeId(NodeId),
+    /// `ui.active_page_index` points past the last page.
+    ActivePageIndexOutOfRange { index: usize, page_count: usize },
+}
+
+impl std::fmt::Display for EditorStateInvariant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EditorStateInvariant::DuplicateNodeId(dup) => write!(f, "duplicate NodeId: {dup:?}"),
+            EditorStateInvariant::ActivePageIndexOutOfRange { index, page_count } => write!(
+                f,
+                "active_page_index {index} out of range (page_count={page_count})"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for EditorStateInvariant {}
+
+impl From<EditorStateInvariant> for String {
+    fn from(error: EditorStateInvariant) -> String {
+        error.to_string()
     }
 }
 

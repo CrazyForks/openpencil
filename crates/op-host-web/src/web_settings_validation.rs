@@ -9,10 +9,149 @@
 
 use super::*;
 
-pub(super) fn settings_payload(value: &serde_json::Value) -> Result<SettingsPayload, String> {
+/// A browser settings / credential snapshot that must not be rewritten.
+///
+/// Every `Display` arm reproduces the ad-hoc `String` message it replaced byte
+/// for byte, so the reasons the store logs (and refuses to overwrite on) are
+/// unchanged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum SettingsValidationError {
+    /// The raw snapshot is not valid JSON. Only the test-only `apply_json`
+    /// entry points parse raw text; the production path is handed a value.
+    #[cfg(test)]
+    Json(String),
+    /// The settings snapshot is not a JSON object.
+    SettingsNotObject,
+    /// The settings snapshot does not deserialize into `SettingsPayload`.
+    SettingsSchema,
+    /// The settings snapshot carries a different `version`.
+    SettingsVersion,
+    /// The credential snapshot is not a JSON object.
+    CredentialsNotObject,
+    /// The credential snapshot does not deserialize into `CredentialPayload`.
+    CredentialSchema,
+    /// The credential snapshot carries a different `version`.
+    CredentialVersion,
+    /// A nested object field is not an object.
+    NestedSchema(&'static str),
+    /// A nested array field is not an array.
+    NestedList(&'static str),
+    /// An entry inside a nested array field is not an object.
+    NestedEntry(&'static str),
+    /// A field name outside the known set for that context.
+    UnknownField(&'static str),
+    /// `theme` is neither `dark` nor `light`.
+    UnknownTheme,
+    /// `locale` does not round-trip through the locale table.
+    UnknownLocale,
+    /// `mcp_port` is below the clamp floor the applicator enforces.
+    McpPortNormalized,
+    /// `mcp_cli_enabled` has a length no migration accepts.
+    McpCliLayout,
+    /// `recent_files` is longer than the cap the applicator enforces.
+    RecentFilesTruncated,
+    /// A built-in agent declares an unsupported `kind`.
+    UnknownAgentKind,
+    /// A built-in agent declares no recognizable `preset`.
+    UnknownAgentPreset,
+    /// A built-in agent's stored preset differs from the reparsed one.
+    AgentPresetNormalized,
+    /// Two built-in agents would collapse into one.
+    DuplicateAgents,
+    /// An image profile declares an unsupported `provider`.
+    UnknownImageProvider,
+    /// `active_image_gen_profile_id` names no stored profile.
+    ActiveImageProfileReplaced,
+    /// Profiles exist but no active one is named.
+    ActiveImageProfileImplicit,
+    /// Openverse credentials are padded or wholly empty.
+    OpenverseNormalized,
+}
+
+impl std::fmt::Display for SettingsValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            #[cfg(test)]
+            SettingsValidationError::Json(error) => write!(f, "{error}"),
+            SettingsValidationError::SettingsNotObject => {
+                write!(f, "browser settings must be an object")
+            }
+            SettingsValidationError::SettingsSchema => {
+                write!(f, "invalid browser settings schema")
+            }
+            SettingsValidationError::SettingsVersion => {
+                write!(f, "unsupported browser settings version")
+            }
+            SettingsValidationError::CredentialsNotObject => {
+                write!(f, "browser credentials must be an object")
+            }
+            SettingsValidationError::CredentialSchema => {
+                write!(f, "invalid browser credential schema")
+            }
+            SettingsValidationError::CredentialVersion => {
+                write!(f, "unsupported browser credential version")
+            }
+            SettingsValidationError::NestedSchema(context) => {
+                write!(f, "invalid {context} schema")
+            }
+            SettingsValidationError::NestedList(context) => write!(f, "invalid {context} list"),
+            SettingsValidationError::NestedEntry(context) => write!(f, "invalid {context} entry"),
+            SettingsValidationError::UnknownField(context) => {
+                write!(f, "unknown field in {context}")
+            }
+            SettingsValidationError::UnknownTheme => write!(f, "unknown browser theme"),
+            SettingsValidationError::UnknownLocale => write!(f, "unknown browser locale"),
+            SettingsValidationError::McpPortNormalized => {
+                write!(f, "browser MCP port would be normalized")
+            }
+            SettingsValidationError::McpCliLayout => {
+                write!(f, "unsupported browser MCP CLI flag layout")
+            }
+            SettingsValidationError::RecentFilesTruncated => {
+                write!(f, "browser recent-file list would be truncated")
+            }
+            SettingsValidationError::UnknownAgentKind => {
+                write!(f, "unknown built-in agent kind")
+            }
+            SettingsValidationError::UnknownAgentPreset => {
+                write!(f, "missing or unknown built-in agent preset")
+            }
+            SettingsValidationError::AgentPresetNormalized => {
+                write!(f, "built-in agent preset would be normalized")
+            }
+            SettingsValidationError::DuplicateAgents => {
+                write!(f, "duplicate built-in agents would be removed")
+            }
+            SettingsValidationError::UnknownImageProvider => {
+                write!(f, "unknown image generation provider")
+            }
+            SettingsValidationError::ActiveImageProfileReplaced => {
+                write!(f, "active image profile would be replaced")
+            }
+            SettingsValidationError::ActiveImageProfileImplicit => {
+                write!(f, "active image profile would be selected implicitly")
+            }
+            SettingsValidationError::OpenverseNormalized => {
+                write!(f, "Openverse credentials would be normalized")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SettingsValidationError {}
+
+impl From<SettingsValidationError> for String {
+    fn from(error: SettingsValidationError) -> String {
+        error.to_string()
+    }
+}
+
+pub(super) fn settings_payload(
+    value: &serde_json::Value,
+) -> Result<SettingsPayload, SettingsValidationError> {
     let object = value
         .as_object()
-        .ok_or_else(|| "browser settings must be an object".to_string())?;
+        .ok_or(SettingsValidationError::SettingsNotObject)?;
     validate_known_fields(
         object,
         &[
@@ -34,9 +173,9 @@ pub(super) fn settings_payload(value: &serde_json::Value) -> Result<SettingsPayl
     )?;
     validate_nested_fields(object)?;
     let payload: SettingsPayload = serde_json::from_value(value.clone())
-        .map_err(|_| "invalid browser settings schema".to_string())?;
+        .map_err(|_| SettingsValidationError::SettingsSchema)?;
     if payload.version != SETTINGS_VERSION {
-        return Err("unsupported browser settings version".into());
+        return Err(SettingsValidationError::SettingsVersion);
     }
     validate_general_semantics(&payload)?;
     validate_credential_semantics(
@@ -48,10 +187,12 @@ pub(super) fn settings_payload(value: &serde_json::Value) -> Result<SettingsPayl
     Ok(payload)
 }
 
-pub(super) fn credential_payload(value: &serde_json::Value) -> Result<CredentialPayload, String> {
+pub(super) fn credential_payload(
+    value: &serde_json::Value,
+) -> Result<CredentialPayload, SettingsValidationError> {
     let object = value
         .as_object()
-        .ok_or_else(|| "browser credentials must be an object".to_string())?;
+        .ok_or(SettingsValidationError::CredentialsNotObject)?;
     validate_known_fields(
         object,
         &[
@@ -65,9 +206,9 @@ pub(super) fn credential_payload(value: &serde_json::Value) -> Result<Credential
     )?;
     validate_nested_fields(object)?;
     let payload: CredentialPayload = serde_json::from_value(value.clone())
-        .map_err(|_| "invalid browser credential schema".to_string())?;
+        .map_err(|_| SettingsValidationError::CredentialSchema)?;
     if payload.version != CREDENTIAL_PAYLOAD_VERSION {
-        return Err("unsupported browser credential version".into());
+        return Err(SettingsValidationError::CredentialVersion);
     }
     validate_credential_semantics(
         &payload.builtin_agents,
@@ -80,7 +221,7 @@ pub(super) fn credential_payload(value: &serde_json::Value) -> Result<Credential
 
 fn validate_nested_fields(
     object: &serde_json::Map<String, serde_json::Value>,
-) -> Result<(), String> {
+) -> Result<(), SettingsValidationError> {
     validate_optional_object_fields(
         object.get("openverse_oauth"),
         &["client_id", "client_secret"],
@@ -115,15 +256,15 @@ fn validate_nested_fields(
 fn validate_optional_object_fields(
     value: Option<&serde_json::Value>,
     allowed: &[&str],
-    context: &str,
-) -> Result<(), String> {
+    context: &'static str,
+) -> Result<(), SettingsValidationError> {
     if let Some(value) = value {
         if value.is_null() {
             return Ok(());
         }
         let object = value
             .as_object()
-            .ok_or_else(|| format!("invalid {context} schema"))?;
+            .ok_or(SettingsValidationError::NestedSchema(context))?;
         validate_known_fields(object, allowed, context)?;
     }
     Ok(())
@@ -132,8 +273,8 @@ fn validate_optional_object_fields(
 fn validate_array_object_fields(
     value: Option<&serde_json::Value>,
     allowed: &[&str],
-    context: &str,
-) -> Result<(), String> {
+    context: &'static str,
+) -> Result<(), SettingsValidationError> {
     let Some(value) = value else {
         return Ok(());
     };
@@ -142,11 +283,11 @@ fn validate_array_object_fields(
     }
     let entries = value
         .as_array()
-        .ok_or_else(|| format!("invalid {context} list"))?;
+        .ok_or(SettingsValidationError::NestedList(context))?;
     for entry in entries {
         let object = entry
             .as_object()
-            .ok_or_else(|| format!("invalid {context} entry"))?;
+            .ok_or(SettingsValidationError::NestedEntry(context))?;
         validate_known_fields(object, allowed, context)?;
     }
     Ok(())
@@ -155,46 +296,46 @@ fn validate_array_object_fields(
 fn validate_known_fields(
     object: &serde_json::Map<String, serde_json::Value>,
     allowed: &[&str],
-    context: &str,
-) -> Result<(), String> {
+    context: &'static str,
+) -> Result<(), SettingsValidationError> {
     if object
         .keys()
         .any(|field| !allowed.contains(&field.as_str()))
     {
-        return Err(format!("unknown field in {context}"));
+        return Err(SettingsValidationError::UnknownField(context));
     }
     Ok(())
 }
 
-fn validate_general_semantics(payload: &SettingsPayload) -> Result<(), String> {
+fn validate_general_semantics(payload: &SettingsPayload) -> Result<(), SettingsValidationError> {
     if payload
         .theme
         .as_deref()
         .is_some_and(|theme| !matches!(theme, "dark" | "light"))
     {
-        return Err("unknown browser theme".into());
+        return Err(SettingsValidationError::UnknownTheme);
     }
     if payload.locale.as_deref().is_some_and(|saved| {
         str_to_locale(saved).is_none_or(|locale| locale_to_str(locale) != saved)
     }) {
-        return Err("unknown browser locale".into());
+        return Err(SettingsValidationError::UnknownLocale);
     }
     if payload.mcp_port.is_some_and(|port| port < 1024) {
-        return Err("browser MCP port would be normalized".into());
+        return Err(SettingsValidationError::McpPortNormalized);
     }
     if payload
         .mcp_cli_enabled
         .as_ref()
         .is_some_and(|enabled| !matches!(enabled.len(), 6..=8))
     {
-        return Err("unsupported browser MCP CLI flag layout".into());
+        return Err(SettingsValidationError::McpCliLayout);
     }
     if payload
         .recent_files
         .as_ref()
         .is_some_and(|recent| recent.len() > RECENT_FILE_CAP)
     {
-        return Err("browser recent-file list would be truncated".into());
+        return Err(SettingsValidationError::RecentFilesTruncated);
     }
     Ok(())
 }
@@ -204,26 +345,26 @@ fn validate_credential_semantics(
     image_profiles: &[ImageGenProfilePayload],
     active_image_profile: Option<&str>,
     openverse: Option<&OpenverseOAuthPayload>,
-) -> Result<(), String> {
+) -> Result<(), SettingsValidationError> {
     let mut parsed_agents = Vec::with_capacity(builtin_agents.len());
     for payload in builtin_agents {
         if !matches!(payload.kind.as_str(), "anthropic" | "openai-compat") {
-            return Err("unknown built-in agent kind".into());
+            return Err(SettingsValidationError::UnknownAgentKind);
         }
         let parsed = builtin_agent_from_payload(payload.clone())
-            .ok_or_else(|| "unknown built-in agent kind".to_string())?;
+            .ok_or(SettingsValidationError::UnknownAgentKind)?;
         let saved = payload
             .preset
             .as_deref()
             .and_then(BuiltinAgentPresetKey::from_str)
-            .ok_or_else(|| "missing or unknown built-in agent preset".to_string())?;
+            .ok_or(SettingsValidationError::UnknownAgentPreset)?;
         if parsed.preset != saved {
-            return Err("built-in agent preset would be normalized".into());
+            return Err(SettingsValidationError::AgentPresetNormalized);
         }
         parsed_agents.push(parsed);
     }
     if dedupe_builtin_agents(parsed_agents.clone()).len() != parsed_agents.len() {
-        return Err("duplicate built-in agents would be removed".into());
+        return Err(SettingsValidationError::DuplicateAgents);
     }
 
     for profile in image_profiles {
@@ -231,25 +372,25 @@ fn validate_credential_semantics(
             profile.provider.as_str(),
             "openai" | "gemini" | "replicate" | "custom"
         ) {
-            return Err("unknown image generation provider".into());
+            return Err(SettingsValidationError::UnknownImageProvider);
         }
         image_gen_profile_from_payload(profile.clone())
-            .ok_or_else(|| "unknown image generation provider".to_string())?;
+            .ok_or(SettingsValidationError::UnknownImageProvider)?;
     }
     if active_image_profile
         .is_some_and(|active| !image_profiles.iter().any(|profile| profile.id == active))
     {
-        return Err("active image profile would be replaced".into());
+        return Err(SettingsValidationError::ActiveImageProfileReplaced);
     }
     if !image_profiles.is_empty() && active_image_profile.is_none() {
-        return Err("active image profile would be selected implicitly".into());
+        return Err(SettingsValidationError::ActiveImageProfileImplicit);
     }
     if let Some(openverse) = openverse {
         if openverse.client_id.trim() != openverse.client_id
             || openverse.client_secret.trim() != openverse.client_secret
             || (openverse.client_id.is_empty() && openverse.client_secret.is_empty())
         {
-            return Err("Openverse credentials would be normalized".into());
+            return Err(SettingsValidationError::OpenverseNormalized);
         }
     }
     Ok(())

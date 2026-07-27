@@ -26,10 +26,34 @@ pub(super) fn ts_update_patch_json(
         ));
     };
     ts_update_patch_json_value(&value)
-        .map_err(|message| ToolOutcome::Err(ToolErrorCode::InvalidArgument, message))
+        .map_err(|error| ToolOutcome::Err(ToolErrorCode::InvalidArgument, error.to_string()))
 }
 
-pub(super) fn ts_update_patch_json_value(value: &Value) -> Result<Option<String>, String> {
+/// A rich-patch normalization failure. Both variants are malformed-`fill_hex`
+/// reports; `Display` reproduces the previous message byte-for-byte (the
+/// `U()` program path re-labels them as `ProgramError::Json`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum UpdateDataError {
+    /// `fill_hex` / `fillHex` is present but is not a JSON string.
+    FillHexNotString,
+    /// `fill_hex` / `fillHex` is a string but not a supported hex spelling.
+    InvalidFillHex(String),
+}
+
+impl std::fmt::Display for UpdateDataError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UpdateDataError::FillHexNotString => f.write_str("fill_hex must be a string"),
+            UpdateDataError::InvalidFillHex(hex) => {
+                write!(f, "fill_hex must be #rgb/#rrggbb/#rrggbbaa, got {hex:?}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for UpdateDataError {}
+
+pub(super) fn ts_update_patch_json_value(value: &Value) -> Result<Option<String>, UpdateDataError> {
     let Some(obj) = value.as_object() else {
         return Ok(None);
     };
@@ -103,7 +127,7 @@ fn is_plain_solid_hex_layer(layer: &serde_json::Map<String, Value>) -> bool {
 /// canonical PenNode schema. Once any rich field moves the update onto
 /// `PatchNodeData`, rewrite the shortcut to a canonical solid fill so it does
 /// not disappear during PenNode deserialization.
-fn canonicalize_fill_hex_shortcut(value: &mut Value) -> Result<(), String> {
+fn canonicalize_fill_hex_shortcut(value: &mut Value) -> Result<(), UpdateDataError> {
     let Some(obj) = value.as_object_mut() else {
         return Ok(());
     };
@@ -113,12 +137,10 @@ fn canonicalize_fill_hex_shortcut(value: &mut Value) -> Result<(), String> {
         return Ok(());
     };
     let Some(hex) = shortcut.as_str() else {
-        return Err("fill_hex must be a string".into());
+        return Err(UpdateDataError::FillHexNotString);
     };
     if !validate_hex(hex) {
-        return Err(format!(
-            "fill_hex must be #rgb/#rrggbb/#rrggbbaa, got {hex:?}"
-        ));
+        return Err(UpdateDataError::InvalidFillHex(hex.to_string()));
     }
     obj.insert(
         "fill".into(),

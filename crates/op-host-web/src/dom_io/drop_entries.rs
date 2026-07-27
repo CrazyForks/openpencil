@@ -16,7 +16,54 @@ pub(super) struct DroppedProjectFile {
     pub(super) file: web_sys::File,
 }
 
-type ProjectDone = Box<dyn FnOnce(Result<Vec<DroppedProjectFile>, String>)>;
+type ProjectDone = Box<dyn FnOnce(Result<Vec<DroppedProjectFile>, DroppedProjectError>)>;
+
+/// A recursive directory drop that could not be turned into a project file
+/// list.
+///
+/// `Display` reproduces the ad-hoc `String` messages this enum replaced byte
+/// for byte, so the `[import-html] …` console lines stay identical.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum DroppedProjectError {
+    /// A file entry resolved to something that is not a `File`.
+    NotAFile,
+    /// The drop carries more files than the project importer accepts.
+    TooManyFiles(usize),
+    /// The traversal found no readable file entries.
+    NoReadableFiles,
+    /// The legacy entry API is missing a method this traversal needs.
+    MethodUnavailable(&'static str),
+    /// A JavaScript exception surfaced during the traversal.
+    Js(String),
+}
+
+impl std::fmt::Display for DroppedProjectError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DroppedProjectError::NotAFile => {
+                write!(f, "directory entry did not return a File")
+            }
+            DroppedProjectError::TooManyFiles(limit) => {
+                write!(f, "HTML project contains more than {limit} files")
+            }
+            DroppedProjectError::NoReadableFiles => {
+                write!(f, "dropped directory contains no readable files")
+            }
+            DroppedProjectError::MethodUnavailable(name) => {
+                write!(f, "directory entry method `{name}` is unavailable")
+            }
+            DroppedProjectError::Js(message) => write!(f, "{message}"),
+        }
+    }
+}
+
+impl std::error::Error for DroppedProjectError {}
+
+impl From<DroppedProjectError> for String {
+    fn from(error: DroppedProjectError) -> String {
+        error.to_string()
+    }
+}
 
 /// Starts a recursive directory read when the drop contains at least one
 /// directory entry. Returns false for ordinary file-only drops so callers can
@@ -62,7 +109,9 @@ fn transfer_entries(transfer: &web_sys::DataTransfer) -> Vec<JsValue> {
     entries
 }
 
-async fn collect_files(entries: Vec<JsValue>) -> Result<Vec<DroppedProjectFile>, String> {
+async fn collect_files(
+    entries: Vec<JsValue>,
+) -> Result<Vec<DroppedProjectFile>, DroppedProjectError> {
     let mut queue: VecDeque<JsValue> = entries.into();
     let mut files = Vec::new();
     while let Some(entry) = queue.pop_front() {
@@ -72,15 +121,14 @@ async fn collect_files(entries: Vec<JsValue>) -> Result<Vec<DroppedProjectFile>,
                 .map_err(js_error)?;
             let file = value
                 .dyn_into::<web_sys::File>()
-                .map_err(|_| "directory entry did not return a File".to_string())?;
+                .map_err(|_| DroppedProjectError::NotAFile)?;
             files.push(DroppedProjectFile {
                 relative_path: entry_path(&entry, &file.name()),
                 file,
             });
             if files.len() > op_html::MAX_PROJECT_FILES {
-                return Err(format!(
-                    "HTML project contains more than {} files",
-                    op_html::MAX_PROJECT_FILES
+                return Err(DroppedProjectError::TooManyFiles(
+                    op_html::MAX_PROJECT_FILES,
                 ));
             }
         } else if entry_is_directory(&entry) {
@@ -100,16 +148,19 @@ async fn collect_files(entries: Vec<JsValue>) -> Result<Vec<DroppedProjectFile>,
         }
     }
     if files.is_empty() {
-        return Err("dropped directory contains no readable files".to_string());
+        return Err(DroppedProjectError::NoReadableFiles);
     }
     Ok(files)
 }
 
-fn callback_method_promise(target: &JsValue, name: &str) -> Result<Promise, String> {
+fn callback_method_promise(
+    target: &JsValue,
+    name: &'static str,
+) -> Result<Promise, DroppedProjectError> {
     let method = Reflect::get(target, &JsValue::from_str(name))
         .map_err(js_error)?
         .dyn_into::<Function>()
-        .map_err(|_| format!("directory entry method `{name}` is unavailable"))?;
+        .map_err(|_| DroppedProjectError::MethodUnavailable(name))?;
     let target = target.clone();
     Ok(Promise::new(&mut move |resolve, reject| {
         if let Err(error) = method.call2(&target, &resolve, &reject) {
@@ -118,11 +169,11 @@ fn callback_method_promise(target: &JsValue, name: &str) -> Result<Promise, Stri
     }))
 }
 
-fn call_method0(target: &JsValue, name: &str) -> Result<JsValue, String> {
+fn call_method0(target: &JsValue, name: &'static str) -> Result<JsValue, DroppedProjectError> {
     Reflect::get(target, &JsValue::from_str(name))
         .map_err(js_error)?
         .dyn_into::<Function>()
-        .map_err(|_| format!("directory entry method `{name}` is unavailable"))?
+        .map_err(|_| DroppedProjectError::MethodUnavailable(name))?
         .call0(target)
         .map_err(js_error)
 }
@@ -150,8 +201,10 @@ fn entry_path(entry: &JsValue, fallback: &str) -> String {
         .unwrap_or_else(|| fallback.to_string())
 }
 
-fn js_error(value: JsValue) -> String {
-    value
-        .as_string()
-        .unwrap_or_else(|| "browser directory read failed".to_string())
+fn js_error(value: JsValue) -> DroppedProjectError {
+    DroppedProjectError::Js(
+        value
+            .as_string()
+            .unwrap_or_else(|| "browser directory read failed".to_string()),
+    )
 }

@@ -10,24 +10,67 @@ use serde_json::{json, Value};
 
 use crate::{Codegen, Compose, Flutter, Html, React, ReactNative, Svelte, SwiftUi, Vue};
 
+/// Why the deterministic last-resort generation could not produce code.
+/// The `Display` text is recorded verbatim in the pipeline's failure
+/// history, so it must stay byte-identical to the strings it replaced.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum DeterministicFallbackError {
+    /// The selected-nodes payload is not parseable JSON; carries the serde
+    /// message (`serde_json::Error` is neither `Clone` nor `Eq`).
+    InvalidJson(String),
+    /// The payload is a JSON array with no elements.
+    EmptyNodeList,
+    /// The payload is neither a JSON object nor a JSON array.
+    NotObjectOrArray,
+    /// The payload parsed but is not a canonical `.op` node forest.
+    NotCanonicalNodes(String),
+    /// The framework generator ran but emitted only whitespace.
+    EmptyGeneratedCode(Framework),
+}
+
+impl std::fmt::Display for DeterministicFallbackError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidJson(detail) => {
+                write!(formatter, "selected nodes are not valid JSON: {detail}")
+            }
+            Self::EmptyNodeList => formatter.write_str("selected node list is empty"),
+            Self::NotObjectOrArray => {
+                formatter.write_str("selected nodes must be a JSON object or array")
+            }
+            Self::NotCanonicalNodes(detail) => write!(
+                formatter,
+                "selected nodes are not canonical .op nodes: {detail}"
+            ),
+            Self::EmptyGeneratedCode(framework) => write!(
+                formatter,
+                "the deterministic {} generator returned empty code",
+                framework.as_wire()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for DeterministicFallbackError {}
+
 pub(super) fn generate(
     nodes_json: &str,
     variables_json: Option<&str>,
     framework: Framework,
-) -> Result<String, String> {
+) -> Result<String, DeterministicFallbackError> {
     let value: Value = serde_json::from_str(nodes_json)
-        .map_err(|error| format!("selected nodes are not valid JSON: {error}"))?;
+        .map_err(|error| DeterministicFallbackError::InvalidJson(error.to_string()))?;
     let children = match value {
         Value::Array(children) if !children.is_empty() => children,
         Value::Object(_) => vec![value],
-        Value::Array(_) => return Err("selected node list is empty".to_string()),
-        _ => return Err("selected nodes must be a JSON object or array".to_string()),
+        Value::Array(_) => return Err(DeterministicFallbackError::EmptyNodeList),
+        _ => return Err(DeterministicFallbackError::NotObjectOrArray),
     };
     let mut document: PenDocument = serde_json::from_value(json!({
         "version": "1.0.0",
         "children": children,
     }))
-    .map_err(|error| format!("selected nodes are not canonical .op nodes: {error}"))?;
+    .map_err(|error| DeterministicFallbackError::NotCanonicalNodes(error.to_string()))?;
     if let Some(variables_json) = variables_json {
         // Variables should enrich the fallback, never make an otherwise valid
         // deterministic generation fail. Invalid or stale variable payloads
@@ -48,10 +91,7 @@ pub(super) fn generate(
         Framework::ReactNative => ReactNative.generate(&document),
     };
     if code.trim().is_empty() {
-        Err(format!(
-            "the deterministic {} generator returned empty code",
-            framework.as_wire()
-        ))
+        Err(DeterministicFallbackError::EmptyGeneratedCode(framework))
     } else {
         Ok(code)
     }
@@ -83,7 +123,9 @@ mod tests {
 
     #[test]
     fn invalid_nodes_return_an_actionable_error() {
-        let error = generate("not-json", None, Framework::React).expect_err("invalid fixture");
+        let error = generate("not-json", None, Framework::React)
+            .expect_err("invalid fixture")
+            .to_string();
         assert!(error.contains("not valid JSON"), "{error}");
     }
 

@@ -146,17 +146,7 @@ pub fn render_nodes_pdf_bytes(
 /// sizes on scroll/zoom. Each page's content is positioned within
 /// that frame at its own `(origin.x, origin.y)`; empty pages are
 /// skipped. Returns Err when no page has paintable content.
-/// Reports `String` at the boundary: `op-host-desktop`'s
-/// `persistence::export_editor_state_to_path` returns this `Result` directly
-/// from its own `Result<(), String>` signature. The byte-level entry points
-/// above are typed.
-pub fn export_pdf(scene: &LayoutScene, target: &StdPath) -> Result<(), String> {
-    export_pdf_typed(scene, target).map_err(String::from)
-}
-
-/// Typed twin of [`export_pdf`] for in-crate callers (the `--serve-web`
-/// daemon's export routes).
-pub(crate) fn export_pdf_typed(scene: &LayoutScene, target: &StdPath) -> Result<(), ExportError> {
+pub fn export_pdf(scene: &LayoutScene, target: &StdPath) -> Result<(), ExportError> {
     let bounds_per_page: Vec<_> = scene.pages.iter().map(crate::export::page_bounds).collect();
     let any_some = bounds_per_page.iter().any(Option::is_some);
     if !any_some {
@@ -314,6 +304,6 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("op-pdf-empty-{}.pdf", std::process::id()));
         let res = export_pdf(&scene, &tmp);
         assert!(res.is_err(), "expected Err on all-empty, got {res:?}");
-        assert_eq!(res.unwrap_err(), "nothing to export");
+        assert_eq!(res.unwrap_err().to_string(), "nothing to export");
     }
 }

@@ -2,6 +2,8 @@ use std::fs::Metadata;
 use std::path::Path;
 use std::time::SystemTime;
 
+use super::error::OutputStateError;
+
 /// The state of the sibling output at the instant overwrite consent is
 /// granted. The inner representation stays private to keep the import mode
 /// opaque outside this module.
@@ -62,7 +64,9 @@ impl OutputFingerprint {
     }
 }
 
-pub(crate) fn capture_output_state(output_path: &Path) -> Result<OutputEntryState, String> {
+pub(crate) fn capture_output_state(
+    output_path: &Path,
+) -> Result<OutputEntryState, OutputStateError> {
     match std::fs::metadata(output_path) {
         Ok(metadata) => Ok(OutputEntryState(EntryState::Present(
             OutputFingerprint::from_metadata(&metadata),
@@ -70,9 +74,12 @@ pub(crate) fn capture_output_state(output_path: &Path) -> Result<OutputEntryStat
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             Ok(OutputEntryState(EntryState::Missing))
         }
-        Err(error) => Err(format!(
-            "could not inspect adjacent OP path {}: {error}",
-            output_path.display()
-        )),
+        // `std::io::Error` belongs to a crate this pass does not own, so its
+        // message is carried as text; `to_string` keeps the adapter valid if
+        // the source ever becomes a typed error of its own.
+        Err(error) => Err(OutputStateError::Inspect {
+            path: output_path.to_path_buf(),
+            message: error.to_string(),
+        }),
     }
 }

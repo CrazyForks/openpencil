@@ -31,6 +31,10 @@ use common::{raster_memory_cycle, setup_headless_context};
 /// SharedSkiaContext::new → with_frame draw → present → teardown ×3 }`.
 /// Only enabled on Linux with `STEP1A_REQUIRE_GPU=1` (matches the
 /// gating used by `gpu_smoke.rs` per BLOCK 2).
+// Survivor: test-only helper gated on `gl-host` + `target_os = "linux"`, so it
+// cannot be compiled or verified from the macOS/Windows dev+CI path; its sole
+// consumer interpolates the error into a `panic!` message, where a typed enum
+// buys nothing.
 #[cfg(target_os = "linux")]
 fn linux_gpu_memory_cycle(iterations: usize) -> Result<(), String> {
     use op_editor_ui::{Color, Point2D, Rect};

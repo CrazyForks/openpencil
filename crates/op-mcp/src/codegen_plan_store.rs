@@ -40,6 +40,8 @@
 mod assembly;
 #[path = "codegen_plan_store_dependencies.rs"]
 mod dependencies;
+#[path = "codegen_plan_store_error.rs"]
+mod error;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -49,6 +51,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::{json, Map, Value};
 
 use dependencies::DependencyState;
+use error::PlanStoreError;
 
 pub(crate) use assembly::assemble_plan;
 
@@ -126,22 +129,23 @@ fn mint_plan_id() -> String {
 
 // --- Chunk field access -------------------------------------------------
 
-fn chunk_id(chunk: &Value) -> Result<&str, String> {
+fn chunk_id(chunk: &Value) -> Result<&str, PlanStoreError> {
     chunk
         .get("id")
         .and_then(Value::as_str)
-        .ok_or_else(|| "every plan chunk needs a string id".to_string())
+        .ok_or(PlanStoreError::ChunkMissingId)
 }
 
-fn chunk_dependencies(chunk: &Value) -> Result<&Vec<Value>, String> {
+fn chunk_dependencies(chunk: &Value) -> Result<&Vec<Value>, PlanStoreError> {
     chunk
         .get("dependencies")
         .and_then(Value::as_array)
-        .ok_or_else(|| {
-            format!(
-                "Chunk {} needs a dependencies array",
-                chunk.get("id").and_then(Value::as_str).unwrap_or("?")
-            )
+        .ok_or_else(|| PlanStoreError::ChunkMissingDependencies {
+            chunk_id: chunk
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or("?")
+                .to_string(),
         })
 }
 
@@ -389,15 +393,15 @@ fn is_pascal_case(s: &str) -> bool {
 /// Port of `validateContract(result)` → `{valid, issues}`. `Err` covers
 /// the result shapes where TS would crash with a TypeError (see module
 /// docs).
-pub(crate) fn validate_contract(result: &Value) -> Result<Value, String> {
+pub(crate) fn validate_contract(result: &Value) -> Result<Value, PlanStoreError> {
     if !result.is_object() {
-        return Err("result must be an object".into());
+        return Err(PlanStoreError::ResultNotObject);
     }
     let Some(code) = result.get("code").and_then(Value::as_str) else {
-        return Err("result.code must be a string".into());
+        return Err(PlanStoreError::ResultCodeNotString);
     };
     let Some(contract) = result.get("contract").filter(|c| c.is_object()) else {
-        return Err("result.contract must be an object".into());
+        return Err(PlanStoreError::ResultContractNotObject);
     };
 
     let mut issues: Vec<String> = Vec::new();
@@ -437,7 +441,7 @@ pub(crate) fn validate_contract(result: &Value) -> Result<Value, String> {
 /// TS `createPlan(plan, allNodes)` → `{planId, executionPlan, warnings}`.
 /// `Err` carries the validation errors joined with `"; "` (the message the
 /// TS route 400s with).
-pub(crate) fn create_plan(plan: &Value, all_nodes: &[Value]) -> Result<Value, String> {
+pub(crate) fn create_plan(plan: &Value, all_nodes: &[Value]) -> Result<Value, PlanStoreError> {
     {
         let mut plans = lock_plans();
         clean_expired(&mut plans, now_ms());
@@ -446,9 +450,9 @@ pub(crate) fn create_plan(plan: &Value, all_nodes: &[Value]) -> Result<Value, St
     let chunks = plan
         .get("chunks")
         .and_then(Value::as_array)
-        .ok_or_else(|| "plan.chunks must be an array".to_string())?;
+        .ok_or(PlanStoreError::ChunksNotArray)?;
     if chunks.is_empty() {
-        return Err("Plan needs at least one chunk".to_string());
+        return Err(PlanStoreError::NoChunks);
     }
     // Structural normalization Rust needs up front (TS would TypeError
     // mid-validation on these shapes — see module docs).
@@ -460,7 +464,7 @@ pub(crate) fn create_plan(plan: &Value, all_nodes: &[Value]) -> Result<Value, St
     let node_index = index_nodes(all_nodes);
     let errors = validate_plan(chunks, &node_index);
     if !errors.is_empty() {
-        return Err(errors.join("; "));
+        return Err(PlanStoreError::Validation(errors));
     }
 
     let warnings = detect_warnings(chunks);
@@ -511,31 +515,34 @@ pub(crate) fn submit_chunk_result(
     plan_id: &str,
     result: &Value,
     status_override: Option<&str>,
-) -> Result<Value, String> {
+) -> Result<Value, PlanStoreError> {
     let mut plans = lock_plans();
     let state = plans
         .get_mut(plan_id)
-        .ok_or_else(|| format!("Plan {plan_id} not found"))?;
+        .ok_or_else(|| PlanStoreError::PlanNotFound {
+            plan_id: plan_id.to_string(),
+        })?;
     state.last_activity_ms = now_ms(); // TS touch(planId)
 
     let result_chunk_id = result
         .get("chunkId")
         .and_then(Value::as_str)
-        .ok_or_else(|| "result.chunkId must be a string".to_string())?;
+        .ok_or(PlanStoreError::ResultChunkIdNotString)?;
     if !state.statuses.contains_key(result_chunk_id) {
-        return Err(format!(
-            "Chunk {result_chunk_id} is not part of plan {plan_id}; use a chunkId from executionPlan"
-        ));
+        return Err(PlanStoreError::ChunkNotInPlan {
+            chunk_id: result_chunk_id.to_string(),
+            plan_id: plan_id.to_string(),
+        });
     }
 
     let explicit_terminal = matches!(status_override, Some("failed") | Some("skipped"));
     let current_dependencies = DependencyState::resolve(&state.chunks, &state.statuses);
     let blockers = current_dependencies.blockers(result_chunk_id);
     if !explicit_terminal && !blockers.is_empty() {
-        return Err(format!(
-            "Chunk {result_chunk_id} is blocked by failed/skipped dependencies: {}. Retry those dependencies first; the plan remains available.",
-            blockers.join(", ")
-        ));
+        return Err(PlanStoreError::ChunkBlocked {
+            chunk_id: result_chunk_id.to_string(),
+            blockers: blockers.iter().map(String::from).collect(),
+        });
     }
     let validation = if explicit_terminal {
         let reason = result

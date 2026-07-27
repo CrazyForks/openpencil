@@ -391,9 +391,10 @@ fn handle_spawn_agents(args_json: &str) -> ChatToolResult {
 
     let specs = match parse_spawn_args(args_json) {
         Ok(specs) => specs,
-        Err(msg) => {
+        Err(error) => {
             return ChatToolResult {
-                content: serde_json::json!({ "success": false, "error": msg }).to_string(),
+                content: serde_json::json!({ "success": false, "error": error.to_string() })
+                    .to_string(),
                 is_error: true,
             };
         }

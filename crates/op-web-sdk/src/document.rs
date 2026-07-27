@@ -1,4 +1,5 @@
 // Document parsing and page snapshot accessors for Viewer.
+use crate::error::ViewerLoadError;
 use crate::Viewer;
 use wasm_bindgen::prelude::wasm_bindgen;
 
@@ -7,9 +8,10 @@ impl Viewer {
     /// Immediately rebuilds the cached `LayoutScene` from the loaded document.
     /// Internal Rust API; the JS-facing wrapper is `Viewer::load_str` (maps the
     /// error to a `JsValue` so it surfaces as a thrown exception).
-    pub fn load(&mut self, src: &str) -> Result<(), String> {
+    pub fn load(&mut self, src: &str) -> Result<(), ViewerLoadError> {
         let editor_meta = op_pen_loader::extract_editor_meta(src);
-        let loaded = op_pen_loader::load_canonical(src).map_err(|e| format!("{e:?}"))?;
+        let loaded =
+            op_pen_loader::load_canonical(src).map_err(|e| ViewerLoadError(format!("{e:?}")))?;
         let doc = loaded.value;
         let page_count = doc
             .pages

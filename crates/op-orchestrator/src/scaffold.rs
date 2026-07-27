@@ -9,6 +9,45 @@ use crate::plan::{OrchestratorPlan, Subtask};
 use jian_ops_schema::node::PenNode;
 use op_editor_core::{EditorCommand, NodeId};
 
+/// Scaffold-template failure. Every variant means "the JSON template this
+/// module hard-codes did not deserialize into a canonical `PenNode`" — an
+/// implementation bug, never bad user input. `detail` carries the
+/// `serde_json::Error` rendering (that error is neither `Clone` nor `Eq`,
+/// so it is kept as its display text to leave this enum comparable).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScaffoldError {
+    /// The mobile status-bar chrome failed to deserialize.
+    MobileStatusBar { root_id: String, detail: String },
+    /// A scaffold root frame failed to deserialize.
+    RootFrame { id: String, detail: String },
+    /// The pre-built two-column app-shell root failed to deserialize.
+    TwoColumnRoot { root_id: String, detail: String },
+}
+
+impl std::fmt::Display for ScaffoldError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MobileStatusBar { root_id, detail } => {
+                write!(f, "mobile status bar for `{root_id}`: {detail}")
+            }
+            Self::RootFrame { id, detail } => write!(f, "scaffold root frame `{id}`: {detail}"),
+            Self::TwoColumnRoot { root_id, detail } => {
+                write!(f, "two-column scaffold root `{root_id}`: {detail}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ScaffoldError {}
+
+/// Keeps `?`-into-`Result<_, String>` call sites (in this crate and in
+/// hosts that consume the scaffold API) compiling unchanged.
+impl From<ScaffoldError> for String {
+    fn from(error: ScaffoldError) -> Self {
+        error.to_string()
+    }
+}
+
 /// Mobile mockup status bar height. Mirrors
 /// `apps/web/src/services/ai/mobile-status-bar.ts`.
 const STATUS_BAR_HEIGHT: f64 = 62.0;
@@ -192,9 +231,13 @@ pub fn mobile_status_bar_node(
     root_id: &str,
     fill_hex: &str,
     width: f64,
-) -> Result<PenNode, String> {
-    serde_json::from_value(mobile_status_bar_json(root_id, fill_hex, width))
-        .map_err(|e| format!("mobile status bar for `{root_id}`: {e}"))
+) -> Result<PenNode, ScaffoldError> {
+    serde_json::from_value(mobile_status_bar_json(root_id, fill_hex, width)).map_err(|e| {
+        ScaffoldError::MobileStatusBar {
+            root_id: root_id.to_string(),
+            detail: e.to_string(),
+        }
+    })
 }
 
 /// 构建单个根 frame 的 `PenNode`,含可选状态栏子节点。
@@ -250,7 +293,7 @@ fn build_root_frame_node(
     gap: f64,
     fill_hex: &str,
     is_mobile: bool,
-) -> Result<PenNode, String> {
+) -> Result<PenNode, ScaffoldError> {
     let children = if is_mobile {
         serde_json::json!([mobile_status_bar_json(id, fill_hex, width)])
     } else {
@@ -271,7 +314,10 @@ fn build_root_frame_node(
         "children": children,
     });
 
-    serde_json::from_value(frame).map_err(|e| format!("scaffold root frame `{id}`: {e}"))
+    serde_json::from_value(frame).map_err(|e| ScaffoldError::RootFrame {
+        id: id.to_string(),
+        detail: e.to_string(),
+    })
 }
 
 /// 从 subtask 的 label 剥去括号后缀并 trim,用作 frame 名 fallback。
@@ -298,7 +344,7 @@ fn short_label(st: &Subtask) -> String {
 pub fn build_scaffold(
     plan: &OrchestratorPlan,
     is_mobile: bool,
-) -> Result<Vec<EditorCommand>, String> {
+) -> Result<Vec<EditorCommand>, ScaffoldError> {
     build_scaffold_at(plan, is_mobile, SAFE_CANVAS_X, SAFE_CANVAS_Y)
 }
 
@@ -310,7 +356,7 @@ pub(crate) fn build_scaffold_at(
     is_mobile: bool,
     x: f64,
     y: f64,
-) -> Result<Vec<EditorCommand>, String> {
+) -> Result<Vec<EditorCommand>, ScaffoldError> {
     let node = build_scaffold_root_node_at(plan, is_mobile, &plan.root_frame.id, x, y)?;
     Ok(vec![EditorCommand::InsertSubtree {
         nodes: vec![node],
@@ -329,7 +375,7 @@ pub fn build_scaffold_reusing(
     plan: &OrchestratorPlan,
     is_mobile: bool,
     reuse_id: &str,
-) -> Result<Vec<EditorCommand>, String> {
+) -> Result<Vec<EditorCommand>, ScaffoldError> {
     let node =
         build_scaffold_root_node_at(plan, is_mobile, reuse_id, SAFE_CANVAS_X, SAFE_CANVAS_Y)?;
     Ok(vec![EditorCommand::ReplaceSubtree {
@@ -349,7 +395,7 @@ fn build_scaffold_root_node_at(
     root_id: &str,
     x: f64,
     y: f64,
-) -> Result<PenNode, String> {
+) -> Result<PenNode, ScaffoldError> {
     let rf = &plan.root_frame;
     let fill_hex = rf
         .first_solid_hex()
@@ -428,7 +474,7 @@ pub(crate) fn build_screen_group_scaffold(
     is_mobile: bool,
     start_x: f64,
     y: f64,
-) -> Result<ScreenGroupScaffoldResult, String> {
+) -> Result<ScreenGroupScaffoldResult, ScaffoldError> {
     let rf = &plan.root_frame;
     let layout = rf.layout.as_deref().unwrap_or("vertical");
     let fill_hex = rf
@@ -563,7 +609,7 @@ fn build_two_column_root_node(
     height: f64,
     fill_hex: &str,
     gap: f64,
-) -> Result<PenNode, String> {
+) -> Result<PenNode, ScaffoldError> {
     let sidebar = serde_json::json!({
         "type": "frame",
         "id": format!("{root_id}-sidebar"),
@@ -610,7 +656,10 @@ fn build_two_column_root_node(
         "fill": [{ "type": "solid", "color": fill_hex }],
         "children": [sidebar, content],
     });
-    serde_json::from_value(frame).map_err(|e| format!("two-column scaffold root `{root_id}`: {e}"))
+    serde_json::from_value(frame).map_err(|e| ScaffoldError::TwoColumnRoot {
+        root_id: root_id.to_string(),
+        detail: e.to_string(),
+    })
 }
 
 #[cfg(test)]

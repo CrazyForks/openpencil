@@ -98,9 +98,11 @@ pub(crate) fn update_command_from_value(
             "U() update JSON must be an object".into(),
         ));
     };
-    // `update_node_data` still reports `String`; its failures are all
-    // malformed-patch reports, so they classify as `Json`.
-    if let Some(patch_json) = ts_update_patch_json_value(value).map_err(ProgramError::Json)? {
+    // `update_node_data`'s failures are all malformed-patch reports, so they
+    // classify as `Json`; render the typed error into the variant's payload.
+    if let Some(patch_json) =
+        ts_update_patch_json_value(value).map_err(|e| ProgramError::Json(e.to_string()))?
+    {
         return Ok(EditorCommand::PatchNodeData {
             node_id,
             patch_json,

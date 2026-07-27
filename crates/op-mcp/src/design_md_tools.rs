@@ -45,7 +45,7 @@ impl McpTool for GetDesignMd {
                 out.insert("markdown".into(), generate_design_md(spec));
                 ToolOutcome::Ok(out)
             }
-            Err(msg) => ToolOutcome::Err(ToolErrorCode::Internal, msg),
+            Err(e) => ToolOutcome::Err(ToolErrorCode::Internal, e.to_string()),
         }
     }
 }
@@ -58,7 +58,7 @@ impl McpTool for SetDesignMd {
     fn call(&self, args: &BTreeMap<String, String>) -> ToolOutcome {
         let auto_extract = match parse_bool_arg(args, "autoExtract") {
             Ok(v) => v,
-            Err(msg) => return ToolOutcome::Err(ToolErrorCode::InvalidArgument, msg),
+            Err(e) => return ToolOutcome::Err(ToolErrorCode::InvalidArgument, e.to_string()),
         };
         let spec = if auto_extract {
             self.extracted.clone()
@@ -71,7 +71,7 @@ impl McpTool for SetDesignMd {
         };
         let spec_json = match spec_json(&spec) {
             Ok(json) => json,
-            Err(msg) => return ToolOutcome::Err(ToolErrorCode::Internal, msg),
+            Err(e) => return ToolOutcome::Err(ToolErrorCode::Internal, e.to_string()),
         };
         let mut out = BTreeMap::new();
         out.insert("success".into(), "true".into());
@@ -129,17 +129,48 @@ fn spec_has_content(spec: &op_editor_core::DesignMdSpec) -> bool {
         || spec.visual_theme.as_ref().is_some_and(|s| !s.is_empty())
 }
 
-fn spec_json(spec: &op_editor_core::DesignMdSpec) -> Result<String, String> {
-    serde_json::to_string(spec).map_err(|e| format!("serialize design.md spec failed: {e}"))
+/// A `design.md` tool failure. `SerializeSpec` is an internal fault
+/// (`ToolErrorCode::Internal`); `BoolArg` is a caller fault
+/// (`ToolErrorCode::InvalidArgument`) — the split the `String` version
+/// could only express by which call site produced it. `Display`
+/// reproduces the previous message byte-for-byte.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DesignMdError {
+    /// The spec did not serialize to JSON.
+    SerializeSpec(String),
+    /// A boolean arg is neither `"true"` nor `"false"`.
+    BoolArg { key: String, raw: String },
 }
 
-fn parse_bool_arg(args: &BTreeMap<String, String>, key: &str) -> Result<bool, String> {
+impl std::fmt::Display for DesignMdError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DesignMdError::SerializeSpec(detail) => {
+                write!(f, "serialize design.md spec failed: {detail}")
+            }
+            DesignMdError::BoolArg { key, raw } => {
+                write!(f, "{key} must be true or false, got {raw:?}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for DesignMdError {}
+
+fn spec_json(spec: &op_editor_core::DesignMdSpec) -> Result<String, DesignMdError> {
+    serde_json::to_string(spec).map_err(|e| DesignMdError::SerializeSpec(e.to_string()))
+}
+
+fn parse_bool_arg(args: &BTreeMap<String, String>, key: &str) -> Result<bool, DesignMdError> {
     let Some(raw) = args.get(key).or_else(|| args.get("auto_extract")) else {
         return Ok(false);
     };
     match raw.as_str() {
         "true" => Ok(true),
         "false" => Ok(false),
-        _ => Err(format!("{key} must be true or false, got {raw:?}")),
+        _ => Err(DesignMdError::BoolArg {
+            key: key.to_string(),
+            raw: raw.clone(),
+        }),
     }
 }

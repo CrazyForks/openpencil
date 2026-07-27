@@ -28,7 +28,53 @@ use wasm_bindgen::JsCast;
 
 use crate::repaint_ctx::RepaintContext;
 
-type DoneFn = Box<dyn FnOnce(Result<String, String>)>;
+type DoneFn = Box<dyn FnOnce(Result<String, IconifyError>)>;
+
+/// A failed Iconify (or daemon brand-catalog) fetch / parse.
+///
+/// `Display` reproduces the ad-hoc `String` messages this enum replaced byte
+/// for byte, so the picker's error row reads exactly the same.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum IconifyError {
+    /// The browser exposes no `XMLHttpRequest` constructor.
+    XhrUnavailable,
+    /// `XMLHttpRequest.open` refused the URL.
+    RequestOpenFailed,
+    /// `XMLHttpRequest.send` refused the request.
+    RequestSendFailed,
+    /// A non-2xx (or bodyless) response.
+    Http(u16),
+    /// The response body is not valid JSON.
+    ResponseParse(String),
+    /// A search response carries no `icons` array.
+    MalformedSearch,
+    /// A collection response carries no `icons` object.
+    MalformedCollection,
+}
+
+impl std::fmt::Display for IconifyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IconifyError::XhrUnavailable => write!(f, "XMLHttpRequest unavailable"),
+            IconifyError::RequestOpenFailed => write!(f, "iconify request open failed"),
+            IconifyError::RequestSendFailed => write!(f, "iconify request send failed"),
+            IconifyError::Http(status) => write!(f, "iconify HTTP {status}"),
+            IconifyError::ResponseParse(error) => write!(f, "{error}"),
+            IconifyError::MalformedSearch => write!(f, "malformed iconify search response"),
+            IconifyError::MalformedCollection => {
+                write!(f, "malformed iconify collection response")
+            }
+        }
+    }
+}
+
+impl std::error::Error for IconifyError {}
+
+impl From<IconifyError> for String {
+    fn from(error: IconifyError) -> String {
+        error.to_string()
+    }
+}
 
 /// Shared with the desktop worker (`op-host-desktop/src/iconify_host.rs`).
 const ICONIFY_API: &str = op_editor_core::icon_picker_state::ICONIFY_API_BASE;
@@ -191,7 +237,7 @@ fn apply_page<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, mut page: Pen
 fn apply_error<C: RepaintContext + 'static>(
     inner: &Rc<RefCell<C>>,
     request: &IconifyLoadMoreRequest,
-    err: String,
+    err: IconifyError,
 ) {
     let mut b = inner.borrow_mut();
     let ui = &mut b.host_mut().editor_state_mut().editor_ui;
@@ -199,7 +245,9 @@ fn apply_error<C: RepaintContext + 'static>(
         return;
     }
     ui.icon_picker_remote.loading = false;
-    ui.icon_picker_remote.error = Some(err);
+    // `icon_picker_remote.error` is a display string on shared editor state,
+    // so the typed error renders exactly once here at the UI edge.
+    ui.icon_picker_remote.error = Some(err.to_string());
     b.host_mut().mark_editor_state_dirty();
     let _ = b.repaint();
 }
@@ -209,12 +257,13 @@ fn apply_error<C: RepaintContext + 'static>(
 // field contract as the desktop's typed deserializers.
 // ---------------------------------------------------------------------
 
-fn parse_search(body: &str, request: &IconifyLoadMoreRequest) -> Result<PendingPage, String> {
-    let value: serde_json::Value = serde_json::from_str(body).map_err(|e| e.to_string())?;
+fn parse_search(body: &str, request: &IconifyLoadMoreRequest) -> Result<PendingPage, IconifyError> {
+    let value: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| IconifyError::ResponseParse(e.to_string()))?;
     let ids: Vec<String> = value
         .get("icons")
         .and_then(|i| i.as_array())
-        .ok_or_else(|| "malformed iconify search response".to_string())?
+        .ok_or(IconifyError::MalformedSearch)?
         .iter()
         .filter_map(|v| v.as_str())
         .map(str::to_string)
@@ -247,8 +296,9 @@ fn parse_search(body: &str, request: &IconifyLoadMoreRequest) -> Result<PendingP
 fn parse_collection(
     collection: &str,
     body: &str,
-) -> Result<HashMap<String, IconPickerRemoteIcon>, String> {
-    let value: serde_json::Value = serde_json::from_str(body).map_err(|e| e.to_string())?;
+) -> Result<HashMap<String, IconPickerRemoteIcon>, IconifyError> {
+    let value: serde_json::Value =
+        serde_json::from_str(body).map_err(|e| IconifyError::ResponseParse(e.to_string()))?;
     let default_w = value
         .get("width")
         .and_then(|v| v.as_f64())
@@ -260,7 +310,7 @@ fn parse_collection(
     let icons = value
         .get("icons")
         .and_then(|i| i.as_object())
-        .ok_or_else(|| "malformed iconify collection response".to_string())?;
+        .ok_or(IconifyError::MalformedCollection)?;
     let mut out = HashMap::new();
     for (name, icon) in icons {
         let Some(svg_body) = icon.get("body").and_then(|b| b.as_str()) else {
@@ -305,17 +355,17 @@ fn parse_collection(
 /// callback would strand the picker's loading row forever.
 fn fetch_text(url: &str, on_done: DoneFn) {
     let slot: Rc<RefCell<Option<DoneFn>>> = Rc::new(RefCell::new(Some(on_done)));
-    let resolve = |slot: &Rc<RefCell<Option<DoneFn>>>, result: Result<String, String>| {
+    let resolve = |slot: &Rc<RefCell<Option<DoneFn>>>, result: Result<String, IconifyError>| {
         if let Some(done) = slot.borrow_mut().take() {
             done(result);
         }
     };
     let Ok(xhr) = web_sys::XmlHttpRequest::new() else {
-        resolve(&slot, Err("XMLHttpRequest unavailable".to_string()));
+        resolve(&slot, Err(IconifyError::XhrUnavailable));
         return;
     };
     if xhr.open_with_async("GET", url, true).is_err() {
-        resolve(&slot, Err("iconify request open failed".to_string()));
+        resolve(&slot, Err(IconifyError::RequestOpenFailed));
         return;
     }
     // `fetch_text` serves BOTH the daemon brand-catalog fetch and the public
@@ -331,7 +381,7 @@ fn fetch_text(url: &str, on_done: DoneFn) {
         let status = xhr_cb.status().unwrap_or(0);
         let result = match xhr_cb.response_text() {
             Ok(Some(text)) if (200..300).contains(&status) => Ok(text),
-            _ => Err(format!("iconify HTTP {status}")),
+            _ => Err(IconifyError::Http(status)),
         };
         if let Some(done) = slot_cb.borrow_mut().take() {
             done(result);
@@ -339,7 +389,7 @@ fn fetch_text(url: &str, on_done: DoneFn) {
     });
     xhr.set_onloadend(Some(onloadend.unchecked_ref()));
     if xhr.send().is_err() {
-        resolve(&slot, Err("iconify request send failed".to_string()));
+        resolve(&slot, Err(IconifyError::RequestSendFailed));
     }
 }
 

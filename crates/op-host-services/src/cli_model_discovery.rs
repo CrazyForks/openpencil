@@ -16,6 +16,7 @@ use op_ai::agent_settings_state::AgentProvider;
 use op_ai::chat_models::ModelEntry;
 use op_ai::chat_provider::CliName;
 
+use crate::cli_probe_error::CliProbeError;
 use crate::cli_probe_support::{bounded_cli_output, diagnose_timeout, BoundedProbe};
 use crate::model_discovery::resolve_cli;
 
@@ -23,37 +24,47 @@ const MODEL_QUERY_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Query the installed Antigravity catalog. `agy models` may print display
 /// names or kebab-case model IDs; both are accepted verbatim by `--model`.
-pub fn query_antigravity_models() -> Result<Vec<ModelEntry>, String> {
-    let exe = resolve_cli("agy").ok_or_else(|| "Antigravity CLI not found".to_string())?;
+pub fn query_antigravity_models() -> Result<Vec<ModelEntry>, CliProbeError> {
+    let exe = resolve_cli("agy").ok_or(CliProbeError::NotFound {
+        provider: "Antigravity",
+    })?;
     antigravity_models_from_exe(&exe, MODEL_QUERY_TIMEOUT)
 }
 
 /// Core of `query_antigravity_models`, with the executable path and timeout
 /// injected so tests can point it at a fake `agy` (a `/bin/sh` script)
 /// without waiting out the real `MODEL_QUERY_TIMEOUT`.
-fn antigravity_models_from_exe(exe: &Path, timeout: Duration) -> Result<Vec<ModelEntry>, String> {
+fn antigravity_models_from_exe(
+    exe: &Path,
+    timeout: Duration,
+) -> Result<Vec<ModelEntry>, CliProbeError> {
     let output = match bounded_cli_output(CliName::Antigravity, exe, &["models"], timeout) {
         BoundedProbe::Completed(output) => output,
         BoundedProbe::TimedOut { stdout, stderr } => {
-            return Err(diagnose_timeout(
+            return Err(CliProbeError::Timeout(diagnose_timeout(
                 CliName::Antigravity,
                 "Antigravity",
                 "`agy`",
                 timeout,
                 &stdout,
                 &stderr,
-            ))
+            )))
         }
         BoundedProbe::Failed => {
-            return Err("Antigravity model query failed or timed out".to_string())
+            return Err(CliProbeError::NotResponding {
+                provider: "Antigravity",
+            })
         }
     };
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(if stderr.is_empty() {
-            "Antigravity model query failed. Run `agy` once to authenticate.".to_string()
+            CliProbeError::QueryFailed {
+                provider: "Antigravity",
+                login_command: Some("`agy`"),
+            }
         } else {
-            stderr
+            CliProbeError::CliReported(stderr)
         });
     }
     require_antigravity_models(
@@ -237,37 +248,44 @@ fn is_catalog_diagnostic(value: &str) -> bool {
 
 /// Query the real Grok Build model catalog. The command is bounded because
 /// model discovery runs during startup and must never strand its worker.
-pub fn query_grok_models() -> Result<Vec<ModelEntry>, String> {
-    let exe = resolve_cli("grok").ok_or_else(|| "Grok Build CLI not found".to_string())?;
+pub fn query_grok_models() -> Result<Vec<ModelEntry>, CliProbeError> {
+    let exe = resolve_cli("grok").ok_or(CliProbeError::NotFound {
+        provider: "Grok Build",
+    })?;
     grok_models_from_exe(&exe, MODEL_QUERY_TIMEOUT)
 }
 
 /// Core of `query_grok_models`, with the executable path and timeout
 /// injected so tests can point it at a fake `grok` (a `/bin/sh` script)
 /// without waiting out the real `MODEL_QUERY_TIMEOUT`.
-fn grok_models_from_exe(exe: &Path, timeout: Duration) -> Result<Vec<ModelEntry>, String> {
+fn grok_models_from_exe(exe: &Path, timeout: Duration) -> Result<Vec<ModelEntry>, CliProbeError> {
     let output = match bounded_cli_output(CliName::GrokBuild, exe, &["models"], timeout) {
         BoundedProbe::Completed(output) => output,
         BoundedProbe::TimedOut { stdout, stderr } => {
-            return Err(diagnose_timeout(
+            return Err(CliProbeError::Timeout(diagnose_timeout(
                 CliName::GrokBuild,
                 "Grok Build",
                 "`grok`",
                 timeout,
                 &stdout,
                 &stderr,
-            ))
+            )))
         }
         BoundedProbe::Failed => {
-            return Err("Grok Build model query failed or timed out".to_string())
+            return Err(CliProbeError::NotResponding {
+                provider: "Grok Build",
+            })
         }
     };
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(if stderr.is_empty() {
-            "Grok Build model query failed".to_string()
+            CliProbeError::QueryFailed {
+                provider: "Grok Build",
+                login_command: None,
+            }
         } else {
-            stderr
+            CliProbeError::CliReported(stderr)
         });
     }
     require_grok_models(
@@ -544,7 +562,10 @@ fn is_reserved_grok_catalog_word(value: &str) -> bool {
     )
 }
 
-fn require_antigravity_models(stdout: &str, stderr: &str) -> Result<Vec<ModelEntry>, String> {
+fn require_antigravity_models(
+    stdout: &str,
+    stderr: &str,
+) -> Result<Vec<ModelEntry>, CliProbeError> {
     let models = parse_antigravity_models(stdout);
     if models.is_empty() {
         Err(catalog_error("Antigravity", "`agy`", stdout, stderr))
@@ -553,7 +574,7 @@ fn require_antigravity_models(stdout: &str, stderr: &str) -> Result<Vec<ModelEnt
     }
 }
 
-fn require_grok_models(stdout: &str, stderr: &str) -> Result<Vec<ModelEntry>, String> {
+fn require_grok_models(stdout: &str, stderr: &str) -> Result<Vec<ModelEntry>, CliProbeError> {
     let models = parse_grok_models(stdout);
     if models.is_empty() {
         Err(catalog_error("Grok Build", "`grok`", stdout, stderr))
@@ -562,7 +583,12 @@ fn require_grok_models(stdout: &str, stderr: &str) -> Result<Vec<ModelEntry>, St
     }
 }
 
-fn catalog_error(provider: &str, command: &str, stdout: &str, stderr: &str) -> String {
+fn catalog_error(
+    provider: &'static str,
+    login_command: &'static str,
+    stdout: &str,
+    stderr: &str,
+) -> CliProbeError {
     let diagnostics = format!("{stdout}\n{stderr}").to_ascii_lowercase();
     let auth_required = [
         "sign in",
@@ -578,11 +604,14 @@ fn catalog_error(provider: &str, command: &str, stdout: &str, stderr: &str) -> S
     .iter()
     .any(|marker| diagnostics.contains(marker));
     if auth_required {
-        format!("{provider} model query requires authentication. Run {command} once to sign in.")
+        CliProbeError::AuthRequired {
+            provider,
+            login_command,
+        }
     } else if stdout.trim().is_empty() {
-        format!("{provider} model query returned no model catalog")
+        CliProbeError::NoCatalog { provider }
     } else {
-        format!("{provider} returned an unrecognized model catalog")
+        CliProbeError::UnrecognizedCatalog { provider }
     }
 }
 

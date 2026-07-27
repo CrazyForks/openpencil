@@ -12,6 +12,8 @@ use std::path::PathBuf;
 
 use op_host_services::export::{export_node_raster_with_margin, RasterFormat};
 
+use crate::render_cli_error::RenderCliError;
+
 /// When `--render-shots` is present on argv, render node PNGs and return
 /// `true` so `main` exits 0; otherwise return `false` and let the normal
 /// GUI path continue. Any failure (bad args, unreadable / unparsable
@@ -47,8 +49,8 @@ pub fn run_cli_if_requested() -> bool {
 
     let state = match load_render_state(file) {
         Ok(state) => state,
-        Err(msg) => {
-            eprintln!("{msg}");
+        Err(error) => {
+            eprintln!("{error}");
             std::process::exit(1);
         }
     };
@@ -111,12 +113,17 @@ pub fn run_cli_if_requested() -> bool {
     true
 }
 
-fn load_render_state(file: &str) -> Result<op_editor_core::EditorState, String> {
+fn load_render_state(file: &str) -> Result<op_editor_core::EditorState, RenderCliError> {
+    // `doc_io` belongs to `op-host-services`, a crate this pass does not own;
+    // carry its message inside the `render-shots:` envelope.
     op_host_services::doc_io::load_editor_state(
         std::path::Path::new(file),
         op_editor_core::Locale::EnUs,
     )
-    .map_err(|e| format!("render-shots: parse {file}: {e}"))
+    .map_err(|e| RenderCliError::LoadDocument {
+        file: file.to_string(),
+        message: e.to_string(),
+    })
 }
 
 /// Filesystem-safe filename from a node id (ids are short slugs like

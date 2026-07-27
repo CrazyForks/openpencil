@@ -233,10 +233,58 @@ fn design_element_count(code: &str) -> usize {
     }
 }
 
-pub fn parse_design_json_nodes(code: &str) -> Result<Vec<PenNode>, String> {
+/// A rejected AI design-JSON payload.
+///
+/// `Display` reproduces the previous ad-hoc `String` messages byte for byte.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DesignParseError {
+    /// The code block is blank.
+    Empty,
+    /// A JSON value did not deserialize into a `PenNode`.
+    Deserialize(String),
+    /// A JSONL slice was not valid JSON.
+    Json(String),
+    /// The payload is neither a node object nor a node array.
+    NotObjectOrArray,
+    /// The payload parsed but carries no nodes.
+    EmptyNodeArray,
+    /// The JSONL scan found no `{...}` objects.
+    NoJsonObjects,
+    /// A JSONL object is truncated (unbalanced braces).
+    IncompleteJsonObject,
+    /// Every JSONL node resolved as a child, leaving no root.
+    EmptyNodeTree,
+}
+
+impl std::fmt::Display for DesignParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DesignParseError::Empty => write!(f, "empty design JSON"),
+            DesignParseError::Deserialize(e) => write!(f, "deserialize: {e}"),
+            DesignParseError::Json(e) => write!(f, "json: {e}"),
+            DesignParseError::NotObjectOrArray => {
+                write!(f, "design JSON must be an object or array")
+            }
+            DesignParseError::EmptyNodeArray => write!(f, "empty design node array"),
+            DesignParseError::NoJsonObjects => write!(f, "no JSON objects found"),
+            DesignParseError::IncompleteJsonObject => write!(f, "incomplete JSON object"),
+            DesignParseError::EmptyNodeTree => write!(f, "empty design node tree"),
+        }
+    }
+}
+
+impl std::error::Error for DesignParseError {}
+
+impl From<DesignParseError> for String {
+    fn from(error: DesignParseError) -> String {
+        error.to_string()
+    }
+}
+
+pub fn parse_design_json_nodes(code: &str) -> Result<Vec<PenNode>, DesignParseError> {
     let trimmed = code.trim();
     if trimmed.is_empty() {
-        return Err("empty design JSON".into());
+        return Err(DesignParseError::Empty);
     }
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
         return parse_design_value(value);
@@ -244,18 +292,17 @@ pub fn parse_design_json_nodes(code: &str) -> Result<Vec<PenNode>, String> {
     parse_jsonl_nodes(trimmed)
 }
 
-fn parse_design_value(mut value: serde_json::Value) -> Result<Vec<PenNode>, String> {
+fn parse_design_value(mut value: serde_json::Value) -> Result<Vec<PenNode>, DesignParseError> {
     normalize_design_json(&mut value);
-    let nodes =
-        match value {
-            serde_json::Value::Array(_) => serde_json::from_value::<Vec<PenNode>>(value)
-                .map_err(|e| format!("deserialize: {e}"))?,
-            serde_json::Value::Object(_) => vec![serde_json::from_value::<PenNode>(value)
-                .map_err(|e| format!("deserialize: {e}"))?],
-            _ => return Err("design JSON must be an object or array".into()),
-        };
+    let nodes = match value {
+        serde_json::Value::Array(_) => serde_json::from_value::<Vec<PenNode>>(value)
+            .map_err(|e| DesignParseError::Deserialize(e.to_string()))?,
+        serde_json::Value::Object(_) => vec![serde_json::from_value::<PenNode>(value)
+            .map_err(|e| DesignParseError::Deserialize(e.to_string()))?],
+        _ => return Err(DesignParseError::NotObjectOrArray),
+    };
     if nodes.is_empty() {
-        Err("empty design node array".into())
+        Err(DesignParseError::EmptyNodeArray)
     } else {
         Ok(nodes)
     }
@@ -286,10 +333,10 @@ fn normalize_design_json(value: &mut serde_json::Value) {
     }
 }
 
-fn parse_jsonl_nodes(text: &str) -> Result<Vec<PenNode>, String> {
+fn parse_jsonl_nodes(text: &str) -> Result<Vec<PenNode>, DesignParseError> {
     let objects = extract_json_objects(text)?;
     if objects.is_empty() {
-        return Err("no JSON objects found".into());
+        return Err(DesignParseError::NoJsonObjects);
     }
 
     let mut nodes_by_id = BTreeMap::<String, PenNode>::new();
@@ -302,8 +349,8 @@ fn parse_jsonl_nodes(text: &str) -> Result<Vec<PenNode>, String> {
             .and_then(|object| object.remove("_parent"))
             .and_then(|value| value.as_str().map(str::to_string));
         normalize_design_json(&mut value);
-        let node =
-            serde_json::from_value::<PenNode>(value).map_err(|e| format!("deserialize: {e}"))?;
+        let node = serde_json::from_value::<PenNode>(value)
+            .map_err(|e| DesignParseError::Deserialize(e.to_string()))?;
         let id = node.id_str().to_string();
         parents.push((id.clone(), parent));
         nodes_by_id.insert(id, node);
@@ -325,13 +372,13 @@ fn parse_jsonl_nodes(text: &str) -> Result<Vec<PenNode>, String> {
         }
     }
     if roots.is_empty() {
-        Err("empty design node tree".into())
+        Err(DesignParseError::EmptyNodeTree)
     } else {
         Ok(roots)
     }
 }
 
-fn extract_json_objects(text: &str) -> Result<Vec<serde_json::Value>, String> {
+fn extract_json_objects(text: &str) -> Result<Vec<serde_json::Value>, DesignParseError> {
     let bytes = text.as_bytes();
     let mut values = Vec::new();
     let mut i = 0usize;
@@ -367,7 +414,7 @@ fn extract_json_objects(text: &str) -> Result<Vec<serde_json::Value>, String> {
                     if depth == 0 {
                         let slice = &text[start..=i];
                         let value = serde_json::from_str::<serde_json::Value>(slice)
-                            .map_err(|e| format!("json: {e}"))?;
+                            .map_err(|e| DesignParseError::Json(e.to_string()))?;
                         values.push(value);
                         i += 1;
                         break;
@@ -378,7 +425,7 @@ fn extract_json_objects(text: &str) -> Result<Vec<serde_json::Value>, String> {
             i += 1;
         }
         if depth > 0 {
-            return Err("incomplete JSON object".into());
+            return Err(DesignParseError::IncompleteJsonObject);
         }
     }
     Ok(values)

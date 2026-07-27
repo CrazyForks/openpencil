@@ -22,6 +22,7 @@
 mod adapter;
 mod authored_geometry;
 mod editor_meta;
+mod editor_meta_error;
 mod editor_scene;
 mod effects;
 mod layout_repair;
@@ -98,14 +99,17 @@ pub use editor_meta::{
     extract_editor_meta_with_report, write_source_with_current_schema,
     write_source_with_editor_meta, EditorMeta, EditorMetaExtraction,
 };
+pub use editor_meta_error::EditorMetaWriteError;
 pub use effects::{
     effects_from_payload, effects_from_payload_ref, effects_to_payload, shadows_from_canonical,
     ShadowPayload,
 };
-pub use library::{merge_library_into_state, merge_library_src_into_state, LibraryMergeReport};
+pub use library::{
+    merge_library_into_state, merge_library_src_into_state, LibraryMergeError, LibraryMergeReport,
+};
 pub use payload::{
     load_canonical, write_normalized_source_with_current_schema, DocPayload, NodePayload,
-    PagePayload, StrokePayload,
+    NormalizedWriteError, PagePayload, StrokePayload,
 };
 pub use variables::{var_table_from_payload, var_table_to_payload, VarTablePayload};
 

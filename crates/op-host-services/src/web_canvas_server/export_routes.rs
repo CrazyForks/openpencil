@@ -44,8 +44,8 @@ pub(super) fn build_raster_download(body: &str, fallback: &EditorState) -> Resul
     let scene = op_pen_loader::editor_state_to_active_page_layout_scene(&editor);
     let tmp = tmp_export_path(ext);
     let result = match selected_node_id {
-        Some(id) => crate::export::export_node_raster_typed(&scene, &id, &tmp, format, scale),
-        None => crate::export::export_raster_typed(&scene, &tmp, format, scale),
+        Some(id) => crate::export::export_node_raster(&scene, &id, &tmp, format, scale),
+        None => crate::export::export_raster(&scene, &tmp, format, scale),
     };
     if let Err(e) = result {
         let _ = std::fs::remove_file(&tmp);
@@ -137,7 +137,7 @@ pub(super) fn build_pdf_download(body: &str, fallback: &EditorState) -> Result<V
     let editor = export_editor_from_body(body, fallback)?;
     let scene = op_pen_loader::editor_state_to_layout_scene(&editor);
     let tmp = tmp_export_path("pdf");
-    crate::export_pdf::export_pdf_typed(&scene, &tmp)?;
+    crate::export_pdf::export_pdf(&scene, &tmp)?;
     let bytes = std::fs::read(&tmp).map_err(|e| WebCanvasError::Io(e.to_string()))?;
     let _ = std::fs::remove_file(&tmp);
     Ok(bytes)
@@ -256,7 +256,7 @@ pub(super) fn save_editor_from_body(
         next.ui.active_page_index = index.min(page_count - 1);
     }
     set_file_name_display(&mut next, path);
-    crate::doc_io::save_to_path(&next, path).map_err(WebCanvasError::Io)?;
+    crate::doc_io::save_to_path(&next, path)?;
     Ok(next)
 }
 

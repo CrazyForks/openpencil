@@ -141,6 +141,7 @@ fn server_persistence_does_not_allow_a_reserved_request_endpoint() {
         panic!("persistence must not authorize a reserved provider endpoint");
     };
 
+    let error = error.to_string();
     assert!(error.contains("endpoint"), "unexpected error: {error}");
 }
 

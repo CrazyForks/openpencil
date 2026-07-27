@@ -20,6 +20,7 @@ use super::batch_page::{command_with_outer_page_id, optional_page_id};
 use super::{EditorCommand, McpTool, ToolErrorCode, ToolOutcome};
 
 use super::batch_design_dsl::parse_insert_operations;
+use super::batch_design_dsl_error::OperationsError;
 use super::batch_design_wire::parse_batch_items;
 
 // Re-exported so the pre-split `crate::batch_design::<item>` paths that
@@ -154,7 +155,12 @@ pub(crate) fn expand_script_arg(
     {
         let program = match crate::script_runner::run_script_to_program(script) {
             Ok(p) => p,
-            Err(e) => return Some(Err(ToolOutcome::Err(ToolErrorCode::InvalidArgument, e))),
+            Err(e) => {
+                return Some(Err(ToolOutcome::Err(
+                    ToolErrorCode::InvalidArgument,
+                    e.to_string(),
+                )))
+            }
         };
         let mut forwarded = args.clone();
         forwarded.remove("script");
@@ -240,7 +246,7 @@ pub(crate) fn dispatch_batch_design(
                 }
                 ToolOutcome::OkWithCommand(out, command_with_outer_page_id(command, page_id))
             }
-            Err(e) => ToolOutcome::Err(ToolErrorCode::InvalidArgument, e),
+            Err(e) => ToolOutcome::Err(ToolErrorCode::InvalidArgument, e.to_string()),
         };
     }
     let Some(raw) = args.get("nodes_json") else {
@@ -263,7 +269,7 @@ pub(crate) fn dispatch_batch_design(
             }
             ToolOutcome::OkWithCommand(out, EditorCommand::BatchInsert { items, page_id })
         }
-        Err(e) => ToolOutcome::Err(ToolErrorCode::InvalidArgument, e),
+        Err(e) => ToolOutcome::Err(ToolErrorCode::InvalidArgument, e.to_string()),
     }
 }
 
@@ -282,7 +288,7 @@ pub(crate) enum ParsedOperations {
     Direct(EditorCommand),
 }
 
-pub(crate) fn parse_operations(input: &str) -> Result<ParsedOperations, String> {
+pub(crate) fn parse_operations(input: &str) -> Result<ParsedOperations, OperationsError> {
     let lines = split_operations(input);
     if lines.len() == 1 {
         if let Some(command) = parse_single_direct_operation(&lines[0])? {

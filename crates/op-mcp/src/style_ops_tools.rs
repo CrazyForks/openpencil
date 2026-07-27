@@ -113,7 +113,9 @@ impl McpTool for ReplaceAllMatchingProperties {
         let replaced_count =
             match replace_matching_properties_in_roots(&mut roots, &parent_ids, &replacements) {
                 Ok(count) => count,
-                Err(msg) => return ToolOutcome::Err(ToolErrorCode::InvalidArgument, msg),
+                Err(err) => {
+                    return ToolOutcome::Err(ToolErrorCode::InvalidArgument, err.to_string())
+                }
             };
 
         let mut out = BTreeMap::new();

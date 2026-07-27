@@ -179,7 +179,7 @@ fn export_raster_fails_on_empty_scene() {
     let tmp = std::env::temp_dir().join(format!("op-export-empty-{}.png", std::process::id()));
     let res = export_raster(&scene, &tmp, RasterFormat::Png, 1.0);
     assert!(res.is_err(), "expected Err on empty scene, got {res:?}");
-    assert_eq!(res.unwrap_err(), "nothing to export");
+    assert_eq!(res.unwrap_err().to_string(), "nothing to export");
 }
 
 #[test]
@@ -448,7 +448,7 @@ fn export_node_raster_errors_on_unknown_id() {
     let tmp = std::env::temp_dir().join(format!("op-export-node-miss-{}.png", std::process::id()));
     let res = export_node_raster(&scene, "ghost", &tmp, RasterFormat::Png, 1.0);
     assert!(res.is_err(), "expected Err on unknown id, got {res:?}");
-    assert!(res.unwrap_err().contains("not found"));
+    assert!(res.unwrap_err().to_string().contains("not found"));
 }
 
 fn visible_pixel_count(bytes: &[u8]) -> usize {

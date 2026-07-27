@@ -139,6 +139,51 @@ pub struct HttpReply {
     pub body: String,
 }
 
+/// Why a request over the small local TCP HTTP transport failed.
+///
+/// Structured per socket stage instead of a pre-formatted sentence.
+/// `Display` reproduces the exact text [`TcpJsonRpc::send`] used to return as
+/// `String`, so `op`'s `op: cannot reach the editor on …` output is unchanged
+/// byte-for-byte.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HttpTransportError {
+    /// `TcpStream::connect_timeout` to the local daemon failed or timed out.
+    Connect {
+        /// The loopback address that was dialed.
+        addr: SocketAddr,
+        /// The underlying `std::io::Error`, rendered.
+        error: String,
+    },
+    /// Writing the HTTP request bytes onto the socket failed.
+    Write(String),
+    /// Reading the HTTP response bytes back off the socket failed.
+    Read(String),
+}
+
+impl std::fmt::Display for HttpTransportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HttpTransportError::Connect { addr, error } => write!(
+                f,
+                "cannot reach the editor on {addr}: {error}\n\
+                 start the OpenPencil MCP server and point clients at http://{addr}/mcp"
+            ),
+            HttpTransportError::Write(error) => write!(f, "http write: {error}"),
+            HttpTransportError::Read(error) => write!(f, "http read: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for HttpTransportError {}
+
+/// Keeps `?` working for any caller that still collects transport failures as
+/// `String`.
+impl From<HttpTransportError> for String {
+    fn from(error: HttpTransportError) -> String {
+        error.to_string()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TcpJsonRpc {
     addr: SocketAddr,
@@ -171,32 +216,31 @@ impl TcpJsonRpc {
         format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
     }
 
-    pub fn post_raw(&self, body: &str, timeout: Duration) -> Result<HttpReply, String> {
+    pub fn post_raw(&self, body: &str, timeout: Duration) -> Result<HttpReply, HttpTransportError> {
         self.send(&self.http_post_request(body), timeout)
     }
 
-    pub fn get_raw(&self, path: &str, timeout: Duration) -> Result<HttpReply, String> {
+    pub fn get_raw(&self, path: &str, timeout: Duration) -> Result<HttpReply, HttpTransportError> {
         self.send(&self.http_get_request(path), timeout)
     }
 
-    fn send(&self, request: &str, timeout: Duration) -> Result<HttpReply, String> {
+    fn send(&self, request: &str, timeout: Duration) -> Result<HttpReply, HttpTransportError> {
         let mut stream = TcpStream::connect_timeout(&self.addr, timeout).map_err(|e| {
-            format!(
-                "cannot reach the editor on {}: {e}\n\
-                 start the OpenPencil MCP server and point clients at http://{}/mcp",
-                self.addr, self.addr
-            )
+            HttpTransportError::Connect {
+                addr: self.addr,
+                error: e.to_string(),
+            }
         })?;
         stream.set_read_timeout(Some(timeout)).ok();
         stream.set_write_timeout(Some(timeout)).ok();
         stream
             .write_all(request.as_bytes())
-            .map_err(|e| format!("http write: {e}"))?;
+            .map_err(|e| HttpTransportError::Write(e.to_string()))?;
         stream.flush().ok();
         let mut response = String::new();
         stream
             .read_to_string(&mut response)
-            .map_err(|e| format!("http read: {e}"))?;
+            .map_err(|e| HttpTransportError::Read(e.to_string()))?;
         Ok(split_http_response(&response))
     }
 }

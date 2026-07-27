@@ -81,7 +81,8 @@ fn transient_credential_model_must_match_the_requested_model() {
     let state = Mutex::new(WebCanvasState::new(EditorState::new(), 3100));
 
     let error = apply_request_snapshot(&req, &state, &SseHub::default())
-        .expect_err("mismatched credential must be rejected");
+        .expect_err("mismatched credential must be rejected")
+        .to_string();
 
     assert!(error.contains("model does not match"));
     assert!(state
@@ -107,7 +108,8 @@ fn browser_only_demo_rejects_custom_or_loopback_transient_endpoints_without_muta
         let before = crate::settings_io::fingerprint(&state.lock().unwrap().editor);
 
         let error = apply_request_snapshot(&req, &state, &SseHub::default())
-            .expect_err("public demo must reject custom endpoint");
+            .expect_err("public demo must reject custom endpoint")
+            .to_string();
 
         assert!(error.contains("endpoint"));
         assert_eq!(
@@ -128,7 +130,8 @@ fn server_persistence_does_not_allow_a_reserved_transient_endpoint() {
     ));
 
     let error = apply_request_snapshot(&req, &state, &SseHub::default())
-        .expect_err("persistence must not authorize a reserved provider endpoint");
+        .expect_err("persistence must not authorize a reserved provider endpoint")
+        .to_string();
     assert!(error.contains("endpoint"), "unexpected error: {error}");
 }
 

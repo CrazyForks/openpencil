@@ -198,7 +198,7 @@ fn drain_generate<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) {
     let Some(body) = body else {
         // Dispatch guards `configured`, but settings can change between the
         // press and this drain — surface the same error the desktop does.
-        settle_generate(inner, epoch, Err("Image generation not configured".into()));
+        settle_generate(inner, epoch, Err(ImageGenerateError::NotConfigured));
         return;
     };
     let url = format!(
@@ -215,7 +215,7 @@ fn drain_generate<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) {
         }),
     );
     if !started {
-        settle_generate(inner, epoch, Err("image generation request failed".into()));
+        settle_generate(inner, epoch, Err(ImageGenerateError::RequestFailed));
     }
 }
 
@@ -271,9 +271,47 @@ fn selected_image_dimensions(state: &op_editor_core::EditorState) -> (Option<f64
     }
 }
 
-pub(crate) fn parse_generate_reply(status: u16, text: &str) -> Result<String, String> {
+/// A failed image-generation turn.
+///
+/// `Display` reproduces the ad-hoc `String` messages this enum replaced byte
+/// for byte. `Remote` is the daemon/provider text shown verbatim in the
+/// popover, so it stays a payload string rather than being re-derived.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ImageGenerateError {
+    /// No image-generation profile is configured.
+    NotConfigured,
+    /// The request could not be started at all.
+    RequestFailed,
+    /// The reply was unusable; only the HTTP status is known.
+    Failed(u16),
+    /// The daemon/provider reported an error message.
+    Remote(String),
+}
+
+impl std::fmt::Display for ImageGenerateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ImageGenerateError::NotConfigured => write!(f, "Image generation not configured"),
+            ImageGenerateError::RequestFailed => write!(f, "image generation request failed"),
+            ImageGenerateError::Failed(status) => {
+                write!(f, "image generation failed ({status})")
+            }
+            ImageGenerateError::Remote(message) => write!(f, "{message}"),
+        }
+    }
+}
+
+impl std::error::Error for ImageGenerateError {}
+
+impl From<ImageGenerateError> for String {
+    fn from(error: ImageGenerateError) -> String {
+        error.to_string()
+    }
+}
+
+pub(crate) fn parse_generate_reply(status: u16, text: &str) -> Result<String, ImageGenerateError> {
     let json: serde_json::Value =
-        serde_json::from_str(text).map_err(|_| format!("image generation failed ({status})"))?;
+        serde_json::from_str(text).map_err(|_| ImageGenerateError::Failed(status))?;
     if status == 200 {
         if let Some(url) = json
             .get("url")
@@ -287,14 +325,14 @@ pub(crate) fn parse_generate_reply(status: u16, text: &str) -> Result<String, St
         .get("error")
         .and_then(serde_json::Value::as_str)
         .filter(|e| !e.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| format!("image generation failed ({status})")))
+        .map(|message| ImageGenerateError::Remote(message.to_string()))
+        .unwrap_or(ImageGenerateError::Failed(status)))
 }
 
 fn settle_generate<C: RepaintContext + 'static>(
     inner: &Rc<RefCell<C>>,
     epoch: u64,
-    outcome: Result<String, String>,
+    outcome: Result<String, ImageGenerateError>,
 ) {
     let Ok(mut b) = inner.try_borrow_mut() else {
         return;
@@ -309,9 +347,9 @@ fn settle_generate<C: RepaintContext + 'static>(
                 panel.generate_preview = Some(Arc::new(url));
                 panel.generate_phase = ImageGeneratePhase::Preview;
             }
-            Err(message) => {
+            Err(error) => {
                 // TS truncates the surfaced message to 200 chars.
-                panel.generate_error = message.chars().take(200).collect();
+                panel.generate_error = error.to_string().chars().take(200).collect();
                 panel.generate_phase = ImageGeneratePhase::Error;
             }
         }
@@ -393,16 +431,17 @@ mod tests {
             Ok("data:image/png;base64,AA==".to_string())
         );
         assert_eq!(
-            parse_generate_reply(502, r#"{"ok":false,"error":"quota exceeded"}"#),
+            parse_generate_reply(502, r#"{"ok":false,"error":"quota exceeded"}"#)
+                .map_err(|error| error.to_string()),
             Err("quota exceeded".to_string())
         );
         // 200 without a url still errors (defensive against a half-shaped reply).
         assert_eq!(
-            parse_generate_reply(200, r#"{"ok":true}"#),
+            parse_generate_reply(200, r#"{"ok":true}"#).map_err(|error| error.to_string()),
             Err("image generation failed (200)".to_string())
         );
         assert_eq!(
-            parse_generate_reply(0, ""),
+            parse_generate_reply(0, "").map_err(|error| error.to_string()),
             Err("image generation failed (0)".to_string())
         );
     }

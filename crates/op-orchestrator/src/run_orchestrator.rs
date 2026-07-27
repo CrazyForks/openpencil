@@ -214,7 +214,7 @@ impl Orchestrator {
                     Err(e) => {
                         rollback(sink, &var_snapshot);
                         sink.end_undo_batch();
-                        return Err(OrchestratorError::Internal(e));
+                        return Err(OrchestratorError::Internal(e.to_string()));
                     }
                 }
             } else {
@@ -252,7 +252,7 @@ impl Orchestrator {
                         // scaffold 模板 bug —— 收尾后报内部错误。
                         rollback(sink, &var_snapshot);
                         sink.end_undo_batch();
-                        return Err(OrchestratorError::Internal(e));
+                        return Err(OrchestratorError::Internal(e.to_string()));
                     }
                 }
                 let Some(rid) = sink.state().active_children().iter().find_map(|n| {

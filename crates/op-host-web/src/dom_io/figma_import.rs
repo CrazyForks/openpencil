@@ -10,6 +10,37 @@ use super::{
     console_warn, finish_document_import, js_bytes, open_file_picker, read_file, InnerRc, ReadMode,
 };
 
+/// A `.fig` file that could not be installed, tagged with the file name the
+/// console line prefixes.
+///
+/// `Display` reproduces the ad-hoc `format!("{name}: {error}")` messages this
+/// enum replaced byte for byte.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FigmaImportError {
+    /// The converted canonical document could not be ingested.
+    Ingest {
+        file_name: String,
+        source: file_actions::DocumentIngestError,
+    },
+    /// The browser `FileReader` produced no bytes for the fallback path.
+    NoBytes { file_name: String },
+}
+
+impl std::fmt::Display for FigmaImportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FigmaImportError::Ingest { file_name, source } => {
+                write!(f, "{file_name}: {source}")
+            }
+            FigmaImportError::NoBytes { file_name } => {
+                write!(f, "{file_name}: file read produced no bytes")
+            }
+        }
+    }
+}
+
+impl std::error::Error for FigmaImportError {}
+
 /// Figma modal drop-zone → hidden `.fig` picker → isolated conversion Worker.
 pub(super) fn import_figma<C: RepaintContext + 'static>(inner: &InnerRc<C>) {
     let inner = inner.clone();
@@ -47,7 +78,10 @@ pub(super) fn ingest_figma_file<C: RepaintContext + 'static>(
                     &temp.full_document_json,
                     &temp.warnings_json,
                 )
-                .map_err(|error| format!("{fallback_name}: {error}"));
+                .map_err(|source| FigmaImportError::Ingest {
+                    file_name: fallback_name.clone(),
+                    source,
+                });
                 match result {
                     Ok(ingested) => {
                         // The committed IndexedDB copy remains the loss-safe
@@ -57,7 +91,7 @@ pub(super) fn ingest_figma_file<C: RepaintContext + 'static>(
                             &inner2,
                             generation,
                             ImportSource::Figma,
-                            Ok(ingested),
+                            Ok::<_, FigmaImportError>(ingested),
                             "import-figma",
                         ) {
                             crate::figma_temp_bridge::delete_session(
@@ -119,9 +153,15 @@ fn ingest_figma_file_fallback<C: RepaintContext + 'static>(
             let stem = file_actions::file_stem(&name).to_string();
             // Parse outside any `inner` borrow — it is the heavy fallback step.
             let result = match js_bytes(&value) {
-                Some(bytes) => file_actions::ingest_figma_bytes(&bytes, &stem)
-                    .map_err(|error| format!("{name}: {error}")),
-                None => Err(format!("{name}: file read produced no bytes")),
+                Some(bytes) => file_actions::ingest_figma_bytes(&bytes, &stem).map_err(|source| {
+                    FigmaImportError::Ingest {
+                        file_name: name.clone(),
+                        source,
+                    }
+                }),
+                None => Err(FigmaImportError::NoBytes {
+                    file_name: name.clone(),
+                }),
             };
             finish_document_import(
                 &inner,

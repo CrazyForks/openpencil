@@ -6,6 +6,8 @@ use std::path::Path;
 
 use toml_edit::{value, DocumentMut, InlineTable, Item, Table, Value};
 
+use crate::mcp_config_error::McpConfigError;
+
 const SERVER_NAME: &str = "openpencil";
 
 #[derive(Debug)]
@@ -15,12 +17,15 @@ pub(crate) struct FileSnapshot {
 }
 
 impl FileSnapshot {
-    pub(crate) fn capture(path: &Path) -> Result<Self, String> {
+    pub(crate) fn capture(path: &Path) -> Result<Self, McpConfigError> {
         match fs::read(path) {
             Ok(bytes) => {
                 let permissions = fs::metadata(path)
                     .map(|metadata| metadata.permissions())
-                    .map_err(|error| format!("metadata {}: {error}", path.display()))?;
+                    .map_err(|error| McpConfigError::Metadata {
+                        path: path.to_path_buf(),
+                        message: error.to_string(),
+                    })?;
                 Ok(Self {
                     bytes: Some(bytes),
                     permissions: Some(permissions),
@@ -30,23 +35,29 @@ impl FileSnapshot {
                 bytes: None,
                 permissions: None,
             }),
-            Err(error) => Err(format!("read {}: {error}", path.display())),
+            Err(error) => Err(McpConfigError::Read {
+                path: path.to_path_buf(),
+                message: error.to_string(),
+            }),
         }
     }
 
-    pub(crate) fn restore(&self, path: &Path) -> Result<(), String> {
+    pub(crate) fn restore(&self, path: &Path) -> Result<(), McpConfigError> {
         match &self.bytes {
             Some(bytes) => atomic_write_with_permissions(path, bytes, self.permissions.clone()),
             None => match fs::remove_file(path) {
                 Ok(()) => Ok(()),
                 Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-                Err(error) => Err(format!("remove {}: {error}", path.display())),
+                Err(error) => Err(McpConfigError::Remove {
+                    path: path.to_path_buf(),
+                    message: error.to_string(),
+                }),
             },
         }
     }
 }
 
-pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), McpConfigError> {
     let permissions = fs::metadata(path)
         .ok()
         .map(|metadata| metadata.permissions());
@@ -61,27 +72,45 @@ fn atomic_write_with_permissions(
     path: &Path,
     bytes: &[u8],
     permissions: Option<Permissions>,
-) -> Result<(), String> {
+) -> Result<(), McpConfigError> {
     use op_host_services::doc_io::atomic_file;
 
     let parent = path
         .parent()
-        .ok_or_else(|| format!("{} has no parent directory", path.display()))?;
-    fs::create_dir_all(parent).map_err(|error| format!("create {}: {error}", parent.display()))?;
+        .ok_or_else(|| McpConfigError::NoParentDirectory {
+            path: path.to_path_buf(),
+        })?;
+    fs::create_dir_all(parent).map_err(|error| McpConfigError::CreateDir {
+        path: parent.to_path_buf(),
+        message: error.to_string(),
+    })?;
 
-    let (temp_path, mut temp) = atomic_file::create_sibling_temp(path)?;
+    // `atomic_file` belongs to `op-host-services`, a crate this pass does not
+    // own; carry its message so the text is unchanged either way.
+    let (temp_path, mut temp) = atomic_file::create_sibling_temp(path)
+        .map_err(|error| McpConfigError::AtomicFile(error.to_string()))?;
     let result = (|| {
         temp.write_all(bytes)
-            .map_err(|error| format!("write {}: {error}", temp_path.display()))?;
-        temp.sync_all()
-            .map_err(|error| format!("sync {}: {error}", temp_path.display()))?;
+            .map_err(|error| McpConfigError::Write {
+                path: temp_path.clone(),
+                message: error.to_string(),
+            })?;
+        temp.sync_all().map_err(|error| McpConfigError::Sync {
+            path: temp_path.clone(),
+            message: error.to_string(),
+        })?;
         drop(temp);
 
         if let Some(permissions) = permissions {
-            fs::set_permissions(&temp_path, permissions)
-                .map_err(|error| format!("permissions {}: {error}", temp_path.display()))?;
+            fs::set_permissions(&temp_path, permissions).map_err(|error| {
+                McpConfigError::Permissions {
+                    path: temp_path.clone(),
+                    message: error.to_string(),
+                }
+            })?;
         }
-        atomic_file::replace_file(&temp_path, path)?;
+        atomic_file::replace_file(&temp_path, path)
+            .map_err(|error| McpConfigError::AtomicFile(error.to_string()))?;
         sync_parent(parent);
         Ok(())
     })();
@@ -101,18 +130,26 @@ pub(crate) fn update_grok_config(
     path: &Path,
     enabled: bool,
     server_url: &str,
-) -> Result<(), String> {
+) -> Result<(), McpConfigError> {
     if !enabled && !path.exists() {
         return Ok(());
     }
     let existing = match fs::read_to_string(path) {
         Ok(text) => text,
         Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
-        Err(error) => return Err(format!("read {}: {error}", path.display())),
+        Err(error) => {
+            return Err(McpConfigError::Read {
+                path: path.to_path_buf(),
+                message: error.to_string(),
+            })
+        }
     };
     let mut document = existing
         .parse::<DocumentMut>()
-        .map_err(|error| format!("parse {}: {error}", path.display()))?;
+        .map_err(|error| McpConfigError::Parse {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        })?;
     edit_grok_server(&mut document, enabled, server_url)?;
     atomic_write(path, document.to_string().as_bytes())
 }
@@ -145,7 +182,7 @@ fn edit_grok_server(
     document: &mut DocumentMut,
     enabled: bool,
     server_url: &str,
-) -> Result<(), String> {
+) -> Result<(), McpConfigError> {
     let root = document.as_table_mut();
     if !root.contains_key("mcp_servers") {
         if !enabled {
@@ -155,11 +192,11 @@ fn edit_grok_server(
     }
     let servers_item = root
         .get_mut("mcp_servers")
-        .ok_or_else(|| "mcp_servers is missing".to_string())?;
+        .ok_or(McpConfigError::GrokMcpServersMissing)?;
     let inline = servers_item.is_inline_table();
     let servers = servers_item
         .as_table_like_mut()
-        .ok_or_else(|| "mcp_servers must be a table".to_string())?;
+        .ok_or(McpConfigError::GrokMcpServersNotATable)?;
 
     if enabled {
         let server = if inline {

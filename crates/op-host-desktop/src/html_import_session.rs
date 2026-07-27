@@ -14,6 +14,7 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
 
 use crate::figma_import_session::{PreparedImport, PumpOutcome};
+use crate::html_import_error::HtmlImportError;
 use crate::persistence::show_error_dialog_public;
 use op_host_services::doc_io::ErrorKind;
 
@@ -25,7 +26,7 @@ const LOCAL_RESOURCE_ORIGIN: &str = "https://openpencil.local/";
 /// (for the error dialog) plus the worker-thread receiver.
 pub struct HtmlImportSession {
     path: PathBuf,
-    rx: Receiver<Result<PreparedImport, String>>,
+    rx: Receiver<Result<PreparedImport, HtmlImportError>>,
 }
 
 /// Spawn a worker thread that reads `path`, converts a single page or
@@ -53,13 +54,13 @@ pub fn spawn(host: &mut WidgetHostNative, path: PathBuf) -> HtmlImportSession {
         // Deliver the failure through the normal pump path (error
         // dialog + overlay-flag clear) instead of crashing the app.
         eprintln!("[import-html] failed to spawn worker: {err}");
-        let _ = tx.send(Err(format!("import worker failed to start: {err}")));
+        let _ = tx.send(Err(HtmlImportError::WorkerSpawn(err.to_string())));
     }
 
     HtmlImportSession { path, rx }
 }
 
-fn parse_path(path: &Path) -> Result<PreparedImport, String> {
+fn parse_path(path: &Path) -> Result<PreparedImport, HtmlImportError> {
     let file_name = path
         .file_stem()
         .and_then(|s| s.to_str())
@@ -68,15 +69,19 @@ fn parse_path(path: &Path) -> Result<PreparedImport, String> {
     let transform =
         |bytes: &[u8]| crate::image_downscale::maybe_downscale(bytes).map(|(_mime, out)| out);
     let result = if is_zip_path(path) {
-        let archive = std::fs::File::open(path).map_err(|error| error.to_string())?;
+        // `std::io::Error` and `op_html`'s error belong to code this pass
+        // does not own, so their messages ride along as text.
+        let archive = std::fs::File::open(path)
+            .map_err(|error| HtmlImportError::ReadSource(error.to_string()))?;
         let opts = op_html::HtmlImportOptions {
             document_name: Some(file_name.to_string()),
             ..Default::default()
         };
         op_html::import_html_zip_reader_document_with_transform(archive, &opts, Some(&transform))
-            .map_err(|error| error.to_string())?
+            .map_err(|error| HtmlImportError::Import(error.to_string()))?
     } else {
-        let source_bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+        let source_bytes =
+            std::fs::read(path).map_err(|error| HtmlImportError::ReadSource(error.to_string()))?;
         let source = op_html::html_encoding::decode_html_bytes(&source_bytes);
         let base_dir = path.parent().map(Path::to_path_buf).unwrap_or_default();
         // Relative references only resolve when the importer has a base
@@ -98,11 +103,9 @@ fn parse_path(path: &Path) -> Result<PreparedImport, String> {
         op_html::import_html_document(source.as_ref(), &opts, Some(&fetcher), Some(&transform))
     };
     if result.document.children.is_empty() {
-        return Err(result
-            .warnings
-            .first()
-            .cloned()
-            .unwrap_or_else(|| "no importable content".to_string()));
+        return Err(HtmlImportError::NoImportableContent(
+            result.warnings.first().cloned(),
+        ));
     }
     let state = EditorState::from_document(result.document);
     Ok(PreparedImport {
@@ -213,7 +216,7 @@ pub fn pump(
         }
         Ok(Err(e)) => {
             eprintln!("[import-html] {e}");
-            show_error_dialog_public(host, ErrorKind::Open, Some(&sess.path), &e);
+            show_error_dialog_public(host, ErrorKind::Open, Some(&sess.path), &e.to_string());
             host.editor_state_mut().editor_ui.figma_import_in_progress = false;
             host.mark_editor_state_dirty();
             *session = None;
@@ -423,7 +426,7 @@ mod tests {
 
         let error = match parse_path(&path) {
             Ok(_) => panic!("invalid zip must fail"),
-            Err(error) => error,
+            Err(error) => error.to_string(),
         };
 
         let _ = std::fs::remove_file(&path);

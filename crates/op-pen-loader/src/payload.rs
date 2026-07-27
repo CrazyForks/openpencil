@@ -30,6 +30,7 @@ fn lock_thumbnail_registry_for_test() -> std::sync::MutexGuard<'static, ()> {
 
 pub use compatibility::{
     write_normalized_source_with_current_schema, CanonicalLoad, CompatibilityReport,
+    NormalizedWriteError,
 };
 use legacy_normalize::normalize_legacy_value;
 

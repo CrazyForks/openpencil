@@ -267,19 +267,21 @@ fn begin_html_document_import<C: RepaintContext + 'static>(inner: &InnerRc<C>) -
     begin_document_import(inner, ImportSource::Html)
 }
 
-fn finish_html_import<C: RepaintContext + 'static>(
+fn finish_html_import<C: RepaintContext + 'static, E: std::fmt::Display>(
     inner: &InnerRc<C>,
     generation: u64,
-    result: Result<file_actions::IngestedDoc, String>,
+    result: Result<file_actions::IngestedDoc, E>,
 ) {
     finish_document_import(inner, generation, ImportSource::Html, result, "import-html");
 }
 
-fn finish_document_import<C: RepaintContext + 'static>(
+/// Generic over the ingest error so every import path can hand over its own
+/// typed failure; the console line only ever renders it through `Display`.
+fn finish_document_import<C: RepaintContext + 'static, E: std::fmt::Display>(
     inner: &InnerRc<C>,
     generation: u64,
     source: ImportSource,
-    result: Result<file_actions::IngestedDoc, String>,
+    result: Result<file_actions::IngestedDoc, E>,
     log_tag: &str,
 ) -> bool {
     if !document_import_is_current(inner, generation, source) {

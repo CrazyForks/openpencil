@@ -21,6 +21,10 @@ use crate::chat_agent_loop::{run_anthropic_agent_loop, run_openai_agent_loop, Ag
 use crate::chat_canvas_tools::MAX_TOOL_TURNS;
 use crate::chat_runtime::{resolved_skill_preamble, shared_runtime, BlockingRecvIter};
 
+#[path = "chat_builtin_http_error.rs"]
+mod error;
+pub use error::BuiltinHttpError;
+
 pub use crate::chat_builtin_http_wire::{map_anthropic_stop_reason, map_openai_stop_reason};
 pub(crate) use crate::chat_builtin_http_wire::{
     normalize_provider_base_url, parse_anthropic_sse_data, parse_openai_sse_data,
@@ -75,7 +79,7 @@ pub struct ConfiguredBuiltinProvider {
     /// provider; regular chat leaves it false so an ordinary tool-using
     /// chat turn never mutates an existing design (Track-1 Step 4 scope).
     finalize_on_exit: bool,
-    construction_error: Option<String>,
+    construction_error: Option<BuiltinHttpError>,
     http_client: Option<reqwest::Client>,
     max_retries: u32,
     min_gap: Duration,
@@ -104,7 +108,9 @@ impl ConfiguredBuiltinProvider {
         let http_client = match builtin_http_client() {
             Ok(client) => Some(client),
             Err(error) => {
-                construction_error.get_or_insert(error);
+                // The dial guard's `ClientBuild` folds into `Dial` — same
+                // sentence, so the reported construction error is unchanged.
+                construction_error.get_or_insert(error.into());
                 None
             }
         };
@@ -143,14 +149,14 @@ impl ConfiguredBuiltinProvider {
 
     /// Per-request client honoring this provider's dial policy. `Trusted`
     /// reuses the eagerly-built client; `PublicOnly` resolves + pins.
-    async fn dial_client(&self, url: &str) -> Result<reqwest::Client, String> {
+    async fn dial_client(&self, url: &str) -> Result<reqwest::Client, BuiltinHttpError> {
         match self.dial_policy {
             crate::provider_dial::EndpointDialPolicy::Trusted => self
                 .http_client
                 .clone()
-                .ok_or_else(|| "Provider HTTP client is unavailable".to_string()),
+                .ok_or(BuiltinHttpError::ClientUnavailable),
             crate::provider_dial::EndpointDialPolicy::PublicOnly => {
-                crate::provider_dial::client_for(self.dial_policy, url).await
+                Ok(crate::provider_dial::client_for(self.dial_policy, url).await?)
             }
         }
     }
@@ -205,7 +211,9 @@ impl ChatProvider for ConfiguredBuiltinProvider {
         if let Some(error) = &self.construction_error {
             return Box::new(
                 [
-                    ChatDelta::Error(error.clone()),
+                    // `ChatDelta::Error` is `op-ai`'s transcript sink and
+                    // takes a `String`; render at this boundary only.
+                    ChatDelta::Error(error.to_string()),
                     ChatDelta::Done {
                         stop_reason: StopReason::Aborted,
                     },
@@ -329,7 +337,9 @@ impl ChatProvider for ConfiguredBuiltinProvider {
                         .await;
                 }
                 Err(e) => {
-                    let _ = tx.send(ChatDelta::Error(e)).await;
+                    // Same `op-ai`-owned sink as above: render the typed
+                    // failure into the transcript's `String` here.
+                    let _ = tx.send(ChatDelta::Error(e.to_string())).await;
                     let _ = tx
                         .send(ChatDelta::Done {
                             stop_reason: StopReason::Aborted,
@@ -445,7 +455,7 @@ pub(crate) async fn send_with_backoff(
     max_retries: u32,
     min_gap: Duration,
     build: impl Fn() -> reqwest::RequestBuilder,
-) -> Result<reqwest::Response, String> {
+) -> Result<reqwest::Response, BuiltinHttpError> {
     for attempt in 0..=max_retries {
         throttle_builtin_http_request(min_gap).await;
         match build().send().await {
@@ -474,24 +484,36 @@ pub(crate) async fn send_with_backoff(
                     // later. The prior wording "(429)" (no "http") silently
                     // missed that classifier — a genuinely exhausted 429 was
                     // misread as retryable and got attempts 2/3 anyway.
-                    return Err(format!(
-                        "The model provider is rate-limiting this account (HTTP 429) and the run could not ride it out after {max_retries} retries. Wait a moment, then send the prompt again to continue. ({label})"
-                    ));
+                    return Err(BuiltinHttpError::RateLimited {
+                        label: label.to_string(),
+                        max_retries,
+                    });
                 }
                 // Provider error bodies are untrusted and can echo request
                 // headers. Never relay them into chat/SSE where credentials
                 // could be reflected back into logs or browser responses.
-                return Err(format!("{label} http {status}"));
+                return Err(BuiltinHttpError::HttpStatus {
+                    label: label.to_string(),
+                    status,
+                });
             }
             Err(e) => {
                 if e.is_timeout() {
-                    return Err(format!("{label} POST {url} timed out: {e}"));
+                    return Err(BuiltinHttpError::Timeout {
+                        label: label.to_string(),
+                        url: url.to_string(),
+                        message: e.to_string(),
+                    });
                 }
                 if attempt < max_retries {
                     tokio::time::sleep(backoff_delay(attempt)).await;
                     continue;
                 }
-                return Err(format!("{label} POST {url}: {e}"));
+                return Err(BuiltinHttpError::Transport {
+                    label: label.to_string(),
+                    url: url.to_string(),
+                    message: e.to_string(),
+                });
             }
         }
     }
@@ -506,7 +528,7 @@ async fn run_openai_chat(
     max_output_tokens: u32,
     disable_thinking: bool,
     tx: &mpsc::Sender<ChatDelta>,
-) -> Result<bool, String> {
+) -> Result<bool, BuiltinHttpError> {
     let url = provider.endpoint("/chat/completions");
     let mut messages = Vec::new();
     if !system_prompt.trim().is_empty() {
@@ -561,10 +583,18 @@ async fn run_openai_chat(
 /// in-flight request). These deadlines surface the stall as an error so the
 /// planning loop falls back instead of hanging. 300s is generous enough not to
 /// kill a slow-but-live generation.
-pub(crate) fn builtin_http_client() -> Result<reqwest::Client, String> {
-    builtin_http_client_builder()
-        .build()
-        .map_err(|error| format!("Failed to configure provider HTTP client: {error}"))
+///
+/// Reports [`crate::provider_dial::ProviderDialError::ClientBuild`] rather
+/// than a local variant: this IS the `Trusted` half of `provider_dial`'s
+/// dial, and the pinned `PublicOnly` half produces the same sentence for the
+/// same reqwest failure — one variant keeps them from drifting apart.
+pub(crate) fn builtin_http_client(
+) -> Result<reqwest::Client, crate::provider_dial::ProviderDialError> {
+    builtin_http_client_builder().build().map_err(|error| {
+        crate::provider_dial::ProviderDialError::ClientBuild {
+            message: error.to_string(),
+        }
+    })
 }
 
 /// Shared builder so pinned (DNS-screened) clients keep the same redirect
@@ -583,7 +613,7 @@ async fn run_anthropic_chat(
     prompt: String,
     max_output_tokens: u32,
     tx: &mpsc::Sender<ChatDelta>,
-) -> Result<bool, String> {
+) -> Result<bool, BuiltinHttpError> {
     let url = provider.endpoint("/v1/messages");
     // Prior turns ride as full wire messages ahead of the current
     // user prompt (TS parity: builtin multi-turn context seeding).

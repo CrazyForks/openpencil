@@ -198,21 +198,44 @@ pub struct WebImageSearchOutcome {
     pub source: Option<&'static str>,
 }
 
+/// Why a `POST /api/ai/image/search` body was refused. Both variants answer
+/// HTTP 400; the enum exists so the route reports WHICH client mistake was
+/// made instead of matching on prose, and `Display` reproduces the exact
+/// sentence the JSON reply already carried.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SearchRequestError {
+    /// The body is not JSON, or is JSON but not an object.
+    InvalidBody,
+    /// The body is a valid object but carries no non-blank `query`.
+    MissingQuery,
+}
+
+impl std::fmt::Display for SearchRequestError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SearchRequestError::InvalidBody => f.write_str("invalid request body"),
+            SearchRequestError::MissingQuery => f.write_str("missing query"),
+        }
+    }
+}
+
+impl std::error::Error for SearchRequestError {}
+
 /// Parse the request body and snapshot the daemon-side credential fallback.
-/// Returns `(query, credentials)` or an error message for the 400 reply.
+/// Returns `(query, credentials)` or the reason for the 400 reply.
 pub(crate) fn parse_search_request(
     body: &str,
     state: &op_editor_core::EditorState,
-) -> Result<(String, Option<WebOpenverseCredentials>), String> {
+) -> Result<(String, Option<WebOpenverseCredentials>), SearchRequestError> {
     let value: serde_json::Value =
-        serde_json::from_str(body).map_err(|_| "invalid request body".to_string())?;
-    let obj = value.as_object().ok_or("invalid request body")?;
+        serde_json::from_str(body).map_err(|_| SearchRequestError::InvalidBody)?;
+    let obj = value.as_object().ok_or(SearchRequestError::InvalidBody)?;
     let query = obj
         .get("query")
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|q| !q.is_empty())
-        .ok_or("missing query")?;
+        .ok_or(SearchRequestError::MissingQuery)?;
     // Browser-held credential wins; the daemon's persisted settings are the
     // fallback (both are optional — anonymous Openverse works, rate-limited).
     let request_credentials = obj

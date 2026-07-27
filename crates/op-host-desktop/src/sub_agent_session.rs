@@ -51,6 +51,7 @@ use crate::chat_session::{self, builtin_provider_with_design_tools, ChatSession}
 use crate::design_loop_indicator::{
     collect_top_level_frame_ids, register_new_frames, DesignLoopIndicator,
 };
+use crate::sub_agent_spawn_error::SpawnArgsError;
 
 /// One launched sub-agent: its scoped design `ChatSession`, its assigned
 /// colour/name identity, and the canvas indicator that badges the frames
@@ -410,15 +411,15 @@ pub(crate) fn pump_sub_agents(
 /// `config` as a JSON-string, so we normalise: extract the `config` value,
 /// re-serialise an array to a string (a string value is used verbatim),
 /// and dispatch into the shared validator.
-pub(crate) fn parse_spawn_args(args_json: &str) -> Result<Vec<SpawnSpec>, String> {
+pub(crate) fn parse_spawn_args(args_json: &str) -> Result<Vec<SpawnSpec>, SpawnArgsError> {
     use std::collections::BTreeMap;
 
+    // `serde_json` and `op-mcp` belong to crates this pass does not own, so
+    // their messages ride along as text.
     let value: serde_json::Value = serde_json::from_str(args_json.trim())
-        .map_err(|e| format!("spawn_agents args must be a JSON object: {e}"))?;
+        .map_err(|e| SpawnArgsError::NotJson(e.to_string()))?;
 
-    let config = value
-        .get("config")
-        .ok_or_else(|| "spawn_agents requires a non-empty config array".to_string())?;
+    let config = value.get("config").ok_or(SpawnArgsError::MissingConfig)?;
 
     let config_str = match config {
         // Already a JSON-string of the array — use verbatim.
@@ -430,7 +431,7 @@ pub(crate) fn parse_spawn_args(args_json: &str) -> Result<Vec<SpawnSpec>, String
 
     let mut args = BTreeMap::new();
     args.insert("config".to_string(), config_str);
-    op_mcp::spawn_agents_tool::parse_spawn_config(&args)
+    op_mcp::spawn_agents_tool::parse_spawn_config(&args).map_err(SpawnArgsError::Invalid)
 }
 
 #[cfg(test)]

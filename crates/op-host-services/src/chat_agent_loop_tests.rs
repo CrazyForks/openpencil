@@ -330,7 +330,7 @@ fn anthropic_text_turn() -> String {
 pub(super) fn run_loop_collect(
     cfg: AgentLoopConfig,
     anthropic: bool,
-) -> (Result<bool, String>, Vec<ChatDelta>) {
+) -> (Result<bool, BuiltinHttpError>, Vec<ChatDelta>) {
     let (tx, mut rx) = mpsc::channel::<ChatDelta>(64);
     let outcome = shared_runtime().block_on(async {
         if anthropic {

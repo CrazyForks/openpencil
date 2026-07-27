@@ -400,23 +400,25 @@ fn sorted_screen_paths(app: &AppMode) -> Vec<String> {
 
 pub(in crate::preview) fn solve_roots(
     runtime: &mut Runtime,
-) -> Result<(Vec<RootFrame>, (f32, f32)), String> {
+) -> Result<(Vec<RootFrame>, (f32, f32)), super::PreviewLayoutError> {
+    use super::PreviewLayoutError;
+
     runtime
         .layout
         .set_backend(std::rc::Rc::new(jian_skia::SkiaMeasure::new()));
     let primary_available = {
         let Some(rt_doc) = runtime.document.as_ref() else {
-            return Err("preview runtime has no document".to_string());
+            return Err(PreviewLayoutError::NoDocument);
         };
         let root_keys = rt_doc.tree.roots.clone();
         let taffy_roots = runtime
             .layout
             .build(&rt_doc.tree)
-            .map_err(|e| format!("build layout tree: {e}"))?;
+            .map_err(|e| PreviewLayoutError::BuildTree(e.to_string()))?;
         // `build` never clears `runtime.document`; surface an error
         // rather than panic to keep the no-panic contract.
         let Some(rt_doc) = runtime.document.as_ref() else {
-            return Err("preview runtime document vanished after layout build".to_string());
+            return Err(PreviewLayoutError::DocumentVanished);
         };
         let mut primary: Option<(f32, f32)> = None;
         for (root_key, taffy_root) in root_keys.iter().zip(taffy_roots.iter()) {
@@ -432,7 +434,7 @@ pub(in crate::preview) fn solve_roots(
             runtime
                 .layout
                 .compute(*taffy_root, per_root)
-                .map_err(|e| format!("compute layout: {e}"))?;
+                .map_err(|e| PreviewLayoutError::Compute(e.to_string()))?;
         }
         primary.unwrap_or((1440.0, 900.0))
     };

@@ -1,21 +1,24 @@
 use super::load_report::is_strict_format_version;
-use super::{sidecar_path, DocumentLoadReport, LoadedEditorState};
+use super::{sidecar_path, DocIoError, DocumentLoadReport, LoadedEditorState};
 use op_editor_core::EditorState;
 use op_pen_loader::{apply_editor_meta, extract_editor_meta_with_report, EditorMeta};
 
 pub fn load_editor_state(
     path: &std::path::Path,
     locale: op_editor_core::Locale,
-) -> Result<EditorState, String> {
+) -> Result<EditorState, DocIoError> {
     load_editor_state_with_report(path, locale).map(|loaded| loaded.state)
 }
 
 pub fn load_editor_state_with_report(
     path: &std::path::Path,
     locale: op_editor_core::Locale,
-) -> Result<LoadedEditorState, String> {
-    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
-    let file_len = file.metadata().map_err(|e| e.to_string())?.len();
+) -> Result<LoadedEditorState, DocIoError> {
+    let file = std::fs::File::open(path).map_err(|e| DocIoError::Io(e.to_string()))?;
+    let file_len = file
+        .metadata()
+        .map_err(|e| DocIoError::Io(e.to_string()))?
+        .len();
     if file_len == 0 {
         let (state, embedded_meta, report) = parse_editor_state_source("", locale)?;
         return Ok(finish_loaded_state_with_report(
@@ -28,10 +31,15 @@ pub fn load_editor_state_with_report(
     // SAFETY: The map is read-only and lives through this synchronous parse.
     // OpenPencil atomically replaces its own files rather than truncating the
     // mapped inode in place.
-    let bytes = unsafe { memmap2::MmapOptions::new().map(&file) }.map_err(|e| e.to_string())?;
+    let bytes = unsafe { memmap2::MmapOptions::new().map(&file) }
+        .map_err(|e| DocIoError::Io(e.to_string()))?;
     let src = std::str::from_utf8(bytes.as_ref()).map_err(|error| {
-        op_i18n::translate(locale, "dialog.loadErrorInvalidUtf8")
-            .replace("{{detail}}", &error.to_string())
+        // `op_i18n` owns this sentence; it is end-user copy, so it is carried
+        // through verbatim with its placeholder already substituted.
+        DocIoError::InvalidUtf8Document(
+            op_i18n::translate(locale, "dialog.loadErrorInvalidUtf8")
+                .replace("{{detail}}", &error.to_string()),
+        )
     })?;
     let (state, embedded_meta, report) = parse_editor_state_source(src, locale)?;
     Ok(finish_loaded_state_with_report(
@@ -45,7 +53,7 @@ pub fn load_editor_state_with_report(
 pub fn load_editor_state_from_source(
     src: &str,
     locale: op_editor_core::Locale,
-) -> Result<EditorState, String> {
+) -> Result<EditorState, DocIoError> {
     let (state, embedded_meta, _) = parse_editor_state_source(src, locale)?;
     Ok(finish_loaded_state(state, embedded_meta))
 }
@@ -53,15 +61,19 @@ pub fn load_editor_state_from_source(
 fn parse_editor_state_source(
     src: &str,
     locale: op_editor_core::Locale,
-) -> Result<(EditorState, Option<EditorMeta>, DocumentLoadReport), String> {
+) -> Result<(EditorState, Option<EditorMeta>, DocumentLoadReport), DocIoError> {
     let embedded = extract_editor_meta_with_report(src);
     let canonical = match op_pen_loader::payload::load_canonical_with_compatibility(src) {
         Ok(loaded) => loaded,
         Err(error) => {
             if looks_like_legacy_doc_payload(src) {
-                return Err(op_i18n::translate(locale, "dialog.loadErrorOldVersion").to_string());
+                return Err(DocIoError::LegacyFormat(
+                    op_i18n::translate(locale, "dialog.loadErrorOldVersion").to_string(),
+                ));
             }
-            return Err(error.to_string());
+            // `op_pen_loader` is not owned by this pass — carry its schema
+            // rejection verbatim.
+            return Err(DocIoError::Schema(error.to_string()));
         }
     };
     let loaded = canonical.loaded;

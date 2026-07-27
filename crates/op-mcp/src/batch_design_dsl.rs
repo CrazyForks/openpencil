@@ -11,6 +11,7 @@ use jian_ops_schema::node::PenNode;
 use op_editor_core::{NodeId, PenNodeExt};
 
 use super::batch_design::{ensure_node_ids, normalize_node_shape};
+use super::batch_design_dsl_error::InsertDslError;
 
 struct ParsedInsert {
     binding: String,
@@ -25,10 +26,10 @@ enum ParentRef {
 
 type InsertForest = (NodeId, Vec<PenNode>, usize, Vec<String>);
 
-pub(crate) fn parse_insert_operations(input: &str) -> Result<InsertForest, String> {
+pub(crate) fn parse_insert_operations(input: &str) -> Result<InsertForest, InsertDslError> {
     let lines = split_operations(input);
     if lines.is_empty() {
-        return Err("operations must contain at least one I(parent, node) operation".into());
+        return Err(InsertDslError::NoOperations);
     }
     let mut inserts = Vec::new();
     let mut binding_to_idx = BTreeMap::new();
@@ -36,14 +37,20 @@ pub(crate) fn parse_insert_operations(input: &str) -> Result<InsertForest, Strin
     for (line_idx, line) in lines.iter().enumerate() {
         let (binding, parent, data) = parse_insert_operation(line, line_idx)?;
         if binding_to_idx.contains_key(&binding) {
-            return Err(format!("duplicate binding {binding:?}"));
+            return Err(InsertDslError::DuplicateBinding(binding));
         }
         let mut value: serde_json::Value =
-            serde_json::from_str(data).map_err(|e| format!("{binding}: invalid node JSON: {e}"))?;
+            serde_json::from_str(data).map_err(|e| InsertDslError::InvalidNodeJson {
+                binding: binding.clone(),
+                detail: e.to_string(),
+            })?;
         normalize_node_shape(&mut value);
         ensure_node_ids(&mut value, &mut tmp_id);
-        let mut node: PenNode = serde_json::from_value(value)
-            .map_err(|e| format!("{binding}: invalid PenNode payload: {e}"))?;
+        let mut node: PenNode =
+            serde_json::from_value(value).map_err(|e| InsertDslError::InvalidPenNode {
+                binding: binding.clone(),
+                detail: e.to_string(),
+            })?;
         // Stamp the binding as the node's authored id so the post-insert remap
         // (which the `batch_design` tool simulates) can be traced back to its
         // binding for the TS `results:[{binding,nodeId}]` map. The host remaps
@@ -64,7 +71,7 @@ pub(crate) fn parse_insert_operations(input: &str) -> Result<InsertForest, Strin
 fn assemble_insert_forest(
     inserts: Vec<ParsedInsert>,
     binding_to_idx: &BTreeMap<String, usize>,
-) -> Result<(NodeId, Vec<PenNode>, usize), String> {
+) -> Result<(NodeId, Vec<PenNode>, usize), InsertDslError> {
     let mut children_by_parent = vec![Vec::<usize>::new(); inserts.len()];
     let mut roots = Vec::<usize>::new();
     let mut real_parent: Option<NodeId> = None;
@@ -74,7 +81,7 @@ fn assemble_insert_forest(
             ParentRef::Ref(raw) => {
                 if let Some(parent_idx) = binding_to_idx.get(raw).copied() {
                     if parent_idx == idx {
-                        return Err(format!("{} cannot be inserted under itself", item.binding));
+                        return Err(InsertDslError::SelfParent(item.binding.clone()));
                     }
                     children_by_parent[parent_idx].push(idx);
                 } else {
@@ -82,10 +89,7 @@ fn assemble_insert_forest(
                     if parent_id.is_real() {
                         match &real_parent {
                             Some(existing) if existing != &parent_id => {
-                                return Err(
-                                    "operations can target only one existing parent per call"
-                                        .into(),
-                                );
+                                return Err(InsertDslError::MultipleExistingParents);
                             }
                             None => real_parent = Some(parent_id),
                             _ => {}
@@ -97,7 +101,7 @@ fn assemble_insert_forest(
         }
     }
     if roots.is_empty() {
-        return Err("operations must include at least one root insert".into());
+        return Err(InsertDslError::NoRootInsert);
     }
     let mut visit = vec![0u8; inserts.len()];
     let mut nodes = Vec::with_capacity(roots.len());
@@ -112,9 +116,9 @@ fn build_tree(
     inserts: &[ParsedInsert],
     children_by_parent: &[Vec<usize>],
     visit: &mut [u8],
-) -> Result<PenNode, String> {
+) -> Result<PenNode, InsertDslError> {
     match visit[idx] {
-        1 => return Err("operations contain a parent cycle".into()),
+        1 => return Err(InsertDslError::ParentCycle),
         2 => return Ok(inserts[idx].node.clone()),
         _ => {}
     }
@@ -123,10 +127,7 @@ fn build_tree(
     for child_idx in &children_by_parent[idx] {
         let child = build_tree(*child_idx, inserts, children_by_parent, visit)?;
         let Some(children) = node.children_mut() else {
-            return Err(format!(
-                "binding {:?} cannot receive children because it is not a container",
-                inserts[idx].binding
-            ));
+            return Err(InsertDslError::NotAContainer(inserts[idx].binding.clone()));
         };
         children.push(child);
     }
@@ -134,31 +135,32 @@ fn build_tree(
     Ok(node)
 }
 
-fn parse_insert_operation(line: &str, index: usize) -> Result<(String, ParentRef, &str), String> {
+fn parse_insert_operation(
+    line: &str,
+    index: usize,
+) -> Result<(String, ParentRef, &str), InsertDslError> {
     let trimmed = line.trim().trim_end_matches(';').trim();
     let (binding, call) = match find_top_level_char(trimmed, '=') {
         Some(eq) => {
             let binding = trimmed[..eq].trim();
             if !is_binding(binding) {
-                return Err(format!("invalid binding {binding:?}"));
+                return Err(InsertDslError::InvalidBinding(binding.to_string()));
             }
             (binding.to_string(), trimmed[eq + 1..].trim())
         }
         None => (format!("_auto_{index}_I"), trimmed),
     };
     if !call.starts_with("I(") || !call.ends_with(')') {
-        return Err(format!(
-            "{binding}: only I(parent, node) operations are supported"
-        ));
+        return Err(InsertDslError::UnsupportedOperation(binding));
     }
     let body = &call[2..call.len() - 1];
     let Some(comma) = find_top_level_char(body, ',') else {
-        return Err(format!("{binding}: I() requires parent and node JSON"));
+        return Err(InsertDslError::MissingArguments(binding));
     };
     let parent = parse_parent_ref(body[..comma].trim())?;
     let data = body[comma + 1..].trim();
     if data.is_empty() {
-        return Err(format!("{binding}: node JSON is empty"));
+        return Err(InsertDslError::EmptyNodeJson(binding));
     }
     Ok((binding, parent, data))
 }
@@ -278,7 +280,7 @@ pub(crate) fn find_top_level_char(s: &str, target: char) -> Option<usize> {
     None
 }
 
-fn parse_parent_ref(raw: &str) -> Result<ParentRef, String> {
+fn parse_parent_ref(raw: &str) -> Result<ParentRef, InsertDslError> {
     let raw = raw.trim();
     if matches!(raw, "null" | "undefined" | "\"\"" | "''" | "0" | "\"0\"") {
         return Ok(ParentRef::Root);
@@ -286,7 +288,7 @@ fn parse_parent_ref(raw: &str) -> Result<ParentRef, String> {
     if raw.starts_with('"') {
         return serde_json::from_str::<String>(raw)
             .map(ParentRef::Ref)
-            .map_err(|e| format!("invalid quoted parent ref: {e}"));
+            .map_err(|e| InsertDslError::InvalidQuotedParentRef(e.to_string()));
     }
     if raw.starts_with('\'') && raw.ends_with('\'') && raw.len() >= 2 {
         return Ok(ParentRef::Ref(raw[1..raw.len() - 1].to_string()));

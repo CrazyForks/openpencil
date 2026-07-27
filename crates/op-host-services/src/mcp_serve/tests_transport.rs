@@ -301,25 +301,35 @@ fn document_sync_route_matches_only_post_to_the_ts_rest_path() {
 fn parse_document_sync_body_mirrors_ts_validation() {
     // Missing `document` key.
     assert_eq!(
-        parse_document_sync_body(r#"{"sourceClientId":"x"}"#).unwrap_err(),
+        parse_document_sync_body(r#"{"sourceClientId":"x"}"#)
+            .unwrap_err()
+            .to_string(),
         "Missing document in request body"
     );
     // Non-object document / missing version / no children|pages array.
     assert_eq!(
-        parse_document_sync_body(r#"{"document":42}"#).unwrap_err(),
+        parse_document_sync_body(r#"{"document":42}"#)
+            .unwrap_err()
+            .to_string(),
         "Invalid document format"
     );
     assert_eq!(
-        parse_document_sync_body(r#"{"document":{"children":[]}}"#).unwrap_err(),
+        parse_document_sync_body(r#"{"document":{"children":[]}}"#)
+            .unwrap_err()
+            .to_string(),
         "Invalid document format"
     );
     assert_eq!(
-        parse_document_sync_body(r#"{"document":{"version":"1.0"}}"#).unwrap_err(),
+        parse_document_sync_body(r#"{"document":{"version":"1.0"}}"#)
+            .unwrap_err()
+            .to_string(),
         "Invalid document format"
     );
     // Malformed JSON.
     assert_eq!(
-        parse_document_sync_body("not json").unwrap_err(),
+        parse_document_sync_body("not json")
+            .unwrap_err()
+            .to_string(),
         "Invalid document format"
     );
     // Valid: version + children array.

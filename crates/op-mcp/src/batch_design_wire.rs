@@ -4,12 +4,13 @@
 //!
 //! Split out of `batch_design.rs` to stay under the 800-line cap.
 
+use super::batch_design_wire_error::WireParseError;
 use super::write_tools::{validate_hex, ALLOWED_KINDS};
 use super::BatchInsertItem;
 
 /// Hand-rolled parser for the `nodes_json` payload. Shell-core
 /// stays serde-free so the wasm32 bundle doesn't grow. Returns a
-/// Vec<BatchInsertItem> on success, an English error string on
+/// Vec<BatchInsertItem> on success, a typed [`WireParseError`] on
 /// any structural problem.
 ///
 /// Grammar (whitespace ignored):
@@ -21,7 +22,7 @@ use super::BatchInsertItem;
 ///
 /// Strings handle `\"` and `\\` escapes inline; no `\u` decode
 /// (the wire never carries unicode escapes in tool args today).
-pub(crate) fn parse_batch_items(input: &str) -> Result<Vec<BatchInsertItem>, String> {
+pub(crate) fn parse_batch_items(input: &str) -> Result<Vec<BatchInsertItem>, WireParseError> {
     // The wire-level parser doesn't unescape JSON string contents
     // — `{"nodes_json":"[\"x\"]"}` arrives here as the raw bytes
     // `[\"x\"]` (backslash + quote). Pre-pass: unescape so the
@@ -31,7 +32,7 @@ pub(crate) fn parse_batch_items(input: &str) -> Result<Vec<BatchInsertItem>, Str
     let mut i = 0usize;
     skip_ws(bytes, &mut i);
     if i >= bytes.len() || bytes[i] != b'[' {
-        return Err("nodes_json must start with `[`".into());
+        return Err(WireParseError::ArrayMustStartWithBracket);
     }
     i += 1;
     skip_ws(bytes, &mut i);
@@ -45,7 +46,7 @@ pub(crate) fn parse_batch_items(input: &str) -> Result<Vec<BatchInsertItem>, Str
         out.push(item);
         skip_ws(bytes, &mut i);
         if i >= bytes.len() {
-            return Err("unterminated array".into());
+            return Err(WireParseError::UnterminatedArray);
         }
         match bytes[i] {
             b',' => {
@@ -55,23 +56,20 @@ pub(crate) fn parse_batch_items(input: &str) -> Result<Vec<BatchInsertItem>, Str
                 i += 1;
                 skip_ws(bytes, &mut i);
                 if i != bytes.len() {
-                    return Err("trailing garbage after array".into());
+                    return Err(WireParseError::TrailingGarbage);
                 }
                 return Ok(out);
             }
             other => {
-                return Err(format!(
-                    "expected `,` or `]` after item, got {:?}",
-                    other as char
-                ));
+                return Err(WireParseError::ExpectedCommaOrBracket(other as char));
             }
         }
     }
 }
 
-fn parse_item(bytes: &[u8], i: &mut usize) -> Result<BatchInsertItem, String> {
+fn parse_item(bytes: &[u8], i: &mut usize) -> Result<BatchInsertItem, WireParseError> {
     if *i >= bytes.len() || bytes[*i] != b'{' {
-        return Err("expected `{` to start a descriptor".into());
+        return Err(WireParseError::ExpectedDescriptorBrace);
     }
     *i += 1;
     let mut kind: Option<String> = None;
@@ -85,7 +83,7 @@ fn parse_item(bytes: &[u8], i: &mut usize) -> Result<BatchInsertItem, String> {
     loop {
         skip_ws(bytes, i);
         if *i >= bytes.len() {
-            return Err("unterminated descriptor".into());
+            return Err(WireParseError::UnterminatedDescriptor);
         }
         if bytes[*i] == b'}' {
             *i += 1;
@@ -94,7 +92,7 @@ fn parse_item(bytes: &[u8], i: &mut usize) -> Result<BatchInsertItem, String> {
         let key = parse_string(bytes, i)?;
         skip_ws(bytes, i);
         if *i >= bytes.len() || bytes[*i] != b':' {
-            return Err(format!("expected `:` after key {key:?}"));
+            return Err(WireParseError::ExpectedColonAfterKey(key));
         }
         *i += 1;
         skip_ws(bytes, i);
@@ -115,33 +113,28 @@ fn parse_item(bytes: &[u8], i: &mut usize) -> Result<BatchInsertItem, String> {
             "y" => y = Some(parse_int(bytes, i)?),
             "width" => width = Some(parse_int(bytes, i)?),
             "height" => height = Some(parse_int(bytes, i)?),
-            other => return Err(format!("unknown key {other:?} in descriptor")),
+            other => return Err(WireParseError::UnknownKey(other.to_string())),
         }
         skip_ws(bytes, i);
         if *i < bytes.len() && bytes[*i] == b',' {
             *i += 1;
         }
     }
-    let kind = kind.ok_or("descriptor missing `kind`")?;
+    let kind = kind.ok_or(WireParseError::MissingField("kind"))?;
     if !ALLOWED_KINDS.iter().any(|k| *k == kind) {
-        return Err(format!(
-            "kind {kind:?} not supported; allowed: {}",
-            ALLOWED_KINDS.join(", ")
-        ));
+        return Err(WireParseError::UnsupportedKind(kind));
     }
-    let name = name.ok_or("descriptor missing `name`")?;
-    let x = x.ok_or("descriptor missing `x`")?;
-    let y = y.ok_or("descriptor missing `y`")?;
-    let width = width.ok_or("descriptor missing `width`")?;
-    let height = height.ok_or("descriptor missing `height`")?;
+    let name = name.ok_or(WireParseError::MissingField("name"))?;
+    let x = x.ok_or(WireParseError::MissingField("x"))?;
+    let y = y.ok_or(WireParseError::MissingField("y"))?;
+    let width = width.ok_or(WireParseError::MissingField("width"))?;
+    let height = height.ok_or(WireParseError::MissingField("height"))?;
     if width < 0 || height < 0 {
-        return Err("width / height must be non-negative".into());
+        return Err(WireParseError::NegativeSize);
     }
     if let Some(ref hex) = fill_hex {
         if !validate_hex(hex) {
-            return Err(format!(
-                "fill_hex must be #rgb/#rrggbb/#rrggbbaa, got {hex:?}"
-            ));
+            return Err(WireParseError::InvalidFillHex(hex.clone()));
         }
     }
     Ok(BatchInsertItem {
@@ -160,15 +153,16 @@ fn parse_item(bytes: &[u8], i: &mut usize) -> Result<BatchInsertItem, String> {
 /// Accepts either an array of fill objects (`[{...}, ...]`) or a single
 /// fill object (`{...}`, wrapped into a 1-entry stack), mirroring the
 /// `normalize_fill` shape-tolerance on the JSON nodes path.
-fn parse_fill_stack(raw: &str) -> Result<Vec<jian_ops_schema::style::PenFill>, String> {
+fn parse_fill_stack(raw: &str) -> Result<Vec<jian_ops_schema::style::PenFill>, WireParseError> {
     use jian_ops_schema::style::PenFill;
     let trimmed = raw.trim_start();
     if trimmed.starts_with('[') {
-        serde_json::from_str::<Vec<PenFill>>(raw).map_err(|e| format!("invalid `fill` array: {e}"))
+        serde_json::from_str::<Vec<PenFill>>(raw)
+            .map_err(|e| WireParseError::InvalidFillArray(e.to_string()))
     } else {
         serde_json::from_str::<PenFill>(raw)
             .map(|f| vec![f])
-            .map_err(|e| format!("invalid `fill` object: {e}"))
+            .map_err(|e| WireParseError::InvalidFillObject(e.to_string()))
     }
 }
 
@@ -176,10 +170,10 @@ fn parse_fill_stack(raw: &str) -> Result<Vec<jian_ops_schema::style::PenFill>, S
 /// `true` / `false` / `null`) starting at `*i`, advance `*i` past it,
 /// and return the raw slice. Respects nesting + string escapes so a
 /// `}`/`]` inside a string doesn't prematurely close the value.
-fn capture_raw_json_value(bytes: &[u8], i: &mut usize) -> Result<String, String> {
+fn capture_raw_json_value(bytes: &[u8], i: &mut usize) -> Result<String, WireParseError> {
     skip_ws(bytes, i);
     if *i >= bytes.len() {
-        return Err("expected a JSON value".into());
+        return Err(WireParseError::ExpectedJsonValue);
     }
     let start = *i;
     match bytes[*i] {
@@ -213,7 +207,7 @@ fn capture_raw_json_value(bytes: &[u8], i: &mut usize) -> Result<String, String>
                 }
                 *i += 1;
             }
-            Err("unterminated JSON value".into())
+            Err(WireParseError::UnterminatedJsonValue)
         }
         b'"' => {
             // Reuse the string parser to advance past escapes correctly,
@@ -233,16 +227,16 @@ fn capture_raw_json_value(bytes: &[u8], i: &mut usize) -> Result<String, String>
     }
 }
 
-fn slice_utf8(bytes: &[u8], start: usize, end: usize) -> Result<String, String> {
+fn slice_utf8(bytes: &[u8], start: usize, end: usize) -> Result<String, WireParseError> {
     std::str::from_utf8(&bytes[start..end])
         .map(|s| s.to_string())
-        .map_err(|_| "invalid UTF-8 in JSON value".to_string())
+        .map_err(|_| WireParseError::InvalidUtf8("JSON value"))
 }
 
 /// Reverse the JSON-string escaping the wire parser left intact.
 /// Handles `\"` / `\\` / `\n` / `\t` / `\r` / `\/`. Anything else
 /// passes through verbatim (no `\u` decode today).
-fn unescape_wire_string(input: &str) -> Result<String, String> {
+fn unescape_wire_string(input: &str) -> Result<String, WireParseError> {
     let mut out = String::with_capacity(input.len());
     let bytes = input.as_bytes();
     let mut i = 0;
@@ -271,7 +265,7 @@ fn unescape_wire_string(input: &str) -> Result<String, String> {
                 i += 1;
             }
             let slice = std::str::from_utf8(&bytes[start..i])
-                .map_err(|_| "invalid UTF-8 in nodes_json".to_string())?;
+                .map_err(|_| WireParseError::InvalidUtf8("nodes_json"))?;
             out.push_str(slice);
         }
     }
@@ -284,9 +278,9 @@ fn skip_ws(bytes: &[u8], i: &mut usize) {
     }
 }
 
-fn parse_string(bytes: &[u8], i: &mut usize) -> Result<String, String> {
+fn parse_string(bytes: &[u8], i: &mut usize) -> Result<String, WireParseError> {
     if *i >= bytes.len() || bytes[*i] != b'"' {
-        return Err("expected string".into());
+        return Err(WireParseError::ExpectedString);
     }
     *i += 1;
     let mut out = String::new();
@@ -299,7 +293,7 @@ fn parse_string(bytes: &[u8], i: &mut usize) -> Result<String, String> {
         if c == b'\\' {
             *i += 1;
             if *i >= bytes.len() {
-                return Err("unterminated escape".into());
+                return Err(WireParseError::UnterminatedEscape);
             }
             let esc = bytes[*i];
             match esc {
@@ -309,7 +303,7 @@ fn parse_string(bytes: &[u8], i: &mut usize) -> Result<String, String> {
                 b't' => out.push('\t'),
                 b'r' => out.push('\r'),
                 b'/' => out.push('/'),
-                other => return Err(format!("unsupported escape \\{}", other as char)),
+                other => return Err(WireParseError::UnsupportedEscape(other as char)),
             }
             *i += 1;
         } else {
@@ -320,14 +314,14 @@ fn parse_string(bytes: &[u8], i: &mut usize) -> Result<String, String> {
                 *i += 1;
             }
             let slice = std::str::from_utf8(&bytes[start..*i])
-                .map_err(|_| "invalid UTF-8 in string".to_string())?;
+                .map_err(|_| WireParseError::InvalidUtf8("string"))?;
             out.push_str(slice);
         }
     }
-    Err("unterminated string".into())
+    Err(WireParseError::UnterminatedString)
 }
 
-fn parse_int(bytes: &[u8], i: &mut usize) -> Result<i32, String> {
+fn parse_int(bytes: &[u8], i: &mut usize) -> Result<i32, WireParseError> {
     let start = *i;
     if *i < bytes.len() && bytes[*i] == b'-' {
         *i += 1;
@@ -336,10 +330,10 @@ fn parse_int(bytes: &[u8], i: &mut usize) -> Result<i32, String> {
         *i += 1;
     }
     if start == *i {
-        return Err("expected integer".into());
+        return Err(WireParseError::ExpectedInteger);
     }
     let raw = std::str::from_utf8(&bytes[start..*i])
-        .map_err(|_| "invalid UTF-8 in integer".to_string())?;
+        .map_err(|_| WireParseError::InvalidUtf8("integer"))?;
     raw.parse::<i32>()
-        .map_err(|_| format!("expected i32, got {raw:?}"))
+        .map_err(|_| WireParseError::NotAnI32(raw.to_string()))
 }

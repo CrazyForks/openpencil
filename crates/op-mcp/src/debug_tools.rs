@@ -162,11 +162,11 @@ impl McpTool for DebugLogsTail {
         }
         let tail_lines = match parse_tail_lines(args) {
             Ok(v) => v,
-            Err(msg) => return ToolOutcome::Err(ToolErrorCode::InvalidArgument, msg),
+            Err(e) => return ToolOutcome::Err(ToolErrorCode::InvalidArgument, e.to_string()),
         };
         let since_ms = match parse_since_ms(args) {
             Ok(v) => v,
-            Err(msg) => return ToolOutcome::Err(ToolErrorCode::InvalidArgument, msg),
+            Err(e) => return ToolOutcome::Err(ToolErrorCode::InvalidArgument, e.to_string()),
         };
         let grep = match args.get("grep").map(|raw| Regex::new(raw)) {
             Some(Ok(re)) => Some(re),
@@ -426,23 +426,51 @@ fn logs_tail_out(path: Option<&Path>, lines: Vec<String>) -> ToolOutcome {
     ToolOutcome::Ok(out)
 }
 
-fn parse_tail_lines(args: &BTreeMap<String, String>) -> Result<usize, String> {
+/// A `debug_logs_tail` scalar arg was present but unparseable. Both
+/// variants carry the raw arg text; `Display` reproduces the previous
+/// message byte-for-byte (these ship to the model as the tool's
+/// `InvalidArgument` payload).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DebugArgError {
+    /// `tailLines` / `tail_lines` is not a non-negative integer.
+    TailLines(String),
+    /// `sinceMs` / `since_ms` is not an integer unix-ms timestamp.
+    SinceMs(String),
+}
+
+impl std::fmt::Display for DebugArgError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DebugArgError::TailLines(raw) => {
+                write!(f, "tailLines must be a non-negative integer, got {raw:?}")
+            }
+            DebugArgError::SinceMs(raw) => write!(
+                f,
+                "sinceMs must be an integer unix-ms timestamp, got {raw:?}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for DebugArgError {}
+
+fn parse_tail_lines(args: &BTreeMap<String, String>) -> Result<usize, DebugArgError> {
     let Some(raw) = args.get("tailLines").or_else(|| args.get("tail_lines")) else {
         return Ok(100);
     };
     let parsed = raw
         .parse::<usize>()
-        .map_err(|_| format!("tailLines must be a non-negative integer, got {raw:?}"))?;
+        .map_err(|_| DebugArgError::TailLines(raw.clone()))?;
     Ok(parsed.min(500))
 }
 
-fn parse_since_ms(args: &BTreeMap<String, String>) -> Result<Option<i64>, String> {
+fn parse_since_ms(args: &BTreeMap<String, String>) -> Result<Option<i64>, DebugArgError> {
     let Some(raw) = args.get("sinceMs").or_else(|| args.get("since_ms")) else {
         return Ok(None);
     };
     raw.parse::<i64>()
         .map(Some)
-        .map_err(|_| format!("sinceMs must be an integer unix-ms timestamp, got {raw:?}"))
+        .map_err(|_| DebugArgError::SinceMs(raw.clone()))
 }
 
 fn parse_iso_timestamp_ms(line: &str) -> Option<i64> {

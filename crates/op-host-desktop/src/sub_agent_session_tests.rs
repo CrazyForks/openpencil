@@ -174,7 +174,9 @@ fn parse_args_two_items_returns_two_specs() {
 
 #[test]
 fn parse_args_missing_config_errors() {
-    let err = parse_spawn_args(r#"{"foo":"bar"}"#).unwrap_err();
+    let err = parse_spawn_args(r#"{"foo":"bar"}"#)
+        .unwrap_err()
+        .to_string();
     assert!(
         err.contains("non-empty config array"),
         "missing config must error: {err}"
@@ -183,7 +185,7 @@ fn parse_args_missing_config_errors() {
 
 #[test]
 fn parse_args_invalid_json_errors() {
-    let err = parse_spawn_args("not json").unwrap_err();
+    let err = parse_spawn_args("not json").unwrap_err().to_string();
     assert!(
         err.contains("must be a JSON object"),
         "invalid json must error: {err}"

@@ -28,14 +28,53 @@ const TEXT_DEFAULT_FILL: Color = Color {
     a: 1.0,
 };
 
+/// A failed SVG serialization.
+///
+/// `Display` reproduces the previous ad-hoc `String` messages byte for byte,
+/// and `From<SvgExportError> for String` keeps the `?` call sites in hosts
+/// that still return `Result<_, String>` (e.g. `op-host-services`'s
+/// `export_svg` wrappers) compiling unchanged.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SvgExportError {
+    /// The scene carries no active page.
+    NoActivePage,
+    /// The selected content has no positive-area painted bounds.
+    NothingToExport,
+    /// The requested node is not on the active page.
+    NodeNotFound(String),
+    /// The requested node exists but paints no geometry.
+    NodePaintsNothing(String),
+}
+
+impl std::fmt::Display for SvgExportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SvgExportError::NoActivePage => write!(f, "no active page"),
+            SvgExportError::NothingToExport => write!(f, "nothing to export"),
+            SvgExportError::NodeNotFound(id) => {
+                write!(f, "node {id} not found on the active page")
+            }
+            SvgExportError::NodePaintsNothing(id) => write!(f, "node {id} paints nothing"),
+        }
+    }
+}
+
+impl std::error::Error for SvgExportError {}
+
+impl From<SvgExportError> for String {
+    fn from(error: SvgExportError) -> String {
+        error.to_string()
+    }
+}
+
 /// Serialize the active page in `scene` as an SVG string.
-pub fn serialize_active_page_svg(scene: &LayoutScene) -> Result<String, String> {
+pub fn serialize_active_page_svg(scene: &LayoutScene) -> Result<String, SvgExportError> {
     let Some(page) = scene.active_page() else {
-        return Err("no active page".into());
+        return Err(SvgExportError::NoActivePage);
     };
     serialize_svg(
         &page.children,
-        page_bounds(page).ok_or("nothing to export")?,
+        page_bounds(page).ok_or(SvgExportError::NothingToExport)?,
         MARGIN,
         glam::Affine2::IDENTITY,
         &[],
@@ -43,18 +82,18 @@ pub fn serialize_active_page_svg(scene: &LayoutScene) -> Result<String, String> 
 }
 
 /// Serialize one active-page node and subtree, tightly cropped to its painted bounds.
-pub fn serialize_node_svg(scene: &LayoutScene, node_id: &str) -> Result<String, String> {
-    let page = scene.active_page().ok_or("no active page")?;
+pub fn serialize_node_svg(scene: &LayoutScene, node_id: &str) -> Result<String, SvgExportError> {
+    let page = scene.active_page().ok_or(SvgExportError::NoActivePage)?;
     let (node, ancestor_xform, ancestor_clips) =
         find_node_with_ancestor_context(&page.children, node_id)
-            .ok_or_else(|| format!("node {node_id} not found on the active page"))?;
+            .ok_or_else(|| SvgExportError::NodeNotFound(node_id.to_string()))?;
     let mut acc = BoundsAcc::new();
     collect_bounds(node, ancestor_xform, &mut acc);
     let painted_bounds = acc
         .into_rect()
-        .ok_or_else(|| format!("node {node_id} paints nothing"))?;
+        .ok_or_else(|| SvgExportError::NodePaintsNothing(node_id.to_string()))?;
     let bounds = apply_ancestor_clip_bounds(painted_bounds, &ancestor_clips)
-        .ok_or_else(|| format!("node {node_id} paints nothing"))?;
+        .ok_or_else(|| SvgExportError::NodePaintsNothing(node_id.to_string()))?;
     serialize_svg(
         std::slice::from_ref(node),
         bounds,
@@ -70,13 +109,13 @@ fn serialize_svg(
     margin: f32,
     root_xform: glam::Affine2,
     ancestor_clips: &[AncestorClip],
-) -> Result<String, String> {
+) -> Result<String, SvgExportError> {
     let view_x = bounds.origin.x - margin;
     let view_y = bounds.origin.y - margin;
     let view_w = bounds.size.x + margin * 2.0;
     let view_h = bounds.size.y + margin * 2.0;
     if view_w <= 0.0 || view_h <= 0.0 {
-        return Err("nothing to export".into());
+        return Err(SvgExportError::NothingToExport);
     }
     let mut svg = String::with_capacity(4096);
     let _ = write!(

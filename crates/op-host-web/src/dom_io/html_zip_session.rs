@@ -12,11 +12,69 @@ use std::rc::Rc;
 
 use wasm_bindgen::JsCast;
 
-use super::browser_files::read_blob_range;
+use super::browser_files::{read_blob_range, BlobReadError};
 use crate::file_actions::{self, IngestedDoc};
 
-type ZipImportResult = Result<IngestedDoc, String>;
+type ZipImportResult = Result<IngestedDoc, ZipImportError>;
 type ZipImportDone = Box<dyn FnOnce(ZipImportResult)>;
+
+/// A browser ZIP import that could not be completed.
+///
+/// `Display` reproduces the ad-hoc `String` messages this enum replaced byte
+/// for byte, so the `[import-html] …` console lines stay identical. `Zip`
+/// carries `op_html`'s own typed error already rendered, exactly as the
+/// previous `error.to_string()` adapters did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum ZipImportError {
+    /// The picked file's size cannot drive `Blob.slice()` range reads.
+    SizeInvalid,
+    /// A range read failed.
+    Blob(BlobReadError),
+    /// The shared ZIP reader rejected the archive.
+    Zip(String),
+    /// The central directory has not been parsed yet.
+    ManifestUnavailable,
+    /// A requested entry index is outside the manifest.
+    EntryIndexInvalid(usize),
+    /// The selected HTML entry has not been decoded yet.
+    HtmlEntryUnavailable,
+    /// The HTML entry parsed but produced no nodes.
+    NoImportableContent,
+}
+
+impl std::fmt::Display for ZipImportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ZipImportError::SizeInvalid => {
+                write!(f, "ZIP file size is invalid for browser range reads")
+            }
+            ZipImportError::Blob(error) => write!(f, "{error}"),
+            ZipImportError::Zip(error) => write!(f, "{error}"),
+            ZipImportError::ManifestUnavailable => write!(f, "ZIP manifest is unavailable"),
+            ZipImportError::EntryIndexInvalid(index) => {
+                write!(f, "ZIP entry index {index} is invalid")
+            }
+            ZipImportError::HtmlEntryUnavailable => write!(f, "ZIP HTML entry is unavailable"),
+            ZipImportError::NoImportableContent => {
+                write!(f, "HTML entry contains no importable content")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ZipImportError {}
+
+impl From<BlobReadError> for ZipImportError {
+    fn from(error: BlobReadError) -> Self {
+        ZipImportError::Blob(error)
+    }
+}
+
+impl From<ZipImportError> for String {
+    fn from(error: ZipImportError) -> String {
+        error.to_string()
+    }
+}
 type IsActive = Box<dyn Fn() -> bool>;
 type SessionRef = Rc<RefCell<ZipImportSession>>;
 
@@ -39,9 +97,7 @@ pub(super) fn start(file: web_sys::File, is_active: IsActive, done: ZipImportDon
         || size > MAX_SAFE_FILE_SIZE
         || size.fract() != 0.0
     {
-        done(Err(
-            "ZIP file size is invalid for browser range reads".to_string()
-        ));
+        done(Err(ZipImportError::SizeInvalid));
         return;
     }
     let archive_len = size as u64;
@@ -77,14 +133,14 @@ fn read_tail(session: SessionRef) {
             let tail = match result {
                 Ok(bytes) => bytes,
                 Err(error) => {
-                    finish(&session2, Err(error));
+                    finish(&session2, Err(error.into()));
                     return;
                 }
             };
             let locator = match op_html::locate_html_zip_directory(archive_len, &tail) {
                 Ok(locator) => locator,
                 Err(error) => {
-                    finish(&session2, Err(error.to_string()));
+                    finish(&session2, Err(ZipImportError::Zip(error.to_string())));
                     return;
                 }
             };
@@ -107,14 +163,14 @@ fn read_directory(session: SessionRef, locator: op_html::HtmlZipDirectoryLocator
             let directory = match result {
                 Ok(bytes) => bytes,
                 Err(error) => {
-                    finish(&session2, Err(error));
+                    finish(&session2, Err(error.into()));
                     return;
                 }
             };
             let manifest = match op_html::parse_html_zip_central_directory(&locator, &directory) {
                 Ok(manifest) => manifest,
                 Err(error) => {
-                    finish(&session2, Err(error.to_string()));
+                    finish(&session2, Err(ZipImportError::Zip(error.to_string())));
                     return;
                 }
             };
@@ -133,7 +189,7 @@ fn read_directory(session: SessionRef, locator: op_html::HtmlZipDirectoryLocator
     );
 }
 
-type EntryLoaded = Box<dyn FnOnce(Result<(), String>)>;
+type EntryLoaded = Box<dyn FnOnce(Result<(), ZipImportError>)>;
 
 fn load_entry(session: SessionRef, index: usize, done: EntryLoaded) {
     if session.borrow().loaded_entries.contains_key(&index) {
@@ -143,11 +199,11 @@ fn load_entry(session: SessionRef, index: usize, done: EntryLoaded) {
     let (file, manifest, entry) = {
         let session = session.borrow();
         let Some(manifest) = session.manifest.clone() else {
-            done(Err("ZIP manifest is unavailable".to_string()));
+            done(Err(ZipImportError::ManifestUnavailable));
             return;
         };
         let Some(entry) = manifest.entries.get(index).cloned() else {
-            done(Err(format!("ZIP entry index {index} is invalid")));
+            done(Err(ZipImportError::EntryIndexInvalid(index)));
             return;
         };
         (session.file.clone(), manifest, entry)
@@ -165,7 +221,7 @@ fn load_entry(session: SessionRef, index: usize, done: EntryLoaded) {
             let local_header_prefix = match result {
                 Ok(bytes) => bytes,
                 Err(error) => {
-                    done(Err(error));
+                    done(Err(error.into()));
                     return;
                 }
             };
@@ -173,7 +229,7 @@ fn load_entry(session: SessionRef, index: usize, done: EntryLoaded) {
                 match op_html::html_zip_local_header_length(&entry, &local_header_prefix) {
                     Ok(length) => length,
                     Err(error) => {
-                        done(Err(error.to_string()));
+                        done(Err(ZipImportError::Zip(error.to_string())));
                         return;
                     }
                 };
@@ -190,14 +246,14 @@ fn load_entry(session: SessionRef, index: usize, done: EntryLoaded) {
                     let local_header = match result {
                         Ok(bytes) => bytes,
                         Err(error) => {
-                            done(Err(error));
+                            done(Err(error.into()));
                             return;
                         }
                     };
                     if let Err(error) =
                         op_html::validate_html_zip_local_header(&entry, &local_header)
                     {
-                        done(Err(error.to_string()));
+                        done(Err(ZipImportError::Zip(error.to_string())));
                         return;
                     }
                     let range = match op_html::html_zip_entry_data_range(
@@ -207,7 +263,7 @@ fn load_entry(session: SessionRef, index: usize, done: EntryLoaded) {
                     ) {
                         Ok(range) => range,
                         Err(error) => {
-                            done(Err(error.to_string()));
+                            done(Err(ZipImportError::Zip(error.to_string())));
                             return;
                         }
                     };
@@ -224,7 +280,7 @@ fn load_entry(session: SessionRef, index: usize, done: EntryLoaded) {
                             let compressed = match result {
                                 Ok(bytes) => bytes,
                                 Err(error) => {
-                                    done(Err(error));
+                                    done(Err(error.into()));
                                     return;
                                 }
                             };
@@ -235,7 +291,7 @@ fn load_entry(session: SessionRef, index: usize, done: EntryLoaded) {
                             ) {
                                 Ok(bytes) => bytes,
                                 Err(error) => {
-                                    done(Err(error.to_string()));
+                                    done(Err(ZipImportError::Zip(error.to_string())));
                                     return;
                                 }
                             };
@@ -263,10 +319,7 @@ fn import_until_resolved(session: SessionRef) {
     };
     if missing.is_empty() {
         if imported.document.children.is_empty() {
-            finish(
-                &session,
-                Err("HTML entry contains no importable content".to_string()),
-            );
+            finish(&session, Err(ZipImportError::NoImportableContent));
             return;
         }
         finish(
@@ -281,17 +334,19 @@ fn import_until_resolved(session: SessionRef) {
     load_entry_queue(session, missing.into());
 }
 
-fn probe_import(session: &SessionRef) -> Result<(op_html::HtmlDocumentResult, Vec<usize>), String> {
+fn probe_import(
+    session: &SessionRef,
+) -> Result<(op_html::HtmlDocumentResult, Vec<usize>), ZipImportError> {
     let session = session.borrow();
     let manifest = session
         .manifest
         .as_ref()
-        .ok_or_else(|| "ZIP manifest is unavailable".to_string())?;
+        .ok_or(ZipImportError::ManifestUnavailable)?;
     let entry = manifest.html_entry();
     let html_bytes = session
         .loaded_entries
         .get(&manifest.html_entry_index)
-        .ok_or_else(|| "ZIP HTML entry is unavailable".to_string())?;
+        .ok_or(ZipImportError::HtmlEntryUnavailable)?;
     let html = op_html::html_encoding::decode_html_bytes(html_bytes);
     let requested = RefCell::new(BTreeSet::new());
     let fetcher = |url: &str| {

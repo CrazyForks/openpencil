@@ -91,7 +91,8 @@ fn invalid_utf8_keeps_the_localized_load_error() {
     let expected = op_i18n::translate(op_editor_core::Locale::EnUs, "dialog.loadErrorInvalidUtf8")
         .replace("{{detail}}", &detail);
     let actual = load_editor_state(&path, op_editor_core::Locale::EnUs)
-        .expect_err("invalid UTF-8 is rejected");
+        .expect_err("invalid UTF-8 is rejected")
+        .to_string();
 
     assert_eq!(actual, expected);
     let _ = std::fs::remove_file(&path);

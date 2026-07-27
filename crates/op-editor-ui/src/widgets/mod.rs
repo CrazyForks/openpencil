@@ -347,7 +347,7 @@ pub use ai_chat_panel::{
     AIChatPlaceholder, AI_CHAT_COLLAPSED_HEIGHT, AI_CHAT_COLLAPSED_WIDTH, AI_CHAT_HEIGHT,
     AI_CHAT_MAX_RATIO, AI_CHAT_MIN_HEIGHT, AI_CHAT_MIN_WIDTH, AI_CHAT_WIDTH,
 };
-pub use ai_chat_transcript_design::parse_design_json_nodes;
+pub use ai_chat_transcript_design::{parse_design_json_nodes, DesignParseError};
 pub use align_toolbar::{AlignToolbar, AlignToolbarHit, ALIGN_TOOLBAR_HEIGHT, ALIGN_TOOLBAR_WIDTH};
 pub use component_browser_panel::{
     ComponentBrowserHit, ComponentBrowserPanel, COMPONENT_BROWSER_PANEL_H,

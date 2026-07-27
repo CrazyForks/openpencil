@@ -7,16 +7,30 @@
 use op_editor_ui::layout_scene::LayoutScene;
 use std::path::Path as StdPath;
 
+use crate::export::ExportError;
+
 /// Serialize the scene's active page to an SVG file at `target`.
-pub fn export_svg(scene: &LayoutScene, target: &StdPath) -> Result<(), String> {
-    let svg = op_editor_ui::svg_export::serialize_active_page_svg(scene)?;
-    std::fs::write(target, svg).map_err(|e| e.to_string())
+///
+/// `serialize_active_page_svg` lives in `op_editor_ui`, a crate this pass
+/// does not own, and still reports `String`; [`ExportError::SvgSerialize`]
+/// carries its sentence verbatim (`to_string` so the adapter keeps working
+/// if that crate later types its own error).
+pub fn export_svg(scene: &LayoutScene, target: &StdPath) -> Result<(), ExportError> {
+    let svg = op_editor_ui::svg_export::serialize_active_page_svg(scene)
+        .map_err(|e| ExportError::SvgSerialize(e.to_string()))?;
+    std::fs::write(target, svg).map_err(|e| ExportError::Write(e.to_string()))
 }
 
-/// Serialize one node and its subtree to an SVG file at `target`.
-pub fn export_node_svg(scene: &LayoutScene, node_id: &str, target: &StdPath) -> Result<(), String> {
-    let svg = op_editor_ui::svg_export::serialize_node_svg(scene, node_id)?;
-    std::fs::write(target, svg).map_err(|e| e.to_string())
+/// Serialize one node and its subtree to an SVG file at `target`. Same
+/// upstream-`String` adapter rationale as [`export_svg`].
+pub fn export_node_svg(
+    scene: &LayoutScene,
+    node_id: &str,
+    target: &StdPath,
+) -> Result<(), ExportError> {
+    let svg = op_editor_ui::svg_export::serialize_node_svg(scene, node_id)
+        .map_err(|e| ExportError::SvgSerialize(e.to_string()))?;
+    std::fs::write(target, svg).map_err(|e| ExportError::Write(e.to_string()))
 }
 
 #[cfg(test)]
@@ -57,7 +71,7 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("op-svg-empty-{}.svg", std::process::id()));
         let res = export_svg(&scene, &tmp);
         assert!(res.is_err());
-        assert_eq!(res.unwrap_err(), "nothing to export");
+        assert_eq!(res.unwrap_err().to_string(), "nothing to export");
     }
 
     #[test]

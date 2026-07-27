@@ -38,13 +38,54 @@ use jian_ops_schema::node::PenNode;
 use jian_ops_schema::state::StateSchema;
 use op_editor_core::EditorState;
 
+/// Failure of [`run_program_to_forest`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProgramGenError {
+    /// `batch_design` returned an envelope with no command; carries the
+    /// envelope JSON so the caller can see which lines were dropped.
+    NoCommand { envelope_json: String },
+    /// `batch_design` returned an outcome shape this path cannot use;
+    /// carries the outcome's `Debug` rendering (`ToolOutcome` is not `Eq`).
+    UnexpectedOutcome { outcome_debug: String },
+    /// The scratch document rejected the program's command.
+    CommandRejected,
+    /// The program ran but produced an empty forest.
+    NoNodes,
+}
+
+impl std::fmt::Display for ProgramGenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoCommand { envelope_json } => {
+                write!(f, "program produced no command: {envelope_json}")
+            }
+            Self::UnexpectedOutcome { outcome_debug } => {
+                write!(f, "unexpected batch_design outcome: {outcome_debug}")
+            }
+            Self::CommandRejected => write!(f, "program command rejected by document"),
+            Self::NoNodes => write!(f, "program produced no nodes"),
+        }
+    }
+}
+
+impl std::error::Error for ProgramGenError {}
+
+/// Keeps `?`-into-`Result<_, String>` call sites compiling unchanged.
+impl From<ProgramGenError> for String {
+    fn from(error: ProgramGenError) -> Self {
+        error.to_string()
+    }
+}
+
 /// Run a `batch_design` DSL PROGRAM string against a FRESH empty document and
 /// return the produced section forest plus any doc-root `state` the program's
 /// nodes hoisted (see the module doc for why the latter matters). The caller
 /// (`script_gen`) hands in the DSL a JS engine emitted by calling the bound
 /// `I`/`C`/… functions. The executor collects per-line errors and applies the
 /// surviving lines (best-effort); a program that builds nothing is an error.
-pub fn run_program_to_forest(program: &str) -> Result<(Vec<PenNode>, StateSchema), String> {
+pub fn run_program_to_forest(
+    program: &str,
+) -> Result<(Vec<PenNode>, StateSchema), ProgramGenError> {
     let mut state = EditorState::new();
     let mut args: BTreeMap<String, String> = BTreeMap::new();
     args.insert("operations".to_string(), program.to_string());
@@ -64,17 +105,23 @@ pub fn run_program_to_forest(program: &str) -> Result<(Vec<PenNode>, StateSchema
                 cmd
             }
             op_mcp::ToolOutcome::OkJson(json) => {
-                return Err(format!("program produced no command: {json}"));
+                return Err(ProgramGenError::NoCommand {
+                    envelope_json: json,
+                });
             }
-            other => return Err(format!("unexpected batch_design outcome: {other:?}")),
+            other => {
+                return Err(ProgramGenError::UnexpectedOutcome {
+                    outcome_debug: format!("{other:?}"),
+                })
+            }
         }
     };
     if !state.apply(cmd) {
-        return Err("program command rejected by document".into());
+        return Err(ProgramGenError::CommandRejected);
     }
     let nodes = state.active_children().to_vec();
     if nodes.is_empty() {
-        return Err("program produced no nodes".into());
+        return Err(ProgramGenError::NoNodes);
     }
     // The scratch document starts empty, so anything sitting in `doc.state`
     // now came from the program's own hoisted `MergeAppState` — drain it so

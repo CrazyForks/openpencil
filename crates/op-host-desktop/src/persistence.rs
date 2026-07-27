@@ -10,8 +10,10 @@ use op_host_native::WidgetHostNative;
 use op_host_services::doc_io::active_page_bbox;
 use op_host_services::doc_io::{
     load_editor_state_with_report, preserve_app_preferences, save_to_path, set_file_name_display,
-    ActionOutcome, ErrorKind,
+    ActionOutcome, DocIoError, ErrorKind,
 };
+
+use crate::persistence_error::DocumentOpenError;
 
 /// Document extensions for the native file-dialog filter (`.op` is the
 /// canonical format, `.pen` the legacy alias). Order is cosmetic — save
@@ -21,7 +23,13 @@ pub(crate) const DOCUMENT_EXTENSIONS: &[&str] = &["op", "pen"];
 /// Pop a Save dialog (rfd native) and write the current document to
 /// the chosen path. `Ok(Some(path))` on success, `Ok(None)` on user
 /// cancel, `Err` on IO / encode failure.
-pub fn save_as_dialog(state: &EditorState) -> Result<Option<PathBuf>, String> {
+///
+/// Reports `doc_io::DocIoError` — the serializer's own reason — rather than
+/// wrapping it: cancellation is already modelled by `Ok(None)`, so the only
+/// thing that can fail here is the write, and a one-variant wrapper would add
+/// no distinction. (Open is different and does get a wrapper; see
+/// [`crate::persistence_error::DocumentOpenError`].)
+pub fn save_as_dialog(state: &EditorState) -> Result<Option<PathBuf>, DocIoError> {
     let Some(path) = pick_save_as_path(state) else {
         return Ok(None);
     };
@@ -57,7 +65,7 @@ pub fn handle_save(
         match save_to_path(host.editor_state(), &path) {
             Err(e) => {
                 eprintln!("[save] {e}");
-                show_error_dialog(host, ErrorKind::Save, Some(&path), &e);
+                show_error_dialog(host, ErrorKind::Save, Some(&path), &e.to_string());
                 return false;
             }
             Ok(()) => {
@@ -112,13 +120,16 @@ pub fn handle_save_as(
         Ok(None) => false,
         Err(e) => {
             eprintln!("[save as] {e}");
-            show_error_dialog(host, ErrorKind::Save, None, &e);
+            show_error_dialog(host, ErrorKind::Save, None, &e.to_string());
             false
         }
     }
 }
 
-fn load_into_host(host: &mut WidgetHostNative, path: &std::path::Path) -> Result<PathBuf, String> {
+fn load_into_host(
+    host: &mut WidgetHostNative,
+    path: &std::path::Path,
+) -> Result<PathBuf, DocumentOpenError> {
     let loaded_source_state = crate::figma_import_session::capture_output_state(path)?;
     let locale = host.editor_state().editor_ui.locale;
     let loaded = load_editor_state_with_report(path, locale);
@@ -173,7 +184,7 @@ pub fn handle_open(
         }
         Err(e) => {
             eprintln!("[open] {e}");
-            show_error_dialog(host, ErrorKind::Open, Some(&path), &e);
+            show_error_dialog(host, ErrorKind::Open, Some(&path), &e.to_string());
             false
         }
     }
@@ -196,7 +207,7 @@ pub fn open_path(
         }
         Err(e) => {
             eprintln!("[open] {e}");
-            show_error_dialog(host, ErrorKind::Open, Some(&path), &e);
+            show_error_dialog(host, ErrorKind::Open, Some(&path), &e.to_string());
             false
         }
     }
@@ -204,7 +215,15 @@ pub fn open_path(
 
 /// Build the layout-resolved scene from the live editor state and
 /// dispatch its configured export format to `path`.
-fn export_editor_state_to_path(state: &EditorState, path: &std::path::Path) -> Result<(), String> {
+///
+/// Reports `op_host_services::export::ExportError` — the reason the export
+/// core already classified. The only consumer renders it through `Display`
+/// (stderr line + the native error dialog's detail body), which is
+/// transparent, so the text the user sees is unchanged.
+fn export_editor_state_to_path(
+    state: &EditorState,
+    path: &std::path::Path,
+) -> Result<(), op_host_services::export::ExportError> {
     use op_editor_core::editor_ui_state::ExportFormat as Fmt;
 
     let fmt = state.editor_ui.export_format;
@@ -304,7 +323,7 @@ pub fn run_action(
                 let result = export_editor_state_to_path(host.editor_state(), &path);
                 if let Err(e) = result {
                     eprintln!("[export-image] {e}");
-                    show_error_dialog(host, ErrorKind::Export, Some(&path), &e);
+                    show_error_dialog(host, ErrorKind::Export, Some(&path), &e.to_string());
                 }
             }
             ActionOutcome::Noop
@@ -326,7 +345,7 @@ pub fn run_action(
                     // File missing / parse failure → tell the user and
                     // drop the stale entry from recents.
                     eprintln!("[open-recent] {e}; pruning {}", entry.path);
-                    show_error_dialog(host, ErrorKind::Open, Some(&path), &e);
+                    show_error_dialog(host, ErrorKind::Open, Some(&path), &e.to_string());
                     host.editor_state_mut()
                         .editor_ui
                         .recent_files

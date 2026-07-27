@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 
 use serde_json::{json, Value};
 
+use super::spawn_agents_error::{SpawnConfigError, SpawnFieldError};
 use super::{McpTool, ToolErrorCode, ToolOutcome};
 
 /// Maximum number of sub-agents per call (Pencil recommends ≤ 8–10).
@@ -45,11 +46,19 @@ pub struct SpawnSpec {
 // ---------------------------------------------------------------------------
 
 /// Extract a required non-empty string field from a JSON object.
-fn required_string(obj: &serde_json::Map<String, Value>, key: &str) -> Result<String, String> {
+fn required_string(
+    obj: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<String, SpawnFieldError> {
     match obj.get(key) {
         Some(Value::String(s)) => Ok(s.clone()),
-        Some(other) => Err(format!("{key} must be a string, got {other}")),
-        None => Err(format!("{key} is required")),
+        Some(other) => Err(SpawnFieldError::NotAString {
+            key: key.to_string(),
+            value: other.to_string(),
+        }),
+        None => Err(SpawnFieldError::Required {
+            key: key.to_string(),
+        }),
     }
 }
 
@@ -57,7 +66,7 @@ fn required_string(obj: &serde_json::Map<String, Value>, key: &str) -> Result<St
 fn optional_string_array(
     obj: &serde_json::Map<String, Value>,
     key: &str,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, SpawnFieldError> {
     match obj.get(key) {
         None | Some(Value::Null) => Ok(Vec::new()),
         Some(Value::Array(arr)) => arr
@@ -65,10 +74,17 @@ fn optional_string_array(
             .enumerate()
             .map(|(i, v)| match v {
                 Value::String(s) => Ok(s.clone()),
-                other => Err(format!("{key}[{i}] must be a string, got {other}")),
+                other => Err(SpawnFieldError::ElementNotAString {
+                    key: key.to_string(),
+                    index: i,
+                    value: other.to_string(),
+                }),
             })
             .collect(),
-        Some(other) => Err(format!("{key} must be an array, got {other}")),
+        Some(other) => Err(SpawnFieldError::NotAnArray {
+            key: key.to_string(),
+            value: other.to_string(),
+        }),
     }
 }
 
@@ -82,58 +98,66 @@ fn optional_string_array(
 /// JSON-string value and `serde_json::from_str`s it into a `Value` array.
 /// Tests construct the args map directly (same convention as `batch_get_tests`):
 /// `args.insert("config".into(), r#"[{"prompt":"...","styleguideName":"..."}]"#.into())`.
+///
+/// SURVIVING `String` SIGNATURE — this is a thin compat shim over
+/// [`parse_spawn_config_typed`]. `op_host_desktop::sub_agent_session::parse_spawn_args`
+/// returns this call as its tail expression from a `Result<_, String>` fn, so
+/// no `From` coercion happens there and a typed return would break that crate.
+/// Reach for `parse_spawn_config_typed` in new code.
 pub fn parse_spawn_config(args: &BTreeMap<String, String>) -> Result<Vec<SpawnSpec>, String> {
+    parse_spawn_config_typed(args).map_err(String::from)
+}
+
+/// The typed core of [`parse_spawn_config`]. In-crate callers use this;
+/// `parse_spawn_config` is the `String`-compat shim above it.
+pub fn parse_spawn_config_typed(
+    args: &BTreeMap<String, String>,
+) -> Result<Vec<SpawnSpec>, SpawnConfigError> {
     let raw = args.get("config").map(String::as_str).unwrap_or("").trim();
 
     if raw.is_empty() {
-        return Err("spawn_agents requires a non-empty config array".into());
+        return Err(SpawnConfigError::EmptyConfig);
     }
 
     let value: Value =
-        serde_json::from_str(raw).map_err(|e| format!("config must be a JSON array: {e}"))?;
+        serde_json::from_str(raw).map_err(|e| SpawnConfigError::ConfigNotJson(e.to_string()))?;
 
     let Value::Array(items) = value else {
-        return Err("config must be a JSON array".into());
+        return Err(SpawnConfigError::ConfigNotArray);
     };
 
     if items.is_empty() {
-        return Err("spawn_agents requires a non-empty config array".into());
+        return Err(SpawnConfigError::EmptyConfig);
     }
 
     if items.len() > MAX_AGENTS {
-        return Err(format!(
-            "spawn_agents config exceeds the {MAX_AGENTS}-agent cap (got {}); Pencil recommends ≤ 8–10 agents per call",
-            items.len()
-        ));
+        return Err(SpawnConfigError::TooManyAgents {
+            count: items.len(),
+            max: MAX_AGENTS,
+        });
     }
 
     let mut specs = Vec::with_capacity(items.len());
-    for (i, item) in items.into_iter().enumerate() {
+    for (index, item) in items.into_iter().enumerate() {
         let Value::Object(obj) = item else {
-            return Err(format!("spawn_agents config[{i}] must be an object"));
+            return Err(SpawnConfigError::ItemNotObject { index });
         };
 
-        let prompt = required_string(&obj, "prompt")
-            .map_err(|e| format!("spawn_agents config[{i}]: {e}"))?;
+        let field = |cause| SpawnConfigError::Field { index, cause };
+
+        let prompt = required_string(&obj, "prompt").map_err(field)?;
         if prompt.trim().is_empty() {
-            return Err(format!(
-                "spawn_agents config[{i}]: prompt must be non-empty"
-            ));
+            return Err(SpawnConfigError::EmptyPrompt { index });
         }
 
-        let styleguide_name = required_string(&obj, "styleguideName")
-            .map_err(|e| format!("spawn_agents config[{i}]: {e}"))?;
+        let styleguide_name = required_string(&obj, "styleguideName").map_err(field)?;
         if styleguide_name.trim().is_empty() {
-            return Err(format!(
-                "spawn_agents config[{i}]: styleguideName must be non-empty (sub-agents cannot search styleguides — pass the name explicitly)"
-            ));
+            return Err(SpawnConfigError::EmptyStyleguideName { index });
         }
 
-        let container_nodes = optional_string_array(&obj, "containerNodes")
-            .map_err(|e| format!("spawn_agents config[{i}]: {e}"))?;
+        let container_nodes = optional_string_array(&obj, "containerNodes").map_err(field)?;
 
-        let guideline_names = optional_string_array(&obj, "guidelineNames")
-            .map_err(|e| format!("spawn_agents config[{i}]: {e}"))?;
+        let guideline_names = optional_string_array(&obj, "guidelineNames").map_err(field)?;
 
         specs.push(SpawnSpec {
             prompt,
@@ -161,9 +185,11 @@ impl McpTool for SpawnAgents {
     }
 
     fn call(&self, args: &BTreeMap<String, String>) -> ToolOutcome {
-        let specs = match parse_spawn_config(args) {
+        let specs = match parse_spawn_config_typed(args) {
             Ok(specs) => specs,
-            Err(msg) => return ToolOutcome::Err(ToolErrorCode::InvalidArgument, msg),
+            Err(error) => {
+                return ToolOutcome::Err(ToolErrorCode::InvalidArgument, error.to_string())
+            }
         };
         let n = specs.len();
         let agent_ids: Vec<String> = (0..n).map(|i| format!("agent-{i}")).collect();

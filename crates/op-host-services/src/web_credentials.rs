@@ -7,6 +7,13 @@ use op_editor_core::{
 };
 use serde::Deserialize;
 
+pub use crate::web_credentials_error::WebCredentialError;
+
+/// Every fallible step of this module fails with [`WebCredentialError`]. The
+/// one exception is the `String`-pinned
+/// [`validate_web_provider_base_url`] wrapper — see the error module's docs.
+type Result<T> = std::result::Result<T, WebCredentialError>;
+
 pub const MAX_CREDENTIAL_BODY_BYTES: usize = 256 * 1024;
 
 const MAX_TEXT_BYTES: usize = 512;
@@ -69,18 +76,18 @@ struct OpenverseOAuthPayload {
 
 /// Validate and atomically merge a browser credential snapshot into daemon
 /// settings. Unrelated daemon-managed entries remain intact.
-pub fn apply_json(state: &mut EditorState, body: &str) -> Result<(), String> {
+pub fn apply_json(state: &mut EditorState, body: &str) -> Result<()> {
     if body.len() > MAX_CREDENTIAL_BODY_BYTES {
-        return Err("credential payload exceeds 256 KiB".into());
+        return Err(WebCredentialError::PayloadTooLarge);
     }
     let payload: CredentialPayload =
-        serde_json::from_str(body).map_err(|_| "invalid credential payload".to_string())?;
+        serde_json::from_str(body).map_err(|_| WebCredentialError::InvalidPayload)?;
     if payload.version != PAYLOAD_VERSION {
-        return Err("unsupported credential payload version".into());
+        return Err(WebCredentialError::UnsupportedPayloadVersion);
     }
     if payload.builtin_agents.len() > MAX_ENTRIES || payload.image_gen_profiles.len() > MAX_ENTRIES
     {
-        return Err("credential payload has too many entries".into());
+        return Err(WebCredentialError::TooManyEntries);
     }
     let mut next = state.editor_ui.agent_settings.clone();
     validate_and_merge(&mut next, payload)?;
@@ -108,13 +115,13 @@ pub(crate) fn parse_transient_builtin(value: &serde_json::Value) -> Option<Built
 /// `OPENPENCIL_WEB_AI_ENDPOINT_ALLOWLIST` entry. Connect-time DNS pinning
 /// (`chat_builtin_http`) closes the rebinding gap this hostname check leaves.
 pub(crate) fn public_demo_transient_endpoint_allowed(agent: &BuiltinAgentConfig) -> bool {
-    validate_web_provider_base_url(agent.base_url.trim()).is_ok()
+    validate_web_provider_base_url_with_env_allowlist(agent.base_url.trim()).is_ok()
 }
 
 /// Validate a browser-controlled provider endpoint independently of whether
 /// browser credentials are persisted. Web AI request paths repeat this check,
 /// so enabling server persistence never doubles as an SSRF opt-in.
-pub(crate) fn validate_web_provider_base_url(base_url: &str) -> Result<reqwest::Url, String> {
+pub(crate) fn validate_web_provider_base_url(base_url: &str) -> Result<reqwest::Url> {
     let allowlist = std::env::var(WEB_AI_ENDPOINT_ALLOWLIST_ENV).ok();
     validate_web_provider_base_url_with_allowlist(base_url, allowlist.as_deref())
 }
@@ -122,9 +129,9 @@ pub(crate) fn validate_web_provider_base_url(base_url: &str) -> Result<reqwest::
 fn validate_web_provider_base_url_with_allowlist(
     base_url: &str,
     allowlist: Option<&str>,
-) -> Result<reqwest::Url, String> {
-    let url = reqwest::Url::parse(base_url.trim())
-        .map_err(|_| "browser provider endpoint is invalid".to_string())?;
+) -> Result<reqwest::Url> {
+    let url =
+        reqwest::Url::parse(base_url.trim()).map_err(|_| WebCredentialError::EndpointInvalid)?;
     if !matches!(url.scheme(), "http" | "https")
         || url.host_str().is_none()
         || !url.username().is_empty()
@@ -132,13 +139,13 @@ fn validate_web_provider_base_url_with_allowlist(
         || url.query().is_some()
         || url.fragment().is_some()
     {
-        return Err("browser provider endpoint is not allowed".into());
+        return Err(WebCredentialError::EndpointNotAllowed);
     }
     if endpoint_is_explicitly_allowlisted(&url, allowlist) {
         return Ok(url);
     }
     if url.scheme() != "https" {
-        return Err("browser provider endpoint must use HTTPS".into());
+        return Err(WebCredentialError::EndpointRequiresHttps);
     }
 
     let host = url
@@ -147,9 +154,17 @@ fn validate_web_provider_base_url_with_allowlist(
         .trim_end_matches('.')
         .to_ascii_lowercase();
     if host.parse::<IpAddr>().is_ok_and(is_restricted_ip) || is_restricted_hostname(&host) {
-        return Err("browser provider endpoint is not allowed".into());
+        return Err(WebCredentialError::EndpointNotAllowed);
     }
     Ok(url)
+}
+
+/// Typed twin of [`validate_web_provider_base_url`] for this module's own
+/// merge path, which already reports [`WebCredentialError`] and must not
+/// round-trip through the wrapper's `String`.
+fn validate_web_provider_base_url_with_env_allowlist(base_url: &str) -> Result<reqwest::Url> {
+    let allowlist = std::env::var(WEB_AI_ENDPOINT_ALLOWLIST_ENV).ok();
+    validate_web_provider_base_url_with_allowlist(base_url, allowlist.as_deref())
 }
 
 /// Whether a raw base URL is an exact scheme/host/port match for an
@@ -304,10 +319,7 @@ pub(crate) fn remove_browser_owned_credentials(state: &mut EditorState) -> bool 
     had_browser_credentials
 }
 
-fn validate_and_merge(
-    settings: &mut AgentSettings,
-    payload: CredentialPayload,
-) -> Result<(), String> {
+fn validate_and_merge(settings: &mut AgentSettings, payload: CredentialPayload) -> Result<()> {
     let builtin_prefix = owner_prefix("builtin");
     let image_prefix = owner_prefix("image");
 
@@ -317,12 +329,12 @@ fn validate_and_merge(
         validate_local_id(&payload.id, "built-in agent id")?;
         let local_id = payload.id.clone();
         if !builtin_ids.insert(local_id.clone()) {
-            return Err("credential payload contains duplicate built-in agent ids".into());
+            return Err(WebCredentialError::DuplicateBuiltinAgentIds);
         }
         let mut agent = parse_builtin_agent(payload)?;
-        validate_web_provider_base_url(&agent.base_url)?;
+        validate_web_provider_base_url_with_env_allowlist(&agent.base_url)?;
         if !public_demo_transient_endpoint_allowed(&agent) {
-            return Err("browser provider endpoint is not explicitly allowed".into());
+            return Err(WebCredentialError::EndpointNotExplicitlyAllowed);
         }
         agent.id = scoped_id(&builtin_prefix, &local_id);
         builtins.push(agent);
@@ -334,7 +346,7 @@ fn validate_and_merge(
         validate_local_id(&payload.id, "image profile id")?;
         let local_id = payload.id.clone();
         if !image_ids.insert(local_id.clone()) {
-            return Err("credential payload contains duplicate image profile ids".into());
+            return Err(WebCredentialError::DuplicateImageProfileIds);
         }
         let mut profile = parse_image_profile(payload)?;
         if let Some(base_url) = profile
@@ -342,7 +354,7 @@ fn validate_and_merge(
             .as_deref()
             .filter(|base_url| !base_url.trim().is_empty())
         {
-            validate_web_provider_base_url(base_url)?;
+            validate_web_provider_base_url_with_env_allowlist(base_url)?;
         }
         profile.id = scoped_id(&image_prefix, &local_id);
         image_profiles.push(profile);
@@ -354,7 +366,7 @@ fn validate_and_merge(
         .map(|id| {
             validate_local_id(id, "active image profile id")?;
             if !image_ids.contains(id) {
-                return Err("active image profile is not in the browser snapshot".to_string());
+                return Err(WebCredentialError::ActiveImageProfileNotInSnapshot);
             }
             Ok(scoped_id(&image_prefix, id))
         })
@@ -371,7 +383,7 @@ fn validate_and_merge(
             "Openverse client secret",
         )?;
         if oauth.client_id.trim().is_empty() && oauth.client_secret.trim().is_empty() {
-            return Err("Openverse credentials must not both be empty".into());
+            return Err(WebCredentialError::OpenverseCredentialsBothEmpty);
         }
     }
 
@@ -392,7 +404,7 @@ fn validate_and_merge(
     if settings.builtin_agents.len() > MAX_TOTAL_ENTRIES
         || settings.image_gen_profiles.len() > MAX_TOTAL_ENTRIES
     {
-        return Err("credential store has too many entries".into());
+        return Err(WebCredentialError::StoreTooManyEntries);
     }
 
     if let Some(id) = active_image_gen_profile_id {
@@ -436,7 +448,7 @@ fn validate_and_merge(
     Ok(())
 }
 
-fn parse_builtin_agent(payload: BuiltinAgentPayload) -> Result<BuiltinAgentConfig, String> {
+fn parse_builtin_agent(payload: BuiltinAgentPayload) -> Result<BuiltinAgentConfig> {
     validate_len(
         &payload.display_name,
         MAX_TEXT_BYTES,
@@ -452,7 +464,7 @@ fn parse_builtin_agent(payload: BuiltinAgentPayload) -> Result<BuiltinAgentConfi
     let kind = match payload.kind.as_str() {
         "anthropic" => BuiltinAgentKind::Anthropic,
         "openai" | "openai-compat" | "openai_compat" => BuiltinAgentKind::OpenAiCompat,
-        _ => return Err("unsupported built-in agent kind".into()),
+        _ => return Err(WebCredentialError::UnsupportedBuiltinAgentKind),
     };
     let preset = payload
         .preset
@@ -482,7 +494,7 @@ fn parse_builtin_agent(payload: BuiltinAgentPayload) -> Result<BuiltinAgentConfi
     })
 }
 
-fn parse_image_profile(payload: ImageGenProfilePayload) -> Result<ImageGenProfile, String> {
+fn parse_image_profile(payload: ImageGenProfilePayload) -> Result<ImageGenProfile> {
     validate_len(&payload.name, MAX_TEXT_BYTES, "image profile name")?;
     validate_len(&payload.model, MAX_TEXT_BYTES, "image profile model")?;
     validate_len(
@@ -499,7 +511,7 @@ fn parse_image_profile(payload: ImageGenProfilePayload) -> Result<ImageGenProfil
         "gemini" => ImageGenProvider::Gemini,
         "replicate" => ImageGenProvider::Replicate,
         "custom" => ImageGenProvider::Custom,
-        _ => return Err("unsupported image generation provider".into()),
+        _ => return Err(WebCredentialError::UnsupportedImageGenProvider),
     };
 
     Ok(ImageGenProfile {
@@ -513,22 +525,26 @@ fn parse_image_profile(payload: ImageGenProfilePayload) -> Result<ImageGenProfil
     })
 }
 
-fn validate_required_id(value: &str, field: &str) -> Result<(), String> {
+fn validate_required_id(value: &str, field: &str) -> Result<()> {
     validate_len(value, MAX_TEXT_BYTES, field)?;
     if value.trim().is_empty() {
-        return Err(format!("{field} must not be empty"));
+        return Err(WebCredentialError::RequiredIdEmpty {
+            field: field.to_string(),
+        });
     }
     Ok(())
 }
 
-fn validate_local_id(value: &str, field: &str) -> Result<(), String> {
+fn validate_local_id(value: &str, field: &str) -> Result<()> {
     if value.is_empty()
         || value.len() > MAX_LOCAL_ID_BYTES
         || !value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
     {
-        return Err(format!("{field} is invalid"));
+        return Err(WebCredentialError::InvalidLocalId {
+            field: field.to_string(),
+        });
     }
     Ok(())
 }
@@ -541,9 +557,11 @@ fn scoped_id(prefix: &str, local_id: &str) -> String {
     format!("{prefix}{local_id}")
 }
 
-fn validate_len(value: &str, max: usize, field: &str) -> Result<(), String> {
+fn validate_len(value: &str, max: usize, field: &str) -> Result<()> {
     if value.len() > max {
-        return Err(format!("{field} is too long"));
+        return Err(WebCredentialError::FieldTooLong {
+            field: field.to_string(),
+        });
     }
     Ok(())
 }

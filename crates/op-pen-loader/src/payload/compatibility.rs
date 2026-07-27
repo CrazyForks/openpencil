@@ -29,6 +29,51 @@ pub struct CanonicalLoad {
     pub compatibility: CompatibilityReport,
 }
 
+/// Why the raw-preserving legacy migration writer could not produce a
+/// current-schema rewrite.
+///
+/// Structured per failure stage; `Display` reproduces the exact strings this
+/// writer used to return as `String` so host-side save dialogs keep their
+/// wording. Note the "not a top-level JSON object" sentence deliberately omits
+/// the word "valid" — that is what this path has always emitted, unlike
+/// [`crate::EditorMetaWriteError::NotTopLevelObject`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NormalizedWriteError {
+    /// The stack-protected `serde_json` parse of the migration DOM failed.
+    Parse(String),
+    /// The parsed source root is not a JSON object, so no top-level field can
+    /// be inserted.
+    NotTopLevelObject,
+    /// Serializing the replacement `editorMeta` value failed.
+    SerializeMeta(String),
+    /// Streaming the migrated DOM into the destination writer failed.
+    Write(String),
+}
+
+impl std::fmt::Display for NormalizedWriteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NormalizedWriteError::NotTopLevelObject => {
+                f.write_str("source document is not a top-level JSON object")
+            }
+            NormalizedWriteError::Parse(error)
+            | NormalizedWriteError::SerializeMeta(error)
+            | NormalizedWriteError::Write(error) => f.write_str(error),
+        }
+    }
+}
+
+impl std::error::Error for NormalizedWriteError {}
+
+/// `op-host-services`' migration Save-As `?`s this writer inside a closure
+/// that still collects failures as `String`; this keeps that call site
+/// compiling unchanged.
+impl From<NormalizedWriteError> for String {
+    fn from(error: NormalizedWriteError) -> String {
+        error.to_string()
+    }
+}
+
 /// Persist known legacy repairs while retaining unknown fields in the raw JSON
 /// tree. This is intentionally reserved for an explicit one-time migration:
 /// the compatibility DOM costs more memory than the typed streaming writer,
@@ -37,27 +82,28 @@ pub fn write_normalized_source_with_current_schema<W: std::io::Write>(
     writer: &mut W,
     src: &str,
     meta: crate::EditorMeta,
-) -> Result<(), String> {
+) -> Result<(), NormalizedWriteError> {
     use serde::Serialize as _;
 
-    let mut raw: serde_json::Value =
-        super::deserialize_deep(src).map_err(|error| error.to_string())?;
+    let mut raw: serde_json::Value = super::deserialize_deep(src)
+        .map_err(|error| NormalizedWriteError::Parse(error.to_string()))?;
     super::normalize_legacy_value(&mut raw);
     let root = raw
         .as_object_mut()
-        .ok_or_else(|| "source document is not a top-level JSON object".to_string())?;
+        .ok_or(NormalizedWriteError::NotTopLevelObject)?;
     root.insert(
         "formatVersion".to_string(),
         serde_json::Value::String(jian_ops_schema::version::FORMAT_VERSION_CURRENT.to_string()),
     );
     root.insert(
         "editorMeta".to_string(),
-        serde_json::to_value(meta).map_err(|error| error.to_string())?,
+        serde_json::to_value(meta)
+            .map_err(|error| NormalizedWriteError::SerializeMeta(error.to_string()))?,
     );
     let mut serializer = serde_json::Serializer::new(writer);
     let result = raw
         .serialize(serde_stacker::Serializer::new(&mut serializer))
-        .map_err(|error| error.to_string());
+        .map_err(|error| NormalizedWriteError::Write(error.to_string()));
     drop_json_value_iteratively(raw);
     result
 }

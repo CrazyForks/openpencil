@@ -5,17 +5,22 @@ use op_editor_core::EditorState;
 use op_host_native::WidgetHostNative;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
 
 use crate::persistence::show_error_dialog_public;
-use op_host_services::doc_io::{commit_staged_document, save_to_path, ErrorKind};
+use op_host_services::doc_io::ErrorKind;
 
+mod error;
+pub(crate) use error::{FigmaImportError, OutputStateError};
 mod image_sources;
 use image_sources::{bind_import_thumbnails, PendingImportThumbs};
 mod output_guard;
 pub(crate) use output_guard::{capture_output_state, OutputEntryState};
+mod publish;
+use publish::{
+    adjacent_op_base_path, persist_import_next_to_source, CompletedImport, PersistResult,
+};
 mod worker_control;
 use worker_control::CancellationToken;
 #[cfg(test)]
@@ -27,8 +32,8 @@ pub struct PreparedImport {
     pub warnings: Vec<String>,
 }
 
-type PrepareResult = Result<op_figma::PreparedFig, String>;
-type ConvertResult = Result<PreparedImport, String>;
+type PrepareResult = Result<op_figma::PreparedFig, FigmaImportError>;
+type ConvertResult = Result<PreparedImport, FigmaImportError>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ImportOutputMode {
@@ -43,37 +48,6 @@ enum ExistingOutputDecision {
     NumberedCopy,
     Cancel,
 }
-
-struct PersistedFile {
-    // Publication is durable once the completed sibling atomically replaces
-    // the fixed output. If UI ownership changes in the tiny post-publish race,
-    // leave that valid file in place; deleting by path could race another
-    // importer replacing the same destination.
-    output_path: PathBuf,
-}
-
-impl PersistedFile {
-    fn new(output_path: PathBuf) -> Self {
-        Self { output_path }
-    }
-
-    fn path(&self) -> &Path {
-        &self.output_path
-    }
-
-    fn commit(self) -> PathBuf {
-        self.output_path
-    }
-}
-
-struct CompletedImport {
-    prepared: PreparedImport,
-    persisted: Result<PersistedFile, String>,
-}
-
-type PersistResult = Result<CompletedImport, String>;
-
-static IMPORT_OUTPUT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 enum SessionStage {
     Preparing(Receiver<PrepareResult>),
@@ -112,7 +86,7 @@ impl Drop for FigmaImportSession {
 fn select_output_mode(
     source_path: &Path,
     choose_existing: impl FnOnce(&Path) -> ExistingOutputDecision,
-) -> Result<Option<ImportOutputMode>, String> {
+) -> Result<Option<ImportOutputMode>, FigmaImportError> {
     let output_path = adjacent_op_base_path(source_path)?;
     if capture_output_state(&output_path)?.is_missing() {
         return Ok(Some(ImportOutputMode::CreateFixed));
@@ -153,7 +127,7 @@ pub(crate) fn prompt_output_mode(
     }) {
         Ok(mode) => mode,
         Err(error) => {
-            show_error_dialog_public(host, ErrorKind::Save, Some(source_path), &error);
+            show_error_dialog_public(host, ErrorKind::Save, Some(source_path), &error.to_string());
             None
         }
     }
@@ -197,7 +171,7 @@ pub(crate) fn spawn_approved(
         // Deliver the failure through the normal pump path (error
         // dialog + overlay-flag clear) instead of crashing the app.
         eprintln!("[import-figma] failed to spawn worker: {err}");
-        let _ = tx.send(Err(format!("import worker failed to start: {err}")));
+        let _ = tx.send(Err(FigmaImportError::PrepareWorkerSpawn(err.to_string())));
     }
 
     FigmaImportSession {
@@ -209,9 +183,11 @@ pub(crate) fn spawn_approved(
 }
 
 fn prepare_path(path: &Path, cancellation: &CancellationToken) -> PrepareResult {
-    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    // `std::io::Error` and `op_figma`'s error both belong to code this pass
+    // does not own, so their messages ride along as text.
+    let bytes = std::fs::read(path).map_err(|e| FigmaImportError::ReadSource(e.to_string()))?;
     if cancellation.is_cancelled() {
-        return Err("Figma import was cancelled".to_string());
+        return Err(FigmaImportError::Cancelled);
     }
     let file_name = path
         .file_stem()
@@ -219,9 +195,9 @@ fn prepare_path(path: &Path, cancellation: &CancellationToken) -> PrepareResult 
         .unwrap_or("Figma Import");
     let prepared =
         op_figma::prepare_fig_binary(&bytes, file_name, op_figma::FigLayoutMode::Preserve)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| FigmaImportError::ParseFig(e.to_string()))?;
     if cancellation.is_cancelled() {
-        return Err("Figma import was cancelled".to_string());
+        return Err(FigmaImportError::Cancelled);
     }
     Ok(prepared)
 }
@@ -232,7 +208,7 @@ fn convert_prepared(
     cancellation: &CancellationToken,
 ) -> ConvertResult {
     if cancellation.is_cancelled() {
-        return Err("Figma import was cancelled".to_string());
+        return Err(FigmaImportError::Cancelled);
     }
     let pending_thumbs = RefCell::new(PendingImportThumbs::default());
     let transform = |bytes: &[u8]| {
@@ -257,16 +233,16 @@ fn convert_prepared(
             prepared.into_all_pages_with_images(Some(&transform))
         }
         op_editor_core::FigmaImportSelection::Cancel => {
-            return Err("Figma import was cancelled".to_string());
+            return Err(FigmaImportError::Cancelled);
         }
     }
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| FigmaImportError::Convert(e.to_string()))?;
     if cancellation.is_cancelled() {
-        return Err("Figma import was cancelled".to_string());
+        return Err(FigmaImportError::Cancelled);
     }
     let mut state = EditorState::from_document(import.document);
     if cancellation.is_cancelled() {
-        return Err("Figma import was cancelled".to_string());
+        return Err(FigmaImportError::Cancelled);
     }
     bind_import_thumbnails(&state.doc, &mut pending_thumbs.borrow_mut());
     state.editor_ui.preserve_authored_geometry = true;
@@ -277,7 +253,7 @@ fn convert_prepared(
 }
 
 #[cfg(test)]
-fn parse_path(path: &Path) -> Result<PreparedImport, String> {
+fn parse_path(path: &Path) -> Result<PreparedImport, FigmaImportError> {
     let cancellation = CancellationToken::default();
     convert_prepared(
         prepare_path(path, &cancellation)?,
@@ -312,202 +288,9 @@ fn conversion_receiver(
         // Deliver the failure through the normal pump path (error
         // dialog + overlay-flag clear) instead of crashing the app.
         eprintln!("[import-figma] failed to spawn convert worker: {err}");
-        let _ = tx.send(Err(format!("convert worker failed to start: {err}")));
+        let _ = tx.send(Err(FigmaImportError::ConvertWorkerSpawn(err.to_string())));
     }
     rx
-}
-
-/// The primary imported document is the fixed sibling `Design.op`. Re-imports
-/// replace it only after confirmation; keeping both publishes `Design (N).op`.
-fn adjacent_op_base_path(source_path: &Path) -> Result<PathBuf, String> {
-    if source_path.file_name().is_none() {
-        return Err("Figma import path has no file name".to_string());
-    }
-    let output_path = source_path.with_extension("op");
-    if output_path == source_path {
-        return Err("Figma import source already has the .op extension".to_string());
-    }
-    Ok(output_path)
-}
-
-fn import_staging_path(source_path: &Path) -> Result<PathBuf, String> {
-    let base = adjacent_op_base_path(source_path)?;
-    let parent = base.parent().unwrap_or_else(|| Path::new(""));
-    let name = base
-        .file_name()
-        .map(|name| name.to_string_lossy())
-        .unwrap_or_else(|| "Figma Import.op".into());
-    for _ in 0..100 {
-        let sequence = IMPORT_OUTPUT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let candidate = parent.join(format!(
-            ".{name}.op-import-{}-{sequence}",
-            std::process::id()
-        ));
-        if !candidate.try_exists().map_err(|error| {
-            format!(
-                "could not inspect import staging path {}: {error}",
-                candidate.display()
-            )
-        })? {
-            return Ok(candidate);
-        }
-    }
-    Err(format!(
-        "could not allocate an import staging file beside {}",
-        source_path.display()
-    ))
-}
-
-fn remove_import_artifact(path: &Path) {
-    match std::fs::remove_file(path) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => eprintln!(
-            "[import-figma] could not remove staging artifact {}: {error}",
-            path.display()
-        ),
-    }
-}
-
-fn remove_legacy_sidecar(path: &Path) {
-    match std::fs::remove_file(op_host_services::doc_io::sidecar_path(path)) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => eprintln!(
-            "[import-figma] stale view-state sidecar cleanup failed for {}: {error}",
-            path.display()
-        ),
-    }
-}
-
-fn publish_new_link(staging_path: &Path, output_path: &Path) -> Result<PathBuf, std::io::Error> {
-    std::fs::hard_link(staging_path, output_path)?;
-    remove_legacy_sidecar(output_path);
-    Ok(output_path.to_path_buf())
-}
-
-fn publish_numbered_copy(staging_path: &Path, source_path: &Path) -> Result<PathBuf, String> {
-    let base = adjacent_op_base_path(source_path)?;
-    let parent = base.parent().unwrap_or_else(|| Path::new(""));
-    let stem = base
-        .file_stem()
-        .map(|stem| stem.to_string_lossy())
-        .unwrap_or_else(|| "Figma Import".into());
-    for suffix in 1..=10_000 {
-        let candidate = parent.join(format!("{stem} ({suffix}).op"));
-        match publish_new_link(staging_path, &candidate) {
-            Ok(path) => return Ok(path),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => {
-                return Err(format!(
-                    "could not publish converted OpenPencil document {}: {error}",
-                    candidate.display()
-                ));
-            }
-        }
-    }
-    Err(format!(
-        "could not find an unused OP file name beside {}",
-        source_path.display()
-    ))
-}
-
-fn publish_staged_op(
-    staging_path: &Path,
-    source_path: &Path,
-    output_mode: ImportOutputMode,
-    cancellation: &CancellationToken,
-) -> Result<PathBuf, String> {
-    let output_path = adjacent_op_base_path(source_path)?;
-    if cancellation.is_cancelled() {
-        return Err("Figma import was cancelled".to_string());
-    }
-    match output_mode {
-        ImportOutputMode::ReplaceFixed { expected } => {
-            let unchanged = capture_output_state(&output_path)
-                .map(|current| current == expected)
-                .unwrap_or_else(|error| {
-                    eprintln!(
-                        "[import-figma] fixed output could not be revalidated; preserving it: {error}"
-                    );
-                    false
-                });
-            if !unchanged {
-                // Consent applied to the exact entry observed after Yes. A
-                // later edit, replacement, deletion, or creation is a new
-                // state; preserve it and publish without another worker-side
-                // prompt.
-                return publish_numbered_copy(staging_path, source_path);
-            }
-            if expected.is_missing() {
-                return match publish_new_link(staging_path, &output_path) {
-                    Ok(path) => Ok(path),
-                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                        publish_numbered_copy(staging_path, source_path)
-                    }
-                    Err(error) => Err(format!(
-                        "could not publish converted OpenPencil document {}: {error}",
-                        output_path.display()
-                    )),
-                };
-            }
-            commit_staged_document(staging_path, &output_path).map_err(|error| {
-                format!(
-                    "could not publish converted OpenPencil document {}: {error}",
-                    output_path.display()
-                )
-            })?;
-            Ok(output_path)
-        }
-        ImportOutputMode::NumberedCopy => publish_numbered_copy(staging_path, source_path),
-        ImportOutputMode::CreateFixed => match publish_new_link(staging_path, &output_path) {
-            Ok(path) => Ok(path),
-            // A fixed file appeared after the initial existence check. Never
-            // overwrite it without consent; preserve both with a numbered copy.
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                publish_numbered_copy(staging_path, source_path)
-            }
-            Err(error) => Err(format!(
-                "could not publish converted OpenPencil document {}: {error}",
-                output_path.display()
-            )),
-        },
-    }
-}
-
-/// Persist on the conversion worker before moving the imported state to the
-/// UI thread. This keeps the large canonical serialization off the event loop
-/// and makes the returned path a truthful, already-committed `current_path`.
-fn persist_import_next_to_source(
-    prepared: PreparedImport,
-    source_path: &Path,
-    output_mode: ImportOutputMode,
-    cancellation: &CancellationToken,
-) -> CompletedImport {
-    let persisted = (|| {
-        if cancellation.is_cancelled() {
-            return Err("Figma import was cancelled".to_string());
-        }
-        let staging_path = import_staging_path(source_path)?;
-        if let Err(error) = save_to_path(&prepared.state, &staging_path) {
-            remove_import_artifact(&staging_path);
-            return Err(format!(
-                "could not write converted OpenPencil document beside {}: {error}",
-                source_path.display()
-            ));
-        }
-        if cancellation.is_cancelled() {
-            remove_import_artifact(&staging_path);
-            return Err("Figma import was cancelled".to_string());
-        }
-        let output_path = publish_staged_op(&staging_path, source_path, output_mode, cancellation);
-        remove_import_artifact(&staging_path);
-        Ok(PersistedFile::new(output_path?))
-    })();
-    CompletedImport {
-        prepared,
-        persisted,
-    }
 }
 
 fn clear_page_selector(ui: &mut op_editor_core::editor_ui_state::EditorUiState) {
@@ -632,7 +415,7 @@ pub fn pump(
     enum Event {
         Prepared(op_figma::PreparedFig),
         Converted(Box<CompletedImport>),
-        Error(String),
+        Error(FigmaImportError),
         Disconnected,
         Pending,
         Cancelled,
@@ -698,7 +481,7 @@ pub fn pump(
         }
         Event::Error(e) => {
             eprintln!("[import-figma] {e}");
-            show_error_dialog_public(host, ErrorKind::Open, Some(&sess.path), &e);
+            show_error_dialog_public(host, ErrorKind::Open, Some(&sess.path), &e.to_string());
             host.editor_state_mut().editor_ui.figma_import_in_progress = false;
             host.mark_editor_state_dirty();
             *session = None;

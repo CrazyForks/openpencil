@@ -5,6 +5,7 @@
 //! `ImageSrc::serialize` and editor metadata can be appended without a
 //! document-sized `Value` or final `String` allocation.
 
+use super::DocIoError;
 use jian_ops_schema::image_thumbs::ImageThumbSnapshot;
 use jian_ops_schema::PenDocument;
 use op_editor_core::{EditorState, SharedDoc};
@@ -81,7 +82,7 @@ pub fn write_canonical_document<W: Write>(
     writer: &mut W,
     document: &PenDocument,
     active_page_index: usize,
-) -> Result<StreamingSaveStats, String> {
+) -> Result<StreamingSaveStats, DocIoError> {
     let thumbnails = jian_ops_schema::image_thumbs::capture_snapshot();
     write_canonical_document_with_thumbnails(
         writer,
@@ -98,7 +99,7 @@ pub(super) fn write_canonical_document_with_thumbnails<W: Write>(
     active_page_index: usize,
     preserve_authored_geometry: bool,
     thumbnails: &ImageThumbSnapshot,
-) -> Result<StreamingSaveStats, String> {
+) -> Result<StreamingSaveStats, DocIoError> {
     write_serializable_document_with_thumbnails(
         writer,
         document,
@@ -117,7 +118,7 @@ pub(super) fn write_serializable_document_with_thumbnails<
     active_page_index: usize,
     preserve_authored_geometry: bool,
     thumbnails: &ImageThumbSnapshot,
-) -> Result<StreamingSaveStats, String> {
+) -> Result<StreamingSaveStats, DocIoError> {
     let stats = jian_ops_schema::image_table::write_document_with_extension(
         writer,
         document,
@@ -128,7 +129,9 @@ pub(super) fn write_serializable_document_with_thumbnails<
             preserve_authored_geometry,
         },
     )
-    .map_err(|e| e.to_string())?;
+    // `jian_ops_schema` is not owned by this pass — carry its sentence
+    // verbatim so the wire text is unchanged.
+    .map_err(|e| DocIoError::Serialize(e.to_string()))?;
     Ok(StreamingSaveStats {
         wrote_images_table: stats.wrote_images_table,
         wrote_image_thumbs: stats.wrote_image_thumbs,

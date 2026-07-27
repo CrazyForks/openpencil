@@ -196,7 +196,7 @@ impl SseCollector for AnthropicCollector {
 pub async fn run_anthropic_agent_loop(
     cfg: AgentLoopConfig,
     tx: &mpsc::Sender<ChatDelta>,
-) -> Result<bool, String> {
+) -> Result<bool, BuiltinHttpError> {
     let executor = cfg.executor.clone();
     let enabled = cfg.finalize_on_exit;
     let result = run_anthropic_agent_loop_inner(cfg, tx).await;
@@ -213,7 +213,7 @@ pub async fn run_anthropic_agent_loop(
 pub(super) async fn run_anthropic_agent_loop_inner(
     cfg: AgentLoopConfig,
     tx: &mpsc::Sender<ChatDelta>,
-) -> Result<bool, String> {
+) -> Result<bool, BuiltinHttpError> {
     let tools_json: Vec<Value> = cfg
         .tools
         .iter()
@@ -330,7 +330,10 @@ pub(super) async fn run_anthropic_agent_loop_inner(
             return Ok(true);
         }
         if let Some(err) = collector.error {
-            return Err(err);
+            // An HTTP-200 body that announced its own failure — see
+            // `BuiltinHttpError::StreamReported`. The provider's message
+            // rides verbatim, as it did when this was a bare `String`.
+            return Err(BuiltinHttpError::StreamReported(err));
         }
         let calls = collector.tool_calls();
         if calls.is_empty() {

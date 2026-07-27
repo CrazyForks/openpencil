@@ -21,7 +21,7 @@ fn checked_settings_load_rejects_a_malformed_existing_file_without_mutation() {
         .expect_err("strict web settings load must reject malformed JSON");
 
     assert!(
-        error.contains("parse settings"),
+        error.to_string().contains("parse settings"),
         "unexpected error: {error}"
     );
     assert_eq!(before, fingerprint(&state));
@@ -39,7 +39,7 @@ fn checked_settings_load_rejects_a_schema_invalid_existing_file() {
         .expect_err("strict web settings load must reject schema-invalid JSON");
 
     assert!(
-        error.contains("parse settings"),
+        error.to_string().contains("parse settings"),
         "unexpected error: {error}"
     );
     let _ = std::fs::remove_dir_all(root);
@@ -56,7 +56,9 @@ fn checked_settings_load_rejects_an_unsupported_settings_version() {
         .expect_err("web startup must not overwrite an unsupported settings schema");
 
     assert!(
-        error.contains("unsupported settings file version"),
+        error
+            .to_string()
+            .contains("unsupported settings file version"),
         "unexpected error: {error}"
     );
     let _ = std::fs::remove_dir_all(root);
@@ -159,7 +161,7 @@ fn checked_settings_load_rejects_unknown_fields_at_every_settings_nesting_level(
             .expect_err("strict web load must reject unknown same-version fields");
 
         assert!(
-            error.contains("unknown settings field"),
+            error.to_string().contains("unknown settings field"),
             "case={case}, {error}"
         );
         assert_eq!(before, fingerprint(&state), "case={case}");
@@ -293,7 +295,10 @@ fn checked_settings_load_rejects_values_that_would_be_silently_normalized() {
         let error = load_checked_from_path(&mut state, &path)
             .expect_err("strict web load must reject a lossy settings normalization");
 
-        assert!(error.contains("losslessly"), "case={case}, {error}");
+        assert!(
+            error.to_string().contains("losslessly"),
+            "case={case}, {error}"
+        );
         assert_eq!(before, fingerprint(&state), "case={case}");
         let _ = std::fs::remove_dir_all(root);
     }
@@ -357,7 +362,9 @@ fn checked_settings_load_rejects_semantically_invalid_credential_entries() {
             .expect_err("web startup must not silently drop an unknown credential entry");
 
         assert!(
-            error.contains("unsupported settings credential entry"),
+            error
+                .to_string()
+                .contains("unsupported settings credential entry"),
             "case={case}, error={error}"
         );
         assert_eq!(before, fingerprint(&state), "case={case}");
@@ -450,7 +457,10 @@ fn checked_settings_load_rejects_an_unreadable_existing_path_without_mutation() 
     let error = load_checked_from_path(&mut state, &path)
         .expect_err("strict web settings load must reject an unreadable settings path");
 
-    assert!(error.contains("read settings"), "unexpected error: {error}");
+    assert!(
+        error.to_string().contains("read settings"),
+        "unexpected error: {error}"
+    );
     assert_eq!(before, fingerprint(&state));
     let _ = std::fs::remove_dir_all(root);
 }

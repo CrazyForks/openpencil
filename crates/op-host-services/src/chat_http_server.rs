@@ -43,6 +43,10 @@ use tokio::sync::mpsc;
 use crate::chat_runtime::{shared_runtime, BlockingRecvIter};
 use crate::chat_spawn::{build_command, find_binary};
 
+#[path = "chat_http_server_error.rs"]
+mod error;
+pub use error::OpenCodeError;
+
 /// TS `opencode-client.ts` reuses an existing server on the default
 /// port before spawning its own.
 const DEFAULT_SERVER_URL: &str = "http://127.0.0.1:4096";
@@ -256,7 +260,9 @@ async fn run_opencode_turn(
                 *spawned = Some(child);
                 url
             }
-            Err(e) => return fail(tx, e).await,
+            // `fail` writes into `op-ai`'s `ChatDelta::Error(String)` sink,
+            // so the typed failure renders here at the boundary.
+            Err(e) => return fail(tx, e.to_string()).await,
         }
     };
 
@@ -331,7 +337,7 @@ async fn run_opencode_turn(
     {
         eprintln!("[AI] OpenCode promptAsync error: {e}");
         sse_task.abort();
-        return fail(tx, e).await;
+        return fail(tx, e.to_string()).await;
     }
 
     // 7. Consume events until idle / error / timeout
@@ -478,7 +484,9 @@ async fn probe_server(client: &reqwest::Client, base: &str) -> bool {
 /// the `opencode server listening on <url>` stdout line (TS
 /// `server.ts::createOpencodeServer`). Returns the announced base URL
 /// plus the child handle (caller kills it when the turn ends).
-async fn spawn_opencode_server(binary: &str) -> Result<(String, tokio::process::Child), String> {
+async fn spawn_opencode_server(
+    binary: &str,
+) -> Result<(String, tokio::process::Child), OpenCodeError> {
     let args: Vec<String> = vec![
         "serve".into(),
         "--hostname=127.0.0.1".into(),
@@ -491,9 +499,10 @@ async fn spawn_opencode_server(binary: &str) -> Result<(String, tokio::process::
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    let mut child = cmd
-        .spawn()
-        .map_err(|e| format!("spawn {binary} serve: {e}"))?;
+    let mut child = cmd.spawn().map_err(|e| OpenCodeError::Spawn {
+        binary: binary.to_string(),
+        message: e.to_string(),
+    })?;
 
     // Collect stderr into the diagnostic buffer the TS error message
     // includes ("Server output: …").
@@ -512,10 +521,7 @@ async fn spawn_opencode_server(binary: &str) -> Result<(String, tokio::process::
             }
         });
     }
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| "opencode serve: no stdout".to_string())?;
+    let stdout = child.stdout.take().ok_or(OpenCodeError::NoStdout)?;
 
     let timeout = listen_timeout();
     let buf_for_scan = Arc::clone(&output_buf);
@@ -548,19 +554,17 @@ async fn spawn_opencode_server(binary: &str) -> Result<(String, tokio::process::
                 .map(|c| c.to_string())
                 .unwrap_or_else(|| "unknown".into());
             let output = output_buf.lock().map(|b| b.clone()).unwrap_or_default();
-            let mut msg = format!("Server exited with code {code}");
-            if !output.trim().is_empty() {
-                msg.push_str(&format!("\nServer output: {output}"));
-            }
-            Err(msg)
+            // `Display` appends the "Server output: …" tail only when the
+            // buffer is non-blank — the same condition this used to apply by
+            // hand, so the message is byte-identical.
+            Err(OpenCodeError::ServerExited { code, output })
         }
         Err(_) => {
             let _ = child.start_kill();
             let _ = child.wait().await;
-            Err(format!(
-                "Timeout waiting for server to start after {}ms",
-                timeout.as_millis()
-            ))
+            Err(OpenCodeError::ListenTimeout {
+                millis: timeout.as_millis(),
+            })
         }
     }
 }
@@ -599,47 +603,56 @@ async fn post_json(
     client: &reqwest::Client,
     url: &str,
     body: &serde_json::Value,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, OpenCodeError> {
     let resp = client
         .post(url)
         .json(body)
         .send()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| OpenCodeError::Request(e.to_string()))?;
     read_json_response(resp).await
 }
 
 /// GET a JSON document with the same error mapping as [`post_json`].
-async fn get_json(client: &reqwest::Client, url: &str) -> Result<serde_json::Value, String> {
-    let resp = client.get(url).send().await.map_err(|e| e.to_string())?;
+async fn get_json(client: &reqwest::Client, url: &str) -> Result<serde_json::Value, OpenCodeError> {
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| OpenCodeError::Request(e.to_string()))?;
     read_json_response(resp).await
 }
 
-async fn read_json_response(resp: reqwest::Response) -> Result<serde_json::Value, String> {
+async fn read_json_response(resp: reqwest::Response) -> Result<serde_json::Value, OpenCodeError> {
     let status = resp.status();
     let text = resp.text().await.unwrap_or_default();
     if !status.is_success() {
         // Error bodies are OpenCode error objects when JSON — run
         // them through the TS formatter; otherwise show raw text.
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
-            return Err(format_opencode_error(Some(&val)));
+            return Err(OpenCodeError::Provider(format_opencode_error(Some(&val))));
         }
-        return Err(format!("http {status}: {}", text.trim()));
+        return Err(OpenCodeError::HttpStatus {
+            status,
+            body: text.trim().to_string(),
+        });
     }
     if text.trim().is_empty() {
         return Ok(serde_json::Value::Null);
     }
-    serde_json::from_str(&text).map_err(|e| format!("invalid JSON response: {e}"))
+    serde_json::from_str(&text).map_err(|e| OpenCodeError::InvalidJson {
+        message: e.to_string(),
+    })
 }
 
 /// `POST /session` → session id (TS `session.create`).
-async fn create_session(client: &reqwest::Client, base: &str) -> Result<String, String> {
+async fn create_session(client: &reqwest::Client, base: &str) -> Result<String, OpenCodeError> {
     let body = serde_json::json!({ "title": SESSION_TITLE });
     let val = post_json(client, &format!("{base}/session"), &body).await?;
     val.get("id")
         .and_then(|v| v.as_str())
         .map(str::to_string)
-        .ok_or_else(|| format_opencode_error(Some(&val)))
+        .ok_or_else(|| OpenCodeError::Provider(format_opencode_error(Some(&val))))
 }
 
 /// Error name → user-friendly label mapping

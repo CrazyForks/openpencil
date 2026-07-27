@@ -65,7 +65,9 @@ impl McpTool for UpsertComponentTool {
         };
         let root = match parse_node(raw, "node_json") {
             Ok(root) => root,
-            Err(message) => return ToolOutcome::Err(ToolErrorCode::InvalidArgument, message),
+            Err(error) => {
+                return ToolOutcome::Err(ToolErrorCode::InvalidArgument, error.to_string())
+            }
         };
         ToolOutcome::OkWithCommand(
             wrote(key),
@@ -100,7 +102,9 @@ impl McpTool for UpsertScreenTool {
         };
         let root = match parse_node(raw, "node_json") {
             Ok(root) => root,
-            Err(message) => return ToolOutcome::Err(ToolErrorCode::InvalidArgument, message),
+            Err(error) => {
+                return ToolOutcome::Err(ToolErrorCode::InvalidArgument, error.to_string())
+            }
         };
         ToolOutcome::OkWithCommand(
             wrote(key),
@@ -129,8 +133,31 @@ fn missing(name: &str) -> ToolOutcome {
     )
 }
 
-fn parse_node(raw: &str, arg_name: &str) -> Result<PenNode, String> {
-    serde_json::from_str(raw).map_err(|e| format!("{arg_name} is not a valid PenNode: {e}"))
+/// A node-JSON arg did not deserialize into a `PenNode`. `arg_name` keeps
+/// WHICH arg failed as data instead of a pre-formatted prefix; `Display`
+/// reproduces the previous message byte-for-byte.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeParseError {
+    /// The wire name of the offending argument.
+    pub arg_name: String,
+    /// The serde error text.
+    pub detail: String,
+}
+
+impl std::fmt::Display for NodeParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let NodeParseError { arg_name, detail } = self;
+        write!(f, "{arg_name} is not a valid PenNode: {detail}")
+    }
+}
+
+impl std::error::Error for NodeParseError {}
+
+fn parse_node(raw: &str, arg_name: &str) -> Result<PenNode, NodeParseError> {
+    serde_json::from_str(raw).map_err(|e| NodeParseError {
+        arg_name: arg_name.to_string(),
+        detail: e.to_string(),
+    })
 }
 
 fn wrote(key: &str) -> BTreeMap<String, String> {

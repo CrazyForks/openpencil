@@ -2,6 +2,7 @@
 
 use serde_json::{json, Map, Value};
 
+use super::error::PlanStoreError;
 use super::{chunk_id, lock_plans, now_ms, topo_sort, DependencyState};
 
 /// Assemble results whose complete dependency chain remains usable.
@@ -9,12 +10,14 @@ use super::{chunk_id, lock_plans, now_ms, topo_sort, DependencyState};
 /// A fully successful plan is consumed. Retryable partial/degraded results are
 /// returned without consuming the plan, so callers may repair failed chunks
 /// and assemble again. Explicitly skipped-only partials are terminal.
-pub(crate) fn assemble_plan(plan_id: &str, _framework: &str) -> Result<Value, String> {
+pub(crate) fn assemble_plan(plan_id: &str, _framework: &str) -> Result<Value, PlanStoreError> {
     let mut plans = lock_plans();
     let (out, retain_plan) = {
         let state = plans
             .get_mut(plan_id)
-            .ok_or_else(|| format!("Plan {plan_id} not found"))?;
+            .ok_or_else(|| PlanStoreError::PlanNotFound {
+                plan_id: plan_id.to_string(),
+            })?;
         state.last_activity_ms = now_ms();
         let sorted = topo_sort(&state.chunks);
         let dependencies = DependencyState::resolve(&state.chunks, &state.statuses);
@@ -31,10 +34,10 @@ pub(crate) fn assemble_plan(plan_id: &str, _framework: &str) -> Result<Value, St
             })
             .collect();
         if !pending.is_empty() {
-            return Err(format!(
-                "Plan {plan_id} is incomplete; pending chunks: {}. Submit each ready chunk before assembling. The plan remains available.",
-                pending.join(", ")
-            ));
+            return Err(PlanStoreError::PlanIncomplete {
+                plan_id: plan_id.to_string(),
+                pending: pending.iter().map(|id| (*id).to_string()).collect(),
+            });
         }
 
         let mut chunks_out = Vec::new();
@@ -107,11 +110,12 @@ pub(crate) fn assemble_plan(plan_id: &str, _framework: &str) -> Result<Value, St
             let omitted = omitted_chunks
                 .iter()
                 .filter_map(|entry| entry.get("chunkId").and_then(Value::as_str))
-                .collect::<Vec<_>>()
-                .join(", ");
-            return Err(format!(
-                "Plan {plan_id} has no usable chunk code (failed/skipped/blocked: {omitted}). Resubmit failed dependencies before assembling. The plan remains available."
-            ));
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            return Err(PlanStoreError::NoUsableChunks {
+                plan_id: plan_id.to_string(),
+                omitted,
+            });
         }
 
         let partial = !omitted_chunks.is_empty();

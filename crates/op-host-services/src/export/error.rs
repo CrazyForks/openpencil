@@ -9,16 +9,18 @@
 //! reported failure: …" envelope, and `mcp_serve/export_tool.rs` ships them
 //! to the model verbatim, so the wording is part of the contract.
 //!
-//! Scope note: the FILE-WRITING entry points (`export_raster`,
-//! `export_node_raster`, `export_svg`, `export_node_svg`, `export_pdf`) and
-//! `screenshot::capture{,_scene}` deliberately still report `String`. They
-//! are consumed by code outside this crate that returns their `Result`
-//! DIRECTLY (`op-host-desktop::persistence::export_editor_state_to_path`) or
-//! bakes the error type into a channel / closure signature
-//! (`mcp_live.rs`'s screenshot `SyncSender`), so a typed error would not
-//! convert through `?` — it would ripple into modules this pass does not own.
-//! Each of those sites converts with a documented `.map_err`; everything
-//! reachable only from inside this crate is typed.
+//! Scope note: the whole surface is typed now. The FILE-WRITING entry points
+//! (`export_raster`, `export_node_raster`, `export_svg`, `export_node_svg`,
+//! `export_pdf`) and `screenshot::capture{,_scene}` used to keep a `String`
+//! because `op-host-desktop::persistence::export_editor_state_to_path`
+//! returned their `Result` directly and `mcp_live.rs` baked the error type
+//! into its screenshot `SyncSender`. Both of those converted, so the
+//! `*_typed` twins and the `From<ExportError> for String` bridge are gone and
+//! the public names ARE the typed cores.
+//!
+//! One inbound seam still speaks `String`: `op_editor_ui::svg_export`'s
+//! serializer, which lives in a crate this pass does not own. Its message is
+//! carried verbatim by [`ExportError::SvgSerialize`].
 
 use std::fmt;
 
@@ -30,6 +32,11 @@ pub enum ExportError {
     NoActivePage,
     /// The active page has no painted content at all.
     NothingToExport,
+    /// Screenshot flavour of [`ExportError::NothingToExport`]: the live
+    /// capture path words the same condition differently ("capture", not
+    /// "export"), and the wording is asserted on, so it is its own variant
+    /// rather than a shared one with a branchy `Display`.
+    NothingToCapture,
     /// A named page resolved but contributes no visible pixels.
     PageEmpty { page_id: String },
     /// The requested node id is absent from the scene's active page.
@@ -62,6 +69,12 @@ pub enum ExportError {
     NoRequestedNodesPaint,
     /// Writing the encoded bytes to the export target failed.
     Write(String),
+    /// The platform-neutral SVG serializer (`op_editor_ui::svg_export`, a
+    /// crate this pass does not own) refused the scene. Its message is
+    /// carried verbatim so the text is unchanged; this variant exists so the
+    /// SVG entry points can still report [`ExportError`] rather than leaking
+    /// the upstream `String` into their signature.
+    SvgSerialize(String),
 }
 
 impl fmt::Display for ExportError {
@@ -69,6 +82,7 @@ impl fmt::Display for ExportError {
         match self {
             ExportError::NoActivePage => f.write_str("no active page"),
             ExportError::NothingToExport => f.write_str("nothing to export"),
+            ExportError::NothingToCapture => f.write_str("nothing to capture on the active page"),
             ExportError::PageEmpty { page_id } => {
                 write!(f, "page {page_id} has no visible content to export")
             }
@@ -103,20 +117,11 @@ impl fmt::Display for ExportError {
             ExportError::NoRequestedNodesPaint => {
                 f.write_str("no requested nodes have paintable content on the active page")
             }
-            ExportError::Write(message) => f.write_str(message),
+            ExportError::Write(message) | ExportError::SvgSerialize(message) => {
+                f.write_str(message)
+            }
         }
     }
 }
 
 impl std::error::Error for ExportError {}
-
-/// Boundary bridge for the file-writing entry points and
-/// `screenshot::capture{,_scene}`, which still report `String` (see the
-/// module docs for why). `Display` reproduces the original sentence, so a
-/// conversion through here is text-preserving. Delete it once those
-/// signatures can move.
-impl From<ExportError> for String {
-    fn from(error: ExportError) -> String {
-        error.to_string()
-    }
-}

@@ -15,6 +15,7 @@ use op_ai::chat_provider::{ChatDelta, ChatProvider, ChatRequest, EffortLevel, Th
 use op_editor_core::{AgentProvider, BuiltinAgentConfig, EditorState};
 use serde_json::{json, Value};
 
+use crate::ai_proxy_error::ProxyProviderError;
 use crate::chat_builtin_http::ConfiguredBuiltinProvider;
 
 /// Parsed `POST /api/ai/stream` body. The web bundle sends skill NAMES
@@ -239,7 +240,7 @@ pub fn proxy_provider_for_request(
     editor: &EditorState,
     request: &AiStreamRequest,
     policy: crate::web_credential_policy::WebCredentialPersistence,
-) -> Result<Option<Box<dyn ChatProvider>>, String> {
+) -> Result<Option<Box<dyn ChatProvider>>, ProxyProviderError> {
     proxy_provider_for_request_with_chat_session(editor, request, true, policy)
 }
 
@@ -252,20 +253,20 @@ pub fn proxy_provider_for_request_with_chat_session(
     request: &AiStreamRequest,
     _chat_session: bool,
     _policy: crate::web_credential_policy::WebCredentialPersistence,
-) -> Result<Option<Box<dyn ChatProvider>>, String> {
+) -> Result<Option<Box<dyn ChatProvider>>, ProxyProviderError> {
     if let Some(agent) = request.transient_builtin.as_ref() {
         if agent.model.trim() != request.model.trim() {
-            return Err("transient credential model does not match the request".into());
+            return Err(ProxyProviderError::TransientModelMismatch);
         }
         if request
             .provider
             .is_some_and(|expected| agent.kind.model_provider() != expected)
         {
-            return Err("transient credential provider does not match the request".into());
+            return Err(ProxyProviderError::TransientProviderMismatch);
         }
         crate::web_credentials::validate_web_provider_base_url(&agent.base_url)?;
         if !crate::web_credentials::public_demo_transient_endpoint_allowed(agent) {
-            return Err("provider endpoint is not allowed: private, loopback, and reserved addresses require an OPENPENCIL_WEB_AI_ENDPOINT_ALLOWLIST entry".into());
+            return Err(ProxyProviderError::EndpointNotPermittedByDeployment);
         }
         return Ok(ConfiguredBuiltinProvider::from_builtin_agent_for_web(agent)
             .map(|provider| Box::new(provider) as Box<dyn ChatProvider>));

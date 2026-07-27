@@ -88,7 +88,7 @@ pub(super) fn server_loop(
                             let _ = crate::mcp_serve::write_mcp_http_response(
                                 &mut stream,
                                 "500 Internal Server Error",
-                                &error_json(&e),
+                                &error_json(&e.to_string()),
                             );
                         }
                     });
@@ -118,10 +118,10 @@ pub(super) fn serve_connection<S: std::io::Read + std::io::Write>(
     quit_flag: &AtomicBool,
     wake_ui: &UiWake,
     client_identity: &Mutex<Option<(String, String)>>,
-) -> Result<(), String> {
+) -> Result<(), McpLiveError> {
     let req = crate::mcp_serve::read_http_request(stream)?;
     if req.method == "OPTIONS" {
-        return crate::mcp_serve::write_mcp_http_response(stream, "204 No Content", "");
+        return write_http(stream, "204 No Content", "");
     }
     // TS live-canvas whole-document sync (REST `POST /api/mcp/document`),
     // distinct from the JSON-RPC `/mcp` path below. Lets a TS whole-doc-sync
@@ -131,14 +131,10 @@ pub(super) fn serve_connection<S: std::io::Read + std::io::Write>(
         return serve_document_sync(stream, req_tx, wake_ui, stateful_lock, &req.body);
     }
     if req.path != "/mcp" && req.path != "/" {
-        return crate::mcp_serve::write_mcp_http_response(
-            stream,
-            "404 Not Found",
-            r#"{"error":"Not found"}"#,
-        );
+        return write_http(stream, "404 Not Found", r#"{"error":"Not found"}"#);
     }
     if req.method != "POST" {
-        return crate::mcp_serve::write_mcp_http_response(
+        return write_http(
             stream,
             "400 Bad Request",
             r#"{"jsonrpc":"2.0","error":{"code":-32000,"message":"Invalid or missing session ID"},"id":null}"#,
@@ -246,7 +242,7 @@ pub(super) fn process_lightweight_live_tool(
     line: &str,
     req_tx: &Sender<UiRequest>,
     wake_ui: &UiWake,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, McpLiveError> {
     let Some(call) = op_mcp::parse_tool_call(line) else {
         return Ok(None);
     };
@@ -262,16 +258,20 @@ pub(super) fn process_lightweight_live_tool(
     } else {
         registry.register(Box::new(request_list_pages(req_tx, wake_ui)?));
     }
-    crate::mcp_serve::process_tool_message_with_registry(&registry, line, |tool_name, cmd| {
-        if !is_write {
-            return false;
-        }
-        match request_apply(req_tx, wake_ui, tool_name.to_string(), cmd.clone()) {
-            Ok(ack) => ack.applied,
-            Err(e) => {
-                eprintln!("openpencil-desktop mcp: apply failed: {e}");
-                false
+    Ok(crate::mcp_serve::process_tool_message_with_registry(
+        &registry,
+        line,
+        |tool_name, cmd| {
+            if !is_write {
+                return false;
             }
-        }
-    })
+            match request_apply(req_tx, wake_ui, tool_name.to_string(), cmd.clone()) {
+                Ok(ack) => ack.applied,
+                Err(e) => {
+                    eprintln!("openpencil-desktop mcp: apply failed: {e}");
+                    false
+                }
+            }
+        },
+    )?)
 }

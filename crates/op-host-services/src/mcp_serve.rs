@@ -169,14 +169,9 @@ where
     // borrows it once the applier closure mutates it.
     let requested_tool = op_mcp::parse_tool_call(trimmed).map(|call| call.tool);
     let registry = rebuild_registry(state, requested_tool.as_deref());
-    // `process_tool_message_with_registry` keeps a `String` error for
-    // `mcp_live`'s sake (see its doc comment); the sentence it produces
-    // already carries the `dispatch: ` prefix, so re-wrapping it here is
-    // text-preserving.
     process_tool_message_with_registry(&registry, line, |tool_name, cmd| {
         apply(tool_name, state, cmd)
     })
-    .map_err(McpServeError::Dispatch)
 }
 
 /// Dispatch one already-classified tool call through a caller-provided
@@ -185,17 +180,14 @@ where
 /// not need state at all (`set_active_page`). The parser, command-application
 /// contract, and wire serializer remain the same as the general path above.
 ///
-/// Keeps a `String` error for the same reason
-/// [`write_mcp_http_response`] does: `mcp_live.rs`'s lightweight-tool path
-/// `return`s this call's `Result` directly from a `Result<_, String>`
-/// signature. Callers wanting the typed error wrap it in
-/// [`McpServeError::Dispatch`], which is text-preserving because the
-/// `dispatch: ` prefix is already part of the message.
+/// Reports [`McpServeError::Dispatch`] — the `dispatch: ` prefix that used
+/// to be baked into a `String` here is now part of that variant's `Display`
+/// input, so the message is unchanged.
 pub(crate) fn process_tool_message_with_registry<F>(
     registry: &ToolRegistry,
     line: &str,
     mut apply: F,
-) -> Result<Option<String>, String>
+) -> Result<Option<String>, McpServeError>
 where
     F: FnMut(&str, &EditorCommand) -> bool,
 {
@@ -205,7 +197,7 @@ where
         run_stdio_with_applier(registry, &mut input, &mut out, |tool_name, cmd| {
             apply(tool_name, cmd)
         })
-        .map_err(|e| format!("dispatch: {e}"))?;
+        .map_err(|e| McpServeError::Dispatch(format!("dispatch: {e}")))?;
     }
     let resp = String::from_utf8_lossy(&out).trim().to_string();
     Ok((!resp.is_empty()).then_some(resp))
@@ -287,9 +279,7 @@ fn serve_http_connection<S: std::io::Read + std::io::Write>(
     path: &std::path::Path,
 ) -> Result<bool, McpServeError> {
     // Routes through the `_with_origin` primitive with the same permissive
-    // `*` value `write_mcp_http_response` supplies; that wrapper keeps a
-    // `String` error for `mcp_live`'s sake (see its doc comment), and this
-    // server reports typed errors.
+    // `*` value `write_mcp_http_response` supplies.
     let reply = |stream: &mut S, status: &str, body: &str| {
         write_mcp_http_response_with_origin(stream, status, body, Some("*"))
     };
@@ -458,22 +448,15 @@ pub fn read_http_request_body<S: std::io::Read>(stream: &mut S) -> Result<String
     read_http_request(stream).map(|req| req.body)
 }
 
-/// Permissive-CORS (`*`) response writer.
-///
-/// Deliberately keeps a `String` error while
-/// [`write_mcp_http_response_with_origin`] below reports
-/// [`McpServeError`]: `mcp_live.rs`'s per-connection handlers `return` this
-/// call's `Result` DIRECTLY from their own `Result<(), String>` signatures,
-/// so a typed error here would not convert through `?` — it would force a
-/// rewrite of a module this pass does not own. Callers that want the typed
-/// error (this module's own `--mcp-http` server, the `--serve-web` daemon)
-/// go through the `_with_origin` primitive.
+/// Permissive-CORS (`*`) response writer — the convenience wrapper over
+/// [`write_mcp_http_response_with_origin`] for every caller that does not
+/// compute a per-request `Access-Control-Allow-Origin`.
 pub fn write_mcp_http_response<S: std::io::Write>(
     stream: &mut S,
     status: &str,
     body: &str,
-) -> Result<(), String> {
-    write_mcp_http_response_with_origin(stream, status, body, Some("*")).map_err(String::from)
+) -> Result<(), McpServeError> {
+    write_mcp_http_response_with_origin(stream, status, body, Some("*"))
 }
 
 /// Like [`write_mcp_http_response`], but lets the caller supply the exact

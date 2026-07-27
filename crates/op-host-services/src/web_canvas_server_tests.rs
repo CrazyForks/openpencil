@@ -228,7 +228,7 @@ fn browser_only_startup_propagates_credential_scrub_save_failure() {
     let error = enforce_credential_persistence_policy(
         &mut editor,
         crate::web_credential_policy::WebCredentialPersistence::BrowserOnly,
-        |_| Err("simulated disk failure".into()),
+        |_| Err(crate::settings_io::SettingsIoError::PathUnavailable),
     )
     .expect_err("startup must fail when scrubbed settings cannot be saved")
     .to_string();
@@ -287,7 +287,7 @@ fn credential_persistence_failure_rolls_back_and_returns_500_without_echoing_sec
         settings_before.clone(),
         Some(agent_settings_before),
         reply,
-        |_| Err("simulated disk failure".into()),
+        |_| Err(crate::settings_io::SettingsIoError::PathUnavailable),
     );
 
     assert_eq!(reply.status, "500 Internal Server Error");
@@ -474,15 +474,21 @@ fn every_web_persistence_policy_propagates_strict_settings_load_failures() {
         crate::web_credential_policy::WebCredentialPersistence::Server,
     ] {
         let checked_calls = std::cell::Cell::new(0);
+        // The stub now returns the loader's own typed refusal instead of a
+        // fabricated sentence; the assertion still checks that the start-up
+        // path propagates it verbatim rather than re-wording it.
         let result = startup_editor_for_web_canvas_with_loader(None, policy, |_| {
             checked_calls.set(checked_calls.get() + 1);
-            Err("invalid existing settings".into())
+            Err(crate::settings_io::SettingsIoError::Lossy)
         });
 
         let error = result
             .expect_err("all web policies must fail closed on invalid settings")
             .to_string();
-        assert_eq!(error, "invalid existing settings");
+        assert_eq!(
+            error,
+            crate::settings_io::SettingsIoError::Lossy.to_string()
+        );
         assert_eq!(checked_calls.get(), 1, "policy={policy:?}");
     }
 }

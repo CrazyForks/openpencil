@@ -6,6 +6,47 @@
 
 use op_editor_core::EditorState;
 
+/// A Save payload that could not be built, or a daemon acknowledgement that
+/// could not be accepted.
+///
+/// `Display` reproduces the ad-hoc `String` messages this enum replaced byte
+/// for byte, so the `[save] …` console lines stay identical.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SavePayloadError {
+    /// The canonical document (with its `editorMeta` extension) could not be
+    /// written.
+    WriteDocument(String),
+    /// The written bytes are not valid UTF-8.
+    NotUtf8(String),
+    /// The daemon request wrapper could not be serialized.
+    SerializeRequest(String),
+    /// The daemon save response is not valid JSON.
+    ResponseParse(String),
+    /// The daemon reported a failed save (message verbatim from the daemon, or
+    /// the fallback when it sent none).
+    Daemon(String),
+}
+
+impl std::fmt::Display for SavePayloadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SavePayloadError::WriteDocument(error) => write!(f, "{error}"),
+            SavePayloadError::NotUtf8(error) => write!(f, "{error}"),
+            SavePayloadError::SerializeRequest(error) => write!(f, "{error}"),
+            SavePayloadError::ResponseParse(error) => write!(f, "{error}"),
+            SavePayloadError::Daemon(message) => write!(f, "{message}"),
+        }
+    }
+}
+
+impl std::error::Error for SavePayloadError {}
+
+impl From<SavePayloadError> for String {
+    fn from(error: SavePayloadError) -> String {
+        error.to_string()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SavePayloadTarget {
     /// Compact request body consumed by `/api/file/save`.
@@ -54,7 +95,7 @@ pub fn save_snapshot_matches_document(
 pub fn serialize_save_payload(
     state: &EditorState,
     target: SavePayloadTarget,
-) -> Result<String, String> {
+) -> Result<String, SavePayloadError> {
     match target {
         SavePayloadTarget::Daemon => serialize_daemon_request(state),
         SavePayloadTarget::BrowserDownload => serialize_download_document(state),
@@ -63,7 +104,7 @@ pub fn serialize_save_payload(
 
 /// Compatibility entry point used by the browser IO tests.
 #[cfg(test)]
-pub fn serialize_document(state: &EditorState) -> Result<String, String> {
+pub fn serialize_document(state: &EditorState) -> Result<String, SavePayloadError> {
     serialize_save_payload(state, SavePayloadTarget::BrowserDownload)
 }
 
@@ -88,11 +129,14 @@ pub fn acknowledge_browser_download(state: &mut EditorState, file_name: &str) {
 
 /// Compatibility entry point for the daemon request body.
 #[cfg(test)]
-pub fn save_request_body(state: &EditorState) -> Result<String, String> {
+pub fn save_request_body(state: &EditorState) -> Result<String, SavePayloadError> {
     serialize_save_payload(state, SavePayloadTarget::Daemon)
 }
 
-fn write_canonical_document(out: &mut Vec<u8>, state: &EditorState) -> Result<(), String> {
+fn write_canonical_document(
+    out: &mut Vec<u8>,
+    state: &EditorState,
+) -> Result<(), SavePayloadError> {
     let thumbnails = jian_ops_schema::image_thumbs::capture_snapshot();
     jian_ops_schema::image_table::write_document_with_extension(
         out,
@@ -105,25 +149,26 @@ fn write_canonical_document(out: &mut Vec<u8>, state: &EditorState) -> Result<()
         },
     )
     .map(|_| ())
-    .map_err(|error| error.to_string())
+    .map_err(|error| SavePayloadError::WriteDocument(error.to_string()))
 }
 
-fn finish_utf8(out: Vec<u8>) -> Result<String, String> {
-    String::from_utf8(out).map_err(|error| error.to_string())
+fn finish_utf8(out: Vec<u8>) -> Result<String, SavePayloadError> {
+    String::from_utf8(out).map_err(|error| SavePayloadError::NotUtf8(error.to_string()))
 }
 
-fn serialize_download_document(state: &EditorState) -> Result<String, String> {
+fn serialize_download_document(state: &EditorState) -> Result<String, SavePayloadError> {
     let mut out = Vec::new();
     write_canonical_document(&mut out, state)?;
     finish_utf8(out)
 }
 
-fn serialize_daemon_request(state: &EditorState) -> Result<String, String> {
+fn serialize_daemon_request(state: &EditorState) -> Result<String, SavePayloadError> {
     let mut out = Vec::new();
     out.extend_from_slice(br#"{"document":"#);
     write_canonical_document(&mut out, state)?;
     out.extend_from_slice(br#", "activePageIndex": "#);
-    serde_json::to_writer(&mut out, &state.ui.active_page_index).map_err(|e| e.to_string())?;
+    serde_json::to_writer(&mut out, &state.ui.active_page_index)
+        .map_err(|e| SavePayloadError::SerializeRequest(e.to_string()))?;
     out.push(b'}');
     finish_utf8(out)
 }
@@ -134,14 +179,15 @@ pub struct SaveResponse {
     pub version: Option<u64>,
 }
 
-pub fn parse_save_response(response: &str) -> Result<SaveResponse, String> {
-    let parsed: serde_json::Value = serde_json::from_str(response).map_err(|e| e.to_string())?;
+pub fn parse_save_response(response: &str) -> Result<SaveResponse, SavePayloadError> {
+    let parsed: serde_json::Value = serde_json::from_str(response)
+        .map_err(|e| SavePayloadError::ResponseParse(e.to_string()))?;
     if !parsed.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
         let message = parsed
             .get("error")
             .and_then(|v| v.as_str())
             .unwrap_or("Save failed");
-        return Err(message.to_string());
+        return Err(SavePayloadError::Daemon(message.to_string()));
     }
     let file_name = parsed
         .get("fileName")

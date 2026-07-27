@@ -7,6 +7,7 @@
 // native test build.
 mod dirty_state;
 mod document;
+pub mod error;
 mod export;
 mod navigation;
 #[cfg(feature = "canvaskit")]
@@ -52,7 +53,8 @@ impl Viewer {
 
     /// Parse a canonical `.op` JSON string and render. Wraps `load` for JS.
     pub fn load_str(&mut self, src: &str) -> Result<(), JsValue> {
-        self.load(src).map_err(|e| JsValue::from_str(&e))
+        self.load(src)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 }
 

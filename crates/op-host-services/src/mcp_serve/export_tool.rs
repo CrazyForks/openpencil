@@ -201,7 +201,7 @@ fn render_pdf(scene: &LayoutScene, node_ids: &[String], scale: f32) -> ToolOutco
     let pdf_result = if valid_ids.is_empty() {
         Err("no valid node ids to render".to_string())
     } else {
-        render_nodes_pdf_bytes(scene, &valid_ids, scale).map_err(String::from)
+        render_nodes_pdf_bytes(scene, &valid_ids, scale).map_err(|e| e.to_string())
     };
 
     match pdf_result {

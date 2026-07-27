@@ -22,6 +22,10 @@ use op_editor_core::agent_settings::{ImageGenProfile, ImageGenProvider, ImageTes
 use crate::provider_dial::EndpointDialPolicy;
 use crate::web_image_search::fetch_image_data_url;
 
+#[path = "web_image_generate_error.rs"]
+mod error;
+pub use error::ImageGenerateError;
+
 /// Truncation cap for surfaced provider errors (TS parity).
 const ERROR_MESSAGE_CAP: usize = 200;
 
@@ -34,13 +38,13 @@ const MAX_PROVIDER_BODY_BYTES: usize = 16 * 1024 * 1024;
 /// Read a provider response's status + body under
 /// [`MAX_PROVIDER_BODY_BYTES`] (streaming abort, not read-then-check).
 async fn read_provider_body(
-    provider: &str,
+    provider: &'static str,
     resp: reqwest::Response,
-) -> Result<(reqwest::StatusCode, String), String> {
+) -> Result<(reqwest::StatusCode, String), ImageGenerateError> {
     let status = resp.status();
     let bytes = crate::web_image_search::read_capped(resp, MAX_PROVIDER_BODY_BYTES)
         .await
-        .ok_or_else(|| format!("{provider} response exceeded the size limit"))?;
+        .ok_or(ImageGenerateError::BodyTooLarge { provider })?;
     Ok((status, String::from_utf8_lossy(&bytes).into_owned()))
 }
 
@@ -58,21 +62,23 @@ pub(crate) struct WebImageGenerateRequest {
 pub(crate) fn parse_generate_request(
     body: &str,
     state: &op_editor_core::EditorState,
-) -> Result<WebImageGenerateRequest, String> {
+) -> Result<WebImageGenerateRequest, ImageGenerateError> {
     let value: serde_json::Value =
-        serde_json::from_str(body).map_err(|_| "invalid request body".to_string())?;
-    let obj = value.as_object().ok_or("invalid request body")?;
+        serde_json::from_str(body).map_err(|_| ImageGenerateError::InvalidRequestBody)?;
+    let obj = value
+        .as_object()
+        .ok_or(ImageGenerateError::InvalidRequestBody)?;
     let prompt = obj
         .get("prompt")
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|p| !p.is_empty())
-        .ok_or("missing prompt")?;
+        .ok_or(ImageGenerateError::MissingPrompt)?;
     let width = obj.get("width").and_then(serde_json::Value::as_f64);
     let height = obj.get("height").and_then(serde_json::Value::as_f64);
     let profile = match obj.get("profile").and_then(serde_json::Value::as_object) {
         Some(profile) => parse_profile(profile)?,
-        None => daemon_active_profile(state).ok_or("image generation not configured")?,
+        None => daemon_active_profile(state).ok_or(ImageGenerateError::NotConfigured)?,
     };
     let custom_endpoint = profile
         .base_url
@@ -89,7 +95,7 @@ pub(crate) fn parse_generate_request(
 
 fn parse_profile(
     profile: &serde_json::Map<String, serde_json::Value>,
-) -> Result<ImageGenProfile, String> {
+) -> Result<ImageGenProfile, ImageGenerateError> {
     let provider = match profile
         .get("provider")
         .and_then(serde_json::Value::as_str)
@@ -99,20 +105,20 @@ fn parse_profile(
         "gemini" => ImageGenProvider::Gemini,
         "replicate" => ImageGenProvider::Replicate,
         "custom" => ImageGenProvider::Custom,
-        _ => return Err("unknown image provider".to_string()),
+        _ => return Err(ImageGenerateError::UnknownProvider),
     };
     let api_key = profile
         .get("api_key")
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|k| !k.is_empty())
-        .ok_or("missing api key")?;
+        .ok_or(ImageGenerateError::MissingApiKey)?;
     let model = profile
         .get("model")
         .and_then(serde_json::Value::as_str)
         .map(str::trim)
         .filter(|m| !m.is_empty())
-        .ok_or("missing model")?;
+        .ok_or(ImageGenerateError::MissingModel)?;
     let base_url = profile
         .get("base_url")
         .and_then(serde_json::Value::as_str)
@@ -144,21 +150,25 @@ fn daemon_active_profile(state: &op_editor_core::EditorState) -> Option<ImageGen
 
 /// Run one generation on the calling thread (the connection's own thread —
 /// the caller must NOT hold the state lock). Returns the final `data:` URL.
-pub(crate) fn run_generate_blocking(request: &WebImageGenerateRequest) -> Result<String, String> {
+pub(crate) fn run_generate_blocking(
+    request: &WebImageGenerateRequest,
+) -> Result<String, ImageGenerateError> {
     // Same reasoning as `web_image_search::run_search_blocking`: a private
     // current-thread runtime panics when this sync helper is called from a
     // tokio worker, so the generation future rides the shared runtime.
     crate::chat_runtime::block_on_anywhere(run_generate(request))
 }
 
-async fn run_generate(request: &WebImageGenerateRequest) -> Result<String, String> {
+async fn run_generate(request: &WebImageGenerateRequest) -> Result<String, ImageGenerateError> {
     let profile = &request.profile;
     // Screen browser-supplied custom endpoints before any dial; default
     // provider hosts are product constants and stay trusted.
     let endpoint_policy = if request.custom_endpoint {
         let base = profile.base_url.as_deref().unwrap_or_default();
+        // The screening REASON is intentionally discarded (`|_|`) — a
+        // browser-facing route must not become a probe oracle.
         crate::web_credentials::validate_web_provider_base_url(base)
-            .map_err(|_| "provider endpoint is not allowed".to_string())?;
+            .map_err(|_| ImageGenerateError::EndpointNotAllowed)?;
         let allowlist = std::env::var(crate::web_credentials::WEB_AI_ENDPOINT_ALLOWLIST_ENV).ok();
         crate::provider_dial::web_dial_policy_for(base, allowlist.as_deref())
     } else {
@@ -220,26 +230,36 @@ async fn run_generate(request: &WebImageGenerateRequest) -> Result<String, Strin
         let policy = crate::provider_dial::web_dial_policy_for(&url, allowlist.as_deref());
         crate::provider_dial::client_for(policy, &url)
             .await
-            .map_err(|_| "generated image URL is not allowed".to_string())?
+            .map_err(|_| ImageGenerateError::ResultUrlNotAllowed)?
     } else {
         client.clone()
     };
     fetch_image_data_url(&download_client, &url)
         .await
-        .ok_or_else(|| "generated image could not be downloaded".to_string())
+        .ok_or(ImageGenerateError::DownloadFailed)
 }
 
-fn generate_client() -> Result<reqwest::Client, String> {
+fn generate_client() -> Result<reqwest::Client, ImageGenerateError> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
         .user_agent(concat!("openpencil-web-daemon/", env!("CARGO_PKG_VERSION")))
         .build()
-        .map_err(|e| format!("http client: {e}"))
+        .map_err(|e| ImageGenerateError::ClientBuild {
+            message: e.to_string(),
+        })
 }
 
 /// Cap + JSON-wrap an error for the reply body.
-pub(crate) fn generate_error_json(message: &str) -> String {
-    let message: String = message.chars().take(ERROR_MESSAGE_CAP).collect();
+///
+/// Takes anything `Display` rather than `&str` so the route can hand it an
+/// [`ImageGenerateError`] directly — the rendered sentence is identical
+/// either way, and the truncation still applies to the finished text.
+pub(crate) fn generate_error_json(message: impl std::fmt::Display) -> String {
+    let message: String = message
+        .to_string()
+        .chars()
+        .take(ERROR_MESSAGE_CAP)
+        .collect();
     serde_json::json!({ "ok": false, "error": message }).to_string()
 }
 
@@ -310,7 +330,7 @@ pub async fn generate_openai(
     profile: &ImageGenProfile,
     width: Option<f64>,
     height: Option<f64>,
-) -> Result<String, String> {
+) -> Result<String, ImageGenerateError> {
     let base = profile
         .base_url
         .as_deref()
@@ -329,13 +349,21 @@ pub async fn generate_openai(
         }))
         .send()
         .await
-        .map_err(|e| format!("OpenAI request failed: {e}"))?;
+        .map_err(|e| ImageGenerateError::Request {
+            provider: "OpenAI",
+            message: e.to_string(),
+        })?;
     let (status, body) = read_provider_body("OpenAI", resp).await?;
     if !status.is_success() {
-        return Err(provider_error("OpenAI", status, &body));
+        return Err(ImageGenerateError::Provider(provider_error(
+            "OpenAI", status, &body,
+        )));
     }
     let json: serde_json::Value =
-        serde_json::from_str(&body).map_err(|e| format!("OpenAI response parse: {e}"))?;
+        serde_json::from_str(&body).map_err(|e| ImageGenerateError::ResponseParse {
+            provider: "OpenAI",
+            message: e.to_string(),
+        })?;
     json.get("data")
         .and_then(|d| d.as_array())
         .and_then(|d| d.first())
@@ -350,7 +378,7 @@ pub async fn generate_openai(
                         .map(|b64| format!("data:image/png;base64,{b64}"))
                 })
         })
-        .ok_or_else(|| "OpenAI response missing image URL".to_string())
+        .ok_or(ImageGenerateError::MissingImageUrl)
 }
 
 /// Gemini `generateContent` inline-image request (shared desktop + web).
@@ -360,7 +388,7 @@ pub async fn generate_gemini(
     profile: &ImageGenProfile,
     width: Option<f64>,
     height: Option<f64>,
-) -> Result<String, String> {
+) -> Result<String, ImageGenerateError> {
     let base = profile
         .base_url
         .as_deref()
@@ -390,13 +418,21 @@ pub async fn generate_gemini(
         // reqwest error Display would echo that URL — API key included —
         // into the surfaced error string (shown in the popover / returned
         // to the browser).
-        .map_err(|e| format!("Gemini request failed: {}", e.without_url()))?;
+        .map_err(|e| ImageGenerateError::Request {
+            provider: "Gemini",
+            message: e.without_url().to_string(),
+        })?;
     let (status, body) = read_provider_body("Gemini", resp).await?;
     if !status.is_success() {
-        return Err(provider_error("Gemini", status, &body));
+        return Err(ImageGenerateError::Provider(provider_error(
+            "Gemini", status, &body,
+        )));
     }
     let json: serde_json::Value =
-        serde_json::from_str(&body).map_err(|e| format!("Gemini response parse: {e}"))?;
+        serde_json::from_str(&body).map_err(|e| ImageGenerateError::ResponseParse {
+            provider: "Gemini",
+            message: e.to_string(),
+        })?;
     let parts = json
         .get("candidates")
         .and_then(|c| c.as_array())
@@ -405,7 +441,7 @@ pub async fn generate_gemini(
         .and_then(|c| c.get("parts"))
         .and_then(|p| p.as_array());
     let Some(parts) = parts else {
-        return Err("Gemini response missing inline image data".to_string());
+        return Err(ImageGenerateError::MissingInlineImage);
     };
     for part in parts {
         let Some(inline) = part.get("inlineData") else {
@@ -422,7 +458,7 @@ pub async fn generate_gemini(
             return Ok(format!("data:{mime};base64,{data}"));
         }
     }
-    Err("Gemini response missing inline image data".to_string())
+    Err(ImageGenerateError::MissingInlineImage)
 }
 
 /// Replicate prediction create + poll (shared desktop + web).
@@ -432,7 +468,7 @@ pub async fn generate_replicate(
     profile: &ImageGenProfile,
     width: Option<f64>,
     height: Option<f64>,
-) -> Result<String, String> {
+) -> Result<String, ImageGenerateError> {
     let base = profile
         .base_url
         .as_deref()
@@ -452,15 +488,25 @@ pub async fn generate_replicate(
         .json(&serde_json::json!({ "model": profile.model, "input": input }))
         .send()
         .await
-        .map_err(|e| format!("Replicate request failed: {e}"))?;
+        .map_err(|e| ImageGenerateError::Request {
+            provider: "Replicate",
+            message: e.to_string(),
+        })?;
     let (status, body) = read_provider_body("Replicate", resp).await?;
     if !status.is_success() {
-        return Err(provider_error("Replicate", status, &body));
+        return Err(ImageGenerateError::Provider(provider_error(
+            "Replicate",
+            status,
+            &body,
+        )));
     }
     let prediction: serde_json::Value =
-        serde_json::from_str(&body).map_err(|e| format!("Replicate response parse: {e}"))?;
+        serde_json::from_str(&body).map_err(|e| ImageGenerateError::ResponseParse {
+            provider: "Replicate",
+            message: e.to_string(),
+        })?;
     let Some(id) = prediction.get("id").and_then(serde_json::Value::as_str) else {
-        return Err("Replicate response missing prediction ID".to_string());
+        return Err(ImageGenerateError::MissingPredictionId);
     };
     // Poll until terminal (TS: max 120 s, 2 s interval). The deadline is
     // wall-clock, not iteration-count: each poll also carries its own short
@@ -484,17 +530,20 @@ pub async fn generate_replicate(
             .timeout(poll_timeout)
             .send()
             .await
-            .map_err(|e| format!("Replicate poll request failed: {e}"))?;
+            .map_err(|e| ImageGenerateError::PollRequest {
+                message: e.to_string(),
+            })?;
         let (status, body) = read_provider_body("Replicate", resp).await?;
         if !status.is_success() {
-            return Err(format!(
-                "Replicate poll returned {}: {}",
-                status.as_u16(),
-                body.chars().take(ERROR_MESSAGE_CAP).collect::<String>()
-            ));
+            return Err(ImageGenerateError::PollStatus {
+                status: status.as_u16(),
+                body: body.chars().take(ERROR_MESSAGE_CAP).collect::<String>(),
+            });
         }
         let json: serde_json::Value =
-            serde_json::from_str(&body).map_err(|e| format!("Replicate poll parse: {e}"))?;
+            serde_json::from_str(&body).map_err(|e| ImageGenerateError::PollParse {
+                message: e.to_string(),
+            })?;
         match json.get("status").and_then(serde_json::Value::as_str) {
             Some("succeeded") => {
                 let output = json.get("output");
@@ -505,19 +554,22 @@ pub async fn generate_replicate(
                     .or_else(|| output.and_then(serde_json::Value::as_str));
                 return url
                     .map(str::to_string)
-                    .ok_or_else(|| "Replicate succeeded but output is missing".to_string());
+                    .ok_or(ImageGenerateError::OutputMissing);
             }
             Some(s @ ("failed" | "canceled")) => {
                 let detail = json
                     .get("error")
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("unknown error");
-                return Err(format!("Replicate prediction {s}: {detail}"));
+                return Err(ImageGenerateError::PredictionFailed {
+                    state: s.to_string(),
+                    detail: detail.to_string(),
+                });
             }
             _ => {}
         }
     }
-    Err("Replicate prediction timed out after 120 seconds".to_string())
+    Err(ImageGenerateError::PredictionTimeout)
 }
 
 #[cfg(test)]
@@ -563,7 +615,8 @@ mod tests {
         let empty = op_editor_core::EditorState::default();
         let err = parse_generate_request(r#"{"prompt":"a cat"}"#, &empty)
             .err()
-            .expect("unconfigured daemon must error");
+            .expect("unconfigured daemon must error")
+            .to_string();
         assert_eq!(err, "image generation not configured");
     }
 

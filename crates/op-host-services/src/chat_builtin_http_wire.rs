@@ -11,11 +11,13 @@ use op_ai::chat_provider::{ChatDelta, StopReason};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
+use crate::chat_builtin_http::BuiltinHttpError;
+
 pub(crate) async fn pump_sse_response(
     resp: reqwest::Response,
     tx: &mpsc::Sender<ChatDelta>,
     parse: fn(&str) -> Option<ChatDelta>,
-) -> Result<bool, String> {
+) -> Result<bool, BuiltinHttpError> {
     let mut stream = resp.bytes_stream();
     let mut buf = Vec::<u8>::new();
     let mut event_data = String::new();
@@ -25,7 +27,9 @@ pub(crate) async fn pump_sse_response(
         if tx.is_closed() {
             return Ok(true);
         }
-        let bytes = chunk.map_err(|e| format!("sse stream: {e}"))?;
+        let bytes = chunk.map_err(|e| BuiltinHttpError::SseStream {
+            message: e.to_string(),
+        })?;
         buf.extend_from_slice(&bytes);
         while let Some(nl_pos) = buf.iter().position(|&b| b == b'\n') {
             let line: Vec<u8> = buf.drain(..=nl_pos).collect();
@@ -111,22 +115,21 @@ pub(crate) fn provider_endpoint(base_url: &str, path: &str) -> String {
     format!("{base}{path}")
 }
 
-pub(crate) fn normalize_provider_base_url(base_url: &str) -> Result<String, String> {
-    let url = reqwest::Url::parse(base_url)
-        .map_err(|error| format!("Invalid provider endpoint: {error}"))?;
+pub(crate) fn normalize_provider_base_url(base_url: &str) -> Result<String, BuiltinHttpError> {
+    let url =
+        reqwest::Url::parse(base_url).map_err(|error| BuiltinHttpError::InvalidEndpointUrl {
+            message: error.to_string(),
+        })?;
     if !matches!(url.scheme(), "http" | "https") {
-        return Err(format!(
-            "Invalid provider endpoint: unsupported URL scheme '{}'",
-            url.scheme()
-        ));
+        return Err(BuiltinHttpError::EndpointUnsupportedScheme {
+            scheme: url.scheme().to_string(),
+        });
     }
     if url.host_str().is_none() {
-        return Err("Invalid provider endpoint: URL must include a host".to_string());
+        return Err(BuiltinHttpError::EndpointMissingHost);
     }
     if url.query().is_some() || url.fragment().is_some() {
-        return Err(
-            "Invalid provider endpoint: query strings and fragments are not allowed".to_string(),
-        );
+        return Err(BuiltinHttpError::EndpointHasQueryOrFragment);
     }
     Ok(url.as_str().trim_end_matches('/').to_string())
 }

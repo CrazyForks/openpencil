@@ -60,6 +60,7 @@
 mod app_mode;
 mod auto_wire;
 mod binding_sites;
+mod error;
 mod input;
 mod mode_transition;
 mod present;
@@ -84,6 +85,7 @@ mod tests_transition;
 
 use app_mode::AppMode;
 use binding_sites::{collect_binding_sites, BindingSite};
+pub use error::{PreviewEnterError, PreviewLayoutError};
 use scene_helpers::{apply_widget_state, display_string, format_warning};
 
 #[allow(unused_imports)]
@@ -212,16 +214,16 @@ impl PreviewSession {
     /// entry screen is mounted. Docs with no screen markers keep today's
     /// exact active-page workbench behavior, unchanged.
     ///
-    /// Returns `Err(message)` if serialization, parsing, runtime build,
-    /// or layout fails — the host then declines to enter preview and
-    /// surfaces the message.
+    /// Returns [`PreviewEnterError`] if serialization, parsing, runtime
+    /// build, or layout fails — the host then declines to enter preview and
+    /// surfaces the rendered message.
     pub fn enter(
         doc: &jian_ops_schema::PenDocument,
         canvas_size: (f32, f32),
         active_theme: &std::collections::BTreeMap<String, String>,
         active_page_index: usize,
         preserve_authored_geometry: bool,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, PreviewEnterError> {
         let _ = canvas_size; // layout is root-derived, not canvas-derived.
 
         // Track C-1: if the document has no authored `screen` marker at
@@ -311,8 +313,8 @@ impl PreviewSession {
         // (the design canvas lays out this exact tree, so taking rects
         // from it keeps preview positions design-identical).
         let layout_doc = prepared.into_owned();
-        let src =
-            serde_json::to_string(&layout_doc).map_err(|e| format!("serialize document: {e}"))?;
+        let src = serde_json::to_string(&layout_doc)
+            .map_err(|e| PreviewEnterError::Serialize(e.to_string()))?;
 
         let loaded = load_str_with(
             &src,
@@ -320,7 +322,7 @@ impl PreviewSession {
                 promote_legacy_widgets: true,
             },
         )
-        .map_err(|e| format!("parse document for preview: {e}"))?;
+        .map_err(|e| PreviewEnterError::Parse(e.to_string()))?;
 
         let mut warnings = loaded
             .warnings
@@ -340,7 +342,7 @@ impl PreviewSession {
         let mut app = None;
         if app_projected {
             let table = jian_core::screens::ScreenTable::from_document(promoted_doc.clone())
-                .ok_or_else(|| "projected document lost its routes".to_string())?;
+                .ok_or(PreviewEnterError::LostRoutes)?;
             let router = std::rc::Rc::new(jian_core::screens::ScreenRouter::new(
                 table.entry_path(),
                 table.paths(),
@@ -373,8 +375,8 @@ impl PreviewSession {
         collect_binding_sites(site_children, &mut binding_sites, &mut warnings);
         warnings.extend(projection_warnings);
 
-        let mut runtime =
-            Runtime::new_from_document(loaded.value).map_err(|e| format!("build runtime: {e}"))?;
+        let mut runtime = Runtime::new_from_document(loaded.value)
+            .map_err(|e| PreviewEnterError::BuildRuntime(e.to_string()))?;
         if let Some(a) = &app {
             runtime.nav = a.router.clone();
         }

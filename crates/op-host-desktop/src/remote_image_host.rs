@@ -18,6 +18,8 @@ use op_editor_ui::widgets::canvas_viewport_image::{
     mark_remote_image_failed, store_remote_image_bytes, take_remote_image_requests,
 };
 
+use crate::asset_fetch_error::AssetFetchError;
+
 /// Concurrent fetch cap — a document with dozens of remote images
 /// trickles through instead of opening a connection storm.
 const MAX_CONCURRENT_FETCHES: usize = 4;
@@ -26,11 +28,11 @@ const MAX_CONCURRENT_FETCHES: usize = 4;
 /// worst-case memory.
 const MAX_REMOTE_IMAGE_BYTES: usize = 8 * 1024 * 1024;
 
-type Fetcher = Arc<dyn Fn(&str) -> Result<Vec<u8>, String> + Send + Sync>;
+type Fetcher = Arc<dyn Fn(&str) -> Result<Vec<u8>, AssetFetchError> + Send + Sync>;
 
 struct FetchJob {
     id: u64,
-    rx: Receiver<Result<Vec<u8>, String>>,
+    rx: Receiver<Result<Vec<u8>, AssetFetchError>>,
 }
 
 pub struct RemoteImageSession {
@@ -122,25 +124,25 @@ fn spawn_fetch(id: u64, url: String, fetcher: Fetcher) -> FetchJob {
 /// shared runtime, and it stays correct if this sync entry point is ever
 /// reached from a tokio worker. Validates the response is a plausible image
 /// (content type or magic bytes) and bounded in size.
-fn fetch_remote_image_blocking(url: &str) -> Result<Vec<u8>, String> {
+fn fetch_remote_image_blocking(url: &str) -> Result<Vec<u8>, AssetFetchError> {
     op_host_services::chat_runtime::block_on_anywhere(async {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(20))
             .user_agent(concat!("openpencil-desktop/", env!("CARGO_PKG_VERSION")))
             .build()
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| AssetFetchError::HttpClient(e.to_string()))?;
         let resp = client
             .get(url)
             .send()
             .await
-            .map_err(|e| e.to_string())?
+            .map_err(|e| AssetFetchError::Request(e.to_string()))?
             .error_for_status()
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| AssetFetchError::Request(e.to_string()))?;
         if resp
             .content_length()
             .is_some_and(|len| len > MAX_REMOTE_IMAGE_BYTES as u64)
         {
-            return Err("image exceeds the size cap".to_string());
+            return Err(AssetFetchError::TooLarge);
         }
         let content_type_is_image = resp
             .headers()
@@ -148,15 +150,18 @@ fn fetch_remote_image_blocking(url: &str) -> Result<Vec<u8>, String> {
             .and_then(|v| v.to_str().ok())
             .map(|v| v.trim().to_ascii_lowercase().starts_with("image/"))
             .unwrap_or(false);
-        let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| AssetFetchError::Request(e.to_string()))?;
         if bytes.is_empty() {
-            return Err("empty response body".to_string());
+            return Err(AssetFetchError::EmptyBody);
         }
         if bytes.len() > MAX_REMOTE_IMAGE_BYTES {
-            return Err("image exceeds the size cap".to_string());
+            return Err(AssetFetchError::TooLarge);
         }
         if !content_type_is_image && !looks_like_image(&bytes) {
-            return Err("response is not an image".to_string());
+            return Err(AssetFetchError::NotAnImage);
         }
         Ok(bytes.to_vec())
     })
@@ -234,8 +239,9 @@ mod tests {
         let url = "https://example.com/missing.png";
         note_remote_image_miss(id, url);
 
-        let mut session =
-            RemoteImageSession::with_fetcher(Arc::new(|_: &str| Err("404".to_string())));
+        let mut session = RemoteImageSession::with_fetcher(Arc::new(|_: &str| {
+            Err(AssetFetchError::Request("404".to_string()))
+        }));
         session.pump();
         pump_until_idle(&mut session);
         assert!(!has_cached_image_bytes(id));

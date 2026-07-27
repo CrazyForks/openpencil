@@ -241,6 +241,7 @@ pub use command::{
 };
 pub use command_node_attrs::{WidgetNumberField, WidgetTextField};
 pub use command_promote::PromoteResult;
+pub use command_style_replace::StyleReplaceError;
 pub use component_browser_state::ComponentBrowserButton;
 pub use components::{Component, ComponentLibrary, ComponentOption};
 pub use compositing::{fill_blend_mode_at, node_blend_mode, node_mask_type};
@@ -282,6 +283,7 @@ pub use instance_override::{
 pub use jian_ops_schema::node::MaskType;
 pub use jian_ops_schema::style::BlendMode;
 pub use jian_ops_schema::{DesignMdColor, DesignMdSpec, DesignMdTypography, PenDocument};
+pub use mutators::EditorStateInvariant;
 pub use node_defaults::{
     default_leaf_node_size, widget_default_size, DEFAULT_LEAF_NODE_SIZE, DEFAULT_TEXT_NODE_HEIGHT,
     DEFAULT_TEXT_NODE_WIDTH,
@@ -305,3 +307,4 @@ pub use uikit_io::KitIoRequest;
 pub use variables_panel_state::VariablesPanelButton;
 pub use viewport::Viewport;
 pub use walkers::ReorderDirection;
+pub use web_sync::WebSyncError;

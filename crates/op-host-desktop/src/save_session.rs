@@ -15,6 +15,10 @@ use winit::event_loop::EventLoopProxy;
 
 use crate::DesktopEvent;
 
+#[path = "save_session/error.rs"]
+mod error;
+pub(crate) use error::SaveError;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EnqueueOutcome {
     Started,
@@ -93,7 +97,7 @@ struct RunningSave {
     document_epoch: u64,
     generation: u64,
     revision: u64,
-    rx: Receiver<Result<(), String>>,
+    rx: Receiver<Result<(), SaveError>>,
 }
 
 /// Result delivered back to the UI thread. A successful disk write is only a
@@ -105,7 +109,7 @@ pub(crate) struct SaveCompletion {
     pub(crate) document_epoch: u64,
     pub(crate) generation: u64,
     pub(crate) revision: u64,
-    pub(crate) result: Result<(), String>,
+    pub(crate) result: Result<(), SaveError>,
 }
 
 pub(crate) struct SaveSession {
@@ -225,9 +229,7 @@ impl SaveSession {
         let result = match self.running.as_ref()?.rx.try_recv() {
             Ok(result) => result,
             Err(TryRecvError::Empty) => return None,
-            Err(TryRecvError::Disconnected) => {
-                Err("background save worker stopped before reporting a result".to_string())
-            }
+            Err(TryRecvError::Disconnected) => Err(SaveError::WorkerStopped),
         };
         self.finish_running(result)
     }
@@ -236,9 +238,12 @@ impl SaveSession {
     /// this path; it exists so exiting cannot abandon a Save-As worker or race
     /// a second synchronous write against its sibling temp file.
     pub(crate) fn wait_next(&mut self) -> Option<SaveCompletion> {
-        let result = self.running.as_ref()?.rx.recv().unwrap_or_else(|_| {
-            Err("background save worker stopped before reporting a result".to_string())
-        });
+        let result = self
+            .running
+            .as_ref()?
+            .rx
+            .recv()
+            .unwrap_or(Err(SaveError::WorkerStopped));
         self.finish_running(result)
     }
 
@@ -324,7 +329,11 @@ impl SaveSession {
                         *active_page_index,
                         *preserve_authored_geometry,
                     ),
-                };
+                }
+                // `doc_io` belongs to `op-host-services`, a crate this pass
+                // does not own; carry its message so the dialog text and the
+                // stderr line are unchanged.
+                .map_err(|error| SaveError::Write(error.to_string()));
                 eprintln!(
                     "[save] {} revision {generation}:{revision} in {:.1} ms",
                     if result.is_ok() { "wrote" } else { "failed" },
@@ -352,7 +361,7 @@ impl SaveSession {
         });
     }
 
-    fn finish_running(&mut self, result: Result<(), String>) -> Option<SaveCompletion> {
+    fn finish_running(&mut self, result: Result<(), SaveError>) -> Option<SaveCompletion> {
         let Some(job) = self.running.take() else {
             // Both callers check `running` before calling; an ordering bug
             // here must not panic mid-save. Drop the stray result instead.
@@ -471,7 +480,7 @@ impl crate::DesktopApp {
                 &self.host,
                 op_host_services::doc_io::ErrorKind::Save,
                 Some(&path),
-                &error,
+                &error.to_string(),
             );
             return false;
         }

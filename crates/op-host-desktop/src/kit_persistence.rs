@@ -26,6 +26,8 @@ use std::path::PathBuf;
 
 use op_editor_core::uikit::{KitComponent, UIKit};
 use op_editor_core::{ComponentCategory, EditorState};
+
+use crate::kit_persistence_error::KitStoreError;
 use serde::{Deserialize, Serialize};
 
 const APP_DIR: &str = "openpencil";
@@ -87,7 +89,7 @@ pub fn save(state: &EditorState) {
     }
 }
 
-fn save_to(state: &EditorState, path: &std::path::Path) -> Result<(), String> {
+fn save_to(state: &EditorState, path: &std::path::Path) -> Result<(), KitStoreError> {
     let payload = PersistedState {
         imported_kits: state
             .ui_kits
@@ -97,11 +99,14 @@ fn save_to(state: &EditorState, path: &std::path::Path) -> Result<(), String> {
             .collect(),
         browser_open: Some(state.editor_ui.component_browser_open),
     };
-    let json = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
+    // `serde_json` / `std::io` are not ours to type; carry their messages,
+    // which is what the log line always showed.
+    let json =
+        serde_json::to_string_pretty(&payload).map_err(|e| KitStoreError::Encode(e.to_string()))?;
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(dir).map_err(|e| KitStoreError::CreateDir(e.to_string()))?;
     }
-    std::fs::write(path, json).map_err(|e| e.to_string())
+    std::fs::write(path, json).map_err(|e| KitStoreError::Write(e.to_string()))
 }
 
 fn kit_to_persisted(kit: &UIKit) -> PersistedKit {

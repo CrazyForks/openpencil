@@ -412,18 +412,38 @@ fn json_scalar_to_string(value: Option<&Value>) -> Option<String> {
     }
 }
 
+/// A geometry arg was present but is not a decimal `i32`.
+///
+/// One-variant enum on purpose: callers prefix it with the arg name
+/// (`format!("{key}: {error}")`), so the payload stays the raw text and the
+/// `Display` reproduces the previous message byte-for-byte.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseI32Error {
+    /// The raw arg value, rendered with `{:?}` in the message.
+    pub raw: String,
+}
+
+impl std::fmt::Display for ParseI32Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let raw = &self.raw;
+        write!(f, "expected decimal i32, got {raw:?}")
+    }
+}
+
+impl std::error::Error for ParseI32Error {}
+
 /// Parse an optional i32 arg. `Ok(None)` when absent, `Ok(Some)` on a
 /// successful parse, `Err` on present-but-malformed input.
 pub(crate) fn parse_opt_i32(
     args: &BTreeMap<String, String>,
     key: &str,
-) -> Result<Option<i32>, String> {
+) -> Result<Option<i32>, ParseI32Error> {
     match args.get(key) {
         None => Ok(None),
         Some(s) => s
             .parse::<i32>()
             .map(Some)
-            .map_err(|_| format!("expected decimal i32, got {s:?}")),
+            .map_err(|_| ParseI32Error { raw: s.clone() }),
     }
 }
 

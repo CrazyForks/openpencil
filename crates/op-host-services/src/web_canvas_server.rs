@@ -238,8 +238,7 @@ impl WebCanvasState {
         body: &str,
         base_version_override: Option<u64>,
     ) -> Result<PushOutcome> {
-        let request = crate::mcp_serve::parse_document_sync_request(body)
-            .map_err(WebCanvasError::BadRequest)?;
+        let request = crate::mcp_serve::parse_document_sync_request(body)?;
         let base_version = base_version_override.or(request.base_version);
         if let Some(expected) = base_version {
             if expected != self.version {
@@ -311,9 +310,11 @@ fn persist_api_settings<F>(
     save_credentials: F,
 ) -> WebReply
 where
-    // `settings_io::save_checked` is outside this conversion's scope and still
-    // reports `String`; only its success/failure is consulted here.
-    F: FnOnce(&EditorState) -> std::result::Result<(), String>,
+    // `settings_io::save_checked` reports its own typed
+    // `SettingsIoError` now; only its success/failure is consulted here, but
+    // naming the type keeps the bound honest instead of erasing it to a
+    // `String` the caller would have to re-render.
+    F: FnOnce(&EditorState) -> std::result::Result<(), crate::settings_io::SettingsIoError>,
 {
     if method == "POST" && path == "/api/settings/credentials" && reply.status == "200 OK" {
         if save_credentials(&state.editor).is_err() {
@@ -498,15 +499,17 @@ pub fn handle_web_canvas_request(
                         status: "200 OK",
                         body: r#"{"ok":true}"#.into(),
                     },
-                    Err(message) => WebReply {
-                        status: if body.len()
-                            > crate::web_credentials::MAX_CREDENTIAL_BODY_BYTES
-                        {
+                    // The oversize verdict now rides on the error itself
+                    // (`is_payload_too_large`) instead of this route
+                    // re-measuring the body against the cap — same 413/400
+                    // split, one owner for the threshold.
+                    Err(error) => WebReply {
+                        status: if error.is_payload_too_large() {
                             "413 Payload Too Large"
                         } else {
                             "400 Bad Request"
                         },
-                        body: crate::mcp_serve::rest_error_body(&message),
+                        body: crate::mcp_serve::rest_error_body(&error.to_string()),
                     },
                 }
             }
