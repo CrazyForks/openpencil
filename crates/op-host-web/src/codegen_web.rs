@@ -31,9 +31,9 @@
 //! * **Whole-page fallback** — an empty selection generates from the active
 //!   page's children (TS `getTargetNodes`, code-panel.tsx:137-142).
 //! * **Assets are kept** — the terminal `Done`'s asset bytes are parked in a
-//!   host-side slot (the wasm-clean `editor_state` carries only `AssetMeta`),
-//!   and Download produces `component.zip` (code + `assets/*`) when assets
-//!   exist — the same zip layout as the desktop `codegen_export`.
+//!   host-side per-framework cache (the wasm-clean `editor_state` carries only
+//!   `AssetMeta`), and Download produces `component.zip` (code + `assets/*`)
+//!   when assets exist — the same zip layout as the desktop `codegen_export`.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -41,7 +41,7 @@ use std::rc::Rc;
 
 use op_codegen::ai::types::{AssetFile, PendingRequest, PipelineStep, RequestId};
 use op_codegen::ai::CodegenPipeline;
-use op_editor_core::codegen::{CodeGenProgress, CodegenPhase};
+use op_editor_core::codegen::{CodeGenProgress, CodegenPhase, CodegenState, Framework};
 use op_editor_core::AgentProvider;
 use op_editor_host_core::codegen::{
     build_codegen_input_value as build_codegen_input, framework_ext,
@@ -50,16 +50,26 @@ use op_editor_host_core::codegen::{
 use crate::repaint_ctx::RepaintContext;
 use crate::web_ai_transport::{post_ai_stream, AiEvent, AiStreamHandle};
 
+type CodegenDocumentIdentity = (u64, u64);
+
+fn document_identity(
+    document_epoch: u64,
+    state: &op_editor_core::EditorState,
+) -> CodegenDocumentIdentity {
+    (document_epoch, state.document_generation())
+}
+
 /// A delta drained by the rAF pump into `editor_state.codegen`. Mirrors the
-/// desktop `CodegenDelta`; the asset BYTES are parked in [`LAST_RESULT`] when
-/// the terminal `Done` is queued (only the metas travel into the wasm-clean
-/// `editor_state`).
+/// desktop `CodegenDelta`. A terminal `Done` keeps its raw asset bytes and
+/// launch-time framework in the queue until the rAF pump actually applies it;
+/// canceled queued results must never get ahead of the painted UI.
 pub enum WebCodegenDelta {
     Progress(CodeGenProgress),
     Done {
         code: String,
         degraded: bool,
-        assets: Vec<op_editor_core::codegen::AssetMeta>,
+        framework: Framework,
+        assets: Vec<AssetFile>,
     },
     Failed(String),
 }
@@ -93,9 +103,15 @@ struct CodegenRun {
     /// match what was GENERATED even if the user switches tabs afterwards
     /// (desktop `CodegenSession.framework` parity).
     framework: op_editor_core::codegen::Framework,
+    /// Generation targets captured at launch and committed to the painted
+    /// state only if this exact run completes successfully.
+    selection_snapshot: Vec<String>,
     /// Browser-local credential for the selected built-in provider. Captured
     /// once at launch and sent only with this run's model requests.
     credential: Option<serde_json::Value>,
+    /// `(host epoch, EditorState generation)` captured at launch. The pair
+    /// covers both whole-state Open/New/import and in-place live-sync replace.
+    document_identity: CodegenDocumentIdentity,
 }
 
 /// Shared state threaded through the async driver: the run + the delta queue.
@@ -103,7 +119,7 @@ type Shared = Rc<RefCell<(CodegenRun, VecDeque<WebCodegenDelta>)>>;
 
 /// The completed result kept HOST-SIDE for Download — asset bytes are not
 /// carried in the wasm-clean `editor_state`. Mirror of the desktop
-/// `CodegenResult` (wasm is single-threaded, so a thread_local slot is the
+/// `CodegenResult` (wasm is single-threaded, so a thread-local cache is the
 /// natural owner).
 pub(crate) struct WebCodegenResult {
     pub(crate) code: String,
@@ -111,22 +127,184 @@ pub(crate) struct WebCodegenResult {
     pub(crate) assets: Vec<AssetFile>,
 }
 
+#[derive(Default)]
+struct WebCodegenResults {
+    document_identity: Option<CodegenDocumentIdentity>,
+    entries: Vec<(Framework, WebCodegenResult)>,
+}
+
+impl WebCodegenResults {
+    fn insert(
+        &mut self,
+        document_identity: CodegenDocumentIdentity,
+        framework: Framework,
+        result: WebCodegenResult,
+    ) {
+        if self.document_identity != Some(document_identity) {
+            self.document_identity = Some(document_identity);
+            self.entries.clear();
+        }
+        if let Some((_, cached)) = self.entries.iter_mut().find(|(fw, _)| *fw == framework) {
+            *cached = result;
+        } else {
+            self.entries.push((framework, result));
+        }
+    }
+
+    fn get(
+        &self,
+        document_identity: CodegenDocumentIdentity,
+        framework: Framework,
+    ) -> Option<&WebCodegenResult> {
+        if self.document_identity != Some(document_identity) {
+            return None;
+        }
+        self.entries
+            .iter()
+            .find(|(fw, _)| *fw == framework)
+            .map(|(_, result)| result)
+    }
+}
+
 thread_local! {
     /// The live (or just-canceled) run. A LIVE run blocks a new launch; a
     /// canceled one does not (desktop `launch_codegen_if_pending` parity:
     /// cancel + regenerate is immediate).
     static ACTIVE_RUN: RefCell<Option<Shared>> = const { RefCell::new(None) };
-    /// Completed result for the Download action (code + asset bytes).
-    static LAST_RESULT: RefCell<Option<WebCodegenResult>> = const { RefCell::new(None) };
+    /// Completed results for Download, including raw asset bytes.
+    static RESULTS: RefCell<WebCodegenResults> =
+        const {
+            RefCell::new(WebCodegenResults {
+                document_identity: None,
+                entries: Vec::new(),
+            })
+        };
 }
 
-/// True while a non-canceled, non-terminal run is in flight.
-fn has_live_run() -> bool {
+fn cache_completed_result(
+    document_identity: CodegenDocumentIdentity,
+    framework: Framework,
+    code: String,
+    assets: Vec<AssetFile>,
+) {
+    RESULTS.with(|results| {
+        results.borrow_mut().insert(
+            document_identity,
+            framework,
+            WebCodegenResult {
+                code,
+                framework_ext: framework_ext(framework),
+                assets,
+            },
+        );
+    });
+}
+
+fn enqueue_completed_result(
+    queue: &mut VecDeque<WebCodegenDelta>,
+    framework: Framework,
+    code: String,
+    degraded: bool,
+    assets: Vec<AssetFile>,
+) {
+    queue.push_back(WebCodegenDelta::Done {
+        code,
+        degraded,
+        framework,
+        assets,
+    });
+}
+
+fn discard_queued_deltas(queue: &mut VecDeque<WebCodegenDelta>) {
+    queue.clear();
+}
+
+fn discard_if_stale_document(
+    run_identity: CodegenDocumentIdentity,
+    live_identity: CodegenDocumentIdentity,
+    queue: &mut VecDeque<WebCodegenDelta>,
+) -> bool {
+    if run_identity == live_identity {
+        return false;
+    }
+    discard_queued_deltas(queue);
+    true
+}
+
+fn apply_codegen_delta(
+    cg: &mut CodegenState,
+    delta: WebCodegenDelta,
+    run_identity: CodegenDocumentIdentity,
+    selection_snapshot: &mut Vec<String>,
+) -> bool {
+    match delta {
+        WebCodegenDelta::Progress(p) => {
+            cg.progress = p;
+            cg.phase = CodegenPhase::Generating;
+            false
+        }
+        WebCodegenDelta::Done {
+            code,
+            degraded,
+            framework,
+            assets,
+        } => {
+            cg.code = code.clone();
+            cg.code_scroll.offset = 0.0;
+            cg.code_selection = None;
+            cg.degraded = degraded;
+            cg.assets = assets
+                .iter()
+                .map(|asset| op_editor_core::codegen::AssetMeta {
+                    relative_path: asset.relative_path.clone(),
+                    byte_len: asset.bytes.len(),
+                })
+                .collect();
+            cg.selection_snapshot = std::mem::take(selection_snapshot);
+            cg.phase = CodegenPhase::Complete;
+            cg.pending_generate = false;
+            cg.pending_regenerate = false;
+            cache_completed_result(run_identity, framework, code, assets);
+            true
+        }
+        WebCodegenDelta::Failed(e) => {
+            cg.error = Some(e);
+            cg.phase = CodegenPhase::Error;
+            cg.pending_generate = false;
+            cg.pending_regenerate = false;
+            true
+        }
+    }
+}
+
+/// True while a non-canceled, non-terminal run for the current document is in
+/// flight. A replacement can be followed by Generate before the next rAF pump;
+/// retire that stale run here so it cannot swallow the new document's press.
+fn has_live_run(live_identity: CodegenDocumentIdentity) -> bool {
     ACTIVE_RUN.with(|slot| {
-        slot.borrow().as_ref().is_some_and(|shared| {
-            let s = shared.borrow();
-            !s.0.cancelled && !s.0.terminal
-        })
+        let shared = slot.borrow().as_ref().cloned();
+        let Some(shared) = shared else {
+            return false;
+        };
+        let run_identity = shared.borrow().0.document_identity;
+        if run_identity != live_identity {
+            let mut s = shared.borrow_mut();
+            s.0.cancelled = true;
+            s.0.pipe.cancel();
+            s.0.credential = None;
+            if let Some(handle) = s.0.handle.take() {
+                handle.abort();
+            }
+            discard_queued_deltas(&mut s.1);
+            drop(s);
+            let mut active = slot.borrow_mut();
+            if active.as_ref().is_some_and(|run| Rc::ptr_eq(run, &shared)) {
+                *active = None;
+            }
+            return false;
+        }
+        let s = shared.borrow();
+        !s.0.cancelled && !s.0.terminal
     })
 }
 
@@ -147,7 +325,7 @@ pub(crate) fn cancel_active_run() {
             // event — the event callback drops it via the `cancelled` flag.
             handle.abort();
         }
-        s.1.clear();
+        discard_queued_deltas(&mut s.1);
     }
 }
 
@@ -176,7 +354,11 @@ pub(crate) fn drain_codegen_flags<C: RepaintContext + 'static>(inner: &Rc<RefCel
         // A LIVE run swallows the press (desktop parity: the pending launch
         // never proceeds while a run is active; the panel only shows
         // Generate / Regenerate outside the Generating state anyway).
-        if has_live_run() {
+        let live_identity = {
+            let b = inner.borrow();
+            document_identity(b.host().document_epoch(), b.host().editor_state())
+        };
+        if has_live_run(live_identity) {
             return;
         }
         start_codegen(inner.clone(), crate::daemon_base::daemon_base());
@@ -193,7 +375,7 @@ pub fn start_codegen<C: RepaintContext + 'static>(inner: Rc<RefCell<C>>, base: S
     // 1. Build input from the live editor state. Nothing to generate from
     //    (empty page + no selection) surfaces an inline error (desktop
     //    `launch_codegen_if_pending` parity).
-    let (input, provider, model, credential, framework) = {
+    let (input, provider, model, credential, framework, document_identity) = {
         let b = inner.borrow();
         let state = b.host().editor_state();
         let Some(input) = build_codegen_input(state) else {
@@ -230,13 +412,20 @@ pub fn start_codegen<C: RepaintContext + 'static>(inner: Rc<RefCell<C>>, base: S
         let provider = selected
             .filter(|entry| entry.builtin_provider_id.is_some())
             .map(|entry| entry.provider);
-        (input, provider, model, credential, state.codegen.framework)
+        (
+            input,
+            provider,
+            model,
+            credential,
+            state.codegen.framework,
+            document_identity(b.host().document_epoch(), state),
+        )
     };
 
-    // Reset the panel into the Generating state before the first turn, and
-    // record the targets this run generates against (TS `lastSelectionRef` —
-    // drives the panel's "Selection changed" notice).
-    {
+    // Reset the panel into the Generating state before the first turn. Keep
+    // this run's targets separate until Done: a failed regeneration keeps the
+    // previous successful code and must keep its matching target snapshot.
+    let selection_snapshot = {
         let mut bm = inner.borrow_mut();
         let selection_snapshot: Vec<String> = bm
             .host()
@@ -250,10 +439,10 @@ pub fn start_codegen<C: RepaintContext + 'static>(inner: Rc<RefCell<C>>, base: S
         cg.progress = Default::default();
         cg.error = None;
         cg.phase = CodegenPhase::Generating;
-        cg.selection_snapshot = selection_snapshot;
         bm.host_mut().mark_editor_state_dirty();
         let _ = bm.repaint();
-    }
+        selection_snapshot
+    };
 
     // 2. Shared run-state + delta queue; register as the active run.
     let shared: Shared = Rc::new(RefCell::new((
@@ -268,7 +457,9 @@ pub fn start_codegen<C: RepaintContext + 'static>(inner: Rc<RefCell<C>>, base: S
             model,
             provider,
             framework,
+            selection_snapshot,
             credential,
+            document_identity,
         },
         VecDeque::new(),
     )));
@@ -309,29 +500,14 @@ fn drive<C: RepaintContext + 'static>(inner: Rc<RefCell<C>>, base: String, share
                     degraded,
                     assets,
                 } => {
-                    // Park the bytes host-side for Download; only the metas
-                    // travel into the wasm-clean editor_state.
-                    let metas = assets
-                        .iter()
-                        .map(|a| op_editor_core::codegen::AssetMeta {
-                            relative_path: a.relative_path.clone(),
-                            byte_len: a.bytes.len(),
-                        })
-                        .collect();
-                    LAST_RESULT.with(|slot| {
-                        *slot.borrow_mut() = Some(WebCodegenResult {
-                            code: code.clone(),
-                            framework_ext: framework_ext(s.0.framework),
-                            assets,
-                        });
-                    });
+                    // Keep the raw result attached to this run until the rAF
+                    // pump applies it. A cancel before that frame drops the
+                    // queue without replacing the last painted/downloadable
+                    // result.
+                    let framework = s.0.framework;
                     s.0.terminal = true;
                     s.0.credential = None;
-                    s.1.push_back(WebCodegenDelta::Done {
-                        code,
-                        degraded,
-                        assets: metas,
-                    });
+                    enqueue_completed_result(&mut s.1, framework, code, degraded, assets);
                     return;
                 }
                 PipelineStep::Failed { message } => {
@@ -487,7 +663,33 @@ fn start_pump<C: RepaintContext + 'static>(inner: Rc<RefCell<C>>, shared: Shared
         // Canceled: drop everything and stop. The Cancel action already
         // flipped the painted phase; nothing here may overwrite it.
         if shared.borrow().0.cancelled {
-            shared.borrow_mut().1.clear();
+            discard_queued_deltas(&mut shared.borrow_mut().1);
+            return false;
+        }
+        let live_identity = {
+            let b = inner.borrow();
+            document_identity(b.host().document_epoch(), b.host().editor_state())
+        };
+        let stale = {
+            let mut s = shared.borrow_mut();
+            let run_identity = s.0.document_identity;
+            discard_if_stale_document(run_identity, live_identity, &mut s.1)
+        };
+        if stale {
+            let mut s = shared.borrow_mut();
+            s.0.cancelled = true;
+            s.0.pipe.cancel();
+            s.0.credential = None;
+            if let Some(handle) = s.0.handle.take() {
+                handle.abort();
+            }
+            drop(s);
+            ACTIVE_RUN.with(|slot| {
+                let mut active = slot.borrow_mut();
+                if active.as_ref().is_some_and(|run| Rc::ptr_eq(run, &shared)) {
+                    *active = None;
+                }
+            });
             return false;
         }
         let mut applied_terminal = false;
@@ -505,34 +707,12 @@ fn start_pump<C: RepaintContext + 'static>(inner: Rc<RefCell<C>>, shared: Shared
 
             let mut bm = inner.borrow_mut();
             let cg = &mut bm.host_mut().editor_state_mut().codegen;
-            match delta {
-                WebCodegenDelta::Progress(p) => {
-                    cg.progress = p;
-                    cg.phase = CodegenPhase::Generating;
-                }
-                WebCodegenDelta::Done {
-                    code,
-                    degraded,
-                    assets,
-                } => {
-                    cg.code = code;
-                    cg.code_scroll.offset = 0.0;
-                    cg.code_selection = None;
-                    cg.degraded = degraded;
-                    cg.assets = assets;
-                    cg.phase = CodegenPhase::Complete;
-                    cg.pending_generate = false;
-                    cg.pending_regenerate = false;
-                    applied_terminal = true;
-                }
-                WebCodegenDelta::Failed(e) => {
-                    cg.error = Some(e);
-                    cg.phase = CodegenPhase::Error;
-                    cg.pending_generate = false;
-                    cg.pending_regenerate = false;
-                    applied_terminal = true;
-                }
-            }
+            let terminal = {
+                let mut s = shared.borrow_mut();
+                let run_identity = s.0.document_identity;
+                apply_codegen_delta(cg, delta, run_identity, &mut s.0.selection_snapshot)
+            };
+            applied_terminal |= terminal;
             bm.host_mut().mark_editor_state_dirty();
             changed = true;
         }
@@ -568,10 +748,11 @@ fn start_pump<C: RepaintContext + 'static>(inner: Rc<RefCell<C>>, shared: Shared
 /// same way on `assets.length > 0`). Falls back to the painted code buffer
 /// when no parked result exists (defensive — Download is only reachable from
 /// the Complete state).
-pub(crate) fn download_generated(state: &op_editor_core::EditorState) {
-    LAST_RESULT.with(|slot| {
-        let slot = slot.borrow();
-        match slot.as_ref() {
+pub(crate) fn download_generated(state: &op_editor_core::EditorState, document_epoch: u64) {
+    let live_identity = document_identity(document_epoch, state);
+    RESULTS.with(|results| {
+        let results = results.borrow();
+        match results.get(live_identity, state.codegen.framework) {
             Some(result) if result.code.is_empty() => {}
             Some(result) if !result.assets.is_empty() => {
                 let bytes = build_code_zip(&result.code, result.framework_ext, &result.assets);
@@ -615,130 +796,5 @@ fn build_code_zip(code: &str, ext: &str, assets: &[AssetFile]) -> Vec<u8> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use op_editor_core::{EditorState, NodeId};
-
-    #[test]
-    fn codegen_lifecycle_explicitly_clears_request_credentials() {
-        let source = include_str!("codegen_web.rs");
-        let implementation = source
-            .split("#[cfg(test)]")
-            .next()
-            .expect("codegen implementation");
-        assert!(
-            implementation.matches("s.0.credential = None;").count() >= 2,
-            "cancel and terminal completion must both clear the captured credential"
-        );
-    }
-
-    fn two_rect_state() -> EditorState {
-        let doc = jian_ops_schema::load_str(
-            r#"{"version":"1.0.0","children":[
-                {"type":"rectangle","id":"n1","name":"A","x":0,"y":0,"width":10,"height":10},
-                {"type":"rectangle","id":"n2","name":"B","x":20,"y":0,"width":10,"height":10}
-            ]}"#,
-        )
-        .expect("fixture parses")
-        .value;
-        EditorState::from_document(doc)
-    }
-
-    #[test]
-    fn build_input_resolves_the_selection_subtrees() {
-        let mut state = two_rect_state();
-        state.set_single_selection(NodeId::new("n1"));
-        let input = build_codegen_input(&state).expect("input");
-        assert!(input.nodes_json.contains("n1"));
-        assert!(!input.nodes_json.contains("n2"));
-        assert_eq!(input.framework, state.codegen.framework);
-    }
-
-    #[test]
-    fn empty_selection_falls_back_to_active_page_children() {
-        // TS getTargetNodes (code-panel.tsx:137-142): no selection → ALL
-        // active-page children. Desktop codegen_input parity.
-        let mut state = two_rect_state();
-        state.clear_selection();
-        let input = build_codegen_input(&state).expect("page fallback");
-        assert!(input.nodes_json.contains("n1"));
-        assert!(input.nodes_json.contains("n2"));
-    }
-
-    #[test]
-    fn empty_page_and_unresolvable_selection_are_none() {
-        let empty = EditorState::new();
-        assert!(build_codegen_input(&empty).is_none());
-        let mut ghost = two_rect_state();
-        ghost.set_single_selection(NodeId::new("ghost"));
-        assert!(build_codegen_input(&ghost).is_none());
-    }
-
-    #[test]
-    fn framework_ext_maps_every_framework() {
-        use op_editor_core::codegen::Framework;
-        assert_eq!(framework_ext(Framework::React), "tsx");
-        assert_eq!(framework_ext(Framework::ReactNative), "tsx");
-        assert_eq!(framework_ext(Framework::Vue), "vue");
-        assert_eq!(framework_ext(Framework::Svelte), "svelte");
-        assert_eq!(framework_ext(Framework::Html), "html");
-        assert_eq!(framework_ext(Framework::Flutter), "dart");
-        assert_eq!(framework_ext(Framework::SwiftUi), "swift");
-        assert_eq!(framework_ext(Framework::Compose), "kt");
-    }
-
-    #[test]
-    fn codegen_proxy_body_carries_the_selected_request_scoped_credential() {
-        let req = PendingRequest {
-            id: RequestId(1),
-            kind: op_codegen::ai::types::RequestKind::Planning,
-            skills: vec!["codegen-plan"],
-            user_message: "plan".into(),
-            max_output_tokens: 1024,
-            thinking: op_ai::chat_provider::ThinkingMode::Disabled,
-            effort: op_ai::chat_provider::EffortLevel::Low,
-        };
-        let credential = serde_json::json!({"api_key":"sk-codegen"});
-
-        let body: serde_json::Value = serde_json::from_str(&build_body_json(
-            &req,
-            Some(AgentProvider::CodexCli),
-            "private-model",
-            Some(&credential),
-        ))
-        .unwrap();
-
-        assert_eq!(body["provider"], "codex-cli");
-        assert_eq!(body["model"], "private-model");
-        assert_eq!(body["credential"]["api_key"], "sk-codegen");
-    }
-
-    #[test]
-    fn code_zip_carries_component_and_each_asset() {
-        let assets = vec![
-            AssetFile {
-                id: "a1".into(),
-                relative_path: "./assets/img-1.png".into(),
-                zip_path: "assets/img-1.png".into(),
-                mime_type: "image/png".into(),
-                bytes: vec![1, 2, 3],
-                source_node_id: "n1".into(),
-            },
-            AssetFile {
-                id: "a2".into(),
-                relative_path: "./assets/img-2.png".into(),
-                zip_path: "assets/img-2.png".into(),
-                mime_type: "image/png".into(),
-                bytes: vec![4, 5, 6],
-                source_node_id: "n2".into(),
-            },
-        ];
-        let bytes = build_code_zip("export default function X(){}", "vue", &assets);
-        // STORED zip magic + every entry name present.
-        assert_eq!(&bytes[0..4], &[0x50, 0x4B, 0x03, 0x04]);
-        let hay = String::from_utf8_lossy(&bytes);
-        assert!(hay.contains("component.vue"));
-        assert!(hay.contains("assets/img-1.png"));
-        assert!(hay.contains("assets/img-2.png"));
-    }
-}
+#[path = "codegen_web_tests.rs"]
+mod tests;

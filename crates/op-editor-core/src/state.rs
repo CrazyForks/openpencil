@@ -214,6 +214,7 @@ impl EditorState {
         self.history_push_count = 0;
         self.ui = UiDraftState::new();
         self.editor_ui.clear_document_derived();
+        self.codegen.reset_for_document_replacement();
         self.sync_dirty_flag();
         // Generation-run ownership is doc-scoped; clear on whole-doc replace.
         self.app_state_owner.clear();
@@ -241,6 +242,7 @@ impl EditorState {
         self.document_generation = self.document_generation.saturating_add(1);
         self.ui = UiDraftState::new();
         self.editor_ui.clear_document_derived();
+        self.codegen.reset_for_document_replacement();
         // Generation-run ownership is doc-scoped; clear on whole-doc replace.
         self.app_state_owner.clear();
         self.instance_write_virtual_anchor = None;
@@ -552,6 +554,25 @@ mod tests {
         assert!(s.editor_ui.collapsed_layers.is_empty());
         assert!(s.editor_ui.padding_edit_mode_anchor.is_empty());
         assert!(!s.editor_ui.preserve_authored_geometry);
+    }
+
+    #[test]
+    fn replace_document_clears_document_scoped_codegen_results() {
+        let mut s = EditorState::new();
+        s.codegen.framework = crate::codegen::Framework::Html;
+        s.codegen.phase = crate::codegen::CodegenPhase::Complete;
+        s.codegen.code = "<main>old document</main>".into();
+        s.codegen.pending_download = true;
+        assert!(s.codegen.select_framework(crate::codegen::Framework::React));
+        s.codegen.phase = crate::codegen::CodegenPhase::Generating;
+
+        s.replace_document(empty_document());
+
+        assert_eq!(s.codegen.framework, crate::codegen::Framework::React);
+        assert_eq!(s.codegen.phase, crate::codegen::CodegenPhase::Idle);
+        assert!(s.codegen.code.is_empty());
+        assert!(s.codegen.framework_cache.is_empty());
+        assert!(!s.codegen.pending_download);
     }
 
     #[test]

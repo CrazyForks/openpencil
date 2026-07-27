@@ -224,10 +224,10 @@ struct DesktopApp {
     /// resolves the selected model and lands the generated markdown
     /// back into `doc.design_md` when the worker completes.
     current_design_md: Option<design_md_host::DesignMdSession>,
-    /// The last completed generation result kept host-side (asset bytes
-    /// plus bundle JSON) for Download / Export Bundle — not carried in
-    /// the wasm-clean `editor_state`.
-    codegen_last_result: Option<codegen_session::CodegenResult>,
+    /// Completed generation results keyed by framework and kept host-side
+    /// (including raw asset bytes) for Download — not carried in the
+    /// wasm-clean `editor_state`.
+    codegen_results: codegen_session::CodegenResults,
     #[cfg(test)]
     design_md_test_provider: Option<Box<dyn op_ai::chat_provider::ChatProvider>>,
     /// In-flight `.fig` import — worker thread that parses on a

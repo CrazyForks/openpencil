@@ -20,6 +20,7 @@ use std::sync::Arc;
 use op_ai::chat_provider::{ChatDelta, ChatProvider, ChatRequest};
 #[cfg(test)]
 use op_codegen::ai::types::CodegenInput;
+use op_editor_core::codegen::Framework;
 use op_editor_host_core::codegen::framework_ext;
 #[cfg(test)]
 use op_editor_host_core::codegen_session::run_pipeline;
@@ -28,18 +29,87 @@ use op_host_native::WidgetHostNative;
 
 use crate::chat_session::{provider_for_selected_model, selected_cli_model_id};
 
+pub type CodegenDocumentIdentity = (u64, u64);
+
+pub fn document_identity(host: &WidgetHostNative) -> CodegenDocumentIdentity {
+    (
+        host.document_epoch(),
+        host.editor_state().document_generation(),
+    )
+}
+
+/// Completed generation payloads keyed by the framework captured when each
+/// run launched. Raw asset bytes stay host-side, but switching framework tabs
+/// must not replace another framework's downloadable result.
+#[derive(Default)]
+pub struct CodegenResults {
+    document_identity: Option<CodegenDocumentIdentity>,
+    entries: Vec<(Framework, CodegenResult)>,
+}
+
+impl CodegenResults {
+    pub fn insert(
+        &mut self,
+        document_identity: CodegenDocumentIdentity,
+        framework: Framework,
+        result: CodegenResult,
+    ) {
+        if self.document_identity != Some(document_identity) {
+            self.document_identity = Some(document_identity);
+            self.entries.clear();
+        }
+        if let Some((_, cached)) = self
+            .entries
+            .iter_mut()
+            .find(|(cached_framework, _)| *cached_framework == framework)
+        {
+            *cached = result;
+        } else {
+            self.entries.push((framework, result));
+        }
+    }
+
+    pub fn get(
+        &self,
+        document_identity: CodegenDocumentIdentity,
+        framework: Framework,
+    ) -> Option<&CodegenResult> {
+        if self.document_identity != Some(document_identity) {
+            return None;
+        }
+        self.entries
+            .iter()
+            .find(|(cached_framework, _)| *cached_framework == framework)
+            .map(|(_, result)| result)
+    }
+
+    #[cfg(test)]
+    fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
 /// Pump the in-flight generation's deltas into `editor_state.codegen`.
 /// Clears `current` once the turn finishes and parks the completed result
-/// (asset bytes) in `last_result`. Returns true when state changed so the
+/// (asset bytes) in `results`. Returns true when state changed so the
 /// caller can dirty the redraw.
 pub fn pump(
     host: &mut WidgetHostNative,
     current: &mut Option<CodegenSession>,
-    last_result: &mut Option<CodegenResult>,
+    results: &mut CodegenResults,
 ) -> bool {
     let Some(session) = current.as_mut() else {
         return false;
     };
+    if session.document_identity != document_identity(host) {
+        // A whole-document replacement superseded this run. Dropping the
+        // receiver plus raising the shared cancel token stops the worker and
+        // guarantees that none of its queued progress/terminal deltas can
+        // mutate or become downloadable from the replacement document.
+        session.cancel();
+        *current = None;
+        return false;
+    }
     if session.is_canceled() {
         // Canceled run: drop EVERY delta (Progress would otherwise flip
         // the phase back to Generating and a late Done / Failed would
@@ -77,6 +147,7 @@ pub fn pump(
                 degraded,
                 assets,
             }) => {
+                let selection_snapshot = std::mem::take(&mut session.selection_snapshot);
                 let metas = assets
                     .iter()
                     .map(|a| op_editor_core::codegen::AssetMeta {
@@ -91,15 +162,20 @@ pub fn pump(
                     cg.code_selection = None;
                     cg.degraded = degraded;
                     cg.assets = metas;
+                    cg.selection_snapshot = selection_snapshot;
                     cg.phase = op_editor_core::codegen::CodegenPhase::Complete;
                     cg.pending_generate = false;
                     cg.pending_regenerate = false;
                 }
-                *last_result = Some(CodegenResult {
-                    code,
-                    framework_ext: framework_ext(session.framework).into(),
-                    assets,
-                });
+                results.insert(
+                    session.document_identity,
+                    session.framework,
+                    CodegenResult {
+                        code,
+                        framework_ext: framework_ext(session.framework).into(),
+                        assets,
+                    },
+                );
                 session.finished = true;
                 changed = true;
             }
@@ -149,6 +225,15 @@ pub fn launch_codegen_if_pending(
     host: &mut WidgetHostNative,
     current: &mut Option<CodegenSession>,
 ) -> bool {
+    let live_document_identity = document_identity(host);
+    if current
+        .as_ref()
+        .is_some_and(|session| session.document_identity != live_document_identity)
+    {
+        if let Some(stale) = current.take() {
+            stale.cancel();
+        }
+    }
     // A LIVE run blocks a new launch; a canceled run still draining its
     // dropped deltas does not — the fresh run replaces it (and gets a
     // strictly larger run epoch), TS parity: cancel + regenerate is
@@ -187,25 +272,27 @@ pub fn launch_codegen_if_pending(
         cg.phase = op_editor_core::codegen::CodegenPhase::Error;
         return true;
     };
+    // Keep this run's targets on the session until Done. A failed
+    // regeneration can keep displaying the previous successful code, so
+    // overwriting its snapshot at launch would create a mixed cache entry.
+    let selection_snapshot: Vec<String> = host
+        .editor_state()
+        .selection
+        .set
+        .iter()
+        .map(|id| id.as_str().to_string())
+        .collect();
     {
-        // Record the targets this run generates against (TS
-        // `lastSelectionRef`) before the mutable codegen borrow.
-        let selection_snapshot: Vec<String> = host
-            .editor_state()
-            .selection
-            .set
-            .iter()
-            .map(|id| id.as_str().to_string())
-            .collect();
         let cg = &mut host.editor_state_mut().codegen;
         cg.progress = Default::default();
         cg.error = None;
         cg.phase = op_editor_core::codegen::CodegenPhase::Generating;
-        cg.selection_snapshot = selection_snapshot;
     }
-    *current = Some(CodegenSession::start_with_model(
-        provider, input, framework, model,
-    ));
+    *current = Some(
+        CodegenSession::start_with_model(provider, input, framework, model)
+            .with_document_identity(live_document_identity)
+            .with_selection_snapshot(selection_snapshot),
+    );
     true
 }
 
@@ -270,304 +357,5 @@ pub fn drain_codegen_cancel_request(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use op_ai::chat_provider::StopReason;
-    use op_editor_core::codegen::{CodeGenProgress, Framework};
-
-    /// Test-only provider that replays a DIFFERENT scripted turn each time
-    /// `send` is called — `EchoProvider` replays the same script, which can't
-    /// satisfy the pipeline's three distinct phases (planning → chunk →
-    /// assembly). Interior mutability lets it pop one script per request.
-    struct ScriptedProvider {
-        scripts: std::sync::Mutex<std::collections::VecDeque<Vec<ChatDelta>>>,
-    }
-
-    impl ChatProvider for ScriptedProvider {
-        fn provider_label(&self) -> &str {
-            "scripted"
-        }
-        fn send(&self, _r: ChatRequest) -> Box<dyn Iterator<Item = ChatDelta> + Send> {
-            let next = self.scripts.lock().unwrap().pop_front().unwrap_or_default();
-            Box::new(next.into_iter())
-        }
-    }
-
-    #[test]
-    fn framework_ext_maps_every_framework() {
-        assert_eq!(framework_ext(Framework::React), "tsx");
-        assert_eq!(framework_ext(Framework::ReactNative), "tsx");
-        assert_eq!(framework_ext(Framework::Vue), "vue");
-        assert_eq!(framework_ext(Framework::Svelte), "svelte");
-        assert_eq!(framework_ext(Framework::Html), "html");
-        assert_eq!(framework_ext(Framework::Flutter), "dart");
-        assert_eq!(framework_ext(Framework::SwiftUi), "swift");
-        assert_eq!(framework_ext(Framework::Compose), "kt");
-    }
-
-    fn turn(text: &str) -> Vec<ChatDelta> {
-        vec![
-            ChatDelta::TextDelta(text.into()),
-            ChatDelta::Done {
-                stop_reason: StopReason::EndTurn,
-            },
-        ]
-    }
-
-    /// A parked (already canceled) run must emit nothing but the terminal
-    /// Aborted failure — no model request is ever dispatched.
-    #[test]
-    fn run_pipeline_pre_canceled_emits_only_aborted_failure() {
-        let provider = ScriptedProvider {
-            scripts: std::sync::Mutex::new(std::collections::VecDeque::from(vec![turn("{}")])),
-        };
-        let (tx, rx) = std::sync::mpsc::channel();
-        let cancel = AtomicBool::new(true);
-        run_pipeline(&provider, test_input(), &tx, &cancel);
-        drop(tx);
-
-        let deltas: Vec<CodegenDelta> = rx.into_iter().collect();
-        assert_eq!(deltas.len(), 1, "exactly one terminal delta");
-        match &deltas[0] {
-            CodegenDelta::Failed(message) => assert!(message.contains("Aborted")),
-            _ => panic!("expected the Aborted terminal failure"),
-        }
-        // The provider was never consulted.
-        assert_eq!(provider.scripts.lock().unwrap().len(), 1);
-    }
-
-    /// Test-only provider that raises the shared cancel flag as a side
-    /// effect of its first `send` — models the user pressing Cancel while
-    /// the first (planning) request streams.
-    struct CancelRaisingProvider {
-        inner: ScriptedProvider,
-        cancel: std::sync::Arc<AtomicBool>,
-    }
-
-    impl ChatProvider for CancelRaisingProvider {
-        fn provider_label(&self) -> &str {
-            "cancel-raising"
-        }
-        fn send(&self, r: ChatRequest) -> Box<dyn Iterator<Item = ChatDelta> + Send> {
-            self.cancel.store(true, Ordering::Relaxed);
-            self.inner.send(r)
-        }
-    }
-
-    /// A cancel raised mid-run stops the pipeline at the next hook point:
-    /// the in-flight request's stream is abandoned, no later phase is
-    /// dispatched. The planning-running snapshot precedes the cancellation;
-    /// no progress is emitted after the terminal Aborted failure.
-    #[test]
-    fn run_pipeline_cancel_mid_run_stops_dispatch_and_aborts() {
-        let plan = r#"{"chunks":[{"id":"c1","name":"Root","nodeIds":["n1"],"role":"r","suggestedComponentName":"Root","dependencies":[]}],"sharedStyles":[],"rootLayout":{"direction":"column","gap":0,"responsive":false}}"#;
-        let cancel = std::sync::Arc::new(AtomicBool::new(false));
-        let provider = CancelRaisingProvider {
-            inner: ScriptedProvider {
-                scripts: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
-                    turn(plan),
-                    turn("chunk code"),
-                    turn("assembly code"),
-                ])),
-            },
-            cancel: std::sync::Arc::clone(&cancel),
-        };
-        let (tx, rx) = std::sync::mpsc::channel();
-        run_pipeline(&provider, test_input(), &tx, &cancel);
-        drop(tx);
-
-        let deltas: Vec<CodegenDelta> = rx.into_iter().collect();
-        assert_eq!(deltas.len(), 2, "running snapshot then terminal failure");
-        assert!(matches!(deltas[0], CodegenDelta::Progress(_)));
-        match &deltas[1] {
-            CodegenDelta::Failed(message) => assert!(message.contains("Aborted")),
-            _ => panic!("expected the Aborted terminal failure"),
-        }
-        // Only the planning request ran — chunk + assembly never dispatched.
-        assert_eq!(provider.inner.scripts.lock().unwrap().len(), 2);
-    }
-
-    /// A canceled session's pump drops EVERYTHING the stale worker still
-    /// emits: Progress must not flip the phase back to Generating, and a
-    /// terminal Done must not overwrite the canceled UI state or park a
-    /// last_result — it only retires the session.
-    #[test]
-    fn pump_after_cancel_drops_progress_and_terminal_deltas() {
-        use op_editor_core::codegen::CodegenPhase;
-
-        let (tx, rx) = std::sync::mpsc::channel();
-        let mut current = Some(CodegenSession {
-            rx,
-            finished: false,
-            framework: Framework::React,
-            model: None,
-            cancel: Arc::new(AtomicBool::new(false)),
-            run_epoch: 1,
-        });
-        let mut last_result: Option<CodegenResult> = None;
-        let mut host = WidgetHostNative::new();
-        host.editor_state_mut().codegen.phase = CodegenPhase::Generating;
-
-        // Cancel action (property dispatch): flips phase + raises intent.
-        host.editor_state_mut().codegen.phase = CodegenPhase::Idle;
-        host.editor_state_mut().codegen.pending_cancel = true;
-        assert!(drain_codegen_cancel_request(&mut host, &mut current));
-        assert!(!host.editor_state().codegen.pending_cancel);
-        assert!(current.as_ref().is_some_and(|s| s.is_canceled()));
-
-        // The stale worker keeps streaming: progress, then terminal Done.
-        tx.send(CodegenDelta::Progress(CodeGenProgress::default()))
-            .unwrap();
-        tx.send(CodegenDelta::Done {
-            code: "stale code".into(),
-            degraded: false,
-            assets: Vec::new(),
-        })
-        .unwrap();
-
-        let changed = pump(&mut host, &mut current, &mut last_result);
-        assert!(!changed, "dropped deltas must not dirty the redraw");
-        let cg = &host.editor_state().codegen;
-        assert_eq!(cg.phase, CodegenPhase::Idle, "canceled state survives");
-        assert!(cg.code.is_empty(), "stale Done must not land its code");
-        assert!(last_result.is_none(), "no result parked for a canceled run");
-        assert!(current.is_none(), "terminal delta retires the session");
-    }
-
-    /// A LIVE in-flight run blocks a new launch; a canceled one does not —
-    /// the pending Generate proceeds (TS: cancel + regenerate immediately).
-    #[test]
-    fn launch_blocked_by_live_run_but_not_by_canceled_run() {
-        use op_editor_core::codegen::CodegenPhase;
-
-        let mut host = WidgetHostNative::new();
-        // Empty the active page so the (canceled-gate-passing) launch
-        // below has nothing to generate from — the whole-page fallback
-        // would otherwise resolve the starter document's nodes and spin
-        // up a real provider worker.
-        host.editor_state_mut().active_children_mut().clear();
-        host.editor_state_mut().clear_selection();
-
-        // Live session → launch refuses.
-        let (_tx_live, rx_live) = std::sync::mpsc::channel();
-        let mut current = Some(CodegenSession {
-            rx: rx_live,
-            finished: false,
-            framework: Framework::React,
-            model: None,
-            cancel: Arc::new(AtomicBool::new(false)),
-            run_epoch: 1,
-        });
-        host.editor_state_mut().codegen.pending_generate = true;
-        assert!(!launch_codegen_if_pending(&mut host, &mut current));
-        assert!(host.editor_state().codegen.pending_generate);
-
-        // Canceled session → launch proceeds (here onto an empty document,
-        // so it surfaces the inline error instead of a fresh worker — the
-        // point is that the canceled run no longer blocks the drain).
-        current.as_ref().unwrap().cancel();
-        assert!(launch_codegen_if_pending(&mut host, &mut current));
-        assert!(!host.editor_state().codegen.pending_generate);
-        assert_eq!(host.editor_state().codegen.phase, CodegenPhase::Error);
-    }
-
-    #[test]
-    fn disconnected_fixed_provider_fails_before_spawning_a_worker() {
-        use op_editor_core::codegen::CodegenPhase;
-
-        let mut host = WidgetHostNative::new();
-        host.editor_state_mut().codegen.pending_generate = true;
-        let mut current = None;
-
-        assert!(launch_codegen_if_pending(&mut host, &mut current));
-        assert!(current.is_none(), "an unconfigured CLI must not be spawned");
-        let cg = &host.editor_state().codegen;
-        assert_eq!(cg.phase, CodegenPhase::Error);
-        assert!(
-            cg.error
-                .as_deref()
-                .is_some_and(|message| message.contains("Agent Settings")),
-            "error should direct the user to provider setup: {:?}",
-            cg.error
-        );
-    }
-
-    /// Every `start` stamps a strictly larger run epoch, so the run that
-    /// replaces a canceled one is distinguishable from it.
-    #[test]
-    fn start_allocates_monotonic_run_epochs() {
-        let provider = || {
-            Box::new(ScriptedProvider {
-                scripts: std::sync::Mutex::new(std::collections::VecDeque::new()),
-            })
-        };
-        let s1 = CodegenSession::start(provider(), test_input(), Framework::React);
-        let s2 = CodegenSession::start(provider(), test_input(), Framework::React);
-        assert!(s2.run_epoch > s1.run_epoch);
-        assert!(!s1.is_canceled());
-        s1.cancel();
-        assert!(s1.is_canceled());
-        assert!(!s2.is_canceled(), "cancel flags are per-run");
-    }
-
-    fn test_input() -> CodegenInput {
-        CodegenInput {
-            nodes_json: "[{\"type\":\"frame\",\"id\":\"n1\",\"children\":[]}]".to_string(),
-            framework: Framework::React,
-            variables_json: None,
-            max_output_tokens: 4096,
-            thinking: op_ai::chat_provider::ThinkingMode::Adaptive,
-            effort: op_ai::chat_provider::EffortLevel::Low,
-        }
-    }
-
-    #[test]
-    fn run_pipeline_drives_three_phases_to_done() {
-        // Phase 1: planning JSON (one chunk targeting node `n1`).
-        let plan = r#"{"chunks":[{"id":"c1","name":"Root","nodeIds":["n1"],"role":"r","suggestedComponentName":"Root","dependencies":[]}],"sharedStyles":[],"rootLayout":{"direction":"column","gap":0,"responsive":false}}"#;
-        // Phase 2: chunk code + contract.
-        let chunk =
-            "export default function Root(){}\n---CONTRACT---\n{\"componentName\":\"Root\"}";
-        // Phase 3: assembly references the chunk component.
-        let assembly = "export default function App(){ return <Root/> }";
-
-        let provider = ScriptedProvider {
-            scripts: std::sync::Mutex::new(std::collections::VecDeque::from(vec![
-                turn(plan),
-                turn(chunk),
-                turn(assembly),
-            ])),
-        };
-
-        let input = CodegenInput {
-            nodes_json: "[{\"type\":\"frame\",\"id\":\"n1\",\"children\":[]}]".to_string(),
-            framework: Framework::React,
-            variables_json: None,
-            max_output_tokens: 4096,
-            thinking: op_ai::chat_provider::ThinkingMode::Adaptive,
-            effort: op_ai::chat_provider::EffortLevel::Low,
-        };
-
-        let (tx, rx) = std::sync::mpsc::channel();
-        run_pipeline(&provider, input, &tx, &AtomicBool::new(false));
-        drop(tx);
-
-        let deltas: Vec<CodegenDelta> = rx.into_iter().collect();
-        assert!(!deltas.is_empty(), "pipeline must emit at least one delta");
-        match deltas.last().expect("a terminal delta") {
-            CodegenDelta::Done { code, .. } => {
-                // The assembled output wires in the assembly turn's App shell.
-                assert!(
-                    code.contains("App"),
-                    "final code should contain the assembled App component, got: {code}"
-                );
-            }
-            CodegenDelta::Failed(message) => {
-                panic!("pipeline failed instead of completing: {message}");
-            }
-            CodegenDelta::Progress(_) => {
-                panic!("last delta should be terminal Done, not Progress");
-            }
-        }
-    }
-}
+#[path = "codegen_session_tests.rs"]
+mod tests;

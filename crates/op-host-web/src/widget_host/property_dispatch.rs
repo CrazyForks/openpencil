@@ -189,7 +189,7 @@ impl WidgetHost {
             }
             CodegenFollowUp::Download => {
                 #[cfg(feature = "canvaskit")]
-                crate::codegen_web::download_generated(&self.editor_state);
+                crate::codegen_web::download_generated(&self.editor_state, self.document_epoch());
             }
             CodegenFollowUp::ExportBundle => {
                 // Live structure bundle (TS code-panel.tsx

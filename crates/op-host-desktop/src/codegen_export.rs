@@ -12,20 +12,17 @@ use std::io::Write;
 use op_codegen::ai::types::AssetFile;
 use op_host_native::WidgetHostNative;
 
-use crate::codegen_session::CodegenResult;
+use crate::codegen_session::CodegenResults;
 
 /// Drain pending Download / Export-Bundle requests from the Code panel.
 /// Returns true when either action ran (the cleared flag changed state, so
 /// the caller repaints the button's reset state).
-pub fn drain_codegen_file_actions(
-    host: &mut WidgetHostNative,
-    last_result: &Option<CodegenResult>,
-) -> bool {
+pub fn drain_codegen_file_actions(host: &mut WidgetHostNative, results: &CodegenResults) -> bool {
     let mut ran = false;
     if host.editor_state().codegen.pending_download {
         host.editor_state_mut().codegen.pending_download = false;
         ran = true;
-        handle_download(host, last_result);
+        handle_download(host, results);
     }
     if host.editor_state().codegen.pending_export_bundle {
         host.editor_state_mut().codegen.pending_export_bundle = false;
@@ -37,8 +34,13 @@ pub fn drain_codegen_file_actions(
 
 /// Save the generated code: a single file when there are no assets, or a
 /// `.zip` (`component.<ext>` + `assets/<...>`) when image assets came back.
-fn handle_download(host: &WidgetHostNative, last_result: &Option<CodegenResult>) {
-    let Some(result) = last_result else { return };
+fn handle_download(host: &WidgetHostNative, results: &CodegenResults) {
+    let Some(result) = results.get(
+        crate::codegen_session::document_identity(host),
+        host.editor_state().codegen.framework,
+    ) else {
+        return;
+    };
     if result.code.is_empty() {
         return;
     }
@@ -163,7 +165,13 @@ fn build_bundle_zip(files: &[(String, Vec<u8>)]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Cursor;
+    use std::io::{Cursor, Read};
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+
+    use op_editor_core::codegen::Framework;
+
+    use crate::codegen_session::{pump, CodegenDelta, CodegenSession};
 
     fn asset(zip_path: &str, bytes: &[u8]) -> AssetFile {
         AssetFile {
@@ -179,6 +187,39 @@ mod tests {
     fn entry_names(bytes: &[u8]) -> Vec<String> {
         let archive = zip::ZipArchive::new(Cursor::new(bytes.to_vec())).expect("valid zip");
         archive.file_names().map(|s| s.to_string()).collect()
+    }
+
+    fn entry_bytes(bytes: &[u8], name: &str) -> Vec<u8> {
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes.to_vec())).expect("valid zip");
+        let mut entry = archive.by_name(name).expect("zip entry");
+        let mut contents = Vec::new();
+        entry.read_to_end(&mut contents).expect("read zip entry");
+        contents
+    }
+
+    fn completed_run(
+        framework: Framework,
+        code: &str,
+        assets: Vec<AssetFile>,
+    ) -> Option<CodegenSession> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(CodegenDelta::Done {
+            code: code.into(),
+            degraded: false,
+            assets,
+        })
+        .expect("queue completion");
+        drop(tx);
+        Some(CodegenSession {
+            rx,
+            finished: false,
+            framework,
+            document_identity: (0, 0),
+            selection_snapshot: Vec::new(),
+            model: None,
+            cancel: Arc::new(AtomicBool::new(false)),
+            run_epoch: 1,
+        })
     }
 
     #[test]
@@ -200,6 +241,79 @@ mod tests {
         assert!(names.contains(&"assets/img-1.png".to_string()));
         assert!(names.contains(&"assets/img-2.png".to_string()));
         assert_eq!(names.len(), 3);
+    }
+
+    #[test]
+    fn download_uses_html_run_after_generating_react_and_switching_back() {
+        let mut host = WidgetHostNative::new();
+        let mut results = CodegenResults::default();
+
+        host.editor_state_mut().codegen.framework = Framework::Html;
+        let mut current = completed_run(
+            Framework::Html,
+            "<main>html source</main>",
+            vec![asset("assets/html.png", &[1, 8, 7])],
+        );
+        assert!(pump(&mut host, &mut current, &mut results));
+
+        assert!(host
+            .editor_state_mut()
+            .codegen
+            .select_framework(Framework::React));
+        current = completed_run(
+            Framework::React,
+            "export default function ReactSource() {}",
+            vec![asset("assets/react.png", &[9, 9, 9])],
+        );
+        assert!(pump(&mut host, &mut current, &mut results));
+
+        assert!(host
+            .editor_state_mut()
+            .codegen
+            .select_framework(Framework::Html));
+        let result = results
+            .get(
+                crate::codegen_session::document_identity(&host),
+                host.editor_state().codegen.framework,
+            )
+            .expect("HTML result remains cached");
+        assert_eq!(result.code, "<main>html source</main>");
+        assert_eq!(result.framework_ext, "html");
+
+        let zip = build_code_zip(&result.code, &result.framework_ext, &result.assets);
+        assert_eq!(
+            entry_bytes(&zip, "component.html"),
+            b"<main>html source</main>"
+        );
+        assert_eq!(entry_bytes(&zip, "assets/html.png"), [1, 8, 7]);
+        assert!(!entry_names(&zip).iter().any(|name| name.contains("react")));
+    }
+
+    #[test]
+    fn completed_download_cache_is_inaccessible_after_document_replacement() {
+        let mut host = WidgetHostNative::new();
+        host.editor_state_mut().codegen.framework = Framework::Html;
+        let mut results = CodegenResults::default();
+        let mut current = completed_run(
+            Framework::Html,
+            "<main>old document</main>",
+            vec![asset("assets/old.png", &[1, 2, 3])],
+        );
+        assert!(pump(&mut host, &mut current, &mut results));
+        let old_identity = crate::codegen_session::document_identity(&host);
+        assert!(results.get(old_identity, Framework::Html).is_some());
+
+        host.replace_editor_state(op_editor_core::EditorState::new());
+        let new_identity = crate::codegen_session::document_identity(&host);
+        assert_ne!(new_identity, old_identity);
+        assert!(
+            results.get(new_identity, Framework::Html).is_none(),
+            "a new document must not see the previous document's raw assets"
+        );
+        assert!(
+            host.editor_state().codegen.code.is_empty(),
+            "the replacement state cannot fall back to painted old code"
+        );
     }
 
     fn rect_node(id: &str) -> jian_ops_schema::node::PenNode {

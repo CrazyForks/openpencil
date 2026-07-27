@@ -106,7 +106,7 @@ impl DesktopApp {
             current_design: None,
             current_codegen: None,
             current_design_md: None,
-            codegen_last_result: None,
+            codegen_results: Default::default(),
             #[cfg(test)]
             design_md_test_provider: None,
             current_figma_import: None,

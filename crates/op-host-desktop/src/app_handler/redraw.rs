@@ -110,7 +110,7 @@ impl DesktopApp {
         if codegen_session::pump(
             &mut self.host,
             &mut self.current_codegen,
-            &mut self.codegen_last_result,
+            &mut self.codegen_results,
         ) {
             self.redraw_dirty = true;
         }
@@ -119,10 +119,8 @@ impl DesktopApp {
         }
         // Drain a pending Download / Export-Bundle from the Code
         // panel — pops a native save dialog + writes the file(s).
-        if crate::codegen_export::drain_codegen_file_actions(
-            &mut self.host,
-            &self.codegen_last_result,
-        ) {
+        if crate::codegen_export::drain_codegen_file_actions(&mut self.host, &self.codegen_results)
+        {
             self.redraw_dirty = true;
         }
         // Drain a finished background `.fig` parse — applies

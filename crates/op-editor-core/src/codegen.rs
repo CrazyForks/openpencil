@@ -4,6 +4,8 @@
 //! op-codegen::ai; these are the types that crate returns (it depends on
 //! op-editor-core, so the edge is acyclic).
 
+use std::sync::Arc;
+
 use jian_core::text_input::prev_char_boundary;
 
 /// Target framework for code generation. Wire tokens match TS `Framework`.
@@ -162,11 +164,32 @@ pub struct AssetMeta {
     pub byte_len: usize,
 }
 
+/// A completed framework's generated artifacts while another framework is
+/// active. The active framework keeps using the flat fields on
+/// [`CodegenState`], so painters and host pipelines do not need a second
+/// lookup; switching tabs snapshots/restores these persistent result fields.
+#[derive(Debug, PartialEq)]
+pub struct CodegenCacheEntry {
+    pub framework: Framework,
+    pub code: String,
+    pub code_scroll: jian_core::scroll::ScrollState,
+    pub code_selection: Option<CodeSelection>,
+    pub degraded: bool,
+    pub assets: Vec<AssetMeta>,
+    pub selection_snapshot: Vec<String>,
+}
+
 /// The Code panel's full state. Mirror of `ChatState`'s role for chat.
 /// `PartialEq` only (not `Eq`) — scroll offsets carry `f32` values.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CodegenState {
     pub framework: Framework,
+    /// Generated results keyed by framework. This mirrors the retired web
+    /// panel's `codeCache` and lets a generated tab survive a round trip
+    /// through another framework without ever relabelling its code. The two
+    /// Arc layers keep both per-frame PropertyPanel snapshots and the
+    /// copy-on-write framework switch shallow.
+    pub framework_cache: Arc<Vec<Arc<CodegenCacheEntry>>>,
     /// Horizontal scroll offset (px, ≥ 0) of the framework tab strip, so the
     /// single-row selector scrolls to reach off-screen frameworks (TS parity).
     pub framework_scroll: jian_core::scroll::ScrollState,
@@ -212,6 +235,7 @@ impl Default for CodegenState {
     fn default() -> Self {
         Self {
             framework: Framework::React,
+            framework_cache: Arc::new(Vec::new()),
             framework_scroll: Default::default(),
             framework_hover: None,
             action_hover: None,
@@ -235,10 +259,26 @@ impl Default for CodegenState {
 }
 
 impl CodegenState {
-    /// Select a different output framework and discard every artifact that
-    /// belongs to the previous one. The framework strip keeps its horizontal
-    /// scroll position, but generated code must never be shown, copied, or
-    /// exported under a framework it was not produced for.
+    /// Drop every artifact and in-flight action derived from the document that
+    /// is being replaced, while retaining the user's framework-tab choice.
+    ///
+    /// `EditorState::replace_document*` preserves application chrome, so this
+    /// reset must be explicit: generated code and its per-framework cache are
+    /// document-scoped and must never survive Open/New/import/live-sync.
+    pub fn reset_for_document_replacement(&mut self) {
+        let framework = self.framework;
+        let framework_scroll = self.framework_scroll;
+        *self = Self {
+            framework,
+            framework_scroll,
+            ..Self::default()
+        };
+    }
+
+    /// Select a different output framework, caching the current completed
+    /// result and restoring any result previously generated for the target.
+    /// A never-generated target still opens in the empty state, so code is
+    /// never shown, copied, or exported under the wrong framework.
     ///
     /// The UI disables framework tabs while generation is active. Keeping the
     /// same guard here prevents a synthetic/stale action from relabelling an
@@ -247,6 +287,13 @@ impl CodegenState {
         if framework == self.framework || self.phase == CodegenPhase::Generating {
             return false;
         }
+
+        self.cache_active_result();
+        let cached = self
+            .framework_cache
+            .iter()
+            .find(|entry| entry.framework == framework)
+            .cloned();
 
         self.framework = framework;
         self.framework_hover = None;
@@ -266,7 +313,46 @@ impl CodegenState {
         self.pending_download = false;
         self.pending_export_bundle = false;
         self.pending_cancel = false;
+
+        if let Some(cached) = cached {
+            self.phase = CodegenPhase::Complete;
+            self.code = cached.code.clone();
+            self.code_scroll = cached.code_scroll;
+            self.code_selection = cached.code_selection;
+            self.degraded = cached.degraded;
+            self.assets = cached.assets.clone();
+            self.selection_snapshot = cached.selection_snapshot.clone();
+        }
         true
+    }
+
+    fn cache_active_result(&mut self) {
+        // An Error state can still carry the last successful output after a
+        // failed regeneration. Preserve that output just like the retired
+        // web panel's per-framework codeCache; a bare error has no result to
+        // retain.
+        if self.phase != CodegenPhase::Complete && self.code.is_empty() {
+            return;
+        }
+
+        let entry = Arc::new(CodegenCacheEntry {
+            framework: self.framework,
+            code: self.code.clone(),
+            code_scroll: self.code_scroll,
+            code_selection: self.code_selection,
+            degraded: self.degraded,
+            assets: self.assets.clone(),
+            selection_snapshot: self.selection_snapshot.clone(),
+        });
+        let cache = Arc::make_mut(&mut self.framework_cache);
+        if let Some(cached) = cache
+            .iter_mut()
+            .find(|cached| cached.framework == self.framework)
+        {
+            *cached = entry;
+        } else {
+            cache.push(entry);
+        }
     }
 
     pub fn selected_code_text(&self) -> Option<&str> {
@@ -347,7 +433,27 @@ mod tests {
     }
 
     #[test]
-    fn selecting_a_different_framework_discards_previous_output() {
+    fn failed_regeneration_caches_the_previous_successful_targets() {
+        let mut s = CodegenState {
+            phase: CodegenPhase::Complete,
+            code: "previous successful output".into(),
+            selection_snapshot: vec!["old-node".into()],
+            ..CodegenState::default()
+        };
+
+        // Hosts keep the new run's targets on the session until Done. An
+        // Error with previous code therefore still carries the successful
+        // targets and must cache/restore them as one coherent result.
+        s.phase = CodegenPhase::Error;
+        s.error = Some("regeneration failed".into());
+        assert!(s.select_framework(Framework::Vue));
+        assert!(s.select_framework(Framework::React));
+        assert_eq!(s.code, "previous successful output");
+        assert_eq!(s.selection_snapshot, ["old-node"]);
+    }
+
+    #[test]
+    fn selecting_a_never_generated_framework_shows_empty_state() {
         let mut s = CodegenState {
             framework_scroll: jian_core::scroll::ScrollState { offset: 18.0 },
             framework_hover: Some(Framework::Vue),
@@ -396,6 +502,69 @@ mod tests {
         assert!(s.copied_at.is_none());
         assert!(!s.pending_download);
         assert!(!s.pending_export_bundle);
+    }
+
+    #[test]
+    fn generated_html_survives_switching_away_and_back() {
+        let mut s = CodegenState {
+            framework: Framework::Html,
+            phase: CodegenPhase::Complete,
+            code: "<!doctype html><main>Hello</main>".into(),
+            code_scroll: jian_core::scroll::ScrollState { offset: 24.0 },
+            code_selection: Some(CodeSelection {
+                anchor: 16,
+                focus: 20,
+            }),
+            degraded: true,
+            assets: vec![AssetMeta {
+                relative_path: "assets/hero.png".into(),
+                byte_len: 128,
+            }],
+            selection_snapshot: vec!["hero".into()],
+            ..CodegenState::default()
+        };
+
+        assert!(s.select_framework(Framework::Vue));
+        assert_eq!(s.phase, CodegenPhase::Idle);
+        assert!(s.code.is_empty());
+
+        s.phase = CodegenPhase::Complete;
+        s.code = "<template>Vue result</template>".into();
+        assert!(s.select_framework(Framework::Html));
+        assert_eq!(s.phase, CodegenPhase::Complete);
+        assert_eq!(s.code, "<!doctype html><main>Hello</main>");
+        assert_eq!(s.code_scroll.offset, 24.0);
+        assert_eq!(
+            s.code_selection,
+            Some(CodeSelection {
+                anchor: 16,
+                focus: 20
+            })
+        );
+        assert!(s.degraded);
+        assert_eq!(s.assets.len(), 1);
+        assert_eq!(s.selection_snapshot, ["hero"]);
+
+        let cloned = s.clone();
+        assert!(
+            Arc::ptr_eq(&s.framework_cache, &cloned.framework_cache),
+            "panel snapshots must not deep-clone every cached source string"
+        );
+        let cloned_vue = cloned
+            .framework_cache
+            .iter()
+            .find(|entry| entry.framework == Framework::Vue)
+            .expect("cached Vue result");
+        assert!(s.select_framework(Framework::React));
+        let live_vue = s
+            .framework_cache
+            .iter()
+            .find(|entry| entry.framework == Framework::Vue)
+            .expect("cached Vue result after copy-on-write");
+        assert!(
+            Arc::ptr_eq(cloned_vue, live_vue),
+            "copy-on-write must retain untouched cached source by reference"
+        );
     }
 
     #[test]

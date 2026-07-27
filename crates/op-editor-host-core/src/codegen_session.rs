@@ -27,6 +27,14 @@ pub struct CodegenSession {
     pub rx: Receiver<CodegenDelta>,
     pub finished: bool,
     pub framework: op_editor_core::codegen::Framework,
+    /// Whole-document identity captured by the host when this run launched.
+    /// Hosts compare it before folding any delta so an Open/New/import/sync
+    /// replacement cannot receive a completion from the previous document.
+    pub document_identity: (u64, u64),
+    /// Node ids captured when this run launched. The host commits these to
+    /// `CodegenState::selection_snapshot` only when the matching terminal
+    /// `Done` is applied; failed/canceled runs simply drop them.
+    pub selection_snapshot: Vec<String>,
     /// CLI model selected when this run launched. Built-in and ACP
     /// providers keep this `None` because their model lives in the provider
     /// configuration rather than on each request.
@@ -36,6 +44,22 @@ pub struct CodegenSession {
 }
 
 impl CodegenSession {
+    /// Bind a newly-started session to `(host epoch, document generation)`.
+    ///
+    /// The shared worker does not own a host, so constructors use the initial
+    /// identity `(0, 0)` and concrete hosts stamp their live identity before
+    /// publishing the session.
+    pub fn with_document_identity(mut self, document_identity: (u64, u64)) -> Self {
+        self.document_identity = document_identity;
+        self
+    }
+
+    /// Bind the generation targets captured alongside the input.
+    pub fn with_selection_snapshot(mut self, selection_snapshot: Vec<String>) -> Self {
+        self.selection_snapshot = selection_snapshot;
+        self
+    }
+
     pub fn cancel(&self) {
         self.cancel.store(true, Ordering::Relaxed);
     }
@@ -91,6 +115,8 @@ impl CodegenSession {
             rx,
             finished: false,
             framework,
+            document_identity: (0, 0),
+            selection_snapshot: Vec::new(),
             model,
             cancel,
             run_epoch: NEXT_RUN_EPOCH.fetch_add(1, Ordering::Relaxed),
