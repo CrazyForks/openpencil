@@ -43,6 +43,11 @@ impl DesktopApp {
         // — the picker paints the Import row + imported group here, and
         // web leaves the default `false` so those controls stay hidden.
         host.editor_state_mut().editor_ui.font_import_supported = true;
+        // Same rationale for the File-menu batch-export row: desktop
+        // owns the directory picker + offscreen exporter it needs.
+        host.editor_state_mut()
+            .editor_ui
+            .batch_frame_export_supported = true;
         // Account gate + session restore. The bridge links the proprietary
         // auth library when a prebuilt exists for this target; stub builds
         // keep every account entry point hidden unless the dev fake-login

@@ -515,7 +515,13 @@ impl WidgetHostNative {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
-            let menu = FileMenu::from_editor_ui(&self.editor_state.editor_ui, now_secs);
+            // Selected-frame count only names the batch-export row; it
+            // leaves row geometry untouched, so the hit-test call sites
+            // keep building the menu without it.
+            let selected_frames =
+                op_editor_core::export_batch::selected_frame_count(&self.editor_state);
+            let menu = FileMenu::from_editor_ui(&self.editor_state.editor_ui, now_secs)
+                .with_selected_frames(selected_frames);
             let menu_rect = menu.rect_at(anchor);
             let mut cx = PaintCx {
                 backend: &mut *frame,

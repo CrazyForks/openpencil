@@ -2,7 +2,9 @@
 //!
 //! Mirrors `apps/web/src/components/editor/top-bar.tsx` file menu
 //! verbatim: New / Open / Save / Save As / Export image, then a
-//! "Recent files" header + entries, finally Clear history.
+//! "Recent files" header + entries, finally Clear history. Hosts that
+//! can write a whole frame set at once get one extra row under Export
+//! image (see `EditorUiState::batch_frame_export_supported`).
 
 use crate::theme::Theme;
 use crate::widgets::editor_state_ext::theme_for;
@@ -23,6 +25,7 @@ fn t(ui: &EditorUiState, key: &str) -> &'static str {
         "save" => "fileMenu.save",
         "saveAs" => "fileMenu.saveAs",
         "exportImage" => "fileMenu.exportImage",
+        "exportAllFrames" => "fileMenu.exportAllFrames",
         "recentFiles" => "fileMenu.recentFiles",
         "noRecentFiles" => "fileMenu.noRecentFiles",
         "clearHistory" => "fileMenu.clearHistory",
@@ -49,6 +52,10 @@ pub enum FileMenuChoice {
     Save,
     SaveAs,
     ExportImage,
+    /// Export every top-level frame of the active page (or just the
+    /// selected frames) as one PNG each. Only offered by hosts that set
+    /// `EditorUiState::batch_frame_export_supported`.
+    ExportAllFrames,
     OpenRecent(usize),
     ClearRecent,
 }
@@ -58,6 +65,11 @@ pub struct FileMenu<'a> {
     pub theme: Theme,
     ui: &'a EditorUiState,
     pub recent: Vec<RecentEntry>,
+    /// Top-level frames in the current selection. Cosmetic only — it
+    /// picks between the row's "all frames" and "N frames" labels; the
+    /// exporter re-derives the scope itself, and row geometry is the
+    /// same either way, so hit-test call sites can leave it at 0.
+    selected_frames: usize,
     /// Shared interaction state populated by the host on cursor-move.
     /// `hover` stores an actionable row index.
     pub menu: jian_widgets::components::menu::MenuState,
@@ -76,8 +88,17 @@ impl<'a> FileMenu<'a> {
             theme: theme_for(ui),
             ui,
             recent,
+            selected_frames: 0,
             menu: ui.file_menu.clone(),
         }
+    }
+
+    /// Tell the menu how many top-level frames are selected so the
+    /// batch-export row can name them. Paint-time only — see
+    /// [`FileMenu::selected_frames`].
+    pub fn with_selected_frames(mut self, count: usize) -> Self {
+        self.selected_frames = count;
+        self
     }
 
     /// Convenience: build a `FileMenu` whose recents are derived
@@ -95,6 +116,38 @@ impl<'a> FileMenu<'a> {
         Self::for_editor_ui(ui, recent)
     }
 
+    /// Whether the batch frame-export row is offered — hosts without a
+    /// directory picker + offscreen exporter leave it out entirely
+    /// rather than paint a dead row.
+    fn has_export_all_row(&self) -> bool {
+        self.ui.batch_frame_export_supported
+    }
+
+    /// Rows in the export section (Export image, plus the optional
+    /// Export-all-frames row below it).
+    fn export_rows(&self) -> usize {
+        1 + usize::from(self.has_export_all_row())
+    }
+
+    /// Row index of the first recent-file entry. Everything after the
+    /// export section shifts with [`FileMenu::export_rows`].
+    fn recent_row_start(&self) -> usize {
+        4 + self.export_rows()
+    }
+
+    /// Label for the batch-export row: naming the selected frames when
+    /// the selection would narrow the scope, else "all frames".
+    fn export_all_label(&self) -> String {
+        if self.selected_frames >= 2 {
+            op_i18n::translate(self.ui.locale, "fileMenu.exportSelectedFrames")
+                .replace("{{count}}", &self.selected_frames.to_string())
+                .trim_end_matches(['.', '…'])
+                .to_string()
+        } else {
+            t(self.ui, "exportAllFrames").to_string()
+        }
+    }
+
     /// Total height = action rows + recent header + recent rows (or
     /// empty hint) + clear row + section paddings.
     pub fn height(&self) -> f32 {
@@ -103,7 +156,7 @@ impl<'a> FileMenu<'a> {
         h += DIVIDER_GAP * 2.0 + 1.0; // divider
         h += ROW_HEIGHT * 2.0; // Save + Save As
         h += DIVIDER_GAP * 2.0 + 1.0;
-        h += ROW_HEIGHT; // Export image
+        h += ROW_HEIGHT * self.export_rows() as f32; // Export image (+ all frames)
         h += DIVIDER_GAP * 2.0 + 1.0;
         h += HEADER_HEIGHT; // Recent files header
         let recent_len = self.recent.len().max(1);
@@ -133,14 +186,18 @@ impl<'a> FileMenu<'a> {
     }
 
     pub fn choice_for_row(&self, row: usize) -> Option<FileMenuChoice> {
+        let recent_start = self.recent_row_start();
         match row {
             0 => Some(FileMenuChoice::NewFile),
             1 => Some(FileMenuChoice::OpenFile),
             2 => Some(FileMenuChoice::Save),
             3 => Some(FileMenuChoice::SaveAs),
             4 => Some(FileMenuChoice::ExportImage),
-            row if row < 5 + self.recent.len() => Some(FileMenuChoice::OpenRecent(row - 5)),
-            row if !self.recent.is_empty() && row == 5 + self.recent.len() => {
+            5 if self.has_export_all_row() => Some(FileMenuChoice::ExportAllFrames),
+            row if row >= recent_start && row < recent_start + self.recent.len() => {
+                Some(FileMenuChoice::OpenRecent(row - recent_start))
+            }
+            row if !self.recent.is_empty() && row == recent_start + self.recent.len() => {
                 Some(FileMenuChoice::ClearRecent)
             }
             _ => None,
@@ -169,11 +226,13 @@ impl<'a> FileMenu<'a> {
             row += 1;
         }
         y += DIVIDER_GAP * 2.0 + 1.0;
-        if row_hit(panel.origin.x, y, point) {
-            return MenuHit::Row(row);
+        for _ in 0..self.export_rows() {
+            if row_hit(panel.origin.x, y, point) {
+                return MenuHit::Row(row);
+            }
+            y += ROW_HEIGHT;
+            row += 1;
         }
-        y += ROW_HEIGHT;
-        row += 1;
         y += DIVIDER_GAP * 2.0 + 1.0;
         y += HEADER_HEIGHT;
         for _ in self.recent.iter() {
@@ -291,6 +350,19 @@ impl<'a> Widget for FileMenu<'a> {
             h(4),
         );
         y += ROW_HEIGHT;
+        if self.has_export_all_row() {
+            paint_row(
+                cx,
+                &self.theme,
+                rect.origin.x,
+                y,
+                Icon::LayoutGrid,
+                &self.export_all_label(),
+                "",
+                h(5),
+            );
+            y += ROW_HEIGHT;
+        }
         y = paint_divider(cx, &self.theme, rect, y);
         paint_header(cx, &self.theme, rect.origin.x, y, t(self.ui, "recentFiles"));
         y += HEADER_HEIGHT;
@@ -304,8 +376,16 @@ impl<'a> Widget for FileMenu<'a> {
             );
             y += ROW_HEIGHT;
         } else {
+            let recent_start = self.recent_row_start();
             for (i, entry) in self.recent.iter().enumerate() {
-                paint_recent_row(cx, &self.theme, rect.origin.x, y, entry, h(5 + i));
+                paint_recent_row(
+                    cx,
+                    &self.theme,
+                    rect.origin.x,
+                    y,
+                    entry,
+                    h(recent_start + i),
+                );
                 y += ROW_HEIGHT;
             }
         }
@@ -329,7 +409,7 @@ impl<'a> Widget for FileMenu<'a> {
                 Icon::Trash,
                 t(self.ui, "clearHistory"),
                 "",
-                h(5 + self.recent.len()),
+                h(self.recent_row_start() + self.recent.len()),
             );
         }
     }
@@ -619,83 +699,5 @@ fn format_age(ui: &EditorUiState, elapsed_secs: u64) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use jian_widgets::components::menu::MenuHit;
-
-    fn menu_panel(menu: &FileMenu<'_>) -> Rect {
-        Rect {
-            origin: Point2D::new(100.0, 50.0),
-            size: Point2D::new(MENU_WIDTH, menu.height()),
-        }
-    }
-
-    #[test]
-    fn hit_uses_shared_menu_state_protocol() {
-        let mut ui = EditorUiState::default();
-        ui.file_menu.hover = Some(5);
-        let menu = FileMenu::for_editor_ui(
-            &ui,
-            vec![
-                RecentEntry {
-                    name: "one.op".to_string(),
-                    age: "now".to_string(),
-                },
-                RecentEntry {
-                    name: "two.op".to_string(),
-                    age: "now".to_string(),
-                },
-            ],
-        );
-        assert_eq!(menu.menu.hover, Some(5));
-
-        let panel = menu_panel(&menu);
-        let divider = DIVIDER_GAP * 2.0 + 1.0;
-        let recent_y = panel.origin.y
-            + PAD_Y
-            + ROW_HEIGHT * 2.0
-            + divider
-            + ROW_HEIGHT * 2.0
-            + divider
-            + ROW_HEIGHT
-            + divider
-            + HEADER_HEIGHT
-            + ROW_HEIGHT * 0.5;
-        assert_eq!(
-            menu.hit(panel, Point2D::new(panel.origin.x + 20.0, recent_y)),
-            MenuHit::Row(5)
-        );
-        assert_eq!(menu.choice_for_row(5), Some(FileMenuChoice::OpenRecent(0)));
-
-        let header_y = recent_y - ROW_HEIGHT * 0.5 - HEADER_HEIGHT * 0.5;
-        assert_eq!(
-            menu.hit(panel, Point2D::new(panel.origin.x + 20.0, header_y)),
-            MenuHit::Inside
-        );
-        assert_eq!(
-            menu.hit(panel, Point2D::new(panel.origin.x - 1.0, header_y)),
-            MenuHit::Outside
-        );
-    }
-
-    #[test]
-    fn recent_columns_keep_an_exact_gap_before_the_right_aligned_age() {
-        let age_width = 42.0;
-        let (name_x, name_budget, age_x) = recent_row_columns(0.0, age_width);
-        let name_right = name_x + name_budget;
-
-        assert_eq!(age_x + age_width, MENU_WIDTH - PAD_X);
-        assert_eq!(age_x - name_right, RECENT_COLUMN_GAP);
-    }
-
-    #[test]
-    fn measured_truncation_stays_inside_its_budget() {
-        let measure = |text: &str| text.chars().count() as f32 * 7.0;
-        let output =
-            truncate_to_width_measured("openpencil-super-long-project-file-name.op", 98.0, measure);
-
-        assert!(output.ends_with('…'), "{output:?}");
-        assert!(measure(&output) <= 98.0, "{output:?}");
-        assert_eq!(truncate_to_width_measured("abc", 0.0, measure), "");
-    }
-}
+#[path = "file_menu_tests.rs"]
+mod tests;

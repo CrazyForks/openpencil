@@ -57,6 +57,14 @@ pub(crate) fn drain_pending_file_action<C: RepaintContext + 'static>(inner: &Inn
             let _ = b.repaint();
         }
         FileAction::ExportImageConfirm => export_image(inner),
+        FileAction::ExportAllFrames => {
+            // Web leaves `batch_frame_export_supported` at `false`, so
+            // the File menu never paints the row that raises this — a
+            // browser has no directory to write a frame set into. Kept
+            // as an explicit no-op branch so the shared action stays
+            // exhaustive without inventing a web-only fan-out of
+            // downloads.
+        }
         FileAction::ImportFigma => import_figma(inner),
         FileAction::FinishFigmaImport(_) => {
             // Desktop alone holds a PreparedFig between modal steps.

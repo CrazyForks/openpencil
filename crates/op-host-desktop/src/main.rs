@@ -46,10 +46,10 @@ mod git_ssh_host;
 mod heap_pressure;
 mod html_import_error;
 mod html_import_session;
-mod image_drop_host;
 mod iconify_host;
 mod image_decode_host;
 mod image_downscale;
+mod image_drop_host;
 mod image_generate_host;
 mod image_panel_host;
 mod image_search_session;
@@ -71,6 +71,7 @@ mod menu;
 mod menu_action;
 mod persistence;
 mod persistence_error;
+mod persistence_export_batch;
 mod persistence_image;
 mod provider_probe_host;
 mod remote_image_host;
@@ -163,6 +164,13 @@ struct DesktopApp {
     /// Cursor moves coalesced between paints; drained on RedrawRequested
     /// and right before apply_press/release so drag-end frames aren't lost.
     pending_cursor_move: Option<(f32, f32)>,
+    /// True while a raster image file is being dragged over the window.
+    /// Drives the per-frame drop-target probe — the platform gives no
+    /// cursor stream during a drag, so the position has to be polled.
+    hovered_image_drop: bool,
+    /// Last polled drag position (logical, top-left origin). Used as the drop
+    /// point when the release itself cannot be re-probed.
+    drop_cursor: Option<(f32, f32)>,
     /// True iff a `request_redraw` is already in flight.
     redraw_pending: bool,
     /// True when the pending redraw needs a paint even if cursor coalescing drained to no-op.
@@ -292,13 +300,6 @@ struct DesktopApp {
     provider_connect_job: Option<provider_probe_host::ProviderConnectJob>,
     /// Startup reconnect replay queue (see `agent_connect_store`).
     provider_reconnect_queue: Vec<op_editor_core::AgentProvider>,
-    /// True while a raster image file is being dragged over the window.
-    /// Drives the per-frame drop-target probe — the platform gives no
-    /// cursor stream during a drag, so the position has to be polled.
-    hovered_image_drop: bool,
-    /// Last polled drag position (logical, top-left origin). Used as the drop
-    /// point when the release itself cannot be re-probed.
-    drop_cursor: Option<(f32, f32)>,
     /// Last persisted pencil-cursor style (see `ui_prefs`).
     last_saved_pencil_cursor: Option<op_editor_core::PencilCursorStyle>,
     /// Providers the store remembers as LAST KNOWN GOOD — seeded from

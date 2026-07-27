@@ -371,6 +371,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "fileMenu.save" => "保存",
         "fileMenu.saveAs" => "另存为...",
         "fileMenu.exportImage" => "导出图片...",
+        "fileMenu.exportAllFrames" => "导出所有画框...",
+        "fileMenu.exportSelectedFrames" => "导出 {{count}} 个画框...",
         "fileMenu.recentFiles" => "最近文件",
         "fileMenu.clearHistory" => "清除历史",
         "fileMenu.noRecentFiles" => "暂无最近文件",
@@ -709,6 +711,11 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "dialog.pickerOpenTitle" => "打开文档",
         "dialog.pickerSaveTitle" => "保存文档",
         "dialog.pickerExportTitle" => "导出图片",
+        "dialog.pickerExportFolderTitle" => "选择导出画框的文件夹",
+        "dialog.batchExportTitle" => "导出画框",
+        "dialog.batchExportSummary" => "已导出 {{ok}}/{{total}} 个画框到：",
+        "dialog.batchExportFailedLead" => "以下画框导出失败：",
+        "dialog.batchExportEmpty" => "当前页面没有可导出的顶层画框。",
         "dialog.updateTitle" => "有可用更新",
         "dialog.updateBody" => {
             "OpenPencil {{version}} 已可用(当前版本 {{current}})。\n\n是否打开发布页面下载?"

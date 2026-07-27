@@ -127,6 +127,7 @@ impl Default for EditorUiState {
             bundled_font_families: std::sync::Arc::new(Vec::new()),
             imported_font_families: std::sync::Arc::new(Vec::new()),
             font_import_supported: false,
+            batch_frame_export_supported: false,
             system_fonts_loaded: false,
             missing_fonts_prompt: None,
             missing_fonts_modal_open: false,

@@ -62,6 +62,7 @@ pub mod design_md_llm_error;
 pub mod design_session;
 pub mod doc_io;
 pub mod export;
+pub mod export_batch;
 pub mod export_pdf;
 mod figma_convert;
 mod figma_convert_error;

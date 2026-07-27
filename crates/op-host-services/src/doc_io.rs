@@ -227,6 +227,7 @@ pub fn preserve_app_preferences(previous: &EditorState, next: &mut EditorState) 
     next.editor_ui.locale = previous.editor_ui.locale;
     next.editor_ui.recent_files = previous.editor_ui.recent_files.clone();
     next.editor_ui.font_import_supported = previous.editor_ui.font_import_supported;
+    next.editor_ui.batch_frame_export_supported = previous.editor_ui.batch_frame_export_supported;
     next.editor_ui.system_fonts_loaded = previous.editor_ui.system_fonts_loaded;
     next.editor_ui.system_font_families = previous.editor_ui.system_font_families.clone();
     next.editor_ui.bundled_font_families = previous.editor_ui.bundled_font_families.clone();

@@ -458,6 +458,11 @@ pub struct EditorUiState {
     /// CanvasKit web host drain these requests; unsupported hosts leave it
     /// `false` so the picker omits dead import/remove controls.
     pub font_import_supported: bool,
+    /// Whether this host can export a whole frame set in one action —
+    /// it needs a directory picker plus the offscreen raster exporter.
+    /// Desktop sets it; hosts that leave it `false` omit the File-menu
+    /// row entirely rather than paint a dead one.
+    pub batch_frame_export_supported: bool,
     /// Whether a host already ran font enumeration (so an empty list
     /// is "machine has none" rather than "not loaded yet").
     pub system_fonts_loaded: bool,

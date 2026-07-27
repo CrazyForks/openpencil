@@ -338,6 +338,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "fileMenu.save" => "儲存",
         "fileMenu.saveAs" => "另存為...",
         "fileMenu.exportImage" => "匯出圖片...",
+        "fileMenu.exportAllFrames" => "匯出所有畫框...",
+        "fileMenu.exportSelectedFrames" => "匯出 {{count}} 個畫框...",
         "fileMenu.recentFiles" => "最近檔案",
         "fileMenu.clearHistory" => "清除歷史",
         "fileMenu.noRecentFiles" => "暫無最近檔案",
@@ -637,6 +639,11 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "dialog.pickerOpenTitle" => "開啟文件",
         "dialog.pickerSaveTitle" => "儲存文件",
         "dialog.pickerExportTitle" => "匯出圖片",
+        "dialog.pickerExportFolderTitle" => "選擇匯出畫框的資料夾",
+        "dialog.batchExportTitle" => "匯出畫框",
+        "dialog.batchExportSummary" => "已匯出 {{ok}}/{{total}} 個畫框到：",
+        "dialog.batchExportFailedLead" => "以下畫框匯出失敗：",
+        "dialog.batchExportEmpty" => "目前頁面沒有可匯出的頂層畫框。",
         "dialog.updateTitle" => "有可用更新",
         "dialog.updateBody" => {
             "OpenPencil {{version}} 已可用(目前版本 {{current}})。\n\n是否開啟發布頁面下載?"

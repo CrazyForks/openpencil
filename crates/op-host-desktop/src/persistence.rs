@@ -328,6 +328,14 @@ pub fn run_action(
             }
             ActionOutcome::Noop
         }
+        FileAction::ExportAllFrames => {
+            host.editor_state_mut()
+                .editor_ui
+                .image_panel
+                .close_popovers();
+            crate::persistence_export_batch::handle_export_all_frames(host);
+            ActionOutcome::Noop
+        }
         FileAction::OpenRecent(i) => {
             let Some(entry) = host.editor_state().editor_ui.recent_files.get(i).cloned() else {
                 return ActionOutcome::Noop;

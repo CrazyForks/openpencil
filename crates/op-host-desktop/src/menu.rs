@@ -31,6 +31,8 @@ pub enum MenuAction {
     Save,
     SaveAs,
     Export,
+    /// File ▸ Export All Frames… — one PNG per top-level frame.
+    ExportAllFrames,
     Undo,
     Redo,
     Cut,
@@ -79,6 +81,7 @@ mod backend {
     const ID_SAVE: &str = "save";
     const ID_SAVE_AS: &str = "save-as";
     const ID_EXPORT: &str = "export";
+    const ID_EXPORT_ALL_FRAMES: &str = "export-all-frames";
     const ID_UNDO: &str = "undo";
     const ID_REDO: &str = "redo";
     const ID_CUT: &str = "cut";
@@ -112,6 +115,7 @@ mod backend {
             ID_SAVE => MenuAction::Save,
             ID_SAVE_AS => MenuAction::SaveAs,
             ID_EXPORT => MenuAction::Export,
+            ID_EXPORT_ALL_FRAMES => MenuAction::ExportAllFrames,
             ID_UNDO => MenuAction::Undo,
             ID_REDO => MenuAction::Redo,
             ID_CUT => MenuAction::Cut,
@@ -218,6 +222,7 @@ mod backend {
                     tr(locale, "menu.exportImage"),
                     Some(accel_shift(Code::KeyP)),
                 ),
+                &item(ID_EXPORT_ALL_FRAMES, "Export All Frames\u{2026}", None),
             ]);
             let _ = menu.append(&file);
 

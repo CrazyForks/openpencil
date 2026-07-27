@@ -57,6 +57,11 @@ pub enum FileAction {
     SaveAs,
     ExportImage,
     ExportImageConfirm,
+    /// File ▸ "Export all frames" — host picks one output directory and
+    /// writes every planned frame into it (see
+    /// `op_editor_core::export_batch` for the plan, and the host's
+    /// batch exporter for the render loop).
+    ExportAllFrames,
     ImportFigma,
     /// Complete or cancel a prepared multi-page Figma import. Native
     /// desktop owns the prepared tree; web safely ignores this action.

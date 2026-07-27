@@ -54,6 +54,7 @@ pub mod design_md;
 pub mod design_md_button_state;
 pub mod drag_mutators;
 pub mod editor_ui_state;
+pub mod export_batch;
 pub mod export_dialog_state;
 pub mod figma_import_state;
 pub mod fill_order;

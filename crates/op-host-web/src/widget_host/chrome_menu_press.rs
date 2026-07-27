@@ -35,6 +35,7 @@ impl WidgetHost {
                     FileMenuChoice::Save => FileAction::Save,
                     FileMenuChoice::SaveAs => FileAction::SaveAs,
                     FileMenuChoice::ExportImage => FileAction::ExportImage,
+                    FileMenuChoice::ExportAllFrames => FileAction::ExportAllFrames,
                     FileMenuChoice::OpenRecent(i) => FileAction::OpenRecent(i),
                     FileMenuChoice::ClearRecent => FileAction::ClearRecent,
                 });
