@@ -2,6 +2,7 @@
 //! `widget_host.rs` so the spine stays under the 800-line cap.
 //! Mirrors the native host's `widget_host/scroll.rs`.
 
+use op_editor_ui::util::scroll_by_max;
 use op_editor_ui::widgets::scroll_flow;
 use op_editor_ui::widgets::{PropertyPanel, TOP_BAR_HEIGHT};
 use op_editor_ui::{Point2D, Rect};
