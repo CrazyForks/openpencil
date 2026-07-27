@@ -228,7 +228,7 @@ fn not_installed_outcome_carries_guidance() {
 
 #[test]
 fn version_failure_message_carries_the_cli_own_diagnostics() {
-    // The 0.8.2 GUI-launch signature: `codex` is a node-shebang script,
+    // The GUI-launch failure signature: `codex` is a node-shebang script,
     // the Dock-inherited PATH has no node, execve fails with 127. The
     // card used to read "Codex CLI not responding", which pointed at the
     // wrong thing entirely.

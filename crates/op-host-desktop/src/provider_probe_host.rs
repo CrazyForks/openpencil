@@ -520,7 +520,7 @@ mod remembered_connection_tests {
 
     #[test]
     fn a_failed_probe_leaves_the_remembered_list_intact() {
-        // The 0.8.2 regression: a GUI launch with a broken environment made
+        // The original regression: a GUI launch with a broken environment made
         // every probe fail, each failure wrote `connected = false` through
         // to `agents.json`, and the provider was gone from the startup
         // replay list for good — the app could never recover on its own.

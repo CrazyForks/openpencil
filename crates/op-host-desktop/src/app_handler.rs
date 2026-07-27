@@ -12,9 +12,8 @@ mod scheduling;
 mod window_events;
 
 use crate::{
-    a11y, chat_session, cursor_icon, figma_import_session, frame, html_import_session,
-    menu, persistence, window_state, DesktopApp, DesktopEvent, INITIAL_VIEWPORT_H,
-    INITIAL_VIEWPORT_W,
+    a11y, chat_session, cursor_icon, figma_import_session, frame, html_import_session, menu,
+    persistence, window_state, DesktopApp, DesktopEvent, INITIAL_VIEWPORT_H, INITIAL_VIEWPORT_W,
 };
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
