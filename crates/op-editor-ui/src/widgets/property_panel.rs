@@ -143,6 +143,10 @@ pub struct PropertyPanel {
     /// row source (see `property_panel_interactions::document_screen_paths`).
     pub screen_paths: Vec<String>,
     pub color_variable_picker_open: Option<op_editor_core::ColorTarget>,
+    /// Scroll offset (px, ≥ 0) of the open colour-variable popup's own
+    /// list. The popup is height-capped, so a long variable set scrolls
+    /// inside it instead of stretching the inspector.
+    pub color_variable_picker_scroll: f32,
     pub color_variables: Vec<ColorVariableOption>,
     pub fill_variable_ref: Option<String>,
     pub stroke_variable_ref: Option<String>,
@@ -353,7 +357,6 @@ impl PropertyPanel {
             color_variable_count: self.color_variable_count,
             fill_variable_bound: self.fill_variable_ref.is_some(),
             stroke_variable_bound: self.stroke_variable_ref.is_some(),
-            color_variable_picker_open: self.color_variable_picker_open,
             effects: caps.effects,
             export: caps.export,
             fill_type: self.fill_type,

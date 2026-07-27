@@ -156,6 +156,13 @@ pub fn scroll_property_panel_body(
             return Some(scroll_by_max(&mut cg.code_scroll, -delta_y, max));
         }
     }
+    // A wheel over the open colour-variable popup scrolls ITS list,
+    // not the inspector behind it.
+    if panel.color_variable_picker_contains(property_rect, point) {
+        let max = panel.color_variable_picker_max_scroll(property_rect);
+        let scroll = &mut state.editor_ui.property_color_variable_picker_scroll;
+        return Some(scroll_by_max(scroll, -delta_y, max));
+    }
     let max = (panel.content_height(property_rect) - property_rect.size.y).max(0.0);
     Some(scroll_by_max(
         &mut state.editor_ui.property_panel_scroll,

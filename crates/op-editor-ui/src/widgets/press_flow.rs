@@ -140,6 +140,11 @@ pub fn press_color_variable_picker(
                 return PropertyOverlayPress::Action(action);
             }
         }
+        // Popup chrome (padding / scrollbar gutter) swallows the press —
+        // only a press OUTSIDE the popup dismisses it.
+        if panel.color_variable_picker_contains(property_rect, point) {
+            return PropertyOverlayPress::Swallow;
+        }
     }
     state.editor_ui.property_color_variable_picker_open = None;
     PropertyOverlayPress::Dismissed

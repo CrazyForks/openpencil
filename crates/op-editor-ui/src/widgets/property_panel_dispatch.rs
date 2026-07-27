@@ -539,6 +539,8 @@ pub fn apply_property_action(
                 if ui.property_color_variable_picker_open == Some(target) {
                     None
                 } else {
+                    // Each open starts at the top of the list.
+                    ui.property_color_variable_picker_scroll.offset = 0.0;
                     Some(target)
                 };
             ui.close_fill_type_picker();

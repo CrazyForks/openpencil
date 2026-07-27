@@ -9,7 +9,7 @@ use crate::widgets::property_panel_inputs::{
     COLOR_VARIABLE_BUTTON_W, COLOR_VARIABLE_GAP, HEADER_HEIGHT, INPUT_HEIGHT, PAD_X, SECTION_GAP,
     SECTION_HEADER_HEIGHT, TAB_HEIGHT,
 };
-use crate::widgets::property_panel_layout::{push_color_variable_picker_rects, VisibleSections};
+use crate::widgets::property_panel_layout::VisibleSections;
 use crate::widgets::property_panel_stroke::stroke_side_input_rects;
 use crate::{Point2D, Rect};
 use op_editor_core::{FillType, PropertyFocus};
@@ -428,17 +428,6 @@ pub(crate) fn push_fill_action_rects(
                             ),
                             var_rect,
                         ));
-                        if visible.color_variable_picker_open
-                            == Some(op_editor_core::ColorTarget::Fill)
-                        {
-                            push_color_variable_picker_rects(
-                                out,
-                                op_editor_core::ColorTarget::Fill,
-                                var_rect,
-                                visible.color_variable_count,
-                                visible.fill_variable_bound,
-                            );
-                        }
                     }
                 } else {
                     // Non-primary solid: swatch opens a picker bound to

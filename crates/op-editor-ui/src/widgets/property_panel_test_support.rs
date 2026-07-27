@@ -72,7 +72,6 @@ pub(super) fn visible_for(panel: &PropertyPanel) -> sections::VisibleSections {
         color_variable_count: panel.color_variable_count,
         fill_variable_bound: panel.fill_variable_ref.is_some(),
         stroke_variable_bound: panel.stroke_variable_ref.is_some(),
-        color_variable_picker_open: panel.color_variable_picker_open,
         effects: caps.effects,
         export: caps.export,
         fill_type: panel.fill_type,

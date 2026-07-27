@@ -304,7 +304,9 @@ pub mod marquee_flow;
 pub(crate) mod menu_paint;
 pub mod missing_fonts_flow;
 pub mod missing_fonts_panel;
-mod property_panel_color_variables;
+pub mod property_panel_color_variables;
+#[cfg(test)]
+mod property_panel_color_variables_tests;
 pub(crate) mod settings_form;
 pub mod shape_picker;
 pub mod status_bar;

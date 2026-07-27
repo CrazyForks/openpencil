@@ -162,6 +162,19 @@ impl WidgetHost {
         {
             return true;
         }
+        // A wheel over the open colour-variable popup scrolls ITS list,
+        // not the inspector behind it (mirrors the native host).
+        if panel.color_variable_picker_contains(property_rect, Point2D::new(x, y)) {
+            let max = panel.color_variable_picker_max_scroll(property_rect);
+            let scroll = &mut self
+                .editor_state
+                .editor_ui
+                .property_color_variable_picker_scroll;
+            if scroll_by_max(scroll, -delta_y, max) {
+                self.mark_dirty();
+            }
+            return true;
+        }
         // A wheel over the open font-family picker scrolls ITS list,
         // not the panel behind it (mirrors the native host).
         if self.editor_state.editor_ui.font_picker.open

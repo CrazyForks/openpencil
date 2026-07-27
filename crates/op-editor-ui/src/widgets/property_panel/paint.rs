@@ -489,27 +489,17 @@ impl Widget for PropertyPanel {
                 self.export_picker_hover,
             );
         }
-        if let Some(target) = self.color_variable_picker_open {
+        // The colour-variable picker paints as a floating popover over the
+        // visible rail, so a long variable list scrolls inside its own
+        // capped box instead of stretching the inspector.
+        if let Some(layout) = self.color_variable_picker_layout(rect) {
             crate::widgets::property_panel_color_variables::paint_color_variable_picker(
                 cx,
                 &self.theme,
-                scrolled,
-                self.visible_sections(),
-                &self.snapshot.effects,
-                &self.snapshot.fills,
-                &self.snapshot.interactions,
+                &layout,
                 &self.color_variables,
-                self.fill_variable_ref.as_deref(),
-                self.stroke_variable_ref.as_deref(),
-                target,
+                self.bound_color_variable_ref(),
                 self.locale,
-                self.fill_type_picker.open,
-                self.fill_type_picker_index,
-                self.font_picker.open,
-                self.font_weight_picker_open,
-                self.export_scale_picker_open,
-                self.export_format_picker_open,
-                self.padding_mode_popover_open,
             );
         }
         self.paint_compositing_picker(cx, rect);

@@ -435,15 +435,6 @@ pub fn action_button_rects_with_fill_picker(
                 PropertyPanelAction::ToggleColorVariablePicker(op_editor_core::ColorTarget::Stroke),
                 var_rect,
             ));
-            if visible.color_variable_picker_open == Some(op_editor_core::ColorTarget::Stroke) {
-                push_color_variable_picker_rects(
-                    &mut out,
-                    op_editor_core::ColorTarget::Stroke,
-                    var_rect,
-                    visible.color_variable_count,
-                    visible.stroke_variable_bound,
-                );
-            }
         }
         y += stroke_section_body_height(visible.stroke_edit_mode);
         y += SECTION_GAP;
@@ -567,36 +558,4 @@ pub fn action_button_rects_with_fill_picker(
     let _ = y; // suppress unused-write lint if export is last
 
     out
-}
-
-pub(crate) fn push_color_variable_picker_rects(
-    out: &mut Vec<(PropertyPanelAction, Rect)>,
-    target: op_editor_core::ColorTarget,
-    anchor: Rect,
-    count: usize,
-    bound: bool,
-) {
-    let x = anchor.origin.x + anchor.size.x - COLOR_VARIABLE_MENU_W;
-    let y = anchor.origin.y + anchor.size.y + 4.0 + COLOR_VARIABLE_MENU_PAD_Y;
-    let mut row = 0usize;
-    if bound {
-        out.push((
-            PropertyPanelAction::UnbindColorVariable(target),
-            Rect {
-                origin: Point2D::new(x, y),
-                size: Point2D::new(COLOR_VARIABLE_MENU_W, COLOR_VARIABLE_MENU_ROW_H),
-            },
-        ));
-        row += 1;
-    }
-    for index in 0..count {
-        out.push((
-            PropertyPanelAction::BindColorVariable { target, index },
-            Rect {
-                origin: Point2D::new(x, y + row as f32 * COLOR_VARIABLE_MENU_ROW_H),
-                size: Point2D::new(COLOR_VARIABLE_MENU_W, COLOR_VARIABLE_MENU_ROW_H),
-            },
-        ));
-        row += 1;
-    }
 }

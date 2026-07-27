@@ -424,6 +424,10 @@ pub struct EditorUiState {
     /// Fill/stroke colour-variable dropdown currently open in the
     /// PropertyPanel; `None` means closed.
     pub property_color_variable_picker_open: Option<crate::ui_draft::ColorTarget>,
+    /// Scroll offset of that dropdown's own list. The popup is height
+    /// capped, so a document with many colour variables scrolls inside
+    /// it rather than stretching the inspector. Reset when it opens.
+    pub property_color_variable_picker_scroll: jian_core::scroll::ScrollState,
     /// Whether the image-fill editor popover is open.
     pub image_fill_popover_open: bool,
     /// Image-fill node currently in Figma-style crop editing mode.
