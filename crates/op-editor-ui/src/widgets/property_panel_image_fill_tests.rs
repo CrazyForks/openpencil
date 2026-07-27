@@ -29,6 +29,98 @@ fn image_fill_state() -> op_editor_core::EditorState {
     image_fill_state_with_url("")
 }
 
+/// The drag-and-drop path lands an image fill on a **frame**, not a
+/// rectangle, and frames report `caps.image == false`. Every other test
+/// in this file uses a rectangle, so a frame-only regression in the fill
+/// section would surface as "the dropped image cannot be adjusted" with
+/// no failing test. Assert the whole reach: fill row -> popover -> mode
+/// chips -> crop becomes drag-editable.
+#[test]
+fn dropped_image_fill_on_a_frame_reaches_the_mode_chips_and_crop_editing() {
+    const PNG_DATA_URL: &str =
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+    let mut state = state_from(
+        r##"{"version":"1.0.0","children":[{
+            "type":"frame","id":"drop-frame","name":"Hero",
+            "x":0,"y":0,"width":320,"height":180,"children":[]
+        }]}"##,
+    );
+    let target = NodeId::new("drop-frame");
+    assert!(
+        state.apply_image_drop(&target, PNG_DATA_URL, Some([1600.0, 400.0])),
+        "a frame must accept a dropped image fill",
+    );
+
+    let panel = PropertyPanel::for_selection(&state).expect("frame image fill panel");
+    let rect = Rect {
+        origin: Point2D::new(320.0, 24.0),
+        size: Point2D::new(280.0, 900.0),
+    };
+    let body = sections::action_button_rects_with_fill_picker(
+        rect,
+        visible_for(&panel),
+        &panel.snapshot.effects,
+        &panel.snapshot.fills,
+        &panel.snapshot.interactions,
+        false,
+        0,
+        false,
+        false,
+        false,
+        false,
+        false,
+    )
+    .into_iter()
+    .find_map(|(a, r)| matches!(a, PropertyPanelAction::ToggleImageFillPopover).then_some(r))
+    .expect("a frame carrying an image fill exposes the image fill row");
+    assert!(matches!(
+        panel.hit_test_action(
+            rect,
+            Point2D::new(
+                body.origin.x + body.size.x / 2.0,
+                body.origin.y + body.size.y / 2.0
+            )
+        ),
+        Some(PropertyPanelAction::ToggleImageFillPopover)
+    ));
+
+    // Every schema mode must be offered, not just cover.
+    state.editor_ui.image_fill_popover_open = true;
+    let panel = PropertyPanel::for_selection(&state).expect("frame image fill panel");
+    let popover =
+        sections::image_fill_popover_action_rects(rect, visible_for(&panel), &panel.snapshot);
+    for mode in op_editor_core::ImageFillMode::ALL {
+        let chip = popover
+            .iter()
+            .find_map(|(a, r)| {
+                matches!(a, PropertyPanelAction::SetImageFillMode(m) if *m == mode).then_some(*r)
+            })
+            .unwrap_or_else(|| panic!("popover must offer the {mode:?} chip"));
+        assert!(
+            matches!(
+                panel.hit_test_action(
+                    rect,
+                    Point2D::new(
+                        chip.origin.x + chip.size.x / 2.0,
+                        chip.origin.y + chip.size.y / 2.0
+                    )
+                ),
+                Some(PropertyPanelAction::SetImageFillMode(hit)) if hit == mode
+            ),
+            "the {mode:?} chip must dispatch its own mode",
+        );
+    }
+
+    // A dropped fill starts as centered cover and is therefore not
+    // repositionable; switching to Crop is what unlocks framing.
+    assert!(!state.can_edit_selected_image_crop());
+    assert!(state.set_selected_image_fill_mode(op_editor_core::ImageFillMode::Crop));
+    assert!(
+        state.can_edit_selected_image_crop(),
+        "Crop mode on a dropped frame fill must become drag-editable",
+    );
+}
+
 #[test]
 fn image_fill_body_click_opens_the_image_popover() {
     let state = image_fill_state();
