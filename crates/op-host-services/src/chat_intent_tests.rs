@@ -132,6 +132,24 @@ fn retry_instruction_without_prior_user_request_stays_unchanged() {
     );
 }
 
+#[test]
+fn retry_instruction_after_successful_turn_stays_conversational() {
+    for assistant_reply in [
+        "Here is the explanation you asked for.",
+        "\n```json\n[{\"type\":\"frame\"}]\n```\n\n<!-- APPLIED -->",
+    ] {
+        let history = vec![
+            (ChatHistoryRole::User, "tell me about frames".into()),
+            (ChatHistoryRole::Assistant, assistant_reply.into()),
+        ];
+        assert_eq!(
+            resolve_retry_instruction("try again", &history),
+            "try again",
+            "a successful chat or edit must not silently replay the prior request"
+        );
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Scripted provider
 // ---------------------------------------------------------------------------

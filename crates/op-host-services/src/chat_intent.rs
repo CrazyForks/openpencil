@@ -97,11 +97,22 @@ fn is_retry_phrase(text: &str) -> bool {
     RETRY_PHRASES.contains(&normalized.as_str())
 }
 
+fn last_turn_failed(history: &[(ChatHistoryRole, String)]) -> bool {
+    history
+        .iter()
+        .rev()
+        .find(|(_, text)| !text.trim().is_empty())
+        .is_some_and(|(role, text)| {
+            *role == ChatHistoryRole::Assistant
+                && text.trim_start().to_ascii_lowercase().starts_with("error:")
+        })
+}
+
 /// Resolve a short retry utterance to the most recent actionable user request.
 /// The transcript remains unchanged; callers use this only as the effective
 /// instruction sent to stateless design/modify providers.
 pub fn resolve_retry_instruction(user_text: &str, history: &[(ChatHistoryRole, String)]) -> String {
-    if !is_retry_phrase(user_text) {
+    if !is_retry_phrase(user_text) || !last_turn_failed(history) {
         return user_text.to_string();
     }
     history

@@ -221,6 +221,24 @@ fn normalize_resolves_numeric_token_and_wraps_bare_fill() {
 }
 
 #[test]
+fn normalize_preserves_unknown_numeric_tokens() {
+    let mut value = serde_json::json!({
+        "type": "text",
+        "fontSize": "$type-future-size",
+        "gap": "$spacing-custom",
+        "content": "$spacing-3",
+        "name": "$type-caption-size"
+    });
+
+    normalize_generated_node_json(&mut value);
+
+    assert_eq!(value["fontSize"], serde_json::json!("$type-future-size"));
+    assert_eq!(value["gap"], serde_json::json!("$spacing-custom"));
+    assert_eq!(value["content"], serde_json::json!("$spacing-3"));
+    assert_eq!(value["name"], serde_json::json!("$type-caption-size"));
+}
+
+#[test]
 fn parse_nodes_renest_keeps_parent_with_stroke_shorthand() {
     // DeepSeek/Ark often emit a card parent with `stroke:{type:"solid",color}`
     // plus child nodes linked by `_parent`. The parent must be normalized
