@@ -188,6 +188,105 @@ fn set_selected_bounds_keeps_flex_children_flow_positioned() {
     assert_eq!(c.height_px(), Some(32.0));
 }
 
+/// The canvas drag mutators each edit document content, so each must advance
+/// the revision — it is what the layout-scene cache treats as the document's
+/// identity, and a drag frame that leaves it alone paints the pre-drag scene.
+///
+/// Runs `mutate` on a freshly selected rect and asserts the revision moved.
+fn assert_records_the_edit(name: &str, mutate: impl FnOnce(&mut crate::state::EditorState)) {
+    let mut s = state_with(vec![rect("n1", "A", 0.0, 0.0, 50.0, 50.0)]);
+    s.set_single_selection(NodeId::new("n1"));
+    let before = s.document_revision();
+    mutate(&mut s);
+    assert_ne!(
+        s.document_revision(),
+        before,
+        "{name} edited the document without recording it"
+    );
+}
+
+#[test]
+fn canvas_drag_mutators_advance_the_document_revision() {
+    let bounds = DocRect {
+        x: 0.0,
+        y: 0.0,
+        w: 80.0,
+        h: 90.0,
+    };
+    assert_records_the_edit("resize_selected_bounds", |s| {
+        s.resize_selected_bounds(bounds, crate::drag_mutators::ResizeAxes::Both, None, None)
+    });
+    assert_records_the_edit("set_selected_bounds", |s| s.set_selected_bounds(bounds));
+    assert_records_the_edit("set_selected_rotation", |s| s.set_selected_rotation(0.5));
+    assert_records_the_edit("translate_selected", |s| {
+        assert!(s.translate_selected(4.0, 6.0));
+    });
+}
+
+/// Same contract for the pen / path-anchor drags, which edit anchors and
+/// handles rather than the node box.
+#[test]
+fn path_anchor_mutators_advance_the_document_revision() {
+    use crate::pen::PathHandleSide;
+    use jian_ops_schema::node::PenPathPointType;
+
+    // A committed 3-anchor path to edit; the pen session that authored it is
+    // finished so each mutator below is the only edit in its frame.
+    let mut base = state_with(vec![]);
+    let mut next_id = 1u64;
+    let id = base
+        .start_pen_path(&mut next_id, (0.0, 0.0))
+        .expect("start");
+    base.add_pen_point((30.0, 0.0));
+    base.add_pen_point((60.0, 30.0));
+    base.ui.pen_dragging_handle = false;
+    assert!(base.finish_pen_path());
+
+    for (name, moved) in [
+        ("set_path_anchor_position", {
+            let mut s = base.clone();
+            let before = s.document_revision();
+            assert!(s.set_path_anchor_position(id.clone(), 1, (40.0, 5.0)));
+            s.document_revision() != before
+        }),
+        ("set_path_anchor_handle", {
+            let mut s = base.clone();
+            let before = s.document_revision();
+            assert!(s.set_path_anchor_handle(id.clone(), 1, PathHandleSide::Out, Some((8.0, 8.0))));
+            s.document_revision() != before
+        }),
+        ("move_path_anchor_handle_ts", {
+            let mut s = base.clone();
+            let before = s.document_revision();
+            assert!(s.move_path_anchor_handle_ts(&id, 1, PathHandleSide::Out, (9.0, 9.0)));
+            s.document_revision() != before
+        }),
+        ("set_path_anchor_point_type_ts", {
+            let mut s = base.clone();
+            let before = s.document_revision();
+            assert!(s.set_path_anchor_point_type_ts(&id, 1, PenPathPointType::Mirrored));
+            s.document_revision() != before
+        }),
+        ("reset_path_anchor_handles", {
+            let mut s = base.clone();
+            let before = s.document_revision();
+            assert!(s.reset_path_anchor_handles(&id, 1));
+            s.document_revision() != before
+        }),
+        ("pen_drag_handle_to", {
+            let mut s = base.clone();
+            let mut next = next_id;
+            let _ = s.start_pen_path(&mut next, (0.0, 0.0));
+            s.add_pen_point((30.0, 0.0));
+            let before = s.document_revision();
+            assert!(s.pen_drag_handle_to((60.0, 60.0)));
+            s.document_revision() != before
+        }),
+    ] {
+        assert!(moved, "{name} edited the document without recording it");
+    }
+}
+
 #[test]
 fn set_selected_rotation_writes_degrees() {
     let mut s = state_with(vec![rect("n1", "A", 0.0, 0.0, 50.0, 50.0)]);

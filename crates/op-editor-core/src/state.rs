@@ -287,6 +287,13 @@ impl EditorState {
     }
 
     /// Record a successful document-content mutation.
+    ///
+    /// Every mutator that edits document content must call this, directly or
+    /// through `history_push_past`. Beyond the saved/dirty flag, the revision
+    /// is the layout-scene cache's identity for the document
+    /// (`op_pen_loader::SceneBuildCache`): a content edit that leaves the
+    /// revision alone is invisible to it, and the hosts keep painting the
+    /// pre-edit scene until some later edit forces a rebuild.
     pub fn mark_document_changed(&mut self) {
         // Allocate from the monotonic counter, NOT `revision + 1`: after
         // save -> undo -> new edit, `revision + 1` would collide with the

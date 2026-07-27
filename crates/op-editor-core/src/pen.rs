@@ -62,6 +62,7 @@ impl EditorState {
         crate::fills::set_primary_fill_hex(&mut node, "transparent");
         crate::fills::set_primary_stroke_hex(&mut node, "#374151");
         self.active_children_mut().push(node);
+        self.mark_document_changed();
         self.ui.pending_pen_history = Some(pre);
         self.ui.pen_in_progress = Some(id.clone());
         // TS arms the handle drag on every mousedown — moving before
@@ -94,6 +95,7 @@ impl EditorState {
             return false;
         }
         refit_path_bounds(node);
+        self.mark_document_changed();
         self.ui.pen_dragging_handle = true;
         true
     }
@@ -132,6 +134,7 @@ impl EditorState {
             return false;
         }
         refit_path_bounds(node);
+        self.mark_document_changed();
         true
     }
 
@@ -186,6 +189,7 @@ impl EditorState {
                 }
                 refit_path_bounds(node);
             }
+            self.mark_document_changed();
         } else {
             self.cancel_pen_path();
         }
@@ -208,6 +212,7 @@ impl EditorState {
         self.ui.pen_last_press = None;
         self.active_children_mut()
             .retain(|n| n.id_str() != id.as_str());
+        self.mark_document_changed();
         if self.selection.anchor == id {
             self.clear_selection();
         }
@@ -242,6 +247,7 @@ impl EditorState {
             return false;
         }
         refit_path_bounds(node);
+        self.mark_document_changed();
         true
     }
 
@@ -293,6 +299,7 @@ impl EditorState {
         // Handles bow the curve past the endpoints — re-fit the
         // handle-aware bounds so the loader's absolutize scale stays 1.
         refit_path_bounds(node);
+        self.mark_document_changed();
         true
     }
 
@@ -337,6 +344,7 @@ impl EditorState {
             }
         }
         refit_path_bounds(node);
+        self.mark_document_changed();
         true
     }
 

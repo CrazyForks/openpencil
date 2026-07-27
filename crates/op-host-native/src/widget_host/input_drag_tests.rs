@@ -179,6 +179,65 @@ fn fill_child_reflows_to_resized_parent_without_authored_mutation() {
 }
 
 #[test]
+fn resize_drag_updates_the_scene_the_paint_reads() {
+    // The whole point of a live drag: every cursor move must leave a scene
+    // that shows the new size. The press paints one frame first, so by the
+    // time the moves arrive the scene cache already holds a settled build —
+    // a mutator that does not record a document change would be skipped by
+    // it and the drag would only appear once some later edit forced a
+    // rebuild.
+    let mut host = WidgetHostNative::new();
+    seed(
+        &mut host,
+        r#"{"version":"1.0.0","children":[{
+          "type":"frame","id":"frame","name":"frame","x":100,"y":80,
+          "width":200,"height":160,"layout":"none","children":[
+            {"type":"rectangle","id":"child","name":"child","x":12,"y":18,
+             "width":60,"height":30}
+          ]
+        }]}"#,
+    );
+    host.editor_state_mut()
+        .set_single_selection(NodeId::new("frame"));
+    // Stand in for the press: `commit_history` records a change, then the
+    // frame that follows settles the scene cache on it.
+    host.editor_state_mut().commit_history();
+    let settled = scene_size(&mut host, "frame");
+    assert_eq!(settled, (200.0, 160.0), "pre-drag scene");
+
+    host.handle_drag = Some(HandleDragState {
+        handle: SelectionHandle::BottomRight,
+        start_screen_x: 500.0,
+        start_screen_y: 500.0,
+        start_bounds: Rect {
+            origin: Point2D::new(100.0, 80.0),
+            size: Point2D::new(200.0, 160.0),
+        },
+        start_authored_x: Some(100.0),
+        start_authored_y: Some(80.0),
+    });
+
+    assert!(host.apply_cursor_move(540.0, 525.0));
+    assert_eq!(
+        scene_size(&mut host, "frame"),
+        (240.0, 185.0),
+        "the resized bounds must reach the scene on the drag frame itself"
+    );
+}
+
+/// Resolved `(width, height)` of `id` in the scene the paint pass reads —
+/// via `layout_scene()`, so the cache gets the same chance to skip that it
+/// gets in the real paint.
+fn scene_size(host: &mut WidgetHostNative, id: &str) -> (f32, f32) {
+    let n = host
+        .layout_scene()
+        .active_page()
+        .and_then(|p| p.find(id))
+        .expect("scene node present");
+    (n.bounds.size.x, n.bounds.size.y)
+}
+
+#[test]
 fn anchor_press_release_without_motion_does_not_push_history() {
     // Codex CONCERN: a press-release on an anchor without any
     // cursor motion must NOT pollute the undo stack.

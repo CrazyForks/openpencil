@@ -280,6 +280,7 @@ fn edit_anchor(
         f(anchors, index, closed);
     }
     crate::pen::refit_path_bounds(node);
+    state.mark_document_changed();
     true
 }
 

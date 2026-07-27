@@ -151,28 +151,37 @@ impl EditorState {
             return;
         }
         let is_flow_child = selected_is_flow_child(self.active_children(), &sel);
+        let mut wrote = false;
         if let Some(node) = find_node_mut(self.active_children_mut(), &sel) {
             if !is_flow_child {
                 if let Some(x) = new_x.filter(|value| value.is_finite()) {
                     node.base_mut().x = Some(x);
+                    wrote = true;
                 }
                 if let Some(y) = new_y.filter(|value| value.is_finite()) {
                     node.base_mut().y = Some(y);
+                    wrote = true;
                 }
             }
             if axes.width() && bounds.w.is_finite() && bounds.w > 0.0 {
                 node.set_width_px(bounds.w);
+                wrote = true;
             }
             if axes.height() && bounds.h.is_finite() && bounds.h > 0.0 {
                 node.set_height_px(bounds.h);
+                wrote = true;
             }
             if axes.width() {
                 if let PenNode::Text(text) = &mut *node {
                     if text.text_growth.is_none() {
                         text.text_growth = Some(TextGrowth::FixedWidth);
+                        wrote = true;
                     }
                 }
             }
+        }
+        if wrote {
+            self.mark_document_changed();
         }
     }
 

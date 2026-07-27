@@ -329,6 +329,7 @@ impl EditorState {
         }
         if let Some(node) = find_node_mut(self.active_children_mut(), &sel) {
             node.base_mut().rotation = Some((radians as f64).to_degrees());
+            self.mark_document_changed();
         }
     }
 
@@ -372,7 +373,12 @@ impl EditorState {
         }
         let editable_set: HashSet<&str> = editable.iter().map(NodeId::as_str).collect();
         let children = self.active_children_mut();
-        walkers::translate_editable_subtree(children, &editable_set, dx, dy, false, false)
+        let translated =
+            walkers::translate_editable_subtree(children, &editable_set, dx, dy, false, false);
+        if translated {
+            self.mark_document_changed();
+        }
+        translated
     }
 
     // --- Tree ops ----------------------------------------------------
