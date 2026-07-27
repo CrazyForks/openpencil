@@ -11,7 +11,6 @@
 //! Everything here is blocking and runs on the probe worker thread
 //! (`provider_probe_host.rs`); nothing touches the UI thread.
 
-use std::io::Read;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -207,46 +206,100 @@ fn decode_jwt_payload(token: &str) -> Option<serde_json::Value> {
     serde_json::from_slice(&bytes).ok()
 }
 
+/// Why a `--version` responsiveness gate failed. Structured (rather
+/// than a bare `None`) so the card's error text can name what the CLI
+/// itself reported: a GUI launch missing the user's PATH makes
+/// `codex` — a `#!/usr/bin/env node` script — die with
+/// `env: node: No such file or directory` on stderr and exit 127,
+/// which read as an indistinguishable "CLI not responding" while the
+/// actual fix was in the message all along.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CliVersionFailure {
+    /// The process never started (missing binary, bad permissions).
+    Spawn(String),
+    /// It ran and exited non-zero; `tail` is its own output.
+    Exited { status: String, tail: String },
+    /// Still running at the deadline; `tail` is whatever it printed.
+    TimedOut { seconds: u64, tail: String },
+}
+
+/// Human-readable card text for a failed version gate. `provider` is
+/// the CLI's display name so each provider keeps its own wording.
+pub(crate) fn cli_version_failure_message(provider: &str, failure: &CliVersionFailure) -> String {
+    match failure {
+        CliVersionFailure::Spawn(error) => format!("{provider} CLI failed to start: {error}"),
+        CliVersionFailure::Exited { status, tail } if tail.is_empty() => {
+            format!("{provider} CLI exited with status {status} and no output")
+        }
+        CliVersionFailure::Exited { tail, .. } => format!("{provider} CLI failed: {tail}"),
+        CliVersionFailure::TimedOut { seconds, tail } if tail.is_empty() => {
+            format!("{provider} CLI did not respond within {seconds}s")
+        }
+        CliVersionFailure::TimedOut { seconds, tail } => {
+            format!("{provider} CLI did not respond within {seconds}s. Last output: {tail}")
+        }
+    }
+}
+
 /// Run `exe --version`, capturing stdout+stderr (the TS gates run
-/// with `2>&1`). `None` on spawn failure, non-zero exit, or
-/// timeout — the "CLI not responding" path.
-fn cli_version(exe: &Path, timeout: Duration) -> Option<String> {
+/// with `2>&1`). Both streams are drained on background threads so a
+/// chatty or hung CLI can neither fill a pipe nor cost us its output
+/// when the deadline kills it.
+fn cli_version(exe: &Path, timeout: Duration) -> Result<String, CliVersionFailure> {
     let mut cmd = Command::new(exe);
     cmd.arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     crate::chat_spawn::hide_console_window(&mut cmd);
-    let mut child = cmd.spawn().ok()?;
+    let mut child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(err) => return Err(CliVersionFailure::Spawn(err.to_string())),
+    };
+    let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(CliVersionFailure::Spawn("no output pipes".to_string()));
+    };
+    let stdout_reader = crate::cli_probe_support::PipeCapture::spawn(stdout);
+    let stderr_reader = crate::cli_probe_support::PipeCapture::spawn(stderr);
     let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
+                let out = String::from_utf8_lossy(&stdout_reader.finish()).into_owned();
+                let err = String::from_utf8_lossy(&stderr_reader.finish()).into_owned();
                 if !status.success() {
-                    return None;
+                    return Err(CliVersionFailure::Exited {
+                        status: crate::chat_spawn::exit_status_label(&status),
+                        tail: crate::cli_probe_support::tail_snippet(&out, &err),
+                    });
                 }
-                // --version output is tiny — far below the pipe
-                // buffer — so reading after exit cannot block.
-                let mut out = String::new();
-                if let Some(mut stdout) = child.stdout.take() {
-                    let _ = stdout.read_to_string(&mut out);
-                }
-                if out.trim().is_empty() {
-                    if let Some(mut stderr) = child.stderr.take() {
-                        let _ = stderr.read_to_string(&mut out);
-                    }
-                }
-                return Some(out.trim().to_string());
+                // A CLI that prints its version to stderr is still a
+                // healthy one — the TS gate's `2>&1` accepted either.
+                let version = if out.trim().is_empty() {
+                    err.trim()
+                } else {
+                    out.trim()
+                };
+                return Ok(version.to_string());
             }
-            Ok(None) => {
-                if Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return None;
-                }
+            Ok(None) if Instant::now() < deadline => {
                 std::thread::sleep(Duration::from_millis(50));
             }
-            Err(_) => return None,
+            Ok(None) | Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let grace = crate::cli_probe_support::CAPTURE_GRACE;
+                let out =
+                    String::from_utf8_lossy(&stdout_reader.finish_bounded(grace)).into_owned();
+                let err =
+                    String::from_utf8_lossy(&stderr_reader.finish_bounded(grace)).into_owned();
+                return Err(CliVersionFailure::TimedOut {
+                    seconds: timeout.as_secs(),
+                    tail: crate::cli_probe_support::tail_snippet(&out, &err),
+                });
+            }
         }
     }
 }
@@ -415,12 +468,11 @@ fn connect_codex_cli(locale: Locale) -> ProbeOutcome {
     };
     // Responsiveness gate — TS runs `codex --version` with a 5 s
     // budget (connect-agent.ts:512-522).
-    let Some(version) = cli_version(&exe, Duration::from_secs(5)) else {
-        return ProbeOutcome::failed(tw(
-            locale,
-            "providerProbe.cliNotResponding",
-            &[("name", "Codex")],
-        ));
+    let version = match cli_version(&exe, Duration::from_secs(5)) {
+        Ok(version) => version,
+        Err(failure) => {
+            return ProbeOutcome::failed(cli_version_failure_message("Codex", &failure))
+        }
     };
     // Model list: app-server protocol (the approved no-hardcoded-
     // lists design; a superset of TS, which reads only the cache),

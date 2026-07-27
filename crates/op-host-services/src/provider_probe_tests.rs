@@ -225,3 +225,116 @@ fn not_installed_outcome_carries_guidance() {
     );
     assert_eq!(outcome.error.as_deref(), Some("Claude Code CLI not found"));
 }
+
+#[test]
+fn version_failure_message_carries_the_cli_own_diagnostics() {
+    // The 0.8.2 GUI-launch signature: `codex` is a node-shebang script,
+    // the Dock-inherited PATH has no node, execve fails with 127. The
+    // card used to read "Codex CLI not responding", which pointed at the
+    // wrong thing entirely.
+    let failure = CliVersionFailure::Exited {
+        status: "127".to_string(),
+        tail: "env: node: No such file or directory".to_string(),
+    };
+    assert_eq!(
+        cli_version_failure_message("Codex", &failure),
+        "Codex CLI failed: env: node: No such file or directory"
+    );
+}
+
+#[test]
+fn version_failure_message_falls_back_when_the_cli_said_nothing() {
+    assert_eq!(
+        cli_version_failure_message(
+            "Codex",
+            &CliVersionFailure::Exited {
+                status: "1".to_string(),
+                tail: String::new(),
+            }
+        ),
+        "Codex CLI exited with status 1 and no output"
+    );
+    assert_eq!(
+        cli_version_failure_message(
+            "Codex",
+            &CliVersionFailure::Spawn("permission denied".into())
+        ),
+        "Codex CLI failed to start: permission denied"
+    );
+    assert_eq!(
+        cli_version_failure_message(
+            "Codex",
+            &CliVersionFailure::TimedOut {
+                seconds: 5,
+                tail: String::new(),
+            }
+        ),
+        "Codex CLI did not respond within 5s"
+    );
+}
+
+/// Write an executable `/bin/sh` stand-in for a CLI, so the version gate
+/// can be driven through a real subprocess without depending on which
+/// coding CLIs happen to be installed on the machine running the tests.
+#[cfg(unix)]
+fn fake_cli(name: &str, body: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("op-cli-version-{}-{name}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let exe = dir.join(name);
+    std::fs::write(&exe, format!("#!/bin/sh\n{body}")).expect("write fake cli");
+    std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    (dir, exe)
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_version_reports_stderr_from_a_nonzero_exit() {
+    // A stand-in for the broken-shebang case: prints to stderr, exits
+    // non-zero. The captured tail must survive into the failure.
+    let (dir, exe) = fake_cli(
+        "fake-codex",
+        "printf 'env: node: No such file or directory\\n' >&2\nexit 127\n",
+    );
+
+    let failure = cli_version(&exe, std::time::Duration::from_secs(5))
+        .expect_err("a 127 exit is not a usable version");
+    let CliVersionFailure::Exited { status, tail } = &failure else {
+        panic!("expected a non-zero exit, got {failure:?}");
+    };
+    assert_eq!(status, "127");
+    assert!(
+        tail.contains("env: node: No such file or directory"),
+        "stderr must survive into the card text, got {tail:?}"
+    );
+    assert!(cli_version_failure_message("Codex", &failure).contains("node"));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn cli_version_accepts_a_healthy_cli_and_bounds_a_hung_one() {
+    let (healthy_dir, healthy) = fake_cli("healthy-cli", "printf 'codex-cli 0.9.1\\n'\n");
+    assert_eq!(
+        cli_version(&healthy, std::time::Duration::from_secs(5)),
+        Ok("codex-cli 0.9.1".to_string())
+    );
+    let _ = std::fs::remove_dir_all(&healthy_dir);
+
+    // Mid first-run OAuth: prints a prompt, then hangs past the budget.
+    let (hung_dir, hung) = fake_cli("hung-cli", "printf 'Sign in at https://x\\n'\nsleep 30\n");
+    let started = std::time::Instant::now();
+    let failure = cli_version(&hung, std::time::Duration::from_millis(400))
+        .expect_err("a CLI still running at the deadline is not a usable version");
+    let CliVersionFailure::TimedOut { seconds, tail } = &failure else {
+        panic!("expected a timeout, got {failure:?}");
+    };
+    assert_eq!(*seconds, 0, "sub-second budgets round down in the message");
+    assert!(
+        tail.contains("Sign in at"),
+        "output printed before the kill must survive, got {tail:?}"
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    let _ = std::fs::remove_dir_all(&hung_dir);
+}
