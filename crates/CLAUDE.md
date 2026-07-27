@@ -56,6 +56,8 @@ a local `parse_hex` / `escape_json` again.
 
 ## Key invariants
 
+- **op-host-native tests need `--features gl-host`.** `gl-host` is a non-default feature (keeps `skia-safe/gl` out of mobile builds), and the entire `widget_host` module is gated behind it — a default-feature `cargo test -p op-host-native` runs 55 tests instead of 676 and gives ZERO coverage of `widget_host/` changes. Always test native with `--features gl-host`.
+
 - **op-editor-ui (widgets) stays wasm32-clean** (spec v19 §1.2). No skia-safe / winit / accesskit_winit. The `RenderBackend` trait is the only seam between widget code and platform.
 - **Widget code lives in op-editor-ui only.** Hosts (op-host-native `widget_host.rs`, op-host-web `widget_host.rs`) are the ONLY files allowed to call `op_editor_ui::widgets::*`. Boundary script: `tools/check-widget-boundary.sh`.
 - **Max 800 lines per file — zero violations workspace-wide.** As of `d2d8104c` no `.rs` file in `crates/` exceeds the cap, and the sibling-module split is the universal shape: a spine keeps the public surface and `mod` declarations, cohesive clusters move into siblings, and re-exports keep every import path and test name stable. Splits are pure code motion — when you split, do not also change behaviour. Test modules follow the same rule (`foo_tests.rs`, or a `foo/tests/` directory when the tests themselves outgrow the cap). Check with `find crates -name '*.rs' -exec wc -l {} + | awk '$1>800'`.
@@ -203,7 +205,7 @@ The hit-test walker `action_button_rects_with_fill_picker(panel_rect, visible, f
 - **Solid** — hex input + caret.
 - **LinearGradient** — Angle row + 色标 header + 2 default stops.
 - **RadialGradient** — 色标 header + 2 stops (no angle).
-- **Image** — 填充 row.
+- **Image** — trigger row (thumbnail + current mode name) opening a 220px popover (`property_panel_image_fill.rs`): mode toggle (Fill / Fit / Crop / Tile; Crop enables drag-to-reframe on canvas with edge clamping), Tile scale input, upload well, 7 color-adjust sliders + reset. Schema `ImageFillBody.transform` is honored by both skia and CanvasKit renderers.
 
 `fill_body_height(fill_type)` in `property_panel_layout.rs` returns the body height per variant; layout walkers thread it through `VisibleSections { …, fill_type }` so sections after Fill stay aligned with paint when the user flips type. Outside clicks close the picker via a dedicated swallow branch in `apply_press`, above all other property-panel hit-tests.
 
