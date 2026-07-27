@@ -291,9 +291,16 @@ struct DesktopApp {
     provider_reconnect_queue: Vec<op_editor_core::AgentProvider>,
     /// Last persisted pencil-cursor style (see `ui_prefs`).
     last_saved_pencil_cursor: Option<op_editor_core::PencilCursorStyle>,
-    /// Last persisted `connected` flags — any change (Connect landing,
-    /// Disconnect press in the widget layer) writes through to the store.
-    last_saved_connections: Option<[bool; 6]>,
+    /// Providers the store remembers as LAST KNOWN GOOD — seeded from
+    /// `agents.json` at startup, extended when a probe succeeds, cleared
+    /// only when the user explicitly disconnects. Deliberately not a
+    /// mirror of the live `connected` flags: a failed probe must not
+    /// evict a provider from next launch's reconnect replay.
+    remembered_connections: [bool; 6],
+    /// Previous frame's per-provider connect phase, so
+    /// `persist_connection_changes` can tell an explicit Disconnect (card
+    /// returns to Idle) from a probe failure (card shows Error).
+    last_seen_provider_phase: [op_editor_core::agent_settings::ProviderConnectPhase; 6],
     /// In-flight ACP-agent connect probe (Settings → Agents → ACP
     /// Connect), drained by `drain_acp_agent_connect`.
     acp_agent_connect_job: Option<acp_agent_probe_host::AcpAgentConnectJob>,

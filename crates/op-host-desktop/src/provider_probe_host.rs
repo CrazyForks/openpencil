@@ -13,7 +13,8 @@
 //! `DesktopApp` field); this residual keeps only the `impl DesktopApp`
 //! pump, which drives the job through its public API.
 
-use op_editor_core::agent_settings::ProviderConnectOutcome;
+use op_editor_core::agent_settings::{AgentSettings, ProviderConnectOutcome, ProviderConnectPhase};
+use op_editor_core::AgentProvider;
 
 use crate::DesktopApp;
 use op_host_services::model_discovery::model_entry_to_ec;
@@ -118,12 +119,26 @@ impl DesktopApp {
             });
         }
         es.rebuild_chat_models();
+        self.host.mark_editor_state_dirty();
         // Remember the connection across launches (flags only — the model
         // catalog is re-probed on restore, keys don't exist for CLIs).
-        let connected_now = es.editor_ui.agent_settings.connected;
-        crate::agent_connect_store::save(&connected_now);
-        self.last_saved_connections = Some(connected_now);
-        self.host.mark_editor_state_dirty();
+        //
+        // ONLY a successful probe writes. The store is the LAST KNOWN GOOD
+        // list, not a snapshot of the current session: persisting failures
+        // too meant a single bad probe — a GUI launch that inherited none
+        // of the user's shell env, a machine offline at login — evicted the
+        // provider from the startup replay list permanently, so the app
+        // could never retry on its own and the user had to press Connect
+        // again every launch. A failed probe now leaves the list alone and
+        // the next launch retries it. Explicit Disconnect still clears the
+        // entry, through `persist_connection_changes` below.
+        if connected {
+            let index = AgentSettings::provider_index(provider);
+            if !self.remembered_connections[index] {
+                self.remembered_connections[index] = true;
+                crate::agent_connect_store::save(&self.remembered_connections);
+            }
+        }
         // Startup restore replays one silent probe per remembered
         // provider; queue the next one as each outcome lands.
         if let Some(next) = self.provider_reconnect_queue.pop() {
@@ -131,27 +146,39 @@ impl DesktopApp {
                 .editor_state_mut()
                 .editor_ui
                 .agent_settings
-                .pending_provider_connect = Some(next);
+                .begin_provider_connect(next);
         }
         true
     }
 
-    /// Write the connection flags through to the store whenever they
-    /// change — the Disconnect button mutates state in the widget layer,
-    /// which cannot reach the store itself. Cheap (fixed-size flag compare),
+    /// Drop providers the user explicitly disconnected from the store —
+    /// the Disconnect button mutates state in the widget layer, which
+    /// cannot reach the store itself. Cheap (fixed-size phase compare),
     /// called once per frame.
+    ///
+    /// Only `disconnect_provider` returns a card to `Idle`; a failed probe
+    /// lands on `Error` and an in-flight one on `Probing`. Watching that
+    /// TRANSITION rather than the `connected` flag is what separates a
+    /// withdrawal from a failure — and it also spares the providers still
+    /// waiting their turn in the startup replay, whose cards are `Idle`
+    /// too but were never non-`Idle` to begin with.
     pub(crate) fn persist_connection_changes(&mut self) {
-        let connected = self.host.editor_state().editor_ui.agent_settings.connected;
-        if self.last_saved_connections == Some(connected) {
-            return;
+        let settings = &self.host.editor_state().editor_ui.agent_settings;
+        let phases: [ProviderConnectPhase; 6] =
+            std::array::from_fn(|index| settings.provider_connection[index].phase);
+        let mut withdrawn_any = false;
+        for (index, phase) in phases.iter().enumerate() {
+            let withdrawn = *phase == ProviderConnectPhase::Idle
+                && self.last_seen_provider_phase[index] != ProviderConnectPhase::Idle;
+            if withdrawn && self.remembered_connections[index] {
+                self.remembered_connections[index] = false;
+                withdrawn_any = true;
+            }
         }
-        // First frame: adopt without writing (nothing changed yet).
-        if self.last_saved_connections.is_none() {
-            self.last_saved_connections = Some(connected);
-            return;
+        self.last_seen_provider_phase = phases;
+        if withdrawn_any {
+            crate::agent_connect_store::save(&self.remembered_connections);
         }
-        crate::agent_connect_store::save(&connected);
-        self.last_saved_connections = Some(connected);
     }
 
     /// Write UI preferences through on change (same frame-observer pattern
@@ -175,17 +202,30 @@ impl DesktopApp {
     /// rest ride the landing hook above, one at a time.
     pub(crate) fn restore_remembered_connections(&mut self) {
         let mut remembered = crate::agent_connect_store::load();
+        // Adopt the stored list as this session's last-known-good set
+        // before any probe runs, so a probe that fails cannot be mistaken
+        // for a user withdrawal and evict the provider.
+        self.remembered_connections = std::array::from_fn(|index| {
+            AgentProvider::ALL
+                .get(index)
+                .is_some_and(|provider| remembered.contains(provider))
+        });
         if remembered.is_empty() {
             return;
         }
         let first = remembered.remove(0);
         remembered.reverse();
         self.provider_reconnect_queue = remembered;
+        // `begin_provider_connect`, not a bare write to the request seam:
+        // the landing hook drops any outcome whose card is not in the
+        // Probing phase, so a seam-only request ran a real probe whose
+        // result was then discarded — and with it the hook that advances
+        // this queue, stranding every provider after the first.
         self.host
             .editor_state_mut()
             .editor_ui
             .agent_settings
-            .pending_provider_connect = Some(first);
+            .begin_provider_connect(first);
     }
 
     /// Whether a probe worker is in flight — keeps the idle event
@@ -212,7 +252,7 @@ mod tests {
     use op_editor_core::agent_settings::ProviderConnectPhase;
     use op_editor_core::AgentProvider;
 
-    fn reset_settings(app: &mut DesktopApp) {
+    pub(super) fn reset_settings(app: &mut DesktopApp) {
         let es = app.host.editor_state_mut();
         es.editor_ui.agent_settings.connected = [false; 6];
         es.editor_ui.agent_settings.provider_connection = Default::default();
@@ -221,6 +261,21 @@ mod tests {
         es.editor_ui.agent_settings.acp_agents.clear();
         es.chat.discovered_models.clear();
         es.rebuild_chat_models();
+        app.remembered_connections = [false; 6];
+        app.last_seen_provider_phase = Default::default();
+    }
+
+    /// Put one provider's card in a given phase and let the frame observer
+    /// adopt it, so a later transition reads as a real change rather than
+    /// as first-frame noise.
+    pub(super) fn settle_phase(app: &mut DesktopApp, index: usize, phase: ProviderConnectPhase) {
+        app.host
+            .editor_state_mut()
+            .editor_ui
+            .agent_settings
+            .provider_connection[index]
+            .phase = phase;
+        app.last_seen_provider_phase[index] = phase;
     }
 
     #[test]
@@ -425,6 +480,210 @@ mod tests {
         assert_eq!(
             settings.provider_connection[2].phase,
             ProviderConnectPhase::Idle
+        );
+    }
+}
+
+#[cfg(test)]
+mod remembered_connection_tests {
+    use super::tests::*;
+    use super::*;
+    use op_ai::agent_settings_state::AgentProvider as Sc;
+    use op_ai::chat_models::ModelEntry as ScModelEntry;
+
+    #[test]
+    fn connection_store_writes_land_in_a_scratch_root_not_the_user_home() {
+        // Deliberately installs no redirect of its own: the store must
+        // refuse the real config directory on its own, whatever order the
+        // harness runs its threads in. If a future change drops that
+        // guard, this fails loudly instead of silently rewriting the
+        // developer's `~/.openpencil/agents.json` — the file that decides
+        // which providers auto-reconnect at launch.
+        let real = op_config_store::home_dir()
+            .expect("home directory")
+            .join(".openpencil");
+
+        crate::agent_connect_store::save(&[true, false, false, false, false, false]);
+
+        let root = op_config_store::ConfigStore::user()
+            .expect("a user root")
+            .root()
+            .to_path_buf();
+        assert_ne!(root, real, "a test must never resolve the real config dir");
+        assert!(root.join("agents.json").is_file());
+        assert_eq!(
+            crate::agent_connect_store::load(),
+            vec![AgentProvider::ClaudeCode],
+            "the scratch root round-trips, so reads are isolated too"
+        );
+    }
+
+    #[test]
+    fn a_failed_probe_leaves_the_remembered_list_intact() {
+        // The 0.8.2 regression: a GUI launch with a broken environment made
+        // every probe fail, each failure wrote `connected = false` through
+        // to `agents.json`, and the provider was gone from the startup
+        // replay list for good — the app could never recover on its own.
+        let mut app = DesktopApp::new(None);
+        reset_settings(&mut app);
+        app.remembered_connections[1] = true;
+        app.host
+            .editor_state_mut()
+            .editor_ui
+            .agent_settings
+            .begin_provider_connect(AgentProvider::CodexCli);
+        app.host
+            .editor_state_mut()
+            .editor_ui
+            .agent_settings
+            .pending_provider_connect = None;
+        let (job, tx) = ProviderConnectJob::pending_for_test(AgentProvider::CodexCli);
+        app.provider_connect_job = Some(job);
+        tx.send(ProbeOutcome {
+            connected: false,
+            error: Some("Codex CLI failed: env: node: No such file or directory".into()),
+            ..ProbeOutcome::default()
+        })
+        .unwrap();
+
+        assert!(app.drain_provider_connect());
+        app.persist_connection_changes();
+        assert!(
+            app.remembered_connections[1],
+            "a failed probe must not evict the provider from next launch's replay"
+        );
+        assert!(
+            !app.host.editor_state().editor_ui.agent_settings.connected[1],
+            "the live card still reads disconnected — only the store is spared"
+        );
+    }
+
+    #[test]
+    fn a_successful_probe_joins_the_remembered_list() {
+        let mut app = DesktopApp::new(None);
+        reset_settings(&mut app);
+        app.host
+            .editor_state_mut()
+            .editor_ui
+            .agent_settings
+            .begin_provider_connect(AgentProvider::ClaudeCode);
+        app.host
+            .editor_state_mut()
+            .editor_ui
+            .agent_settings
+            .pending_provider_connect = None;
+        let (job, tx) = ProviderConnectJob::pending_for_test(AgentProvider::ClaudeCode);
+        app.provider_connect_job = Some(job);
+        tx.send(ProbeOutcome {
+            connected: true,
+            models: vec![ScModelEntry::new(
+                Sc::ClaudeCode,
+                "claude-sonnet-4-6",
+                "Sonnet",
+            )],
+            connection_info: Some("Connected via pro (a@b.c)".into()),
+            ..ProbeOutcome::default()
+        })
+        .unwrap();
+
+        assert!(app.drain_provider_connect());
+        assert_eq!(
+            app.remembered_connections,
+            [true, false, false, false, false, false]
+        );
+    }
+
+    #[test]
+    fn an_explicit_disconnect_drops_the_provider_from_the_remembered_list() {
+        let mut app = DesktopApp::new(None);
+        reset_settings(&mut app);
+        app.remembered_connections[2] = true;
+        settle_phase(&mut app, 2, ProviderConnectPhase::Connected);
+
+        app.host
+            .editor_state_mut()
+            .editor_ui
+            .agent_settings
+            .disconnect_provider(AgentProvider::OpenCode);
+        app.persist_connection_changes();
+
+        assert_eq!(app.remembered_connections, [false; 6]);
+    }
+
+    #[test]
+    fn a_provider_waiting_its_turn_in_the_startup_replay_is_not_a_disconnect() {
+        // Queued providers sit at Idle with `connected = false` until their
+        // probe starts — the same absolute state an explicit Disconnect
+        // leaves behind. Only the transition tells them apart.
+        let mut app = DesktopApp::new(None);
+        reset_settings(&mut app);
+        app.remembered_connections = [true; 6];
+
+        app.persist_connection_changes();
+        app.persist_connection_changes();
+
+        assert_eq!(app.remembered_connections, [true; 6]);
+    }
+
+    #[test]
+    fn a_probe_failure_that_lands_on_error_is_not_read_as_a_disconnect() {
+        let mut app = DesktopApp::new(None);
+        reset_settings(&mut app);
+        app.remembered_connections[5] = true;
+        settle_phase(&mut app, 5, ProviderConnectPhase::Probing);
+        app.host
+            .editor_state_mut()
+            .editor_ui
+            .agent_settings
+            .provider_connection[5]
+            .phase = ProviderConnectPhase::Error;
+
+        app.persist_connection_changes();
+
+        assert!(app.remembered_connections[5]);
+    }
+
+    #[test]
+    fn the_replay_queue_advances_into_the_probing_phase() {
+        // The landing hook drops any outcome whose card is not Probing, so
+        // handing the next provider a bare request-seam write produced a
+        // probe whose result was discarded — and the queue stalled there.
+        let mut app = DesktopApp::new(None);
+        reset_settings(&mut app);
+        app.provider_reconnect_queue = vec![AgentProvider::OpenCode];
+        app.host
+            .editor_state_mut()
+            .editor_ui
+            .agent_settings
+            .begin_provider_connect(AgentProvider::ClaudeCode);
+        app.host
+            .editor_state_mut()
+            .editor_ui
+            .agent_settings
+            .pending_provider_connect = None;
+        let (job, tx) = ProviderConnectJob::pending_for_test(AgentProvider::ClaudeCode);
+        app.provider_connect_job = Some(job);
+        tx.send(ProbeOutcome {
+            connected: false,
+            error: Some("not authenticated".into()),
+            ..ProbeOutcome::default()
+        })
+        .unwrap();
+
+        assert!(app.drain_provider_connect());
+        // The same pump that landed Claude's outcome consumed the queued
+        // request seam and spawned OpenCode's probe.
+        assert!(app.provider_connect_job.is_some());
+        assert!(app.provider_reconnect_queue.is_empty());
+        assert_eq!(
+            app.host
+                .editor_state()
+                .editor_ui
+                .agent_settings
+                .provider_connection[2]
+                .phase,
+            ProviderConnectPhase::Probing,
+            "the queued provider must be marked in-flight, or its outcome is dropped"
         );
     }
 }
