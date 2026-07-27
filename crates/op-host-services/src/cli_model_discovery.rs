@@ -20,7 +20,11 @@ use crate::cli_probe_error::CliProbeError;
 use crate::cli_probe_support::{bounded_cli_output, diagnose_timeout, BoundedProbe};
 use crate::model_discovery::resolve_cli;
 
-const MODEL_QUERY_TIMEOUT: Duration = Duration::from_secs(10);
+/// Matches `cli_provider_probe::MODELS_PROBE_TIMEOUT`: every query in this
+/// module is a `models` call, and a `models` call is a network round trip.
+/// Ten seconds cut off `agy`'s own error (11.04 s without a proxy) a beat
+/// before it arrived.
+const MODEL_QUERY_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Query the installed Antigravity catalog. `agy models` may print display
 /// names or kebab-case model IDs; both are accepted verbatim by `--model`.

@@ -21,7 +21,17 @@ use crate::cli_probe_support::{bounded_cli_output, diagnose_timeout, BoundedProb
 use crate::model_discovery::resolve_cli;
 use crate::provider_probe::ProbeOutcome;
 
-const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+/// `--version` / `version` answers from local state, so a CLI that has
+/// not printed anything in ten seconds is stuck, not slow.
+const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// `models` is a NETWORK call. Under a GUI launch without the user's
+/// proxy exports, `agy models` took 11.04 s to produce its real error —
+/// just past the shared ten-second budget, so the actionable message was
+/// killed a beat before it arrived and the card reported a bare timeout
+/// instead. The version step keeps the tighter budget; only this step,
+/// which legitimately waits on a remote, gets the longer one.
+const MODELS_PROBE_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Translate one `providerProbe.*` key with named placeholders. Mirrors the
 /// private `tw` helper in `provider_probe.rs` — these probes produce the same
@@ -165,7 +175,7 @@ fn cli_version(
     provider: &str,
     login_command: &str,
 ) -> Result<String, CliProbeError> {
-    match bounded_cli_output(cli, exe, args, PROBE_TIMEOUT) {
+    match bounded_cli_output(cli, exe, args, VERSION_PROBE_TIMEOUT) {
         BoundedProbe::Completed(output) => {
             if !output.status.success() {
                 return Err(CliProbeError::Localized(tw(
@@ -197,7 +207,7 @@ fn cli_version(
             cli,
             provider,
             login_command,
-            PROBE_TIMEOUT,
+            VERSION_PROBE_TIMEOUT,
             &stdout,
             &stderr,
         ))),
@@ -218,14 +228,14 @@ fn query_models(
     login_command: &str,
     parse: fn(&str) -> Vec<ModelEntry>,
 ) -> Result<Vec<ModelEntry>, CliProbeError> {
-    let output = match bounded_cli_output(cli, exe, &["models"], PROBE_TIMEOUT) {
+    let output = match bounded_cli_output(cli, exe, &["models"], MODELS_PROBE_TIMEOUT) {
         BoundedProbe::Completed(output) => output,
         BoundedProbe::TimedOut { stdout, stderr } => {
             return Err(CliProbeError::Timeout(diagnose_timeout(
                 cli,
                 provider,
                 login_command,
-                PROBE_TIMEOUT,
+                MODELS_PROBE_TIMEOUT,
                 &stdout,
                 &stderr,
             )))
@@ -316,6 +326,16 @@ fn catalog_error(
 mod tests {
     use super::*;
     use op_ai::agent_settings_state::AgentProvider;
+
+    #[test]
+    fn the_network_step_gets_a_longer_budget_than_the_local_one() {
+        // `agy models` needs > 10 s to report its own failure when the GUI
+        // process has no proxy; `agy --version` reads local state. A single
+        // shared budget could not serve both.
+        assert_eq!(VERSION_PROBE_TIMEOUT, Duration::from_secs(10));
+        assert_eq!(MODELS_PROBE_TIMEOUT, Duration::from_secs(20));
+        assert!(MODELS_PROBE_TIMEOUT > VERSION_PROBE_TIMEOUT);
+    }
 
     #[test]
     fn not_installed_outcome_carries_provider_guidance() {
