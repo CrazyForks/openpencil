@@ -8,6 +8,7 @@
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -65,16 +66,16 @@ pub(crate) fn bounded_cli_output(
     let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
         return BoundedProbe::Failed;
     };
-    let stdout_reader = drain_pipe(stdout);
-    let stderr_reader = drain_pipe(stderr);
+    let stdout_reader = PipeCapture::spawn(stdout);
+    let stderr_reader = PipeCapture::spawn(stderr);
     let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
                 return BoundedProbe::Completed(Output {
                     status,
-                    stdout: stdout_reader.join().unwrap_or_default(),
-                    stderr: stderr_reader.join().unwrap_or_default(),
+                    stdout: stdout_reader.finish(),
+                    stderr: stderr_reader.finish(),
                 });
             }
             Ok(None) if Instant::now() < deadline => {
@@ -84,36 +85,86 @@ pub(crate) fn bounded_cli_output(
                 let _ = child.kill();
                 let _ = child.wait();
                 return BoundedProbe::TimedOut {
-                    stdout: stdout_reader.join().unwrap_or_default(),
-                    stderr: stderr_reader.join().unwrap_or_default(),
+                    stdout: stdout_reader.finish_bounded(CAPTURE_GRACE),
+                    stderr: stderr_reader.finish_bounded(CAPTURE_GRACE),
                 };
             }
         }
     }
 }
 
-/// Continue draining after the retained output cap so a verbose CLI cannot
-/// fill an OS pipe and deadlock the bounded probe.
-fn drain_pipe<R>(mut pipe: R) -> JoinHandle<Vec<u8>>
-where
-    R: Read + Send + 'static,
-{
-    std::thread::spawn(move || {
-        let mut retained = Vec::new();
-        let mut chunk = [0_u8; 8192];
-        loop {
-            let Ok(count) = pipe.read(&mut chunk) else {
-                break;
-            };
-            if count == 0 {
-                break;
-            }
-            let remaining = MAX_PROBE_OUTPUT_BYTES.saturating_sub(retained.len());
-            retained.extend_from_slice(&chunk[..count.min(remaining)]);
-        }
-        retained
-    })
+/// A background drainer for one child pipe.
+///
+/// Reads past the retained cap so a verbose CLI cannot fill an OS pipe and
+/// deadlock the probe. The bytes live behind a mutex rather than inside the
+/// reader thread's return value so a timed-out probe can take what was
+/// captured WITHOUT joining: killing a shell wrapper does not kill the
+/// grandchild it spawned, and that grandchild keeps the pipe open — an
+/// unconditional join on the kill path would let the child, not the
+/// deadline, decide when the probe returns (measured: a 400 ms budget took
+/// 30 s). Shared with `chat_spawn`'s login-shell env probe, which needs
+/// the same guarantee against a blocking shell rc.
+pub(crate) struct PipeCapture {
+    retained: Arc<Mutex<Vec<u8>>>,
+    reader: JoinHandle<()>,
 }
+
+impl PipeCapture {
+    pub(crate) fn spawn<R>(mut pipe: R) -> Self
+    where
+        R: Read + Send + 'static,
+    {
+        let retained = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&retained);
+        let reader = std::thread::spawn(move || {
+            let mut chunk = [0_u8; 8192];
+            loop {
+                let Ok(count) = pipe.read(&mut chunk) else {
+                    break;
+                };
+                if count == 0 {
+                    break;
+                }
+                let Ok(mut retained) = sink.lock() else {
+                    break;
+                };
+                let remaining = MAX_PROBE_OUTPUT_BYTES.saturating_sub(retained.len());
+                retained.extend_from_slice(&chunk[..count.min(remaining)]);
+            }
+        });
+        Self { retained, reader }
+    }
+
+    /// Everything captured through EOF — the normal-exit path, where the
+    /// child has already been observed to exit.
+    pub(crate) fn finish(self) -> Vec<u8> {
+        let Self { retained, reader } = self;
+        let _ = reader.join();
+        take_retained(&retained)
+    }
+
+    /// Everything captured within `grace` — the kill path, where the pipe
+    /// may never reach EOF. The grace window lets a reader that is merely
+    /// a few scheduler ticks behind catch up before we take the bytes.
+    pub(crate) fn finish_bounded(self, grace: Duration) -> Vec<u8> {
+        let deadline = Instant::now() + grace;
+        while !self.reader.is_finished() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        take_retained(&self.retained)
+    }
+}
+
+fn take_retained(retained: &Mutex<Vec<u8>>) -> Vec<u8> {
+    retained
+        .lock()
+        .map(|mut retained| std::mem::take(&mut *retained))
+        .unwrap_or_default()
+}
+
+/// How long a killed probe waits for its reader threads to drain the
+/// bytes already in flight before giving up on them.
+pub(crate) const CAPTURE_GRACE: Duration = Duration::from_millis(200);
 
 /// Turn a timed-out probe's retained stdout/stderr into an actionable
 /// message. Checked first against the same auth-prompt vocabulary a
@@ -320,6 +371,33 @@ mod tests {
         // away what the reader threads already captured.
         let (stdout, _stderr, _budget) = timed_out_probe_with_output(CliName::Antigravity);
         assert!(String::from_utf8_lossy(&stdout).contains("Authentication required"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounded_cli_output_returns_at_its_deadline_when_the_pipe_never_reaches_eof() {
+        // Killing a shell does not kill the grandchild it spawned, and the
+        // grandchild keeps the inherited pipe open — so waiting for EOF on
+        // the kill path handed the deadline to the child (measured: a
+        // 400 ms budget returned after 30 s). Output captured before the
+        // kill must still survive.
+        let script = "printf 'Authentication required\\n'; sleep 30 & sleep 30";
+        let started = Instant::now();
+        match bounded_cli_output(
+            CliName::Antigravity,
+            Path::new("/bin/sh"),
+            &["-c", script],
+            Duration::from_millis(400),
+        ) {
+            BoundedProbe::TimedOut { stdout, .. } => {
+                assert!(String::from_utf8_lossy(&stdout).contains("Authentication required"));
+            }
+            _ => panic!("expected the sleeps to outlast the timeout"),
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the deadline, not the child, decides when the probe returns"
+        );
     }
 
     #[cfg(unix)]
