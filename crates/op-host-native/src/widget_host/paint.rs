@@ -719,11 +719,18 @@ impl WidgetHostNative {
                 origin: Point2D::new(drop_left, TOP_BAR_HEIGHT),
                 size: Point2D::new(drop_w, drop_h),
             };
+            let target = self
+                .editor_state
+                .editor_ui
+                .file_drop_target
+                .clone()
+                .and_then(|id| self.node_screen_rect(&id, viewport_width, viewport_height));
             op_editor_ui::widgets::file_drop_overlay::paint_file_drop_overlay(
                 &mut *frame,
                 &self.theme,
                 self.editor_state.editor_ui.locale,
                 drop_rect,
+                target,
             );
         }
 

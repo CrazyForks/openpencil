@@ -12,8 +12,9 @@ mod scheduling;
 mod window_events;
 
 use crate::{
-    a11y, chat_session, cursor_icon, figma_import_session, frame, html_import_session, menu,
-    persistence, window_state, DesktopApp, DesktopEvent, INITIAL_VIEWPORT_H, INITIAL_VIEWPORT_W,
+    a11y, chat_session, cursor_icon, figma_import_session, frame, html_import_session,
+    image_drop_host, menu, persistence, window_state, DesktopApp, DesktopEvent,
+    INITIAL_VIEWPORT_H, INITIAL_VIEWPORT_W,
 };
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
@@ -61,6 +62,16 @@ impl ApplicationHandler<DesktopEvent> for DesktopApp {
                 // CFRunLoop timer arming (measured via `sample`).
                 self.schedule_next_wake(event_loop);
             }
+        }
+        // A file drag owns the pointer, so the drop-target ring has to be
+        // re-probed on each wake rather than driven by cursor events.
+        if self.refresh_image_drop_hover() {
+            self.request_redraw(true);
+        }
+        // A file drag owns the pointer, so the drop-target ring has to be
+        // re-probed on each wake rather than driven by cursor events.
+        if self.refresh_image_drop_hover() {
+            self.request_redraw(true);
         }
         // Native-menu selections arrive on `muda`'s global channel.
         // A menu click wakes the event loop, so draining here — at
@@ -448,7 +459,7 @@ impl ApplicationHandler<DesktopEvent> for DesktopApp {
             WindowEvent::CloseRequested => self.on_close_requested(event_loop),
             WindowEvent::Resized(size) => self.on_resized(event_loop, size),
             WindowEvent::Moved(pos) => self.on_moved(pos),
-            WindowEvent::HoveredFile(_path) => self.on_hovered_file(),
+            WindowEvent::HoveredFile(path) => self.on_hovered_file(&path),
             WindowEvent::HoveredFileCancelled => self.on_hovered_file_cancelled(),
             WindowEvent::DroppedFile(path) => self.on_dropped_file(path),
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {

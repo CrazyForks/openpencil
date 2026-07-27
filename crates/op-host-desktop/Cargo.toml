@@ -275,6 +275,9 @@ objc2-app-kit = { version = "0.2", default-features = false, features = [
   "std",
   "NSApplication",
   "NSColorSpace",
+  # `NSEvent::mouseLocation` — the live pointer position during a native
+  # file drag, which winit's drag events do not carry (`src/drag_cursor.rs`).
+  "NSEvent",
   "NSImage",
   "NSResponder",
   "NSView",

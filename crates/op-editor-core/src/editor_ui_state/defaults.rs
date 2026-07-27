@@ -49,6 +49,7 @@ impl Default for EditorUiState {
             figma_import_page_select: Default::default(),
             figma_import_in_progress: false,
             file_drop_active: false,
+            file_drop_target: None,
             preserve_authored_geometry: false,
             preview: PreviewState::default(),
             agent_settings_open: false,

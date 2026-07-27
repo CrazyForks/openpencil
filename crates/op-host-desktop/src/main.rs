@@ -32,6 +32,7 @@ mod design_loop_indicator;
 mod design_md_error;
 mod design_md_host;
 mod design_session;
+mod drag_cursor;
 mod figma_import_session;
 mod font_import_host;
 mod fonts;
@@ -45,6 +46,7 @@ mod git_ssh_host;
 mod heap_pressure;
 mod html_import_error;
 mod html_import_session;
+mod image_drop_host;
 mod iconify_host;
 mod image_decode_host;
 mod image_downscale;
@@ -290,6 +292,13 @@ struct DesktopApp {
     provider_connect_job: Option<provider_probe_host::ProviderConnectJob>,
     /// Startup reconnect replay queue (see `agent_connect_store`).
     provider_reconnect_queue: Vec<op_editor_core::AgentProvider>,
+    /// True while a raster image file is being dragged over the window.
+    /// Drives the per-frame drop-target probe — the platform gives no
+    /// cursor stream during a drag, so the position has to be polled.
+    hovered_image_drop: bool,
+    /// Last polled drag position (logical, top-left origin). Used as the drop
+    /// point when the release itself cannot be re-probed.
+    drop_cursor: Option<(f32, f32)>,
     /// Last persisted pencil-cursor style (see `ui_prefs`).
     last_saved_pencil_cursor: Option<op_editor_core::PencilCursorStyle>,
     /// Providers the store remembers as LAST KNOWN GOOD — seeded from

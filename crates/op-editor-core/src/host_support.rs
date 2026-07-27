@@ -241,6 +241,30 @@ impl EditorState {
         )
     }
 
+    /// Like [`Self::insert_image_node_at_viewport_sized`], but centred on an
+    /// explicit DOC-space point — the drop point of a dragged image file, so
+    /// the node lands where the user released it instead of mid-viewport.
+    pub fn insert_image_node_at_doc_point_sized(
+        &mut self,
+        name: &str,
+        src: &str,
+        pixel_width: u32,
+        pixel_height: u32,
+        centre: (f64, f64),
+    ) -> Option<NodeId> {
+        if pixel_width == 0 || pixel_height == 0 {
+            return None;
+        }
+        let scale = (300.0 / f64::from(pixel_width.max(pixel_height))).min(1.0);
+        self.insert_image_node_with_dimensions(
+            name,
+            src,
+            f64::from(pixel_width) * scale,
+            f64::from(pixel_height) * scale,
+            centre,
+        )
+    }
+
     fn insert_image_node_at_viewport_with_dimensions(
         &mut self,
         name: &str,
@@ -248,14 +272,30 @@ impl EditorState {
         width: f64,
         height: f64,
     ) -> Option<NodeId> {
-        use jian_ops_schema::node::image::ImageNode;
-        use jian_ops_schema::node::PenNode;
-        use jian_ops_schema::sizing::SizingBehavior;
         let pan_x = self.viewport.pan_x as f64;
         let pan_y = self.viewport.pan_y as f64;
         let zoom = self.viewport.zoom.max(0.001) as f64;
-        let centre_x = -pan_x / zoom;
-        let centre_y = -pan_y / zoom;
+        self.insert_image_node_with_dimensions(
+            name,
+            src,
+            width,
+            height,
+            (-pan_x / zoom, -pan_y / zoom),
+        )
+    }
+
+    fn insert_image_node_with_dimensions(
+        &mut self,
+        name: &str,
+        src: &str,
+        width: f64,
+        height: f64,
+        centre: (f64, f64),
+    ) -> Option<NodeId> {
+        use jian_ops_schema::node::image::ImageNode;
+        use jian_ops_schema::node::PenNode;
+        use jian_ops_schema::sizing::SizingBehavior;
+        let (centre_x, centre_y) = centre;
         let safe = self.max_node_id().checked_add(1)?;
         let id = NodeId::new(format!("n{}", safe));
         let _next_id = safe.checked_add(1)?;

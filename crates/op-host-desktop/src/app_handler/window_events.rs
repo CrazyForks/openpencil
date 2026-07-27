@@ -3,7 +3,7 @@
 //! `app_handler.rs` spine to keep it under the 800-line cap; pure code
 //! motion.
 
-use crate::{chat_session, figma_import_session, html_import_session, persistence, DesktopApp};
+use crate::{chat_session, figma_import_session, html_import_session, image_drop_host, persistence, DesktopApp};
 use std::path::PathBuf;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event_loop::ActiveEventLoop;
@@ -81,7 +81,7 @@ impl DesktopApp {
         }
     }
 
-    pub(super) fn on_hovered_file(&mut self) {
+    pub(super) fn on_hovered_file(&mut self, path: &std::path::Path) {
         // A file is being dragged over the window — show the
         // full-canvas drop overlay so the target is obvious.
         if !self.host.editor_state().editor_ui.file_drop_active {
@@ -89,10 +89,23 @@ impl DesktopApp {
             self.host.mark_editor_state_dirty();
             self.request_redraw(true);
         }
+        // An image can land INSIDE a node, so from here on the drag
+        // position is polled every frame to ring the node under it
+        // (`new_events`); winit reports no cursor moves during a drag.
+        if image_drop_host::is_supported_image_drop(path) {
+            self.hovered_image_drop = true;
+            if self.refresh_image_drop_hover() {
+                // Repaint only: the ring lives in `editor_ui`, so
+                // marking the document dirty here would rebuild the
+                // whole layout scene on every pointer move.
+                self.request_redraw(true);
+            }
+        }
     }
 
     pub(super) fn on_hovered_file_cancelled(&mut self) {
         // The drag left the window without dropping — hide it.
+        self.clear_image_drop_hover();
         if self.host.editor_state().editor_ui.file_drop_active {
             self.host.editor_state_mut().editor_ui.file_drop_active = false;
             self.host.mark_editor_state_dirty();
@@ -101,10 +114,35 @@ impl DesktopApp {
     }
 
     pub(super) fn on_dropped_file(&mut self, path: PathBuf) {
+        // Resolve the release position BEFORE tearing down the hover
+        // state — it is what decides fill-a-node vs insert-a-node.
+        let drop_point = self
+            .window
+            .as_ref()
+            .and_then(crate::drag_cursor::window_cursor_position)
+            .or(self.drop_cursor);
+        self.clear_image_drop_hover();
         // Clear the drag overlay now that the drop has landed.
         self.host.editor_state_mut().editor_ui.file_drop_active = false;
         self.host.mark_editor_state_dirty();
         self.request_redraw(true);
+        if image_drop_host::is_supported_image_drop(&path) {
+            let outcome = image_drop_host::apply_image_drop(
+                &mut self.host,
+                &path,
+                drop_point,
+                self.viewport_width,
+                self.viewport_height,
+            );
+            if outcome == image_drop_host::ImageDropOutcome::Ignored {
+                eprintln!(
+                    "openpencil-desktop: dropped image had no effect: {}",
+                    path.display()
+                );
+            }
+            self.request_redraw(true);
+            return;
+        }
         // Drag-and-drop open. `.op` / `.pen` documents route
         // through the canonical loader; `.fig` Figma exports
         // route through the background Figma import worker

@@ -211,6 +211,11 @@ pub struct EditorUiState {
     /// platform's `HoveredFile` and `HoveredFileCancelled` / drop). Drives
     /// the full-canvas drop overlay so the user sees a clear drop target.
     pub file_drop_active: bool,
+    /// Node the hovering file would fill if released now (image files over a
+    /// frame / rectangle / … — see `image_drop`). Drives the drop-target ring
+    /// painted by the same overlay. `None` when the drop would open a document
+    /// or insert a standalone node instead. Never serialized.
+    pub file_drop_target: Option<crate::NodeId>,
     /// Imported Figma documents parsed in Preserve mode already carry
     /// authored parent-local geometry. The scene builder can use this
     /// flag to skip the expensive flex/text layout pass.

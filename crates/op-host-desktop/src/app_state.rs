@@ -126,6 +126,8 @@ impl DesktopApp {
             provider_reconnect_queue: Vec::new(),
             remembered_connections: [false; 6],
             last_seen_provider_phase: Default::default(),
+            hovered_image_drop: false,
+            drop_cursor: None,
             last_saved_pencil_cursor: None,
             acp_agent_connect_job: None,
             initial_file,

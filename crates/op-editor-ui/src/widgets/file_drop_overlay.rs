@@ -13,11 +13,17 @@ use crate::{Color, Point2D, Rect, RenderBackend, TextLayout};
 /// Paint the drop overlay across `canvas_rect` (the editor's canvas
 /// region — i.e. excluding the rails so the highlight reads as "drop
 /// onto the canvas").
+///
+/// `target` is the SCREEN rect of the node the file would land in when the
+/// drag is an image over a fillable node. Given one, the overlay drops its
+/// centred "drop to open" card and rings that node instead: the drop has a
+/// specific destination, so pointing at it is the honest feedback.
 pub fn paint_file_drop_overlay(
     backend: &mut dyn RenderBackend,
     theme: &Theme,
     locale: op_editor_core::Locale,
     canvas_rect: Rect,
+    target: Option<Rect>,
 ) {
     let p = theme.primary;
     // 1. A subtle primary-tinted scrim over the whole canvas.
@@ -41,7 +47,25 @@ pub fn paint_file_drop_overlay(
     };
     backend.stroke_round_rect(border, 16.0, theme.primary, 2.5);
 
-    // 3. A centred card: download icon + label.
+    // 3. With a resolved node target, ring it and stop — the card would
+    //    otherwise sit in the middle of the canvas describing a different
+    //    (document-open) outcome than the one about to happen.
+    if let Some(target) = target {
+        backend.fill_round_rect(
+            target,
+            6.0,
+            Color {
+                r: p.r,
+                g: p.g,
+                b: p.b,
+                a: 0.18,
+            },
+        );
+        backend.stroke_round_rect(target, 6.0, theme.primary, 2.5);
+        return;
+    }
+
+    // 4. Otherwise a centred card: download icon + label.
     let label_text = op_i18n::translate(locale, "dialog.dropToOpen");
     let label_w = backend.measure_text(label_text, 14.0);
     let card_w = (label_w + 56.0).max(220.0);

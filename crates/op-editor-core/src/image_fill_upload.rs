@@ -2,7 +2,7 @@
 
 use crate::fills::node_fills_mut;
 use crate::walkers::find_node_mut;
-use crate::EditorState;
+use crate::{EditorState, ImageFillMode, NodeId};
 use jian_ops_schema::node::PenNode;
 use jian_ops_schema::style::{ImageFillBody, ImageOriginalSize, PenFill};
 
@@ -27,6 +27,26 @@ impl EditorState {
         original_size: Option<[f32; 2]>,
     ) -> bool {
         let sel = self.selection.anchor.clone();
+        self.set_node_fill_image_url(&sel, src, original_size, None)
+    }
+
+    /// Write `src` into `id`'s primary fill as an image.
+    ///
+    /// `mode` is written verbatim when given; `None` leaves the field absent,
+    /// which every renderer resolves to `Fill` (cover) anyway. An `Image` node
+    /// takes the url on its `src` instead — it has no fill list.
+    ///
+    /// Does NOT snapshot history: the two call sites differ (the fill picker
+    /// bumps the revision, the drag-and-drop path wants one undo step around
+    /// its whole gesture), so the caller owns that decision.
+    pub fn set_node_fill_image_url(
+        &mut self,
+        id: &NodeId,
+        src: &str,
+        original_size: Option<[f32; 2]>,
+        mode: Option<ImageFillMode>,
+    ) -> bool {
+        let sel = id.clone();
         if !sel.is_real() || !self.is_editable(&sel) {
             return false;
         }
@@ -47,7 +67,7 @@ impl EditorState {
                 };
                 let body = PenFill::Image(ImageFillBody {
                     url: src.into(),
-                    mode: None,
+                    mode: mode.map(ImageFillMode::to_schema),
                     original_size,
                     transform: None,
                     tile_scale: None,
@@ -80,7 +100,6 @@ impl EditorState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ImageFillMode, NodeId};
 
     #[test]
     fn sized_fill_upload_persists_dimensions_and_exits_stale_crop_edit() {

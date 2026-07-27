@@ -114,6 +114,7 @@ mod icon_picker_press_tests;
 mod image_crop_drag;
 #[cfg(test)]
 mod image_crop_drag_tests;
+mod image_drop_target;
 mod image_panel_dispatch;
 #[cfg(test)]
 mod image_panel_overlay_tests;

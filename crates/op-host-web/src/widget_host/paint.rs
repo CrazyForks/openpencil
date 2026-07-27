@@ -554,6 +554,9 @@ impl WidgetHost {
                 &self.theme,
                 self.editor_state.editor_ui.locale,
                 drop_rect,
+                // The browser host has no drag-position stream yet, so it can
+                // never resolve a node target to ring.
+                None,
             );
         }
 

@@ -24,9 +24,9 @@ use std::path::Path;
 /// File extensions the import dialog accepts.
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg"];
 
-struct EmbeddedImage {
-    url: String,
-    original_size: Option<[f32; 2]>,
+pub(crate) struct EmbeddedImage {
+    pub(crate) url: String,
+    pub(crate) original_size: Option<[f32; 2]>,
 }
 
 /// Pop a file dialog scoped to image / SVG extensions, returning the
@@ -47,7 +47,7 @@ fn pick_image_path(host: &WidgetHostNative) -> Option<std::path::PathBuf> {
 /// files get the `image/svg+xml` MIME, everything else picks from a
 /// small extension table — falling back to `application/octet-stream`
 /// so an unknown extension still round-trips.
-fn read_as_data_url(path: &Path) -> std::io::Result<EmbeddedImage> {
+pub(crate) fn read_as_data_url(path: &Path) -> std::io::Result<EmbeddedImage> {
     let bytes = std::fs::read(path)?;
     // Shrink an oversized raster source before it lands in the document
     // (a multi-MB `src` lags every later scene rebuild + canvas decode).

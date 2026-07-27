@@ -74,6 +74,8 @@ impl DesktopApp {
             || self.current_codegen.is_some()
             || self.current_design_md.is_some()
             || !self.sub_agents.is_empty()
+            // Poll the drag position while an image file hovers the window.
+            || self.hovered_image_drop
         {
             event_loop.set_control_flow(ControlFlow::WaitUntil(self.periodic_wake_instant(33)));
         } else if self
