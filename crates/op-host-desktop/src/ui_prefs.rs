@@ -12,6 +12,7 @@ struct UiPrefs {
 }
 
 pub(crate) fn save_pencil_cursor(style: PencilCursorStyle) {
+    crate::test_config_root::guard_user_config();
     let value = UiPrefs {
         pencil_cursor: Some(style.id().to_string()),
     };
@@ -21,6 +22,7 @@ pub(crate) fn save_pencil_cursor(style: PencilCursorStyle) {
 }
 
 pub(crate) fn load_pencil_cursor() -> Option<PencilCursorStyle> {
+    crate::test_config_root::guard_user_config();
     let value: UiPrefs = op_config_store::read_json(FILE).ok().flatten()?;
     PencilCursorStyle::from_id(value.pencil_cursor.as_deref()?)
 }

@@ -80,6 +80,7 @@ mod single_instance;
 mod sub_agent_session;
 mod sub_agent_spawn_error;
 mod tcc_selftest;
+mod test_config_root;
 mod theme_preset_host;
 mod ui_prefs;
 mod update_check;

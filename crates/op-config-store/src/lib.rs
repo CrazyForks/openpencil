@@ -7,6 +7,11 @@ use serde::{de::DeserializeOwned, Serialize};
 use std::ffi::OsString;
 use std::io::{Error, ErrorKind, Write};
 use std::path::{Component, Path, PathBuf};
+use std::sync::OnceLock;
+
+/// Process-wide replacement for the `~/.openpencil` root. See
+/// [`redirect_user_root_for_tests`].
+static USER_ROOT_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
 
 /// Name of the per-user config directory under the home directory
 /// (`~/.openpencil`). Exposed for callers that must resolve the
@@ -105,7 +110,34 @@ pub fn write_json_path<T: Serialize>(path: &Path, value: &T) -> std::io::Result<
     Ok(())
 }
 
+/// Redirect [`ConfigStore::user`] — and everything built on it
+/// (`read_json` / `write_json` / [`openpencil_dir`]) — at `root` for the
+/// remainder of THIS PROCESS.
+///
+/// Exists so a test binary can point the whole crate graph at a scratch
+/// directory instead of the developer's real `~/.openpencil`. Without it
+/// a test that exercises a persistence path rewrites live user config:
+/// `cargo test -p op-host-desktop` was measured clobbering
+/// `agents.json`, the file that decides which agent providers
+/// auto-reconnect at launch, with whichever value the last parallel test
+/// happened to write.
+///
+/// Deliberately NOT an environment variable. The harness runs cases in
+/// parallel threads of a single process, where `set_var` races every
+/// concurrent reader — and is `unsafe` on current Rust besides.
+///
+/// First call wins and later calls are no-ops, so every test can install
+/// the same root unconditionally with no ordering rules between them.
+/// Returns the root actually in force.
+#[doc(hidden)]
+pub fn redirect_user_root_for_tests(root: impl Into<PathBuf>) -> &'static Path {
+    USER_ROOT_OVERRIDE.get_or_init(|| root.into()).as_path()
+}
+
 fn default_openpencil_dir() -> std::io::Result<PathBuf> {
+    if let Some(root) = USER_ROOT_OVERRIDE.get() {
+        return Ok(root.clone());
+    }
     home_dir().map(|home| home.join(OPENPENCIL_DIR_NAME))
 }
 
@@ -242,6 +274,29 @@ mod tests {
 
         assert!(store.read_json::<serde_json::Value>("../bad.json").is_err());
         assert!(store.write_json("/tmp/bad.json", &json!({})).is_err());
+    }
+
+    #[test]
+    fn user_root_redirect_covers_the_process_level_helpers_and_wins_once() {
+        let root = temp_root("redirect");
+        assert_eq!(redirect_user_root_for_tests(&root), root);
+        assert_eq!(ConfigStore::user().unwrap().root(), root);
+        assert_eq!(openpencil_dir().unwrap(), root);
+
+        // The free helpers are what callers actually reach for, and they
+        // must land in the redirected root, not the real home directory.
+        write_json("probe.json", &json!({ "ok": true })).unwrap();
+        assert!(root.join("probe.json").is_file());
+        let back: Option<serde_json::Value> = read_json("probe.json").unwrap();
+        assert_eq!(back, Some(json!({ "ok": true })));
+        assert_ne!(root, home_dir().unwrap().join(".openpencil"));
+
+        // Idempotent: a second install does not move the root, so tests
+        // may all call it in any order.
+        assert_eq!(
+            redirect_user_root_for_tests(temp_root("redirect-again")),
+            root
+        );
     }
 
     #[test]

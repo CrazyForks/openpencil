@@ -23,6 +23,7 @@ struct PersistedAgentConnections {
 /// Persist the currently-connected provider ids. Best-effort: a failed
 /// write must never break the probe flow.
 pub(crate) fn save(connected: &[bool; 6]) {
+    crate::test_config_root::guard_user_config();
     let value = PersistedAgentConnections {
         connected: AgentProvider::ALL
             .iter()
@@ -39,6 +40,7 @@ pub(crate) fn save(connected: &[bool; 6]) {
 /// Providers remembered as connected from the previous session, in
 /// `AgentProvider::ALL` order.
 pub(crate) fn load() -> Vec<AgentProvider> {
+    crate::test_config_root::guard_user_config();
     let Ok(Some(value)) = op_config_store::read_json::<PersistedAgentConnections>(FILE) else {
         return Vec::new();
     };
