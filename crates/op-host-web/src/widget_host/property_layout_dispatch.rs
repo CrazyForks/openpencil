@@ -23,4 +23,23 @@ impl WidgetHost {
             })
             .filter(|value| value.is_finite() && *value >= 0.0)
     }
+
+    /// Resize the selection to the intrinsic ratio of the image it
+    /// paints, keeping its current width. The resolved canvas width is
+    /// read first so a Fill / Hug node matches what the user sees.
+    pub(in crate::widget_host) fn match_selected_image_aspect_ratio(&mut self) {
+        let Some(width) = self.selected_resolved_size(true) else {
+            return;
+        };
+        let Some(source) = self
+            .editor_state
+            .selected_node()
+            .and_then(op_editor_ui::widgets::property_panel_image_ratio::node_image_source_size)
+        else {
+            return;
+        };
+        let _ = self
+            .editor_state
+            .match_selected_aspect_ratio(source, width as f32);
+    }
 }

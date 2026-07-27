@@ -320,6 +320,13 @@ pub enum PropertyPanelAction {
     },
     /// User clicked the image adjustment reset affordance.
     ResetImageAdjustments,
+    /// User clicked the image popover's "match image ratio" row — host
+    /// keeps the node's width and writes the height that reproduces the
+    /// image's own proportions. Only emitted while the intrinsic source
+    /// size is actually known (see
+    /// `property_panel_image_ratio::image_source_size`), so the host can
+    /// treat it as a request it is expected to be able to satisfy.
+    MatchImageAspectRatio,
     /// Clear the active page's authored canvas background so the
     /// editor theme surface is used again.
     ClearPageBackground,

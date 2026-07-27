@@ -139,6 +139,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "image.highlights" => "高光",
         "image.shadows" => "陰影",
         "image.reset" => "重設",
+        "image.matchRatio" => "符合圖片比例",
         "stroke.title" => "描邊",
         "appearance.layer" => "圖層",
         "appearance.opacity" => "不透明度",

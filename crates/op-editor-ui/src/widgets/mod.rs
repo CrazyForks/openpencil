@@ -76,6 +76,9 @@ mod property_panel_image_fill_tests;
 pub mod property_panel_image_node;
 pub mod property_panel_image_popovers;
 mod property_panel_image_preview;
+pub mod property_panel_image_ratio;
+#[cfg(test)]
+mod property_panel_image_ratio_tests;
 pub mod property_panel_input_layout;
 pub mod property_panel_inputs;
 pub mod property_panel_instance;

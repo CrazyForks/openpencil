@@ -654,6 +654,7 @@ pub fn apply_property_action(
         // host has to commit any pending property / variable-row draft
         // first — those commits live host-side.
         A::FocusEffectParam { .. } => HostOwned,
+        A::MatchImageAspectRatio => HostOwned,
         A::OpenEffectColorPicker(index) => {
             let _ = state.open_color_picker(
                 op_editor_core::ui_draft::ColorTarget::EffectColor(*index),

@@ -139,6 +139,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "image.highlights" => "Highlights",
         "image.shadows" => "Shadows",
         "image.reset" => "Reset",
+        "image.matchRatio" => "Match image ratio",
         "stroke.title" => "Stroke",
         "appearance.layer" => "Layer",
         "appearance.opacity" => "Opacity",

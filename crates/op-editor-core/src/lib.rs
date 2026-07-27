@@ -82,6 +82,7 @@ pub mod host_variables_commit;
 pub mod host_variables_transitions;
 pub mod icon_picker_state;
 pub mod image_crop;
+pub mod image_aspect;
 pub mod image_drop;
 mod image_fill_upload;
 pub mod image_node_props;
@@ -272,6 +273,7 @@ pub use history::{EditorSnapshot, History, HISTORY_CAP};
 pub use history_snapshot::{SharedComponents, SharedDoc};
 pub use hoist_app_state::{hoist_app_state, UNPLANNED_APP_STATE_IDX};
 pub use icon_picker_state::{IconPickerRemoteIcon, IconPickerRemoteState, IconifyLoadMoreRequest};
+pub use image_aspect::aspect_matched_height;
 pub use image_crop::{
     image_fill_body_is_crop, primary_image_fill_is_crop_editable, primary_image_fill_transform,
     translate_primary_image_crop,

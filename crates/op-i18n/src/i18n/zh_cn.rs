@@ -155,6 +155,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "image.highlights" => "高光",
         "image.shadows" => "阴影",
         "image.reset" => "重置",
+        "image.matchRatio" => "匹配图片比例",
         "stroke.title" => "描边",
         "appearance.layer" => "图层",
         "appearance.opacity" => "不透明度",

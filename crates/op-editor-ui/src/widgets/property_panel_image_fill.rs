@@ -23,6 +23,12 @@ const HEADER_H: f32 = 44.0;
 const MODE_H: f32 = 30.0;
 const TILE_SCALE_ROW_H: f32 = 36.0;
 const UPLOAD_H: f32 = 112.0;
+/// The match-ratio row sits between the upload well and the adjustments
+/// divider — it acts on the image itself, not on its colour grading.
+/// Both metrics are unconditional so picking an image never reflows the
+/// popover under the cursor.
+const MATCH_RATIO_GAP: f32 = 8.0;
+const MATCH_RATIO_H: f32 = 28.0;
 const ADJ_HEADER_H: f32 = 28.0;
 const ADJ_ROW_H: f32 = 34.0;
 
@@ -36,6 +42,8 @@ fn panel_h(show_tile_scale: bool) -> f32 {
         }
         + 10.0
         + UPLOAD_H
+        + MATCH_RATIO_GAP
+        + MATCH_RATIO_H
         + 12.0
         + 1.0
         + ADJ_HEADER_H
@@ -131,6 +139,13 @@ pub fn image_fill_popover_action_rects(
     let show_tile_scale = tile_scale_visible(snapshot);
     let upload = upload_rect(pop, show_tile_scale);
     out.push((PropertyPanelAction::PickFillImage, upload));
+
+    if match_ratio_target_height(snapshot).is_some() {
+        out.push((
+            PropertyPanelAction::MatchImageAspectRatio,
+            match_ratio_rect(pop, show_tile_scale),
+        ));
+    }
 
     if snapshot
         .image_fill
@@ -291,7 +306,39 @@ pub fn paint_image_fill_popover(
         paint_tile_scale(cx, theme, pop, &summary, edit, locale);
     }
     paint_upload(cx, theme, pop, &summary, locale);
+    paint_match_ratio(
+        cx,
+        theme,
+        pop,
+        snapshot,
+        tile_scale_visible(snapshot),
+        locale,
+    );
     paint_adjustments(cx, theme, pop, &summary, locale);
+}
+
+fn paint_match_ratio(
+    cx: &mut PaintCx<'_>,
+    theme: &Theme,
+    pop: Rect,
+    snapshot: &NodeSnapshot,
+    show_tile_scale: bool,
+    locale: op_editor_core::Locale,
+) {
+    jian_widgets::components::button::Button {
+        label: op_i18n::translate(locale, "image.matchRatio"),
+        icon_paths: Some(Icon::Maximize.paths()),
+        variant: jian_widgets::components::button::ButtonVariant::Secondary,
+        enabled: match_ratio_target_height(snapshot).is_some(),
+        hovered: false,
+        pressed: false,
+        font_size: 11.0,
+    }
+    .paint(
+        cx.backend,
+        match_ratio_rect(pop, show_tile_scale),
+        &crate::widgets::button::tokens_from_theme(theme),
+    );
 }
 
 fn tile_scale_rect(pop: Rect) -> Rect {
@@ -322,8 +369,30 @@ fn upload_rect(pop: Rect, show_tile_scale: bool) -> Rect {
     }
 }
 
+fn match_ratio_rect(pop: Rect, show_tile_scale: bool) -> Rect {
+    let upload = upload_rect(pop, show_tile_scale);
+    Rect {
+        origin: Point2D::new(
+            upload.origin.x,
+            upload.origin.y + UPLOAD_H + MATCH_RATIO_GAP,
+        ),
+        size: Point2D::new(upload.size.x, MATCH_RATIO_H),
+    }
+}
+
+/// The height the match-ratio row would write, or `None` when it has
+/// nothing to compute from — no image fill, an unknown intrinsic size,
+/// or a node with no resolved width. Paint uses it for the disabled
+/// state and the hit walker uses it as the gate, so a greyed-out row
+/// can never also be clickable.
+fn match_ratio_target_height(snapshot: &NodeSnapshot) -> Option<f32> {
+    let summary = snapshot.image_fill.as_ref()?;
+    let source = crate::widgets::property_panel_image_ratio::image_source_size(summary)?;
+    op_editor_core::aspect_matched_height(snapshot.width as f32, source)
+}
+
 fn adjustments_header_y(pop: Rect, show_tile_scale: bool) -> f32 {
-    upload_rect(pop, show_tile_scale).origin.y + UPLOAD_H + 13.0
+    match_ratio_rect(pop, show_tile_scale).origin.y + MATCH_RATIO_H + 13.0
 }
 
 fn adjustment_track_rects(
@@ -465,7 +534,7 @@ fn paint_adjustments(
 ) {
     let show_tile_scale =
         summary.tile_scale.is_some() && summary.mode == op_editor_core::ImageFillMode::Tile;
-    let divider_y = upload_rect(pop, show_tile_scale).origin.y + UPLOAD_H + 12.0;
+    let divider_y = match_ratio_rect(pop, show_tile_scale).origin.y + MATCH_RATIO_H + 12.0;
     cx.backend.fill_rect(
         Rect {
             origin: Point2D::new(pop.origin.x, divider_y),
