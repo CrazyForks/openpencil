@@ -258,6 +258,22 @@ impl WidgetHostNative {
             self.mark_dirty();
             return true;
         }
+        // Escape closes the colour-variable popup before the fill-type
+        // dropdown underneath it (one layer per press).
+        if self
+            .editor_state
+            .editor_ui
+            .property_color_variable_picker_open
+            .take()
+            .is_some()
+        {
+            self.editor_state
+                .editor_ui
+                .property_color_variable_picker_scroll
+                .offset = 0.0;
+            self.mark_dirty();
+            return true;
+        }
         if self.editor_state.editor_ui.escape_fill_type_picker() {
             self.mark_dirty();
             return true;

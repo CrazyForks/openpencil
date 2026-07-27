@@ -82,7 +82,7 @@ fn a_drop_over_the_left_rail_is_not_a_canvas_drop() {
 #[test]
 fn preview_mode_refuses_drop_targets() {
     let mut host = seed(PLACEHOLDER);
-    host.editor_state_mut().editor_ui.preview_mode = true;
+    host.editor_state_mut().editor_ui.preview.mode = true;
     let (x, y) = screen_at(&host, 430.0, 250.0);
     assert_eq!(
         host.image_drop_target_at(x, y, VIEWPORT_W, VIEWPORT_H),

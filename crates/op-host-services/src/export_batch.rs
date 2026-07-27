@@ -71,7 +71,9 @@ pub fn export_frames_to_dir(
             scale,
         ) {
             Ok(()) => report.written.push(target.file_name.clone()),
-            Err(e) => report.failed.push((target.file_name.clone(), e.to_string())),
+            Err(e) => report
+                .failed
+                .push((target.file_name.clone(), e.to_string())),
         }
     }
     report

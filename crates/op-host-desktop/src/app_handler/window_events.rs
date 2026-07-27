@@ -3,7 +3,10 @@
 //! `app_handler.rs` spine to keep it under the 800-line cap; pure code
 //! motion.
 
-use crate::{chat_session, figma_import_session, html_import_session, image_drop_host, persistence, DesktopApp};
+use crate::{
+    chat_session, figma_import_session, html_import_session, image_drop_host, persistence,
+    DesktopApp,
+};
 use std::path::PathBuf;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event_loop::ActiveEventLoop;

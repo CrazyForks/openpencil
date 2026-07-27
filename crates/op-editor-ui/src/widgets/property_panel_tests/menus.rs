@@ -7,6 +7,7 @@
 
 use super::{color_eq, RoundFillBackend};
 use crate::widgets::property_panel::{PropertyPanel, PropertyPanelAction};
+use crate::widgets::property_panel_color_variables::ColorVariableRow;
 use crate::widgets::property_panel_sections as sections;
 use crate::widgets::property_panel_test_support::{state_from, visible_for};
 use crate::widgets::{PaintCx, Widget};
@@ -295,52 +296,51 @@ fn color_variable_picker_emits_bind_and_unbind_rows() {
         origin: Point2D::new(0.0, 0.0),
         size: Point2D::new(280.0, 1200.0),
     };
-    let rects = sections::action_button_rects_with_fill_picker(
-        rect,
-        visible_for(&panel),
-        &panel.snapshot.effects,
-        &panel.snapshot.fills,
-        &panel.snapshot.interactions,
-        false,
-        0,
-        false,
-        false,
-        false,
-        false,
-        false,
+    let layout = panel
+        .color_variable_picker_layout(rect)
+        .expect("open picker should lay out");
+    let unbound_rows = layout.rows.clone();
+    assert_eq!(
+        layout.row_at(row_center(&unbound_rows, 0)),
+        Some(ColorVariableRow::Variable(0)),
+        "open color-variable picker should expose variable rows"
     );
     assert!(
-        rects.iter().any(|(action, _)| matches!(
-            action,
-            PropertyPanelAction::BindColorVariable {
+        matches!(
+            panel.color_variable_picker_action_at(rect, row_center(&unbound_rows, 0)),
+            Some(PropertyPanelAction::BindColorVariable {
                 target: op_editor_core::ColorTarget::Fill,
                 index: 0,
-            }
-        )),
-        "open color-variable picker should expose variable rows"
+            })
+        ),
+        "clicking a variable row should still bind that variable"
     );
 
     assert!(state.bind_selected_color_variable(op_editor_core::ColorTarget::Fill, "color-1"));
     let panel = PropertyPanel::for_selection(&state).expect("bound rectangle panel");
-    let rects = sections::action_button_rects_with_fill_picker(
-        rect,
-        visible_for(&panel),
-        &panel.snapshot.effects,
-        &panel.snapshot.fills,
-        &panel.snapshot.interactions,
-        false,
-        0,
-        false,
-        false,
-        false,
-        false,
-        false,
-    );
-    assert!(
-        rects.iter().any(|(action, _)| matches!(
-            action,
-            PropertyPanelAction::UnbindColorVariable(op_editor_core::ColorTarget::Fill)
-        )),
+    let layout = panel
+        .color_variable_picker_layout(rect)
+        .expect("open picker should lay out");
+    assert_eq!(
+        layout.rows.first().map(|(row, _)| *row),
+        Some(ColorVariableRow::Unbind),
         "bound color field should expose an unbind row"
     );
+    assert!(
+        matches!(
+            panel.color_variable_picker_action_at(rect, row_center(&layout.rows, 0)),
+            Some(PropertyPanelAction::UnbindColorVariable(
+                op_editor_core::ColorTarget::Fill
+            ))
+        ),
+        "clicking the unbind row should still unbind"
+    );
+}
+
+fn row_center(rows: &[(ColorVariableRow, Rect)], index: usize) -> Point2D {
+    let (_, rect) = rows[index];
+    Point2D::new(
+        rect.origin.x + rect.size.x / 2.0,
+        rect.origin.y + rect.size.y / 2.0,
+    )
 }
