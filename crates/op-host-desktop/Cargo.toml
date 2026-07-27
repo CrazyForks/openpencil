@@ -183,10 +183,11 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 toml_edit = "0.25"
 rfd = "0.14"
-# OS clipboard for the AI chat input's Cmd+C / Cmd+V / Cmd+X.
-# arboard wraps NSPasteboard (macOS), the Win32 clipboard, and
-# X11 / Wayland on Linux — one cross-platform text-clipboard API.
-arboard = "3"
+# OS clipboard for Cmd+C / Cmd+V / Cmd+X, including canvas images.
+# Native Wayland access is opt-in in arboard; without this feature a
+# Wayland session still probes X11/XWayland and misses clipboard offers
+# made directly by apps such as KDE Spectacle.
+arboard = { version = "3", features = ["wayland-data-control"] }
 # Base64-encodes chat image attachments for providers that take
 # inline image content blocks (Claude SDK) or a base64 body field
 # (HTTP-server transport). Same pure-Rust crate op-figma uses.

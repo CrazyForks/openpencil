@@ -93,3 +93,34 @@ pub fn set_text(text: &str) {
         let _ = clipboard.set_text(text.to_owned());
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::borrow::Cow;
+
+    #[test]
+    fn native_clipboard_rgba_is_encoded_as_png() {
+        let image = arboard::ImageData {
+            width: 2,
+            height: 1,
+            bytes: Cow::Owned(vec![255, 0, 0, 255, 0, 255, 0, 128]),
+        };
+
+        let encoded = encode_image(image).expect("valid clipboard RGBA should encode");
+
+        assert_eq!((encoded.width, encoded.height), (2, 1));
+        assert!(encoded.png.starts_with(b"\x89PNG\r\n\x1a\n"));
+    }
+
+    #[test]
+    fn native_clipboard_rgba_rejects_truncated_rows() {
+        let image = arboard::ImageData {
+            width: 2,
+            height: 1,
+            bytes: Cow::Owned(vec![255, 0, 0, 255]),
+        };
+
+        assert!(encode_image(image).is_none());
+    }
+}
