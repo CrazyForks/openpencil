@@ -6,10 +6,42 @@
 //! HTTP-server transport doesn't have to re-implement (or reach into)
 //! the stdio bridge's internals.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use tokio::process::Command;
+
+/// Hard budget for the login-shell environment probe. The probe runs an
+/// INTERACTIVE shell, so it executes the user's full rc — which is
+/// allowed to block forever (a prompt framework waiting on the network, a
+/// stale `nvm use`, a hung completion script). The probe fires from
+/// `main` before any window exists, so an unbounded wait hangs the whole
+/// launch with no UI to explain it. A healthy `-ilc` dump measures ~2.2 s
+/// on a developer machine; a run past this budget is a broken rc, and
+/// falling back to the unrepaired process env beats never starting.
+const LOGIN_SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// Environment variables grafted from the login shell onto this process,
+/// beyond `PATH`. A GUI (Dock / Finder) launch inherits launchd's
+/// environment, which carries none of the user's proxy exports, so any
+/// probe that must reach the network (`agy models`, `grok models`) stalls
+/// behind a proxy-only route until its own deadline fires.
+///
+/// Deliberately a fixed allowlist rather than a bulk copy: the login
+/// shell's full environment holds unrelated host secrets, and this
+/// process's env is inherited by every child we spawn.
+const GRAFTED_ENV_KEYS: [&str; 8] = [
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "no_proxy",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+];
 
 /// The user's LOGIN-SHELL `PATH`, resolved once and cached.
 ///
@@ -35,9 +67,9 @@ pub fn login_shell_path() -> Option<&'static str> {
 /// to the subscription OAuth credential — and Anthropic rejects
 /// non-Claude-Code-shaped requests on that credential with
 /// `403 Request not allowed`. `None` on Windows or when the probe
-/// fails.
-pub fn login_shell_env() -> Option<&'static std::collections::BTreeMap<String, String>> {
-    static CACHE: OnceLock<Option<std::collections::BTreeMap<String, String>>> = OnceLock::new();
+/// fails or times out.
+pub fn login_shell_env() -> Option<&'static BTreeMap<String, String>> {
+    static CACHE: OnceLock<Option<BTreeMap<String, String>>> = OnceLock::new();
     CACHE
         .get_or_init(|| {
             #[cfg(windows)]
@@ -47,30 +79,113 @@ pub fn login_shell_env() -> Option<&'static std::collections::BTreeMap<String, S
             #[cfg(not(windows))]
             {
                 let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
-                let out = std::process::Command::new(&shell)
-                    .args(["-lc", "command env"])
-                    .stdin(std::process::Stdio::null())
-                    .output()
-                    .ok()?;
-                if !out.status.success() {
-                    return None;
-                }
-                let text = String::from_utf8(out.stdout).ok()?;
-                let mut map = std::collections::BTreeMap::new();
-                for line in text.lines() {
-                    // Multi-line values lose their tail here — acceptable:
-                    // the consumers (PATH, API keys, base URLs) are
-                    // single-line by construction.
-                    if let Some((key, value)) = line.split_once('=') {
-                        if !key.is_empty() {
-                            map.insert(key.to_string(), value.to_string());
-                        }
+                // `-i` is load-bearing. A pure login shell (`-l`) reads
+                // only `.zprofile` / `.profile`, while homebrew, nvm and
+                // proxy exports conventionally live in the INTERACTIVE rc
+                // (`.zshrc` / `.bashrc`) — so `-lc` came back missing
+                // exactly the entries a GUI launch needs, and Node-based
+                // CLIs died on shebang resolution while networked probes
+                // hung with no proxy.
+                match capture_env_dump(&shell, &["-ilc", "command env"], LOGIN_SHELL_PROBE_TIMEOUT)
+                {
+                    EnvDump::Completed(text) => {
+                        let map = parse_env_dump(&text);
+                        (!map.is_empty()).then_some(map)
                     }
+                    EnvDump::TimedOut | EnvDump::Failed => None,
                 }
-                (!map.is_empty()).then_some(map)
             }
         })
         .as_ref()
+}
+
+/// Result of one bounded `<shell> -ilc "command env"` run.
+#[cfg(not(windows))]
+enum EnvDump {
+    /// The shell exited successfully inside the budget; carries stdout.
+    Completed(String),
+    /// Still running at the deadline (a blocking rc) — killed.
+    TimedOut,
+    /// Never produced usable output: spawn failed, pipes missing,
+    /// non-zero exit, or non-UTF-8 stdout.
+    Failed,
+}
+
+/// Run `program args…` with a hard deadline and return its stdout.
+///
+/// The command spec is a parameter rather than baked in so tests can
+/// exercise the success / timeout / failure branches against a trivial
+/// `/bin/sh` script instead of launching a real interactive shell (which
+/// would run the developer's own rc).
+#[cfg(not(windows))]
+fn capture_env_dump(program: &str, args: &[&str], timeout: Duration) -> EnvDump {
+    use std::process::Stdio;
+    use std::time::Instant;
+
+    let mut command = std::process::Command::new(program);
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        // An interactive rc is allowed to be noisy on stderr (a
+        // `command not found` from a half-installed completion). Drain
+        // it into the void: only stdout is parsed, and an undrained
+        // pipe would let a chatty rc deadlock this probe.
+        .stderr(Stdio::piped());
+    let Ok(mut child) = command.spawn() else {
+        return EnvDump::Failed;
+    };
+    let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return EnvDump::Failed;
+    };
+    let stdout_reader = crate::cli_probe_support::PipeCapture::spawn(stdout);
+    let stderr_reader = crate::cli_probe_support::PipeCapture::spawn(stderr);
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let out = stdout_reader.finish();
+                drop(stderr_reader);
+                if !status.success() {
+                    return EnvDump::Failed;
+                }
+                return match String::from_utf8(out) {
+                    Ok(text) => EnvDump::Completed(text),
+                    Err(_) => EnvDump::Failed,
+                };
+            }
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Ok(None) | Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return EnvDump::TimedOut;
+            }
+        }
+    }
+}
+
+/// Parse `env` output into a map.
+///
+/// Multi-line values lose their tail — acceptable: the consumers (PATH,
+/// API keys, base URLs, proxy URLs) are single-line by construction. A
+/// key containing whitespace is not an environment entry but rc chatter
+/// that happened to print an `=`, so it is dropped.
+fn parse_env_dump(text: &str) -> BTreeMap<String, String> {
+    let mut map = BTreeMap::new();
+    for line in text.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if key.is_empty() || key.contains(char::is_whitespace) {
+            continue;
+        }
+        map.insert(key.to_string(), value.to_string());
+    }
+    map
 }
 
 /// One env var through the process env first, then the captured
@@ -98,14 +213,23 @@ pub fn effective_path_env() -> String {
     }
 }
 
-/// Repair THIS PROCESS's `PATH` from the login shell — call once at GUI
-/// startup, before any worker threads spawn. A Dock-launched app inherits
-/// launchd's minimal PATH; grafting the login-shell PATH onto the process
-/// itself means every child (CLI subprocesses, the Claude agent SDK's
-/// `env::vars()` baseline) inherits the repaired PATH naturally — WITHOUT
-/// passing PATH through per-request env maps, which the agent SDK's
-/// dangerous-env blocklist rejects outright.
-pub fn repair_gui_process_path() {
+/// Repair THIS PROCESS's environment from the login shell — call once at
+/// GUI startup, before any worker threads spawn. A Dock-launched app
+/// inherits launchd's minimal environment; grafting the login-shell
+/// values onto the process itself means every child (CLI subprocesses,
+/// the Claude agent SDK's `env::vars()` baseline) inherits them naturally
+/// — WITHOUT passing them through per-request env maps, which the agent
+/// SDK's dangerous-env blocklist rejects outright.
+///
+/// Two repairs, both narrow: the merged `PATH` (so `#!/usr/bin/env node`
+/// shebangs resolve) and the [`GRAFTED_ENV_KEYS`] proxy allowlist (so
+/// networked probes are not stranded on a proxy-only route).
+pub fn repair_gui_process_env() {
+    repair_process_path();
+    repair_process_proxy_vars();
+}
+
+fn repair_process_path() {
     let merged = effective_path_env();
     if merged.is_empty() || std::env::var("PATH").as_deref() == Ok(merged.as_str()) {
         return;
@@ -113,6 +237,38 @@ pub fn repair_gui_process_path() {
     // Single-threaded startup call site; the desktop main calls this before
     // the winit loop or any chat worker exists.
     std::env::set_var("PATH", merged);
+}
+
+fn repair_process_proxy_vars() {
+    let Some(login) = login_shell_env() else {
+        return;
+    };
+    for (key, value) in proxy_grafts(login, |key| std::env::var_os(key).is_some()) {
+        std::env::set_var(key, value);
+    }
+}
+
+/// Which allowlisted proxy variables to graft, given the login-shell dump
+/// and a predicate reporting what this process already carries. A key
+/// already present in the process wins — an explicit launch-time setting
+/// (including an intentional empty `no_proxy`) must not be overwritten by
+/// a shell rc. Split out of [`repair_process_proxy_vars`] so the
+/// allowlist and the no-overwrite rule are testable without mutating the
+/// test process's own environment.
+fn proxy_grafts<F>(login: &BTreeMap<String, String>, is_set: F) -> Vec<(&str, &str)>
+where
+    F: Fn(&str) -> bool,
+{
+    GRAFTED_ENV_KEYS
+        .iter()
+        .filter_map(|key| {
+            if is_set(key) {
+                return None;
+            }
+            let value = login.get(*key)?;
+            (!value.trim().is_empty()).then_some((*key, value.as_str()))
+        })
+        .collect()
 }
 
 /// Login-shell entries first, current-process entries appended, deduped.
@@ -361,5 +517,131 @@ mod login_shell_tests {
     fn merge_handles_empty_segments() {
         assert_eq!(merge_path_lists("", "/usr/bin"), "/usr/bin");
         assert_eq!(merge_path_lists("/usr/bin", ""), "/usr/bin");
+    }
+
+    #[test]
+    fn parse_env_dump_keeps_entries_and_drops_rc_chatter() {
+        let dump = concat!(
+            "PATH=/opt/homebrew/bin:/usr/bin\n",
+            "https_proxy=http://127.0.0.1:7890\n",
+            // A noisy interactive rc printing to stdout: not an entry.
+            "_encode: command not found = maybe\n",
+            // Continuation of a multi-line value; the tail is dropped.
+            "some trailing prose\n",
+            "=novalue\n",
+        );
+        let map = parse_env_dump(dump);
+        assert_eq!(
+            map.get("PATH").map(String::as_str),
+            Some("/opt/homebrew/bin:/usr/bin")
+        );
+        assert_eq!(
+            map.get("https_proxy").map(String::as_str),
+            Some("http://127.0.0.1:7890")
+        );
+        assert_eq!(map.len(), 2, "only real KEY=VALUE lines survive: {map:?}");
+    }
+
+    fn login_dump() -> BTreeMap<String, String> {
+        [
+            ("http_proxy", "http://127.0.0.1:7890"),
+            ("https_proxy", "http://127.0.0.1:7890"),
+            ("no_proxy", "   "),
+            ("ANTHROPIC_API_KEY", "sk-secret"),
+            ("PATH", "/opt/homebrew/bin"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+    }
+
+    #[test]
+    fn proxy_grafts_only_allowlisted_keys_that_are_unset() {
+        let login = login_dump();
+        let grafts = proxy_grafts(&login, |_| false);
+        assert_eq!(
+            grafts,
+            vec![
+                ("http_proxy", "http://127.0.0.1:7890"),
+                ("https_proxy", "http://127.0.0.1:7890"),
+            ],
+            "blank values are skipped, and nothing outside the allowlist \
+             (ANTHROPIC_API_KEY / PATH) is grafted"
+        );
+    }
+
+    #[test]
+    fn proxy_grafts_never_overwrite_a_key_this_process_already_carries() {
+        let login = login_dump();
+        let grafts = proxy_grafts(&login, |key| key == "http_proxy");
+        assert_eq!(grafts, vec![("https_proxy", "http://127.0.0.1:7890")]);
+        assert!(proxy_grafts(&login, |_| true).is_empty());
+    }
+}
+
+#[cfg(all(test, not(windows)))]
+mod env_dump_tests {
+    use super::*;
+
+    /// Deliberately short: these assert on the deadline firing, not on
+    /// any real shell finishing.
+    const TIMEOUT: Duration = Duration::from_millis(400);
+
+    #[test]
+    fn capture_reads_stdout_and_tolerates_stderr_noise() {
+        let script = "printf 'A=1\\nB=2\\n'; printf '_encode: command not found\\n' >&2";
+        let EnvDump::Completed(text) = capture_env_dump("/bin/sh", &["-c", script], TIMEOUT) else {
+            panic!("a script that exits inside the budget must complete");
+        };
+        let map = parse_env_dump(&text);
+        assert_eq!(map.get("A").map(String::as_str), Some("1"));
+        assert_eq!(map.get("B").map(String::as_str), Some("2"));
+    }
+
+    #[test]
+    fn capture_times_out_instead_of_hanging_on_a_blocking_rc() {
+        let started = std::time::Instant::now();
+        let dump = capture_env_dump("/bin/sh", &["-c", "sleep 30"], TIMEOUT);
+        assert!(
+            matches!(dump, EnvDump::TimedOut),
+            "a shell still running at the deadline must be killed, not awaited"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the deadline, not the child, decides when the probe returns"
+        );
+    }
+
+    #[test]
+    fn capture_reports_failure_for_nonzero_exit_and_missing_program() {
+        assert!(matches!(
+            capture_env_dump("/bin/sh", &["-c", "printf 'A=1\\n'; exit 3"], TIMEOUT),
+            EnvDump::Failed
+        ));
+        assert!(matches!(
+            capture_env_dump(
+                "/nonexistent/shell-that-is-not-installed",
+                &["-ilc"],
+                TIMEOUT
+            ),
+            EnvDump::Failed
+        ));
+    }
+
+    #[test]
+    fn a_dump_with_no_entries_falls_back_to_the_unrepaired_env() {
+        // The fallback contract behind `login_shell_env`: an empty parse
+        // must read as "no login-shell env", so `effective_path_env`
+        // keeps the current process PATH instead of clearing it.
+        let EnvDump::Completed(text) =
+            capture_env_dump("/bin/sh", &["-c", "printf 'no entries here\\n'"], TIMEOUT)
+        else {
+            panic!("the script exits inside the budget");
+        };
+        assert!(parse_env_dump(&text).is_empty());
+        assert_eq!(
+            effective_path_env().is_empty(),
+            std::env::var("PATH").unwrap_or_default().is_empty()
+        );
     }
 }

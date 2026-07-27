@@ -309,7 +309,7 @@ fn effective_options(
     // rejects any request whose options.env carries PATH — the whole
     // query dies with "Invalid configuration" (measured 2026-07-11).
     // The GUI PATH repair is process-wide instead
-    // (`chat_spawn::repair_gui_process_path` at desktop startup), which
+    // (`chat_spawn::repair_gui_process_env` at desktop startup), which
     // the SDK's `env::vars()` baseline inherits naturally.
     for name in [
         "ANTHROPIC_API_KEY",

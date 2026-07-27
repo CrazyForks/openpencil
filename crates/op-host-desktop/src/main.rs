@@ -499,13 +499,14 @@ fn init_tracing() {
 }
 
 fn main() {
-    // FIRST, before any thread exists: graft the login-shell PATH onto this
-    // process. A Dock/Finder launch inherits launchd's minimal PATH — CLI
-    // agents (codex is a node-shebang script) and the Claude agent SDK's
-    // env baseline all need the user's real PATH, and the SDK's
-    // dangerous-env blocklist forbids passing PATH per-request, so the
-    // process env is the only correct carrier.
-    op_host_services::chat_spawn::repair_gui_process_path();
+    // FIRST, before any thread exists: graft the login-shell PATH and proxy
+    // exports onto this process. A Dock/Finder launch inherits launchd's
+    // minimal environment — CLI agents (codex is a node-shebang script) and
+    // the Claude agent SDK's env baseline all need the user's real PATH,
+    // networked CLI probes need the proxy vars, and the SDK's dangerous-env
+    // blocklist forbids passing PATH per-request, so the process env is the
+    // only correct carrier.
+    op_host_services::chat_spawn::repair_gui_process_env();
     // Register the brand-logo catalog (omitted from the wasm bundle, embedded in
     // this binary) BEFORE any path that can render natively — the GUI app, the
     // headless `--render-shots` rasterizer below, MCP — so they resolve
