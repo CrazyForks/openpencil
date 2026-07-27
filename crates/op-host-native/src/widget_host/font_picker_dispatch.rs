@@ -211,7 +211,10 @@ impl WidgetHostNative {
         }
         let max = panel.font_picker_max_scroll(rect);
         let ui = &mut self.editor_state.editor_ui;
-        let next = (ui.font_picker.scroll.offset + delta_y).clamp(0.0, max);
+        // A positive delta means the content travelled down (the reader
+        // moved up), so the offset shrinks — the one convention every
+        // other scroll surface in both hosts uses.
+        let next = (ui.font_picker.scroll.offset - delta_y).clamp(0.0, max);
         if next != ui.font_picker.scroll.offset {
             ui.font_picker.scroll.offset = next;
             ui.font_picker.hover = None;

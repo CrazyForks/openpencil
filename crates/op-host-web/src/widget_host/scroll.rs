@@ -182,7 +182,9 @@ impl WidgetHost {
         {
             let max = panel.font_picker_max_scroll(property_rect);
             let ui = &mut self.editor_state.editor_ui;
-            let next = (ui.font_picker.scroll.offset + delta_y).clamp(0.0, max);
+            // Positive delta shrinks the offset — same convention as
+            // every other scroll surface (see the native host).
+            let next = (ui.font_picker.scroll.offset - delta_y).clamp(0.0, max);
             if next != ui.font_picker.scroll.offset {
                 ui.font_picker.scroll.offset = next;
                 ui.font_picker.hover = None;

@@ -187,6 +187,8 @@ mod screen_switcher;
 mod screen_switcher_tests;
 mod scroll;
 #[cfg(test)]
+mod scroll_direction_tests;
+#[cfg(test)]
 mod scroll_tests;
 mod settings_caret;
 #[cfg(test)]
