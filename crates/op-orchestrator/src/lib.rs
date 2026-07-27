@@ -61,6 +61,7 @@ pub mod loop_finalize;
 pub mod nav_issues;
 pub mod prompt;
 pub mod radial_repair;
+pub mod repair_summary;
 pub mod retry_subtask;
 pub mod role_defaults;
 pub mod role_infer;
@@ -121,10 +122,11 @@ pub use design_system::{
 };
 pub use design_type::{detect_design_type, DesignType, DesignTypePreset};
 pub use intent::classify_intent;
-pub use loop_finalize::apply_loop_finalize;
+pub use loop_finalize::{apply_loop_finalize, apply_loop_finalize_counted};
 pub use mobile_reflow::repair_mobile_trailing_nav_reflow;
 pub use model_profile::{resolve_model_profile, ModelProfile, ModelTier};
 pub use prompt::build_orchestrator_prompt;
+pub use repair_summary::{CheckCategory, RepairSummary};
 pub use run::Orchestrator;
 pub use spawn_concurrent::{run_spawned_agents_concurrent, SpawnAgentResult, SpawnAgentSpec};
 pub use stub_providers::{

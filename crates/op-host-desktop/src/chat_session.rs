@@ -260,13 +260,17 @@ fn execute_tool_requests(
                 .ok()
                 .and_then(|v| v.get("checkOnly").and_then(|b| b.as_bool()))
                 .unwrap_or(false);
+            // The quality tally is a by-product of the REAL finalize only —
+            // the `checkOnly` probe runs no repair pass, so it must report an
+            // empty summary rather than inherit the last real run's numbers.
+            let mut quality = op_orchestrator::RepairSummary::default();
             let unfilled = if check_only {
                 op_orchestrator::unfilled_screens::detect_unfilled_screens(state)
                     .into_iter()
                     .map(|hit| hit.name)
                     .collect::<Vec<_>>()
             } else {
-                op_orchestrator::apply_loop_finalize(state);
+                quality = op_orchestrator::apply_loop_finalize_counted(state);
                 let names =
                     op_orchestrator::unfilled_screens::finalize_and_mark_unfilled_screens(state);
                 session.mark_loop_finalized();
@@ -287,6 +291,20 @@ fn execute_tool_requests(
                     "success": true,
                     "committed": committed,
                     "unfilled": unfilled,
+                    "quality": {
+                        "checks": quality
+                            .checked()
+                            .into_iter()
+                            .map(|c| c.key())
+                            .collect::<Vec<_>>(),
+                        "repairs": quality
+                            .repaired()
+                            .into_iter()
+                            .map(|(check, count)| {
+                                serde_json::json!({ "check": check.key(), "count": count })
+                            })
+                            .collect::<Vec<_>>(),
+                    },
                 })
                 .to_string(),
                 is_error: false,

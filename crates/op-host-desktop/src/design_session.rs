@@ -434,6 +434,22 @@ fn apply_progress(msg: &mut ChatMessage, progress: &[Progress], locale: Locale) 
                     names.join(", ")
                 ),
             ),
+            // Quality credential — same untranslated diagnostic-line
+            // treatment as the two reports above. `remaining` is `None`:
+            // the promise-delivery check has not run yet at this point, and
+            // an assumed "no issues left" would be a claim, not a fact.
+            Progress::QualityChecked { checks, repairs } => {
+                match op_host_services::quality_credential::quality_credential_line(
+                    &op_ai::chat_provider::QualitySummary {
+                        checks: checks.clone(),
+                        repairs: repairs.clone(),
+                    },
+                    None,
+                ) {
+                    Some(line) => append_narration(msg, line.trim_start()),
+                    None => false,
+                }
+            }
         };
     }
     changed

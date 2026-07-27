@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use futures::StreamExt;
 use op_ai::chat_provider::{
-    ChatDelta, ChatHistoryRole, ChatToolDef, ChatToolExecutor, ChatToolResult, StopReason,
-    UnfilledScreensReport,
+    ChatDelta, ChatHistoryRole, ChatToolDef, ChatToolExecutor, ChatToolResult, FinalizeReport,
+    QualitySummary, StopReason, UnfilledScreensReport,
 };
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
@@ -135,12 +135,9 @@ async fn execute_tool(
 /// Returns the promise-delivery invariant's committed/unfilled report AFTER
 /// finalize ran and any still-unfilled screens got canvas-marked — empty on
 /// the default no-op and on the common path where nothing was left unfilled.
-async fn run_loop_finalize(
-    executor: &Arc<dyn ChatToolExecutor>,
-    enabled: bool,
-) -> UnfilledScreensReport {
+async fn run_loop_finalize(executor: &Arc<dyn ChatToolExecutor>, enabled: bool) -> FinalizeReport {
     if !enabled {
-        return UnfilledScreensReport::default();
+        return FinalizeReport::default();
     }
     let executor = executor.clone();
     tokio::task::spawn_blocking(move || executor.finalize())
@@ -288,11 +285,31 @@ async fn finalize_and_report(
     executor: &Arc<dyn ChatToolExecutor>,
     enabled: bool,
 ) -> UnfilledScreensReport {
-    let still_unfilled = run_loop_finalize(executor, enabled).await;
-    report_unfilled_if_any(tx, &still_unfilled.unfilled).await;
+    let finalized = run_loop_finalize(executor, enabled).await;
+    report_unfilled_if_any(tx, &finalized.screens.unfilled).await;
     let blocker_report = blockers::check_blockers(executor, enabled).await;
     report_blockers_if_any(tx, &blocker_report).await;
-    still_unfilled
+    // The positive half of the same tail: what the deterministic passes
+    // checked and repaired. Emitted LAST so it reads as the closing receipt
+    // over whatever problem lines precede it, and its leftover count is the
+    // sum of exactly those lines — never a separate, softer number.
+    let remaining = finalized.screens.unfilled.len() + blocker_report.blockers.len();
+    report_quality_credential(tx, &finalized.quality, remaining).await;
+    finalized.screens
+}
+
+/// Append the user-visible quality credential. Silent when the executor
+/// reported no checks at all (plain chat turn, no live document) — see
+/// `crate::quality_credential`'s honesty contract.
+async fn report_quality_credential(
+    tx: &mpsc::Sender<ChatDelta>,
+    quality: &QualitySummary,
+    remaining: usize,
+) {
+    if let Some(line) = crate::quality_credential::quality_credential_line(quality, Some(remaining))
+    {
+        let _ = tx.send(ChatDelta::TextDelta(line)).await;
+    }
 }
 
 /// Self-diagnostic signal for the finalize-lifecycle invariant (0718-1-k3-1
@@ -424,6 +441,12 @@ mod finalize_tests;
 #[cfg(test)]
 #[path = "chat_agent_loop_blockers_tests.rs"]
 mod blockers_tests;
+
+// Quality-credential tests for the same finalize tail — same split
+// rationale and shared infra as `blockers_tests` above.
+#[cfg(test)]
+#[path = "chat_agent_loop_quality_tests.rs"]
+mod quality_tests;
 
 #[cfg(test)]
 #[path = "chat_agent_loop_retry_tests.rs"]

@@ -412,6 +412,44 @@ pub struct UnfilledScreensReport {
     pub unfilled: Vec<String>,
 }
 
+/// What the deterministic quality passes checked and repaired during finalize
+/// — the transport-free mirror of `op_orchestrator::RepairSummary`, which
+/// this crate cannot name (op-ai sits BELOW op-orchestrator in the dep
+/// graph). The host that owns the live document converts one into the other
+/// and ships it across the same tool-channel ack every other result rides.
+///
+/// `checks` are the check-family keys that actually ran (`layout` /
+/// `overflow` / `hierarchy` / `structure` / `palette`); `repairs` pairs the
+/// subset that fixed something with how many document edits it applied.
+/// Empty `checks` means the passes never ran at all — the credential must
+/// then be omitted entirely, never rendered as a clean bill of health.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct QualitySummary {
+    pub checks: Vec<String>,
+    pub repairs: Vec<(String, usize)>,
+}
+
+impl QualitySummary {
+    /// Whether any check family ran — the gate for showing a credential.
+    pub fn ran(&self) -> bool {
+        !self.checks.is_empty()
+    }
+
+    pub fn total_repairs(&self) -> usize {
+        self.repairs.iter().map(|(_, count)| *count).sum()
+    }
+}
+
+/// Everything [`ChatToolExecutor::finalize`] hands back: the promise-delivery
+/// report the corrective tiers act on, plus the quality tally the completion
+/// message reports. One struct so a new finalize output never needs another
+/// round-trip over the tool channel.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FinalizeReport {
+    pub screens: UnfilledScreensReport,
+    pub quality: QualitySummary,
+}
+
 pub trait ChatToolExecutor: Send + Sync {
     fn execute(&self, name: &str, args_json: &str) -> ChatToolResult;
 
@@ -430,10 +468,14 @@ pub trait ChatToolExecutor: Send + Sync {
     ///
     /// Returns the promise-delivery report AFTER finalize ran and any still-
     /// unfilled screens got marked on the canvas — the loop's unconditional
-    /// honest-report tier reads `unfilled` to append a transcript line. Empty
-    /// for every executor that doesn't own a live document.
-    fn finalize(&self) -> UnfilledScreensReport {
-        UnfilledScreensReport::default()
+    /// honest-report tier reads `screens.unfilled` to append a transcript
+    /// line — alongside `quality`, the tally of what those same passes
+    /// checked and repaired (the user-visible quality credential). Empty for
+    /// every executor that doesn't own a live document, which is exactly why
+    /// an empty `quality` must suppress the credential rather than print a
+    /// zero: nothing was checked, so there is nothing to vouch for.
+    fn finalize(&self) -> FinalizeReport {
+        FinalizeReport::default()
     }
 
     /// Cheap, read-only promise-delivery check — same detector as

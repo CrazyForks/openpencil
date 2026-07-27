@@ -52,6 +52,7 @@
 //! anything, and there is no per-subtask retry to drive at loop end, so it is
 //! not part of the finalize.
 
+use crate::repair_summary::{CheckCategory, RepairCounter, RepairSummary};
 use crate::role_defaults::{detect_theme_from_fill, Theme};
 use jian_ops_schema::node::PenNode;
 use op_editor_core::{first_solid_fill_hex, EditorCommand, EditorState, NodeId, PenNodeExt};
@@ -439,30 +440,46 @@ fn ensure_text_fill_forest(nodes: &mut [PenNode], state: &EditorState) {
 /// See the module doc for the included-vs-excluded pass list and the rationale
 /// for excluding the two subtask-boundary-dependent passes.
 pub fn apply_loop_finalize(state: &mut EditorState) {
+    let _ = apply_loop_finalize_counted(state);
+}
+
+/// [`apply_loop_finalize`] that also reports what its quality passes checked
+/// and repaired, so the loop can surface a truthful credential to the user
+/// instead of leaving every repair in the logs. Behaviourally identical — the
+/// returned [`RepairSummary`] is pure measurement (see
+/// `crate::repair_summary`). An empty summary means the passes never ran
+/// (empty document), NOT "checked and found nothing".
+pub fn apply_loop_finalize_counted(state: &mut EditorState) -> RepairSummary {
+    let mut summary = RepairSummary::default();
     if state.active_children().is_empty() {
-        return;
+        return summary;
     }
 
     {
-        let mut sink = StateDocSink { state: &mut *state };
-        crate::abandoned_duplicate_roots::remove_abandoned_duplicate_roots(&mut sink);
-        crate::cleanup::remove_duplicate_bottom_nav_sections_for_all_roots(&mut sink);
+        let mut counter = RepairCounter::new();
+        let mut base = StateDocSink { state: &mut *state };
+        let mut counting = counter.wrap(&mut base);
+        let sink: &mut dyn crate::types::DocSink = &mut counting;
+        crate::abandoned_duplicate_roots::remove_abandoned_duplicate_roots(sink);
+        crate::cleanup::remove_duplicate_bottom_nav_sections_for_all_roots(sink);
         // Nav-surface normalization (72px row, space_between, centered items)
         // previously ran only on the orchestrator path — the agentic loop's
         // hand-built navs shipped crooked (GLM-5.2 2026-07-11).
-        crate::cleanup::repair_mobile_structural_chrome_for_all_roots(&mut sink);
-        crate::avatar_repair::repair_avatar_slots_for_all_roots(&mut sink);
-        crate::cleanup::anchor_bottom_nav_last_for_all_roots(&mut sink);
-        crate::mobile_content_rail::repair_mobile_content_rails_for_all_roots(&mut sink);
-        crate::cleanup::distribute_bottom_nav_tabs_for_all_roots(&mut sink);
-        crate::cleanup::collapse_nested_horizontal_padding_for_all_roots(&mut sink);
-        crate::cleanup::expand_absolute_container_to_children_for_all_roots(&mut sink);
-        crate::cleanup::pad_clipping_horizontal_row_for_stroke_for_all_roots(&mut sink);
-        crate::cleanup::equalize_horizontal_card_heights_for_all_roots(&mut sink);
-        crate::cleanup::collapse_fill_container_content_sections_for_all_roots(&mut sink);
+        crate::cleanup::repair_mobile_structural_chrome_for_all_roots(sink);
+        crate::avatar_repair::repair_avatar_slots_for_all_roots(sink);
+        crate::cleanup::anchor_bottom_nav_last_for_all_roots(sink);
+        counter.checkpoint(&mut summary, CheckCategory::Structure);
+        crate::mobile_content_rail::repair_mobile_content_rails_for_all_roots(sink);
+        crate::cleanup::distribute_bottom_nav_tabs_for_all_roots(sink);
+        crate::cleanup::collapse_nested_horizontal_padding_for_all_roots(sink);
+        crate::cleanup::expand_absolute_container_to_children_for_all_roots(sink);
+        crate::cleanup::pad_clipping_horizontal_row_for_stroke_for_all_roots(sink);
+        crate::cleanup::equalize_horizontal_card_heights_for_all_roots(sink);
+        crate::cleanup::collapse_fill_container_content_sections_for_all_roots(sink);
+        counter.checkpoint(&mut summary, CheckCategory::Layout);
     }
     if state.active_children().is_empty() {
-        return;
+        return summary;
     }
 
     // -- Resolve the section forest + its page context. --
@@ -542,7 +559,7 @@ pub fn apply_loop_finalize(state: &mut EditorState) {
     {
         let mut sink = StateDocSink { state: &mut *state };
         let root_id_refs: Vec<&str> = root_ids.iter().map(String::as_str).collect();
-        crate::cleanup::finalize_design(&mut sink, &plan, &root_id_refs);
+        crate::cleanup::finalize_design_with_summary(&mut sink, &plan, &root_id_refs, &mut summary);
     }
 
     // Fill-less text → a background-contrasting fill, over the FULLY
@@ -555,6 +572,8 @@ pub fn apply_loop_finalize(state: &mut EditorState) {
     // while the tree is mutated.
     let snapshot = state.clone();
     ensure_text_fill_forest(state.active_children_mut(), &snapshot);
+
+    summary
 }
 
 /// Build the minimal [`OrchestratorPlan`](crate::plan::OrchestratorPlan) the

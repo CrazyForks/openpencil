@@ -21,7 +21,7 @@
 //! 一条独立消费方,不受此影响。
 
 use crate::append::apply_append_context_to_plan;
-use crate::cleanup::{descendant_count, finalize_design};
+use crate::cleanup::{descendant_count, finalize_design_with_summary};
 use crate::model_profile::resolve_model_profile;
 use crate::plan::{build_fallback_plan, OrchestratorPlan};
 use crate::plan_normalize::{normalize, NormInfo};

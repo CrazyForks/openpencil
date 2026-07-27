@@ -9,6 +9,7 @@
 use crate::cleanup_layout::root_content_height;
 use crate::cleanup_typography::repair_overbold_text_hierarchy;
 use crate::plan::OrchestratorPlan;
+use crate::repair_summary::{CheckCategory, RepairCounter, RepairSummary};
 use crate::types::DocSink;
 use jian_ops_schema::node::{
     container::{AlignItems, ContainerProps, JustifyContent, LayoutMode, Padding},
@@ -274,7 +275,20 @@ fn find_root<'a>(state: &'a EditorState, root_id: &str) -> Option<&'a PenNode> {
 /// per-subtask forest context that is not available at this whole-root
 /// finalize boundary, so folding them in is deferred to a later step.
 pub fn finalize_design(sink: &mut dyn DocSink, plan: &OrchestratorPlan, root_ids: &[&str]) {
-    run_cleanup_passes(sink, plan, root_ids);
+    let mut summary = RepairSummary::default();
+    run_cleanup_passes_with_summary(sink, plan, root_ids, &mut summary);
+}
+
+/// [`finalize_design`] that also reports what it checked and repaired, for the
+/// user-facing quality credential. Identical behaviour — the summary is a
+/// pure measurement of the same passes (see `crate::repair_summary`).
+pub fn finalize_design_with_summary(
+    sink: &mut dyn DocSink,
+    plan: &OrchestratorPlan,
+    root_ids: &[&str],
+    summary: &mut RepairSummary,
+) {
+    run_cleanup_passes_with_summary(sink, plan, root_ids, summary);
 }
 
 /// Env-gated (`OPENPENCIL_DEBUG_CLEANUP=1`) probe: log the named child's
@@ -309,6 +323,26 @@ fn debug_probe_child_height(sink: &dyn DocSink, root_id: &str, tag: &str) {
 }
 
 pub fn run_cleanup_passes(sink: &mut dyn DocSink, plan: &OrchestratorPlan, root_ids: &[&str]) {
+    let mut summary = RepairSummary::default();
+    run_cleanup_passes_with_summary(sink, plan, root_ids, &mut summary);
+}
+
+/// The real cleanup driver. `summary` accumulates what each contiguous group
+/// of passes checked and how many document edits it applied — see
+/// `crate::repair_summary` for what one "repair" counts as. The measurement
+/// is non-invasive: `sink` is shadowed once by a counting decorator and the
+/// `counter.checkpoint(...)` lines between pass groups are the only additions
+/// to what is otherwise the unchanged pass sequence.
+pub fn run_cleanup_passes_with_summary(
+    sink: &mut dyn DocSink,
+    plan: &OrchestratorPlan,
+    root_ids: &[&str],
+    summary: &mut RepairSummary,
+) {
+    let mut counter = RepairCounter::new();
+    let mut counting = counter.wrap(sink);
+    let sink: &mut dyn DocSink = &mut counting;
+
     let effective_root_ids: Vec<String> = if root_ids.is_empty() {
         Vec::new()
     } else {
@@ -328,11 +362,13 @@ pub fn run_cleanup_passes(sink: &mut dyn DocSink, plan: &OrchestratorPlan, root_
             .filter(|root_id| seen.insert(root_id.clone()))
             .collect()
     };
+    counter.checkpoint(summary, CheckCategory::Structure);
 
     // Doc-global (not per-root): heal theme-polarity splits in the variable
     // table BEFORE the per-root passes, so every pass that resolves `$refs`
     // (surface discipline, geometry text fills) sees the repaired palette.
     crate::loop_finalize::fix_theme_variable_polarity(sink);
+    counter.checkpoint(summary, CheckCategory::Palette);
     for root_id in &effective_root_ids {
         debug_probe_child_height(sink, root_id, "cleanup-entry");
         // FIRST: whole-root structural restructures, shared by BOTH the
@@ -368,6 +404,7 @@ pub fn run_cleanup_passes(sink: &mut dyn DocSink, plan: &OrchestratorPlan, root_
         // Flat table cells → Table → Row → Cell.
         rid = apply_root_transform(sink, &rid, crate::table_repair::regroup_flat_table_rows);
         debug_probe_child_height(sink, &rid, "regroup_table");
+        counter.checkpoint(summary, CheckCategory::Structure);
         // Gap-less table rows → column gap (weak models omit it → columns touch,
         // "SPEND"+"STATUS" reads as "SPENDSTATUS").
         rid = apply_root_transform(sink, &rid, crate::table_repair::ensure_table_column_gap);
@@ -375,6 +412,7 @@ pub fn run_cleanup_passes(sink: &mut dyn DocSink, plan: &OrchestratorPlan, root_
         // Row gap on the table CONTAINER (rows already zebra'd / hairlined) →
         // flush rows, reference-grade rhythm comes from the rows themselves.
         rid = apply_root_transform(sink, &rid, crate::table_repair::flush_table_row_gap);
+        counter.checkpoint(summary, CheckCategory::Layout);
         // Card-level "-35%" tags meant for the image corner → adopt into the
         // image wrapper as an absolute 8,8 overlay.
         rid = apply_root_transform(sink, &rid, crate::chip_repair::adopt_corner_badges);
@@ -382,6 +420,7 @@ pub fn run_cleanup_passes(sink: &mut dyn DocSink, plan: &OrchestratorPlan, root_
         // the icon's top-right corner.
         rid = apply_root_transform(sink, &rid, crate::chip_repair::adopt_notification_dots);
         debug_probe_child_height(sink, &rid, "table_flush");
+        counter.checkpoint(summary, CheckCategory::Structure);
         // Transparent wrapper padding inside an already-padded/gapped column →
         // double inset: misaligned section edges + starved children (a padded
         // "Key Metrics" strip squeezed its KPI cards until label touched icon).
@@ -412,6 +451,7 @@ pub fn run_cleanup_passes(sink: &mut dyn DocSink, plan: &OrchestratorPlan, root_
             crate::app_shell::sink_structured_sidebar_footers,
         );
         debug_probe_child_height(sink, &rid, "sink_footer");
+        counter.checkpoint(summary, CheckCategory::Layout);
         // The tree-shape `fit_content` parent ↔ `fill_container` child demoter
         // (`fix_circular_fill_height`) is RETIRED: the layout engine now resolves
         // a fill-height child of a hugging parent to its content size (vertical
@@ -425,13 +465,16 @@ pub fn run_cleanup_passes(sink: &mut dyn DocSink, plan: &OrchestratorPlan, root_
 
         remove_duplicate_status_bars(sink, rid);
         remove_duplicate_bottom_nav_sections(sink, rid);
+        counter.checkpoint(summary, CheckCategory::Structure);
         distribute_bottom_nav_tabs(sink, rid);
         collapse_nested_horizontal_padding(sink, rid);
         expand_absolute_container_to_children(sink, rid);
         pad_clipping_horizontal_row_for_stroke(sink, rid);
         equalize_horizontal_card_heights(sink, rid);
         collapse_fill_container_content_sections(sink, rid);
+        counter.checkpoint(summary, CheckCategory::Layout);
         repair_light_mobile_nav_surfaces(sink, rid);
+        counter.checkpoint(summary, CheckCategory::Palette);
         cleanup_mobile_chrome::repair_mobile_structural_chrome(sink, rid);
         // Normalize the late-nav construction shell before geometry validation
         // can grow the root around the stale numeric wrapper and erase the
@@ -446,8 +489,10 @@ pub fn run_cleanup_passes(sink: &mut dyn DocSink, plan: &OrchestratorPlan, root_
         crate::mobile_reflow::repair_mobile_trailing_nav_reflow_for_root_in_sink(sink, rid);
         cleanup_mobile_dense::repair_dense_mobile_rows(sink, rid);
         cleanup_desktop_dashboard::repair_sparse_desktop_dashboard_rows(sink, plan, rid);
+        counter.checkpoint(summary, CheckCategory::Layout);
         repair_overbold_text_hierarchy(sink, rid);
         strip_decorative_filled_strokes(sink, rid);
+        counter.checkpoint(summary, CheckCategory::Hierarchy);
         crate::radial_repair::repair_radial_stacks(sink, rid);
         crate::stub_repair::remove_empty_decorated_stubs(sink, rid);
         // A section's header row whose second child is the ENTIRE content
@@ -458,6 +503,7 @@ pub fn run_cleanup_passes(sink: &mut dyn DocSink, plan: &OrchestratorPlan, root_
         // header's own sibling. Runs before geometry validation so it sees
         // the corrected tree, not the pre-repair one.
         crate::section_shell_fill_repair::repair_section_shell_fill_ownership(sink, rid);
+        counter.checkpoint(summary, CheckCategory::Structure);
         // Geometry-driven validation LOOP: run the REAL jian layout, detect +
         // fix what the resolved rects prove wrong (table columns overflowing
         // their row, fill containers collapsed to 0 height by a hugging ancestor
@@ -491,6 +537,7 @@ pub fn run_cleanup_passes(sink: &mut dyn DocSink, plan: &OrchestratorPlan, root_
             crate::geometry_validation::geometry_validate_and_fix(sink, rid);
         }
         debug_probe_child_height(sink, rid, "geometry");
+        counter.checkpoint(summary, CheckCategory::Overflow);
         // Geometry validation can change a repaired radial wrapper from its
         // authored numeric width to `fill_container`. Re-run the centering pass
         // against the final resolved bounds so absolute arc/label coordinates
@@ -498,6 +545,7 @@ pub fn run_cleanup_passes(sink: &mut dyn DocSink, plan: &OrchestratorPlan, root_
         crate::radial_repair::repair_radial_stacks(sink, rid);
         adjust_root_height_to_content(sink, rid, preserve_root_height);
         debug_probe_child_height(sink, rid, "adjust_root_height");
+        counter.checkpoint(summary, CheckCategory::Layout);
     }
 
     crate::avatar_repair::repair_avatar_slots_for_all_roots(sink);
@@ -509,7 +557,9 @@ pub fn run_cleanup_passes(sink: &mut dyn DocSink, plan: &OrchestratorPlan, root_
     // appended after the nav is repaired by moving the nav back to the end;
     // where that section belongs is intent — the geometry echo handles it.
     anchor_bottom_nav_last_for_all_roots(sink);
+    counter.checkpoint(summary, CheckCategory::Structure);
     crate::mobile_reflow::repair_mobile_trailing_nav_reflow_in_sink(sink);
+    counter.checkpoint(summary, CheckCategory::Layout);
 
     // Multi-screen root position deconfliction: screen-shaped top-level
     // roots that overlap because one or more never got a canvas position
@@ -548,11 +598,16 @@ pub fn run_cleanup_passes(sink: &mut dyn DocSink, plan: &OrchestratorPlan, root_
     // it also links PRE-EXISTING screens from earlier turns, matching
     // `avatar_repair` above.
     crate::wire_screen_navigation::wire_screen_navigation(sink);
+    counter.checkpoint(summary, CheckCategory::Structure);
 }
 
 #[cfg(test)]
 #[path = "cleanup_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "cleanup_repair_summary_tests.rs"]
+mod tests_repair_summary;
 
 #[cfg(test)]
 #[path = "cleanup_abandoned_duplicate_roots_tests.rs"]

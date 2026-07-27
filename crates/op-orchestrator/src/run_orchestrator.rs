@@ -604,12 +604,13 @@ impl Orchestrator {
         //
         // Fresh-document mode reuses the single page/target root — every node
         // under it is new — so the behaviour is unchanged there.
+        let mut quality = crate::repair_summary::RepairSummary::default();
         if append_result.skip_root_insertion {
             let new_roots: Vec<&str> = outcomes
                 .iter()
                 .flat_map(|o| o.inserted_root_ids.iter().map(String::as_str))
                 .collect();
-            finalize_design(sink, &plan, &new_roots);
+            finalize_design_with_summary(sink, &plan, &new_roots, &mut quality);
         } else {
             // Every screen-group root (not just the first) goes in — this is
             // the co-op point with `wire_screen_navigation` (Track A of the
@@ -621,9 +622,27 @@ impl Orchestrator {
             // Passing them all is still correct scoping for the OTHER
             // whole-root cleanup passes (dedup / avatar-repair / etc.).
             let root_id_refs: Vec<&str> = root_ids.iter().map(String::as_str).collect();
-            finalize_design(sink, &plan, &root_id_refs);
+            finalize_design_with_summary(sink, &plan, &root_id_refs, &mut quality);
         }
         on_progress(Progress::CleanupDone);
+        // Turn the cleanup stage's tally into a user-visible credential. Only
+        // fires when the passes actually ran (an empty summary means cleanup
+        // was skipped entirely), so nothing is ever vouched for that nobody
+        // checked.
+        if !quality.is_empty() {
+            on_progress(Progress::QualityChecked {
+                checks: quality
+                    .checked()
+                    .into_iter()
+                    .map(|c| c.key().to_string())
+                    .collect(),
+                repairs: quality
+                    .repaired()
+                    .into_iter()
+                    .map(|(check, count)| (check.key().to_string(), count))
+                    .collect(),
+            });
+        }
         sink.end_undo_batch();
 
         // -- 阶段 5:视觉校验 (S3c D1) — 在 cleanup 后、返回 RunSummary 前 --

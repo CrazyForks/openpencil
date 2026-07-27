@@ -56,7 +56,7 @@ use std::sync::{Arc, Mutex};
 
 use op_ai::chat_provider::{
     ChatDelta, ChatProvider, ChatRequest, ChatToolExecutor, ChatToolResult, EffortLevel,
-    ThinkingMode, UnfilledScreensReport,
+    FinalizeReport, ThinkingMode, UnfilledScreensReport,
 };
 use op_editor_core::{BuiltinAgentConfig, BuiltinAgentKind, BuiltinAgentPresetKey, EditorState};
 use op_host_services::chat_builtin_http::ConfiguredBuiltinProvider;
@@ -195,12 +195,12 @@ impl ChatToolExecutor for HeadlessExecutor {
         result
     }
 
-    fn finalize(&self) -> UnfilledScreensReport {
+    fn finalize(&self) -> FinalizeReport {
         let mut state = self
             .state
             .lock()
             .expect("EditorState mutex poisoned before finalize");
-        op_orchestrator::apply_loop_finalize(&mut state);
+        let quality = op_orchestrator::apply_loop_finalize_counted(&mut state);
         let unfilled =
             op_orchestrator::unfilled_screens::finalize_and_mark_unfilled_screens(&mut state);
         let committed = op_orchestrator::unfilled_screens::list_screen_candidates(&state)
@@ -209,13 +209,25 @@ impl ChatToolExecutor for HeadlessExecutor {
             .collect::<Vec<_>>();
         if self.dump {
             eprintln!("[LOOP] finalize: apply_loop_finalize ran (Class-A structural backstop)");
+            eprintln!(
+                "[LOOP] finalize: quality checked {:?}, {} auto-repair(s)",
+                quality
+                    .checked()
+                    .iter()
+                    .map(|c| c.key())
+                    .collect::<Vec<_>>(),
+                quality.total_repairs()
+            );
             if !unfilled.is_empty() {
                 eprintln!("[LOOP] finalize: unfilled screens left unfilled: {unfilled:?}");
             }
         }
-        UnfilledScreensReport {
-            committed,
-            unfilled,
+        FinalizeReport {
+            screens: UnfilledScreensReport {
+                committed,
+                unfilled,
+            },
+            quality: op_host_services::quality_credential::quality_summary_from_repairs(&quality),
         }
     }
 

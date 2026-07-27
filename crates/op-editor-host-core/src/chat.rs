@@ -7,7 +7,8 @@ use std::thread;
 
 use op_ai::chat_provider::{
     BlockerReport, ChatDelta, ChatHistoryRole, ChatProvider, ChatRequest, ChatToolExecutor,
-    ChatToolResult, UnfilledScreensReport, CHECK_BLOCKERS_OP, LOOP_FINALIZE_OP,
+    ChatToolResult, FinalizeReport, QualitySummary, UnfilledScreensReport, CHECK_BLOCKERS_OP,
+    LOOP_FINALIZE_OP,
 };
 use op_editor_core::{ChatMessage, ChatRole, ChatToolCall};
 
@@ -42,8 +43,12 @@ impl ChatToolExecutor for UiChatToolExecutor {
     /// the ack's `content` carries back the (already canvas-marked)
     /// committed/unfilled report — no new IPC needed, this reuses the same
     /// envelope every other tool result already rides.
-    fn finalize(&self) -> UnfilledScreensReport {
-        unfilled_report_from_ack(&self.forward(LOOP_FINALIZE_OP, r#"{"checkOnly":false}"#))
+    fn finalize(&self) -> FinalizeReport {
+        let ack = self.forward(LOOP_FINALIZE_OP, r#"{"checkOnly":false}"#);
+        FinalizeReport {
+            screens: unfilled_report_from_ack(&ack),
+            quality: quality_summary_from_ack(&ack),
+        }
     }
 
     /// Cheap, read-only promise-delivery check — same reserved op, with
@@ -84,6 +89,43 @@ fn unfilled_report_from_ack(result: &ChatToolResult) -> UnfilledScreensReport {
         committed: names("committed"),
         unfilled: names("unfilled"),
     }
+}
+
+/// Parse the `"quality": {"checks":[...],"repairs":[{"check":…,"count":…}]}`
+/// half of the same `LOOP_FINALIZE_OP` ack. Degrades to an empty summary on
+/// any other shape (transport error, an older host build that predates the
+/// field) — and an empty summary renders NO credential, so a host that can't
+/// report what it checked never gets credited for checking.
+fn quality_summary_from_ack(result: &ChatToolResult) -> QualitySummary {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&result.content) else {
+        return QualitySummary::default();
+    };
+    let Some(quality) = v.get("quality") else {
+        return QualitySummary::default();
+    };
+    let checks = quality
+        .get("checks")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|c| c.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let repairs = quality
+        .get("repairs")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|entry| {
+                    let check = entry.get("check")?.as_str()?.to_string();
+                    let count = entry.get("count")?.as_u64()? as usize;
+                    Some((check, count))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    QualitySummary { checks, repairs }
 }
 
 /// Parse the `{"success":true,"blockers":[{"category":...,"detail":...}]}`

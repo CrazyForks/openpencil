@@ -15,8 +15,8 @@ use super::*;
 use crate::chat_runtime::shared_runtime;
 use base64::Engine as _;
 use op_ai::chat_provider::{
-    BlockerEntry, BlockerReport, ChatToolDef, ChatToolExecutor, ChatToolResult,
-    UnfilledScreensReport,
+    BlockerEntry, BlockerReport, ChatToolDef, ChatToolExecutor, ChatToolResult, FinalizeReport,
+    QualitySummary, UnfilledScreensReport,
 };
 
 /// Executor double — records calls + loop-finalize invocations, replays a
@@ -32,6 +32,10 @@ pub(super) struct ScriptedExecutor {
     unfilled_checks: Mutex<VecDeque<UnfilledScreensReport>>,
     /// Scripted `finalize` return values, popped the same way.
     unfilled_finalizes: Mutex<VecDeque<UnfilledScreensReport>>,
+    /// Scripted `finalize` quality tallies, popped the same way. Empty by
+    /// default — an executor that never scripts one reports "nothing
+    /// checked", which must suppress the credential entirely.
+    quality_finalizes: Mutex<VecDeque<QualitySummary>>,
     /// Scripted `check_blockers` return values, popped in call order; once
     /// exhausted, further calls return the default (empty) report.
     blocker_checks: Mutex<VecDeque<BlockerReport>>,
@@ -59,6 +63,7 @@ impl ScriptedExecutor {
             ),
             unfilled_checks: Mutex::new(VecDeque::new()),
             unfilled_finalizes: Mutex::new(VecDeque::new()),
+            quality_finalizes: Mutex::new(VecDeque::new()),
             blocker_checks: Mutex::new(VecDeque::new()),
             blocker_check_calls: std::sync::atomic::AtomicUsize::new(0),
         })
@@ -96,6 +101,27 @@ impl ScriptedExecutor {
             .lock()
             .unwrap()
             .push_back(report_of(committed, unfilled));
+        self
+    }
+
+    /// Queue one scripted `finalize` quality tally. `checks` are the check
+    /// families that ran; `repairs` the `(family, edits applied)` subset that
+    /// fixed something.
+    pub(super) fn with_quality_finalize(
+        self: Arc<Self>,
+        checks: &[&str],
+        repairs: &[(&str, usize)],
+    ) -> Arc<Self> {
+        self.quality_finalizes
+            .lock()
+            .unwrap()
+            .push_back(QualitySummary {
+                checks: checks.iter().map(|c| c.to_string()).collect(),
+                repairs: repairs
+                    .iter()
+                    .map(|(c, n)| ((*c).to_string(), *n))
+                    .collect(),
+            });
         self
     }
 
@@ -150,14 +176,23 @@ impl ChatToolExecutor for ScriptedExecutor {
         }
     }
 
-    fn finalize(&self) -> UnfilledScreensReport {
+    fn finalize(&self) -> FinalizeReport {
         self.finalize_calls
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        self.unfilled_finalizes
-            .lock()
-            .unwrap()
-            .pop_front()
-            .unwrap_or_default()
+        FinalizeReport {
+            screens: self
+                .unfilled_finalizes
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_default(),
+            quality: self
+                .quality_finalizes
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_default(),
+        }
     }
 
     fn check_unfilled_screens(&self) -> UnfilledScreensReport {

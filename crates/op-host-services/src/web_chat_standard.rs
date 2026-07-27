@@ -721,6 +721,21 @@ fn progress_label(p: &Progress) -> String {
             )
         }
         Progress::CleanupDone => "• Cleanup done".into(),
+        // The classic path's quality credential. `remaining` is `None` on
+        // purpose: the promise-delivery check runs later in the pipeline, so
+        // claiming anything about leftover work here would be a guess.
+        Progress::QualityChecked { checks, repairs } => {
+            crate::quality_credential::quality_credential_line(
+                &op_ai::chat_provider::QualitySummary {
+                    checks: checks.clone(),
+                    repairs: repairs.clone(),
+                },
+                None,
+            )
+            .unwrap_or_default()
+            .trim_start()
+            .to_string()
+        }
         Progress::ValidationStarted => "• Validation started".into(),
         Progress::ValidationPreCheckDone { applied, .. } => {
             format!("• Pre-validation applied {applied} fix(es)")

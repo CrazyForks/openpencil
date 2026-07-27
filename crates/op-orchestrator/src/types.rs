@@ -403,6 +403,27 @@ pub enum Progress {
     /// three stable identities and three independent progress streams.
     WorkerScoped(WorkerEvent),
     CleanupDone,
+    /// The user-visible quality credential for the classic path — emitted
+    /// once, right after [`Progress::CleanupDone`], carrying what the cleanup
+    /// passes actually checked and repaired
+    /// (`crate::repair_summary::RepairSummary`, flattened to wire strings so
+    /// hosts render it without depending on this crate's enum).
+    ///
+    /// A separate variant rather than a payload on `CleanupDone` so existing
+    /// `CleanupDone` matchers (ordering assertions, the "polishing" narration)
+    /// keep working untouched.
+    ///
+    /// Deliberately carries NO leftover-issue count: the promise-delivery
+    /// check (`Progress::UnfilledScreens`) runs later in the pipeline, so
+    /// anything claimed here about remaining work would be a guess. Renderers
+    /// must omit that clause rather than assume "none".
+    QualityChecked {
+        /// Check-family keys that ran, in display order.
+        checks: Vec<String>,
+        /// `(check family, document edits applied)` for families that
+        /// repaired something.
+        repairs: Vec<(String, usize)>,
+    },
     // ── S3c: Vision-validation progress variants ─────────────────────────────
     /// 视觉校验阶段开始(pre-validation 将在此之后立即运行)。
     ValidationStarted,
