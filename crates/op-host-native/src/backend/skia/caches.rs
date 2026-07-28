@@ -17,11 +17,19 @@ impl NativeBackend {
         Some(hit.image.clone())
     }
 
+    /// Generation of the installed-raster set — see the field's note.
+    /// A composition cached across frames stamps this and drops or
+    /// re-renders itself when it no longer matches.
+    pub fn raster_generation(&self) -> u64 {
+        self.raster_generation
+    }
+
     /// Install worker-decoded pixels into the paint-side LRU.
     /// `covers_edge_px` records how sharp this raster is, so a later
     /// zoom-in can tell that it needs a finer decode.
     pub fn install_raster_image(&mut self, id: u64, image: skia_safe::Image, covers_edge_px: u32) {
         self.image_cache_tick += 1;
+        self.raster_generation = self.raster_generation.wrapping_add(1);
         let bytes = (image.width().max(0) as usize)
             .saturating_mul(image.height().max(0) as usize)
             .saturating_mul(4);

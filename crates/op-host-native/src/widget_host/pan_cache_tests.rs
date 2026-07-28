@@ -302,6 +302,69 @@ fn progressive_restore_converges_to_direct_paint_quality() {
     );
 }
 
+/// Image decodes finish on a worker, install pixels straight into the
+/// backend's raster cache, and mutate no editor state — so no
+/// `mark_dirty` fires. A restored (sharp) layer must still notice, or
+/// it serves the blur-up placeholder until something unrelated
+/// happens to invalidate it.
+#[test]
+fn a_landed_image_decode_reopens_the_progressive_restore() {
+    let _indicator_guard = crate::agent_indicator_test_support::read();
+    let fonts0 = jian_skia::font_generation();
+    let mut host = WidgetHostNative::new();
+    seed_red_rect(&mut host);
+    let mut backend = NativeBackend::with_dpi(1.0);
+
+    host.set_now_ms(1_000);
+    let _ = paint_frame(&mut host, &mut backend);
+    assert!(host.apply_pan_gesture(350.0, 150.0, -10.0, 0.0, W as f32, H as f32));
+    let _ = paint_frame(&mut host, &mut backend);
+    if !fonts_stable_since(fonts0) {
+        return;
+    }
+    assert!(host.pan_cache_resident_for_test());
+
+    // Gesture ends: let the progressive restore finish.
+    host.set_now_ms(10_000);
+    for _ in 0..super::canvas_pan_cache::PAN_CACHE_RESTORE_TILES + 4 {
+        let _ = paint_frame(&mut host, &mut backend);
+        if host.pan_cache_sharp_for_test() && !host.pan_cache_restore_active_for_test() {
+            break;
+        }
+    }
+    if !fonts_stable_since(fonts0) {
+        return;
+    }
+    assert!(host.pan_cache_sharp_for_test());
+
+    // A worker install lands: the layer's baked pixels are now stale.
+    let mut decoded =
+        skia_safe::surfaces::raster_n32_premul((4, 4)).expect("raster surface allocated");
+    decoded.canvas().clear(skia_safe::Color::BLUE);
+    backend.install_raster_image(1, decoded.image_snapshot(), 4);
+
+    let _ = paint_frame(&mut host, &mut backend);
+    if !fonts_stable_since(fonts0) {
+        return;
+    }
+    assert!(
+        host.pan_cache_restore_active_for_test() || !host.pan_cache_sharp_for_test(),
+        "a landed decode must reopen the restore instead of blitting stale pixels"
+    );
+
+    // And it converges again rather than restoring on every frame.
+    for _ in 0..super::canvas_pan_cache::PAN_CACHE_RESTORE_TILES + 4 {
+        let _ = paint_frame(&mut host, &mut backend);
+        if host.pan_cache_sharp_for_test() && !host.pan_cache_restore_active_for_test() {
+            break;
+        }
+    }
+    if !fonts_stable_since(fonts0) {
+        return;
+    }
+    assert!(host.pan_cache_sharp_for_test());
+}
+
 #[test]
 fn document_mutation_invalidates_the_pan_cache() {
     let _indicator_guard = crate::agent_indicator_test_support::read();

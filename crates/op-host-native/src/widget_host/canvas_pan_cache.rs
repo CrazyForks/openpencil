@@ -44,6 +44,12 @@ pub(in crate::widget_host) struct CanvasPanCache {
     /// progressive gesture-end restore repaints it tile by tile).
     /// Degraded content only ever shows mid-gesture.
     pub sharp: bool,
+    /// Installed-raster generation baked into the layer. Image decodes
+    /// land on a worker AFTER the frame that queued them, and they
+    /// mutate no editor state, so nothing else would ever invalidate
+    /// the layer — the rest-time restore watches this stamp and
+    /// repaints the visible tiles when it moves.
+    pub raster_generation: u64,
     /// Canvas hover id baked into the layer — rest-time blits must
     /// drop the cache when the hover changed (some hover clears skip
     /// `mark_dirty`), or the outline would freeze on screen.
@@ -107,6 +113,7 @@ impl WidgetHostNative {
         surface: skia_safe::Surface,
         rect: Rect,
         dpi: f32,
+        raster_generation: u64,
     ) {
         self.pan_cache_builds = self.pan_cache_builds.wrapping_add(1);
         let hovered = self.editor_state.editor_ui.canvas_hover_node.clone();
@@ -119,6 +126,7 @@ impl WidgetHostNative {
             dpi,
             // Layers are built mid-gesture in degrade mode.
             sharp: false,
+            raster_generation,
             hovered,
         });
     }

@@ -13,6 +13,44 @@ use crate::backend::NativeFrameBackend;
 use op_editor_ui::widgets::{CanvasViewport, PaintCx, Widget};
 use op_editor_ui::{Point2D, Rect, RenderBackend};
 
+/// The layer-edge strips a shift of `shift` logical px scrolls into
+/// view, in the layer's logical space. Shifting content right (`x > 0`)
+/// exposes the left edge and vice versa; the vertical strip runs full
+/// height and the horizontal strip full width so a diagonal shift's
+/// L-shape is fully covered. Each extent is rounded UP to a whole
+/// device pixel: the layer copy lands on the pixel grid, so a
+/// fractional shift would otherwise leave a one-pixel seam of stale
+/// content at the edge.
+fn exposed_strips(expanded: Rect, shift: Point2D, dpi: f32) -> Vec<Rect> {
+    let extent = |v: f32| (v.abs() * dpi).ceil() / dpi;
+    let mut strips = Vec::new();
+    let sx = extent(shift.x);
+    if sx > 0.0 {
+        let x = if shift.x > 0.0 {
+            expanded.origin.x
+        } else {
+            expanded.origin.x + expanded.size.x - sx
+        };
+        strips.push(Rect {
+            origin: Point2D::new(x, expanded.origin.y),
+            size: Point2D::new(sx, expanded.size.y),
+        });
+    }
+    let sy = extent(shift.y);
+    if sy > 0.0 {
+        let y = if shift.y > 0.0 {
+            expanded.origin.y
+        } else {
+            expanded.origin.y + expanded.size.y - sy
+        };
+        strips.push(Rect {
+            origin: Point2D::new(expanded.origin.x, y),
+            size: Point2D::new(expanded.size.x, sy),
+        });
+    }
+    strips
+}
+
 impl WidgetHostNative {
     /// Serve the canvas region from the pan bitmap cache: a pure-pan
     /// frame blits the resident layer; past the scroll threshold the
@@ -103,6 +141,15 @@ impl WidgetHostNative {
             offscreen.restore_to_count(save);
         }
         cache.pan = Point2D::new(cache.pan.x + sdx, cache.pan.y + sdy);
+        // The layer stays anchored at `cache.pan`, which the snap and
+        // the dominant-axis-only refresh leave BEHIND the live viewport
+        // pan: sub-device-pixel on the refreshed axis, but the whole
+        // untouched delta on the other one. The blit below translates
+        // the entire layer by that residual, so strips must be painted
+        // as if the pan were `cache.pan` — painting them at the live
+        // pan lands them at twice the residual, a mis-registered band
+        // up to the full margin wide on a diagonal gesture.
+        let residual = Point2D::new(dx - sdx, dy - sdy);
         // 2. Repaint only the exposed strips. Shifting content right
         //    (sdx > 0) exposes the left edge, and vice versa; the
         //    vertical strip runs full height and the horizontal strip
@@ -111,34 +158,12 @@ impl WidgetHostNative {
             origin: Point2D::new(canvas_rect.origin.x - M, canvas_rect.origin.y - M),
             size: Point2D::new(canvas_rect.size.x + M * 2.0, canvas_rect.size.y + M * 2.0),
         };
-        let mut strips: Vec<Rect> = Vec::new();
-        if sdx > 0.0 {
-            strips.push(Rect {
-                origin: expanded.origin,
-                size: Point2D::new(sdx, expanded.size.y),
-            });
-        } else if sdx < 0.0 {
-            strips.push(Rect {
-                origin: Point2D::new(expanded.origin.x + expanded.size.x + sdx, expanded.origin.y),
-                size: Point2D::new(-sdx, expanded.size.y),
-            });
-        }
-        if sdy > 0.0 {
-            strips.push(Rect {
-                origin: expanded.origin,
-                size: Point2D::new(expanded.size.x, sdy),
-            });
-        } else if sdy < 0.0 {
-            strips.push(Rect {
-                origin: Point2D::new(expanded.origin.x, expanded.origin.y + expanded.size.y + sdy),
-                size: Point2D::new(expanded.size.x, -sdy),
-            });
-        }
+        let strips = exposed_strips(expanded, Point2D::new(sdx, sdy), dpi);
         if !strips.is_empty() {
             let mut canvas = CanvasViewport::from_editor(&self.editor_state, &self.layout_scene);
             canvas.now_ms = self.now_ms;
             canvas.fast_interaction = true;
-            canvas.offset_paint_origin(M, M);
+            canvas.offset_paint_origin(M - residual.x, M - residual.y);
             for strip in strips {
                 canvas.cull_override = Some(strip);
                 frame.paint_offscreen_region(
@@ -157,10 +182,6 @@ impl WidgetHostNative {
         // Strips paint in degrade mode — the layer needs a fresh
         // progressive restore once the gesture ends.
         cache.sharp = false;
-        let residual = Point2D::new(
-            self.editor_state.viewport.pan_x - cache.pan.x,
-            self.editor_state.viewport.pan_y - cache.pan.y,
-        );
         self.pan_cache = Some(cache);
         Some(residual)
     }
@@ -191,6 +212,7 @@ impl WidgetHostNative {
             return false;
         }
         let dpi = frame.dpi_scale();
+        let raster_generation = frame.raster_generation();
         let hovered_now = self.editor_state.editor_ui.canvas_hover_node.clone();
         {
             let Some(cache) = self.pan_cache.as_ref() else {
@@ -202,6 +224,20 @@ impl WidgetHostNative {
             if cache.hovered != hovered_now {
                 self.drop_pan_cache();
                 return false;
+            }
+        }
+        // Image decodes land on a worker after the frame that queued
+        // them and touch no editor state, so no `mark_dirty` fires: a
+        // sharp layer would keep serving the blur-up placeholder until
+        // something unrelated invalidated it. Restart the progressive
+        // restore instead of dropping the layer, so the fix costs a few
+        // rest frames rather than a full rebuild — and costs a live
+        // gesture nothing at all, which is the point of the cache.
+        if let Some(cache) = self.pan_cache.as_mut() {
+            if cache.raster_generation != raster_generation {
+                cache.raster_generation = raster_generation;
+                cache.sharp = false;
+                self.pan_cache_restore = None;
             }
         }
         let Some(offset) = self.pan_cache_offset(canvas_rect, dpi) else {
@@ -235,7 +271,7 @@ impl WidgetHostNative {
                 }
             }
             let tile_h = (canvas_rect.size.y / PAN_CACHE_RESTORE_TILES as f32).ceil();
-            let tiles = (0..PAN_CACHE_RESTORE_TILES)
+            let mut tiles: Vec<Rect> = (0..PAN_CACHE_RESTORE_TILES)
                 .map(|i| Rect {
                     origin: Point2D::new(
                         canvas_rect.origin.x,
@@ -244,6 +280,17 @@ impl WidgetHostNative {
                     size: Point2D::new(canvas_rect.size.x, tile_h),
                 })
                 .collect();
+            // The rebase shift vacates a strip at the layer edge that
+            // the visible-region tiles never reach. It sits in the
+            // margin, so nothing shows until the NEXT gesture scrolls
+            // it back on screen — as a band still registered to the
+            // pre-rebase anchor. Restoring it as a trailing tile keeps
+            // the whole layer, margin included, one coherent image.
+            let expanded = Rect {
+                origin: Point2D::new(canvas_rect.origin.x - M, canvas_rect.origin.y - M),
+                size: Point2D::new(canvas_rect.size.x + M * 2.0, canvas_rect.size.y + M * 2.0),
+            };
+            tiles.extend(exposed_strips(expanded, offset, dpi));
             self.pan_cache_restore =
                 Some(super::canvas_pan_cache::PanCacheRestore { tiles, next: 0 });
         }

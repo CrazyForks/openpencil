@@ -14,6 +14,14 @@ impl<'a> NativeFrameBackend<'a> {
         Self { inner, canvas }
     }
 
+    /// Generation of the backend's installed-raster set. A cached
+    /// composition stamps this so a decode landing after the capture
+    /// (blur-up placeholder → full-resolution image) is not served
+    /// stale forever.
+    pub fn raster_generation(&self) -> u64 {
+        self.inner.raster_generation()
+    }
+
     /// Render `f` into an offscreen surface covering `rect` grown by
     /// `margin` logical px on every side, and return the surface.
     /// The surface is allocated compatible with this frame's canvas

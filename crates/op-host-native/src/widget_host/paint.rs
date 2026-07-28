@@ -275,7 +275,8 @@ impl WidgetHostNative {
                         PAN_CACHE_MARGIN,
                         Point2D::new(0.0, 0.0),
                     );
-                    self.store_pan_cache(surface, canvas_rect, dpi);
+                    let raster_generation = frame.raster_generation();
+                    self.store_pan_cache(surface, canvas_rect, dpi, raster_generation);
                 }
             }
         }

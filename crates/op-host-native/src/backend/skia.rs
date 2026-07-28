@@ -103,6 +103,11 @@ pub struct NativeBackend {
     image_cache_bytes: usize,
     /// Monotonic use counter driving LRU eviction.
     image_cache_tick: u64,
+    /// Bumped only when newly decoded pixels are INSTALLED, so a cached
+    /// composition (the pan bitmap layer) can tell that a repaint would
+    /// now draw something different. `image_cache_tick` cannot serve
+    /// this: it also advances on every lookup.
+    raster_generation: u64,
     /// Small, paint-thread-decoded blur-up rasters. This cache is isolated
     /// from the full-resolution worker-populated image LRU.
     thumb_cache: image::ThumbCache,
@@ -239,6 +244,7 @@ impl NativeBackend {
             image_cache: std::collections::HashMap::new(),
             image_cache_bytes: 0,
             image_cache_tick: 0,
+            raster_generation: 0,
             thumb_cache: image::ThumbCache::default(),
             svg_path_cache: std::collections::HashMap::new(),
             svg_path_cache_order: std::collections::VecDeque::new(),

@@ -147,6 +147,8 @@ mod page_switch_center_tests;
 mod paint;
 mod paint_pan_cache;
 #[cfg(test)]
+mod pan_cache_scroll_tests;
+#[cfg(test)]
 mod pan_cache_tests;
 #[cfg(test)]
 mod panel_history_tests;
