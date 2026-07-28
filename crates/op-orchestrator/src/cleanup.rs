@@ -419,6 +419,15 @@ pub fn run_cleanup_passes_with_summary(
         // [bell icon, 8px square] flow pairs → round the dot and pin it on
         // the icon's top-right corner.
         rid = apply_root_transform(sink, &rid, crate::chip_repair::adopt_notification_dots);
+        // A progress ring's track + progress arc authored as FLEX SIBLINGS of a
+        // general container (a padded card, a section with its own heading) →
+        // extract them into a dedicated concentric `layout:none` wrapper.
+        // `radial_repair` below only converts a parent that IS the ring's own
+        // wrapper, so without this the arcs stay in flow and render as two
+        // circles side by side. Runs HERE — a structural restructure, before
+        // the geometry loop and before `repair_radial_stacks`, which then
+        // finishes the wrapper's concentric geometry against resolved rects.
+        rid = apply_root_transform(sink, &rid, crate::ring_repair::wrap_ring_fragments);
         debug_probe_child_height(sink, &rid, "table_flush");
         counter.checkpoint(summary, CheckCategory::Structure);
         // Transparent wrapper padding inside an already-padded/gapped column →

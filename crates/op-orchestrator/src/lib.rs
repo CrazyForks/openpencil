@@ -63,6 +63,7 @@ pub mod prompt;
 pub mod radial_repair;
 pub mod repair_summary;
 pub mod retry_subtask;
+pub(crate) mod ring_repair;
 pub mod role_defaults;
 pub mod role_infer;
 pub(crate) mod role_layout_post_pass;

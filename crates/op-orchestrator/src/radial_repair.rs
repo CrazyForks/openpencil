@@ -8,8 +8,11 @@ use crate::types::DocSink;
 
 #[path = "radial_repair_force_center.rs"]
 mod radial_repair_force_center;
+#[path = "radial_repair_lane.rs"]
+mod radial_repair_lane;
 #[path = "radial_repair_partial_pair.rs"]
 mod radial_repair_partial_pair;
+pub(crate) use radial_repair_lane::parent_is_dedicated_ring_wrapper;
 #[path = "radial_repair_preinsert_normalize.rs"]
 mod radial_repair_preinsert_normalize;
 
@@ -20,7 +23,7 @@ struct Rect {
 }
 
 const MAX_SAFE_ASPECT_RATIO: f64 = 1.2;
-const MIN_SAFE_ARC_DIAMETER_RATIO: f64 = 0.8;
+pub(crate) const MIN_SAFE_ARC_DIAMETER_RATIO: f64 = 0.8;
 const MIN_SAFE_ARC_TO_PARENT_RATIO: f64 = 0.6;
 const MAX_SAFE_ARC_TO_PARENT_RATIO: f64 = 1.05;
 
@@ -44,10 +47,10 @@ struct AuthoredRadialGeometry {
     parent_h: f64,
 }
 
-struct RadialLayers {
-    centres: Vec<usize>,
-    progress: Vec<usize>,
-    tracks: Vec<usize>,
+pub(crate) struct RadialLayers {
+    pub(crate) centres: Vec<usize>,
+    pub(crate) progress: Vec<usize>,
+    pub(crate) tracks: Vec<usize>,
 }
 
 /// True when direct arc children would still participate in flex flow.
@@ -284,7 +287,7 @@ fn radial_layer_order(v: &Value) -> Option<Vec<usize>> {
     Some(centres)
 }
 
-fn radial_layers(v: &Value) -> Option<RadialLayers> {
+pub(crate) fn radial_layers(v: &Value) -> Option<RadialLayers> {
     if !matches!(
         v.get("type").and_then(Value::as_str),
         Some("frame" | "group" | "rectangle")
@@ -405,7 +408,7 @@ fn semantic_arc_layer(v: &Value) -> Option<ArcLayer> {
     }
 }
 
-fn near_square(width: f64, height: f64) -> bool {
+pub(crate) fn near_square(width: f64, height: f64) -> bool {
     valid_size(width, height) && width.max(height) / width.min(height) <= MAX_SAFE_ASPECT_RATIO
 }
 
@@ -675,7 +678,7 @@ fn estimated_text_size(v: &Value) -> Option<(f64, f64)> {
     Some((width, line_height))
 }
 
-fn estimated_subtree_size(v: &Value) -> Option<(f64, f64)> {
+pub(crate) fn estimated_subtree_size(v: &Value) -> Option<(f64, f64)> {
     if let Some(size) = estimated_text_size(v) {
         return Some(size);
     }
@@ -765,7 +768,7 @@ fn update_size(id: &str, width: Option<f64>, height: Option<f64>) -> EditorComma
     }
 }
 
-fn is_arc_ellipse(v: &Value) -> bool {
+pub(crate) fn is_arc_ellipse(v: &Value) -> bool {
     v.get("type").and_then(Value::as_str) == Some("ellipse")
         && (v.get("sweepAngle").is_some()
             || numeric(v, "innerRadius").is_some_and(|r| r > 0.0)

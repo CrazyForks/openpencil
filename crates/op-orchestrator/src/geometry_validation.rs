@@ -227,6 +227,10 @@ pub fn geometry_diagnostics(state: &EditorState) -> Vec<String> {
             bottom_nav_root_containment_diagnostic(&v, &rects, &mut out);
             bottom_nav_order_diagnostic(&v, &mut out);
             push_text_collision_diagnostics(&v, &rects, &mut out);
+            // Ring track/progress arcs left as flex siblings. Detection is
+            // shared verbatim with the repair pass (`ring_repair`), so the
+            // echo can never describe a violation the fixer disagrees with.
+            crate::ring_repair::push_ring_fragment_diagnostics(&v, &mut out, MAX_DIAGNOSTICS);
             collect_diagnostics(&v, &rects, &mut out);
         }
     }
