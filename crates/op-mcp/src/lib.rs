@@ -92,6 +92,7 @@ pub mod document_save;
 #[cfg(test)]
 mod document_save_tests;
 pub mod editor_state_tool;
+pub mod effect_normalize;
 pub mod element_tools;
 pub mod extra_read_tools;
 #[cfg(test)]

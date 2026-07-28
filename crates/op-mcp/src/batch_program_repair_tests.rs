@@ -238,3 +238,40 @@ fn children_after_a_redraft_attach_to_the_new_draft() {
         "utility must nest under the final draft"
     );
 }
+
+#[test]
+fn shadow_missing_spread_does_not_cascade_into_the_whole_card() {
+    // 2026-07-28 production log (desktop built-in agent, program-gen): a
+    // "Challenge Card" frame carried a shadow written without `spread`, serde
+    // rejected the node payload, `b9` never got a binding, and all 19
+    // following `I(b9, …)` lines died with "Insert parent not found" — the
+    // entire card vanished from the design without a visible error.
+    let mut state = sample();
+    let program = concat!(
+        "b9=I(\"n10\", {\"type\":\"frame\",\"name\":\"Challenge Card\",\"width\":320,\"height\":200,\"layout\":\"vertical\",",
+        "\"effects\":[{\"type\":\"shadow\",\"offsetX\":0,\"offsetY\":4,\"blur\":12,\"color\":\"#00000014\"}]})\n",
+        "b10=I(b9, {\"type\":\"text\",\"content\":\"Daily Challenge\",\"fontSize\":18})\n",
+        "b11=I(b9, {\"type\":\"text\",\"content\":\"3 of 5 complete\",\"fontSize\":14})"
+    );
+    let (envelope, cmd) = call_operations(&state, program);
+    assert!(envelope.get("errors").is_none(), "{envelope}");
+    let card_id = binding_id(&envelope, "b9");
+    binding_id(&envelope, "b10");
+    binding_id(&envelope, "b11");
+    assert!(state.apply(cmd.expect("command")));
+    let card = op_editor_core::walkers::find_node(state.active_children(), &NodeId::new(&card_id))
+        .expect("the card itself must land");
+    assert_eq!(
+        card.children().map(|c| c.len()).unwrap_or(0),
+        2,
+        "both descendant lines must attach to the recovered card"
+    );
+    // The authored shadow keeps its full semantics — the repair fills the
+    // missing field, it does not drop the effect.
+    let shadow = &serde_json::to_value(card).expect("card json")["effects"][0];
+    assert_eq!(shadow["type"], "shadow");
+    assert_eq!(shadow["offsetY"], 4.0);
+    assert_eq!(shadow["blur"], 12.0);
+    assert_eq!(shadow["spread"], 0.0);
+    assert_eq!(shadow["color"], "#00000014");
+}

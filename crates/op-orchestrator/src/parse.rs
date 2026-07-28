@@ -328,6 +328,11 @@ pub fn normalize_generated_node_json(value: &mut serde_json::Value) {
             }
             normalize_stroke_json(object);
             normalize_layout_enum_json(object);
+            // Shared with the program-DSL parse path: an `effects` body is
+            // missing-required-field fragile (`spread` above all), and one
+            // rejected node drops a whole card. Single-sourced in op-mcp so
+            // the two parse paths can't drift.
+            op_mcp::effect_normalize::normalize_node_effects(object);
 
             for (key, child) in object.iter_mut() {
                 // 数值型设计 token(`$type-*-size` 等)只在**数值字段**上就地解析

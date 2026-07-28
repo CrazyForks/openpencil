@@ -420,3 +420,28 @@ fn parse_nodes_ignores_draft_in_truncated_second_think() {
     // 只有 a;draft-x(在被截断的 think#2 里)不计入。
     assert_eq!(crate::cleanup::count_descendants(&nodes[0]), 1);
 }
+
+#[test]
+fn parse_nodes_tolerates_a_shadow_missing_spread() {
+    // The modify/chat flat-JSONL path shares the program-DSL病灶: `ShadowBody`
+    // 的 `spread` 是必填,模型漏写就整个节点报废。这里连子节点一起验证 ——
+    // 老逻辑下带阴影的卡片会被整张丢掉,只剩它旁边的节点。
+    let text = r##"[
+  {"type":"frame","id":"card","name":"Challenge Card","x":0,"y":0,"width":320,"height":200,
+   "effects":[{"type":"shadow","offsetX":0,"offsetY":4,"blur":12,"color":"#00000014"}]},
+  {"type":"text","id":"title","content":"Daily Challenge","fontSize":18,"_parent":"card"}
+]"##;
+
+    let nodes = parse_nodes(text).expect("a shadow missing spread must not drop the card");
+    assert_eq!(nodes.len(), 1, "the card is the only root");
+    assert_eq!(nodes[0].id_str(), "card");
+    assert_eq!(
+        crate::cleanup::count_descendants(&nodes[0]),
+        1,
+        "the child must still attach to the recovered card"
+    );
+    let effects = &serde_json::to_value(&nodes[0]).expect("card json")["effects"][0];
+    assert_eq!(effects["type"], "shadow");
+    assert_eq!(effects["spread"], 0.0);
+    assert_eq!(effects["blur"], 12.0);
+}

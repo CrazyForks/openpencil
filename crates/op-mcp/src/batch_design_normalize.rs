@@ -47,6 +47,10 @@ pub(crate) fn normalize_node_shape(value: &mut serde_json::Value) {
     if let Some(padding) = obj.get_mut("padding") {
         normalize_padding(padding);
     }
+    // `effects` bodies carry REQUIRED fields (`spread` and friends). A model
+    // that omits one fails the whole node, and in the program DSL that
+    // cascades through every descendant line — see `effect_normalize`.
+    crate::effect_normalize::normalize_node_effects(obj);
     super::node_shape_defaults::normalize_text_default_bounds(obj);
     normalize_layout_keyword(obj, "justifyContent");
     normalize_layout_keyword(obj, "alignItems");
