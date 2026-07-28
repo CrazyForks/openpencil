@@ -495,6 +495,18 @@ pub fn run_cleanup_passes_with_summary(
         // existing ownership collapse after rail repair so only one layer owns
         // the gutter.
         collapse_nested_horizontal_padding(sink, rid);
+        // …and re-run the double-inset stripper for the same reason. Its first
+        // run above sits before the mobile chrome / content-rail passes, so a
+        // section that only BECOMES a padded rail there was still unpadded when
+        // it was checked, and any transparent wrapper under it kept its own
+        // gutter. `collapse_nested_horizontal_padding` above cannot cover the
+        // gap: it only fires on a rail whose wrapper is its ONLY child, so a
+        // section holding the wrapper plus any sibling (a tab-bar spacer, a
+        // second module) stayed double-inset — measured on `0727-1-gm`, where
+        // the wrapped card came out 279px wide against 327px siblings.
+        let rid_owned =
+            apply_root_transform(sink, rid, crate::spacing_repair::strip_wrapper_double_inset);
+        let rid = rid_owned.as_str();
         crate::mobile_reflow::repair_mobile_trailing_nav_reflow_for_root_in_sink(sink, rid);
         cleanup_mobile_dense::repair_dense_mobile_rows(sink, rid);
         cleanup_desktop_dashboard::repair_sparse_desktop_dashboard_rows(sink, plan, rid);
@@ -641,6 +653,10 @@ mod tests_bottom_nav;
 #[cfg(test)]
 #[path = "cleanup_nested_horizontal_padding_tests.rs"]
 mod tests_nested_horizontal_padding;
+
+#[cfg(test)]
+#[path = "cleanup_rail_wrapper_gutter_tests.rs"]
+mod tests_rail_wrapper_gutter;
 
 #[cfg(test)]
 #[path = "cleanup_absolute_container_tests.rs"]

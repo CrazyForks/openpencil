@@ -122,3 +122,107 @@ fn side_stroked_panel_keeps_all_padding() {
     }));
     assert!(!strip_wrapper_double_inset(&mut root));
 }
+
+#[test]
+fn nested_transparent_chain_converges_on_one_gutter_owner() {
+    // rail(24) > sheet(24) > inner(24): every structural layer re-adding the
+    // rail's gutter. Only the rail may keep it — otherwise the card lands
+    // 48px inside its siblings instead of 24.
+    let mut root = node(json!({
+        "type":"frame","id":"rail","layout":"vertical","padding":[0,24],
+        "children":[
+            {"type":"frame","id":"sheet","layout":"vertical","padding":[16,24],
+             "children":[
+                 {"type":"frame","id":"inner","layout":"vertical","padding":[8,24],
+                  "children":[card("c")]}
+             ]}
+        ]
+    }));
+    assert!(strip_wrapper_double_inset(&mut root));
+    let v = serde_json::to_value(&root).unwrap();
+    let sheet = &v["children"][0];
+    let inner = &sheet["children"][0];
+    assert_eq!(sheet["padding"], json!([16.0, 0.0, 16.0, 0.0]));
+    assert_eq!(inner["padding"], json!([8.0, 0.0, 8.0, 0.0]));
+    assert_eq!(
+        inner["children"][0]["padding"],
+        json!(24.0),
+        "the opaque card's own inset survives the whole chain"
+    );
+}
+
+#[test]
+fn nested_chain_strip_is_a_fixed_point() {
+    let mut root = node(json!({
+        "type":"frame","id":"rail","layout":"vertical","padding":[0,24],
+        "children":[
+            {"type":"frame","id":"sheet","layout":"vertical","padding":[16,24],
+             "children":[
+                 {"type":"frame","id":"inner","layout":"vertical","padding":[8,24],
+                  "children":[card("c")]}
+             ]}
+        ]
+    }));
+    assert!(strip_wrapper_double_inset(&mut root));
+    let once = serde_json::to_value(&root).unwrap();
+    assert!(
+        !strip_wrapper_double_inset(&mut root),
+        "a second run must find nothing left to strip"
+    );
+    assert_eq!(once, serde_json::to_value(&root).unwrap());
+}
+
+#[test]
+fn gutter_claim_does_not_cross_a_card_surface() {
+    // rail(24) > card(fill, padding 8) > lane(padding 12): the lane sits
+    // inside a real surface whose own inset is too small to claim a gutter,
+    // so nothing authorizes stripping it. Were the rail's claim to leak
+    // through the card, the lane would lose its 12px.
+    let mut root = node(json!({
+        "type":"frame","id":"rail","layout":"vertical","padding":[0,24],
+        "children":[
+            {"type":"frame","id":"surface","layout":"vertical","padding":8,
+             "fill":[{"type":"solid","color":"#141414"}],
+             "children":[
+                 {"type":"frame","id":"lane","layout":"vertical","padding":[8,12],
+                  "children":[card("c")]}
+             ]}
+        ]
+    }));
+    let v = serde_json::to_value(&root).unwrap();
+    let before = v["children"][0].clone();
+    strip_wrapper_double_inset(&mut root);
+    assert_eq!(
+        serde_json::to_value(&root).unwrap()["children"][0],
+        before,
+        "nothing under a painted card is a rail-gutter duplicate"
+    );
+}
+
+#[test]
+fn uniformly_wrapped_siblings_stay_equal_width() {
+    // All three sections inset through an identical transparent wrapper. The
+    // gutter moves to the single owner (the rail), so the sections stay equal
+    // to each other — the pass never introduces the asymmetry it removes.
+    let wrapper = |id: &str| {
+        json!({"type":"frame","id":id,"layout":"vertical","padding":[16,24],
+               "children":[card(&format!("{id}-c"))]})
+    };
+    let mut root = node(json!({
+        "type":"frame","id":"rail","layout":"vertical","padding":[0,24],"gap":20,
+        "children":[wrapper("a"), wrapper("b"), wrapper("c")]
+    }));
+    assert!(strip_wrapper_double_inset(&mut root));
+    let v = serde_json::to_value(&root).unwrap();
+    let pads: Vec<_> = v["children"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["padding"].clone())
+        .collect();
+    assert_eq!(
+        pads,
+        vec![Value::Null; 3],
+        "every sibling loses the same padding, so their widths stay identical"
+    );
+}

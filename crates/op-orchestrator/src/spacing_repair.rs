@@ -28,7 +28,7 @@ pub(crate) fn strip_wrapper_double_inset(root: &mut PenNode) -> bool {
     let Ok(mut v) = serde_json::to_value(&*root) else {
         return false;
     };
-    if !strip_in_value(&mut v) {
+    if !strip_in_value(&mut v, false) {
         return false;
     }
     match serde_json::from_value::<PenNode>(v) {
@@ -40,11 +40,20 @@ pub(crate) fn strip_wrapper_double_inset(root: &mut PenNode) -> bool {
     }
 }
 
-fn strip_in_value(v: &mut Value) -> bool {
+/// `gutter_above` — some ancestor reached through an unbroken chain of
+/// NON-PAINTING frames already owns a horizontal gutter, so this level's
+/// children may not re-add one either. Without it a chain of transparent
+/// wrappers only lost its outermost duplicate: stripping the first layer left
+/// the second one's parent unpadded, which read as "nobody owns the gutter
+/// here" and let the third layer keep an inset it had no claim to — the same
+/// misalignment this pass exists to remove, one level deeper. It does NOT
+/// cross a painting surface: a card's own padding is its inner inset, not a
+/// rail gutter, so `is_painting_surface` resets the chain.
+fn strip_in_value(v: &mut Value, gutter_above: bool) -> bool {
     let mut changed = false;
     let is_column = v.get("layout").and_then(Value::as_str) == Some("vertical");
     let (pt, pr, pb, pl) = padding_sides(v);
-    let parent_pads_h = pr >= 16.0 && pl >= 16.0;
+    let parent_pads_h = (pr >= 16.0 && pl >= 16.0) || gutter_above;
     let parent_gaps = num(v, "gap") >= 12.0;
     let _ = (pt, pb);
     if is_column && (parent_pads_h || parent_gaps) {
@@ -82,10 +91,31 @@ fn strip_in_value(v: &mut Value) -> bool {
     }
     if let Some(kids) = v.get_mut("children").and_then(Value::as_array_mut) {
         for c in kids.iter_mut() {
-            changed |= strip_in_value(c);
+            let inherits = parent_pads_h && !is_painting_surface(c);
+            changed |= strip_in_value(c, inherits);
         }
     }
     changed
+}
+
+/// Does this node paint a surface of its own — a fill, a clip, or any stroke
+/// beyond a top/bottom rule? Such a node re-establishes the inset frame for
+/// everything below it, so an ancestor's gutter claim stops here.
+fn is_painting_surface(v: &Value) -> bool {
+    let paints_fill = v
+        .get("fill")
+        .map(|f| match f {
+            Value::Array(a) => !a.is_empty(),
+            Value::Null => false,
+            _ => true,
+        })
+        .unwrap_or(false);
+    let clips = v.get("clipContent").and_then(Value::as_bool) == Some(true);
+    let strokes = match v.get("stroke") {
+        None | Some(Value::Null) => false,
+        Some(stroke) => !stroke_is_horizontal_rule_only(stroke),
+    };
+    paints_fill || clips || strokes
 }
 
 /// Per-axis padding transparency of a padded layout wrapper —
