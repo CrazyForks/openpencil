@@ -93,6 +93,8 @@ mod cleanup_mobile_reflow_tests;
 #[cfg(test)]
 mod cleanup_scroller_preservation_tests;
 #[cfg(test)]
+mod geometry_bottom_gap_tests;
+#[cfg(test)]
 mod geometry_chip_tests;
 #[cfg(test)]
 mod geometry_root_containment_tests;

@@ -43,6 +43,9 @@ use text_collision::push_text_collision_diagnostics;
 // `geometry_diagnostics` / `fix_rail_width_collapse`); each family of
 // collectors lives in its own file and is re-imported here so the drivers (and
 // the test modules mounted below) see the same flat namespace as before.
+#[path = "geometry_bottom_gap.rs"]
+mod geometry_bottom_gap;
+use geometry_bottom_gap::push_mobile_bottom_gap_diagnostic;
 #[path = "geometry_card_rail_fixes.rs"]
 mod geometry_card_rail_fixes;
 #[path = "geometry_diagnostics_collect.rs"]
@@ -226,6 +229,7 @@ pub fn geometry_diagnostics(state: &EditorState) -> Vec<String> {
         if let Ok(v) = serde_json::to_value(root) {
             bottom_nav_root_containment_diagnostic(&v, &rects, &mut out);
             bottom_nav_order_diagnostic(&v, &mut out);
+            push_mobile_bottom_gap_diagnostic(&v, &rects, &mut out);
             push_text_collision_diagnostics(&v, &rects, &mut out);
             // Ring track/progress arcs left as flex siblings. Detection is
             // shared verbatim with the repair pass (`ring_repair`), so the
