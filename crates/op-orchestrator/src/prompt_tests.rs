@@ -82,6 +82,8 @@ fn subtask() -> crate::plan::Subtask {
 mod components_tests;
 #[path = "prompt_planning_tests.rs"]
 mod planning_tests;
+#[path = "prompt_skill_budget_tests.rs"]
+mod skill_budget_tests;
 #[path = "prompt_subagent_content_tests.rs"]
 mod subagent_content_tests;
 #[path = "prompt_timeout_feedback_tests.rs"]

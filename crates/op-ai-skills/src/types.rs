@@ -57,9 +57,18 @@ impl Phase {
     /// headroom the codebase had already decided was correct. Tier-scaled
     /// callers (Basic/Standard mobile/desktop) are unaffected: they pass an
     /// explicit `budget_override` and never fall through to this default.
+    ///
+    /// Planning moved 4000 → 6000 for a related reason (2026-07-28). Its
+    /// three `Base` skills are budget-EXEMPT but still counted against the
+    /// total, and they need ~4500 tokens on their own once
+    /// `style-guide-selector` carries the injected style-guide catalog. At
+    /// 4000 the phase was already over budget before Step 3 ran, so
+    /// `landing-page-predesign` — the phase's only Domain skill — could never
+    /// be included on ANY prompt, matched or not. The ceiling now covers the
+    /// base set plus that skill with headroom.
     pub fn default_budget(self) -> u32 {
         match self {
-            Phase::Planning => 4000,
+            Phase::Planning => 6000,
             Phase::Generation => 12000,
             Phase::Validation => 3000,
             Phase::Maintenance => 5000,
@@ -69,7 +78,7 @@ impl Phase {
 
 /// Per-phase default token budgets — the TS `DEFAULT_BUDGETS` record.
 pub const DEFAULT_BUDGETS: [(Phase, u32); 4] = [
-    (Phase::Planning, 4000),
+    (Phase::Planning, 6000),
     (Phase::Generation, 12000),
     (Phase::Validation, 3000),
     (Phase::Maintenance, 5000),
@@ -322,7 +331,7 @@ mod tests {
 
     #[test]
     fn default_budget_table() {
-        assert_eq!(Phase::Planning.default_budget(), 4000);
+        assert_eq!(Phase::Planning.default_budget(), 6000);
         assert_eq!(Phase::Generation.default_budget(), 12000);
         assert_eq!(Phase::Validation.default_budget(), 3000);
         assert_eq!(Phase::Maintenance.default_budget(), 5000);
