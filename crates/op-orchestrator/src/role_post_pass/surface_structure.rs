@@ -403,6 +403,20 @@ pub(super) fn fix_deck_front_card_transparency(node: &mut Value) {
     let Some(front_rect) = deck_layer_rect(front) else {
         return;
     };
+    // An image sibling anywhere in the stack means this is an image-backed
+    // card (photo underneath, scrim in the middle, transparent content on
+    // top) — the see-through front is the composition, not a leak. Filling
+    // it would blot out the photo and its scrim entirely (measured:
+    // 0728-gm.op's three theme-list cards, where the model's deliberate
+    // photo + 3-stop alpha scrim + transparent content stack came back with
+    // an opaque $color-surface lid and no visible image). Same rationale as
+    // the ellipse exclusion above.
+    if children
+        .iter()
+        .any(|sibling| sibling.get("type").and_then(Value::as_str) == Some("image"))
+    {
+        return;
+    }
     let leaks_through = children.iter().skip(1).any(|sibling| {
         matches!(
             sibling.get("type").and_then(Value::as_str),

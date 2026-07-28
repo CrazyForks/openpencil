@@ -112,3 +112,35 @@ fn donut_ring_ellipse_sibling_behind_a_label_is_not_misfired_on() {
         "ellipse ring siblings must never trigger the deck front-card fix: {v}"
     );
 }
+
+#[test]
+fn image_backed_card_keeps_its_transparent_content_layer() {
+    // 0728-gm.op theme-list card: photo at the bottom, alpha gradient scrim
+    // in the middle, transparent text-bearing content stack on top. The
+    // see-through front IS the composition — filling it hides the photo.
+    let nodes: Vec<PenNode> = vec![serde_json::from_value(json!({
+        "type":"frame","id":"card","name":"Theme Card","layout":"none",
+        "x":0,"y":0,"width":240,"height":140,
+        "children":[
+            {"type":"frame","id":"content","name":"Content Stack",
+             "x":0,"y":0,"width":240,"height":140,
+             "children":[{"type":"text","id":"t1","content":"高分赛博朋克佳作"}]},
+            {"type":"rectangle","id":"scrim","name":"Gradient Scrim",
+             "x":0,"y":0,"width":240,"height":140,
+             "fill":[{"type":"linear_gradient","angle":180.0,"stops":[
+                 {"offset":0.0,"color":"#0F172A33"},
+                 {"offset":1.0,"color":"#0F172AF2"}]}]},
+            {"type":"image","id":"photo","name":"Background Image",
+             "x":0,"y":0,"width":240,"height":140,
+             "src":"op-image:207917279cfb430f",
+             "imageSearchQuery":"cyberpunk city neon"}
+        ]
+    }))
+    .unwrap()];
+    let v = run(nodes);
+    assert_eq!(
+        v["children"][0].get("fill"),
+        None,
+        "image-backed card's transparent content layer must stay transparent: {v}"
+    );
+}
