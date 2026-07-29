@@ -186,9 +186,43 @@ fn serve(
             if hash != canonical_document_hash(&fixtures::expected_alternating_document()?)? {
                 bail!("alternating smoke converged to the wrong document semantics");
             }
+            receive_final_applied(
+                &mut core,
+                &document,
+                guest_connection,
+                &mut connection,
+                CommitSeq(3),
+            )?;
             return Ok(hash.to_string());
         }
     }
+}
+
+fn receive_final_applied(
+    core: &mut OwnerSessionCore,
+    document: &jian_ops_schema::PenDocument,
+    connection_key: ConnectionKey,
+    connection: &mut op_collab_transport::SecureConnection<TcpStream>,
+    expected: CommitSeq,
+) -> Result<()> {
+    let frame = connection
+        .receive_frame()
+        .context("receive guest final Applied acknowledgement")?;
+    let CollabMessage::Applied(applied) = frame.body() else {
+        bail!("owner expected guest final Applied acknowledgement");
+    };
+    if applied.through_seq != expected {
+        bail!(
+            "owner expected guest Applied through sequence {}, received {}",
+            expected.0,
+            applied.through_seq.0
+        );
+    }
+    let effects = core.accept_frame(connection_key, frame, document)?;
+    if !effects.is_empty() {
+        bail!("guest final Applied acknowledgement unexpectedly produced owner effects");
+    }
+    Ok(())
 }
 
 fn take_prepared(
