@@ -259,6 +259,57 @@ async fn next_data_or_answer(socket: &mut ClientSocket, hello: &RelayClientHello
     }
 }
 
+async fn answer_reauth_control(
+    socket: &mut ClientSocket,
+    hello: &RelayClientHello,
+    message: Option<Result<Message, tokio_tungstenite::tungstenite::Error>>,
+) {
+    let message = message
+        .expect("socket remains open during reauthentication")
+        .expect("reauthentication control is a valid WebSocket message");
+    match message {
+        Message::Text(text) => {
+            let challenge = RelayReauthChallengeV1::decode_text(&text)
+                .expect("server sends a valid reauthentication challenge")
+                .into_challenge();
+            answer_challenge(socket, challenge, hello.clone()).await;
+        }
+        Message::Ping(payload) => {
+            socket
+                .send(Message::Pong(payload))
+                .await
+                .expect("reply to reauthentication ping");
+        }
+        Message::Pong(_) => {}
+        other => panic!("unexpected frame while completing reauthentication: {other:?}"),
+    }
+}
+
+async fn complete_paired_reauthentication(
+    owner: &mut ClientSocket,
+    guest: &mut ClientSocket,
+    owner_hello: &RelayClientHello,
+    guest_hello: &RelayClientHello,
+    authenticator: &RenewingAuthenticator,
+) {
+    time::timeout(Duration::from_secs(5), async {
+        while authenticator.renewed_authentications.load(Ordering::SeqCst) < 2 {
+            tokio::select! {
+                biased;
+                message = owner.next() => {
+                    answer_reauth_control(owner, owner_hello, message).await;
+                }
+                message = guest.next() => {
+                    answer_reauth_control(guest, guest_hello, message).await;
+                }
+                _ = time::sleep(Duration::from_millis(1)) => {}
+            }
+        }
+    })
+    .await
+    .expect("both peers complete online reauthentication");
+}
+
 async fn wait_for_atomic(value: &AtomicUsize, expected: usize) {
     time::timeout(Duration::from_secs(5), async {
         while value.load(Ordering::SeqCst) != expected {
@@ -358,13 +409,14 @@ async fn paired_reauth_uses_fresh_challenge_and_preserves_racing_binary() {
         next_data_or_answer(&mut owner, &owner_hello).await,
         b"binary-after-response"
     );
-    time::timeout(Duration::from_secs(1), async {
-        while authenticator.renewed_authentications.load(Ordering::SeqCst) < 2 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .expect("both peers complete online reauthentication");
+    complete_paired_reauthentication(
+        &mut owner,
+        &mut guest,
+        &owner_hello,
+        &guest_hello,
+        authenticator.as_ref(),
+    )
+    .await;
     assert_eq!(
         authenticator.initial_authentications.load(Ordering::SeqCst),
         2
