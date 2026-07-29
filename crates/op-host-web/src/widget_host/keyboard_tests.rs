@@ -54,6 +54,10 @@ fn keydown_shortcut_cmd_shift_k_toggles_component_browser() {
     host.editor_state
         .editor_ui
         .component_browser_kit_picker_open = true;
+    assert!(
+        host.input_active(),
+        "the open component browser owns keyboard input"
+    );
 
     assert!(host.apply_keydown_shortcut("k", true, true, false));
     assert!(!host.editor_state.editor_ui.component_browser_open);
@@ -68,6 +72,32 @@ fn keydown_shortcut_cmd_shift_k_toggles_component_browser() {
     host.editor_state_dirty = false;
     assert!(!host.apply_keydown_shortcut("K", true, true, true));
     assert!(!host.editor_state.editor_ui.component_browser_open);
+    assert!(!host.editor_state_dirty);
+}
+
+#[test]
+fn keydown_component_shortcut_does_not_escape_settings_or_git_inputs() {
+    let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.agent_settings_open = true;
+    host.editor_state.editor_ui.agent_settings.focus = Some(SettingsFocus::McpPort);
+    host.editor_state_dirty = false;
+
+    assert!(host.apply_keydown_shortcut("K", true, true, false));
+    assert!(!host.editor_state.editor_ui.component_browser_open);
+    assert_eq!(
+        host.editor_state.editor_ui.agent_settings.focus,
+        Some(SettingsFocus::McpPort)
+    );
+    assert!(!host.editor_state_dirty);
+
+    host.editor_state.editor_ui.agent_settings.focus = None;
+    host.editor_state.editor_ui.agent_settings_open = false;
+    host.editor_state.editor_ui.git_panel.open = true;
+    host.editor_state.editor_ui.git_panel.commit_focused = true;
+
+    assert!(host.apply_keydown_shortcut("K", true, true, false));
+    assert!(!host.editor_state.editor_ui.component_browser_open);
+    assert!(host.editor_state.editor_ui.git_panel.commit_focused);
     assert!(!host.editor_state_dirty);
 }
 

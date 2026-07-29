@@ -434,12 +434,25 @@ impl WidgetHost {
         if !is_mod || !shift || alt {
             return false;
         }
-        if self.input_active() {
+        // The collaboration invite field must keep ownership of editor
+        // shortcuts while the user is typing.
+        if self.editor_state.editor_ui.collab_join_input_active() {
             return true;
         }
         if key.eq_ignore_ascii_case("k") {
-            self.apply_toggle_component_browser()
+            // K may close its own component browser even though that search
+            // surface counts as an active input. Every other focused input
+            // keeps ownership, matching the native settings/Git guards.
+            if self.editor_state.editor_ui.component_browser_open {
+                self.apply_toggle_component_browser()
+            } else if self.input_active() {
+                true
+            } else {
+                self.apply_toggle_component_browser()
+            }
         } else if key.eq_ignore_ascii_case("f") {
+            // F/H intentionally blur inputs covered by the import modal, with
+            // settings/Git/modal guards inside `apply_open_import`.
             self.apply_open_import(ImportSource::Figma)
         } else if key.eq_ignore_ascii_case("h") {
             self.apply_open_import(ImportSource::Html)
