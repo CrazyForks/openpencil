@@ -114,6 +114,20 @@ impl DesktopCollabRuntime {
         }
     }
 
+    #[cfg(test)]
+    pub(in crate::collab_runtime) fn wait_for_worker_slot_for_test(&mut self) {
+        // Tests that inject a replacement transport must cross the same
+        // retirement acknowledgement gate as launch_pending_network.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while self.require_worker_slot().is_err() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "retired collaboration worker must release its slot"
+            );
+            std::thread::yield_now();
+        }
+    }
+
     pub(in crate::collab_runtime) fn retire_workers(&mut self) {
         // A generation identifies one worker incarnation, not the retained
         // guest session actor. Fence it before requesting shutdown so neither

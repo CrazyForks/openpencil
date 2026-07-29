@@ -615,6 +615,8 @@ fn retry_against_new_epoch_ends_without_replaying_pending_edit() {
         },
         &mut host,
     );
+    runtime.wait_for_worker_slot_for_test();
+    assert!(runtime.network.is_none());
     let (network, retry_commands) = guest_command_channel_with_capacity_for_test(8);
     runtime.network = Some(network);
     let retry_connection = connection(3);
