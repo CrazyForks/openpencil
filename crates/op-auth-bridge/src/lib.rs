@@ -16,6 +16,9 @@
 //! validation, and bounded JWKS caching are entirely open source. The private
 //! library may only issue opaque tickets from its authenticated device session.
 
+#[cfg(all(op_auth_development_prebuilt, not(debug_assertions)))]
+compile_error!("the local op-auth archive override requires target debug assertions");
+
 mod collab_claims;
 mod collab_jwks;
 mod collab_jwks_cache;

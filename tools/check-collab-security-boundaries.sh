@@ -27,6 +27,7 @@ collab_scan_roots=(
     crates/op-editor-ui/src
     crates/op-host-native/src
     crates/op-host-desktop/src
+    crates/op-host-services/src/profile_avatar_fetch.rs
     crates/op-host-services/src/public_https_client.rs
     crates/op-host-services/src/provider_dial.rs
     crates/op-host-services/src/web_credentials.rs
@@ -512,8 +513,15 @@ for avatar_anchor in \
     "MAX_AVATAR_ENCODED_BYTES" \
     "public_https_client" \
     "REQUEST_TIMEOUT"; do
-    require_literal crates/op-host-desktop/src/collab_avatar_host.rs \
+    require_literal crates/op-host-services/src/profile_avatar_fetch.rs \
         "$avatar_anchor" "bounded collaboration avatar fetch"
+done
+for desktop_avatar_anchor in \
+    "request.is_current_account()" \
+    "fetch_account_avatar_blocking(request.url())" \
+    "fetch_profile_avatar_blocking(request.url())"; do
+    require_literal crates/op-host-desktop/src/collab_avatar_host.rs \
+        "$desktop_avatar_anchor" "desktop avatar security-policy delegation"
 done
 require_literal crates/op-host-services/src/provider_dial.rs \
     ".no_proxy()" "public HTTPS proxy bypass prevention"

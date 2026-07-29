@@ -35,6 +35,29 @@ decryptor and key with the application adds obscurity, not a security boundary.
 Production trust never depends on client artifact secrecy: signing keys and
 ticket issuance remain server-side.
 
+## Local ABI-v2 development
+
+Developers can exercise the collaboration UI against a private ABI-v2 archive
+without replacing the committed ABI-v1 compatibility artifact:
+
+```sh
+OPENPENCIL_DEV_OP_AUTH_ARCHIVE=/absolute/path/to/libop_auth.a \
+OPENPENCIL_DEV_OP_AUTH_ABI_VERSION=2 \
+cargo build -p op-host-desktop --features dev-op-auth-abi-v2
+```
+
+Using the override requires the feature and both variables together; enabling
+the feature without either variable is a no-op so workspace `--all-features`
+checks keep using the committed artifact. The archive path must be absolute,
+must select a regular non-symlink file using the artifact name expected by the
+current target, and is watched for changes by Cargo. The build script copies it
+into Cargo's private build-output directory before linking. This override is
+accepted only in Cargo's debug profile when target debug assertions are
+enabled; release, release-derived, and hardened profiles reject it. It
+deliberately skips release provenance only for a local, non-shipping binary.
+The runtime ABI handshake and required collaboration symbols still fail
+closed.
+
 ## Regional login and collaboration trust
 
 The credential-bearing login/ticket origin and the public collaboration trust

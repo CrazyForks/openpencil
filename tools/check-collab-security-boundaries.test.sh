@@ -332,11 +332,21 @@ EOF
 fn public_fixture_is_explicitly_enabled() {}
 EOF
 
-    cat > "$fixture_root/crates/op-host-desktop/src/collab_avatar_host.rs" <<'EOF'
+    cat > "$fixture_root/crates/op-host-services/src/profile_avatar_fetch.rs" <<'EOF'
 const MAX_REDIRECTS: usize = 3;
 const REQUEST_TIMEOUT: u64 = 5;
 const MAX_AVATAR_ENCODED_BYTES: usize = 1024;
 fn public_https_client() {}
+EOF
+
+    cat > "$fixture_root/crates/op-host-desktop/src/collab_avatar_host.rs" <<'EOF'
+fn dispatch(request: AvatarRequest) {
+    if request.is_current_account() {
+        fetch_account_avatar_blocking(request.url());
+    } else {
+        fetch_profile_avatar_blocking(request.url());
+    }
+}
 EOF
 
     cat > "$fixture_root/crates/op-host-services/src/public_https_client.rs" <<'EOF'
@@ -633,6 +643,26 @@ new_fixture desktop-sensitive-file
 : > "$fixture_root/crates/op-host-desktop/src/collab_runtime/runtime-ticket.token"
 expect_failure "rejects sensitive files in desktop collaboration integration" \
     "sensitive key/token-shaped files are forbidden"
+
+new_fixture avatar-redirect-limit-removed
+sed '/MAX_REDIRECTS/d' \
+    "$fixture_root/crates/op-host-services/src/profile_avatar_fetch.rs" \
+    > "$fixture_root/crates/op-host-services/src/profile_avatar_fetch.rs.next"
+mv \
+    "$fixture_root/crates/op-host-services/src/profile_avatar_fetch.rs.next" \
+    "$fixture_root/crates/op-host-services/src/profile_avatar_fetch.rs"
+expect_failure "requires the shared avatar redirect limit" \
+    "bounded collaboration avatar fetch"
+
+new_fixture desktop-public-avatar-delegation-removed
+sed '/fetch_profile_avatar_blocking(request.url())/d' \
+    "$fixture_root/crates/op-host-desktop/src/collab_avatar_host.rs" \
+    > "$fixture_root/crates/op-host-desktop/src/collab_avatar_host.rs.next"
+mv \
+    "$fixture_root/crates/op-host-desktop/src/collab_avatar_host.rs.next" \
+    "$fixture_root/crates/op-host-desktop/src/collab_avatar_host.rs"
+expect_failure "requires public-only desktop collaboration avatar delegation" \
+    "desktop avatar security-policy delegation"
 
 new_fixture avatar-proxy-bypass-removed
 : > "$fixture_root/crates/op-host-services/src/provider_dial.rs"

@@ -16,6 +16,9 @@ path = "src/main.rs"
 [features]
 default = []
 mcp-debug-tools = ["op-mcp/debug-tools"]
+# Local-only collaboration development against an external private ABI-v2
+# archive. Release builds are rejected by op-auth-bridge's build script.
+dev-op-auth-abi-v2 = ["op-auth-bridge/dev-abi-v2"]
 
 # File-association metadata for `cargo-bundle` (`cargo bundle`). This
 # declares OpenPencil as the OS-level handler for `.op` / `.pen`

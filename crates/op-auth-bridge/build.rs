@@ -3,19 +3,27 @@
 //! UI stays hidden. Open-source checkouts therefore always build.
 
 use std::env;
+use std::ffi::OsStr;
+use std::fs;
 use std::path::PathBuf;
 
 #[path = "prebuilt_provenance.rs"]
 mod prebuilt_provenance;
 
+const DEV_ARCHIVE_ENV: &str = "OPENPENCIL_DEV_OP_AUTH_ARCHIVE";
+const DEV_ABI_VERSION_ENV: &str = "OPENPENCIL_DEV_OP_AUTH_ABI_VERSION";
+const DEV_FEATURE_ENV: &str = "CARGO_FEATURE_DEV_ABI_V2";
+
 fn main() {
     println!("cargo:rustc-check-cfg=cfg(op_auth_prebuilt)");
     println!("cargo:rustc-check-cfg=cfg(op_auth_collab_ticket_prebuilt)");
+    println!("cargo:rustc-check-cfg=cfg(op_auth_development_prebuilt)");
     println!("cargo:rerun-if-changed=prebuilt");
+    println!("cargo:rerun-if-env-changed={DEV_ARCHIVE_ENV}");
+    println!("cargo:rerun-if-env-changed={DEV_ABI_VERSION_ENV}");
 
     let target = env::var("TARGET").unwrap_or_default();
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let prebuilt_dir = manifest_dir.join("prebuilt").join(&target);
     // MSVC static libraries follow the `<name>.lib` convention; every
     // other target uses the Unix `lib<name>.a` archive name.
     let artifact = if target.ends_with("-pc-windows-msvc") {
@@ -23,28 +31,49 @@ fn main() {
     } else {
         "libop_auth.a"
     };
-    let artifact_path = prebuilt_dir.join(artifact);
-    if !artifact_path.is_file() {
-        return;
-    }
-    let validated = match prebuilt_provenance::validate_prebuilt(
-        &manifest_dir.join("prebuilt"),
-        &prebuilt_dir,
-        &target,
-        artifact,
-        &env::var("CARGO_PKG_VERSION").unwrap_or_default(),
-    ) {
-        Ok(validated) => validated,
-        Err(error) => {
-            println!("cargo:warning=ignoring op-auth prebuilt: {error}");
-            return;
-        }
-    };
-    let abi_version = validated.abi_version;
+
+    let development = development_prebuilt(artifact);
+    let (prebuilt_dir, abi_version, development_override, signed_provenance) =
+        if let Some((directory, abi_version)) = development {
+            println!(
+                "cargo:warning=using unsigned local op-auth ABI {abi_version} \
+                 archive for a debug build"
+            );
+            println!("cargo:rustc-cfg=op_auth_development_prebuilt");
+            (directory, abi_version, true, false)
+        } else {
+            let prebuilt_dir = manifest_dir.join("prebuilt").join(&target);
+            let artifact_path = prebuilt_dir.join(artifact);
+            if !artifact_path.is_file() {
+                return;
+            }
+            let validated = match prebuilt_provenance::validate_prebuilt(
+                &manifest_dir.join("prebuilt"),
+                &prebuilt_dir,
+                &target,
+                artifact,
+                &env::var("CARGO_PKG_VERSION").unwrap_or_default(),
+            ) {
+                Ok(validated) => validated,
+                Err(error) => {
+                    println!("cargo:warning=ignoring op-auth prebuilt: {error}");
+                    return;
+                }
+            };
+            (
+                prebuilt_dir,
+                validated.abi_version,
+                false,
+                validated.signed_provenance,
+            )
+        };
 
     println!("cargo:rustc-cfg=op_auth_prebuilt");
     if abi_version == 2 {
-        debug_assert!(validated.signed_provenance);
+        assert!(
+            development_override || signed_provenance,
+            "production ABI-v2 archives require signed provenance"
+        );
         println!("cargo:rustc-cfg=op_auth_collab_ticket_prebuilt");
     }
     println!("cargo:rustc-env=OP_AUTH_PREBUILT_ABI_VERSION={abi_version}");
@@ -65,4 +94,66 @@ fn main() {
         println!("cargo:rustc-link-lib=advapi32");
         println!("cargo:rustc-link-lib=ntdll");
     }
+}
+
+fn development_prebuilt(artifact: &str) -> Option<(PathBuf, u32)> {
+    let feature_enabled = env::var_os(DEV_FEATURE_ENV).is_some();
+    let archive = env::var_os(DEV_ARCHIVE_ENV);
+    let abi_version = env::var_os(DEV_ABI_VERSION_ENV);
+    let (archive, abi_version) = match (feature_enabled, archive, abi_version) {
+        (_, None, None) => return None,
+        (true, Some(archive), Some(abi_version)) => (archive, abi_version),
+        (false, _, _) => {
+            panic!("{DEV_ARCHIVE_ENV} requires the op-auth-bridge/dev-abi-v2 feature");
+        }
+        _ => {
+            panic!(
+                "op-auth-bridge/dev-abi-v2 requires {DEV_ARCHIVE_ENV} and {DEV_ABI_VERSION_ENV}"
+            );
+        }
+    };
+
+    let debug_build = env::var("PROFILE").is_ok_and(|profile| profile == "debug");
+    assert!(
+        debug_build,
+        "{DEV_ARCHIVE_ENV} is accepted only in Cargo's debug profile"
+    );
+
+    let requested_archive = PathBuf::from(archive);
+    assert!(
+        requested_archive.is_absolute(),
+        "{DEV_ARCHIVE_ENV} must be an absolute path"
+    );
+    let metadata = fs::symlink_metadata(&requested_archive)
+        .unwrap_or_else(|_| panic!("{DEV_ARCHIVE_ENV} is missing or unreadable"));
+    assert!(
+        metadata.file_type().is_file(),
+        "{DEV_ARCHIVE_ENV} must select a regular non-symlink file"
+    );
+    let archive = fs::canonicalize(&requested_archive)
+        .unwrap_or_else(|_| panic!("{DEV_ARCHIVE_ENV} is missing or unreadable"));
+    assert!(
+        archive.is_file(),
+        "{DEV_ARCHIVE_ENV} must select a regular file"
+    );
+    assert_eq!(
+        archive.file_name(),
+        Some(OsStr::new(artifact)),
+        "{DEV_ARCHIVE_ENV} must select the target's {artifact}"
+    );
+
+    let abi_version = abi_version
+        .into_string()
+        .ok()
+        .filter(|value| value == "2")
+        .map(|_| 2)
+        .unwrap_or_else(|| panic!("{DEV_ABI_VERSION_ENV} must be exactly 2"));
+    let directory = PathBuf::from(
+        env::var("OUT_DIR").expect("Cargo provides OUT_DIR to the op-auth build script"),
+    );
+    fs::copy(&archive, directory.join(artifact))
+        .unwrap_or_else(|_| panic!("failed to stage {DEV_ARCHIVE_ENV} in OUT_DIR"));
+    println!("cargo:rerun-if-changed={}", requested_archive.display());
+    println!("cargo:rerun-if-changed={}", archive.display());
+    Some((directory, abi_version))
 }
