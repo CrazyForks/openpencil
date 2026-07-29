@@ -66,6 +66,8 @@ fn single_selection_dimension_label_uses_active_color() {
 
 #[test]
 fn active_node_drag_hides_selection_chrome_and_dimension_label() {
+    let _guard = crate::agent_indicator_test_support::lock();
+    op_editor_core::agent_indicators::clear();
     let mut state = EditorState::new();
     state.doc.children = vec![named_rect_node("n2", "Schedule Card 1")];
     state.set_single_selection(op_editor_core::NodeId::new("n2"));
@@ -132,6 +134,8 @@ fn active_node_drag_suppresses_focus_and_child_hover_outlines() {
 
 #[test]
 fn active_node_drag_overlay_paints_selected_node_at_absolute_drag_origin() {
+    let _guard = crate::agent_indicator_test_support::lock();
+    op_editor_core::agent_indicators::clear();
     let mut state = EditorState::new();
     state.doc.children = vec![named_rect_node("n2", "Schedule Card 1")];
     state.set_single_selection(op_editor_core::NodeId::new("n2"));
@@ -169,6 +173,8 @@ fn active_node_drag_overlay_paints_selected_node_at_absolute_drag_origin() {
 
 #[test]
 fn active_node_drag_drop_indicator_omits_dragged_ghost_rect() {
+    let _guard = crate::agent_indicator_test_support::lock();
+    op_editor_core::agent_indicators::clear();
     let mut state = EditorState::new();
     state.doc.children = vec![named_rect_node("n2", "Schedule Card 1")];
     state.set_single_selection(op_editor_core::NodeId::new("n2"));
@@ -213,6 +219,8 @@ fn active_node_drag_drop_indicator_omits_dragged_ghost_rect() {
 
 #[test]
 fn selected_root_frame_paints_one_name_label() {
+    let _guard = crate::agent_indicator_test_support::lock();
+    op_editor_core::agent_indicators::clear();
     let mut state = EditorState::new();
     state.doc.children = vec![named_frame_node("n1", "Frame")];
     state.set_single_selection(op_editor_core::NodeId::new("n1"));
@@ -245,6 +253,8 @@ fn selected_root_frame_paints_one_name_label() {
 
 #[test]
 fn multi_selection_overlay_omits_count_label_and_paints_union_dimensions() {
+    let _guard = crate::agent_indicator_test_support::lock();
+    op_editor_core::agent_indicators::clear();
     let mut state = EditorState::new();
     state.doc.children = vec![
         named_rect_node("n2", "Schedule Card 1"),
