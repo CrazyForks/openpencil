@@ -9,11 +9,15 @@ use std::{
     time::Duration,
 };
 
+use op_auth_bridge::CollabVerifierConfigError;
+#[cfg(unix)]
 use op_auth_bridge::{
-    CollabJwksCacheLimits, CollabTicketVerifier, CollabVerifierConfig, CollabVerifierConfigError,
+    CollabJwksCacheLimits, CollabTicketVerifier, CollabVerifierConfig,
     DEFAULT_MAX_COLLAB_JWKS_BYTES,
 };
+#[cfg(unix)]
 use op_collab_policy_file::PinnedPolicyFileFetcher;
+#[cfg(unix)]
 use op_collab_relay_control_plane::{RegionBoundOwnerPublishPolicy, RelayLocatorPublishService};
 use op_collab_relay_protocol::{LocatorKeyId, RelayRegion};
 
@@ -123,14 +127,21 @@ impl fmt::Debug for ProductionLocatorConfig {
             .debug_struct("ProductionLocatorConfig")
             .field("server", &self.server)
             .field("home_region", &self.home_region)
-            .field("ticket_policy_file", &"[REDACTED]")
+            .field(
+                "ticket_policy_file",
+                &redacted_path(&self.ticket_policy_file),
+            )
             .field("policy_max_age_seconds", &self.policy_max_age_seconds)
-            .field("hsm_socket", &"[REDACTED]")
+            .field("hsm_socket", &redacted_path(&self.hsm_socket))
             .field("hsm_key_id", &self.hsm_key_id)
             .field("hsm_peer", &self.hsm_peer)
             .field("hsm_timeout", &self.hsm_timeout)
             .finish()
     }
+}
+
+fn redacted_path(_path: &Path) -> &'static str {
+    "[REDACTED]"
 }
 
 #[cfg(unix)]

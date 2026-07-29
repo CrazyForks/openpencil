@@ -1,3 +1,4 @@
+#[cfg(unix)]
 use std::{
     fmt,
     io::{Read as _, Write as _},
@@ -5,18 +6,27 @@ use std::{
     time::Duration,
 };
 
+#[cfg(unix)]
 use op_collab_relay_control_plane::{RelayLocatorSigner, RelayLocatorSignerError};
-use op_collab_relay_protocol::{LocatorKeyId, LocatorSignature, LOCATOR_CANONICAL_SIGNING_BYTES};
+use op_collab_relay_protocol::LOCATOR_CANONICAL_SIGNING_BYTES;
+#[cfg(unix)]
+use op_collab_relay_protocol::{LocatorKeyId, LocatorSignature};
 
 pub const HSM_SIGNING_PROTOCOL_VERSION: u8 = 1;
 pub const HSM_SIGN_REQUEST_BYTES: usize = 4 + 1 + 1 + 1 + 64 + LOCATOR_CANONICAL_SIGNING_BYTES;
 pub const HSM_SIGN_RESPONSE_BYTES: usize = 4 + 1 + 1 + 64;
+#[cfg(unix)]
 pub const MAX_HSM_SOCKET_PATH_BYTES: usize = 100;
+#[cfg(unix)]
 pub const MAX_HSM_TIMEOUT: Duration = Duration::from_secs(5);
 
+#[cfg(unix)]
 const REQUEST_MAGIC: &[u8; 4] = b"OPLS";
+#[cfg(unix)]
 const RESPONSE_MAGIC: &[u8; 4] = b"OPLR";
+#[cfg(unix)]
 const SIGN_OPERATION: u8 = 1;
+#[cfg(unix)]
 const STATUS_OK: u8 = 0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -195,6 +205,7 @@ fn validate_socket_source(
     Ok(())
 }
 
+#[cfg(unix)]
 fn encode_request(
     key_id: &LocatorKeyId,
     canonical: &[u8; LOCATOR_CANONICAL_SIGNING_BYTES],
@@ -210,6 +221,7 @@ fn encode_request(
     output
 }
 
+#[cfg(unix)]
 fn decode_response(response: &[u8]) -> Result<LocatorSignature, HsmSignerError> {
     if response.len() != HSM_SIGN_RESPONSE_BYTES
         || &response[..4] != RESPONSE_MAGIC

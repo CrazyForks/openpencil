@@ -5,10 +5,14 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use ed25519_dalek::{Signer as _, SigningKey, Verifier as _};
+#[cfg(unix)]
+use ed25519_dalek::Verifier as _;
+use ed25519_dalek::{Signer as _, SigningKey};
+#[cfg(unix)]
+use op_collab_relay_control_plane::RelayLocatorSigner;
 use op_collab_relay_control_plane::{
-    OwnerPublishDraft, OwnerPublishRequest, RelayLocatorPublishServiceError, RelayLocatorSigner,
-    RelayPublishLifetime, SignedLocatorResponse, MAX_PUBLISH_AUTHORIZATION_BYTES,
+    OwnerPublishDraft, OwnerPublishRequest, RelayLocatorPublishServiceError, RelayPublishLifetime,
+    SignedLocatorResponse, MAX_PUBLISH_AUTHORIZATION_BYTES,
 };
 use op_collab_relay_protocol::{
     ExpectedDiscoveryId, LocatorKeyId, LocatorSignature, OwnerNoiseStatic, RelayRegion,
@@ -20,10 +24,10 @@ use tokio::{
     sync::oneshot,
 };
 
+use crate::{serve_listener_until, LocatorHttpLimits, LocatorPublisher, LocatorServerConfig};
+#[cfg(unix)]
 use crate::{
-    serve_listener_until, ExpectedUnixPeer, LocatorHttpLimits, LocatorPublisher,
-    LocatorServerConfig, UnixHsmRelayLocatorSigner, HSM_SIGN_REQUEST_BYTES,
-    HSM_SIGN_RESPONSE_BYTES,
+    ExpectedUnixPeer, UnixHsmRelayLocatorSigner, HSM_SIGN_REQUEST_BYTES, HSM_SIGN_RESPONSE_BYTES,
 };
 
 const OWNER_KEY: [u8; 32] = [0x42; 32];
