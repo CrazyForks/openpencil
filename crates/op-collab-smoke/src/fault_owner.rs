@@ -275,6 +275,12 @@ fn stale_rebase(
             route_effects(&mut link.connection, fixtures::EPOCH, effects)?;
         }
     }
+    receive_applied(
+        &mut core,
+        &document,
+        guest_connection(),
+        &mut link.connection,
+    )?;
     let expected =
         crate::scenario::with_position(&crate::scenario::initial_document()?, 10.0, 5.0)?;
     if canonical_document_hash(&document)? != canonical_document_hash(&expected)? {
