@@ -557,8 +557,8 @@ fn paint_collaboration_chip(
 }
 
 /// User-avatar button: a generic outline glyph when signed out, or a
-/// filled initial-letter circle when signed in. Shares the same
-/// hover/press ghost background as its icon-button siblings (Sun /
+/// profile image with an initial-letter fallback when signed in. Shares the
+/// same hover/press ghost background as its icon-button siblings (Sun /
 /// Globe / Maximize) so it reads consistently in the chrome row.
 pub(super) fn paint_account_button(
     cx: &mut PaintCx<'_>,
@@ -610,6 +610,11 @@ pub(super) fn paint_account_button(
                     avatar_rect.origin.x + (AVATAR - letter_w) / 2.0,
                     center_y + 4.0,
                 ),
+            );
+            crate::widgets::account_avatar_paint::paint_account_avatar_image(
+                cx,
+                account,
+                avatar_rect,
             );
         }
     }

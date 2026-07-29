@@ -1,14 +1,14 @@
-//! Bounded host/widget handoff for verified collaboration avatars.
+//! Bounded host/widget handoff for verified profile avatars.
 //!
-//! URLs arrive only from the authenticated collaboration roster and stay in
-//! this ephemeral process-local registry; encoded bytes stay in its LRU.
-//! Neither enters `EditorState`, document serialization, or debug output.
-//! Widgets read only by epoch-local participant key; the desktop host owns
-//! HTTPS and the existing image decode workers own rasterization.
+//! URLs arrive from authenticated account/collaboration profiles and stay in
+//! this ephemeral process-local registry; encoded bytes stay in its LRU. The
+//! desktop host owns SSRF-safe HTTPS and the existing image decode workers own
+//! rasterization.
 
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 pub const MAX_AVATAR_ENCODED_BYTES: usize = 512 * 1024;
 pub const MAX_AVATAR_SOURCE_EDGE_PX: u32 = 1_024;
@@ -17,9 +17,15 @@ pub const AVATAR_DECODE_EDGE_PX: u32 = 64;
 
 const MAX_AVATAR_URL_BYTES: usize = 2_048;
 const MAX_PARTICIPANT_KEY_BYTES: usize = 256;
+const MAX_ACCOUNT_REVISION_BYTES: usize = 128;
+const COLLAB_KEY_PREFIX: &str = "collab:";
+const MAX_REGISTRY_KEY_BYTES: usize = MAX_PARTICIPANT_KEY_BYTES + COLLAB_KEY_PREFIX.len();
+const ACCOUNT_AVATAR_KEY: &str = "account:current";
 const AVATAR_CACHE_BYTE_BUDGET: usize = 8 * 1024 * 1024;
 const AVATAR_CACHE_MAX_ENTRIES: usize = 64;
 const AVATAR_PENDING_CAP: usize = 32;
+const ACCOUNT_AVATAR_MAX_RETRIES: u8 = 6;
+const ACCOUNT_AVATAR_MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
 const IMAGE_ID_PREFIX: u64 = 0xa710_0000_0000_0000;
 
 /// Opaque request token. Its custom `Debug` deliberately omits the URL and
@@ -36,6 +42,15 @@ pub struct CollabAvatarFetchRequest {
 impl CollabAvatarFetchRequest {
     pub fn url(&self) -> &str {
         &self.url
+    }
+
+    /// Whether this request belongs to the locally authenticated account.
+    ///
+    /// Remote collaboration participants always occupy the separate
+    /// `collab:` namespace and therefore cannot opt into account-only host
+    /// fetch policy.
+    pub fn is_current_account(&self) -> bool {
+        self.participant_key == ACCOUNT_AVATAR_KEY
     }
 }
 
@@ -81,6 +96,8 @@ struct AvatarSlot {
     image_id: u64,
     state: SlotState,
     last_used: u64,
+    failure_count: u8,
+    retry_at: Option<Instant>,
 }
 
 struct AvatarRegistry {
@@ -155,6 +172,8 @@ impl AvatarRegistry {
                     image_id,
                     state: SlotState::Waiting,
                     last_used: tick,
+                    failure_count: 0,
+                    retry_at: None,
                 },
             );
         }
@@ -196,10 +215,28 @@ impl AvatarRegistry {
 
     fn ready(&mut self, participant_key: &str) -> Option<CollabAvatarImage> {
         if participant_key.is_empty()
-            || participant_key.len() > MAX_PARTICIPANT_KEY_BYTES
+            || participant_key.len() > MAX_REGISTRY_KEY_BYTES
             || participant_key.chars().any(char::is_control)
         {
             return None;
+        }
+        if participant_key == ACCOUNT_AVATAR_KEY {
+            let retry_url = self.slots.get_mut(participant_key).and_then(|slot| {
+                let retry_due = matches!(slot.state, SlotState::Failed)
+                    && slot
+                        .retry_at
+                        .is_some_and(|deadline| Instant::now() >= deadline);
+                if matches!(slot.state, SlotState::Waiting) || retry_due {
+                    slot.state = SlotState::Waiting;
+                    slot.retry_at = None;
+                    Some(slot.url.clone())
+                } else {
+                    None
+                }
+            });
+            if let Some(url) = retry_url {
+                let _ = self.lookup(participant_key, &url);
+            }
         }
         self.tick = self.tick.wrapping_add(1);
         let tick = self.tick;
@@ -269,6 +306,8 @@ impl AvatarRegistry {
         slot.last_used = self.tick;
         match encoded {
             Some(encoded) => {
+                slot.failure_count = 0;
+                slot.retry_at = None;
                 self.cached_bytes = self.cached_bytes.saturating_add(encoded.len());
                 self.encoded.insert(slot.image_id, encoded);
                 slot.state = SlotState::Ready;
@@ -279,6 +318,18 @@ impl AvatarRegistry {
             }
             None => {
                 slot.state = SlotState::Failed;
+                if request.participant_key == ACCOUNT_AVATAR_KEY
+                    && slot.failure_count < ACCOUNT_AVATAR_MAX_RETRIES
+                {
+                    slot.failure_count += 1;
+                    slot.retry_at = Some(
+                        Instant::now()
+                            + account_avatar_retry_delay(slot.failure_count)
+                                .min(ACCOUNT_AVATAR_MAX_RETRY_DELAY),
+                    );
+                } else {
+                    slot.retry_at = None;
+                }
                 true
             }
         }
@@ -288,16 +339,105 @@ impl AvatarRegistry {
         self.encoded.get(&image_id).map(Arc::clone)
     }
 
+    fn has_background_work(&self) -> bool {
+        !self.pending.is_empty()
+            || self.slots.get(ACCOUNT_AVATAR_KEY).is_some_and(|slot| {
+                matches!(
+                    slot.state,
+                    SlotState::Waiting | SlotState::Queued | SlotState::InFlight
+                ) || (matches!(slot.state, SlotState::Failed) && slot.retry_at.is_some())
+            })
+    }
+
+    fn install_ready(
+        &mut self,
+        participant_key: &str,
+        source_identity: &str,
+        bytes: Vec<u8>,
+    ) -> bool {
+        let Some(encoded) = validate_encoded_avatar(bytes) else {
+            self.remove_slot(participant_key);
+            return false;
+        };
+        let changed = self
+            .slots
+            .get(participant_key)
+            .is_some_and(|slot| slot.url != source_identity);
+        if changed {
+            self.remove_slot(participant_key);
+        }
+        self.tick = self.tick.wrapping_add(1);
+        let tick = self.tick;
+        if !self.slots.contains_key(participant_key) {
+            if self.max_entries == 0 {
+                return false;
+            }
+            self.evict_to_entry_limit(self.max_entries.saturating_sub(1));
+            let image_id = IMAGE_ID_PREFIX | self.next_image_id;
+            self.next_image_id = self.next_image_id.wrapping_add(1).max(1);
+            self.slots.insert(
+                participant_key.to_string(),
+                AvatarSlot {
+                    url: source_identity.to_string(),
+                    profile_generation: 1,
+                    image_id,
+                    state: SlotState::Ready,
+                    last_used: tick,
+                    failure_count: 0,
+                    retry_at: None,
+                },
+            );
+        }
+        let slot = self
+            .slots
+            .get_mut(participant_key)
+            .expect("ready slot was inserted above");
+        slot.last_used = tick;
+        slot.state = SlotState::Ready;
+        slot.failure_count = 0;
+        slot.retry_at = None;
+        if let Some(previous) = self.encoded.insert(slot.image_id, encoded.clone()) {
+            self.cached_bytes = self.cached_bytes.saturating_sub(previous.len());
+        }
+        self.cached_bytes = self.cached_bytes.saturating_add(encoded.len());
+        self.evict_over_budget();
+        self.slots
+            .get(participant_key)
+            .is_some_and(|slot| matches!(slot.state, SlotState::Ready))
+    }
+
     fn begin_session_generation(&mut self, generation: u64) -> bool {
+        let account_request_invalidated = self
+            .slots
+            .get(ACCOUNT_AVATAR_KEY)
+            .is_some_and(|slot| matches!(slot.state, SlotState::Queued | SlotState::InFlight));
         let changed = self.session_generation != generation
             || !self.pending.is_empty()
-            || !self.slots.is_empty()
-            || !self.encoded.is_empty();
+            || self.slots.keys().any(|key| key != ACCOUNT_AVATAR_KEY)
+            || account_request_invalidated;
         self.session_generation = generation;
+
+        let stale_keys: Vec<String> = self
+            .slots
+            .keys()
+            .filter(|key| key.as_str() != ACCOUNT_AVATAR_KEY)
+            .cloned()
+            .collect();
+        for key in stale_keys {
+            self.remove_slot(&key);
+        }
         self.pending.clear();
-        self.slots.clear();
-        self.encoded.clear();
-        self.cached_bytes = 0;
+        let account_retry_url = self.slots.get_mut(ACCOUNT_AVATAR_KEY).and_then(|account| {
+            if matches!(account.state, SlotState::Queued | SlotState::InFlight) {
+                account.state = SlotState::Waiting;
+                Some(account.url.clone())
+            } else {
+                None
+            }
+        });
+        if let Some(url) = account_retry_url {
+            let _ = self.lookup(ACCOUNT_AVATAR_KEY, &url);
+        }
         self.tick = self.tick.wrapping_add(1);
         // Keep `next_image_id` monotonic: a late decode result may still land
         // in the backend LRU, and a fresh generation must never reuse its id.
@@ -319,8 +459,15 @@ impl AvatarRegistry {
             let Some(oldest) = self
                 .slots
                 .iter()
+                .filter(|(key, _)| key.as_str() != ACCOUNT_AVATAR_KEY)
                 .min_by_key(|(_, slot)| slot.last_used)
                 .map(|(key, _)| key.clone())
+                .or_else(|| {
+                    self.slots
+                        .iter()
+                        .min_by_key(|(_, slot)| slot.last_used)
+                        .map(|(key, _)| key.clone())
+                })
             else {
                 break;
             };
@@ -333,8 +480,15 @@ impl AvatarRegistry {
             let Some(oldest) = self
                 .slots
                 .iter()
+                .filter(|(key, _)| key.as_str() != ACCOUNT_AVATAR_KEY)
                 .min_by_key(|(_, slot)| slot.last_used)
                 .map(|(key, _)| key.clone())
+                .or_else(|| {
+                    self.slots
+                        .iter()
+                        .min_by_key(|(_, slot)| slot.last_used)
+                        .map(|(key, _)| key.clone())
+                })
             else {
                 break;
             };
@@ -355,31 +509,80 @@ fn avatars() -> &'static Mutex<AvatarRegistry> {
 /// epoch-local participant key. Invalid/absent profiles remove any stale
 /// image for that participant.
 pub fn register_collab_avatar_url(participant_key: &str, url: Option<&str>) -> bool {
+    let Some(participant_key) = collab_registry_key(participant_key) else {
+        return false;
+    };
     let Ok(mut registry) = avatars().lock() else {
         return false;
     };
     let Some(url) = url else {
-        registry.remove_slot(participant_key);
+        registry.remove_slot(&participant_key);
         return true;
     };
-    if !valid_lookup(participant_key, url) {
-        registry.remove_slot(participant_key);
+    if !valid_lookup(&participant_key, url) {
+        registry.remove_slot(&participant_key);
         return false;
     }
-    let _ = registry.lookup(participant_key, url);
+    let _ = registry.lookup(&participant_key, url);
     true
 }
 
 /// Resolve a ready avatar by opaque participant key only.
 pub fn collab_avatar_image(participant_key: &str) -> Option<CollabAvatarImage> {
-    avatars().lock().ok()?.ready(participant_key)
+    let participant_key = collab_registry_key(participant_key)?;
+    avatars().lock().ok()?.ready(&participant_key)
+}
+
+/// Register or clear the current authenticated account's profile image.
+///
+/// The account lives in a separate namespace from collaboration participant
+/// keys, so an untrusted roster key cannot replace the signed-in user's image.
+pub fn register_account_avatar_url(url: Option<&str>) -> bool {
+    let Ok(mut registry) = avatars().lock() else {
+        return false;
+    };
+    let Some(url) = url else {
+        registry.remove_slot(ACCOUNT_AVATAR_KEY);
+        return true;
+    };
+    if !valid_lookup(ACCOUNT_AVATAR_KEY, url) {
+        registry.remove_slot(ACCOUNT_AVATAR_KEY);
+        return false;
+    }
+    let _ = registry.lookup(ACCOUNT_AVATAR_KEY, url);
+    true
+}
+
+/// Resolve the current account image after its host fetch has completed.
+pub fn account_avatar_image() -> Option<CollabAvatarImage> {
+    avatars().lock().ok()?.ready(ACCOUNT_AVATAR_KEY)
+}
+
+/// Install bytes returned by the authenticated serve-web avatar proxy.
+///
+/// `revision` is an opaque, URL-derived identity emitted by the daemon. The
+/// browser never receives the underlying profile URL.
+pub fn install_account_avatar_bytes(revision: &str, bytes: Vec<u8>) -> bool {
+    if revision.is_empty()
+        || revision.len() > MAX_ACCOUNT_REVISION_BYTES
+        || !revision
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return false;
+    }
+    let source_identity = format!("proxy:{revision}");
+    avatars()
+        .lock()
+        .map(|mut registry| registry.install_ready(ACCOUNT_AVATAR_KEY, &source_identity, bytes))
+        .unwrap_or(false)
 }
 
 /// Begin a process-local avatar epoch for a collaboration runtime.
-/// Pending, failed, and ready entries are dropped on every call, including
-/// when a newly constructed runtime reuses the same numeric generation.
-/// In-flight workers may finish, but their request tokens can no longer
-/// complete because opaque image ids are never reused.
+/// Collaboration entries are dropped on every call, including when a newly
+/// constructed runtime reuses the same numeric generation. The independent
+/// current-account slot survives; an in-flight account request is safely
+/// requeued under the new generation.
 pub fn begin_collab_avatar_generation(generation: u64) -> bool {
     avatars()
         .lock()
@@ -414,18 +617,33 @@ pub fn cached_collab_avatar_bytes(image_id: u64) -> Option<Arc<[u8]>> {
 pub fn has_pending_collab_avatar_requests() -> bool {
     avatars()
         .lock()
-        .map(|registry| !registry.pending.is_empty())
+        .map(|registry| registry.has_background_work())
         .unwrap_or(false)
+}
+
+fn account_avatar_retry_delay(failure_count: u8) -> Duration {
+    let exponent = u32::from(failure_count.saturating_sub(1).min(5));
+    Duration::from_secs(1_u64 << exponent)
 }
 
 fn valid_lookup(participant_key: &str, url: &str) -> bool {
     !participant_key.is_empty()
-        && participant_key.len() <= MAX_PARTICIPANT_KEY_BYTES
+        && participant_key.len() <= MAX_REGISTRY_KEY_BYTES
         && !participant_key.chars().any(char::is_control)
         && !url.is_empty()
         && url.len() <= MAX_AVATAR_URL_BYTES
         && url.starts_with("https://")
         && !url.chars().any(char::is_whitespace)
+}
+
+fn collab_registry_key(participant_key: &str) -> Option<String> {
+    if participant_key.is_empty()
+        || participant_key.len() > MAX_PARTICIPANT_KEY_BYTES
+        || participant_key.chars().any(char::is_control)
+    {
+        return None;
+    }
+    Some(format!("{COLLAB_KEY_PREFIX}{participant_key}"))
 }
 
 fn validate_encoded_avatar(bytes: Vec<u8>) -> Option<Arc<[u8]>> {
@@ -455,146 +673,5 @@ pub(crate) fn lock_collab_avatar_registry_for_tests() -> std::sync::MutexGuard<'
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn png_header(width: u32, height: u32, payload_bytes: usize) -> Vec<u8> {
-        let mut bytes = vec![0; payload_bytes.max(24)];
-        bytes[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
-        bytes[12..16].copy_from_slice(b"IHDR");
-        bytes[16..20].copy_from_slice(&width.to_be_bytes());
-        bytes[20..24].copy_from_slice(&height.to_be_bytes());
-        bytes
-    }
-
-    fn fetch(registry: &mut AvatarRegistry, key: &str, url: &str) -> CollabAvatarFetchRequest {
-        assert!(registry.lookup(key, url).is_none());
-        registry.take_requests(1).pop().expect("request queued")
-    }
-
-    #[test]
-    fn success_is_cached_and_failures_keep_the_fallback() {
-        let mut registry = AvatarRegistry::with_limits(1_024, 4, 4);
-        let ok = fetch(&mut registry, "p1", "https://cdn.example/a.png");
-        assert!(registry.complete(&ok, Some(png_header(16, 16, 48))));
-        let image = registry
-            .lookup("p1", "https://cdn.example/a.png")
-            .expect("valid response is ready");
-        assert_eq!(image.image_id, ok.image_id);
-
-        let failed = fetch(&mut registry, "p2", "https://cdn.example/b.png");
-        assert!(registry.complete(&failed, None));
-        assert!(registry.lookup("p2", "https://cdn.example/b.png").is_none());
-        assert!(registry.take_requests(1).is_empty());
-    }
-
-    #[test]
-    fn encoded_bytes_dimensions_and_queue_are_bounded() {
-        let mut registry = AvatarRegistry::with_limits(2_048, 64, 1);
-        let large_body = fetch(&mut registry, "p1", "https://cdn.example/large.png");
-        assert!(registry.complete(&large_body, Some(vec![0; MAX_AVATAR_ENCODED_BYTES + 1])));
-        assert!(registry
-            .lookup("p1", "https://cdn.example/large.png")
-            .is_none());
-
-        let large_raster = fetch(&mut registry, "p2", "https://cdn.example/wide.png");
-        assert!(registry.complete(
-            &large_raster,
-            Some(png_header(MAX_AVATAR_SOURCE_EDGE_PX + 1, 1, 24))
-        ));
-        assert!(registry
-            .lookup("p2", "https://cdn.example/wide.png")
-            .is_none());
-
-        assert!(registry.lookup("p3", "https://cdn.example/c.png").is_none());
-        assert!(registry.lookup("p4", "https://cdn.example/d.png").is_none());
-        assert_eq!(registry.take_requests(8).len(), 1);
-    }
-
-    #[test]
-    fn lru_eviction_and_generation_switch_drop_stale_results() {
-        let mut registry = AvatarRegistry::with_limits(80, 2, 4);
-        let first = fetch(&mut registry, "p1", "https://cdn.example/one.png");
-        assert!(registry.complete(&first, Some(png_header(2, 2, 40))));
-        let second = fetch(&mut registry, "p2", "https://cdn.example/two.png");
-        assert!(registry.complete(&second, Some(png_header(2, 2, 40))));
-        assert!(registry
-            .lookup("p1", "https://cdn.example/one.png")
-            .is_some());
-        let third = fetch(&mut registry, "p3", "https://cdn.example/three.png");
-        assert!(registry.complete(&third, Some(png_header(2, 2, 40))));
-        assert!(
-            !registry.slots.contains_key("p2"),
-            "least recently used entry is evicted"
-        );
-
-        let old = fetch(&mut registry, "p4", "https://cdn.example/old.png");
-        assert!(registry
-            .lookup("p4", "https://cdn.example/new.png")
-            .is_none());
-        let new = registry.take_requests(1).pop().expect("new generation");
-        assert!(!registry.complete(&old, Some(png_header(2, 2, 32))));
-        assert!(registry
-            .lookup("p4", "https://cdn.example/new.png")
-            .is_none());
-        assert!(registry.complete(&new, Some(png_header(2, 2, 32))));
-        assert_eq!(
-            registry
-                .lookup("p4", "https://cdn.example/new.png")
-                .expect("new generation wins")
-                .image_id,
-            new.image_id
-        );
-    }
-
-    #[test]
-    fn session_generation_rotation_clears_cache_and_rejects_late_workers() {
-        let mut registry = AvatarRegistry::with_limits(1_024, 4, 4);
-        assert!(registry.begin_session_generation(7));
-        let stale = fetch(
-            &mut registry,
-            "same-participant",
-            "https://cdn.example/same.png",
-        );
-        assert!(registry.begin_session_generation(8));
-        assert!(registry.slots.is_empty());
-        assert!(registry.pending.is_empty());
-        assert!(!registry.complete(&stale, Some(png_header(16, 16, 32))));
-
-        let current = fetch(
-            &mut registry,
-            "same-participant",
-            "https://cdn.example/same.png",
-        );
-        assert_ne!(stale.image_id, current.image_id);
-        assert!(
-            registry.begin_session_generation(8),
-            "a new runtime may reuse the numeric generation and must still reset"
-        );
-        assert!(!registry.complete(&current, Some(png_header(16, 16, 32))));
-        let refreshed = fetch(
-            &mut registry,
-            "same-participant",
-            "https://cdn.example/same.png",
-        );
-        assert_ne!(current.image_id, refreshed.image_id);
-        assert!(registry.complete(&refreshed, Some(png_header(16, 16, 32))));
-        assert!(registry
-            .lookup("same-participant", "https://cdn.example/same.png")
-            .is_some());
-    }
-
-    #[test]
-    fn request_debug_redacts_url_and_identity() {
-        let mut registry = AvatarRegistry::with_limits(100, 1, 1);
-        let request = fetch(
-            &mut registry,
-            "private-participant",
-            "https://cdn.example/secret.png",
-        );
-        let debug = format!("{request:?}");
-        assert!(!debug.contains("private-participant"));
-        assert!(!debug.contains("cdn.example"));
-        assert!(debug.contains("[REDACTED]"));
-    }
-}
+#[path = "collab_avatar_runtime_tests.rs"]
+mod tests;

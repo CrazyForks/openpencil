@@ -1,9 +1,12 @@
 //! Public-only HTTPS dialing for small, unauthenticated assets.
 //!
 //! Callers still own response limits and redirect policy. This module owns
-//! the security-sensitive connect step: every hostname is resolved, every
-//! address is screened, proxies are disabled, and the client is pinned to the
-//! screened addresses so DNS rebinding cannot redirect the socket later.
+//! the security-sensitive connect step: every hostname is resolved, addresses
+//! are screened, proxies are disabled, and the client is pinned so DNS
+//! rebinding cannot redirect the socket later. A separate current-account-only
+//! seam recognizes an all-RFC-2544 hostname resolution as a Clash-style
+//! fake-IP TUN token; literals, mixed sets, and every other reserved range
+//! remain rejected.
 
 use std::fmt;
 
@@ -47,6 +50,27 @@ pub async fn public_https_client(
     )
     .await
     .map_err(|_| PublicHttpsClientError::DialRejected)
+}
+
+/// Build the account-avatar-only variant that can traverse a Clash-style
+/// fake-IP TUN. Callers must establish that the URL belongs to the local
+/// authenticated account; remote collaboration data must use
+/// [`public_https_client`].
+pub async fn tunnel_compatible_account_asset_client(
+    url: &reqwest::Url,
+) -> Result<reqwest::Client, PublicHttpsClientError> {
+    if url.scheme() != "https"
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+        || url.port() == Some(0)
+    {
+        return Err(PublicHttpsClientError::UrlNotAllowed);
+    }
+    crate::provider_dial::client_for_tunnel_compatible_public_asset(url.as_str())
+        .await
+        .map_err(|_| PublicHttpsClientError::DialRejected)
 }
 
 #[cfg(test)]

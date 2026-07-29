@@ -326,6 +326,40 @@ fn cross_origin_browser_cannot_write_server_credentials() {
 }
 
 #[test]
+fn cross_origin_browser_cannot_read_account_avatar() {
+    let state = Mutex::new(fresh_state());
+    let request = format!(
+        "POST {} HTTP/1.1\r\nHost: 127.0.0.1:3100\r\nOrigin: https://evil.example\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{{}}",
+        op_editor_core::auth_routes::AVATAR
+    );
+    let request_len = request.len();
+    let mut stream = std::io::Cursor::new(request.into_bytes());
+
+    serve_one(&mut stream, &state, &SseHub::default()).expect("request handled");
+
+    let response = String::from_utf8_lossy(&stream.get_ref()[request_len..]);
+    assert!(response.contains("403 Forbidden"));
+    assert!(response.contains("cross-origin"));
+}
+
+#[test]
+fn account_avatar_proxy_rejects_subresource_gets_without_fetching() {
+    let state = Mutex::new(fresh_state());
+    let request = format!(
+        "GET {} HTTP/1.1\r\nHost: 127.0.0.1:3100\r\nContent-Length: 0\r\n\r\n",
+        op_editor_core::auth_routes::AVATAR
+    );
+    let request_len = request.len();
+    let mut stream = std::io::Cursor::new(request.into_bytes());
+
+    serve_one(&mut stream, &state, &SseHub::default()).expect("request handled");
+
+    let response = String::from_utf8_lossy(&stream.get_ref()[request_len..]);
+    assert!(response.contains("404 Not Found"));
+    assert!(!response.contains("\"encoded\""));
+}
+
+#[test]
 fn credential_origin_check_allows_default_loopback_and_non_browser_clients() {
     for headers in [
         "Host: 127.0.0.1:3100\r\nOrigin: http://127.0.0.1:3100\r\n",

@@ -51,6 +51,13 @@ thread_local! {
     /// The begin POST is in flight — status polls are suppressed so they
     /// can't observe the daemon's pre-begin `idle` state.
     static BEGIN_INFLIGHT: Cell<bool> = const { Cell::new(false) };
+    /// Opaque avatar revision requested by the latest authenticated status.
+    static ACCOUNT_AVATAR_DESIRED: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// Revision currently installed in the bounded profile-avatar cache.
+    static ACCOUNT_AVATAR_INSTALLED: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// At most one request per revision; a changed revision may supersede an
+    /// older in-flight request, whose callback is discarded.
+    static ACCOUNT_AVATAR_IN_FLIGHT: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 /// Shared latches for the interval tick.
@@ -168,6 +175,7 @@ fn fetch_status<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, base: &str)
             let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&body) else {
                 return;
             };
+            sync_account_avatar(&inner, parsed["avatar_revision"].as_str());
             let mut b = inner.borrow_mut();
             let ui = &mut b.host_mut().editor_state_mut().editor_ui;
             let available = parsed["available"].as_bool().unwrap_or(false);
@@ -211,7 +219,10 @@ fn drain_actions<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, base: &str
                 close_login_popup_placeholder();
                 auth_routes::LOGIN_CANCEL
             }
-            PendingAuthAction::SignOut => auth_routes::LOGOUT,
+            PendingAuthAction::SignOut => {
+                clear_account_avatar_sync_state();
+                auth_routes::LOGOUT
+            }
         };
         let _ = live_sync::post_json(&format!("{base}{path}"), "{}", None);
     }
@@ -281,6 +292,7 @@ fn apply_login_status<C: RepaintContext + 'static>(
         }
         "exchanging" => ui.login_modal_status = Some(LoginFlowStatus::Exchanging),
         "signed_in" => {
+            sync_account_avatar(inner, parsed["avatar_revision"].as_str());
             let display_name = parsed["display_name"]
                 .as_str()
                 .unwrap_or_default()
@@ -327,5 +339,127 @@ fn apply_login_status<C: RepaintContext + 'static>(
     if ui.login_modal_status != previous || !ui.login_modal_open {
         b.host_mut().mark_editor_state_dirty();
         let _ = b.repaint();
+    }
+}
+
+fn sync_account_avatar<C: RepaintContext + 'static>(
+    inner: &Rc<RefCell<C>>,
+    revision: Option<&str>,
+) {
+    let revision = revision
+        .filter(|value| {
+            !value.is_empty()
+                && value.len() <= 128
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        })
+        .map(str::to_owned);
+    ACCOUNT_AVATAR_DESIRED.with(|desired| *desired.borrow_mut() = revision.clone());
+    let Some(revision) = revision else {
+        clear_account_avatar_sync_state();
+        return;
+    };
+    if account_avatar_revision_active(&revision) {
+        return;
+    }
+
+    ACCOUNT_AVATAR_INSTALLED.with(|installed| installed.borrow_mut().take());
+    let _ = op_editor_ui::collab_avatar_runtime::register_account_avatar_url(None);
+    ACCOUNT_AVATAR_IN_FLIGHT.with(|in_flight| {
+        *in_flight.borrow_mut() = Some(revision.clone());
+    });
+    let expected = revision.clone();
+    let inner = inner.clone();
+    let url = format!(
+        "{}{}",
+        crate::daemon_base::daemon_base(),
+        auth_routes::AVATAR
+    );
+    let started = live_sync::post_json_with_status(
+        &url,
+        "{}",
+        Rc::new(move |status, body| {
+            ACCOUNT_AVATAR_IN_FLIGHT.with(|in_flight| {
+                if in_flight.borrow().as_deref() == Some(expected.as_str()) {
+                    in_flight.borrow_mut().take();
+                }
+            });
+            let still_desired = ACCOUNT_AVATAR_DESIRED
+                .with(|desired| desired.borrow().as_deref() == Some(expected.as_str()));
+            if status != 200 || !still_desired {
+                return;
+            }
+            let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&body) else {
+                return;
+            };
+            if parsed["revision"].as_str() != Some(expected.as_str()) {
+                return;
+            }
+            use base64::Engine as _;
+            let Some(encoded) = parsed["encoded"].as_str().and_then(|value| {
+                base64::engine::general_purpose::STANDARD
+                    .decode(value.as_bytes())
+                    .ok()
+            }) else {
+                return;
+            };
+            if !op_editor_ui::collab_avatar_runtime::install_account_avatar_bytes(
+                &expected, encoded,
+            ) {
+                return;
+            }
+            ACCOUNT_AVATAR_INSTALLED.with(|installed| {
+                *installed.borrow_mut() = Some(expected.clone());
+            });
+            let mut context = inner.borrow_mut();
+            context.host_mut().mark_editor_state_dirty();
+            let _ = context.repaint();
+        }),
+    );
+    if !started {
+        ACCOUNT_AVATAR_IN_FLIGHT.with(|in_flight| in_flight.borrow_mut().take());
+    }
+}
+
+fn clear_account_avatar_sync_state() {
+    clear_account_avatar_revision_latches();
+    let _ = op_editor_ui::collab_avatar_runtime::register_account_avatar_url(None);
+}
+
+fn clear_account_avatar_revision_latches() {
+    ACCOUNT_AVATAR_DESIRED.with(|desired| desired.borrow_mut().take());
+    ACCOUNT_AVATAR_INSTALLED.with(|installed| installed.borrow_mut().take());
+    ACCOUNT_AVATAR_IN_FLIGHT.with(|in_flight| in_flight.borrow_mut().take());
+}
+
+fn account_avatar_revision_active(revision: &str) -> bool {
+    ACCOUNT_AVATAR_INSTALLED.with(|installed| installed.borrow().as_deref() == Some(revision))
+        || ACCOUNT_AVATAR_IN_FLIGHT
+            .with(|in_flight| in_flight.borrow().as_deref() == Some(revision))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sign_out_latches_allow_same_revision_to_be_fetched_after_relogin() {
+        const REVISION: &str = "same-account-revision";
+        ACCOUNT_AVATAR_DESIRED.with(|desired| {
+            *desired.borrow_mut() = Some(REVISION.to_string());
+        });
+        ACCOUNT_AVATAR_INSTALLED.with(|installed| {
+            *installed.borrow_mut() = Some(REVISION.to_string());
+        });
+        ACCOUNT_AVATAR_IN_FLIGHT.with(|in_flight| {
+            *in_flight.borrow_mut() = Some(REVISION.to_string());
+        });
+        assert!(account_avatar_revision_active(REVISION));
+
+        clear_account_avatar_revision_latches();
+
+        assert!(!account_avatar_revision_active(REVISION));
+        ACCOUNT_AVATAR_DESIRED.with(|desired| assert!(desired.borrow().is_none()));
     }
 }

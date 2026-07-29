@@ -112,6 +112,18 @@ pub(super) fn serve_one<S: Read + Write>(
         )?;
         return Ok(false);
     }
+    // Current-account avatar proxy: performs bounded public HTTPS I/O on this
+    // connection thread, never while holding the editor-state mutex.
+    if req.method == "POST" && req.path == op_editor_core::auth_routes::AVATAR {
+        let reply = crate::web_auth::avatar();
+        crate::mcp_serve::write_mcp_http_response_with_origin(
+            stream,
+            reply.status,
+            &reply.body,
+            cors_origin,
+        )?;
+        return Ok(false);
+    }
     // Device-login begin: waits (per-connection thread, off the state
     // lock) for the pairing's verification URI so the popup can navigate
     // straight from this response — handled here rather than in the

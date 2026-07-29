@@ -155,7 +155,8 @@ pub struct TopBar {
     /// `hit_test` falls back to a char-count estimate.
     pub chip_text_w: Option<f32>,
     /// Sign-in state — drives the avatar button's glyph (generic user
-    /// outline when signed out, an initial-letter circle when signed in).
+    /// outline when signed out, profile image with an initial fallback when
+    /// signed in).
     pub account: op_editor_core::AccountState,
     /// Whether the avatar button paints at all. Follows the host-set
     /// runtime release gate (`EditorUiState::account_ui_available`):

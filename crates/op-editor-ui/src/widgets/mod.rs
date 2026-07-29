@@ -197,6 +197,7 @@ mod icons_data;
 pub mod brand_icons;
 
 // Step 4 — extra editor-chrome widgets (TS app parity).
+mod account_avatar_paint;
 pub mod account_menu;
 pub mod account_press_flow;
 pub mod agent_settings_account;

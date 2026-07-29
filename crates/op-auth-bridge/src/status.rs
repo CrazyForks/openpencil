@@ -73,13 +73,13 @@ mod tests {
 
     #[test]
     fn decodes_signed_in_payload() {
-        let payload = r#"{"display_name":"Kay","primary_email":"kay@example.com","avatar_url":null,"device_id":"d1"}"#;
+        let payload = r#"{"display_name":"Kay","primary_email":"kay@example.com","avatar_url":"https://cdn.example/kay.png","device_id":"d1"}"#;
         assert_eq!(
             AuthStatus::decode(4, Some(payload)),
             AuthStatus::SignedIn {
                 display_name: "Kay".to_string(),
                 primary_email: Some("kay@example.com".to_string()),
-                avatar_url: None,
+                avatar_url: Some("https://cdn.example/kay.png".to_string()),
                 device_id: "d1".to_string(),
             }
         );

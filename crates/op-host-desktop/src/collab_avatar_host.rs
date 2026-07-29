@@ -2,32 +2,19 @@
 
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::Arc;
-use std::time::Duration;
 
 use op_editor_ui::collab_avatar_runtime::{
     complete_collab_avatar_request, take_collab_avatar_requests, CollabAvatarFetchRequest,
-    MAX_AVATAR_ENCODED_BYTES,
 };
-use reqwest::header::{ACCEPT, LOCATION};
+use op_host_services::profile_avatar_fetch::{
+    fetch_account_avatar_blocking, fetch_profile_avatar_blocking,
+    ProfileAvatarFetchError as AvatarFetchError,
+};
 
 const MAX_CONCURRENT_FETCHES: usize = 3;
-const MAX_REDIRECTS: usize = 3;
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AvatarFetchError {
-    UrlNotAllowed,
-    DialRejected,
-    RequestFailed,
-    TimedOut,
-    HttpStatus,
-    RedirectInvalid,
-    TooManyRedirects,
-    TooLarge,
-    EmptyBody,
-}
-
-type Fetcher = Arc<dyn Fn(&str) -> Result<Vec<u8>, AvatarFetchError> + Send + Sync>;
+type Fetcher =
+    Arc<dyn Fn(&CollabAvatarFetchRequest) -> Result<Vec<u8>, AvatarFetchError> + Send + Sync>;
 
 struct FetchJob {
     request: CollabAvatarFetchRequest,
@@ -52,7 +39,13 @@ pub(crate) fn lock_avatar_test_registry() -> std::sync::MutexGuard<'static, ()> 
 
 impl CollabAvatarHost {
     pub(crate) fn new() -> Self {
-        Self::with_fetcher(Arc::new(fetch_avatar_blocking))
+        Self::with_fetcher(Arc::new(|request| {
+            if request.is_current_account() {
+                fetch_account_avatar_blocking(request.url())
+            } else {
+                fetch_profile_avatar_blocking(request.url())
+            }
+        }))
     }
 
     fn with_fetcher(fetcher: Fetcher) -> Self {
@@ -106,110 +99,14 @@ impl CollabAvatarHost {
 
 fn spawn_fetch(request: CollabAvatarFetchRequest, fetcher: Fetcher) -> Option<FetchJob> {
     let (tx, rx) = mpsc::channel();
-    let url = request.url().to_string();
+    let worker_request = request.clone();
     std::thread::Builder::new()
         .name("op-collab-avatar".into())
         .spawn(move || {
-            let _ = tx.send(fetcher(&url));
+            let _ = tx.send(fetcher(&worker_request));
         })
         .ok()?;
     Some(FetchJob { request, rx })
-}
-
-fn fetch_avatar_blocking(url: &str) -> Result<Vec<u8>, AvatarFetchError> {
-    op_host_services::chat_runtime::block_on_anywhere(fetch_avatar(url))
-}
-
-async fn fetch_avatar(url: &str) -> Result<Vec<u8>, AvatarFetchError> {
-    let mut url = parse_avatar_url(url)?;
-    for redirect_count in 0..=MAX_REDIRECTS {
-        // `public_https_client` resolves + screens every address, disables
-        // proxies, and pins the socket while the request URL retains the
-        // original hostname for TLS certificate verification and SNI.
-        let client = with_timeout(
-            REQUEST_TIMEOUT,
-            op_host_services::public_https_client::public_https_client(&url),
-        )
-        .await?
-        .map_err(|_| AvatarFetchError::DialRejected)?;
-        let mut response = client
-            .get(url.clone())
-            .header(ACCEPT, "image/webp,image/png,image/jpeg,image/gif")
-            .timeout(REQUEST_TIMEOUT)
-            .send()
-            .await
-            .map_err(|_| AvatarFetchError::RequestFailed)?;
-
-        if response.status().is_redirection() {
-            if redirect_count == MAX_REDIRECTS {
-                return Err(AvatarFetchError::TooManyRedirects);
-            }
-            let location = response
-                .headers()
-                .get(LOCATION)
-                .and_then(|value| value.to_str().ok())
-                .ok_or(AvatarFetchError::RedirectInvalid)?;
-            url = parse_avatar_url(
-                url.join(location)
-                    .map_err(|_| AvatarFetchError::RedirectInvalid)?
-                    .as_str(),
-            )?;
-            continue;
-        }
-        if !response.status().is_success() {
-            return Err(AvatarFetchError::HttpStatus);
-        }
-        if response
-            .content_length()
-            .is_some_and(|length| length > MAX_AVATAR_ENCODED_BYTES as u64)
-        {
-            return Err(AvatarFetchError::TooLarge);
-        }
-        let mut bytes = Vec::with_capacity(
-            response
-                .content_length()
-                .unwrap_or(0)
-                .min(MAX_AVATAR_ENCODED_BYTES as u64) as usize,
-        );
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|_| AvatarFetchError::RequestFailed)?
-        {
-            if bytes.len().saturating_add(chunk.len()) > MAX_AVATAR_ENCODED_BYTES {
-                return Err(AvatarFetchError::TooLarge);
-            }
-            bytes.extend_from_slice(&chunk);
-        }
-        if bytes.is_empty() {
-            return Err(AvatarFetchError::EmptyBody);
-        }
-        return Ok(bytes);
-    }
-    Err(AvatarFetchError::TooManyRedirects)
-}
-
-async fn with_timeout<F, T>(duration: Duration, future: F) -> Result<T, AvatarFetchError>
-where
-    F: std::future::Future<Output = T>,
-{
-    tokio::time::timeout(duration, future)
-        .await
-        .map_err(|_| AvatarFetchError::TimedOut)
-}
-
-fn parse_avatar_url(value: &str) -> Result<reqwest::Url, AvatarFetchError> {
-    let url = reqwest::Url::parse(value).map_err(|_| AvatarFetchError::UrlNotAllowed)?;
-    if url.scheme() != "https"
-        || url.host_str().is_none()
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.fragment().is_some()
-        || url.port() == Some(0)
-    {
-        return Err(AvatarFetchError::UrlNotAllowed);
-    }
-    Ok(url)
 }
 
 #[cfg(test)]
@@ -220,7 +117,7 @@ mod tests {
         register_collab_avatar_url, take_collab_avatar_requests,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     fn png_header() -> Vec<u8> {
         let mut bytes = vec![0; 32];
@@ -318,7 +215,10 @@ mod tests {
             "https://cdn.example/avatar.png#fragment",
             "https://cdn.example:0/avatar.png",
         ] {
-            assert_eq!(parse_avatar_url(url), Err(AvatarFetchError::UrlNotAllowed));
+            assert_eq!(
+                fetch_profile_avatar_blocking(url),
+                Err(AvatarFetchError::UrlNotAllowed)
+            );
         }
         for url in [
             "https://127.0.0.1/avatar.png",
@@ -328,19 +228,10 @@ mod tests {
             "https://[fe80::1]/avatar.png",
         ] {
             assert_eq!(
-                fetch_avatar_blocking(url),
+                fetch_profile_avatar_blocking(url),
                 Err(AvatarFetchError::DialRejected),
                 "{url}"
             );
         }
-    }
-
-    #[test]
-    fn resolver_deadline_cancels_a_hanging_dial_future() {
-        let result = op_host_services::chat_runtime::block_on_anywhere(with_timeout(
-            Duration::from_millis(1),
-            std::future::pending::<()>(),
-        ));
-        assert_eq!(result, Err(AvatarFetchError::TimedOut));
     }
 }

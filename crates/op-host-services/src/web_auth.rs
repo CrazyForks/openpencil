@@ -73,8 +73,12 @@ pub(crate) fn status(state: &mut WebCanvasState) -> WebReply {
         AuthStatus::SignedIn {
             display_name,
             primary_email,
+            avatar_url,
             ..
         } => {
+            let avatar_revision = avatar_url
+                .as_deref()
+                .and_then(|url| crate::profile_avatar_fetch::profile_avatar_revision(url).ok());
             state.editor.editor_ui.account = AccountState::SignedIn {
                 handle: primary_email
                     .clone()
@@ -86,6 +90,7 @@ pub(crate) fn status(state: &mut WebCanvasState) -> WebReply {
                 "signed_in": true,
                 "display_name": display_name,
                 "primary_email": primary_email,
+                "avatar_revision": avatar_revision,
             })
         }
         _ => {
@@ -253,8 +258,12 @@ pub(crate) fn login_status(state: &mut WebCanvasState) -> WebReply {
         AuthStatus::SignedIn {
             display_name,
             primary_email,
+            avatar_url,
             ..
         } => {
+            let avatar_revision = avatar_url
+                .as_deref()
+                .and_then(|url| crate::profile_avatar_fetch::profile_avatar_revision(url).ok());
             state.auth_login_handle = None;
             state.editor.editor_ui.account = AccountState::SignedIn {
                 handle: primary_email
@@ -266,6 +275,7 @@ pub(crate) fn login_status(state: &mut WebCanvasState) -> WebReply {
                 "state": "signed_in",
                 "display_name": display_name,
                 "primary_email": primary_email,
+                "avatar_revision": avatar_revision,
             })
         }
         AuthStatus::Error { code } => {
@@ -290,6 +300,49 @@ pub(crate) fn login_cancel(state: &mut WebCanvasState) -> WebReply {
         op_auth_bridge::cancel(handle);
     }
     ok()
+}
+
+/// `POST /api/auth/avatar` — proxy the current profile image through the
+/// daemon's public-only HTTPS client. The browser receives only an opaque
+/// revision and bounded bytes, never the signed CDN URL.
+pub(crate) fn avatar() -> WebReply {
+    if !op_auth_bridge::available() {
+        return WebReply {
+            status: "404 Not Found",
+            body: crate::mcp_serve::rest_error_body("account avatar unavailable"),
+        };
+    }
+    let AuthStatus::SignedIn {
+        avatar_url: Some(url),
+        ..
+    } = op_auth_bridge::poll(op_auth_bridge::SESSION_HANDLE)
+    else {
+        return WebReply {
+            status: "404 Not Found",
+            body: crate::mcp_serve::rest_error_body("account avatar unavailable"),
+        };
+    };
+    let Ok(revision) = crate::profile_avatar_fetch::profile_avatar_revision(&url) else {
+        return WebReply {
+            status: "404 Not Found",
+            body: crate::mcp_serve::rest_error_body("account avatar unavailable"),
+        };
+    };
+    let Ok(bytes) = crate::profile_avatar_fetch::fetch_account_avatar_blocking(&url) else {
+        return WebReply {
+            status: "502 Bad Gateway",
+            body: crate::mcp_serve::rest_error_body("account avatar fetch failed"),
+        };
+    };
+    use base64::Engine as _;
+    WebReply {
+        status: "200 OK",
+        body: serde_json::json!({
+            "revision": revision,
+            "encoded": base64::engine::general_purpose::STANDARD.encode(bytes),
+        })
+        .to_string(),
+    }
 }
 
 /// `POST /api/auth/logout` — drop the shared session (revokes the device

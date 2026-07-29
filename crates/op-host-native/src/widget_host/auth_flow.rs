@@ -77,8 +77,12 @@ impl WidgetHostNative {
             AuthStatus::SignedIn {
                 display_name,
                 primary_email,
+                avatar_url,
                 ..
             } => {
+                let _ = op_editor_ui::collab_avatar_runtime::register_account_avatar_url(
+                    avatar_url.as_deref(),
+                );
                 ui.account = AccountState::SignedIn {
                     handle: primary_email.unwrap_or_else(|| display_name.clone()),
                     display_name,
@@ -127,6 +131,7 @@ impl WidgetHostNative {
             AuthStatus::Idle
         ) {
             self.editor_state.editor_ui.account = AccountState::Anonymous;
+            let _ = op_editor_ui::collab_avatar_runtime::register_account_avatar_url(None);
             self.mark_dirty();
             return true;
         }

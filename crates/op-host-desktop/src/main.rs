@@ -480,9 +480,13 @@ fn init_auth_runtime(host: &mut WidgetHostNative) {
                     if let op_auth_bridge::AuthStatus::SignedIn {
                         display_name,
                         primary_email,
+                        avatar_url,
                         ..
                     } = op_auth_bridge::poll(op_auth_bridge::SESSION_HANDLE)
                     {
+                        let _ = op_editor_ui::collab_avatar_runtime::register_account_avatar_url(
+                            avatar_url.as_deref(),
+                        );
                         host.editor_state_mut().editor_ui.account =
                             op_editor_core::AccountState::SignedIn {
                                 handle: primary_email.unwrap_or_else(|| display_name.clone()),

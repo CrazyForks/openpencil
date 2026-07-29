@@ -17,6 +17,13 @@ pub const API_PREFIX: &str = "/api/auth/";
 /// `GET` — session/status snapshot (seeds `account_ui_available`).
 pub const STATUS: &str = "/api/auth/status";
 
+/// `POST` — bounded current-account avatar bytes from the same-origin daemon.
+///
+/// JSON POST is intentional: unlike a GET, a cross-site image element cannot
+/// trigger the daemon's upstream fetch without passing the existing
+/// same-origin and JSON content-type gates.
+pub const AVATAR: &str = "/api/auth/avatar";
+
 /// `POST` — begin a device-login pairing. The daemon holds the request
 /// until the pairing's verification URI is known.
 pub const LOGIN_BEGIN: &str = "/api/auth/login/begin";
@@ -36,7 +43,14 @@ mod tests {
 
     #[test]
     fn api_routes_share_the_gating_prefix() {
-        for route in [STATUS, LOGIN_BEGIN, LOGIN_STATUS, LOGIN_CANCEL, LOGOUT] {
+        for route in [
+            STATUS,
+            AVATAR,
+            LOGIN_BEGIN,
+            LOGIN_STATUS,
+            LOGIN_CANCEL,
+            LOGOUT,
+        ] {
             assert!(
                 route.starts_with(API_PREFIX),
                 "{route} outside {API_PREFIX}"
