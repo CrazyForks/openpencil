@@ -267,6 +267,7 @@ fn add_no_follow(options: &mut OpenOptions) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -283,6 +284,7 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
     fn temp_parent(name: &str) -> PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
