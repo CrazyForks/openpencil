@@ -6,6 +6,7 @@ use op_collab::{Epoch, SessionId};
 use op_collab_transport::JoinIntent;
 
 use super::{DiscoveryNetwork, SessionNetwork};
+use crate::collab_runtime::relay::{GuestConnectionRoute, RelayOwnerRequest};
 #[cfg(test)]
 use crate::collab_runtime::types::{CollabRuntimeError, CollabRuntimeFailure};
 use crate::collab_runtime::DesktopCollabRuntime;
@@ -20,11 +21,10 @@ enum PendingNetworkLaunchKind {
     Owner {
         session_id: SessionId,
         epoch: Epoch,
+        relay: Option<RelayOwnerRequest>,
     },
     Guest {
-        addresses: Vec<std::net::SocketAddr>,
-        discovery_id: Option<String>,
-        expected_remote_static: Option<[u8; 32]>,
+        route: GuestConnectionRoute,
         intent: JoinIntent,
     },
     Discovery,
@@ -153,28 +153,26 @@ impl DesktopCollabRuntime {
         &mut self,
         session_id: SessionId,
         epoch: Epoch,
+        relay: Option<RelayOwnerRequest>,
     ) {
         self.pending_network_launch = Some(PendingNetworkLaunch {
             generation: self.generation,
-            kind: PendingNetworkLaunchKind::Owner { session_id, epoch },
+            kind: PendingNetworkLaunchKind::Owner {
+                session_id,
+                epoch,
+                relay,
+            },
         });
     }
 
     pub(in crate::collab_runtime) fn defer_guest_launch(
         &mut self,
-        addresses: Vec<std::net::SocketAddr>,
-        discovery_id: Option<String>,
-        expected_remote_static: Option<[u8; 32]>,
+        route: GuestConnectionRoute,
         intent: JoinIntent,
     ) {
         self.pending_network_launch = Some(PendingNetworkLaunch {
             generation: self.generation,
-            kind: PendingNetworkLaunchKind::Guest {
-                addresses,
-                discovery_id,
-                expected_remote_static,
-                intent,
-            },
+            kind: PendingNetworkLaunchKind::Guest { route, intent },
         });
     }
 
@@ -190,27 +188,25 @@ impl DesktopCollabRuntime {
             return false;
         };
         match launch.kind {
-            PendingNetworkLaunchKind::Owner { session_id, epoch } => {
+            PendingNetworkLaunchKind::Owner {
+                session_id,
+                epoch,
+                relay,
+            } => {
                 self.network = Some(super::spawn_owner(
                     self.event_sink(),
                     Arc::clone(&self.key_store),
                     "[::]:0".parse().expect("constant owner bind address"),
                     session_id,
                     epoch,
+                    relay,
                 ));
             }
-            PendingNetworkLaunchKind::Guest {
-                addresses,
-                discovery_id,
-                expected_remote_static,
-                intent,
-            } => {
+            PendingNetworkLaunchKind::Guest { route, intent } => {
                 self.network = Some(super::spawn_guest(
                     self.event_sink(),
                     Arc::clone(&self.key_store),
-                    addresses,
-                    discovery_id,
-                    expected_remote_static,
+                    route,
                     intent,
                 ));
             }
@@ -316,9 +312,11 @@ mod tests {
         runtime.pending_network_launch = Some(PendingNetworkLaunch {
             generation,
             kind: PendingNetworkLaunchKind::Guest {
-                addresses: vec!["127.0.0.1:43120".parse().unwrap()],
-                discovery_id: Some("fast-discovery-to-join".to_owned()),
-                expected_remote_static: None,
+                route: GuestConnectionRoute::lan(
+                    vec!["127.0.0.1:43120".parse().unwrap()],
+                    Some("fast-discovery-to-join".to_owned()),
+                    None,
+                ),
                 intent: JoinIntent::New,
             },
         });

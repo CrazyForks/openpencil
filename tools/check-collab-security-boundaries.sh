@@ -19,6 +19,12 @@ failures=()
 collab_scan_roots=(
     crates/op-collab
     crates/op-collab-transport
+    crates/op-collab-relay-protocol
+    crates/op-collab-relay-client
+    crates/op-collab-relay-server
+    crates/op-collab-relay-control-plane
+    crates/op-collab-policy-file
+    crates/op-collab-relay-locator-server
     crates/op-collab-smoke
     crates/op-auth-bridge
     crates/op-util/src
@@ -32,6 +38,10 @@ collab_scan_roots=(
     crates/op-host-services/src/provider_dial.rs
     crates/op-host-services/src/web_credentials.rs
     crates/op-i18n/src
+    deploy/collab-relay
+    deploy/collab-relay-edge
+    deploy/collab-relay-locator
+    deploy/collab-relay-locator-edge
 )
 
 collab_boundary_files() {
@@ -105,8 +115,7 @@ cfg_test_external_module_files() {
                 reset_attributes()
             }
         ' "$source_file")
-    done < <(find crates/op-auth-bridge/src -type f -name '*.rs' \
-        | LC_ALL=C sort)
+    done < <(collab_rust_source_files)
 }
 
 record_failure() {
@@ -117,6 +126,14 @@ require_file() {
     file=$1
     if [[ ! -f "$file" ]]; then
         record_failure "missing required file: $file"
+    fi
+}
+
+require_executable() {
+    file=$1
+    label=$2
+    if [[ ! -x "$file" ]]; then
+        record_failure "$label: expected executable file $file"
     fi
 }
 
@@ -174,51 +191,12 @@ require_cfg_test_literal() {
         ' "$source_file"; then
             return
         fi
-    done < <(find crates/op-auth-bridge/src -type f -name '*.rs' \
-        | LC_ALL=C sort)
+    done < <(collab_rust_source_files)
 
     record_failure "$label: expected cfg(test) coverage containing '$literal'"
 }
 
-for required in \
-    Cargo.toml \
-    crates/op-collab/Cargo.toml \
-    crates/op-collab/LICENSE \
-    crates/op-collab/src/ticket_json.rs \
-    crates/op-collab/tests/credential_ownership.rs \
-    crates/op-collab-transport/Cargo.toml \
-    crates/op-collab-transport/LICENSE \
-    crates/op-collab-smoke/LICENSE \
-    crates/op-auth-bridge/Cargo.toml \
-    crates/op-auth-bridge/LICENSE \
-    crates/op-auth-bridge/prebuilt_provenance.rs \
-    .github/workflows/collab-security.yml \
-    docs/security/p2p-collaboration-threat-model.md; do
-    require_file "$required"
-done
-
-for auth_tool_path in \
-    "tools/check-op-auth-prebuilt.sh" \
-    "tools/check-op-auth-prebuilt.test.sh" \
-    "tools/package-op-auth-prebuilt.sh"; do
-    require_file "$auth_tool_path"
-    require_literal_count .github/workflows/collab-security.yml \
-        "$auth_tool_path" 3 "authentication artifact workflow gate"
-done
-
-for workflow_path in \
-    "crates/op-collab-smoke/**" \
-    "crates/op-util/**" \
-    "crates/op-editor-core/**" \
-    "crates/op-editor-host-core/**" \
-    "crates/op-editor-ui/**" \
-    "crates/op-host-native/**" \
-    "crates/op-host-desktop/**" \
-    "crates/op-host-services/**" \
-    "crates/op-i18n/**"; do
-    require_literal_count .github/workflows/collab-security.yml \
-        "$workflow_path" 2 "collaboration security workflow path trigger"
-done
+source "$script_dir/check-collab-deployment-boundaries.sh"
 
 # The protocol core is allowed in browser/wasm dependency graphs. Native
 # transport, authentication, key generation, and HTTP/TLS stacks are not.
@@ -536,6 +514,12 @@ untyped_errors=$(grep -RInE \
     'Result<[^>]*,[[:space:]]*(String|&[[:space:]]*str)[[:space:]]*>' \
     crates/op-collab/src \
     crates/op-collab-transport/src \
+    crates/op-collab-relay-protocol/src \
+    crates/op-collab-relay-client/src \
+    crates/op-collab-relay-server/src \
+    crates/op-collab-relay-control-plane/src \
+    crates/op-collab-policy-file/src \
+    crates/op-collab-relay-locator-server/src \
     crates/op-auth-bridge/src 2>/dev/null || true)
 if [[ -n "$untyped_errors" ]]; then
     record_failure "untyped Result<_, String/&str> at collaboration boundaries:
@@ -651,8 +635,21 @@ fi
 # High-signal committed-secret patterns. This is intentionally conservative;
 # comprehensive secret scanning remains a repository-host responsibility.
 sensitive_files=$(collab_boundary_files \
-    | grep -E '\.(pem|key|p12|pfx|jwt|token)$' \
+    | grep -Ei '\.(pem|key|p12|pfx|jwt|token)$|(^|/)(relay-x25519-keys[^/]*|[^/]*private[-_]keys?[^/]*|locator-signing-key[^/]*)\.json$' \
     || true)
+repository_private_json_files=$(find . \
+    \( -path './.git' -o -path './target' -o -path '*/node_modules' \) \
+    -prune -o -type f -print \
+    | sed 's#^\./##' \
+    | grep -Ei '(^|/)(relay-x25519-keys[^/]*|[^/]*private[-_]keys?[^/]*|locator-signing-key[^/]*)\.json$' \
+    || true)
+if [[ -n "$repository_private_json_files" ]]; then
+    if [[ -n "$sensitive_files" ]]; then
+        sensitive_files+=$'\n'
+    fi
+    sensitive_files+="$repository_private_json_files"
+    sensitive_files=$(printf '%s\n' "$sensitive_files" | LC_ALL=C sort -u)
+fi
 if [[ -n "$sensitive_files" ]]; then
     record_failure "sensitive key/token-shaped files are forbidden:
 $sensitive_files"

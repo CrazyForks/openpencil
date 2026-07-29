@@ -1,8 +1,9 @@
 use super::WidgetHostNative;
 use jian_ops_schema::PenDocument;
 use op_editor_core::{
-    AuthenticatedCollabSession, CollabAvailability, CollabConnectionPhase, CollabNoticeKind,
-    CollabShareEndpoint, CollabUiRole, EditOrigin, PeerNamespace, Tool,
+    AuthenticatedCollabSession, CollabAvailability, CollabConnectionPathUi, CollabConnectionPhase,
+    CollabInviteCode, CollabNoticeKind, CollabRelayRegion, CollabShareEndpoint, CollabUiRole,
+    EditOrigin, PeerNamespace, Tool,
 };
 use op_editor_ui::widgets::{CollabPanel, TopBar, TOP_BAR_HEIGHT};
 use op_editor_ui::{Point2D, Rect};
@@ -90,6 +91,61 @@ fn owner_share_copy_queues_clipboard_text_in_the_pointer_event() {
     assert_eq!(
         host.editor_state().chat.pending_copy_text.as_deref(),
         Some(endpoint)
+    );
+    assert!(host
+        .editor_state()
+        .editor_ui
+        .collab
+        .pending_action
+        .is_none());
+}
+
+#[test]
+fn owner_invite_copy_queues_clipboard_text_in_the_pointer_event() {
+    let invite = "opc1_secret-route";
+    let mut host = WidgetHostNative::new();
+    host.editor_state_mut().editor_ui.collab.availability = CollabAvailability::Ready;
+    host.editor_state_mut().editor_ui.collab.panel.open = true;
+    assert!(host
+        .editor_state_mut()
+        .editor_ui
+        .collab
+        .set_authenticated_session(
+            CollabConnectionPhase::Active,
+            AuthenticatedCollabSession {
+                session_name: "Test".into(),
+                role: CollabUiRole::Owner,
+                share_endpoint: None,
+            },
+            Vec::new(),
+        ));
+    host.editor_state_mut().editor_ui.collab.set_public_session(
+        CollabInviteCode::new(invite),
+        CollabConnectionPathUi::Relay {
+            home_region: CollabRelayRegion::China,
+        },
+    );
+    let viewport = Rect::xywh(0.0, 0.0, 1_000.0, 800.0);
+    let topbar_rect = Rect::xywh(0.0, 0.0, viewport.size.x, TOP_BAR_HEIGHT);
+    let topbar = TopBar::for_editor_ui(&host.editor_state().editor_ui);
+    let panel = CollabPanel::for_editor_ui(&host.editor_state().editor_ui).unwrap();
+    let panel_rect = panel.rect_at(
+        topbar.collaboration_chip_rect_estimated(topbar_rect),
+        viewport,
+    );
+    let copy = panel
+        .invite_copy_rect(panel_rect)
+        .expect("owner invite target");
+
+    assert!(host.apply_press(
+        copy.origin.x + copy.size.x / 2.0,
+        copy.origin.y + copy.size.y / 2.0,
+        viewport.size.x,
+        viewport.size.y,
+    ));
+    assert_eq!(
+        host.editor_state().chat.pending_copy_text.as_deref(),
+        Some(invite)
     );
     assert!(host
         .editor_state()

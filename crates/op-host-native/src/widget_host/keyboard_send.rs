@@ -13,9 +13,11 @@ impl WidgetHostNative {
         if self.preview.is_some() {
             return self.preview_dispatch_key("Enter", false);
         }
-        if let Some(queued) =
-            op_editor_ui::widgets::collab_ui::join_address_submit(&mut self.editor_state.editor_ui)
-        {
+        if self.editor_state.editor_ui.collab_join_input_active() {
+            let queued = op_editor_ui::widgets::collab_ui::join_address_submit(
+                &mut self.editor_state.editor_ui,
+            )
+            .unwrap_or(false);
             if queued {
                 self.mark_dirty();
             }

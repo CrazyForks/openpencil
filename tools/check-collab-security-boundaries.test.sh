@@ -24,6 +24,12 @@ new_fixture() {
         "$fixture_root/crates/op-collab/src" \
         "$fixture_root/crates/op-collab/tests" \
         "$fixture_root/crates/op-collab-transport/src" \
+        "$fixture_root/crates/op-collab-relay-protocol/src" \
+        "$fixture_root/crates/op-collab-relay-client/src" \
+        "$fixture_root/crates/op-collab-relay-server/src" \
+        "$fixture_root/crates/op-collab-relay-control-plane/src" \
+        "$fixture_root/crates/op-collab-policy-file/src" \
+        "$fixture_root/crates/op-collab-relay-locator-server/src" \
         "$fixture_root/crates/op-collab-smoke/src" \
         "$fixture_root/crates/op-auth-bridge/src" \
         "$fixture_root/crates/op-auth-bridge/tests" \
@@ -34,9 +40,15 @@ new_fixture() {
         "$fixture_root/crates/op-host-native/src" \
         "$fixture_root/crates/op-host-desktop/src/collab_runtime" \
         "$fixture_root/crates/op-host-services/src" \
-        "$fixture_root/crates/op-i18n/src"
+        "$fixture_root/crates/op-i18n/src" \
+        "$fixture_root/deploy/collab-relay" \
+        "$fixture_root/deploy/collab-relay-edge" \
+        "$fixture_root/deploy/collab-relay-locator" \
+        "$fixture_root/deploy/collab-relay-locator-edge"
 
     cp "$gate_source" "$fixture_root/tools/check-collab-security-boundaries.sh"
+    cp "$script_dir/check-collab-deployment-boundaries.sh" \
+        "$fixture_root/tools/check-collab-deployment-boundaries.sh"
     cp "$script_dir/check-op-auth-prebuilt.sh" "$fixture_root/tools/check-op-auth-prebuilt.sh"
     cp "$script_dir/check-op-auth-prebuilt.test.sh" "$fixture_root/tools/check-op-auth-prebuilt.test.sh"
     cp "$script_dir/package-op-auth-prebuilt.sh" "$fixture_root/tools/package-op-auth-prebuilt.sh"
@@ -52,6 +64,13 @@ members = [
 [workspace.package]
 license = "MIT"
 EOF
+    cat > "$fixture_root/.dockerignore" <<'EOF'
+**/relay-x25519-keys*.json
+**/*private-keys*.json
+**/*private_keys*.json
+**/locator-signing-key*.json
+EOF
+    cp "$fixture_root/.dockerignore" "$fixture_root/.gitignore"
 
     cat > "$fixture_root/docs/security/p2p-collaboration-threat-model.md" <<'EOF'
 # Fixture threat model
@@ -62,7 +81,15 @@ EOF
     cat > "$fixture_root/.github/workflows/collab-security.yml" <<'EOF'
 pull_request:
   paths:
+    - '.dockerignore'
+    - '.gitignore'
     - 'crates/op-collab-smoke/**'
+    - 'crates/op-collab-relay-protocol/**'
+    - 'crates/op-collab-relay-client/**'
+    - 'crates/op-collab-relay-server/**'
+    - 'crates/op-collab-relay-control-plane/**'
+    - 'crates/op-collab-policy-file/**'
+    - 'crates/op-collab-relay-locator-server/**'
     - 'crates/op-util/**'
     - 'crates/op-editor-core/**'
     - 'crates/op-editor-host-core/**'
@@ -71,12 +98,24 @@ pull_request:
     - 'crates/op-host-desktop/**'
     - 'crates/op-host-services/**'
     - 'crates/op-i18n/**'
+    - 'deploy/collab-relay/**'
+    - 'deploy/collab-relay-edge/**'
+    - 'deploy/collab-relay-locator/**'
+    - 'deploy/collab-relay-locator-edge/**'
     - 'tools/check-op-auth-prebuilt.sh'
     - 'tools/check-op-auth-prebuilt.test.sh'
     - 'tools/package-op-auth-prebuilt.sh'
 push:
   paths:
+    - '.dockerignore'
+    - '.gitignore'
     - 'crates/op-collab-smoke/**'
+    - 'crates/op-collab-relay-protocol/**'
+    - 'crates/op-collab-relay-client/**'
+    - 'crates/op-collab-relay-server/**'
+    - 'crates/op-collab-relay-control-plane/**'
+    - 'crates/op-collab-policy-file/**'
+    - 'crates/op-collab-relay-locator-server/**'
     - 'crates/op-util/**'
     - 'crates/op-editor-core/**'
     - 'crates/op-editor-host-core/**'
@@ -85,6 +124,10 @@ push:
     - 'crates/op-host-desktop/**'
     - 'crates/op-host-services/**'
     - 'crates/op-i18n/**'
+    - 'deploy/collab-relay/**'
+    - 'deploy/collab-relay-edge/**'
+    - 'deploy/collab-relay-locator/**'
+    - 'deploy/collab-relay-locator-edge/**'
     - 'tools/check-op-auth-prebuilt.sh'
     - 'tools/check-op-auth-prebuilt.test.sh'
     - 'tools/package-op-auth-prebuilt.sh'
@@ -94,7 +137,286 @@ steps:
   - run: bash -n tools/package-op-auth-prebuilt.sh
   - run: cargo test --locked -p op-auth-bridge --test prebuilt_provenance
   - run: cargo test --locked -p op-collab-transport frame::tests
+  - run: bash deploy/collab-relay-edge/validate.sh
+  - run: bash deploy/collab-relay-locator/validate.sh
+  - run: bash deploy/collab-relay-locator-edge/validate.sh
 EOF
+
+    cat > "$fixture_root/deploy/collab-relay-edge/global-nginx.conf" <<'EOF'
+stream {
+    access_log off;
+    upstream cn_federation_listener { server 192.0.2.10:9443; }
+    server {
+        listen 8443;
+        limit_conn global_clients 32;
+        proxy_ssl on;
+        proxy_ssl_verify on;
+        proxy_ssl_certificate /run/secrets/global-edge-client-cert.pem;
+        proxy_ssl_certificate_key /run/secrets/global-edge-client-key.pem;
+        proxy_ssl_trusted_certificate /run/secrets/cn-federation-ca.pem;
+        proxy_ssl_session_reuse off;
+        proxy_next_upstream off;
+        proxy_pass cn_federation_listener;
+    }
+}
+EOF
+
+    cat > "$fixture_root/deploy/collab-relay/nginx.conf" <<'EOF'
+server {
+    listen 443 ssl;
+    client_header_buffer_size 64k;
+    large_client_header_buffers 2 64k;
+    location = /v1/tunnel {
+        proxy_set_header Authorization $http_authorization;
+        proxy_pass_header OpenPencil-Relay-Challenge;
+    }
+}
+server {
+    listen 8444 ssl;
+    client_header_buffer_size 64k;
+    large_client_header_buffers 2 64k;
+    location = /v1/tunnel {
+        limit_req zone=relay_federation_handshakes burst=500 nodelay;
+        limit_conn relay_federation_connections 512;
+        proxy_set_header Authorization $http_authorization;
+        proxy_pass_header OpenPencil-Relay-Challenge;
+    }
+}
+EOF
+    for relay_deploy_file in \
+        Dockerfile \
+        README.md \
+        compose.yaml \
+        compose.production.yaml \
+        compose.reduced-assurance.yaml; do
+        : > "$fixture_root/deploy/collab-relay/$relay_deploy_file"
+    done
+    cat > "$fixture_root/deploy/collab-relay/Dockerfile" <<'EOF'
+FROM rust:1.94-bookworm@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa AS build
+FROM gcr.io/distroless/cc-debian12:nonroot@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+EOF
+    cat > "$fixture_root/deploy/collab-relay-edge/cn-federation-nginx.conf" <<'EOF'
+stream {
+    access_log off;
+    upstream cn_inner_wss { server 192.0.2.20:8444; }
+    server {
+        listen 9443 ssl;
+        ssl_verify_client on;
+        ssl_client_certificate /run/secrets/global-edge-client-ca.pem;
+        ssl_crl /run/secrets/global-edge-client-crl.pem;
+        ssl_session_cache off;
+        proxy_next_upstream off;
+        proxy_pass cn_inner_wss;
+    }
+}
+EOF
+    : > "$fixture_root/deploy/collab-relay-edge/README.md"
+    cat > "$fixture_root/deploy/collab-relay-edge/compose.global.yaml" <<'EOF'
+ports:
+  - published: 443
+restart: "no"
+EOF
+    : > "$fixture_root/deploy/collab-relay-edge/compose.cn.yaml"
+    cat > "$fixture_root/deploy/collab-relay-edge/rotate-cn-crl.sh" <<'EOF'
+echo "candidate CRLNumber must be strictly greater"
+echo "candidate CRL drops an existing revoked certificate serial"
+echo "CRL activation requires root"
+echo "CRL/CA files must be root:101 mode 0440"
+OPENPENCIL_RELAY_EDGE_VALIDATION_MODE=production
+# Recheck the final staged inode after ownership and mode changes.
+docker compose up -d --no-deps --force-recreate cn-federation
+docker compose exec -T cn-federation nginx -t
+EOF
+    cat > "$fixture_root/deploy/collab-relay-edge/validate.sh" <<'EOF'
+#!/bin/sh
+set -eu
+EOF
+    cat > "$fixture_root/deploy/collab-relay-edge/global-new-connection-rate.nft" <<'EOF'
+ct state new meter relay_edge_new_v4 { ip saddr timeout 2m limit rate over 60/minute burst 20 packets } counter drop
+EOF
+    cat > "$fixture_root/deploy/collab-relay-edge/install-global-new-connection-rate.sh" <<'EOF'
+#!/bin/sh
+meter_name=relay_edge_new_v4
+ct state new meter $meter_name { ip saddr timeout 2m limit rate over 60/minute burst 20 packets } counter drop
+EOF
+    cat > "$fixture_root/deploy/collab-relay-edge/verify-global-new-connection-rate.sh" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+    cat > "$fixture_root/deploy/collab-relay-edge/verify-rate-rules.py" <<'EOF'
+#!/usr/bin/env python3
+not address.is_global
+len(expressions) != 7
+"rate": 60
+"burst": 20
+"per": "minute"
+expect_equal(expressions[6], {"drop": None}
+EOF
+    cat > "$fixture_root/deploy/collab-relay-edge/deploy-global.sh" <<'EOF'
+#!/bin/sh
+"$script_dir/install-global-new-connection-rate.sh"
+OPENPENCIL_RELAY_EDGE_VALIDATION_MODE=production
+--abort-on-container-exit --exit-code-from global-edge
+EOF
+    cat > "$fixture_root/deploy/collab-relay-edge/openpencil-collab-relay-global.service.example" <<'EOF'
+Requires=docker.service nftables.service
+After=network-online.target nftables.service docker.service
+ExecStart=/opt/openpencil/deploy/collab-relay-edge/deploy-global.sh
+EOF
+
+    cat > "$fixture_root/deploy/collab-relay-locator/nginx-location.conf" <<'EOF'
+location = /v1/locator {
+    if ($request_uri != "/v1/locator") {
+        return 404;
+    }
+    if ($http_host = "") {
+        return 400;
+    }
+    limit_req zone=openpencil_locator_per_source burst=20 nodelay;
+    limit_conn openpencil_locator_connections 16;
+    client_max_body_size 191;
+    proxy_set_header Authorization $http_authorization;
+}
+location / {
+    return 404;
+}
+EOF
+    cat > "$fixture_root/deploy/collab-relay-locator/nginx-http-limits.conf" <<'EOF'
+limit_req_zone $binary_remote_addr zone=openpencil_locator_per_source:10m rate=10r/s;
+limit_conn_zone $binary_remote_addr zone=openpencil_locator_connections:10m;
+client_header_buffer_size 64k;
+large_client_header_buffers 2 64k;
+EOF
+    cat > "$fixture_root/deploy/collab-relay-locator/compose.yaml" <<'EOF'
+services:
+  locator:
+    environment:
+      OPENPENCIL_COLLAB_LOCATOR_HSM_SOCKET: /run/openpencil-hsm/signer.sock
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+EOF
+    cat > "$fixture_root/deploy/collab-relay-locator/Dockerfile" <<'EOF'
+FROM rust:1.94-bookworm@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa AS build
+FROM gcr.io/distroless/cc-debian12:nonroot@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+ENTRYPOINT ["/usr/local/bin/op-collab-relay-locator-server", "--production"]
+EOF
+    : > "$fixture_root/deploy/collab-relay-locator/README.md"
+    cat > "$fixture_root/deploy/collab-relay-locator/validate.sh" <<'EOF'
+#!/bin/sh
+set -eu
+EOF
+
+    cat > "$fixture_root/deploy/collab-relay-locator-edge/global-nginx.conf" <<'EOF'
+stream {
+    access_log off;
+    upstream cn_locator_federation { server 192.0.2.30:9543; }
+    server {
+        listen 8443;
+        limit_conn locator_global_clients 32;
+        proxy_ssl on;
+        proxy_ssl_verify on;
+        proxy_ssl_certificate /run/secrets/global-locator-edge-client-cert.pem;
+        proxy_ssl_certificate_key /run/secrets/global-locator-edge-client-key.pem;
+        proxy_ssl_trusted_certificate /run/secrets/cn-locator-federation-ca.pem;
+        proxy_ssl_session_reuse off;
+        proxy_next_upstream off;
+        proxy_pass cn_locator_federation;
+    }
+}
+EOF
+    cat > "$fixture_root/deploy/collab-relay-locator-edge/cn-federation-nginx.conf" <<'EOF'
+stream {
+    access_log off;
+    upstream cn_locator_inner_https { server 192.0.2.40:8445; }
+    server {
+        listen 9543 ssl;
+        ssl_verify_client on;
+        ssl_client_certificate /run/secrets/global-locator-edge-client-ca.pem;
+        ssl_crl /run/secrets/global-locator-edge-client-crl.pem;
+        ssl_session_cache off;
+        proxy_next_upstream off;
+        proxy_pass cn_locator_inner_https;
+    }
+}
+EOF
+    cat > "$fixture_root/deploy/collab-relay-locator-edge/cn-locator-https-nginx.conf" <<'EOF'
+server {
+    client_header_buffer_size 64k;
+    large_client_header_buffers 2 64k;
+    keepalive_requests 1;
+    keepalive_timeout 0;
+    if ($ssl_server_name != locator.example.cn) {
+        return 421;
+    }
+    if ($http_host != locator.example.cn) {
+        return 421;
+    }
+    location = /v1/locator {
+        if ($request_uri != "/v1/locator") {
+            return 404;
+        }
+        proxy_pass_request_headers off;
+        proxy_set_header Authorization $http_authorization;
+        proxy_set_header Transfer-Encoding "";
+        proxy_set_header Content-Encoding "";
+    }
+}
+EOF
+    for locator_edge_file in \
+        README.md \
+        compose.global.yaml \
+        compose.cn.yaml \
+        compose.cn-https.yaml \
+        global-new-connection-rate.nft \
+        verify-global-new-connection-rate.sh \
+        deploy-global.sh \
+        validate.sh; do
+        : > "$fixture_root/deploy/collab-relay-locator-edge/$locator_edge_file"
+    done
+    cat > "$fixture_root/deploy/collab-relay-locator-edge/compose.global.yaml" <<'EOF'
+ports:
+  - published: 443
+restart: "no"
+EOF
+    cat > "$fixture_root/deploy/collab-relay-locator-edge/install-global-new-connection-rate.sh" <<'EOF'
+ct state new meter locator_edge_new_v4 { ip saddr timeout 2m limit rate over 60/minute burst 20 packets } counter drop
+EOF
+    cat > "$fixture_root/deploy/collab-relay-locator-edge/deploy-global.sh" <<'EOF'
+#!/bin/sh
+"$script_dir/install-global-new-connection-rate.sh"
+OPENPENCIL_LOCATOR_EDGE_VALIDATION_MODE=production
+--abort-on-container-exit --exit-code-from global-locator-edge
+EOF
+    cat > "$fixture_root/deploy/collab-relay-locator-edge/openpencil-collab-locator-global.service.example" <<'EOF'
+Requires=docker.service nftables.service
+After=network-online.target nftables.service docker.service
+ExecStart=/opt/openpencil/deploy/collab-relay-locator-edge/deploy-global.sh
+EOF
+    cat > "$fixture_root/deploy/collab-relay-locator-edge/rotate-cn-crl.sh" <<'EOF'
+echo "candidate CRLNumber must be strictly greater"
+echo "candidate CRL drops an existing revoked certificate serial"
+echo "CRL activation requires root"
+echo "CRL/CA files must be root:101 mode 0440"
+OPENPENCIL_LOCATOR_EDGE_VALIDATION_MODE=production
+# Revalidate the exact staged inode after its final ownership/mode changes.
+docker compose up -d --no-deps --force-recreate
+docker compose exec -T locator-cn-federation nginx -t
+EOF
+    chmod +x \
+        "$fixture_root/deploy/collab-relay-edge/install-global-new-connection-rate.sh" \
+        "$fixture_root/deploy/collab-relay-edge/verify-global-new-connection-rate.sh" \
+        "$fixture_root/deploy/collab-relay-edge/verify-rate-rules.py" \
+        "$fixture_root/deploy/collab-relay-edge/deploy-global.sh" \
+        "$fixture_root/deploy/collab-relay-edge/rotate-cn-crl.sh" \
+        "$fixture_root/deploy/collab-relay-edge/validate.sh" \
+        "$fixture_root/deploy/collab-relay-locator-edge/install-global-new-connection-rate.sh" \
+        "$fixture_root/deploy/collab-relay-locator-edge/verify-global-new-connection-rate.sh" \
+        "$fixture_root/deploy/collab-relay-locator-edge/deploy-global.sh" \
+        "$fixture_root/deploy/collab-relay-locator-edge/rotate-cn-crl.sh" \
+        "$fixture_root/deploy/collab-relay-locator-edge/validate.sh"
 
     cat > "$fixture_root/crates/op-collab/Cargo.toml" <<'EOF'
 [package]
@@ -111,6 +433,21 @@ version = "0.0.0"
 license.workspace = true
 EOF
     : > "$fixture_root/crates/op-collab-transport/LICENSE"
+    for relay_crate in \
+        op-collab-relay-protocol \
+        op-collab-relay-client \
+        op-collab-relay-server \
+        op-collab-relay-control-plane \
+        op-collab-policy-file \
+        op-collab-relay-locator-server; do
+        cat > "$fixture_root/crates/$relay_crate/Cargo.toml" <<EOF
+[package]
+name = "$relay_crate"
+version = "0.0.0"
+license.workspace = true
+EOF
+        : > "$fixture_root/crates/$relay_crate/LICENSE"
+    done
     : > "$fixture_root/crates/op-collab-smoke/LICENSE"
 
     cat > "$fixture_root/crates/op-auth-bridge/Cargo.toml" <<'EOF'
@@ -437,315 +774,4 @@ expect_failure() {
     fi
 }
 
-new_fixture baseline
-expect_pass "accepts the minimal safe collaboration boundary"
-
-new_fixture wasm-native-dependency
-: > "$fixture_root/.fake-wasm-forbidden"
-expect_failure "rejects native dependencies in the wasm closure" \
-    "WASM boundary includes native/auth dependencies"
-
-new_fixture credential-clone-assertion-removed
-sed '/assert_not_impl_any!(OpaqueTicket: Clone);/d' \
-    "$fixture_root/crates/op-collab/tests/credential_ownership.rs" \
-    > "$fixture_root/crates/op-collab/tests/credential_ownership.rs.next"
-mv \
-    "$fixture_root/crates/op-collab/tests/credential_ownership.rs.next" \
-    "$fixture_root/crates/op-collab/tests/credential_ownership.rs"
-expect_failure "requires compile-time non-Clone credential assertions" \
-    "credential-bearing protocol type must remain non-Clone"
-
-new_fixture dedicated-ticket-codec-removed
-: > "$fixture_root/crates/op-collab/src/error.rs"
-expect_failure "requires the dedicated credential codec failure" \
-    "dedicated credential codec failure"
-
-new_fixture credential-preflight-moved-after-value
-awk '
-    index($0, "    reject_renew_ticket_before_generic_value_decode(bytes)?;") == 1 {
-        held = $0
-        next
-    }
-    held != "" && index($0, "    let mut value = decode_json_value(bytes, limits)?;") == 1 {
-        print
-        print held
-        held = ""
-        next
-    }
-    { print }
-' \
-    "$fixture_root/crates/op-collab/src/codec.rs" \
-    > "$fixture_root/crates/op-collab/src/codec.rs.next"
-mv \
-    "$fixture_root/crates/op-collab/src/codec.rs.next" \
-    "$fixture_root/crates/op-collab/src/codec.rs"
-expect_failure "requires credential classification before generic Value decoding" \
-    "generic credential discriminator must run before JSON Value decoding"
-
-new_fixture dedicated-ticket-zeroizing-decoder-removed
-sed '/Zeroizing::new(String::with_capacity/d' \
-    "$fixture_root/crates/op-collab/src/ticket_json.rs" \
-    > "$fixture_root/crates/op-collab/src/ticket_json.rs.next"
-mv \
-    "$fixture_root/crates/op-collab/src/ticket_json.rs.next" \
-    "$fixture_root/crates/op-collab/src/ticket_json.rs"
-expect_failure "requires direct zeroizing ticket string decoding" \
-    "direct zeroizing ticket string decoder"
-
-new_fixture dedicated-ticket-ordinary-string-deserializer
-printf '%s\n' \
-    'fn bad() { let _ = String::deserialize(deserializer); }' \
-    >> "$fixture_root/crates/op-collab/src/ticket_json.rs"
-expect_failure "rejects ordinary String deserialization in the ticket decoder" \
-    "dedicated ticket decoder must not materialize ordinary strings or Values"
-
-new_fixture opaque-ticket-generic-string-deserializer
-printf '%s\n' \
-    'fn bad() { let _ = String::deserialize(deserializer); }' \
-    >> "$fixture_root/crates/op-collab/src/protocol.rs"
-expect_failure "rejects ordinary String deserialization in OpaqueTicket" \
-    "OpaqueTicket must not deserialize through an ordinary String"
-
-new_fixture generic-renewal-deserialize-assertion-removed
-sed '/assert_not_impl_any!(RenewTicket: serde::de::DeserializeOwned);/d' \
-    "$fixture_root/crates/op-collab/tests/credential_ownership.rs" \
-    > "$fixture_root/crates/op-collab/tests/credential_ownership.rs.next"
-mv \
-    "$fixture_root/crates/op-collab/tests/credential_ownership.rs.next" \
-    "$fixture_root/crates/op-collab/tests/credential_ownership.rs"
-expect_failure "requires the generic renewal Deserialize compile-time boundary" \
-    "credential-bearing protocol type must not implement generic Deserialize"
-
-new_fixture derived-collab-message-deserializer
-printf '%s\n' \
-    '#[derive(PartialEq, Serialize, Deserialize)]' \
-    >> "$fixture_root/crates/op-collab/src/protocol.rs"
-expect_failure "rejects derived adjacent-tag CollabMessage deserialization" \
-    "CollabMessage must not use derived Deserialize"
-
-new_fixture direct-serde-renewal-serialization-regression-removed
-sed '/direct_serde_renewal_serialization_is_fail_closed/d' \
-    "$fixture_root/crates/op-collab/tests/credential_ownership.rs" \
-    > "$fixture_root/crates/op-collab/tests/credential_ownership.rs.next"
-mv \
-    "$fixture_root/crates/op-collab/tests/credential_ownership.rs.next" \
-    "$fixture_root/crates/op-collab/tests/credential_ownership.rs"
-expect_failure "requires the direct serde renewal serialization regression" \
-    "direct serde credential serialization rejection test"
-
-new_fixture mislabeled-renewal-regression-removed
-: > "$fixture_root/crates/op-collab-transport/src/frame.rs"
-expect_failure "requires the mislabeled renewal transport regression" \
-    "mislabeled credential transport regression test"
-
-new_fixture credential-transport-workflow-test-removed
-sed '/cargo test --locked -p op-collab-transport frame::tests/d' \
-    "$fixture_root/.github/workflows/collab-security.yml" \
-    > "$fixture_root/.github/workflows/collab-security.yml.next"
-mv \
-    "$fixture_root/.github/workflows/collab-security.yml.next" \
-    "$fixture_root/.github/workflows/collab-security.yml"
-expect_failure "requires the credential transport codec workflow test" \
-    "credential transport codec workflow test"
-
-new_fixture desktop-renewal-vec-copy
-printf '%s\n' \
-    'fn bad(ticket: Ticket) { let _ = ticket.expose().as_bytes().to_vec(); }' \
-    >> "$fixture_root/crates/op-host-desktop/src/collab_runtime/types.rs"
-expect_failure "rejects ordinary Vec copies in desktop renewal commands" \
-    "desktop renewal commands must move OpaqueTicket"
-
-new_fixture non-mit-crate
-cat > "$fixture_root/crates/op-collab-transport/Cargo.toml" <<'EOF'
-[package]
-name = "op-collab-transport"
-version = "0.0.0"
-license = "Apache-2.0"
-EOF
-expect_failure "rejects a non-MIT collaboration crate" \
-    "must inherit or declare the MIT license"
-
-new_fixture deterministic-production-seed
-printf '%s\n' \
-    'const PRODUCTION_SIGNING_SEED: [u8; 32] = [9; 32];' \
-    >> "$fixture_root/crates/op-collab/src/protocol.rs"
-expect_failure "rejects deterministic key material in production source" \
-    "deterministic signing/key seed leaked"
-
-new_fixture deterministic-production-seed-after-test-module
-printf '%s\n' \
-    'const PRODUCTION_SIGNING_SEED: [u8; 32] = [9; 32];' \
-    >> "$fixture_root/crates/op-auth-bridge/src/collab_verifier.rs"
-expect_failure "scans production items after an inline cfg(test) module" \
-    "deterministic signing/key seed leaked"
-
-new_fixture deterministic-external-test-without-cfg
-sed '/#!\[cfg(test)\]/d' \
-    "$fixture_root/crates/op-auth-bridge/src/collab_jwks_cache_cancellation_tests.rs" \
-    > "$fixture_root/crates/op-auth-bridge/src/collab_jwks_cache_cancellation_tests.rs.next"
-mv \
-    "$fixture_root/crates/op-auth-bridge/src/collab_jwks_cache_cancellation_tests.rs.next" \
-    "$fixture_root/crates/op-auth-bridge/src/collab_jwks_cache_cancellation_tests.rs"
-expect_failure "requires an explicit cfg(test) boundary for external unit tests" \
-    "deterministic signing/key seed leaked"
-
-new_fixture deterministic-path-test-without-parent-cfg
-sed '/#\[cfg(test)\]/d' \
-    "$fixture_root/crates/op-auth-bridge/src/collab_jwks_cache.rs" \
-    > "$fixture_root/crates/op-auth-bridge/src/collab_jwks_cache.rs.next"
-mv \
-    "$fixture_root/crates/op-auth-bridge/src/collab_jwks_cache.rs.next" \
-    "$fixture_root/crates/op-auth-bridge/src/collab_jwks_cache.rs"
-expect_failure "requires cfg(test) on path-based external unit-test modules" \
-    "deterministic signing/key seed leaked"
-
-new_fixture production-root-fixture-regression-removed
-sed '/verifies_the_frozen_go_production_root_fixture/d' \
-    "$fixture_root/crates/op-auth-bridge/src/collab_union_policy_tests.rs" \
-    > "$fixture_root/crates/op-auth-bridge/src/collab_union_policy_tests.rs.next"
-mv \
-    "$fixture_root/crates/op-auth-bridge/src/collab_union_policy_tests.rs.next" \
-    "$fixture_root/crates/op-auth-bridge/src/collab_union_policy_tests.rs"
-expect_failure "requires the split production root fixture regression" \
-    "production trust-root fixture regression test"
-
-new_fixture production-policy-fail-closed-regression-removed
-sed '/production_signed_policy_path_never_falls_back_to_raw_jwks/d' \
-    "$fixture_root/crates/op-auth-bridge/src/collab_verifier.rs" \
-    > "$fixture_root/crates/op-auth-bridge/src/collab_verifier.rs.next"
-mv \
-    "$fixture_root/crates/op-auth-bridge/src/collab_verifier.rs.next" \
-    "$fixture_root/crates/op-auth-bridge/src/collab_verifier.rs"
-expect_failure "requires the split production policy fail-closed regression" \
-    "production/test issuer isolation regression test"
-
-new_fixture sensitive-key-file
-: > "$fixture_root/crates/op-collab-transport/peer.key"
-expect_failure "rejects key-shaped repository fixtures" \
-    "sensitive key/token-shaped files are forbidden"
-
-new_fixture compact-token
-mkdir -p "$fixture_root/crates/op-collab/fixtures"
-printf '%s\n' \
-    '"abcdefghijklmnop.qrstuvwxyzABCDEF.abcdefghijklmnopqrstuvwxyzABCDEF0123456789"' \
-    > "$fixture_root/crates/op-collab/fixtures/captured-ticket.txt"
-expect_failure "rejects compact bearer tokens in non-source fixtures" \
-    "high-signal credential/private-key material detected"
-
-new_fixture smoke-compact-token
-printf '%s\n' \
-    '"abcdefghijklmnop.qrstuvwxyzABCDEF.abcdefghijklmnopqrstuvwxyzABCDEF0123456789"' \
-    > "$fixture_root/crates/op-collab-smoke/captured-ticket.txt"
-expect_failure "rejects compact bearer tokens in the smoke crate" \
-    "high-signal credential/private-key material detected"
-
-new_fixture desktop-sensitive-file
-: > "$fixture_root/crates/op-host-desktop/src/collab_runtime/runtime-ticket.token"
-expect_failure "rejects sensitive files in desktop collaboration integration" \
-    "sensitive key/token-shaped files are forbidden"
-
-new_fixture avatar-redirect-limit-removed
-sed '/MAX_REDIRECTS/d' \
-    "$fixture_root/crates/op-host-services/src/profile_avatar_fetch.rs" \
-    > "$fixture_root/crates/op-host-services/src/profile_avatar_fetch.rs.next"
-mv \
-    "$fixture_root/crates/op-host-services/src/profile_avatar_fetch.rs.next" \
-    "$fixture_root/crates/op-host-services/src/profile_avatar_fetch.rs"
-expect_failure "requires the shared avatar redirect limit" \
-    "bounded collaboration avatar fetch"
-
-new_fixture desktop-public-avatar-delegation-removed
-sed '/fetch_profile_avatar_blocking(request.url())/d' \
-    "$fixture_root/crates/op-host-desktop/src/collab_avatar_host.rs" \
-    > "$fixture_root/crates/op-host-desktop/src/collab_avatar_host.rs.next"
-mv \
-    "$fixture_root/crates/op-host-desktop/src/collab_avatar_host.rs.next" \
-    "$fixture_root/crates/op-host-desktop/src/collab_avatar_host.rs"
-expect_failure "requires public-only desktop collaboration avatar delegation" \
-    "desktop avatar security-policy delegation"
-
-new_fixture avatar-proxy-bypass-removed
-: > "$fixture_root/crates/op-host-services/src/provider_dial.rs"
-expect_failure "requires proxy-free pinned avatar dialing" \
-    "public HTTPS proxy bypass prevention"
-
-new_fixture auth-artifact-integrity-removed
-: > "$fixture_root/crates/op-auth-bridge/build.rs"
-expect_failure "requires authentication artifact integrity verification" \
-    "authentication artifact integrity gate"
-
-new_fixture auth-artifact-signature-removed
-: > "$fixture_root/crates/op-auth-bridge/prebuilt_provenance.rs"
-expect_failure "requires authentication artifact signature verification" \
-    "authentication artifact signature verification"
-
-new_fixture auth-matrix-test-removed
-sed \
-    '/cargo test --locked -p op-auth-bridge --test prebuilt_provenance/d' \
-    "$fixture_root/.github/workflows/collab-security.yml" \
-    > "$fixture_root/.github/workflows/collab-security.yml.next"
-mv \
-    "$fixture_root/.github/workflows/collab-security.yml.next" \
-    "$fixture_root/.github/workflows/collab-security.yml"
-expect_failure "requires the committed authentication matrix test" \
-    "committed authentication matrix test"
-
-new_fixture integration-line-cap
-awk 'BEGIN { for (line = 1; line <= 801; line++) print "// integration line" }' \
-    > "$fixture_root/crates/op-editor-host-core/src/collab/oversized.rs"
-expect_failure "enforces the line cap across collaboration integration source" \
-    "has 801 lines; maximum is 800"
-
-new_fixture missing-workflow-trigger
-awk '
-    !removed && index($0, "crates/op-host-desktop/**") {
-        removed = 1
-        next
-    }
-    { print }
-' \
-    "$fixture_root/.github/workflows/collab-security.yml" \
-    > "$fixture_root/.github/workflows/collab-security.yml.next"
-mv \
-    "$fixture_root/.github/workflows/collab-security.yml.next" \
-    "$fixture_root/.github/workflows/collab-security.yml"
-expect_failure "rejects removal of either integration workflow trigger" \
-    "collaboration security workflow path trigger"
-
-new_fixture missing-hard-limit
-awk '!/MAX_OPS_PER_TXN/' \
-    "$fixture_root/crates/op-collab/src/protocol.rs" \
-    > "$fixture_root/crates/op-collab/src/protocol.rs.next"
-mv \
-    "$fixture_root/crates/op-collab/src/protocol.rs.next" \
-    "$fixture_root/crates/op-collab/src/protocol.rs"
-expect_failure "rejects removal of a protocol hard-limit anchor" \
-    "protocol hard limit"
-
-new_fixture public-transport-queue
-sed \
-    's/pub(crate) struct BoundedTransferQueue/pub struct BoundedTransferQueue/' \
-    "$fixture_root/crates/op-collab-transport/src/queue.rs" \
-    > "$fixture_root/crates/op-collab-transport/src/queue.rs.next"
-mv \
-    "$fixture_root/crates/op-collab-transport/src/queue.rs.next" \
-    "$fixture_root/crates/op-collab-transport/src/queue.rs"
-expect_failure "rejects exposing the transport queue implementation" \
-    "bounded queue/rate type"
-
-new_fixture untyped-boundary-error
-printf '%s\n' \
-    'fn bad_boundary() -> Result<(), String> { Ok(()) }' \
-    >> "$fixture_root/crates/op-collab/src/protocol.rs"
-expect_failure "rejects untyped public boundary errors" \
-    "untyped Result<_, String/&str>"
-
-if [[ "$failure_count" -ne 0 ]]; then
-    printf '%s\n' \
-        "check-collab-security-boundaries.test.sh: $failure_count mutation test(s) failed." \
-        >&2
-    exit 1
-fi
-
-printf '%s\n' \
-    "check-collab-security-boundaries.test.sh: all $test_index mutation tests pass."
+source "$script_dir/check-collab-security-boundaries-cases.sh"

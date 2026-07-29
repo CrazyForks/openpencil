@@ -16,6 +16,7 @@ use socket2::{Domain, Protocol, Socket, Type};
 use super::super::auth::{
     production_verifier, unix_time_ms, LocalAdmission, LocalTicketRenewer, ProductionTicketVerifier,
 };
+use super::super::relay::{OwnerRelayRuntime, RelayOwnerRequest};
 use super::super::types::{
     CollabRuntimeFailure, NetworkEvent, OwnerNetworkCommand, PeerNetworkCommand,
     TerminalNetworkEvent,
@@ -33,24 +34,21 @@ const PEER_TERMINAL_CAPACITY: usize = 1;
 /// timeout, while remaining bounded and holding a pending-handshake slot.
 const OWNER_APPROVAL_TIMEOUT: Duration = Duration::from_secs(120);
 
+pub(super) struct OwnerTarget {
+    pub(super) bind_address: SocketAddr,
+    pub(super) session_id: SessionId,
+    pub(super) epoch: Epoch,
+    pub(super) relay: Option<RelayOwnerRequest>,
+}
+
 pub(super) fn run(
     sink: EventSink,
     key_store: Arc<dyn StaticKeyStore>,
-    bind_address: SocketAddr,
-    session_id: SessionId,
-    epoch: Epoch,
+    target: OwnerTarget,
     commands: Receiver<OwnerNetworkCommand>,
     shutdown: Receiver<ByeReason>,
 ) {
-    let result = run_inner(
-        &sink,
-        key_store,
-        bind_address,
-        session_id,
-        epoch,
-        commands,
-        shutdown,
-    );
+    let result = run_inner(&sink, key_store, target, commands, shutdown);
     if let Err(failure) = result {
         let _ = sink.send_terminal(TerminalNetworkEvent::Failed(failure));
     }
@@ -60,12 +58,16 @@ pub(super) fn run(
 fn run_inner(
     sink: &EventSink,
     key_store: Arc<dyn StaticKeyStore>,
-    bind_address: SocketAddr,
-    session_id: SessionId,
-    epoch: Epoch,
+    target: OwnerTarget,
     commands: Receiver<OwnerNetworkCommand>,
     shutdown: Receiver<ByeReason>,
 ) -> Result<(), CollabRuntimeFailure> {
+    let OwnerTarget {
+        bind_address,
+        session_id,
+        epoch,
+        relay,
+    } = target;
     let config = TransportConfig::default();
     let key = Arc::new(
         key_store
@@ -83,6 +85,16 @@ fn run_inner(
         LocalTicketRenewer::new(*key.public_key(), Arc::clone(&verifier), local_auth.clone())
             .map_err(|error| error.failure)?;
     let local = Arc::new(RwLock::new(initial_local));
+    let relay = match relay {
+        Some(request) => Some(OwnerRelayRuntime::start(
+            request,
+            Arc::clone(&key),
+            Arc::clone(&local),
+            &session_id,
+            epoch,
+        )?),
+        None => None,
+    };
     let (listener, dual_stack) = bind_owner_listener(bind_address)?;
     listener
         .set_nonblocking(true)
@@ -100,12 +112,18 @@ fn run_inner(
         ServerPrelude::new(discovery_id, session_id.clone(), epoch)
             .map_err(|_| CollabRuntimeFailure::Protocol)?,
     );
+    let (invite, connection_path) = match relay.as_ref() {
+        Some(relay) => (Some(relay.invite()), relay.path()),
+        None => (None, op_editor_core::CollabConnectionPathUi::Lan),
+    };
     if !sink.send(NetworkEvent::OwnerReady {
         session_id: session_id.clone(),
         epoch,
         endpoint,
         share_endpoint,
         local_auth,
+        invite,
+        connection_path,
     }) {
         return Ok(());
     }
@@ -196,8 +214,8 @@ fn run_inner(
                 Err(TryRecvError::Disconnected) => return Ok(()),
             }
         }
-        match listener.accept() {
-            Ok((stream, address)) => {
+        match accept_owner_stream(&listener, relay.as_ref(), &prelude) {
+            Ok(Some((stream, address, accepted_prelude))) => {
                 let Some(raw_connection) = next_connection else {
                     continue;
                 };
@@ -220,7 +238,7 @@ fn run_inner(
                     key: Arc::clone(&key),
                     local: Arc::clone(&local),
                     verifier: Arc::clone(&verifier),
-                    prelude: Arc::clone(&prelude),
+                    prelude: accepted_prelude,
                     shared_budget: shared_budget.clone(),
                     config,
                     connection_id,
@@ -244,7 +262,7 @@ fn run_inner(
                     },
                 );
             }
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+            Ok(None) => {
                 // The channel wait wakes immediately for Stop/send work while
                 // bounding listener admission latency. This avoids the old
                 // unconditional 200 Hz idle poll.
@@ -260,6 +278,27 @@ fn run_inner(
             }
             Err(_) => return Err(CollabRuntimeFailure::Transport),
         }
+    }
+}
+
+fn accept_owner_stream(
+    lan_listener: &TcpListener,
+    relay: Option<&OwnerRelayRuntime>,
+    lan_prelude: &Arc<ServerPrelude>,
+) -> std::io::Result<Option<(TcpStream, SocketAddr, Arc<ServerPrelude>)>> {
+    if let Some(relay) = relay {
+        match relay.accept() {
+            Ok((stream, address)) => {
+                return Ok(Some((stream, address, relay.prelude())));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(error) => return Err(error),
+        }
+    }
+    match lan_listener.accept() {
+        Ok((stream, address)) => Ok(Some((stream, address, Arc::clone(lan_prelude)))),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+        Err(error) => Err(error),
     }
 }
 

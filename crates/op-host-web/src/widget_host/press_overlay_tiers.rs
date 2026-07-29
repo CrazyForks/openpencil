@@ -104,7 +104,10 @@ impl WidgetHost {
         let (x, y) = (ctx.x, ctx.y);
         let viewport_width = ctx.viewport_width;
         let viewport_height = ctx.viewport_height;
-        if self.editor_state.editor_ui.collab.panel.open {
+        if self.editor_state.editor_ui.collab.panel.open
+            && !(self.editor_state.editor_ui.account_ui_available
+                && self.editor_state.editor_ui.login_modal_open)
+        {
             let top_bar_rect = Rect::xywh(
                 0.0,
                 0.0,
@@ -123,8 +126,9 @@ impl WidgetHost {
                 );
                 if let Some(hit) = panel.hit_test(panel_rect, Point2D::new(x, y)) {
                     match hit {
-                        op_editor_ui::widgets::CollabPanelHit::CopyShareEndpoint(endpoint) => {
-                            self.host_copy_text(&endpoint);
+                        op_editor_ui::widgets::CollabPanelHit::CopyInvite(invite)
+                        | op_editor_ui::widgets::CollabPanelHit::CopyShareEndpoint(invite) => {
+                            self.host_copy_text(&invite);
                         }
                         hit => {
                             let _ = op_editor_ui::widgets::collab_ui::apply_panel_hit(
@@ -140,6 +144,7 @@ impl WidgetHost {
                         .collab
                         .panel
                         .join_address_focused = false;
+                    self.editor_state.editor_ui.collab.panel.hover = None;
                     self.blur_text_inputs_on_blank_press();
                 }
                 self.mark_dirty();

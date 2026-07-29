@@ -1,5 +1,5 @@
 use std::sync::mpsc::{Receiver, TryRecvError};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
 use op_collab::{Bye, ByeReason, CollabMessage, ConnectionKey, Epoch, SessionId};
@@ -8,7 +8,9 @@ use op_collab_transport::{
     QueueError, RuntimeError, SharedQueueBudget,
 };
 
-use super::super::auth::{unix_time_ms, LocalTicketRenewer, ProductionTicketVerifier};
+use super::super::auth::{
+    unix_time_ms, LocalAdmission, LocalTicketRenewer, ProductionTicketVerifier,
+};
 use super::super::types::{
     CollabRuntimeFailure, GuestNetworkCommand, NetworkEvent, PeerNetworkCommand, RemoteBye,
     TerminalNetworkEvent,
@@ -27,6 +29,12 @@ pub(super) struct DriverIdentity {
 pub(super) struct DriverControl<C> {
     pub(super) commands: Receiver<C>,
     pub(super) shutdown: Receiver<ByeReason>,
+}
+
+pub(super) struct GuestRenewalContext {
+    pub(super) verifier: Arc<ProductionTicketVerifier>,
+    pub(super) renewer: LocalTicketRenewer,
+    pub(super) admission: Arc<RwLock<LocalAdmission>>,
 }
 
 pub(super) fn drive_owner_peer(
@@ -181,8 +189,7 @@ pub(super) fn drive_guest(
     shared_budget: SharedQueueBudget,
     identity: DriverIdentity,
     control: DriverControl<GuestNetworkCommand>,
-    verifier: Arc<ProductionTicketVerifier>,
-    mut renewer: LocalTicketRenewer,
+    renewal: GuestRenewalContext,
     sink: &EventSink,
 ) -> Option<CollabRuntimeFailure> {
     let DriverIdentity {
@@ -191,6 +198,11 @@ pub(super) fn drive_guest(
         epoch,
     } = identity;
     let DriverControl { commands, shutdown } = control;
+    let GuestRenewalContext {
+        verifier,
+        mut renewer,
+        admission: local_admission,
+    } = renewal;
     let mut driver = match ConnectionDriver::new(
         connection,
         shared_budget,
@@ -219,11 +231,16 @@ pub(super) fn drive_guest(
         }
         if terminal.is_none() && !stop_requested {
             match renewer.poll(Instant::now()) {
-                Ok(Some(admission)) => {
-                    let ticket = match admission.renewal_ticket() {
+                Ok(Some(renewed)) => {
+                    let ticket = match renewed.renewal_ticket() {
                         Ok(ticket) => ticket,
                         Err(error) => return Some(error.failure),
                     };
+                    if let Err(error) =
+                        LocalAdmission::install_shared_relay_renewal(&local_admission, renewed)
+                    {
+                        return Some(error.failure);
+                    }
                     if let Err(failure) =
                         send_reliable(sink, NetworkEvent::LocalTicketReady { ticket })
                     {

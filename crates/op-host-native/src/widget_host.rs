@@ -76,6 +76,8 @@ mod click;
 #[cfg(test)]
 mod codegen_framework_tests;
 #[cfg(test)]
+mod collab_input_tests;
+#[cfg(test)]
 mod collaboration_id_tests;
 #[cfg(test)]
 mod collaboration_install_tests;

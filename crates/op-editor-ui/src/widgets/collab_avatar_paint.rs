@@ -1,6 +1,8 @@
 //! Shared collaboration-avatar painter for the TopBar and session panel.
 
-use crate::collab_avatar_runtime::{collab_avatar_image, AVATAR_DECODE_EDGE_PX};
+use crate::collab_avatar_runtime::{
+    account_avatar_image, collab_avatar_image, CollabAvatarImage, AVATAR_DECODE_EDGE_PX,
+};
 use crate::widgets::canvas_viewport_image::note_pending_decode;
 use crate::widgets::collab_ui::CollabAvatarModel;
 use crate::widgets::PaintCx;
@@ -49,7 +51,7 @@ pub(super) fn paint_collab_avatar(
         ),
     );
 
-    let Some(image) = collab_avatar_image(&participant.participant_key) else {
+    let Some(image) = participant_avatar_image(participant) else {
         return false;
     };
     let sharp = cx.backend.image_decoded(
@@ -73,6 +75,14 @@ pub(super) fn paint_collab_avatar(
     );
     cx.backend.restore();
     true
+}
+
+fn participant_avatar_image(participant: &CollabAvatarModel) -> Option<CollabAvatarImage> {
+    if participant.is_self {
+        account_avatar_image().or_else(|| collab_avatar_image(&participant.participant_key))
+    } else {
+        collab_avatar_image(&participant.participant_key)
+    }
 }
 
 fn rgba_u32(value: u32) -> Color {
@@ -222,5 +232,60 @@ mod tests {
             15.0
         ));
         assert_eq!(backend.image_draws, 1);
+    }
+
+    #[test]
+    fn self_participant_reuses_the_ready_account_avatar() {
+        let _guard = lock_collab_avatar_registry_for_tests();
+        assert!(crate::collab_avatar_runtime::register_account_avatar_url(
+            Some("https://cdn.example/account.png")
+        ));
+        let request = take_collab_avatar_requests(1).pop().unwrap();
+        assert!(request.is_current_account());
+        assert!(complete_collab_avatar_request(&request, Some(png_header())));
+
+        let mut backend = AvatarBackend {
+            image_ready: true,
+            ..Default::default()
+        };
+        let mut cx = PaintCx {
+            backend: &mut backend,
+        };
+        assert!(paint_collab_avatar(
+            &mut cx,
+            &model(),
+            Rect::xywh(0.0, 0.0, 22.0, 22.0),
+            9.0,
+            15.0
+        ));
+        assert_eq!(backend.image_draws, 1);
+    }
+
+    #[test]
+    fn remote_participant_never_reuses_the_local_account_avatar() {
+        let _guard = lock_collab_avatar_registry_for_tests();
+        assert!(crate::collab_avatar_runtime::register_account_avatar_url(
+            Some("https://cdn.example/account.png")
+        ));
+        let request = take_collab_avatar_requests(1).pop().unwrap();
+        assert!(complete_collab_avatar_request(&request, Some(png_header())));
+
+        let mut remote = model();
+        remote.is_self = false;
+        let mut backend = AvatarBackend {
+            image_ready: true,
+            ..Default::default()
+        };
+        let mut cx = PaintCx {
+            backend: &mut backend,
+        };
+        assert!(!paint_collab_avatar(
+            &mut cx,
+            &remote,
+            Rect::xywh(0.0, 0.0, 22.0, 22.0),
+            9.0,
+            15.0
+        ));
+        assert_eq!(backend.image_draws, 0);
     }
 }

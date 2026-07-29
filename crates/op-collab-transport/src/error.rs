@@ -165,6 +165,8 @@ pub enum KeyStoreError {
     InvalidLength(usize),
     #[error("device static key is all zero")]
     AllZero,
+    #[error("X25519 peer key produces a non-contributory shared secret")]
+    NonContributoryPeer,
     #[error("secure random generation failed")]
     Random,
 }

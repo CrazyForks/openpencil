@@ -18,6 +18,7 @@ use std::thread::JoinHandle;
 use op_collab::{ByeReason, Epoch, SessionId};
 use op_collab_transport::{JoinIntent, SharedQueueBudget, StaticKeyStore};
 
+use super::relay::{GuestConnectionRoute, RelayOwnerRequest};
 use super::types::{
     GuestNetworkCommand, NetworkEvent, OwnerNetworkCommand, TaggedNetworkEvent,
     TerminalNetworkEvent,
@@ -371,6 +372,7 @@ pub(super) fn spawn_owner(
     bind_address: SocketAddr,
     session_id: SessionId,
     epoch: Epoch,
+    relay: Option<RelayOwnerRequest>,
 ) -> SessionNetwork {
     let (commands, receiver) = mpsc::sync_channel(GUI_COMMAND_CAPACITY);
     let (shutdown, shutdown_receiver) = mpsc::sync_channel(TERMINAL_COMMAND_CAPACITY);
@@ -380,9 +382,12 @@ pub(super) fn spawn_owner(
             owner::run(
                 sink,
                 key_store,
-                bind_address,
-                session_id,
-                epoch,
+                owner::OwnerTarget {
+                    bind_address,
+                    session_id,
+                    epoch,
+                    relay,
+                },
                 receiver,
                 shutdown_receiver,
             );
@@ -398,9 +403,7 @@ pub(super) fn spawn_owner(
 pub(super) fn spawn_guest(
     sink: EventSink,
     key_store: Arc<dyn StaticKeyStore>,
-    addresses: Vec<SocketAddr>,
-    expected_discovery_id: Option<String>,
-    expected_remote_static: Option<[u8; 32]>,
+    route: GuestConnectionRoute,
     intent: JoinIntent,
 ) -> SessionNetwork {
     let (commands, receiver) = mpsc::sync_channel(GUI_COMMAND_CAPACITY);
@@ -411,12 +414,7 @@ pub(super) fn spawn_guest(
             guest::run(
                 sink,
                 key_store,
-                guest::GuestTarget {
-                    addresses,
-                    expected_discovery_id,
-                    expected_remote_static,
-                    intent,
-                },
+                guest::GuestTarget { route, intent },
                 receiver,
                 shutdown_receiver,
             );

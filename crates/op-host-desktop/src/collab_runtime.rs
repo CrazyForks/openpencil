@@ -1,8 +1,4 @@
-//! Desktop collaboration orchestration.
-//!
-//! The GUI thread exclusively owns the editor/session actor. Network workers
-//! own sockets and framed bytes, and cross this boundary through bounded typed
-//! channels plus a winit wake event.
+//! GUI-owned collaboration actors bridged to network workers by bounded channels.
 
 mod actor;
 mod admission;
@@ -11,6 +7,7 @@ mod effects;
 mod effects_wire;
 mod network;
 mod poll;
+pub(crate) mod relay;
 mod support;
 mod types;
 
@@ -44,6 +41,10 @@ use support::{production_key_store, random_epoch};
 use winit::event_loop::EventLoopProxy;
 
 use crate::DesktopEvent;
+use relay::{
+    guest_route_from_invite, owner_request_from_environment, EnvironmentRelayLocatorControlPlane,
+    GuestConnectionRoute, RelayLocatorControlPlane,
+};
 use types::{
     CollabRuntimeError, CollabRuntimeFailure, CollabStatusEvent, DiscoveredEndpoint, NetworkEvent,
     TaggedNetworkEvent,
@@ -65,7 +66,7 @@ pub(crate) struct DesktopCollabRuntime {
     pending_guest: Option<PendingGuestAdmission>,
     pending_owner: PendingOwnerAdmissions,
     discovered: HashMap<String, DiscoveredEndpoint>,
-    last_join: Option<(Vec<SocketAddr>, Option<String>)>,
+    last_join: Option<GuestConnectionRoute>,
     pinned_owner_static: Option<[u8; 32]>,
     transaction_active: bool,
     save_as_fork_requested: bool,
@@ -78,11 +79,31 @@ pub(crate) struct DesktopCollabRuntime {
     latest_owner_ticket: Option<OpaqueTicket>,
     key_store: Arc<dyn StaticKeyStore>,
     bridge_budget: SharedQueueBudget,
+    relay_locator_control_plane: Arc<dyn RelayLocatorControlPlane>,
+}
+
+struct OwnerReadyState {
+    session_id: SessionId,
+    epoch: Epoch,
+    endpoint: SocketAddr,
+    share_endpoint: Option<SocketAddr>,
+    auth: op_collab::VerifiedAuthMetadata,
+    invite: Option<op_editor_core::CollabInviteCode>,
+    connection_path: op_editor_core::CollabConnectionPathUi,
 }
 
 impl DesktopCollabRuntime {
     pub(crate) fn new() -> Self {
-        Self::with_key_store(production_key_store())
+        Self::with_relay_locator_control_plane(Arc::new(EnvironmentRelayLocatorControlPlane))
+    }
+
+    /// Inject an authenticated control-plane/HSM locator issuer; the default fails closed.
+    pub(crate) fn with_relay_locator_control_plane(
+        control_plane: Arc<dyn RelayLocatorControlPlane>,
+    ) -> Self {
+        let mut runtime = Self::with_key_store(production_key_store());
+        runtime.relay_locator_control_plane = control_plane;
+        runtime
     }
 
     fn with_key_store(key_store: Arc<dyn StaticKeyStore>) -> Self {
@@ -125,6 +146,7 @@ impl DesktopCollabRuntime {
             latest_owner_ticket: None,
             key_store,
             bridge_budget,
+            relay_locator_control_plane: Arc::new(EnvironmentRelayLocatorControlPlane),
         }
     }
 
@@ -146,7 +168,7 @@ impl DesktopCollabRuntime {
         if collab.availability == next {
             return false;
         }
-        collab.availability = next;
+        collab.set_availability(next);
         host.mark_editor_state_dirty();
         true
     }
@@ -161,7 +183,10 @@ impl DesktopCollabRuntime {
             return false;
         };
         let result = match action {
-            CollabUiAction::Start => self.start_owner(host),
+            CollabUiAction::OpenCreate => Ok(()),
+            CollabUiAction::Start => self.start_owner(host, true),
+            CollabUiAction::StartLan => self.start_owner(host, false),
+            CollabUiAction::OpenJoin => Ok(()),
             CollabUiAction::BeginDiscovery => self.begin_discovery(host),
             CollabUiAction::JoinDiscovered { discovery_id } => {
                 self.join_discovered(host, &discovery_id)
@@ -197,8 +222,7 @@ impl DesktopCollabRuntime {
         std::mem::take(&mut self.save_as_fork_requested)
     }
 
-    /// Starts one GUI-owned edit capture. A `false` return means another
-    /// gesture already owns the transaction, or no live session is bound.
+    /// Start one GUI-owned edit capture; `false` means busy or no live session is bound.
     pub(crate) fn begin_local_edit(&mut self, host: &mut WidgetHostNative) -> bool {
         if self.transaction_active {
             return false;
@@ -250,9 +274,7 @@ impl DesktopCollabRuntime {
         }
     }
 
-    /// Route Cmd/Ctrl+Z to M1 selective undo while a collaboration actor is
-    /// bound. Returns `false` only in standalone mode, where the native global
-    /// history path remains valid.
+    /// Route Cmd/Ctrl+Z to M1 selective undo; `false` preserves standalone history.
     pub(crate) fn request_undo(&mut self, host: &mut WidgetHostNative) -> bool {
         let Some(mut actor) = self.actor.take() else {
             return false;
@@ -335,7 +357,7 @@ impl DesktopCollabRuntime {
         self.latest_owner_ticket = None;
         host.disable_collaboration_ids();
         let collab = &mut host.editor_state_mut().editor_ui.collab;
-        collab.phase = CollabConnectionPhase::Idle;
+        collab.set_phase(CollabConnectionPhase::Idle);
         collab.pending_edit = CollabPendingEditUi::None;
         collab.clear_authenticated();
         collab.panel.discovered = Arc::new(Vec::new());
@@ -347,13 +369,30 @@ impl DesktopCollabRuntime {
         self.status.drain(..)
     }
 
-    fn start_owner(&mut self, host: &mut WidgetHostNative) -> Result<(), CollabRuntimeError> {
+    fn start_owner(
+        &mut self,
+        host: &mut WidgetHostNative,
+        use_public_relay: bool,
+    ) -> Result<(), CollabRuntimeError> {
         self.require_ready(host)?;
+        let relay = if use_public_relay {
+            Some(
+                owner_request_from_environment(Arc::clone(&self.relay_locator_control_plane))?
+                    .ok_or_else(|| {
+                        CollabRuntimeError::new(CollabRuntimeFailure::RelayUnavailable)
+                    })?,
+            )
+        } else {
+            None
+        };
         self.leave(host);
         let session_id = SessionId::from(random_identifier("session")?);
         let epoch = random_epoch()?;
-        host.editor_state_mut().editor_ui.collab.phase = CollabConnectionPhase::Starting;
-        self.defer_owner_launch(session_id, epoch);
+        host.editor_state_mut()
+            .editor_ui
+            .collab
+            .set_phase(CollabConnectionPhase::Starting);
+        self.defer_owner_launch(session_id, epoch, relay);
         Ok(())
     }
 
@@ -364,7 +403,10 @@ impl DesktopCollabRuntime {
         }
         self.retire_workers();
         self.discovered.clear();
-        host.editor_state_mut().editor_ui.collab.phase = CollabConnectionPhase::Discovering;
+        host.editor_state_mut()
+            .editor_ui
+            .collab
+            .set_phase(CollabConnectionPhase::Discovering);
         self.defer_discovery_launch();
         Ok(())
     }
@@ -382,10 +424,9 @@ impl DesktopCollabRuntime {
         if !discovered.compatible {
             return Err(CollabRuntimeError::invalid_session());
         }
-        self.start_guest(
+        self.start_guest_route(
             host,
-            discovered.addresses,
-            Some(discovered.discovery_id),
+            GuestConnectionRoute::lan(discovered.addresses, Some(discovered.discovery_id), None),
             JoinIntent::New,
         )
     }
@@ -395,15 +436,23 @@ impl DesktopCollabRuntime {
         host: &mut WidgetHostNative,
         endpoint: &str,
     ) -> Result<(), CollabRuntimeError> {
+        let endpoint = endpoint.trim();
+        if endpoint.starts_with(op_collab_relay_protocol::RELAY_INVITE_PREFIX) {
+            let route = guest_route_from_invite(endpoint)?;
+            return self.start_guest_route(host, route, JoinIntent::New);
+        }
         let endpoint = endpoint
-            .trim()
             .parse()
             .map_err(|_| CollabRuntimeError::new(CollabRuntimeFailure::InvalidAddress))?;
-        self.start_guest(host, vec![endpoint], None, JoinIntent::New)
+        self.start_guest_route(
+            host,
+            GuestConnectionRoute::lan(vec![endpoint], None, None),
+            JoinIntent::New,
+        )
     }
 
     fn retry_guest(&mut self, host: &mut WidgetHostNative) -> Result<(), CollabRuntimeError> {
-        let (addresses, _) = self
+        let route = self
             .last_join
             .clone()
             .ok_or_else(CollabRuntimeError::invalid_session)?;
@@ -423,39 +472,52 @@ impl DesktopCollabRuntime {
         let expected_remote_static = self
             .pinned_owner_static
             .ok_or_else(CollabRuntimeError::invalid_session)?;
-        self.spawn_guest(host, addresses, None, Some(expected_remote_static), intent)
+        self.spawn_guest_route(
+            host,
+            route.retry_with_owner_static(expected_remote_static),
+            intent,
+        )
     }
 
-    fn start_guest(
+    fn start_guest_route(
         &mut self,
         host: &mut WidgetHostNative,
-        addresses: Vec<SocketAddr>,
-        discovery_id: Option<String>,
+        route: GuestConnectionRoute,
         intent: JoinIntent,
     ) -> Result<(), CollabRuntimeError> {
         self.require_ready(host)?;
         self.leave(host);
-        self.spawn_guest(host, addresses, discovery_id, None, intent)
+        self.spawn_guest_route(host, route, intent)
     }
 
-    fn spawn_guest(
+    fn spawn_guest_route(
         &mut self,
         host: &mut WidgetHostNative,
-        addresses: Vec<SocketAddr>,
-        discovery_id: Option<String>,
-        expected_remote_static: Option<[u8; 32]>,
+        route: GuestConnectionRoute,
         intent: JoinIntent,
     ) -> Result<(), CollabRuntimeError> {
-        let endpoint = *addresses
-            .first()
-            .ok_or_else(CollabRuntimeError::invalid_session)?;
+        let endpoint = route.status_endpoint();
+        let path = route.connection_path();
         self.require_ready(host)?;
         self.retire_workers();
         self.pending_guest = None;
-        host.editor_state_mut().editor_ui.collab.phase = CollabConnectionPhase::Joining;
-        self.last_join = Some((addresses.clone(), discovery_id.clone()));
-        self.defer_guest_launch(addresses, discovery_id, expected_remote_static, intent);
-        self.push_status(CollabStatusEvent::JoinStarted { endpoint });
+        host.editor_state_mut()
+            .editor_ui
+            .collab
+            .set_phase(CollabConnectionPhase::Joining);
+        self.last_join = Some(route.clone());
+        self.defer_guest_launch(route, intent);
+        match (endpoint, path) {
+            (Some(endpoint), _) => {
+                self.push_status(CollabStatusEvent::JoinStarted { endpoint });
+            }
+            (None, op_editor_core::CollabConnectionPathUi::Relay { home_region }) => {
+                self.push_status(CollabStatusEvent::RelayJoinStarted { home_region })
+            }
+            (None, op_editor_core::CollabConnectionPathUi::Lan) => {
+                return Err(CollabRuntimeError::invalid_session());
+            }
+        }
         Ok(())
     }
 
@@ -484,12 +546,18 @@ impl DesktopCollabRuntime {
                 endpoint,
                 share_endpoint,
                 local_auth,
+                invite,
+                connection_path,
             } => self.owner_ready(
-                session_id,
-                epoch,
-                endpoint,
-                share_endpoint,
-                local_auth,
+                OwnerReadyState {
+                    session_id,
+                    epoch,
+                    endpoint,
+                    share_endpoint,
+                    auth: local_auth,
+                    invite,
+                    connection_path,
+                },
                 host,
             ),
             NetworkEvent::PeerAuthenticated {
@@ -509,8 +577,10 @@ impl DesktopCollabRuntime {
                     session_id,
                     epoch,
                 });
-                host.editor_state_mut().editor_ui.collab.phase =
-                    CollabConnectionPhase::Authenticating;
+                host.editor_state_mut()
+                    .editor_ui
+                    .collab
+                    .set_phase(CollabConnectionPhase::Authenticating);
                 Ok(())
             }
             NetworkEvent::Frame { connection, frame } => self.accept_frame(connection, frame, host),
@@ -545,18 +615,20 @@ impl DesktopCollabRuntime {
 
     fn owner_ready(
         &mut self,
-        session_id: SessionId,
-        epoch: Epoch,
-        endpoint: SocketAddr,
-        share_endpoint: Option<SocketAddr>,
-        auth: op_collab::VerifiedAuthMetadata,
+        ready: OwnerReadyState,
         host: &mut WidgetHostNative,
     ) -> Result<(), CollabRuntimeError> {
-        let mut owner = OwnerActor::new(session_id, epoch, auth, host)?;
-        owner.set_share_endpoint(share_endpoint);
+        let mut owner = OwnerActor::new(ready.session_id, ready.epoch, ready.auth, host)?;
+        owner.set_share_endpoint(ready.share_endpoint);
         set_owner_ui(host, &owner);
+        host.editor_state_mut()
+            .editor_ui
+            .collab
+            .set_public_session(ready.invite, ready.connection_path);
         self.actor = Some(EditorActor::Owner(Box::new(owner)));
-        self.push_status(CollabStatusEvent::OwnerStarted { endpoint });
+        self.push_status(CollabStatusEvent::OwnerStarted {
+            endpoint: ready.endpoint,
+        });
         self.push_status(CollabStatusEvent::SessionActive { role: Role::Owner });
         Ok(())
     }
@@ -609,7 +681,7 @@ impl DesktopCollabRuntime {
         let CollabMessage::Welcome(welcome) = frame.into_body() else {
             return Err(CollabRuntimeError::invalid_session());
         };
-        match self.actor.take() {
+        let result = match self.actor.take() {
             Some(EditorActor::Guest(mut guest)) => {
                 let replaced_session = guest.session.core().session_id() != &pending.session_id
                     || guest.session.core().epoch() != pending.epoch;
@@ -653,7 +725,30 @@ impl DesktopCollabRuntime {
                 self.actor = Some(EditorActor::Guest(Box::new(guest)));
                 Ok(())
             }
+        };
+        if result.is_ok() {
+            self.publish_guest_connection_path(host);
         }
+        result
+    }
+
+    pub(super) fn publish_guest_connection_path(&self, host: &mut WidgetHostNative) {
+        let Some(route) = self.last_join.as_ref() else {
+            return;
+        };
+        if host
+            .editor_state()
+            .editor_ui
+            .collab
+            .authenticated_session()
+            .is_none()
+        {
+            return;
+        }
+        host.editor_state_mut()
+            .editor_ui
+            .collab
+            .set_public_session(None, route.connection_path());
     }
 
     fn complete_renewal(

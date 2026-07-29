@@ -1,0 +1,18 @@
+[package]
+name = "op-collab-policy-file"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license = "MIT"
+repository.workspace = true
+description = "Bounded no-follow signed-policy file source for OpenPencil collaboration services"
+
+[dependencies]
+blake3 = "1.5"
+op-auth-bridge = { path = "../op-auth-bridge" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"

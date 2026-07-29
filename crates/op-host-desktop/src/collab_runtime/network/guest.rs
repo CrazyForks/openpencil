@@ -1,7 +1,7 @@
 use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -14,16 +14,17 @@ use op_collab_transport::{
 use subtle::ConstantTimeEq;
 
 use super::super::auth::{production_verifier, unix_time_ms, LocalAdmission, LocalTicketRenewer};
+use super::super::relay::{relay_guest_target, GuestConnectionRoute, GuestRelayRuntime};
 use super::super::types::{
     CollabRuntimeFailure, GuestNetworkCommand, NetworkEvent, TerminalNetworkEvent,
 };
-use super::connection::{drive_guest, runtime_failure, DriverControl, DriverIdentity};
+use super::connection::{
+    drive_guest, runtime_failure, DriverControl, DriverIdentity, GuestRenewalContext,
+};
 use super::EventSink;
 
 pub(super) struct GuestTarget {
-    pub(super) addresses: Vec<SocketAddr>,
-    pub(super) expected_discovery_id: Option<String>,
-    pub(super) expected_remote_static: Option<[u8; 32]>,
+    pub(super) route: GuestConnectionRoute,
     pub(super) intent: JoinIntent,
 }
 
@@ -210,34 +211,60 @@ fn run_inner(
     shutdown: Receiver<ByeReason>,
     cancellation: &GuestShutdownController,
 ) -> Result<(), CollabRuntimeFailure> {
-    let GuestTarget {
-        addresses,
-        expected_discovery_id,
-        expected_remote_static,
-        intent,
-    } = target;
+    let GuestTarget { route, intent } = target;
     let config = TransportConfig::default();
-    if addresses.is_empty() {
-        return Err(CollabRuntimeFailure::Transport);
-    }
-    if addresses.len() > MAX_DISCOVERY_ADDRESSES {
-        return Err(CollabRuntimeFailure::ResourceLimit);
-    }
-    let key = key_store
-        .load_or_generate()
-        .map_err(|_| CollabRuntimeFailure::SecureKeyUnavailable)?;
+    let key = Arc::new(
+        key_store
+            .load_or_generate()
+            .map_err(|_| CollabRuntimeFailure::SecureKeyUnavailable)?,
+    );
     let verifier = production_verifier().map_err(|error| error.failure)?;
-    let local = LocalAdmission::request_cancellable(key.public_key(), verifier.as_ref(), || {
-        cancellation.requested()
-    })
-    .map_err(|error| error.failure)?;
-    let local_auth = local.auth().clone();
+    let local = Arc::new(RwLock::new(
+        LocalAdmission::request_cancellable(key.public_key(), verifier.as_ref(), || {
+            cancellation.requested()
+        })
+        .map_err(|error| error.failure)?,
+    ));
+    let local_auth = local
+        .read()
+        .map_err(|_| CollabRuntimeFailure::AuthenticationUnavailable)?
+        .auth()
+        .clone();
     let renewer = LocalTicketRenewer::new(
         *key.public_key(),
         std::sync::Arc::clone(&verifier),
         local_auth.clone(),
     )
     .map_err(|error| error.failure)?;
+    let mut relay_runtime = None;
+    let (addresses, expected_discovery_id, expected_remote_static, relay_join) = match &route {
+        GuestConnectionRoute::Lan {
+            addresses,
+            discovery_id,
+            expected_remote_static,
+        } => (
+            addresses.clone(),
+            discovery_id.clone(),
+            *expected_remote_static,
+            false,
+        ),
+        GuestConnectionRoute::Relay(request) => {
+            let running = GuestRelayRuntime::start(request, Arc::clone(&key), Arc::clone(&local))?;
+            let target = relay_guest_target(request, &running);
+            relay_runtime = Some(running);
+            (target.0, target.1, target.2, true)
+        }
+    };
+    if addresses.is_empty() {
+        return Err(if relay_join {
+            CollabRuntimeFailure::RelayUnavailable
+        } else {
+            CollabRuntimeFailure::Transport
+        });
+    }
+    if addresses.len() > MAX_DISCOVERY_ADDRESSES {
+        return Err(CollabRuntimeFailure::ResourceLimit);
+    }
     let join_budget = config
         .timeouts
         .connect
@@ -249,22 +276,31 @@ fn run_inner(
     let (prelude, mut connection) = connect_address_sequence_cancellable(
         &addresses,
         overall_deadline,
-        &key,
+        key.as_ref(),
         expected_discovery_id.as_deref(),
         expected_remote_static.as_ref(),
         config,
         cancellation,
     )
-    .map_err(|error| runtime_failure(&error))?;
+    .map_err(|error| relay_join_failure(&error, relay_join))?;
     let remote_static = *connection.remote_static();
-    let hello = local.hello(intent).map_err(|error| error.failure)?;
+    let (hello, expected_issuer, expected_subject) = {
+        let local = local
+            .read()
+            .map_err(|_| CollabRuntimeFailure::AuthenticationUnavailable)?;
+        (
+            local.hello(intent).map_err(|error| error.failure)?,
+            local.expected_issuer().to_owned(),
+            local.expected_subject().to_owned(),
+        )
+    };
     let now_unix_ms = unix_time_ms().map_err(|error| error.failure)?;
     connection
         .exchange_admission_initiator(
             &hello,
             verifier.as_ref(),
-            local.expected_issuer(),
-            local.expected_subject(),
+            &expected_issuer,
+            &expected_subject,
             now_unix_ms,
             Instant::now(),
         )
@@ -304,8 +340,11 @@ fn run_inner(
             epoch,
         },
         DriverControl { commands, shutdown },
-        verifier,
-        renewer,
+        GuestRenewalContext {
+            verifier,
+            renewer,
+            admission: local,
+        },
         sink,
     );
     let _ = sink.send_terminal(TerminalNetworkEvent::ConnectionClosed {
@@ -313,7 +352,22 @@ fn run_inner(
         failure,
         remote_bye: None,
     });
+    drop(relay_runtime);
     Ok(())
+}
+
+fn relay_join_failure(error: &RuntimeError, relay_join: bool) -> CollabRuntimeFailure {
+    if !relay_join {
+        return runtime_failure(error);
+    }
+    match error {
+        RuntimeError::DiscoveryIdMismatch
+        | RuntimeError::Admission(AdmissionError::StaticKeyMismatch) => {
+            CollabRuntimeFailure::RelayInviteUnavailable
+        }
+        RuntimeError::RateLimited => CollabRuntimeFailure::ResourceLimit,
+        _ => CollabRuntimeFailure::RelayUnavailable,
+    }
 }
 
 fn connect_address_sequence_cancellable(
@@ -474,7 +528,7 @@ mod tests {
                         ErrorKind::ConnectionReset | ErrorKind::BrokenPipe
                     ) =>
                 {
-                    return
+                    return;
                 }
                 Err(error) => panic!("cancelled join socket did not close: {error}"),
             }

@@ -9,6 +9,7 @@
 use std::sync::Arc;
 
 use crate::collab_admission_ui::{CollabAdmissionRequestKey, PendingCollabAdmissionUi};
+use crate::{CollabConnectErrorUi, CollabPanelHover, CollabPublicSessionUi};
 
 /// Presence is lossy and is never part of the ordered commit stream.
 pub const COLLAB_PRESENCE_FRAME_INTERVAL_MS: u64 = 33;
@@ -90,21 +91,9 @@ pub enum CollabUiRole {
 pub enum CollabPanelView {
     #[default]
     Home,
+    Create,
     Join,
     Session,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CollabPanelHover {
-    Close,
-    Start,
-    OpenJoin,
-    JoinAddress,
-    Discovered(usize),
-    Retry,
-    Leave,
-    DiscardPending,
-    SaveAsFork,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,7 +106,7 @@ pub struct DiscoveredCollabEndpoint {
     pub compatible: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Clone, PartialEq, Eq, Default)]
 pub struct CollabPanelState {
     pub open: bool,
     pub view: CollabPanelView,
@@ -316,6 +305,7 @@ pub enum CollabRejectUiCode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CollabNoticeKind {
+    Connect(CollabConnectErrorUi),
     DisconnectedReadOnly,
     TicketExpired,
     OwnerLeft,
@@ -328,6 +318,7 @@ pub enum CollabNoticeKind {
 impl CollabNoticeKind {
     pub const fn i18n_key(self) -> &'static str {
         match self {
+            Self::Connect(error) => error.i18n_key(),
             Self::DisconnectedReadOnly => "collab.status.disconnectedReadOnly",
             Self::TicketExpired => "collab.status.ticketExpired",
             Self::OwnerLeft => "collab.status.ownerLeft",
@@ -351,9 +342,15 @@ pub struct CollabNotice {
     pub created_at_ms: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum CollabUiAction {
+    /// Open the local create-session choice screen.
+    OpenCreate,
+    /// Start an internet-reachable session through the configured public relay.
     Start,
+    /// Start a direct session restricted to the local network.
+    StartLan,
+    OpenJoin,
     BeginDiscovery,
     JoinDiscovered {
         discovery_id: String,
@@ -388,6 +385,7 @@ pub struct CollabUiState {
     pub notice: Option<CollabNotice>,
     pub pending_action: Option<CollabUiAction>,
     authenticated: Option<AuthenticatedCollabSession>,
+    pub(crate) public_session: CollabPublicSessionUi,
     pub(crate) pending_admissions: Arc<Vec<PendingCollabAdmissionUi>>,
     participants: Arc<Vec<CollabParticipantUi>>,
     presence: Arc<Vec<RemotePresenceUi>>,
@@ -405,6 +403,7 @@ impl Default for CollabUiState {
             notice: None,
             pending_action: None,
             authenticated: None,
+            public_session: CollabPublicSessionUi::default(),
             pending_admissions: Arc::new(Vec::new()),
             participants: Arc::new(Vec::new()),
             presence: Arc::new(Vec::new()),
@@ -448,13 +447,16 @@ impl CollabUiState {
     ) -> bool {
         if !phase.is_authenticated() {
             self.clear_authenticated();
-            self.phase = phase;
+            self.set_phase(phase);
             return false;
         }
         if session.role != CollabUiRole::Owner {
             session.share_endpoint = None;
         }
-        self.phase = phase;
+        self.set_phase(phase);
+        if self.authenticated.as_ref() != Some(&session) {
+            self.panel.hover = None;
+        }
         self.authenticated = Some(session);
         if self
             .authenticated
@@ -469,6 +471,7 @@ impl CollabUiState {
 
     pub fn clear_authenticated(&mut self) {
         self.authenticated = None;
+        self.public_session = CollabPublicSessionUi::default();
         self.clear_pending_admissions();
         self.participants = Arc::new(Vec::new());
         self.clear_presence();
@@ -489,6 +492,9 @@ impl CollabUiState {
                 && seen.insert(participant.participant_key.clone())
         });
         participants.truncate(MAX_COLLAB_UI_PARTICIPANTS);
+        if self.participants.as_slice() != participants.as_slice() {
+            self.panel.hover = None;
+        }
         self.participants = Arc::new(participants);
         self.retain_rostered_presence();
     }
@@ -561,7 +567,11 @@ impl CollabUiState {
     /// same UI turn even when a presence frame was just painted.
     pub fn remove_participant(&mut self, participant_key: &str) {
         let mut participants = self.participants.as_ref().clone();
+        let before = participants.len();
         participants.retain(|participant| participant.participant_key != participant_key);
+        if participants.len() != before {
+            self.panel.hover = None;
+        }
         self.participants = Arc::new(participants);
 
         let mut presence = self.presence.as_ref().clone();
@@ -583,6 +593,7 @@ impl CollabUiState {
     }
 
     pub fn set_notice(&mut self, kind: CollabNoticeKind, now_ms: u64) {
+        self.panel.hover = None;
         self.notice = Some(CollabNotice {
             kind,
             created_at_ms: now_ms,

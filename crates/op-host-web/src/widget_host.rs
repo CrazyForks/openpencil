@@ -77,6 +77,8 @@ mod chrome_menu_press;
 mod click;
 #[cfg(test)]
 mod codegen_framework_tests;
+#[cfg(test)]
+mod collab_input_tests;
 mod color_picker_press;
 mod component_browser_press;
 mod cursor_input;

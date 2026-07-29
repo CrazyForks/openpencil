@@ -5,10 +5,18 @@ on:
     paths:
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - '.dockerignore'
+      - '.gitignore'
       - 'rust-toolchain.toml'
       - 'crates/op-collab/**'
       - 'crates/op-collab-smoke/**'
       - 'crates/op-collab-transport/**'
+      - 'crates/op-collab-relay-protocol/**'
+      - 'crates/op-collab-relay-client/**'
+      - 'crates/op-collab-relay-server/**'
+      - 'crates/op-collab-relay-control-plane/**'
+      - 'crates/op-collab-policy-file/**'
+      - 'crates/op-collab-relay-locator-server/**'
       - 'crates/op-auth-bridge/**'
       - 'crates/op-util/**'
       - 'crates/op-editor-core/**'
@@ -18,6 +26,10 @@ on:
       - 'crates/op-host-desktop/**'
       - 'crates/op-host-services/**'
       - 'crates/op-i18n/**'
+      - 'deploy/collab-relay/**'
+      - 'deploy/collab-relay-edge/**'
+      - 'deploy/collab-relay-locator/**'
+      - 'deploy/collab-relay-locator-edge/**'
       - 'docs/security/p2p-collaboration-threat-model.md'
       - 'docs/testing/p2p-collaboration-platform-acceptance.md'
       - 'tools/check-collab-security-boundaries.sh'
@@ -32,10 +44,18 @@ on:
     paths:
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - '.dockerignore'
+      - '.gitignore'
       - 'rust-toolchain.toml'
       - 'crates/op-collab/**'
       - 'crates/op-collab-smoke/**'
       - 'crates/op-collab-transport/**'
+      - 'crates/op-collab-relay-protocol/**'
+      - 'crates/op-collab-relay-client/**'
+      - 'crates/op-collab-relay-server/**'
+      - 'crates/op-collab-relay-control-plane/**'
+      - 'crates/op-collab-policy-file/**'
+      - 'crates/op-collab-relay-locator-server/**'
       - 'crates/op-auth-bridge/**'
       - 'crates/op-util/**'
       - 'crates/op-editor-core/**'
@@ -45,6 +65,10 @@ on:
       - 'crates/op-host-desktop/**'
       - 'crates/op-host-services/**'
       - 'crates/op-i18n/**'
+      - 'deploy/collab-relay/**'
+      - 'deploy/collab-relay-edge/**'
+      - 'deploy/collab-relay-locator/**'
+      - 'deploy/collab-relay-locator-edge/**'
       - 'docs/security/p2p-collaboration-threat-model.md'
       - 'docs/testing/p2p-collaboration-platform-acceptance.md'
       - 'tools/check-collab-security-boundaries.sh'
@@ -94,17 +118,28 @@ jobs:
         run: |
           bash tools/check-collab-security-boundaries.sh
           bash tools/check-op-auth-prebuilt.sh
+          bash deploy/collab-relay-edge/validate.sh
+          bash deploy/collab-relay-locator/validate.sh
+          bash deploy/collab-relay-locator-edge/validate.sh
 
       - name: Compile the public protocol core for wasm
         run: |
           cargo check --locked --target wasm32-unknown-unknown \
             -p op-collab --no-default-features
+          cargo check --locked --target wasm32-unknown-unknown \
+            -p op-collab-relay-protocol --no-default-features
 
       - name: Test protocol state machines, properties, and resource limits
         run: |
           cargo test --locked -p op-collab
           cargo test --locked -p op-collab-transport config::tests
           cargo test --locked -p op-collab-transport frame::tests
+          cargo test --locked -p op-collab-relay-protocol --all-features
+          cargo test --locked -p op-collab-relay-client
+          cargo test --locked -p op-collab-relay-server
+          cargo test --locked -p op-collab-relay-control-plane
+          cargo test --locked -p op-collab-policy-file
+          cargo test --locked -p op-collab-relay-locator-server
 
       - name: Test production/test trust-root isolation
         run: |

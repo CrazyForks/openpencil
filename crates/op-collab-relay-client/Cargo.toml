@@ -1,0 +1,33 @@
+[package]
+name = "op-collab-relay-client"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Bounded TCP-to-WebSocket relay bridge for OpenPencil collaboration"
+
+[dependencies]
+op-collab-relay-protocol = { path = "../op-collab-relay-protocol" }
+futures-util = "0.3"
+thiserror = { workspace = true }
+tokio = { version = "1", features = [
+  "io-util",
+  "macros",
+  "net",
+  "rt",
+  "sync",
+  "time",
+] }
+tokio-tungstenite = { version = "0.24", default-features = false, features = [
+  "connect",
+  "rustls-tls-native-roots",
+] }
+url = "2"
+zeroize = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread"] }
+tokio-tungstenite = { version = "0.24", default-features = false, features = [
+  "handshake",
+] }

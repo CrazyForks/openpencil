@@ -5,6 +5,7 @@ use op_collab::{
     SessionId, VerifiedAuthMetadata,
 };
 use op_collab_transport::{EncodedFrameTransfer, JoinIntent, SharedQueueReservation};
+use op_editor_core::{CollabConnectionPathUi, CollabInviteCode, CollabRelayRegion};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CollabRuntimeFailure {
@@ -14,6 +15,9 @@ pub(crate) enum CollabRuntimeFailure {
     ClockUnavailable,
     InvalidAddress,
     InvalidSession,
+    RelayInviteUnavailable,
+    RelayUnavailable,
+    RelayRegionUnavailable,
     Transport,
     Protocol,
     ResourceLimit,
@@ -49,6 +53,7 @@ impl CollabRuntimeError {
 pub(crate) enum CollabStatusEvent {
     OwnerStarted { endpoint: SocketAddr },
     JoinStarted { endpoint: SocketAddr },
+    RelayJoinStarted { home_region: CollabRelayRegion },
     PeerAuthenticated { connection: ConnectionKey },
     SessionActive { role: Role },
     Reconnecting,
@@ -65,6 +70,8 @@ pub(super) enum NetworkEvent {
         endpoint: SocketAddr,
         share_endpoint: Option<SocketAddr>,
         local_auth: VerifiedAuthMetadata,
+        invite: Option<CollabInviteCode>,
+        connection_path: CollabConnectionPathUi,
     },
     PeerAuthenticated {
         connection: ConnectionKey,

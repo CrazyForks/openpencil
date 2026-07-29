@@ -4,6 +4,8 @@
 //! from the open verifier and pinned signed-policy authority; account display
 //! state and peer payloads never become an authentication fallback.
 
+mod relay;
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::Arc;
@@ -141,6 +143,18 @@ impl LocalAdmission {
         verifier: &ProductionTicketVerifier,
         cancelled: impl Fn() -> bool,
     ) -> Result<Self, CollabRuntimeError> {
+        let deadline = Instant::now()
+            .checked_add(TICKET_REQUEST_TIMEOUT)
+            .ok_or_else(authentication_unavailable)?;
+        Self::request_cancellable_until(local_static, verifier, deadline, cancelled)
+    }
+
+    fn request_cancellable_until(
+        local_static: &[u8; 32],
+        verifier: &ProductionTicketVerifier,
+        deadline: Instant,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Self, CollabRuntimeError> {
         if cancelled() {
             return Err(authentication_unavailable());
         }
@@ -153,9 +167,6 @@ impl LocalAdmission {
         let request_id = provider
             .begin_ticket(request)
             .map_err(|_| authentication_unavailable())?;
-        let deadline = Instant::now()
-            .checked_add(TICKET_REQUEST_TIMEOUT)
-            .ok_or_else(authentication_unavailable)?;
         let ticket = loop {
             if cancelled() {
                 provider.cancel_ticket(request_id);
@@ -163,7 +174,10 @@ impl LocalAdmission {
             }
             match provider.poll_ticket(request_id) {
                 CollabTicketPoll::Pending if Instant::now() < deadline => {
-                    std::thread::sleep(TICKET_POLL_INTERVAL);
+                    std::thread::sleep(
+                        TICKET_POLL_INTERVAL
+                            .min(deadline.saturating_duration_since(Instant::now())),
+                    );
                 }
                 CollabTicketPoll::Ready { ticket, .. } => break ticket,
                 CollabTicketPoll::Pending => {
@@ -227,6 +241,9 @@ impl LocalAdmission {
 
 /// Non-blocking local ticket renewal. Provider polling runs on a dedicated
 /// worker; socket drivers only poll this receiver and keep heartbeats moving.
+/// A renewal is cancelled at the ticket's terminal-shutdown boundary, so a
+/// short ticket has a real opportunity to renew when the provider is fast but
+/// never extends its old authentication deadline for a slow provider.
 pub(super) struct LocalTicketRenewer {
     local_static: [u8; 32],
     verifier: Arc<ProductionTicketVerifier>,
@@ -265,24 +282,25 @@ impl LocalTicketRenewer {
         &mut self,
         now: Instant,
     ) -> Result<Option<LocalAdmission>, CollabRuntimeError> {
-        if now >= self.shutdown_at {
-            return Err(CollabRuntimeError::new(
-                CollabRuntimeFailure::TicketRejected,
-            ));
-        }
-        if self.pending.is_none() && now >= self.renew_at {
+        let renewal_due = renewal_due_before_shutdown(now, self.renew_at, self.shutdown_at)?;
+        if self.pending.is_none() && renewal_due {
             let local_static = self.local_static;
             let verifier = Arc::clone(&self.verifier);
             let (sender, receiver) = mpsc::channel();
             let cancelled = Arc::new(AtomicBool::new(false));
             let worker_cancelled = Arc::clone(&cancelled);
+            let renewal_deadline = self.shutdown_at;
             let worker = match std::thread::Builder::new()
                 .name("op-collab-ticket-renewal".to_string())
                 .spawn(move || {
-                    let _ = sender.send(LocalAdmission::request_cancellable(
+                    let _ = sender.send(LocalAdmission::request_cancellable_until(
                         &local_static,
                         verifier.as_ref(),
-                        || worker_cancelled.load(Ordering::Acquire),
+                        renewal_deadline,
+                        || {
+                            worker_cancelled.load(Ordering::Acquire)
+                                || Instant::now() >= renewal_deadline
+                        },
                     ));
                 }) {
                 Ok(worker) => worker,
@@ -450,7 +468,7 @@ fn renewal_schedule(
         .checked_sub(now_unix_ms)
         .filter(|ttl| *ttl > 0)
         .ok_or_else(|| CollabRuntimeError::new(CollabRuntimeFailure::TicketRejected))?;
-    let renewal_ms = ttl.saturating_mul(4) / 5;
+    let renewal_ms = ttl / 2;
     let renew_at = now
         .checked_add(Duration::from_millis(renewal_ms))
         .ok_or_else(|| CollabRuntimeError::new(CollabRuntimeFailure::ClockUnavailable))?;
@@ -461,10 +479,22 @@ fn renewal_schedule(
 }
 
 fn terminal_shutdown_at(now: Instant, expires_at: Instant) -> Instant {
-    expires_at
-        .checked_sub(TERMINAL_FLUSH_TIMEOUT)
-        .filter(|shutdown_at| *shutdown_at >= now)
-        .unwrap_or(now)
+    let remaining = expires_at.saturating_duration_since(now);
+    let reserved = TERMINAL_FLUSH_TIMEOUT.min(remaining / 4);
+    expires_at.checked_sub(reserved).unwrap_or(now)
+}
+
+fn renewal_due_before_shutdown(
+    now: Instant,
+    renew_at: Instant,
+    shutdown_at: Instant,
+) -> Result<bool, CollabRuntimeError> {
+    if now >= shutdown_at {
+        return Err(CollabRuntimeError::new(
+            CollabRuntimeFailure::TicketRejected,
+        ));
+    }
+    Ok(now >= renew_at)
 }
 
 fn transient_retry_schedule(
@@ -507,6 +537,10 @@ fn validate_renewed_binding(
 }
 
 #[cfg(test)]
+#[path = "auth/renewal_schedule_tests.rs"]
+mod renewal_schedule_tests;
+
+#[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -522,27 +556,6 @@ mod tests {
             display_name: None,
             avatar_url: None,
         }
-    }
-
-    #[test]
-    fn short_ticket_renews_at_eighty_percent() {
-        let start = Instant::now();
-        let (due, _) = renewal_schedule(1_000, 1_100, start).expect("renewal deadline");
-        assert_eq!(due.duration_since(start), Duration::from_millis(80));
-    }
-
-    #[test]
-    fn local_auth_shutdown_reserves_the_terminal_flush_window() {
-        let start = Instant::now();
-        let expires_at = start + Duration::from_secs(30);
-        assert_eq!(
-            expires_at.duration_since(terminal_shutdown_at(start, expires_at)),
-            TERMINAL_FLUSH_TIMEOUT
-        );
-        assert_eq!(
-            terminal_shutdown_at(start, start + Duration::from_millis(100)),
-            start
-        );
     }
 
     #[test]
@@ -716,7 +729,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_fetch_is_cancelled_joined_and_does_not_block_restart() {
+    fn pending_fetch_is_cancelled_and_joined_before_terminal_hard_expiry() {
         let live = Arc::new(AtomicUsize::new(0));
         let worker_live = Arc::clone(&live);
         let published = Arc::new(AtomicUsize::new(0));
@@ -761,7 +774,10 @@ mod tests {
             cancelled,
             worker: Some(worker),
         });
-        assert!(start.elapsed() < Duration::from_secs(1));
+        assert!(
+            Instant::now() < start + TERMINAL_FLUSH_TIMEOUT,
+            "worker cancellation and join must fit inside the reserved terminal window"
+        );
         assert_eq!(live.load(Ordering::SeqCst), 0);
         assert_eq!(published.load(Ordering::SeqCst), 0);
         assert!(dropped.load(Ordering::Acquire));

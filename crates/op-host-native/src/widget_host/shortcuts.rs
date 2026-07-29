@@ -12,6 +12,7 @@ impl WidgetHostNative {
     pub fn non_chat_input_owns_keyboard_pub(&self) -> bool {
         let editor_ui = &self.editor_state.editor_ui;
         if self.preview.is_some()
+            || editor_ui.collab_join_input_active()
             || editor_ui.font_picker.open
             || editor_ui.image_panel.search_open
             || editor_ui.image_panel.generate_open
@@ -163,6 +164,11 @@ impl WidgetHostNative {
             return true;
         }
         if self.apply_input_select_all() {
+            return true;
+        }
+        // String-backed fields without a range-selection model still own the
+        // chord; never select canvas nodes behind the collaboration panel.
+        if self.input_active() {
             return true;
         }
         let ok = self.editor_state.select_all_top_level();
@@ -512,6 +518,7 @@ impl WidgetHostNative {
     /// Cmd+, — open / close the floating agent-settings modal.
     pub fn apply_toggle_agent_settings(&mut self) -> bool {
         self.commit_variable_row_focus_if_any();
+        self.editor_state.editor_ui.blur_collab_join_input();
         let opening = !self.editor_state.editor_ui.agent_settings_open;
         if opening {
             self.editor_state.editor_ui.agent_settings_open = true;

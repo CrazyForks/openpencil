@@ -51,6 +51,12 @@ Cargo.lock.merge-conflict
 /crates/*/target
 /vendor/agent/target
 
+# Never stage local collaboration/HSM private-key containers.
+**/relay-x25519-keys*.json
+**/*private-keys*.json
+**/*private_keys*.json
+**/locator-signing-key*.json
+
 tools/__pycache__/
 openpencil-docs
 output

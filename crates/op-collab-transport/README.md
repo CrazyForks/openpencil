@@ -136,6 +136,14 @@ guarantees it fails closed. Hosts should select this fallback only when the
 platform store is known to be unavailable, not when it is merely locked, so a
 temporary access failure cannot create a second device identity.
 
+For local diagnosis, a debug-assertions `openpencil-desktop` build can set
+`OPENPENCIL_COLLAB_DEV_FILE_KEYSTORE=1` to bypass the OS credential store and
+use that same hardened `FileKeyStore` directly. The opt-in is exact, ignored by
+release builds, and must not be enabled in packaged applications. Without it,
+the desktop still tries `OsKeyStore` first and falls back only for
+`PlatformStoreUnavailable`; access-denied, malformed, and other failures
+continue to fail closed.
+
 Production ticket signing keys, device/account credentials, token exchange,
 and account authorization policy stay outside this crate. Logs and `Debug`
 output must never contain opaque tickets, Noise private keys, account

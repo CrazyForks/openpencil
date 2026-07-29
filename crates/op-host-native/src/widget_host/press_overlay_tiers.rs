@@ -140,7 +140,10 @@ impl WidgetHostNative {
         // Shared collaboration popover. Like the account/locale menus it is
         // modal within the dropdown tier: a press outside closes and is
         // swallowed, while a row/button only queues a runtime-owned action.
-        if self.editor_state.editor_ui.collab.panel.open {
+        if self.editor_state.editor_ui.collab.panel.open
+            && !(self.editor_state.editor_ui.account_ui_available
+                && self.editor_state.editor_ui.login_modal_open)
+        {
             let top_bar_rect = Rect::xywh(0.0, 0.0, viewport_width, TOP_BAR_HEIGHT);
             let top_bar = TopBar::for_editor_ui(&self.editor_state.editor_ui);
             if let Some(panel) = CollabPanel::for_editor_ui(&self.editor_state.editor_ui) {
@@ -151,8 +154,9 @@ impl WidgetHostNative {
                 let point = Point2D::new(x, y);
                 if let Some(hit) = panel.hit_test(panel_rect, point) {
                     match hit {
-                        op_editor_ui::widgets::CollabPanelHit::CopyShareEndpoint(endpoint) => {
-                            self.editor_state.chat.queue_copy_text(endpoint);
+                        op_editor_ui::widgets::CollabPanelHit::CopyInvite(invite)
+                        | op_editor_ui::widgets::CollabPanelHit::CopyShareEndpoint(invite) => {
+                            self.editor_state.chat.queue_copy_text(invite);
                         }
                         hit => {
                             let _ = op_editor_ui::widgets::collab_ui::apply_panel_hit(
@@ -168,6 +172,7 @@ impl WidgetHostNative {
                         .collab
                         .panel
                         .join_address_focused = false;
+                    self.editor_state.editor_ui.collab.panel.hover = None;
                     self.blur_text_inputs_on_blank_press();
                 }
                 self.mark_dirty();

@@ -127,6 +127,7 @@ impl CollabUiState {
         }
         Arc::make_mut(&mut self.pending_admissions)
             .push(PendingCollabAdmissionUi::new(request_key, resume_role));
+        self.panel.hover = None;
         true
     }
 
@@ -134,10 +135,17 @@ impl CollabUiState {
         let pending = Arc::make_mut(&mut self.pending_admissions);
         let before = pending.len();
         pending.retain(|request| request.request_key != *request_key);
-        before != pending.len()
+        let changed = before != pending.len();
+        if changed {
+            self.panel.hover = None;
+        }
+        changed
     }
 
     pub fn clear_pending_admissions(&mut self) {
+        if !self.pending_admissions.is_empty() {
+            self.panel.hover = None;
+        }
         self.pending_admissions = Arc::new(Vec::new());
     }
 }

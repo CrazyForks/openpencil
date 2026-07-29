@@ -6,9 +6,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use x25519_dalek::{PublicKey, StaticSecret};
-#[cfg(unix)]
-use zeroize::Zeroizing;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::KeyStoreError;
 
@@ -47,6 +45,23 @@ impl DeviceStaticKey {
 
     pub fn public_key(&self) -> &[u8; PRIVATE_KEY_BYTES] {
         &self.public
+    }
+
+    /// Performs X25519 agreement without exposing this device's private key.
+    ///
+    /// The returned shared secret is wiped on drop. All-zero and other
+    /// non-contributory peer inputs are rejected before callers can use the
+    /// result as key material.
+    pub fn agree_x25519(
+        &self,
+        peer_public: &[u8; PRIVATE_KEY_BYTES],
+    ) -> Result<Zeroizing<[u8; PRIVATE_KEY_BYTES]>, KeyStoreError> {
+        let secret = StaticSecret::from(self.private);
+        let shared = secret.diffie_hellman(&PublicKey::from(*peer_public));
+        if !shared.was_contributory() {
+            return Err(KeyStoreError::NonContributoryPeer);
+        }
+        Ok(Zeroizing::new(shared.to_bytes()))
     }
 
     pub(crate) fn private_key(&self) -> &[u8; PRIVATE_KEY_BYTES] {
@@ -253,6 +268,20 @@ fn add_no_follow(options: &mut OpenOptions) {
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn device_agreement_is_symmetric_and_rejects_non_contributory_peers() {
+        let first = DeviceStaticKey::from_private([0x11; PRIVATE_KEY_BYTES]).unwrap();
+        let second = DeviceStaticKey::from_private([0x22; PRIVATE_KEY_BYTES]).unwrap();
+
+        let first_shared = first.agree_x25519(second.public_key()).unwrap();
+        let second_shared = second.agree_x25519(first.public_key()).unwrap();
+        assert_eq!(&*first_shared, &*second_shared);
+        assert!(matches!(
+            first.agree_x25519(&[0; PRIVATE_KEY_BYTES]),
+            Err(KeyStoreError::NonContributoryPeer)
+        ));
+    }
 
     fn temp_parent(name: &str) -> PathBuf {
         let nonce = SystemTime::now()

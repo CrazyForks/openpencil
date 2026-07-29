@@ -8,7 +8,8 @@ use op_collab::{
 };
 use op_collab_transport::{encode_frame_transfer, m1_wire_limits, SharedQueueBudget};
 use op_editor_core::{
-    CollabConnectionPhase, CollabNoticeKind, CollabPendingEditUi, CollabRejectUiCode, PenDocument,
+    CollabAvailability, CollabConnectionPhase, CollabNoticeKind, CollabPanelHover,
+    CollabPendingEditUi, CollabRejectUiCode, PenDocument,
 };
 use op_host_native::WidgetHostNative;
 
@@ -59,11 +60,24 @@ fn document_named(name: &str) -> PenDocument {
 }
 
 #[test]
-fn owner_ready_projects_a_manual_share_address_only_after_authentication() {
+fn availability_refresh_clears_hover_from_the_previous_screen() {
+    let mut runtime = DesktopCollabRuntime::new();
+    let mut host = WidgetHostNative::new();
+    let collab = &mut host.editor_state_mut().editor_ui.collab;
+    collab.availability = CollabAvailability::Ready;
+    collab.panel.hover = Some(CollabPanelHover::Start);
+
+    assert!(runtime.refresh_availability(&mut host));
+    assert_eq!(host.editor_state().editor_ui.collab.panel.hover, None);
+}
+
+#[test]
+fn owner_ready_projects_share_address_and_relay_invite_after_authentication() {
     let mut runtime = DesktopCollabRuntime::new();
     let mut host = WidgetHostNative::new();
     let listener = "0.0.0.0:43120".parse().unwrap();
     let share = "192.168.1.20:43120".parse().unwrap();
+    let invite = op_editor_core::CollabInviteCode::new("opc1_owner-only-route").unwrap();
 
     assert!(runtime.handle_event(
         NetworkEvent::OwnerReady {
@@ -72,6 +86,10 @@ fn owner_ready_projects_a_manual_share_address_only_after_authentication() {
             endpoint: listener,
             share_endpoint: Some(share),
             local_auth: auth(0),
+            invite: Some(invite.clone()),
+            connection_path: op_editor_core::CollabConnectionPathUi::Relay {
+                home_region: op_editor_core::CollabRelayRegion::China,
+            },
         },
         &mut host,
     ));
@@ -88,6 +106,19 @@ fn owner_ready_projects_a_manual_share_address_only_after_authentication() {
             .as_ref()
             .map(op_editor_core::CollabShareEndpoint::as_str),
         Some("192.168.1.20:43120")
+    );
+    let public = host
+        .editor_state()
+        .editor_ui
+        .collab
+        .public_session()
+        .expect("authenticated public session");
+    assert_eq!(public.invite(), Some(&invite));
+    assert_eq!(
+        public.connection(),
+        Some(op_editor_core::CollabConnectionPathUi::Relay {
+            home_region: op_editor_core::CollabRelayRegion::China,
+        })
     );
 }
 

@@ -7,13 +7,20 @@
 //! boundary in one reusable flow.
 
 use op_editor_core::{
-    CollabAdmissionRequestKey, CollabAvailability, CollabConnectionPhase, CollabGateReason,
-    CollabParticipantUi, CollabPendingEditUi, CollabShareEndpoint, CollabUiAction, CollabUiRole,
-    DiscoveredCollabEndpoint, EditorUiState,
+    CollabAdmissionRequestKey, CollabAvailability, CollabConnectionPathUi, CollabConnectionPhase,
+    CollabGateReason, CollabInviteCode, CollabParticipantUi, CollabPendingEditUi,
+    CollabShareEndpoint, CollabUiAction, CollabUiRole, DiscoveredCollabEndpoint, EditorUiState,
+    MAX_COLLAB_INVITE_CODE_CHARS,
 };
 
 const TOP_BAR_AVATAR_LIMIT: usize = 3;
-const MAX_JOIN_ADDRESS_CHARS: usize = 255;
+const MAX_JOIN_TARGET_CHARS: usize = MAX_COLLAB_INVITE_CODE_CHARS;
+
+#[path = "collab_ui_action.rs"]
+mod action;
+#[path = "collab_ui_debug.rs"]
+mod debug;
+use action::action_model;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CollabTopBarTone {
@@ -124,11 +131,12 @@ impl CollabTopBarModel {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum CollabPanelScreen {
     Unavailable,
     SignInRequired,
     Home,
+    Create,
     Join {
         address: String,
         discovered: Vec<DiscoveredCollabEndpoint>,
@@ -139,6 +147,8 @@ pub enum CollabPanelScreen {
     Session {
         session_name: String,
         role_label: String,
+        invite: Option<CollabInviteCode>,
+        connection: Option<CollabConnectionPathUi>,
         share_endpoint: Option<CollabShareEndpoint>,
         participants: Vec<CollabAvatarModel>,
         pending: bool,
@@ -156,7 +166,7 @@ pub struct CollabAdmissionRequestModel {
     pub actions: Vec<CollabPanelActionModel>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct CollabPanelActionModel {
     pub action: CollabUiAction,
     pub label: String,
@@ -236,6 +246,7 @@ fn panel_session_or_pre_auth(
                 .iter()
                 .map(CollabAvatarModel::from)
                 .collect();
+            let public_session = collab.public_session();
             let admission_request = collab.pending_admissions().first().map(|request| {
                 let request_key = request.request_key().clone();
                 let mut actions = Vec::new();
@@ -292,6 +303,12 @@ fn panel_session_or_pre_auth(
                 CollabPanelScreen::Session {
                     session_name: session.session_name.clone(),
                     role_label: role_label(ui, session.role).to_string(),
+                    invite: if session.role == CollabUiRole::Owner {
+                        public_session.and_then(|public| public.invite()).cloned()
+                    } else {
+                        None
+                    },
+                    connection: public_session.and_then(|public| public.connection()),
                     share_endpoint: if session.role == CollabUiRole::Owner {
                         session.share_endpoint.clone()
                     } else {
@@ -319,6 +336,13 @@ fn panel_session_or_pre_auth(
                         primary: true,
                     });
                 }
+                if collab.phase == CollabConnectionPhase::Idle {
+                    actions.push(action_model(
+                        ui,
+                        CollabUiAction::BeginDiscovery,
+                        endpoint.is_empty(),
+                    ));
+                }
                 actions.push(action_model(ui, CollabUiAction::Cancel, false));
                 (
                     CollabPanelScreen::Join {
@@ -327,43 +351,25 @@ fn panel_session_or_pre_auth(
                     },
                     actions,
                 )
+            } else if collab.panel.view == op_editor_core::CollabPanelView::Create {
+                (
+                    CollabPanelScreen::Create,
+                    vec![
+                        action_model(ui, CollabUiAction::Start, true),
+                        action_model(ui, CollabUiAction::StartLan, false),
+                        action_model(ui, CollabUiAction::Cancel, false),
+                    ],
+                )
             } else {
                 (
                     CollabPanelScreen::Home,
                     vec![
-                        action_model(ui, CollabUiAction::Start, true),
-                        action_model(ui, CollabUiAction::BeginDiscovery, false),
+                        action_model(ui, CollabUiAction::OpenCreate, true),
+                        action_model(ui, CollabUiAction::OpenJoin, false),
                     ],
                 )
             }
         }
-    }
-}
-
-fn action_model(
-    ui: &EditorUiState,
-    action: CollabUiAction,
-    primary: bool,
-) -> CollabPanelActionModel {
-    let key = match action {
-        CollabUiAction::Start => "collab.action.start",
-        CollabUiAction::BeginDiscovery => "collab.action.join",
-        CollabUiAction::JoinDiscovered { .. } | CollabUiAction::JoinAddress { .. } => {
-            "collab.action.connect"
-        }
-        CollabUiAction::Cancel => "collab.action.cancel",
-        CollabUiAction::Retry => "collab.action.retry",
-        CollabUiAction::Leave => "collab.action.leave",
-        CollabUiAction::DiscardPending => "collab.action.discardPending",
-        CollabUiAction::SaveAsFork => "collab.action.saveAsFork",
-        CollabUiAction::ApproveAdmissionEditor { .. } => "collab.action.approveEditor",
-        CollabUiAction::ApproveAdmissionViewer { .. } => "collab.action.approveViewer",
-        CollabUiAction::RejectAdmission { .. } => "collab.action.rejectAdmission",
-    };
-    CollabPanelActionModel {
-        action,
-        label: op_i18n::translate(ui.locale, key).to_string(),
-        primary,
     }
 }
 
@@ -374,6 +380,17 @@ pub fn role_label(ui: &EditorUiState, role: CollabUiRole) -> &'static str {
         CollabUiRole::Viewer => "collab.session.role.viewer",
     };
     op_i18n::translate(ui.locale, key)
+}
+
+pub fn connection_path_label(ui: &EditorUiState, connection: CollabConnectionPathUi) -> String {
+    let path = op_i18n::translate(ui.locale, connection.i18n_key());
+    match connection.home_region() {
+        Some(region) => format!(
+            "{path} · {}",
+            op_i18n::translate(ui.locale, region.i18n_key())
+        ),
+        None => path.to_string(),
+    }
 }
 
 pub fn gate_reason_text(ui: &EditorUiState, reason: CollabGateReason) -> &'static str {
@@ -414,6 +431,7 @@ pub fn apply_panel_hit(
         CollabPanelHit::Close => {
             ui.collab.panel.open = false;
             ui.collab.panel.join_address_focused = false;
+            ui.collab.panel.hover = None;
             true
         }
         CollabPanelHit::FocusJoinAddress => {
@@ -426,14 +444,29 @@ pub fn apply_panel_hit(
             }
             ui.login_modal_open = true;
             ui.login_modal_hover = None;
+            ui.collab.panel.open = false;
             ui.collab.panel.join_address_focused = false;
+            ui.collab.panel.hover = None;
             true
         }
         // Platform hosts perform this inside the originating pointer event so
         // native/browser clipboard gesture requirements remain satisfied.
         CollabPanelHit::CopyShareEndpoint(_) => false,
+        CollabPanelHit::CopyInvite(_) => false,
         CollabPanelHit::Inside => {
             ui.collab.panel.join_address_focused = false;
+            true
+        }
+        CollabPanelHit::Action(CollabUiAction::OpenCreate) => {
+            ui.collab.panel.view = op_editor_core::CollabPanelView::Create;
+            ui.collab.panel.join_address_focused = false;
+            ui.collab.panel.hover = None;
+            true
+        }
+        CollabPanelHit::Action(CollabUiAction::OpenJoin) => {
+            ui.collab.panel.view = op_editor_core::CollabPanelView::Join;
+            ui.collab.panel.join_address_focused = true;
+            ui.collab.panel.hover = None;
             true
         }
         CollabPanelHit::Action(CollabUiAction::BeginDiscovery) => {
@@ -445,6 +478,7 @@ pub fn apply_panel_hit(
         {
             ui.collab.panel.view = op_editor_core::CollabPanelView::Home;
             ui.collab.panel.join_address_focused = false;
+            ui.collab.panel.hover = None;
             true
         }
         CollabPanelHit::Action(action) => {
@@ -454,14 +488,14 @@ pub fn apply_panel_hit(
     }
 }
 
-/// Typed-character routing for the manual `host:port` field. `None` means
+/// Typed-character routing for the invite-or-`host:port` field. `None` means
 /// the collaboration input is not focused; `Some` means it owns the key.
 pub fn join_address_text(ui: &mut EditorUiState, character: char) -> Option<bool> {
     if !ui.collab.panel.join_address_focused {
         return None;
     }
     if character.is_control()
-        || ui.collab.panel.join_address.chars().count() >= MAX_JOIN_ADDRESS_CHARS
+        || ui.collab.panel.join_address.chars().count() >= MAX_JOIN_TARGET_CHARS
     {
         return Some(false);
     }
@@ -474,6 +508,7 @@ pub fn join_address_text(ui: &mut EditorUiState, character: char) -> Option<bool
         return Some(false);
     }
     ui.collab.panel.join_address.push(character);
+    ui.collab.panel.hover = None;
     Some(true)
 }
 
@@ -481,7 +516,11 @@ pub fn join_address_backspace(ui: &mut EditorUiState) -> Option<bool> {
     if !ui.collab.panel.join_address_focused {
         return None;
     }
-    Some(ui.collab.panel.join_address.pop().is_some())
+    let changed = ui.collab.panel.join_address.pop().is_some();
+    if changed {
+        ui.collab.panel.hover = None;
+    }
+    Some(changed)
 }
 
 pub fn join_address_submit(ui: &mut EditorUiState) -> Option<bool> {
@@ -496,6 +535,7 @@ pub fn join_address_submit(ui: &mut EditorUiState) -> Option<bool> {
         endpoint: endpoint.to_string(),
     };
     ui.collab.panel.join_address_focused = false;
+    ui.collab.panel.hover = None;
     Some(request_action(ui, action))
 }
 
@@ -731,38 +771,8 @@ mod tests {
             assert!(share_endpoint.is_none());
         }
     }
-
-    #[test]
-    fn panel_hit_dispatches_navigation_without_fake_runtime_state() {
-        let mut ui = EditorUiState::default();
-        ui.collab.availability = CollabAvailability::Ready;
-        ui.collab.panel.open = true;
-        assert!(apply_panel_hit(
-            &mut ui,
-            crate::widgets::collab_panel::CollabPanelHit::Action(CollabUiAction::BeginDiscovery)
-        ));
-        assert_eq!(ui.collab.panel.view, CollabPanelView::Join);
-        assert_eq!(
-            ui.collab.take_pending_action(),
-            Some(CollabUiAction::BeginDiscovery)
-        );
-        assert_eq!(ui.collab.phase, CollabConnectionPhase::Idle);
-    }
-
-    #[test]
-    fn manual_address_input_is_bounded_and_queues_one_join() {
-        let mut ui = EditorUiState::default();
-        ui.collab.panel.join_address_focused = true;
-        for character in "192.168.1.8:43120".chars() {
-            assert_eq!(join_address_text(&mut ui, character), Some(true));
-        }
-        assert_eq!(join_address_text(&mut ui, ' '), Some(false));
-        assert_eq!(join_address_submit(&mut ui), Some(true));
-        assert_eq!(
-            ui.collab.take_pending_action(),
-            Some(CollabUiAction::JoinAddress {
-                endpoint: "192.168.1.8:43120".into()
-            })
-        );
-    }
 }
+
+#[cfg(test)]
+#[path = "collab_ui_tests.rs"]
+mod public_flow_tests;

@@ -34,6 +34,7 @@ impl DesktopApp {
                 .as_ref(),
             Some(
                 op_editor_core::CollabUiAction::Start
+                    | op_editor_core::CollabUiAction::StartLan
                     | op_editor_core::CollabUiAction::JoinDiscovered { .. }
                     | op_editor_core::CollabUiAction::JoinAddress { .. }
                     | op_editor_core::CollabUiAction::Retry

@@ -16,9 +16,11 @@ impl WidgetHostNative {
         if self.preview.is_some() {
             return self.preview_dispatch_key("Backspace", false);
         }
-        if let Some(changed) = op_editor_ui::widgets::collab_ui::join_address_backspace(
-            &mut self.editor_state.editor_ui,
-        ) {
+        if self.editor_state.editor_ui.collab_join_input_active() {
+            let changed = op_editor_ui::widgets::collab_ui::join_address_backspace(
+                &mut self.editor_state.editor_ui,
+            )
+            .unwrap_or(false);
             if changed {
                 self.mark_dirty();
             }

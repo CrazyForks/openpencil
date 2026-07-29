@@ -6,8 +6,8 @@ use op_collab::{
     Point, Presence, UndoOutcome, UndoResult, Viewport,
 };
 use op_editor_core::{
-    CollabConnectionPhase, CollabNoticeKind, CollabPendingEditUi, CollabRejectUiCode,
-    DiscoveredCollabEndpoint, RemotePresenceUi,
+    CollabConnectErrorUi, CollabConnectionPhase, CollabNoticeKind, CollabPendingEditUi,
+    CollabRejectUiCode, DiscoveredCollabEndpoint, RemotePresenceUi,
 };
 use op_editor_host_core::collab::{
     GuestEditorOutput, GuestLocalEditResolution, LocalEditResolution, OwnerEditorOutput,
@@ -35,7 +35,7 @@ impl DesktopCollabRuntime {
             .cloned()
             .map(|session| (session.discovery_id.clone(), session))
             .collect();
-        host.editor_state_mut().editor_ui.collab.panel.discovered = Arc::new(
+        let discovered = Arc::new(
             sessions
                 .into_iter()
                 .filter_map(|session| {
@@ -47,6 +47,11 @@ impl DesktopCollabRuntime {
                 })
                 .collect(),
         );
+        let panel = &mut host.editor_state_mut().editor_ui.collab.panel;
+        if panel.discovered != discovered {
+            panel.hover = None;
+            panel.discovered = discovered;
+        }
     }
 
     pub(super) fn require_ready(&self, host: &WidgetHostNative) -> Result<(), CollabRuntimeError> {
@@ -66,10 +71,8 @@ impl DesktopCollabRuntime {
         ticket: op_collab::OpaqueTicket,
     ) -> Result<(), CollabRuntimeError> {
         if matches!(self.actor, Some(EditorActor::Owner(_))) {
-            // Pending, already-authenticated sockets have not entered the
-            // owner's active connection set yet. Retain the sole credential
-            // object; each peer receives a separately zeroizing wire encoding
-            // borrowed from this protected owner storage.
+            // Retain one credential for pending authenticated sockets; each peer
+            // receives a separately zeroizing encoding borrowed from owner storage.
             self.latest_owner_ticket = Some(ticket);
             let Some(EditorActor::Owner(owner)) = self.actor.as_ref() else {
                 unreachable!("owner role was checked above");
@@ -93,9 +96,7 @@ impl DesktopCollabRuntime {
         }
     }
 
-    /// Publish the newest local cursor/selection snapshot at most once per
-    /// paint interval. Presence is lossy and uses the transport coalescing
-    /// lane; it never enters the ordered document transaction.
+    /// Publish lossy local presence at most once per paint interval.
     pub(crate) fn publish_local_presence(
         &mut self,
         host: &mut WidgetHostNative,
@@ -201,9 +202,7 @@ impl DesktopCollabRuntime {
             local_edit,
             failed_connections,
         } = output;
-        // A queued peer frame can fail after a local gesture completes.
-        // Remove every offender before routing successful effects so a commit
-        // from a good peer is never broadcast back to a protocol-fatal peer.
+        // Remove failed peers before routing successful effects back to the survivors.
         for connection in failed_connections {
             self.close_failed_owner_peer(owner, connection, host)?;
         }
@@ -391,13 +390,14 @@ impl DesktopCollabRuntime {
         };
         if phase.is_authenticated() {
             set_guest_ui(host, guest, phase);
+            self.publish_guest_connection_path(host);
             if phase == CollabConnectionPhase::Active {
                 self.push_status(CollabStatusEvent::SessionActive {
                     role: guest.session.core().role(),
                 });
             }
         } else {
-            host.editor_state_mut().editor_ui.collab.phase = phase;
+            host.editor_state_mut().editor_ui.collab.set_phase(phase);
         }
         Ok(())
     }
@@ -456,6 +456,20 @@ impl DesktopCollabRuntime {
     }
 
     pub(super) fn fail(&mut self, host: &mut WidgetHostNative, failure: CollabRuntimeFailure) {
+        if let Some(notice) = setup_failure_notice(failure) {
+            self.push_status(CollabStatusEvent::Failed(failure));
+            if self.actor.is_none() {
+                self.retire_workers();
+                self.pending_guest = None;
+                host.disable_collaboration_ids();
+                host.editor_state_mut()
+                    .editor_ui
+                    .collab
+                    .set_phase(CollabConnectionPhase::Idle);
+            }
+            self.set_notice(host, notice);
+            return;
+        }
         if matches!(
             failure,
             CollabRuntimeFailure::ResourceLimit | CollabRuntimeFailure::Transport
@@ -480,15 +494,16 @@ impl DesktopCollabRuntime {
             self.retire_workers();
             self.pending_guest = None;
             host.disable_collaboration_ids();
-            host.editor_state_mut().editor_ui.collab.phase = CollabConnectionPhase::Idle;
+            host.editor_state_mut()
+                .editor_ui
+                .collab
+                .set_phase(CollabConnectionPhase::Idle);
         }
         host.mark_editor_state_dirty();
     }
 
-    /// A session-wide network or reliable-delivery failure must never leave
-    /// the UI/core claiming Active. Owners fall back to the still-current
-    /// standalone document; guests retain confirmed+pending state read-only so
-    /// an explicit retry can resume idempotently.
+    /// Fail session-wide network errors closed: owners keep the standalone document;
+    /// guests keep confirmed and pending state read-only for an idempotent retry.
     pub(super) fn fail_network(
         &mut self,
         host: &mut WidgetHostNative,
@@ -521,7 +536,10 @@ impl DesktopCollabRuntime {
                 self.pending_guest = None;
                 self.transaction_active = false;
                 host.disable_collaboration_ids();
-                host.editor_state_mut().editor_ui.collab.phase = CollabConnectionPhase::Idle;
+                host.editor_state_mut()
+                    .editor_ui
+                    .collab
+                    .set_phase(CollabConnectionPhase::Idle);
             }
         }
         self.set_notice(host, disconnect_notice(failure));
@@ -695,6 +713,15 @@ pub(super) fn command_send_error(error: NetworkCommandSendError) -> CollabRuntim
 
 pub(super) fn disconnect_notice(failure: CollabRuntimeFailure) -> CollabNoticeKind {
     match failure {
+        CollabRuntimeFailure::RelayInviteUnavailable => {
+            CollabNoticeKind::Connect(CollabConnectErrorUi::InviteUnavailable)
+        }
+        CollabRuntimeFailure::RelayUnavailable => {
+            CollabNoticeKind::Connect(CollabConnectErrorUi::RelayUnavailable)
+        }
+        CollabRuntimeFailure::RelayRegionUnavailable => {
+            CollabNoticeKind::Connect(CollabConnectErrorUi::RegionUnavailable)
+        }
         CollabRuntimeFailure::TicketRejected => CollabNoticeKind::TicketExpired,
         CollabRuntimeFailure::AuthenticationUnavailable => {
             CollabNoticeKind::Reject(CollabRejectUiCode::Authentication)
@@ -708,6 +735,21 @@ pub(super) fn disconnect_notice(failure: CollabRuntimeFailure) -> CollabNoticeKi
         | CollabRuntimeFailure::InvalidSession
         | CollabRuntimeFailure::Transport
         | CollabRuntimeFailure::Protocol => CollabNoticeKind::DisconnectedReadOnly,
+    }
+}
+
+fn setup_failure_notice(failure: CollabRuntimeFailure) -> Option<CollabNoticeKind> {
+    match failure {
+        CollabRuntimeFailure::RelayInviteUnavailable => Some(CollabNoticeKind::Connect(
+            CollabConnectErrorUi::InviteUnavailable,
+        )),
+        CollabRuntimeFailure::RelayUnavailable => Some(CollabNoticeKind::Connect(
+            CollabConnectErrorUi::RelayUnavailable,
+        )),
+        CollabRuntimeFailure::RelayRegionUnavailable => Some(CollabNoticeKind::Connect(
+            CollabConnectErrorUi::RegionUnavailable,
+        )),
+        _ => None,
     }
 }
 

@@ -32,6 +32,9 @@ pub mod clipboard;
 pub mod codegen;
 pub mod collab_admission_ui;
 pub mod collab_gate;
+pub mod collab_panel_hover;
+pub mod collab_public_ui;
+mod collab_ui_debug;
 pub mod collab_ui_state;
 pub mod color_picker;
 pub mod color_picker_edit;
@@ -260,13 +263,18 @@ pub use collab_gate::{
     CollabApplyError, CollabDocumentMutation, CollabEditSource, CollabGateAction, CollabGatePolicy,
     CollabGateReason, CollabNodeField, CollabUnsupportedFeature,
 };
+pub use collab_panel_hover::CollabPanelHover;
+pub use collab_public_ui::{
+    CollabConnectErrorUi, CollabConnectionPathUi, CollabInviteCode, CollabPublicSessionUi,
+    CollabRelayRegion, MAX_COLLAB_INVITE_CODE_CHARS,
+};
 pub use collab_ui_state::{
     AuthenticatedCollabSession, CollabAvailability, CollabCanvasPoint, CollabConnectionPhase,
-    CollabNotice, CollabNoticeKind, CollabPanelHover, CollabPanelState, CollabPanelView,
-    CollabParticipantUi, CollabPendingEditUi, CollabRejectUiCode, CollabShareEndpoint,
-    CollabUiAction, CollabUiRole, CollabUiState, DiscoveredCollabEndpoint, RemotePresenceUi,
-    COLLAB_PRESENCE_FRAME_INTERVAL_MS, MAX_COLLAB_DISPLAY_NAME_CHARS,
-    MAX_COLLAB_SHARE_ENDPOINT_CHARS, MAX_COLLAB_UI_PARTICIPANTS, MAX_COLLAB_UI_SELECTION_IDS,
+    CollabNotice, CollabNoticeKind, CollabPanelState, CollabPanelView, CollabParticipantUi,
+    CollabPendingEditUi, CollabRejectUiCode, CollabShareEndpoint, CollabUiAction, CollabUiRole,
+    CollabUiState, DiscoveredCollabEndpoint, RemotePresenceUi, COLLAB_PRESENCE_FRAME_INTERVAL_MS,
+    MAX_COLLAB_DISPLAY_NAME_CHARS, MAX_COLLAB_SHARE_ENDPOINT_CHARS, MAX_COLLAB_UI_PARTICIPANTS,
+    MAX_COLLAB_UI_SELECTION_IDS,
 };
 pub use color_picker::{hsv_to_rgb, parse_hex_alpha, parse_hex_rgb, rgb_to_hex, rgb_to_hsv};
 pub use command::{

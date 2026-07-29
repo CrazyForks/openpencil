@@ -168,6 +168,10 @@ impl WidgetHost {
         if self.apply_input_select_all() {
             return true;
         }
+        // String-backed fields without a selection model still own Cmd/Ctrl+A.
+        if self.input_active() {
+            return true;
+        }
         if self.editor_state.select_all_top_level() {
             self.mark_dirty();
             return true;
@@ -372,7 +376,10 @@ impl WidgetHost {
     }
 
     pub fn apply_undo(&mut self) -> bool {
-        if self.editor_state.ui.layer_rename.is_some() || self.editor_state.chat.focused {
+        if self.editor_state.editor_ui.collab_join_input_active()
+            || self.editor_state.ui.layer_rename.is_some()
+            || self.editor_state.chat.focused
+        {
             return false;
         }
         if self.editor_state.undo() {
@@ -384,7 +391,10 @@ impl WidgetHost {
     }
 
     pub fn apply_redo(&mut self) -> bool {
-        if self.editor_state.ui.layer_rename.is_some() || self.editor_state.chat.focused {
+        if self.editor_state.editor_ui.collab_join_input_active()
+            || self.editor_state.ui.layer_rename.is_some()
+            || self.editor_state.chat.focused
+        {
             return false;
         }
         if self.editor_state.redo() {
@@ -423,6 +433,9 @@ impl WidgetHost {
     ) -> bool {
         if !is_mod || !shift || alt {
             return false;
+        }
+        if self.input_active() {
+            return true;
         }
         if key.eq_ignore_ascii_case("k") {
             self.apply_toggle_component_browser()

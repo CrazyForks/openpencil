@@ -601,6 +601,52 @@ dependencies = [
 ]
 
 [[package]]
+name = "axum"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31b698c5f9a010f6573133b09e0de5408834d0c82f8d7475a89fc1867a71cd90"
+dependencies = [
+ "axum-core",
+ "bytes",
+ "futures-util",
+ "http",
+ "http-body",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "itoa",
+ "matchit",
+ "memchr",
+ "mime",
+ "percent-encoding",
+ "pin-project-lite",
+ "serde_core",
+ "sync_wrapper",
+ "tokio",
+ "tower",
+ "tower-layer",
+ "tower-service",
+]
+
+[[package]]
+name = "axum-core"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08c78f31d7b1291f7ee735c1c6780ccde7785daae9a9206026862dab7d8792d1"
+dependencies = [
+ "bytes",
+ "futures-core",
+ "http",
+ "http-body",
+ "http-body-util",
+ "mime",
+ "pin-project-lite",
+ "sync_wrapper",
+ "tower-layer",
+ "tower-service",
+]
+
+[[package]]
 name = "backoff"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2213,6 +2259,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
+name = "httpdate"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
+
+[[package]]
 name = "hyper"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2226,6 +2278,7 @@ dependencies = [
  "http",
  "http-body",
  "httparse",
+ "httpdate",
  "itoa",
  "pin-project-lite",
  "smallvec",
@@ -2909,6 +2962,12 @@ checksum = "d1525a2a28c7f4fa0fc98bb91ae755d1e2d1505079e05539e35bc876b5d65ae9"
 dependencies = [
  "regex-automata",
 ]
+
+[[package]]
+name = "matchit"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "mdns-sd"
@@ -3611,6 +3670,108 @@ dependencies = [
 ]
 
 [[package]]
+name = "op-collab-policy-file"
+version = "0.8.2"
+dependencies = [
+ "blake3",
+ "libc",
+ "op-auth-bridge",
+ "tempfile",
+]
+
+[[package]]
+name = "op-collab-relay-client"
+version = "0.8.2"
+dependencies = [
+ "futures-util",
+ "op-collab-relay-protocol",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-tungstenite",
+ "url",
+ "zeroize",
+]
+
+[[package]]
+name = "op-collab-relay-control-plane"
+version = "0.8.2"
+dependencies = [
+ "ed25519-dalek",
+ "getrandom 0.3.4",
+ "op-auth-bridge",
+ "op-collab-relay-protocol",
+ "reqwest 0.12.28",
+ "subtle",
+ "thiserror 1.0.69",
+ "url",
+ "zeroize",
+]
+
+[[package]]
+name = "op-collab-relay-locator-server"
+version = "0.8.2"
+dependencies = [
+ "axum",
+ "bytes",
+ "ed25519-dalek",
+ "hyper",
+ "hyper-util",
+ "libc",
+ "op-auth-bridge",
+ "op-collab-policy-file",
+ "op-collab-relay-control-plane",
+ "op-collab-relay-protocol",
+ "reqwest 0.12.28",
+ "socket2 0.6.3",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tower-http",
+ "tower-service",
+ "tracing",
+ "tracing-subscriber",
+ "zeroize",
+]
+
+[[package]]
+name = "op-collab-relay-protocol"
+version = "0.8.2"
+dependencies = [
+ "base64",
+ "blake3",
+ "getrandom 0.3.4",
+ "hkdf",
+ "hmac",
+ "sha2",
+ "thiserror 1.0.69",
+ "zeroize",
+]
+
+[[package]]
+name = "op-collab-relay-server"
+version = "0.8.2"
+dependencies = [
+ "base64",
+ "blake3",
+ "ed25519-dalek",
+ "futures-util",
+ "libc",
+ "op-auth-bridge",
+ "op-collab-policy-file",
+ "op-collab-relay-protocol",
+ "serde",
+ "serde_json",
+ "subtle",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
+ "tracing-subscriber",
+ "x25519-dalek",
+ "zeroize",
+]
+
+[[package]]
 name = "op-collab-smoke"
 version = "0.8.2"
 dependencies = [
@@ -3757,6 +3918,7 @@ dependencies = [
  "base64",
  "casement",
  "dirs 5.0.1",
+ "ed25519-dalek",
  "futures",
  "getrandom 0.3.4",
  "github-copilot-sdk",
@@ -3775,6 +3937,9 @@ dependencies = [
  "op-auth-bridge",
  "op-codegen",
  "op-collab",
+ "op-collab-relay-client",
+ "op-collab-relay-control-plane",
+ "op-collab-relay-protocol",
  "op-collab-transport",
  "op-config-store",
  "op-design-lint",
@@ -3805,6 +3970,7 @@ dependencies = [
  "toml_edit",
  "tracing",
  "tracing-subscriber",
+ "zeroize",
  "zip",
 ]
 
@@ -5903,7 +6069,11 @@ checksum = "edc5f74e248dc973e0dbb7b74c7e0d6fcc301c694ff50049504004ef4d0cdcd9"
 dependencies = [
  "futures-util",
  "log",
+ "rustls",
+ "rustls-native-certs",
+ "rustls-pki-types",
  "tokio",
+ "tokio-rustls",
  "tungstenite",
 ]
 
@@ -5999,7 +6169,9 @@ dependencies = [
  "futures-util",
  "http",
  "http-body",
+ "http-body-util",
  "pin-project-lite",
+ "tokio",
  "tower",
  "tower-layer",
  "tower-service",
@@ -6136,6 +6308,8 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.8.6",
+ "rustls",
+ "rustls-pki-types",
  "sha1",
  "thiserror 1.0.69",
  "utf-8",

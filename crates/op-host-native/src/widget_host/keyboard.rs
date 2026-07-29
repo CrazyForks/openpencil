@@ -23,9 +23,12 @@ impl WidgetHostNative {
             let mut s = [0u8; 4];
             return self.preview_dispatch_text(c.encode_utf8(&mut s));
         }
-        if let Some(changed) =
-            op_editor_ui::widgets::collab_ui::join_address_text(&mut self.editor_state.editor_ui, c)
-        {
+        if self.editor_state.editor_ui.collab_join_input_active() {
+            let changed = op_editor_ui::widgets::collab_ui::join_address_text(
+                &mut self.editor_state.editor_ui,
+                c,
+            )
+            .unwrap_or(false);
             if changed {
                 self.mark_dirty();
             }

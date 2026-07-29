@@ -303,9 +303,11 @@ fn retired_full_backlogs_are_purged_before_a_new_launch_can_emit() {
     }
     runtime.retire_workers();
     runtime.defer_guest_launch(
-        vec!["127.0.0.1:43120".parse().unwrap()],
-        None,
-        None,
+        crate::collab_runtime::relay::GuestConnectionRoute::lan(
+            vec!["127.0.0.1:43120".parse().unwrap()],
+            None,
+            None,
+        ),
         JoinIntent::New,
     );
     assert!(

@@ -69,6 +69,27 @@ pub fn mirror_variable_row_input_legacy(state: &mut EditorState, select_all: boo
 // ─── Focus predicates ──────────────────────────────────────────────────
 
 impl EditorUiState {
+    /// Whether the visible collaboration Join field owns the keyboard.
+    ///
+    /// The focus bit alone is insufficient: an async phase transition or an
+    /// externally dismissed panel can leave it stale. Hosts use this
+    /// visibility-aware predicate for shortcuts, clipboard, and IME focus.
+    pub fn collab_join_input_active(&self) -> bool {
+        self.collab.availability == crate::CollabAvailability::Ready
+            && matches!(
+                self.collab.phase,
+                crate::CollabConnectionPhase::Idle | crate::CollabConnectionPhase::Discovering
+            )
+            && self.collab.panel.open
+            && self.collab.panel.view == crate::CollabPanelView::Join
+            && self.collab.panel.join_address_focused
+    }
+
+    /// Drop even a stale Join-field focus bit when another surface takes over.
+    pub fn blur_collab_join_input(&mut self) -> bool {
+        std::mem::take(&mut self.collab.panel.join_address_focused)
+    }
+
     /// Whether a variables-panel theme-axis / variant header rename
     /// draft owns the keyboard.
     pub fn variables_header_rename_active(&self) -> bool {
@@ -588,7 +609,8 @@ pub fn select_all_focused_input(state: &mut EditorState, now_ms: u64) -> bool {
 /// Host-resolved surfaces (font picker, image popovers, settings, Git)
 /// are checked host-side before this predicate.
 pub fn delete_owned_by_chrome_input(state: &EditorState) -> bool {
-    state.ui.property_focus.is_some()
+    state.editor_ui.collab_join_input_active()
+        || state.ui.property_focus.is_some()
         || state.editor_ui.effect_param_focus.is_some()
         || state.editor_ui.variable_row_focus.is_some()
         || state.editor_ui.variables_header_rename_active()

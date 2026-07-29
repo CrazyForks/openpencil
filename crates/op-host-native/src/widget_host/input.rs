@@ -27,7 +27,8 @@ impl WidgetHostNative {
             return true;
         }
         let ui = &self.editor_state.ui;
-        ui.layer_rename.is_some()
+        self.editor_state.editor_ui.collab_join_input_active()
+            || ui.layer_rename.is_some()
             || ui.text_editing.is_some()
             || ui.property_focus.is_some()
             || self.editor_state.editor_ui.variable_row_focus.is_some()
@@ -66,6 +67,7 @@ impl WidgetHostNative {
 
     pub fn settings_focus_active(&self) -> bool {
         self.editor_state.editor_ui.agent_settings.focus.is_some()
+            || self.editor_state.editor_ui.collab_join_input_active()
     }
 
     /// Whether the variables-panel search input owns the keyboard.
