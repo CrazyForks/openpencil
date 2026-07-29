@@ -47,6 +47,9 @@ impl RenderBackend for MeasureOnly<'_> {
     fn measure_text_weighted(&mut self, text: &str, font_size: f32, weight: u16) -> f32 {
         self.inner.measure_text_weighted(text, font_size, weight)
     }
+    fn measure_text_family(&mut self, text: &str, font_size: f32, family: &str) -> f32 {
+        self.inner.measure_text_family(text, font_size, family)
+    }
     fn text_ascent(&mut self, font_size: f32, weight: u16) -> f32 {
         self.inner.text_ascent(font_size, weight)
     }
@@ -74,25 +77,59 @@ fn inverse_rotate_doc(p: Point2D, node: &SceneNode) -> Point2D {
 }
 
 impl WidgetHostNative {
+    fn with_measure_only<R>(&self, f: impl FnOnce(&mut MeasureOnly<'_>) -> R) -> R {
+        let mut measure = self
+            .text_measure
+            .borrow_mut()
+            .take()
+            .unwrap_or_else(|| crate::NativeBackend::with_dpi(1.0));
+        let out = f(&mut MeasureOnly {
+            inner: &mut measure,
+        });
+        *self.text_measure.borrow_mut() = Some(measure);
+        out
+    }
+
     /// Width (px) of the agent chip's text at the paint font size (11),
     /// measured with the shared measure-only backend so `TopBar`'s
     /// agent-chip hit area matches the painted chip exactly instead of a
     /// char-count estimate that overran into the file-name gap.
     pub(in crate::widget_host) fn topbar_chip_text_w(
-        &mut self,
+        &self,
         top_bar: &op_editor_ui::widgets::TopBar,
     ) -> f32 {
         let chip_text = top_bar.chip_text();
-        let mut measure = self
-            .text_measure
-            .take()
-            .unwrap_or_else(|| crate::NativeBackend::with_dpi(1.0));
-        let w = MeasureOnly {
-            inner: &mut measure,
-        }
-        .measure_text(&chip_text, 11.0);
-        self.text_measure = Some(measure);
-        w
+        self.with_measure_only(|backend| backend.measure_text(&chip_text, 11.0))
+    }
+
+    /// Family-aware TopBar hit-test. The centered title group's horizontal
+    /// position depends on its actual glyph advances, so the native target must
+    /// use the same system-font measurement as paint.
+    pub(in crate::widget_host) fn topbar_hit_test(
+        &self,
+        top_bar: &op_editor_ui::widgets::TopBar,
+        rect: Rect,
+        point: Point2D,
+    ) -> Option<op_editor_ui::widgets::TopBarHit> {
+        self.with_measure_only(|backend| {
+            top_bar.hit_test_with_measure(rect, point, |text, size| {
+                backend.measure_text_family(text, size, "system-ui")
+            })
+        })
+    }
+
+    /// Exact center of the painted TopBar Git button, shared by the Git
+    /// popover body and caret placement.
+    pub(in crate::widget_host) fn topbar_git_button_center_x(
+        &self,
+        top_bar: &op_editor_ui::widgets::TopBar,
+        rect: Rect,
+    ) -> Option<f32> {
+        self.with_measure_only(|backend| {
+            top_bar.git_button_center_x_with_measure(rect, |text, size| {
+                backend.measure_text_family(text, size, "system-ui")
+            })
+        })
     }
 
     /// The edited Text node's resolved scene node, cloned out of the
@@ -117,19 +154,10 @@ impl WidgetHostNative {
         node: &SceneNode,
         f: impl FnOnce(&TextEditLayout, &mut dyn RenderBackend) -> R,
     ) -> R {
-        let mut measure = self
-            .text_measure
-            .take()
-            .unwrap_or_else(|| crate::NativeBackend::with_dpi(1.0));
-        let out = {
-            let mut backend = MeasureOnly {
-                inner: &mut measure,
-            };
-            let layout = text_edit_layout(&mut backend, node);
-            f(&layout, &mut backend)
-        };
-        self.text_measure = Some(measure);
-        out
+        self.with_measure_only(|backend| {
+            let layout = text_edit_layout(backend, node);
+            f(&layout, backend)
+        })
     }
 
     /// Convert a screen point to the edited node's un-rotated doc

@@ -1,5 +1,5 @@
 use super::top_bar::*;
-use super::top_bar_title::elide_filename_to_width;
+use super::top_bar_title::{elide_filename_to_width, TopBarTitleLayout};
 use crate::theme::Theme;
 use crate::widgets::icons::Icon;
 use crate::widgets::{PaintCx, Widget};
@@ -66,8 +66,21 @@ fn long_dirty_title_stays_between_left_and_right_controls() {
     );
 }
 
+fn title_group_center_x(bar: &TopBar, layout: &TopBarTitleLayout) -> f32 {
+    let group_right = layout
+        .git_rect
+        .map(|git| git.origin.x + git.size.x)
+        .or_else(|| {
+            layout
+                .edited_x
+                .map(|edited_x| edited_x + title_test_width(bar.label_edited, 11.0))
+        })
+        .unwrap_or_else(|| layout.file_x + title_test_width(&layout.file_name, 13.0));
+    (layout.file_x + group_right) / 2.0
+}
+
 #[test]
-fn git_position_does_not_follow_file_name_length() {
+fn title_group_stays_at_window_center_for_short_and_long_names() {
     let make_bar = |file_name: &str| {
         let mut bar = TopBar::new(file_name);
         bar.edited = true;
@@ -80,17 +93,84 @@ fn git_position_does_not_follow_file_name_length() {
     let short = make_bar("test.op");
     let long = make_bar("openpencil-super-long-project-file-name-for-title-overflow-check (1).op");
     let rect = Rect {
+        origin: Point2D::new(37.0, 0.0),
+        size: Point2D::new(1_400.0, TOP_BAR_HEIGHT),
+    };
+    let short_layout = short.title_layout(rect, title_test_width);
+    let long_layout = long.title_layout(rect, title_test_width);
+    let window_center = rect.origin.x + rect.size.x / 2.0;
+
+    assert!(short_layout.git_rect.is_some());
+    assert!(long_layout.git_rect.is_some());
+    assert!(nearly_eq(
+        title_group_center_x(&short, &short_layout),
+        window_center
+    ));
+    assert!(nearly_eq(
+        title_group_center_x(&long, &long_layout),
+        window_center
+    ));
+    assert!(long_layout.file_name.contains('…'), "{long_layout:?}");
+    assert!(long_layout.file_name.ends_with(".op"));
+}
+
+#[test]
+fn title_group_center_is_independent_of_asymmetric_chrome() {
+    let rect = Rect {
+        origin: Point2D::ZERO,
+        size: Point2D::new(1_600.0, TOP_BAR_HEIGHT),
+    };
+    let mut compact = TopBar::new("Untitled");
+    compact.git_branch = Some("main".to_string());
+
+    let mut crowded = TopBar::new("Untitled");
+    crowded.git_branch = Some("main".to_string());
+    crowded.agent_count = 6;
+    crowded.connected = [true; 6];
+    crowded.mcp_count = 8;
+    crowded.account_button_visible = true;
+    crowded.collab.visible = true;
+    crowded.collab.label = "Connected".to_string();
+
+    for bar in [&compact, &crowded] {
+        let layout = bar.title_layout(rect, title_test_width);
+        assert!(layout.git_rect.is_some(), "{layout:?}");
+        assert!(nearly_eq(
+            title_group_center_x(bar, &layout),
+            rect.size.x / 2.0
+        ));
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn measured_git_hit_tracks_the_painted_centered_group() {
+    let bar = TopBar::new("centered-document.op");
+    let rect = Rect {
         origin: Point2D::ZERO,
         size: Point2D::new(1_200.0, TOP_BAR_HEIGHT),
     };
-    let short_git = short.git_button_rect(rect);
-    let long_git = long.git_button_rect(rect);
-    let long_layout = long.title_layout(rect, title_test_width);
+    let compact_metric = |text: &str, size: f32| text.chars().count() as f32 * size * 0.2;
+    let measured = bar.git_button_rect_with_measure(rect, compact_metric);
+    let estimated = bar.git_button_rect(rect);
+    let point = Point2D::new(
+        measured.origin.x + measured.size.x / 2.0,
+        TOP_BAR_HEIGHT / 2.0,
+    );
 
-    assert!(short_git.size.x > 0.0);
-    assert!(nearly_eq(short_git.origin.x, long_git.origin.x));
-    assert!(long_layout.file_name.contains('…'), "{long_layout:?}");
-    assert!(long_layout.file_name.ends_with(".op"));
+    assert!(
+        (measured.origin.x - estimated.origin.x).abs() > ICON_BUTTON,
+        "fixture must distinguish exact and fallback geometry"
+    );
+    assert_eq!(
+        bar.hit_test_with_measure(rect, point, compact_metric),
+        Some(TopBarHit::ToggleGitPanel)
+    );
+    assert_ne!(
+        bar.hit_test(rect, point),
+        Some(TopBarHit::ToggleGitPanel),
+        "fallback geometry intentionally sits elsewhere in this fixture"
+    );
 }
 
 #[test]

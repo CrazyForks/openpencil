@@ -164,11 +164,13 @@ impl TopBar {
             );
 
             // ── Bounded centered file title ─────────────────────
-            // File name, dirty marker, and Git button share one slot between
-            // the import control and agent chip. Paint uses the same family
-            // metrics as the text runs, so the title ends exactly at the
-            // reserved Git gap instead of inheriting a conservative estimate.
-            // Clipping remains a hard guard against platform-font differences.
+            // File name, dirty marker, and Git button form one visual group
+            // centered against the full window. The slot between the import
+            // control and agent chip only clamps that group when the viewport
+            // is too narrow. Paint uses the same family metrics as the text
+            // runs, so the title ends exactly at the reserved Git gap instead
+            // of inheriting a conservative estimate. Clipping remains a hard
+            // guard against platform-font differences.
             let title = self.title_layout(rect, |text, size| {
                 cx.backend.measure_text_family(text, size, "system-ui")
             });

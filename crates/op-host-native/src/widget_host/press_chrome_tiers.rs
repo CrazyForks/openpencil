@@ -109,7 +109,7 @@ impl WidgetHostNative {
         };
         let mut top_bar = TopBar::for_editor_ui(&self.editor_state.editor_ui);
         top_bar.chip_text_w = Some(self.topbar_chip_text_w(&top_bar));
-        if let Some(hit) = top_bar.hit_test(top_bar_rect, Point2D::new(x, y)) {
+        if let Some(hit) = self.topbar_hit_test(&top_bar, top_bar_rect, Point2D::new(x, y)) {
             self.close_image_popovers_for_higher_overlay();
             // A TopBar destination replaces the collaboration Join caret.
             // Clear even stale focus so reopening Join cannot resurrect it.

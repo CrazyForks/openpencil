@@ -259,6 +259,25 @@ impl TopBar {
             })
     }
 
+    /// Git-button geometry using caller-provided family-aware text metrics.
+    ///
+    /// Paint and native input both use the system font. Keeping this measured
+    /// variant alongside the deterministic fallback prevents the centered
+    /// title group's variable width from shifting the visible hover target away
+    /// from the button.
+    pub fn git_button_rect_with_measure(
+        &self,
+        top_bar_rect: Rect,
+        measure: impl FnMut(&str, f32) -> f32,
+    ) -> Rect {
+        self.title_layout(top_bar_rect, measure)
+            .git_rect
+            .unwrap_or(Rect {
+                origin: Point2D::new(top_bar_rect.origin.x, top_bar_rect.origin.y),
+                size: Point2D::new(0.0, 0.0),
+            })
+    }
+
     pub(super) fn git_icon_left(git_button: Rect) -> f32 {
         git_button.origin.x + GIT_BUTTON_PAD_X
     }
@@ -272,6 +291,20 @@ impl TopBar {
             return None;
         }
         let r = self.git_button_rect(top_bar_rect);
+        (r.size.x > 0.0).then_some(r.origin.x + r.size.x / 2.0)
+    }
+
+    /// Measured counterpart of [`Self::git_button_center_x`] for native
+    /// popover placement.
+    pub fn git_button_center_x_with_measure(
+        &self,
+        top_bar_rect: Rect,
+        measure: impl FnMut(&str, f32) -> f32,
+    ) -> Option<f32> {
+        if !GIT_BUTTON_AVAILABLE || !self.file_controls_visible() {
+            return None;
+        }
+        let r = self.git_button_rect_with_measure(top_bar_rect, measure);
         (r.size.x > 0.0).then_some(r.origin.x + r.size.x / 2.0)
     }
 

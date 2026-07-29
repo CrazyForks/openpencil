@@ -55,7 +55,7 @@ impl WidgetHostNative {
             let mut top_bar = TopBar::for_editor_ui(&self.editor_state.editor_ui);
             top_bar.chip_text_w = Some(self.topbar_chip_text_w(&top_bar));
             let new_hover = (!chat_surface_owns_point)
-                .then(|| top_bar.hit_test(tb_rect, Point2D::new(x, y)))
+                .then(|| self.topbar_hit_test(&top_bar, tb_rect, Point2D::new(x, y)))
                 .flatten()
                 .map(op_editor_ui::widgets::editor_state_ext::topbar_button_hover);
             if new_hover != self.editor_state.editor_ui.topbar_button_hover {

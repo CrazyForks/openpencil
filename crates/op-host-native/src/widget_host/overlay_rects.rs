@@ -42,7 +42,7 @@ impl WidgetHostNative {
         let top_bar = TopBar::for_editor_ui(&self.editor_state.editor_ui);
         let min_x = canvas_left + GIT_PANEL_INSET;
         let max_x = (canvas_left + canvas_w - pw - GIT_PANEL_INSET).max(min_x);
-        let origin_x = match top_bar.git_button_center_x(top_bar_rect) {
+        let origin_x = match self.topbar_git_button_center_x(&top_bar, top_bar_rect) {
             Some(cx) => (cx - pw / 2.0).clamp(min_x, max_x),
             None => min_x,
         };

@@ -1,8 +1,10 @@
 //! Bounded file-title layout for the `TopBar`.
 //!
 //! The title lives in the center slot between the import button and the
-//! agent chip. Long file names are middle-elided while the edited marker and
-//! Git button keep their own space.
+//! agent chip. The visible file-name / edited-marker / Git-button group is
+//! centered against the full window whenever the slot has room; left/right
+//! chrome only clamps it in genuinely narrow layouts. Long file names are
+//! middle-elided while the edited marker and Git button keep their own space.
 
 use crate::widgets::top_bar::*;
 use crate::{Point2D, Rect};
@@ -24,10 +26,11 @@ pub(super) struct TopBarTitleLayout {
 impl TopBar {
     /// Compute the title layout using one caller-supplied text metric.
     ///
-    /// Paint supplies exact backend metrics while hit-test and popup anchoring
-    /// use a conservative fallback. The Git anchor itself is fixed, and the
-    /// edited marker is reserved before the file name is elided, so it cannot
-    /// be pushed underneath the agent chip by a long path basename.
+    /// Paint supplies exact backend metrics; native hit-test and popup
+    /// anchoring pass the same family-aware metric, while backend-less callers
+    /// use a conservative fallback. The edited marker and Git button are
+    /// reserved before the file name is elided, so neither can be pushed under
+    /// the agent chip by a long path basename.
     pub(super) fn title_layout(
         &self,
         top_bar_rect: Rect,
@@ -78,12 +81,8 @@ impl TopBar {
         } else {
             0.0
         };
-        let title_box_w = (slot_width - git_span).clamp(0.0, TITLE_TEXT_MAX_WIDTH);
-        let desired_box_left = top_bar_rect.origin.x + (top_bar_rect.size.x - title_box_w) / 2.0;
-        let max_box_left = (slot_right - title_box_w - git_span).max(slot_left);
-        let title_box_left = desired_box_left.clamp(slot_left, max_box_left);
-
-        let max_file_w = (title_box_w - edited_span).max(0.0);
+        let max_title_w = (slot_width - git_span).clamp(0.0, TITLE_TEXT_MAX_WIDTH);
+        let max_file_w = (max_title_w - edited_span).max(0.0);
         let file_name = elide_filename_to_width(&self.file_name, max_file_w, |candidate| {
             measure(candidate, 13.0)
         });
@@ -94,14 +93,15 @@ impl TopBar {
             0.0
         };
         let title_w = file_w + actual_edited_gap + edited_w;
-        // Git anchors at the fixed box's right edge. Right-align the measured
-        // title/status content to that edge so the visible gap stays exactly
-        // `GIT_GAP`, independent of how much the name was elided.
-        let file_x = title_box_left + (title_box_w - title_w).max(0.0);
+        let group_w = title_w + git_span;
+        let desired_group_left = top_bar_rect.origin.x + (top_bar_rect.size.x - group_w) / 2.0;
+        let max_group_left = (slot_right - group_w).max(slot_left);
+        let group_left = desired_group_left.clamp(slot_left, max_group_left);
+        let file_x = group_left;
         let edited_x = self.edited.then_some(file_x + file_w + actual_edited_gap);
         let git_rect = show_git.then_some(Rect {
             origin: Point2D::new(
-                title_box_left + title_box_w + GIT_GAP,
+                group_left + title_w + GIT_GAP,
                 top_bar_rect.origin.y + (top_bar_rect.size.y - ICON_BUTTON) / 2.0,
             ),
             size: Point2D::new(measured_git_w, ICON_BUTTON),

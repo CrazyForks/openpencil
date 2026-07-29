@@ -451,7 +451,7 @@ impl WidgetHostNative {
             // Up-caret connecting the panel to the Git button — drawn
             // after the panel so its base covers the panel's top border
             // and reads as one continuous popover surface.
-            if let Some(btn_cx) = top_bar.git_button_center_x(top_bar_rect) {
+            if let Some(btn_cx) = self.topbar_git_button_center_x(&top_bar, top_bar_rect) {
                 let half = GIT_PANEL_CARET_HALF;
                 let top = panel_rect.origin.y;
                 let caret_x = btn_cx.clamp(

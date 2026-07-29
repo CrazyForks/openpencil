@@ -341,8 +341,10 @@ pub struct WidgetHostNative {
     /// Lazily-created measure-only Skia backend for text-edit
     /// hit-testing OUTSIDE the paint pass (press / drag / arrow-key
     /// line mapping). Same `measure_text_weighted` implementation the
-    /// paint backend uses, so hit geometry matches painted glyphs.
-    pub(in crate::widget_host) text_measure: Option<crate::NativeBackend>,
+    /// paint backend uses, so hit geometry matches painted glyphs. Interior
+    /// mutability also lets read-only TopBar geometry (hover + Git popover
+    /// placement) use the same metrics without widening those APIs to `&mut`.
+    pub(in crate::widget_host) text_measure: std::cell::RefCell<Option<crate::NativeBackend>>,
     /// Active panel-resize drag — set when the cursor is pressed
     /// within the resize gutter of LayerPanel's right edge or
     /// PropertyPanel's left edge.

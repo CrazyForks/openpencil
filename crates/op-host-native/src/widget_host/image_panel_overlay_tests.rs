@@ -17,7 +17,7 @@ fn topbar_point(host: &mut WidgetHostNative, target: TopBarHit) -> Point2D {
     let mut x = rect.origin.x;
     while x < rect.origin.x + rect.size.x {
         let point = Point2D::new(x, TOP_BAR_HEIGHT / 2.0);
-        if topbar.hit_test(rect, point) == Some(target) {
+        if host.topbar_hit_test(&topbar, rect, point) == Some(target) {
             return point;
         }
         x += 1.0;

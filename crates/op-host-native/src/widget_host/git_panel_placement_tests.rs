@@ -248,8 +248,9 @@ fn git_panel_hangs_centred_under_the_git_button() {
         origin: Point2D::new(0.0, 0.0),
         size: Point2D::new(vw, TOP_BAR_HEIGHT),
     };
-    let btn_cx = TopBar::for_editor_ui(&host.editor_state().editor_ui)
-        .git_button_center_x(top_bar_rect)
+    let top_bar = TopBar::for_editor_ui(&host.editor_state().editor_ui);
+    let btn_cx = host
+        .topbar_git_button_center_x(&top_bar, top_bar_rect)
         .expect("Git button is shown on desktop");
     let panel_cx = r.origin.x + r.size.x / 2.0;
     assert!(

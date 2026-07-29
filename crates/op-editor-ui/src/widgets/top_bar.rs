@@ -354,6 +354,45 @@ impl TopBar {
     ///   - Sun (third from right) → ToggleTheme
     ///   - Globe (fourth from right) → ToggleLocale
     pub fn hit_test(&self, rect: Rect, point: Point2D) -> Option<TopBarHit> {
+        if !rect.contains(point) {
+            return None;
+        }
+        let git_rect = if GIT_BUTTON_AVAILABLE && self.file_controls_visible() {
+            self.git_button_rect(rect)
+        } else {
+            Rect::xywh(rect.origin.x, rect.origin.y, 0.0, 0.0)
+        };
+        self.hit_test_with_git_rect(rect, point, git_rect)
+    }
+
+    /// Hit-test using the same font-family measurement as paint.
+    ///
+    /// Native hosts use this path for the centered title group's Git button so
+    /// its hover/press target follows the painted group even when the system
+    /// font's advances differ from the cross-platform fallback estimator.
+    pub fn hit_test_with_measure(
+        &self,
+        rect: Rect,
+        point: Point2D,
+        measure: impl FnMut(&str, f32) -> f32,
+    ) -> Option<TopBarHit> {
+        if !rect.contains(point) {
+            return None;
+        }
+        let git_rect = if GIT_BUTTON_AVAILABLE && self.file_controls_visible() {
+            self.git_button_rect_with_measure(rect, measure)
+        } else {
+            Rect::xywh(rect.origin.x, rect.origin.y, 0.0, 0.0)
+        };
+        self.hit_test_with_git_rect(rect, point, git_rect)
+    }
+
+    fn hit_test_with_git_rect(
+        &self,
+        rect: Rect,
+        point: Point2D,
+        git_rect: Rect,
+    ) -> Option<TopBarHit> {
         if !(rect).contains(point) {
             return None;
         }
@@ -388,11 +427,12 @@ impl TopBar {
         // only — see `GIT_BUTTON_AVAILABLE`; also hidden inside a VS Code
         // embed alongside the rest of the file-scoped chrome — the file
         // name it hangs off doesn't paint either).
-        if GIT_BUTTON_AVAILABLE && self.file_controls_visible() {
-            let git_rect = self.git_button_rect(rect);
-            if git_rect.size.x > 0.0 && git_rect.contains(point) {
-                return Some(TopBarHit::ToggleGitPanel);
-            }
+        if GIT_BUTTON_AVAILABLE
+            && self.file_controls_visible()
+            && git_rect.size.x > 0.0
+            && git_rect.contains(point)
+        {
+            return Some(TopBarHit::ToggleGitPanel);
         }
         // Right cluster: Maximize / Play / Sun / Globe-with-chevron
         // (right→left). Maximize + Play + Sun are normal ICON_BUTTON
