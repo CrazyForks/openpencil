@@ -11,15 +11,17 @@ use crate::widgets::button::tokens_from_theme;
 use crate::widgets::icons::{draw_icon, Icon};
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout};
+use jian_widgets::components::button::{Button, ButtonVariant};
 use jian_widgets::components::card::Card;
 use op_editor_core::editor_ui_state::{EditorUiState, Locale};
 use op_editor_core::AccountState;
 
 const TITLE_H: f32 = 48.0;
-const CARD_H: f32 = 116.0;
-const AVATAR: f32 = 52.0;
+const CARD_H: f32 = 88.0;
+const AVATAR: f32 = 44.0;
 const ACTION_BTN_W: f32 = 112.0;
-const ACTION_BTN_H: f32 = 40.0;
+const ACTION_BTN_H: f32 = 34.0;
+const CARD_INSET: f32 = 16.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccountTabHit {
@@ -44,7 +46,7 @@ fn card_rect(content: Rect) -> Rect {
 fn action_btn_rect(card: Rect) -> Rect {
     Rect {
         origin: Point2D::new(
-            card.origin.x + card.size.x - 20.0 - ACTION_BTN_W,
+            card.origin.x + card.size.x - CARD_INSET - ACTION_BTN_W,
             card.origin.y + (CARD_H - ACTION_BTN_H) / 2.0,
         ),
         size: Point2D::new(ACTION_BTN_W, ACTION_BTN_H),
@@ -98,27 +100,7 @@ pub(super) fn paint_account_tab(
     );
 
     let card = card_rect(content);
-    let is_dark = theme.background.r < 0.5;
-    let shadow = Rect {
-        origin: Point2D::new(card.origin.x, card.origin.y + 3.0),
-        size: card.size,
-    };
-    cx.backend.fill_drop_shadow(
-        shadow,
-        16.0,
-        16.0,
-        Color::BLACK.with_alpha(if is_dark { 0.28 } else { 0.08 }),
-    );
-    Card {
-        fill: Some(mix(
-            theme.card,
-            theme.foreground,
-            if is_dark { 0.035 } else { 0.46 },
-        )),
-        border: Some(mix(theme.border, theme.primary, 0.08)),
-        radius: 16.0,
-    }
-    .paint(cx.backend, card, &tokens_from_theme(theme));
+    account_card_style(theme).paint(cx.backend, card, &tokens_from_theme(theme));
 
     match &ui.account {
         AccountState::Anonymous => paint_signed_out(cx, theme, ui, card),
@@ -133,7 +115,7 @@ fn paint_signed_out(cx: &mut PaintCx<'_>, theme: &Theme, ui: &EditorUiState, car
     let avatar_rect = avatar_rect(card);
     paint_avatar_tile(cx, theme, avatar_rect);
 
-    let text_x = avatar_rect.origin.x + AVATAR + 16.0;
+    let text_x = avatar_rect.origin.x + AVATAR + 12.0;
     let label = TextLayout::single_run(
         t_settings(ui, "settings.account.notSignedIn"),
         "system-ui",
@@ -191,8 +173,15 @@ fn paint_signed_in(
             avatar_rect.origin.y + AVATAR / 2.0 + 5.0,
         ),
     );
+    let _ = crate::widgets::account_avatar_paint::paint_account_avatar_image(
+        cx,
+        &ui.account,
+        avatar_rect,
+    );
+    cx.backend
+        .stroke_oval(avatar_rect, theme.border.with_alpha(0.72), 1.0);
 
-    let text_x = avatar_rect.origin.x + AVATAR + 16.0;
+    let text_x = avatar_rect.origin.x + AVATAR + 12.0;
     let name_label = TextLayout::single_run(
         display_name,
         "system-ui",
@@ -229,7 +218,7 @@ fn paint_signed_in(
 fn avatar_rect(card: Rect) -> Rect {
     Rect {
         origin: Point2D::new(
-            card.origin.x + 20.0,
+            card.origin.x + CARD_INSET,
             card.origin.y + (CARD_H - AVATAR) / 2.0,
         ),
         size: Point2D::new(AVATAR, AVATAR),
@@ -243,7 +232,7 @@ fn paint_avatar_tile(cx: &mut PaintCx<'_>, theme: &Theme, rect: Rect) {
     draw_icon(
         cx.backend,
         Icon::User,
-        Point2D::new(rect.origin.x + 14.0, rect.origin.y + 14.0),
+        Point2D::new(rect.origin.x + 10.0, rect.origin.y + 10.0),
         24.0,
         theme.primary,
         1.8,
@@ -252,6 +241,14 @@ fn paint_avatar_tile(cx: &mut PaintCx<'_>, theme: &Theme, rect: Rect) {
 
 fn signed_out_hint(locale: Locale) -> &'static str {
     op_i18n::translate(locale, "account.signedOutHint")
+}
+
+fn account_card_style(theme: &Theme) -> Card {
+    Card {
+        fill: Some(theme.muted),
+        border: Some(theme.border),
+        radius: 10.0,
+    }
 }
 
 fn mix(a: Color, b: Color, amount: f32) -> Color {
@@ -316,26 +313,16 @@ fn paint_primary_action(cx: &mut PaintCx<'_>, theme: &Theme, rect: Rect, label: 
 }
 
 fn paint_action_button(cx: &mut PaintCx<'_>, theme: &Theme, rect: Rect, label: &str) {
-    cx.backend
-        .fill_round_rect(rect, 10.0, theme.muted.with_alpha(0.72));
-    cx.backend
-        .stroke_round_rect(rect, 10.0, mix(theme.border, theme.destructive, 0.10), 1.0);
-    let w = cx.backend.measure_text_weighted(label, 12.0, 550);
-    let layout = TextLayout::single_run(
+    Button {
         label,
-        "system-ui",
-        12.0,
-        (theme.foreground).to_jian(),
-        Point2D::new(0.0, 0.0),
-    )
-    .with_font_weight(550);
-    cx.backend.draw_text(
-        &layout,
-        Point2D::new(
-            rect.origin.x + (rect.size.x - w) / 2.0,
-            rect.origin.y + rect.size.y / 2.0 + 4.0,
-        ),
-    );
+        icon_paths: None,
+        variant: ButtonVariant::DestructiveOutline,
+        enabled: true,
+        hovered: false,
+        pressed: false,
+        font_size: 12.0,
+    }
+    .paint(cx.backend, rect, &tokens_from_theme(theme));
 }
 
 #[cfg(test)]
@@ -357,6 +344,34 @@ mod tests {
             )));
         }
         assert!(avatar.origin.x + avatar.size.x < action.origin.x);
+    }
+
+    #[test]
+    fn account_card_uses_the_settings_surface_in_both_themes() {
+        for theme in [Theme::light(), Theme::dark()] {
+            let style = account_card_style(&theme);
+            assert_eq!(style.fill, Some(theme.muted));
+            assert_eq!(style.border, Some(theme.border));
+            assert_eq!(style.radius, 10.0);
+        }
+    }
+
+    #[test]
+    fn account_action_center_is_clickable() {
+        let content = Rect::xywh(220.0, 80.0, 472.0, 640.0);
+        let action = action_btn_rect(card_rect(content));
+        let center = Point2D::new(
+            action.origin.x + action.size.x / 2.0,
+            action.origin.y + action.size.y / 2.0,
+        );
+        let mut ui = EditorUiState::default();
+
+        assert_eq!(hit_test(content, &ui, center), AccountTabHit::SignIn);
+        ui.account = AccountState::SignedIn {
+            display_name: "Kayshen".into(),
+            username: "kayshen".into(),
+        };
+        assert_eq!(hit_test(content, &ui, center), AccountTabHit::SignOut);
     }
 
     #[test]
