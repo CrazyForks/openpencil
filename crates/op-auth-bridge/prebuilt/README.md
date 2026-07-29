@@ -22,6 +22,14 @@ Do not run `strip`, `objcopy`, or an obfuscator in place on these committed
 files: archive members and cross-object symbols may be required by the final
 link.
 
+Linux and MSVC Rust hosts link a temporary Cargo `OUT_DIR` derivative, not
+these committed bytes. The build bridge gives the archive's bundled
+`rust_eh_personality` an equal-length private name, including its internal
+references, because a C-facing Rust `staticlib` otherwise conflicts with the
+host toolchain's own personality routine. The transformation happens only
+after provenance validation, preserves archive layout, and rejects ambiguous
+input; it never weakens the linker's duplicate-symbol checks.
+
 ## ABI-v2 signed provenance
 
 Every production target directory must contain:
@@ -55,6 +63,8 @@ full source revision. At minimum:
   temporary-directory prefixes;
 - use one narrow `extern "C"` wrapper and keep every other implementation
   symbol hidden from the final binary;
+- namespace any Rust runtime symbols that must remain in the archive so they
+  cannot collide when the C ABI is linked into a different Rust toolchain;
 - enable fat LTO, one codegen unit, dead-code elimination, and symbol stripping
   at the final application link;
 - use `panic=abort` for the static library if the private implementation can

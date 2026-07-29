@@ -19,6 +19,7 @@ pub const HARDENING_PROFILE_V1: &str = "op-auth-hardened-v1";
 pub struct ValidatedPrebuilt {
     pub abi_version: u32,
     pub signed_provenance: bool,
+    pub archive_sha256: [u8; 32],
 }
 
 #[derive(Debug)]
@@ -40,7 +41,9 @@ pub fn validate_prebuilt(
     let artifact_path = target_dir.join(artifact_name);
     let artifact = fs::read(&artifact_path)
         .map_err(|_| ProvenanceError("artifact is missing or unreadable"))?;
-    let actual_sha256 = format!("{:x}", Sha256::digest(&artifact));
+    let digest = Sha256::digest(&artifact);
+    let actual_sha256 = format!("{digest:x}");
+    let archive_sha256: [u8; 32] = digest.into();
     let expected_sha256 = read_trimmed(&target_dir.join("SHA256"), "SHA256 is missing")?;
     if !valid_hex(&expected_sha256, 64) || !actual_sha256.eq_ignore_ascii_case(&expected_sha256) {
         return Err(ProvenanceError("artifact SHA-256 does not match"));
@@ -56,6 +59,7 @@ pub fn validate_prebuilt(
         return Ok(ValidatedPrebuilt {
             abi_version,
             signed_provenance: false,
+            archive_sha256,
         });
     }
     if version != package_version {
@@ -98,6 +102,7 @@ pub fn validate_prebuilt(
     Ok(ValidatedPrebuilt {
         abi_version,
         signed_provenance: true,
+        archive_sha256,
     })
 }
 

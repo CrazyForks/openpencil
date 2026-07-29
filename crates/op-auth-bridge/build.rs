@@ -5,8 +5,10 @@
 use std::env;
 use std::ffi::OsStr;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+#[path = "prebuilt_link_compat.rs"]
+mod prebuilt_link_compat;
 #[path = "prebuilt_provenance.rs"]
 mod prebuilt_provenance;
 
@@ -19,6 +21,7 @@ fn main() {
     println!("cargo:rustc-check-cfg=cfg(op_auth_collab_ticket_prebuilt)");
     println!("cargo:rustc-check-cfg=cfg(op_auth_development_prebuilt)");
     println!("cargo:rerun-if-changed=prebuilt");
+    println!("cargo:rerun-if-changed=prebuilt_link_compat.rs");
     println!("cargo:rerun-if-env-changed={DEV_ARCHIVE_ENV}");
     println!("cargo:rerun-if-env-changed={DEV_ABI_VERSION_ENV}");
 
@@ -33,14 +36,14 @@ fn main() {
     };
 
     let development = development_prebuilt(artifact);
-    let (prebuilt_dir, abi_version, development_override, signed_provenance) =
+    let (prebuilt_dir, abi_version, development_override, signed_provenance, expected_sha256) =
         if let Some((directory, abi_version)) = development {
             println!(
                 "cargo:warning=using unsigned local op-auth ABI {abi_version} \
                  archive for a debug build"
             );
             println!("cargo:rustc-cfg=op_auth_development_prebuilt");
-            (directory, abi_version, true, false)
+            (directory, abi_version, true, false, None)
         } else {
             let prebuilt_dir = manifest_dir.join("prebuilt").join(&target);
             let artifact_path = prebuilt_dir.join(artifact);
@@ -65,6 +68,7 @@ fn main() {
                 validated.abi_version,
                 false,
                 validated.signed_provenance,
+                Some(validated.archive_sha256),
             )
         };
 
@@ -77,7 +81,8 @@ fn main() {
         println!("cargo:rustc-cfg=op_auth_collab_ticket_prebuilt");
     }
     println!("cargo:rustc-env=OP_AUTH_PREBUILT_ABI_VERSION={abi_version}");
-    println!("cargo:rustc-link-search=native={}", prebuilt_dir.display());
+    let link_dir = rust_host_link_directory(&target, &prebuilt_dir, artifact, expected_sha256);
+    println!("cargo:rustc-link-search=native={}", link_dir.display());
     // `-bundle`: keep the archive out of this crate's rlib and hand it to
     // the final link instead. Bundled foreign objects would otherwise be
     // fed to thin-LTO in release builds, which fails with "failed to get
@@ -94,6 +99,36 @@ fn main() {
         println!("cargo:rustc-link-lib=advapi32");
         println!("cargo:rustc-link-lib=ntdll");
     }
+}
+
+fn rust_host_link_directory(
+    target: &str,
+    prebuilt_dir: &Path,
+    artifact: &str,
+    expected_sha256: Option<[u8; 32]>,
+) -> PathBuf {
+    if !target.contains("linux") && !target.ends_with("-pc-windows-msvc") {
+        return prebuilt_dir.to_path_buf();
+    }
+
+    let link_dir = PathBuf::from(
+        env::var("OUT_DIR").expect("Cargo provides OUT_DIR to the op-auth build script"),
+    )
+    .join("rust-host-link");
+    let report = prebuilt_link_compat::stage_archive_for_rust_host(
+        &prebuilt_dir.join(artifact),
+        &link_dir.join(artifact),
+        expected_sha256,
+    )
+    .unwrap_or_else(|error| panic!("failed to stage op-auth for Rust host linking: {error}"));
+    if report.renamed_occurrences != 0 {
+        println!(
+            "cargo:warning=isolated {} bundled Rust personality symbol occurrence(s) \
+             in the temporary op-auth link archive",
+            report.renamed_occurrences
+        );
+    }
+    link_dir
 }
 
 fn development_prebuilt(artifact: &str) -> Option<(PathBuf, u32)> {

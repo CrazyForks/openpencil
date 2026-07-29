@@ -21,6 +21,18 @@ been retroactively stripped, encrypted, or described as obfuscated because an
 in-place binary rewrite could break final linkage. Run
 `tools/check-op-auth-prebuilt.sh` for the current measured audit.
 
+The Linux and MSVC artifacts were built as C-facing Rust `staticlib` archives,
+so they also contain the producing toolchain's Rust runtime. Before a Rust host
+link, `build.rs` validates the original archive, rechecks that the bytes being
+staged have the validated digest, and creates a private `OUT_DIR` copy in which
+the equal-length `rust_eh_personality` symbol name is namespaced to
+`rust_eh_personalitx`. The one-byte suffix change also preserves the sorted
+MSVC linker-member index. This updates the definition and its internal
+references without changing archive offsets, keeps the committed SHA/signature
+as the trust anchor, and avoids a broad linker multiple-definition exception.
+Malformed archives, changed bytes, and archives containing both names fail
+closed.
+
 Production ABI-v2 artifacts fail closed unless their byte hash, target, ABI,
 source revision, build id, and `op-auth-hardened-v1` declaration are covered by
 an Ed25519 signature rooted in `prebuilt/PROVENANCE_PUBKEY`. The private release
