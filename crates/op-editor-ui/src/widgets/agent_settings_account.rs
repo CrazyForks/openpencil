@@ -2,7 +2,7 @@
 //!
 //! Signed out: a login-guidance card reusing the same primary "Sign in
 //! with browser" affordance as [`crate::widgets::login_modal`]. Signed
-//! in: display name / handle / avatar-initial + a Sign Out row. Mirrors
+//! in: display name / username / avatar-initial + a Sign Out row. Mirrors
 //! the System tab's card-based layout (`agent_settings_system.rs`).
 
 use crate::theme::Theme;
@@ -124,8 +124,8 @@ pub(super) fn paint_account_tab(
         AccountState::Anonymous => paint_signed_out(cx, theme, ui, card),
         AccountState::SignedIn {
             display_name,
-            handle,
-        } => paint_signed_in(cx, theme, ui, card, display_name, handle),
+            username,
+        } => paint_signed_in(cx, theme, ui, card, display_name, username),
     }
 }
 
@@ -171,7 +171,7 @@ fn paint_signed_in(
     ui: &EditorUiState,
     card: Rect,
     display_name: &str,
-    handle: &str,
+    username: &str,
 ) {
     let avatar_rect = avatar_rect(card);
     cx.backend.fill_oval(avatar_rect, theme.primary);
@@ -205,16 +205,16 @@ fn paint_signed_in(
         &name_label,
         Point2D::new(text_x, card.origin.y + CARD_H / 2.0 - 2.0),
     );
-    let handle_display = format!("@{}", handle);
-    let handle_label = TextLayout::single_run(
-        &handle_display,
+    let username_display = format!("@{}", username);
+    let username_label = TextLayout::single_run(
+        &username_display,
         "system-ui",
         11.0,
         (theme.muted_foreground).to_jian(),
         Point2D::new(0.0, 0.0),
     );
     cx.backend.draw_text(
-        &handle_label,
+        &username_label,
         Point2D::new(text_x, card.origin.y + CARD_H / 2.0 + 16.0),
     );
 

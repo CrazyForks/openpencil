@@ -138,6 +138,7 @@ impl WidgetHostNative {
             SettingsPress::SignOut => {
                 // Revoke the device session (inert no-op in stub builds).
                 op_auth_bridge::sign_out();
+                self.forget_auth_session_profile();
             }
         }
         if outcome.refresh_fonts {

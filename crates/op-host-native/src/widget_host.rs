@@ -447,6 +447,13 @@ pub struct WidgetHostNative {
     /// the flow reports `WaitingApproval` every poll, but the browser
     /// must open exactly once.
     pub(in crate::widget_host) auth_browser_opened: bool,
+    /// Short post-restore window during which the desktop keeps polling the
+    /// session handle. The private runtime revalidates persisted credentials
+    /// asynchronously, so profile fields can become fresher after startup.
+    pub(in crate::widget_host) auth_session_refresh_deadline: Option<std::time::Instant>,
+    /// Opaque process-local hash of the last mirrored avatar source. This keeps
+    /// repeated session polls idempotent without retaining another signed URL.
+    pub(in crate::widget_host) auth_account_avatar_revision: Option<u64>,
     pub(in crate::widget_host) last_viewport_w: f32,
     pub(in crate::widget_host) last_viewport_h: f32,
     /// Live canvas Preview (Play) session — `Some` while

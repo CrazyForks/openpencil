@@ -75,6 +75,7 @@ impl WidgetHostNative {
                 // Revoke the device session (background thread inside
                 // the library; an inert no-op in stub builds).
                 op_auth_bridge::sign_out();
+                self.forget_auth_session_profile();
             }
             AccountMenuPress::Dismissed => {
                 // Outside click — blank press: dismiss + blur inputs.

@@ -17,13 +17,32 @@ pub enum AccountState {
     Anonymous,
     SignedIn {
         display_name: String,
-        handle: String,
+        username: String,
     },
 }
 
 impl AccountState {
     pub fn is_signed_in(&self) -> bool {
         matches!(self, AccountState::SignedIn { .. })
+    }
+
+    /// Build display state from the authenticated profile.
+    ///
+    /// Usernames are the only values rendered with an `@` prefix. Older
+    /// persisted credentials and rolling-upgrade servers may not provide one,
+    /// so a missing or blank username falls back to the display name. Email is
+    /// deliberately not accepted here: an address is not an account handle.
+    pub fn signed_in_profile(display_name: String, username: Option<String>) -> Self {
+        let username = username
+            .and_then(|username| {
+                let username = username.trim();
+                (!username.is_empty()).then(|| username.to_string())
+            })
+            .unwrap_or_else(|| display_name.clone());
+        Self::SignedIn {
+            display_name,
+            username,
+        }
     }
 
     /// First uppercase character of the display name — the avatar-circle
@@ -45,9 +64,35 @@ impl AccountState {
     /// no env vars so it stays wasm32-clean). Never reachable from the
     /// production sign-in button.
     pub fn dev_fake_signed_in() -> Self {
-        AccountState::SignedIn {
-            display_name: "Fini".to_string(),
-            handle: "fini".to_string(),
+        AccountState::signed_in_profile("Fini".to_string(), Some("fini".to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AccountState;
+
+    #[test]
+    fn signed_in_profile_prefers_the_authenticated_username() {
+        assert_eq!(
+            AccountState::signed_in_profile("Kay Shen".to_string(), Some("kayshen_7".to_string())),
+            AccountState::SignedIn {
+                display_name: "Kay Shen".to_string(),
+                username: "kayshen_7".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn signed_in_profile_falls_back_to_display_name_for_missing_or_blank_username() {
+        for username in [None, Some(String::new()), Some(" \t ".to_string())] {
+            assert_eq!(
+                AccountState::signed_in_profile("Kay Shen".to_string(), username),
+                AccountState::SignedIn {
+                    display_name: "Kay Shen".to_string(),
+                    username: "Kay Shen".to_string(),
+                }
+            );
         }
     }
 }

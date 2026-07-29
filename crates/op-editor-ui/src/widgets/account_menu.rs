@@ -1,6 +1,6 @@
 //! Signed-in account dropdown — anchored under the TopBar avatar button.
 //!
-//! Header (display name + `@handle`), divider, "Settings" (opens the
+//! Header (display name + `@username`), divider, "Settings" (opens the
 //! settings modal on the Account tab), "Sign Out".
 
 use crate::theme::Theme;
@@ -28,7 +28,7 @@ pub struct AccountMenu<'a> {
     pub theme: Theme,
     ui: &'a EditorUiState,
     display_name: String,
-    handle: String,
+    username: String,
     hover: Option<AccountMenuRow>,
 }
 
@@ -36,11 +36,11 @@ impl<'a> AccountMenu<'a> {
     /// `None` when the account is not signed in — the host should not
     /// paint/hit-test this widget in that state.
     pub fn for_editor_ui(ui: &'a EditorUiState) -> Option<Self> {
-        let (display_name, handle) = match &ui.account {
+        let (display_name, username) = match &ui.account {
             op_editor_core::AccountState::SignedIn {
                 display_name,
-                handle,
-            } => (display_name.clone(), handle.clone()),
+                username,
+            } => (display_name.clone(), username.clone()),
             op_editor_core::AccountState::Anonymous => return None,
         };
         Some(Self {
@@ -48,7 +48,7 @@ impl<'a> AccountMenu<'a> {
             theme: theme_for(ui),
             ui,
             display_name,
-            handle,
+            username,
             hover: ui.account_menu_hover,
         })
     }
@@ -120,7 +120,7 @@ impl<'a> Widget for AccountMenu<'a> {
         cx.backend
             .stroke_round_rect(rect, 10.0, self.theme.border, 1.0);
 
-        // Header: display name + @handle.
+        // Header: display name + @username.
         let name_layout = TextLayout::single_run(
             &self.display_name,
             "system-ui",
@@ -132,16 +132,16 @@ impl<'a> Widget for AccountMenu<'a> {
             &name_layout,
             Point2D::new(rect.origin.x + PAD_X, rect.origin.y + 22.0),
         );
-        let handle_display = format!("@{}", self.handle);
-        let handle_layout = TextLayout::single_run(
-            &handle_display,
+        let username_display = format!("@{}", self.username);
+        let username_layout = TextLayout::single_run(
+            &username_display,
             "system-ui",
             11.0,
             (self.theme.muted_foreground).to_jian(),
             Point2D::new(0.0, 0.0),
         );
         cx.backend.draw_text(
-            &handle_layout,
+            &username_layout,
             Point2D::new(rect.origin.x + PAD_X, rect.origin.y + 40.0),
         );
 
@@ -217,7 +217,7 @@ mod tests {
         EditorUiState {
             account: op_editor_core::AccountState::SignedIn {
                 display_name: "Fini".to_string(),
-                handle: "fini".to_string(),
+                username: "fini".to_string(),
             },
             ..EditorUiState::default()
         }

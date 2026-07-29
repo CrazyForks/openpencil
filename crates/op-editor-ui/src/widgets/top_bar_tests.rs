@@ -598,7 +598,7 @@ fn for_editor_ui_carries_signed_in_account() {
     let ui = EditorUiState {
         account: op_editor_core::AccountState::SignedIn {
             display_name: "Fini".to_string(),
-            handle: "fini".to_string(),
+            username: "fini".to_string(),
         },
         ..EditorUiState::default()
     };

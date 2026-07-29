@@ -18,6 +18,7 @@ pub enum AuthStatus {
     /// Signed in (terminal for flows; steady state for the session).
     SignedIn {
         display_name: String,
+        username: Option<String>,
         primary_email: Option<String>,
         avatar_url: Option<String>,
         device_id: String,
@@ -54,6 +55,7 @@ impl AuthStatus {
             3 => AuthStatus::Exchanging,
             4 => AuthStatus::SignedIn {
                 display_name: field("display_name").unwrap_or_default(),
+                username: field("username"),
                 primary_email: field("primary_email"),
                 avatar_url: field("avatar_url"),
                 device_id: field("device_id").unwrap_or_default(),
@@ -73,16 +75,27 @@ mod tests {
 
     #[test]
     fn decodes_signed_in_payload() {
-        let payload = r#"{"display_name":"Kay","primary_email":"kay@example.com","avatar_url":"https://cdn.example/kay.png","device_id":"d1"}"#;
+        let payload = r#"{"display_name":"Kay","username":"kayshen_7","primary_email":"kay@example.com","avatar_url":"https://cdn.example/kay.png","device_id":"d1"}"#;
         assert_eq!(
             AuthStatus::decode(4, Some(payload)),
             AuthStatus::SignedIn {
                 display_name: "Kay".to_string(),
+                username: Some("kayshen_7".to_string()),
                 primary_email: Some("kay@example.com".to_string()),
                 avatar_url: Some("https://cdn.example/kay.png".to_string()),
                 device_id: "d1".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn older_signed_in_payloads_decode_without_a_username() {
+        let payload =
+            r#"{"display_name":"Kay","primary_email":"kay@example.com","device_id":"d1"}"#;
+        assert!(matches!(
+            AuthStatus::decode(4, Some(payload)),
+            AuthStatus::SignedIn { username: None, .. }
+        ));
     }
 
     #[test]

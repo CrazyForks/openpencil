@@ -90,6 +90,8 @@ impl WidgetHostNative {
             auth_login_handle: None,
             auth_pending_browser_url: None,
             auth_browser_opened: false,
+            auth_session_refresh_deadline: None,
+            auth_account_avatar_revision: None,
         }
     }
 

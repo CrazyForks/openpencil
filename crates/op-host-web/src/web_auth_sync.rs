@@ -180,17 +180,7 @@ fn fetch_status<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, base: &str)
             let ui = &mut b.host_mut().editor_state_mut().editor_ui;
             let available = parsed["available"].as_bool().unwrap_or(false);
             let account = if parsed["signed_in"].as_bool().unwrap_or(false) {
-                let display_name = parsed["display_name"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_string();
-                AccountState::SignedIn {
-                    handle: parsed["primary_email"]
-                        .as_str()
-                        .map(str::to_string)
-                        .unwrap_or_else(|| display_name.clone()),
-                    display_name,
-                }
+                signed_in_account(&parsed)
             } else {
                 AccountState::Anonymous
             };
@@ -209,6 +199,16 @@ fn fetch_status<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, base: &str)
             }
         }),
     );
+}
+
+fn signed_in_account(payload: &serde_json::Value) -> AccountState {
+    AccountState::signed_in_profile(
+        payload["display_name"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string(),
+        payload["username"].as_str().map(str::to_string),
+    )
 }
 
 fn drain_actions<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, base: &str) {
@@ -293,17 +293,7 @@ fn apply_login_status<C: RepaintContext + 'static>(
         "exchanging" => ui.login_modal_status = Some(LoginFlowStatus::Exchanging),
         "signed_in" => {
             sync_account_avatar(inner, parsed["avatar_revision"].as_str());
-            let display_name = parsed["display_name"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string();
-            ui.account = AccountState::SignedIn {
-                handle: parsed["primary_email"]
-                    .as_str()
-                    .map(str::to_string)
-                    .unwrap_or_else(|| display_name.clone()),
-                display_name,
-            };
+            ui.account = signed_in_account(parsed);
             ui.login_modal_status = None;
             ui.login_modal_open = false;
             ui.login_modal_hover = None;
@@ -442,6 +432,42 @@ fn account_avatar_revision_active(revision: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn account_payload_prefers_username_and_never_uses_email_as_a_handle() {
+        let with_username = serde_json::json!({
+            "display_name": "Kay Shen",
+            "username": "kayshen_7",
+            "primary_email": "wrong-handle@example.com",
+        });
+        assert_eq!(
+            signed_in_account(&with_username),
+            AccountState::SignedIn {
+                display_name: "Kay Shen".to_string(),
+                username: "kayshen_7".to_string(),
+            }
+        );
+
+        for payload in [
+            serde_json::json!({
+                "display_name": "Kay Shen",
+                "primary_email": "wrong-handle@example.com",
+            }),
+            serde_json::json!({
+                "display_name": "Kay Shen",
+                "username": "",
+                "primary_email": "wrong-handle@example.com",
+            }),
+        ] {
+            assert_eq!(
+                signed_in_account(&payload),
+                AccountState::SignedIn {
+                    display_name: "Kay Shen".to_string(),
+                    username: "Kay Shen".to_string(),
+                }
+            );
+        }
+    }
 
     #[test]
     fn sign_out_latches_allow_same_revision_to_be_fetched_after_relogin() {

@@ -44,14 +44,11 @@ pub(crate) fn init(editor: &mut EditorState, remote_exposure_ok: bool) {
 fn adopt_session(editor: &mut EditorState) {
     if let AuthStatus::SignedIn {
         display_name,
-        primary_email,
+        username,
         ..
     } = op_auth_bridge::poll(op_auth_bridge::SESSION_HANDLE)
     {
-        editor.editor_ui.account = AccountState::SignedIn {
-            handle: primary_email.unwrap_or_else(|| display_name.clone()),
-            display_name,
-        };
+        editor.editor_ui.account = AccountState::signed_in_profile(display_name, username);
     }
 }
 
@@ -72,6 +69,7 @@ pub(crate) fn status(state: &mut WebCanvasState) -> WebReply {
     let body = match op_auth_bridge::poll(op_auth_bridge::SESSION_HANDLE) {
         AuthStatus::SignedIn {
             display_name,
+            username,
             primary_email,
             avatar_url,
             ..
@@ -79,16 +77,13 @@ pub(crate) fn status(state: &mut WebCanvasState) -> WebReply {
             let avatar_revision = avatar_url
                 .as_deref()
                 .and_then(|url| crate::profile_avatar_fetch::profile_avatar_revision(url).ok());
-            state.editor.editor_ui.account = AccountState::SignedIn {
-                handle: primary_email
-                    .clone()
-                    .unwrap_or_else(|| display_name.clone()),
-                display_name: display_name.clone(),
-            };
+            state.editor.editor_ui.account =
+                AccountState::signed_in_profile(display_name.clone(), username.clone());
             serde_json::json!({
                 "available": available,
                 "signed_in": true,
                 "display_name": display_name,
+                "username": username,
                 "primary_email": primary_email,
                 "avatar_revision": avatar_revision,
             })
@@ -257,6 +252,7 @@ pub(crate) fn login_status(state: &mut WebCanvasState) -> WebReply {
         AuthStatus::Exchanging => serde_json::json!({ "state": "exchanging" }),
         AuthStatus::SignedIn {
             display_name,
+            username,
             primary_email,
             avatar_url,
             ..
@@ -265,15 +261,12 @@ pub(crate) fn login_status(state: &mut WebCanvasState) -> WebReply {
                 .as_deref()
                 .and_then(|url| crate::profile_avatar_fetch::profile_avatar_revision(url).ok());
             state.auth_login_handle = None;
-            state.editor.editor_ui.account = AccountState::SignedIn {
-                handle: primary_email
-                    .clone()
-                    .unwrap_or_else(|| display_name.clone()),
-                display_name: display_name.clone(),
-            };
+            state.editor.editor_ui.account =
+                AccountState::signed_in_profile(display_name.clone(), username.clone());
             serde_json::json!({
                 "state": "signed_in",
                 "display_name": display_name,
+                "username": username,
                 "primary_email": primary_email,
                 "avatar_revision": avatar_revision,
             })

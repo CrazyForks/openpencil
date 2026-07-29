@@ -94,7 +94,7 @@ mod tests {
     fn account() -> AccountState {
         AccountState::SignedIn {
             display_name: "Kayshen".into(),
-            handle: "Kayshen".into(),
+            username: "kayshen".into(),
         }
     }
 
