@@ -12,7 +12,9 @@ use reqwest::{
     redirect::Policy,
     StatusCode,
 };
-use url::{Host, Url};
+#[cfg(any(test, debug_assertions))]
+use url::Host;
+use url::Url;
 use zeroize::Zeroizing;
 
 use crate::{
