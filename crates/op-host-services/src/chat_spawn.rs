@@ -9,6 +9,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::OnceLock;
+#[cfg(not(windows))]
 use std::time::Duration;
 
 use tokio::process::Command;
@@ -21,6 +22,7 @@ use tokio::process::Command;
 /// launch with no UI to explain it. A healthy `-ilc` dump measures ~2.2 s
 /// on a developer machine; a run past this budget is a broken rc, and
 /// falling back to the unrepaired process env beats never starting.
+#[cfg(not(windows))]
 const LOGIN_SHELL_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// Environment variables grafted from the login shell onto this process,
@@ -174,6 +176,7 @@ fn capture_env_dump(program: &str, args: &[&str], timeout: Duration) -> EnvDump 
 /// API keys, base URLs, proxy URLs) are single-line by construction. A
 /// key containing whitespace is not an environment entry but rc chatter
 /// that happened to print an `=`, so it is dropped.
+#[cfg(any(not(windows), test))]
 fn parse_env_dump(text: &str) -> BTreeMap<String, String> {
     let mut map = BTreeMap::new();
     for line in text.lines() {
