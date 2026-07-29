@@ -244,20 +244,20 @@ impl DesktopApp {
                 false
             }
             A::CheckUpdates => {
-                // Re-run the probe; the System tab reflects `Checking`
-                // immediately and the result lands on a later frame.
-                // Skip when a probe is already in flight so repeated
-                // menu clicks can't stack untracked worker threads.
-                if self.update_probe.is_pending() {
-                    false
-                } else {
-                    self.host.editor_state_mut().editor_ui.update_status =
-                        op_editor_core::UpdateStatus::Checking;
-                    self.host.mark_editor_state_dirty();
+                // Make every manual check visible immediately. An automatic
+                // startup probe may already be running, so reveal that same
+                // worker instead of stacking another request.
+                self.host.apply_open_agent_settings_tab(
+                    op_editor_core::agent_settings::AgentSettingsTab::System,
+                );
+                self.host.editor_state_mut().editor_ui.update_status =
+                    op_editor_core::UpdateStatus::Checking;
+                self.host.mark_editor_state_dirty();
+                if !self.update_probe.is_pending() {
                     self.update_probe = update_check::UpdateProbe::spawn();
                     self.update_prompt_shown = false;
-                    true
                 }
+                true
             }
             A::OpenGithub => {
                 update_check::open_url("https://github.com/ZSeven-W/openpencil");

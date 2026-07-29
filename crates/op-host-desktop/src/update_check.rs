@@ -95,7 +95,7 @@ impl UpdateProbe {
             Err(TryRecvError::Empty) => None,
             Err(TryRecvError::Disconnected) => {
                 self.rx = None;
-                None
+                Some(UpdateStatus::Error)
             }
         }
     }
@@ -420,6 +420,16 @@ mod tests {
     fn disabled_auto_check_creates_idle_probe() {
         let probe = UpdateProbe::for_auto_check(false);
 
+        assert!(!probe.is_pending());
+    }
+
+    #[test]
+    fn disconnected_worker_resolves_as_error_instead_of_staying_checking() {
+        let (tx, rx) = mpsc::channel();
+        drop(tx);
+        let mut probe = UpdateProbe { rx: Some(rx) };
+
+        assert_eq!(probe.poll(), Some(UpdateStatus::Error));
         assert!(!probe.is_pending());
     }
 }

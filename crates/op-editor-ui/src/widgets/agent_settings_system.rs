@@ -1,7 +1,7 @@
 //! System tab of the settings modal.
 //!
-//! Renders the auto-update preference row plus the experimental-features
-//! opt-in (gates canvas Preview mode + the property-panel Widget section).
+//! Renders the auto-update preference and live release-probe status plus the
+//! experimental-features opt-in and pencil-cursor picker.
 
 use crate::theme::Theme;
 use crate::widgets::agent_settings_i18n::t as t_settings;
@@ -10,14 +10,16 @@ use crate::widgets::agent_settings_switch::{
 };
 use crate::widgets::button::tokens_from_theme;
 use crate::widgets::PaintCx;
-use crate::{Point2D, Rect, TextLayout};
+use crate::{Color, Point2D, Rect, TextLayout};
 use jian_widgets::components::card::Card;
 use op_editor_core::agent_settings::AgentSettings;
-use op_editor_core::editor_ui_state::EditorUiState;
+use op_editor_core::editor_ui_state::{EditorUiState, UpdateStatus};
 
 const TITLE_H: f32 = 36.0;
-const CARD_H: f32 = 58.0;
+const TOGGLE_CARD_H: f32 = 58.0;
+const UPDATE_CARD_H: f32 = 116.0;
 const CARD_GAP: f32 = 12.0;
+const STATUS_DOT_RADIUS: f32 = 4.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SystemHit {
@@ -34,13 +36,18 @@ const CURSOR_SWATCH: f32 = 52.0;
 const CURSOR_SWATCH_GAP: f32 = 10.0;
 
 pub(super) fn content_height() -> f32 {
-    12.0 + TITLE_H + CARD_H + CARD_GAP + CARD_H + CARD_GAP + CURSOR_CARD_H + 24.0
+    let update = if AUTO_UPDATE_AVAILABLE {
+        UPDATE_CARD_H + CARD_GAP
+    } else {
+        0.0
+    };
+    12.0 + TITLE_H + update + TOGGLE_CARD_H + CARD_GAP + CURSOR_CARD_H + 24.0
 }
 
 fn cursor_card_rect(content: Rect) -> Rect {
     let prev = experimental_card_rect(content);
     Rect {
-        origin: Point2D::new(content.origin.x, prev.origin.y + CARD_H + CARD_GAP),
+        origin: Point2D::new(content.origin.x, prev.origin.y + TOGGLE_CARD_H + CARD_GAP),
         size: Point2D::new(content.size.x, CURSOR_CARD_H),
     }
 }
@@ -60,7 +67,7 @@ fn cursor_swatch_rect(card: Rect, i: usize) -> Rect {
 fn auto_update_card_rect(content: Rect) -> Rect {
     Rect {
         origin: Point2D::new(content.origin.x, content.origin.y + 12.0 + TITLE_H),
-        size: Point2D::new(content.size.x, CARD_H),
+        size: Point2D::new(content.size.x, UPDATE_CARD_H),
     }
 }
 
@@ -79,9 +86,9 @@ fn experimental_card_rect(content: Rect) -> Rect {
     Rect {
         origin: Point2D::new(
             content.origin.x,
-            content.origin.y + 12.0 + TITLE_H + CARD_H + CARD_GAP,
+            content.origin.y + 12.0 + TITLE_H + UPDATE_CARD_H + CARD_GAP,
         ),
-        size: Point2D::new(content.size.x, CARD_H),
+        size: Point2D::new(content.size.x, TOGGLE_CARD_H),
     }
 }
 
@@ -91,7 +98,7 @@ fn switch_rect_for(card: Rect) -> Rect {
     Rect {
         origin: Point2D::new(
             card.origin.x + card.size.x - 16.0 - SETTINGS_SWITCH_W,
-            card.origin.y + (CARD_H - SETTINGS_SWITCH_H) / 2.0,
+            card.origin.y + (TOGGLE_CARD_H - SETTINGS_SWITCH_H) / 2.0,
         ),
         size: Point2D::new(SETTINGS_SWITCH_W, SETTINGS_SWITCH_H),
     }
@@ -143,6 +150,7 @@ pub(super) fn paint_system_tab(
             "settings.autoUpdateDesc",
             settings.auto_update_enabled,
         );
+        paint_update_status(cx, theme, ui, auto_update_card_rect(content));
     }
     paint_toggle_card(
         cx,
@@ -154,6 +162,108 @@ pub(super) fn paint_system_tab(
         settings.experimental_features_enabled,
     );
     paint_cursor_card(cx, theme, ui, cursor_card_rect(content));
+}
+
+/// Lower half of the auto-update card: current probe state and build version.
+fn paint_update_status(cx: &mut PaintCx<'_>, theme: &Theme, ui: &EditorUiState, card: Rect) {
+    let (color, status_key, description_key) = status_view(theme, &ui.update_status);
+    let divider_y = card.origin.y + TOGGLE_CARD_H;
+    cx.backend.stroke_line(
+        Point2D::new(card.origin.x + 16.0, divider_y),
+        Point2D::new(card.origin.x + card.size.x - 16.0, divider_y),
+        theme.border,
+        1.0,
+    );
+
+    let dot_center_y = divider_y + 20.0;
+    cx.backend.fill_oval(
+        Rect {
+            origin: Point2D::new(card.origin.x + 16.0, dot_center_y - STATUS_DOT_RADIUS),
+            size: Point2D::new(STATUS_DOT_RADIUS * 2.0, STATUS_DOT_RADIUS * 2.0),
+        },
+        color,
+    );
+
+    let status_text = match &ui.update_status {
+        UpdateStatus::Available { version } => {
+            format!("{} v{version}", t_settings(ui, status_key))
+        }
+        _ => t_settings(ui, status_key).to_string(),
+    };
+    let status = TextLayout::single_run(
+        &status_text,
+        "system-ui",
+        12.0,
+        color.to_jian(),
+        Point2D::new(0.0, 0.0),
+    );
+    cx.backend.draw_text(
+        &status,
+        Point2D::new(card.origin.x + 32.0, divider_y + 24.0),
+    );
+
+    let current_version = format!(
+        "{}: v{}",
+        t_settings(ui, "settings.system.currentVersion"),
+        env!("CARGO_PKG_VERSION")
+    );
+    let current_version_w = cx.backend.measure_text(&current_version, 10.0);
+    let version = TextLayout::single_run(
+        &current_version,
+        "system-ui",
+        10.0,
+        theme.muted_foreground.to_jian(),
+        Point2D::new(0.0, 0.0),
+    );
+    cx.backend.draw_text(
+        &version,
+        Point2D::new(
+            card.origin.x + card.size.x - 16.0 - current_version_w,
+            divider_y + 24.0,
+        ),
+    );
+
+    let description = TextLayout::single_run(
+        t_settings(ui, description_key),
+        "system-ui",
+        11.0,
+        theme.muted_foreground.to_jian(),
+        Point2D::new(0.0, 0.0),
+    );
+    cx.backend.draw_text(
+        &description,
+        Point2D::new(card.origin.x + 16.0, divider_y + 46.0),
+    );
+}
+
+fn status_view(theme: &Theme, status: &UpdateStatus) -> (Color, &'static str, &'static str) {
+    match status {
+        UpdateStatus::Idle => (
+            theme.muted_foreground,
+            "settings.system.idle",
+            "settings.system.idleDescription",
+        ),
+        UpdateStatus::Checking => (
+            theme.primary,
+            "settings.system.checking",
+            "settings.system.checkingDescription",
+        ),
+        UpdateStatus::UpToDate => (
+            theme.status_success,
+            "settings.system.upToDate",
+            "settings.system.upToDateDescription",
+        ),
+        UpdateStatus::Available { .. } => (
+            theme.status_warning,
+            "settings.system.updateAvailable",
+            "settings.system.updateAvailableDescription",
+        ),
+        UpdateStatus::Error => (
+            theme.destructive,
+            "settings.system.errorStatus",
+            "settings.system.errorDescription",
+        ),
+    }
 }
 
 /// The pencil-cursor picker: a labelled card with one swatch per style,

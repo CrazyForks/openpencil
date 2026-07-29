@@ -3,7 +3,7 @@
 
 use super::WidgetHostNative;
 use op_editor_core::host_keyboard_transitions as shared;
-use op_editor_core::{figma_import_state::ImportSource, ReorderDirection};
+use op_editor_core::{figma_import_state::ImportSource, AgentSettingsTab, ReorderDirection};
 
 impl WidgetHostNative {
     /// True when a non-chat text surface owns keyboard input. Plain-string
@@ -537,6 +537,42 @@ impl WidgetHostNative {
             ui.agent_settings_drag = None;
             ui.ime_preedit = None;
         }
+        self.mark_dirty();
+        true
+    }
+
+    /// Open the floating settings modal on a specific tab.
+    ///
+    /// Native menu commands use this instead of toggling so a command can
+    /// reveal its live status even when Settings is already open elsewhere.
+    pub fn apply_open_agent_settings_tab(&mut self, tab: AgentSettingsTab) -> bool {
+        self.commit_variable_row_focus_if_any();
+        self.editor_state.editor_ui.blur_collab_join_input();
+        self.commit_settings_focus_if_any();
+        shared::commit_editing_for_modal(&mut self.editor_state);
+        self.design_md_drag = None;
+        self.component_browser_drag = None;
+        self.icon_picker_drag = None;
+        {
+            let ui = &mut self.editor_state.editor_ui;
+            ui.close_font_picker();
+            ui.close_icon_picker();
+            ui.design_md_panel.open = false;
+            ui.design_md_panel.hover = None;
+            ui.component_browser_open = false;
+            ui.component_browser_kit_picker_open = false;
+            ui.component_browser_confirm_delete_kit = None;
+            ui.component_browser_hover = None;
+            ui.layer_context_menu = None;
+            ui.agent_settings_open = true;
+            ui.agent_settings.tab = tab;
+            ui.agent_settings.scroll_y.offset = 0.0;
+            ui.agent_settings_drag = None;
+            ui.ime_preedit = None;
+        }
+        self.editor_state.ui.path_anchor_menu = None;
+        self.close_image_popovers_for_higher_overlay();
+        self.editor_state.chat.blur_input(self.now_ms);
         self.mark_dirty();
         true
     }

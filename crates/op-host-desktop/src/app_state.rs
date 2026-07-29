@@ -71,6 +71,10 @@ impl DesktopApp {
                     .auto_update_enabled,
             )
         };
+        if update_probe.is_pending() {
+            host.editor_state_mut().editor_ui.update_status =
+                op_editor_core::UpdateStatus::Checking;
+        }
         let model_probe = if cfg!(test) {
             op_host_services::model_discovery::ModelProbe::idle()
         } else {

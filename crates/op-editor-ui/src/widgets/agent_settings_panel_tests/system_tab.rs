@@ -24,14 +24,53 @@ fn system_auto_update_switch_has_click_target() {
 }
 
 #[test]
-fn system_tab_uses_ts_compact_auto_update_card_height() {
+fn system_tab_reserves_space_for_update_status() {
     let mut state = EditorState::default();
     state.editor_ui.agent_settings.tab = AgentSettingsTab::System;
     let panel = AgentSettingsPanel::for_editor(&state);
 
     assert_eq!(
         panel.content_total_height(),
-        320.0,
-        "System tab = title + auto-update + experimental + pencil-cursor picker"
+        378.0,
+        "System tab = title + update status + experimental + pencil-cursor picker"
     );
+}
+
+#[test]
+fn system_tab_paints_each_update_probe_result() {
+    let cases = [
+        (op_editor_core::UpdateStatus::Idle, "Not checked yet"),
+        (op_editor_core::UpdateStatus::Checking, "Checking…"),
+        (op_editor_core::UpdateStatus::UpToDate, "Up to date"),
+        (
+            op_editor_core::UpdateStatus::Available {
+                version: "9.8.7".to_string(),
+            },
+            "Update available v9.8.7",
+        ),
+        (op_editor_core::UpdateStatus::Error, "Check failed"),
+    ];
+
+    for (status, expected) in cases {
+        let mut state = EditorState::default();
+        state.editor_ui.locale = op_editor_core::Locale::EnUs;
+        state.editor_ui.agent_settings.tab = AgentSettingsTab::System;
+        state.editor_ui.update_status = status;
+        let panel = AgentSettingsPanel::for_editor(&state);
+        let rect = panel.rect(1200.0, 800.0);
+        let mut backend = CaptureBackend::default();
+        let mut cx = PaintCx {
+            backend: &mut backend,
+        };
+
+        panel.paint(&mut cx, rect);
+
+        assert!(
+            backend
+                .text_effective_points
+                .iter()
+                .any(|(text, _)| text == expected),
+            "System tab should paint update status {expected:?}"
+        );
+    }
 }

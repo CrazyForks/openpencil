@@ -3,8 +3,8 @@
 
 use super::WidgetHostNative;
 use op_editor_core::{
-    agent_settings::SettingsFocus, figma_import_state::ImportSource, ui_draft::ColorTarget, NodeId,
-    PropertyFocus,
+    agent_settings::SettingsFocus, figma_import_state::ImportSource, ui_draft::ColorTarget,
+    AgentSettingsTab, NodeId, PropertyFocus,
 };
 
 fn seed(host: &mut WidgetHostNative, json: &str) {
@@ -99,6 +99,33 @@ fn closing_settings_clears_focus_before_an_import_shortcut() {
 
     assert!(host.apply_open_figma_import());
     assert!(host.editor_state().editor_ui.figma_import_open);
+}
+
+#[test]
+fn opening_a_specific_settings_tab_reveals_it_and_commits_prior_input() {
+    let mut host = WidgetHostNative::new();
+    {
+        let ui = &mut host.editor_state_mut().editor_ui;
+        ui.agent_settings.tab = AgentSettingsTab::Mcp;
+        ui.agent_settings.scroll_y.offset = 84.0;
+        ui.agent_settings.focus = Some(SettingsFocus::McpPort);
+        ui.settings_input.set_text("4321");
+        ui.design_md_panel.open = true;
+        ui.component_browser_open = true;
+        ui.open_icon_picker(false);
+    }
+
+    assert!(host.apply_open_agent_settings_tab(AgentSettingsTab::System));
+
+    let ui = &host.editor_state().editor_ui;
+    assert!(ui.agent_settings_open);
+    assert_eq!(ui.agent_settings.tab, AgentSettingsTab::System);
+    assert_eq!(ui.agent_settings.scroll_y.offset, 0.0);
+    assert!(ui.agent_settings.focus.is_none());
+    assert_eq!(ui.agent_settings.mcp_server.port, 4321);
+    assert!(!ui.design_md_panel.open);
+    assert!(!ui.component_browser_open);
+    assert!(!ui.icon_picker.open);
 }
 
 #[test]
