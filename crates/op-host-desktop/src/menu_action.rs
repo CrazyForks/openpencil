@@ -135,16 +135,6 @@ impl DesktopApp {
                 );
                 true
             }
-            A::ExportAllFrames => {
-                self.host.commit_variable_row_focus_if_any_pub();
-                persistence::run_action(
-                    op_editor_core::editor_ui_state::FileAction::ExportAllFrames,
-                    &mut self.host,
-                    &mut self.current_path,
-                    self.window.as_ref(),
-                );
-                true
-            }
             A::Undo => self.collab_runtime.request_undo(&mut self.host) || self.host.apply_undo(),
             A::Redo => self.collab_runtime.reject_redo(&mut self.host) || self.host.apply_redo(),
             // Route through the input-aware dispatch (not the raw
