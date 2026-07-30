@@ -98,6 +98,7 @@ mod window_resize;
 mod window_state;
 
 use op_host_native::{NativeBackend, SharedSkiaContext, SharedSkiaError, WidgetHostNative};
+use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::time::Instant;
 use winit::event_loop::{ControlFlow, EventLoop, EventLoopProxy};
@@ -538,6 +539,31 @@ fn init_tracing() {
         .try_init();
 }
 
+fn conflicting_headless_modes<I, S>(args: I) -> Option<Vec<&'static str>>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    const MODE_FLAGS: [&str; 6] = [
+        "--mcp",
+        "--mcp-http",
+        "--serve-web",
+        "--tcc-selftest",
+        "--render-shots",
+        "--enrich-images",
+    ];
+    let mut requested = Vec::new();
+    for arg in args {
+        let arg = arg.as_ref();
+        for mode in MODE_FLAGS {
+            if arg == OsStr::new(mode) && !requested.contains(&mode) {
+                requested.push(mode);
+            }
+        }
+    }
+    (requested.len() > 1).then_some(requested)
+}
+
 fn main() {
     // FIRST, before any thread exists: graft the login-shell PATH and proxy
     // exports onto this process. A Dock/Finder launch inherits launchd's
@@ -566,6 +592,13 @@ fn main() {
         Err(err) => eprintln!("[fonts] skipping imported-font rescan: {err}"),
     }
     init_tracing();
+    if let Some(modes) = conflicting_headless_modes(std::env::args_os().skip(1)) {
+        eprintln!(
+            "openpencil-desktop: headless modes are mutually exclusive: {}",
+            modes.join(", ")
+        );
+        std::process::exit(2);
+    }
     // `--mcp` / `--mcp-http` swap the GUI for an MCP server mode;
     // when one of those ran, exit instead of opening a window.
     if mcp_serve::run_cli_if_requested() {

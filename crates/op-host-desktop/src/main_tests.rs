@@ -5,6 +5,38 @@ use super::*;
 use winit::keyboard::{Key, NamedKey};
 
 #[test]
+fn distinct_headless_modes_are_rejected_before_dispatch() {
+    assert_eq!(
+        conflicting_headless_modes([
+            "--render-shots",
+            "input.op",
+            "shots",
+            "--enrich-images",
+            "input.op",
+            "output.op",
+        ]),
+        Some(vec!["--render-shots", "--enrich-images"])
+    );
+    assert_eq!(
+        conflicting_headless_modes(["--mcp-http", "3100", "input.op", "--tcc-selftest"]),
+        Some(vec!["--mcp-http", "--tcc-selftest"])
+    );
+}
+
+#[test]
+fn one_headless_mode_or_repeated_same_flag_is_not_a_conflict() {
+    assert_eq!(
+        conflicting_headless_modes(["--render-shots", "input.op", "shots"]),
+        None
+    );
+    assert_eq!(
+        conflicting_headless_modes(["--enrich-images", "input.op", "--enrich-images"]),
+        None
+    );
+    assert_eq!(conflicting_headless_modes(["document.op"]), None);
+}
+
+#[test]
 fn cursor_only_redraw_without_visible_state_change_skips_present() {
     let mut app = DesktopApp::new(None);
     app.redraw_pending = true;
