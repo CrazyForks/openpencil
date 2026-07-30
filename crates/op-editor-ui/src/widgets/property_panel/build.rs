@@ -297,6 +297,7 @@ impl PropertyPanel {
         Self {
             id: WidgetId::new(2000),
             color_variable_picker_scroll: ui.property_color_variable_picker_scroll.offset.max(0.0),
+            color_variable_picker_hover: ui.property_color_variable_picker_hover,
             snapshot,
             theme: theme_for(ui),
             page_only: false,

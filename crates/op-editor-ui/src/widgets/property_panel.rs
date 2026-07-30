@@ -147,6 +147,10 @@ pub struct PropertyPanel {
     /// list. The popup is height-capped, so a long variable set scrolls
     /// inside it instead of stretching the inspector.
     pub color_variable_picker_scroll: f32,
+    /// Row slot of the open colour-variable popup under the cursor
+    /// (`None` = none), mirrored from
+    /// `editor_ui.property_color_variable_picker_hover`.
+    pub color_variable_picker_hover: Option<usize>,
     pub color_variables: Vec<ColorVariableOption>,
     pub fill_variable_ref: Option<String>,
     pub stroke_variable_ref: Option<String>,

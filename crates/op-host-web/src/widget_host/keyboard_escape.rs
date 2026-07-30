@@ -160,13 +160,9 @@ impl WidgetHost {
             .editor_state
             .editor_ui
             .property_color_variable_picker_open
-            .take()
             .is_some()
         {
-            self.editor_state
-                .editor_ui
-                .property_color_variable_picker_scroll
-                .offset = 0.0;
+            self.editor_state.editor_ui.close_color_variable_picker();
             self.mark_dirty();
             return true;
         }

@@ -253,9 +253,7 @@ impl WidgetHostNative {
                 {
                     // Non-primary fill swatch — bind the picker to this
                     // fill so HSV writes back to `fills[index]`.
-                    self.editor_state
-                        .editor_ui
-                        .property_color_variable_picker_open = None;
+                    self.editor_state.editor_ui.close_color_variable_picker();
                     let _ = self.editor_state.open_color_picker_for_fill(
                         op_editor_core::ui_draft::ColorTarget::Fill,
                         index,

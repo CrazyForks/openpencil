@@ -198,6 +198,14 @@ impl PropertyPanel {
         })
     }
 
+    /// Row slot under `point` for hover tracking — the same scrolled
+    /// geometry [`Self::color_variable_picker_action_at`] presses
+    /// against, so a hovered row is always a clickable one.
+    pub fn color_variable_picker_row_at(&self, panel_rect: Rect, point: Point2D) -> Option<usize> {
+        self.color_variable_picker_layout(panel_rect)?
+            .row_slot_at(point)
+    }
+
     /// Scroll range of the popup's list (host wheel handler clamp).
     pub fn color_variable_picker_max_scroll(&self, panel_rect: Rect) -> f32 {
         self.color_variable_picker_layout(panel_rect)

@@ -7,6 +7,7 @@
 //! tests pin both fixes: the popup is an overlay (it must never move any
 //! other panel control), and its two text columns can never overlap.
 
+use super::press_flow::PropertyOverlayPress;
 use super::property_panel::{PropertyPanel, PropertyPanelAction};
 use super::property_panel_color_variables::{
     color_variable_picker_layout, row_hex_rect, row_name_budget, row_name_rect,
@@ -452,4 +453,255 @@ fn empty_variable_set_has_no_popup() {
         0.0,
     )
     .is_none());
+}
+
+// ─── Press + hover routing ─────────────────────────────────────────────
+//
+// The popup's rows used to be unreachable: the host routed its presses
+// through the panel's ordinary control walk, which knows nothing about
+// the overlay's scrolled row rects, so every row click fell into the
+// `contains` swallow and was eaten. Hover had no state at all, so the
+// controls painted underneath lit up through the popup.
+
+const VIEWPORT_W: f32 = 1280.0;
+const VIEWPORT_H: f32 = 740.0;
+
+/// The rail rect the shared press / hover flows derive themselves.
+fn press_panel_rect(state: &EditorState) -> Rect {
+    crate::widgets::press_flow::property_panel_rect(state, VIEWPORT_W, VIEWPORT_H)
+}
+
+fn press(state: &mut EditorState, point: Point2D) -> PropertyOverlayPress {
+    crate::widgets::press_flow::press_color_variable_picker(state, VIEWPORT_W, VIEWPORT_H, point)
+}
+
+/// Run the picked action through the shared property dispatch, the way
+/// both hosts' `finish_property_overlay_press` does.
+fn dispatch(state: &mut EditorState, action: &PropertyPanelAction) {
+    use crate::widgets::property_panel_dispatch as dispatch;
+    let mut image_adjustment_drag = None;
+    let mut effect_radius_drag = None;
+    let _ = dispatch::apply_property_action(
+        state,
+        action,
+        dispatch::PropertyActionContext {
+            now_ms: 0,
+            resolved_sizing_fallback: None,
+            image_adjustment_drag: &mut image_adjustment_drag,
+            effect_radius_drag: &mut effect_radius_drag,
+        },
+    );
+}
+
+fn hover(state: &mut EditorState, rect: Rect, point: Point2D) -> (bool, bool) {
+    let panel = PropertyPanel::for_selection(state).expect("rectangle panel");
+    crate::widgets::cursor_hover_flow::color_variable_picker_hover(state, Some(&panel), rect, point)
+}
+
+/// A press on a variable row binds it and the popup closes behind the
+/// selection.
+#[test]
+fn press_on_variable_row_binds_and_closes() {
+    let mut state = state_with_variables(6);
+    state.editor_ui.property_color_variable_picker_open = Some(ColorTarget::Fill);
+    let rect = press_panel_rect(&state);
+    let layout = open_layout(&state, rect);
+    let (row, row_rect) = layout.rows[2];
+    assert_eq!(row, ColorVariableRow::Variable(2));
+
+    let action = match press(&mut state, row_center(row_rect)) {
+        PropertyOverlayPress::Action(action) => action,
+        other => panic!("row press must dispatch an action, got {other:?}"),
+    };
+    assert_eq!(
+        action,
+        PropertyPanelAction::BindColorVariable {
+            target: ColorTarget::Fill,
+            index: 2,
+        }
+    );
+
+    dispatch(&mut state, &action);
+    assert_eq!(state.editor_ui.property_color_variable_picker_open, None);
+    assert_eq!(
+        state.editor_ui.property_color_variable_picker_scroll.offset, 0.0,
+        "closing must reset the list scroll"
+    );
+    let panel = PropertyPanel::for_selection(&state).expect("rectangle panel");
+    assert_eq!(
+        panel.fill_variable_ref.as_deref(),
+        Some("color-border-subtle-02"),
+        "the pressed row is the variable that got bound"
+    );
+}
+
+/// Scrolling the list moves which variable a press at a given screen
+/// point binds — the row rects carry the offset and the press must read
+/// the same geometry paint does.
+#[test]
+fn press_after_scroll_binds_the_scrolled_row() {
+    let mut state = state_with_variables(40);
+    state.editor_ui.property_color_variable_picker_open = Some(ColorTarget::Fill);
+    state.editor_ui.property_color_variable_picker_scroll.offset = COLOR_VARIABLE_MENU_ROW_H * 3.0;
+    let rect = press_panel_rect(&state);
+    let layout = open_layout(&state, rect);
+    let (row, row_rect) = *layout
+        .rows
+        .iter()
+        .find(|(_, r)| r.origin.y >= layout.viewport.origin.y)
+        .expect("some row is still visible");
+    assert!(
+        matches!(row, ColorVariableRow::Variable(index) if index >= 3),
+        "three rows of scroll should reveal a later variable, got {row:?}"
+    );
+
+    match press(&mut state, row_center(row_rect)) {
+        PropertyOverlayPress::Action(PropertyPanelAction::BindColorVariable { target, index }) => {
+            assert_eq!(target, ColorTarget::Fill);
+            assert_eq!(ColorVariableRow::Variable(index), row);
+        }
+        other => panic!("scrolled row press must bind that row, got {other:?}"),
+    }
+}
+
+/// The leading unbind row resolves the binding back to a concrete
+/// colour and closes the popup.
+#[test]
+fn press_on_unbind_row_unbinds() {
+    let mut state = state_with_variables(4);
+    assert!(state.bind_selected_color_variable(ColorTarget::Fill, "color-border-subtle-01"));
+    state.editor_ui.property_color_variable_picker_open = Some(ColorTarget::Fill);
+    let rect = press_panel_rect(&state);
+    let layout = open_layout(&state, rect);
+    assert_eq!(layout.rows[0].0, ColorVariableRow::Unbind);
+
+    let action = match press(&mut state, row_center(layout.rows[0].1)) {
+        PropertyOverlayPress::Action(action) => action,
+        other => panic!("unbind row press must dispatch an action, got {other:?}"),
+    };
+    assert_eq!(
+        action,
+        PropertyPanelAction::UnbindColorVariable(ColorTarget::Fill)
+    );
+
+    dispatch(&mut state, &action);
+    assert_eq!(state.editor_ui.property_color_variable_picker_open, None);
+    let panel = PropertyPanel::for_selection(&state).expect("rectangle panel");
+    assert_eq!(panel.fill_variable_ref, None);
+}
+
+/// A press on the popup's own padding is swallowed — the popup stays
+/// open and nothing is bound.
+#[test]
+fn press_on_popup_padding_is_swallowed() {
+    let mut state = state_with_variables(6);
+    state.editor_ui.property_color_variable_picker_open = Some(ColorTarget::Fill);
+    let rect = press_panel_rect(&state);
+    let layout = open_layout(&state, rect);
+    let padding = Point2D::new(row_center(layout.popup).x, layout.popup.origin.y + 1.0);
+    assert!(
+        layout.row_at(padding).is_none(),
+        "fixture point must be popup chrome, not a row"
+    );
+
+    assert_eq!(press(&mut state, padding), PropertyOverlayPress::Swallow);
+    assert_eq!(
+        state.editor_ui.property_color_variable_picker_open,
+        Some(ColorTarget::Fill),
+        "chrome presses keep the popup open"
+    );
+}
+
+/// A press outside the popup dismisses it.
+#[test]
+fn press_outside_dismisses_and_clears() {
+    let mut state = state_with_variables(6);
+    state.editor_ui.property_color_variable_picker_open = Some(ColorTarget::Fill);
+    state.editor_ui.property_color_variable_picker_hover = Some(1);
+    let rect = press_panel_rect(&state);
+    let layout = open_layout(&state, rect);
+    let outside = Point2D::new(layout.popup.origin.x - 20.0, row_center(layout.popup).y);
+
+    assert_eq!(press(&mut state, outside), PropertyOverlayPress::Dismissed);
+    assert_eq!(state.editor_ui.property_color_variable_picker_open, None);
+    assert_eq!(state.editor_ui.property_color_variable_picker_hover, None);
+}
+
+/// A cursor over a row lights that row and reports that the popup owns
+/// the point, so the host consumes the move instead of letting the rail
+/// underneath hover.
+#[test]
+fn hover_over_row_sets_row_hover_and_owns_point() {
+    let mut state = state_with_variables(6);
+    state.editor_ui.property_color_variable_picker_open = Some(ColorTarget::Fill);
+    let rect = press_panel_rect(&state);
+    let layout = open_layout(&state, rect);
+
+    let (over_popup, changed) = hover(&mut state, rect, row_center(layout.rows[1].1));
+    assert!(over_popup, "a row press point is on the popup");
+    assert!(changed);
+    assert_eq!(
+        state.editor_ui.property_color_variable_picker_hover,
+        Some(1)
+    );
+
+    // Re-entering the same row is not a repaint.
+    let (over_popup, changed) = hover(&mut state, rect, row_center(layout.rows[1].1));
+    assert!(over_popup);
+    assert!(!changed);
+}
+
+/// Moving off the popup drops the row hover and hands the move back to
+/// the surfaces below.
+#[test]
+fn hover_outside_popup_clears_row_hover() {
+    let mut state = state_with_variables(6);
+    state.editor_ui.property_color_variable_picker_open = Some(ColorTarget::Fill);
+    state.editor_ui.property_color_variable_picker_hover = Some(1);
+    let rect = press_panel_rect(&state);
+    let layout = open_layout(&state, rect);
+    let outside = Point2D::new(layout.popup.origin.x - 20.0, row_center(layout.popup).y);
+
+    let (over_popup, changed) = hover(&mut state, rect, outside);
+    assert!(!over_popup);
+    assert!(changed);
+    assert_eq!(state.editor_ui.property_color_variable_picker_hover, None);
+}
+
+/// Popup chrome owns the point without lighting any row.
+#[test]
+fn hover_over_popup_padding_owns_point_without_a_row() {
+    let mut state = state_with_variables(6);
+    state.editor_ui.property_color_variable_picker_open = Some(ColorTarget::Fill);
+    state.editor_ui.property_color_variable_picker_hover = Some(1);
+    let rect = press_panel_rect(&state);
+    let layout = open_layout(&state, rect);
+    let padding = Point2D::new(row_center(layout.popup).x, layout.popup.origin.y + 1.0);
+
+    let (over_popup, changed) = hover(&mut state, rect, padding);
+    assert!(over_popup);
+    assert!(changed);
+    assert_eq!(state.editor_ui.property_color_variable_picker_hover, None);
+}
+
+/// A closed popup is inert for hover, and closing drops the retained
+/// row hover with the scroll.
+#[test]
+fn closing_the_popup_clears_hover_and_scroll() {
+    let mut state = state_with_variables(6);
+    state.editor_ui.property_color_variable_picker_open = Some(ColorTarget::Fill);
+    state.editor_ui.property_color_variable_picker_hover = Some(2);
+    state.editor_ui.property_color_variable_picker_scroll.offset = COLOR_VARIABLE_MENU_ROW_H;
+
+    assert!(state.editor_ui.close_color_variable_picker());
+    assert_eq!(state.editor_ui.property_color_variable_picker_hover, None);
+    assert_eq!(
+        state.editor_ui.property_color_variable_picker_scroll.offset,
+        0.0
+    );
+
+    let rect = press_panel_rect(&state);
+    let (over_popup, changed) = hover(&mut state, rect, Point2D::new(1100.0, 300.0));
+    assert!(!over_popup);
+    assert!(!changed, "a closed popup never reports a hover change");
 }

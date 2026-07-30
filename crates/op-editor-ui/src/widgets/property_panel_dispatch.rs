@@ -306,7 +306,7 @@ pub fn apply_property_action(
             ui.image_fill_popover_open = false;
             ui.close_font_picker();
             ui.font_weight_picker_open = false;
-            ui.property_color_variable_picker_open = None;
+            ui.close_color_variable_picker();
             Handled
         }
         A::SetFillType { index, fill_type } => {
@@ -314,7 +314,7 @@ pub fn apply_property_action(
             let ui = &mut state.editor_ui;
             ui.close_fill_type_picker();
             ui.image_fill_popover_open = false;
-            ui.property_color_variable_picker_open = None;
+            ui.close_color_variable_picker();
             Handled
         }
         A::AddFill => {
@@ -330,7 +330,7 @@ pub fn apply_property_action(
             let ui = &mut state.editor_ui;
             ui.close_fill_type_picker();
             ui.image_fill_popover_open = false;
-            ui.property_color_variable_picker_open = None;
+            ui.close_color_variable_picker();
             Handled
         }
         A::AddGradientStop => {
@@ -349,7 +349,7 @@ pub fn apply_property_action(
             ui.font_weight_picker_open = false;
             ui.export_scale_picker_open = false;
             ui.export_format_picker_open = false;
-            ui.property_color_variable_picker_open = None;
+            ui.close_color_variable_picker();
             if ui.image_fill_popover_open {
                 FollowUp(F::EnterImageCropEdit)
             } else {
@@ -388,7 +388,7 @@ pub fn apply_property_action(
             ui.font_weight_picker_open = false;
             ui.export_scale_picker_open = false;
             ui.export_format_picker_open = false;
-            ui.property_color_variable_picker_open = None;
+            ui.close_color_variable_picker();
             Handled
         }
         A::SetTextAlign(value) => {
@@ -412,7 +412,7 @@ pub fn apply_property_action(
             ui.image_fill_popover_open = false;
             ui.export_scale_picker_open = false;
             ui.export_format_picker_open = false;
-            ui.property_color_variable_picker_open = None;
+            ui.close_color_variable_picker();
             if opening {
                 FollowUp(F::EnsureSystemFontsLoaded)
             } else {
@@ -457,7 +457,7 @@ pub fn apply_property_action(
             ui.image_fill_popover_open = false;
             ui.export_scale_picker_open = false;
             ui.export_format_picker_open = false;
-            ui.property_color_variable_picker_open = None;
+            ui.close_color_variable_picker();
             Handled
         }
         A::SetFontWeight(choice) => {
@@ -478,7 +478,7 @@ pub fn apply_property_action(
             ui.image_fill_popover_open = false;
             ui.export_scale_picker_open = false;
             ui.export_format_picker_open = false;
-            ui.property_color_variable_picker_open = None;
+            ui.close_color_variable_picker();
             Handled
         }
         A::SetPaddingMode(mode) => {
@@ -505,7 +505,7 @@ pub fn apply_property_action(
             ui.image_fill_popover_open = false;
             ui.export_scale_picker_open = false;
             ui.export_format_picker_open = false;
-            ui.property_color_variable_picker_open = None;
+            ui.close_color_variable_picker();
             Handled
         }
         A::SetStrokeMode(mode) => {
@@ -520,13 +520,13 @@ pub fn apply_property_action(
         }
         A::OpenColorPicker(target) => {
             // Fallback anchor when called outside the press path.
-            state.editor_ui.property_color_variable_picker_open = None;
+            state.editor_ui.close_color_variable_picker();
             let _ = state.open_color_picker(color_target(*target), 0.0);
             Handled
         }
         A::OpenFillColorPicker(index) => {
             // Fallback anchor when called outside the press path.
-            state.editor_ui.property_color_variable_picker_open = None;
+            state.editor_ui.close_color_variable_picker();
             let _ = state.open_color_picker_for_fill(
                 op_editor_core::ui_draft::ColorTarget::Fill,
                 *index,
@@ -537,14 +537,12 @@ pub fn apply_property_action(
         A::ToggleColorVariablePicker(target) => {
             let target = color_target(*target);
             let ui = &mut state.editor_ui;
-            ui.property_color_variable_picker_open =
-                if ui.property_color_variable_picker_open == Some(target) {
-                    None
-                } else {
-                    // Each open starts at the top of the list.
-                    ui.property_color_variable_picker_scroll.offset = 0.0;
-                    Some(target)
-                };
+            let reopening = ui.property_color_variable_picker_open != Some(target);
+            // Each open starts at the top of the list, un-hovered.
+            ui.close_color_variable_picker();
+            if reopening {
+                ui.property_color_variable_picker_open = Some(target);
+            }
             ui.close_fill_type_picker();
             ui.image_fill_popover_open = false;
             ui.close_font_picker();
@@ -558,13 +556,13 @@ pub fn apply_property_action(
                 state.commit_history();
                 let _ = state.bind_selected_color_variable(color_target(*target), &name);
             }
-            state.editor_ui.property_color_variable_picker_open = None;
+            state.editor_ui.close_color_variable_picker();
             Handled
         }
         A::UnbindColorVariable(target) => {
             state.commit_history();
             let _ = state.unbind_selected_color_variable(color_target(*target));
-            state.editor_ui.property_color_variable_picker_open = None;
+            state.editor_ui.close_color_variable_picker();
             Handled
         }
         A::ToggleExportScalePicker => {
@@ -574,7 +572,7 @@ pub fn apply_property_action(
             ui.close_font_picker();
             ui.font_weight_picker_open = false;
             ui.export_picker_hover = None;
-            ui.property_color_variable_picker_open = None;
+            ui.close_color_variable_picker();
             Handled
         }
         A::ToggleExportFormatPicker => {
@@ -584,7 +582,7 @@ pub fn apply_property_action(
             ui.close_font_picker();
             ui.font_weight_picker_open = false;
             ui.export_picker_hover = None;
-            ui.property_color_variable_picker_open = None;
+            ui.close_color_variable_picker();
             Handled
         }
         A::SetExportScale(scale) => {
@@ -688,7 +686,7 @@ pub fn apply_property_action(
             ui.font_weight_picker_open = false;
             ui.export_scale_picker_open = false;
             ui.export_format_picker_open = false;
-            ui.property_color_variable_picker_open = None;
+            ui.close_color_variable_picker();
             Handled
         }
         A::SetInteractionNavigate { path } => {

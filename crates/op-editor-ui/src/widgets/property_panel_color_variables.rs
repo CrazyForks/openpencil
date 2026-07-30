@@ -92,13 +92,17 @@ impl ColorVariablePickerLayout {
     /// Row under `point`, or `None` when the point is outside the list
     /// or over a row scrolled out of view.
     pub fn row_at(&self, point: Point2D) -> Option<ColorVariableRow> {
+        self.row_slot_at(point).map(|slot| self.rows[slot].0)
+    }
+
+    /// Index into [`Self::rows`] of the row under `point` — the key the
+    /// hosts retain as hover state, so paint and hit-test agree on which
+    /// row is lit without re-deriving the leading unbind offset.
+    pub fn row_slot_at(&self, point: Point2D) -> Option<usize> {
         if !self.viewport.contains(point) {
             return None;
         }
-        self.rows
-            .iter()
-            .find(|(_, rect)| rect.contains(point))
-            .map(|(row, _)| *row)
+        self.rows.iter().position(|(_, rect)| rect.contains(point))
     }
 
     /// Whether `point` is anywhere on the popup — the host swallows
@@ -177,13 +181,15 @@ pub fn color_variable_picker_layout(
 }
 
 /// Paint the popup for an already-resolved layout. `current` is the
-/// bound variable name for the picker's target, if any.
+/// bound variable name for the picker's target, if any; `hover` is the
+/// row slot under the cursor (see [`ColorVariablePickerLayout::row_slot_at`]).
 pub fn paint_color_variable_picker(
     cx: &mut PaintCx<'_>,
     theme: &Theme,
     layout: &ColorVariablePickerLayout,
     variables: &[ColorVariableOption],
     current: Option<&str>,
+    hover: Option<usize>,
     locale: op_editor_core::Locale,
 ) {
     cx.backend
@@ -194,19 +200,20 @@ pub fn paint_color_variable_picker(
     cx.backend.save();
     cx.backend.clip_rect(layout.viewport);
     let viewport_bottom = layout.viewport.origin.y + layout.viewport.size.y;
-    for (row, rect) in &layout.rows {
+    for (slot, (row, rect)) in layout.rows.iter().enumerate() {
         if rect.origin.y + rect.size.y < layout.viewport.origin.y || rect.origin.y > viewport_bottom
         {
             continue;
         }
+        let hovered = hover == Some(slot);
         match row {
-            ColorVariableRow::Unbind => paint_unbind_row(cx, theme, locale, *rect),
+            ColorVariableRow::Unbind => paint_unbind_row(cx, theme, locale, hovered, *rect),
             ColorVariableRow::Variable(index) => {
                 let Some(variable) = variables.get(*index) else {
                     continue;
                 };
                 let active = current == Some(variable.name.as_str());
-                paint_variable_row(cx, theme, variable, active, *rect);
+                paint_variable_row(cx, theme, variable, active, hovered, *rect);
             }
         }
     }
@@ -256,9 +263,13 @@ fn paint_unbind_row(
     cx: &mut PaintCx<'_>,
     theme: &Theme,
     locale: op_editor_core::Locale,
+    hovered: bool,
     row: Rect,
 ) {
     let inner = row_inner(row);
+    if hovered {
+        cx.backend.fill_round_rect(inner, ROW_RADIUS, theme.muted);
+    }
     draw_icon(
         cx.backend,
         Icon::Close,
@@ -292,12 +303,17 @@ fn paint_variable_row(
     theme: &Theme,
     variable: &ColorVariableOption,
     active: bool,
+    hovered: bool,
     row: Rect,
 ) {
     let inner = row_inner(row);
+    // The bound row's tint wins over the hover wash, the way the export
+    // and effect-add popups resolve the same overlap.
     if active {
         cx.backend
             .fill_round_rect(inner, ROW_RADIUS, theme.row_selected_primary);
+    } else if hovered {
+        cx.backend.fill_round_rect(inner, ROW_RADIUS, theme.muted);
     }
     let swatch = Rect {
         origin: Point2D::new(

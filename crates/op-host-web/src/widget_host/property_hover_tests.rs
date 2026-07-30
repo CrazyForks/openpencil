@@ -412,3 +412,55 @@ fn codegen_preview_wheel_scrolls_code_not_property_panel() {
         0.0
     );
 }
+
+/// Web twin of the native `color_variable_popup_owns_hover_…` test: the
+/// popup owns every point on its chrome, so its own row lights up and
+/// the rail's stale wash underneath is dropped instead of showing
+/// through.
+#[test]
+fn color_variable_popup_owns_hover_instead_of_the_rail_underneath() {
+    use jian_ops_schema::variable::{VariableKind, VariableScalar};
+    use op_editor_core::{ColorTarget, NodeId};
+
+    let mut host = WidgetHost::new();
+    host.editor_state = EditorState::sample();
+    host.mark_dirty();
+    host.last_viewport_w = 1280.0;
+    host.last_viewport_h = 740.0;
+    host.editor_state.set_single_selection(NodeId::new("n13"));
+    for i in 0..6 {
+        assert!(host.editor_state.create_variable(
+            &format!("color-surface-{i:02}"),
+            VariableKind::Color,
+            VariableScalar::Str("#DBD8CB".into()),
+        ));
+    }
+    host.editor_state
+        .editor_ui
+        .property_color_variable_picker_open = Some(ColorTarget::Fill);
+    // A wash left over from the inspector row the popup now covers.
+    host.editor_state.editor_ui.property_action_hover = Some(0);
+
+    let rect = property_rect(&host);
+    let layout = PropertyPanel::for_selection(&host.editor_state)
+        .expect("rectangle panel")
+        .color_variable_picker_layout(rect)
+        .expect("open picker lays out");
+    let row = layout.rows[1].1;
+
+    assert!(host.apply_cursor_move(
+        row.origin.x + row.size.x / 2.0,
+        row.origin.y + row.size.y / 2.0,
+    ));
+    assert_eq!(
+        host.editor_state
+            .editor_ui
+            .property_color_variable_picker_hover,
+        Some(1),
+        "the row under the cursor must light up"
+    );
+    assert_eq!(
+        host.editor_state.editor_ui.property_action_hover, None,
+        "hover must not pass through the popup to the rail underneath"
+    );
+}

@@ -112,7 +112,7 @@ pub fn close_other_property_popovers_for_image(ui: &mut EditorUiState) {
     ui.font_weight_picker_open = false;
     ui.export_scale_picker_open = false;
     ui.export_format_picker_open = false;
-    ui.property_color_variable_picker_open = None;
+    ui.close_color_variable_picker();
     ui.close_font_picker();
 }
 

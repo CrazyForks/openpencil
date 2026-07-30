@@ -103,3 +103,57 @@ fn topmost_design_panel_cursor_move_clears_stale_path_anchor_menu_hover() {
         "stale lower-menu hover should clear under the topmost panel"
     );
 }
+
+/// The colour-variable popup used to have no hover state at all, so a
+/// cursor over its rows highlighted whatever inspector control sat
+/// underneath. The popup now owns every point on its chrome: its own row
+/// lights up and the rail's stale wash is dropped.
+#[test]
+fn color_variable_popup_owns_hover_instead_of_the_rail_underneath() {
+    use jian_ops_schema::variable::{VariableKind, VariableScalar};
+    use op_editor_core::{ColorTarget, EditorState};
+    use op_editor_ui::widgets::{press_flow, PropertyPanel};
+
+    let mut host = WidgetHostNative::new();
+    host.last_viewport_w = VIEWPORT_W;
+    host.last_viewport_h = VIEWPORT_H;
+    *host.editor_state_mut() = EditorState::sample();
+    host.editor_state_mut()
+        .set_single_selection(NodeId::new("n13"));
+    for i in 0..6 {
+        assert!(host.editor_state_mut().create_variable(
+            &format!("color-surface-{i:02}"),
+            VariableKind::Color,
+            VariableScalar::Str("#DBD8CB".into()),
+        ));
+    }
+    let ui = &mut host.editor_state_mut().editor_ui;
+    ui.property_color_variable_picker_open = Some(ColorTarget::Fill);
+    // A wash left over from the inspector row the popup now covers.
+    ui.property_action_hover = Some(0);
+
+    let rect = press_flow::property_panel_rect(host.editor_state(), VIEWPORT_W, VIEWPORT_H);
+    let layout = PropertyPanel::for_selection(host.editor_state())
+        .expect("rectangle panel")
+        .color_variable_picker_layout(rect)
+        .expect("open picker lays out");
+    let row = layout.rows[1].1;
+    let point = Point2D::new(
+        row.origin.x + row.size.x / 2.0,
+        row.origin.y + row.size.y / 2.0,
+    );
+
+    assert!(host.apply_cursor_move(point.x, point.y));
+    assert_eq!(
+        host.editor_state()
+            .editor_ui
+            .property_color_variable_picker_hover,
+        Some(1),
+        "the row under the cursor must light up"
+    );
+    assert_eq!(
+        host.editor_state().editor_ui.property_action_hover,
+        None,
+        "hover must not pass through the popup to the rail underneath"
+    );
+}

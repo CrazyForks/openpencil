@@ -160,6 +160,19 @@ impl EditorUiState {
         changed
     }
 
+    /// Close the fill / stroke colour-variable popup, dropping the row
+    /// hover and list scroll with it so the next open starts clean.
+    /// Returns whether anything changed.
+    pub fn close_color_variable_picker(&mut self) -> bool {
+        let changed = self.property_color_variable_picker_open.is_some()
+            || self.property_color_variable_picker_hover.is_some()
+            || self.property_color_variable_picker_scroll.offset != 0.0;
+        self.property_color_variable_picker_open = None;
+        self.property_color_variable_picker_hover = None;
+        self.property_color_variable_picker_scroll.offset = 0.0;
+        changed
+    }
+
     pub fn open_icon_picker(&mut self, replace_selection: bool) {
         self.close_icon_picker();
         self.icon_picker.open = true;
@@ -368,7 +381,7 @@ impl EditorUiState {
         self.stroke_edit_mode_anchor = String::new();
         self.stroke_mode_popover_open = false;
         self.stroke_mode_popover_hover = None;
-        self.property_color_variable_picker_open = None;
+        self.close_color_variable_picker();
         self.image_crop_editing = None;
         self.axis_dropdown_open = None;
         self.variables_theme_rename_axis = None;

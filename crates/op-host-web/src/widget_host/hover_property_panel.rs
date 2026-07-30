@@ -67,3 +67,44 @@ impl WidgetHost {
         changed
     }
 }
+
+impl WidgetHost {
+    /// Fill / stroke colour-variable popup hover tier of
+    /// `apply_cursor_move`. Same press order as
+    /// `press_property_overlay_tiers`: this popup sits above the padding
+    /// and font popovers below it, so it gets first refusal on the point.
+    ///
+    /// `Some(consumed)` ends the move; `None` falls through to the next
+    /// popover.
+    pub(in crate::widget_host) fn color_variable_picker_hover_tier(
+        &mut self,
+        panel: &op_editor_ui::widgets::PropertyPanel,
+        property_rect: op_editor_ui::Rect,
+        point: op_editor_ui::Point2D,
+        chat_or_picker_surface_owns_point: bool,
+        upper_hover_changed: &mut bool,
+    ) -> Option<bool> {
+        let (over_popup, hover_changed) =
+            op_editor_ui::widgets::cursor_hover_flow::color_variable_picker_hover(
+                &mut self.editor_state,
+                Some(panel),
+                property_rect,
+                point,
+            );
+        if hover_changed {
+            self.mark_dirty();
+        }
+        if over_popup {
+            self.clear_chat_and_lower_hover();
+            return Some(true);
+        }
+        if hover_changed {
+            if chat_or_picker_surface_owns_point {
+                *upper_hover_changed = true;
+            } else {
+                return Some(true);
+            }
+        }
+        None
+    }
+}

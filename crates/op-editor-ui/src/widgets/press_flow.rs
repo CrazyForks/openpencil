@@ -130,6 +130,14 @@ pub fn press_color_variable_picker(
 ) -> PropertyOverlayPress {
     let property_rect = property_panel_rect(state, viewport_width, viewport_height);
     if let Some(panel) = PropertyPanel::for_selection(state) {
+        // The popup's own rows first: they are painted over the rail and
+        // carry the list scroll, which the panel's ordinary control walk
+        // knows nothing about. Without this the row press fell through to
+        // the `contains` swallow below and the click was eaten.
+        if let Some(action) = panel.color_variable_picker_action_at(property_rect, point) {
+            return PropertyOverlayPress::Action(action);
+        }
+        // The `{}` trigger itself sits outside the popup and toggles it.
         if let Some(action) = panel.hit_test_action(property_rect, point) {
             if matches!(
                 action,
@@ -146,7 +154,7 @@ pub fn press_color_variable_picker(
             return PropertyOverlayPress::Swallow;
         }
     }
-    state.editor_ui.property_color_variable_picker_open = None;
+    state.editor_ui.close_color_variable_picker();
     PropertyOverlayPress::Dismissed
 }
 

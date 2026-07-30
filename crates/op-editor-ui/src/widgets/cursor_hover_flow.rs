@@ -164,6 +164,40 @@ pub fn property_base_hover(
     changed
 }
 
+/// Fill / stroke colour-variable popup hover. Returns
+/// `(over_popup, changed)`: the popup owns every point on its chrome, so
+/// a caller seeing `over_popup` must consume the move and clear the
+/// hover painted beneath it instead of letting the rail light up through
+/// the overlay. `panel` is `None` when the rail can't be probed for this
+/// move, which clears the row hover rather than freezing it.
+pub fn color_variable_picker_hover(
+    state: &mut EditorState,
+    panel: Option<&PropertyPanel>,
+    property_rect: Rect,
+    point: Point2D,
+) -> (bool, bool) {
+    if state
+        .editor_ui
+        .property_color_variable_picker_open
+        .is_none()
+    {
+        return (false, false);
+    }
+    let (over_popup, new_hover) = panel
+        .map(|panel| {
+            (
+                panel.color_variable_picker_contains(property_rect, point),
+                panel.color_variable_picker_row_at(property_rect, point),
+            )
+        })
+        .unwrap_or((false, None));
+    let changed = new_hover != state.editor_ui.property_color_variable_picker_hover;
+    if changed {
+        state.editor_ui.property_color_variable_picker_hover = new_hover;
+    }
+    (over_popup, changed)
+}
+
 /// Code-panel hover wash. Reuses the Code panel's click geometry so
 /// framework chips, scroll chevrons, and body actions share hit-testing
 /// with paint. `eligible` folds in each host's own suppression gates

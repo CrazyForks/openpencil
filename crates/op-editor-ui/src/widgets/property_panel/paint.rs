@@ -499,6 +499,7 @@ impl Widget for PropertyPanel {
                 &layout,
                 &self.color_variables,
                 self.bound_color_variable_ref(),
+                self.color_variable_picker_hover,
                 self.locale,
             );
         }

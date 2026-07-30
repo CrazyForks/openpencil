@@ -40,7 +40,7 @@ impl EditorUiState {
             self.stroke_mode_popover_open = false;
             self.export_scale_picker_open = false;
             self.export_format_picker_open = false;
-            self.property_color_variable_picker_open = None;
+            self.close_color_variable_picker();
         }
     }
 

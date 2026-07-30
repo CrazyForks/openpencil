@@ -135,6 +135,11 @@ impl WidgetHostNative {
             || self.editor_state.editor_ui.stroke_mode_popover_open
             || self.editor_state.editor_ui.font_weight_picker_open
             || self.editor_state.editor_ui.font_picker.open
+            || self
+                .editor_state
+                .editor_ui
+                .property_color_variable_picker_open
+                .is_some()
             || self.editor_state.editor_ui.image_fill_popover_open
             || self.editor_state.editor_ui.image_panel.search_open
             || self.editor_state.editor_ui.image_panel.generate_open;
@@ -256,6 +261,30 @@ impl WidgetHostNative {
             return Some(interaction_hover_changed || below_changed);
         }
         if interaction_hover_changed {
+            if chat_or_picker_owns_point {
+                ctx.upper_hover_changed = true;
+            } else {
+                return Some(true);
+            }
+        }
+        // Fill / stroke colour-variable popup row hover (no-op when
+        // closed). Same press order as `press_property_overlay_tiers`:
+        // this popup sits above the padding / font popovers below it.
+        let (over_color_variable_popup, color_variable_hover_changed) =
+            hover_flow::color_variable_picker_hover(
+                &mut self.editor_state,
+                property_panel,
+                property_rect,
+                point,
+            );
+        if color_variable_hover_changed {
+            self.mark_dirty();
+        }
+        if over_color_variable_popup {
+            let below_changed = self.clear_chat_and_lower_hover();
+            return Some(color_variable_hover_changed || below_changed);
+        }
+        if color_variable_hover_changed {
             if chat_or_picker_owns_point {
                 ctx.upper_hover_changed = true;
             } else {

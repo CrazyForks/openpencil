@@ -108,6 +108,11 @@ impl WidgetHost {
             || self.editor_state.editor_ui.stroke_mode_popover_open
             || self.editor_state.editor_ui.font_weight_picker_open
             || self.editor_state.editor_ui.font_picker.open
+            || self
+                .editor_state
+                .editor_ui
+                .property_color_variable_picker_open
+                .is_some()
             || self.editor_state.editor_ui.image_fill_popover_open
             || self.editor_state.editor_ui.image_panel.search_open
             || self.editor_state.editor_ui.image_panel.generate_open;
@@ -248,6 +253,15 @@ impl WidgetHost {
                         return true;
                     }
                 }
+            }
+            if let Some(consumed) = self.color_variable_picker_hover_tier(
+                panel,
+                property_rect,
+                point,
+                chat_or_picker_surface_owns_point,
+                &mut upper_hover_changed,
+            ) {
+                return consumed;
             }
             if self.editor_state.editor_ui.padding_mode_popover_open
                 || self.editor_state.editor_ui.stroke_mode_popover_open

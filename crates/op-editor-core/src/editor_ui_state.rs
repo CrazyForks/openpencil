@@ -434,6 +434,10 @@ pub struct EditorUiState {
     /// capped, so a document with many colour variables scrolls inside
     /// it rather than stretching the inspector. Reset when it opens.
     pub property_color_variable_picker_scroll: jian_core::scroll::ScrollState,
+    /// Row slot hovered in that dropdown (`None` = none). It indexes the
+    /// popup's laid-out row list, so slot 0 is the leading unbind row
+    /// whenever a variable is bound. Cleared whenever the popup closes.
+    pub property_color_variable_picker_hover: Option<usize>,
     /// Whether the image-fill editor popover is open.
     pub image_fill_popover_open: bool,
     /// Image-fill node currently in Figma-style crop editing mode.

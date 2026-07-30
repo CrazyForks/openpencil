@@ -130,6 +130,7 @@ impl Default for EditorUiState {
             font_import_supported: false,
             batch_frame_export_supported: false,
             property_color_variable_picker_scroll: Default::default(),
+            property_color_variable_picker_hover: None,
             system_fonts_loaded: false,
             missing_fonts_prompt: None,
             missing_fonts_modal_open: false,
