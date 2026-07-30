@@ -87,6 +87,7 @@ pub(super) struct CountingBackend {
     pub(super) text: usize,
     pub(super) texts: Vec<String>,
     pub(super) round_rects: usize,
+    pub(super) linear_gradients: usize,
     pub(super) images: Vec<(Rect, u64, usize)>,
     pub(super) image_modes: Vec<ImageDrawMode>,
     pub(super) image_transforms: Vec<Option<[f32; 6]>>,
@@ -114,6 +115,19 @@ impl crate::RenderBackend for CountingBackend {
     fn stroke_line(&mut self, _: Point2D, _: Point2D, _: Color, _: f32) {}
     fn fill_round_rect(&mut self, _: Rect, _: f32, _: Color) {
         self.round_rects += 1;
+    }
+    fn fill_round_rect_linear_gradient(
+        &mut self,
+        rect: Rect,
+        radius: f32,
+        stops: &[(f32, Color)],
+        _: f32,
+        opacity: f32,
+    ) {
+        self.linear_gradients += 1;
+        if let Some((_, color)) = stops.first() {
+            self.fill_round_rect(rect, radius, color.with_alpha(color.a * opacity));
+        }
     }
     fn stroke_round_rect(&mut self, _: Rect, _: f32, _: Color, _: f32) {}
     fn stroke_svg_path(&mut self, _: &str, _: Point2D, _: f32, _: Color, _: f32) {}

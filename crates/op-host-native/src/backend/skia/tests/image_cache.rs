@@ -118,6 +118,19 @@ fn image_decoded_is_false_before_install_and_true_after() {
 }
 
 #[test]
+fn prompt_center_jpeg_decodes_into_a_capped_raster() {
+    let encoded = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../op-editor-ui/assets/prompt_center_previews/gallery-wander.jpg"
+    ));
+    let (image, covers_edge_px) =
+        decode_raster_capped(encoded, 320).expect("prompt preview JPEG rasterizes");
+
+    assert_eq!(image.dimensions(), (320, 200).into());
+    assert_eq!(covers_edge_px, 320);
+}
+
+#[test]
 fn image_cache_evicts_least_recently_used_over_byte_budget() {
     let mut be = NativeBackend::with_dpi(1.0);
     let png = encode_test_png(4, 3);

@@ -46,6 +46,7 @@ mod layer_panel_tests;
 mod layer_panel_walkers;
 pub mod path_anchor_context_menu;
 pub mod prompt_center_panel;
+pub(crate) mod prompt_center_previews;
 #[cfg(test)]
 mod prompt_center_shared_flow_tests;
 pub mod property_panel;

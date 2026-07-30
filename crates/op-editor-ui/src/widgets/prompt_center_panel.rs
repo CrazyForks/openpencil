@@ -43,7 +43,10 @@ const CHIP_H: f32 = 24.0;
 const CHIP_GAP: f32 = 6.0;
 const CARD_COLS: usize = 2;
 const CARD_GAP: f32 = 12.0;
-const CARD_H: f32 = 112.0;
+const CARD_H: f32 = 262.0;
+const CARD_PREVIEW_INSET: f32 = 8.0;
+const CARD_PREVIEW_ASPECT: f32 = 16.0 / 10.0;
+const CARD_FOOTER_MIN_H: f32 = 44.0;
 const DELETE_BTN: f32 = 24.0;
 
 const FILTERS: [PromptFilter; 8] = [
@@ -182,14 +185,18 @@ impl<'a> PromptCenterPanel<'a> {
             }
         }
         let cards = self.filtered();
+        let viewport = self.cards_viewport(panel);
         for (index, rect) in self.card_rects_for_count(panel, cards.len()) {
+            if !viewport.contains(point) {
+                continue;
+            }
             if cards[index].custom
                 && self.state.editor_ui.prompt_center.custom_store_writable
                 && Self::delete_rect(rect).contains(point)
             {
                 return Some(delete_hover_token(index));
             }
-            if rect.contains(point) && self.cards_viewport(panel).contains(point) {
+            if rect.contains(point) {
                 return Some(index);
             }
         }
@@ -342,6 +349,19 @@ impl<'a> PromptCenterPanel<'a> {
             card.origin.y + 8.0,
             DELETE_BTN,
             DELETE_BTN,
+        )
+    }
+
+    /// Preview region within a card, preserving a 16:10 thumbnail aspect ratio.
+    pub fn card_preview_rect(card: Rect) -> Rect {
+        let width = (card.size.x - CARD_PREVIEW_INSET * 2.0).max(0.0);
+        let available_height =
+            (card.size.y - CARD_PREVIEW_INSET * 2.0 - CARD_FOOTER_MIN_H).max(0.0);
+        Rect::xywh(
+            card.origin.x + CARD_PREVIEW_INSET,
+            card.origin.y + CARD_PREVIEW_INSET,
+            width,
+            (width / CARD_PREVIEW_ASPECT).min(available_height),
         )
     }
 

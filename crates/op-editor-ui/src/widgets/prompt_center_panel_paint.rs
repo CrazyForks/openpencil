@@ -1,5 +1,6 @@
 //! Prompt Center painting, split from geometry to keep both files compact.
 
+use op_editor_core::prompt_center_catalog::PromptCategory;
 use op_editor_core::PromptCenterFocus;
 
 use super::{
@@ -9,9 +10,13 @@ use super::{
     PROMPT_CENTER_SAVE_HOVER,
 };
 use crate::widgets::button::paint_button_feedback_wash;
+use crate::widgets::canvas_viewport_image::{
+    has_cached_image_bytes, note_pending_decode, required_raster_edge, store_remote_image_bytes,
+};
+use crate::widgets::prompt_center_previews::prompt_center_preview;
 use crate::widgets::property_panel_text_input::paint_text_input_view;
 use crate::widgets::{draw_icon, Icon, PaintCx};
-use crate::{Color, Point2D, Rect, TextLayout};
+use crate::{Color, ImageDrawMode, Point2D, Rect, TextLayout};
 
 impl PromptCenterPanel<'_> {
     /// Paint the complete non-modal panel.
@@ -309,6 +314,9 @@ impl PromptCenterPanel<'_> {
         cx.backend.fill_round_rect(rect, 9.0, self.theme.card);
         cx.backend
             .stroke_round_rect(rect, 9.0, self.theme.border, 1.0);
+
+        let preview = Self::card_preview_rect(rect);
+        self.paint_card_preview(cx, preview, card);
         paint_button_feedback_wash(
             cx.backend,
             &self.theme,
@@ -318,35 +326,18 @@ impl PromptCenterPanel<'_> {
             self.is_pressed(index),
         );
 
-        let title_right_pad =
-            if card.custom && self.state.editor_ui.prompt_center.custom_store_writable {
-                42.0
-            } else {
-                14.0
-            };
+        let title_right_pad = 14.0;
         let title = truncate_to_width(&card.title, rect.size.x - 14.0 - title_right_pad, 12.5);
         self.paint_text(
             cx,
             &title,
-            Point2D::new(rect.origin.x + 12.0, rect.origin.y + 23.0),
+            Point2D::new(
+                rect.origin.x + 12.0,
+                preview.origin.y + preview.size.y + 22.0,
+            ),
             12.5,
             self.theme.foreground,
         );
-
-        let summary_width = rect.size.x - 24.0;
-        let lines = summary_lines(card.body, summary_width, 11.0);
-        for (line_index, line) in lines.iter().enumerate() {
-            self.paint_text(
-                cx,
-                line,
-                Point2D::new(
-                    rect.origin.x + 12.0,
-                    rect.origin.y + 47.0 + line_index as f32 * 17.0,
-                ),
-                11.0,
-                self.theme.muted_foreground,
-            );
-        }
 
         let metadata = {
             let built_in = self.metadata(card);
@@ -368,6 +359,8 @@ impl PromptCenterPanel<'_> {
 
         if card.custom && self.state.editor_ui.prompt_center.custom_store_writable {
             let delete = Self::delete_rect(rect);
+            cx.backend
+                .fill_round_rect(delete, 6.0, self.theme.popover.with_alpha(0.88));
             paint_button_feedback_wash(
                 cx.backend,
                 &self.theme,
@@ -385,6 +378,81 @@ impl PromptCenterPanel<'_> {
                 1.4,
             );
         }
+    }
+
+    fn paint_card_preview(&self, cx: &mut PaintCx<'_>, preview: Rect, card: &PromptCenterCard<'_>) {
+        let Some((image_id, encoded)) = prompt_center_preview(card.id.as_ref()) else {
+            self.paint_preview_fallback(cx, preview, card);
+            return;
+        };
+        if !has_cached_image_bytes(image_id) {
+            store_remote_image_bytes(image_id, encoded.to_vec());
+        }
+        let max_edge_px = required_raster_edge(preview, cx.backend.dpi_scale());
+        let sharp = cx.backend.image_decoded(image_id, encoded, max_edge_px);
+        if !sharp {
+            note_pending_decode(image_id, max_edge_px);
+        }
+        if !sharp && !cx.backend.image_resident(image_id) {
+            self.paint_preview_fallback(cx, preview, card);
+            return;
+        }
+
+        cx.backend.save();
+        cx.backend.clip_round_rect(preview, 7.0);
+        cx.backend
+            .draw_image_with_mode(preview, image_id, encoded, ImageDrawMode::Fill);
+        cx.backend.restore();
+    }
+
+    fn paint_preview_fallback(
+        &self,
+        cx: &mut PaintCx<'_>,
+        preview: Rect,
+        card: &PromptCenterCard<'_>,
+    ) {
+        let accent = match card.category {
+            PromptCategory::Starter => self.theme.primary,
+            PromptCategory::MobileApp => Color::rgb_u8(124, 92, 255),
+            PromptCategory::WebPage => Color::rgb_u8(14, 165, 233),
+            PromptCategory::Dashboard => self.theme.status_success,
+            PromptCategory::Component => self.theme.status_warning,
+            PromptCategory::Modify => Color::rgb_u8(236, 72, 153),
+        };
+        cx.backend.fill_round_rect_linear_gradient(
+            preview,
+            7.0,
+            &[
+                (0.0, accent.with_alpha(0.42)),
+                (1.0, self.theme.muted.with_alpha(0.92)),
+            ],
+            135.0,
+            1.0,
+        );
+        let icon = if card.custom {
+            Icon::Pencil
+        } else {
+            match card.category {
+                PromptCategory::Starter => Icon::Library,
+                PromptCategory::MobileApp => Icon::Smartphone,
+                PromptCategory::WebPage => Icon::Chrome,
+                PromptCategory::Dashboard => Icon::LayoutGrid,
+                PromptCategory::Component => Icon::Component,
+                PromptCategory::Modify => Icon::Wand2,
+            }
+        };
+        let icon_size = 34.0;
+        draw_icon(
+            cx.backend,
+            icon,
+            Point2D::new(
+                preview.origin.x + (preview.size.x - icon_size) / 2.0,
+                preview.origin.y + (preview.size.y - icon_size) / 2.0,
+            ),
+            icon_size,
+            self.theme.foreground.with_alpha(0.72),
+            1.35,
+        );
     }
 
     fn paint_text(
@@ -423,33 +491,4 @@ fn truncate_to_width(text: &str, max_width: f32, size: f32) -> String {
     }
     output.push('…');
     output
-}
-
-fn summary_lines(text: &str, max_width: f32, size: f32) -> [String; 2] {
-    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut lines = [String::new(), String::new()];
-    let mut line = 0;
-    let mut width = 0.0;
-    let mut truncated = false;
-    for ch in normalized.chars() {
-        let advance = estimated_text_width(&ch.to_string(), size);
-        if width + advance > max_width {
-            if line == 1 {
-                truncated = true;
-                break;
-            }
-            line = 1;
-            width = 0.0;
-        }
-        lines[line].push(ch);
-        width += advance;
-    }
-    if truncated {
-        let second = lines[1].trim_end_matches('…').to_owned();
-        lines[1] = truncate_to_width(&(second + "…"), max_width, size);
-        if !lines[1].ends_with('…') {
-            lines[1].push('…');
-        }
-    }
-    lines
 }
