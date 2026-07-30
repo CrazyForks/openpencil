@@ -125,10 +125,11 @@ fn system_experimental_switch_toggles_preference() {
             .experimental_features_enabled
     );
 
-    let (cx, cy, cw) = agent_settings_content_metrics(&host);
+    let (cx, _, cw) = agent_settings_content_metrics(&host);
+    let switch_x = cx + cw - 28.0;
     assert!(host.dispatch_agent_settings_press(
-        cx + cw - 28.0,
-        experimental_switch_y(cy),
+        switch_x,
+        experimental_switch_y(&host, switch_x),
         1200.0,
         800.0
     ));
@@ -169,10 +170,11 @@ fn disabling_experimental_leaves_active_preview_running() {
     assert!(host.enter_preview((800.0, 600.0)), "preview should enter");
     assert!(host.preview_active());
 
-    let (cx, cy, cw) = agent_settings_content_metrics(&host);
+    let (cx, _, cw) = agent_settings_content_metrics(&host);
+    let switch_x = cx + cw - 28.0;
     assert!(host.dispatch_agent_settings_press(
-        cx + cw - 28.0,
-        experimental_switch_y(cy),
+        switch_x,
+        experimental_switch_y(&host, switch_x),
         1200.0,
         800.0
     ));
@@ -203,10 +205,11 @@ fn disabling_experimental_clears_widget_property_focus() {
     host.editor_state_mut().ui.property_focus =
         Some(op_editor_core::PropertyFocus::WidgetPlaceholder);
 
-    let (cx, cy, cw) = agent_settings_content_metrics(&host);
+    let (cx, _, cw) = agent_settings_content_metrics(&host);
+    let switch_x = cx + cw - 28.0;
     assert!(host.dispatch_agent_settings_press(
-        cx + cw - 28.0,
-        experimental_switch_y(cy),
+        switch_x,
+        experimental_switch_y(&host, switch_x),
         1200.0,
         800.0
     ));
