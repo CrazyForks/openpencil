@@ -31,6 +31,15 @@
 
 <br />
 
+<p align="center">
+  <a href="https://github.com/InnerAura/hyperweave" title="Star history rendered with HyperWeave">
+    <img src="./screenshot/openpencil-star-history.svg" alt="OpenPencil star history rendered by HyperWeave" width="100%" />
+  </a>
+</p>
+<p align="center">
+  <sub>The trend above is rendered with <a href="https://github.com/InnerAura/hyperweave"><b>HyperWeave</b></a> — an experimental SVG artifact layer for agents. &nbsp;<a href="https://github.com/InnerAura/hyperweave"><b>Explore&nbsp;→</b></a></sub>
+</p>
+
 > **Nota:** Existe outro projeto de código aberto com o mesmo nome — [OpenPencil](https://github.com/open-pencil/open-pencil), focado em design visual compatível com Figma com colaboração em tempo real. Este projeto foca em fluxos de trabalho AI-nativos de design para código.
 
 ## Por que OpenPencil
