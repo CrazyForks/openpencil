@@ -525,6 +525,11 @@ pub fn run_cleanup_passes_with_summary(
         // the corrected tree, not the pre-repair one.
         crate::section_shell_fill_repair::repair_section_shell_fill_ownership(sink, rid);
         counter.checkpoint(summary, CheckCategory::Structure);
+        // No-nav mobile screens share one deterministic closing contract:
+        // 24-32px of bottom room. The repair reads the same resolved geometry
+        // as the diagnostic and grows only root padding, never business nodes.
+        crate::geometry_validation::repair_mobile_bottom_breathing(sink, rid);
+        counter.checkpoint(summary, CheckCategory::Layout);
         // Geometry-driven validation LOOP: run the REAL jian layout, detect +
         // fix what the resolved rects prove wrong (table columns overflowing
         // their row, fill containers collapsed to 0 height by a hugging ancestor

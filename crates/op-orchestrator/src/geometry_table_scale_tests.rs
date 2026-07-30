@@ -101,6 +101,67 @@ fn single_overflowing_row_is_not_a_table() {
 }
 
 #[test]
+fn separated_mobile_chrome_rows_are_not_a_table() {
+    // gallery-wander's destination screen: the content wrapper contained a
+    // three-item top bar and a three-item bottom tab bar with business sections
+    // between them. Counting horizontal children alone called this a table and
+    // emitted "3 columns cannot fit a 295px row".
+    let fixed = |id: &str| cell(id, json!(36));
+    let top_bar = json!({
+        "type": "frame", "id": "top", "layout": "horizontal", "children": [
+            fixed("back"),
+            { "type": "text", "id": "title", "width": "fit_content", "content": "Destination Details" },
+            fixed("bookmark")
+        ]
+    });
+    let nav_item = |id: &str| {
+        json!({ "type": "frame", "id": id, "layout": "vertical",
+                "width": "fill_container", "children": [] })
+    };
+    let content = json!({
+        "type": "frame", "id": "content", "layout": "vertical", "children": [
+            top_bar,
+            { "type": "frame", "id": "hero", "layout": "vertical", "children": [] },
+            { "type": "frame", "id": "body", "layout": "vertical", "children": [] },
+            { "type": "frame", "id": "nav", "layout": "horizontal", "children": [
+                nav_item("trips"), nav_item("destination"), nav_item("saved")
+            ]}
+        ]
+    });
+    let mut rects = std::collections::HashMap::new();
+    for id in ["top", "nav"] {
+        rects.insert(
+            id.to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 295.0,
+                h: 72.0,
+            },
+        );
+    }
+
+    assert!(!is_table_shape(&content));
+    assert!(table_overflow_scale(&content, &rects).is_none());
+    assert!(table_columns_exceed_width(&content, &rects).is_none());
+}
+
+#[test]
+fn contiguous_unnamed_rows_with_matching_width_modes_remain_a_table() {
+    let widths = [json!(180), json!("fill_container"), json!(120), json!(96)];
+    let table = json!({
+        "type": "frame", "id": "records", "layout": "vertical", "children": [
+            row("header", &widths),
+            row("record-a", &widths),
+            row("record-b", &widths)
+        ]
+    });
+
+    assert!(is_table_shape(&table));
+    assert_eq!(table_rows(&table).len(), 3);
+}
+
+#[test]
 fn padded_row_with_text_fill_column_triggers_on_inner_width() {
     // test0703.op's exact failure shape: 860px rows padded [12,16] (inner
     // 828), fixed columns 220+120+140+166+96 = 742 + 5×16 gaps = 822, one

@@ -284,7 +284,7 @@ fn mixed_business_wrapper_promotes_real_tabbar_to_mobile_root() {
     assert_eq!(nav.height_px(), Some(72.0));
     assert_eq!(
         serde_json::to_value(nav).expect("nav serializes")["width"],
-        json!(375.0),
+        json!("fill_container"),
         "normal nav normalization runs after promotion"
     );
 }
@@ -510,7 +510,7 @@ fn explicit_horizontal_text_only_bottom_nav_is_not_demoted() {
     assert_eq!(nav.base().role.as_deref(), Some("bottom-tab-bar"));
     assert_eq!(nav.base().name.as_deref(), Some("Tab Bar"));
     let nav_json = serde_json::to_value(nav).expect("nav serializes");
-    assert_eq!(nav_json["width"], json!(375.0));
+    assert_eq!(nav_json["width"], json!("fill_container"));
     assert_eq!(nav_json["height"], json!(72.0));
     assert_eq!(nav_json["layout"], json!("horizontal"));
 }
@@ -553,7 +553,7 @@ fn explicit_bottom_nav_with_missing_layout_is_repaired_not_demoted() {
     let nav = find_node(root, "nav").expect("nav survives");
     assert_eq!(nav.base().role.as_deref(), Some("bottom-tab-bar"));
     let nav_json = serde_json::to_value(nav).expect("nav serializes");
-    assert_eq!(nav_json["width"], json!(375.0));
+    assert_eq!(nav_json["width"], json!("fill_container"));
     assert_eq!(nav_json["height"], json!(72.0));
     assert_eq!(nav_json["layout"], json!("horizontal"));
 }

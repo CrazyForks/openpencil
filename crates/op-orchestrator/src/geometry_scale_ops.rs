@@ -11,14 +11,8 @@ pub(super) fn collect_scale_ops(
     if let Some(scale) = table_overflow_scale(v, rects) {
         // Apply the same scale to EVERY row's fixed cells (columns stay aligned)
         // and to each row's gap.
-        for row in children(v) {
-            if layout_str(row) != Some("horizontal") {
-                continue;
-            }
+        for row in table_rows(v) {
             let cells = children(row);
-            if cells.len() < 3 {
-                continue;
-            }
             for cell in cells {
                 if let (Some(w), Some(id)) =
                     (fixed_width(cell), cell.get("id").and_then(Value::as_str))
@@ -52,25 +46,19 @@ pub(super) fn collect_scale_ops(
     }
 }
 
-/// If `v` is a table-shaped container (≥2 horizontal rows of ≥3 cells — the
-/// STRUCTURE is the gate, not the name; "VIP Client List" shipped a starved
-/// 6px email column because a name gate only trusted `table`-named frames)
-/// whose fixed columns crowd out the rows' RESOLVED inner width, return the
-/// scale factor (< 1.0) to apply to its fixed columns + gap. Each row is
-/// measured against its own inner width (rect minus padding) and each
-/// text-bearing flex column reserves a readable floor; the WORST row decides,
-/// so uneven header/data column sets can't hide the deficit. `None` when the
-/// shape isn't a table or everything fits.
+/// If `v` is a table-shaped container (a repeated contiguous run of ≥2
+/// horizontal rows with ≥3 cells and matching width modes — the STRUCTURE is
+/// the gate, not the name; "VIP Client List" shipped a starved 6px email column
+/// because a name gate only trusted `table`-named frames) whose fixed columns
+/// crowd out the rows' RESOLVED inner width, return the scale factor (< 1.0) to
+/// apply to its fixed columns + gap. Each row is measured against its own inner
+/// width (rect minus padding) and each text-bearing flex column reserves a
+/// readable floor; the WORST row decides, so uneven header/data column sets
+/// can't hide the deficit. `None` when the shape isn't a table or everything
+/// fits.
 pub(super) fn table_overflow_scale(v: &Value, rects: &HashMap<String, Rect>) -> Option<f64> {
-    if layout_str(v) == Some("horizontal") {
-        return None;
-    }
-    let rows: Vec<&Value> = children(v)
-        .iter()
-        .filter(|r| layout_str(r) == Some("horizontal") && children(r).len() >= 3)
-        .collect();
-    // Need at least a header + one data row to be a real table.
-    if rows.len() < 2 {
+    let rows = table_rows(v);
+    if rows.is_empty() {
         return None;
     }
     let mut worst: Option<f64> = None;

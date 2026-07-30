@@ -7,7 +7,11 @@
 //! include a trailing section that a name heuristic would have mistaken for
 //! chrome.
 
-use crate::geometry_validation::geometry_diagnostics;
+use crate::geometry_validation::{
+    geometry_diagnostics, repair_mobile_bottom_breathing,
+    repair_mobile_bottom_breathing_for_all_roots,
+};
+use op_editor_core::PenNodeExt;
 use serde_json::json;
 
 const ECHO: &str = "mobile-bottom-flush";
@@ -24,6 +28,51 @@ fn diagnostics_for(root: serde_json::Value) -> Vec<String> {
 
 fn echoed(root: serde_json::Value) -> bool {
     diagnostics_for(root).iter().any(|d| d.contains(ECHO))
+}
+
+fn state_for(root: serde_json::Value) -> op_editor_core::EditorState {
+    let doc: jian_ops_schema::PenDocument = serde_json::from_value(json!({
+        "version": "1.0",
+        "children": [root]
+    }))
+    .expect("valid document");
+    op_editor_core::EditorState::from_document(doc)
+}
+
+fn repair(root: serde_json::Value) -> (op_editor_core::EditorState, bool) {
+    let mut state = state_for(root);
+    let changed = {
+        let mut sink = crate::loop_finalize::StateDocSink { state: &mut state };
+        repair_mobile_bottom_breathing(&mut sink, "root")
+    };
+    (state, changed)
+}
+
+fn resolved_direct_child_gap(state: &op_editor_core::EditorState) -> f64 {
+    let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
+    let page = scene.active_page().expect("active page");
+    let root = page.children.first().expect("root scene");
+    let root_bounds = root.aggregate_bounds();
+    let content_bottom = root
+        .children
+        .iter()
+        .map(|child| {
+            let bounds = child.aggregate_bounds();
+            f64::from(bounds.origin.y + bounds.size.y)
+        })
+        .fold(f64::NEG_INFINITY, f64::max);
+    f64::from(root_bounds.origin.y + root_bounds.size.y) - content_bottom
+}
+
+fn fixed_gap_screen(gap: f64) -> serde_json::Value {
+    json!({
+        "type": "frame", "id": "root", "name": "Mobile Screen",
+        "width": 390, "height": 844, "layout": "vertical", "gap": 0,
+        "children": [
+            { "type": "frame", "id": "body", "name": "Body",
+              "width": "fill_container", "height": 844.0 - gap }
+        ]
+    })
 }
 
 /// A movie-detail screen: no bottom nav, last section ends exactly at the
@@ -193,4 +242,159 @@ fn content_overflowing_the_root_is_left_to_the_spill_diagnostics() {
                        "width": "fill_container", "height": 1200 }]
     });
     assert!(!echoed(root), "overflow is not a flush-bottom report");
+}
+
+#[test]
+fn cleanup_repairs_zero_and_eleven_pixel_gaps_to_twenty_eight() {
+    for initial_gap in [0.0, 11.0] {
+        let (state, changed) = repair(fixed_gap_screen(initial_gap));
+        assert!(changed, "{initial_gap}px must be repaired");
+        let gap = resolved_direct_child_gap(&state);
+        assert!(
+            (gap - 28.0).abs() <= 1.0,
+            "expected 28px after repairing {initial_gap}px, got {gap}"
+        );
+        assert!(
+            !geometry_diagnostics(&state)
+                .iter()
+                .any(|issue| issue.contains(ECHO)),
+            "repair and echo must share one fact predicate"
+        );
+    }
+}
+
+#[test]
+fn cleanup_preserves_compliant_gap_navigation_desktop_and_business_nodes() {
+    let (compliant, changed) = repair(fixed_gap_screen(24.0));
+    assert!(!changed, "an existing 24px gap is already compliant");
+    assert!((resolved_direct_child_gap(&compliant) - 24.0).abs() <= 1.0);
+
+    let nav = json!({
+        "type": "frame", "id": "root", "name": "Home",
+        "width": 390, "height": 844, "layout": "vertical",
+        "children": [
+            { "type": "frame", "id": "body", "width": "fill_container", "height": 772 },
+            { "type": "frame", "id": "nav", "role": "bottom-tab-bar",
+              "width": "fill_container", "height": 72 }
+        ]
+    });
+    let (with_nav, changed) = repair(nav);
+    assert!(!changed, "bottom navigation deliberately closes the screen");
+    assert_eq!(with_nav.active_children()[0].children().unwrap().len(), 2);
+
+    let desktop = json!({
+        "type": "frame", "id": "root", "name": "Dashboard",
+        "width": 1440, "height": 900, "layout": "vertical",
+        "children": [
+            { "type": "frame", "id": "body", "width": "fill_container", "height": 900 }
+        ]
+    });
+    let (desktop, changed) = repair(desktop);
+    assert!(!changed, "desktop roots are outside the mobile contract");
+    assert_eq!(desktop.active_children()[0].children().unwrap().len(), 1);
+}
+
+#[test]
+fn cleanup_preserves_a_last_wrapper_closed_by_nested_bottom_navigation() {
+    let root = json!({
+        "type": "frame", "id": "root", "name": "Explore",
+        "width": 390, "height": 844, "layout": "vertical",
+        "children": [
+            { "type": "frame", "id": "status", "role": "status-bar",
+              "width": "fill_container", "height": 62 },
+            {
+                "type": "frame", "id": "wrapper", "name": "Content Wrapper",
+                "width": "fill_container", "height": 782, "layout": "vertical",
+                "children": [
+                    { "type": "frame", "id": "content",
+                      "width": "fill_container", "height": 710 },
+                    { "type": "frame", "id": "nav", "role": "bottom-tab-bar",
+                      "width": "fill_container", "height": 72,
+                      "layout": "horizontal" }
+                ]
+            }
+        ]
+    });
+    let (state, changed) = repair(root);
+
+    assert!(
+        !changed,
+        "a nested trailing bottom navigation already closes the screen"
+    );
+    let value = serde_json::to_value(&state.active_children()[0]).expect("root serializes");
+    assert!(
+        value.get("padding").is_none(),
+        "cleanup must not add blank space below nested navigation: {value}"
+    );
+    assert!(
+        !geometry_diagnostics(&state)
+            .iter()
+            .any(|issue| issue.contains(ECHO)),
+        "the shared diagnostic must recognize the same closing nav fact"
+    );
+}
+
+#[test]
+fn cleanup_repairs_a_last_wrapper_without_nested_bottom_navigation() {
+    let root = json!({
+        "type": "frame", "id": "root", "name": "Article Detail",
+        "width": 390, "height": 844, "layout": "vertical",
+        "children": [{
+            "type": "frame", "id": "wrapper", "name": "Content Wrapper",
+            "width": "fill_container", "height": 844, "layout": "vertical",
+            "children": [{
+                "type": "frame", "id": "content",
+                "width": "fill_container", "height": 844
+            }]
+        }]
+    });
+    let (state, changed) = repair(root);
+
+    assert!(
+        changed,
+        "an ordinary trailing wrapper still needs breathing room"
+    );
+    assert!((resolved_direct_child_gap(&state) - 28.0).abs() <= 1.0);
+    let value = serde_json::to_value(&state.active_children()[0]).expect("root serializes");
+    assert_eq!(value["padding"], json!([0.0, 0.0, 28.0, 0.0]));
+}
+
+#[test]
+fn all_roots_driver_repairs_every_mobile_screen() {
+    let doc: jian_ops_schema::PenDocument = serde_json::from_value(json!({
+        "version": "1.0",
+        "children": [
+            {
+                "type": "frame", "id": "root-a", "width": 390, "height": 844,
+                "layout": "vertical",
+                "children": [
+                    { "type": "frame", "id": "body-a",
+                      "width": "fill_container", "height": 844 }
+                ]
+            },
+            {
+                "type": "frame", "id": "root-b", "x": 440, "width": 390, "height": 844,
+                "layout": "vertical",
+                "children": [
+                    { "type": "frame", "id": "body-b",
+                      "width": "fill_container", "height": 844 }
+                ]
+            }
+        ]
+    }))
+    .expect("valid two-screen document");
+    let mut state = op_editor_core::EditorState::from_document(doc);
+    let changed = {
+        let mut sink = crate::loop_finalize::StateDocSink { state: &mut state };
+        repair_mobile_bottom_breathing_for_all_roots(&mut sink)
+    };
+    assert!(changed);
+    for root in state.active_children() {
+        let value = serde_json::to_value(root).expect("root serializes");
+        assert_eq!(
+            value["padding"],
+            json!([0.0, 0.0, 28.0, 0.0]),
+            "every root must be visited"
+        );
+    }
 }

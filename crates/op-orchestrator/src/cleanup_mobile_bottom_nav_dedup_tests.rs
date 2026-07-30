@@ -101,7 +101,11 @@ fn bottom_nav_detected_by_cjk_name() {
     // Authored absolute inset is CLEARED so the nav rejoins flex flow —
     // a written x (even 0) is absolute placement and gets buried at (0,0).
     assert_eq!(nav.base().x, None);
-    assert_eq!(nav.width_px(), Some(390.0));
+    assert_eq!(nav.base().role.as_deref(), Some("bottom-tab-bar"));
+    assert_eq!(
+        serde_json::to_value(nav).expect("nav serializes")["width"],
+        serde_json::json!("fill_container")
+    );
     assert_eq!(nav.height_px(), Some(72.0));
 }
 

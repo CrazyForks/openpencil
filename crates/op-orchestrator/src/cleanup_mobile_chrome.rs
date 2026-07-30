@@ -89,7 +89,6 @@ pub(crate) fn repair_mobile_structural_chrome(sink: &mut dyn DocSink, root_id: &
         if !super::is_mobile_root(root) {
             return;
         }
-        let root_width = root.width_px().unwrap_or(0.0);
         let Some(children) = root.children() else {
             return;
         };
@@ -107,7 +106,7 @@ pub(crate) fn repair_mobile_structural_chrome(sink: &mut dyn DocSink, root_id: &
                     .structural_shells
                     .push(NodeId::new(child.id_str().to_string()));
             }
-            collect_bottom_nav_chrome_repairs(child, root_width, allow_structural, &mut repairs);
+            collect_bottom_nav_chrome_repairs(child, allow_structural, &mut repairs);
         }
         repairs
     };
@@ -120,20 +119,18 @@ pub(crate) fn repair_mobile_structural_chrome(sink: &mut dyn DocSink, root_id: &
             page_id: None,
         });
     }
-    for (node_id, root_width) in repairs.bottom_nav_surfaces {
+    for node_id in repairs.bottom_nav_surfaces {
         // `x`/`y` are CLEARED, never set: any authored position reads as
         // ABSOLUTE placement in jian and yanks the nav out of flex flow —
         // the old `"x":0` patch (without y) pinned a healthy 4-tab
         // BottomTabBar to the root's top-left corner where later-painted
         // siblings buried it ("the navbar vanished at finalize",
-        // test0711-22 23:34 run). The nav is the root's last FLEX child;
-        // the numeric width alone gives the full-bleed span.
+        // test0711-22 23:34 run). `fill_container` also makes horizontal
+        // padding part of the root-width slot; a numeric root width plus
+        // padding resolves wider than the artboard in jian.
         sink.apply(EditorCommand::PatchNodeData {
             node_id,
-            patch_json: format!(
-                r#"{{"x":null,"y":null,"width":{},"height":72,"layout":"horizontal","gap":0,"padding":[8,16,8,16],"justifyContent":"space_between","alignItems":"center","stroke":null,"effects":null,"cornerRadius":0}}"#,
-                root_width.round()
-            ),
+            patch_json: r#"{"role":"bottom-tab-bar","x":null,"y":null,"width":"fill_container","height":72,"layout":"horizontal","gap":0,"padding":[8,16,8,16],"justifyContent":"space_between","alignItems":"center","stroke":null,"effects":null,"cornerRadius":0}"#.to_string(),
             page_id: None,
         });
     }
@@ -337,7 +334,7 @@ fn contains_meaningful_business_content(node: &PenNode) -> bool {
 #[derive(Default)]
 struct MobileChromeRepairs {
     structural_shells: Vec<NodeId>,
-    bottom_nav_surfaces: Vec<(NodeId, f64)>,
+    bottom_nav_surfaces: Vec<NodeId>,
     bottom_nav_items: Vec<NodeId>,
 }
 
@@ -459,7 +456,6 @@ fn is_input_like_haystack(hay: &str) -> bool {
 
 fn collect_bottom_nav_chrome_repairs(
     root_child: &PenNode,
-    root_width: f64,
     allow_structural: bool,
     repairs: &mut MobileChromeRepairs,
 ) {
@@ -468,7 +464,7 @@ fn collect_bottom_nav_chrome_repairs(
     };
     repairs
         .bottom_nav_surfaces
-        .push((NodeId::new(nav.id_str().to_string()), root_width));
+        .push(NodeId::new(nav.id_str().to_string()));
 
     let Some(children) = nav.children() else {
         return;

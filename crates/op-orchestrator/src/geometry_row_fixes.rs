@@ -203,16 +203,92 @@ pub(super) const ROW_OVERFULL_EPS: f64 = 8.0;
 /// can't meaningfully absorb a deficit.
 pub(super) const MIN_FLEXIFY_W: f64 = 120.0;
 
-/// Is `v` table-shaped (≥2 horizontal rows of ≥3 cells)? Overfull TABLE rows
-/// belong to the column scaler, which keeps columns aligned across rows —
-/// flexifying one row's widest column would break the vertical alignment.
-pub(super) fn is_table_shape(v: &Value) -> bool {
-    layout_str(v) != Some("horizontal")
-        && children(v)
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TableCellWidthMode {
+    Fixed,
+    Fill,
+    Hug,
+    Other,
+}
+
+fn table_row_signature(row: &Value) -> Option<Vec<TableCellWidthMode>> {
+    if layout_str(row) != Some("horizontal") || children(row).len() < 3 {
+        return None;
+    }
+    Some(
+        children(row)
             .iter()
-            .filter(|r| layout_str(r) == Some("horizontal") && children(r).len() >= 3)
-            .count()
-            >= 2
+            .map(|cell| {
+                if fixed_width(cell).is_some() {
+                    TableCellWidthMode::Fixed
+                } else {
+                    match cell.get("width").and_then(Value::as_str) {
+                        Some("fill_container") => TableCellWidthMode::Fill,
+                        Some("fit_content") | None => TableCellWidthMode::Hug,
+                        Some(_) => TableCellWidthMode::Other,
+                    }
+                }
+            })
+            .collect(),
+    )
+}
+
+/// Return the repeated, contiguous row run that gives `v` a table shape.
+///
+/// A data table has a header and data rows next to each other under one
+/// container, with the same per-column sizing contract. Merely finding two
+/// unrelated horizontal bands is not enough: a mobile content column often
+/// contains a three-item top bar and a three-item bottom tab bar separated by
+/// business sections. Treating those bands as table rows suppresses the normal
+/// row fixers and can emit an impossible "too many columns" diagnostic.
+///
+/// The predicate uses only layout and width-mode facts. Names and roles are
+/// deliberately irrelevant, so unnamed generated tables remain covered.
+pub(super) fn table_rows(v: &Value) -> Vec<&Value> {
+    if layout_str(v) == Some("horizontal") {
+        return Vec::new();
+    }
+
+    let mut best = Vec::new();
+    let mut run = Vec::new();
+    let mut run_signature: Option<Vec<TableCellWidthMode>> = None;
+    for child in children(v) {
+        let Some(signature) = table_row_signature(child) else {
+            if run.len() > best.len() {
+                best = std::mem::take(&mut run);
+            } else {
+                run.clear();
+            }
+            run_signature = None;
+            continue;
+        };
+        if run_signature.as_ref() == Some(&signature) {
+            run.push(child);
+        } else {
+            if run.len() > best.len() {
+                best = std::mem::take(&mut run);
+            } else {
+                run.clear();
+            }
+            run.push(child);
+            run_signature = Some(signature);
+        }
+    }
+    if run.len() > best.len() {
+        best = run;
+    }
+    if best.len() >= 2 {
+        best
+    } else {
+        Vec::new()
+    }
+}
+
+/// Is `v` table-shaped? Overfull TABLE rows belong to the column scaler, which
+/// keeps columns aligned across rows — flexifying one row's widest column would
+/// break the vertical alignment.
+pub(super) fn is_table_shape(v: &Value) -> bool {
+    !table_rows(v).is_empty()
 }
 
 /// A horizontal row whose children's RESOLVED widths + gaps sum wider than

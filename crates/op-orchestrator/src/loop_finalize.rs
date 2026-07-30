@@ -476,6 +476,7 @@ pub fn apply_loop_finalize_counted(state: &mut EditorState) -> RepairSummary {
         crate::cleanup::pad_clipping_horizontal_row_for_stroke_for_all_roots(sink);
         crate::cleanup::equalize_horizontal_card_heights_for_all_roots(sink);
         crate::cleanup::collapse_fill_container_content_sections_for_all_roots(sink);
+        crate::geometry_validation::repair_mobile_bottom_breathing_for_all_roots(sink);
         counter.checkpoint(&mut summary, CheckCategory::Layout);
     }
     if state.active_children().is_empty() {

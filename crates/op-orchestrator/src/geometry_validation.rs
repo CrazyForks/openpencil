@@ -46,6 +46,9 @@ use text_collision::push_text_collision_diagnostics;
 #[path = "geometry_bottom_gap.rs"]
 mod geometry_bottom_gap;
 use geometry_bottom_gap::push_mobile_bottom_gap_diagnostic;
+pub(crate) use geometry_bottom_gap::{
+    repair_mobile_bottom_breathing, repair_mobile_bottom_breathing_for_all_roots,
+};
 #[path = "geometry_interaction_backfill.rs"]
 mod geometry_interaction_backfill;
 use geometry_interaction_backfill::push_interaction_backfill_diagnostics;
@@ -286,14 +289,8 @@ pub fn fix_rail_width_collapse(sink: &mut dyn DocSink, root_id: &str) -> bool {
 /// rescale; the design needs fewer columns. Returns `(columns, inner_px)`
 /// of the worst row for the diagnostic.
 fn table_columns_exceed_width(v: &Value, rects: &HashMap<String, Rect>) -> Option<(usize, i64)> {
-    if layout_str(v) == Some("horizontal") {
-        return None;
-    }
-    let rows: Vec<&Value> = children(v)
-        .iter()
-        .filter(|r| layout_str(r) == Some("horizontal") && children(r).len() >= 3)
-        .collect();
-    if rows.len() < 2 {
+    let rows = table_rows(v);
+    if rows.is_empty() {
         return None;
     }
     for row in rows {

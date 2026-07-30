@@ -110,6 +110,7 @@ fn image_much_taller_than_its_parent_is_echoed_vertically() {
             "children": [
                 { "type": "frame", "id": "avatar", "name": "Avatar",
                   "width": "fill_container", "height": 42, "layout": "horizontal",
+                  "padding": [8, 0],
                   "children": [
                     { "type": "image", "id": "img", "name": "woman face headshot", "src": "",
                       "width": "fill_container", "height": 300 }
@@ -127,6 +128,41 @@ fn image_much_taller_than_its_parent_is_echoed_vertically() {
             .iter()
             .any(|i| i.contains("woman face headshot") && i.contains("inflates")),
         "vertical spill must be echoed: {issues:?}"
+    );
+}
+
+/// The bottom-breathing cleanup adds numeric root padding without changing
+/// business children. OpenPencil's post-layout reconciliation includes that
+/// padding in the resolved root extent; it is not evidence of a tall child.
+#[test]
+fn numeric_root_padding_alone_is_not_echoed_as_vertical_spill() {
+    let doc: jian_ops_schema::PenDocument = serde_json::from_value(serde_json::json!({
+        "version": "1.0",
+        "children": [{
+            "type": "frame", "id": "root", "name": "Screen",
+            "width": 390, "height": 844, "layout": "vertical",
+            "padding": [0, 0, 28, 0],
+            "children": [
+                { "type": "frame", "id": "body", "name": "Body",
+                  "width": "fill_container", "height": 844 }
+            ]
+        }]
+    }))
+    .expect("doc");
+    let state = op_editor_core::EditorState::from_document(doc);
+    let rects = resolved_rects(&state);
+    let resolved_root = rects.get("root").expect("root rect").h;
+    assert!(
+        resolved_root > 844.0 + VERTICAL_SPILL_SLACK,
+        "fixture must exercise post-layout padding growth, got {resolved_root}"
+    );
+
+    let issues = super::geometry_diagnostics(&state);
+    assert!(
+        !issues
+            .iter()
+            .any(|issue| issue.contains("Screen (root): declared")),
+        "numeric padding alone is not a vertical spill: {issues:?}"
     );
 }
 

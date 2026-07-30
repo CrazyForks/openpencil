@@ -121,7 +121,10 @@ fn cleanup_strips_mobile_bottom_nav_pill_chrome() {
     let nav = find_node(root, "bottom-nav").expect("nav survives");
     let home = find_node(root, "home-tab").expect("home tab survives");
     let search = find_node(root, "search-tab").expect("search tab survives");
-    assert_eq!(nav.width_px(), Some(390.0));
+    assert_eq!(
+        serde_json::to_value(nav).expect("nav serializes")["width"],
+        json!("fill_container")
+    );
     match nav {
         PenNode::Frame(frame) => {
             assert!(frame.container.stroke.is_none(), "nav stroke is removed");
@@ -249,7 +252,7 @@ fn cleanup_normalizes_mobile_bottom_nav_spacing_and_tab_slots() {
         .expect("root survives");
     let nav = find_node(root, "bottom-nav").expect("nav survives");
     let nav_json = serde_json::to_value(nav).expect("nav serializes");
-    assert_eq!(nav_json["width"], json!(390.0));
+    assert_eq!(nav_json["width"], json!("fill_container"));
     assert_eq!(nav_json["height"], json!(72.0));
     assert_eq!(nav_json["gap"], json!(0.0));
     assert_eq!(nav_json["padding"], json!([8.0, 16.0, 8.0, 16.0]));
@@ -324,13 +327,99 @@ fn cleanup_normalizes_structurally_detected_bottom_nav_without_role_or_name() {
         .expect("root survives");
     let nav = find_node(root, "footer").expect("nav survives");
     let nav_json = serde_json::to_value(nav).expect("nav serializes");
-    assert_eq!(nav_json["width"], json!(390.0), "nav spread to full width");
+    assert_eq!(
+        nav_json["width"],
+        json!("fill_container"),
+        "nav spread to full width"
+    );
     assert_eq!(nav_json["justifyContent"], json!("space_between"));
     for id in ["home", "search", "orders", "profile"] {
         let tab = find_node(root, id).expect("tab survives");
         let tab_json = serde_json::to_value(tab).expect("tab serializes");
         assert_eq!(tab_json["width"], json!("fill_container"), "tab {id} fills");
     }
+}
+
+#[test]
+fn cjk_named_nav_stays_inside_real_jian_width_and_stamps_semantics() {
+    let mut sink = VecDocSink::new();
+    let tree: PenNode = serde_json::from_value(json!({
+        "type": "frame", "id": "root", "name": "Mobile", "width": 375, "height": 812,
+        "layout": "vertical",
+        "children": [
+            {
+                "type": "frame", "id": "header", "name": "Header Actions",
+                "width": 180, "height": 56, "layout": "horizontal",
+                "children": [
+                    {"type": "frame", "id": "header-home", "role": "tab"},
+                    {"type": "frame", "id": "header-search", "role": "tab"},
+                    {"type": "frame", "id": "header-profile", "role": "tab"}
+                ]
+            },
+            {
+                "type": "frame", "id": "content", "name": "Content",
+                "width": "fill_container", "height": 684
+            },
+            {
+                "type": "frame", "id": "nav", "name": "底部导航栏",
+                "width": 375, "height": 72, "layout": "horizontal",
+                "padding": [8, 16, 8, 16],
+                "children": [
+                    {"type": "frame", "id": "home", "name": "Home Tab", "role": "tab"},
+                    {"type": "frame", "id": "search", "name": "Search Tab", "role": "tab"},
+                    {"type": "frame", "id": "profile", "name": "Profile Tab", "role": "tab"}
+                ]
+            }
+        ]
+    }))
+    .expect("CJK nav fixture");
+    sink.state.apply(EditorCommand::InsertAuthoredSubtree {
+        nodes: vec![tree],
+        parent_id: NodeId::NONE,
+        page_id: None,
+    });
+    sink.applied.clear();
+
+    crate::cleanup::repair_mobile_structural_chrome_for_all_roots(&mut sink);
+
+    let root = sink.state.active_children().first().expect("root");
+    let header = find_node(root, "header").expect("header");
+    let nav = find_node(root, "nav").expect("nav");
+    assert_eq!(
+        serde_json::to_value(header).expect("header serializes")["width"],
+        json!(180.0),
+        "the top header row must not be normalized as bottom navigation"
+    );
+    assert_eq!(nav.base().role.as_deref(), Some("bottom-tab-bar"));
+    assert_eq!(
+        serde_json::to_value(nav).expect("nav serializes")["width"],
+        json!("fill_container")
+    );
+
+    fn resolved_width(nodes: &[jian_scene::layout_scene::SceneNode], id: &str) -> Option<f64> {
+        nodes.iter().find_map(|node| {
+            (node.id == id)
+                .then(|| f64::from(node.aggregate_bounds().size.x))
+                .or_else(|| resolved_width(&node.children, id))
+        })
+    }
+    let scene = op_pen_loader::editor_state_to_active_page_layout_scene(&sink.state);
+    let page = scene.active_page().expect("active page");
+    let root_width = resolved_width(&page.children, "root").expect("resolved root");
+    let nav_width = resolved_width(&page.children, "nav").expect("resolved nav");
+    assert!(
+        (nav_width - root_width).abs() <= 1.0,
+        "nav padding must stay inside the root-width slot, got nav={nav_width} root={root_width}"
+    );
+
+    let issues = crate::geometry_validation::geometry_diagnostics(&sink.state);
+    assert!(
+        issues.iter().all(|issue| {
+            !issue.contains("mobile-bottom-flush")
+                && !issue.contains("mobile-root-bottom-nav-overflow")
+        }),
+        "normalized bottom navigation must not echo as missing or overflowing: {issues:?}"
+    );
 }
 
 #[test]
@@ -528,13 +617,9 @@ fn cleanup_structural_nav_only_matches_bottom_row_inside_single_wrapper() {
     // The bottom nav row IS spread to full width.
     let nav = find_node(root, "nav-row").expect("nav-row survives");
     let nav_json = serde_json::to_value(nav).expect("nav serializes");
-    // Full-width in FLEX FLOW: numeric root-width or fill_container both
-    // qualify. The nav must NOT carry an authored x/y — that reads as
-    // absolute placement and buries it at the root's top-left corner.
-    assert!(
-        nav_json["width"] == json!(390.0) || nav_json["width"] == json!("fill_container"),
-        "the bottom nav row should still be spread full-width: {nav_json}"
-    );
+    // Full-width in FLEX FLOW: the nav must use fill sizing and carry no
+    // authored x/y, otherwise padding widens it or absolute-positions it.
+    assert_eq!(nav_json["width"], json!("fill_container"));
     assert!(
         nav_json.get("x").is_none_or(serde_json::Value::is_null),
         "nav must stay in flex flow (no authored x): {nav_json}"

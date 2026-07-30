@@ -33,7 +33,14 @@ pub(super) fn collect_vertical_spill_diagnostics(
     else {
         return;
     };
-    if resolved <= declared + VERTICAL_SPILL_SLACK {
+    // Taffy treats a numeric size as the border box, but OpenPencil's
+    // post-layout repair reconciles an open container to its children's
+    // measured extent plus authored padding. A generated container whose
+    // children already consume the declared height can therefore resolve
+    // taller by exactly its numeric vertical padding. That is breathing room,
+    // not an oversized child. Expression padding is deliberately not guessed.
+    let padding_allowance = numeric_vertical_padding(v).unwrap_or(0.0);
+    if resolved <= declared + padding_allowance + VERTICAL_SPILL_SLACK {
         return;
     }
     let culprit = children(v)
