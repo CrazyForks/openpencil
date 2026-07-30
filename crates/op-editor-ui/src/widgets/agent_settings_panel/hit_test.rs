@@ -72,12 +72,6 @@ impl AgentSettingsPanel<'_> {
                     AcpHit::FocusDraft(field) => {
                         return AgentSettingsHit::FocusAcpAgentDraft(field)
                     }
-                    AcpHit::ToggleConnectionType(index) => {
-                        return AgentSettingsHit::ToggleAcpConnectionType(index);
-                    }
-                    AcpHit::ToggleDraftConnectionType => {
-                        return AgentSettingsHit::ToggleAcpDraftConnectionType;
-                    }
                     AcpHit::SaveDraft => return AgentSettingsHit::SaveAcpAgentDraft,
                     AcpHit::CancelDraft => return AgentSettingsHit::CancelAcpAgentDraft,
                     AcpHit::Edit(index) => return AgentSettingsHit::EditAcpAgent(index),

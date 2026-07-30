@@ -51,7 +51,7 @@ pub(super) fn draft_card_height(settings: &AgentSettings) -> f32 {
 }
 
 pub(super) fn add_provider_rect(content: Rect, y: f32) -> Rect {
-    header_action_rect(content, y, 0.0)
+    header_action_rect(content, y)
 }
 
 pub(super) fn card_rect(x: f32, y: f32, w: f32, h: f32) -> Rect {

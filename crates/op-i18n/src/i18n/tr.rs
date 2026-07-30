@@ -552,10 +552,12 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "settings.agents.builtinEmpty" => "Yapılandırılmış yerleşik sağlayıcı yok.",
         "settings.agents.syncError" => "Sunucu eşitlemesi başarısız:",
         "settings.agents.addProvider" => "+ Sağlayıcı ekle",
-        "settings.agents.acp" => "ACP Aracısı",
-        "settings.agents.acpSubtitle" => "Harici ACP uyumlu aracıları bağlayın.",
-        "settings.agents.acpEmpty" => "Yapılandırılmış ACP aracısı yok.",
-        "settings.agents.addAcp" => "+ Aracı ekle",
+        "settings.agents.acp" => "Genel entegrasyon",
+        "settings.agents.acpSubtitle" => {
+            "ACP uyumlu herhangi bir Agent'ı özel bir yapılandırmayla bağlayın."
+        }
+        "settings.agents.acpEmpty" => "Yapılandırılmış özel Agent yok.",
+        "settings.agents.addAcp" => "+ Özel Agent ekle",
         "settings.agents.title" => "Ajanlar",
         "settings.agents.connect" => "Bağlan",
         "settings.agents.disconnect" => "Bağlantıyı kes",

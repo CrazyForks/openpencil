@@ -552,10 +552,12 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "settings.agents.builtinEmpty" => "Встроенные провайдеры не настроены.",
         "settings.agents.syncError" => "Ошибка синхронизации с сервером:",
         "settings.agents.addProvider" => "+ Добавить провайдера",
-        "settings.agents.acp" => "Агент ACP",
-        "settings.agents.acpSubtitle" => "Подключение внешних ACP-совместимых агентов.",
-        "settings.agents.acpEmpty" => "Агенты ACP не настроены.",
-        "settings.agents.addAcp" => "+ Добавить агента",
+        "settings.agents.acp" => "Универсальное подключение",
+        "settings.agents.acpSubtitle" => {
+            "Подключайте любые ACP-совместимые Agent с помощью пользовательской конфигурации."
+        }
+        "settings.agents.acpEmpty" => "Пользовательские Agent не настроены.",
+        "settings.agents.addAcp" => "+ Добавить пользовательский Agent",
         "settings.agents.title" => "Агенты",
         "settings.agents.connect" => "Подключить",
         "settings.agents.disconnect" => "Отключить",

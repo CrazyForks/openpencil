@@ -49,8 +49,10 @@ pub(crate) fn paint_subtitle(
     text: &str,
     x: f32,
     y: f32,
+    max_w: f32,
 ) -> f32 {
-    draw_text(cx, text, 12.0, theme.muted_foreground, x, y + 16.0);
+    let shown = ellipsize(cx, text, max_w, 12.0);
+    draw_text(cx, &shown, 12.0, theme.muted_foreground, x, y + 16.0);
     y + SUBTITLE_H
 }
 
@@ -63,10 +65,11 @@ pub(crate) fn paint_empty(
     y: f32,
     w: f32,
 ) -> f32 {
-    let text_w = cx.backend.measure_text(text, 13.0);
+    let shown = ellipsize(cx, text, w, 13.0);
+    let text_w = cx.backend.measure_text(&shown, 13.0);
     draw_text(
         cx,
-        text,
+        &shown,
         13.0,
         theme.muted_foreground,
         x + (w - text_w) / 2.0,

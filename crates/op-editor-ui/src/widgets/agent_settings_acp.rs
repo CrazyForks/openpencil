@@ -2,21 +2,21 @@
 
 use crate::theme::Theme;
 use crate::widgets::agent_settings_acp_helpers::{
-    field_input_rect, form_actions_y, form_card_h, type_toggle_rect,
+    connection_type_rect, field_input_rect, form_actions_y, form_card_h,
 };
 use crate::widgets::agent_settings_caret::settings_input_text;
 use crate::widgets::agent_settings_form_actions::{
     cancel_button_rect, paint_form_actions, save_button_rect,
 };
 use crate::widgets::agent_settings_header_action::{
-    header_action_rect, header_action_text_baseline_y, header_action_text_x,
+    fit_header_copy, header_action_rect, header_action_text_baseline_y, header_action_text_x,
 };
 use crate::widgets::agent_settings_i18n::t as t_settings;
 use crate::widgets::button::{paint_ghost_button_feedback, tokens_from_theme};
 use crate::widgets::icons::{draw_icon, Icon};
 use crate::widgets::settings_form::{self, draw_text, ellipsize, paint_action};
 use crate::widgets::PaintCx;
-use crate::{Point2D, Rect};
+use crate::{Point2D, Rect, TextLayout};
 use jian_widgets::components::button::{Button, ButtonVariant};
 use jian_widgets::components::card::Card;
 use op_editor_core::agent_settings::{
@@ -40,8 +40,6 @@ pub enum AcpHit {
     AddAgent,
     Focus { index: usize, field: AcpAgentField },
     FocusDraft(AcpAgentField),
-    ToggleConnectionType(usize),
-    ToggleDraftConnectionType,
     SaveDraft,
     CancelDraft,
     Edit(usize),
@@ -83,9 +81,6 @@ pub fn hit_test(content: Rect, settings: &AgentSettings, point: Point2D, y: f32)
             card_height(settings, index),
         );
         if is_editing(settings, index) {
-            if (type_toggle_rect(card)).contains(point) {
-                return AcpHit::ToggleConnectionType(index);
-            }
             for field in form_fields(agent.connection_type) {
                 if (field_input_rect(card, *field)).contains(point) {
                     return AcpHit::Focus {
@@ -111,9 +106,6 @@ pub fn hit_test(content: Rect, settings: &AgentSettings, point: Point2D, y: f32)
             content.size.x,
             form_card_h(agent.connection_type),
         );
-        if (type_toggle_rect(card)).contains(point) {
-            return AcpHit::ToggleDraftConnectionType;
-        }
         for field in form_fields(agent.connection_type) {
             if (field_input_rect(card, *field)).contains(point) {
                 return AcpHit::FocusDraft(*field);
@@ -172,6 +164,7 @@ pub fn paint_acp_section(
         t_settings(ui, "settings.agents.acpSubtitle"),
         content.origin.x,
         y,
+        content.size.x,
     );
     if settings.acp_agents.is_empty() && settings.acp_agent_draft.is_none() {
         return settings_form::paint_empty(
@@ -231,23 +224,23 @@ fn paint_header(
     action_hover: bool,
     action_pressed: bool,
 ) -> f32 {
+    let copy = fit_header_copy(cx, title, action, content.size.x);
     draw_text(
         cx,
-        title,
+        &copy.title,
         15.0,
         theme.foreground,
         content.origin.x,
         y + 18.0,
     );
-    let action_w = cx.backend.measure_text(action, 12.0);
-    let action_rect = header_action_rect(content, y, action_w);
+    let action_rect = header_action_rect(content, y);
     paint_ghost_button_feedback(cx.backend, theme, action_rect, action_hover, action_pressed);
     draw_text(
         cx,
-        action,
+        &copy.action,
         12.0,
         theme.primary,
-        header_action_text_x(action_rect, action_w),
+        header_action_text_x(action_rect, copy.action_w),
         header_action_text_baseline_y(action_rect),
     );
     y + HEADER_H
@@ -287,7 +280,7 @@ fn paint_compact_acp_card(
         if connected { theme.accent } else { theme.muted },
     );
     cx.backend.stroke_round_rect(card, 8.0, theme.border, 1.0);
-    paint_avatar(cx, theme, ui, agent, card);
+    paint_avatar(cx, theme, agent, card);
 
     let text_x = card.origin.x + 60.0;
     let name = ellipsize(cx, &agent.display_name, 190.0, 13.0);
@@ -371,39 +364,45 @@ fn paint_acp_form(
         11.0,
         theme.muted_foreground,
         card.origin.x + 12.0,
-        type_toggle_rect(card).origin.y - 8.0,
+        connection_type_rect(card).origin.y - 8.0,
     );
-    paint_type_toggle(cx, theme, ui, agent, card);
+    paint_connection_type_badge(cx, theme, ui, agent, card);
     for field in form_fields(agent.connection_type) {
         paint_field(cx, theme, settings, ui, agent, index, *field, card, now_ms);
     }
 }
 
-fn paint_avatar(
-    cx: &mut PaintCx<'_>,
-    theme: &Theme,
-    ui: &EditorUiState,
-    agent: &AcpAgentConfig,
-    card: Rect,
-) {
+fn paint_avatar(cx: &mut PaintCx<'_>, theme: &Theme, agent: &AcpAgentConfig, card: Rect) {
     let avatar = Rect {
         origin: Point2D::new(card.origin.x + 12.0, card.origin.y + 12.0),
         size: Point2D::new(36.0, 36.0),
     };
     cx.backend.fill_round_rect(avatar, 8.0, theme.card);
-    let icon = match agent.connection_type {
-        AcpConnectionType::Local => Icon::Terminal,
-        AcpConnectionType::Remote => Icon::Globe,
-    };
-    draw_icon(
-        cx.backend,
-        icon,
-        Point2D::new(avatar.origin.x + 9.0, avatar.origin.y + 9.0),
-        18.0,
-        theme.foreground,
-        1.6,
+    let monogram = agent_monogram(&agent.display_name);
+    let monogram_w = cx.backend.measure_text(&monogram, 15.0);
+    let layout = TextLayout::single_run(
+        &monogram,
+        "system-ui",
+        15.0,
+        theme.foreground.to_jian(),
+        Point2D::ZERO,
+    )
+    .with_font_weight(600);
+    cx.backend.draw_text(
+        &layout,
+        Point2D::new(
+            avatar.origin.x + (avatar.size.x - monogram_w) / 2.0,
+            jian_widgets::centered_text_baseline_y(avatar, 15.0),
+        ),
     );
-    let _ = ui;
+}
+
+fn agent_monogram(display_name: &str) -> String {
+    display_name
+        .chars()
+        .find(|ch| !ch.is_whitespace() && !ch.is_control())
+        .map(|ch| ch.to_uppercase().collect())
+        .unwrap_or_else(|| "?".to_string())
 }
 
 fn paint_connection_button(
@@ -543,51 +542,41 @@ fn paint_field(
     }
 }
 
-fn paint_type_toggle(
+fn paint_connection_type_badge(
     cx: &mut PaintCx<'_>,
     theme: &Theme,
     ui: &EditorUiState,
     agent: &AcpAgentConfig,
     card: Rect,
 ) {
-    let r = type_toggle_rect(card);
+    let r = connection_type_rect(card);
+    cx.backend.fill_round_rect(r, 6.0, theme.card);
     cx.backend.stroke_round_rect(r, 6.0, theme.border, 1.0);
-    let half = r.size.x / 2.0;
-    for (i, kind) in [AcpConnectionType::Local, AcpConnectionType::Remote]
-        .iter()
-        .enumerate()
-    {
-        let item = Rect {
-            origin: Point2D::new(r.origin.x + i as f32 * half, r.origin.y),
-            size: Point2D::new(half, r.size.y),
-        };
-        let active = agent.connection_type == *kind;
-        if active {
-            cx.backend.fill_round_rect(item, 5.0, theme.primary);
-        }
-        let color = if active {
-            theme.primary_foreground
-        } else {
-            theme.muted_foreground
-        };
-        let label = connection_type_label(ui, *kind);
-        let icon = match kind {
-            AcpConnectionType::Local => Icon::Terminal,
-            AcpConnectionType::Remote => Icon::Globe,
-        };
-        let tw = cx.backend.measure_text(label, 11.0);
-        let group_w = 16.0 + 6.0 + tw;
-        let group_x = item.origin.x + (item.size.x - group_w) / 2.0;
-        draw_icon(
-            cx.backend,
-            icon,
-            Point2D::new(group_x, item.origin.y + 6.0),
-            14.0,
-            color,
-            1.5,
-        );
-        draw_text(cx, label, 11.0, color, group_x + 22.0, item.origin.y + 18.0);
-    }
+    let kind = agent.connection_type;
+    let label = connection_type_label(ui, kind);
+    let icon = match kind {
+        AcpConnectionType::Local => Icon::Terminal,
+        AcpConnectionType::Remote => Icon::Globe,
+    };
+    let tw = cx.backend.measure_text(label, 11.0);
+    let group_w = 16.0 + 6.0 + tw;
+    let group_x = r.origin.x + (r.size.x - group_w) / 2.0;
+    draw_icon(
+        cx.backend,
+        icon,
+        Point2D::new(group_x, r.origin.y + 6.0),
+        14.0,
+        theme.muted_foreground,
+        1.5,
+    );
+    draw_text(
+        cx,
+        label,
+        11.0,
+        theme.muted_foreground,
+        group_x + 22.0,
+        r.origin.y + 18.0,
+    );
 }
 
 fn acp_detail(settings: &AgentSettings, agent: &AcpAgentConfig) -> String {
@@ -653,7 +642,7 @@ fn card_height(settings: &AgentSettings, index: usize) -> f32 {
 }
 
 fn add_agent_rect(content: Rect, y: f32) -> Rect {
-    header_action_rect(content, y, 0.0)
+    header_action_rect(content, y)
 }
 
 fn card_rect(x: f32, y: f32, w: f32, h: f32) -> Rect {

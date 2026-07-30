@@ -552,10 +552,12 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "settings.agents.builtinEmpty" => "Chưa cấu hình nhà cung cấp tích hợp nào.",
         "settings.agents.syncError" => "Đồng bộ máy chủ thất bại:",
         "settings.agents.addProvider" => "+ Thêm nhà cung cấp",
-        "settings.agents.acp" => "Agent ACP",
-        "settings.agents.acpSubtitle" => "Kết nối các Agent bên ngoài tương thích ACP.",
-        "settings.agents.acpEmpty" => "Chưa cấu hình Agent ACP nào.",
-        "settings.agents.addAcp" => "+ Thêm Agent",
+        "settings.agents.acp" => "Tích hợp chung",
+        "settings.agents.acpSubtitle" => {
+            "Kết nối bất kỳ Agent tương thích ACP nào bằng cấu hình tùy chỉnh."
+        }
+        "settings.agents.acpEmpty" => "Chưa cấu hình Agent tùy chỉnh nào.",
+        "settings.agents.addAcp" => "+ Thêm Agent tùy chỉnh",
         "settings.agents.title" => "Agents",
         "settings.agents.connect" => "Kết nối",
         "settings.agents.disconnect" => "Ngắt kết nối",

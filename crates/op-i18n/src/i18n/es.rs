@@ -552,10 +552,12 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "settings.agents.builtinEmpty" => "No hay proveedores integrados configurados.",
         "settings.agents.syncError" => "Error de sincronización con el servidor:",
         "settings.agents.addProvider" => "+ Añadir proveedor",
-        "settings.agents.acp" => "Agente ACP",
-        "settings.agents.acpSubtitle" => "Conecta agentes externos compatibles con ACP.",
-        "settings.agents.acpEmpty" => "No hay agentes ACP configurados.",
-        "settings.agents.addAcp" => "+ Añadir agente",
+        "settings.agents.acp" => "Integración genérica",
+        "settings.agents.acpSubtitle" => {
+            "Conecta cualquier Agent compatible con ACP con una configuración personalizada."
+        }
+        "settings.agents.acpEmpty" => "No hay Agents personalizados configurados.",
+        "settings.agents.addAcp" => "+ Añadir Agent personalizado",
         "settings.agents.title" => "Agentes",
         "settings.agents.connect" => "Conectar",
         "settings.agents.disconnect" => "Desconectar",

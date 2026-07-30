@@ -246,32 +246,6 @@ pub(crate) fn apply_entry_hit(
             focus_acp_agent_draft(state, field, now_ms);
             SettingsPressOutcome::handled()
         }
-        AgentSettingsHit::ToggleAcpConnectionType(index) => {
-            commit(state);
-            let flipped = state
-                .editor_ui
-                .agent_settings
-                .acp_agents
-                .get_mut(index)
-                .map(flip_acp_connection_type);
-            if let Some(field) = flipped {
-                focus_acp_agent(state, index, field, now_ms);
-            }
-            SettingsPressOutcome::handled()
-        }
-        AgentSettingsHit::ToggleAcpDraftConnectionType => {
-            commit(state);
-            let flipped = state
-                .editor_ui
-                .agent_settings
-                .acp_agent_draft
-                .as_mut()
-                .map(flip_acp_connection_type);
-            if let Some(field) = flipped {
-                focus_acp_agent_draft(state, field, now_ms);
-            }
-            SettingsPressOutcome::handled()
-        }
         AgentSettingsHit::EditAcpAgent(index) => {
             commit(state);
             focus_acp_agent(state, index, AcpAgentField::DisplayName, now_ms);
@@ -279,9 +253,14 @@ pub(crate) fn apply_entry_hit(
         }
         AgentSettingsHit::RemoveAcpAgent(index) => {
             commit(state);
-            let agents = &mut state.editor_ui.agent_settings.acp_agents;
-            if index < agents.len() {
-                agents.remove(index);
+            let id = state
+                .editor_ui
+                .agent_settings
+                .acp_agents
+                .get(index)
+                .map(|agent| agent.id.clone());
+            if let Some(id) = id {
+                state.editor_ui.agent_settings.remove_acp_agent(&id);
                 clear_focus(state);
                 state.rebuild_chat_models();
             }

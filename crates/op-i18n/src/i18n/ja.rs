@@ -552,10 +552,12 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "settings.agents.builtinEmpty" => "組み込みプロバイダーが設定されていません。",
         "settings.agents.syncError" => "サーバー同期に失敗しました:",
         "settings.agents.addProvider" => "+ プロバイダーを追加",
-        "settings.agents.acp" => "ACP エージェント",
-        "settings.agents.acpSubtitle" => "外部の ACP 対応エージェントに接続します。",
-        "settings.agents.acpEmpty" => "ACP エージェントが設定されていません。",
-        "settings.agents.addAcp" => "+ エージェントを追加",
+        "settings.agents.acp" => "汎用連携",
+        "settings.agents.acpSubtitle" => {
+            "カスタム設定で任意の ACP 対応 Agent を接続します。"
+        }
+        "settings.agents.acpEmpty" => "カスタム Agent は設定されていません。",
+        "settings.agents.addAcp" => "+ カスタム Agent を追加",
         "settings.agents.title" => "Agents",
         "settings.agents.connect" => "接続",
         "settings.agents.disconnect" => "切断",

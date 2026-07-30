@@ -552,10 +552,12 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "settings.agents.builtinEmpty" => "ยังไม่ได้กำหนดค่าผู้ให้บริการในตัว",
         "settings.agents.syncError" => "การซิงค์กับเซิร์ฟเวอร์ล้มเหลว:",
         "settings.agents.addProvider" => "+ เพิ่มผู้ให้บริการ",
-        "settings.agents.acp" => "ACP Agent",
-        "settings.agents.acpSubtitle" => "เชื่อมต่อ Agent ภายนอกที่รองรับ ACP",
-        "settings.agents.acpEmpty" => "ยังไม่ได้กำหนดค่า ACP Agent",
-        "settings.agents.addAcp" => "+ เพิ่ม Agent",
+        "settings.agents.acp" => "การเชื่อมต่อทั่วไป",
+        "settings.agents.acpSubtitle" => {
+            "เชื่อมต่อ Agent ที่รองรับ ACP ด้วยการกำหนดค่าแบบกำหนดเอง"
+        }
+        "settings.agents.acpEmpty" => "ยังไม่ได้กำหนดค่า Agent แบบกำหนดเอง",
+        "settings.agents.addAcp" => "+ เพิ่ม Agent แบบกำหนดเอง",
         "settings.agents.title" => "Agents",
         "settings.agents.connect" => "เชื่อมต่อ",
         "settings.agents.disconnect" => "ยกเลิกการเชื่อมต่อ",

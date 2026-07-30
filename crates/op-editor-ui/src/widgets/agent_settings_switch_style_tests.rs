@@ -125,7 +125,7 @@ fn mcp_server_button_rect(rect: Rect) -> Rect {
     }
 }
 
-fn add_provider_button_rect(rect: Rect, text_w: f32) -> Rect {
+fn add_provider_button_rect(rect: Rect, _text_w: f32) -> Rect {
     let (content_x, content_y, content_w) = settings_content_metrics(rect);
     super::agent_settings_header_action::header_action_rect(
         Rect {
@@ -133,11 +133,10 @@ fn add_provider_button_rect(rect: Rect, text_w: f32) -> Rect {
             size: Point2D::new(content_w, 0.0),
         },
         content_y + 12.0,
-        text_w,
     )
 }
 
-fn add_acp_agent_button_rect(rect: Rect, text_w: f32) -> Rect {
+fn add_acp_agent_button_rect(rect: Rect, _text_w: f32) -> Rect {
     let (content_x, content_y, content_w) = settings_content_metrics(rect);
     let builtin_h = 28.0 + 28.0 + 64.0;
     let acp_y = content_y + 12.0 + builtin_h + 28.0;
@@ -147,7 +146,6 @@ fn add_acp_agent_button_rect(rect: Rect, text_w: f32) -> Rect {
             size: Point2D::new(content_w, 0.0),
         },
         acp_y,
-        text_w,
     )
 }
 
@@ -710,7 +708,7 @@ fn builtin_add_provider_text_is_centered_in_hover_wash() {
     let label = op_i18n::translate(state.editor_ui.locale, "settings.agents.addProvider");
     let mut backend = CaptureBackend::default();
     let label_w = backend.measure_text(label, 12.0);
-    let hover_rect = super::agent_settings_header_action::header_action_rect(content, y, label_w);
+    let hover_rect = super::agent_settings_header_action::header_action_rect(content, y);
     let expected_x = super::agent_settings_header_action::header_action_text_x(hover_rect, label_w);
     let expected_y = hover_rect.origin.y + hover_rect.size.y / 2.0 + 4.0;
 

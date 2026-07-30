@@ -13,7 +13,9 @@ pub(super) const DRAFT_CARD_H: f32 = 370.0;
 const FIELD_H: f32 = 28.0;
 const ENV_FIELD_H: f32 = 64.0;
 
-pub(super) fn type_toggle_rect(card: Rect) -> Rect {
+/// Read-only transport badge. New custom-Agent drafts are Local-only in
+/// M1; legacy Remote rows keep their persisted label but cannot switch here.
+pub(super) fn connection_type_rect(card: Rect) -> Rect {
     Rect {
         origin: Point2D::new(card.origin.x + 12.0, card.origin.y + 100.0),
         size: Point2D::new(card.size.x - 24.0, 28.0),

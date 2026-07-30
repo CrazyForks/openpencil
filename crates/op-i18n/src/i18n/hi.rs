@@ -550,10 +550,12 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "settings.agents.builtinEmpty" => "कोई अंतर्निहित प्रदाता कॉन्फ़िगर नहीं किया गया।",
         "settings.agents.syncError" => "सर्वर सिंक विफल:",
         "settings.agents.addProvider" => "+ प्रदाता जोड़ें",
-        "settings.agents.acp" => "ACP एजेंट",
-        "settings.agents.acpSubtitle" => "बाहरी ACP-संगत एजेंट कनेक्ट करें।",
-        "settings.agents.acpEmpty" => "कोई ACP एजेंट कॉन्फ़िगर नहीं किया गया।",
-        "settings.agents.addAcp" => "+ एजेंट जोड़ें",
+        "settings.agents.acp" => "सामान्य इंटीग्रेशन",
+        "settings.agents.acpSubtitle" => {
+            "कस्टम कॉन्फ़िगरेशन से किसी भी ACP-संगत Agent को कनेक्ट करें।"
+        }
+        "settings.agents.acpEmpty" => "कोई कस्टम Agent कॉन्फ़िगर नहीं है।",
+        "settings.agents.addAcp" => "+ कस्टम Agent जोड़ें",
         "settings.agents.title" => "एजेंट",
         "settings.agents.connect" => "कनेक्ट करें",
         "settings.agents.disconnect" => "डिस्कनेक्ट करें",

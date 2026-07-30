@@ -6,6 +6,70 @@
 use super::*;
 
 #[test]
+fn full_painted_add_provider_action_rect_is_clickable_from_its_left_edge() {
+    let state = EditorState::default();
+    let panel = AgentSettingsPanel::for_editor(&state);
+    let panel_rect = panel.rect(1200.0, 800.0);
+    let content = crate::widgets::agent_settings_panel_geometry::content_rect(panel_rect);
+    let action = crate::widgets::agent_settings_header_action::header_action_rect(
+        content,
+        content.origin.y + 12.0,
+    );
+
+    assert_eq!(
+        panel.hit_test(
+            panel_rect,
+            Point2D::new(action.origin.x + 1.0, action.origin.y + action.size.y / 2.0),
+        ),
+        AgentSettingsHit::AddProvider
+    );
+}
+
+#[test]
+fn long_spanish_and_russian_builtin_subtitles_fit_the_shared_single_line_row() {
+    let content = Rect {
+        origin: Point2D::new(24.0, 32.0),
+        size: Point2D::new(472.0, 0.0),
+    };
+    let section_y = 40.0;
+    let subtitle_baseline = section_y + 28.0 + 16.0;
+
+    for locale in [op_i18n::Locale::Es, op_i18n::Locale::Ru] {
+        let mut state = EditorState::default();
+        state.editor_ui.locale = locale;
+        let mut backend = CaptureBackend::default();
+        let mut cx = PaintCx {
+            backend: &mut backend,
+        };
+        crate::widgets::agent_settings_builtin::paint_builtin_section(
+            &mut cx,
+            &crate::theme::Theme::dark(),
+            &state.editor_ui.agent_settings,
+            &state.editor_ui,
+            content,
+            section_y,
+            0,
+        );
+
+        let (subtitle, point) = backend
+            .text_effective_points
+            .iter()
+            .find(|(_, point)| (point.y - subtitle_baseline).abs() < 0.01)
+            .cloned()
+            .expect("built-in subtitle should be painted on its fixed-height row");
+        let painted_w = backend.measure_text(&subtitle, 12.0);
+        assert!(
+            subtitle.ends_with("..."),
+            "{locale:?} built-in subtitle should visibly signal truncation"
+        );
+        assert!(
+            point.x + painted_w <= content.origin.x + content.size.x + 0.01,
+            "{locale:?} built-in subtitle should fit its content row"
+        );
+    }
+}
+
+#[test]
 fn hit_test_resolves_builtin_agent_api_key_field() {
     let mut state = EditorState::default();
     state.editor_ui.agent_settings.add_builtin_agent();

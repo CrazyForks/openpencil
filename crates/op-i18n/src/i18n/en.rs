@@ -601,10 +601,12 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "settings.agents.builtinEmpty" => "No built-in providers configured.",
         "settings.agents.syncError" => "Server sync failed:",
         "settings.agents.addProvider" => "+ Add provider",
-        "settings.agents.acp" => "ACP Agent",
-        "settings.agents.acpSubtitle" => "Connect external ACP-compatible Agents.",
-        "settings.agents.acpEmpty" => "No ACP Agents configured.",
-        "settings.agents.addAcp" => "+ Add Agent",
+        "settings.agents.acp" => "Universal integration",
+        "settings.agents.acpSubtitle" => {
+            "Connect any ACP-compatible Agent with a custom configuration."
+        }
+        "settings.agents.acpEmpty" => "No custom Agents configured.",
+        "settings.agents.addAcp" => "+ Add custom Agent",
         "settings.agents.title" => "Agents",
         "settings.agents.connect" => "Connect",
         "settings.agents.disconnect" => "Disconnect",

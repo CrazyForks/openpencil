@@ -13,6 +13,23 @@ fn en_us_returns_english_chrome_strings() {
 }
 
 #[test]
+fn custom_agent_entry_is_presented_as_a_universal_integration() {
+    assert_eq!(translate(Locale::ZhCn, "settings.agents.acp"), "通用接入");
+    assert_eq!(
+        translate(Locale::ZhCn, "settings.agents.addAcp"),
+        "+ 添加自定义 Agent"
+    );
+    assert_eq!(
+        translate(Locale::EnUs, "settings.agents.acp"),
+        "Universal integration"
+    );
+    assert_eq!(
+        translate(Locale::EnUs, "settings.agents.addAcp"),
+        "+ Add custom Agent"
+    );
+}
+
+#[test]
 fn every_locale_has_a_direct_common_translation() {
     for locale in Locale::ALL {
         assert_ne!(translate(locale, "common.cancel"), "common.cancel");

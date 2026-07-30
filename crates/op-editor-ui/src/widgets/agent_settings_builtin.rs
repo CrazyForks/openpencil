@@ -12,7 +12,7 @@ use crate::widgets::agent_settings_form_actions::{
     cancel_button_rect, paint_form_actions, save_button_rect,
 };
 use crate::widgets::agent_settings_header_action::{
-    header_action_rect, header_action_text_baseline_y, header_action_text_x,
+    fit_header_copy, header_action_rect, header_action_text_baseline_y, header_action_text_x,
 };
 use crate::widgets::agent_settings_i18n::t as t_settings;
 use crate::widgets::agent_settings_switch::paint_settings_switch;
@@ -284,6 +284,7 @@ pub fn paint_builtin_section(
         t_settings(ui, "settings.agents.builtinSubtitle"),
         content.origin.x,
         y,
+        content.size.x,
     );
     if let Some(error) = settings.web_credential_sync_error.as_deref() {
         let text = format!("{} {error}", t_settings(ui, "settings.agents.syncError"));
@@ -362,8 +363,9 @@ fn paint_header(
     action_hover: bool,
     action_pressed: bool,
 ) -> f32 {
+    let copy = fit_header_copy(cx, title, action, frame.w);
     let layout = TextLayout::single_run(
-        title,
+        &copy.title,
         "system-ui",
         15.0,
         (theme.foreground).to_jian(),
@@ -371,18 +373,16 @@ fn paint_header(
     );
     cx.backend
         .draw_text(&layout, Point2D::new(frame.x, frame.y + 18.0));
-    let action_w = cx.backend.measure_text(action, 12.0);
     let action_rect = header_action_rect(
         Rect {
             origin: Point2D::new(frame.x, frame.y),
             size: Point2D::new(frame.w, HEADER_HEIGHT),
         },
         frame.y,
-        action_w,
     );
     paint_ghost_button_feedback(cx.backend, theme, action_rect, action_hover, action_pressed);
     let act = TextLayout::single_run(
-        action,
+        &copy.action,
         "system-ui",
         12.0,
         (theme.primary).to_jian(),
@@ -391,7 +391,7 @@ fn paint_header(
     cx.backend.draw_text(
         &act,
         Point2D::new(
-            header_action_text_x(action_rect, action_w),
+            header_action_text_x(action_rect, copy.action_w),
             header_action_text_baseline_y(action_rect),
         ),
     );

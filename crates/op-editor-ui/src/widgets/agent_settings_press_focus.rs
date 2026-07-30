@@ -124,27 +124,14 @@ pub(crate) fn acp_field_text(
     }
 }
 
-/// The field that carries the transport for `connection_type` — the one
-/// a freshly-flipped or unconfigured ACP card focuses.
+/// The field that carries the persisted transport for `connection_type` —
+/// the one an unconfigured ACP card focuses. New M1 drafts are Local-only;
+/// Remote remains here for legacy persisted rows.
 pub(crate) fn transport_field(connection_type: AcpConnectionType) -> AcpAgentField {
     match connection_type {
         AcpConnectionType::Local => AcpAgentField::Command,
         AcpConnectionType::Remote => AcpAgentField::Url,
     }
-}
-
-/// Flip Local ↔ Remote on `agent`, drop its connected flag (the live
-/// session no longer matches the transport), and report the field to
-/// focus next.
-pub(crate) fn flip_acp_connection_type(
-    agent: &mut op_editor_core::agent_settings::AcpAgentConfig,
-) -> AcpAgentField {
-    agent.connection_type = match agent.connection_type {
-        AcpConnectionType::Local => AcpConnectionType::Remote,
-        AcpConnectionType::Remote => AcpConnectionType::Local,
-    };
-    agent.connected = false;
-    transport_field(agent.connection_type)
 }
 
 pub(crate) fn focus_acp_agent(

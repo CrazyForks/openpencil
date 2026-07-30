@@ -550,10 +550,12 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "settings.agents.builtinEmpty" => "Tidak ada penyedia bawaan yang dikonfigurasi.",
         "settings.agents.syncError" => "Sinkronisasi server gagal:",
         "settings.agents.addProvider" => "+ Tambah penyedia",
-        "settings.agents.acp" => "Agent ACP",
-        "settings.agents.acpSubtitle" => "Hubungkan Agent eksternal yang kompatibel dengan ACP.",
-        "settings.agents.acpEmpty" => "Tidak ada Agent ACP yang dikonfigurasi.",
-        "settings.agents.addAcp" => "+ Tambah Agent",
+        "settings.agents.acp" => "Integrasi umum",
+        "settings.agents.acpSubtitle" => {
+            "Hubungkan Agent apa pun yang kompatibel dengan ACP menggunakan konfigurasi khusus."
+        }
+        "settings.agents.acpEmpty" => "Tidak ada Agent khusus yang dikonfigurasi.",
+        "settings.agents.addAcp" => "+ Tambah Agent khusus",
         "settings.agents.title" => "Agents",
         "settings.agents.connect" => "Hubungkan",
         "settings.agents.disconnect" => "Putuskan",

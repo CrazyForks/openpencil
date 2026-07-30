@@ -140,8 +140,6 @@ pub enum AgentSettingsHit {
         field: AcpAgentField,
     },
     FocusAcpAgentDraft(AcpAgentField),
-    ToggleAcpConnectionType(usize),
-    ToggleAcpDraftConnectionType,
     SaveAcpAgentDraft,
     CancelAcpAgentDraft,
     EditAcpAgent(usize),
