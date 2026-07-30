@@ -14,6 +14,10 @@ use op_editor_core::host_escape_transitions as escape;
 impl WidgetHost {
     /// Escape — handles one layer per press.
     pub fn apply_escape(&mut self) -> bool {
+        if self.editor_state.editor_ui.escape_prompt_center() {
+            self.mark_dirty();
+            return true;
+        }
         // The property-panel image popover owns Escape before any stale input
         // underneath. Keep the image selected; only dismiss the top layer.
         if self.editor_state.editor_ui.image_panel.search_open

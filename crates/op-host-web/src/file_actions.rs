@@ -348,6 +348,12 @@ pub fn preserve_app_preferences(previous: &EditorState, next: &mut EditorState) 
     next.editor_ui.system_font_families = previous.editor_ui.system_font_families.clone();
     next.editor_ui.bundled_font_families = previous.editor_ui.bundled_font_families.clone();
     next.editor_ui.imported_font_families = previous.editor_ui.imported_font_families.clone();
+    next.editor_ui.prompt_center.custom_prompts =
+        previous.editor_ui.prompt_center.custom_prompts.clone();
+    next.editor_ui.prompt_center.custom_store_writable =
+        previous.editor_ui.prompt_center.custom_store_writable;
+    next.editor_ui.prompt_center.custom_store_dirty =
+        previous.editor_ui.prompt_center.custom_store_dirty;
     next.editor_ui.agent_settings = previous.editor_ui.agent_settings.clone();
     next.editor_ui.chat_selected_agent = previous.editor_ui.chat_selected_agent;
     next.chat.discovered_models = previous.chat.discovered_models.clone();

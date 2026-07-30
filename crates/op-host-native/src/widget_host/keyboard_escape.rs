@@ -17,6 +17,10 @@ impl WidgetHostNative {
             self.exit_preview();
             return true;
         }
+        if self.editor_state.editor_ui.escape_prompt_center() {
+            self.mark_dirty();
+            return true;
+        }
         if self.editor_state.color_picker_hex_focused() {
             self.collab_blur_color_picker_inputs();
             self.mark_dirty();

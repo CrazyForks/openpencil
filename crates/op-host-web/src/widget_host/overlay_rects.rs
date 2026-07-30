@@ -121,6 +121,15 @@ impl WidgetHost {
         overlay_geometry::component_browser_panel_rect(&self.editor_state, viewport_w, viewport_h)
     }
 
+    /// Floating Prompt Center rect — `None` when closed.
+    pub(in crate::widget_host) fn prompt_center_panel_rect(
+        &self,
+        viewport_w: f32,
+        viewport_h: f32,
+    ) -> Option<Rect> {
+        overlay_geometry::prompt_center_panel_rect(&self.editor_state, viewport_w, viewport_h)
+    }
+
     /// Floating Icon-picker panel rect — `None` when closed. Centred
     /// compact searchable panel, same placement as the native host.
     pub(in crate::widget_host) fn icon_picker_panel_rect(
@@ -151,7 +160,32 @@ impl WidgetHost {
                 .icon_picker_panel_rect(viewport_w, viewport_h)
                 .is_some_and(|r| (r).contains(p))
             || self
+                .prompt_center_panel_rect(viewport_w, viewport_h)
+                .is_some_and(|r| (r).contains(p))
+            || self
                 .component_browser_panel_rect(viewport_w, viewport_h)
                 .is_some_and(|r| (r).contains(p))
+    }
+
+    /// Panels painted above Chat. Variables is intentionally excluded:
+    /// it sits below Chat even though [`Self::over_topmost_panel`] groups
+    /// it with floating chrome for canvas suppression.
+    pub(in crate::widget_host) fn over_true_topmost_panel(
+        &self,
+        point: Point2D,
+        viewport_w: f32,
+        viewport_h: f32,
+    ) -> bool {
+        self.design_md_panel_rect(viewport_w, viewport_h)
+            .is_some_and(|rect| rect.contains(point))
+            || self
+                .icon_picker_panel_rect(viewport_w, viewport_h)
+                .is_some_and(|rect| rect.contains(point))
+            || self
+                .prompt_center_panel_rect(viewport_w, viewport_h)
+                .is_some_and(|rect| rect.contains(point))
+            || self
+                .component_browser_panel_rect(viewport_w, viewport_h)
+                .is_some_and(|rect| rect.contains(point))
     }
 }

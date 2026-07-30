@@ -81,6 +81,27 @@ impl EditorUiState {
         true
     }
 
+    /// Close the Prompt Center before Escape reaches chat focus or selection.
+    pub fn escape_prompt_center(&mut self) -> bool {
+        if !self.prompt_center.open {
+            return false;
+        }
+        if self.prompt_center.save_open {
+            self.prompt_center.save_open = false;
+            self.prompt_center.save_title.set_text("");
+            self.prompt_center.focus = crate::PromptCenterFocus::Search;
+            self.prompt_center.hover = None;
+            if matches!(
+                self.pressed_button,
+                Some(crate::ButtonPressTarget::PromptCenter(_))
+            ) {
+                self.pressed_button = None;
+            }
+            return true;
+        }
+        self.close_prompt_center()
+    }
+
     /// Close the chat model picker dropdown.
     pub fn escape_chat_model_picker(&mut self) -> bool {
         if !self.chat_model_picker.open {

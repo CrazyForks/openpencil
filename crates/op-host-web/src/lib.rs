@@ -59,6 +59,8 @@ mod document_json;
 mod dom_io;
 #[cfg(feature = "canvaskit")]
 mod file_actions;
+#[cfg(all(test, feature = "canvaskit"))]
+mod prompt_center_file_actions_tests;
 // Short-lived Worker-side Figma converter. The exported class is instantiated
 // only in a module Worker by `figma_temp_worker.js`; the main editor never
 // retains it.

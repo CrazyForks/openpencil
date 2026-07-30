@@ -119,6 +119,30 @@ pub fn scroll_icon_picker(
     Some(dirty)
 }
 
+/// Scroll the Prompt Center card grid. The whole panel owns the wheel,
+/// including its fixed header and empty padding, so canvas zoom/pan can
+/// never fire through it.
+pub fn scroll_prompt_center(
+    state: &mut EditorState,
+    panel_rect: Option<Rect>,
+    point: Point2D,
+    delta_y: f32,
+) -> Option<bool> {
+    if !state.editor_ui.prompt_center.open {
+        return None;
+    }
+    let rect = panel_rect?;
+    if !rect.contains(point) {
+        return None;
+    }
+    let max = crate::widgets::PromptCenterPanel::for_editor(state)?.max_scroll(rect);
+    let changed = scroll_by_max(&mut state.editor_ui.prompt_center.scroll, -delta_y, max);
+    if changed {
+        state.editor_ui.prompt_center.hover = None;
+    }
+    Some(changed)
+}
+
 /// Scroll the right-rail PropertyPanel body once the hosts' own
 /// popover-priority preamble has declined the event: the Code tab's
 /// horizontal framework strip, the Code preview box, then the panel's

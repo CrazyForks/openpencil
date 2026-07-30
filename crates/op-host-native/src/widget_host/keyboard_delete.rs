@@ -11,6 +11,13 @@ use op_editor_core::host_preset_name_draft as preset_name;
 
 impl WidgetHostNative {
     pub fn apply_backspace(&mut self) -> bool {
+        if let Some(changed) = shared::prompt_center_backspace(&mut self.editor_state, self.now_ms)
+        {
+            if changed {
+                self.mark_dirty();
+            }
+            return true;
+        }
         // Preview mode: Backspace edits the focused runtime widget, not
         // the editor selection.
         if self.preview.is_some() {
@@ -244,6 +251,14 @@ impl WidgetHostNative {
     /// Delete — pops a char from rename / text-edit when active;
     /// otherwise deletes the selected node.
     pub fn apply_delete(&mut self) -> bool {
+        if let Some(changed) =
+            shared::prompt_center_delete_forward(&mut self.editor_state, self.now_ms)
+        {
+            if changed {
+                self.mark_dirty();
+            }
+            return true;
+        }
         // Preview mode: Delete edits the focused runtime widget, never
         // the editor selection.
         if self.preview.is_some() {

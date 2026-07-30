@@ -47,6 +47,8 @@ pub enum AIChatHit {
     /// Click on the effort chip — host cycles
     /// `ChatState::effort_level`.
     CycleEffort,
+    /// Click on the prompt-library button — opens the Prompt Center.
+    OpenPromptCenter,
     /// Click on the footer Agent Team chip — host cycles
     /// `ChatState::agent_team_size`.
     CycleAgentTeam,

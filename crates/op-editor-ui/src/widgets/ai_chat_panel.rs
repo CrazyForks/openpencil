@@ -519,6 +519,8 @@ fn paint_selection_chip(
 pub(crate) struct FooterLayout {
     /// Model picker pill — left anchor of the toolbar.
     pub(crate) model: Rect,
+    /// Prompt-library button — opens the Prompt Center.
+    pub(crate) prompt_center: Rect,
     /// Speed/effort chip — ⚡ icon + effort label in gold, no bg.
     /// Retained next to the model pill; clicking cycles effort level.
     pub(crate) speed: Rect,

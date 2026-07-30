@@ -35,6 +35,7 @@ impl WidgetHost {
             || (self.editor_state.editor_ui.agent_settings_open
                 && self.editor_state.editor_ui.agent_settings.focus.is_some())
             || self.editor_state.editor_ui.icon_picker.open
+            || self.editor_state.editor_ui.prompt_center.open
             || self.editor_state.editor_ui.chat_model_picker.open
             || self.editor_state.editor_ui.component_browser_open
             || self.editor_state.chat.focused
@@ -58,6 +59,7 @@ impl WidgetHost {
             || self.variables_search_active()
             || editor_ui.preset_name_input_active()
             || editor_ui.icon_picker.open
+            || editor_ui.prompt_center.open
             || editor_ui.component_browser_open
             || self.git_commit_focus_active()
             || self.git_remote_focus_active()
@@ -149,6 +151,13 @@ impl WidgetHost {
                 .image_panel
                 .active_input(generate_configured)
                 .and_then(slice);
+        }
+        if eui.prompt_center.open {
+            let input = match eui.prompt_center.focus {
+                op_editor_core::PromptCenterFocus::Search => &eui.prompt_center.search,
+                op_editor_core::PromptCenterFocus::SaveTitle => &eui.prompt_center.save_title,
+            };
+            return slice(input);
         }
         if eui.agent_settings.focus.is_some() {
             return slice(&eui.settings_input);

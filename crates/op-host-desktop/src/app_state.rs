@@ -7,8 +7,9 @@
 use crate::{
     collab_avatar_host, figma_import_session, git_session, html_import_session, image_decode_host,
     image_panel_host, image_search_session, ime_window, init_auth_runtime, kit_persistence,
-    persistence, remote_image_host, save_session, single_instance, theme_preset_host, update_check,
-    DesktopApp, PaintedPageIdentity, INITIAL_VIEWPORT_H, INITIAL_VIEWPORT_W,
+    persistence, prompt_center_store, remote_image_host, save_session, single_instance,
+    theme_preset_host, update_check, DesktopApp, PaintedPageIdentity, INITIAL_VIEWPORT_H,
+    INITIAL_VIEWPORT_W,
 };
 use op_host_native::WidgetHostNative;
 use std::path::PathBuf;
@@ -22,6 +23,7 @@ impl DesktopApp {
         let fit_blank_frame = initial_file.is_none();
         // Best-effort prefs restore onto the host's `EditorState`.
         op_host_services::settings_io::load(host.editor_state_mut());
+        prompt_center_store::install_user_prompts(&mut host);
         // Zode is a desktop-local integration. Keep it out of the shared
         // settings loader so `--serve-web` never exposes machine-local Zode
         // providers that the browser settings UI cannot manage.

@@ -1,7 +1,7 @@
 //! Footer toolbar geometry and paint for the AI chat panel.
 //!
 //! Computes the bottom single-row toolbar rects:
-//!   model pill (LEFT) | [gap] | ⚡ parallel-agents chip | attach | send (RIGHT)
+//!   model pill (LEFT) | library | ⚡ parallel-agents | attach | send (RIGHT)
 //!
 //! As of #38 the ⚡/📎/🎨 cluster moved from the LEFT (between model and gap) to
 //! the RIGHT. As of #42 the cluster sits snug against the single send/stop
@@ -48,6 +48,8 @@ const PARALLEL_AGENTS_PICKER_W: f32 = 130.0;
 
 /// Width of the bare-icon buttons (attach) in the toolbar.
 pub(crate) const FOOTER_ICON_W: f32 = 24.0;
+/// Width of the Prompt Center library button.
+pub(crate) const FOOTER_PROMPT_W: f32 = 24.0;
 
 /// Diameter of the circular send/stop buttons.
 pub(crate) const FOOTER_CIRCLE_D: f32 = 28.0;
@@ -65,15 +67,13 @@ impl<'a> AIChatPlaceholder<'a> {
         let toolbar_center_y = toolbar_top + INPUT_TOOLBAR_HEIGHT / 2.0;
         let cy = toolbar_center_y;
 
-        // Left anchor — model pill stays at PAD (unchanged by #38).
+        // Left anchor — model pill starts at PAD. Its width contracts at
+        // the minimum chat width so the new library button never overlaps
+        // the fixed right-hand cluster.
         let model_x = rect.origin.x + PAD;
         let model_h = 28.0;
-        let model = Rect::xywh(model_x, cy - model_h / 2.0, FOOTER_MODEL_PILL_W, model_h);
 
-        // Agent-team chip — zero-width logical rect for schema compat; contains() = false.
-        let agent_team = Rect::xywh(model_x + FOOTER_MODEL_PILL_W, cy - 11.0, 0.0, 22.0);
-
-        // Right cluster (#38/#42 layout) — ⚡ chip | 📎 attach | send,
+        // Right cluster (#38/#42 layout) — library | ⚡ | 📎 | send,
         // laid out right-to-left from right_edge (stop shares the send slot).
         let right_edge = rect.origin.x + rect.size.x - PAD;
 
@@ -105,8 +105,24 @@ impl<'a> AIChatPlaceholder<'a> {
         let speed_h = 22.0;
         let speed = Rect::xywh(speed_x, cy - speed_h / 2.0, FOOTER_SPEED_W, speed_h);
 
+        // Prompt Center — immediately left of the parallel-agents chip.
+        let prompt_x = speed_x - FOOTER_GAP - FOOTER_PROMPT_W;
+        let prompt_center = Rect::xywh(
+            prompt_x,
+            cy - FOOTER_PROMPT_W / 2.0,
+            FOOTER_PROMPT_W,
+            FOOTER_PROMPT_W,
+        );
+
+        let model_w = FOOTER_MODEL_PILL_W.min((prompt_x - FOOTER_GAP - model_x).max(0.0));
+        let model = Rect::xywh(model_x, cy - model_h / 2.0, model_w, model_h);
+
+        // Agent-team chip — zero-width logical rect for schema compat; contains() = false.
+        let agent_team = Rect::xywh(model_x + model_w, cy - 11.0, 0.0, 22.0);
+
         FooterLayout {
             model,
+            prompt_center,
             speed,
             agent_team,
             attach,
@@ -267,7 +283,7 @@ pub(crate) fn paint_parallel_agents_picker(
 
 /// Paint the bottom-toolbar row of the AI chat panel (#27 / #32 layout).
 ///
-/// Draws: model pill | [gap] | ⚡ parallel-agents chip | 📎 attach | ↑ send (◻ stop while streaming)
+/// Draws: model pill | library | ⚡ parallel-agents | 📎 attach | ↑ send
 ///
 /// The ⚡ chip shows "{N}x" in gold (N = `agent_team_size`) and opens the
 /// Parallel Agents picker on click.
@@ -372,6 +388,32 @@ pub(crate) fn paint_bottom_toolbar(
         1.4,
     );
     cx.backend.restore();
+
+    // --- Prompt Center library button ---
+    let prompt_hover = widget.footer_hover == Some(ChatFooterButton::PromptCenter)
+        || widget.footer_pressed == Some(ChatFooterButton::PromptCenter);
+    if prompt_hover {
+        cx.backend.fill_round_rect(
+            footer.prompt_center,
+            6.0,
+            chat_neutral_feedback_color(
+                &widget.theme,
+                widget.footer_pressed == Some(ChatFooterButton::PromptCenter),
+            ),
+        );
+    }
+    let prompt_icon_offset = (FOOTER_PROMPT_W - 14.0) / 2.0;
+    draw_icon(
+        cx.backend,
+        Icon::Library,
+        Point2D::new(
+            footer.prompt_center.origin.x + prompt_icon_offset,
+            footer.prompt_center.origin.y + prompt_icon_offset,
+        ),
+        14.0,
+        widget.theme.muted_foreground,
+        1.4,
+    );
 
     // --- Parallel-agents chip (#32) — ⚡ in gold + "{N}x" label, no background ---
     // Repurposed from the old effort/speed chip. The chip shows the current

@@ -210,6 +210,8 @@ mod missing_fonts_key_tests;
 #[cfg(test)]
 mod preview_device_key_tests;
 #[cfg(test)]
+mod prompt_center_key_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod vector_fidelity_property_keys;

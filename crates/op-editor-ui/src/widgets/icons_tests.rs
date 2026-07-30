@@ -77,6 +77,7 @@ fn every_variant_paints_at_least_one_primitive() {
         Icon::Redo,
         Icon::Braces,
         Icon::BookOpen,
+        Icon::Library,
         Icon::Plus,
         Icon::Minus,
         Icon::Search,

@@ -48,6 +48,10 @@ impl WidgetHost {
             self.close_image_popovers_for_higher_overlay();
             return Some(true);
         }
+        if self.dispatch_prompt_center_press(x, y, viewport_width, viewport_height) {
+            self.close_image_popovers_for_higher_overlay();
+            return Some(true);
+        }
         // Floating Component-Browser panel — painted just under the
         // Design-MD panel; hit-tests right after it. A consumed press
         // may queue an insert — drain it against this viewport (web

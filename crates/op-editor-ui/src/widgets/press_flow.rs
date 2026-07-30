@@ -19,6 +19,8 @@ use crate::widgets::{
 };
 use crate::{Point2D, Rect};
 
+pub use super::prompt_center_press_flow::press_prompt_center;
+
 /// Screen rect of the right-hand property rail. Both hosts derive it
 /// from the same two inputs, so the walk lives here instead of being
 /// re-spelled at every popover hit-test site.

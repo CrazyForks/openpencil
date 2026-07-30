@@ -17,12 +17,15 @@
 use op_editor_core::EditorState;
 
 use crate::layout_scene::LayoutScene;
-use crate::widgets::host_canvas_geometry::{canvas_region, TOOLBAR_INSET_X, TOOLBAR_INSET_Y};
+use crate::widgets::host_canvas_geometry::{
+    canvas_rect, canvas_region, TOOLBAR_INSET_X, TOOLBAR_INSET_Y,
+};
 use crate::widgets::{
     ImportMenu, LayoutCx, LocalePicker, ShapePicker, Toolbar, TopBar, Widget,
     COMPONENT_BROWSER_PANEL_H, COMPONENT_BROWSER_PANEL_W, DESIGN_MD_PANEL_H, DESIGN_MD_PANEL_W,
     ICON_PICKER_PANEL_H, ICON_PICKER_PANEL_W, IMPORT_MENU_WIDTH, LOCALE_PICKER_WIDTH,
-    SHAPE_PICKER_WIDTH, TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
+    PROMPT_CENTER_PANEL_H, PROMPT_CENTER_PANEL_W, SHAPE_PICKER_WIDTH, TOOLBAR_WIDTH,
+    TOP_BAR_HEIGHT,
 };
 use crate::{Point2D, Rect};
 
@@ -202,6 +205,32 @@ pub fn component_browser_panel_rect(
         viewport_w,
         viewport_h,
     ))
+}
+
+/// Prompt Center rect — centred within the live canvas region, rather
+/// than the whole viewport, so open side rails do not visually displace it.
+pub fn prompt_center_panel_rect(
+    state: &EditorState,
+    viewport_w: f32,
+    viewport_h: f32,
+) -> Option<Rect> {
+    if !state.editor_ui.prompt_center.open {
+        return None;
+    }
+    let canvas = canvas_rect(state, viewport_w, viewport_h);
+    let viewport_w = viewport_w.max(0.0);
+    let viewport_h = viewport_h.max(0.0);
+    let panel_w = PROMPT_CENTER_PANEL_W.min(viewport_w);
+    let panel_h = PROMPT_CENTER_PANEL_H.min(viewport_h);
+    let x = canvas.origin.x + (canvas.size.x - panel_w) / 2.0;
+    let y = canvas.origin.y + (canvas.size.y - panel_h) / 2.0;
+    Some(Rect {
+        origin: Point2D::new(
+            x.clamp(0.0, (viewport_w - panel_w).max(0.0)),
+            y.clamp(0.0, (viewport_h - panel_h).max(0.0)),
+        ),
+        size: Point2D::new(panel_w, panel_h),
+    })
 }
 
 /// Floating Icon-picker panel rect — `None` when closed.

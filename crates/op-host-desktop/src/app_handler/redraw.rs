@@ -15,6 +15,7 @@ impl DesktopApp {
     /// render context yet) — the dispatcher then skips its post-event
     /// epilogue, exactly as the inlined `return` did.
     pub(super) fn on_redraw_requested(&mut self, event_loop: &ActiveEventLoop) -> bool {
+        crate::prompt_center_store::flush_user_prompts_if_dirty(&mut self.host);
         if (self.ctx.is_none() || self.backend.is_none())
             && !self.try_init_render_context(event_loop)
         {

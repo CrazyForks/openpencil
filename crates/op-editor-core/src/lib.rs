@@ -110,6 +110,8 @@ pub mod path_bounds;
 pub mod path_edit;
 pub mod pen;
 pub mod pen_node_ext;
+pub mod prompt_center_catalog;
+pub mod prompt_center_keyboard;
 pub mod property_edit_mutators;
 pub mod property_panel_state;
 pub mod ref_resolve;
@@ -207,6 +209,8 @@ mod history_bench_tests;
 #[cfg(test)]
 mod history_snapshot_tests;
 #[cfg(test)]
+mod prompt_center_catalog_tests;
+#[cfg(test)]
 mod property_task9_tests;
 #[cfg(test)]
 mod svg_import_tests;
@@ -295,12 +299,13 @@ pub use edit_transaction::{
 };
 pub use editor_ui_state::{
     BooleanOp, CloneField, CloneFormState, CommitDiffPatch, CommitDiffSummary, CommitDiffView,
-    CompositingPickerTarget, DesignMdPanelState, DesignMdRequest, EditorUiState, EmbedHost,
-    ExportFormat, FileAction, FillType, FlexLayout, FontPickerPurpose, GitBranchPickerMode,
-    GitCandidateFile, GitCommitSummary, GitDiffTarget, GitDiffView, GitFileEntry, GitOverflowView,
-    GitPanelAction, GitPanelState, ImageAdjustmentField, ImageFillMode, LayerContextMenuState,
-    Locale, MergeConflictRow, MergeResolveFile, MergeResolveState, MissingFontSurface,
-    PaddingEditMode, PageRenameState, PencilCursorStyle, PreviewDeviceKind, PreviewState,
+    CompositingPickerTarget, CustomPrompt, DesignMdPanelState, DesignMdRequest, EditorUiState,
+    EmbedHost, ExportFormat, FileAction, FillType, FlexLayout, FontPickerPurpose,
+    GitBranchPickerMode, GitCandidateFile, GitCommitSummary, GitDiffTarget, GitDiffView,
+    GitFileEntry, GitOverflowView, GitPanelAction, GitPanelState, ImageAdjustmentField,
+    ImageFillMode, LayerContextMenuState, Locale, MergeConflictRow, MergeResolveFile,
+    MergeResolveState, MissingFontSurface, PaddingEditMode, PageRenameState, PencilCursorStyle,
+    PreviewDeviceKind, PreviewState, PromptCenterFocus, PromptCenterState, PromptFilter,
     PropertyTab, RecentFile, SizeToggleState, ThemeMode, UpdateStatus, VariableRowFocus,
 };
 pub use export_dialog_state::ExportDialogButton;

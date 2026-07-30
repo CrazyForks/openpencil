@@ -156,6 +156,9 @@ mod press_overlay_tiers;
 mod press_property_tiers;
 mod press_surface_tiers;
 #[cfg(test)]
+mod prompt_center_host_tests;
+mod prompt_center_press;
+#[cfg(test)]
 mod property_compositing_tests;
 mod property_dispatch;
 mod property_focus_press;

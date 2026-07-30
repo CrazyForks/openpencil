@@ -13,6 +13,7 @@ pub enum ButtonPressTarget {
     ChatHeader(crate::chat_button_state::ChatHeaderButton),
     ChatFooter(crate::chat_button_state::ChatFooterButton),
     ChatExample(usize),
+    PromptCenter(usize),
     Codegen(crate::codegen::CodegenHover),
     Git(crate::git_button_state::GitButton),
     PropertyPanel(usize),

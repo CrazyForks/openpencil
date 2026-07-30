@@ -25,6 +25,12 @@ use crate::ui_draft::PropertyFocus;
 use crate::walkers::ReorderDirection;
 use crate::Tool;
 
+pub use crate::prompt_center_keyboard::{
+    backspace as prompt_center_backspace, delete_forward as prompt_center_delete_forward,
+    move_caret as prompt_center_caret, select_all as prompt_center_select_all,
+    text as prompt_center_text,
+};
+
 // ─── Legacy draft mirrors ──────────────────────────────────────────────
 //
 // The widget layer still paints the caret from the flat
@@ -542,6 +548,9 @@ pub fn chat_input_caret(state: &mut EditorState, forward: bool, now_ms: u64) -> 
 /// order. Callers resolve the surfaces whose predicates are host-side
 /// (image popovers, settings modal, Git panel) BEFORE calling this.
 pub fn select_all_focused_input(state: &mut EditorState, now_ms: u64) -> bool {
+    if prompt_center_select_all(state, now_ms) {
+        return true;
+    }
     if let Some(rename) = state.ui.layer_rename.as_mut() {
         rename.input.select_all();
         rename.input.touch(now_ms);
@@ -620,6 +629,7 @@ pub fn delete_owned_by_chrome_input(state: &EditorState) -> bool {
         || state.editor_ui.preset_name_input_active()
         || state.editor_ui.variables_search_input_active()
         || state.editor_ui.icon_picker.open
+        || state.editor_ui.prompt_center.open
         || state.editor_ui.chat_model_picker.open
         || state.editor_ui.component_browser_open
         || state.chat.focused

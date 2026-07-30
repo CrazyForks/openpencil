@@ -45,6 +45,9 @@ mod layer_panel_paint;
 mod layer_panel_tests;
 mod layer_panel_walkers;
 pub mod path_anchor_context_menu;
+pub mod prompt_center_panel;
+#[cfg(test)]
+mod prompt_center_shared_flow_tests;
 pub mod property_panel;
 pub mod property_panel_action;
 pub mod property_panel_code;
@@ -180,6 +183,7 @@ pub mod host_overlay_geometry;
 pub mod image_crop_flow;
 pub mod image_popover_input_flow;
 pub mod press_flow;
+mod prompt_center_press_flow;
 pub mod scroll_flow;
 
 // Step 4 — icon glyph drawer for editor chrome (lucide-flavored line art).
@@ -375,6 +379,10 @@ pub use icon_picker_panel::{
 pub use import_menu::{ImportMenu, ImportMenuChoice, IMPORT_MENU_WIDTH};
 pub use locale_picker::{LocalePicker, LOCALE_PICKER_WIDTH};
 pub use missing_fonts_panel::{MissingFontsHit, MissingFontsPanel};
+pub use prompt_center_panel::{
+    PromptCenterCard, PromptCenterHit, PromptCenterPanel, PROMPT_CENTER_PANEL_H,
+    PROMPT_CENTER_PANEL_W,
+};
 pub use shape_picker::{ShapeChoice, ShapePicker, SHAPE_PICKER_WIDTH};
 pub use status_bar::{StatusBar, STATUS_BAR_HEIGHT, STATUS_BAR_WIDTH};
 pub use top_bar::{TopBar, TopBarHit, TOP_BAR_HEIGHT};

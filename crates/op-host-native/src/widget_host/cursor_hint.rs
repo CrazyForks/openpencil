@@ -11,7 +11,7 @@
 use super::{cursor_for_handle, CursorHint, WidgetHostNative};
 use op_editor_ui::widgets::{
     rotation_corner_at_point, selection_handle_at_point, AIChatHit, AIChatPlaceholder,
-    ChatResizeEdge,
+    ChatResizeEdge, PromptCenterPanel,
 };
 use op_editor_ui::{Point2D, Rect};
 
@@ -53,6 +53,26 @@ impl WidgetHostNative {
                 VariablesResizeEdge::Corner => CursorHint::ResizeNwse,
             };
         }
+        let point = Point2D::new(x, y);
+        // Design-MD and Icon Picker paint above Prompt Center. Their chrome
+        // must keep the neutral cursor even when it overlaps a prompt input.
+        if self
+            .design_md_panel_rect(viewport_w, viewport_h)
+            .is_some_and(|rect| rect.contains(point))
+            || self
+                .icon_picker_panel_rect(viewport_w, viewport_h)
+                .is_some_and(|rect| rect.contains(point))
+        {
+            return CursorHint::Default;
+        }
+        if let (Some(panel), Some(rect)) = (
+            PromptCenterPanel::for_editor(&self.editor_state),
+            self.prompt_center_panel_rect(viewport_w, viewport_h),
+        ) {
+            if panel.text_input_at(rect, point) {
+                return CursorHint::Text;
+            }
+        }
         // Image popovers paint above Chat. Their editor gets an I-beam; the
         // rest of the popup stays neutral before the model picker applies its
         // modal cursor gate.
@@ -62,7 +82,6 @@ impl WidgetHostNative {
                 op_editor_ui::widgets::PropertyPanel::for_selection(&self.editor_state)
             {
                 let property_rect = self.property_rect(viewport_w, viewport_h);
-                let point = Point2D::new(x, y);
                 if panel.image_popover_input_at(property_rect, point).is_some() {
                     return CursorHint::Text;
                 }

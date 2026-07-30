@@ -147,6 +147,14 @@ fn hit_test_resolves_bottom_toolbar_actions() {
         panel.hit_test(rect, Point2D::new(PAD + 8.0, y)),
         Some(AIChatHit::ToggleModelPicker)
     );
+    let prompt_center = Point2D::new(
+        footer.prompt_center.origin.x + footer.prompt_center.size.x / 2.0,
+        y,
+    );
+    assert_eq!(
+        panel.hit_test(rect, prompt_center),
+        Some(AIChatHit::OpenPromptCenter)
+    );
     // attach: use the footer rect center (now right-aligned, #38)
     let attach_center = Point2D::new(footer.attach.origin.x + footer.attach.size.x / 2.0, y);
     assert_eq!(
@@ -177,6 +185,14 @@ fn footer_hover_maps_bottom_toolbar_actions() {
     assert_eq!(
         panel.footer_hover_at(rect, Point2D::new(PAD + 8.0, y)),
         Some(op_editor_core::ChatFooterButton::ModelPicker)
+    );
+    let prompt_center = Point2D::new(
+        footer.prompt_center.origin.x + footer.prompt_center.size.x / 2.0,
+        y,
+    );
+    assert_eq!(
+        panel.footer_hover_at(rect, prompt_center),
+        Some(op_editor_core::ChatFooterButton::PromptCenter)
     );
     // attach: use footer rect center (now right-aligned, #38)
     let attach_center = Point2D::new(footer.attach.origin.x + footer.attach.size.x / 2.0, y);

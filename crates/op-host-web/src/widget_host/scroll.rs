@@ -140,6 +140,29 @@ impl WidgetHost {
         true
     }
 
+    pub(in crate::widget_host) fn try_scroll_prompt_center(
+        &mut self,
+        x: f32,
+        y: f32,
+        delta_y: f32,
+        viewport_width: f32,
+        viewport_height: f32,
+    ) -> bool {
+        let panel_rect = self.prompt_center_panel_rect(viewport_width, viewport_height);
+        let Some(dirty) = scroll_flow::scroll_prompt_center(
+            &mut self.editor_state,
+            panel_rect,
+            Point2D::new(x, y),
+            delta_y,
+        ) else {
+            return false;
+        };
+        if dirty {
+            self.mark_dirty();
+        }
+        true
+    }
+
     /// Scroll the right-rail PropertyPanel when a wheel lands over
     /// it. Returns `true` when the cursor was over the inspector.
     pub(in crate::widget_host) fn try_scroll_property_panel(

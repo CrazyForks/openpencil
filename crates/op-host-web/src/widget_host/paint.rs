@@ -13,8 +13,8 @@ use op_editor_ui::widgets::host_canvas_geometry as canvas_geometry;
 use op_editor_ui::widgets::variables_panel::VariablesPanel;
 use op_editor_ui::widgets::{
     AIChatPlaceholder, CanvasViewport, ComponentBrowserPanel, DesignMdPanel, IconPickerPanel,
-    LayerPanel, LayoutCx, LocalePicker, PaintCx, PropertyPanel, ShapePicker, StatusBar, Toolbar,
-    Widget, TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
+    LayerPanel, LayoutCx, LocalePicker, PaintCx, PromptCenterPanel, PropertyPanel, ShapePicker,
+    StatusBar, Toolbar, Widget, TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
 };
 use op_editor_ui::{Point2D, Rect, RenderBackend};
 
@@ -524,6 +524,17 @@ impl WidgetHost {
         if let (Some(panel), Some(panel_rect)) = (
             ComponentBrowserPanel::for_editor_at(&self.editor_state, self.now_ms),
             self.component_browser_panel_rect(viewport_width, viewport_height),
+        ) {
+            let mut cx = PaintCx {
+                backend: &mut *backend,
+            };
+            panel.paint(&mut cx, panel_rect);
+        }
+
+        // Prompt Center shares the Component Browser's floating-panel band.
+        if let (Some(panel), Some(panel_rect)) = (
+            PromptCenterPanel::for_editor_at(&self.editor_state, self.now_ms),
+            self.prompt_center_panel_rect(viewport_width, viewport_height),
         ) {
             let mut cx = PaintCx {
                 backend: &mut *backend,

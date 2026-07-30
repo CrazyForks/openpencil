@@ -61,7 +61,10 @@ pub use git_panel::{
     GitFileEntry, GitOverflowView, GitPanelAction, GitPanelState, MergeConflictRow,
     MergeResolveFile, MergeResolveState,
 };
-pub use groups::{DesignMdPanelState, PreviewState, SizeToggleState};
+pub use groups::{
+    CustomPrompt, DesignMdPanelState, PreviewState, PromptCenterFocus, PromptCenterState,
+    PromptFilter, SizeToggleState,
+};
 pub use pickers::{
     CanvasDropIndicator, CanvasOverlayLine, CanvasOverlayRect, CompositingPickerTarget,
     EffectParamFocus, FontPickerPurpose, LayerContextMenuState, MissingFontSurface,
@@ -639,6 +642,10 @@ pub struct EditorUiState {
     /// Floating Design-MD panel — open flag, hover target, position,
     /// expanded-section bitmask, scroll, and the queued host request.
     pub design_md_panel: DesignMdPanelState,
+
+    // --- Prompt Center ----------------------------------------------
+    /// Floating prompt catalogue, search, save form, and custom entries.
+    pub prompt_center: PromptCenterState,
 
     // --- Component browser ------------------------------------------
     /// Whether the floating Component-Browser panel is shown.

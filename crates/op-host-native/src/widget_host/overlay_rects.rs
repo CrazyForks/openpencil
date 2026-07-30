@@ -212,6 +212,15 @@ impl WidgetHostNative {
         overlay_geometry::component_browser_panel_rect(&self.editor_state, viewport_w, viewport_h)
     }
 
+    /// Floating Prompt Center rect — `None` when closed.
+    pub(in crate::widget_host) fn prompt_center_panel_rect(
+        &self,
+        viewport_w: f32,
+        viewport_h: f32,
+    ) -> Option<Rect> {
+        overlay_geometry::prompt_center_panel_rect(&self.editor_state, viewport_w, viewport_h)
+    }
+
     /// Floating Icon-picker panel rect — `None` when closed.
     /// The TS picker is a dialog; native centers a compact searchable
     /// panel because the built-in Rust catalog is local and finite.
@@ -242,6 +251,9 @@ impl WidgetHostNative {
                 .is_some_and(|r| (r).contains(p))
             || self
                 .icon_picker_panel_rect(viewport_w, viewport_h)
+                .is_some_and(|r| (r).contains(p))
+            || self
+                .prompt_center_panel_rect(viewport_w, viewport_h)
                 .is_some_and(|r| (r).contains(p))
             || self
                 .component_browser_panel_rect(viewport_w, viewport_h)

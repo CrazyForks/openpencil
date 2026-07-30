@@ -15,6 +15,29 @@ use crate::layout_scene::LayoutScene;
 use crate::widgets::{CanvasViewport, PropertyPanel};
 use crate::{Point2D, Rect};
 
+/// Resolve Prompt Center hover while treating the entire floating panel
+/// as cursor-owned chrome. Padding and grid gutters therefore block
+/// hover from leaking into lower panels or the canvas.
+pub fn prompt_center_hover(
+    state: &mut EditorState,
+    panel_rect: Rect,
+    point: Point2D,
+) -> (bool, bool) {
+    if !state.editor_ui.prompt_center.open {
+        return (false, false);
+    }
+    let owns_point = panel_rect.contains(point);
+    let next = if owns_point {
+        crate::widgets::PromptCenterPanel::for_editor(state)
+            .and_then(|panel| panel.hover_at(panel_rect, point))
+    } else {
+        None
+    };
+    let changed = state.editor_ui.prompt_center.hover != next;
+    state.editor_ui.prompt_center.hover = next;
+    (owns_point, changed)
+}
+
 // ─── Modal overlays that own the cursor while open ─────────────────────
 
 /// Missing-fonts modal hover: the per-row choose-file buttons plus the

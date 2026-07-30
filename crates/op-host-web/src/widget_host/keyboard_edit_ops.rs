@@ -233,6 +233,15 @@ impl WidgetHost {
         false
     }
 
+    /// Move the Prompt Center search/title caret without reaching canvas nudge.
+    pub fn apply_prompt_center_caret(&mut self, forward: bool, extend: bool) -> bool {
+        if shared::prompt_center_caret(&mut self.editor_state, forward, extend, self.now_ms) {
+            self.mark_dirty();
+            return true;
+        }
+        false
+    }
+
     /// Cmd/Ctrl+C — copy the selection into the clipboard.
     pub fn apply_copy(&mut self) -> bool {
         if self.editor_state.editor_ui.image_panel.search_open
@@ -246,7 +255,7 @@ impl WidgetHost {
             }
             return true;
         }
-        if self.editor_state.chat.focused {
+        if self.editor_state.chat.focused && !self.non_chat_input_owns_keyboard() {
             if let Some(text) = self
                 .editor_state
                 .chat
@@ -316,7 +325,7 @@ impl WidgetHost {
             return true;
         }
         // Chat input cut — its own selection model.
-        if self.editor_state.chat.focused {
+        if self.editor_state.chat.focused && !self.non_chat_input_owns_keyboard() {
             if let Some(text) = self
                 .editor_state
                 .chat
@@ -433,6 +442,9 @@ impl WidgetHost {
     ) -> bool {
         if !is_mod || !shift || alt {
             return false;
+        }
+        if self.editor_state.editor_ui.prompt_center.open {
+            return true;
         }
         // The collaboration invite field must keep ownership of editor
         // shortcuts while the user is typing.

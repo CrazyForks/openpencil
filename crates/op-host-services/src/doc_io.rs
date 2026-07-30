@@ -232,6 +232,12 @@ pub fn preserve_app_preferences(previous: &EditorState, next: &mut EditorState) 
     next.editor_ui.system_font_families = previous.editor_ui.system_font_families.clone();
     next.editor_ui.bundled_font_families = previous.editor_ui.bundled_font_families.clone();
     next.editor_ui.imported_font_families = previous.editor_ui.imported_font_families.clone();
+    next.editor_ui.prompt_center.custom_prompts =
+        previous.editor_ui.prompt_center.custom_prompts.clone();
+    next.editor_ui.prompt_center.custom_store_writable =
+        previous.editor_ui.prompt_center.custom_store_writable;
+    next.editor_ui.prompt_center.custom_store_dirty =
+        previous.editor_ui.prompt_center.custom_store_dirty;
     // Imported UIKits are app-level (persisted in `uikits.json`), not
     // document state — `from_document` reset them to the built-ins.
     next.ui_kits = previous.ui_kits.clone();
@@ -396,6 +402,28 @@ mod tests {
         assert_eq!(&*next.editor_ui.system_font_families, &["PingFang SC"]);
         assert_eq!(&*next.editor_ui.bundled_font_families, &["Inter"]);
         assert_eq!(&*next.editor_ui.imported_font_families, &["Brand Sans"]);
+    }
+
+    #[test]
+    fn app_preferences_preserve_prompt_center_store_state() {
+        let mut previous = EditorState::new();
+        previous
+            .editor_ui
+            .prompt_center
+            .install_custom_prompts(Vec::new(), true);
+        previous.editor_ui.prompt_center.add_custom_prompt(
+            "Reusable".into(),
+            "Reusable body".into(),
+            op_editor_core::prompt_center_catalog::PromptCategory::Modify,
+            42,
+        );
+        let mut next = EditorState::new();
+
+        preserve_app_preferences(&previous, &mut next);
+
+        assert_eq!(next.editor_ui.prompt_center.custom_prompts.len(), 1);
+        assert!(next.editor_ui.prompt_center.custom_store_writable);
+        assert!(next.editor_ui.prompt_center.custom_store_dirty);
     }
 
     use super::*;

@@ -69,6 +69,8 @@ pub(crate) const BOOK_OPEN: &[&str] = &[
     "M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z",
 ];
 
+pub(crate) const LIBRARY: &[&str] = &["m16 6l4 14", "M12 6v14", "M8 8v12", "M4 4v16"];
+
 pub(crate) const PLUS: &[&str] = &["M5 12h14", "M12 5v14"];
 
 pub(crate) const MINUS: &[&str] = &["M5 12h14"];

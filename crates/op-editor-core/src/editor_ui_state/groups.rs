@@ -14,6 +14,8 @@
 
 use super::{DesignMdRequest, PreviewDeviceKind};
 use crate::design_md_button_state::DesignMdButton;
+use crate::prompt_center_catalog::PromptCategory;
+use serde::{Deserialize, Serialize};
 
 /// Canvas **Preview** (Play) mode state.
 ///
@@ -103,6 +105,181 @@ impl Default for DesignMdPanelState {
             scroll: jian_core::scroll::ScrollState::default(),
             generating: false,
             request: None,
+        }
+    }
+}
+
+/// Which input inside the Prompt Center owns keyboard editing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PromptCenterFocus {
+    /// The catalogue search field.
+    #[default]
+    Search,
+    /// The title field in the save-current-prompt form.
+    SaveTitle,
+}
+
+/// The catalogue subset selected by the Prompt Center chip row.
+///
+/// "My" is a view over custom entries rather than a storage category,
+/// so it remains distinct from [`PromptCategory`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PromptFilter {
+    /// Every built-in prompt.
+    #[default]
+    All,
+    /// One fixed built-in category.
+    Category(PromptCategory),
+    /// User-saved prompts only.
+    Custom,
+}
+
+/// One user-saved prompt persisted by the native host.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CustomPrompt {
+    pub id: String,
+    pub title: String,
+    pub body: String,
+    pub category: PromptCategory,
+    pub created_at: u64,
+}
+
+/// Grouped state for the non-modal Prompt Center panel.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PromptCenterState {
+    /// Whether the floating panel is visible.
+    pub open: bool,
+    /// Search text, caret, selection, and IME state.
+    pub search: jian_core::text_input::TextInputState,
+    /// Active catalogue filter.
+    pub filter: PromptFilter,
+    /// Vertical card-grid scroll.
+    pub scroll: jian_core::scroll::ScrollState,
+    /// Widget-defined hover token. Card rows use their filtered index;
+    /// chrome controls use reserved high values.
+    pub hover: Option<usize>,
+    /// Keyboard owner while the panel is open.
+    pub focus: PromptCenterFocus,
+    /// Whether the inline save-current-prompt form is expanded.
+    pub save_open: bool,
+    /// Title draft for a custom prompt.
+    pub save_title: jian_core::text_input::TextInputState,
+    /// Storage category selected for the custom prompt.
+    pub save_category: PromptCategory,
+    /// Prompts loaded from the host-owned config store.
+    pub custom_prompts: Vec<CustomPrompt>,
+    /// Whether this host can persist custom prompts.
+    pub custom_store_writable: bool,
+    /// Raised by save/delete and drained after a successful host persist.
+    pub custom_store_dirty: bool,
+}
+
+impl Default for PromptCenterState {
+    fn default() -> Self {
+        Self {
+            open: false,
+            search: Default::default(),
+            filter: PromptFilter::All,
+            scroll: Default::default(),
+            hover: None,
+            focus: PromptCenterFocus::Search,
+            save_open: false,
+            save_title: Default::default(),
+            save_category: PromptCategory::Starter,
+            custom_prompts: Vec::new(),
+            custom_store_writable: false,
+            custom_store_dirty: false,
+        }
+    }
+}
+
+impl PromptCenterState {
+    /// Open the panel with search focused and no stale hover/scroll.
+    pub fn open(&mut self, now_ms: u64) {
+        self.open = true;
+        self.focus = PromptCenterFocus::Search;
+        self.hover = None;
+        self.scroll.offset = 0.0;
+        self.search.touch(now_ms);
+    }
+
+    /// Close only this panel layer.
+    pub fn close(&mut self) {
+        self.open = false;
+        self.hover = None;
+        self.save_open = false;
+        self.focus = PromptCenterFocus::Search;
+    }
+
+    /// Replace host-loaded custom prompts without raising persistence.
+    pub fn install_custom_prompts(&mut self, prompts: Vec<CustomPrompt>, writable: bool) {
+        self.custom_prompts = prompts;
+        self.custom_store_writable = writable;
+        self.custom_store_dirty = false;
+    }
+
+    /// Save a custom prompt and return its stable generated id.
+    pub fn add_custom_prompt(
+        &mut self,
+        title: String,
+        body: String,
+        category: PromptCategory,
+        created_at: u64,
+    ) -> Option<String> {
+        let title = title.trim();
+        let body = body.trim();
+        if !self.custom_store_writable || title.is_empty() || body.is_empty() {
+            return None;
+        }
+        let mut suffix = 0_u32;
+        let id = loop {
+            let candidate = if suffix == 0 {
+                format!("custom-{created_at}")
+            } else {
+                format!("custom-{created_at}-{suffix}")
+            };
+            if self
+                .custom_prompts
+                .iter()
+                .all(|prompt| prompt.id != candidate)
+            {
+                break candidate;
+            }
+            suffix = suffix.saturating_add(1);
+        };
+        self.custom_prompts.push(CustomPrompt {
+            id: id.clone(),
+            title: title.to_owned(),
+            body: body.to_owned(),
+            category,
+            created_at,
+        });
+        self.custom_store_dirty = true;
+        self.filter = PromptFilter::Custom;
+        self.save_open = false;
+        self.focus = PromptCenterFocus::Search;
+        self.save_title.set_text("");
+        self.scroll.offset = 0.0;
+        Some(id)
+    }
+
+    /// Delete one custom prompt by id.
+    pub fn delete_custom_prompt(&mut self, id: &str) -> bool {
+        if !self.custom_store_writable {
+            return false;
+        }
+        let before = self.custom_prompts.len();
+        self.custom_prompts.retain(|prompt| prompt.id != id);
+        let changed = self.custom_prompts.len() != before;
+        self.custom_store_dirty |= changed;
+        changed
+    }
+
+    /// Mutable keyboard-owned field.
+    pub fn focused_input_mut(&mut self) -> &mut jian_core::text_input::TextInputState {
+        match self.focus {
+            PromptCenterFocus::Search => &mut self.search,
+            PromptCenterFocus::SaveTitle => &mut self.save_title,
         }
     }
 }

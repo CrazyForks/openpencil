@@ -54,6 +54,10 @@ impl WidgetHostNative {
             self.close_image_popovers_for_higher_overlay();
             return Some(true);
         }
+        if self.dispatch_prompt_center_press(x, y, viewport_width, viewport_height) {
+            self.close_image_popovers_for_higher_overlay();
+            return Some(true);
+        }
         // Floating Component-Browser panel — painted just under the
         // Design-MD panel; hit-tests right after it.
         if self.dispatch_component_browser_press(x, y, viewport_width, viewport_height) {

@@ -56,6 +56,8 @@ pub enum Icon {
     Braces,
     /// BookOpen — design system / Markdown panel toggle.
     BookOpen,
+    /// Library — Prompt Center catalogue.
+    Library,
     /// Plus — "add" affordance.
     Plus,
     /// Minus — zoom out.
@@ -291,6 +293,7 @@ impl Icon {
             Icon::Redo => REDO,
             Icon::Braces => BRACES,
             Icon::BookOpen => BOOK_OPEN,
+            Icon::Library => LIBRARY,
             Icon::Plus => PLUS,
             Icon::Minus => MINUS,
             Icon::Search => SEARCH,
@@ -498,6 +501,7 @@ impl Icon {
             "panel-left" => Icon::PanelLeft,
             "braces" | "code" => Icon::Braces,
             "book-open" => Icon::BookOpen,
+            "library" => Icon::Library,
             "message-square" | "chat" => Icon::MessageSquare,
             "layout-grid" => Icon::LayoutGrid,
             "rows-3" | "rows" => Icon::Rows3,

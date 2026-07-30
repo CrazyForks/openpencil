@@ -14,6 +14,12 @@ impl WidgetHostNative {
     /// Typed-char router: settings → rename → text-edit → variable
     /// row → property → chat.
     pub fn apply_text(&mut self, c: char) -> bool {
+        if let Some(changed) = shared::prompt_center_text(&mut self.editor_state, c, self.now_ms) {
+            if changed {
+                self.mark_dirty();
+            }
+            return true;
+        }
         // Preview (Play) mode owns the keyboard: printable chars go to
         // the live runtime's focused widget, never editor editing.
         if self.preview.is_some() {

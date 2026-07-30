@@ -135,6 +135,15 @@ impl WidgetHostNative {
         false
     }
 
+    /// Left / Right arrow in the Prompt Center's focused input.
+    pub fn apply_prompt_center_caret(&mut self, forward: bool, extend: bool) -> bool {
+        if shared::prompt_center_caret(&mut self.editor_state, forward, extend, self.now_ms) {
+            self.mark_dirty();
+            return true;
+        }
+        false
+    }
+
     /// Left / Right arrow on a focused property input — moves the
     /// text caret one character. Returns `false` when no property
     /// input is focused, so the caller falls back to node-nudge.

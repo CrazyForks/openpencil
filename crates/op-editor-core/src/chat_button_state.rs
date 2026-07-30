@@ -24,6 +24,8 @@ pub enum ChatHeaderButton {
 /// `None` on `EditorUiState.chat_footer_hover` = no hover wash.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChatFooterButton {
+    /// Prompt-library button — opens the Prompt Center.
+    PromptCenter,
     /// Bottom-left model chip — opens the model picker.
     ModelPicker,
     /// Speed/effort chip (⚡ + label) — cycles the effort level.

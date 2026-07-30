@@ -152,6 +152,7 @@ mod overlay_rects;
 #[cfg(test)]
 mod page_switch_center_tests;
 mod paint;
+mod paint_floating_panels;
 mod paint_pan_cache;
 #[cfg(test)]
 mod pan_cache_scroll_tests;
@@ -179,6 +180,9 @@ mod preview_frame_geometry_tests;
 #[cfg(all(test, not(target_os = "windows")))]
 mod preview_frame_tests;
 mod preview_input;
+#[cfg(test)]
+mod prompt_center_host_tests;
+mod prompt_center_press;
 #[cfg(test)]
 mod property_compositing_tests;
 mod property_dispatch;

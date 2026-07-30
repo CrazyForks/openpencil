@@ -6,22 +6,7 @@ use crate::{chat_session, design_session, persistence, DesktopApp};
 use base64::Engine as _;
 use winit::keyboard::{Key, NamedKey};
 
-/// Snapshot of every system-clipboard flavour relevant to Cmd/Ctrl+V.
-/// Tests inject this directly so paste precedence is deterministic and
-/// never depends on the developer machine's clipboard contents.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct ClipboardPayload {
-    pub(crate) text: Option<String>,
-    pub(crate) html: Option<String>,
-    pub(crate) image: Option<crate::clipboard::ClipboardImage>,
-}
-
-impl ClipboardPayload {
-    fn read_system() -> Self {
-        let (text, html, image) = crate::clipboard::read_paste_flavours();
-        Self { text, html, image }
-    }
-}
+pub(crate) use crate::keyboard_clipboard_payload::ClipboardPayload;
 
 impl DesktopApp {
     /// Dispatch a pressed key (`logical_key` + its `text`) — the
@@ -31,14 +16,8 @@ impl DesktopApp {
         use op_editor_core::ReorderDirection;
         let mut consumed = false;
         let nudge = if self.shift_modifier { 10.0 } else { 1.0 };
-        // While a settings-modal input OR any Git-panel text input (commit
-        // message, remote URL, HTTPS credential, author name / email,
-        // branch-create, or the inline clone wizard) owns the keyboard, the
-        // ONLY allowed paths are text / backspace / send / escape and the
-        // C/X/V/A clipboard chords. Editor shortcuts (Cmd+D, Cmd+G, Cmd+Z,
-        // Cmd+J, arrow nudges, Delete, [ / ], single-letter tool switches,
-        // …) would otherwise silently mutate the document or shift focus
-        // while the user thinks they are typing into the input.
+        // Settings and Git inputs retain text, navigation, and clipboard
+        // chords while blocking document shortcuts.
         let settings_focused = self.host.settings_focus_active()
             || self.host.git_commit_focus_active()
             || self.host.git_remote_focus_active()
@@ -50,6 +29,7 @@ impl DesktopApp {
             let panel = &self.host.editor_state().editor_ui.image_panel;
             panel.search_open || panel.generate_open
         };
+        let prompt_center_open = self.host.editor_state().editor_ui.prompt_center.open;
         match logical_key {
             // Named-key shortcuts fire only when no Cmd/Ctrl is held.
             Key::Named(NamedKey::Backspace) if !self.zoom_modifier => {
@@ -74,6 +54,22 @@ impl DesktopApp {
             Key::Named(NamedKey::Escape) if !self.zoom_modifier => {
                 consumed = self.host.apply_escape();
             }
+            Key::Named(NamedKey::ArrowLeft) if prompt_center_open && !self.zoom_modifier => {
+                consumed = self
+                    .host
+                    .apply_prompt_center_caret(false, self.shift_modifier);
+            }
+            Key::Named(NamedKey::ArrowRight) if prompt_center_open && !self.zoom_modifier => {
+                consumed = self
+                    .host
+                    .apply_prompt_center_caret(true, self.shift_modifier);
+            }
+            Key::Named(
+                NamedKey::ArrowLeft
+                | NamedKey::ArrowRight
+                | NamedKey::ArrowUp
+                | NamedKey::ArrowDown,
+            ) if prompt_center_open => consumed = true,
             // Preview (Play) mode owns Tab + arrows: Tab advances the
             // widget focus chain (the runner otherwise drops Tab as a
             // control char, so the user could never focus an input
@@ -165,9 +161,8 @@ impl DesktopApp {
                 consumed = self.host.apply_text_edit_line_edge(true);
             }
             Key::Named(NamedKey::ArrowLeft) if !self.zoom_modifier && !settings_focused => {
-                // An active inline rename moves its caret first, then
-                // the canvas text editor, then a focused property
-                // input; otherwise the arrow nudges the selection.
+                // Focused text inputs move their caret before the arrow
+                // falls through to selection nudging.
                 consumed = self.host.apply_chat_model_picker_caret(false)
                     || self.host.apply_chat_input_caret(false)
                     || self.host.apply_rename_caret(false)
@@ -192,6 +187,7 @@ impl DesktopApp {
                     && self.alt_modifier
                     && !self.shift_modifier
                     && !settings_focused
+                    && !prompt_center_open
                     && !image_popover_open =>
             {
                 use op_editor_core::BooleanOp;
@@ -211,71 +207,61 @@ impl DesktopApp {
                 if self.zoom_modifier && !self.shift_modifier && !self.alt_modifier =>
             {
                 let lower = ch.to_lowercase();
-                match lower.as_str() {
-                    // Cmd+, always allowed — it toggles the
-                    // modal itself; closing while focused
-                    // also commits via the close path.
-                    "," => consumed = self.host.apply_toggle_agent_settings(),
-                    "s" => {
-                        // Codex stop-gate: commit any pending
-                        // variable-row inline edit before save
-                        // so the typed value lands on disk.
-                        self.host.commit_variable_row_focus_if_any_pub();
-                        consumed = self.request_background_save();
-                    }
-                    "o" => {
-                        self.host.commit_variable_row_focus_if_any_pub();
-                        consumed = persistence::handle_open(
-                            &mut self.host,
-                            &mut self.current_path,
-                            self.window.as_ref(),
-                        );
-                        if consumed {
-                            self.mark_document_saved();
+                if prompt_center_open && !matches!(lower.as_str(), "a" | "c" | "v" | "x") {
+                    consumed = true;
+                } else {
+                    match lower.as_str() {
+                        // Cmd+, toggles the settings modal.
+                        "," => consumed = self.host.apply_toggle_agent_settings(),
+                        "s" => {
+                            // Commit a pending variable edit before saving.
+                            self.host.commit_variable_row_focus_if_any_pub();
+                            consumed = self.request_background_save();
                         }
+                        "o" => {
+                            self.host.commit_variable_row_focus_if_any_pub();
+                            consumed = persistence::handle_open(
+                                &mut self.host,
+                                &mut self.current_path,
+                                self.window.as_ref(),
+                            );
+                            if consumed {
+                                self.mark_document_saved();
+                            }
+                        }
+                        // Clipboard chords target the focused input before canvas.
+                        "c" => consumed = self.handle_cmd_copy(),
+                        "x" => consumed = self.handle_cmd_cut(),
+                        "v" => consumed = self.handle_cmd_paste(),
+                        "a" => consumed = self.host.apply_select_all(),
+                        _ if image_popover_open => consumed = true,
+                        _ if settings_focused => {}
+                        // Cmd+P mirrors the TopBar Preview button.
+                        "p" => {
+                            consumed = self.host.toggle_preview_with_cached_viewport();
+                        }
+                        "d" => consumed = self.host.apply_duplicate(),
+                        "z" => {
+                            consumed = self.collab_runtime.request_undo(&mut self.host)
+                                || self.host.apply_undo()
+                        }
+                        "y" => {
+                            consumed = self.collab_runtime.reject_redo(&mut self.host)
+                                || self.host.apply_redo()
+                        }
+                        "g" => consumed = self.host.apply_group(),
+                        "j" => consumed = self.host.apply_toggle_chat(),
+                        // Cmd/Ctrl+T — open a fresh chat tab (MT.3). Preserves
+                        // existing tabs and leaves any in-flight run bound to its
+                        // own tab. Gated after the `settings_focused` swallow like
+                        // the other chrome chords (Cmd+J), so it doesn't fire while
+                        // a settings / Git input owns the keyboard.
+                        "t" => {
+                            self.new_chat_tab();
+                            consumed = true;
+                        }
+                        _ => {}
                     }
-                    // Cmd+C / X / V / A operate on whichever text input
-                    // owns the keyboard (chat / settings / git / property
-                    // / rename / variables / model-picker / canvas text
-                    // editor), falling back to the document node clipboard
-                    // / canvas select-all when nothing is focused. Handled
-                    // BEFORE the `settings_focused` swallow so they keep
-                    // working inside the settings / Git / clone inputs.
-                    "c" => consumed = self.handle_cmd_copy(),
-                    "x" => consumed = self.handle_cmd_cut(),
-                    "v" => consumed = self.handle_cmd_paste(),
-                    "a" => consumed = self.host.apply_select_all(),
-                    _ if image_popover_open => consumed = true,
-                    _ if settings_focused => {}
-                    // Track C-6: Cmd+P toggles Preview — parity with the
-                    // TopBar Play button (`press.rs`'s `TopBarHit::TogglePreview`).
-                    // A visible image-popover input owns all non-clipboard
-                    // Cmd/Ctrl chords, so this arm intentionally follows its
-                    // guard above.
-                    "p" => {
-                        consumed = self.host.toggle_preview_with_cached_viewport();
-                    }
-                    "d" => consumed = self.host.apply_duplicate(),
-                    "z" => {
-                        consumed = self.collab_runtime.request_undo(&mut self.host)
-                            || self.host.apply_undo()
-                    }
-                    "y" => {
-                        consumed = self.collab_runtime.reject_redo(&mut self.host)
-                            || self.host.apply_redo()
-                    }
-                    "g" => consumed = self.host.apply_group(),
-                    "j" => consumed = self.host.apply_toggle_chat(),
-                    // Cmd/Ctrl+T — open a fresh chat tab (MT.3). Preserves
-                    // existing tabs and leaves any in-flight run bound to its
-                    // own tab. Gated after the `settings_focused` swallow like
-                    // the other chrome chords (Cmd+J), so it doesn't fire while
-                    // a settings / Git input owns the keyboard.
-                    "t" => {
-                        self.new_chat_tab();
-                        consumed = true;
-                    }
-                    _ => {}
                 }
             }
             // `!alt_modifier` for the same reason as the
@@ -283,36 +269,40 @@ impl DesktopApp {
             Key::Character(ref ch)
                 if self.zoom_modifier && self.shift_modifier && !self.alt_modifier =>
             {
-                match ch.to_lowercase().as_str() {
-                    // Cmd+Shift+S = Save As; always allowed.
-                    "s" => {
-                        self.host.commit_variable_row_focus_if_any_pub();
-                        consumed = self.request_background_save_as();
+                if prompt_center_open {
+                    consumed = true;
+                } else {
+                    match ch.to_lowercase().as_str() {
+                        // Cmd+Shift+S = Save As; always allowed.
+                        "s" => {
+                            self.host.commit_variable_row_focus_if_any_pub();
+                            consumed = self.request_background_save_as();
+                        }
+                        "p" => {
+                            self.host.commit_variable_row_focus_if_any_pub();
+                            persistence::run_action(
+                                op_editor_core::editor_ui_state::FileAction::ExportImage,
+                                &mut self.host,
+                                &mut self.current_path,
+                                self.window.as_ref(),
+                            );
+                            consumed = true;
+                        }
+                        _ if image_popover_open => consumed = true,
+                        _ if settings_focused => {}
+                        "z" => {
+                            consumed = self.collab_runtime.reject_redo(&mut self.host)
+                                || self.host.apply_redo()
+                        }
+                        "g" => consumed = self.host.apply_ungroup(),
+                        "c" => consumed = self.host.apply_toggle_code_panel(),
+                        "v" => consumed = self.host.apply_toggle_variables_panel(),
+                        "d" => consumed = self.host.apply_toggle_design_md_panel(),
+                        "k" => consumed = self.host.apply_toggle_component_browser(),
+                        "f" => consumed = self.host.apply_open_figma_import(),
+                        "h" => consumed = self.host.apply_open_html_import(),
+                        _ => {}
                     }
-                    "p" => {
-                        self.host.commit_variable_row_focus_if_any_pub();
-                        persistence::run_action(
-                            op_editor_core::editor_ui_state::FileAction::ExportImage,
-                            &mut self.host,
-                            &mut self.current_path,
-                            self.window.as_ref(),
-                        );
-                        consumed = true;
-                    }
-                    _ if image_popover_open => consumed = true,
-                    _ if settings_focused => {}
-                    "z" => {
-                        consumed = self.collab_runtime.reject_redo(&mut self.host)
-                            || self.host.apply_redo()
-                    }
-                    "g" => consumed = self.host.apply_ungroup(),
-                    "c" => consumed = self.host.apply_toggle_code_panel(),
-                    "v" => consumed = self.host.apply_toggle_variables_panel(),
-                    "d" => consumed = self.host.apply_toggle_design_md_panel(),
-                    "k" => consumed = self.host.apply_toggle_component_browser(),
-                    "f" => consumed = self.host.apply_open_figma_import(),
-                    "h" => consumed = self.host.apply_open_html_import(),
-                    _ => {}
                 }
             }
             // Single-letter tool switches (no modifier). Only
@@ -364,12 +354,7 @@ impl DesktopApp {
                 }
             },
             _ => {
-                // Suppress apply_text whenever Cmd / Ctrl
-                // is held — Cmd-anything that isn't bound
-                // above must NOT type into a focused chat
-                // / property input. Otherwise Cmd+Shift+D
-                // (and other unbound chords) would inject
-                // "D" into the focused input.
+                // Unbound Cmd/Ctrl chords must not type into an input.
                 if !self.zoom_modifier {
                     if let Some(s) = text {
                         for c in s.chars() {

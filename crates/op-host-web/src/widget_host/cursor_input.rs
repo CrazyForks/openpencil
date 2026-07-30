@@ -479,15 +479,7 @@ impl WidgetHost {
         // `over_topmost_panel` helper groups it with floating panels. Only the
         // three panels painted after Chat may suppress ordinary Chat ownership.
         let over_topmost = !picker_open
-            && (self
-                .design_md_panel_rect(self.last_viewport_w, self.last_viewport_h)
-                .is_some_and(|rect| rect.contains(point))
-                || self
-                    .icon_picker_panel_rect(self.last_viewport_w, self.last_viewport_h)
-                    .is_some_and(|rect| rect.contains(point))
-                || self
-                    .component_browser_panel_rect(self.last_viewport_w, self.last_viewport_h)
-                    .is_some_and(|rect| rect.contains(point)));
+            && self.over_true_topmost_panel(point, self.last_viewport_w, self.last_viewport_h);
         // StatusBar paints and presses above Chat. Preserve its ownership
         // before the model picker truncates LayerPanel / toolbar / base UI.
         if let Some(status_rect) = self.status_bar_rect(self.last_viewport_w, self.last_viewport_h)

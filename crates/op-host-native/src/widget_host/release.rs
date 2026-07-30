@@ -173,6 +173,9 @@ impl WidgetHostNative {
     /// the tool branch; the shared cursor-move / release paths drive
     /// and end it like any pan drag.
     pub fn apply_pan_press(&mut self, x: f32, y: f32) -> bool {
+        if self.over_topmost_panel(x, y, self.last_viewport_w, self.last_viewport_h) {
+            return true;
+        }
         self.drag = Some(DragState {
             last_x: x,
             last_y: y,

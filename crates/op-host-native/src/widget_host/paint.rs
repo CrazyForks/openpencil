@@ -8,10 +8,9 @@ use crate::backend::NativeFrameBackend;
 use op_editor_ui::widgets::editor_state_ext::theme_for;
 use op_editor_ui::widgets::host_canvas_geometry as canvas_geometry;
 use op_editor_ui::widgets::{
-    variables_panel::VariablesPanel, AIChatPlaceholder, AlignToolbar, CanvasViewport,
-    ComponentBrowserPanel, DesignMdPanel, GitPanel, IconPickerPanel, LayerPanel, LayoutCx,
-    LocalePicker, PaintCx, PropertyPanel, ShapePicker, StatusBar, Toolbar, TopBar, Widget,
-    TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
+    variables_panel::VariablesPanel, AIChatPlaceholder, AlignToolbar, CanvasViewport, GitPanel,
+    LayerPanel, LayoutCx, LocalePicker, PaintCx, PropertyPanel, ShapePicker, StatusBar, Toolbar,
+    TopBar, Widget, TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
 };
 use op_editor_ui::{Point2D, Rect, RenderBackend};
 
@@ -691,48 +690,7 @@ impl WidgetHostNative {
             menu.paint(&mut cx);
         }
 
-        // 11.5. Floating Component-Browser panel — the UIKit library
-        //       browser, toggled from the View menu. Painted just
-        //       below the Design-MD panel so when both are open the
-        //       Design-MD panel sits absolute-top.
-        if let (Some(panel), Some(panel_rect)) = (
-            ComponentBrowserPanel::for_editor_at(&self.editor_state, self.now_ms),
-            self.component_browser_panel_rect(viewport_width, viewport_height),
-        ) {
-            let mut cx = PaintCx {
-                backend: &mut *frame,
-            };
-            panel.paint(&mut cx, panel_rect);
-        }
-
-        // 11.7. Floating Icon picker — opened from the shape-tool
-        //       dropdown. It sits above the component browser and
-        //       below Design-MD, matching the press routing order.
-        if let (Some(panel), Some(panel_rect)) = (
-            IconPickerPanel::for_editor_at(&self.editor_state, self.now_ms),
-            self.icon_picker_panel_rect(viewport_width, viewport_height),
-        ) {
-            let mut cx = PaintCx {
-                backend: &mut *frame,
-            };
-            panel.paint(&mut cx, panel_rect);
-        }
-
-        // 12. Floating Design-MD panel — the document's design.md
-        //     brief, toggled from the View menu. Painted last so it
-        //     is the top-most overlay: a deliberately-opened,
-        //     draggable panel that captures clicks on its rect ahead
-        //     of every lower layer (hit-test mirrors this — see
-        //     `press.rs`, dispatched first).
-        if let (Some(panel), Some(panel_rect)) = (
-            DesignMdPanel::for_editor(&self.editor_state),
-            self.design_md_panel_rect(viewport_width, viewport_height),
-        ) {
-            let mut cx = PaintCx {
-                backend: &mut *frame,
-            };
-            panel.paint(&mut cx, panel_rect);
-        }
+        self.paint_floating_panels(frame, viewport_width, viewport_height);
 
         // 13. File-drop overlay — top-most layer, above every panel and
         //     modal, while a file is dragged over the window.

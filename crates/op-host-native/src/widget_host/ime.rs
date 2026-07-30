@@ -25,6 +25,9 @@ impl WidgetHostNative {
     /// conditions `apply_text` routes on (keep in sync with
     /// `keyboard.rs::apply_text`).
     pub fn text_input_focus_active(&self) -> bool {
+        if self.editor_state.editor_ui.prompt_center.open {
+            return true;
+        }
         let panel = &self.editor_state.editor_ui.image_panel;
         if panel.search_open || panel.generate_open {
             let configured = self
@@ -41,6 +44,12 @@ impl WidgetHostNative {
     /// other inputs keep the legacy no-floating-overlay behavior.
     pub fn apply_ime_preedit(&mut self, text: &str, cursor: Option<(usize, usize)>) -> bool {
         let had = self.editor_state.editor_ui.ime_preedit.take().is_some();
+        if self.editor_state.editor_ui.prompt_center.open {
+            if had {
+                self.mark_dirty();
+            }
+            return had;
+        }
         if self.editor_state.editor_ui.image_panel.search_open
             || self.editor_state.editor_ui.image_panel.generate_open
         {
@@ -82,6 +91,15 @@ impl WidgetHostNative {
     pub fn apply_ime_commit(&mut self, text: &str) -> bool {
         if self.editor_state.editor_ui.ime_preedit.take().is_some() {
             self.mark_dirty();
+        }
+        if self.editor_state.editor_ui.prompt_center.open {
+            let mut consumed = false;
+            for ch in text.chars() {
+                if !ch.is_control() && self.apply_text(ch) {
+                    consumed = true;
+                }
+            }
+            return consumed;
         }
         if self.editor_state.editor_ui.image_panel.search_open
             || self.editor_state.editor_ui.image_panel.generate_open
@@ -135,6 +153,12 @@ impl WidgetHostNative {
             .image_generation_configured();
         let image_popover_open = self.editor_state.editor_ui.image_panel.search_open
             || self.editor_state.editor_ui.image_panel.generate_open;
+        if let (Some(panel), Some(rect)) = (
+            op_editor_ui::widgets::PromptCenterPanel::for_editor(&self.editor_state),
+            self.prompt_center_panel_rect(viewport_w, viewport_h),
+        ) {
+            return Some(panel.focused_input_caret_rect(rect));
+        }
         if image_popover_open {
             self.editor_state
                 .editor_ui
@@ -162,7 +186,7 @@ impl WidgetHostNative {
 #[cfg(test)]
 mod tests {
     use crate::WidgetHostNative;
-    use op_editor_core::NodeId;
+    use op_editor_core::{NodeId, PromptCenterFocus};
     use op_editor_ui::widgets::PropertyPanelAction as A;
 
     const TEXT_DOC: &str = r#"{"version":"1.0.0","children":[
@@ -325,5 +349,80 @@ mod tests {
 
         assert!(after_three.origin.x > start.origin.x + 5.0);
         assert_eq!(after_three.origin.y, start.origin.y);
+    }
+
+    #[test]
+    fn prompt_ime_commit_beats_stale_canvas_edit_and_chat_focus() {
+        let mut h = host();
+        start_canvas_text_edit(&mut h);
+        h.editor_state_mut().chat.focused = true;
+        h.editor_state_mut().editor_ui.open_prompt_center(1);
+
+        assert!(h.text_input_focus_active());
+        assert!(
+            !h.apply_ime_preedit("ni", Some((0, 2))),
+            "non-canvas prompt preedit does not paint a floating overlay"
+        );
+        assert!(
+            h.editor_state().ui.text_edit_input.composition().is_none(),
+            "prompt preedit must not leak into the covered canvas editor"
+        );
+
+        assert!(h.apply_ime_commit("你好"));
+        assert_eq!(
+            h.editor_state().editor_ui.prompt_center.search.text(),
+            "你好"
+        );
+        assert_eq!(h.editor_state().text_edit_content(), Some("hello"));
+        assert!(
+            h.editor_state().chat.input.text().is_empty(),
+            "stale chat focus must not take the prompt commit"
+        );
+    }
+
+    #[test]
+    fn prompt_ime_anchor_tracks_search_and_save_title_carets() {
+        let mut h = host();
+        h.editor_state_mut().chat.focused = true;
+        h.editor_state_mut().editor_ui.open_prompt_center(1);
+        h.editor_state_mut()
+            .editor_ui
+            .prompt_center
+            .search
+            .set_text("abcd");
+        h.editor_state_mut()
+            .editor_ui
+            .prompt_center
+            .search
+            .set_caret(0, 0);
+        let search_start = h
+            .ime_anchor_rect(1200.0, 800.0)
+            .expect("prompt search should yield an IME anchor");
+
+        h.editor_state_mut()
+            .editor_ui
+            .prompt_center
+            .search
+            .set_caret(3, 0);
+        let search_after_three = h
+            .ime_anchor_rect(1200.0, 800.0)
+            .expect("prompt search should keep its IME anchor");
+        assert!(search_after_three.origin.x > search_start.origin.x + 12.0);
+        assert_eq!(search_after_three.origin.y, search_start.origin.y);
+
+        {
+            let prompt = &mut h.editor_state_mut().editor_ui.prompt_center;
+            prompt.save_open = true;
+            prompt.focus = PromptCenterFocus::SaveTitle;
+            prompt.save_title.set_text("title");
+            prompt.save_title.set_caret(4, 0);
+        }
+        let save_title = h
+            .ime_anchor_rect(1200.0, 800.0)
+            .expect("prompt save title should yield an IME anchor");
+        assert_ne!(
+            save_title.origin.y, search_after_three.origin.y,
+            "the candidate window must move to the active prompt field"
+        );
     }
 }

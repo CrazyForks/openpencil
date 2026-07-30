@@ -300,6 +300,7 @@ fn paint_footer_neutral_hovers_use_visible_feedback() {
     // Test the subset that emit a neutral wash rect on hover.
     let cases = [
         op_editor_core::ChatFooterButton::ModelPicker,
+        op_editor_core::ChatFooterButton::PromptCenter,
         op_editor_core::ChatFooterButton::SpeedChip,
         op_editor_core::ChatFooterButton::AddAttachment,
     ];
@@ -316,6 +317,7 @@ fn paint_footer_neutral_hovers_use_visible_feedback() {
         // old→new: AgentTeam removed (zero-width in #27); Send is always
         // a filled circle so its hover is a bg-alpha change, not a separate wash.
         let target = match hover {
+            op_editor_core::ChatFooterButton::PromptCenter => footer.prompt_center,
             op_editor_core::ChatFooterButton::ModelPicker => footer.model,
             op_editor_core::ChatFooterButton::SpeedChip => footer.speed,
             op_editor_core::ChatFooterButton::AgentTeam => footer.agent_team,

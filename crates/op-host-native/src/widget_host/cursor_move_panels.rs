@@ -45,6 +45,16 @@ impl WidgetHostNative {
                     self.mark_dirty();
                 }
                 if panel_rect.contains(point) {
+                    if self
+                        .editor_state
+                        .editor_ui
+                        .prompt_center
+                        .hover
+                        .take()
+                        .is_some()
+                    {
+                        self.mark_dirty();
+                    }
                     self.clear_lower_overlay_hover();
                     return Some(true);
                 }
@@ -53,6 +63,36 @@ impl WidgetHostNative {
                 }
                 *higher_overlay_hover_changed |= changed;
             }
+        }
+        if let Some(panel_rect) =
+            self.prompt_center_panel_rect(self.last_viewport_w, self.last_viewport_h)
+        {
+            let (owns_point, changed) =
+                op_editor_ui::widgets::cursor_hover_flow::prompt_center_hover(
+                    &mut self.editor_state,
+                    panel_rect,
+                    Point2D::new(x, y),
+                );
+            if changed {
+                self.mark_dirty();
+            }
+            if owns_point {
+                if self
+                    .editor_state
+                    .editor_ui
+                    .component_browser_hover
+                    .take()
+                    .is_some()
+                {
+                    self.mark_dirty();
+                }
+                self.clear_lower_overlay_hover();
+                return Some(true);
+            }
+            if changed && !chat_or_picker_owns_point {
+                return Some(true);
+            }
+            *higher_overlay_hover_changed |= changed;
         }
         if let Some(d) = self.component_browser_drag {
             self.editor_state.editor_ui.component_browser_pos =

@@ -118,6 +118,15 @@ impl WidgetHost {
                 return true;
             }
         }
+        if self.try_scroll_design_md_panel(x, y, delta_y, viewport_width, viewport_height) {
+            return true;
+        }
+        if self.try_scroll_icon_picker(x, y, delta_y, viewport_width, viewport_height) {
+            return true;
+        }
+        if self.try_scroll_prompt_center(x, y, delta_y, viewport_width, viewport_height) {
+            return true;
+        }
         if self.try_scroll_chat_transcript(x, y, delta_y, viewport_width, viewport_height) {
             return true;
         }
@@ -126,12 +135,6 @@ impl WidgetHost {
             return true;
         }
         if self.try_scroll_locale_picker(x, y, delta_y, viewport_width) {
-            return true;
-        }
-        if self.try_scroll_design_md_panel(x, y, delta_y, viewport_width, viewport_height) {
-            return true;
-        }
-        if self.try_scroll_icon_picker(x, y, delta_y, viewport_width, viewport_height) {
             return true;
         }
         // Side rails scroll their panels instead of zooming the
@@ -191,6 +194,9 @@ impl WidgetHost {
         if self.try_scroll_icon_picker(x, y, dy, viewport_width, viewport_height) {
             return true;
         }
+        if self.try_scroll_prompt_center(x, y, dy, viewport_width, viewport_height) {
+            return true;
+        }
         if self.try_scroll_chat_transcript(x, y, dy, viewport_width, viewport_height) {
             return true;
         }
@@ -221,7 +227,9 @@ impl WidgetHost {
     ) -> bool {
         self.last_viewport_w = viewport_width;
         self.last_viewport_h = viewport_height;
-        if !self.over_canvas(x, y, viewport_width, viewport_height) {
+        if self.over_topmost_panel(x, y, viewport_width, viewport_height)
+            || !self.over_canvas(x, y, viewport_width, viewport_height)
+        {
             return false;
         }
         self.drag = Some(DragState {

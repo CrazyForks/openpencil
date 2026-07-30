@@ -15,6 +15,12 @@ impl WidgetHost {
     /// Push a typed character into the focused chat / settings input.
     /// Returns true if anything changed.
     pub fn apply_text(&mut self, c: char) -> bool {
+        if let Some(changed) = shared::prompt_center_text(&mut self.editor_state, c, self.now_ms) {
+            if changed {
+                self.mark_dirty();
+            }
+            return true;
+        }
         if self.editor_state.editor_ui.collab_join_input_active() {
             let changed = op_editor_ui::widgets::collab_ui::join_address_text(
                 &mut self.editor_state.editor_ui,
@@ -114,6 +120,13 @@ impl WidgetHost {
     }
 
     pub fn apply_backspace(&mut self) -> bool {
+        if let Some(changed) = shared::prompt_center_backspace(&mut self.editor_state, self.now_ms)
+        {
+            if changed {
+                self.mark_dirty();
+            }
+            return true;
+        }
         if self.editor_state.editor_ui.collab_join_input_active() {
             let changed = op_editor_ui::widgets::collab_ui::join_address_backspace(
                 &mut self.editor_state.editor_ui,
@@ -224,6 +237,9 @@ impl WidgetHost {
     }
 
     pub fn apply_send(&mut self) -> bool {
+        if self.editor_state.editor_ui.prompt_center.open {
+            return true;
+        }
         if self.editor_state.editor_ui.collab_join_input_active() {
             let queued = op_editor_ui::widgets::collab_ui::join_address_submit(
                 &mut self.editor_state.editor_ui,
@@ -311,6 +327,14 @@ impl WidgetHost {
     /// drafts unless rename / text-edit owns the keyboard. Mirrors
     /// the native shell's `apply_delete`.
     pub fn apply_delete(&mut self) -> bool {
+        if let Some(changed) =
+            shared::prompt_center_delete_forward(&mut self.editor_state, self.now_ms)
+        {
+            if changed {
+                self.mark_dirty();
+            }
+            return true;
+        }
         if self.apply_image_panel_delete() {
             return true;
         }

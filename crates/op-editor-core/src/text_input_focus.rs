@@ -17,6 +17,12 @@ impl EditorState {
         if self.editor_ui.image_panel.search_open || self.editor_ui.image_panel.generate_open {
             return self.editor_ui.image_panel.active_input(generate_configured);
         }
+        if self.editor_ui.prompt_center.open {
+            return Some(match self.editor_ui.prompt_center.focus {
+                crate::PromptCenterFocus::Search => &self.editor_ui.prompt_center.search,
+                crate::PromptCenterFocus::SaveTitle => &self.editor_ui.prompt_center.save_title,
+            });
+        }
         if self.ui.text_editing.is_some() {
             return Some(&self.ui.text_edit_input);
         }
@@ -94,6 +100,9 @@ impl EditorState {
                 .editor_ui
                 .image_panel
                 .active_input_mut(generate_configured);
+        }
+        if self.editor_ui.prompt_center.open {
+            return Some(self.editor_ui.prompt_center.focused_input_mut());
         }
         if self.ui.text_editing.is_some() {
             return Some(&mut self.ui.text_edit_input);

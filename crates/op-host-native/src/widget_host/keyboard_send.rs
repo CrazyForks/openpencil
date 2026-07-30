@@ -8,6 +8,9 @@ use super::WidgetHostNative;
 
 impl WidgetHostNative {
     pub fn apply_send(&mut self) -> bool {
+        if self.editor_state.editor_ui.prompt_center.open {
+            return true;
+        }
         // Preview mode: Enter goes to the focused runtime widget
         // (textarea newline / activation), never chat send.
         if self.preview.is_some() {

@@ -484,6 +484,7 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
                 let panel = &b.host.editor_state().editor_ui.image_panel;
                 panel.search_open || panel.generate_open
             };
+            let prompt_center_open = b.host.editor_state().editor_ui.prompt_center.open;
             let mut consumed = false;
             if starts_space_pan && !b.host.input_active() {
                 b.host.set_space_pan(true);
@@ -494,6 +495,8 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
                 "Delete" if !is_mod => consumed = b.host.apply_delete(),
                 "Enter" if !is_mod => consumed = b.host.apply_send(),
                 "Escape" if !is_mod => consumed = b.host.apply_escape(),
+                "ArrowUp" | "ArrowDown" if !is_mod && prompt_center_open => consumed = true,
+                "ArrowLeft" | "ArrowRight" if is_mod && prompt_center_open => consumed = true,
                 "ArrowUp" if !is_mod && image_popover_open => consumed = true,
                 "ArrowDown" if !is_mod && image_popover_open => consumed = true,
                 "ArrowUp" if !is_mod => {
@@ -519,7 +522,8 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
                 "ArrowLeft" if is_mod => consumed = b.host.apply_text_edit_line_edge(false),
                 "ArrowRight" if is_mod => consumed = b.host.apply_text_edit_line_edge(true),
                 "ArrowLeft" if !is_mod => {
-                    consumed = b.host.apply_image_panel_caret(false, shift)
+                    consumed = b.host.apply_prompt_center_caret(false, shift)
+                        || b.host.apply_image_panel_caret(false, shift)
                         || b.host.apply_settings_caret(false)
                         || b.host.apply_chat_model_picker_caret(false)
                         || b.host.apply_chat_input_caret(false)
@@ -529,7 +533,8 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
                         || b.host.apply_nudge(-nudge, 0.0);
                 }
                 "ArrowRight" if !is_mod => {
-                    consumed = b.host.apply_image_panel_caret(true, shift)
+                    consumed = b.host.apply_prompt_center_caret(true, shift)
+                        || b.host.apply_image_panel_caret(true, shift)
                         || b.host.apply_settings_caret(true)
                         || b.host.apply_chat_model_picker_caret(true)
                         || b.host.apply_chat_input_caret(true)
@@ -545,17 +550,21 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
                     consumed = b.host.apply_reorder(ReorderDirection::Up)
                 }
                 "F" | "f" | "H" | "h" | "K" | "k"
-                    if is_mod && shift && !evt.alt_key() && !image_popover_open =>
+                    if is_mod
+                        && shift
+                        && !evt.alt_key()
+                        && !image_popover_open
+                        && !prompt_center_open =>
                 {
                     consumed =
                         b.host
                             .apply_keydown_shortcut(key.as_str(), is_mod, shift, evt.alt_key())
                 }
-                "d" | "D" if is_mod && !shift && !image_popover_open => {
+                "d" | "D" if is_mod && !shift && !image_popover_open && !prompt_center_open => {
                     consumed = b.host.apply_duplicate()
                 }
                 // Cmd/Ctrl+T — open a fresh chat tab (MT.3).
-                "t" | "T" if is_mod && !shift && !image_popover_open => {
+                "t" | "T" if is_mod && !shift && !image_popover_open && !prompt_center_open => {
                     consumed = b.host.apply_new_chat_tab()
                 }
                 "a" | "A" if is_mod && !shift => consumed = b.host.apply_select_all(),
@@ -570,6 +579,7 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
                 // browser's native paste fires the `paste` event. (Mirrors the
                 // skia codegen build, lib.rs.)
                 "v" | "V" if is_mod && !shift => {}
+                _ if is_mod && prompt_center_open => consumed = true,
                 // Case-insensitive: with Shift held, `key` is layout/IME
                 // dependent — macOS Chromium can report either "z" or "Z"
                 // for Cmd+Shift+Z, so branch on the shift flag alone.

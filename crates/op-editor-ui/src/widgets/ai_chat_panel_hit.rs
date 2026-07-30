@@ -218,7 +218,7 @@ impl<'a> AIChatPlaceholder<'a> {
                 return Some(AIChatHit::FocusInput);
             }
             // Bottom toolbar strip (#27 layout):
-            //   model pill | ⚡ speed chip | 📎 attach | [gap] | ◻ stop | ↑ send
+            //   model pill | library | ⚡ speed | 📎 attach | ◻ stop / ↑ send
             if point.y >= toolbar_top {
                 let footer = self.footer_layout(rect, input_rect, toolbar_top);
                 let streaming = self.is_streaming();
@@ -228,6 +228,9 @@ impl<'a> AIChatPlaceholder<'a> {
                     } else {
                         AIChatHit::FocusInput
                     });
+                }
+                if (footer.prompt_center).contains(point) {
+                    return Some(AIChatHit::OpenPromptCenter);
                 }
                 if (footer.speed).contains(point) {
                     // The ⚡ chip is now the Parallel Agents chip (#32).
@@ -545,6 +548,9 @@ impl<'a> AIChatPlaceholder<'a> {
         let streaming = self.is_streaming();
         if !self.state.available_models.is_empty() && (footer.model).contains(point) {
             return Some(op_editor_core::ChatFooterButton::ModelPicker);
+        }
+        if (footer.prompt_center).contains(point) {
+            return Some(op_editor_core::ChatFooterButton::PromptCenter);
         }
         if (footer.speed).contains(point) {
             return Some(op_editor_core::ChatFooterButton::SpeedChip);

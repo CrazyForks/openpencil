@@ -168,6 +168,16 @@ impl WidgetHost {
                     self.mark_dirty();
                 }
                 if panel_rect.contains(point) {
+                    if self
+                        .editor_state
+                        .editor_ui
+                        .prompt_center
+                        .hover
+                        .take()
+                        .is_some()
+                    {
+                        self.mark_dirty();
+                    }
                     self.clear_hover_below_topmost_panel();
                     return true;
                 }
@@ -176,6 +186,36 @@ impl WidgetHost {
                 }
                 *upper_hover_changed |= changed;
             }
+        }
+        if let Some(panel_rect) =
+            self.prompt_center_panel_rect(self.last_viewport_w, self.last_viewport_h)
+        {
+            let (owns_point, changed) =
+                op_editor_ui::widgets::cursor_hover_flow::prompt_center_hover(
+                    &mut self.editor_state,
+                    panel_rect,
+                    Point2D::new(x, y),
+                );
+            if changed {
+                self.mark_dirty();
+            }
+            if owns_point {
+                if self
+                    .editor_state
+                    .editor_ui
+                    .component_browser_hover
+                    .take()
+                    .is_some()
+                {
+                    self.mark_dirty();
+                }
+                self.clear_hover_below_topmost_panel();
+                return true;
+            }
+            if changed && !chat_or_picker_owns_point {
+                return true;
+            }
+            *upper_hover_changed |= changed;
         }
         if let Some(d) = self.component_browser_drag {
             self.editor_state.editor_ui.component_browser_pos =
@@ -412,15 +452,8 @@ impl WidgetHost {
         property_panel: Option<&PropertyPanel>,
     ) -> bool {
         let point = Point2D::new(x, y);
-        let over_true_topmost = self
-            .design_md_panel_rect(self.last_viewport_w, self.last_viewport_h)
-            .is_some_and(|rect| rect.contains(point))
-            || self
-                .icon_picker_panel_rect(self.last_viewport_w, self.last_viewport_h)
-                .is_some_and(|rect| rect.contains(point))
-            || self
-                .component_browser_panel_rect(self.last_viewport_w, self.last_viewport_h)
-                .is_some_and(|rect| rect.contains(point));
+        let over_true_topmost =
+            self.over_true_topmost_panel(point, self.last_viewport_w, self.last_viewport_h);
         if over_true_topmost
             && !self.over_dropdown_overlay(x, y, self.last_viewport_w, self.last_viewport_h)
         {

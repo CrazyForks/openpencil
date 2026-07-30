@@ -56,24 +56,24 @@ fn bottom_toolbar_layout_model_pill_is_leftmost() {
         "model pill should be at least 140px wide"
     );
     // #38: ⚡/📎/🎨 cluster is now right-aligned (left of stop/send).
-    // Model pill right edge must still be left of the speed chip.
+    // Model pill right edge must still be left of the prompt button.
     assert!(
-        footer.model.origin.x + footer.model.size.x < footer.speed.origin.x,
-        "model pill right edge must be left of the speed chip"
+        footer.model.origin.x + footer.model.size.x < footer.prompt_center.origin.x,
+        "model pill right edge must be left of the prompt button"
     );
     // There is a flexible gap between model and the right cluster.
     let model_right = footer.model.origin.x + footer.model.size.x;
     assert!(
-        footer.speed.origin.x > model_right + 4.0,
-        "speed chip (#38 right cluster) must be well to the right of the model pill"
+        footer.prompt_center.origin.x > model_right,
+        "prompt button must be to the right of the model pill"
     );
 }
 
 #[test]
-fn bottom_toolbar_layout_order_is_model_speed_attach_send() {
+fn bottom_toolbar_layout_order_is_model_prompt_speed_attach_send() {
     // #38: ⚡/📎 moved right; #42: stop shares the send slot. Full
     // left-to-right order is:
-    //   model (LEFT) | [gap] | speed | attach | send (RIGHT)
+    //   model (LEFT) | prompt | speed | attach | send (RIGHT)
     let s = EditorState::new();
     let panel = AIChatPlaceholder::from_editor(&s);
     let rect = Rect::xywh(0.0, 0.0, AI_CHAT_WIDTH, AI_CHAT_HEIGHT);
@@ -81,10 +81,14 @@ fn bottom_toolbar_layout_order_is_model_speed_attach_send() {
     let toolbar_top = input.origin.y + INPUT_AREA_HEIGHT;
     let footer = panel.footer_layout(rect, input, toolbar_top);
 
-    // Left-to-right order: model < speed < attach < send
+    // Left-to-right order: model < prompt < speed < attach < send
     assert!(
-        footer.model.origin.x < footer.speed.origin.x,
-        "model left of speed"
+        footer.model.origin.x + footer.model.size.x <= footer.prompt_center.origin.x,
+        "model left of prompt"
+    );
+    assert!(
+        footer.prompt_center.origin.x < footer.speed.origin.x,
+        "prompt left of speed"
     );
     assert!(
         footer.speed.origin.x < footer.attach.origin.x,
@@ -102,9 +106,33 @@ fn bottom_toolbar_layout_order_is_model_speed_attach_send() {
     // #38 specific: speed/attach must all be RIGHT of the model pill.
     let model_right = footer.model.origin.x + footer.model.size.x;
     assert!(
-        footer.speed.origin.x > model_right + 4.0,
-        "speed chip must be right of model pill with a visible gap (#38)"
+        footer.prompt_center.origin.x >= model_right + 4.0,
+        "prompt button must be right of model pill with a visible gap"
     );
+}
+
+#[test]
+fn bottom_toolbar_min_width_rects_do_not_overlap() {
+    let s = EditorState::new();
+    let panel = AIChatPlaceholder::from_editor(&s);
+    let rect = Rect::xywh(0.0, 0.0, AI_CHAT_MIN_WIDTH, AI_CHAT_HEIGHT);
+    let input = panel.input_rect(rect);
+    let footer = panel.footer_layout(rect, input, input.origin.y + INPUT_AREA_HEIGHT);
+    let ordered = [
+        footer.model,
+        footer.prompt_center,
+        footer.speed,
+        footer.attach,
+        footer.send,
+    ];
+    for pair in ordered.windows(2) {
+        assert!(
+            pair[0].origin.x + pair[0].size.x <= pair[1].origin.x,
+            "footer rects overlap at minimum width: {:?} then {:?}",
+            pair[0],
+            pair[1]
+        );
+    }
 }
 
 #[test]

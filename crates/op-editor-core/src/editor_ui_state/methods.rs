@@ -65,6 +65,31 @@ impl EditorUiState {
         self.pressed_button == Some(target)
     }
 
+    /// Open the Prompt Center with its search field focused.
+    pub fn open_prompt_center(&mut self, now_ms: u64) {
+        self.close_icon_picker();
+        self.close_chat_model_picker();
+        self.close_parallel_agents_picker();
+        self.prompt_center.open(now_ms);
+    }
+
+    /// Close the Prompt Center and clear its transient interaction state.
+    pub fn close_prompt_center(&mut self) -> bool {
+        if !self.prompt_center.open {
+            return false;
+        }
+        self.prompt_center.close();
+        if matches!(
+            self.pressed_button,
+            Some(crate::button_press_state::ButtonPressTarget::PromptCenter(
+                _
+            ))
+        ) {
+            self.pressed_button = None;
+        }
+        true
+    }
+
     /// Toggle the Effects "+" add-menu. The corner-radius editor and
     /// effect menu are mutually exclusive inspector overlays.
     pub fn toggle_effect_add_picker(&mut self) {
@@ -174,6 +199,7 @@ impl EditorUiState {
     }
 
     pub fn open_icon_picker(&mut self, replace_selection: bool) {
+        self.close_prompt_center();
         self.close_icon_picker();
         self.icon_picker.open = true;
         self.icon_picker_replace_selection = replace_selection;

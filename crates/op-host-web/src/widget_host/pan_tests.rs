@@ -133,3 +133,61 @@ fn middle_pan_press_starts_canvas_pan_without_primary_press_dispatch() {
     assert_eq!(host.editor_state.viewport.pan_y, 25.0);
     assert!(host.marquee_drag.is_none());
 }
+
+fn assert_panel_blocks_middle_pan(host: &mut WidgetHost, panel: op_editor_ui::Rect, label: &str) {
+    let point = Point2D::new(
+        panel.origin.x + panel.size.x / 2.0,
+        panel.origin.y + panel.size.y / 2.0,
+    );
+    assert!(
+        host.over_canvas(point.x, point.y, VIEWPORT_W, VIEWPORT_H),
+        "{label} fixture point must otherwise be eligible for canvas pan"
+    );
+    assert!(
+        host.over_topmost_panel(point.x, point.y, VIEWPORT_W, VIEWPORT_H),
+        "{label} must participate in the shared topmost-panel predicate"
+    );
+    assert!(
+        !host.apply_pan_press(point.x, point.y, VIEWPORT_W, VIEWPORT_H),
+        "middle-button pan must not start through {label}"
+    );
+    assert!(host.drag.is_none());
+}
+
+#[test]
+fn middle_pan_press_is_blocked_by_every_topmost_floating_panel() {
+    let mut design = WidgetHost::new();
+    design.editor_state.editor_ui.design_md_panel.open = true;
+    let rect = design
+        .design_md_panel_rect(VIEWPORT_W, VIEWPORT_H)
+        .expect("Design-MD rect");
+    assert_panel_blocks_middle_pan(&mut design, rect, "Design-MD");
+
+    let mut variables = WidgetHost::new();
+    variables.editor_state.editor_ui.variables_panel_open = true;
+    let rect = variables
+        .variables_panel_rect(VIEWPORT_W, VIEWPORT_H)
+        .expect("Variables rect");
+    assert_panel_blocks_middle_pan(&mut variables, rect, "Variables");
+
+    let mut icon = WidgetHost::new();
+    icon.editor_state.editor_ui.icon_picker.open = true;
+    let rect = icon
+        .icon_picker_panel_rect(VIEWPORT_W, VIEWPORT_H)
+        .expect("Icon Picker rect");
+    assert_panel_blocks_middle_pan(&mut icon, rect, "Icon Picker");
+
+    let mut prompt = WidgetHost::new();
+    prompt.editor_state.editor_ui.open_prompt_center(1);
+    let rect = prompt
+        .prompt_center_panel_rect(VIEWPORT_W, VIEWPORT_H)
+        .expect("Prompt Center rect");
+    assert_panel_blocks_middle_pan(&mut prompt, rect, "Prompt Center");
+
+    let mut components = WidgetHost::new();
+    components.editor_state.editor_ui.component_browser_open = true;
+    let rect = components
+        .component_browser_panel_rect(VIEWPORT_W, VIEWPORT_H)
+        .expect("Component Browser rect");
+    assert_panel_blocks_middle_pan(&mut components, rect, "Component Browser");
+}

@@ -1,0 +1,455 @@
+//! Prompt Center painting, split from geometry to keep both files compact.
+
+use op_editor_core::PromptCenterFocus;
+
+use super::{
+    delete_hover_token, estimated_text_width, filter_hover_token, save_category_hover_token,
+    PromptCenterCard, PromptCenterPanel, CARD_H, CHIP_H, CLOSE_BTN, HEADER_H, PAD,
+    PROMPT_CENTER_CANCEL_HOVER, PROMPT_CENTER_CLOSE_HOVER, PROMPT_CENTER_OPEN_SAVE_HOVER,
+    PROMPT_CENTER_SAVE_HOVER,
+};
+use crate::widgets::button::paint_button_feedback_wash;
+use crate::widgets::property_panel_text_input::paint_text_input_view;
+use crate::widgets::{draw_icon, Icon, PaintCx};
+use crate::{Color, Point2D, Rect, TextLayout};
+
+impl PromptCenterPanel<'_> {
+    /// Paint the complete non-modal panel.
+    pub fn paint(&self, cx: &mut PaintCx<'_>, panel: Rect) {
+        cx.backend.fill_round_rect(panel, 12.0, self.theme.popover);
+        cx.backend
+            .stroke_round_rect(panel, 12.0, self.theme.border, 1.0);
+        self.paint_header(cx, panel);
+        self.paint_search(cx, panel);
+        self.paint_filter_chips(cx, panel);
+        if self.state.editor_ui.prompt_center.save_open {
+            self.paint_save_form(cx, panel);
+        }
+        self.paint_cards(cx, panel);
+    }
+
+    fn paint_header(&self, cx: &mut PaintCx<'_>, panel: Rect) {
+        self.paint_text(
+            cx,
+            self.t("promptCenter.title"),
+            Point2D::new(panel.origin.x + PAD, panel.origin.y + 29.0),
+            15.0,
+            self.theme.foreground,
+        );
+
+        if let Some(rect) = self.save_current_rect(panel) {
+            cx.backend.fill_round_rect(rect, 7.0, self.theme.muted);
+            paint_button_feedback_wash(
+                cx.backend,
+                &self.theme,
+                rect,
+                7.0,
+                self.state.editor_ui.prompt_center.hover == Some(PROMPT_CENTER_OPEN_SAVE_HOVER),
+                self.is_pressed(PROMPT_CENTER_OPEN_SAVE_HOVER),
+            );
+            draw_icon(
+                cx.backend,
+                Icon::Save,
+                Point2D::new(rect.origin.x + 8.0, rect.origin.y + 6.0),
+                14.0,
+                self.theme.muted_foreground,
+                1.4,
+            );
+            let label =
+                truncate_to_width(self.t("promptCenter.saveCurrent"), rect.size.x - 34.0, 11.0);
+            self.paint_text(
+                cx,
+                &label,
+                Point2D::new(rect.origin.x + 28.0, rect.origin.y + 17.0),
+                11.0,
+                self.theme.foreground,
+            );
+        }
+
+        let close = Self::close_rect(panel);
+        jian_widgets::components::icon_button::IconButton {
+            icon_paths: Icon::Close.paths(),
+            hovered: self.state.editor_ui.prompt_center.hover == Some(PROMPT_CENTER_CLOSE_HOVER),
+            pressed: self.is_pressed(PROMPT_CENTER_CLOSE_HOVER),
+            active: false,
+            enabled: true,
+            icon_size: CLOSE_BTN - 11.0,
+            stroke_width: 1.5,
+        }
+        .paint(
+            cx.backend,
+            close,
+            &crate::widgets::button::tokens_from_theme(&self.theme),
+        );
+
+        cx.backend.fill_rect(
+            Rect::xywh(panel.origin.x, panel.origin.y + HEADER_H, panel.size.x, 1.0),
+            self.theme.border,
+        );
+    }
+
+    fn paint_search(&self, cx: &mut PaintCx<'_>, panel: Rect) {
+        let rect = Self::search_rect(panel);
+        cx.backend.fill_round_rect(rect, 7.0, self.theme.muted);
+        cx.backend
+            .stroke_round_rect(rect, 7.0, self.theme.border, 1.0);
+        draw_icon(
+            cx.backend,
+            Icon::Search,
+            Point2D::new(rect.origin.x + 9.0, rect.origin.y + 7.0),
+            16.0,
+            self.theme.muted_foreground,
+            1.4,
+        );
+        paint_text_input_view(
+            cx,
+            &self.theme,
+            &self.state.editor_ui.prompt_center.search,
+            rect,
+            12.0,
+            32.0,
+            rect.origin.y + 19.0,
+            self.now_ms,
+            self.t("promptCenter.searchPlaceholder"),
+            self.state.editor_ui.prompt_center.focus == PromptCenterFocus::Search,
+        );
+    }
+
+    fn paint_filter_chips(&self, cx: &mut PaintCx<'_>, panel: Rect) {
+        for (index, (rect, filter)) in self.filter_chip_rects(panel).into_iter().enumerate() {
+            let active = self.state.editor_ui.prompt_center.filter == filter;
+            let (fill, foreground) = if active {
+                (self.theme.primary, self.theme.primary_foreground)
+            } else {
+                (self.theme.muted, self.theme.muted_foreground)
+            };
+            cx.backend.fill_round_rect(rect, CHIP_H / 2.0, fill);
+            paint_button_feedback_wash(
+                cx.backend,
+                &self.theme,
+                rect,
+                CHIP_H / 2.0,
+                self.state.editor_ui.prompt_center.hover == Some(filter_hover_token(index)),
+                self.is_pressed(filter_hover_token(index)),
+            );
+            let label = truncate_to_width(self.filter_label(filter), rect.size.x - 14.0, 11.0);
+            let label_w = estimated_text_width(&label, 11.0);
+            self.paint_text(
+                cx,
+                &label,
+                Point2D::new(
+                    rect.origin.x + ((rect.size.x - label_w) / 2.0).max(5.0),
+                    rect.origin.y + 16.0,
+                ),
+                11.0,
+                foreground,
+            );
+        }
+    }
+
+    fn paint_save_form(&self, cx: &mut PaintCx<'_>, panel: Rect) {
+        let form_top = Self::save_title_rect(panel).origin.y - 8.0;
+        let form = Rect::xywh(panel.origin.x, form_top, panel.size.x, super::SAVE_FORM_H);
+        cx.backend
+            .fill_rect(form, self.theme.muted.with_alpha(0.35));
+        cx.backend.fill_rect(
+            Rect::xywh(form.origin.x, form.origin.y, form.size.x, 1.0),
+            self.theme.border,
+        );
+        cx.backend.fill_rect(
+            Rect::xywh(
+                form.origin.x,
+                form.origin.y + form.size.y - 1.0,
+                form.size.x,
+                1.0,
+            ),
+            self.theme.border,
+        );
+
+        let title = Self::save_title_rect(panel);
+        cx.backend.fill_round_rect(title, 6.0, self.theme.popover);
+        cx.backend
+            .stroke_round_rect(title, 6.0, self.theme.border, 1.0);
+        paint_text_input_view(
+            cx,
+            &self.theme,
+            &self.state.editor_ui.prompt_center.save_title,
+            title,
+            12.0,
+            10.0,
+            title.origin.y + 18.0,
+            self.now_ms,
+            self.t("promptCenter.saveTitlePlaceholder"),
+            self.state.editor_ui.prompt_center.focus == PromptCenterFocus::SaveTitle,
+        );
+
+        self.paint_form_button(
+            cx,
+            Self::cancel_button_rect(panel),
+            self.t("promptCenter.cancel"),
+            self.state.editor_ui.prompt_center.hover == Some(PROMPT_CENTER_CANCEL_HOVER),
+            self.is_pressed(PROMPT_CENTER_CANCEL_HOVER),
+            true,
+        );
+        self.paint_form_button(
+            cx,
+            Self::save_button_rect(panel),
+            self.t("promptCenter.save"),
+            self.state.editor_ui.prompt_center.hover == Some(PROMPT_CENTER_SAVE_HOVER),
+            self.is_pressed(PROMPT_CENTER_SAVE_HOVER),
+            self.can_commit_save(),
+        );
+
+        for (index, (rect, category)) in self.save_category_rects(panel).into_iter().enumerate() {
+            let active = self.state.editor_ui.prompt_center.save_category == category;
+            let fill = if active {
+                self.theme.row_selected_primary
+            } else {
+                self.theme.popover
+            };
+            cx.backend.fill_round_rect(rect, CHIP_H / 2.0, fill);
+            cx.backend
+                .stroke_round_rect(rect, CHIP_H / 2.0, self.theme.border, 1.0);
+            paint_button_feedback_wash(
+                cx.backend,
+                &self.theme,
+                rect,
+                CHIP_H / 2.0,
+                self.state.editor_ui.prompt_center.hover == Some(save_category_hover_token(index)),
+                self.is_pressed(save_category_hover_token(index)),
+            );
+            let label = truncate_to_width(self.category_label(category), rect.size.x - 14.0, 10.5);
+            let label_w = estimated_text_width(&label, 10.5);
+            self.paint_text(
+                cx,
+                &label,
+                Point2D::new(
+                    rect.origin.x + ((rect.size.x - label_w) / 2.0).max(5.0),
+                    rect.origin.y + 16.0,
+                ),
+                10.5,
+                if active {
+                    self.theme.foreground
+                } else {
+                    self.theme.muted_foreground
+                },
+            );
+        }
+    }
+
+    fn paint_form_button(
+        &self,
+        cx: &mut PaintCx<'_>,
+        rect: Rect,
+        label: &str,
+        hovered: bool,
+        pressed: bool,
+        enabled: bool,
+    ) {
+        let fill = if enabled {
+            self.theme.primary
+        } else {
+            self.theme.muted
+        };
+        cx.backend.fill_round_rect(rect, 6.0, fill);
+        if enabled {
+            paint_button_feedback_wash(cx.backend, &self.theme, rect, 6.0, hovered, pressed);
+        }
+        let text = truncate_to_width(label, rect.size.x - 12.0, 11.0);
+        let width = estimated_text_width(&text, 11.0);
+        self.paint_text(
+            cx,
+            &text,
+            Point2D::new(
+                rect.origin.x + ((rect.size.x - width) / 2.0).max(5.0),
+                rect.origin.y + 18.0,
+            ),
+            11.0,
+            if enabled {
+                self.theme.primary_foreground
+            } else {
+                self.theme.muted_foreground
+            },
+        );
+    }
+
+    fn paint_cards(&self, cx: &mut PaintCx<'_>, panel: Rect) {
+        let cards = self.filtered();
+        let viewport = self.cards_viewport(panel);
+        if cards.is_empty() {
+            self.paint_text(
+                cx,
+                self.t("promptCenter.empty"),
+                Point2D::new(viewport.origin.x, viewport.origin.y + 28.0),
+                12.0,
+                self.theme.muted_foreground,
+            );
+            return;
+        }
+
+        let bottom = viewport.origin.y + viewport.size.y;
+        cx.backend.save();
+        cx.backend.clip_rect(viewport);
+        for (index, rect) in self.card_rects_for_count(panel, cards.len()) {
+            if rect.origin.y + CARD_H <= viewport.origin.y || rect.origin.y >= bottom {
+                continue;
+            }
+            self.paint_card(cx, index, rect, &cards[index]);
+        }
+        cx.backend.restore();
+    }
+
+    fn paint_card(
+        &self,
+        cx: &mut PaintCx<'_>,
+        index: usize,
+        rect: Rect,
+        card: &PromptCenterCard<'_>,
+    ) {
+        cx.backend.fill_round_rect(rect, 9.0, self.theme.card);
+        cx.backend
+            .stroke_round_rect(rect, 9.0, self.theme.border, 1.0);
+        paint_button_feedback_wash(
+            cx.backend,
+            &self.theme,
+            rect,
+            9.0,
+            self.state.editor_ui.prompt_center.hover == Some(index),
+            self.is_pressed(index),
+        );
+
+        let title_right_pad =
+            if card.custom && self.state.editor_ui.prompt_center.custom_store_writable {
+                42.0
+            } else {
+                14.0
+            };
+        let title = truncate_to_width(&card.title, rect.size.x - 14.0 - title_right_pad, 12.5);
+        self.paint_text(
+            cx,
+            &title,
+            Point2D::new(rect.origin.x + 12.0, rect.origin.y + 23.0),
+            12.5,
+            self.theme.foreground,
+        );
+
+        let summary_width = rect.size.x - 24.0;
+        let lines = summary_lines(card.body, summary_width, 11.0);
+        for (line_index, line) in lines.iter().enumerate() {
+            self.paint_text(
+                cx,
+                line,
+                Point2D::new(
+                    rect.origin.x + 12.0,
+                    rect.origin.y + 47.0 + line_index as f32 * 17.0,
+                ),
+                11.0,
+                self.theme.muted_foreground,
+            );
+        }
+
+        let metadata = {
+            let built_in = self.metadata(card);
+            if built_in.is_empty() && card.custom {
+                self.category_label(card.category).to_owned()
+            } else {
+                built_in
+            }
+        };
+        if !metadata.is_empty() {
+            self.paint_text(
+                cx,
+                &truncate_to_width(&metadata, rect.size.x - 24.0, 10.0),
+                Point2D::new(rect.origin.x + 12.0, rect.origin.y + rect.size.y - 12.0),
+                10.0,
+                self.theme.muted_foreground.with_alpha(0.85),
+            );
+        }
+
+        if card.custom && self.state.editor_ui.prompt_center.custom_store_writable {
+            let delete = Self::delete_rect(rect);
+            paint_button_feedback_wash(
+                cx.backend,
+                &self.theme,
+                delete,
+                6.0,
+                self.state.editor_ui.prompt_center.hover == Some(delete_hover_token(index)),
+                self.is_pressed(delete_hover_token(index)),
+            );
+            draw_icon(
+                cx.backend,
+                Icon::Trash,
+                Point2D::new(delete.origin.x + 5.0, delete.origin.y + 5.0),
+                14.0,
+                self.theme.destructive,
+                1.4,
+            );
+        }
+    }
+
+    fn paint_text(
+        &self,
+        cx: &mut PaintCx<'_>,
+        text: &str,
+        position: Point2D,
+        size: f32,
+        color: Color,
+    ) {
+        let layout = TextLayout::single_run(
+            text,
+            "system-ui",
+            size,
+            color.to_jian(),
+            Point2D::new(0.0, 0.0),
+        );
+        cx.backend.draw_text(&layout, position);
+    }
+}
+
+fn truncate_to_width(text: &str, max_width: f32, size: f32) -> String {
+    if estimated_text_width(text, size) <= max_width {
+        return text.to_owned();
+    }
+    let ellipsis_width = estimated_text_width("…", size);
+    let mut width = 0.0;
+    let mut output = String::new();
+    for ch in text.chars() {
+        let advance = estimated_text_width(&ch.to_string(), size);
+        if width + advance + ellipsis_width > max_width {
+            break;
+        }
+        output.push(ch);
+        width += advance;
+    }
+    output.push('…');
+    output
+}
+
+fn summary_lines(text: &str, max_width: f32, size: f32) -> [String; 2] {
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut lines = [String::new(), String::new()];
+    let mut line = 0;
+    let mut width = 0.0;
+    let mut truncated = false;
+    for ch in normalized.chars() {
+        let advance = estimated_text_width(&ch.to_string(), size);
+        if width + advance > max_width {
+            if line == 1 {
+                truncated = true;
+                break;
+            }
+            line = 1;
+            width = 0.0;
+        }
+        lines[line].push(ch);
+        width += advance;
+    }
+    if truncated {
+        let second = lines[1].trim_end_matches('…').to_owned();
+        lines[1] = truncate_to_width(&(second + "…"), max_width, size);
+        if !lines[1].ends_with('…') {
+            lines[1].push('…');
+        }
+    }
+    lines
+}

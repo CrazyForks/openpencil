@@ -32,6 +32,12 @@ impl WidgetHost {
             .image_generation_configured();
         let image_popover_open = self.editor_state.editor_ui.image_panel.search_open
             || self.editor_state.editor_ui.image_panel.generate_open;
+        if let (Some(panel), Some(rect)) = (
+            op_editor_ui::widgets::PromptCenterPanel::for_editor(&self.editor_state),
+            self.prompt_center_panel_rect(self.last_viewport_w, self.last_viewport_h),
+        ) {
+            return Some(panel.focused_input_caret_rect(rect));
+        }
         if image_popover_open {
             self.editor_state
                 .editor_ui

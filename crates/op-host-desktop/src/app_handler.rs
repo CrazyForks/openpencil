@@ -570,6 +570,7 @@ impl ApplicationHandler<DesktopEvent> for DesktopApp {
         }
         // Component-Browser kit Import / Export + uikits.json flush.
         self.drain_kit_io();
+        crate::prompt_center_store::flush_user_prompts_if_dirty(&mut self.host);
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
@@ -580,6 +581,7 @@ impl ApplicationHandler<DesktopEvent> for DesktopApp {
         // a focused-but-uncommitted edit isn't silently dropped.
         self.host.flush_settings_input();
         op_host_services::settings_io::save(self.host.editor_state());
+        crate::prompt_center_store::flush_user_prompts_if_dirty(&mut self.host);
         if let Some(mut server) = self.mcp_server.take() {
             server.stop();
             crate::mcp_port_file::remove();

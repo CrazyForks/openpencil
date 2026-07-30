@@ -65,6 +65,7 @@ pub fn chat_button_press_target(hit: &AIChatHit) -> Option<ButtonPressTarget> {
         return Some(ButtonPressTarget::ChatExample(*index));
     }
     let footer = match hit {
+        AIChatHit::OpenPromptCenter => ChatFooterButton::PromptCenter,
         AIChatHit::ToggleModelPicker => ChatFooterButton::ModelPicker,
         // The ⚡ chip is now the Parallel Agents chip — pressed state uses SpeedChip.
         AIChatHit::ToggleParallelAgentsPicker => ChatFooterButton::SpeedChip,
@@ -178,6 +179,10 @@ pub fn apply_chat_hit(state: &mut EditorState, hit: AIChatHit, now_ms: u64) -> C
         }
         AIChatHit::CycleEffort => {
             state.chat.cycle_effort_level();
+            ChatClickStep::Dirty
+        }
+        AIChatHit::OpenPromptCenter => {
+            state.editor_ui.open_prompt_center(now_ms);
             ChatClickStep::Dirty
         }
         AIChatHit::CycleAgentTeam => {
