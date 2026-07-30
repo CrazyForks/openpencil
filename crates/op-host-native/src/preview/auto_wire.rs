@@ -31,12 +31,14 @@
 //! accumulates screens incrementally and each turn should link the new
 //! ones in. At PREVIEW-ENTRY time it is deliberately stricter: an author
 //! who has started marking screens by hand is mid-way through an
-//! intentional App Mode setup, and silently binding additional nav/back
-//! taps behind their back on every preview open would be a confusing,
+//! intentional App Mode setup, and silently binding additional nav taps
+//! behind their back on every preview open would be a confusing,
 //! preview-only side effect they never asked for and can't see in the
 //! editor. So this module's gate is document-wide ("does ANY authored
 //! marker exist"), not per-node — user/model intent wins outright rather
 //! than being merged with.
+//! Generation-only back/card completion is deliberately not part of this
+//! cloned-state fallback; those interactions are persisted by cleanup.
 //!
 //! ## Why op-host-native can depend on op-orchestrator
 //!

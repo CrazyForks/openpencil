@@ -46,6 +46,12 @@ use text_collision::push_text_collision_diagnostics;
 #[path = "geometry_bottom_gap.rs"]
 mod geometry_bottom_gap;
 use geometry_bottom_gap::push_mobile_bottom_gap_diagnostic;
+#[path = "geometry_interaction_backfill.rs"]
+mod geometry_interaction_backfill;
+use geometry_interaction_backfill::push_interaction_backfill_diagnostics;
+pub(crate) use geometry_interaction_backfill::{
+    screen_has_back_control_shape, wire_interaction_backfill,
+};
 #[path = "geometry_card_rail_fixes.rs"]
 mod geometry_card_rail_fixes;
 #[path = "geometry_diagnostics_collect.rs"]
@@ -222,6 +228,7 @@ const MAX_DIAGNOSTICS: usize = 8;
 pub fn geometry_diagnostics(state: &EditorState) -> Vec<String> {
     let rects = resolved_rects(state);
     let mut out = Vec::new();
+    push_interaction_backfill_diagnostics(state, None, &mut out);
     for root in state.active_children() {
         if out.len() >= MAX_DIAGNOSTICS {
             break;

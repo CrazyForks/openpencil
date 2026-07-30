@@ -316,6 +316,7 @@ fn subagent_prompt_reduced_complexity_full_tier_skill_filtering_is_noop() {
         false,
         true,
         &ComponentLibrary::default(),
+        &[],
     );
     let (reduced_cr, _) = build_subagent_prompt_core(
         &st,
@@ -326,6 +327,7 @@ fn subagent_prompt_reduced_complexity_full_tier_skill_filtering_is_noop() {
         false,
         true,
         &ComponentLibrary::default(),
+        &[],
     );
     assert_eq!(
         full_cr.system_prompt, reduced_cr.system_prompt,

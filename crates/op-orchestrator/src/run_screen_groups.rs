@@ -121,6 +121,12 @@ pub(crate) fn insert_screen_group_roots(
         }
     }
 
+    // Freeze the normalized planning screen list into real route markers
+    // before any fan-out prompt is built. The prompt inventory reads the same
+    // merged candidates and allocator, so generated cross-screen actions can
+    // never reference a virtual route that cleanup later assigns differently.
+    crate::wire_screen_navigation::ensure_planned_screen_routes(sink, plan);
+
     // Only the genuinely-concurrent shape (`identities.len() ==
     // new_root_ids.len()`) tags anything — an empty slice (the sequential
     // path) deliberately leaves every root untagged; see this function's doc.

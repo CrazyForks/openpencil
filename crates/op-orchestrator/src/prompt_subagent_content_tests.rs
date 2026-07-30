@@ -4,6 +4,98 @@
 use super::*;
 
 #[test]
+fn subagent_prompt_injects_exact_json_quoted_screen_route_inventory() {
+    let subtask = subtask();
+    let plan = plan();
+    let req = req();
+    let routes = vec![
+        ("Home".to_string(), "/".to_string()),
+        (
+            "Movie \"Night\"\nDetail".to_string(),
+            "/movie-detail".to_string(),
+        ),
+    ];
+
+    let (call, with_routes_report) = build_subagent_prompt_with_screen_routes(
+        &subtask,
+        &plan,
+        &req,
+        AbortFlag::new(),
+        false,
+        false,
+        &ComponentLibrary::default(),
+        &routes,
+    );
+    let expected = r#"DOCUMENT SCREEN ROUTES (use these exact route values in schema-encoded navigation actions; never invent another route):
+- "Home" -> "/"
+- "Movie \"Night\"\nDetail" -> "/movie-detail"
+
+CRITICAL LAYOUT CONSTRAINTS:"#;
+    assert!(
+        call.user_prompt.contains(expected),
+        "route inventory must be exact and JSON-quoted:\n{}",
+        call.user_prompt
+    );
+
+    let (_, empty_report) = build_subagent_prompt_with_screen_routes(
+        &subtask,
+        &plan,
+        &req,
+        AbortFlag::new(),
+        false,
+        false,
+        &ComponentLibrary::default(),
+        &[],
+    );
+    assert_eq!(
+        with_routes_report, empty_report,
+        "user-prompt route context must not perturb the skill budget"
+    );
+}
+
+#[test]
+fn empty_screen_route_inventory_matches_public_builder_byte_for_byte() {
+    let subtask = subtask();
+    let plan = plan();
+    let req = req();
+    let components = ComponentLibrary::default();
+
+    let (compat_call, compat_report) = build_subagent_prompt(
+        &subtask,
+        &plan,
+        &req,
+        AbortFlag::new(),
+        false,
+        false,
+        &components,
+    );
+    let (empty_call, empty_report) = build_subagent_prompt_with_screen_routes(
+        &subtask,
+        &plan,
+        &req,
+        AbortFlag::new(),
+        false,
+        false,
+        &components,
+        &[],
+    );
+
+    assert_eq!(compat_call.system_prompt, empty_call.system_prompt);
+    assert_eq!(compat_call.user_prompt, empty_call.user_prompt);
+    assert_eq!(compat_call.timeout, empty_call.timeout);
+    assert_eq!(compat_call.no_text_timeout, empty_call.no_text_timeout);
+    assert_eq!(
+        compat_call.first_text_timeout,
+        empty_call.first_text_timeout
+    );
+    assert_eq!(compat_report, empty_report);
+    assert!(
+        !empty_call.user_prompt.contains("DOCUMENT SCREEN ROUTES"),
+        "empty inventory must not grow a route header"
+    );
+}
+
+#[test]
 fn subagent_prompt_honors_explicit_radius_and_spacing_numbers() {
     let mobile_req = DesignRequest {
         prompt: "设计一个美食移动端首页，圆角和间距要统一，圆角 8 px，间距 12 px".into(),

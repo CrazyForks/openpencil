@@ -610,14 +610,18 @@ pub fn run_cleanup_passes_with_summary(
     // point, so both the classic and loop-finalize paths pick it up.
     crate::unify_shared_status_bar::unify_shared_status_bar(sink);
 
-    // Track A of the interactive-preview plan: mark screen-shaped top-level
-    // frames + wire their nav tabs / back buttons, so a multi-screen document
-    // enters App Mode preview with zero model cooperation. Runs LAST — after
-    // bottom-nav anchoring/dedup/distribution above have settled the final
-    // nav shape, so tab-item discovery sees the real tree, not an
-    // in-progress one. Whole-doc (scans `sink.state()`, not `root_ids`) so
-    // it also links PRE-EXISTING screens from earlier turns, matching
-    // `avatar_repair` above.
+    // Establish final screen routes first. The cleanup-only semantic pass can
+    // then persist only fact-proven back/card interactions against those real
+    // routes, before the label-matching nav fallback. Keeping the semantic pass
+    // outside public `wire_screen_navigation` prevents Cmd+P's cloned-state
+    // fallback from creating preview-only interactions that never reach the
+    // saved document.
+    crate::wire_screen_navigation::ensure_screen_routes(sink);
+    crate::geometry_validation::wire_interaction_backfill(sink);
+
+    // Track A fallback: wire bottom-nav/sidebar tabs after final chrome shape
+    // and semantic interactions are settled. Whole-doc (scans `sink.state()`,
+    // not `root_ids`) so it also links pre-existing screens from earlier turns.
     crate::wire_screen_navigation::wire_screen_navigation(sink);
     counter.checkpoint(summary, CheckCategory::Structure);
 }

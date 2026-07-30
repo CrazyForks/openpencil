@@ -3,10 +3,10 @@
 //! The preview engine (PreviewSession + jian-core `ScreenRouter` App Mode)
 //! already understands multi-screen documents: it looks for top-level
 //! `FrameNode.screen` markers and `events.onTap` navigation actions. What is
-//! missing is generation-side wiring — AI-produced documents never carry
-//! these fields, so `project_screens` finds nothing and preview degrades to
-//! a single scrolling page. This pass fills that gap deterministically, with
-//! zero model cooperation required (see
+//! missing is generation-side wiring — AI-produced documents may omit these
+//! fields, so `project_screens` finds nothing and preview degrades to a single
+//! scrolling page. This module fills the screen/nav gap deterministically,
+//! while cleanup-only interaction backfill owns strict back/card actions (see
 //! `openpencil-docs/openpencil/generation/preview-interactive-app-mode-0712.md`,
 //! "Track A contract v2").
 //!
@@ -24,11 +24,9 @@
 //! 3. `screen` only ever marks a top-level (page-root-level) frame — the
 //!    projection pass (`jian_ops_schema::screen_projection`) only scans
 //!    top-level children per page (or per-document when pageless).
-//! 4. Idempotent + additive-only: a node that already carries `screen` or
-//!    `events` is never touched (an authored marker may be a future
-//!    breakpoint-variant of the same path — see the jian
-//!    `feat/responsive-m1a` compatibility notes in the plan doc). Running
-//!    the pass twice must be a no-op the second time.
+//! 4. Idempotent + additive-only: an authored `screen` marker or `events`
+//!    collection is never overwritten. Running the pass twice must be a no-op
+//!    the second time.
 //! 5. Zero new schema fields — only the existing `screen` / `events` fields
 //!    are ever written.
 //!
@@ -36,8 +34,7 @@
 //!
 //! 1. `crate::cleanup::run_cleanup_passes` — the in-crate generation-pipeline
 //!    caller (orchestrator per-subtask cleanup + the agentic loop's whole-doc
-//!    finalize), which is why the pass writes through the crate's own
-//!    `DocSink` rather than a concrete document type.
+//!    finalize), which invokes this after cleanup-only interaction backfill.
 //! 2. `op_host_native::preview::auto_wire` (Track C-1) — enter-preview
 //!    auto-wiring. When a document carries no authored `screen` marker at
 //!    all, the preview host runs this SAME pass over a JSON-cloned
@@ -60,11 +57,9 @@ use crate::types::DocSink;
 const MOBILE_SCREEN_WIDTH: std::ops::RangeInclusive<f64> = 320.0..=480.0;
 const DESKTOP_SCREEN_MIN_WIDTH: f64 = 1024.0;
 
-/// A back control must resolve within this many px of its screen's top edge
-/// to count as "header region" — generous enough to cover a padded header
-/// band (56-96px measured) plus a nested icon's own inset, tight enough that
-/// a mid-page control is never mistaken for a nav-bar back arrow.
-const HEADER_REGION_MAX_Y: f64 = 140.0;
+/// Compatibility band for shared-nav's shipped detail-page exemption.
+/// Interaction backfill uses its own stricter geometry fact.
+const LEGACY_HEADER_REGION_MAX_Y: f64 = 140.0;
 
 const ENTRY_NAME_HINTS: [&str; 4] = ["home", "main", "dashboard", "index"];
 
@@ -98,46 +93,52 @@ pub(crate) struct NavParts<'a> {
 }
 
 /// Entry point: mark screen-shaped top-level frames with a `screen` route
-/// path and wire each screen's bottom-nav / sidebar-nav tabs + header back
-/// buttons to `events.onTap` navigation actions. No-ops when the document
+/// path and wire each screen's bottom-nav / sidebar-nav tabs to `events.onTap`
+/// navigation actions. No-ops when the document
 /// has fewer than two screen-shaped top-level frames (single-screen docs
 /// keep today's scrolling-page preview — zero regression surface).
 pub fn wire_screen_navigation(sink: &mut dyn DocSink) {
-    let screens = collect_screen_candidates(sink.state());
+    let screens = ensure_screen_routes(sink);
     if screens.len() < 2 {
         return;
     }
 
-    let assignments = assign_screen_paths(&screens);
-    for (node_id, path) in &assignments {
-        sink.apply(EditorCommand::PatchNodeData {
-            node_id: NodeId::new(node_id.clone()),
-            patch_json: format!(r#"{{"screen":"{path}"}}"#),
-            page_id: None,
-        });
-    }
-
-    // Full id -> (path, name) table: authored markers keep their path, fresh
-    // assignments add theirs. Every candidate has exactly one entry.
-    let assigned: HashMap<&str, &str> = assignments
-        .iter()
-        .map(|(id, path)| (id.as_str(), path.as_str()))
-        .collect();
     let screen_paths: Vec<(String, String)> = screens
         .iter()
-        .map(|s| {
-            let path = s
+        .filter_map(|screen| {
+            screen
                 .existing_path
-                .clone()
-                .or_else(|| assigned.get(s.id.as_str()).map(|p| p.to_string()))
-                .unwrap_or_default();
-            (s.name.clone(), path)
+                .as_ref()
+                .map(|path| (screen.name.clone(), path.clone()))
         })
         .collect();
 
     wire_nav_tabs(sink, &screens, &screen_paths);
-    wire_back_buttons(sink, &screens);
 }
+
+/// Persist routes without wiring interactions. Generation cleanup uses this
+/// before its document-writing interaction backfill; preview fallback keeps
+/// calling [`wire_screen_navigation`] on a clone and only gets route/nav wiring.
+pub(crate) fn ensure_screen_routes(sink: &mut dyn DocSink) -> Vec<ScreenCandidate> {
+    let screens = screen_route_inventory::collect_prompt_live_candidates(sink.state());
+    if screens.len() < 2 {
+        return screens;
+    }
+    for (node_id, path) in assign_screen_paths(&screens) {
+        sink.apply(EditorCommand::PatchNodeData {
+            node_id: NodeId::new(node_id),
+            patch_json: format!(r#"{{"screen":"{path}"}}"#),
+            page_id: None,
+        });
+    }
+    screen_route_inventory::collect_prompt_live_candidates(sink.state())
+}
+
+#[path = "screen_route_inventory.rs"]
+mod screen_route_inventory;
+pub(crate) use screen_route_inventory::{
+    ensure_planned_screen_routes, prompt_screen_route_inventory,
+};
 
 /// Scan the active page's top-level `Frame` children for screen-shaped
 /// candidates (numeric width AND height, width in a mobile or desktop band).
@@ -562,44 +563,20 @@ pub(crate) fn labels_match(a: &str, b: &str) -> bool {
     ta.iter().any(|t| tb.contains(t))
 }
 
-// ── Back-button wiring ──────────────────────────────────────────────────
+// ── Shared-nav legacy detail signal ──────────────────────────────────────
 
-/// Bind a header-region back control (name/icon containing back /
-/// arrow-left / chevron-left) to `pop`. There is no system-level back
-/// affordance in v1 (design §7) — only an authored UI node can carry it.
-fn wire_back_buttons(sink: &mut dyn DocSink, screens: &[ScreenCandidate]) {
-    let y_offsets = resolved_y_offsets(sink.state());
-    let mut patches: Vec<String> = Vec::new();
-    for screen in screens {
-        let Some(root) = op_editor_core::walkers::find_node(
-            sink.state().active_children(),
-            &NodeId::new(screen.id.clone()),
-        ) else {
-            continue;
-        };
-        let screen_top = y_offsets.get(&screen.id).copied().unwrap_or(0.0);
-        collect_back_controls(root, screen_top, &y_offsets, &mut patches);
-    }
-    for node_id in patches {
-        sink.apply(EditorCommand::PatchNodeData {
-            node_id: NodeId::new(node_id),
-            patch_json: r#"{"events":{"onTap":[{"pop":null}]}}"#.to_string(),
-            page_id: None,
-        });
-    }
-}
-
-/// Whether `screen` has a back-shaped control (role `back`/`back-button`/
-/// `nav-back`, or a name/icon containing "back" / "arrow-left" /
-/// "chevron-left") within its header region — reuses
-/// [`collect_back_controls`]'s exact detection (same `HEADER_REGION_MAX_Y`
-/// band `wire_back_buttons` binds `pop` against). Shared detail-page signal
-/// for `unify_shared_nav`'s Inject-exemption gate: a screen with a header
-/// back control reads as a push-in detail screen, not a tab destination.
+/// Preserve shared-nav's shipped detail-page exemption. This intentionally
+/// remains broader than M1 interaction backfill: it may recognize legacy
+/// direct icons, roles, and authored names, but it never writes an event.
+/// The strict cleanup repair and diagnostic predicate lives in
+/// `geometry_interaction_backfill`.
 pub(crate) fn screen_has_back_control_in_header(
     sink: &dyn DocSink,
     screen: &ScreenCandidate,
 ) -> bool {
+    if crate::geometry_validation::screen_has_back_control_shape(sink.state(), &screen.id) {
+        return true;
+    }
     let Some(root) = op_editor_core::walkers::find_node(
         sink.state().active_children(),
         &NodeId::new(screen.id.clone()),
@@ -609,37 +586,34 @@ pub(crate) fn screen_has_back_control_in_header(
     let y_offsets = resolved_y_offsets(sink.state());
     let screen_top = y_offsets.get(&screen.id).copied().unwrap_or(0.0);
     let mut hits = Vec::new();
-    collect_back_controls(root, screen_top, &y_offsets, &mut hits);
+    collect_legacy_back_controls(root, screen_top, &y_offsets, &mut hits);
     !hits.is_empty()
 }
 
-fn collect_back_controls(
+fn collect_legacy_back_controls(
     node: &PenNode,
     screen_top: f64,
     y_offsets: &HashMap<String, f64>,
     out: &mut Vec<String>,
 ) {
     if node_has_events(node) {
-        // An authored interactive control owns its whole subtree — wiring a
-        // descendant underneath (e.g. the arrow icon inside an already-bound
-        // back button) would double-dispatch the same tap.
         return;
     }
-    if is_back_control(node) {
+    if is_legacy_back_control(node) {
         let within_header = y_offsets
             .get(node.id_str())
-            .is_some_and(|y| (y - screen_top) <= HEADER_REGION_MAX_Y);
+            .is_some_and(|y| (y - screen_top) <= LEGACY_HEADER_REGION_MAX_Y);
         if within_header {
             out.push(node.id_str().to_string());
-            return; // don't also bind a nested icon inside the matched control
+            return;
         }
     }
     for child in node.children().into_iter().flatten() {
-        collect_back_controls(child, screen_top, y_offsets, out);
+        collect_legacy_back_controls(child, screen_top, y_offsets, out);
     }
 }
 
-fn is_back_control(node: &PenNode) -> bool {
+fn is_legacy_back_control(node: &PenNode) -> bool {
     if matches!(
         node.base().role.as_deref(),
         Some("back" | "back-button" | "nav-back")
@@ -656,10 +630,11 @@ fn is_back_control(node: &PenNode) -> bool {
     hay.contains("back") || hay.contains("arrowleft") || hay.contains("chevronleft")
 }
 
-fn compact_lower(s: &str) -> String {
-    s.chars()
-        .filter(|c| c.is_ascii_alphanumeric())
-        .flat_map(|c| c.to_lowercase())
+fn compact_lower(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(|character| character.to_lowercase())
         .collect()
 }
 
@@ -694,17 +669,12 @@ pub fn subtree_has_events(node: &PenNode) -> bool {
 /// `/`-rooted route path; the JSON string VALUE is the literal
 /// `"<path>"` (quotes included) so it compiles as a Tier-1 string-literal
 /// expression — see the module doc, contract point 1.
-fn navigate_patch(verb: &str, path: &str) -> String {
+pub(crate) fn navigate_patch(verb: &str, path: &str) -> String {
     let body = serde_json::to_string(path).unwrap_or_default(); // -> "\"/path\""
     let escaped_body = serde_json::to_string(&body).unwrap_or_default(); // -> "\"\\\"/path\\\"\""
     format!(r#"{{"events":{{"onTap":[{{"{verb}":{escaped_body}}}]}}}}"#)
 }
 
-/// Node id -> resolved absolute-doc-space Y offset, via the same jian layout
-/// pass `snapshot_layout` / `geometry_validation` use. Only Y is needed here
-/// (header-region gating); a fuller Rect lives in `geometry_validation`
-/// scoped to its own module, mirroring the existing per-module
-/// `resolved_widths` precedent in `sidebar_archetype`.
 fn resolved_y_offsets(state: &EditorState) -> HashMap<String, f64> {
     let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
     let mut out = HashMap::new();

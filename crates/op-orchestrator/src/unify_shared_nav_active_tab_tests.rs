@@ -554,7 +554,7 @@ fn active_retarget_preserves_descendant_routes_by_tab_position() {
 
 /// A nav-less screen with a back-shaped header control (chevron-left /
 /// arrow-left icon as the first child — resolves within the header region
-/// exactly like `wire_screen_navigation_tests.rs::header_back_icon_gets_pop`).
+/// exactly like the legacy shared-nav detail exemption).
 fn screen_json_no_nav_with_back_header(id: &str, name: &str) -> serde_json::Value {
     serde_json::json!({
         "type": "frame", "id": id, "name": name, "width": 390, "height": 844,

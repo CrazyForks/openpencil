@@ -143,6 +143,92 @@ fn an_over_bold_screen_counts_its_repairs_under_hierarchy() {
 }
 
 #[test]
+fn interaction_backfill_edits_are_counted_as_structure_repairs() {
+    let nodes: Vec<PenNode> = serde_json::from_value(json!([
+        {
+            "type": "frame", "id": "entry", "name": "Discover", "screen": "/",
+            "x": 0, "y": 0, "width": 390, "height": 844, "layout": "none",
+            "children": [{
+                "type": "frame", "id": "row", "x": 20, "y": 180,
+                "width": 350, "height": 170, "layout": "horizontal",
+                "children": [
+                    {
+                        "type": "frame", "id": "card-a", "width": 100, "height": 150,
+                        "layout": "vertical", "children": [
+                            {"type":"image","id":"image-a","width":100,"height":90,
+                             "src":"https://example.invalid/a.png"},
+                            {"type":"text","id":"title-a","content":"A","width":100,"height":20}
+                        ]
+                    },
+                    {
+                        "type": "frame", "id": "card-b", "width": 100, "height": 150,
+                        "layout": "vertical", "children": [
+                            {"type":"image","id":"image-b","width":100,"height":90,
+                             "src":"https://example.invalid/b.png"},
+                            {"type":"text","id":"title-b","content":"B","width":100,"height":20}
+                        ]
+                    }
+                ]
+            }]
+        },
+        {
+            "type": "frame", "id": "detail", "name": "Movie Detail",
+            "screen": "/detail", "x": 450, "y": 0, "width": 390, "height": 844,
+            "layout": "none", "children": [
+                {
+                    "type": "frame", "id": "back", "x": 24, "y": 80,
+                    "width": 44, "height": 44, "layout": "none", "children": [{
+                        "type":"icon_font","id":"back-icon","x":12,"y":12,
+                        "width":20,"height":20,"iconFontName":"arrow-left"
+                    }]
+                },
+                {"type":"frame","id":"detail-content","x":0,"y":160,
+                 "width":390,"height":600,"children":[]}
+            ]
+        }
+    ]))
+    .expect("fixture nodes");
+    let mut sink = VecDocSink::new();
+    sink.state.apply(EditorCommand::InsertSubtree {
+        nodes,
+        parent_id: NodeId::NONE,
+        page_id: None,
+    });
+    let root_ids = sink
+        .state
+        .active_children()
+        .iter()
+        .map(|node| node.id_str().to_string())
+        .collect::<Vec<_>>();
+    let root_refs = root_ids.iter().map(String::as_str).collect::<Vec<_>>();
+    sink.applied.clear();
+    let mut summary = RepairSummary::default();
+
+    run_cleanup_passes_with_summary(&mut sink, &plan(), &root_refs, &mut summary);
+
+    let interaction_patches = sink
+        .applied
+        .iter()
+        .filter(|command| {
+            matches!(
+                command,
+                EditorCommand::PatchNodeData { patch_json, .. }
+                    if patch_json.contains(r#""pop":null"#)
+                        || patch_json.contains(r#""push":"\"/detail\"""#)
+            )
+        })
+        .count();
+    assert_eq!(
+        interaction_patches, 3,
+        "one back frame and two cards must be persisted"
+    );
+    assert!(
+        summary.repairs_for(CheckCategory::Structure) >= interaction_patches,
+        "the quality credential must count every interaction patch: {summary:?}"
+    );
+}
+
+#[test]
 fn the_tally_never_exceeds_the_edits_the_sink_actually_took() {
     // The credential's number must be defensible against the document: it
     // counts accepted applies, so it can never claim more repairs than the

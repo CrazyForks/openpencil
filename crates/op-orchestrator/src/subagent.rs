@@ -8,7 +8,7 @@
 //! - `node_count > 0`(`error` 可带软错误)—— 部分产出,继续后续。
 
 use crate::plan::{OrchestratorPlan, Subtask};
-use crate::prompt::build_subagent_prompt;
+use crate::prompt::build_subagent_prompt_with_screen_routes;
 use crate::types::{AbortFlag, DesignRequest, DocSink, LlmChunk, LlmClient, SubtaskOutcome};
 use futures::StreamExt;
 use jian_ops_schema::node::PenNode;
@@ -108,15 +108,16 @@ pub(crate) async fn run_subtask_with_reveal_at(
         subtask: Some(subtask.clone()),
     };
 
-    // Snapshot the document's reusable-component registry before the prompt
-    // build so the AVAILABLE COMPONENTS manifest reflects whatever masters were
-    // merged into the doc (e.g. a loaded `.lib.op`). Cloned to release the
-    // shared `sink` borrow before the later mutable inserts. Empty registry ⇒
-    // `build_subagent_prompt` leaves the prompt unchanged.
+    // Snapshot document-wide prompt context before building the prompt.
+    // Classic fan-out derives routes from normalized planning groups; loop
+    // continuation (whose synthetic plan has no screen labels) falls back to
+    // live screen markers. Both paths share navigation's route allocator.
+    let screen_routes =
+        crate::wire_screen_navigation::prompt_screen_route_inventory(plan, sink.state());
     let components = sink.state().components.clone();
 
     // 收集 LLM 文本输出。
-    let (call_req, skill_report) = build_subagent_prompt(
+    let (call_req, skill_report) = build_subagent_prompt_with_screen_routes(
         subtask,
         plan,
         req,
@@ -124,6 +125,7 @@ pub(crate) async fn run_subtask_with_reveal_at(
         reduced_complexity,
         minimal_skills,
         &components,
+        &screen_routes,
     );
     // Surface the per-subtask skill-load report to the chat UI immediately
     // after the prompt is built (spec Component 4).

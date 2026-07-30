@@ -96,6 +96,52 @@ fn run_spawned_agents_invokes_real_runner_and_inserts_n_subtrees() {
     );
 }
 
+#[test]
+fn loop_spawned_agent_prompts_receive_live_document_screen_routes() {
+    let mut sink = VecDocSink::new();
+    let screens: Vec<jian_ops_schema::node::PenNode> = serde_json::from_str(
+        r#"[
+          {"type":"frame","id":"home","name":"Home","screen":"/",
+           "x":0,"y":0,"width":390,"height":844,"children":[]},
+          {"type":"frame","id":"detail","name":"Movie Detail","screen":"/movie-detail",
+           "x":470,"y":0,"width":390,"height":844,"children":[]}
+        ]"#,
+    )
+    .unwrap();
+    sink.apply(EditorCommand::InsertSubtree {
+        nodes: screens,
+        parent_id: op_editor_core::NodeId::NONE,
+        page_id: None,
+    });
+    sink.applied.clear();
+
+    let llm = ScriptedLlm::new(vec![
+        ScriptResponse::Text(node_json("a")),
+        ScriptResponse::Text(node_json("b")),
+    ]);
+    let specs = vec![spec("a"), spec("b")];
+    let results = block_on(run_spawned_agents_concurrent(
+        &specs,
+        &make_req(),
+        &llm,
+        &mut sink,
+        &AbortFlag::new(),
+        2,
+        None,
+    ));
+
+    assert!(results.iter().all(|result| result.error.is_none()));
+    let prompts = llm.user_prompts();
+    assert_eq!(prompts.len(), 2);
+    for prompt in prompts {
+        assert!(prompt.contains(r#"- "Home" -> "/""#), "{prompt}");
+        assert!(
+            prompt.contains(r#"- "Movie Detail" -> "/movie-detail""#),
+            "{prompt}"
+        );
+    }
+}
+
 /// Concurrency is GENUINE: with a cap ≥ N, `CountingLlm` observes more than
 /// one in-flight call — the workers' LLM calls overlap (vs. strictly
 /// sequential, which would cap at 1).

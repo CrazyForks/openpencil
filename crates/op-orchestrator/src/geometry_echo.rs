@@ -14,7 +14,9 @@
 use op_editor_core::{EditorState, NodeId};
 
 use super::text_collision::push_text_collision_diagnostics;
-use super::{collect_diagnostics, resolved_rects, MAX_DIAGNOSTICS};
+use super::{
+    collect_diagnostics, push_interaction_backfill_diagnostics, resolved_rects, MAX_DIAGNOSTICS,
+};
 
 /// Geometry diagnostics for exactly the subtrees rooted at `root_ids` —
 /// the `inserted_root_ids` one subtask's `InsertSubtree` produced. Runs the
@@ -30,6 +32,7 @@ pub(crate) fn geometry_diagnostics_for_roots(
 ) -> Vec<String> {
     let rects = resolved_rects(state);
     let mut out = Vec::new();
+    push_interaction_backfill_diagnostics(state, Some(root_ids), &mut out);
     for root_id in root_ids {
         if out.len() >= MAX_DIAGNOSTICS {
             break;

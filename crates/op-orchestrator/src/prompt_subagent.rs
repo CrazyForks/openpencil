@@ -25,6 +25,36 @@ pub fn build_subagent_prompt(
     minimal_skills: bool,
     components: &ComponentLibrary,
 ) -> (CallRequest, SkillLoadReport) {
+    build_subagent_prompt_with_screen_routes(
+        subtask,
+        plan,
+        req,
+        abort,
+        reduced_complexity,
+        minimal_skills,
+        components,
+        &[],
+    )
+}
+
+/// Production prompt builder with the document-wide screen route inventory.
+///
+/// The public compatibility wrapper above passes an empty inventory so direct
+/// callers that do not own a document snapshot keep byte-identical prompts.
+/// Generation paths call this variant after resolving normalized plan groups
+/// (or loop continuation's live screens) through navigation's shared route
+/// allocator.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_subagent_prompt_with_screen_routes(
+    subtask: &Subtask,
+    plan: &OrchestratorPlan,
+    req: &DesignRequest,
+    abort: AbortFlag,
+    reduced_complexity: bool,
+    minimal_skills: bool,
+    components: &ComponentLibrary,
+    screen_routes: &[(String, String)],
+) -> (CallRequest, SkillLoadReport) {
     // Script-gen is THE subagent protocol on every rung. Retry flags narrow
     // the skill set only; they never switch the output protocol.
     let script_on = true;
@@ -37,6 +67,7 @@ pub fn build_subagent_prompt(
         minimal_skills,
         script_on,
         components,
+        screen_routes,
     )
 }
 
@@ -53,6 +84,7 @@ pub(super) fn build_subagent_prompt_core(
     minimal_skills: bool,
     script_on: bool,
     components: &ComponentLibrary,
+    screen_routes: &[(String, String)],
 ) -> (CallRequest, SkillLoadReport) {
     // Resolve the full generation skill set, then apply tier-gated filtering.
     let model_id = req.model.as_deref().unwrap_or("");
@@ -293,6 +325,7 @@ pub(super) fn build_subagent_prompt_core(
         .as_ref()
         .map(|instruction| format!("{instruction}\n\n"))
         .unwrap_or_default();
+    let screen_route_block = screen_route_prompt_block(screen_routes);
     let spacing_rule = if is_mobile_layout {
         "SPACING CONSISTENCY — MOBILE CONTENT RAIL: The root page may keep 0 horizontal padding for full-width status/navigation/full-bleed media. This ordinary transparent root-direct section owns padding:[0,24] exactly once; do not duplicate it on an inner wrapper. If this section is a clipped horizontal scroller, keep its section full width, inset its header 24px on both sides, and give the clipped viewport a 24px leading inset with a flush 0px trailing edge."
     } else {
@@ -319,6 +352,7 @@ pub(super) fn build_subagent_prompt_core(
         "Page sections:\n{}\n\n\
 Generate ONLY \"{}\" (~{:.0}px of content).{}\n\
 Overall design: {}\n\n\
+{}\
 {}\
 CRITICAL LAYOUT CONSTRAINTS:\n\
 - {}\n\
@@ -347,6 +381,7 @@ CRITICAL LAYOUT CONSTRAINTS:\n\
         subtask.region.height,
         my_elements,
         req.prompt,
+        screen_route_block,
         explicit_user_token_block,
         root_rule,
         subtask.region.height,
@@ -467,5 +502,26 @@ CRITICAL LAYOUT CONSTRAINTS:\n\
             first_text_timeout: Some(t.first_text),
         },
         report,
+    )
+}
+
+fn screen_route_prompt_block(screen_routes: &[(String, String)]) -> String {
+    if screen_routes.is_empty() {
+        return String::new();
+    }
+
+    let rows = screen_routes
+        .iter()
+        .map(|(name, route)| {
+            let name = serde_json::to_string(name).expect("serializing a string cannot fail");
+            let route = serde_json::to_string(route).expect("serializing a string cannot fail");
+            format!("- {name} -> {route}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        "DOCUMENT SCREEN ROUTES (use these exact route values in schema-encoded navigation \
+         actions; never invent another route):\n{rows}\n\n"
     )
 }

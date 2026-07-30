@@ -195,6 +195,172 @@ fn duplicate_slugs_get_numeric_suffix() {
 }
 
 #[test]
+fn prompt_inventory_matches_the_routes_the_pass_persists() {
+    let json = r#"{"version":"1.0","children":[
+        {"type":"frame","id":"authored","name":"Checkout","width":390,"height":844,
+         "layout":"vertical","children":[],"screen":"/buy-now"},
+        {"type":"frame","id":"home","name":"Home","width":390,"height":844,
+         "layout":"vertical","children":[]},
+        {"type":"frame","id":"settings-a","name":"Settings","width":390,"height":844,
+         "layout":"vertical","children":[]},
+        {"type":"frame","id":"settings-b","name":"Settings","width":390,"height":844,
+         "layout":"vertical","children":[]}
+    ]}"#;
+    let mut state = state_from_json(json);
+    let inventory = screen_route_inventory::screen_route_inventory(&state);
+    run_pass(&mut state);
+    let persisted = state
+        .active_children()
+        .iter()
+        .filter_map(|node| {
+            let PenNode::Frame(frame) = node else {
+                return None;
+            };
+            Some((
+                frame.base.name.clone().unwrap_or_default(),
+                frame.screen.clone()?,
+            ))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(inventory, persisted);
+    assert_eq!(
+        inventory,
+        vec![
+            ("Checkout".into(), "/buy-now".into()),
+            ("Home".into(), "/".into()),
+            ("Settings".into(), "/settings".into()),
+            ("Settings".into(), "/settings-2".into()),
+        ]
+    );
+}
+
+#[test]
+fn planned_inventory_merges_existing_entry_and_persists_midwidth_routes() {
+    let json = r#"{"version":"1.0","children":[
+        {"type":"frame","id":"home","name":"Home","screen":"/",
+         "width":390,"height":844,"layout":"vertical","children":[]},
+        {"type":"frame","id":"search","name":"Search",
+         "width":768,"height":1024,"layout":"vertical","children":[]},
+        {"type":"frame","id":"profile","name":"Profile",
+         "width":768,"height":1024,"layout":"vertical","children":[]}
+    ]}"#;
+    let mut state = state_from_json(json);
+    let plan: crate::plan::OrchestratorPlan = serde_json::from_value(serde_json::json!({
+        "rootFrame": {
+            "id": "root",
+            "name": "App",
+            "width": 768,
+            "height": 1024
+        },
+        "subtasks": [
+            {
+                "id": "search-task",
+                "label": "Search",
+                "screen": "Search",
+                "parentFrameId": "search",
+                "region": {"width": 768, "height": 400}
+            },
+            {
+                "id": "profile-task",
+                "label": "Profile",
+                "screen": "Profile",
+                "parentFrameId": "profile",
+                "region": {"width": 768, "height": 400}
+            }
+        ]
+    }))
+    .unwrap();
+
+    let planned = prompt_screen_route_inventory(&plan, &state);
+    assert_eq!(
+        planned,
+        vec![
+            ("Home".into(), "/".into()),
+            ("Search".into(), "/search".into()),
+            ("Profile".into(), "/profile".into()),
+        ]
+    );
+
+    {
+        let mut sink = crate::loop_finalize::StateDocSink { state: &mut state };
+        ensure_planned_screen_routes(&mut sink, &plan);
+    }
+    assert_eq!(prompt_screen_route_inventory(&plan, &state), planned);
+    assert_eq!(
+        ["home", "search", "profile"]
+            .into_iter()
+            .map(|id| frame_screen(find_by_id(state.active_children(), id).unwrap()).unwrap())
+            .collect::<Vec<_>>(),
+        vec!["/", "/search", "/profile"]
+    );
+}
+
+#[test]
+fn authored_midwidth_entry_reserves_root_for_new_shaped_screen() {
+    let json = r#"{"version":"1.0","children":[
+        {"type":"frame","id":"tablet-home","name":"Home","screen":"/",
+         "width":768,"height":1024,"layout":"vertical","children":[]},
+        {"type":"frame","id":"detail","name":"Detail",
+         "width":390,"height":844,"layout":"vertical","children":[]}
+    ]}"#;
+    let mut state = state_from_json(json);
+    assert_eq!(
+        screen_route_inventory::screen_route_inventory(&state),
+        vec![
+            ("Home".into(), "/".into()),
+            ("Detail".into(), "/detail".into())
+        ]
+    );
+
+    run_pass(&mut state);
+
+    assert_eq!(
+        frame_screen(find_by_id(state.active_children(), "detail").unwrap()),
+        Some("/detail")
+    );
+}
+
+#[test]
+fn collapsed_plan_groups_fall_back_to_the_live_route_inventory() {
+    let state = state_from_json(
+        r#"{"version":"1.0","children":[
+            {"type":"frame","id":"home","name":"Home","screen":"/",
+             "width":390,"height":844,"children":[]},
+            {"type":"frame","id":"detail","name":"Detail","screen":"/detail",
+             "width":390,"height":844,"children":[]}
+        ]}"#,
+    );
+    let plan: crate::plan::OrchestratorPlan = serde_json::from_value(serde_json::json!({
+        "rootFrame": {"id": "root", "name": "App", "width": 390, "height": 844},
+        "subtasks": [
+            {
+                "id": "search-task",
+                "label": "Search",
+                "screen": "Search",
+                "parentFrameId": "home",
+                "region": {"width": 390, "height": 300}
+            },
+            {
+                "id": "profile-task",
+                "label": "Profile",
+                "screen": "Profile",
+                "parentFrameId": "home",
+                "region": {"width": 390, "height": 300}
+            }
+        ]
+    }))
+    .unwrap();
+
+    assert_eq!(
+        prompt_screen_route_inventory(&plan, &state),
+        vec![
+            ("Home".into(), "/".into()),
+            ("Detail".into(), "/detail".into())
+        ]
+    );
+}
+
+#[test]
 fn authored_screen_marker_is_never_overwritten_and_not_reused_as_entry() {
     // "Checkout" already carries an authored (non-"/") marker. Since the
     // pass never touches authored markers even to satisfy the single-entry
@@ -557,36 +723,36 @@ fn existing_tab_events_are_left_alone() {
     );
 }
 
-// ── Back-button wiring ──────────────────────────────────────────────────
+// ── Cleanup-only interaction boundary ──────────────────────────────────
 
 #[test]
-fn header_back_icon_gets_pop() {
+fn preview_fallback_does_not_create_a_temporary_back_binding() {
     let json = r#"{"version":"1.0","children":[
         {"type":"frame","id":"profile","name":"Profile","width":390,"height":844,
-         "layout":"vertical","children":[
-            {"type":"icon_font","id":"back-icon","name":"Back","iconFontName":"arrow-left",
-             "width":24,"height":24}
+         "layout":"none","children":[
+            {"type":"frame","id":"back","x":24,"y":80,"width":44,"height":44,
+             "layout":"none","children":[
+                {"type":"icon_font","id":"back-icon","x":12,"y":12,
+                 "iconFontName":"arrow-left","width":20,"height":20}
+             ]}
          ]},
         {"type":"frame","id":"home","name":"Home","width":390,"height":844,
          "layout":"vertical","children":[]}
     ]}"#;
     let mut state = state_from_json(json);
     run_pass(&mut state);
-    let back = find_by_id(state.active_children(), "back-icon").unwrap();
-    assert_eq!(
-        node_events_json(back).unwrap(),
-        serde_json::json!({"onTap": [{"pop": null}]})
+    assert!(
+        node_events_json(find_by_id(state.active_children(), "back").unwrap()).is_none(),
+        "public preview fallback may assign routes/nav, but cleanup-only backfill must write \
+         interactions to the real document"
     );
 }
 
-/// An authored interactive control owns its whole subtree: the arrow icon
-/// INSIDE an already-bound back button must not receive a second `pop`
-/// (both handlers firing on one tap would double-pop the route stack).
 #[test]
-fn icon_inside_authored_back_button_is_not_double_bound() {
+fn authored_back_binding_is_preserved_by_preview_fallback() {
     let json = r#"{"version":"1.0","children":[
         {"type":"frame","id":"profile","name":"Profile","width":390,"height":844,
-         "layout":"vertical","children":[
+         "layout":"none","children":[
             {"type":"frame","id":"back-btn","name":"Back Button","width":44,"height":44,
              "events":{"onTap":[{"pop":null}]},
              "children":[
@@ -598,32 +764,9 @@ fn icon_inside_authored_back_button_is_not_double_bound() {
          "layout":"vertical","children":[]}
     ]}"#;
     let mut state = state_from_json(json);
+    let before = node_events_json(find_by_id(state.active_children(), "back-btn").unwrap());
     run_pass(&mut state);
-    let icon = find_by_id(state.active_children(), "inner-icon").unwrap();
-    assert!(
-        node_events_json(icon).is_none(),
-        "a descendant of an authored interactive control must never be wired"
-    );
-}
-
-#[test]
-fn back_icon_outside_header_region_is_not_bound() {
-    let json = r#"{"version":"1.0","children":[
-        {"type":"frame","id":"profile","name":"Profile","width":390,"height":844,
-         "layout":"vertical","children":[
-            {"type":"frame","id":"filler","name":"Filler","width":"fill_container","height":700,
-             "children":[]},
-            {"type":"icon_font","id":"chevron-icon","name":"chevron-left","iconFontName":"chevron-left",
-             "width":24,"height":24}
-         ]},
-        {"type":"frame","id":"home","name":"Home","width":390,"height":844,
-         "layout":"vertical","children":[]}
-    ]}"#;
-    let mut state = state_from_json(json);
-    run_pass(&mut state);
-    let chevron = find_by_id(state.active_children(), "chevron-icon").unwrap();
-    assert!(
-        node_events_json(chevron).is_none(),
-        "a back-shaped icon well below the header band must not be bound"
-    );
+    let after = node_events_json(find_by_id(state.active_children(), "back-btn").unwrap());
+    assert_eq!(after, before);
+    assert!(node_events_json(find_by_id(state.active_children(), "inner-icon").unwrap()).is_none());
 }

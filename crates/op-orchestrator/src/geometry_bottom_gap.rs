@@ -101,7 +101,11 @@ pub(super) fn push_mobile_bottom_gap_diagnostic(
 /// the authored `role` semantic the corpus mandates, or the resolved shape a
 /// tab bar always has — a full-width band in the nav height range laying out
 /// at least three evenly-sized tap targets in a row.
-fn is_bottom_nav_shape(child: &Value, root_rect: &Rect, rects: &HashMap<String, Rect>) -> bool {
+pub(super) fn is_bottom_nav_shape(
+    child: &Value,
+    root_rect: &Rect,
+    rects: &HashMap<String, Rect>,
+) -> bool {
     if child.get("role").and_then(Value::as_str) == Some("bottom-tab-bar") {
         return true;
     }

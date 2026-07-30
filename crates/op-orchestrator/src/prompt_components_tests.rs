@@ -399,6 +399,7 @@ fn tight_budget_dashboard_keeps_component_composition() {
         false,
         false,
         &lib,
+        &[],
     );
     let sys = &cr.system_prompt;
 

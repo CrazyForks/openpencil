@@ -9,13 +9,14 @@
 //! `hasEntryScreen` / `navBoundTabs` / `navTotalTabs` / `popBound` /
 //! `appModeReady` quantify whether a generated document actually enters
 //! PreviewSession's routed multi-screen App Mode — `wire_screen_navigation`
-//! (Track A) now auto-wires `screen` markers + nav-tab / back-button
-//! `events.onTap` bindings at the end of every generation turn, so this is
-//! the deterministic check that it actually landed, not just that the pass
-//! exists. The nav-container / has-events predicates are reused directly
-//! from `op_orchestrator::wire_screen_navigation` (bumped `pub` for this;
+//! (Track A) now auto-wires `screen` markers + nav-tab bindings, while the
+//! cleanup-only interaction backfill persists fact-proven back/card actions
+//! at the end of every generation turn. This is the deterministic check that
+//! the bindings actually landed, not just that the passes exist. The
+//! nav-container / has-events predicates are reused directly from
+//! `op_orchestrator::wire_screen_navigation` (bumped `pub` for this;
 //! op-smoke already depends on `op-orchestrator`) rather than reimplemented,
-//! so the rubric can never silently disagree with what the pass wired.
+//! so the rubric can never silently disagree with what the nav pass wired.
 //!
 //! M3 addition (content-completeness follow-up): `completeness` closes a
 //! blind spot the geometry + chrome + interactivity metrics above all share
@@ -208,12 +209,11 @@ fn count_pop_bound_value(value: &Value) -> usize {
 }
 
 /// Whether a node's (already-serialized) `events.onTap` includes a bound
-/// `pop` navigation action. Track A's own back-button wiring only ever
-/// writes `{"pop": null}` (`wire_screen_navigation::wire_back_buttons`);
-/// checked generically (rather than reusing a Track A "is this shaped like a
-/// back button" name/icon heuristic) so a hand-authored pop binding on any
-/// node counts too — this metric is "did a pop binding land", not "did the
-/// back-button heuristic fire".
+/// `pop` navigation action. The cleanup interaction backfill only ever writes
+/// `{"pop": null}`; checked generically (rather than repeating its strict
+/// geometry/icon-data predicate) so a hand-authored pop binding on any node
+/// counts too — this metric is "did a pop binding land", not "did the strict
+/// back-control fact match".
 fn has_pop_action(value: &Value) -> bool {
     value
         .get("events")

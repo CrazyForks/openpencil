@@ -159,6 +159,41 @@ fn multi_screen_plan_gets_one_root_per_screen_group() {
     assert_eq!(summary.subtasks.len(), 2);
 }
 
+#[test]
+fn every_fanout_subtask_prompt_receives_the_full_screen_route_inventory() {
+    let llm = ScriptedLlm::new(vec![
+        ScriptResponse::Text(MULTI_SCREEN_PLAN_JSON.into()),
+        ScriptResponse::Text(node_json("home")),
+        ScriptResponse::Text(node_json("profile")),
+    ]);
+    let mut sink = VecDocSink::new();
+
+    futures::executor::block_on(Orchestrator::new().run(
+        req(),
+        &mut sink,
+        &llm,
+        &mut |_| {},
+        &AbortFlag::new(),
+        &stub_providers(),
+    ))
+    .expect("multi-screen run ok");
+
+    let route_prompts = llm
+        .user_prompts()
+        .into_iter()
+        .filter(|prompt| prompt.contains("DOCUMENT SCREEN ROUTES"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        route_prompts.len(),
+        2,
+        "both Home and Profile workers need the same document-wide inventory"
+    );
+    for prompt in route_prompts {
+        assert!(prompt.contains(r#"- "Home" -> "/""#), "{prompt}");
+        assert!(prompt.contains(r#"- "Profile" -> "/profile""#), "{prompt}");
+    }
+}
+
 /// Co-op point with Track A (`wire_screen_navigation`, run as part of
 /// `finalize_design`'s cleanup tail): once N screen-shaped roots exist,
 /// EVERY one of them — not just the first — gets a `screen` route marker,
