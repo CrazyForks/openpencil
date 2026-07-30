@@ -277,6 +277,23 @@ fn chat_model_picker_helpers_reset_select_interaction_state_and_search() {
 }
 
 #[test]
+fn opening_the_chat_model_picker_requests_one_catalog_refresh() {
+    let mut ui = EditorUiState::new();
+    assert!(!ui.pending_model_catalog_refresh);
+
+    assert!(ui.toggle_chat_model_picker());
+    assert!(ui.take_pending_model_catalog_refresh());
+    assert!(
+        !ui.take_pending_model_catalog_refresh(),
+        "one open must not queue two probes"
+    );
+
+    // Closing asks for nothing.
+    assert!(!ui.toggle_chat_model_picker());
+    assert!(!ui.pending_model_catalog_refresh);
+}
+
+#[test]
 fn icon_picker_helpers_reset_select_interaction_state_and_search() {
     let mut ui = EditorUiState::new();
     ui.icon_picker_replace_selection = true;

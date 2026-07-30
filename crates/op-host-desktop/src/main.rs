@@ -72,6 +72,7 @@ mod mcp_runtime;
 mod mcp_serve;
 mod menu;
 mod menu_action;
+mod model_refresh_host;
 mod persistence;
 mod persistence_error;
 mod persistence_export_batch;
@@ -281,6 +282,11 @@ struct DesktopApp {
     /// on a worker thread; its result is drained into
     /// `chat.available_models` on a later frame.
     model_probe: op_host_services::model_discovery::ModelProbe,
+    /// TTL-debounced re-discovery of the connected CLI providers'
+    /// catalogs, requested whenever the chat model picker opens
+    /// (`editor_ui.pending_model_catalog_refresh`) and drained by
+    /// `drain_model_catalog_refresh`.
+    model_catalog_refresh: op_host_services::model_catalog_refresh::ModelCatalogRefresh,
     /// Background auto-search jobs that replace generated empty image
     /// nodes with freely licensed remote images.
     image_search: image_search_session::ImageSearchSession,

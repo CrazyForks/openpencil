@@ -71,6 +71,7 @@ mod import_html_url_error;
 pub mod loop_blocker_ledger;
 pub mod mcp_live;
 pub mod mcp_serve;
+pub mod model_catalog_refresh;
 pub mod model_discovery;
 mod model_probe;
 pub mod pre_validator;

@@ -113,6 +113,7 @@ impl DesktopApp {
                 .is_some_and(crate::iconify_host::IconifyJob::is_pending)
             || self.provider_connect_pending()
             || self.acp_agent_connect_pending()
+            || self.model_catalog_refresh_pending()
             || self
                 .git_pull_job
                 .as_ref()
@@ -182,6 +183,7 @@ impl DesktopApp {
                 .is_some_and(crate::iconify_host::IconifyJob::is_pending)
             || self.provider_connect_pending()
             || self.acp_agent_connect_pending()
+            || self.model_catalog_refresh_pending()
             || self
                 .git_pull_job
                 .as_ref()

@@ -235,8 +235,19 @@ impl EditorUiState {
         self.close_chat_model_picker();
         if opening {
             self.chat_model_picker.open = true;
+            // Raised here rather than in the click flow so every path
+            // that opens the picker asks for a fresh catalog — the
+            // request is only a request, and the host that drains it
+            // decides (via TTL) whether a probe actually runs.
+            self.pending_model_catalog_refresh = true;
         }
         opening
+    }
+
+    /// Consume the model-catalog refresh request raised by the last
+    /// picker open. Returns true exactly once per open.
+    pub fn take_pending_model_catalog_refresh(&mut self) -> bool {
+        std::mem::take(&mut self.pending_model_catalog_refresh)
     }
 
     pub fn close_chat_model_picker(&mut self) -> bool {

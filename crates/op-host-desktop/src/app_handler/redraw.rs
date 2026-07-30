@@ -349,6 +349,11 @@ impl DesktopApp {
         if self.drain_acp_agent_connect() {
             self.redraw_dirty = true;
         }
+        // Drain the picker-open catalog refresh — a CLI that gained
+        // models since the last probe shows up without a restart.
+        if self.drain_model_catalog_refresh() {
+            self.redraw_dirty = true;
+        }
         // Drain the background auto-update probe.
         if self.poll_update_probe() {
             self.redraw_dirty = true;
