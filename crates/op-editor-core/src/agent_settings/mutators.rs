@@ -279,6 +279,7 @@ impl AgentSettings {
 
     pub fn remove_acp_agent(&mut self, id: &str) -> bool {
         let before = self.acp_agents.len();
+        self.invalidate_acp_agent_connection(id);
         self.acp_agents.retain(|agent| agent.id != id);
         self.acp_agents.len() != before
     }

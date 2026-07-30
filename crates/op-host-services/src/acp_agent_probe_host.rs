@@ -6,7 +6,9 @@
 
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
-use op_editor_core::agent_settings::{AcpAgentConfig as CoreAcpAgentConfig, AcpConnectionType};
+use op_editor_core::agent_settings::{
+    AcpAgentConfig as CoreAcpAgentConfig, AcpAgentConnectRequest, AcpConnectionType,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AcpAgentProbeOutcome {
@@ -38,13 +40,14 @@ impl AcpAgentProbeOutcome {
 }
 
 pub struct AcpAgentConnectJob {
-    id: String,
+    request: AcpAgentConnectRequest,
+    config: CoreAcpAgentConfig,
     rx: Option<Receiver<AcpAgentProbeOutcome>>,
 }
 
 impl AcpAgentConnectJob {
-    pub fn spawn(agent: CoreAcpAgentConfig) -> Self {
-        let id = agent.id.clone();
+    pub fn spawn(request: AcpAgentConnectRequest, agent: CoreAcpAgentConfig) -> Self {
+        debug_assert_eq!(request.id, agent.id);
         let config = acp_config_for_probe(&agent);
         let (tx, rx) = mpsc::channel();
         // Detached one-shot: the probe's handshake calls carry op-acp's
@@ -54,7 +57,11 @@ impl AcpAgentConnectJob {
             let outcome = probe_acp_agent_config(config);
             let _ = tx.send(outcome);
         });
-        Self { id, rx: Some(rx) }
+        Self {
+            request,
+            config: agent,
+            rx: Some(rx),
+        }
     }
 
     pub fn is_pending(&self) -> bool {
@@ -64,18 +71,32 @@ impl AcpAgentConnectJob {
     /// The agent id this job is probing. Public accessor for the
     /// desktop-residual pump (private field is unreachable cross-crate).
     pub fn id(&self) -> &str {
-        &self.id
+        &self.request.id
+    }
+
+    pub fn request(&self) -> &AcpAgentConnectRequest {
+        &self.request
+    }
+
+    /// Exact configuration snapshot that launched this probe.
+    pub fn config(&self) -> &CoreAcpAgentConfig {
+        &self.config
     }
 
     /// Test seam: construct a pending job + the sender that feeds it a
     /// fake outcome. Public (not `#[cfg(test)]`) so the desktop residual's
     /// `impl DesktopApp` tests can build one across the crate boundary.
     #[doc(hidden)]
-    pub fn pending_for_test(id: impl Into<String>) -> (Self, mpsc::Sender<AcpAgentProbeOutcome>) {
+    pub fn pending_for_test(
+        request: AcpAgentConnectRequest,
+        config: CoreAcpAgentConfig,
+    ) -> (Self, mpsc::Sender<AcpAgentProbeOutcome>) {
+        debug_assert_eq!(request.id, config.id);
         let (tx, rx) = mpsc::channel();
         (
             Self {
-                id: id.into(),
+                request,
+                config,
                 rx: Some(rx),
             },
             tx,

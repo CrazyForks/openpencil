@@ -98,6 +98,12 @@ mod web_image_panel;
 mod web_model_catalog;
 #[cfg(feature = "canvaskit")]
 mod web_settings;
+// The daemon ACP route intentionally remains unavailable in production.
+// Compile the dormant browser bridge in CanvasKit tests so its request
+// generation contract cannot silently drift from the shared core state.
+#[cfg(all(test, feature = "canvaskit"))]
+#[allow(dead_code)]
+mod web_acp_connect;
 // postMessage bridge to the VS Code extension host (token bootstrap, document
 // open, snapshot, save-committed, conflict resolution). DOM wiring only — the
 // wire codec lives in `op_editor_core::bridge_protocol`.

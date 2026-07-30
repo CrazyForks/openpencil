@@ -152,7 +152,8 @@ fn acp_agent_connect_press_starts_real_probe_request() {
             .editor_ui
             .agent_settings
             .pending_acp_agent_connect
-            .as_deref(),
+            .as_ref()
+            .map(|request| request.id.as_str()),
         Some("acp-1")
     );
     assert!(host.apply_release_with_viewport(1200.0, 800.0));

@@ -108,7 +108,7 @@ impl McpCli {
 // `agent_settings_connection.rs` (800-line cap); re-exported here so
 // call sites keep the `agent_settings::McpServer` path.
 pub use crate::agent_settings_acp_connection::{
-    AcpAgentConnectOutcome, AcpAgentConnectPhase, AcpAgentConnection,
+    AcpAgentConnectOutcome, AcpAgentConnectPhase, AcpAgentConnectRequest, AcpAgentConnection,
 };
 pub use crate::agent_settings_connection::{
     McpServer, ProviderConnectOutcome, ProviderConnectPhase, ProviderConnection,
@@ -215,7 +215,9 @@ pub struct AgentSettings {
     pub acp_agents: Vec<AcpAgentConfig>,
     pub acp_agent_draft: Option<AcpAgentConfig>,
     pub next_acp_agent_id: u64,
-    pub pending_acp_agent_connect: Option<String>,
+    /// Last issued ACP connect generation. Runtime-only and process-local.
+    pub acp_agent_connect_generation: u64,
+    pub pending_acp_agent_connect: Option<AcpAgentConnectRequest>,
     pub acp_agent_connection: BTreeMap<String, AcpAgentConnection>,
     pub scroll_y: jian_core::scroll::ScrollState,
     pub mcp_server: McpServer,
@@ -285,6 +287,7 @@ impl Default for AgentSettings {
             acp_agents: Vec::new(),
             acp_agent_draft: None,
             next_acp_agent_id: 1,
+            acp_agent_connect_generation: 0,
             pending_acp_agent_connect: None,
             acp_agent_connection: BTreeMap::new(),
             scroll_y: Default::default(),

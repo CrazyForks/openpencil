@@ -31,12 +31,10 @@ fn web_acp_agent_connect_control_is_hidden() {
     ));
     assert_eq!(host.editor_state.editor_ui.pressed_button, None);
     assert!(!host.editor_state.editor_ui.agent_settings.acp_agents[0].connected);
-    assert_eq!(
-        host.editor_state
-            .editor_ui
-            .agent_settings
-            .pending_acp_agent_connect
-            .as_deref(),
-        None
-    );
+    assert!(host
+        .editor_state
+        .editor_ui
+        .agent_settings
+        .pending_acp_agent_connect
+        .is_none());
 }

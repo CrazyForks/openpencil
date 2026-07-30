@@ -14,7 +14,8 @@ pub use op_host_services::acp_agent_probe_host::AcpAgentConnectJob;
 
 impl DesktopApp {
     pub(crate) fn drain_acp_agent_connect(&mut self) -> bool {
-        let mut changed = self.poll_acp_agent_connect_job();
+        let mut changed = self.discard_stale_acp_agent_connect_job();
+        changed |= self.poll_acp_agent_connect_job();
         if self
             .acp_agent_connect_job
             .as_ref()
@@ -22,14 +23,14 @@ impl DesktopApp {
         {
             return changed;
         }
-        let pending_id = self
+        let pending = self
             .host
             .editor_state_mut()
             .editor_ui
             .agent_settings
             .pending_acp_agent_connect
             .take();
-        if let Some(id) = pending_id {
+        if let Some(request) = pending {
             let agent = self
                 .host
                 .editor_state()
@@ -37,38 +38,89 @@ impl DesktopApp {
                 .agent_settings
                 .acp_agents
                 .iter()
-                .find(|agent| agent.id == id && agent.ready())
+                .find(|agent| agent.id == request.id && agent.ready())
                 .cloned();
             if let Some(agent) = agent {
-                self.acp_agent_connect_job = Some(AcpAgentConnectJob::spawn(agent));
+                self.acp_agent_connect_job =
+                    Some(AcpAgentConnectJob::spawn(request.clone(), agent));
+            } else {
+                let es = self.host.editor_state_mut();
+                es.editor_ui
+                    .agent_settings
+                    .invalidate_acp_agent_connect_request(&request);
+                es.rebuild_chat_models();
+                self.host.mark_editor_state_dirty();
             }
             changed = true;
         }
         changed
     }
 
+    fn discard_stale_acp_agent_connect_job(&mut self) -> bool {
+        let Some(job) = self.acp_agent_connect_job.as_ref() else {
+            return false;
+        };
+        if self
+            .host
+            .editor_state()
+            .editor_ui
+            .agent_settings
+            .acp_agent_probe_is_current(job.config(), job.request())
+        {
+            return false;
+        }
+
+        let request = job.request().clone();
+        self.acp_agent_connect_job = None;
+        let replacement_pending = self
+            .host
+            .editor_state()
+            .editor_ui
+            .agent_settings
+            .pending_acp_agent_connect
+            .as_ref()
+            .is_some_and(|pending| {
+                pending.id == request.id && pending.generation != request.generation
+            });
+        if replacement_pending {
+            // The old job's request was already drained before it spawned,
+            // so a new pending request for the same id belongs to the edited
+            // configuration. Keep it intact; `drain_acp_agent_connect` will
+            // launch its replacement below.
+            return true;
+        }
+        let es = self.host.editor_state_mut();
+        es.editor_ui
+            .agent_settings
+            .invalidate_acp_agent_connect_request(&request);
+        es.rebuild_chat_models();
+        self.host.mark_editor_state_dirty();
+        true
+    }
+
     fn poll_acp_agent_connect_job(&mut self) -> bool {
         let Some(job) = self.acp_agent_connect_job.as_mut() else {
             return false;
         };
-        let id = job.id().to_string();
         let Some(outcome) = job.poll() else {
             return false;
         };
+        let expected = job.config().clone();
+        let request = job.request().clone();
         self.acp_agent_connect_job = None;
 
         let es = self.host.editor_state_mut();
-        if !es.editor_ui.agent_settings.acp_agent_probe_in_flight(&id) {
-            return false;
-        }
-        es.editor_ui.agent_settings.apply_acp_agent_connect_outcome(
-            &id,
-            AcpAgentConnectOutcome {
-                connected: outcome.connected,
-                info: outcome.info,
-                error: outcome.error,
-            },
-        );
+        es.editor_ui
+            .agent_settings
+            .apply_acp_agent_connect_outcome_if_current(
+                &expected,
+                &request,
+                AcpAgentConnectOutcome {
+                    connected: outcome.connected,
+                    info: outcome.info,
+                    error: outcome.error,
+                },
+            );
         es.rebuild_chat_models();
         self.host.mark_editor_state_dirty();
         true
@@ -109,8 +161,12 @@ mod tests {
             true,
         );
         settings.begin_acp_agent_connect(0);
-        settings.pending_acp_agent_connect = None;
-        let (job, tx) = AcpAgentConnectJob::pending_for_test("acp-1");
+        let request = settings
+            .pending_acp_agent_connect
+            .take()
+            .expect("probe request");
+        let expected = settings.acp_agents[0].clone();
+        let (job, tx) = AcpAgentConnectJob::pending_for_test(request, expected);
         app.acp_agent_connect_job = Some(job);
 
         tx.send(AcpAgentProbeOutcome::failed("initialize failed"))
@@ -138,8 +194,12 @@ mod tests {
             true,
         );
         settings.begin_acp_agent_connect(0);
-        settings.pending_acp_agent_connect = None;
-        let (job, tx) = AcpAgentConnectJob::pending_for_test("acp-1");
+        let request = settings
+            .pending_acp_agent_connect
+            .take()
+            .expect("probe request");
+        let expected = settings.acp_agents[0].clone();
+        let (job, tx) = AcpAgentConnectJob::pending_for_test(request, expected);
         app.acp_agent_connect_job = Some(job);
 
         tx.send(AcpAgentProbeOutcome::connected("Claude Code 1.0".into()))
@@ -152,4 +212,139 @@ mod tests {
         assert_eq!(conn.phase, AcpAgentConnectPhase::Connected);
         assert_eq!(conn.info.as_deref(), Some("Claude Code 1.0"));
     }
+
+    #[test]
+    fn probe_result_is_discarded_when_configuration_changes_in_flight() {
+        let mut app = DesktopApp::new(None);
+        let settings = &mut app.host.editor_state_mut().editor_ui.agent_settings;
+        settings.add_acp_agent_config(
+            "Claude Code",
+            AcpConnectionType::Local,
+            "claude",
+            Vec::new(),
+            BTreeMap::new(),
+            None,
+            true,
+        );
+        settings.begin_acp_agent_connect(0);
+        let request = settings
+            .pending_acp_agent_connect
+            .take()
+            .expect("probe request");
+        let expected = settings.acp_agents[0].clone();
+        let (job, tx) = AcpAgentConnectJob::pending_for_test(request, expected);
+        app.acp_agent_connect_job = Some(job);
+        app.host
+            .editor_state_mut()
+            .editor_ui
+            .agent_settings
+            .acp_agents[0]
+            .command = "different-agent".into();
+
+        tx.send(AcpAgentProbeOutcome::connected("Old Agent 1.0".into()))
+            .unwrap();
+
+        assert!(app.drain_acp_agent_connect());
+        let settings = &app.host.editor_state().editor_ui.agent_settings;
+        assert!(!settings.acp_agents[0].connected);
+        assert_eq!(settings.pending_acp_agent_connect, None);
+        assert_eq!(
+            settings.acp_agent_connection_for("acp-1"),
+            Default::default()
+        );
+        assert!(app.acp_agent_connect_job.is_none());
+    }
+
+    #[test]
+    fn stale_job_discard_preserves_reconnect_for_edited_configuration() {
+        let mut app = DesktopApp::new(None);
+        let settings = &mut app.host.editor_state_mut().editor_ui.agent_settings;
+        settings.add_acp_agent_config(
+            "Claude Code",
+            AcpConnectionType::Local,
+            "claude",
+            Vec::new(),
+            BTreeMap::new(),
+            None,
+            true,
+        );
+        settings.begin_acp_agent_connect(0);
+        let request = settings
+            .pending_acp_agent_connect
+            .take()
+            .expect("probe request");
+        let expected = settings.acp_agents[0].clone();
+        let (job, _tx) = AcpAgentConnectJob::pending_for_test(request, expected);
+        app.acp_agent_connect_job = Some(job);
+
+        let settings = &mut app.host.editor_state_mut().editor_ui.agent_settings;
+        settings.invalidate_acp_agent_connection("acp-1");
+        settings.acp_agents[0].command = "different-agent".into();
+        settings.begin_acp_agent_connect(0);
+
+        assert!(app.discard_stale_acp_agent_connect_job());
+        let settings = &app.host.editor_state().editor_ui.agent_settings;
+        assert_eq!(
+            settings
+                .pending_acp_agent_connect
+                .as_ref()
+                .map(|request| request.id.as_str()),
+            Some("acp-1")
+        );
+        assert_eq!(
+            settings.acp_agent_connection_for("acp-1").phase,
+            AcpAgentConnectPhase::Probing
+        );
+        assert!(app.acp_agent_connect_job.is_none());
+    }
+
+    #[test]
+    fn ready_old_job_is_discarded_after_same_config_disconnect_reconnect() {
+        let mut app = DesktopApp::new(None);
+        let settings = &mut app.host.editor_state_mut().editor_ui.agent_settings;
+        settings.add_acp_agent_config(
+            "Claude Code",
+            AcpConnectionType::Local,
+            "claude",
+            Vec::new(),
+            BTreeMap::new(),
+            None,
+            true,
+        );
+        settings.begin_acp_agent_connect(0);
+        let old_request = settings
+            .pending_acp_agent_connect
+            .take()
+            .expect("old probe request");
+        let expected = settings.acp_agents[0].clone();
+        let (job, tx) = AcpAgentConnectJob::pending_for_test(old_request.clone(), expected);
+        app.acp_agent_connect_job = Some(job);
+
+        let settings = &mut app.host.editor_state_mut().editor_ui.agent_settings;
+        settings.disconnect_acp_agent(0);
+        settings.begin_acp_agent_connect(0);
+        let new_request = settings
+            .pending_acp_agent_connect
+            .clone()
+            .expect("replacement probe request");
+        assert!(new_request.generation > old_request.generation);
+        tx.send(AcpAgentProbeOutcome::connected("Old Agent 1.0".into()))
+            .unwrap();
+
+        assert!(app.discard_stale_acp_agent_connect_job());
+        let settings = &app.host.editor_state().editor_ui.agent_settings;
+        assert_eq!(
+            settings.pending_acp_agent_connect.as_ref(),
+            Some(&new_request)
+        );
+        let connection = settings.acp_agent_connection_for("acp-1");
+        assert_eq!(connection.phase, AcpAgentConnectPhase::Probing);
+        assert_eq!(connection.generation, new_request.generation);
+        assert!(!settings.acp_agents[0].connected);
+        assert!(app.acp_agent_connect_job.is_none());
+    }
 }
+
+#[cfg(test)]
+#[path = "acp_local_e2e_tests.rs"]
+mod local_e2e_tests;

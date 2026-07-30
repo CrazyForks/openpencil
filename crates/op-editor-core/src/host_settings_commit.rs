@@ -95,14 +95,26 @@ pub fn commit_settings_focus(state: &mut EditorState, scope: SettingsCommitScope
             }
         }
         SettingsFocus::AcpAgent { index, field } => {
-            if let Some(agent) = state.editor_ui.agent_settings.acp_agents.get_mut(index) {
-                write_acp_field(agent, field, &draft);
+            let changed_id = state
+                .editor_ui
+                .agent_settings
+                .acp_agents
+                .get_mut(index)
+                .and_then(|agent| {
+                    let id = agent.id.clone();
+                    write_acp_field(agent, field, &draft).then_some(id)
+                });
+            if let Some(id) = changed_id {
+                state
+                    .editor_ui
+                    .agent_settings
+                    .invalidate_acp_agent_connection(&id);
                 state.rebuild_chat_models();
             }
         }
         SettingsFocus::AcpAgentDraft(field) => {
             if let Some(agent) = state.editor_ui.agent_settings.acp_agent_draft.as_mut() {
-                write_acp_field(agent, field, &draft);
+                let _ = write_acp_field(agent, field, &draft);
             }
         }
     }
@@ -162,37 +174,105 @@ fn write_builtin_field(
     }
 }
 
-/// Write one ACP-agent field from a committed draft. Every transport
-/// field drops `connected` — the live session no longer matches the
-/// config it was started from. `Args` / `Env` parse the RAW draft (their
-/// own splitters handle whitespace), everything else the trimmed form.
+/// Write one ACP-agent field from a committed draft and report whether
+/// the persisted configuration changed. The caller invalidates all runtime
+/// connection state for a changed row. `Args` / `Env` parse the RAW draft
+/// (their own splitters handle whitespace), everything else the trimmed form.
 fn write_acp_field(
     agent: &mut crate::agent_settings::AcpAgentConfig,
     field: AcpAgentField,
     draft: &str,
-) {
+) -> bool {
     let trimmed = draft.trim();
     match field {
         AcpAgentField::DisplayName => {
-            if !trimmed.is_empty() {
+            if !trimmed.is_empty() && agent.display_name != trimmed {
                 agent.display_name = trimmed.to_string();
+                true
+            } else {
+                false
             }
         }
         AcpAgentField::Command => {
-            agent.command = trimmed.to_string();
-            agent.connected = false;
+            let next = trimmed.to_string();
+            let changed = agent.command != next;
+            agent.command = next;
+            changed
         }
         AcpAgentField::Args => {
+            let previous = agent.args.clone();
             agent.set_args_text(draft);
-            agent.connected = false;
+            agent.args != previous
         }
         AcpAgentField::Env => {
+            let previous = agent.env.clone();
             agent.set_env_text(draft);
-            agent.connected = false;
+            agent.env != previous
         }
         AcpAgentField::Url => {
-            agent.url = (!trimmed.is_empty()).then(|| trimmed.to_string());
-            agent.connected = false;
+            let next = (!trimmed.is_empty()).then(|| trimmed.to_string());
+            let changed = agent.url != next;
+            agent.url = next;
+            changed
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent_settings::{AcpAgentConnectOutcome, AcpAgentConnectPhase, AcpConnectionType};
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn committed_acp_edit_clears_verified_connection_and_detail() {
+        let mut state = EditorState::new();
+        let id = state.editor_ui.agent_settings.add_acp_agent_config(
+            "Local Agent",
+            AcpConnectionType::Local,
+            "old-agent",
+            Vec::new(),
+            BTreeMap::new(),
+            None,
+            true,
+        );
+        state.editor_ui.agent_settings.begin_acp_agent_connect(0);
+        state
+            .editor_ui
+            .agent_settings
+            .apply_acp_agent_connect_outcome(
+                &id,
+                AcpAgentConnectOutcome {
+                    connected: true,
+                    info: Some("Local Agent 1.0".into()),
+                    ..AcpAgentConnectOutcome::default()
+                },
+            );
+        assert!(state
+            .editor_ui
+            .agent_settings
+            .acp_agent_verified_connected(&id));
+
+        state.editor_ui.agent_settings.focus = Some(SettingsFocus::AcpAgent {
+            index: 0,
+            field: AcpAgentField::Command,
+        });
+        state.editor_ui.settings_input.set_text("new-agent");
+
+        assert!(commit_settings_focus(
+            &mut state,
+            SettingsCommitScope::Operator
+        ));
+
+        let settings = &state.editor_ui.agent_settings;
+        assert_eq!(settings.acp_agents[0].command, "new-agent");
+        assert!(!settings.acp_agents[0].connected);
+        assert!(!settings.acp_agent_verified_connected(&id));
+        assert_eq!(settings.pending_acp_agent_connect, None);
+        assert_eq!(
+            settings.acp_agent_connection_for(&id).phase,
+            AcpAgentConnectPhase::Idle
+        );
+        assert_eq!(settings.acp_agent_connection_for(&id).info, None);
     }
 }
