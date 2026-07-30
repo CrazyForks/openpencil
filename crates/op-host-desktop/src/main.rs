@@ -53,6 +53,7 @@ mod iconify_host;
 mod image_decode_host;
 mod image_downscale;
 mod image_drop_host;
+mod image_enrich_cli;
 mod image_generate_host;
 mod image_panel_host;
 mod image_search_session;
@@ -579,6 +580,11 @@ fn main() {
     // `--render-shots <file.op> <out_dir> [scale]` renders node-only
     // PNGs headless (model-design benchmark) and exits without a window.
     if render_cli::run_cli_if_requested() {
+        return;
+    }
+    // `--enrich-images <input.op> <output.op> [timeout_seconds]` runs the
+    // production image-search session headlessly for batch artifacts.
+    if image_enrich_cli::run_cli_if_requested() {
         return;
     }
     let initial_file = initial_file_from_argv();

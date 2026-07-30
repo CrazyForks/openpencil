@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Headless smoke runner for op-orchestrator — drives one design turn against AnthropicProvider and dumps every event to stderr"
+description = "Headless smoke runner for op-orchestrator — drives one design turn against an API or CLI provider and dumps every event to stderr"
 
 [[bin]]
 name = "op-smoke"

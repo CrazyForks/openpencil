@@ -1,7 +1,7 @@
 //! Headless smoke runner for `op-orchestrator`.
 //!
-//! Drives one design turn against `AnthropicProvider` without the
-//! desktop UI / `DesignSession` actor model — single-threaded
+//! Drives one design turn against an API or production CLI provider without
+//! the desktop UI / `DesignSession` actor model — single-threaded
 //! `block_on(Orchestrator::run)` against an inline `DocSink`, with every
 //! progress event + every applied `EditorCommand` dumped to stderr.
 //!
@@ -14,10 +14,16 @@
 //!
 //! Optional env overrides:
 //! - `OPENPENCIL_ORCHESTRATOR_MODEL` — default `claude-sonnet-4-6`.
+//! - `OPENPENCIL_LLM_PROVIDER` — `anthropic` (default), `openai-compat`,
+//!   or `antigravity` / `agy`. The Antigravity arm reuses the production
+//!   generation-only subprocess transport and the CLI's existing login.
+//! - `OPENPENCIL_SMOKE_VALIDATION=1` — opt into the production lint
+//!   pre-validator and post-generation validation stage. The default remains
+//!   skipped so existing smoke traces are unchanged.
 //!
 //! ## What this verifies vs the desktop GUI smoke
 //!
-//! - LLM client construction (`AnthropicProvider::new` + auth).
+//! - LLM client construction (API credentials or the production CLI bridge).
 //! - `Orchestrator::run` reaching the network (200 OK / 401 / 429 etc.
 //!   surfaces as a `LlmError` in the streamed events).
 //! - Planner → scaffold → subtask → cleanup transitions
@@ -32,9 +38,9 @@
 //! - chat panel rendering of progress lines / streaming bubble.
 //! - Cross-session abort (mid-turn switch to chat — covered by
 //!   `chat_session::launch_if_pending` host tests).
-//! - Pre-validation fixes — smoke runs with `SkippedPreValidator` so
-//!   the trace stays focused on orchestrator behaviour. The host
-//!   binary uses `LintPreValidator`; smoke skips that layer.
+//! - Pre-validation fixes by default — smoke uses `SkippedPreValidator`
+//!   unless `OPENPENCIL_SMOKE_VALIDATION=1` explicitly opts into the
+//!   production `LintPreValidator`.
 
 use std::sync::Arc;
 
@@ -45,13 +51,58 @@ mod loop_seed;
 
 use agent::provider::anthropic::AnthropicProvider;
 use agent::provider::openai_compat::{OpenAiCompatConfig, OpenAiCompatProvider};
+use op_ai::chat_provider::{ChatProvider, CliName};
 use op_editor_core::{EditorCommand, EditorState};
+use op_host_services::chat_provider_llm::ChatProviderLlmClient;
+use op_host_services::chat_subprocess::SubprocessProvider;
 use op_orchestrator::{
-    AbortFlag, DesignRequest, DocSink, LlmClient, Orchestrator, Progress, SkippedPreValidator,
-    SkippedScreenshotProvider, SkippedVisionLlmClient, ValidationProviders,
+    AbortFlag, DesignRequest, DocSink, LlmClient, Orchestrator, PreValidator, Progress,
+    SkippedPreValidator, SkippedScreenshotProvider, SkippedVisionLlmClient, ValidationProviders,
 };
 
 use crate::llm_clients::{DirectOpenAiClient, SmokeLlmClient};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SmokeProviderKind {
+    Anthropic,
+    OpenAiCompat,
+    Antigravity,
+}
+
+impl SmokeProviderKind {
+    fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "anthropic" => Some(Self::Anthropic),
+            "openai" | "openai-compat" => Some(Self::OpenAiCompat),
+            "antigravity" | "agy" => Some(Self::Antigravity),
+            _ => None,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Anthropic => "anthropic",
+            Self::OpenAiCompat => "openai-compat",
+            Self::Antigravity => "antigravity",
+        }
+    }
+}
+
+fn truthy_env_value(value: Option<&str>) -> bool {
+    value.is_some_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "on"
+        )
+    })
+}
+
+fn antigravity_llm(model: &str) -> Box<dyn LlmClient> {
+    let provider = SubprocessProvider::for_cli_generation(CliName::Antigravity)
+        .expect("Antigravity has a production subprocess transport");
+    let provider: Arc<dyn ChatProvider> = Arc::new(provider);
+    Box::new(ChatProviderLlmClient::new(provider).with_model(Some(model.to_string())))
+}
 
 /// Inline `DocSink` — owns the canonical state directly, no channel hop.
 /// Every `apply` echoes the command kind + result so the smoke trace
@@ -113,7 +164,7 @@ fn describe_cmd(cmd: &EditorCommand) -> String {
             let dbg = format!("{other:?}");
             // Truncate the Debug output so massive payloads don't blow up the trace.
             if dbg.len() > 120 {
-                format!("{}...", &dbg[..117])
+                format!("{}...", dbg.chars().take(117).collect::<String>())
             } else {
                 dbg
             }
@@ -294,7 +345,15 @@ async fn main() -> std::process::ExitCode {
         Some(p) if !p.is_empty() => p,
         _ => {
             eprintln!(
-                "usage: op-smoke <prompt>\n\nexport OPENPENCIL_ANTHROPIC_API_KEY=... (or ANTHROPIC_API_KEY)"
+                "usage: op-smoke <prompt>\n\n\
+                 providers:\n\
+                   anthropic (default): OPENPENCIL_ANTHROPIC_API_KEY=...\n\
+                   openai-compat: OPENPENCIL_LLM_BASE_URL=... OPENPENCIL_LLM_API_KEY=...\n\
+                   antigravity/agy: uses the logged-in agy CLI\n\n\
+                 common:\n\
+                   OPENPENCIL_ORCHESTRATOR_MODEL=<model>\n\
+                   OPENPENCIL_SMOKE_OUT=<result.op>\n\
+                   OPENPENCIL_SMOKE_VALIDATION=1"
             );
             return std::process::ExitCode::from(2);
         }
@@ -313,24 +372,31 @@ async fn main() -> std::process::ExitCode {
         return run_loop_mode(prompt).await;
     }
 
-    let provider_kind =
+    let provider_kind_raw =
         std::env::var("OPENPENCIL_LLM_PROVIDER").unwrap_or_else(|_| "anthropic".into());
-    let model = std::env::var("OPENPENCIL_ORCHESTRATOR_MODEL").unwrap_or_else(|_| {
-        match provider_kind.as_str() {
-            "anthropic" => "claude-sonnet-4-6".into(),
-            _ => "gpt-4o-mini".into(),
-        }
-    });
+    let Some(provider_kind) = SmokeProviderKind::parse(&provider_kind_raw) else {
+        eprintln!(
+            "error: unknown OPENPENCIL_LLM_PROVIDER={provider_kind_raw:?} \
+             (want anthropic|openai-compat|antigravity|agy)"
+        );
+        return std::process::ExitCode::from(3);
+    };
+    let model =
+        std::env::var("OPENPENCIL_ORCHESTRATOR_MODEL").unwrap_or_else(|_| match provider_kind {
+            SmokeProviderKind::Anthropic => "claude-sonnet-4-6".into(),
+            SmokeProviderKind::OpenAiCompat => "gpt-4o-mini".into(),
+            SmokeProviderKind::Antigravity => "gemini-3.6-flash-high".into(),
+        });
 
-    eprintln!("[SMOKE] provider={provider_kind} model={model}");
+    eprintln!("[SMOKE] provider={} model={model}", provider_kind.label());
     eprintln!("[SMOKE] prompt={prompt:?}");
 
     // `OPENPENCIL_SMOKE_DIRECT=1` swaps the QueryEngine path for a direct
     // openai-compat client that can send MiniMax `thinking:{type:disabled}`
     // (the vendored agent QueryEngine can't) — needed to validate M3 headless.
     let direct = std::env::var("OPENPENCIL_SMOKE_DIRECT").is_ok();
-    let llm: Box<dyn LlmClient> = match provider_kind.as_str() {
-        "anthropic" => {
+    let llm: Box<dyn LlmClient> = match provider_kind {
+        SmokeProviderKind::Anthropic => {
             let key = std::env::var("OPENPENCIL_ANTHROPIC_API_KEY")
                 .ok()
                 .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok())
@@ -346,7 +412,7 @@ async fn main() -> std::process::ExitCode {
                 default_model: model.clone(),
             })
         }
-        "openai" | "openai-compat" => {
+        SmokeProviderKind::OpenAiCompat => {
             let key = std::env::var("OPENPENCIL_LLM_API_KEY")
                 .ok()
                 .filter(|k| !k.is_empty());
@@ -379,12 +445,7 @@ async fn main() -> std::process::ExitCode {
                 })
             }
         }
-        other => {
-            eprintln!(
-                "error: unknown OPENPENCIL_LLM_PROVIDER={other:?} (want anthropic|openai-compat)"
-            );
-            return std::process::ExitCode::from(3);
-        }
+        SmokeProviderKind::Antigravity => antigravity_llm(&model),
     };
 
     // `OPENPENCIL_SMOKE_STARTER=1` seeds the fresh-canvas starter frame so a
@@ -540,6 +601,8 @@ async fn main() -> std::process::ExitCode {
         return code;
     }
 
+    let validation_enabled =
+        truthy_env_value(std::env::var("OPENPENCIL_SMOKE_VALIDATION").ok().as_deref());
     let request = DesignRequest {
         prompt,
         model: Some(model),
@@ -550,17 +613,23 @@ async fn main() -> std::process::ExitCode {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(1),
-        validation_enabled: false,
+        validation_enabled,
         visual_ref_enabled: false,
     };
     let abort = AbortFlag::new();
-    // Skip pre-validation in the smoke trace — keeps the orchestrator
-    // signal clean. The desktop binary swaps this for `LintPreValidator`.
-    let pre_validator = SkippedPreValidator;
+    // Preserve the historical skipped validator unless the caller explicitly
+    // requests the production lint + validation path.
+    let skipped_pre_validator = SkippedPreValidator;
+    let lint_pre_validator = op_host_services::pre_validator::LintPreValidator;
+    let pre_validator: &dyn PreValidator = if validation_enabled {
+        &lint_pre_validator
+    } else {
+        &skipped_pre_validator
+    };
     let screenshot = SkippedScreenshotProvider;
     let vision = SkippedVisionLlmClient;
     let providers = ValidationProviders {
-        pre_validator: &pre_validator,
+        pre_validator,
         screenshot: &screenshot,
         vision: &vision,
         system_prompt: String::new(),
@@ -638,5 +707,56 @@ async fn main() -> std::process::ExitCode {
             eprintln!("[FINAL] Err in {elapsed:?}: {e}");
             std::process::ExitCode::from(1)
         }
+    }
+}
+
+#[cfg(test)]
+mod provider_tests {
+    use super::*;
+
+    #[test]
+    fn provider_parser_accepts_antigravity_aliases() {
+        assert_eq!(
+            SmokeProviderKind::parse("antigravity"),
+            Some(SmokeProviderKind::Antigravity)
+        );
+        assert_eq!(
+            SmokeProviderKind::parse("AGY"),
+            Some(SmokeProviderKind::Antigravity)
+        );
+        assert_eq!(
+            SmokeProviderKind::parse("openai"),
+            Some(SmokeProviderKind::OpenAiCompat)
+        );
+        assert_eq!(SmokeProviderKind::parse("unknown"), None);
+    }
+
+    #[test]
+    fn validation_switch_is_explicit_and_default_off() {
+        assert!(!truthy_env_value(None));
+        assert!(!truthy_env_value(Some("0")));
+        assert!(!truthy_env_value(Some("false")));
+        assert!(truthy_env_value(Some("1")));
+        assert!(truthy_env_value(Some("true")));
+        assert!(truthy_env_value(Some("on")));
+    }
+
+    #[test]
+    fn antigravity_llm_constructs_without_api_credentials() {
+        let _ = antigravity_llm("gemini-3.6-flash-high");
+    }
+
+    #[test]
+    fn debug_trace_truncation_is_unicode_safe() {
+        let command = EditorCommand::Batch {
+            commands: vec![EditorCommand::SetNodeName {
+                node_id: op_editor_core::NodeId::new("n1"),
+                name: "收藏地图头部与筛选".repeat(20),
+            }],
+        };
+        let label = describe_cmd(&command);
+        assert!(label.ends_with("..."));
+        assert_eq!(label.chars().count(), 120);
+        assert!(label.contains("收藏地图"));
     }
 }
