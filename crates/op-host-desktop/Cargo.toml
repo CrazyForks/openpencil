@@ -97,6 +97,7 @@ op-collab-relay-client = { path = "../op-collab-relay-client" }
 op-collab-relay-control-plane = { path = "../op-collab-relay-control-plane" }
 op-collab-relay-protocol = { path = "../op-collab-relay-protocol" }
 ed25519-dalek = { version = "2.2", default-features = false, features = ["std"] }
+sha2 = "0.10"
 zeroize = "1"
 # D′ architecture: pre-validation adapter translates PlannedFix → EditorCommand.
 op-design-lint = { path = "../op-design-lint" }

@@ -4,10 +4,19 @@ use super::*;
 use ed25519_dalek::{Signer, SigningKey};
 use op_collab_relay_control_plane::SignedLocatorResponse;
 
+struct CountingBootstrapProvider(std::sync::atomic::AtomicUsize);
+
+impl RelayBootstrapProvider for CountingBootstrapProvider {
+    fn load(&self) -> Result<std::sync::Arc<RelayBootstrap>, CollabRuntimeFailure> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Err(CollabRuntimeFailure::RelayUnavailable)
+    }
+}
+
 struct SigningControlPlane(SigningKey);
 
-impl RelayLocatorControlPlane for SigningControlPlane {
-    fn publish_route(
+impl SigningControlPlane {
+    fn publish_for_test(
         &self,
         draft: OwnerPublishDraft,
         _ticket: &OpaqueCollabTicket,
@@ -33,8 +42,9 @@ impl RelayLocatorControlPlane for SigningControlPlane {
         );
         let response = SignedLocatorResponse::decode(&locator.encode())
             .map_err(|_| CollabRuntimeFailure::RelayUnavailable)?;
-        let verifier = Ed25519LocatorVerifier {
-            keys: HashMap::from([(key_id.as_str().to_owned(), self.0.verifying_key())]),
+        let verifier = SingleKeyVerifier {
+            key_id: key_id.clone(),
+            key: self.0.verifying_key(),
         };
         let published = draft
             .complete(response, &verifier, now)
@@ -43,6 +53,40 @@ impl RelayLocatorControlPlane for SigningControlPlane {
             .invite()
             .verify(&verifier, now)
             .map_err(|_| CollabRuntimeFailure::RelayUnavailable)
+    }
+}
+
+impl RelayLocatorControlPlane for SigningControlPlane {
+    fn publish_route(
+        &self,
+        draft: OwnerPublishDraft,
+        ticket: &OpaqueCollabTicket,
+        _region: &RelayBootstrapRegion,
+    ) -> Result<VerifiedRelayRoute, CollabRuntimeFailure> {
+        self.publish_for_test(draft, ticket)
+    }
+}
+
+struct SingleKeyVerifier {
+    key_id: LocatorKeyId,
+    key: ed25519_dalek::VerifyingKey,
+}
+
+impl RelayLocatorVerifier for SingleKeyVerifier {
+    fn verify(
+        &self,
+        key_id: &LocatorKeyId,
+        canonical_signing_bytes: &[u8],
+        signature: &[u8; 64],
+    ) -> bool {
+        key_id == &self.key_id
+            && self
+                .key
+                .verify_strict(
+                    canonical_signing_bytes,
+                    &ed25519_dalek::Signature::from_bytes(signature),
+                )
+                .is_ok()
     }
 }
 
@@ -63,31 +107,6 @@ fn development_unsigned_requires_all_three_gates() {
 }
 
 #[test]
-fn locator_key_parser_is_bounded_and_verifies_ed25519() {
-    let signing = SigningKey::from_bytes(&[7_u8; 32]);
-    let encoded = URL_SAFE_NO_PAD.encode(signing.verifying_key().as_bytes());
-    let verifier = parse_locator_keys(&format!("current={encoded}")).unwrap();
-    let bytes = b"canonical locator bytes";
-    let signature = signing.sign(bytes).to_bytes();
-    assert!(verifier.verify(&LocatorKeyId::new("current").unwrap(), bytes, &signature));
-    assert!(!verifier.verify(&LocatorKeyId::new("unknown").unwrap(), bytes, &signature));
-    assert!(parse_locator_keys(&format!("a={encoded},a={encoded}")).is_err());
-    assert!(parse_locator_keys("missing-separator").is_err());
-}
-
-#[test]
-fn relay_x25519_pin_parser_is_canonical_bounded_and_rejects_duplicates() {
-    let encoded = URL_SAFE_NO_PAD.encode([11_u8; 32]);
-    assert!(parse_relay_x25519_keys(&format!("relay-cn={encoded}")).is_ok());
-    assert!(parse_relay_x25519_keys(&format!("relay-cn={encoded},relay-cn={encoded}")).is_err());
-    assert!(parse_relay_x25519_keys(&format!("relay-cn={encoded}=")).is_err());
-    assert!(
-        parse_relay_x25519_keys(&format!("relay-cn={}", URL_SAFE_NO_PAD.encode([0_u8; 32])))
-            .is_err()
-    );
-}
-
-#[test]
 fn injected_control_plane_publishes_a_ticket_bound_owner_route() {
     let signing = SigningKey::from_bytes(&[9_u8; 32]);
     let verifying_key = signing.verifying_key();
@@ -100,7 +119,7 @@ fn injected_control_plane_publishes_a_ticket_bound_owner_route() {
     .unwrap();
     let ticket = OpaqueCollabTicket::new(b"header.payload.signature".to_vec()).expect("ticket");
     let route = SigningControlPlane(signing)
-        .publish_route(draft, &ticket)
+        .publish_for_test(draft, &ticket)
         .expect("published route");
     assert_eq!(route.locator().claims().home_region(), RelayRegion::Cn);
     assert_eq!(
@@ -109,45 +128,34 @@ fn injected_control_plane_publishes_a_ticket_bound_owner_route() {
     );
     let fragment = RelayInviteV1::new(&route).to_fragment();
     let invite = RelayInviteV1::from_fragment(&fragment).unwrap();
-    let verifier = Ed25519LocatorVerifier {
-        keys: HashMap::from([("current".to_owned(), verifying_key)]),
+    let verifier = SingleKeyVerifier {
+        key_id: LocatorKeyId::new("current").unwrap(),
+        key: verifying_key,
     };
     let now = unix_time_ms().unwrap() / 1_000;
     let verified = invite.verify(&verifier, now).expect("signed invite");
     assert_eq!(verified.locator().claims().home_region(), RelayRegion::Cn);
-    assert!(endpoint_for_region(
-        verified.locator().claims().home_region(),
-        Some("wss://global-ingress.example.com/v1/tunnel"),
-        Some("malformed-global-url"),
-    )
-    .is_ok());
+
+    let provider = std::sync::Arc::new(CountingBootstrapProvider(
+        std::sync::atomic::AtomicUsize::new(0),
+    ));
+    let route = guest_route_from_parsed_invite(invite, provider.clone());
+    assert_eq!(
+        provider.0.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "the UI invite parser must not fetch bootstrap HTTP"
+    );
+    assert_eq!(
+        route.connection_path(),
+        CollabConnectionPathUi::Relay {
+            home_region: CollabRelayRegion::China
+        }
+    );
 }
 
 #[test]
-fn overseas_guest_follows_cn_home_region_and_never_falls_back() {
-    // An overseas deployment may point the logical CN endpoint at a
-    // Global L4/TLS-passthrough ingress whose upstream remains CN.
-    let cn_url = "wss://global-ingress.example.com/v1/tunnel";
-    let cn = RelayEndpoint::parse(cn_url).unwrap();
-    assert_eq!(
-        endpoint_for_region(RelayRegion::Cn, Some(cn_url), Some("malformed-global-url")).unwrap(),
-        cn
-    );
+fn cn_home_region_stays_cn_in_the_collaboration_ui() {
     assert_eq!(ui_region(RelayRegion::Cn), CollabRelayRegion::China);
-    let error = endpoint_for_region(
-        RelayRegion::Cn,
-        None,
-        Some("wss://global-home.example.com/v1/tunnel"),
-    )
-    .unwrap_err();
-    assert_eq!(error.failure, CollabRuntimeFailure::RelayRegionUnavailable);
-    let error = endpoint_for_region(
-        RelayRegion::Cn,
-        Some("malformed-cn-url"),
-        Some("wss://global-home.example.com/v1/tunnel"),
-    )
-    .unwrap_err();
-    assert_eq!(error.failure, CollabRuntimeFailure::RelayUnavailable);
 }
 
 #[test]

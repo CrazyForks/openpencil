@@ -1,5 +1,4 @@
 //! GUI-owned collaboration actors bridged to network workers by bounded channels.
-
 mod actor;
 mod admission;
 mod auth;
@@ -8,6 +7,7 @@ mod effects_wire;
 mod network;
 mod poll;
 pub(crate) mod relay;
+mod relay_bootstrap;
 mod support;
 mod types;
 

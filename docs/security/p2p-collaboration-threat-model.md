@@ -1,8 +1,9 @@
 # P2P collaboration threat model and trust boundary
 
-Status: public M1 implementation checkpoint, 2026-07-28; the private identity
-source integration is implemented, while production provisioning and the full
-real-platform acceptance matrix remain pending.
+Status: public M1 and M2.1 source checkpoint, 2026-07-30; the private identity
+source integration and public relay/bootstrap client boundaries are
+implemented, while production provisioning, op-hub/relay/locator deployment,
+and the full real-platform acceptance matrix remain pending.
 
 This document is the security contract for OpenPencil peer-to-peer
 collaboration. It is intentionally public. The protocol, parsers, state
@@ -19,14 +20,22 @@ A manually entered publicly routable address can exercise the current TCP and
 Noise path across sites when firewall and NAT policy permit it, but M1 has no
 rendezvous, NAT traversal, or relay and does not claim robust Internet
 reachability.
+M2.1 adds an owner-anchored public WSS relay path. An overseas peer may join a
+signed `home_region=cn` invite through a Global L4 ingress that fixed-backhauls
+to the same CN relay and locator services; being overseas does not change the
+signed home region or authorize a Global-home fallback. Relay infrastructure
+forwards bounded prelude, Noise handshake, and inner Noise ciphertext as an
+opaque stream. It can observe admission and routing metadata at the documented
+layers, but it must not decrypt or persist document frames.
 ZSeven services authenticate accounts and are the production issuer boundary
 for short-lived admission tickets. The private issuer and credential-bearing
 provider source implementations now exist, including a strict JWKS profile,
 persistent rotation ledger, Unix-HSM peer authentication, and an append-only
 ABI-v2 client contract. Production HSM keys, protected static archives,
 deployment policy, and hardened runners are separate provisioning gates and
-are not claimed complete at this checkpoint. The services do not store or
-relay document content.
+are not claimed complete at this checkpoint. Identity and bootstrap services
+do not store document content; relay services forward but do not decrypt or
+persist it.
 
 The implementation must:
 
@@ -56,6 +65,8 @@ traffic reaches OpenPencil.
 | Document and presence content | Confidentiality and integrity in transit; no disclosure before admission |
 | ZSeven device credential | Private implementation and platform-protected storage; never exposed through the open collaboration API |
 | Collaboration signing private key | Issuer/HSM boundary only; never shipped to a client or repository |
+| Collaboration bootstrap root private key | Offline signing/HSM boundary only; never held by the desktop or online op-hub service |
+| Signed relay bootstrap and verified LKG | Authenticity, canonical encoding, bounded validity, rollback resistance, and atomic CN/Global endpoint/key selection |
 | Short-lived collaboration ticket | Treated as a bearer credential, redacted and zeroized where owned |
 | Noise X25519 static private key | Local-only, zeroized in memory, stored with platform/file protections |
 | Account subject and device id | Derived only from verified claims; omitted from mDNS and routine logs |
@@ -70,19 +81,28 @@ traffic reaches OpenPencil.
    local X25519 public key.
 2. The ticket issuer signs the fixed public claims profile. It does not return
    signing keys to the client.
-3. mDNS advertises only an ephemeral discovery id, protocol version, and TCP
+3. For a public relay session, the desktop fetches one signed collaboration
+   bootstrap from a startup-configured exact HTTPS endpoint. It verifies the
+   canonical payload under the embedded Ed25519 root and selects one complete
+   CN or Global entry. The bootstrap mirror, DNS, TLS endpoint, invite, and peer
+   cannot replace that trust root.
+4. An owner publishes a route to the selected entry's locator service. A guest
+   selects the entry named by the invite's signed `home_region`. Both use the
+   same verified snapshot for the relay URL, locator URL and verification keys,
+   and relay challenge X25519 pins.
+5. mDNS advertises only an ephemeral discovery id, protocol version, and TCP
    port. Discovery is a locator, not an authentication statement.
-4. Peers complete `Noise_XX_25519_ChaChaPoly_BLAKE2s`. The responder prelude is
+6. Peers complete `Noise_XX_25519_ChaChaPoly_BLAKE2s`. The responder prelude is
    included in the Noise prologue.
-5. Tickets are exchanged inside the encrypted Noise channel. The open verifier
+7. Tickets are exchanged inside the encrypted Noise channel. The open verifier
    checks signature, issuer, audience, version, scope, time, identifiers, and
    the equality of `dh_pub_x25519` with the observed remote Noise static key.
    Optional `display_name` and `avatar_url` claims are accepted only from this
    signed payload; names are bounded and control-free, and avatar URLs must be
    bounded HTTPS URLs without credentials or fragments.
-6. Only after both admission checks succeed may the owner send a welcome,
+8. Only after both admission checks succeed may the owner send a welcome,
    snapshot, commit, or presence message.
-7. The owner assigns the connection role and is the serialization point for
+9. The owner assigns the connection role and is the serialization point for
    accepted commits. A guest cannot acquire permissions by putting a role,
    author, subject, or device id in an untrusted message.
 
@@ -131,6 +151,84 @@ authorized in a higher generation before either region changes signing state.
 Mirror availability, consistency, HSM provisioning, and physical multi-region
 timing tests remain production gates.
 
+### Signed collaboration bootstrap and cross-region relay routing
+
+The desktop's former direct injection of five relay/locator endpoint and public
+key values is retired. Production now configures
+`OPENPENCIL_COLLAB_BOOTSTRAP_URL`, while an owner additionally retains
+`OPENPENCIL_COLLAB_RELAY_HOME_REGION=cn|global` as a local home selector. A
+guest obtains its home region only from the signed invite. The embedded
+`openpencil-collab-root-v1` Ed25519 public key currently has the same bytes as
+the collaboration union-policy root, but the two source constants are not yet
+single-sourced; deployment and tests must not assume source-level coupling.
+
+The bootstrap URL must be HTTPS with the exact
+`/api/v1/collaboration/bootstrap` path and no credentials, query, or fragment.
+The envelope and decoded payload must each match their canonical JSON
+re-encoding. Payload, signature, and public-key fields use unpadded canonical
+base64url. The signature is Ed25519 over:
+
+```text
+"openpencil/op-hub/collaboration-bootstrap/v1\0" ||
+canonical_payload_json_bytes
+```
+
+The domain separator prevents a valid signature for another collaboration
+artifact from being interpreted as a bootstrap signature. A payload has one
+non-zero generation and one validity window of at most seven days, and contains
+exactly one CN and one Global entry in the same signed snapshot. Each entry
+atomically contains its exact relay WSS URL, locator HTTPS URL, locator
+Ed25519 public keys, and relay-challenge X25519 public keys. The desktop allows
+at most 300 seconds of future `not_before` clock skew, while `not_after` remains
+exclusive.
+
+An overseas guest joining a signed `home_region=cn` invite therefore selects
+the complete CN entry from that snapshot. GeoDNS or an audited edge may land
+the CN entry's logical hostnames at a Global L4 ingress and fixed-backhaul the
+untouched inner TLS stream to CN. The guest must not select the Global entry
+because of its physical location, combine a Global endpoint with CN keys, or
+fall back to a Global home when the CN path fails. The CN locator signer and CN
+relay authenticator remain the authoritative route and admission boundaries.
+
+The desktop cache is bound to the exact bootstrap endpoint and stores the
+signed body with its strong SHA-256 ETag. A still-current, freshly reverified
+last-known-good snapshot may be used after a fetch/request-send failure before
+a response is available, a status other than 200/304, or a valid 304 with the
+exact cached ETag. A body-read failure after a 200 response, or any invalid 200
+response, does not fall back to LKG. A lower generation, or different signed
+payload bytes at the same generation, fails closed. An expired snapshot is not
+used for routing, but remains a rollback baseline. This high-water mark exists
+only in a valid persisted endpoint-bound cache: changing the bootstrap URL, or
+deleting, corrupting, making unreadable, or failing to persist the cache, does
+not preserve a global generation floor.
+
+Domestic and overseas op-hub sites may serve the same byte-identical signed
+envelope, but the current service does not replicate or hot-reload snapshots;
+operations must deploy the same artifact to both sites. Each op-hub process
+loads `OP_HUB_BOOTSTRAP_FILE`, verifies it with
+`OP_HUB_BOOTSTRAP_ROOT_KEYS`, and enforces
+`OP_HUB_BOOTSTRAP_MIN_GENERATION` before serving an immutable in-memory
+snapshot. The online service never receives the offline bootstrap private key.
+
+Debug plaintext is a narrow exception, not a production alternate trust path.
+Only a test/debug build with
+`OPENPENCIL_COLLAB_BOOTSTRAP_DEV_HTTP=1` may fetch bootstrap HTTP from a
+numeric-loopback address. Additional
+`OPENPENCIL_COLLAB_BOOTSTRAP_DEV_ROOT_KEYS` are considered only in that mode;
+plaintext locator and relay endpoints in the snapshot must also be numeric
+loopback. Unsigned relay operation separately requires
+`OPENPENCIL_COLLAB_RELAY_DEV_UNSIGNED=1` in a debug build and numeric-loopback
+WebSocket endpoint. `localhost`, non-loopback plaintext, and release builds are
+not covered by these exceptions.
+
+Client bootstrap does not replace service-side secret and policy
+provisioning. The relay server retains
+`OPENPENCIL_COLLAB_RELAY_TICKET_POLICY_FILE`,
+`OPENPENCIL_COLLAB_RELAY_LOCATOR_KEYS_FILE`, and
+`OPENPENCIL_COLLAB_RELAY_X25519_KEYS_FILE`; the locator server retains
+`OPENPENCIL_COLLAB_LOCATOR_TICKET_POLICY_FILE`. Those files remain bounded
+operator/HSM-side production inputs and are not desktop discovery settings.
+
 ## Public and private ownership
 
 The default is open source. Code stays private only when publishing it would
@@ -141,6 +239,8 @@ expose an account credential or a production signing secret.
 | Wire protocol, exact diff/apply, canonical hash, owner/guest state machines | Public `openpencil/crates/op-collab` | Reviewable deterministic behavior; wasm-compatible |
 | Noise/TCP framing, admission, limits, queues, discovery, key-store interface and safe fallback | Public `openpencil/crates/op-collab-transport` | Security comes from open protocol and audited libraries |
 | Ticket claims/profile, signed-union-policy and legacy JWKS parser/cache, Ed25519 verifier, provider trait, stub, ABI declarations | Public `openpencil/crates/op-auth-bridge` | Trust decisions must remain reviewable |
+| Relay protocol/client/server, signed locator verifier, bootstrap verifier/cache, canonical wire and rollback tests | Public `openpencil` crates and desktop host | Endpoint, key-selection, and data-plane trust decisions must remain reviewable |
+| Signed bootstrap HTTP serving and deployment | Private `op-hub` service; public signed response | The online service holds no root private key; private deployment topology is not a cryptographic control |
 | Deterministic issuer and rotation fixtures | Public, compiled only for tests or `test-issuer` | Contain deliberately public seeds and a `.invalid` issuer; production verifier rejects that issuer |
 | Host integration, UI, recovery, diagnostics, and smoke tests | Public `openpencil` | No credential-handling reason to hide them |
 | Device token and authenticated ticket request implementation | Private `op-platform` real provider | Holds the account credential and platform storage integration |
@@ -228,6 +328,34 @@ markers, closes the pending result lane, and joins the worker without waiting
 for the network timeout or publishing a late result. The trait default can only
 check before and after a blocking third-party fetch; any other production
 blocking adapter must override the cancellable method.
+
+### Bootstrap mirror compromise, rollback, and region confusion
+
+A compromised op-hub mirror, DNS path, CDN, or TLS terminator can deny service,
+replay bytes, or return malformed data, but cannot authorize a new endpoint or
+public key without a valid domain-separated root signature. Canonical JSON and
+base64url checks remove alternate encodings; bounded response, payload, region,
+and key counts constrain parser and allocation work. An invalid signed time
+window, weak key, unknown root, malformed ETag, lower generation, or
+same-generation rewrite fails closed.
+
+LKG is an availability control, not a trust bypass. It is usable only while its
+signature and validity window still verify, and it does not conceal a malformed
+200 response. Operators must nevertheless treat cache deletion, corruption,
+unreadability, persistence failure, bootstrap URL changes, and unsynchronized
+regional mirrors as rollback-risk events because the client has no durable
+cross-endpoint global generation ledger without a valid cache. Production
+rollouts must publish one byte-identical envelope to domestic and overseas
+mirrors, advance the op-hub minimum-generation floor, and preserve overlapping
+region keys inside the signed snapshot. Rotating the embedded root requires a
+coordinated client-and-service release; the current production desktop does
+not load additional roots from runtime configuration.
+
+The invite's signed `home_region` is authoritative. Physical geolocation,
+bootstrap mirror location, DNS answer, and edge ingress do not authorize a
+different region. If an overseas client cannot reach the CN entry for a CN-home
+invite, it closes or reports relay unavailable; it does not mix Global
+endpoint/key material or silently create a Global-home session.
 
 ### Unauthorized edits and identity injection
 

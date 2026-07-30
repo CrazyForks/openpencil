@@ -3961,6 +3961,7 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
+ "sha2",
  "skia-safe",
  "socket2 0.6.3",
  "static_assertions",

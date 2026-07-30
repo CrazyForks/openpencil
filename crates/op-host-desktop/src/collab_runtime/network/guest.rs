@@ -250,7 +250,7 @@ fn run_inner(
         ),
         GuestConnectionRoute::Relay(request) => {
             let running = GuestRelayRuntime::start(request, Arc::clone(&key), Arc::clone(&local))?;
-            let target = relay_guest_target(request, &running);
+            let target = relay_guest_target(&running);
             relay_runtime = Some(running);
             (target.0, target.1, target.2, true)
         }
