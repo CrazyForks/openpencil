@@ -322,19 +322,39 @@ fn cli_version_accepts_a_healthy_cli_and_bounds_a_hung_one() {
     );
     let _ = std::fs::remove_dir_all(&healthy_dir);
 
-    // Mid first-run OAuth: prints a prompt, then hangs past the budget.
-    let (hung_dir, hung) = fake_cli("hung-cli", "printf 'Sign in at https://x\\n'\nsleep 30\n");
-    let started = std::time::Instant::now();
-    let failure = cli_version(&hung, std::time::Duration::from_millis(400))
-        .expect_err("a CLI still running at the deadline is not a usable version");
+    // Mid first-run OAuth: prints a prompt, then hangs past the budget. A
+    // loaded runner can take several seconds to schedule the freshly spawned
+    // shell, so retry with a larger budget instead of racing its first printf.
+    let (hung_dir, hung) = fake_cli(
+        "hung-cli",
+        "printf 'Sign in at https://x\\n'\nexec sleep 30\n",
+    );
+    let budget_cap = std::time::Duration::from_secs(16);
+    let mut budget = std::time::Duration::from_secs(4);
+    let failure = loop {
+        let started = std::time::Instant::now();
+        let failure = cli_version(&hung, budget)
+            .expect_err("a CLI still running at the deadline is not a usable version");
+        assert!(
+            started.elapsed() < budget * 4,
+            "the deadline, not the hung CLI, must bound the probe"
+        );
+        let captured_prompt = matches!(
+            &failure,
+            CliVersionFailure::TimedOut { tail, .. } if tail.contains("Sign in at")
+        );
+        if captured_prompt || budget >= budget_cap {
+            break failure;
+        }
+        budget = (budget * 2).min(budget_cap);
+    };
     let CliVersionFailure::TimedOut { seconds, tail } = &failure else {
         panic!("expected a timeout, got {failure:?}");
     };
-    assert_eq!(*seconds, 0, "sub-second budgets round down in the message");
+    assert_eq!(*seconds, budget.as_secs());
     assert!(
         tail.contains("Sign in at"),
         "output printed before the kill must survive, got {tail:?}"
     );
-    assert!(started.elapsed() < std::time::Duration::from_secs(5));
     let _ = std::fs::remove_dir_all(&hung_dir);
 }

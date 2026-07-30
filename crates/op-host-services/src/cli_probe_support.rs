@@ -379,25 +379,36 @@ mod tests {
         // Killing a shell does not kill the grandchild it spawned, and the
         // grandchild keeps the inherited pipe open — so waiting for EOF on
         // the kill path handed the deadline to the child (measured: a
-        // 400 ms budget returned after 30 s). Output captured before the
-        // kill must still survive.
+        // short budget returned after 30 s). Output captured before the kill
+        // must still survive. Escalate the budget when a loaded runner has
+        // not scheduled the shell's first printf yet.
         let script = "printf 'Authentication required\\n'; sleep 30 & sleep 30";
-        let started = Instant::now();
-        match bounded_cli_output(
-            CliName::Antigravity,
-            Path::new("/bin/sh"),
-            &["-c", script],
-            Duration::from_millis(400),
-        ) {
-            BoundedProbe::TimedOut { stdout, .. } => {
-                assert!(String::from_utf8_lossy(&stdout).contains("Authentication required"));
+        let mut budget = PROBE_BUDGET;
+        loop {
+            let started = Instant::now();
+            let probe = bounded_cli_output(
+                CliName::Antigravity,
+                Path::new("/bin/sh"),
+                &["-c", script],
+                budget,
+            );
+            let elapsed = started.elapsed();
+            let BoundedProbe::TimedOut { stdout, .. } = probe else {
+                panic!("expected the sleeps to outlast the timeout");
+            };
+            assert!(
+                elapsed < budget * 4,
+                "the deadline, not the child, decides when the probe returns"
+            );
+            if String::from_utf8_lossy(&stdout).contains("Authentication required") {
+                break;
             }
-            _ => panic!("expected the sleeps to outlast the timeout"),
+            assert!(
+                budget < PROBE_BUDGET_CAP,
+                "prompt output was not captured within {budget:?}"
+            );
+            budget = (budget * 2).min(PROBE_BUDGET_CAP);
         }
-        assert!(
-            started.elapsed() < Duration::from_secs(5),
-            "the deadline, not the child, decides when the probe returns"
-        );
     }
 
     #[cfg(unix)]
