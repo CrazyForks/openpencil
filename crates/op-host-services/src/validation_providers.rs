@@ -153,7 +153,7 @@ impl ChatVisionLlmClient {
 
     /// Attach the vision model id to every request this client issues.
     pub fn with_model(mut self, model: Option<String>) -> Self {
-        self.model = model;
+        self.model = Self::transport_model(model);
         self
     }
 
@@ -170,6 +170,13 @@ impl ChatVisionLlmClient {
             media_type: "image/png".to_string(),
             data,
         })
+    }
+
+    /// Keep ACP catalog identities inside orchestrator capability policy.
+    /// They name an agent, not a provider model, and therefore must collapse
+    /// to the provider default at this transport boundary.
+    fn transport_model(model: Option<String>) -> Option<String> {
+        model.filter(|id| !op_orchestrator::is_acp_capability_marker(id))
     }
 }
 
@@ -207,7 +214,8 @@ impl VisionLlmClient for ChatVisionLlmClient {
             thinking: ThinkingMode::Disabled,
             effort: EffortLevel::Low,
             attachments: vec![attachment],
-            model: self.model.clone().or_else(|| req.model.clone()),
+            model: Self::transport_model(self.model.clone())
+                .or_else(|| Self::transport_model(req.model.clone())),
         };
 
         // `provider.send` is a blocking delta iterator (the same shape the
@@ -399,6 +407,29 @@ mod tests {
         );
         assert!(r.user_message.contains("Analyze this screenshot"));
         assert_eq!(r.model.as_deref(), Some("vision-model"));
+    }
+
+    #[test]
+    fn chat_vision_client_does_not_forward_acp_capability_marker_as_model() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let provider = Arc::new(RecordingVisionProvider {
+            seen: seen.clone(),
+            reply: r#"{"issues":[],"fixes":[],"qualityScore":9}"#.into(),
+        });
+        let client =
+            ChatVisionLlmClient::new(provider).with_model(Some("acp:custom/vendor".to_string()));
+        let mut request = vision_req(&b64_png());
+        request.model = Some("acp:custom/vendor".to_string());
+
+        let response = client.validate(request);
+
+        assert!(matches!(response, VisionResponse::Text(_)));
+        let requests = seen.lock().unwrap();
+        assert_eq!(
+            requests.first().expect("provider was called").model,
+            None,
+            "ACP catalog identity is a capability marker, not a transport model"
+        );
     }
 
     /// A non-base64 screenshot string can't drive a vision call → Skipped.

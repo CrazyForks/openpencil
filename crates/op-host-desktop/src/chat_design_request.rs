@@ -1,16 +1,24 @@
 use op_editor_core::EditorState;
 use op_orchestrator::{AppendContext, DesignRequest};
 
-/// Resolve the selected chat model's id for the orchestrator. Only
-/// built-in (API-key) agents expose a concrete model id; CLI/ACP agents
-/// pick their own model internally and yield `None` (the CLI-side
-/// selection rides `ChatProviderLlmClient::with_model` instead). The id
-/// feeds model-aware orchestrator policy — tier-gated skill filtering,
-/// the element-manifest routing gate, and the M3 thinking policy — and
-/// matches the configuration the ab-v9 benchmarks ran with (op-smoke
-/// has always passed `OPENPENCIL_ORCHESTRATOR_MODEL` through).
-fn selected_builtin_model(state: &EditorState) -> Option<String> {
+/// Resolve the selected chat model's capability id for the orchestrator.
+/// Built-in (API-key) agents expose their concrete model id. ACP entries
+/// preserve their `acp:<id>` catalog identity so the model-profile resolver
+/// can choose its conservative weak-agent default instead of treating a
+/// missing id as Full tier. The ACP marker is not a transport model override:
+/// `selected_cli_model_id` still yields `None` for ACP providers.
+///
+/// Fixed CLI agents keep choosing their own model internally and yield `None`
+/// here (the CLI-side selection rides `ChatProviderLlmClient::with_model`
+/// instead). The returned id feeds model-aware orchestrator policy —
+/// tier-gated skill filtering, the element-manifest routing gate, and the M3
+/// thinking policy — and matches the configuration the ab-v9 benchmarks ran
+/// with (op-smoke has always passed `OPENPENCIL_ORCHESTRATOR_MODEL` through).
+fn selected_orchestrator_model(state: &EditorState) -> Option<String> {
     let entry = state.chat.selected_model_entry()?;
+    if entry.acp_agent_id().is_some() {
+        return Some(entry.value.clone());
+    }
     let id = entry.builtin_provider_id.as_deref()?;
     state
         .editor_ui
@@ -29,7 +37,7 @@ pub(crate) fn build_design_request(
 ) -> DesignRequest {
     DesignRequest {
         prompt,
-        model: selected_builtin_model(state),
+        model: selected_orchestrator_model(state),
         provider: None,
         design_md: state.doc.design_md.clone(),
         // Detected by `chat_intent::detect_append_intent` when the
@@ -159,5 +167,20 @@ mod tests {
         // Drives tier-gated prompts, the manifest routing gate, and the
         // M3 thinking policy — must match the agent the session will call.
         assert_eq!(req.model.as_deref(), Some("MiniMax-M3"));
+    }
+
+    #[test]
+    fn selected_acp_agent_reaches_the_orchestrator_as_basic_tier() {
+        let mut state = EditorState::new();
+        state.chat.available_models = vec![ModelEntry::acp("custom/vendor", "Custom ACP")];
+        state.chat.selected_model = 0;
+
+        let req = build_design_request("draw a dashboard".into(), &state, None);
+
+        assert_eq!(req.model.as_deref(), Some("acp:custom/vendor"));
+        assert_eq!(
+            op_orchestrator::resolve_model_profile(req.model.as_deref().unwrap()).tier,
+            op_orchestrator::ModelTier::Basic
+        );
     }
 }

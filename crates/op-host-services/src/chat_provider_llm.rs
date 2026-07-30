@@ -98,6 +98,7 @@ impl LlmClient for ChatProviderLlmClient {
         let m3_keeps_thinking = req
             .model
             .as_deref()
+            .filter(|model| !op_orchestrator::is_acp_capability_marker(model))
             .map(|m| m.to_ascii_lowercase().contains("minimax-m3"))
             .unwrap_or(false);
         let chat_req = ChatRequest {
@@ -227,6 +228,14 @@ mod tests {
 
         let unknown = call_with_model(None);
         assert_eq!(unknown.thinking, ThinkingMode::Disabled);
+
+        let acp_marker = call_with_model(Some("acp:minimax-m3-wrapper"));
+        assert_eq!(acp_marker.thinking, ThinkingMode::Disabled);
+        assert_eq!(acp_marker.max_output_tokens, 16384);
+        assert_eq!(
+            acp_marker.model, None,
+            "ACP capability identity must not become a transport model"
+        );
     }
 
     // ── Provider-shape agnosticism ───────────────────────────────────────

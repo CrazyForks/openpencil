@@ -2,7 +2,10 @@
 //! 800-line-per-file ceiling (mirrors `chat_session_launch_selection_tests.rs`).
 
 use super::*;
-use op_editor_core::pen_node_ext::PenNodeExt;
+use op_editor_core::{
+    pen_node_ext::PenNodeExt, AgentProvider, BuiltinAgentConfig, BuiltinAgentKind,
+    BuiltinAgentPresetKey, ModelEntry,
+};
 
 fn frame(
     id: &str,
@@ -95,6 +98,86 @@ fn stash_design_request_for_retry_writes_json_onto_the_last_message() {
     let restored: op_orchestrator::DesignRequest =
         serde_json::from_str(&json).expect("must round-trip");
     assert_eq!(restored.prompt, "design a login page");
+}
+
+#[test]
+fn design_launch_preparation_captures_acp_tier_before_detaching_chat() {
+    let mut host = WidgetHostNative::new();
+    host.editor_state_mut().chat.available_models =
+        vec![ModelEntry::acp("custom/vendor", "Custom ACP")];
+    host.editor_state_mut().chat.selected_model = 0;
+    let expected_revision = host.editor_state().document_revision();
+    let expected_root_count = host.editor_state().active_children().len();
+
+    let (request, initial_state) =
+        prepare_design_request_and_snapshot(&mut host, "draw a dashboard".into(), None);
+
+    assert_eq!(request.model.as_deref(), Some("acp:custom/vendor"));
+    assert_eq!(
+        op_orchestrator::resolve_model_profile(request.model.as_deref().unwrap()).tier,
+        op_orchestrator::ModelTier::Basic
+    );
+    assert!(
+        initial_state.chat.selected_model_entry().is_none(),
+        "the worker snapshot must stay narrowed"
+    );
+    assert_eq!(initial_state.document_revision(), expected_revision);
+    assert_eq!(initial_state.active_children().len(), expected_root_count);
+    assert_eq!(
+        host.editor_state()
+            .chat
+            .selected_model_entry()
+            .and_then(ModelEntry::acp_agent_id),
+        Some("custom/vendor"),
+        "snapshot preparation must restore the live chat selection"
+    );
+}
+
+#[test]
+fn design_launch_preparation_captures_builtin_model_before_detaching_chat() {
+    let mut host = WidgetHostNative::new();
+    host.editor_state_mut()
+        .editor_ui
+        .agent_settings
+        .builtin_agents
+        .push(BuiltinAgentConfig {
+            id: "builtin-1".into(),
+            preset: BuiltinAgentPresetKey::Custom,
+            display_name: "MiniMax".into(),
+            kind: BuiltinAgentKind::OpenAiCompat,
+            api_key: "sk-test".into(),
+            model: "MiniMax-M3".into(),
+            base_url: "http://localhost:9".into(),
+            enabled: true,
+        });
+    host.editor_state_mut().chat.available_models = vec![ModelEntry::builtin(
+        AgentProvider::ClaudeCode,
+        "builtin-1",
+        "builtin:builtin-1:MiniMax-M3",
+        "MiniMax M3",
+    )];
+    host.editor_state_mut().chat.selected_model = 0;
+
+    let (request, initial_state) =
+        prepare_design_request_and_snapshot(&mut host, "draw a dashboard".into(), None);
+
+    assert_eq!(request.model.as_deref(), Some("MiniMax-M3"));
+    assert_eq!(
+        op_orchestrator::resolve_model_profile(request.model.as_deref().unwrap()).tier,
+        op_orchestrator::ModelTier::Full
+    );
+    assert!(
+        initial_state.chat.selected_model_entry().is_none(),
+        "the worker snapshot must stay narrowed"
+    );
+    assert_eq!(
+        host.editor_state()
+            .chat
+            .selected_model_entry()
+            .and_then(|entry| entry.builtin_provider_id.as_deref()),
+        Some("builtin-1"),
+        "snapshot preparation must restore the live builtin selection"
+    );
 }
 
 /// Regression lock for a real bug a user hit: the CLI-standard route

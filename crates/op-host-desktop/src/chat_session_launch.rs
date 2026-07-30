@@ -26,6 +26,23 @@ use super::ChatSession;
 mod chat_design_request;
 use chat_design_request::build_design_request;
 
+/// Build the model-aware request while the live chat selection is still
+/// attached, then take the narrowed worker snapshot.
+///
+/// `narrowed_snapshot` deliberately detaches `EditorState::chat`; reversing
+/// these two operations therefore erases the selected builtin/ACP identity
+/// and makes the orchestrator resolve `model=None` as Full tier.
+fn prepare_design_request_and_snapshot(
+    host: &mut WidgetHostNative,
+    prompt: String,
+    append_context: Option<op_orchestrator::AppendContext>,
+) -> (op_orchestrator::DesignRequest, EditorState) {
+    let request = build_design_request(prompt, host.editor_state(), append_context);
+    let initial_state =
+        op_editor_core::request_snapshot::narrowed_snapshot(host.editor_state_mut());
+    (request, initial_state)
+}
+
 // Design-agent-loop helpers (flag gate + provider builder + turn launcher)
 // split out at the 800-line cap; see module docs there.
 #[path = "chat_session_launch_design.rs"]
@@ -115,14 +132,17 @@ pub fn launch_if_pending(
                 host.editor_state(),
                 &effective_user_text,
             );
+            let (request, initial_state) = prepare_design_request_and_snapshot(
+                host,
+                effective_user_text.clone(),
+                append_context,
+            );
             // Narrowed clone — this becomes the design worker's
             // `RemoteDocSink` mirror, which is only ever read through
             // `DocSink::state()` (`active_children` / `doc` / `components`).
             // See `op_editor_core::request_snapshot` for the field audit.
-            let initial_state =
-                op_editor_core::request_snapshot::narrowed_snapshot(host.editor_state_mut());
-            let request =
-                build_design_request(effective_user_text.clone(), &initial_state, append_context);
+            // The request above must be built first because that snapshot
+            // intentionally detaches chat/model-selection state.
             // Persist the request onto the turn's assistant bubble (already
             // pushed by `begin_send`) BEFORE it moves into the worker — the
             // manual per-subtask "Retry" button needs it to re-run a failed
@@ -420,14 +440,13 @@ fn launch_cli_standard_turn(
     let system_prompt = build_chat_system_prompt(state, user_text);
     let modify_plan = op_host_services::chat_intent::build_modify_plan(state, user_text);
     let append_context = op_host_services::chat_intent::detect_append_intent(state, user_text);
+    let (design_request, initial_state) =
+        prepare_design_request_and_snapshot(host, user_text.to_string(), append_context);
     // Narrowed clone — `CliTurnPlan::initial_state` ends up as the design
     // worker's `RemoteDocSink` mirror, read only through `DocSink::state()`.
-    // See `op_editor_core::request_snapshot` for the field audit. Takes the
-    // mutable borrow, so it must come after the last read of `state`.
-    let initial_state =
-        op_editor_core::request_snapshot::narrowed_snapshot(host.editor_state_mut());
-    let design_request =
-        build_design_request(user_text.to_string(), &initial_state, append_context);
+    // See `op_editor_core::request_snapshot` for the field audit. Preparation
+    // takes the mutable borrow, so it must come after the last read of `state`;
+    // it builds the model-aware request before detaching chat for the snapshot.
     // Same stash as the builtin/design-intent path above — this turn may or
     // may not actually classify as `DesignIntent::New` on the worker (the
     // classifier runs async), but setting it unconditionally is harmless:

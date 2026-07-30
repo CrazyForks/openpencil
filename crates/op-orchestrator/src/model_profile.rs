@@ -48,6 +48,26 @@ const DEFAULT_PROFILE: ModelProfile = ModelProfile {
     label: "Unknown model",
 };
 
+/// ACP agents do not expose their backing model to OpenPencil. Treat their
+/// catalog identity conservatively instead of promoting a missing model id to
+/// the Full-tier default.
+const ACP_PROFILE: ModelProfile = ModelProfile {
+    tier: ModelTier::Basic,
+    thinking_disabled: true,
+    timeout_multiplier: 1.0,
+    label: "ACP agent",
+};
+
+/// Whether `model_id` is the catalog identity of an ACP agent rather than a
+/// concrete provider model. Hosts may carry this marker through
+/// [`crate::DesignRequest`] for capability policy, but must not forward it as a
+/// transport model override.
+pub fn is_acp_capability_marker(model_id: &str) -> bool {
+    model_id
+        .get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("acp:"))
+}
+
 /// 模型表 —— verbatim 移植自 `model-profiles.ts:22-95`,首个命中胜出。
 const MODEL_PROFILES: &[Entry] = &[
     // Full tier
@@ -215,8 +235,10 @@ const fn e(matcher: Match, tier: ModelTier, thinking_disabled: bool, label: &'st
     }
 }
 
-/// 解析模型 id → profile。strip `provider/` 前缀 → 小写 → 首个命中。
-/// 空 id → 强制 `Full`(TS 行为);无命中 → `DEFAULT_PROFILE`。
+/// Resolve a model id to its capability profile. ACP catalog ids use the
+/// conservative `Basic` default. Other ids strip a `provider/` prefix, then
+/// match the lower-cased model table. An empty id keeps the legacy forced
+/// `Full` behavior; an unmatched non-empty id uses [`DEFAULT_PROFILE`].
 pub fn resolve_model_profile(model_id: &str) -> ModelProfile {
     if model_id.is_empty() {
         return ModelProfile {
@@ -225,6 +247,11 @@ pub fn resolve_model_profile(model_id: &str) -> ModelProfile {
             timeout_multiplier: 1.0,
             label: "Default (no model)",
         };
+    }
+    // Check before stripping a provider prefix: ACP ids are opaque and may
+    // themselves contain `/` (for example `acp:vendor/custom-agent`).
+    if is_acp_capability_marker(model_id) {
+        return ACP_PROFILE;
     }
     let normalized = match model_id.find('/') {
         Some(i) => &model_id[i + 1..],
@@ -284,6 +311,10 @@ mod tests {
         assert_eq!(resolve_model_profile("minimax-01").tier, ModelTier::Basic);
         assert_eq!(resolve_model_profile("glm-4-plus").tier, ModelTier::Basic);
         assert_eq!(resolve_model_profile("qwen-max").tier, ModelTier::Basic);
+        assert_eq!(
+            resolve_model_profile("acp:vendor/custom-agent").tier,
+            ModelTier::Basic
+        );
     }
 
     #[test]
