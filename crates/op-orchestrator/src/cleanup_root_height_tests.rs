@@ -394,6 +394,121 @@ fn cleanup_expands_zero_height_desktop_root_from_fit_content_children() {
 }
 
 #[test]
+fn cleanup_reconciles_root_height_with_resolved_wrapped_text() {
+    let mut sink = VecDocSink::new();
+    let tree: PenNode = serde_json::from_value(json!({
+        "type": "frame",
+        "id": "root",
+        "name": "Long Landing Page",
+        "width": 320,
+        "height": 40,
+        "layout": "vertical",
+        "children": [{
+            "type": "text",
+            "id": "copy",
+            "name": "Wrapped Copy",
+            "content": "A deliberately long fixed-width sentence that wraps across several lines in the real layout engine.",
+            "width": 88,
+            "textGrowth": "fixed-width",
+            "fontSize": 18,
+            "lineHeight": 1.5
+        }]
+    }))
+    .expect("wrapped text root json");
+    sink.state.apply(EditorCommand::InsertSubtree {
+        nodes: vec![tree],
+        parent_id: NodeId::NONE,
+        page_id: None,
+    });
+    let root_id = sink.state.active_children()[0].id_str().to_string();
+    sink.applied.clear();
+
+    run_cleanup_passes(&mut sink, &plan(), &[&root_id]);
+
+    let declared = sink
+        .state
+        .active_children()
+        .iter()
+        .find(|node| node.id_str() == root_id)
+        .and_then(PenNodeExt::height_px)
+        .expect("numeric root height");
+    let resolved = crate::geometry_validation::resolved_node_height(&sink.state, &root_id)
+        .expect("resolved root height");
+    assert!(
+        declared + 0.5 >= resolved,
+        "declared {declared}px must contain resolved {resolved}px"
+    );
+}
+
+fn overfull_desktop_artboard() -> (VecDocSink, String) {
+    let mut sink = VecDocSink::new();
+    let tree: PenNode = serde_json::from_value(json!({
+        "type": "frame",
+        "id": "root",
+        "name": "Explicit Desktop Artboard",
+        "width": 1440,
+        "height": 900,
+        "layout": "vertical",
+        "gap": 24,
+        "children": [
+            {"type":"frame", "id":"upper", "name":"Upper Section",
+             "width":"fill_container", "height":500, "children":[]},
+            {"type":"frame", "id":"lower", "name":"Lower Section",
+             "width":"fill_container", "height":500, "children":[]}
+        ]
+    }))
+    .expect("desktop artboard json");
+    sink.state.apply(EditorCommand::InsertSubtree {
+        nodes: vec![tree],
+        parent_id: NodeId::NONE,
+        page_id: None,
+    });
+    let root_id = sink.state.active_children()[0].id_str().to_string();
+    sink.applied.clear();
+    (sink, root_id)
+}
+
+#[test]
+fn cleanup_policy_preserves_only_requested_fixed_root_height() {
+    let (mut growing_sink, growing_root_id) = overfull_desktop_artboard();
+    run_cleanup_passes(&mut growing_sink, &plan(), &[&growing_root_id]);
+    let grown_height = growing_sink
+        .state
+        .active_children()
+        .iter()
+        .find(|node| node.base().name.as_deref() == Some("Explicit Desktop Artboard"))
+        .and_then(PenNodeExt::height_px)
+        .expect("grown root height");
+    assert!(
+        grown_height > 900.0,
+        "default cleanup must keep growing ordinary overfull roots"
+    );
+
+    let (mut preserved_sink, preserved_root_id) = overfull_desktop_artboard();
+    let mut summary = RepairSummary::default();
+    run_cleanup_passes_with_summary_and_policy(
+        &mut preserved_sink,
+        &plan(),
+        &[&preserved_root_id],
+        &mut summary,
+        CleanupPolicy {
+            preserve_requested_root_height: true,
+        },
+    );
+    let preserved_height = preserved_sink
+        .state
+        .active_children()
+        .iter()
+        .find(|node| node.base().name.as_deref() == Some("Explicit Desktop Artboard"))
+        .and_then(PenNodeExt::height_px)
+        .expect("preserved root height");
+    assert_eq!(
+        preserved_height, 900.0,
+        "request-derived cleanup policy must freeze the explicit 1440x900 root"
+    );
+}
+
+#[test]
 fn cleanup_recolors_safe_dark_bottom_nav_on_light_mobile_root() {
     let mut sink = VecDocSink::new();
     let tree: PenNode = serde_json::from_value(json!({

@@ -34,7 +34,7 @@ If Type 0:
 OTHERWISE classify by purpose:
 
 1. Multi-section page — marketing, promotional, or informational content designed to be scrolled (e.g. product sites, portfolios, company pages):
-   - Desktop: width=1200, height=0 (scrollable), 6-10 subtasks
+   - Desktop default: width=1200, height=0 (scrollable), 6-10 subtasks
    - Structure: navigation - hero - content sections - CTA - footer
 
 2. Single-task screen — full functional SCREEN focused on one user task (e.g. login screen, signup screen, settings page, profile page, full onboarding flow):
@@ -43,15 +43,15 @@ OTHERWISE classify by purpose:
    - NOT a single card/badge/modal — those are Type 0 components
 
 3. Data-rich workspace — overview screens with metrics, tables, or management panels (e.g. dashboards, admin consoles, analytics):
-   - Desktop: width=1200, height=0, 2-5 subtasks
+   - Desktop default: width=1200, height=0, 2-5 subtasks
    - Structure: sidebar or topbar + content panels
 
 WIDTH SELECTION RULES:
 
 - Type 0 components — width=400, height=0
 - Type 2 single-task SCREEN (login screen, profile page) — width=375, height=812
-- Types 1 & 3 (multi-section / dashboard) — width=1200, height=0
-- This mapping is mandatory.
+- Types 1 & 3 (multi-section / dashboard) — default width=1200, height=0
+- An explicit user-requested root width or width×height pair overrides these defaults and must be used exactly.
 
 MOBILE vs MOCKUP:
 

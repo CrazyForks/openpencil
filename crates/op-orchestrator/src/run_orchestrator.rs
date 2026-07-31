@@ -622,7 +622,15 @@ impl Orchestrator {
             // Passing them all is still correct scoping for the OTHER
             // whole-root cleanup passes (dedup / avatar-repair / etc.).
             let root_id_refs: Vec<&str> = root_ids.iter().map(String::as_str).collect();
-            finalize_design_with_summary(sink, &plan, &root_id_refs, &mut quality);
+            finalize_design_with_summary_and_policy(
+                sink,
+                &plan,
+                &root_id_refs,
+                &mut quality,
+                CleanupPolicy {
+                    preserve_requested_root_height: norm.preserve_requested_root_height,
+                },
+            );
         }
         on_progress(Progress::CleanupDone);
         // Turn the cleanup stage's tally into a user-visible credential. Only

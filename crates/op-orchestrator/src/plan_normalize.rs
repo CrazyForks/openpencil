@@ -14,6 +14,9 @@ use crate::types::DesignRequest;
 mod plan_home_intent;
 use plan_home_intent::plan_is_app_home_screen;
 
+#[path = "plan_normalize_dimensions.rs"]
+mod plan_normalize_dimensions;
+
 // multiscreen-fanout-break fix (item A) — screen-grouping tests, split out
 // to keep this file's inline `mod tests` from crossing the 800-line cap.
 #[cfg(test)]
@@ -24,11 +27,18 @@ mod tests_screen_groups;
 #[path = "plan_normalize_nav_tests.rs"]
 mod tests_nav;
 
+#[cfg(test)]
+#[path = "plan_normalize_dimensions_tests.rs"]
+mod tests_dimensions;
+
 /// 规范化产出的派生信息。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NormInfo {
     /// 根 frame 窄到移动端宽度 —— scaffold 阶段据此注入固定状态栏。
     pub is_mobile: bool,
+    /// The request explicitly fixed both root dimensions, so fresh-root
+    /// cleanup must preserve the requested height instead of growing it.
+    pub preserve_requested_root_height: bool,
 }
 
 /// 移动端宽度上限(含)—— ≤ 此值视为移动端单屏。
@@ -154,6 +164,9 @@ fn ensure_requested_bottom_nav_subtask(plan: &mut OrchestratorPlan, req: &Design
 ///   LLM 值,超出则取推断值 —— 忠实 TS `normalizeOrchestratorPlan`
 ///   `orchestrator.ts:259-272`)。
 pub fn normalize(plan: &mut OrchestratorPlan, req: &DesignRequest) -> NormInfo {
+    let preserve_requested_root_height =
+        plan_normalize_dimensions::apply_requested_root_dimensions(plan, req);
+
     let is_mobile = plan.root_frame.width <= MOBILE_MAX_WIDTH;
 
     if is_mobile {
@@ -228,7 +241,10 @@ pub fn normalize(plan: &mut OrchestratorPlan, req: &DesignRequest) -> NormInfo {
         }
     }
 
-    NormInfo { is_mobile }
+    NormInfo {
+        is_mobile,
+        preserve_requested_root_height,
+    }
 }
 
 #[cfg(test)]

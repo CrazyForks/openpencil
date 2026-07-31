@@ -25,7 +25,7 @@ If Type 0:
 OTHERWISE classify by purpose:
 
 1. Multi-section page — marketing, promotional, or informational content designed to be scrolled (e.g. product sites, portfolios, company pages):
-   - Desktop: width=1200, height=0 (scrollable), 6-10 subtasks
+   - Desktop default: width=1200, height=0 (scrollable), 6-10 subtasks
    - Structure: navigation - hero - content sections - CTA - footer
 
 2. Single-task SCREEN — full functional screen for one user task (e.g. login screen, signup screen, settings page, profile page):
@@ -34,7 +34,7 @@ OTHERWISE classify by purpose:
    - NOT a single card/badge/modal — those are Type 0 components
 
 3. Data-rich workspace — overview screens with metrics, tables, or management panels (e.g. dashboards, admin consoles, analytics):
-   - Desktop: width=1200, height=0, 2-5 subtasks
+   - Desktop default: width=1200, height=0, 2-5 subtasks
    - Structure: sidebar or topbar + content panels
    - Sidebar subtasks: a sidebar is a VERTICAL rail (brand block, stacked nav items, footer profile) — NEVER a horizontal navbar, NEVER a hero headline or marketing copy.
 
@@ -60,14 +60,14 @@ RULES:
 - CJK FONT RULE: If the user's request is in Chinese/Japanese/Korean or the product targets CJK audiences, the styleGuide fonts MUST use CJK-compatible fonts: heading="Noto Sans SC" (Chinese) / "Noto Sans JP" (Japanese) / "Noto Sans KR" (Korean), body="Inter". NEVER use "Space Grotesk" or "Manrope" as heading font for CJK content — they have no CJK character support.
 - Root frame fill must use the background color from the selected style guide. Each guide in the list shows its bg color (e.g. bg:#0A0F1C). Use that exact hex value for the rootFrame fill color.
 - Root frame gap: Landing pages with distinct section backgrounds - gap=0 (sections flush). Mobile screens and dashboards - gap=16-24 (breathing room between sections). Always include "gap" in rootFrame.
-- Root frame height: Mobile (width=375) - set height=812 (fixed viewport). Desktop (width=1200) - set height=0 (auto-expands as sections are generated).
+- Root frame height: Mobile default (width=375) - set height=812 (fixed viewport). Desktop default (width=1200) - set height=0 (auto-expands as sections are generated). Preserve an explicit user-requested root height.
 - Landing page height hints: nav 64-80px, hero 500-600px, feature sections 400-600px, testimonials 300-400px, CTA 200-300px, footer 200-300px.
 - App screen height hints: status bar is pre-inserted (62px, do NOT plan a "Status Bar" section). Header 56-64px, form fields 48-56px each, buttons 48px, spacing 16-24px.
 - If a section is about "App截图"/"XX截图"/"screenshot"/"mockup", plan it as a phone mockup placeholder block, not a detailed mini-app reconstruction.
 - For landing pages: navigation sections should preserve good horizontal balance, links evenly distributed in the center group.
 - Regions tile to fill rootFrame. vertical = top-to-bottom.
-- Mobile: 375x812 (both width AND height are fixed). Desktop: 1200x0 (width fixed, height auto-expands).
-- WIDTH SELECTION: Type 0 components - width=400, height=0. Type 2 single-task SCREENS (login screen, profile page, settings page) - width=375, height=812 (mobile). Multi-section pages and data-rich workspaces (types 1 & 3) - width=1200, height=0 (desktop). A "profile card" is Type 0 (width=400), NOT Type 2. This is mandatory.
+- Mobile default: 375x812 (both width AND height are fixed). Desktop default: 1200x0 (width fixed, height auto-expands).
+- WIDTH SELECTION: Type 0 components default to width=400, height=0. Type 2 single-task SCREENS (login screen, profile page, settings page) default to width=375, height=812 (mobile). Multi-section pages and data-rich workspaces (types 1 & 3) default to width=1200, height=0 (desktop). A "profile card" is Type 0 (width=400), NOT Type 2. An explicit user-requested root width or width×height pair overrides every default and must be copied exactly into rootFrame.
 - MULTI-SCREEN APPS: When the request involves multiple distinct screens/pages (e.g. "登录页+个人中心", "login and profile", "continue generating the remaining 3 pages"), add "screen":"<name>" to EVERY subtask. Each DISTINCT "screen" value becomes its OWN top-level root frame, placed as a separate sibling screen on the canvas; subtasks sharing the same "screen" value land together in that one root. Tagging is mandatory to get separate screens — if you omit "screen" (or give every subtask the SAME value), all subtasks collapse into a single shared root frame, even when the request clearly asked for multiple distinct pages. This applies starting at just 2-3 distinct screens — do NOT wait for a larger count before tagging; a separate skill's guidance about when to hand a screen off to a sub-agent (parallel delegation) is a DIFFERENT decision with its own higher threshold and has no bearing on whether you tag "screen" here. Use a concise page name per screen (e.g. "登录", "Profile") — it becomes that root frame's name. Single-screen requests don't need "screen" at all. Example (2 screens, "Login" then "Profile"): [{"id":"brand","label":"Brand Area","screen":"Login","region":{...}},{"id":"form","label":"Login Form","screen":"Login","region":{...}},{"id":"card","label":"User Card","screen":"Profile","region":{...}}]
 - SHARED CHROME ACROSS SCREENS: only plan a FULL bottom-nav/sidebar subtask for the FIRST screen. For every screen after that, either omit the nav subtask entirely or plan it as a minimal placeholder (no need to invent its own icon/label set) — a deterministic pass copies the first screen's nav onto every screen whose name matches one of that nav's tabs (even a screen with NO nav content at all, e.g. its own nav subtask failed) and fixes up which tab is active, so re-planning a full nav per screen wastes subtasks on content that gets replaced anyway. A screen whose name matches none of the nav's tabs (a standalone detail view, say) is correctly left alone — give it its own nav subtask only if it genuinely needs different chrome.
 - PUSH-IN DETAIL SCREENS NEVER GET A TAB BAR: a screen reached by tapping a card/row on another screen (a destination/product/article detail, not one of the bottom nav's own top-level destinations) never gets a "Bottom Navigation Bar" subtask, even a placeholder one. Give it a header with a Back control instead — returning relies on that Back tap (`pop`), not a tab switch. Only plan a nav subtask for a screen that genuinely IS one of the shared nav's tabs.

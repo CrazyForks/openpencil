@@ -48,6 +48,47 @@ fn run_happy_path_applies_scaffold_and_subtasks() {
 }
 
 #[test]
+fn fresh_run_preserves_explicit_root_height_through_cleanup() {
+    let tall_section = |name: &str| {
+        format!(
+            r#"I(null, {{"type":"frame","name":"{name}","width":"fill_container","height":560,"children":[{{"type":"text","content":"{name}","fontSize":18}}]}});"#
+        )
+    };
+    let llm = ScriptedLlm::new(vec![
+        ScriptResponse::Text(PLAN_JSON.into()),
+        ScriptResponse::Text(tall_section("Tall Hero")),
+        ScriptResponse::Text(tall_section("Tall Features")),
+    ]);
+    let mut sink = VecDocSink::new();
+    let mut request = req();
+    request.prompt = "Design a 1440×900 desktop page".into();
+    request.validation_enabled = false;
+
+    futures::executor::block_on(Orchestrator::new().run(
+        request,
+        &mut sink,
+        &llm,
+        &mut |_| {},
+        &AbortFlag::new(),
+        &stub_providers(),
+    ))
+    .expect("explicit-size run succeeds");
+
+    let root = sink
+        .state
+        .active_children()
+        .iter()
+        .find(|node| node.base().name.as_deref() == Some("Page"))
+        .expect("generated page root");
+    assert_eq!(root.width_px(), Some(1440.0));
+    assert_eq!(
+        root.height_px(),
+        Some(900.0),
+        "fresh-run cleanup must not grow an explicitly requested root height"
+    );
+}
+
+#[test]
 fn run_mobile_scaffold_reveals_status_bar() {
     let _guard = crate::agent_indicator_test_support::lock();
     let epoch = op_editor_core::agent_indicators::begin();

@@ -6,6 +6,7 @@ use crate::design_md_policy::{
     build_design_md_style_policy, guess_neutral_background_from_theme, infer_design_md_background,
 };
 use crate::design_type::{detect_design_type, DesignType};
+use crate::request_dimensions::requested_root_dimensions;
 use crate::style_guide_context::infer_tags_from_prompt;
 use jian_ops_schema::DesignMdSpec;
 use op_ai_skills::style_guide::{
@@ -92,19 +93,36 @@ pub fn build_compact_planning_prompt(
         DesignType::LandingPage => "Create 4-8 scrollable page sections in top-to-bottom order.",
     };
 
-    let mobile_rules: Vec<&str> = match preset.type_ {
+    let size_rule = if let Some(dimensions) = requested_root_dimensions(prompt) {
+        format!(
+            "The user explicitly requested the root dimensions. Use width={} and height={} on the root frame exactly.",
+            dimensions.width,
+            dimensions.height.unwrap_or(0.0)
+        )
+    } else {
+        match preset.type_ {
+            DesignType::MobileScreen => {
+                "Use width=375 and height=812 on the root frame.".to_string()
+            }
+            DesignType::Component => "Use width=400 and height=0 on the root frame.".to_string(),
+            _ => "Use width=1200 and height=0 on the root frame.".to_string(),
+        }
+    };
+
+    let mobile_rules: Vec<String> = match preset.type_ {
         DesignType::MobileScreen => vec![
-            "This is a direct mobile screen, not a phone mockup.",
-            "Do NOT create a status bar section. The status bar is inserted separately.",
-            "Use width=375 and height=812 on the root frame.",
+            "This is a direct mobile screen, not a phone mockup.".to_string(),
+            "Do NOT create a status bar section. The status bar is inserted separately."
+                .to_string(),
+            size_rule,
         ],
         DesignType::Component => vec![
-            "This is a single component (Type 0), not a screen.",
-            "Do NOT create a status bar, navigation, or footer section.",
-            "Use width=400 and height=0 on the root frame.",
-            "Use exactly 1 subtask for the component itself.",
+            "This is a single component (Type 0), not a screen.".to_string(),
+            "Do NOT create a status bar, navigation, or footer section.".to_string(),
+            size_rule,
+            "Use exactly 1 subtask for the component itself.".to_string(),
         ],
-        _ => vec!["Use width=1200 and height=0 on the root frame."],
+        _ => vec![size_rule],
     };
 
     let style_rule = if design_md.is_some() {
@@ -137,8 +155,8 @@ pub fn build_compact_planning_prompt(
             .to_string(),
         style_rule,
     ];
-    for r in &mobile_rules {
-        lines.push((*r).to_string());
+    for rule in mobile_rules {
+        lines.push(rule);
     }
     lines.push(format!(
         "Always set rootFrame layout=\"vertical\" and gap={default_gap}."
@@ -192,6 +210,24 @@ mod tests {
         assert!(cp.system.contains("width=1200 and height=0"));
         // 无 design.md → 从 catalog 选了个 guide 名
         assert!(!cp.selected_style_guide_name.is_empty());
+    }
+
+    #[test]
+    fn compact_prompt_honors_explicit_dimension_pair() {
+        let cp =
+            build_compact_planning_prompt("Design a 1440×900 desktop operations dashboard", None);
+        assert!(cp.system.contains("width=1440 and height=900"));
+        assert!(!cp.system.contains("width=1200 and height=0"));
+    }
+
+    #[test]
+    fn compact_prompt_honors_explicit_wide_root() {
+        let cp = build_compact_planning_prompt(
+            "Design a desktop landing page. Make the root exactly 1440px wide.",
+            None,
+        );
+        assert!(cp.system.contains("width=1440 and height=0"));
+        assert!(!cp.system.contains("width=1200 and height=0"));
     }
 
     #[test]

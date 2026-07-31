@@ -63,7 +63,18 @@ pub(super) fn adjust_root_height_to_content(
         if root_has_explicit_fit_content_height(root) {
             return;
         }
-        (root_content_height(root), root.height_px())
+        let estimated = root_content_height(root);
+        // The tree estimator intentionally has no font shaper, so wrapped
+        // fit-content text can make the real jian layout a little taller.
+        // Reconcile against that same resolved scene used by diagnostics.
+        let resolved = crate::geometry_validation::resolved_node_height(sink.state(), root_id)
+            .filter(|height| height.is_finite() && *height > 0.0)
+            .map(|height| height.ceil() as i32);
+        let required = match (estimated, resolved) {
+            (Some(estimated), Some(resolved)) => Some(estimated.max(resolved)),
+            (estimated, resolved) => estimated.or(resolved),
+        };
+        (required, root.height_px())
     };
 
     // Non-mobile roots only GROW a too-short fixed height to fit overflowing

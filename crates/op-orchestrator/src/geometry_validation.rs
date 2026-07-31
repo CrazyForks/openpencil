@@ -103,6 +103,63 @@ fn resolved_rects(state: &EditorState) -> HashMap<String, Rect> {
     map
 }
 
+pub(crate) fn resolved_node_height(state: &EditorState, node_id: &str) -> Option<f64> {
+    let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
+    let page = scene.active_page()?;
+    let root = find_scene_node(&page.children, node_id)?;
+    resolved_subtree_height(root)
+}
+
+fn find_scene_node<'a>(nodes: &'a [SceneNode], node_id: &str) -> Option<&'a SceneNode> {
+    for node in nodes {
+        if node.id == node_id {
+            return Some(node);
+        }
+        if let Some(found) = find_scene_node(&node.children, node_id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// Measure the resolved subtree against the node's own top edge.
+///
+/// `SceneNode::aggregate_bounds()` intentionally returns a bounded node's own
+/// rectangle, so it cannot reveal descendants that overflow a fixed-height
+/// root. Raw scene bounds are absolute; walking every descendant preserves the
+/// real layout bottom even when an ancestor clips or has an authored height.
+fn resolved_subtree_height(root: &SceneNode) -> Option<f64> {
+    let root_top = f64::from(root.bounds.origin.y);
+    if !root_top.is_finite() {
+        return None;
+    }
+    let bottom = max_raw_bottom(root)?;
+    let height = bottom - root_top;
+    height.is_finite().then_some(height.max(0.0))
+}
+
+fn max_raw_bottom(node: &SceneNode) -> Option<f64> {
+    let y = f64::from(node.bounds.origin.y);
+    let height = f64::from(node.bounds.size.y);
+    let own_bottom = if y.is_finite() && height.is_finite() && height >= 0.0 {
+        let bottom = y + height;
+        bottom.is_finite().then_some(bottom)
+    } else {
+        None
+    };
+
+    node.children
+        .iter()
+        .filter_map(max_raw_bottom)
+        .fold(own_bottom, |max_bottom, child_bottom| {
+            Some(
+                max_bottom
+                    .map(|current| current.max(child_bottom))
+                    .unwrap_or(child_bottom),
+            )
+        })
+}
+
 fn collect_rects(nodes: &[SceneNode], map: &mut HashMap<String, Rect>) {
     for n in nodes {
         let b = n.aggregate_bounds();
@@ -332,3 +389,7 @@ mod rail_collapse_tests;
 #[cfg(test)]
 #[path = "geometry_compact_status_tests.rs"]
 mod compact_status_tests;
+
+#[cfg(test)]
+#[path = "geometry_resolved_extent_tests.rs"]
+mod resolved_extent_tests;

@@ -249,6 +249,16 @@ fn find_root<'a>(state: &'a EditorState, root_id: &str) -> Option<&'a PenNode> {
     op_editor_core::walkers::find_node(state.active_children(), &NodeId::new(root_id.to_string()))
 }
 
+/// Cleanup intent that exists outside the generated document tree.
+///
+/// The default deliberately preserves the historical cleanup behavior. Only
+/// the fresh-root orchestrator path may opt into the request-derived height
+/// contract; append, section, and whole-document loop finalization stay false.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct CleanupPolicy {
+    pub(crate) preserve_requested_root_height: bool,
+}
+
 /// 阶段 4 清理 pass —— 在全部 subtask 插入完成后运行。
 ///
 /// `root_ids` 是本轮产出的根 frame id(S3a 单屏只有一个;S3b 并发
@@ -289,6 +299,17 @@ pub fn finalize_design_with_summary(
     summary: &mut RepairSummary,
 ) {
     run_cleanup_passes_with_summary(sink, plan, root_ids, summary);
+}
+
+/// Fresh-root orchestrator variant carrying request-derived cleanup intent.
+pub(crate) fn finalize_design_with_summary_and_policy(
+    sink: &mut dyn DocSink,
+    plan: &OrchestratorPlan,
+    root_ids: &[&str],
+    summary: &mut RepairSummary,
+    policy: CleanupPolicy,
+) {
+    run_cleanup_passes_with_summary_and_policy(sink, plan, root_ids, summary, policy);
 }
 
 /// Env-gated (`OPENPENCIL_DEBUG_CLEANUP=1`) probe: log the named child's
@@ -338,6 +359,22 @@ pub fn run_cleanup_passes_with_summary(
     plan: &OrchestratorPlan,
     root_ids: &[&str],
     summary: &mut RepairSummary,
+) {
+    run_cleanup_passes_with_summary_and_policy(
+        sink,
+        plan,
+        root_ids,
+        summary,
+        CleanupPolicy::default(),
+    );
+}
+
+fn run_cleanup_passes_with_summary_and_policy(
+    sink: &mut dyn DocSink,
+    plan: &OrchestratorPlan,
+    root_ids: &[&str],
+    summary: &mut RepairSummary,
+    policy: CleanupPolicy,
 ) {
     let mut counter = RepairCounter::new();
     let mut counting = counter.wrap(sink);
@@ -548,11 +585,12 @@ pub fn run_cleanup_passes_with_summary(
                 }
             }
         }
-        let preserve_root_height = find_root(sink.state(), rid).is_some_and(|root| {
-            root_has_explicit_fit_content_height(root)
-                || has_explicit_mobile_viewport_contract(root)
-                || crate::mobile_reflow::has_mobile_trailing_nav_reflow_contract(root)
-        });
+        let preserve_root_height = policy.preserve_requested_root_height
+            || find_root(sink.state(), rid).is_some_and(|root| {
+                root_has_explicit_fit_content_height(root)
+                    || has_explicit_mobile_viewport_contract(root)
+                    || crate::mobile_reflow::has_mobile_trailing_nav_reflow_contract(root)
+            });
         if preserve_root_height {
             let mut guarded = PreserveRootHeightSink {
                 inner: sink,
