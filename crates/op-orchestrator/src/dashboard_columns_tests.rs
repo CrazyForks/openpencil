@@ -63,10 +63,24 @@ fn sidebar_subtask_true_for_nav_in_elements() {
 }
 
 #[test]
-fn sidebar_subtask_false_for_top_bar() {
-    // "Top Navigation Bar" does NOT contain "top bar" or "header",
-    // so it IS a sidebar — use a proper "Top Bar" example for the false case.
-    let st = subtask("top-bar", "Top Bar", None);
+fn sidebar_subtask_false_for_navigation_bar() {
+    let st = subtask("nav", "Navigation Bar", None);
+    assert!(!is_sidebar_subtask(&st));
+}
+
+#[test]
+fn sidebar_subtask_true_for_sidebar_navigation_bar() {
+    let st = subtask("sidebar", "Sidebar Navigation Bar", None);
+    assert!(is_sidebar_subtask(&st));
+}
+
+#[test]
+fn sidebar_subtask_false_for_footer_navigation_links() {
+    let st = subtask(
+        "cta",
+        "Final CTA & Footer",
+        Some("conversion CTA, footer navigation links, legal links"),
+    );
     assert!(!is_sidebar_subtask(&st));
 }
 
@@ -115,6 +129,78 @@ fn dashboard_like_false_for_landing_page() {
     );
     assert!(!is_dashboard_like_prompt(
         "landing page for a startup",
+        &plan
+    ));
+}
+
+#[test]
+fn explicit_landing_page_intent_vetoes_dashboard_intent() {
+    let plan = plan_with(
+        1440.0,
+        vec![subtask(
+            "analytics",
+            "Analytics Dashboard",
+            Some("KPI cards and revenue chart"),
+        )],
+    );
+    assert!(!is_dashboard_like_prompt(
+        "Design a landing-page for an analytics dashboard",
+        &plan
+    ));
+}
+
+#[test]
+fn explicit_dashboard_intent_wins_over_landing_anatomy() {
+    let plan = plan_with(
+        1440.0,
+        vec![
+            subtask("hero", "Hero Summary", Some("analytics KPIs")),
+            subtask("workflow", "Workflow", Some("operations activity")),
+            subtask("footer", "Footer", Some("workspace links")),
+        ],
+    );
+    assert!(plan_has_landing_anatomy(&plan));
+    assert!(is_dashboard_like_prompt(
+        "Design an analytics dashboard for a growth team",
+        &plan
+    ));
+}
+
+#[test]
+fn explicit_admin_console_intent_wins_over_landing_anatomy() {
+    let plan = plan_with(
+        1440.0,
+        vec![
+            subtask("hero", "Hero Summary", Some("account status")),
+            subtask("workflow", "Workflow", Some("support queue")),
+            subtask("footer", "Footer", Some("admin links")),
+        ],
+    );
+    assert!(plan_has_landing_anatomy(&plan));
+    assert!(is_dashboard_like_prompt(
+        "Design an admin-console for support operations",
+        &plan
+    ));
+}
+
+#[test]
+fn dashboard_like_false_for_landing_page_with_data_sections() {
+    let plan = plan_with(
+        1440.0,
+        vec![
+            subtask("nav", "Navigation Bar", Some("main navigation links")),
+            subtask("hero", "Hero Section", Some("headline and product visual")),
+            subtask(
+                "capabilities",
+                "Capability Stories",
+                Some("live node graph"),
+            ),
+            subtask("proof", "Customer Proof", Some("three key metrics cards")),
+            subtask("faq", "FAQ", Some("data privacy guarantees")),
+        ],
+    );
+    assert!(!is_dashboard_like_prompt(
+        "Design a responsive website for an AI workbench",
         &plan
     ));
 }

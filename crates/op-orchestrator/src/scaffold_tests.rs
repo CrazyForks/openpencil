@@ -254,6 +254,21 @@ fn plan_is_sidebar_dashboard_false_for_landing_nav_without_data() {
 }
 
 #[test]
+fn plan_is_sidebar_dashboard_false_for_landing_nav_with_graph_and_metrics() {
+    let mut p = plan();
+    p.root_frame.width = 1440.0;
+    p.subtasks = vec![
+        st("nav", "Navigation"),
+        st("hero", "Hero Section"),
+        st("capabilities", "Capability Graph"),
+        st("proof", "Customer Metrics"),
+        st("pricing", "Pricing"),
+        st("cta", "Final CTA & Footer Navigation"),
+    ];
+    assert!(!plan_is_sidebar_dashboard(&p, false));
+}
+
+#[test]
 fn plan_is_sidebar_dashboard_false_when_narrow() {
     let mut p = sidebar_dashboard_plan();
     p.root_frame.width = 600.0;

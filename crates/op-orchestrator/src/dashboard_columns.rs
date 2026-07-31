@@ -20,8 +20,19 @@ use crate::plan::{OrchestratorPlan, Subtask};
 ///
 /// Port of TS `isSidebarSubtask` (`orchestrator.ts:175-180`).
 pub(crate) fn is_sidebar_subtask(st: &Subtask) -> bool {
-    let text = subtask_text(st);
-    has_sidebar_keyword(&text) && !has_topbar_keyword(&text)
+    let identity = subtask_identity_text(st);
+    if has_strong_sidebar_keyword(&identity) {
+        return true;
+    }
+    if has_topbar_keyword(&identity) {
+        return false;
+    }
+    if has_sidebar_keyword(&identity) {
+        return true;
+    }
+
+    let elements = st.elements.as_deref().unwrap_or_default().to_lowercase();
+    (identity.contains("left") || identity.contains("side")) && has_sidebar_keyword(&elements)
 }
 
 /// A STRONG sidebar signal — "sidebar" / "side bar" / "side nav" / "rail" — is
@@ -30,15 +41,7 @@ pub(crate) fn is_sidebar_subtask(st: &Subtask) -> bool {
 /// app-shell scaffold without requiring a dashboard-content gate.
 pub(crate) fn is_strong_sidebar_subtask(st: &Subtask) -> bool {
     let t = subtask_text(st);
-    (t.contains("sidebar")
-        || t.contains("side bar")
-        || t.contains("side nav")
-        || t.contains("side-nav")
-        || t.contains("left rail")
-        || t.contains("left nav")
-        || t.contains("nav rail")
-        || t.contains("navigation rail"))
-        && !has_topbar_keyword(&t)
+    has_strong_sidebar_keyword(&t)
 }
 
 /// Returns `true` when the prompt + plan subtasks suggest a dashboard-like
@@ -47,16 +50,51 @@ pub(crate) fn is_strong_sidebar_subtask(st: &Subtask) -> bool {
 /// Matches `/(dashboard|admin|analytics|fintech|workspace|data)/` over
 /// `prompt` concatenated with every subtask's `id + label + elements`.
 ///
+/// Explicit landing-page intent vetoes every dashboard signal. Otherwise an
+/// explicit dashboard or admin-console request wins before the plan's
+/// structural landing-page anatomy is considered.
+///
 /// Port of TS `isDashboardLikePrompt` (`orchestrator.ts:192-197`).
 pub(crate) fn is_dashboard_like_prompt(prompt: &str, plan: &OrchestratorPlan) -> bool {
+    let prompt = prompt.to_lowercase();
+    if has_explicit_landing_page_intent(&prompt) {
+        return false;
+    }
+    if has_explicit_dashboard_intent(&prompt) {
+        return true;
+    }
+    if plan_has_landing_anatomy(plan) {
+        return false;
+    }
     let subtask_text: String = plan
         .subtasks
         .iter()
         .map(subtask_text)
         .collect::<Vec<_>>()
         .join("\n");
-    let text = format!("{}\n{}", prompt, subtask_text).to_lowercase();
+    let text = format!("{prompt}\n{subtask_text}");
     has_dashboard_keyword(&text)
+}
+
+pub(crate) fn plan_has_landing_anatomy(plan: &OrchestratorPlan) -> bool {
+    let identities: Vec<String> = plan.subtasks.iter().map(subtask_identity_text).collect();
+    let has_hero = identities.iter().any(|text| text.contains("hero"));
+    let has_supporting_story = identities.iter().any(|text| {
+        text.contains("feature")
+            || text.contains("capabilit")
+            || text.contains("workflow")
+            || text.contains("testimonial")
+            || text.contains("customer proof")
+            || text.contains("logo")
+    });
+    let has_conversion_end = identities.iter().any(|text| {
+        text.contains("pricing")
+            || text.contains("faq")
+            || text.contains("footer")
+            || text.contains("final cta")
+            || text.contains("call to action")
+    });
+    has_hero && has_supporting_story && has_conversion_end
 }
 
 /// Returns `true` when the subtask is a dashboard-grade CONTENT section — a
@@ -91,6 +129,21 @@ fn subtask_text(st: &Subtask) -> String {
     .to_lowercase()
 }
 
+fn subtask_identity_text(st: &Subtask) -> String {
+    format!("{} {}", st.id, st.label).to_lowercase()
+}
+
+fn has_strong_sidebar_keyword(text: &str) -> bool {
+    text.contains("sidebar")
+        || text.contains("side bar")
+        || text.contains("side nav")
+        || text.contains("side-nav")
+        || text.contains("left rail")
+        || text.contains("left nav")
+        || text.contains("nav rail")
+        || text.contains("navigation rail")
+}
+
 /// `/(sidebar|side bar|navigation|nav|menu)/`
 fn has_sidebar_keyword(text: &str) -> bool {
     text.contains("sidebar")
@@ -102,7 +155,20 @@ fn has_sidebar_keyword(text: &str) -> bool {
 
 /// `/(top bar|header)/`
 fn has_topbar_keyword(text: &str) -> bool {
-    text.contains("top bar") || text.contains("header")
+    text.contains("top bar")
+        || text.contains("header")
+        || text.contains("top navigation")
+        || text.contains("navigation bar")
+        || text.contains("nav bar")
+        || text.contains("navbar")
+}
+
+fn has_explicit_landing_page_intent(text: &str) -> bool {
+    text.contains("landing page") || text.contains("landing-page")
+}
+
+fn has_explicit_dashboard_intent(text: &str) -> bool {
+    text.contains("dashboard") || text.contains("admin console") || text.contains("admin-console")
 }
 
 /// `/(dashboard|admin|analytics|fintech|workspace|data)/`

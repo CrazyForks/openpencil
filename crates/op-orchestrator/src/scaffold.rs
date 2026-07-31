@@ -557,8 +557,18 @@ pub(crate) const CONTENT_COLUMN_NAME: &str = "Main Content";
 pub(crate) fn plan_is_sidebar_dashboard(plan: &OrchestratorPlan, is_mobile: bool) -> bool {
     use crate::dashboard_columns::{
         is_dashboard_content_subtask, is_sidebar_subtask, is_strong_sidebar_subtask,
+        plan_has_landing_anatomy,
     };
     if is_mobile || plan.root_frame.width < 900.0 {
+        return false;
+    }
+    let Some(first) = plan.subtasks.first() else {
+        return false;
+    };
+    if !is_sidebar_subtask(first) {
+        return false;
+    }
+    if !is_strong_sidebar_subtask(first) && plan_has_landing_anatomy(plan) {
         return false;
     }
     let sidebars = plan
@@ -581,7 +591,7 @@ pub(crate) fn plan_is_sidebar_dashboard(plan: &OrchestratorPlan, is_mobile: bool
     // a sidebar dashboard whose sections lack table/metric/chart keywords used
     // to fall through to the single-root path and fill the sidebar full-width
     // during streaming.
-    if plan.subtasks.iter().any(is_strong_sidebar_subtask) {
+    if is_strong_sidebar_subtask(first) {
         return true;
     }
     // Only an AMBIGUOUS nav/menu signal → require >=2 data-content sections so a
