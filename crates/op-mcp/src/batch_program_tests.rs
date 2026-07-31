@@ -361,6 +361,37 @@ b=I("n10", {"type":"rectangle","name":"B","width":10,"height":10})"##;
 }
 
 #[test]
+fn js_style_line_separators_are_noise_not_syntax_errors() {
+    // A model that reaches for a list separator writes it on EVERY line, so
+    // rejecting it fails the whole batch and rolls the transaction back —
+    // measured 2026-07-31 with five `G(...)` image fills, after which the
+    // model mis-diagnosed the error as an ARGUMENT separator problem and
+    // spent the rest of the run demolishing subtrees it had already built.
+    let state = sample();
+    let comma_separated = "a=I(null, {\"type\":\"frame\",\"name\":\"A\"}),\nb=I(null, {\"type\":\"frame\",\"name\":\"B\"}),";
+    let (envelope, cmd) = call_operations(&state, comma_separated);
+    // A clean run reports no `errors` key at all — a present one means the
+    // transaction rolled back.
+    assert!(
+        envelope.get("errors").is_none(),
+        "trailing commas must not fail the batch: {envelope}"
+    );
+    assert!(cmd.is_some(), "both operations survive");
+    assert_eq!(
+        envelope["results"].as_array().map(Vec::len),
+        Some(2),
+        "both bindings land: {envelope}"
+    );
+    // Semicolons were already tolerated; keep them that way.
+    let (semi, semi_cmd) = call_operations(
+        &state,
+        "a=I(null, {\"type\":\"frame\",\"name\":\"A\"});\nb=I(null, {\"type\":\"frame\",\"name\":\"B\"});",
+    );
+    assert!(semi.get("errors").is_none(), "{semi}");
+    assert!(semi_cmd.is_some());
+}
+
+#[test]
 fn unparseable_program_returns_ts_errors_without_a_command() {
     let state = sample();
     let program = "X(1)\nfoo bar";

@@ -251,6 +251,17 @@ impl ProgramCtx {
 
 /// TS `executeLine` — one DSL operation.
 fn execute_line(line: &str, ctx: &mut ProgramCtx) -> Result<()> {
+    // Strip a trailing statement/list separator before the grammar sees the
+    // line: the patterns below all anchor on `\)$`, so one stray `,` makes
+    // the operation unparsable. A model that reaches for a separator writes
+    // it on EVERY line, so the whole batch fails and the transaction rolls
+    // back — measured 2026-07-31 with five `G(...)` image fills, after which
+    // the model mis-read `Cannot parse operation` as an ARGUMENT-separator
+    // problem and spent the rest of the run deleting and rebuilding subtrees
+    // it had already committed, ending worse than where it started. Only the
+    // line's own tail is touched, so a `,` inside an argument body is safe:
+    // every real operation ends on `)`.
+    let line = line.trim().trim_end_matches([';', ',']).trim();
     // TS line grammar (dotAll `s` flag — pretty-printed JSON bodies
     // carry literal newlines inside the arg list):
     //   binding=OP(args)  for I/C/K/R/M/G
@@ -352,7 +363,19 @@ fn explicitly_sized_append_lines(lines: &[String]) -> BTreeSet<usize> {
 /// Parse one complete DSL operation without splitting on delimiters nested in
 /// calls or quoted strings. Returns `(binding, opcode, argument body)`.
 fn parsed_operation(line: &str) -> Option<(Option<&str>, char, &str)> {
-    let line = line.trim().trim_end_matches(';').trim();
+    // A trailing `;` or `,` is noise, not syntax. The program is one
+    // operation per line, but models routinely reach for a statement or
+    // list separator out of JS habit — and a comma is the costlier of the
+    // two to reject, because a model that writes `I(...),` writes it on
+    // EVERY line, so the whole batch fails at once and the transaction
+    // rolls back. Measured 2026-07-31: five `G(...)` image fills, all
+    // rejected for one trailing comma each; the model could not tell from
+    // `Cannot parse operation` what was wrong, guessed at the argument
+    // separator instead, and spent the rest of the run deleting and
+    // rebuilding subtrees it had already committed — the design ended up
+    // worse than before it tried. Nothing meaningful can end a line with
+    // `,`: every operation closes on `)`.
+    let line = line.trim().trim_end_matches([';', ',']).trim();
     let (binding, call) = match find_top_level_char(line, '=') {
         Some(eq) => {
             let binding = line[..eq].trim();
