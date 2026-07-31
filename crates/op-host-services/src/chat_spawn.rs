@@ -204,14 +204,61 @@ pub fn env_var_with_login_shell(name: &str) -> Option<String> {
     (!value.trim().is_empty()).then(|| value.clone())
 }
 
-/// Process `PATH` merged with the login shell's (login entries first,
-/// current entries appended, deduped). This is what spawned CLIs get as
-/// their `PATH` so `#!/usr/bin/env node` shebangs resolve under a GUI
-/// launch. Falls back to the current PATH when the shell probe failed.
+/// The PATH a GUI process inherits when nothing has customised it — what
+/// launchd hands a Dock/Finder launch. Membership in this set is the
+/// FACT that separates "this process has no PATH of its own" from "the
+/// user arranged this PATH deliberately"; it is not a heuristic guess
+/// about the entries' meaning.
+const SYSTEM_DEFAULT_PATH_DIRS: &[&str] = &["/usr/bin", "/bin", "/usr/sbin", "/sbin"];
+
+/// Whether `current` carries no information beyond the system default —
+/// every entry is a stock system directory (or there are none at all).
+fn path_is_system_default(current: &str) -> bool {
+    current
+        .split(':')
+        .filter(|dir| !dir.is_empty())
+        .all(|dir| SYSTEM_DEFAULT_PATH_DIRS.contains(&dir.trim_end_matches('/')))
+}
+
+/// Merge order, split out of [`effective_path_env`] so the decision is
+/// unit-testable without mutating the test process's environment.
+///
+/// The two launch modes want opposite things, and the difference between
+/// them is a fact we can check rather than guess:
+///
+/// - **Dock/Finder launch** — the process PATH is launchd's stock set, so
+///   it expresses no intent. The login shell's PATH is the only place the
+///   user's toolchain exists; it must lead, or `#!/usr/bin/env node`
+///   shebangs resolve against a system node (the 2026-07-25 exit-127
+///   fix).
+/// - **Terminal launch (or any customised PATH)** — the process PATH *is*
+///   the user's current intent, ordering included. Letting the login
+///   shell lead here silently overrides which binary we pick.
+///
+/// That second case shipped as a real defect: with two `codex` installs
+/// (homebrew 0.133.0 and nvm 0.146.0) and a `.zshrc` that puts homebrew
+/// first, the app resolved the OLD one even though the user's terminal
+/// resolved the new one — so the model picker showed a stale catalog, and
+/// the old binary rewrote the shared `~/.codex/models_cache.json` with
+/// its own outdated list (measured 2026-07-31). Login entries are still
+/// appended, so nothing that was reachable before becomes unreachable.
+fn merged_path_for(login: &str, current: &str) -> String {
+    if path_is_system_default(current) {
+        merge_path_lists(login, current)
+    } else {
+        merge_path_lists(current, login)
+    }
+}
+
+/// Process `PATH` merged with the login shell's, deduped. This is what
+/// spawned CLIs get as their `PATH` so `#!/usr/bin/env node` shebangs
+/// resolve under a GUI launch. Which list leads depends on whether the
+/// process PATH carries any intent — see [`merged_path_for`]. Falls back
+/// to the current PATH when the shell probe failed.
 pub fn effective_path_env() -> String {
     let current = std::env::var("PATH").unwrap_or_default();
     match login_shell_path() {
-        Some(login) => merge_path_lists(login, &current),
+        Some(login) => merged_path_for(login, &current),
         None => current,
     }
 }
@@ -520,6 +567,57 @@ mod login_shell_tests {
     fn merge_handles_empty_segments() {
         assert_eq!(merge_path_lists("", "/usr/bin"), "/usr/bin");
         assert_eq!(merge_path_lists("/usr/bin", ""), "/usr/bin");
+    }
+
+    #[test]
+    fn stock_process_path_lets_the_login_shell_lead() {
+        // Dock/Finder launch: launchd's PATH expresses no intent, so the
+        // login shell supplies the toolchain (the exit-127 fix).
+        assert!(path_is_system_default("/usr/bin:/bin:/usr/sbin:/sbin"));
+        assert!(path_is_system_default(""));
+        // A trailing slash is the same directory, not a customisation.
+        assert!(path_is_system_default("/usr/bin/:/bin"));
+        let merged = merged_path_for(
+            "/Users/x/.nvm/versions/node/v20/bin:/opt/homebrew/bin:/usr/bin",
+            "/usr/bin:/bin:/usr/sbin:/sbin",
+        );
+        assert!(
+            merged.starts_with("/Users/x/.nvm/versions/node/v20/bin:/opt/homebrew/bin"),
+            "login toolchain leads a stock PATH, got {merged}"
+        );
+    }
+
+    #[test]
+    fn customised_process_path_wins_over_the_login_shell() {
+        // The 2026-07-31 codex defect, as a test: two installs of the same
+        // CLI, the login shell ordering homebrew first, the process PATH
+        // ordering nvm first. The process PATH is the user's live intent
+        // and must decide which binary we resolve.
+        let login = "/opt/homebrew/bin:/Users/x/.nvm/versions/node/v20/bin:/usr/bin";
+        let current = "/Users/x/.nvm/versions/node/v20/bin:/opt/homebrew/bin:/usr/bin:/bin";
+        assert!(!path_is_system_default(current));
+        let merged = merged_path_for(login, current);
+        let nvm = merged
+            .split(':')
+            .position(|dir| dir.contains(".nvm"))
+            .expect("nvm entry survives");
+        let brew = merged
+            .split(':')
+            .position(|dir| dir == "/opt/homebrew/bin")
+            .expect("homebrew entry survives");
+        assert!(nvm < brew, "the process PATH's order decides, got {merged}");
+    }
+
+    #[test]
+    fn login_only_entries_are_still_appended_to_a_customised_path() {
+        // Reordering must never make something unreachable: a directory
+        // only the login shell knows about still lands on the merged PATH.
+        let merged = merged_path_for("/opt/only-in-login/bin:/usr/bin", "/Users/x/bin:/usr/bin");
+        assert!(merged.starts_with("/Users/x/bin"), "got {merged}");
+        assert!(
+            merged.split(':').any(|dir| dir == "/opt/only-in-login/bin"),
+            "login-only entry survives, got {merged}"
+        );
     }
 
     #[test]
