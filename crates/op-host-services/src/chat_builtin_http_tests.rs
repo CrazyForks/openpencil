@@ -493,14 +493,20 @@ fn anthropic_sse_error_does_not_reflect_upstream_message() {
 }
 
 #[test]
-fn is_minimax_model_gates_thinking_field() {
-    // 仅 MiniMax 模型加 `thinking:{type:disabled}`;别的 provider 不加。
-    assert!(is_minimax_model("MiniMax-M3"));
-    assert!(is_minimax_model("MiniMax-M2.7"));
-    assert!(is_minimax_model("abab6.5s-chat"));
-    assert!(!is_minimax_model("deepseek-v4-pro"));
-    assert!(!is_minimax_model("qwen3-coder-plus"));
-    assert!(!is_minimax_model("ark-code-latest"));
+fn thinking_field_gate_covers_every_reasoning_family() {
+    // 这条测试此前断言 `!is_minimax_model("deepseek-v4-pro")`,把"DeepSeek 不下发
+    // 关思考字段"当成了契约 —— 而那正是缺陷本身:它的 profile 明写
+    // thinking_disabled,官方也支持同形字段,漏发的结果是 loop 每轮泄漏 reasoning、
+    // `batch_design` 被截断。判定收敛到 op-orchestrator 后,这里只守传输层用的是
+    // 那张共享表,家族覆盖由该表自己的测试守。
+    use op_orchestrator::accepts_thinking_body_field;
+    assert!(accepts_thinking_body_field("MiniMax-M3"));
+    assert!(accepts_thinking_body_field("abab6.5s-chat"));
+    assert!(accepts_thinking_body_field("glm-5.2"));
+    assert!(accepts_thinking_body_field("deepseek-v4-pro"));
+    // 未知字段会被拒的端点仍然不加。
+    assert!(!accepts_thinking_body_field("qwen3-coder-plus"));
+    assert!(!accepts_thinking_body_field("ark-code-latest"));
 }
 
 #[test]

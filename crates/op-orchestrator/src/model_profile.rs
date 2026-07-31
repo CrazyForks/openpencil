@@ -276,9 +276,86 @@ pub fn resolve_model_profile(model_id: &str) -> ModelProfile {
     DEFAULT_PROFILE
 }
 
+/// 模型家族是否接受 `thinking:{"type":"disabled"}` 这个 body 字段。
+///
+/// 这是**协议能力**,不是 [`ModelProfile::thinking_disabled`](ModelProfile)
+/// 那条"该不该关思考"的策略:后者说意图,前者说这条意图能否在线级表达出来。
+/// 两者都为真时,传输层才真正下发该字段。
+///
+/// 单一来源。此前这份知识以 `is_minimax_model` / `is_glm_model` 两个谓词的形式
+/// 散在传输层(`chat_builtin_http`)、agent tool-loop(`chat_agent_loop::openai`)
+/// 和 headless harness(`op-smoke::llm_clients`)**三处**,每接一家推理模型都要
+/// 三处同改。代价已经兑现两次:
+///
+/// 1. loop 侧漏加,glm-5.2 的每个 design turn 都在泄漏 reasoning,把
+///    `batch_design` 的 JSON 截断在半路;
+/// 2. harness 侧的副本 drift 成 `starts_with("glm")`(生产是 `contains`);
+/// 3. deepseek-v4-pro 的 profile 明写 `thinking_disabled: true`,却因为不在这张
+///    名单里而被静默丢弃 —— 只读工具的参数短,思考吃剩的预算还够吐出来所以全绿,
+///    唯独上万 token 的 `batch_design` 必然截断,表现为"探索完就没下文"。
+///
+/// 收录依据(每一条都要有出处,不靠猜):
+/// - MiniMax M 系 / 旧 abab:MiniMax 专属 `thinking` 字段,线上实测接受。
+/// - GLM-4.5+ / GLM-5.x:curl 对 ark glm-5.2 验证,关思考后 reasoning_tokens=0、
+///   content 为干净 JSON。
+/// - DeepSeek V4 系:官方文档 <https://api-docs.deepseek.com/guides/thinking_mode/>
+///   给出同形字段 `{"thinking":{"type":"enabled|disabled"}}`,并写明思考**默认开启
+///   且默认 effort=high** —— 不关就是最重的那一档。
+///
+/// 不做无条件下发:内置 provider 允许用户把 base_url 指向任意 openai-compat 端点
+/// (含 OpenAI 官方),那里的未知 body 字段会 400。名单是这条风险的边界,新增一家
+/// 只改这里一处。
+pub fn accepts_thinking_body_field(model_id: &str) -> bool {
+    let normalized = match model_id.find('/') {
+        Some(i) => &model_id[i + 1..],
+        None => model_id,
+    };
+    let lower = normalized.to_ascii_lowercase();
+    lower.starts_with("minimax")
+        || lower.starts_with("abab")
+        || lower.contains("glm")
+        || lower.starts_with("deepseek")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thinking_body_field_covers_every_reasoning_family_we_ship() {
+        // MiniMax (current + legacy naming).
+        assert!(accepts_thinking_body_field("MiniMax-M3"));
+        assert!(accepts_thinking_body_field("abab6.5s-chat"));
+        // GLM — `contains`, not `starts_with`: 方舟 ids carry a vendor prefix.
+        assert!(accepts_thinking_body_field("glm-5.2"));
+        assert!(accepts_thinking_body_field("ark/glm-5.1"));
+        // DeepSeek — the family this table was missing (2026-07-31).
+        assert!(accepts_thinking_body_field("deepseek-v4-pro"));
+        assert!(accepts_thinking_body_field("deepseek-v4-flash"));
+        assert!(accepts_thinking_body_field("deepseek-reasoner"));
+        // Endpoints that would 400 on an unknown body field stay out.
+        assert!(!accepts_thinking_body_field("gpt-5.6-sol"));
+        assert!(!accepts_thinking_body_field("qwen3-coder-plus"));
+        assert!(!accepts_thinking_body_field("claude-opus-5"));
+        assert!(!accepts_thinking_body_field(""));
+    }
+
+    /// The capability table must cover every model whose profile asks for
+    /// thinking off — otherwise the profile's intent is silently dropped at
+    /// the wire, which is exactly how deepseek-v4-pro regressed.
+    #[test]
+    fn every_reasoning_model_we_disable_thinking_for_can_express_it() {
+        for model in ["deepseek-v4-pro", "deepseek-v4-flash", "glm-5.2"] {
+            assert!(
+                resolve_model_profile(model).thinking_disabled,
+                "{model} profile should ask for thinking off"
+            );
+            assert!(
+                accepts_thinking_body_field(model),
+                "{model} asks for thinking off but cannot express it on the wire"
+            );
+        }
+    }
 
     #[test]
     fn full_tier_models() {

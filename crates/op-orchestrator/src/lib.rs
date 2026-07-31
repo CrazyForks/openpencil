@@ -127,7 +127,10 @@ pub use design_type::{detect_design_type, DesignType, DesignTypePreset};
 pub use intent::classify_intent;
 pub use loop_finalize::{apply_loop_finalize, apply_loop_finalize_counted};
 pub use mobile_reflow::repair_mobile_trailing_nav_reflow;
-pub use model_profile::{is_acp_capability_marker, resolve_model_profile, ModelProfile, ModelTier};
+pub use model_profile::{
+    accepts_thinking_body_field, is_acp_capability_marker, resolve_model_profile, ModelProfile,
+    ModelTier,
+};
 pub use prompt::build_orchestrator_prompt;
 pub use repair_summary::{CheckCategory, RepairSummary};
 pub use run::Orchestrator;

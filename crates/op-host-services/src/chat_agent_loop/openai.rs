@@ -219,15 +219,19 @@ pub(super) async fn run_openai_agent_loop_inner(
             "messages": messages,
             "tools": tools_json,
         });
-        // Turn OFF hidden reasoning for MiniMax / GLM. Without this a glm-5.2
-        // design turn spends its whole `max_tokens` on `reasoning_content` and
-        // truncates the `batch_design` mid-JSON — the single-shot builtin body
-        // gates the same field on the same flag (`chat_builtin_http`), but the
-        // loop body was missing it, so every loop turn leaked thinking.
-        if cfg.disable_thinking
-            && (crate::chat_builtin_http::is_minimax_model(&cfg.model)
-                || crate::chat_builtin_http::is_glm_model(&cfg.model))
-        {
+        // Turn OFF hidden reasoning for the families that can express it.
+        // Without this a reasoning model's design turn spends its whole
+        // `max_tokens` on `reasoning_content` and truncates the
+        // `batch_design` mid-JSON. The failure is deceptively partial: the
+        // read-only tools take `{}`-sized arguments and still fit in what
+        // reasoning leaves behind, so the transcript shows a run of green
+        // tool calls and then simply stops — measured with deepseek-v4-pro,
+        // whose thinking defaults to `effort=high` (2026-07-31).
+        //
+        // Shares `accepts_thinking_body_field` with the single-shot body in
+        // `chat_builtin_http`; this loop previously carried its own copy of
+        // the family list and that is exactly how DeepSeek fell through.
+        if cfg.disable_thinking && op_orchestrator::accepts_thinking_body_field(&cfg.model) {
             if let Some(obj) = body.as_object_mut() {
                 obj.insert("thinking".into(), json!({ "type": "disabled" }));
             }

@@ -352,22 +352,6 @@ impl ChatProvider for ConfiguredBuiltinProvider {
     }
 }
 
-/// MiniMax M 系("MiniMax-M*"、旧 "abab*")是推理模型,其思考由 MiniMax 专属的
-/// `thinking` body 字段控制。据模型名判定,以便只对它发关思考字段。
-pub(crate) fn is_minimax_model(model: &str) -> bool {
-    let m = model.to_ascii_lowercase();
-    m.starts_with("minimax") || m.starts_with("abab")
-}
-
-/// GLM-4.5+/GLM-5.x（智谱 / 方舟 coding plan）同为推理模型：reasoning 走
-/// `reasoning_content`，不关思考会烧光输出预算把 `content` 留空（实测 glm-5.2
-/// 一个设计子任务 thinking_len≈3 万、text_len=0，整段 parse 失败）。它接受和
-/// MiniMax 同样的 `thinking:{type:"disabled"}`（curl 对 ark glm-5.2 验证：关思考后
-/// reasoning_tokens=0、content 为干净 JSON）。按名判定，只对 GLM 下发。
-pub(crate) fn is_glm_model(model: &str) -> bool {
-    model.to_ascii_lowercase().contains("glm")
-}
-
 fn builtin_http_min_gap() -> Duration {
     std::env::var("OPENPENCIL_BUILTIN_HTTP_MIN_GAP_MS")
         .ok()
@@ -552,13 +536,15 @@ async fn run_openai_chat(
         "max_tokens": max_output_tokens,
         "messages": messages,
     });
-    // MiniMax M 系和 GLM-5.x 都是推理模型:不关思考会把 reasoning 烧到占满输出
-    // 预算,JSON content 被截断甚至留空(glm-5.2 实测一个设计子任务 thinking≈3 万
-    // 字符、content 0,整段 parse 失败、重试也撞同一堵墙)。当调用方明确要求关思考
-    // (`disable_thinking`,如编排器的设计子任务),在线级下发 `thinking:{type:"disabled"}`
-    // (实测 MiniMax 与 ark glm-5.2 都接受、返回干净 content)。普通对话走 `Adaptive`
-    // 不进这里,保留推理。只对这两类加此字段,不碰别的 openai-compat(DeepSeek / Qwen)。
-    if disable_thinking && (is_minimax_model(&provider.model) || is_glm_model(&provider.model)) {
+    // 推理模型不关思考会把 reasoning 烧到占满输出预算,JSON content 被截断甚至
+    // 留空(glm-5.2 实测一个设计子任务 thinking≈3 万字符、content 0,整段 parse
+    // 失败、重试也撞同一堵墙)。当调用方明确要求关思考(`disable_thinking`,如编排器
+    // 的设计子任务),且该模型家族能在线级表达这条意图时,下发
+    // `thinking:{type:"disabled"}`。普通对话走 `Adaptive` 不进这里,保留推理。
+    //
+    // 名单是 `op_orchestrator::accepts_thinking_body_field` 的单一来源 —— 曾经
+    // 散在三处、drift 过、也漏过 DeepSeek,详见那里的注释。
+    if disable_thinking && op_orchestrator::accepts_thinking_body_field(&provider.model) {
         if let Some(obj) = body.as_object_mut() {
             obj.insert("thinking".into(), json!({ "type": "disabled" }));
         }

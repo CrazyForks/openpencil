@@ -133,22 +133,6 @@ impl LlmClient for SmokeLlmClient {
     }
 }
 
-/// MiniMax M-series ("MiniMax-M*", legacy "abab*") are reasoning models whose
-/// thinking is toggled by the MiniMax `thinking` body field. Mirrors the
-/// production gate in `chat_builtin_http::is_minimax_model`.
-fn is_minimax_model(model: &str) -> bool {
-    let m = model.to_ascii_lowercase();
-    m.starts_with("minimax") || m.starts_with("abab")
-}
-
-/// GLM reasoning models burn the whole `max_tokens` budget on reasoning and
-/// return EMPTY content unless thinking is disabled (measured: an orchestrator
-/// sidebar subtask failed 3× "empty content from provider" and shipped
-/// missing). Mirrors the production gate in `chat_builtin_http::is_glm_model`.
-fn is_glm_model(model: &str) -> bool {
-    model.to_ascii_lowercase().starts_with("glm")
-}
-
 /// Direct openai-compat `LlmClient` for the harness (OPENPENCIL_SMOKE_DIRECT=1).
 ///
 /// The default [`SmokeLlmClient`] goes through the vendored `agent` QueryEngine,
@@ -215,7 +199,13 @@ impl LlmClient for DirectOpenAiClient {
             // (17% M3, ~10s answers); this lets the M3-with-think arm be
             // benchmarked (strip_reasoning handles the <think> blocks).
             let keep_thinking = std::env::var("OPENPENCIL_SMOKE_KEEP_THINKING").is_ok();
-            if !keep_thinking && (force_disable || is_minimax_model(&model) || is_glm_model(&model))
+            // Same capability table as production (`chat_builtin_http` +
+            // the agent loop). The harness used to keep its own copy, which
+            // had already drifted to `starts_with("glm")` against
+            // production's `contains` — so a 方舟-prefixed id benchmarked
+            // with thinking ON while production ran it OFF.
+            if !keep_thinking
+                && (force_disable || op_orchestrator::accepts_thinking_body_field(&model))
             {
                 if let Some(obj) = body.as_object_mut() {
                     obj.insert("thinking".into(), serde_json::json!({ "type": "disabled" }));
