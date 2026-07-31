@@ -316,6 +316,18 @@ fn parse_codex_model_list(line: &str) -> Option<Vec<ModelEntry>> {
     Some(
         data.iter()
             .filter_map(|m| {
+                // `hidden` is the app-server's twin of the cache's
+                // `visibility` (which `parse_codex_models_cache` filters
+                // on): entries the CLI lists for internal use only —
+                // `codex-auto-review` and friends. Today the server
+                // already withholds them from `model/list`, so this
+                // filter is a no-op against the current build; it exists
+                // so a server that starts sending them cannot leak an
+                // unusable model into the picker, and so both parse paths
+                // apply the same rule.
+                if m.get("hidden").and_then(serde_json::Value::as_bool) == Some(true) {
+                    return None;
+                }
                 let value = m.get("model").or_else(|| m.get("id"))?.as_str()?;
                 let name = m
                     .get("displayName")
@@ -604,6 +616,22 @@ mod tests {
         assert_eq!(models[0].display_name, "GPT-5.5");
         // Missing displayName falls back to the model value.
         assert_eq!(models[1].display_name, "gpt-5.4");
+    }
+
+    #[test]
+    fn app_server_parser_drops_hidden_models_like_the_cache_parser() {
+        // Same rule the cache parser applies via `visibility` — an
+        // internal-use entry must never reach the picker.
+        let models = parse_codex_model_list(
+            r#"{"id":2,"result":{"data":[
+                {"id":"gpt-5.6-sol","model":"gpt-5.6-sol","displayName":"GPT-5.6-Sol","hidden":false},
+                {"id":"codex-auto-review","model":"codex-auto-review","displayName":"Codex Auto Review","hidden":true},
+                {"id":"gpt-5.5","model":"gpt-5.5","displayName":"GPT-5.5"}
+            ]}}"#,
+        )
+        .expect("id:2 parses");
+        let values: Vec<&str> = models.iter().map(|m| m.value.as_str()).collect();
+        assert_eq!(values, ["gpt-5.6-sol", "gpt-5.5"]);
     }
 
     #[test]
