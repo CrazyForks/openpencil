@@ -134,6 +134,64 @@ fn openverse_selection_skips_junk_and_prefers_query_overlap() {
 }
 
 #[test]
+fn openverse_selection_ranks_by_complete_token_overlap_stably() {
+    use serde_json::json;
+    let empty = std::collections::HashSet::new();
+
+    let ranked = vec![
+        json!({"title": "Limestone architecture", "url": "https://x/one.jpg"}),
+        json!({"title": "Limestone lounge chair in a quiet studio", "url": "https://x/many.jpg"}),
+    ];
+    let picked = select_openverse_result(
+        &ranked,
+        "limestone lounge chair editorial furniture",
+        &empty,
+    )
+    .expect("ranked result");
+    assert_eq!(
+        picked["url"], "https://x/many.jpg",
+        "more complete query tokens beat an earlier one-token match"
+    );
+
+    let substring = vec![
+        json!({"title": "Cathedral facade", "url": "https://x/substring.jpg"}),
+        json!({"title": "Minimal lounge interior", "url": "https://x/exact.jpg"}),
+    ];
+    let picked = select_openverse_result(&substring, "cat lounge", &empty).expect("exact result");
+    assert_eq!(
+        picked["url"], "https://x/exact.jpg",
+        "a query token inside a longer title word is not an overlap"
+    );
+
+    let tied = vec![
+        json!({"title": "Oak lounge", "url": "https://x/first.jpg"}),
+        json!({"title": "Lounge lighting", "url": "https://x/second.jpg"}),
+    ];
+    let picked =
+        select_openverse_result(&tied, "lounge chair", &empty).expect("stable tied result");
+    assert_eq!(
+        picked["url"], "https://x/first.jpg",
+        "provider order breaks equal-overlap ties"
+    );
+}
+
+#[test]
+fn openverse_selection_still_excludes_used_and_junk_before_ranking() {
+    use serde_json::json;
+    let results = vec![
+        json!({"id": "junk", "title": "Limestone lounge chair placeholder", "url": "https://x/junk.jpg"}),
+        json!({"id": "used", "title": "Limestone lounge chair studio", "url": "https://x/used.jpg"}),
+        json!({"id": "available", "title": "Limestone chair", "url": "https://x/available.jpg"}),
+    ];
+    let used = std::collections::HashSet::from(["openverse:used".to_string()]);
+
+    let picked = select_openverse_result(&results, "limestone lounge chair", &used)
+        .expect("unused non-junk result");
+
+    assert_eq!(picked["url"], "https://x/available.jpg");
+}
+
+#[test]
 fn simplify_strips_design_artifact_words_but_never_to_empty() {
     // "synthwave album cover neon" → the corpus has no album covers, but it
     // has plenty of synthwave/neon photography.

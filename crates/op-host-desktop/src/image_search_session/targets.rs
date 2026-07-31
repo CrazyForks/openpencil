@@ -240,7 +240,25 @@ fn image_search_target_for(
         PenNode::Image(image) => image.image_prompt.clone(),
         _ => None,
     };
-    let mode = match node {
+    let mode = image_request_mode(node);
+    let (width, height) = resolved_sizes
+        .get(id)
+        .copied()
+        .map(|(width, height)| (Some(width), Some(height)))
+        .unwrap_or_else(|| (node.width_px(), node.height_px()));
+    Some(ImageSearchTarget {
+        node_id: NodeId::new(id),
+        query,
+        aspect_ratio: infer_aspect_ratio(width, height),
+        prompt,
+        mode,
+        width,
+        height,
+    })
+}
+
+pub(crate) fn image_request_mode(node: &PenNode) -> ImageRequestMode {
+    match node {
         // Legacy / script-generated Image nodes intentionally carry both
         // fields: generation uses the richer prompt when a profile exists,
         // otherwise stock search falls back to the query. `G("search")` and
@@ -282,21 +300,7 @@ fn image_search_target_for(
             ImageRequestMode::Search
         }
         _ => ImageRequestMode::Auto,
-    };
-    let (width, height) = resolved_sizes
-        .get(id)
-        .copied()
-        .map(|(width, height)| (Some(width), Some(height)))
-        .unwrap_or_else(|| (node.width_px(), node.height_px()));
-    Some(ImageSearchTarget {
-        node_id: NodeId::new(id),
-        query,
-        aspect_ratio: infer_aspect_ratio(width, height),
-        prompt,
-        mode,
-        width,
-        height,
-    })
+    }
 }
 
 fn is_placeholder_src(src: &str) -> bool {

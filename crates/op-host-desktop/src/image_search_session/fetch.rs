@@ -122,10 +122,19 @@ fn result_title(result: &serde_json::Value) -> String {
         .to_lowercase()
 }
 
+fn meaningful_tokens(value: &str) -> HashSet<String> {
+    value
+        .to_lowercase()
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|token| token.chars().count() > 2)
+        .map(str::to_string)
+        .collect()
+}
+
 /// Pick the best of the returned results instead of blindly trusting rank 1:
-/// drop junk-titled entries, then prefer the first whose title shares a word
-/// with the query (Openverse relevance degrades fast on niche queries), then
-/// the first non-junk entry.
+/// drop junk/used entries, then rank by complete query-token overlap. Equal
+/// scores preserve provider order, and an all-zero set falls back to the first
+/// usable result.
 pub(crate) fn select_openverse_result<'results>(
     results: &'results [serde_json::Value],
     query: &str,
@@ -152,20 +161,18 @@ pub(crate) fn select_openverse_result<'results>(
                     .any(|marker| title.contains(marker))
         })
         .collect();
-    let query_words: Vec<String> = query
-        .to_lowercase()
-        .split_whitespace()
-        .filter(|w| w.len() > 2)
-        .map(str::to_string)
-        .collect();
-    non_junk
-        .iter()
-        .find(|result| {
-            let title = result_title(result);
-            query_words.iter().any(|word| title.contains(word.as_str()))
-        })
-        .copied()
-        .or_else(|| non_junk.first().copied())
+    let query_tokens = meaningful_tokens(query);
+    let mut best = None;
+    let mut best_overlap = 0usize;
+    for result in non_junk {
+        let title_tokens = meaningful_tokens(&result_title(result));
+        let overlap = query_tokens.intersection(&title_tokens).count();
+        if best.is_none() || overlap > best_overlap {
+            best = Some(result);
+            best_overlap = overlap;
+        }
+    }
+    best
 }
 
 fn openverse_result_identity(result: &serde_json::Value) -> Option<String> {

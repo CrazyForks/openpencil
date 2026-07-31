@@ -242,6 +242,16 @@ impl ImageSearchSession {
         !self.jobs.is_empty()
     }
 
+    /// Re-admit terminal stock-search failures for a bounded caller-managed
+    /// retry. Callers must restore only Search/Auto nodes before invoking this;
+    /// explicit Generate targets are intentionally never re-admitted here.
+    pub(crate) fn retry_search_failures(&mut self, node_ids: &HashSet<NodeId>) {
+        for node_id in node_ids {
+            self.completed.remove(node_id.as_str());
+        }
+        self.invalidate_scan_gate();
+    }
+
     /// Force the next `enqueue_missing` to re-walk the tree even when the
     /// `(revision, active page)` key looks unchanged (e.g. because a fresh
     /// `EditorState` restarts its revision at 0 and its active page index at
@@ -588,7 +598,7 @@ mod targets;
 
 use fetch::fetch_first_image_url_blocking;
 pub(crate) use fetch::fetch_image_data_url;
-pub(crate) use targets::collect_targets;
+pub(crate) use targets::{collect_targets, image_request_mode};
 use targets::{
     collect_targets_with_scene, current_intent_fingerprints, intent_fingerprint,
     is_frame_placeholder_still_unfilled, is_image_area_rectangle_by_heuristic,

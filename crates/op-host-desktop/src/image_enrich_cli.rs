@@ -8,20 +8,19 @@
 //! an explicit Generate target fails instead of silently changing acquisition
 //! mode.
 
-use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fmt;
-use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use jian_ops_schema::node::PenNode;
-use jian_ops_schema::style::PenFill;
-use op_editor_core::{walkers, EditorState, NodeId, PenNodeExt};
+use op_editor_core::EditorState;
 use serde::Serialize;
 
-use crate::image_search_session::{
-    collect_targets, ImageSearchSession, SEARCH_FAILED_PLACEHOLDER_SRC,
-};
+use crate::image_search_session::ImageSearchSession;
+#[cfg(test)]
+use crate::image_search_session::SEARCH_FAILED_PLACEHOLDER_SRC;
+
+mod retry;
 
 const DEFAULT_TIMEOUT_SECONDS: u64 = 120;
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
@@ -229,136 +228,27 @@ fn enrich_document(request: &EnrichRequest) -> Result<EnrichSummary, EnrichError
         });
     }
     let summary = result?;
+    save_enriched_state(&state, &request.output, summary)
+}
+
+fn save_enriched_state(
+    state: &EditorState,
+    output: &Path,
+    summary: EnrichSummary,
+) -> Result<EnrichSummary, EnrichError> {
     if summary.failed != 0 || summary.unresolved != 0 {
         return Err(EnrichError::Failed(summary));
     }
-    op_host_services::doc_io::save_to_path(&state, &request.output).map_err(|error| {
-        EnrichError::Save {
-            path: request.output.clone(),
-            message: error.to_string(),
-        }
+    op_host_services::doc_io::save_to_path(state, output).map_err(|error| EnrichError::Save {
+        path: output.to_path_buf(),
+        message: error.to_string(),
     })?;
     Ok(summary)
 }
 
 fn enrich_state(state: &mut EditorState, timeout: Duration) -> Result<EnrichSummary, EnrichError> {
     let mut session = ImageSearchSession::new();
-    enrich_state_with_session(state, timeout, &mut session)
-}
-
-fn enrich_state_with_session(
-    state: &mut EditorState,
-    timeout: Duration,
-    session: &mut ImageSearchSession,
-) -> Result<EnrichSummary, EnrichError> {
-    // One deadline covers the complete enrichment phase across every page.
-    // Document load and the final atomic save intentionally sit outside it.
-    let started = Instant::now();
-    let timeout_seconds = timeout.as_secs();
-    let page_count = state.page_count();
-    let mut targets = 0usize;
-    let mut failed = 0usize;
-    let mut unresolved = 0usize;
-
-    for page in 0..page_count {
-        if !state.set_active_page(page) {
-            return Err(EnrichError::InvalidPage { page, page_count });
-        }
-        let mut target_ids: HashSet<NodeId> = collect_targets(state, &HashSet::new())
-            .into_iter()
-            .map(|target| target.node_id)
-            .collect();
-        collect_failure_sentinel_ids(state.active_children(), &mut target_ids);
-        targets += target_ids.len();
-
-        loop {
-            let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
-            let enqueued = session.enqueue_missing_with_scene(state, &scene);
-            let was_pending = session.is_pending();
-            let changed = session.poll_into_with_scene(state, &scene);
-            if !session.is_pending() && !enqueued && !was_pending && !changed {
-                break;
-            }
-            // A synchronous or just-completed job gets an immediate
-            // quiescence pass even at the deadline. Only pending work can
-            // time out; this prevents a completed final poll from being
-            // misreported as a timeout.
-            if !session.is_pending() {
-                continue;
-            }
-            if started.elapsed() >= timeout {
-                // Poll once more at the boundary so a completion that raced
-                // the first poll wins over the deadline.
-                let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
-                let _ = session.poll_into_with_scene(state, &scene);
-                if !session.is_pending() {
-                    continue;
-                }
-                return Err(EnrichError::Timeout {
-                    page,
-                    seconds: timeout_seconds,
-                });
-            }
-            std::thread::sleep(POLL_INTERVAL);
-        }
-
-        let remaining = collect_targets(state, &HashSet::new());
-        unresolved += remaining.len();
-        failed += target_ids
-            .iter()
-            .filter(|node_id| node_has_failure_sentinel(state, node_id))
-            .count();
-    }
-
-    Ok(EnrichSummary {
-        pages: page_count,
-        targets,
-        resolved: targets.saturating_sub(failed.saturating_add(unresolved)),
-        failed,
-        unresolved,
-    })
-}
-
-fn collect_failure_sentinel_ids(children: &[PenNode], out: &mut HashSet<NodeId>) {
-    for node in children {
-        if node_contains_failure_sentinel(node) {
-            if let Some(id) = NodeId::new_opt(node.id_str()) {
-                out.insert(id);
-            }
-        }
-        if let Some(children) = node.children() {
-            collect_failure_sentinel_ids(children, out);
-        }
-    }
-}
-
-fn node_contains_failure_sentinel(node: &PenNode) -> bool {
-    match node {
-        PenNode::Image(image) => image.src == SEARCH_FAILED_PLACEHOLDER_SRC,
-        PenNode::Frame(frame) => fills_have_failure_sentinel(frame.container.fill.as_deref()),
-        PenNode::Rectangle(rectangle) => {
-            fills_have_failure_sentinel(rectangle.container.fill.as_deref())
-        }
-        _ => false,
-    }
-}
-
-fn node_has_failure_sentinel(state: &EditorState, node_id: &NodeId) -> bool {
-    let Some(node) = walkers::find_node(state.active_children(), node_id) else {
-        return false;
-    };
-    node_contains_failure_sentinel(node)
-}
-
-fn fills_have_failure_sentinel(fills: Option<&[PenFill]>) -> bool {
-    fills.is_some_and(|fills| {
-        fills.iter().any(|fill| {
-            matches!(
-                fill,
-                PenFill::Image(image) if image.url == SEARCH_FAILED_PLACEHOLDER_SRC
-            )
-        })
-    })
+    retry::enrich_state_with_session(state, timeout, &mut session)
 }
 
 #[cfg(test)]
@@ -499,7 +389,7 @@ mod tests {
     }
 
     #[test]
-    fn preexisting_failure_sentinel_is_counted_as_a_failed_target() {
+    fn preexisting_generate_failure_sentinel_is_terminal() {
         let source = format!(
             r#"{{
   "version": "1.0",
@@ -509,6 +399,7 @@ mod tests {
       "id": "failed",
       "name": "Failed search",
       "src": "{SEARCH_FAILED_PLACEHOLDER_SRC}",
+      "imagePrompt": "paint a moonlit forest",
       "width": 160,
       "height": 90
     }}
