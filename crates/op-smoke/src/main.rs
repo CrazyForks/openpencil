@@ -48,6 +48,7 @@ mod audit_rubric;
 mod llm_clients;
 mod loop_mode;
 mod loop_seed;
+mod modify_mode;
 
 use agent::provider::anthropic::AnthropicProvider;
 use agent::provider::openai_compat::{OpenAiCompatConfig, OpenAiCompatProvider};
@@ -358,6 +359,10 @@ async fn main() -> std::process::ExitCode {
             return std::process::ExitCode::from(2);
         }
     };
+
+    if let Some(code) = modify_mode::run_if_requested(prompt.clone()).await {
+        return code;
+    }
 
     // `OPENPENCIL_SMOKE_LOOP=1` is a SEPARATE branch: instead of the
     // `Orchestrator`, it runs the headless Pencil-style agentic tool-loop

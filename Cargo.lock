@@ -4199,6 +4199,7 @@ dependencies = [
  "op-pen-loader",
  "reqwest 0.12.28",
  "serde_json",
+ "sha2",
  "tokio",
 ]
 
