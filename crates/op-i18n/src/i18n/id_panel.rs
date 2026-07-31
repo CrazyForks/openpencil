@@ -72,6 +72,14 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "promptCenter.item.extremeDailyApp.title" => "Aplikasi yang ingin dibuka setiap hari",
         "promptCenter.item.extremeCalendar.title" => "Ciptakan ulang aplikasi kalender",
         "promptCenter.item.extremeCalm.title" => "Ketenangan dalam satu layar",
+        "promptCenter.item.webOrbit.title" => "Orbit · Halaman landing ruang kerja AI",
+        "promptCenter.item.webAtelier.title" => "Atelier · E-commerce furnitur",
+        "promptCenter.item.dashboardPulse.title" => "Pulse · Dasbor analitik pertumbuhan",
+        "promptCenter.item.dashboardSentinel.title" => "Sentinel · Operasi logistik",
+        "promptCenter.item.componentDataGrid.title" => "Gridworks · Tabel data perusahaan",
+        "promptCenter.item.componentFormLab.title" => "Form Lab · Sistem komponen formulir",
+        "promptCenter.item.modifyPolishCurrent.title" => "Sempurnakan layar saat ini",
+        "promptCenter.item.modifyCompleteStates.title" => "Lengkapi status komponen",
         _ => return super::id_collab::lookup(key),
     })
 }

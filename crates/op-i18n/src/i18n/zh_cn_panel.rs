@@ -77,6 +77,14 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "promptCenter.item.extremeDailyApp.title" => "极限 · 每日必开 App",
         "promptCenter.item.extremeCalendar.title" => "极限 · 日历",
         "promptCenter.item.extremeCalm.title" => "极限 · 宁静",
+        "promptCenter.item.webOrbit.title" => "Orbit · AI 工作台官网",
+        "promptCenter.item.webAtelier.title" => "Atelier · 家居品牌电商",
+        "promptCenter.item.dashboardPulse.title" => "Pulse · 增长分析台",
+        "promptCenter.item.dashboardSentinel.title" => "Sentinel · 物流运维中心",
+        "promptCenter.item.componentDataGrid.title" => "Gridworks · 企业数据表",
+        "promptCenter.item.componentFormLab.title" => "Form Lab · 表单组件系统",
+        "promptCenter.item.modifyPolishCurrent.title" => "精修当前界面",
+        "promptCenter.item.modifyCompleteStates.title" => "补齐组件状态",
         _ => return super::zh_cn_collab::lookup(key),
     })
 }

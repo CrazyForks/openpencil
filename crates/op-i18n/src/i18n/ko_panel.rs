@@ -72,6 +72,14 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "promptCenter.item.extremeDailyApp.title" => "극한 · 매일 쓰고 싶은 앱",
         "promptCenter.item.extremeCalendar.title" => "극한 · 캘린더",
         "promptCenter.item.extremeCalm.title" => "극한 · 평온",
+        "promptCenter.item.webOrbit.title" => "Orbit · AI 워크벤치 랜딩 페이지",
+        "promptCenter.item.webAtelier.title" => "Atelier · 가구 브랜드 커머스",
+        "promptCenter.item.dashboardPulse.title" => "Pulse · 성장 분석 대시보드",
+        "promptCenter.item.dashboardSentinel.title" => "Sentinel · 물류 운영",
+        "promptCenter.item.componentDataGrid.title" => "Gridworks · 엔터프라이즈 데이터 테이블",
+        "promptCenter.item.componentFormLab.title" => "Form Lab · 폼 컴포넌트 시스템",
+        "promptCenter.item.modifyPolishCurrent.title" => "현재 화면 다듬기",
+        "promptCenter.item.modifyCompleteStates.title" => "컴포넌트 상태 완성하기",
         _ => return super::ko_collab::lookup(key),
     })
 }

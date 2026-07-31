@@ -70,6 +70,16 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "promptCenter.item.extremeDailyApp.title" => "極限 · 毎日使いたいアプリ",
         "promptCenter.item.extremeCalendar.title" => "極限 · カレンダー",
         "promptCenter.item.extremeCalm.title" => "極限 · 静けさ",
+        "promptCenter.item.webOrbit.title" => "Orbit · AI ワークベンチのランディングページ",
+        "promptCenter.item.webAtelier.title" => "Atelier · 家具ブランドの EC サイト",
+        "promptCenter.item.dashboardPulse.title" => "Pulse · グロース分析ダッシュボード",
+        "promptCenter.item.dashboardSentinel.title" => "Sentinel · 物流オペレーション",
+        "promptCenter.item.componentDataGrid.title" => {
+            "Gridworks · エンタープライズデータテーブル"
+        }
+        "promptCenter.item.componentFormLab.title" => "Form Lab · フォームコンポーネントシステム",
+        "promptCenter.item.modifyPolishCurrent.title" => "現在の画面を磨く",
+        "promptCenter.item.modifyCompleteStates.title" => "コンポーネント状態を補完",
         _ => return super::ja_collab::lookup(key),
     })
 }

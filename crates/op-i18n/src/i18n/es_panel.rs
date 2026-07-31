@@ -66,6 +66,16 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "promptCenter.item.extremeDailyApp.title" => "Extremo · Para abrir cada día",
         "promptCenter.item.extremeCalendar.title" => "Extremo · Reinventar el calendario",
         "promptCenter.item.extremeCalm.title" => "Extremo · Una pantalla de calma",
+        "promptCenter.item.webOrbit.title" => "Orbit · Página de inicio del espacio de trabajo de IA",
+        "promptCenter.item.webAtelier.title" => "Atelier · Comercio de muebles",
+        "promptCenter.item.dashboardPulse.title" => "Pulse · Panel de analítica de crecimiento",
+        "promptCenter.item.dashboardSentinel.title" => "Sentinel · Operaciones logísticas",
+        "promptCenter.item.componentDataGrid.title" => "Gridworks · Tabla de datos empresarial",
+        "promptCenter.item.componentFormLab.title" => {
+            "Form Lab · Sistema de componentes de formulario"
+        }
+        "promptCenter.item.modifyPolishCurrent.title" => "Pulir la pantalla actual",
+        "promptCenter.item.modifyCompleteStates.title" => "Completar los estados de los componentes",
         _ => return super::es_collab::lookup(key),
     })
 }

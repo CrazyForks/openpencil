@@ -2,7 +2,7 @@
 
 type Lookup = fn(&str) -> Option<&'static str>;
 
-const KEYS: [&str; 43] = [
+const KEYS: [&str; 51] = [
     "promptCenter.title",
     "promptCenter.searchPlaceholder",
     "promptCenter.category.all",
@@ -46,6 +46,14 @@ const KEYS: [&str; 43] = [
     "promptCenter.item.extremeDailyApp.title",
     "promptCenter.item.extremeCalendar.title",
     "promptCenter.item.extremeCalm.title",
+    "promptCenter.item.webOrbit.title",
+    "promptCenter.item.webAtelier.title",
+    "promptCenter.item.dashboardPulse.title",
+    "promptCenter.item.dashboardSentinel.title",
+    "promptCenter.item.componentDataGrid.title",
+    "promptCenter.item.componentFormLab.title",
+    "promptCenter.item.modifyPolishCurrent.title",
+    "promptCenter.item.modifyCompleteStates.title",
 ];
 
 #[test]

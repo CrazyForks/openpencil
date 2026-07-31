@@ -54,20 +54,47 @@ fn travel_search_matches_both_chinese_and_english() {
 #[test]
 fn category_filter_only_returns_that_category() {
     let mut state = open_state(Locale::EnUs);
-    state.editor_ui.prompt_center.filter = PromptFilter::Category(PromptCategory::Starter);
-    let cards = PromptCenterPanel::for_editor(&state)
-        .expect("open panel")
-        .filtered();
-    assert!(!cards.is_empty());
-    assert!(cards
-        .iter()
-        .all(|card| card.category == PromptCategory::Starter));
+    let expected = [
+        (PromptCategory::Starter, None),
+        (PromptCategory::WebPage, Some(["web-orbit", "web-atelier"])),
+        (
+            PromptCategory::Dashboard,
+            Some(["dashboard-pulse", "dashboard-sentinel"]),
+        ),
+        (
+            PromptCategory::Component,
+            Some(["component-data-grid", "component-form-lab"]),
+        ),
+        (
+            PromptCategory::Modify,
+            Some(["modify-polish-current", "modify-complete-states"]),
+        ),
+    ];
 
-    state.editor_ui.prompt_center.filter = PromptFilter::Category(PromptCategory::WebPage);
-    assert!(PromptCenterPanel::for_editor(&state)
-        .expect("open panel")
-        .filtered()
-        .is_empty());
+    for (category, expected_ids) in expected {
+        state.editor_ui.prompt_center.filter = PromptFilter::Category(category);
+        let cards = PromptCenterPanel::for_editor(&state)
+            .expect("open panel")
+            .filtered();
+        assert!(
+            !cards.is_empty(),
+            "{category:?} should have built-in prompts"
+        );
+        assert!(
+            cards.iter().all(|card| card.category == category),
+            "{category:?} filter leaked another category"
+        );
+        if let Some(expected_ids) = expected_ids {
+            assert_eq!(
+                cards
+                    .iter()
+                    .map(|card| card.id.as_ref())
+                    .collect::<Vec<_>>(),
+                expected_ids,
+                "{category:?} prompt order changed"
+            );
+        }
+    }
 }
 
 #[test]
@@ -382,7 +409,7 @@ fn first_paint_queues_only_visible_previews_and_uses_fallbacks() {
 }
 
 #[test]
-fn starter_quick_actions_use_the_local_fallback_without_image_decode() {
+fn starter_quick_actions_use_generated_previews() {
     let mut state = open_state(Locale::EnUs);
     state.editor_ui.prompt_center.filter = PromptFilter::Category(PromptCategory::Starter);
     let panel = PromptCenterPanel::for_editor(&state).expect("open panel");
@@ -394,7 +421,12 @@ fn starter_quick_actions_use_the_local_fallback_without_image_decode() {
         panel_rect(),
     );
 
-    assert!(backend.images.is_empty());
-    assert!(backend.image_decode_edges.is_empty());
-    assert_eq!(backend.linear_gradients, 4);
+    assert_eq!(backend.images.len(), 4);
+    assert_eq!(backend.image_decode_edges.len(), 4);
+    assert_eq!(backend.image_modes.len(), 4);
+    assert!(backend
+        .image_modes
+        .iter()
+        .all(|mode| *mode == ImageDrawMode::Fill));
+    assert_eq!(backend.linear_gradients, 0);
 }

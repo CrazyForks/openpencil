@@ -64,6 +64,14 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "promptCenter.item.extremeDailyApp.title" => "Экстрим · Открывать каждый день",
         "promptCenter.item.extremeCalendar.title" => "Экстрим · Переизобрести календарь",
         "promptCenter.item.extremeCalm.title" => "Экстрим · Один экран спокойствия",
+        "promptCenter.item.webOrbit.title" => "Orbit · Лендинг ИИ-рабочего пространства",
+        "promptCenter.item.webAtelier.title" => "Atelier · Интернет-магазин мебели",
+        "promptCenter.item.dashboardPulse.title" => "Pulse · Панель аналитики роста",
+        "promptCenter.item.dashboardSentinel.title" => "Sentinel · Логистические операции",
+        "promptCenter.item.componentDataGrid.title" => "Gridworks · Корпоративная таблица данных",
+        "promptCenter.item.componentFormLab.title" => "Form Lab · Система компонентов форм",
+        "promptCenter.item.modifyPolishCurrent.title" => "Улучшить текущий экран",
+        "promptCenter.item.modifyCompleteStates.title" => "Дополнить состояния компонентов",
         _ => return super::ru_collab::lookup(key),
     })
 }

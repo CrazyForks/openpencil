@@ -64,6 +64,14 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "promptCenter.item.extremeDailyApp.title" => "Her gün açmak isteyeceğin uygulama",
         "promptCenter.item.extremeCalendar.title" => "Takvimi baştan tasarla",
         "promptCenter.item.extremeCalm.title" => "Tek ekranda huzur",
+        "promptCenter.item.webOrbit.title" => "Orbit · Yapay zekâ çalışma alanı açılış sayfası",
+        "promptCenter.item.webAtelier.title" => "Atelier · Mobilya e-ticareti",
+        "promptCenter.item.dashboardPulse.title" => "Pulse · Büyüme analitiği panosu",
+        "promptCenter.item.dashboardSentinel.title" => "Sentinel · Lojistik operasyonları",
+        "promptCenter.item.componentDataGrid.title" => "Gridworks · Kurumsal veri tablosu",
+        "promptCenter.item.componentFormLab.title" => "Form Lab · Form bileşeni sistemi",
+        "promptCenter.item.modifyPolishCurrent.title" => "Mevcut ekranı iyileştir",
+        "promptCenter.item.modifyCompleteStates.title" => "Bileşen durumlarını tamamla",
         _ => return super::tr_collab::lookup(key),
     })
 }

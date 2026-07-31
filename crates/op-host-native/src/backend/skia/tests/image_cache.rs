@@ -119,15 +119,47 @@ fn image_decoded_is_false_before_install_and_true_after() {
 
 #[test]
 fn prompt_center_jpeg_decodes_into_a_capped_raster() {
-    let encoded = include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../op-editor-ui/assets/prompt_center_previews/gallery-wander.jpg"
-    ));
-    let (image, covers_edge_px) =
-        decode_raster_capped(encoded, 320).expect("prompt preview JPEG rasterizes");
+    let previews: [(&str, &[u8]); 4] = [
+        (
+            "starter-travel-app",
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../op-editor-ui/assets/prompt_center_previews/starter-travel-app.jpg"
+            ))
+            .as_slice(),
+        ),
+        (
+            "starter-dashboard",
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../op-editor-ui/assets/prompt_center_previews/starter-dashboard.jpg"
+            ))
+            .as_slice(),
+        ),
+        (
+            "starter-coffee-shop",
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../op-editor-ui/assets/prompt_center_previews/starter-coffee-shop.jpg"
+            ))
+            .as_slice(),
+        ),
+        (
+            "starter-barbershop",
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../op-editor-ui/assets/prompt_center_previews/starter-barbershop.jpg"
+            ))
+            .as_slice(),
+        ),
+    ];
 
-    assert_eq!(image.dimensions(), (320, 200).into());
-    assert_eq!(covers_edge_px, 320);
+    for (prompt_id, encoded) in previews {
+        let (image, covers_edge_px) = decode_raster_capped(encoded, 320)
+            .unwrap_or_else(|| panic!("{prompt_id} preview JPEG must rasterize"));
+        assert_eq!(image.dimensions(), (320, 200).into(), "{prompt_id}");
+        assert_eq!(covers_edge_px, 320, "{prompt_id}");
+    }
 }
 
 #[test]

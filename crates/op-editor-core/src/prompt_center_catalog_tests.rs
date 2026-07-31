@@ -11,9 +11,9 @@ fn has_tag(prompt: &PromptDefinition, tag: &str) -> bool {
 }
 
 #[test]
-fn embedded_catalogue_has_all_forty_nine_seed_prompts() {
+fn embedded_catalogue_has_all_fifty_seven_seed_prompts() {
     let prompts = prompt_catalogue();
-    assert_eq!(prompts.len(), 49);
+    assert_eq!(prompts.len(), 57);
 
     let expected = [
         "gallery-wander",
@@ -65,6 +65,14 @@ fn embedded_catalogue_has_all_forty_nine_seed_prompts() {
         "starter-dashboard",
         "starter-coffee-shop",
         "starter-barbershop",
+        "web-orbit",
+        "web-atelier",
+        "dashboard-pulse",
+        "dashboard-sentinel",
+        "component-data-grid",
+        "component-form-lab",
+        "modify-polish-current",
+        "modify-complete-states",
     ];
     let actual: Vec<_> = prompts.iter().map(|prompt| prompt.id.as_str()).collect();
     assert_eq!(actual, expected);
@@ -91,6 +99,21 @@ fn seed_groups_and_categories_match_the_source_contract() {
             .count(),
         4
     );
+    for category in [
+        PromptCategory::WebPage,
+        PromptCategory::Dashboard,
+        PromptCategory::Component,
+        PromptCategory::Modify,
+    ] {
+        assert_eq!(
+            prompts
+                .iter()
+                .filter(|prompt| prompt.category == category)
+                .count(),
+            2,
+            "{category:?}"
+        );
+    }
     assert_eq!(
         prompts
             .iter()
@@ -161,7 +184,7 @@ fn paired_galleries_share_twenty_title_keys() {
     }
 
     let unique_title_keys: HashSet<_> = prompts.iter().map(|prompt| &prompt.title_key).collect();
-    assert_eq!(unique_title_keys.len(), 29);
+    assert_eq!(unique_title_keys.len(), 37);
 }
 
 #[test]
@@ -193,6 +216,34 @@ fn screen_metadata_matches_the_four_multiscreen_pairs() {
         .iter()
         .filter(|prompt| prompt.screens.is_some_and(|count| count >= 2))
         .all(|prompt| has_tag(prompt, "multi-screen")));
+
+    for id in [
+        "web-orbit",
+        "web-atelier",
+        "dashboard-pulse",
+        "dashboard-sentinel",
+        "component-data-grid",
+        "component-form-lab",
+    ] {
+        assert_eq!(
+            prompts
+                .iter()
+                .find(|prompt| prompt.id == id)
+                .and_then(|prompt| prompt.screens),
+            Some(1),
+            "{id}"
+        );
+    }
+    for id in ["modify-polish-current", "modify-complete-states"] {
+        assert_eq!(
+            prompts
+                .iter()
+                .find(|prompt| prompt.id == id)
+                .and_then(|prompt| prompt.screens),
+            None,
+            "{id}"
+        );
+    }
 }
 
 #[test]

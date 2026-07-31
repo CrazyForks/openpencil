@@ -449,3 +449,81 @@ title_key = "ai.quickAction.barbershop"
 title_fallback = "用于管理理发店客户的豪华 Web 应用"
 body_zh = '''用于管理理发店客户的豪华 Web 应用'''
 body_en = '''Luxury webapp for managing barbershop clients'''
+
+[[prompt]]
+id = "web-orbit"
+category = "web-page"
+tags = ["web", "landing", "saas", "responsive"]
+title_key = "promptCenter.item.webOrbit.title"
+title_fallback = "Orbit · AI 工作台官网"
+body_zh = '''设计 Orbit AI 工作台的响应式桌面落地页：精简导航、分屏 Hero（明确价值主张、产品界面视觉和双 CTA）、客户品牌、三段能力叙事、工作流图、客户证言、两档定价、FAQ 和末尾 CTA。审美为编辑感企业科技：暖白、墨黑、电光钴蓝、精确排版和克制的动效暗示；避免泛滥的渐变光球。'''
+body_en = '''Design a responsive desktop landing page for Orbit, an AI workbench: a slim nav; split hero with a precise value proposition, product UI visual and two CTAs; customer logos; three capability stories; workflow diagram; customer proof; two pricing tiers; FAQ; and a final CTA. Aesthetic: editorial enterprise tech—warm white, ink black, electric cobalt, crisp type and restrained motion cues; avoid generic gradient blobs.'''
+screens = 1
+
+[[prompt]]
+id = "web-atelier"
+category = "web-page"
+tags = ["web", "commerce", "editorial", "photo", "responsive"]
+title_key = "promptCenter.item.webAtelier.title"
+title_fallback = "Atelier · 家居品牌电商"
+body_zh = '''设计 Atelier 当代家具工作室的响应式电商首页：电影感空间 Hero、品类横栏、编辑式系列网格、可购买的整屋故事、工艺介绍、设计师引言、门店与服务区、邮件订阅页脚。使用真实家具与室内摄影。审美为安静奢华：石灰岩、胡桃木与黑色，不对称编辑网格，大量留白。'''
+body_en = '''Design a responsive ecommerce homepage for Atelier, a contemporary furniture studio: a cinematic room hero, category rail, editorial collection grid, shoppable-room story, craftsmanship section, designer quote, stores and services strip, and newsletter footer. Use real furniture and interior photography. Aesthetic: quiet luxury—limestone, walnut and black, an asymmetric editorial grid, generous whitespace.'''
+screens = 1
+
+[[prompt]]
+id = "dashboard-pulse"
+category = "dashboard"
+tags = ["dashboard", "analytics", "saas", "data"]
+title_key = "promptCenter.item.dashboardPulse.title"
+title_fallback = "Pulse · 增长分析台"
+body_zh = '''设计 1440×900 的 Pulse 增长分析后台：固定侧栏、工作区与日期筛选、四张带环比的 KPI 卡、收入与激活趋势、留存 cohort 热图、获客渠道构成、转化漏斗、带状态和负责人的活动表，以及清晰的 tooltip 状态。白灰底配靛蓝点缀，信息密集但有呼吸感；图表必须有刻度、图例和可访问对比度。'''
+body_en = '''Design a 1440×900 desktop growth-analytics dashboard for Pulse: persistent sidebar, workspace and date filters, four KPI cards with deltas, revenue and activation trends, a cohort-retention heatmap, acquisition mix, conversion funnel, campaign table with status and owner, and a clear tooltip state. Use white and slate with an indigo accent; dense but breathable. Charts must include labels, legends and accessible contrast.'''
+screens = 1
+
+[[prompt]]
+id = "dashboard-sentinel"
+category = "dashboard"
+tags = ["dashboard", "operations", "logistics", "map", "data"]
+title_key = "promptCenter.item.dashboardSentinel.title"
+title_fallback = "Sentinel · 物流运维中心"
+body_zh = '''设计 1440×900 的 Sentinel 末端物流运维台：车队健康概览、实时配送地图、紧急告警队列、SLA 与风险指标、状态分布、路线表现图和可排序运单表。正常、警告和严重状态不能只靠颜色区分。审美为深海军蓝控制室，精确网格，青色表示活动态，琥珀与红色仅用于严重程度。'''
+body_en = '''Design a 1440×900 operations dashboard for Sentinel, a last-mile logistics platform: fleet-health summary, live delivery map, urgent-alert queue, SLA and risk KPIs, status breakdown, route-performance chart and sortable shipment table. Normal, warning and critical states must not rely on color alone. Aesthetic: dark-navy control room, crisp grids, cyan active states, amber and red reserved for severity.'''
+screens = 1
+
+[[prompt]]
+id = "component-data-grid"
+category = "component"
+tags = ["component", "design-system", "table", "states", "accessibility"]
+title_key = "promptCenter.item.componentDataGrid.title"
+title_fallback = "Gridworks · 企业数据表"
+body_zh = '''设计 1440×900 的企业数据表组件规范板：展示结构与 token，以及默认、hover、选中、排序、筛选、行内编辑、加载骨架、空、错误和分页状态；包含工具栏搜索、筛选 chip、批量操作、吸顶表头和密度控制，并标注间距与文字规格。中性设计系统、钴蓝焦点环、无障碍优先。'''
+body_en = '''Design a 1440×900 component-spec board for Gridworks, an enterprise data table. Show anatomy and tokens plus default, hover, selected, sorted, filtered, inline-edit, loading-skeleton, empty, error and pagination states. Include toolbar search, filter chips, bulk actions, sticky headers, density controls and spacing/type annotations. Use a neutral design system, cobalt focus rings and accessibility-first decisions.'''
+screens = 1
+
+[[prompt]]
+id = "component-form-lab"
+category = "component"
+tags = ["component", "design-system", "form", "states", "accessibility"]
+title_key = "promptCenter.item.componentFormLab.title"
+title_fallback = "Form Lab · 表单组件系统"
+body_zh = '''设计 1440×900 的表单组件规范板：文本框、文本域、选择器、组合框、日期输入、复选框、单选框、开关、文件上传和主次按钮；展示默认、hover、focus、已填、禁用、成功与错误状态、帮助文字和计数器，并组合出一张完整注册表单。采用一致 token、8pt 间距、清晰焦点和 WCAG 对比度。'''
+body_en = '''Design a 1440×900 component-spec board for Form Lab: text field, textarea, select, combobox, date input, checkbox, radio, switch, file upload and primary/secondary actions. Show default, hover, focus, filled, disabled, success and error states, helper/counter text, plus one composed sign-up form. Use consistent tokens, 8pt spacing, visible focus and WCAG contrast.'''
+screens = 1
+
+[[prompt]]
+id = "modify-polish-current"
+category = "modify"
+tags = ["modify", "polish", "layout", "typography"]
+title_key = "promptCenter.item.modifyPolishCurrent.title"
+title_fallback = "精修当前界面"
+body_zh = '''精修当前选中界面，但不改变产品意图、正文、数据、路由结构或交互。修正网格与对齐、间距节奏、文字层级、对比度、卡片分组和视觉密度；复用现有品牌 token，保留已有 events 和内容，不替换成另一个概念；达到可发布质量，并保持原屏幕数量。'''
+body_en = '''Polish the currently selected screen without changing its product intent, copy, data, route structure or interactions. Fix grid alignment, spacing rhythm, typography hierarchy, contrast, card grouping and visual density. Reuse existing brand tokens, preserve existing events and content, do not replace it with another concept, and leave the original screen count unchanged.'''
+
+[[prompt]]
+id = "modify-complete-states"
+category = "modify"
+tags = ["modify", "states", "accessibility", "interaction"]
+title_key = "promptCenter.item.modifyCompleteStates.title"
+title_fallback = "补齐组件状态"
+body_zh = '''在保留当前选中组件或界面的基础样式与数据的前提下，补齐适用的 hover、pressed、focus、disabled、loading、empty、error 和 success 状态；保证可读对比度与最小 44px 点击目标。把变体放到相邻的带标签状态板或组件 variants 中，保留原稿，并保留已有 events 与 routes。'''
+body_en = '''Complete the missing interaction and system states for the currently selected component or screen while preserving its base style and data. Add only applicable hover, pressed, focus, disabled, loading, empty, error and success states; ensure readable contrast and 44px minimum targets. Place variants on an adjacent labeled state board or as component variants, keep the original intact, and preserve existing events and routes.'''

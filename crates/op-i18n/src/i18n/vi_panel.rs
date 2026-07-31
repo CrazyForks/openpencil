@@ -74,6 +74,14 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "promptCenter.item.extremeDailyApp.title" => "Ứng dụng bạn muốn mở mỗi ngày",
         "promptCenter.item.extremeCalendar.title" => "Tái định nghĩa ứng dụng lịch",
         "promptCenter.item.extremeCalm.title" => "Sự tĩnh lặng trong một màn hình",
+        "promptCenter.item.webOrbit.title" => "Orbit · Trang đích bàn làm việc AI",
+        "promptCenter.item.webAtelier.title" => "Atelier · Thương mại nội thất",
+        "promptCenter.item.dashboardPulse.title" => "Pulse · Bảng phân tích tăng trưởng",
+        "promptCenter.item.dashboardSentinel.title" => "Sentinel · Vận hành logistics",
+        "promptCenter.item.componentDataGrid.title" => "Gridworks · Bảng dữ liệu doanh nghiệp",
+        "promptCenter.item.componentFormLab.title" => "Form Lab · Hệ thống thành phần biểu mẫu",
+        "promptCenter.item.modifyPolishCurrent.title" => "Tinh chỉnh màn hình hiện tại",
+        "promptCenter.item.modifyCompleteStates.title" => "Hoàn thiện các trạng thái thành phần",
         _ => return super::vi_collab::lookup(key),
     })
 }

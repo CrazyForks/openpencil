@@ -21,8 +21,8 @@ macro_rules! preview {
 
 /// Return the stable cache id and embedded JPEG bytes for a built-in prompt.
 ///
-/// Starter quick actions, user-defined prompts, and unknown ids intentionally
-/// have no generated preview and therefore return `None`.
+/// User-defined prompts and unknown ids intentionally have no generated preview
+/// and therefore return `None`.
 pub(crate) fn prompt_center_preview(prompt_id: &str) -> Option<(u64, &'static [u8])> {
     match prompt_id {
         "gallery-wander" => preview!(1, "gallery-wander"),
@@ -70,6 +70,18 @@ pub(crate) fn prompt_center_preview(prompt_id: &str) -> Option<(u64, &'static [u
         "extreme-daily-app" => preview!(43, "extreme-daily-app"),
         "extreme-calendar" => preview!(44, "extreme-calendar"),
         "extreme-calm" => preview!(45, "extreme-calm"),
+        "web-orbit" => preview!(46, "web-orbit"),
+        "web-atelier" => preview!(47, "web-atelier"),
+        "dashboard-pulse" => preview!(48, "dashboard-pulse"),
+        "dashboard-sentinel" => preview!(49, "dashboard-sentinel"),
+        "component-data-grid" => preview!(50, "component-data-grid"),
+        "component-form-lab" => preview!(51, "component-form-lab"),
+        "modify-polish-current" => preview!(52, "modify-polish-current"),
+        "modify-complete-states" => preview!(53, "modify-complete-states"),
+        "starter-travel-app" => preview!(54, "starter-travel-app"),
+        "starter-dashboard" => preview!(55, "starter-dashboard"),
+        "starter-coffee-shop" => preview!(56, "starter-coffee-shop"),
+        "starter-barbershop" => preview!(57, "starter-barbershop"),
         _ => None,
     }
 }
@@ -78,17 +90,15 @@ pub(crate) fn prompt_center_preview(prompt_id: &str) -> Option<(u64, &'static [u
 mod tests {
     use std::collections::HashSet;
 
-    use op_editor_core::prompt_center_catalog::{prompt_catalogue, PromptCategory};
+    use op_editor_core::prompt_center_catalog::prompt_catalogue;
+    use serde_json::Value;
 
     use super::prompt_center_preview;
 
     #[test]
-    fn every_generated_catalogue_entry_has_one_unique_preview() {
-        let generated: Vec<_> = prompt_catalogue()
-            .iter()
-            .filter(|prompt| prompt.category != PromptCategory::Starter)
-            .collect();
-        assert_eq!(generated.len(), 45);
+    fn every_accepted_catalogue_preview_has_one_unique_image() {
+        let generated = prompt_catalogue();
+        assert_eq!(generated.len(), 57);
 
         let mut image_ids = HashSet::new();
         for prompt in generated {
@@ -105,23 +115,53 @@ mod tests {
                 prompt.id
             );
         }
-        assert_eq!(image_ids.len(), 45);
+        assert_eq!(image_ids.len(), 57);
     }
 
     #[test]
-    fn starter_custom_and_unknown_ids_have_no_generated_preview() {
-        for prompt in prompt_catalogue()
-            .iter()
-            .filter(|prompt| prompt.category == PromptCategory::Starter)
-        {
+    fn custom_and_unknown_ids_have_no_generated_preview() {
+        assert!(prompt_center_preview("custom-1").is_none());
+        assert!(prompt_center_preview("unknown-prompt").is_none());
+    }
+
+    #[test]
+    fn every_generated_preview_has_accepted_model_provenance() {
+        let provenance: Value = serde_json::from_str(include_str!(concat!(
+            "../../assets/prompt_center_previews/",
+            "preview_provenance.json"
+        )))
+        .expect("preview provenance must be valid JSON");
+        let entries = provenance["entries"]
+            .as_object()
+            .expect("preview provenance must have an entries object");
+        let generated = prompt_catalogue();
+        assert_eq!(entries.len(), generated.len());
+
+        for prompt in generated {
+            let entry = entries
+                .get(&prompt.id)
+                .unwrap_or_else(|| panic!("missing provenance for `{}`", prompt.id));
+            assert_eq!(entry["status"], "accepted", "{}", prompt.id);
             assert!(
-                prompt_center_preview(&prompt.id).is_none(),
-                "starter `{}` unexpectedly has a preview",
+                entry["provider"]
+                    .as_str()
+                    .is_some_and(|value| !value.is_empty()),
+                "{}",
+                prompt.id
+            );
+            assert!(
+                entry["model"]
+                    .as_str()
+                    .is_some_and(|value| !value.is_empty()),
+                "{}",
+                prompt.id
+            );
+            assert_eq!(
+                entry["previewSha256"].as_str().map(str::len),
+                Some(64),
+                "{}",
                 prompt.id
             );
         }
-
-        assert!(prompt_center_preview("custom-1").is_none());
-        assert!(prompt_center_preview("unknown-prompt").is_none());
     }
 }

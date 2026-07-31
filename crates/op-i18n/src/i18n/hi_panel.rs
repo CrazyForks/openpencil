@@ -68,6 +68,14 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "promptCenter.item.extremeDailyApp.title" => "हर दिन खोलने लायक ऐप",
         "promptCenter.item.extremeCalendar.title" => "कैलेंडर को नए सिरे से गढ़ें",
         "promptCenter.item.extremeCalm.title" => "एक स्क्रीन में शांति",
+        "promptCenter.item.webOrbit.title" => "Orbit · एआई वर्कबेंच लैंडिंग पेज",
+        "promptCenter.item.webAtelier.title" => "Atelier · फ़र्नीचर ई-कॉमर्स",
+        "promptCenter.item.dashboardPulse.title" => "Pulse · विकास विश्लेषण डैशबोर्ड",
+        "promptCenter.item.dashboardSentinel.title" => "Sentinel · लॉजिस्टिक्स संचालन",
+        "promptCenter.item.componentDataGrid.title" => "Gridworks · एंटरप्राइज़ डेटा तालिका",
+        "promptCenter.item.componentFormLab.title" => "Form Lab · फ़ॉर्म कॉम्पोनेंट प्रणाली",
+        "promptCenter.item.modifyPolishCurrent.title" => "वर्तमान स्क्रीन को निखारें",
+        "promptCenter.item.modifyCompleteStates.title" => "कॉम्पोनेंट की अवस्थाएँ पूरी करें",
         _ => return super::hi_collab::lookup(key),
     })
 }
