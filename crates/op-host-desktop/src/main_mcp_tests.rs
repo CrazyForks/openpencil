@@ -31,10 +31,10 @@ fn live_mcp_http_server_applies_write_requests_to_editor_state() {
         panic!("could not start MCP server on an unused port after 20 attempts");
     }
 
-    fn post_json(port: u16, body: &str) -> String {
+    fn post_json(port: u16, token: &str, body: &str) -> String {
         let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect MCP server");
         let req = format!(
-            "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\n\r\n{}",
+            "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nX-OpenPencil-Token: {token}\r\nContent-Length: {}\r\n\r\n{}",
             body.len(),
             body
         );
@@ -48,8 +48,9 @@ fn live_mcp_http_server_applies_write_requests_to_editor_state() {
     let mut state = op_editor_core::EditorState::new();
     let body = r##"{"jsonrpc":"2.0","id":1,"method":"insert_node","params":{"kind":"rect","name":"From MCP","x":"10","y":"20","width":"100","height":"50","fill_hex":"#00ff00"}}"##;
     let (tx, rx) = mpsc::channel();
+    let token = server.token().to_owned();
     std::thread::spawn(move || {
-        let _ = tx.send(post_json(port, body));
+        let _ = tx.send(post_json(port, &token, body));
     });
 
     let started = Instant::now();
@@ -167,10 +168,10 @@ fn live_mcp_http_server_routes_file_path_requests_to_target_file() {
         panic!("could not start MCP server on an unused port after 20 attempts");
     }
 
-    fn post_json(port: u16, body: &str) -> String {
+    fn post_json(port: u16, token: &str, body: &str) -> String {
         let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect MCP server");
         let req = format!(
-            "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\n\r\n{}",
+            "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1\r\nX-OpenPencil-Token: {token}\r\nContent-Length: {}\r\n\r\n{}",
             body.len(),
             body
         );
@@ -219,8 +220,9 @@ fn live_mcp_http_server_routes_file_path_requests_to_target_file() {
         r#"{{"jsonrpc":"2.0","id":31,"method":"tools/call","params":{{"name":"batch_get","arguments":{{"filePath":{file_path_json},"readDepth":1}}}}}}"#
     );
     let (tx, rx) = mpsc::channel();
+    let token = server.token().to_owned();
     std::thread::spawn(move || {
-        let _ = tx.send(post_json(port, &body));
+        let _ = tx.send(post_json(port, &token, &body));
     });
 
     let started = Instant::now();
@@ -262,10 +264,10 @@ fn live_mcp_http_server_replaces_document_via_rest_document_sync() {
         panic!("could not start MCP server on an unused port after 20 attempts");
     }
 
-    fn post(port: u16, path: &str, body: &str) -> String {
+    fn post(port: u16, token: &str, path: &str, body: &str) -> String {
         let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect MCP server");
         let req = format!(
-            "POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\n\r\n{}",
+            "POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nX-OpenPencil-Token: {token}\r\nContent-Length: {}\r\n\r\n{}",
             body.len(),
             body
         );
@@ -284,8 +286,9 @@ fn live_mcp_http_server_replaces_document_via_rest_document_sync() {
     // `/api/mcp/document` — the same REST shape `document.post.ts` serves.
     let body = r##"{"document":{"version":"1.0.0","children":[{"id":"n9","type":"rectangle","name":"Synced Rect","x":5,"y":6,"width":80,"height":40,"fill":[{"type":"solid","color":"#123456"}]}]},"sourceClientId":"ts-app"}"##;
     let (tx, rx) = mpsc::channel();
+    let token = server.token().to_owned();
     std::thread::spawn(move || {
-        let _ = tx.send(post(port, "/api/mcp/document", body));
+        let _ = tx.send(post(port, &token, "/api/mcp/document", body));
     });
 
     let started = Instant::now();

@@ -33,7 +33,9 @@ fn ticket_deadlines_are_monotonic_and_use_eighty_percent_for_renewal() {
         b"ticket",
         &[7; 32],
         "https://issuer.example",
-        "00000000-0000-0000-0000-000000000001",
+        PeerIdentityPolicy::SameAccount {
+            subject: "00000000-0000-0000-0000-000000000001",
+        },
         1_000,
     )
     .unwrap();
@@ -135,7 +137,7 @@ mod heartbeat_idle {
                     &hello,
                     &verifier(owner_public, guest_public),
                     ISSUER,
-                    SUBJECT,
+                    PeerIdentityPolicy::SameAccount { subject: SUBJECT },
                     NOW_UNIX_MS,
                     Instant::now(),
                 )
@@ -168,7 +170,7 @@ mod heartbeat_idle {
                 &hello,
                 &verifier(owner_public, guest_public),
                 ISSUER,
-                SUBJECT,
+                PeerIdentityPolicy::SameAccount { subject: SUBJECT },
                 NOW_UNIX_MS,
                 Instant::now(),
             )

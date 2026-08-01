@@ -301,14 +301,11 @@ than "routing metadata" in the narrow sense, and is stated here explicitly:
 - **The full admission ticket**, presented as the WSS `Authorization: Bearer`
   credential and verified by the relay. Its claims carry the global account
   subject, the device id, and — when present — the display name and avatar
-  URL. Scope this precisely: peer admission today requires the remote ticket's
-  subject to equal the *local* account (`expected_subject` is the local
-  account on both sides, and a mismatch is rejected as `WrongSubject`), so the
-  product currently pairs only devices of the same account. What a relay
-  operator reconstructs is therefore **which devices of a given account sync,
-  from where, and when** — not a cross-account collaboration graph. That graph
-  becomes possible the moment cross-account collaboration ships, which is why
-  the credential is worth minimizing before then.
+  URL. Cross-account collaboration is supported, so a relay operator
+  reconstructs **which accounts collaborate with each other, from which
+  devices, and when** — a social graph, not merely one account's device fleet.
+  This is the strongest argument for minimizing the credential, and it is why
+  the minimization is tracked as open work below rather than as a nicety.
 
   Note also that the relay reads exactly one field out of this ticket, the
   expiry it clamps the session deadline to. The subject, device id, `jti`,
@@ -465,6 +462,39 @@ bootstrap mirror location, DNS answer, and edge ingress do not authorize a
 different region. If an overseas client cannot reach the CN entry for a CN-home
 invite, it closes or reports relay unavailable; it does not mix Global
 endpoint/key material or silently create a Global-home session.
+
+### Which accounts may pair
+
+Collaboration is cross-account: a peer holding a valid ticket from the trusted
+issuer may pair with a peer of any other account. The account is therefore no
+longer the authorization, and what replaces it is deliberately **asymmetric**,
+because the two sides do not have the same ability to answer "who is this?".
+
+- **The owner accepting a guest** admits any issued account. Nothing at this
+  layer decides whether the guest joins — a human does, from the approval
+  prompt, which is shown the verified identity, and which the admission state
+  machine makes unskippable (`Active` is reachable only through
+  `OwnerAuthorized`).
+- **A guest joining by invite or relay** admits any issued account, because
+  the invite's signed locator has already pinned the owner's Noise static key
+  and that pin is checked before admission runs. The device is authenticated
+  regardless of the account behind it, which is precisely what makes joining a
+  stranger's session safe.
+- **A guest joining over an unpinned LAN discovery** still requires the same
+  account. A guest has no approval prompt — whatever it accepts, it accepts
+  silently — and on an unpinned LAN join nothing else names the peer: mDNS is
+  spoofable and no key is known in advance. There the subject *is* the
+  authentication, so relaxing it would let anyone on the segment holding any
+  valid ticket pose as the owner, undetected.
+
+Relaxing the account relaxes nothing else: the issuer must still be the pinned
+one, the ticket must be unexpired, and it must be bound to the Noise static key
+actually observed on the connection. Renewal continuity is also unchanged — a
+session's issuer, subject, device id, and static key may not change mid-session.
+
+Residual risk: the unpinned LAN path remains same-account only. Opening it needs
+a way for the guest to confirm who it is joining, which is a user-facing
+decision rather than a protocol change.
 
 ### Unauthorized edits and identity injection
 

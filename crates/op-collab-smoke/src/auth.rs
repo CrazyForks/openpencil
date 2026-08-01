@@ -54,7 +54,9 @@ impl SmokeAuth {
             ticket.expose(),
             key.public_key(),
             TEST_COLLAB_ISSUER,
-            TEST_SUBJECT,
+            PeerIdentityPolicy::SameAccount {
+                subject: TEST_SUBJECT,
+            },
             now_unix_ms,
         )?
         .to_auth_metadata();

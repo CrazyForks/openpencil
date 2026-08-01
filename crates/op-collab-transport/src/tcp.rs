@@ -424,8 +424,8 @@ impl Write for DeadlineTcp<'_> {
 mod tests {
     use super::*;
     use crate::{
-        read_ciphertext_record, AdmissionHello, AdmissionPhase, JoinIntent, TicketVerifier,
-        TransferClass, VerifiedTicketClaims,
+        read_ciphertext_record, AdmissionHello, AdmissionPhase, JoinIntent, PeerIdentityPolicy,
+        TicketVerifier, TransferClass, VerifiedTicketClaims,
     };
     use op_collab::{Bye, ByeReason, CollabMessage, Epoch, FrameEnvelope, Role, SessionId};
     use std::net::TcpListener;
@@ -492,7 +492,7 @@ mod tests {
                     &local,
                     &verifier(owner_public, guest_public),
                     ISSUER,
-                    SUBJECT,
+                    PeerIdentityPolicy::SameAccount { subject: SUBJECT },
                     NOW_UNIX_MS,
                     Instant::now(),
                 )
@@ -523,7 +523,7 @@ mod tests {
                 &local,
                 &verifier(owner_public, guest_public),
                 ISSUER,
-                SUBJECT,
+                PeerIdentityPolicy::SameAccount { subject: SUBJECT },
                 NOW_UNIX_MS,
                 client_now,
             )

@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 use op_collab::{ByeReason, ConnectionKey, Epoch, SessionId};
 use op_collab_transport::{
     accept_secure_tcp_guarded, ConnectionLimiter, DeviceStaticKey, DiscoveryError,
-    DiscoveryPublisher, JoinIntent, PendingHandshakeGuard, ServerPrelude, SharedQueueBudget,
-    StaticKeyStore, TransportConfig,
+    DiscoveryPublisher, JoinIntent, PeerIdentityPolicy, PendingHandshakeGuard, ServerPrelude,
+    SharedQueueBudget, StaticKeyStore, TransportConfig,
 };
 use socket2::{Domain, Protocol, Socket, Type};
 
@@ -433,7 +433,7 @@ fn run_peer_inner(args: PeerArgs) -> Option<CollabRuntimeFailure> {
         Ok(connection) => connection,
         Err(error) => return Some(runtime_failure(&error)),
     };
-    let (hello, expected_issuer, expected_subject) = {
+    let (hello, expected_issuer) = {
         let local = match local.read() {
             Ok(local) => local,
             Err(_) => return Some(CollabRuntimeFailure::AuthenticationUnavailable),
@@ -442,21 +442,22 @@ fn run_peer_inner(args: PeerArgs) -> Option<CollabRuntimeFailure> {
             Ok(hello) => hello,
             Err(error) => return Some(error.failure),
         };
-        (
-            hello,
-            local.expected_issuer().to_owned(),
-            local.expected_subject().to_owned(),
-        )
+        (hello, local.expected_issuer().to_owned())
     };
     let now_unix_ms = match unix_time_ms() {
         Ok(now) => now,
         Err(error) => return Some(error.failure),
     };
+    // Cross-account collaboration: a guest from any account the trusted issuer
+    // vouches for may reach this point. Nothing here decides whether it joins —
+    // the owner does, from the approval prompt below, which is shown the
+    // verified identity and which the admission state machine makes
+    // unskippable (`Active` is reachable only through `OwnerAuthorized`).
     let (remote, identity) = match connection.exchange_admission_responder(
         &hello,
         verifier.as_ref(),
         &expected_issuer,
-        &expected_subject,
+        PeerIdentityPolicy::AnyIssuedAccount,
         now_unix_ms,
         Instant::now(),
     ) {

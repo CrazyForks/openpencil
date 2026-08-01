@@ -6,7 +6,7 @@ use super::ConnectionDriver;
 use crate::queue::QueueItem;
 use crate::{
     verify_initial_ticket, AdmissionError, AdmissionHello, AdmissionIdentity, AdmissionPhase,
-    EncodedFrameTransfer, QueueError, RuntimeError, TicketVerifier,
+    EncodedFrameTransfer, PeerIdentityPolicy, QueueError, RuntimeError, TicketVerifier,
 };
 
 impl ConnectionDriver {
@@ -37,7 +37,7 @@ impl ConnectionDriver {
         hello: &AdmissionHello,
         verifier: &dyn TicketVerifier,
         expected_issuer: &str,
-        expected_subject: &str,
+        identity_policy: PeerIdentityPolicy<'_>,
         now_unix_ms: u64,
         now: Instant,
     ) -> Result<AdmissionIdentity, RuntimeError> {
@@ -51,7 +51,7 @@ impl ConnectionDriver {
             hello.ticket(),
             self.connection.remote_static(),
             expected_issuer,
-            expected_subject,
+            identity_policy,
             now_unix_ms,
         )
         .inspect_err(|_| self.connection.failed = true)?;

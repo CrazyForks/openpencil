@@ -78,7 +78,9 @@ fn initial_ticket_binds_identity_profile_expiry_and_remote_static() {
         b"ticket",
         &static_key,
         "https://issuer.example",
-        "00000000-0000-0000-0000-000000000001",
+        PeerIdentityPolicy::SameAccount {
+            subject: "00000000-0000-0000-0000-000000000001",
+        },
         1_000,
     )
     .unwrap();
@@ -106,7 +108,9 @@ fn initial_ticket_binds_identity_profile_expiry_and_remote_static() {
             b"ticket",
             &[8_u8; 32],
             "https://issuer.example",
-            "00000000-0000-0000-0000-000000000001",
+            PeerIdentityPolicy::SameAccount {
+                subject: "00000000-0000-0000-0000-000000000001"
+            },
             1_000
         ),
         Err(AdmissionError::StaticKeyMismatch)
@@ -117,7 +121,7 @@ fn initial_ticket_binds_identity_profile_expiry_and_remote_static() {
             b"ticket",
             &static_key,
             "https://issuer.example",
-            "other",
+            PeerIdentityPolicy::SameAccount { subject: "other" },
             1_000
         ),
         Err(AdmissionError::WrongSubject)
@@ -160,7 +164,9 @@ fn renewal_requires_same_identity_and_strictly_later_expiry() {
         b"ticket",
         &static_key,
         "https://issuer.example",
-        "00000000-0000-0000-0000-000000000001",
+        PeerIdentityPolicy::SameAccount {
+            subject: "00000000-0000-0000-0000-000000000001",
+        },
         1_000,
     )
     .unwrap();
@@ -202,4 +208,67 @@ fn renewal_requires_same_identity_and_strictly_later_expiry() {
 fn ticket_bounds_are_enforced_before_encoding() {
     assert!(AdmissionHello::new(Vec::new(), JoinIntent::New).is_err());
     assert!(AdmissionHello::new(vec![0; MAX_TICKET_BYTES + 1], JoinIntent::New).is_err());
+}
+
+#[test]
+fn any_issued_account_admits_a_foreign_subject_but_keeps_every_other_check() {
+    let static_key = [7_u8; 32];
+    let verifier = FixtureVerifier {
+        claims: claims_with_profile(static_key, 2_000),
+        fail: false,
+    };
+
+    // Cross-account collaboration: the subject belongs to somebody else and is
+    // admitted. The caller is responsible for the human approval or the pinned
+    // key that decides whether this peer actually joins.
+    let identity = verify_initial_ticket(
+        &verifier,
+        b"ticket",
+        &static_key,
+        "https://issuer.example",
+        PeerIdentityPolicy::AnyIssuedAccount,
+        1_000,
+    )
+    .unwrap();
+    assert_eq!(
+        identity.claims().subject(),
+        "00000000-0000-0000-0000-000000000001"
+    );
+
+    // Relaxing the account must not relax anything else: a foreign issuer, an
+    // expired ticket, and a ticket bound to a different Noise static key are
+    // all still refused.
+    assert!(matches!(
+        verify_initial_ticket(
+            &verifier,
+            b"ticket",
+            &static_key,
+            "https://attacker.example",
+            PeerIdentityPolicy::AnyIssuedAccount,
+            1_000
+        ),
+        Err(AdmissionError::WrongIssuer)
+    ));
+    assert!(matches!(
+        verify_initial_ticket(
+            &verifier,
+            b"ticket",
+            &static_key,
+            "https://issuer.example",
+            PeerIdentityPolicy::AnyIssuedAccount,
+            3_000
+        ),
+        Err(AdmissionError::Expired)
+    ));
+    assert!(matches!(
+        verify_initial_ticket(
+            &verifier,
+            b"ticket",
+            &[8_u8; 32],
+            "https://issuer.example",
+            PeerIdentityPolicy::AnyIssuedAccount,
+            1_000
+        ),
+        Err(AdmissionError::StaticKeyMismatch)
+    ));
 }

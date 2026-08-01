@@ -457,8 +457,8 @@ mod tests {
     };
     use op_collab_transport::{
         accept_secure_tcp, connect_secure_tcp, AdmissionHello, AdmissionPhase, ConnectionDriver,
-        DeviceStaticKey, DriverEvent, InboundTransferPolicy, JoinIntent, ServerPrelude,
-        SharedQueueBudget, TransportConfig, VerifiedTicketClaims,
+        DeviceStaticKey, DriverEvent, InboundTransferPolicy, JoinIntent, PeerIdentityPolicy,
+        ServerPrelude, SharedQueueBudget, TransportConfig, VerifiedTicketClaims,
     };
 
     use super::super::shutdown::{retirement_ready, TerminalDrain};
@@ -528,7 +528,7 @@ mod tests {
                     &local,
                     &initial_verifier(owner_static, guest_static, expires_at_unix_ms),
                     ISSUER,
-                    SUBJECT,
+                    PeerIdentityPolicy::SameAccount { subject: SUBJECT },
                     NOW_UNIX_MS,
                     Instant::now(),
                 )
@@ -552,7 +552,7 @@ mod tests {
                 &local,
                 &initial_verifier(owner_static, guest_static, expires_at_unix_ms),
                 ISSUER,
-                SUBJECT,
+                PeerIdentityPolicy::SameAccount { subject: SUBJECT },
                 NOW_UNIX_MS,
                 Instant::now(),
             )

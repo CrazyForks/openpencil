@@ -21,6 +21,7 @@ use super::super::types::{
 use super::connection::{
     drive_guest, runtime_failure, DriverControl, DriverIdentity, GuestRenewalContext,
 };
+use super::guest_identity::guest_identity_policy;
 use super::EventSink;
 
 pub(super) struct GuestTarget {
@@ -295,12 +296,21 @@ fn run_inner(
         )
     };
     let now_unix_ms = unix_time_ms().map_err(|error| error.failure)?;
+    // The guest has no approval prompt — whatever it accepts here, it accepts
+    // silently — so the account check may only be dropped when the owner's
+    // device key was already pinned out of band and checked above. An invite
+    // carries that pin in its signed locator, which is what makes joining a
+    // stranger's session safe: the device is authenticated regardless of the
+    // account behind it. An unpinned LAN join has no such anchor — mDNS is
+    // spoofable and nothing else names the peer — so there the subject stays
+    // the authentication, and only this account's own devices are accepted.
+    let identity_policy = guest_identity_policy(expected_remote_static.as_ref(), &expected_subject);
     connection
         .exchange_admission_initiator(
             &hello,
             verifier.as_ref(),
             &expected_issuer,
-            &expected_subject,
+            identity_policy,
             now_unix_ms,
             Instant::now(),
         )
@@ -463,7 +473,7 @@ mod tests {
     use super::*;
     use op_collab::{Epoch, SessionId};
     use op_collab_transport::{
-        accept_secure_tcp, write_server_prelude, AdmissionHello, ServerPrelude,
+        accept_secure_tcp, write_server_prelude, AdmissionHello, PeerIdentityPolicy, ServerPrelude,
     };
     use std::io::{ErrorKind, Read};
     use std::net::{IpAddr, Ipv4Addr, TcpListener, TcpStream};
@@ -709,7 +719,7 @@ mod tests {
             &hello,
             &verifier,
             "issuer",
-            "subject",
+            PeerIdentityPolicy::SameAccount { subject: "subject" },
             1,
             Instant::now(),
         );

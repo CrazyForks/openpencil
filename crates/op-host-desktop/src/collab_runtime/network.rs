@@ -3,6 +3,7 @@
 mod connection;
 mod discovery;
 mod guest;
+mod guest_identity;
 mod lifecycle;
 mod owner;
 mod owner_lifecycle;

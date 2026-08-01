@@ -9,7 +9,7 @@ use crate::record::read_ciphertext_record_until;
 use crate::{
     decode_frame_transfer, encrypt_record, verify_initial_ticket, write_ciphertext_record,
     AdmissionError, AdmissionHello, AdmissionIdentity, AdmissionPhase, AdmissionState, ChunkHeader,
-    EncodedFrameTransfer, NoiseSession, Reassembler, RecordError, RuntimeError,
+    EncodedFrameTransfer, NoiseSession, PeerIdentityPolicy, Reassembler, RecordError, RuntimeError,
     SharedReassemblyBudget, TicketVerifier, TokenBucket, TransferChunkIter, TransferClass,
     TransportConfig, CHUNK_HEADER_BYTES, TRANSPORT_HEARTBEAT_PLAINTEXT,
 };
@@ -402,7 +402,7 @@ impl<S: Read + Write> SecureConnection<S> {
         local: &AdmissionHello,
         verifier: &dyn TicketVerifier,
         expected_issuer: &str,
-        expected_subject: &str,
+        identity_policy: PeerIdentityPolicy<'_>,
         now_unix_ms: u64,
         now: Instant,
     ) -> Result<(AdmissionHello, AdmissionIdentity), RuntimeError> {
@@ -413,7 +413,7 @@ impl<S: Read + Write> SecureConnection<S> {
             remote.ticket(),
             self.remote_static(),
             expected_issuer,
-            expected_subject,
+            identity_policy,
             now_unix_ms,
         )
         .inspect_err(|_| {
@@ -429,7 +429,7 @@ impl<S: Read + Write> SecureConnection<S> {
         local: &AdmissionHello,
         verifier: &dyn TicketVerifier,
         expected_issuer: &str,
-        expected_subject: &str,
+        identity_policy: PeerIdentityPolicy<'_>,
         now_unix_ms: u64,
         now: Instant,
     ) -> Result<(AdmissionHello, AdmissionIdentity), RuntimeError> {
@@ -439,7 +439,7 @@ impl<S: Read + Write> SecureConnection<S> {
             remote.ticket(),
             self.remote_static(),
             expected_issuer,
-            expected_subject,
+            identity_policy,
             now_unix_ms,
         )
         .inspect_err(|_| {

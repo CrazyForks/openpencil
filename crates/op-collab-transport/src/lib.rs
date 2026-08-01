@@ -33,7 +33,8 @@ mod windows_key_store;
 
 pub use admission::{
     verify_initial_ticket, verify_renewal_ticket, AdmissionHello, AdmissionIdentity,
-    AdmissionPhase, AdmissionState, JoinIntent, ResumeHint, TicketVerifier, VerifiedTicketClaims,
+    AdmissionPhase, AdmissionState, JoinIntent, PeerIdentityPolicy, ResumeHint, TicketVerifier,
+    VerifiedTicketClaims,
 };
 pub use chunk::{
     ChunkHeader, CompletedTransfer, Reassembler, TransferChunk, TransferChunkIter, TransferClass,

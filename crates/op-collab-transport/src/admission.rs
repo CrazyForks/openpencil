@@ -217,12 +217,45 @@ impl fmt::Debug for AdmissionIdentity {
     }
 }
 
+/// Which accounts a peer's admission ticket may belong to.
+///
+/// Independent of this, every ticket is verified against the trusted issuer,
+/// checked for expiry, and bound to the Noise static key actually observed on
+/// the connection. This decides only *whose* ticket is acceptable on top of
+/// that.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PeerIdentityPolicy<'a> {
+    /// Only this account's own devices; the subject must match exactly.
+    ///
+    /// This is the multi-device sync case, and it is the only thing
+    /// authenticating the peer when nothing else does — notably an
+    /// unpinned LAN join, where mDNS is spoofable and no key is known in
+    /// advance.
+    SameAccount { subject: &'a str },
+    /// Any account the trusted issuer vouches for — cross-account
+    /// collaboration.
+    ///
+    /// This removes the last automatic answer to *who* the peer is, so a
+    /// caller may select it only when something else supplies that answer:
+    ///
+    /// * the responder (owner) gates the connection on an explicit human
+    ///   approval that is shown the verified identity, and the admission
+    ///   state machine makes that gate unskippable — `Active` is reachable
+    ///   only through `OwnerAuthorized`; or
+    /// * the initiator (guest) has pinned the peer's Noise static key
+    ///   out of band, from an invite's signed locator, so the account is
+    ///   beside the point: the device itself is already authenticated.
+    ///
+    /// Selecting it without one of those is a hole, not a relaxation.
+    AnyIssuedAccount,
+}
+
 pub fn verify_initial_ticket(
     verifier: &dyn TicketVerifier,
     opaque_ticket: &[u8],
     remote_static: &[u8; 32],
     expected_issuer: &str,
-    expected_subject: &str,
+    identity_policy: PeerIdentityPolicy<'_>,
     now_unix_ms: u64,
 ) -> Result<AdmissionIdentity, AdmissionError> {
     let claims = verifier
@@ -231,8 +264,10 @@ pub fn verify_initial_ticket(
     if claims.issuer != expected_issuer {
         return Err(AdmissionError::WrongIssuer);
     }
-    if claims.subject != expected_subject {
-        return Err(AdmissionError::WrongSubject);
+    if let PeerIdentityPolicy::SameAccount { subject } = identity_policy {
+        if claims.subject != subject {
+            return Err(AdmissionError::WrongSubject);
+        }
     }
     if claims.expires_at_unix_ms <= now_unix_ms {
         return Err(AdmissionError::Expired);

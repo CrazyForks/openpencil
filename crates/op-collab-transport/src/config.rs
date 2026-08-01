@@ -57,6 +57,13 @@ pub const DEFAULT_GLOBAL_QUEUED_BYTES: usize = 256 * 1024 * 1024;
 /// transport-owned inbound heap to half the outbound aggregate
 /// (`DEFAULT_GLOBAL_QUEUED_BYTES`).
 pub const DEFAULT_GLOBAL_INBOUND_REASSEMBLY_BYTES: usize = 128 * 1024 * 1024;
+// The aggregate has to admit one full owner snapshot or a legitimate first
+// sync would be refused by its own budget, and it must stay under the outbound
+// aggregate so inbound buffering cannot become the larger of the two. Both are
+// relations between constants, so they belong at compile time — a runtime test
+// would only assert what the compiler already knows.
+const _: () = assert!(DEFAULT_GLOBAL_INBOUND_REASSEMBLY_BYTES >= MAX_SNAPSHOT_TRANSFER_BYTES);
+const _: () = assert!(DEFAULT_GLOBAL_INBOUND_REASSEMBLY_BYTES <= DEFAULT_GLOBAL_QUEUED_BYTES);
 pub const MAX_CONFIGURED_CONNECTIONS: usize = 256;
 pub const MAX_CONFIGURED_QUEUE_ITEMS: usize = 1_024;
 pub const MAX_CONFIGURED_QUEUE_BYTES: usize = 512 * 1024 * 1024;
@@ -329,12 +336,6 @@ mod tests {
         );
         assert!(config.timeouts.handshake_first_message < config.timeouts.handshake);
         assert!(connections.max_pending_handshakes <= MAX_CONFIGURED_CONNECTIONS);
-    }
-
-    #[test]
-    fn inbound_reassembly_aggregate_admits_a_full_snapshot() {
-        assert!(DEFAULT_GLOBAL_INBOUND_REASSEMBLY_BYTES >= MAX_SNAPSHOT_TRANSFER_BYTES);
-        assert!(DEFAULT_GLOBAL_INBOUND_REASSEMBLY_BYTES <= DEFAULT_GLOBAL_QUEUED_BYTES);
     }
 
     #[test]

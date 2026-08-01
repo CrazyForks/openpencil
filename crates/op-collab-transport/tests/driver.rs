@@ -8,9 +8,9 @@ use op_collab::{
 };
 use op_collab_transport::{
     accept_secure_tcp, connect_secure_tcp, AdmissionHello, ConnectionDriver, DeviceStaticKey,
-    DriverEvent, EncodedFrameTransfer, InboundTransferPolicy, JoinIntent, RuntimeError,
-    SecureConnection, ServerPrelude, SharedQueueBudget, TicketVerifier, TransportConfig,
-    VerifiedTicketClaims,
+    DriverEvent, EncodedFrameTransfer, InboundTransferPolicy, JoinIntent, PeerIdentityPolicy,
+    RuntimeError, SecureConnection, ServerPrelude, SharedQueueBudget, TicketVerifier,
+    TransportConfig, VerifiedTicketClaims,
 };
 
 const ISSUER: &str = "https://issuer.example";
@@ -83,7 +83,7 @@ fn admitted_pair_with_expiry(
                 &local,
                 &verifier_with_expiry(owner_public, guest_public, expires_at_unix_ms),
                 ISSUER,
-                SUBJECT,
+                PeerIdentityPolicy::SameAccount { subject: SUBJECT },
                 NOW_UNIX_MS,
                 Instant::now(),
             )
@@ -106,7 +106,7 @@ fn admitted_pair_with_expiry(
             &local,
             &verifier_with_expiry(owner_public, guest_public, expires_at_unix_ms),
             ISSUER,
-            SUBJECT,
+            PeerIdentityPolicy::SameAccount { subject: SUBJECT },
             NOW_UNIX_MS,
             Instant::now(),
         )
@@ -240,7 +240,7 @@ fn nonblocking_driver_completes_mutual_admission_without_blocking_reads() {
             &received_guest,
             &verifier(owner_public, guest_public),
             ISSUER,
-            SUBJECT,
+            PeerIdentityPolicy::SameAccount { subject: SUBJECT },
             NOW_UNIX_MS,
             now,
         )
@@ -257,7 +257,7 @@ fn nonblocking_driver_completes_mutual_admission_without_blocking_reads() {
             &received_owner,
             &verifier(owner_public, guest_public),
             ISSUER,
-            SUBJECT,
+            PeerIdentityPolicy::SameAccount { subject: SUBJECT },
             NOW_UNIX_MS,
             now,
         )
