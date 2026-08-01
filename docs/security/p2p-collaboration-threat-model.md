@@ -70,7 +70,7 @@ traffic reaches OpenPencil.
 | Short-lived collaboration ticket | Treated as a bearer credential, redacted and zeroized where owned |
 | Noise X25519 static private key | Local-only, zeroized in memory, stored with platform/file protections |
 | Account subject and device id | Derived only from verified claims; omitted from mDNS and routine logs |
-| Collaboration display name and avatar URL | Accepted only as bounded signed claims; disclosed only to admitted session participants |
+| Collaboration display name and avatar URL | Accepted only as bounded signed claims; disclosed to admitted session participants and, on the relay path only, to the relay operator through the bearer ticket (see "Relay operator visibility") |
 | Owner role and commit sequence | Owner-authoritative and guarded against guest self-assertion or stale writes |
 | Resource availability | Bounded before allocation, reassembly, parsing, or broadcast |
 
@@ -286,6 +286,77 @@ precondition, not peer authentication.
 An attacker can advertise many endpoints or make connection attempts. Cache,
 pending-handshake, per-IP, and active-connection limits reduce impact but
 cannot prevent network-link exhaustion.
+
+### Relay operator visibility
+
+The relay never sees document content. The tunnel payload is a byte-for-byte
+bridge of the same prelude, Noise `XX_25519_ChaChaPoly_BLAKE2s` handshake, and
+encrypted records the LAN path uses, and post-pair frames are forwarded as
+opaque binary without being parsed. Admission is re-established inside the
+Noise channel, so peer admission never depends on the relay's view.
+
+What the relay does see, in plaintext after its own TLS terminator, is more
+than "routing metadata" in the narrow sense, and is stated here explicitly:
+
+- **The full admission ticket**, presented as the WSS `Authorization: Bearer`
+  credential and verified by the relay. Its claims carry the global account
+  subject, the device id, and — when present — the display name and avatar
+  URL. A relay operator can therefore reconstruct which accounts collaborate
+  with each other, from which devices, and when.
+- **The client hello**: route id, role, caller device X25519 public key,
+  possession proof, and the embedded signed locator (owner Noise static key,
+  region, validity window, discovery id).
+- **Traffic shape**: pairing times, message counts, and volume.
+- **The cleartext server prelude**, which necessarily precedes the handshake
+  because it is the Noise prologue. It carries `session_id` and `epoch`, which
+  are stable correlation handles for the lifetime of a session — unlike the
+  discovery id, which rotates every five minutes.
+
+Residual risk: this is a disclosure to the relay operator, not to the network,
+and it is inherent to operating a relay that authenticates before forwarding.
+It is accepted for the first-party relay. Two mitigations are open work: moving
+to a claim-minimized relay credential that proves route authorization without
+carrying account identity, and replacing the cleartext `session_id` in the
+prologue with a binding commitment. Until then, the deployment requirement is
+that relay and locator operators must not persist bearer headers, hello bytes,
+or client addresses beyond what an incident needs, and must not log them at
+all: no relay or locator code path interpolates ticket, key, or identity
+material into a log statement, and both binaries clamp their log filter to
+their own crate so dependency traces cannot be turned on to dump wire data.
+
+### Invite disclosure and re-sharing
+
+A relay invite is a bearer capability. Anyone holding it can reach the pairing
+step for that route, so it is treated as a secret: it is never placed in a URL
+path or query, its pairing window is capped at one hour, and it is bound to the
+signed locator's region and validity window. It does **not** by itself grant
+admission — the owner must still approve each guest, and the guest must still
+present a valid ticket bound to its own device key inside the Noise channel.
+
+Residual risk: a leaked or forwarded invite lets an unintended party consume
+pairing capacity and reach the owner's approval prompt, which is a social-
+engineering surface (an approval prompt for a plausible-looking name) rather
+than a cryptographic one. Deliberate re-sharing by an authorized participant is
+out of scope, consistent with the rest of this model.
+
+### Local process boundary during a session
+
+The desktop exposes an HTTP JSON-RPC MCP endpoint on `127.0.0.1` so external
+agent CLIs can drive the editor. During a collaboration session this endpoint
+reads and writes the same document that the admission system guards, but it is
+a *local* boundary: its per-instance token authenticates identity probes and
+shutdown, while document tool calls are available to any process running as the
+same user, and the endpoint does not check `Origin`/`Host`.
+
+Residual risk: any local process — or, through DNS rebinding, a web page open
+in a browser on the same machine — can read or mutate the shared document
+without passing session admission. A `CollabGatePolicy` can reject MCP
+mutations mid-session, but reads and the boundary itself remain outside the
+collaboration trust model. This is accepted for a single-user desktop where a
+hostile local process already has the document on disk; it is called out here
+because the collaboration feature widens the blast radius from "this user's
+file" to "every participant's live document". Origin/Host validation and
+authenticating document tool calls are open work.
 
 ### Forged, replayed, wrong-account, or downgraded tickets
 

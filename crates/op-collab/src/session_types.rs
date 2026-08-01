@@ -351,6 +351,10 @@ pub enum SessionError {
     RenewalDidNotExtend,
     #[error("peer does not exist in this owner session")]
     UnknownPeer,
+    #[error("peer is still connected and cannot be released")]
+    PeerStillConnected,
+    #[error("the owner peer cannot be released from its own session")]
+    CannotReleaseOwner,
 }
 
 impl SessionError {

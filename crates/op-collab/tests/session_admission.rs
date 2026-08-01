@@ -171,3 +171,59 @@ fn renewal_requires_the_same_auth_binding_and_a_later_expiry() {
         Err(SessionError::RenewalBindingMismatch)
     ));
 }
+
+#[test]
+fn releasing_a_disconnected_peer_returns_its_participant_slot() {
+    let (mut core, document) = setup_peer(Role::Editor);
+    core.disconnect(connection(2)).unwrap();
+
+    // The peer is retained for same-epoch resume, so it still occupies a slot.
+    assert!(core.peer_progress(&PeerId::from(EDITOR_PEER)).is_some());
+    core.release_disconnected_peer(&PeerId::from(EDITOR_PEER))
+        .unwrap();
+    assert!(core.peer_progress(&PeerId::from(EDITOR_PEER)).is_none());
+
+    // The freed slot admits a different guest, and the released peer can no
+    // longer resume — it would have to join afresh.
+    assert!(matches!(
+        core.resume_peer(
+            connection(4),
+            grant(
+                Role::Editor,
+                EDITOR_PARTICIPANT,
+                EDITOR_PEER,
+                EDITOR_NAMESPACE
+            ),
+        ),
+        Err(SessionError::UnknownPeer)
+    ));
+    core.activate_peer(
+        connection(3),
+        grant(
+            Role::Viewer,
+            VIEWER_PARTICIPANT,
+            VIEWER_PEER,
+            VIEWER_NAMESPACE,
+        ),
+        &document,
+    )
+    .unwrap();
+}
+
+#[test]
+fn releasing_refuses_a_connected_peer_and_the_owner() {
+    let (mut core, _document) = setup_peer(Role::Editor);
+
+    assert!(matches!(
+        core.release_disconnected_peer(&PeerId::from(EDITOR_PEER)),
+        Err(SessionError::PeerStillConnected)
+    ));
+    assert!(matches!(
+        core.release_disconnected_peer(&PeerId::from(OWNER_PEER)),
+        Err(SessionError::CannotReleaseOwner)
+    ));
+    assert!(matches!(
+        core.release_disconnected_peer(&PeerId::from("peer-absent")),
+        Err(SessionError::UnknownPeer)
+    ));
+}

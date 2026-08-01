@@ -722,7 +722,7 @@ fn unreadable_cache_cannot_disarm_the_rollback_floor() {
 }
 
 #[test]
-fn cache_persist_failure_is_surfaced_instead_of_swallowed() {
+fn cache_persist_failure_degrades_without_failing_the_bootstrap() {
     let signing = SigningKey::from_bytes(&[7; 32]);
     let body = signed_envelope(&signing, "test_root_1", &valid_payload());
     let cache_root = std::env::temp_dir().join(format!(
@@ -762,9 +762,17 @@ fn cache_persist_failure_is_surfaced_instead_of_swallowed() {
         development_http: true,
         cache_path: cache_root.join(BOOTSTRAP_CACHE_FILE),
     };
+    // An unwritable configuration directory must not mean "cannot
+    // collaborate": the document this run fetched was fully verified, so it is
+    // returned. What is lost is the persisted generation floor for the next
+    // start, and that loss has to stay visible rather than passing silently.
+    let loaded = provider
+        .load_inner(NOW)
+        .expect("a verified document is still usable when its cache cannot be written");
+    assert_eq!(loaded.generation, valid_payload().generation);
     assert!(
-        matches!(provider.load_inner(NOW), Err(BootstrapError::CachePersist)),
-        "an unwritable cache must not silently disarm the anti-rollback floor"
+        !loaded.rollback_floor_armed,
+        "a failed cache write must report the anti-rollback floor as unarmed"
     );
     server.join().unwrap();
     let _ = std::fs::remove_file(cache_root);

@@ -75,6 +75,17 @@ pub(super) struct RelayBootstrap {
     generation: u64,
     signed_payload: Box<[u8]>,
     regions: Vec<RelayBootstrapRegion>,
+    /// Whether this run persisted the document that arms the anti-rollback
+    /// generation floor for the next start.
+    ///
+    /// A failed cache write degrades rather than failing the bootstrap: the
+    /// document was still fully verified, and an unwritable configuration
+    /// directory must not mean "cannot collaborate". What it costs is the
+    /// floor, and the threat model already accepts a missing floor — deleting
+    /// the cache has the same effect and nothing can prevent that. What it
+    /// must not do is pass silently, so the state travels with the document
+    /// instead of being dropped.
+    rollback_floor_armed: bool,
 }
 
 impl RelayBootstrap {
@@ -163,10 +174,13 @@ impl EnvironmentRelayBootstrapProvider {
             .get_or_init(|| Mutex::new(()))
             .lock()
             .map_err(|_| BootstrapError::Cache)?;
-        // Only an actually absent cache is an empty floor. A corrupt,
-        // unreadable, or non-regular cache must stop bootstrap resolution;
-        // otherwise fetching without it could silently accept a generation
-        // below the floor established by an earlier run.
+        // An absent cache is an empty floor and reads as `Ok(None)`, so the
+        // unwritable-configuration-directory case never reaches this error
+        // path — only a cache that exists and is corrupt, unreadable, or not a
+        // regular file does. That is an anomaly rather than a first run, and
+        // continuing past it would let the anomaly itself disarm the
+        // generation floor, so resolution stops here. The write side degrades
+        // instead; see the persist step below.
         let cached = read_cache(&self.cache_path, self.endpoint.as_str())?;
         let cached_verified = cached.as_ref().and_then(|cached| {
             verify_bootstrap(
@@ -230,31 +244,34 @@ impl EnvironmentRelayBootstrapProvider {
         }
         // The persisted document is what arms the anti-rollback generation
         // floor on the next start: `cached_signed` above is read back from
-        // exactly this file. Discarding a write failure would let that
-        // security property disappear on an unwritable configuration
-        // directory with no signal at all, so the failure is propagated.
+        // exactly this file. A write failure therefore costs the floor, but it
+        // does not make the document this run just verified any less valid, so
+        // it degrades rather than failing the bootstrap — an unwritable
+        // configuration directory must not mean "cannot collaborate".
         //
-        // It is propagated rather than logged because this module — and the
-        // whole desktop `collab_runtime` — deliberately contains no
-        // `tracing` / `println!` call: collaboration identities, endpoints,
-        // and ticket material flow through here, and the absence of a logging
-        // sink is the boundary that keeps them out of log files. The typed
-        // `BootstrapError::CachePersist` carries the reason without carrying
-        // any secret, identity, or path material, and the caller collapses it
-        // into `CollabRuntimeFailure::RelayUnavailable`.
+        // The failure is recorded rather than logged because this module — and
+        // the whole desktop `collab_runtime` — deliberately contains no
+        // `tracing` / `println!` call: collaboration identities, endpoints, and
+        // ticket material flow through here, and the absence of a logging sink
+        // is the boundary that keeps them out of log files. Callers read
+        // read `RelayBootstrap::rollback_floor_armed` instead.
         //
         // Verification is untouched: this runs only after `verify_bootstrap`
         // and `reject_rollback` have already accepted the document, so the
         // verifier stays exactly as fail-closed as before.
-        let body = String::from_utf8(body).map_err(|_| BootstrapError::CachePersist)?;
-        write_cache(
-            &self.cache_path,
-            &BootstrapCache {
-                endpoint: self.endpoint.as_str().to_owned(),
-                etag,
-                body,
-            },
-        )?;
+        let mut verified = verified;
+        verified.rollback_floor_armed = match String::from_utf8(body) {
+            Ok(body) => write_cache(
+                &self.cache_path,
+                &BootstrapCache {
+                    endpoint: self.endpoint.as_str().to_owned(),
+                    etag,
+                    body,
+                },
+            )
+            .is_ok(),
+            Err(_) => false,
+        };
         Ok(Arc::new(verified))
     }
 
@@ -361,6 +378,9 @@ fn verify_bootstrap(
         generation: payload.generation,
         signed_payload: payload_bytes.into_boxed_slice(),
         regions,
+        // Verification says nothing about persistence; `load_inner` lowers this
+        // when its own cache write fails.
+        rollback_floor_armed: true,
     })
 }
 

@@ -614,6 +614,12 @@ async fn online_challenge_timeout_keeps_its_auth_concurrency_permit() {
     let mut config = test_config();
     config.handshake_timeout = Duration::from_millis(200);
     config.max_auth_in_flight = 1;
+    // Renewals are budgeted separately from initial authentication, so that an
+    // unauthenticated flood cannot starve live tunnels into a policy close.
+    // The permit hygiene this test covers is therefore a property of the
+    // renewal budget: saturate that one to make a second online challenge
+    // contend.
+    config.max_reauth_in_flight = 1;
     config.waiting_timeout = Duration::from_secs(5);
     config.idle_timeout = Duration::from_secs(10);
     config.tunnel_lifetime = Duration::from_secs(10);

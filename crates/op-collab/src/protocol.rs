@@ -402,8 +402,35 @@ pub struct Applied {
 ///
 /// The collaboration core only transports it. Parsing and verification stay
 /// in the host authentication layer, and `Debug` never reveals its contents.
-#[derive(PartialEq, Eq)]
 pub struct OpaqueTicket(Zeroizing<String>);
+
+/// Compares two tickets without leaking where they first differ.
+///
+/// Nothing in this crate compares a ticket against a stored secret today —
+/// verification lives in the host authentication layer, which already uses
+/// constant-time primitives. The equality impl exists because `RenewTicket`
+/// and `CollabMessage` derive `PartialEq`, and a derived one would inherit
+/// `String`'s early-exit comparison, turning any future `==` on attacker-
+/// supplied input into a timing oracle. This is written by hand rather than
+/// with `subtle` to keep this wasm32-clean crate's dependency set unchanged;
+/// the length check is deliberate, as ticket length is bounded and already
+/// observable on the wire.
+impl PartialEq for OpaqueTicket {
+    fn eq(&self, other: &Self) -> bool {
+        let ours = self.0.as_bytes();
+        let theirs = other.0.as_bytes();
+        if ours.len() != theirs.len() {
+            return false;
+        }
+        let mut difference = 0_u8;
+        for (ours, theirs) in ours.iter().zip(theirs.iter()) {
+            difference |= ours ^ theirs;
+        }
+        difference == 0
+    }
+}
+
+impl Eq for OpaqueTicket {}
 
 impl OpaqueTicket {
     pub fn new(value: String) -> Result<Self, OpaqueTicketError> {

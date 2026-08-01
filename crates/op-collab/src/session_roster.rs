@@ -235,6 +235,39 @@ impl OwnerSessionCore {
         Ok(vec![OwnerEffect::Broadcast { message }])
     }
 
+    /// Releases a disconnected peer's roster slot back to the session.
+    ///
+    /// A departed peer is deliberately retained so it can resume inside the
+    /// same epoch, keeping its counters, id namespace, and result windows
+    /// intact. That retention is unbounded, though: `activate_peer` counts
+    /// retained peers against `max_participants`, so a session that churns
+    /// through guests eventually admits nobody until the epoch ends, and each
+    /// retained peer holds its result window until then. This is the owner's
+    /// escape hatch for a peer it knows will not come back.
+    ///
+    /// Releasing does not weaken id-space safety. A namespace can only be
+    /// handed out again if the document carries none of its ids, which
+    /// `activate_peer` checks against the document itself rather than against
+    /// the roster, so a released peer's committed ids still block reuse. The
+    /// peer is not told anything: `disconnect` already broadcast its
+    /// `ParticipantLeft`, and a released peer that reconnects simply joins
+    /// afresh instead of resuming.
+    pub fn release_disconnected_peer(&mut self, peer_id: &PeerId) -> Result<(), SessionError> {
+        self.ensure_running()?;
+        if *peer_id == self.owner_peer_id {
+            return Err(SessionError::CannotReleaseOwner);
+        }
+        let peer = self
+            .peers
+            .get(peer_id.as_ref())
+            .ok_or(SessionError::UnknownPeer)?;
+        if peer.connection.is_some() {
+            return Err(SessionError::PeerStillConnected);
+        }
+        self.peers.remove(peer_id.as_ref());
+        Ok(())
+    }
+
     pub(crate) fn welcome_for(&self, peer_id: &PeerId) -> Result<Welcome, SessionError> {
         let peer = self
             .peers
