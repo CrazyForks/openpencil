@@ -10,7 +10,7 @@ use op_collab::{
     PeerNamespace, Role, Submit,
 };
 use op_collab_transport::{
-    accept_secure_tcp, m1_wire_limits, AdmissionHello, ConnectionLimiter, DeviceStaticKey,
+    accept_secure_tcp_guarded, m1_wire_limits, AdmissionHello, ConnectionLimiter, DeviceStaticKey,
     EncodedFrameTransfer, JoinIntent, ServerPrelude, TransportConfig,
 };
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -78,7 +78,7 @@ fn serve(
         fixtures::session_id(),
         fixtures::EPOCH,
     )?;
-    let mut connection = accept_secure_tcp(stream, &owner_key, &prelude, config)?;
+    let mut connection = accept_secure_tcp_guarded(stream, &owner_key, &prelude, config, &pending)?;
     let local_hello = AdmissionHello::new(auth.ticket().to_vec(), JoinIntent::New)?;
     let (_, guest_identity) = connection.exchange_admission_responder(
         &local_hello,

@@ -17,12 +17,14 @@ mod diff_structure;
 mod diff_types;
 mod error;
 mod finite;
+mod frame_direction;
 mod guest;
 mod guest_pending;
 mod guest_sync;
 mod guest_types;
 mod hash;
 mod id_high_water;
+mod profile_validation;
 mod protocol;
 mod serde_context;
 mod session;
@@ -51,6 +53,10 @@ pub use diff_types::{
 pub use error::{
     CanonicalHashError, CanonicalHashParseError, CollabApplyError, OpaqueTicketError,
     ProtocolError, SnapshotError,
+};
+pub use frame_direction::{
+    guest_to_owner_envelope_limit, message_direction, FrameDirection, InboundFrameDirection,
+    MAX_GUEST_TO_OWNER_ENVELOPE_BYTES,
 };
 pub use guest::GuestSessionCore;
 pub use guest_types::{

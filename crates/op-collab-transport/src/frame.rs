@@ -4,7 +4,7 @@ use std::sync::Arc;
 use op_collab::{
     decode_renew_ticket_frame_from_json_slice, encode_commit_frame_to_json_vec,
     encode_renew_ticket_frame_to_zeroizing_json, CollabMessage, Commit, Epoch, FrameEnvelope,
-    OpaqueTicket, SensitiveFrameJson, SessionId, WireLimits,
+    InboundFrameDirection, OpaqueTicket, SensitiveFrameJson, SessionId, WireLimits,
 };
 
 use crate::queue::QueueItem;
@@ -114,9 +114,13 @@ impl EncodedFrameTransfer {
     }
 
     /// Decodes this validated transfer under the same wire limits.
-    pub fn decode(&self, limits: WireLimits) -> Result<FrameEnvelope, FrameTransportError> {
+    pub fn decode(
+        &self,
+        limits: WireLimits,
+        inbound_direction: InboundFrameDirection,
+    ) -> Result<FrameEnvelope, FrameTransportError> {
         self.validate_for(limits)?;
-        decode_frame_transfer(self.class, self.bytes(), limits)
+        decode_frame_transfer(self.class, self.bytes(), limits, inbound_direction)
     }
 
     pub(crate) fn validate_for(
@@ -196,12 +200,17 @@ pub fn decode_frame_transfer(
     declared_class: TransferClass,
     encoded: &[u8],
     limits: WireLimits,
+    inbound_direction: InboundFrameDirection,
 ) -> Result<FrameEnvelope, FrameTransportError> {
     enforce_class_limit(declared_class, encoded.len())?;
     let frame = if declared_class == TransferClass::Ticket {
         decode_renew_ticket_frame_from_json_slice(encoded, limits)?
     } else {
-        FrameEnvelope::from_json_slice_with_limits(encoded, limits)?
+        FrameEnvelope::from_json_slice_with_limits_for_direction(
+            encoded,
+            limits,
+            inbound_direction,
+        )?
     };
     let actual = frame_transfer_class(&frame);
     if actual != declared_class {
@@ -251,10 +260,15 @@ mod tests {
         let (class, bytes) = encode_frame_transfer(&control, m1_wire_limits()).unwrap();
         assert_eq!(class, TransferClass::Control);
         assert_eq!(
-            decode_frame_transfer(class, &bytes, m1_wire_limits())
-                .unwrap()
-                .body()
-                .kind(),
+            decode_frame_transfer(
+                class,
+                &bytes,
+                m1_wire_limits(),
+                InboundFrameDirection::GuestToOwner,
+            )
+            .unwrap()
+            .body()
+            .kind(),
             "bye"
         );
 
@@ -276,7 +290,12 @@ mod tests {
         }));
         let bytes = control.to_json_vec_with_limits(m1_wire_limits()).unwrap();
         assert!(matches!(
-            decode_frame_transfer(TransferClass::Txn, &bytes, m1_wire_limits()),
+            decode_frame_transfer(
+                TransferClass::Txn,
+                &bytes,
+                m1_wire_limits(),
+                InboundFrameDirection::GuestToOwner,
+            ),
             Err(FrameTransportError::ClassMismatch { .. })
         ));
     }
@@ -298,7 +317,12 @@ mod tests {
             TransferClass::Snapshot,
         ] {
             assert!(matches!(
-                decode_frame_transfer(declared_class, malformed_ticket_payload, m1_wire_limits()),
+                decode_frame_transfer(
+                    declared_class,
+                    malformed_ticket_payload,
+                    m1_wire_limits(),
+                    InboundFrameDirection::GuestToOwner,
+                ),
                 Err(FrameTransportError::Protocol(
                     op_collab::ProtocolError::SensitiveCredentialRequiresDedicatedCodec
                 ))
@@ -354,7 +378,9 @@ mod tests {
         assert!(debug.contains(&format!("encoded_len: {}", encoded.encoded_len())));
         assert!(!debug.contains(SECRET));
         assert!(!debug.contains(&format!("{:?}", SECRET.as_bytes())));
-        let decoded = encoded.decode(m1_wire_limits()).unwrap();
+        let decoded = encoded
+            .decode(m1_wire_limits(), InboundFrameDirection::GuestToOwner)
+            .unwrap();
         let CollabMessage::RenewTicket(decoded) = decoded.into_body() else {
             panic!("dedicated ticket codec must retain the message kind");
         };

@@ -597,6 +597,87 @@ fn authentication_concurrency_must_be_non_zero() {
 }
 
 #[test]
+fn reauthentication_concurrency_must_be_non_zero() {
+    let mut config = test_config();
+    config.max_reauth_in_flight = 0;
+    assert!(matches!(
+        config.validate(),
+        Err(crate::ConfigError::Zero("max_reauth_in_flight"))
+    ));
+}
+
+#[test]
+fn source_budget_must_not_exceed_the_global_pending_ceiling() {
+    let mut config = test_config();
+    config.max_pending = 4;
+    config.max_pending_per_source = 5;
+    assert!(matches!(
+        config.validate(),
+        Err(crate::ConfigError::SourceBudgetExceedsGlobal)
+    ));
+}
+
+#[tokio::test]
+async fn one_source_cannot_hold_more_than_its_share_of_pending_slots() {
+    let mut config = test_config();
+    config.waiting_timeout = Duration::from_secs(5);
+    config.max_pending_per_source = 1;
+    let server = TestServer::start(config).await;
+
+    // An un-paired connection holds its admission slot for the whole wait, so
+    // the second connection from the same source must be refused outright.
+    let waiting = connect_ready(&server, &make_valid_hello(RelayRole::Owner, 41)).await;
+    assert!(connect(server.address, "/v1/tunnel").await.is_err());
+
+    // Releasing the first connection returns the slot to that source.
+    drop(waiting);
+    let mut admitted = None;
+    for _ in 0..50 {
+        if let Ok(socket) = connect(server.address, "/v1/tunnel").await {
+            admitted = Some(socket);
+            break;
+        }
+        time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        admitted.is_some(),
+        "a released source slot admits the next connection"
+    );
+    drop(admitted);
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn pairing_releases_the_source_budget() {
+    let mut config = test_config();
+    config.waiting_timeout = Duration::from_secs(5);
+    config.max_pending_per_source = 2;
+    let server = TestServer::start(config).await;
+
+    let owner_hello = make_valid_hello(RelayRole::Owner, 42);
+    let guest_hello = make_valid_hello(RelayRole::Guest, 42);
+    let mut owner = connect_ready(&server, &owner_hello).await;
+    let mut guest = connect_ready(&server, &guest_hello).await;
+    assert_eq!(next_status(&mut owner).await, RelayServerStatus::Paired);
+    assert_eq!(next_status(&mut guest).await, RelayServerStatus::Paired);
+
+    // Both peers are paired, so neither still charges the pre-pairing budget
+    // and two fresh connections from the same source fit again.
+    let mut admitted = 0;
+    for _ in 0..50 {
+        if connect(server.address, "/v1/tunnel").await.is_ok() {
+            admitted += 1;
+            if admitted == 2 {
+                break;
+            }
+        }
+        time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(admitted, 2, "paired peers release their source slots");
+    server.stop().await;
+}
+
+#[test]
 fn bearer_token_requires_data_before_optional_padding() {
     for invalid in [
         b"=".as_slice(),

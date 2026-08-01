@@ -1,8 +1,11 @@
 #![cfg(test)]
 
 use std::{
+    ffi::OsStr,
+    net::{IpAddr, Ipv4Addr},
+    num::{NonZeroU32, NonZeroUsize},
     sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 #[cfg(unix)]
@@ -24,7 +27,12 @@ use tokio::{
     sync::oneshot,
 };
 
-use crate::{serve_listener_until, LocatorHttpLimits, LocatorPublisher, LocatorServerConfig};
+use crate::{
+    config::{client_rate_per_second, LOCATOR_CLIENT_RATE_PER_SECOND_ENV},
+    http::rate_limit::RateLimiter,
+    serve_listener_until, LocatorHttpLimits, LocatorPublisher, LocatorServerConfig,
+    LocatorServerConfigError,
+};
 #[cfg(unix)]
 use crate::{
     ExpectedUnixPeer, UnixHsmRelayLocatorSigner, HSM_SIGN_REQUEST_BYTES, HSM_SIGN_RESPONSE_BYTES,
@@ -193,7 +201,8 @@ async fn real_http_route_rejects_method_query_headers_bearer_and_body() {
 #[tokio::test]
 async fn rate_auth_concurrency_and_auth_timeout_fail_closed() {
     let rate_limits = LocatorHttpLimits {
-        max_requests_per_second: std::num::NonZeroU32::MIN,
+        max_requests_per_second: NonZeroU32::MIN,
+        max_client_requests_per_second: NonZeroU32::MIN,
         ..LocatorHttpLimits::default()
     };
     let server = TestServer::start(Arc::new(SigningPublisher::immediate()), rate_limits).await;
@@ -235,6 +244,138 @@ async fn rate_auth_concurrency_and_auth_timeout_fail_closed() {
         .await;
     assert!(response.starts_with("HTTP/1.1 503 Service Unavailable\r\n"));
     server.stop().await;
+}
+
+#[test]
+fn per_client_rate_windows_are_independent_across_client_addresses() {
+    let limiter = RateLimiter::new(
+        NonZeroU32::new(100).expect("global rate"),
+        NonZeroU32::new(2).expect("client rate"),
+        NonZeroUsize::new(256).expect("connections"),
+    );
+    let now = Instant::now();
+    assert!(limiter.allow(now, client(1)));
+    assert!(limiter.allow(now, client(1)));
+    assert!(!limiter.allow(now, client(1)));
+    for _ in 0..2 {
+        assert!(
+            limiter.allow(now, client(2)),
+            "a second address must carry its own budget"
+        );
+    }
+    assert!(!limiter.allow(now, client(2)));
+    assert!(
+        limiter.allow(now + Duration::from_millis(1_001), client(1)),
+        "a per-client window must recover once it elapses"
+    );
+}
+
+#[test]
+fn one_client_exhausting_its_budget_does_not_throttle_another_client() {
+    let limiter = RateLimiter::new(
+        NonZeroU32::new(1_000).expect("global rate"),
+        NonZeroU32::new(4).expect("client rate"),
+        NonZeroUsize::new(256).expect("connections"),
+    );
+    let now = Instant::now();
+    for _ in 0..512 {
+        let _ = limiter.allow(now, client(9));
+    }
+    assert!(!limiter.allow(now, client(9)));
+    for _ in 0..4 {
+        assert!(
+            limiter.allow(now, client(10)),
+            "one flooding address must not spend a legitimate owner's budget"
+        );
+    }
+}
+
+#[test]
+fn tracked_client_windows_stay_bounded_under_many_distinct_addresses() {
+    let limiter = RateLimiter::new(
+        NonZeroU32::new(1_000_000).expect("global rate"),
+        NonZeroU32::new(4).expect("client rate"),
+        NonZeroUsize::new(1).expect("connections"),
+    );
+    let now = Instant::now();
+    let capacity = limiter.max_tracked_clients();
+    let mut admitted = 0_usize;
+    for index in 0..4_096_u32 {
+        if limiter.allow(now, IpAddr::V4(Ipv4Addr::from(index))) {
+            admitted += 1;
+        }
+    }
+    assert_eq!(admitted, capacity);
+    assert_eq!(limiter.tracked_clients(), capacity);
+    assert!(
+        limiter.allow(now + Duration::from_millis(1_001), client(200)),
+        "expired windows must be pruned so the map recovers"
+    );
+    assert_eq!(limiter.tracked_clients(), 1);
+}
+
+#[test]
+fn global_rate_ceiling_still_bounds_total_capacity_across_clients() {
+    let limiter = RateLimiter::new(
+        NonZeroU32::new(3).expect("global rate"),
+        NonZeroU32::new(2).expect("client rate"),
+        NonZeroUsize::new(256).expect("connections"),
+    );
+    let now = Instant::now();
+    for index in 1..=3 {
+        assert!(limiter.allow(now, client(index)));
+    }
+    assert!(
+        !limiter.allow(now, client(4)),
+        "distinct sources under their own budget must still hit the global ceiling"
+    );
+    assert!(!limiter.allow(now, client(1)));
+    assert!(limiter.allow(now + Duration::from_millis(1_001), client(4)));
+}
+
+#[test]
+fn client_rate_environment_override_is_positive_and_bounded() {
+    assert_eq!(client_rate_per_second(None), Ok(None));
+    assert_eq!(
+        client_rate_per_second(Some(OsStr::new("25"))),
+        Ok(NonZeroU32::new(25))
+    );
+    assert_eq!(
+        client_rate_per_second(Some(OsStr::new("10000"))),
+        Ok(NonZeroU32::new(10_000))
+    );
+    for rejected in ["0", "-1", "", " 25", "10001", "abc"] {
+        assert_eq!(
+            client_rate_per_second(Some(OsStr::new(rejected))),
+            Err(LocatorServerConfigError::InvalidEnvNumber {
+                name: LOCATOR_CLIENT_RATE_PER_SECOND_ENV,
+            }),
+            "{rejected}"
+        );
+    }
+}
+
+#[test]
+fn limits_reject_a_per_client_rate_above_the_global_rate() {
+    let limits = LocatorHttpLimits {
+        max_requests_per_second: NonZeroU32::new(4).expect("global rate"),
+        max_client_requests_per_second: NonZeroU32::new(5).expect("client rate"),
+        ..LocatorHttpLimits::default()
+    };
+    assert_eq!(
+        limits.validate(),
+        Err(LocatorServerConfigError::InvalidRateLimit)
+    );
+    let bounded = LocatorHttpLimits {
+        max_client_requests_per_second: NonZeroU32::new(4).expect("client rate"),
+        ..limits
+    };
+    assert_eq!(bounded.validate(), Ok(()));
+    assert_eq!(LocatorHttpLimits::default().validate(), Ok(()));
+}
+
+fn client(last: u8) -> IpAddr {
+    IpAddr::V4(Ipv4Addr::new(203, 0, 113, last))
 }
 
 #[cfg(unix)]

@@ -153,17 +153,10 @@ pub(crate) fn reject_code_for_apply(error: &CollabApplyError) -> RejectCode {
     }
 }
 
+/// Direction is classified once, in `frame_direction`, because the decoder
+/// sizes its inbound ceiling from the same classification.
 pub(crate) fn peer_to_owner_message(message: &CollabMessage) -> bool {
-    matches!(
-        message,
-        CollabMessage::Submit(_)
-            | CollabMessage::CatchUp(_)
-            | CollabMessage::Applied(_)
-            | CollabMessage::RenewTicket(_)
-            | CollabMessage::UndoRequest(_)
-            | CollabMessage::PresenceUpdate(_)
-            | CollabMessage::Bye(_)
-    )
+    crate::frame_direction::message_travels_guest_to_owner(message)
 }
 
 pub(crate) fn validate_config(config: OwnerSessionConfig) -> Result<(), SessionError> {

@@ -52,6 +52,11 @@ pub enum ChunkError {
     InvalidPayloadLength { actual: usize, expected: usize },
     #[error("transfer timed out after {0:?}")]
     TimedOut(Duration),
+    #[error("inbound reassembly budget rejected a {class:?} transfer of {requested} bytes")]
+    InboundBudgetExhausted {
+        class: TransferClass,
+        requested: usize,
+    },
     #[error("transfer length arithmetic overflow")]
     LengthOverflow,
 }
@@ -88,6 +93,8 @@ pub enum NoiseTransportError {
     HandshakeFrameLength(usize),
     #[error("Noise handshake did not expose a 32-byte remote static key")]
     MissingRemoteStatic,
+    #[error("Noise handshake lost its pending-connection seat")]
+    PendingSeatUnavailable,
 }
 
 #[derive(Debug, thiserror::Error)]

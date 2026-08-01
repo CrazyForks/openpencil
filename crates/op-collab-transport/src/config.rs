@@ -23,11 +23,40 @@ pub const M1_MAX_PRESENCE_BYTES: u32 = 44 * 1024;
 /// Leaves room for the Submit/Commit envelope around the encoded transaction.
 pub const M1_MAX_TXN_BODY_BYTES: u32 = (MAX_TXN_TRANSFER_BYTES - 32 * 1024) as u32;
 
-pub const DEFAULT_MAX_PENDING_HANDSHAKES: usize = 16;
+/// Global ceiling on concurrent pending handshakes.
+///
+/// A pending seat is taken before any cryptographic work and is only converted
+/// into an active connection after ticket admission, so the ceiling has to keep
+/// honest joins working while unauthenticated peers are connecting. The cost of
+/// one pending seat is bounded by the accepted socket plus the largest buffers a
+/// pre-admission connection can own: one Noise record
+/// (`MAX_NOISE_CIPHERTEXT_BYTES`, 60 KiB + 16 B) and one reassembling Ticket
+/// transfer (`MAX_TICKET_TRANSFER_BYTES`, 64 KiB), i.e. under 128 KiB. At this
+/// ceiling the worst case is 128 seats x 128 KiB = 16 MiB held for at most
+/// `timeouts.handshake` (5 s), and — because a seat is also capped per source
+/// address — filling it needs 128 / `DEFAULT_MAX_PENDING_HANDSHAKES_PER_IP` = 32
+/// distinct addresses instead of the 4 the previous 16-seat ceiling needed.
+///
+/// The ceiling alone is not the defence: guarded owner accepts enforce
+/// `timeouts.handshake_first_message` as the actual socket read deadline. A
+/// silent connection must exit and drop its continuously charged guard before
+/// its global seat is released. See [`crate::ConnectionLimiter`].
+pub const DEFAULT_MAX_PENDING_HANDSHAKES: usize = 128;
 pub const DEFAULT_MAX_PENDING_HANDSHAKES_PER_IP: usize = 4;
 pub const DEFAULT_MAX_ACTIVE_CONNECTIONS: usize = 64;
 pub const DEFAULT_OUTBOUND_QUEUE_ITEMS: usize = 8;
 pub const DEFAULT_GLOBAL_QUEUED_BYTES: usize = 256 * 1024 * 1024;
+/// Aggregate ceiling for inbound reassembly buffers across every connection.
+///
+/// Inbound transfers allocate the peer-declared total on chunk 0, so the
+/// per-class caps alone bound only one connection at a time: 64 authenticated
+/// peers x `MAX_TXN_TRANSFER_BYTES` (4 MiB) is 256 MiB of buffer no
+/// per-connection limit can see. This aggregate admits one full owner snapshot
+/// (`MAX_SNAPSHOT_TRANSFER_BYTES`, 64 MiB) plus 16 concurrent maximum-size
+/// transactions (16 x 4 MiB) and refuses the rest with a typed error, holding
+/// transport-owned inbound heap to half the outbound aggregate
+/// (`DEFAULT_GLOBAL_QUEUED_BYTES`).
+pub const DEFAULT_GLOBAL_INBOUND_REASSEMBLY_BYTES: usize = 128 * 1024 * 1024;
 pub const MAX_CONFIGURED_CONNECTIONS: usize = 256;
 pub const MAX_CONFIGURED_QUEUE_ITEMS: usize = 1_024;
 pub const MAX_CONFIGURED_QUEUE_BYTES: usize = 512 * 1024 * 1024;
@@ -49,6 +78,11 @@ pub fn m1_wire_limits() -> WireLimits {
 pub struct TimeoutConfig {
     pub connect: Duration,
     pub handshake: Duration,
+    /// Actual socket-read deadline in which a freshly accepted connection must
+    /// produce its first valid handshake message. The connection is closed and
+    /// its continuously held pending seat is released on expiry; after valid
+    /// progress, the remaining handshake uses the full `handshake` deadline.
+    pub handshake_first_message: Duration,
     pub admission: Duration,
     pub ordinary_transfer: Duration,
     pub snapshot_transfer: Duration,
@@ -62,6 +96,11 @@ impl Default for TimeoutConfig {
         Self {
             connect: Duration::from_secs(5),
             handshake: Duration::from_secs(5),
+            // One round trip after TCP establishment is enough for an honest
+            // initiator, including relay-mediated paths, while keeping a silent
+            // peer's hold on a global pending seat to a fifth of the handshake
+            // window.
+            handshake_first_message: Duration::from_secs(1),
             admission: Duration::from_secs(10),
             ordinary_transfer: Duration::from_secs(10),
             snapshot_transfer: Duration::from_secs(60),
@@ -234,6 +273,7 @@ impl TransportConfig {
         if [
             timeouts.connect,
             timeouts.handshake,
+            timeouts.handshake_first_message,
             timeouts.admission,
             timeouts.ordinary_transfer,
             timeouts.snapshot_transfer,
@@ -243,6 +283,7 @@ impl TransportConfig {
         ]
         .into_iter()
         .any(|timeout| timeout.is_zero() || timeout > MAX_CONFIGURED_TIMEOUT)
+            || timeouts.handshake_first_message > timeouts.handshake
             || timeouts.snapshot_transfer < timeouts.ordinary_transfer
             || timeouts.read_write > timeouts.idle
             || timeouts.admission > timeouts.idle
@@ -270,6 +311,30 @@ mod tests {
         let maximum_snapshot_wire_bytes =
             MAX_SNAPSHOT_TRANSFER_BYTES + maximum_snapshot_records * 24;
         assert!(config.rate.byte_burst >= maximum_snapshot_wire_bytes as u64);
+    }
+
+    #[test]
+    fn pending_ceiling_leaves_headroom_for_honest_joins_under_a_silent_flood() {
+        let config = TransportConfig::default().validate().unwrap();
+        let connections = config.connections;
+        // The documented flood: every address opens its per-address maximum.
+        // The ceiling must still leave seats for honest guests, and a silent
+        // peer only holds its seat for the first-message window.
+        let flood_addresses = 4;
+        let flood_seats = flood_addresses * connections.max_pending_handshakes_per_ip;
+        assert!(flood_seats < connections.max_pending_handshakes);
+        assert!(
+            connections.max_pending_handshakes / connections.max_pending_handshakes_per_ip >= 32,
+            "filling the pending pool must require many distinct source addresses"
+        );
+        assert!(config.timeouts.handshake_first_message < config.timeouts.handshake);
+        assert!(connections.max_pending_handshakes <= MAX_CONFIGURED_CONNECTIONS);
+    }
+
+    #[test]
+    fn inbound_reassembly_aggregate_admits_a_full_snapshot() {
+        assert!(DEFAULT_GLOBAL_INBOUND_REASSEMBLY_BYTES >= MAX_SNAPSHOT_TRANSFER_BYTES);
+        assert!(DEFAULT_GLOBAL_INBOUND_REASSEMBLY_BYTES <= DEFAULT_GLOBAL_QUEUED_BYTES);
     }
 
     #[test]
@@ -317,6 +382,21 @@ mod tests {
 
         let mut config = TransportConfig::default();
         config.timeouts.read_write = config.timeouts.idle + Duration::from_millis(1);
+        assert_eq!(
+            config.validate(),
+            Err(ConfigError::InvalidValue { field: "timeouts" })
+        );
+
+        let mut config = TransportConfig::default();
+        config.timeouts.handshake_first_message =
+            config.timeouts.handshake + Duration::from_secs(1);
+        assert_eq!(
+            config.validate(),
+            Err(ConfigError::InvalidValue { field: "timeouts" })
+        );
+
+        let mut config = TransportConfig::default();
+        config.timeouts.handshake_first_message = Duration::ZERO;
         assert_eq!(
             config.validate(),
             Err(ConfigError::InvalidValue { field: "timeouts" })

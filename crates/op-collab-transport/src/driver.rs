@@ -2,7 +2,7 @@ use std::io::Write;
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
-use op_collab::FrameEnvelope;
+use op_collab::{FrameEnvelope, InboundFrameDirection};
 use zeroize::Zeroizing;
 
 use crate::driver_io::{
@@ -50,6 +50,13 @@ pub enum InboundTransferPolicy {
 impl InboundTransferPolicy {
     const fn allows(self, class: TransferClass) -> bool {
         !matches!((self, class), (Self::PeerToOwner, TransferClass::Snapshot))
+    }
+
+    const fn frame_direction(self) -> InboundFrameDirection {
+        match self {
+            Self::PeerToOwner => InboundFrameDirection::GuestToOwner,
+            Self::OwnerToGuest => InboundFrameDirection::OwnerToGuest,
+        }
     }
 }
 
@@ -568,7 +575,10 @@ impl ConnectionDriver {
         let Some(ciphertext) = self.inbound_ciphertext.as_ref() else {
             return Ok((progressed, None, None));
         };
-        let expected_plaintext = ciphertext.len().saturating_sub(16) as u64;
+        let expected_plaintext = ciphertext
+            .len()
+            .saturating_sub(crate::config::NOISE_AEAD_TAG_BYTES)
+            as u64;
         let ready = rate_ready_at(
             &mut self.connection.inbound_records,
             &mut self.connection.inbound_bytes,
@@ -611,6 +621,7 @@ impl ConnectionDriver {
             class: completed.class,
             transfer_id: completed.transfer_id,
             bytes: completed.bytes,
+            _reservation: completed._reservation,
         };
         let event = self.decode_event(transfer)?;
         Ok((true, Some(event), None))
@@ -643,6 +654,7 @@ impl ConnectionDriver {
                     transfer.class,
                     &transfer.bytes,
                     self.connection.config.wire_limits,
+                    self.inbound_policy.frame_direction(),
                 )?;
                 Ok(DriverEvent::Frame { frame, encoded_len })
             }

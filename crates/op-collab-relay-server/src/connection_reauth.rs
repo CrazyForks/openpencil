@@ -144,7 +144,7 @@ pub(crate) async fn perform_reauthentication(
     sink: &mut WebSocketSink,
     source: &mut WebSocketSource,
     authenticator: Arc<dyn RelayAuthenticator>,
-    auth_in_flight: Arc<Semaphore>,
+    reauth_in_flight: Arc<Semaphore>,
     identity: &RelaySessionIdentity,
     current: RelayAuthState,
     configured_deadline: Instant,
@@ -166,7 +166,7 @@ pub(crate) async fn perform_reauthentication(
         sink,
         source,
         response_deadline,
-        auth_in_flight.acquire_owned(),
+        reauth_in_flight.acquire_owned(),
         traffic.as_deref_mut(),
     )
     .await?

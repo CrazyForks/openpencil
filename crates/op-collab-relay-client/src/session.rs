@@ -20,6 +20,7 @@ use crate::auth::{AuthMode, RelayAuthAttempt, RelayCredential};
 use crate::endpoint::RelayEndpoint;
 use crate::error::{RelayFailureKind, TunnelError};
 use crate::limits::RelayLimits;
+use crate::reauth_budget::ReauthBudget;
 
 pub(crate) type RelaySocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -146,10 +147,12 @@ pub(crate) async fn send_binary(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn pump(
     mut socket: RelaySocket,
     mut local: TcpStream,
     reauth: ClientReauthContext<'_>,
+    reauth_budget: &mut ReauthBudget,
     cancel: &mut watch::Receiver<bool>,
     started_at: Instant,
     limits: RelayLimits,
@@ -226,6 +229,7 @@ pub(crate) async fn pump(
                             &mut socket,
                             &text,
                             reauth,
+                            reauth_budget,
                             cancel,
                             idle_deadline,
                             lifetime_deadline,
@@ -242,9 +246,11 @@ pub(crate) async fn pump(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn next_binary_with_reauth(
     socket: &mut RelaySocket,
     reauth: ClientReauthContext<'_>,
+    reauth_budget: &mut ReauthBudget,
     cancel: &mut watch::Receiver<bool>,
     timeout: Duration,
     timeout_kind: RelayFailureKind,
@@ -272,7 +278,16 @@ pub(crate) async fn next_binary_with_reauth(
                 return Ok(bytes);
             }
             Some(Ok(Message::Text(text))) => {
-                answer_reauth_challenge(socket, &text, reauth, cancel, deadline, deadline).await?;
+                answer_reauth_challenge(
+                    socket,
+                    &text,
+                    reauth,
+                    reauth_budget,
+                    cancel,
+                    deadline,
+                    deadline,
+                )
+                .await?;
             }
             Some(Ok(Message::Ping(bytes))) => {
                 send_before_deadlines(socket, Message::Pong(bytes), cancel, deadline, deadline)
@@ -290,10 +305,12 @@ pub(crate) async fn next_binary_with_reauth(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn answer_reauth_challenge(
     socket: &mut RelaySocket,
     text: &str,
     reauth: ClientReauthContext<'_>,
+    reauth_budget: &mut ReauthBudget,
     cancel: &mut watch::Receiver<bool>,
     idle_deadline: Instant,
     lifetime_deadline: Instant,
@@ -304,6 +321,10 @@ async fn answer_reauth_challenge(
     let challenge = RelayReauthChallengeV1::decode_text(text)
         .map_err(|_| TunnelError::Failure(RelayFailureKind::TextFrame))?
         .into_challenge();
+    // The budget is charged only on the path that actually mints a bearer, so
+    // a relay cannot spend it with frames that never reach the credential
+    // provider, and the reduced-assurance modes keep their existing rejection.
+    reauth_budget.admit(Instant::now())?;
     let attempt = authenticator
         .begin_attempt()
         .map_err(|_| TunnelError::Failure(RelayFailureKind::Authentication))?;

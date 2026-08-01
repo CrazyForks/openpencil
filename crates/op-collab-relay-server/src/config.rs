@@ -7,7 +7,9 @@ use std::{
 
 const LISTEN_ENV: &str = "OPENPENCIL_COLLAB_RELAY_LISTEN";
 const MAX_PENDING_ENV: &str = "OPENPENCIL_COLLAB_RELAY_MAX_PENDING";
+const MAX_PENDING_PER_SOURCE_ENV: &str = "OPENPENCIL_COLLAB_RELAY_MAX_PENDING_PER_SOURCE";
 const MAX_AUTH_IN_FLIGHT_ENV: &str = "OPENPENCIL_COLLAB_RELAY_MAX_AUTH_IN_FLIGHT";
+const MAX_REAUTH_IN_FLIGHT_ENV: &str = "OPENPENCIL_COLLAB_RELAY_MAX_REAUTH_IN_FLIGHT";
 const MAX_ACTIVE_ENV: &str = "OPENPENCIL_COLLAB_RELAY_MAX_ACTIVE";
 const MAX_WAITING_PER_ROUTE_ENV: &str = "OPENPENCIL_COLLAB_RELAY_MAX_WAITING_PER_ROUTE";
 const RELAY_QUEUE_ENV: &str = "OPENPENCIL_COLLAB_RELAY_QUEUE_CAPACITY";
@@ -23,7 +25,15 @@ pub struct RelayConfig {
     pub tunnel_lifetime: Duration,
     pub max_message_bytes: usize,
     pub max_pending: usize,
+    /// How many un-paired connections one source address may hold at once.
+    pub max_pending_per_source: usize,
     pub max_auth_in_flight: usize,
+    /// Renewal budget for already-authenticated tunnels.
+    ///
+    /// Kept separate from `max_auth_in_flight` so a flood of unauthenticated
+    /// connections cannot starve the reauthentication of live sessions, which
+    /// closes them with a policy error when it cannot complete in time.
+    pub max_reauth_in_flight: usize,
     pub max_active_pairs: usize,
     pub max_waiting_per_route: usize,
     pub relay_queue_capacity: usize,
@@ -42,7 +52,9 @@ impl Default for RelayConfig {
             tunnel_lifetime: Duration::from_secs(12 * 60 * 60),
             max_message_bytes: 64 * 1024,
             max_pending: 1_024,
+            max_pending_per_source: 16,
             max_auth_in_flight: 128,
+            max_reauth_in_flight: 128,
             max_active_pairs: 10_000,
             max_waiting_per_route: 4,
             relay_queue_capacity: 32,
@@ -65,8 +77,12 @@ impl RelayConfig {
                 .map_err(|source| ConfigError::Listen { value, source })?;
         }
         config.max_pending = parse_positive_usize(MAX_PENDING_ENV, config.max_pending)?;
+        config.max_pending_per_source =
+            parse_positive_usize(MAX_PENDING_PER_SOURCE_ENV, config.max_pending_per_source)?;
         config.max_auth_in_flight =
             parse_positive_usize(MAX_AUTH_IN_FLIGHT_ENV, config.max_auth_in_flight)?;
+        config.max_reauth_in_flight =
+            parse_positive_usize(MAX_REAUTH_IN_FLIGHT_ENV, config.max_reauth_in_flight)?;
         config.max_active_pairs = parse_positive_usize(MAX_ACTIVE_ENV, config.max_active_pairs)?;
         config.max_waiting_per_route =
             parse_positive_usize(MAX_WAITING_PER_ROUTE_ENV, config.max_waiting_per_route)?;
@@ -86,7 +102,9 @@ impl RelayConfig {
         for (name, value) in [
             ("max_message_bytes", self.max_message_bytes),
             ("max_pending", self.max_pending),
+            ("max_pending_per_source", self.max_pending_per_source),
             ("max_auth_in_flight", self.max_auth_in_flight),
+            ("max_reauth_in_flight", self.max_reauth_in_flight),
             ("max_active_pairs", self.max_active_pairs),
             ("max_waiting_per_route", self.max_waiting_per_route),
             ("relay_queue_capacity", self.relay_queue_capacity),
@@ -114,6 +132,9 @@ impl RelayConfig {
         }
         if self.max_queued_bytes_per_route > self.max_queued_bytes {
             return Err(ConfigError::RouteBudgetExceedsGlobal);
+        }
+        if self.max_pending_per_source > self.max_pending {
+            return Err(ConfigError::SourceBudgetExceedsGlobal);
         }
         for (name, value) in [
             ("handshake_timeout", self.handshake_timeout),
@@ -181,4 +202,6 @@ pub enum ConfigError {
     TooLarge { name: &'static str, maximum: usize },
     #[error("max_queued_bytes_per_route must not exceed max_queued_bytes")]
     RouteBudgetExceedsGlobal,
+    #[error("max_pending_per_source must not exceed max_pending")]
+    SourceBudgetExceedsGlobal,
 }

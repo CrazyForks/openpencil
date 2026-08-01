@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::io::Read as _;
 use std::net::IpAddr;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -27,6 +27,11 @@ use super::types::{CollabRuntimeError, CollabRuntimeFailure};
 #[path = "relay_bootstrap_url.rs"]
 mod bootstrap_url;
 
+#[path = "relay_bootstrap_cache.rs"]
+mod bootstrap_cache;
+
+use bootstrap_cache::{read_cache, write_cache, BootstrapCache};
+
 pub(super) const BOOTSTRAP_URL_ENV: &str = "OPENPENCIL_COLLAB_BOOTSTRAP_URL";
 #[cfg(any(test, debug_assertions))]
 const BOOTSTRAP_DEV_HTTP_ENV: &str = "OPENPENCIL_COLLAB_BOOTSTRAP_DEV_HTTP";
@@ -38,8 +43,8 @@ const BOOTSTRAP_CONTEXT: &[u8] = b"openpencil/op-hub/collaboration-bootstrap/v1\
 const BOOTSTRAP_CACHE_FILE: &str = "collaboration-bootstrap-v1.json";
 const BOOTSTRAP_CONTENT_TYPE: &str = "application/json";
 const BOOTSTRAP_VERSION: u64 = 1;
-const BUILTIN_ROOT_KID: &str = "openpencil-collab-root-v1";
-const BUILTIN_ROOT_X: &str = "wiQJcA9o-bydBkfIVnVUJzKA4wtv8Dapn0JYhS_bZ-I";
+const BUILTIN_ROOT_KID: &str = "openpencil-collab-union-root-v2";
+const BUILTIN_ROOT_X: &str = "5SVj-_jnJbuZlpDoD3M9x1eZAPDFLSq5jRb-c0xUh5A";
 const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 const MAX_PAYLOAD_BYTES: usize = 32 * 1024;
 const MAX_CACHE_BYTES: u64 = (MAX_RESPONSE_BYTES as u64 * 2) + 4_096;
@@ -158,9 +163,11 @@ impl EnvironmentRelayBootstrapProvider {
             .get_or_init(|| Mutex::new(()))
             .lock()
             .map_err(|_| BootstrapError::Cache)?;
-        let cached = read_cache(&self.cache_path, self.endpoint.as_str())
-            .ok()
-            .flatten();
+        // Only an actually absent cache is an empty floor. A corrupt,
+        // unreadable, or non-regular cache must stop bootstrap resolution;
+        // otherwise fetching without it could silently accept a generation
+        // below the floor established by an earlier run.
+        let cached = read_cache(&self.cache_path, self.endpoint.as_str())?;
         let cached_verified = cached.as_ref().and_then(|cached| {
             verify_bootstrap(
                 cached.body.as_bytes(),
@@ -221,16 +228,33 @@ impl EnvironmentRelayBootstrapProvider {
         if let Some(previous) = cached_signed.as_ref() {
             reject_rollback(previous, &verified)?;
         }
-        if let Ok(body) = String::from_utf8(body) {
-            let _ = write_cache(
-                &self.cache_path,
-                &BootstrapCache {
-                    endpoint: self.endpoint.as_str().to_owned(),
-                    etag,
-                    body,
-                },
-            );
-        }
+        // The persisted document is what arms the anti-rollback generation
+        // floor on the next start: `cached_signed` above is read back from
+        // exactly this file. Discarding a write failure would let that
+        // security property disappear on an unwritable configuration
+        // directory with no signal at all, so the failure is propagated.
+        //
+        // It is propagated rather than logged because this module — and the
+        // whole desktop `collab_runtime` — deliberately contains no
+        // `tracing` / `println!` call: collaboration identities, endpoints,
+        // and ticket material flow through here, and the absence of a logging
+        // sink is the boundary that keeps them out of log files. The typed
+        // `BootstrapError::CachePersist` carries the reason without carrying
+        // any secret, identity, or path material, and the caller collapses it
+        // into `CollabRuntimeFailure::RelayUnavailable`.
+        //
+        // Verification is untouched: this runs only after `verify_bootstrap`
+        // and `reject_rollback` have already accepted the document, so the
+        // verifier stays exactly as fail-closed as before.
+        let body = String::from_utf8(body).map_err(|_| BootstrapError::CachePersist)?;
+        write_cache(
+            &self.cache_path,
+            &BootstrapCache {
+                endpoint: self.endpoint.as_str().to_owned(),
+                etag,
+                body,
+            },
+        )?;
         Ok(Arc::new(verified))
     }
 
@@ -475,16 +499,10 @@ fn validate_global_key_registry(
     regions: &[BootstrapRegion],
     select: fn(&BootstrapRegion) -> &[BootstrapKey],
 ) -> Result<(), BootstrapError> {
-    let mut by_kid = HashMap::<&str, &str>::new();
-    let mut by_x = HashMap::<&str, &str>::new();
+    let mut seen_kids = HashSet::<&str>::new();
+    let mut seen_public_keys = HashSet::<&str>::new();
     for key in regions.iter().flat_map(select) {
-        if by_kid
-            .insert(key.kid.as_str(), key.x.as_str())
-            .is_some_and(|existing| existing != key.x)
-            || by_x
-                .insert(key.x.as_str(), key.kid.as_str())
-                .is_some_and(|existing| existing != key.kid)
-        {
+        if !seen_kids.insert(key.kid.as_str()) || !seen_public_keys.insert(key.x.as_str()) {
             return Err(BootstrapError::InvalidPayload);
         }
     }
@@ -722,54 +740,6 @@ struct BootstrapKey {
     x: String,
 }
 
-#[derive(Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct BootstrapCache {
-    endpoint: String,
-    etag: Option<String>,
-    body: String,
-}
-
-fn read_cache(path: &Path, endpoint: &str) -> Result<Option<BootstrapCache>, BootstrapError> {
-    let metadata = match std::fs::metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(_) => return Err(BootstrapError::Cache),
-    };
-    if !metadata.is_file() || metadata.len() > MAX_CACHE_BYTES {
-        return Err(BootstrapError::Cache);
-    }
-    let bytes = std::fs::read(path).map_err(|_| BootstrapError::Cache)?;
-    let cache: BootstrapCache =
-        serde_json::from_slice(&bytes).map_err(|_| BootstrapError::Cache)?;
-    if cache.endpoint != endpoint
-        || cache.body.is_empty()
-        || cache.body.len() > MAX_RESPONSE_BYTES
-        || cache
-            .etag
-            .as_ref()
-            .is_some_and(|etag| etag.is_empty() || etag.len() > MAX_ETAG_BYTES)
-    {
-        return Err(BootstrapError::Cache);
-    }
-    let expected_etag = strong_etag(cache.body.as_bytes());
-    if cache.etag.as_deref() != Some(expected_etag.as_str()) {
-        return Err(BootstrapError::Cache);
-    }
-    Ok(Some(cache))
-}
-
-fn write_cache(path: &Path, cache: &BootstrapCache) -> Result<(), BootstrapError> {
-    let parent = path.parent().ok_or(BootstrapError::Cache)?;
-    let file = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .ok_or(BootstrapError::Cache)?;
-    op_config_store::ConfigStore::at(parent)
-        .write_json(file, cache)
-        .map_err(|_| BootstrapError::Cache)
-}
-
 fn relay_runtime_error() -> CollabRuntimeError {
     CollabRuntimeError::new(CollabRuntimeFailure::RelayUnavailable)
 }
@@ -777,6 +747,7 @@ fn relay_runtime_error() -> CollabRuntimeError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum BootstrapError {
     Cache,
+    CachePersist,
     Expired,
     InvalidBase64,
     InvalidEndpoint,

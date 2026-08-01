@@ -49,8 +49,23 @@ pub fn run_xx_responder(
     local_static: &DeviceStaticKey,
     prelude: &EncodedServerPrelude,
 ) -> Result<NoiseSession, NoiseTransportError> {
+    run_xx_responder_observed(stream, local_static, prelude, &mut || Ok(()))
+}
+
+/// Responder variant that reports the first structurally valid Noise message.
+///
+/// `on_first_message` runs only after the initiator's opening message has been
+/// accepted by Noise, so an accept path can distinguish a peer that proved
+/// liveness from one that merely opened a socket.
+pub(crate) fn run_xx_responder_observed(
+    stream: &mut (impl Read + Write),
+    local_static: &DeviceStaticKey,
+    prelude: &EncodedServerPrelude,
+    on_first_message: &mut dyn FnMut() -> Result<(), NoiseTransportError>,
+) -> Result<NoiseSession, NoiseTransportError> {
     let mut handshake = build_handshake(local_static, prelude, false)?;
     read_handshake_message(stream, &mut handshake)?;
+    on_first_message()?;
     write_handshake_message(stream, &mut handshake)?;
     read_handshake_message(stream, &mut handshake)?;
     finish_handshake(handshake)

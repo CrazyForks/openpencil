@@ -24,6 +24,14 @@ const DISCOVERY_LEN_OFFSET: usize = 58;
 const DISCOVERY_OFFSET: usize = 59;
 const LIFETIME_OFFSET: usize = 187;
 
+// The discovery-id field is exactly as wide as the longest id the protocol
+// admits, which is what makes the `DISCOVERY_OFFSET + discovery_len` slices
+// below infallible for any length that passes the bound check. Growing the
+// protocol constant without widening the field would turn a single byte of a
+// request into an out-of-range slice, so fail the build instead.
+const _: () = assert!(LIFETIME_OFFSET - DISCOVERY_OFFSET == MAX_EXPECTED_DISCOVERY_ID_BYTES);
+const _: () = assert!(LIFETIME_OFFSET + 4 == OWNER_PUBLISH_REQUEST_BYTES);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RelayPublishLifetime(NonZeroU32);
 

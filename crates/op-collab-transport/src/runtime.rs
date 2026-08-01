@@ -2,22 +2,23 @@ use std::fmt;
 use std::io::{Read, Write};
 use std::time::{Duration, Instant};
 
-use op_collab::{FrameEnvelope, Role};
+use op_collab::{FrameEnvelope, InboundFrameDirection, Role};
 use zeroize::Zeroizing;
 
 use crate::record::read_ciphertext_record_until;
 use crate::{
     decode_frame_transfer, encrypt_record, verify_initial_ticket, write_ciphertext_record,
     AdmissionError, AdmissionHello, AdmissionIdentity, AdmissionPhase, AdmissionState, ChunkHeader,
-    EncodedFrameTransfer, NoiseSession, Reassembler, RecordError, RuntimeError, TicketVerifier,
-    TokenBucket, TransferChunkIter, TransferClass, TransportConfig, CHUNK_HEADER_BYTES,
-    TRANSPORT_HEARTBEAT_PLAINTEXT,
+    EncodedFrameTransfer, NoiseSession, Reassembler, RecordError, RuntimeError,
+    SharedReassemblyBudget, TicketVerifier, TokenBucket, TransferChunkIter, TransferClass,
+    TransportConfig, CHUNK_HEADER_BYTES, TRANSPORT_HEARTBEAT_PLAINTEXT,
 };
 
 pub struct TransportTransfer {
     pub(crate) class: TransferClass,
     pub(crate) transfer_id: u64,
     pub(crate) bytes: Zeroizing<Vec<u8>>,
+    pub(crate) _reservation: Option<crate::SharedReassemblyReservation>,
 }
 
 impl TransportTransfer {
@@ -74,6 +75,24 @@ impl<S: Read + Write> SecureConnection<S> {
         config: TransportConfig,
         now: Instant,
     ) -> Result<Self, RuntimeError> {
+        Self::with_inbound_budget(
+            stream,
+            noise,
+            config,
+            now,
+            SharedReassemblyBudget::process_default(),
+        )
+    }
+
+    /// Builds a connection whose inbound reassembly buffers are charged against
+    /// `inbound_budget` instead of the process-wide aggregate.
+    pub fn with_inbound_budget(
+        stream: S,
+        noise: NoiseSession,
+        config: TransportConfig,
+        now: Instant,
+        inbound_budget: SharedReassemblyBudget,
+    ) -> Result<Self, RuntimeError> {
         let config = config.validate()?;
         let outbound_bytes =
             TokenBucket::new(config.rate.bytes_per_second, config.rate.byte_burst, now)
@@ -98,7 +117,7 @@ impl<S: Read + Write> SecureConnection<S> {
             stream,
             noise,
             config,
-            reassembler: Reassembler::new(config.timeouts),
+            reassembler: Reassembler::with_budget(config.timeouts, inbound_budget),
             next_send_id: Some(1),
             outbound_bytes,
             outbound_records,
@@ -242,8 +261,19 @@ impl<S: Read + Write> SecureConnection<S> {
 
     fn receive_transfer_inner(&mut self) -> Result<TransportTransfer, RuntimeError> {
         self.check_idle(Instant::now())?;
+        // Progress, not mere traffic, resets the idle clock for this blocking
+        // call. Heartbeats keep the session alive, so they still refresh
+        // `last_activity`, but a peer that sends nothing else must not be able
+        // to pin this call for the whole ticket lifetime. The independent check
+        // mirrors `ConnectionDriver::poll_inner`, which owns the same deadline
+        // for the nonblocking path.
+        let idle_timeout = self.config.timeouts.idle;
+        let mut last_progress = self.last_activity;
         loop {
             let now = Instant::now();
+            if now.saturating_duration_since(last_progress) >= idle_timeout {
+                return Err(RuntimeError::IdleTimeout);
+            }
             self.reassembler.check_timeout(now)?;
             let record_deadline = now
                 .checked_add(self.config.timeouts.read_write)
@@ -293,12 +323,18 @@ impl<S: Read + Write> SecureConnection<S> {
                 self.reassembler.reset();
                 return Err(error);
             }
+            if let Err(error) = self.ensure_inbound_transfer_allowed(header.class) {
+                self.reassembler.reset();
+                return Err(error);
+            }
             self.last_activity = now;
+            last_progress = now;
             if let Some(completed) = self.reassembler.push(now, &plaintext)? {
                 return Ok(TransportTransfer {
                     class: completed.class,
                     transfer_id: completed.transfer_id,
                     bytes: completed.bytes,
+                    _reservation: completed._reservation,
                 });
             }
         }
@@ -322,10 +358,20 @@ impl<S: Read + Write> SecureConnection<S> {
 
     pub fn receive_frame(&mut self) -> Result<FrameEnvelope, RuntimeError> {
         self.ensure_active(Instant::now())?;
+        let inbound_direction = self
+            .admission
+            .role()
+            .map(InboundFrameDirection::from_remote_role)
+            .ok_or(AdmissionError::InvalidState)?;
         let transfer = self.receive_transfer()?;
         self.ensure_active(Instant::now())?;
-        decode_frame_transfer(transfer.class, &transfer.bytes, self.config.wire_limits)
-            .map_err(RuntimeError::from)
+        decode_frame_transfer(
+            transfer.class,
+            &transfer.bytes,
+            self.config.wire_limits,
+            inbound_direction,
+        )
+        .map_err(RuntimeError::from)
     }
 
     pub fn send_admission(
@@ -475,6 +521,18 @@ impl<S: Read + Write> SecureConnection<S> {
         }
     }
 
+    fn ensure_inbound_transfer_allowed(&self, class: TransferClass) -> Result<(), RuntimeError> {
+        let Some(role) = self.admission.role() else {
+            return Ok(());
+        };
+        if InboundFrameDirection::from_remote_role(role) == InboundFrameDirection::GuestToOwner
+            && class == TransferClass::Snapshot
+        {
+            return Err(RuntimeError::ForbiddenInboundClass(class));
+        }
+        Ok(())
+    }
+
     pub fn into_inner(self) -> S {
         self.stream
     }
@@ -503,56 +561,5 @@ fn ticket_deadlines(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use static_assertions::assert_not_impl_any;
-
-    assert_not_impl_any!(TransportTransfer: Clone);
-
-    #[test]
-    fn ticket_transfer_debug_does_not_expose_bytes() {
-        let transfer = TransportTransfer {
-            class: TransferClass::Ticket,
-            transfer_id: 9,
-            bytes: Zeroizing::new(vec![211; 17]),
-        };
-        let debug = format!("{transfer:?}");
-        assert!(debug.contains("class: Ticket"));
-        assert!(debug.contains("transfer_id: 9"));
-        assert!(debug.contains("encoded_len: 17"));
-        assert!(!debug.contains("211, 211"));
-    }
-
-    #[test]
-    fn ticket_deadlines_are_monotonic_and_use_eighty_percent_for_renewal() {
-        let identity = verify_initial_ticket(
-            &|_: &[u8], expected: &[u8; 32], _: u64| {
-                crate::VerifiedTicketClaims::new(
-                    "https://issuer.example".into(),
-                    "00000000-0000-0000-0000-000000000001".into(),
-                    "00000000-0000-0000-0000-000000000002".into(),
-                    *expected,
-                    1_250,
-                )
-            },
-            b"ticket",
-            &[7; 32],
-            "https://issuer.example",
-            "00000000-0000-0000-0000-000000000001",
-            1_000,
-        )
-        .unwrap();
-        let now = Instant::now();
-        assert_eq!(
-            ticket_deadlines(&identity, 1_000, now).unwrap(),
-            (
-                now + Duration::from_millis(200),
-                now + Duration::from_millis(250)
-            )
-        );
-        assert!(matches!(
-            ticket_deadlines(&identity, 1_250, now),
-            Err(AdmissionError::TicketExpired)
-        ));
-    }
-}
+#[path = "runtime_tests.rs"]
+mod tests;

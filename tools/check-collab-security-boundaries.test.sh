@@ -3,6 +3,20 @@
 
 set -euo pipefail
 
+if [[ "${OPENPENCIL_COLLAB_SECURITY_FAKE_CARGO:-}" == "1" ]]; then
+    if [[ "${1:-}" != "tree" ]]; then
+        printf 'unexpected fake cargo invocation: %s\n' "$*" >&2
+        exit 2
+    fi
+    printf '%s\n' \
+        'op-collab v0.0.0' \
+        'serde v1.0.0'
+    if [[ -f "$PWD/.fake-wasm-forbidden" ]]; then
+        printf '%s\n' 'tokio v1.0.0'
+    fi
+    exit 0
+fi
+
 script_dir=$(CDPATH= cd "$(dirname "$0")" && pwd)
 gate_source="$script_dir/check-collab-security-boundaries.sh"
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/collab-security-gate.XXXXXX")
@@ -78,69 +92,7 @@ EOF
 This file exists so the executable boundary gate can verify its public contract.
 EOF
 
-    cat > "$fixture_root/.github/workflows/collab-security.yml" <<'EOF'
-pull_request:
-  paths:
-    - '.dockerignore'
-    - '.gitignore'
-    - 'crates/op-collab-smoke/**'
-    - 'crates/op-collab-relay-protocol/**'
-    - 'crates/op-collab-relay-client/**'
-    - 'crates/op-collab-relay-server/**'
-    - 'crates/op-collab-relay-control-plane/**'
-    - 'crates/op-collab-policy-file/**'
-    - 'crates/op-collab-relay-locator-server/**'
-    - 'crates/op-util/**'
-    - 'crates/op-editor-core/**'
-    - 'crates/op-editor-host-core/**'
-    - 'crates/op-editor-ui/**'
-    - 'crates/op-host-native/**'
-    - 'crates/op-host-desktop/**'
-    - 'crates/op-host-services/**'
-    - 'crates/op-i18n/**'
-    - 'deploy/collab-relay/**'
-    - 'deploy/collab-relay-edge/**'
-    - 'deploy/collab-relay-locator/**'
-    - 'deploy/collab-relay-locator-edge/**'
-    - 'tools/check-op-auth-prebuilt.sh'
-    - 'tools/check-op-auth-prebuilt.test.sh'
-    - 'tools/package-op-auth-prebuilt.sh'
-push:
-  paths:
-    - '.dockerignore'
-    - '.gitignore'
-    - 'crates/op-collab-smoke/**'
-    - 'crates/op-collab-relay-protocol/**'
-    - 'crates/op-collab-relay-client/**'
-    - 'crates/op-collab-relay-server/**'
-    - 'crates/op-collab-relay-control-plane/**'
-    - 'crates/op-collab-policy-file/**'
-    - 'crates/op-collab-relay-locator-server/**'
-    - 'crates/op-util/**'
-    - 'crates/op-editor-core/**'
-    - 'crates/op-editor-host-core/**'
-    - 'crates/op-editor-ui/**'
-    - 'crates/op-host-native/**'
-    - 'crates/op-host-desktop/**'
-    - 'crates/op-host-services/**'
-    - 'crates/op-i18n/**'
-    - 'deploy/collab-relay/**'
-    - 'deploy/collab-relay-edge/**'
-    - 'deploy/collab-relay-locator/**'
-    - 'deploy/collab-relay-locator-edge/**'
-    - 'tools/check-op-auth-prebuilt.sh'
-    - 'tools/check-op-auth-prebuilt.test.sh'
-    - 'tools/package-op-auth-prebuilt.sh'
-steps:
-  - run: bash tools/check-op-auth-prebuilt.sh
-  - run: bash tools/check-op-auth-prebuilt.test.sh
-  - run: bash -n tools/package-op-auth-prebuilt.sh
-  - run: cargo test --locked -p op-auth-bridge --test prebuilt_provenance
-  - run: cargo test --locked -p op-collab-transport frame::tests
-  - run: bash deploy/collab-relay-edge/validate.sh
-  - run: bash deploy/collab-relay-locator/validate.sh
-  - run: bash deploy/collab-relay-locator-edge/validate.sh
-EOF
+    write_collab_security_workflow_fixture
 
     cat > "$fixture_root/deploy/collab-relay-edge/global-nginx.conf" <<'EOF'
 stream {
@@ -485,11 +437,16 @@ enum RawNonSensitiveMessage {}
 struct RawFrameEnvelope {
     body: RawNonSensitiveMessage,
 }
-pub fn from_json_slice_with_limits(bytes: &[u8], limits: ()) {
-    reject_renew_ticket_before_generic_value_decode(bytes)?;
+pub fn from_json_slice_with_limits_for_direction(
+    bytes: &[u8],
+    limits: (),
+    inbound_direction: InboundFrameDirection,
+) {
+    enforce_inbound_envelope_limit(inbound_direction, bytes.len(), limits)?;
+    declared_kind_rejecting_renew_ticket(bytes)?;
     let mut value = decode_json_value(bytes, limits)?;
 }
-fn reject_renew_ticket_before_generic_value_decode(_bytes: &[u8]) -> Result<(), ()> {
+fn declared_kind_rejecting_renew_ticket(_bytes: &[u8]) -> Result<(), ()> {
     Ok(())
 }
 fn decode_json_value(_bytes: &[u8], _limits: ()) -> Result<(), ()> {
@@ -506,6 +463,18 @@ impl DedicatedOpaqueTicketRef<'_> {
         serializer.serialize_str(self.0.expose());
     }
 }
+EOF
+
+    cat > "$fixture_root/crates/op-collab/src/frame_direction.rs" <<'EOF'
+pub enum InboundFrameDirection {
+    GuestToOwner,
+    OwnerToGuest,
+}
+fn enforce_inbound_envelope_limit(
+    direction: InboundFrameDirection,
+    actual: usize,
+    limits: WireLimits,
+) {}
 EOF
 
     cat > "$fixture_root/crates/op-collab/src/ticket_json.rs" <<'EOF'
@@ -548,6 +517,8 @@ EOF
     cat > "$fixture_root/crates/op-collab/tests/outbound_limits.rs" <<'EOF'
 #[test]
 fn presence_payload_limit_applies_to_encode_and_decode() {}
+#[test]
+fn oversized_snapshot_kind_cannot_raise_the_owner_inbound_ceiling() {}
 EOF
 
     cat > "$fixture_root/crates/op-collab-transport/src/config.rs" <<'EOF'
@@ -572,6 +543,21 @@ EOF
     cat > "$fixture_root/crates/op-collab-transport/src/frame.rs" <<'EOF'
 #[test]
 fn mislabeled_renewal_never_reaches_generic_payload_deserialization() {}
+EOF
+
+    cat > "$fixture_root/crates/op-collab-transport/src/connection_limit_tests.rs" <<'EOF'
+#[test]
+fn live_silent_guards_stay_charged_until_the_socket_worker_drops_them() {}
+EOF
+
+    cat > "$fixture_root/crates/op-collab-transport/src/tcp.rs" <<'EOF'
+#[test]
+fn silent_guarded_accept_exits_at_first_message_deadline_before_releasing_its_seat() {}
+EOF
+
+    cat > "$fixture_root/crates/op-collab-transport/src/chunk_tests.rs" <<'EOF'
+#[test]
+fn completed_transfer_holds_the_declared_reservation_until_drop() {}
 EOF
 
     cat > "$fixture_root/crates/op-collab-transport/src/queue.rs" <<'EOF'
@@ -712,21 +698,13 @@ assert_not_impl_any!(PeerNetworkCommand: Clone);
 fn verification_commands_move_the_original_ticket_allocation() {}
 EOF
 
-    cat > "$fixture_root/fake-bin/cargo" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-if [[ "${1:-}" != "tree" ]]; then
-    printf 'unexpected fake cargo invocation: %s\n' "$*" >&2
-    exit 2
-fi
-printf '%s\n' \
-    'op-collab v0.0.0' \
-    'serde v1.0.0'
-if [[ -f "$PWD/.fake-wasm-forbidden" ]]; then
-    printf '%s\n' 'tokio v1.0.0'
-fi
+    cat > "$fixture_root/crates/op-host-desktop/src/collab_runtime/relay_bootstrap_tests.rs" <<'EOF'
+#[test]
+fn payload_rejects_exact_cross_region_key_reuse() {}
 EOF
-    chmod +x "$fixture_root/fake-bin/cargo"
+
+    ln -s "$script_dir/check-collab-security-boundaries.test.sh" \
+        "$fixture_root/fake-bin/cargo"
 
 }
 
@@ -735,6 +713,7 @@ run_gate() {
     gate_output=$(
         cd "$fixture_root"
         PATH="$fixture_root/fake-bin:$PATH" \
+            OPENPENCIL_COLLAB_SECURITY_FAKE_CARGO=1 \
             bash tools/check-collab-security-boundaries.sh 2>&1
     )
     gate_status=$?

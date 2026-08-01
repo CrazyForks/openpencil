@@ -50,6 +50,12 @@ pub enum RelayFailureKind {
     Rejected,
     Protocol,
     TextFrame,
+    /// The relay sent a reauthentication challenge sooner than the protocol's
+    /// slowest possible legitimate rotation cadence allows.
+    ReauthTooFrequent,
+    /// The relay exhausted this connection's server-initiated
+    /// reauthentication budget.
+    ReauthBudgetExhausted,
     BinaryFrameTooLarge,
     IdleTimeout,
     LifetimeExceeded,

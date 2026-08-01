@@ -603,18 +603,8 @@ impl GuestSessionCore {
     }
 }
 
+/// Direction is classified once, in `frame_direction`, because the decoder
+/// sizes its inbound ceiling from the same classification.
 fn owner_to_guest_message(message: &CollabMessage) -> bool {
-    matches!(
-        message,
-        CollabMessage::Welcome(_)
-            | CollabMessage::Commit(_)
-            | CollabMessage::Reject(_)
-            | CollabMessage::Snapshot(_)
-            | CollabMessage::UndoResult(_)
-            | CollabMessage::RenewTicket(_)
-            | CollabMessage::PresenceChanged(_)
-            | CollabMessage::ParticipantJoined(_)
-            | CollabMessage::ParticipantLeft(_)
-            | CollabMessage::Bye(_)
-    )
+    crate::frame_direction::message_travels_owner_to_guest(message)
 }

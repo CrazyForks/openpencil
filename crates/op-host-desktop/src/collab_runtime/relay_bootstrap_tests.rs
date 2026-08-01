@@ -236,6 +236,28 @@ fn payload_rejects_noncanonical_json_duplicate_regions_keys_and_unknown_fields()
 }
 
 #[test]
+fn payload_rejects_exact_cross_region_key_reuse() {
+    let signing = SigningKey::from_bytes(&[7; 32]);
+    let roots = roots(&signing, "test_root_1");
+
+    let mut payload = valid_payload();
+    payload.regions[1].locator_keys[0] = payload.regions[0].locator_keys[0].clone();
+    let body = signed_envelope(&signing, "test_root_1", &payload);
+    assert_eq!(
+        verify_bootstrap(&body, &roots, NOW, false, true).unwrap_err(),
+        BootstrapError::InvalidPayload
+    );
+
+    let mut payload = valid_payload();
+    payload.regions[1].relay_x25519_keys[0] = payload.regions[0].relay_x25519_keys[0].clone();
+    let body = signed_envelope(&signing, "test_root_1", &payload);
+    assert_eq!(
+        verify_bootstrap(&body, &roots, NOW, false, true).unwrap_err(),
+        BootstrapError::InvalidPayload
+    );
+}
+
+#[test]
 fn payload_rejects_invalid_time_urls_kids_and_low_order_keys() {
     let signing = SigningKey::from_bytes(&[7; 32]);
     let roots = roots(&signing, "test_root_1");
@@ -594,4 +616,156 @@ fn provider_sends_etag_and_accepts_only_matching_not_modified() {
         .contains(&format!("if-none-match: {}", etag).to_ascii_lowercase()));
     server.join().unwrap();
     let _ = std::fs::remove_dir_all(cache_root);
+}
+
+fn assert_bad_cache_cannot_disarm_rollback_floor(
+    label: &str,
+    damage_cache: impl FnOnce(&std::path::Path),
+) {
+    let signing = SigningKey::from_bytes(&[7; 32]);
+    let mut high_payload = valid_payload();
+    high_payload.generation = 8;
+    let high_body = signed_envelope(&signing, "test_root_1", &high_payload);
+    let lower_body = signed_envelope(&signing, "test_root_1", &valid_payload());
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let address = listener.local_addr().unwrap();
+    let endpoint = format!("http://{address}{BOOTSTRAP_PATH}");
+    let lower_etag = strong_etag(&lower_body);
+    let (stop_sender, stop_receiver) = mpsc::sync_channel(1);
+    let server = thread::spawn(move || loop {
+        match listener.accept() {
+            Ok((mut stream, _)) => {
+                let mut request = [0_u8; 2_048];
+                let _ = stream.read(&mut request).unwrap();
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nETag: {lower_etag}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    lower_body.len()
+                )
+                .unwrap();
+                stream.write_all(&lower_body).unwrap();
+                return true;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                match stop_receiver.recv_timeout(Duration::from_millis(10)) {
+                    Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => return false,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                }
+            }
+            Err(error) => panic!("bootstrap listener failed: {error}"),
+        }
+    });
+    let cache_root = std::env::temp_dir().join(format!(
+        "op-bootstrap-floor-{label}-{}-{NOW}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&cache_root);
+    let _ = std::fs::remove_file(&cache_root);
+    std::fs::create_dir_all(&cache_root).unwrap();
+    let cache_path = cache_root.join(BOOTSTRAP_CACHE_FILE);
+    write_cache(
+        &cache_path,
+        &BootstrapCache {
+            endpoint: endpoint.clone(),
+            etag: Some(strong_etag(&high_body)),
+            body: String::from_utf8(high_body).unwrap(),
+        },
+    )
+    .unwrap();
+    damage_cache(&cache_path);
+    let provider = EnvironmentRelayBootstrapProvider {
+        endpoint: Url::parse(&endpoint).unwrap(),
+        roots: roots(&signing, "test_root_1"),
+        development_http: true,
+        cache_path,
+    };
+    assert_eq!(provider.load_inner(NOW).unwrap_err(), BootstrapError::Cache);
+    stop_sender.send(()).ok();
+    assert!(
+        !server.join().unwrap(),
+        "an unsafe cache must fail before a lower-generation response is fetched"
+    );
+    let _ = std::fs::remove_dir_all(cache_root);
+}
+
+#[test]
+fn corrupt_cache_cannot_disarm_the_rollback_floor() {
+    assert_bad_cache_cannot_disarm_rollback_floor("corrupt", |path| {
+        std::fs::write(path, b"not json").unwrap();
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn unreadable_cache_cannot_disarm_the_rollback_floor() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let probe = std::env::temp_dir().join(format!(
+        "op-bootstrap-permission-probe-{}-{NOW}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&probe);
+    std::fs::write(&probe, b"probe").unwrap();
+    std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let can_still_read = std::fs::File::open(&probe).is_ok();
+    std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let _ = std::fs::remove_file(&probe);
+    // Root and unusual ACL environments can still read mode-000 files, so
+    // they cannot exercise the permission-denied branch.
+    if can_still_read {
+        return;
+    }
+    assert_bad_cache_cannot_disarm_rollback_floor("unreadable", |path| {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).unwrap();
+    });
+}
+
+#[test]
+fn cache_persist_failure_is_surfaced_instead_of_swallowed() {
+    let signing = SigningKey::from_bytes(&[7; 32]);
+    let body = signed_envelope(&signing, "test_root_1", &valid_payload());
+    let cache_root = std::env::temp_dir().join(format!(
+        "op-bootstrap-unwritable-{}-{}",
+        std::process::id(),
+        NOW
+    ));
+    let _ = std::fs::remove_dir_all(&cache_root);
+    let _ = std::fs::remove_file(&cache_root);
+    std::fs::create_dir_all(&cache_root).unwrap();
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let endpoint = format!("http://{address}{BOOTSTRAP_PATH}");
+    let etag = strong_etag(&body);
+    let response_body = body.clone();
+    let blocked_cache_root = cache_root.clone();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0_u8; 2_048];
+        let _ = stream.read(&mut request).unwrap();
+        // The cache is genuinely absent during the initial read. Replace its
+        // parent only after the request arrives, so persistence fails without
+        // conflating that failure with an unsafe cache read.
+        std::fs::remove_dir(&blocked_cache_root).unwrap();
+        std::fs::write(&blocked_cache_root, b"not a directory").unwrap();
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nETag: {etag}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            response_body.len()
+        )
+        .unwrap();
+        stream.write_all(&response_body).unwrap();
+    });
+    let provider = EnvironmentRelayBootstrapProvider {
+        endpoint: Url::parse(&endpoint).unwrap(),
+        roots: roots(&signing, "test_root_1"),
+        development_http: true,
+        cache_path: cache_root.join(BOOTSTRAP_CACHE_FILE),
+    };
+    assert!(
+        matches!(provider.load_inner(NOW), Err(BootstrapError::CachePersist)),
+        "an unwritable cache must not silently disarm the anti-rollback floor"
+    );
+    server.join().unwrap();
+    let _ = std::fs::remove_file(cache_root);
 }

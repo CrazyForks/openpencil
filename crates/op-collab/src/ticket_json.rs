@@ -56,16 +56,17 @@ struct BorrowedRenewTicketPayload<'a> {
 }
 
 /// Rejects credential-bearing input before the generic decoder can construct a
-/// JSON value tree. The caller has already enforced envelope and nesting limits.
-pub(crate) fn reject_renew_ticket_before_generic_value_decode(
+/// JSON value tree. The caller has already enforced envelope, nesting, and its
+/// trusted local-direction limit before this borrowed parse begins.
+pub(crate) fn declared_kind_rejecting_renew_ticket(
     encoded: &[u8],
-) -> Result<(), ProtocolError> {
+) -> Result<Cow<'_, str>, ProtocolError> {
     let frame = parse_borrowed_envelope(encoded)?;
     let body = parse_borrowed_body(frame.body)?;
     if body.kind == "renew_ticket" {
         return Err(ProtocolError::SensitiveCredentialRequiresDedicatedCodec);
     }
-    Ok(())
+    Ok(body.kind)
 }
 
 /// Decodes a declared renewal transfer without copying ticket plaintext into

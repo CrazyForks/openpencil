@@ -347,7 +347,7 @@ if [[ -n "$ordinary_ticket_deserializer" ]]; then
 $ordinary_ticket_deserializer"
 fi
 credential_probe_line=$(grep -nE \
-    '^[[:space:]]*reject_renew_ticket_before_generic_value_decode\(bytes\)\?;' \
+    '^[[:space:]]*declared_kind_rejecting_renew_ticket\(bytes\)\?;' \
     crates/op-collab/src/codec.rs | head -1 | cut -d: -f1 || true)
 generic_value_decode_line=$(grep -nF \
     'let mut value = decode_json_value(bytes, limits)?;' \
@@ -357,6 +357,22 @@ if [[ -z "$credential_probe_line" || -z "$generic_value_decode_line" ]] \
     record_failure \
         "generic credential discriminator must run before JSON Value decoding"
 fi
+# The guest-to-owner envelope ceiling is selected from authenticated local
+# connection direction before the discriminator or generic Value is parsed.
+# An attacker-declared Snapshot kind must never select the 64 MiB owner budget.
+inbound_direction_limit_line=$(grep -nE \
+    '^[[:space:]]*enforce_inbound_envelope_limit\(inbound_direction, bytes\.len\(\), limits\)\?;' \
+    crates/op-collab/src/codec.rs | head -1 | cut -d: -f1 || true)
+if [[ -z "$inbound_direction_limit_line" || -z "$credential_probe_line" \
+        || -z "$generic_value_decode_line" ]] \
+    || [[ "$inbound_direction_limit_line" -ge "$credential_probe_line" ]] \
+    || [[ "$inbound_direction_limit_line" -ge "$generic_value_decode_line" ]]; then
+    record_failure \
+        "trusted per-direction inbound envelope limit must run before discriminator and JSON Value decoding"
+fi
+require_literal crates/op-collab/src/frame_direction.rs \
+    "direction: InboundFrameDirection" \
+    "trusted inbound frame direction resource boundary"
 require_literal crates/op-collab/src/error.rs \
     "SensitiveCredentialRequiresDedicatedCodec" "dedicated credential codec failure"
 require_literal crates/op-collab/tests/credential_ownership.rs \
@@ -392,6 +408,24 @@ require_literal crates/op-collab-transport/src/frame.rs \
 require_literal .github/workflows/collab-security.yml \
     "cargo test --locked -p op-collab-transport frame::tests" \
     "credential transport codec workflow test"
+require_literal_count .github/workflows/collab-security.yml \
+    "cargo test --locked -p op-collab-transport" 3 \
+    "complete transport resource-limit workflow test"
+require_literal crates/op-collab/tests/outbound_limits.rs \
+    "oversized_snapshot_kind_cannot_raise_the_owner_inbound_ceiling" \
+    "attacker-declared frame direction regression test"
+require_literal crates/op-collab-transport/src/connection_limit_tests.rs \
+    "live_silent_guards_stay_charged_until_the_socket_worker_drops_them" \
+    "live socket pending-seat regression test"
+require_literal crates/op-collab-transport/src/tcp.rs \
+    "silent_guarded_accept_exits_at_first_message_deadline_before_releasing_its_seat" \
+    "real first-message socket deadline regression test"
+require_literal crates/op-collab-transport/src/chunk_tests.rs \
+    "completed_transfer_holds_the_declared_reservation_until_drop" \
+    "completed transfer aggregate-reservation regression test"
+require_literal crates/op-host-desktop/src/collab_runtime/relay_bootstrap_tests.rs \
+    "payload_rejects_exact_cross_region_key_reuse" \
+    "cross-region exact key-reuse regression test"
 for non_clone_type in OpaqueTicket RenewTicket CollabMessage FrameEnvelope; do
     require_literal crates/op-collab/tests/credential_ownership.rs \
         "assert_not_impl_any!($non_clone_type: Clone);" \

@@ -6,16 +6,18 @@ use zeroize::Zeroizing;
 use crate::{
     apply::validate_txn_resource_shape,
     finite::validate_finite,
+    frame_direction::enforce_inbound_envelope_limit,
     protocol::{valid_profile_avatar_url, valid_profile_display_name},
     serde_context::{frame_has_external_image_ref, inline_frame, inline_txn, to_isolated_value},
-    ticket_json::reject_renew_ticket_before_generic_value_decode,
+    ticket_json::declared_kind_rejecting_renew_ticket,
     typed_images, verify_snapshot, Applied, ApplyLimits, Bye, CatchUp, ClientOpId, CollabMessage,
-    CollabTxn, Commit, Epoch, FrameEnvelope, OpaqueTicket, Participant, ParticipantId,
-    ParticipantLeft, ParticipantPresence, PeerId, PeerNamespace, Presence, ProtocolError, Reject,
-    SessionId, Snapshot, Submit, UndoRequest, UndoRequestId, UndoResult, Welcome, WireLimits,
-    CANONICAL_HASH_VERSION, COLLAB_PROTOCOL_VERSION, MAX_DOCUMENT_NODES, MAX_ENVELOPE_BYTES,
-    MAX_IDENTIFIER_BYTES, MAX_OPS_PER_TXN, MAX_PRESENCE_BYTES, MAX_PROCESSED_SUBTREE_NODES_PER_OP,
-    MAX_TREE_DEPTH, MAX_TXN_BYTES, MAX_VALIDATION_NODE_VISITS_PER_TXN,
+    CollabTxn, Commit, Epoch, FrameEnvelope, InboundFrameDirection, OpaqueTicket, Participant,
+    ParticipantId, ParticipantLeft, ParticipantPresence, PeerId, PeerNamespace, Presence,
+    ProtocolError, Reject, SessionId, Snapshot, Submit, UndoRequest, UndoRequestId, UndoResult,
+    Welcome, WireLimits, CANONICAL_HASH_VERSION, COLLAB_PROTOCOL_VERSION, MAX_DOCUMENT_NODES,
+    MAX_ENVELOPE_BYTES, MAX_IDENTIFIER_BYTES, MAX_OPS_PER_TXN, MAX_PRESENCE_BYTES,
+    MAX_PROCESSED_SUBTREE_NODES_PER_OP, MAX_TREE_DEPTH, MAX_TXN_BYTES,
+    MAX_VALIDATION_NODE_VISITS_PER_TXN,
 };
 
 impl fmt::Debug for FrameEnvelope {
@@ -256,14 +258,35 @@ impl FrameEnvelope {
         Self::from_json_slice_with_limits(bytes, WireLimits::default())
     }
 
+    /// Decodes with the conservative guest-to-owner pre-parse ceiling.
+    ///
+    /// Inbound transports that authenticated an owner must call
+    /// [`Self::from_json_slice_with_limits_for_direction`] explicitly.
     pub fn from_json_slice_with_limits(
         bytes: &[u8],
         limits: WireLimits,
     ) -> Result<Self, ProtocolError> {
+        Self::from_json_slice_with_limits_for_direction(
+            bytes,
+            limits,
+            InboundFrameDirection::GuestToOwner,
+        )
+    }
+
+    /// Decodes an inbound frame under a direction selected from authenticated
+    /// local connection state, never from attacker-declared frame fields.
+    pub fn from_json_slice_with_limits_for_direction(
+        bytes: &[u8],
+        limits: WireLimits,
+        inbound_direction: InboundFrameDirection,
+    ) -> Result<Self, ProtocolError> {
         validate_wire_limits(limits)?;
         enforce_envelope_limit(bytes.len(), limits)?;
         enforce_json_nesting_limit(bytes, json_nesting_limit(limits))?;
-        reject_renew_ticket_before_generic_value_decode(bytes)?;
+        enforce_inbound_envelope_limit(inbound_direction, bytes.len(), limits)?;
+        // Reject the sensitive renewal kind before generic JSON materialises.
+        // The returned kind is deliberately not used for resource budgeting.
+        declared_kind_rejecting_renew_ticket(bytes)?;
         let mut value = decode_json_value(bytes, limits)?;
         if frame_has_external_image_ref(&mut value) {
             return Err(ProtocolError::ExternalImageReference);
@@ -474,7 +497,7 @@ pub(crate) fn enforce_envelope_limit(
     Ok(())
 }
 
-fn usize_limit(limit: u32) -> usize {
+pub(crate) fn usize_limit(limit: u32) -> usize {
     usize::try_from(limit).unwrap_or(usize::MAX)
 }
 

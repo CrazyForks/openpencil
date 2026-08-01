@@ -10,7 +10,7 @@ use std::{
 use op_collab_relay_control_plane::{RelayLocatorSigner, RelayLocatorSignerError};
 use op_collab_relay_protocol::LOCATOR_CANONICAL_SIGNING_BYTES;
 #[cfg(unix)]
-use op_collab_relay_protocol::{LocatorKeyId, LocatorSignature};
+use op_collab_relay_protocol::{LocatorKeyId, LocatorSignature, MAX_LOCATOR_KEY_ID_BYTES};
 
 pub const HSM_SIGNING_PROTOCOL_VERSION: u8 = 1;
 pub const HSM_SIGN_REQUEST_BYTES: usize = 4 + 1 + 1 + 1 + 64 + LOCATOR_CANONICAL_SIGNING_BYTES;
@@ -216,6 +216,10 @@ fn encode_request(
     output[5] = SIGN_OPERATION;
     output[6] = key_id.as_str().len() as u8;
     output[7..7 + key_id.as_str().len()].copy_from_slice(key_id.as_str().as_bytes());
+    // The key-id field is a fixed 64-byte slot starting at offset 7. The write
+    // above and the canonical offset below are only in bounds while the longest
+    // protocol key id fits that slot exactly.
+    const _: () = assert!(MAX_LOCATOR_KEY_ID_BYTES == 64);
     let canonical_offset = 7 + 64;
     output[canonical_offset..].copy_from_slice(canonical);
     output

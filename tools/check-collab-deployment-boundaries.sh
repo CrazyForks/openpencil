@@ -67,6 +67,8 @@ for required in \
     deploy/collab-relay-locator-edge/openpencil-collab-locator-global.service.example \
     deploy/collab-relay-locator-edge/rotate-cn-crl.sh \
     deploy/collab-relay-locator-edge/validate.sh \
+    tools/check-collab-security-boundaries-cases.sh \
+    tools/check-collab-deployment-boundaries.sh \
     .github/workflows/collab-security.yml \
     docs/security/p2p-collaboration-threat-model.md; do
     require_file "$required"

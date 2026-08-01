@@ -1,13 +1,13 @@
 use std::{
     future::Future,
-    num::NonZeroU32,
-    sync::{Arc, Mutex},
+    net::IpAddr,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
 use axum::{
     body::Bytes,
-    extract::{OriginalUri, State},
+    extract::{Extension, OriginalUri, State},
     http::{
         header::{
             ACCEPT, AUTHORIZATION, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_TYPE, RETRY_AFTER,
@@ -42,6 +42,10 @@ use zeroize::Zeroizing;
 
 use crate::LocatorServerConfig;
 
+pub(crate) mod rate_limit;
+
+use rate_limit::RateLimiter;
+
 pub const MAX_HTTP_HEADERS: usize = 32;
 pub const MAX_HTTP_HEADER_BYTES: usize = 64 * 1024;
 
@@ -68,11 +72,19 @@ where
     }
 }
 
+/// Address of the peer that opened the connection a request arrived on.
+///
+/// Attached per connection by the accept loop, because the manual
+/// `hyper`/`TowerToHyperService` wiring gives the handler no other view of the
+/// socket. Requests are rate limited against this address.
+#[derive(Clone, Copy, Debug)]
+struct ClientAddress(IpAddr);
+
 struct AppState {
     publisher: Arc<dyn LocatorPublisher>,
     in_flight: Arc<Semaphore>,
     auth_in_flight: Arc<Semaphore>,
-    rate_limiter: Arc<FixedWindowRateLimiter>,
+    rate_limiter: Arc<RateLimiter>,
     auth_timeout: Duration,
 }
 
@@ -85,43 +97,6 @@ impl Clone for AppState {
             rate_limiter: Arc::clone(&self.rate_limiter),
             auth_timeout: self.auth_timeout,
         }
-    }
-}
-
-struct FixedWindowRateLimiter {
-    maximum: NonZeroU32,
-    state: Mutex<RateWindow>,
-}
-
-struct RateWindow {
-    started: Instant,
-    accepted: u32,
-}
-
-impl FixedWindowRateLimiter {
-    fn new(maximum: NonZeroU32) -> Self {
-        Self {
-            maximum,
-            state: Mutex::new(RateWindow {
-                started: Instant::now(),
-                accepted: 0,
-            }),
-        }
-    }
-
-    fn allow(&self, now: Instant) -> bool {
-        let Ok(mut state) = self.state.lock() else {
-            return false;
-        };
-        if now.saturating_duration_since(state.started) >= Duration::from_secs(1) {
-            state.started = now;
-            state.accepted = 0;
-        }
-        if state.accepted >= self.maximum.get() {
-            return false;
-        }
-        state.accepted += 1;
-        true
     }
 }
 
@@ -172,8 +147,10 @@ where
         publisher,
         in_flight: Arc::new(Semaphore::new(config.limits.max_in_flight.get())),
         auth_in_flight: Arc::new(Semaphore::new(config.limits.max_auth_in_flight.get())),
-        rate_limiter: Arc::new(FixedWindowRateLimiter::new(
+        rate_limiter: Arc::new(RateLimiter::new(
             config.limits.max_requests_per_second,
+            config.limits.max_client_requests_per_second,
+            config.limits.max_connections,
         )),
         auth_timeout: config.limits.auth_timeout,
     };
@@ -193,13 +170,17 @@ where
             biased;
             () = &mut shutdown => break,
             accepted = listener.accept() => {
-                let (stream, _) = accepted.map_err(LocatorServerError::Accept)?;
+                let (stream, peer) = accepted.map_err(LocatorServerError::Accept)?;
                 let Ok(connection_permit) =
                     Arc::clone(&connection_capacity).try_acquire_owned()
                 else {
                     continue;
                 };
-                let service = TowerToHyperService::new(router.clone());
+                // The router is shared, so the connecting peer is attached per
+                // connection: it is the only place the socket address is known.
+                let service = TowerToHyperService::new(
+                    router.clone().layer(Extension(ClientAddress(peer.ip()))),
+                );
                 let connection_shutdown = shutdown_receiver.clone();
                 let limits = config.limits.clone();
                 connections.spawn(async move {
@@ -280,6 +261,7 @@ async fn health() -> StatusCode {
 
 async fn publish_locator(
     State(state): State<AppState>,
+    Extension(client): Extension<ClientAddress>,
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
     body: Bytes,
@@ -300,7 +282,7 @@ async fn publish_locator(
             );
         }
     };
-    if !state.rate_limiter.allow(Instant::now()) {
+    if !state.rate_limiter.allow(Instant::now(), client.0) {
         return response_with_header(
             StatusCode::TOO_MANY_REQUESTS,
             RETRY_AFTER,

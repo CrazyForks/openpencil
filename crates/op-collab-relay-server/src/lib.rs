@@ -3,6 +3,7 @@ mod config;
 mod connection;
 mod connection_reauth;
 mod error;
+mod peer_quota;
 mod pinned_verifiers;
 mod production;
 mod registry;

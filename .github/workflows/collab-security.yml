@@ -87,7 +87,7 @@ jobs:
   collaboration-security:
     name: Static boundaries and targeted tests
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -105,6 +105,8 @@ jobs:
         run: |
           bash -n tools/check-collab-security-boundaries.sh
           bash -n tools/check-collab-security-boundaries.test.sh
+          bash -n tools/check-collab-security-boundaries-cases.sh
+          bash -n tools/check-collab-deployment-boundaries.sh
           bash -n tools/check-op-auth-prebuilt.sh
           bash -n tools/check-op-auth-prebuilt.test.sh
           bash -n tools/package-op-auth-prebuilt.sh
@@ -132,6 +134,7 @@ jobs:
       - name: Test protocol state machines, properties, and resource limits
         run: |
           cargo test --locked -p op-collab
+          cargo test --locked -p op-collab-transport
           cargo test --locked -p op-collab-transport config::tests
           cargo test --locked -p op-collab-transport frame::tests
           cargo test --locked -p op-collab-relay-protocol --all-features

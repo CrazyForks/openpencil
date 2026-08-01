@@ -102,6 +102,13 @@ impl ProductionLocatorConfig {
             limits.max_requests_per_second =
                 std::num::NonZeroU32::new(value as u32).expect("bounded non-zero");
         }
+        // Lowering the global ceiling must not turn the default per-client rate
+        // into a startup error. An explicit per-client override is applied after
+        // this clamp, so a value that exceeds the ceiling still fails loudly.
+        limits.max_client_requests_per_second = limits
+            .max_client_requests_per_second
+            .min(limits.max_requests_per_second);
+        limits.apply_env_overrides()?;
         let server = LocatorServerConfig::new(listen, limits)?;
         Ok(Self {
             server,

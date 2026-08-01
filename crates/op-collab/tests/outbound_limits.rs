@@ -1,9 +1,11 @@
 use jian_ops_schema::PenDocument;
 use op_collab::{
-    AdmissionGrant, ClientOpId, CollabMessage, CommitSeq, ConnectionKey, ConnectionPrincipal,
-    Epoch, FrameEnvelope, OwnerSessionConfig, OwnerSessionCore, ParticipantId, PeerId,
-    PeerNamespace, Presence, ProtocolError, Role, SessionError, SessionId, UndoRequest,
-    UndoRequestId, VerifiedAuthMetadata, WireLimits,
+    canonical_document_hash, guest_to_owner_envelope_limit, AdmissionGrant, ClientOpId,
+    CollabMessage, CommitSeq, ConnectionKey, ConnectionPrincipal, Epoch, FrameEnvelope,
+    InboundFrameDirection, OwnerSessionConfig, OwnerSessionCore, ParticipantId, PeerId,
+    PeerNamespace, Presence, ProtocolError, Role, SessionError, SessionId, Snapshot, UndoRequest,
+    UndoRequestId, VerifiedAuthMetadata, WireLimits, MAX_ENVELOPE_BYTES,
+    MAX_GUEST_TO_OWNER_ENVELOPE_BYTES, MAX_TXN_BYTES,
 };
 
 fn connection(raw: u64) -> ConnectionKey {
@@ -61,6 +63,87 @@ fn short_grant(role: Role, participant: &str, peer: &str, namespace: &str) -> Ad
         ),
         PeerNamespace::try_from(namespace).unwrap(),
     )
+}
+
+#[test]
+fn guest_inbound_ceiling_is_derived_from_the_per_message_caps() {
+    assert_eq!(
+        guest_to_owner_envelope_limit(WireLimits::default()),
+        MAX_GUEST_TO_OWNER_ENVELOPE_BYTES as usize
+    );
+    assert!(MAX_GUEST_TO_OWNER_ENVELOPE_BYTES > MAX_TXN_BYTES);
+    assert!(MAX_GUEST_TO_OWNER_ENVELOPE_BYTES < MAX_ENVELOPE_BYTES);
+    let tight = WireLimits {
+        max_envelope_bytes: 4_096,
+        ..WireLimits::default()
+    };
+    assert_eq!(guest_to_owner_envelope_limit(tight), 4_096);
+}
+
+#[test]
+fn oversized_guest_frame_is_rejected_before_the_generic_decode() {
+    let padding = "a".repeat(MAX_GUEST_TO_OWNER_ENVELOPE_BYTES as usize);
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "protocolVersion": 1,
+        "sessionId": "session",
+        "epoch": 1,
+        "body": {
+            "type": "submit",
+            "payload": {
+                "clientOpId": {"peerId": padding, "localCounter": 1},
+                "baseSeq": 0,
+                "txn": {"ops": []},
+            },
+        },
+    }))
+    .unwrap();
+    assert!(bytes.len() > guest_to_owner_envelope_limit(WireLimits::default()));
+    assert!(bytes.len() <= MAX_ENVELOPE_BYTES as usize);
+
+    assert!(matches!(
+        FrameEnvelope::from_json_slice(&bytes),
+        Err(ProtocolError::GuestEnvelopeTooLarge { .. })
+    ));
+}
+
+#[test]
+fn oversized_snapshot_kind_cannot_raise_the_owner_inbound_ceiling() {
+    let content = "a".repeat(MAX_GUEST_TO_OWNER_ENVELOPE_BYTES as usize);
+    let document: PenDocument = serde_json::from_value(serde_json::json!({
+        "version": "1.0",
+        "children": [{"type": "text", "id": "c_ns_1", "content": content}],
+    }))
+    .unwrap();
+    let snapshot = FrameEnvelope::new(
+        SessionId::from("session"),
+        Epoch(1),
+        CollabMessage::Snapshot(Box::new(Snapshot {
+            seq: CommitSeq(0),
+            doc_hash: canonical_document_hash(&document).unwrap(),
+            document,
+        })),
+    );
+
+    let encoded = snapshot.to_json_vec().unwrap();
+    assert!(encoded.len() > guest_to_owner_envelope_limit(WireLimits::default()));
+    assert_eq!(
+        FrameEnvelope::from_json_slice_with_limits_for_direction(
+            &encoded,
+            WireLimits::default(),
+            InboundFrameDirection::OwnerToGuest,
+        )
+        .unwrap(),
+        snapshot
+    );
+
+    assert!(matches!(
+        FrameEnvelope::from_json_slice_with_limits_for_direction(
+            &encoded,
+            WireLimits::default(),
+            InboundFrameDirection::GuestToOwner,
+        ),
+        Err(ProtocolError::GuestEnvelopeTooLarge { .. })
+    ));
 }
 
 #[test]

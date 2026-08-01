@@ -1,13 +1,16 @@
+use std::cell::Cell;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use polling::{Event, Events, Poller};
 use socket2::{Domain, Protocol, SockRef, Socket, TcpKeepalive, Type};
 
+use crate::noise::run_xx_responder_observed;
 use crate::{
-    read_server_prelude, run_xx_initiator, run_xx_responder, write_server_prelude, ConfigError,
-    DeviceStaticKey, EncodedServerPrelude, RuntimeError, SecureConnection, ServerPrelude,
+    read_server_prelude, run_xx_initiator, write_server_prelude, ConfigError, DeviceStaticKey,
+    EncodedServerPrelude, PendingHandshakeGuard, RuntimeError, SecureConnection, ServerPrelude,
     TransportConfig,
 };
 
@@ -241,19 +244,81 @@ fn cancelled_io_error() -> std::io::Error {
 ///
 /// The caller should hold a [`crate::PendingHandshakeGuard`] before invoking
 /// this function so connection-flood limits apply before cryptographic work.
+/// Prefer [`accept_secure_tcp_guarded`], which also tells the guard when the
+/// peer proves liveness.
 pub fn accept_secure_tcp(
-    mut stream: TcpStream,
+    stream: TcpStream,
     local_static: &DeviceStaticKey,
     prelude: &ServerPrelude,
     config: TransportConfig,
 ) -> Result<SecureConnection<TcpStream>, RuntimeError> {
+    accept_secure_tcp_inner(stream, local_static, prelude, config, None, &mut || Ok(()))
+}
+
+/// Accepts a connection and reports its first valid handshake message to
+/// `pending`.
+///
+/// This is the sanctioned owner-side accept path. The first valid Noise
+/// message has an actual `timeouts.handshake_first_message` socket deadline.
+/// A silent peer is disconnected and its worker returns before the continuously
+/// held pending guard can release its global seat. Valid progress switches the
+/// I/O deadline to the full handshake window.
+pub fn accept_secure_tcp_guarded(
+    stream: TcpStream,
+    local_static: &DeviceStaticKey,
+    prelude: &ServerPrelude,
+    config: TransportConfig,
+    pending: &PendingHandshakeGuard,
+) -> Result<SecureConnection<TcpStream>, RuntimeError> {
+    accept_secure_tcp_inner(
+        stream,
+        local_static,
+        prelude,
+        config,
+        Some(config.timeouts.handshake_first_message),
+        &mut || {
+            pending
+                .note_handshake_progress()
+                .map_err(|_| crate::NoiseTransportError::PendingSeatUnavailable)
+        },
+    )
+}
+
+fn accept_secure_tcp_inner(
+    mut stream: TcpStream,
+    local_static: &DeviceStaticKey,
+    prelude: &ServerPrelude,
+    config: TransportConfig,
+    first_message_timeout: Option<Duration>,
+    on_first_message: &mut dyn FnMut() -> Result<(), crate::NoiseTransportError>,
+) -> Result<SecureConnection<TcpStream>, RuntimeError> {
     let config = config.validate()?;
     configure_tcp_common(&stream, config)?;
-    let deadline = handshake_deadline(config, None)?;
+    let started_at = Instant::now();
+    let deadline =
+        started_at
+            .checked_add(config.timeouts.handshake)
+            .ok_or(ConfigError::InvalidValue {
+                field: "timeouts.handshake",
+            })?;
+    let initial_deadline = match first_message_timeout {
+        Some(timeout) => started_at
+            .checked_add(timeout)
+            .ok_or(ConfigError::InvalidValue {
+                field: "timeouts.handshake_first_message",
+            })?
+            .min(deadline),
+        None => deadline,
+    };
     let noise = {
-        let mut io = DeadlineTcp::new(&mut stream, deadline);
+        let mut io = DeadlineTcp::new(&mut stream, initial_deadline);
+        let deadline_handle = io.deadline_handle();
         let encoded = write_server_prelude(&mut io, prelude)?;
-        run_xx_responder(&mut io, local_static, &encoded)?
+        run_xx_responder_observed(&mut io, local_static, &encoded, &mut || {
+            on_first_message()?;
+            deadline_handle.set(deadline);
+            Ok(())
+        })?
     };
     prepare_tcp_stream(&stream, config)?;
     SecureConnection::new(stream, noise, config, Instant::now())
@@ -307,16 +372,24 @@ fn remaining_timeout(deadline: Instant, configured: Duration) -> std::io::Result
 
 struct DeadlineTcp<'a> {
     stream: &'a mut TcpStream,
-    deadline: Instant,
+    deadline: Rc<Cell<Instant>>,
 }
 
 impl<'a> DeadlineTcp<'a> {
-    const fn new(stream: &'a mut TcpStream, deadline: Instant) -> Self {
-        Self { stream, deadline }
+    fn new(stream: &'a mut TcpStream, deadline: Instant) -> Self {
+        Self {
+            stream,
+            deadline: Rc::new(Cell::new(deadline)),
+        }
+    }
+
+    fn deadline_handle(&self) -> Rc<Cell<Instant>> {
+        Rc::clone(&self.deadline)
     }
 
     fn remaining(&self) -> std::io::Result<Duration> {
         self.deadline
+            .get()
             .checked_duration_since(Instant::now())
             .filter(|duration| !duration.is_zero())
             .ok_or_else(|| {
@@ -512,6 +585,102 @@ mod tests {
         );
         assert!(matches!(result, Err(RuntimeError::DiscoveryIdMismatch)));
         assert!(server.join().unwrap());
+    }
+
+    #[test]
+    fn a_guarded_accept_keeps_the_pending_seat_after_the_first_handshake_message() {
+        use crate::{ConnectionLimiter, ConnectionLimits, TimeoutConfig};
+
+        let config = TransportConfig {
+            timeouts: TimeoutConfig {
+                handshake_first_message: Duration::from_millis(200),
+                ..TimeoutConfig::default()
+            },
+            ..TransportConfig::default()
+        };
+        let limiter =
+            ConnectionLimiter::with_timeouts(ConnectionLimits::default(), config.timeouts).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let owner_key = DeviceStaticKey::from_private([11_u8; 32]).unwrap();
+        let limiter_for_owner = limiter.clone();
+        let server = std::thread::spawn(move || {
+            let (stream, peer) = listener.accept().unwrap();
+            let pending = limiter_for_owner.try_begin_handshake(peer.ip()).unwrap();
+            let accepted =
+                accept_secure_tcp_guarded(stream, &owner_key, &server_prelude(), config, &pending);
+            (accepted.is_ok(), pending)
+        });
+
+        let (_, connection) = connect_secure_tcp(
+            address,
+            &DeviceStaticKey::from_private([12_u8; 32]).unwrap(),
+            Some("00112233445566778899aabbccddeeff"),
+            config,
+        )
+        .unwrap();
+        let (accepted, pending) = server.join().unwrap();
+        assert!(accepted);
+
+        let long_after = Instant::now() + Duration::from_secs(30);
+        assert!(
+            pending.holds_global_seat_at(long_after),
+            "a peer that completed the handshake keeps its pending seat"
+        );
+        drop(connection);
+    }
+
+    #[test]
+    fn silent_guarded_accept_exits_at_first_message_deadline_before_releasing_its_seat() {
+        use crate::{ConnectionLimiter, ConnectionLimits, TimeoutConfig};
+
+        let config = TransportConfig {
+            connections: ConnectionLimits {
+                max_pending_handshakes: 1,
+                max_pending_handshakes_per_ip: 1,
+                ..ConnectionLimits::default()
+            },
+            timeouts: TimeoutConfig {
+                handshake: Duration::from_secs(2),
+                handshake_first_message: Duration::from_millis(100),
+                ..TimeoutConfig::default()
+            },
+            ..TransportConfig::default()
+        };
+        let limiter =
+            ConnectionLimiter::with_timeouts(config.connections, config.timeouts).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let owner_key = DeviceStaticKey::from_private([13_u8; 32]).unwrap();
+        let limiter_for_owner = limiter.clone();
+        let (started_tx, started_rx) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (stream, peer) = listener.accept().unwrap();
+            let pending = limiter_for_owner.try_begin_handshake(peer.ip()).unwrap();
+            started_tx.send(()).unwrap();
+            let result =
+                accept_secure_tcp_guarded(stream, &owner_key, &server_prelude(), config, &pending);
+            drop(pending);
+            result
+        });
+
+        let silent = TcpStream::connect(address).unwrap();
+        started_rx.recv().unwrap();
+        assert_eq!(limiter.counts().unwrap().pending_handshakes, 1);
+        assert!(matches!(
+            limiter.try_begin_handshake("198.51.100.9".parse().unwrap()),
+            Err(crate::ConnectionLimitError::PendingHandshakesFull)
+        ));
+
+        let started = Instant::now();
+        assert!(server.join().unwrap().is_err());
+        assert!(started.elapsed() < config.timeouts.handshake);
+        assert_eq!(limiter.counts().unwrap().pending_handshakes, 0);
+        let replacement = limiter
+            .try_begin_handshake("198.51.100.9".parse().unwrap())
+            .unwrap();
+        drop(replacement);
+        drop(silent);
     }
 
     #[test]

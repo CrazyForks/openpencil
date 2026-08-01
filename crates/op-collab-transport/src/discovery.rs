@@ -678,9 +678,13 @@ fn disabled_listener_family(endpoint: SocketAddr, dual_stack: bool) -> Option<If
     }
 }
 
+/// Link-local addresses are rejected symmetrically across both families: an
+/// advertised IPv4 `169.254.0.0/16` address is as unroutable off its own segment
+/// as an IPv6 `fe80::/10` one, and dialling it only wastes a connect budget.
 fn is_usable_address(address: &IpAddr) -> bool {
     !address.is_unspecified()
         && !address.is_multicast()
+        && !matches!(address, IpAddr::V4(address) if address.is_link_local())
         && !matches!(address, IpAddr::V6(address) if address.is_unicast_link_local())
 }
 

@@ -11,6 +11,7 @@ use crate::auth::AuthMode;
 use crate::endpoint::RelayEndpoint;
 use crate::error::{RelayFailureKind, TunnelError};
 use crate::limits::RelayLimits;
+use crate::reauth_budget::ReauthBudget;
 use crate::session::{
     connect_socket, next_binary_with_reauth, send_binary, ClientReauthContext, RelaySocket,
     RelayUpgrade,
@@ -43,11 +44,13 @@ impl fmt::Debug for RelayHandshake {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn establish_relay(
     endpoint: &RelayEndpoint,
     handshake: &RelayHandshake,
     role: RelayRole,
     auth: &AuthMode,
+    reauth_budget: &mut ReauthBudget,
     cancel: &mut watch::Receiver<bool>,
     started_at: Instant,
     limits: RelayLimits,
@@ -57,6 +60,7 @@ pub(crate) async fn establish_relay(
         handshake,
         role,
         auth,
+        reauth_budget,
         cancel,
         started_at,
         limits,
@@ -71,6 +75,7 @@ pub(crate) async fn establish_relay_with_ready_hook<F>(
     handshake: &RelayHandshake,
     role: RelayRole,
     auth: &AuthMode,
+    reauth_budget: &mut ReauthBudget,
     cancel: &mut watch::Receiver<bool>,
     started_at: Instant,
     limits: RelayLimits,
@@ -122,6 +127,7 @@ where
             role,
             route: &handshake.route,
         },
+        reauth_budget,
         cancel,
         hello_timeout,
         hello_kind,
@@ -151,6 +157,7 @@ where
             role,
             route: &handshake.route,
         },
+        reauth_budget,
         cancel,
         pair_timeout,
         pair_kind,
@@ -164,9 +171,11 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn next_status(
     socket: &mut RelaySocket,
     reauth: ClientReauthContext<'_>,
+    reauth_budget: &mut ReauthBudget,
     cancel: &mut watch::Receiver<bool>,
     timeout: Duration,
     timeout_kind: RelayFailureKind,
@@ -175,6 +184,7 @@ async fn next_status(
     let bytes = next_binary_with_reauth(
         socket,
         reauth,
+        reauth_budget,
         cancel,
         timeout,
         timeout_kind,

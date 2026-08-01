@@ -26,7 +26,7 @@ expect_failure "requires the dedicated credential codec failure" \
 
 new_fixture credential-preflight-moved-after-value
 awk '
-    index($0, "    reject_renew_ticket_before_generic_value_decode(bytes)?;") == 1 {
+    index($0, "    declared_kind_rejecting_renew_ticket(bytes)?;") == 1 {
         held = $0
         next
     }
@@ -45,6 +45,28 @@ mv \
     "$fixture_root/crates/op-collab/src/codec.rs"
 expect_failure "requires credential classification before generic Value decoding" \
     "generic credential discriminator must run before JSON Value decoding"
+
+new_fixture inbound-direction-budget-moved-after-discriminator
+awk '
+    index($0, "    enforce_inbound_envelope_limit(inbound_direction, bytes.len(), limits)?;") == 1 {
+        held = $0
+        next
+    }
+    held != "" && index($0, "    declared_kind_rejecting_renew_ticket(bytes)?;") == 1 {
+        print
+        print held
+        held = ""
+        next
+    }
+    { print }
+' \
+    "$fixture_root/crates/op-collab/src/codec.rs" \
+    > "$fixture_root/crates/op-collab/src/codec.rs.next"
+mv \
+    "$fixture_root/crates/op-collab/src/codec.rs.next" \
+    "$fixture_root/crates/op-collab/src/codec.rs"
+expect_failure "requires trusted direction budgeting before wire discrimination" \
+    "trusted per-direction inbound envelope limit must run before discriminator and JSON Value decoding"
 
 new_fixture dedicated-ticket-zeroizing-decoder-removed
 sed '/Zeroizing::new(String::with_capacity/d' \

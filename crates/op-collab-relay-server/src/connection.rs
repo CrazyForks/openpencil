@@ -37,6 +37,7 @@ use crate::{
         perform_reauthentication, ReauthOutcome, ReauthRelayTraffic, RelayAuthState,
         RelaySessionIdentity,
     },
+    peer_quota::PeerQuotaPermit,
     registry::{PairNotice, QueuedPayload, Registration, Registry, WaitingRegistration},
 };
 
@@ -51,20 +52,41 @@ pub(crate) struct ConnectionServices {
     pub(crate) registry: Registry,
     pub(crate) authenticator: Arc<dyn RelayAuthenticator>,
     pub(crate) auth_in_flight: Arc<Semaphore>,
+    pub(crate) reauth_in_flight: Arc<Semaphore>,
     pub(crate) queued_bytes: Arc<Semaphore>,
+}
+
+/// The capacity a connection occupies until it pairs.
+///
+/// Both permits cover the same span — the pre-pairing phase — so they are
+/// released together. Once paired, the connection's cost is bounded by
+/// `max_active_pairs` and the queue budgets instead.
+pub(crate) struct AdmissionPermit {
+    _pending: OwnedSemaphorePermit,
+    _source: PeerQuotaPermit,
+}
+
+impl AdmissionPermit {
+    pub(crate) fn new(pending: OwnedSemaphorePermit, source: PeerQuotaPermit) -> Self {
+        Self {
+            _pending: pending,
+            _source: source,
+        }
+    }
 }
 
 pub(crate) async fn serve_connection(
     stream: TcpStream,
     services: ConnectionServices,
     mut shutdown: watch::Receiver<bool>,
-    pending_permit: OwnedSemaphorePermit,
+    admission_permit: AdmissionPermit,
 ) {
     let ConnectionServices {
         config,
         registry,
         authenticator,
         auth_in_flight,
+        reauth_in_flight,
         queued_bytes,
     } = services;
     let started_at = Instant::now();
@@ -181,15 +203,19 @@ pub(crate) async fn serve_connection(
         }
     };
     if !send_status(&mut sink, RelayServerStatus::Ready).await {
-        if let Registration::Waiting(waiting) = &registration {
-            registry.unregister_waiter(waiting).await;
+        match &registration {
+            Registration::Waiting(waiting) => registry.unregister_waiter(waiting).await,
+            // The counterpart only reclaims the slot if it reads its pairing
+            // notice, and its wait loop can time out in the same wake without
+            // ever reading it. Release the pair here so the entry cannot leak.
+            Registration::Paired(pair) => registry.close_pair(pair.pair_id).await,
         }
         return;
     }
 
     let mut pair = match registration {
         Registration::Paired(pair) => {
-            drop(pending_permit);
+            drop(admission_permit);
             pair
         }
         Registration::Waiting(mut waiting) => {
@@ -202,13 +228,13 @@ pub(crate) async fn serve_connection(
                 configured_deadline,
                 strict_reauth,
                 Arc::clone(&authenticator),
-                Arc::clone(&auth_in_flight),
+                Arc::clone(&reauth_in_flight),
                 &identity,
                 &mut shutdown,
             )
             .await;
             registry.unregister_waiter(&waiting).await;
-            drop(pending_permit);
+            drop(admission_permit);
             let Some(pair) = pair else {
                 return;
             };
@@ -241,7 +267,7 @@ pub(crate) async fn serve_connection(
         configured_deadline,
         strict_reauth,
         authenticator,
-        auth_in_flight,
+        reauth_in_flight,
         identity,
         &mut shutdown,
     )
@@ -338,7 +364,7 @@ async fn wait_for_pair(
     configured_deadline: Instant,
     strict_reauth: bool,
     authenticator: Arc<dyn RelayAuthenticator>,
-    auth_in_flight: Arc<Semaphore>,
+    reauth_in_flight: Arc<Semaphore>,
     identity: &RelaySessionIdentity,
     shutdown: &mut watch::Receiver<bool>,
 ) -> Option<PairNotice> {
@@ -377,7 +403,7 @@ async fn wait_for_pair(
                     sink,
                     source,
                     Arc::clone(&authenticator),
-                    Arc::clone(&auth_in_flight),
+                    Arc::clone(&reauth_in_flight),
                     identity,
                     *auth_state,
                     configured_deadline,
@@ -476,7 +502,7 @@ async fn relay_paired(
     configured_deadline: Instant,
     strict_reauth: bool,
     authenticator: Arc<dyn RelayAuthenticator>,
-    auth_in_flight: Arc<Semaphore>,
+    reauth_in_flight: Arc<Semaphore>,
     identity: RelaySessionIdentity,
     shutdown: &mut watch::Receiver<bool>,
 ) {
@@ -513,7 +539,7 @@ async fn relay_paired(
                     &mut sink,
                     &mut source,
                     Arc::clone(&authenticator),
-                    Arc::clone(&auth_in_flight),
+                    Arc::clone(&reauth_in_flight),
                     &identity,
                     auth_state,
                     configured_deadline,

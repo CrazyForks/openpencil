@@ -8,6 +8,7 @@ mod bridge;
 mod endpoint;
 mod error;
 mod limits;
+mod reauth_budget;
 mod session;
 
 pub use auth::{

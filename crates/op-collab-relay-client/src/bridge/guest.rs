@@ -15,6 +15,7 @@ use crate::error::{
     TunnelError,
 };
 use crate::limits::RelayLimits;
+use crate::reauth_budget::ReauthBudget;
 use crate::session::{cancelled, pump, ClientReauthContext};
 
 /// A single-use loopback listener that connects an existing guest TCP driver
@@ -175,11 +176,15 @@ async fn run_guest(
         return;
     }
 
+    // One budget for the guest's single tunnel, spanning the handshake and the
+    // pump so the bound covers the whole connection rather than one phase.
+    let mut reauth_budget = ReauthBudget::new(limits);
     let socket = match establish_relay(
         &endpoint,
         &route,
         op_collab_relay_protocol::RelayRole::Guest,
         &auth,
+        &mut reauth_budget,
         &mut cancel,
         started_at,
         limits,
@@ -214,6 +219,7 @@ async fn run_guest(
             role: op_collab_relay_protocol::RelayRole::Guest,
             route: route.route(),
         },
+        &mut reauth_budget,
         &mut cancel,
         started_at,
         limits,

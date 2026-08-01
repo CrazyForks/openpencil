@@ -234,14 +234,20 @@ impl BudgetedFrame {
     #[cfg(test)]
     pub(super) fn into_inner(self) -> FrameEnvelope {
         self.encoded
-            .decode(op_collab_transport::m1_wire_limits())
+            .decode(
+                op_collab_transport::m1_wire_limits(),
+                op_collab::InboundFrameDirection::OwnerToGuest,
+            )
             .expect("budgeted test frame remains valid")
     }
 
     #[cfg(test)]
     pub(super) fn decode_for_test(&self) -> FrameEnvelope {
         self.encoded
-            .decode(op_collab_transport::m1_wire_limits())
+            .decode(
+                op_collab_transport::m1_wire_limits(),
+                op_collab::InboundFrameDirection::OwnerToGuest,
+            )
             .expect("budgeted test frame remains valid")
     }
 

@@ -77,13 +77,20 @@ loop {
 ```
 
 For accepted sockets, acquire `ConnectionLimiter::try_begin_handshake` before
-calling `accept_secure_tcp`, and convert the pending guard to an active guard
-only after ticket admission succeeds.
+spawning a worker, call `accept_secure_tcp_guarded`, and convert the pending
+guard to an active guard only after ticket admission succeeds. Every live
+pending worker continuously owns a global and per-address seat; the guarded
+accept applies `handshake_first_message` as the socket deadline until the
+first valid Noise message, so a silent worker exits before its seat is freed.
 
 The inbound direction policy is part of allocation admission. In particular,
 an owner rejects guest-originated `Snapshot` transfers from their authenticated
 header before reserving the snapshot reassembly budget; a guest permits
-owner-originated snapshots for initial sync and log-gap recovery.
+owner-originated snapshots for initial sync and log-gap recovery. The same
+trusted direction selects the pre-parse JSON envelope ceiling, so a guest's
+attacker-declared message kind cannot select the larger owner Snapshot budget.
+An aggregate reassembly reservation remains charged after the final chunk and
+is released only after the completed bytes have been decoded or dropped.
 
 `SecureConnection` also exposes a blocking helper API for focused tools and
 tests. Its `send_transfer` atomically preflights the entire transfer against

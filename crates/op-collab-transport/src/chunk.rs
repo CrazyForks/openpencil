@@ -4,8 +4,9 @@ use std::time::Instant;
 use zeroize::Zeroizing;
 
 use crate::{
-    ChunkError, TimeoutConfig, MAX_CONTROL_TRANSFER_BYTES, MAX_NOISE_PLAINTEXT_BYTES,
-    MAX_SNAPSHOT_TRANSFER_BYTES, MAX_TXN_TRANSFER_BYTES,
+    ChunkError, SharedReassemblyBudget, SharedReassemblyReservation, TimeoutConfig,
+    MAX_CONTROL_TRANSFER_BYTES, MAX_NOISE_PLAINTEXT_BYTES, MAX_SNAPSHOT_TRANSFER_BYTES,
+    MAX_TXN_TRANSFER_BYTES,
 };
 
 pub const CHUNK_HEADER_BYTES: usize = 24;
@@ -111,12 +112,24 @@ impl ChunkHeader {
     }
 }
 
-#[derive(PartialEq, Eq)]
 pub struct CompletedTransfer {
     pub(crate) class: TransferClass,
     pub(crate) transfer_id: u64,
     pub(crate) bytes: Zeroizing<Vec<u8>>,
+    /// Keeps the aggregate reservation charged while the completed bytes are
+    /// decoded or retained by the caller.
+    pub(crate) _reservation: Option<SharedReassemblyReservation>,
 }
+
+impl PartialEq for CompletedTransfer {
+    fn eq(&self, other: &Self) -> bool {
+        self.class == other.class
+            && self.transfer_id == other.transfer_id
+            && self.bytes == other.bytes
+    }
+}
+
+impl Eq for CompletedTransfer {}
 
 impl CompletedTransfer {
     pub const fn class(&self) -> TransferClass {
@@ -254,6 +267,9 @@ struct InFlightTransfer {
     next_index: u32,
     started_at: Instant,
     bytes: Zeroizing<Vec<u8>>,
+    /// Aggregate reservation for `header.total_len`. Completion transfers it
+    /// alongside the bytes; abort, timeout, or reassembler drop releases it.
+    _reservation: Option<SharedReassemblyReservation>,
 }
 
 impl fmt::Debug for InFlightTransfer {
@@ -271,14 +287,28 @@ impl fmt::Debug for InFlightTransfer {
 #[derive(Debug)]
 pub struct Reassembler {
     timeouts: TimeoutConfig,
+    budget: Option<SharedReassemblyBudget>,
     in_flight: Option<InFlightTransfer>,
     last_started_id: Option<u64>,
 }
 
 impl Reassembler {
+    /// Builds an unbudgeted reassembler. Production connections use
+    /// [`Self::with_budget`] so their declared allocations are visible to the
+    /// aggregate inbound bound.
     pub const fn new(timeouts: TimeoutConfig) -> Self {
         Self {
             timeouts,
+            budget: None,
+            in_flight: None,
+            last_started_id: None,
+        }
+    }
+
+    pub fn with_budget(timeouts: TimeoutConfig, budget: SharedReassemblyBudget) -> Self {
+        Self {
+            timeouts,
+            budget: Some(budget),
             in_flight: None,
             last_started_id: None,
         }
@@ -363,12 +393,26 @@ impl Reassembler {
                     expected: 0,
                 });
             }
+            // The declared total is charged against the aggregate inbound bound
+            // before it is allocated, so a peer cannot reserve memory the
+            // process-wide budget cannot see.
+            let declared = header.total_len as usize;
+            let reservation = match &self.budget {
+                Some(budget) => Some(budget.reserve(declared).map_err(|_| {
+                    ChunkError::InboundBudgetExhausted {
+                        class: header.class,
+                        requested: declared,
+                    }
+                })?),
+                None => None,
+            };
             self.last_started_id = Some(header.transfer_id);
             self.in_flight = Some(InFlightTransfer {
                 header,
                 next_index: 0,
                 started_at: now,
-                bytes: Zeroizing::new(Vec::with_capacity(header.total_len as usize)),
+                bytes: Zeroizing::new(Vec::with_capacity(declared)),
+                _reservation: reservation,
             });
         }
 
@@ -403,6 +447,7 @@ impl Reassembler {
             class: completed.header.class,
             transfer_id: completed.header.transfer_id,
             bytes: completed.bytes,
+            _reservation: completed._reservation,
         }))
     }
 }
@@ -452,333 +497,5 @@ fn expected_payload_len(total_len: usize, chunk_index: u32) -> Result<usize, Chu
 }
 
 #[cfg(test)]
-mod tests {
-    use std::time::Duration;
-
-    use super::*;
-    use static_assertions::assert_not_impl_any;
-
-    assert_not_impl_any!(CompletedTransfer: Clone);
-    assert_not_impl_any!(TransferChunk: Clone);
-    assert_not_impl_any!(TransferChunkIter<'static>: Clone);
-
-    fn mutate_header(mut chunk: Vec<u8>, offset: usize, value: u8) -> Vec<u8> {
-        chunk[offset] = value;
-        chunk
-    }
-
-    #[test]
-    fn header_encoding_is_exact_and_big_endian() {
-        let header = ChunkHeader {
-            class: TransferClass::Txn,
-            transfer_id: 0x0102_0304_0506_0708,
-            chunk_index: 0x1112_1314,
-            chunk_count: 0x0000_0002,
-            total_len: 0x0000_f001,
-        };
-        let encoded = header.encode();
-        assert_eq!(
-            encoded,
-            [
-                1, 3, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0x11, 0x12, 0x13, 0x14, 0, 0, 0, 2, 0, 0, 0xf0,
-                1,
-            ]
-        );
-        assert_eq!(ChunkHeader::decode(&encoded), Ok(header));
-    }
-
-    #[test]
-    fn iterator_and_reassembler_cover_chunk_boundaries() {
-        let timeouts = TimeoutConfig::default();
-        let now = Instant::now();
-        for (class, len) in [
-            (TransferClass::Control, 1),
-            (TransferClass::Control, MAX_CHUNK_PAYLOAD),
-            (TransferClass::Control, MAX_CHUNK_PAYLOAD + 1),
-            (TransferClass::Txn, MAX_TXN_TRANSFER_BYTES),
-        ] {
-            let source = vec![0xa5; len];
-            let chunks = TransferChunkIter::new(class, 7, &source)
-                .unwrap()
-                .collect::<Vec<_>>();
-            assert_eq!(chunks.len(), len.div_ceil(MAX_CHUNK_PAYLOAD));
-            assert!(chunks
-                .iter()
-                .all(|chunk| chunk.len() <= MAX_NOISE_PLAINTEXT_BYTES));
-
-            let mut reassembler = Reassembler::new(timeouts);
-            let mut completed = None;
-            for chunk in chunks {
-                completed = reassembler.push(now, &chunk).unwrap();
-            }
-            assert_eq!(completed.unwrap().bytes.as_slice(), source);
-        }
-    }
-
-    #[test]
-    fn ticket_chunk_debug_only_reports_class_and_lengths() {
-        let source = vec![211_u8; MAX_CHUNK_PAYLOAD + 1];
-        let mut chunks = TransferChunkIter::new(TransferClass::Ticket, 7, &source).unwrap();
-        let iter_debug = format!("{chunks:?}");
-        assert!(iter_debug.contains("class: Ticket"));
-        assert!(iter_debug.contains(&format!("encoded_len: {}", source.len())));
-        assert!(!iter_debug.contains("211, 211"));
-
-        let now = Instant::now();
-        let mut reassembler = Reassembler::new(TimeoutConfig::default());
-        assert_eq!(
-            reassembler.push(now, &chunks.next().unwrap()).unwrap(),
-            None
-        );
-        let in_flight_debug = format!("{reassembler:?}");
-        assert!(in_flight_debug.contains("class: Ticket"));
-        assert!(!in_flight_debug.contains("211, 211"));
-
-        let completed = reassembler
-            .push(now, &chunks.next().unwrap())
-            .unwrap()
-            .unwrap();
-        let completed_debug = format!("{completed:?}");
-        assert!(completed_debug.contains("class: Ticket"));
-        assert!(completed_debug.contains(&format!("encoded_len: {}", source.len())));
-        assert!(!completed_debug.contains("211, 211"));
-    }
-
-    #[test]
-    fn class_caps_are_enforced_before_splitting_or_allocating() {
-        for class in [
-            TransferClass::Control,
-            TransferClass::Ticket,
-            TransferClass::Txn,
-            TransferClass::Snapshot,
-        ] {
-            let oversized = vec![0; class.max_transfer_bytes() + 1];
-            let exact =
-                TransferChunkIter::new(class, 1, &oversized[..class.max_transfer_bytes()]).unwrap();
-            assert_eq!(
-                exact.chunk_count() as usize,
-                class.max_transfer_bytes().div_ceil(MAX_CHUNK_PAYLOAD)
-            );
-            assert_eq!(
-                TransferChunkIter::new(class, 1, &oversized).unwrap_err(),
-                ChunkError::TransferTooLarge {
-                    class,
-                    actual: oversized.len(),
-                    maximum: class.max_transfer_bytes(),
-                }
-            );
-        }
-    }
-
-    #[test]
-    fn malformed_headers_fail_closed() {
-        let valid = TransferChunkIter::new(TransferClass::Control, 1, b"x")
-            .unwrap()
-            .next()
-            .unwrap();
-        let mut reassembler = Reassembler::new(TimeoutConfig::default());
-        let now = Instant::now();
-
-        assert_eq!(
-            reassembler.push(now, &[0; 23]),
-            Err(ChunkError::HeaderLength(23))
-        );
-        assert_eq!(
-            reassembler.push(now, &mutate_header(valid.to_vec(), 0, 2)),
-            Err(ChunkError::UnsupportedVersion(2))
-        );
-        assert_eq!(
-            reassembler.push(now, &mutate_header(valid.to_vec(), 2, 1)),
-            Err(ChunkError::ReservedBits)
-        );
-        assert_eq!(
-            reassembler.push(now, &mutate_header(valid.to_vec(), 1, 99)),
-            Err(ChunkError::UnknownClass(99))
-        );
-    }
-
-    #[test]
-    fn order_mismatch_clears_in_flight_state() {
-        let source = vec![9; MAX_CHUNK_PAYLOAD + 1];
-        let chunks = TransferChunkIter::new(TransferClass::Control, 4, &source)
-            .unwrap()
-            .collect::<Vec<_>>();
-        let now = Instant::now();
-        let mut reassembler = Reassembler::new(TimeoutConfig::default());
-
-        assert_eq!(reassembler.push(now, &chunks[0]).unwrap(), None);
-        assert_eq!(
-            reassembler.push(now, &chunks[0]),
-            Err(ChunkError::UnexpectedChunkIndex {
-                actual: 0,
-                expected: 1,
-            })
-        );
-        assert_eq!(
-            reassembler.push(now, &chunks[1]),
-            Err(ChunkError::ReplayedTransferId {
-                actual: 4,
-                previous: 4,
-            })
-        );
-        let next = TransferChunkIter::new(TransferClass::Control, 5, &source)
-            .unwrap()
-            .collect::<Vec<_>>();
-        assert_eq!(reassembler.push(now, &next[0]).unwrap(), None);
-        assert!(reassembler.push(now, &next[1]).unwrap().is_some());
-    }
-
-    #[test]
-    fn completed_transfer_ids_must_increase() {
-        let now = Instant::now();
-        let mut reassembler = Reassembler::new(TimeoutConfig::default());
-        let transfer = |id| {
-            TransferChunkIter::new(TransferClass::Control, id, b"x")
-                .unwrap()
-                .next()
-                .unwrap()
-        };
-
-        assert!(reassembler.push(now, &transfer(10)).unwrap().is_some());
-        assert_eq!(
-            reassembler.push(now, &transfer(10)),
-            Err(ChunkError::ReplayedTransferId {
-                actual: 10,
-                previous: 10,
-            })
-        );
-        assert_eq!(
-            reassembler.push(now, &transfer(9)),
-            Err(ChunkError::ReplayedTransferId {
-                actual: 9,
-                previous: 10,
-            })
-        );
-        assert!(reassembler.push(now, &transfer(11)).unwrap().is_some());
-    }
-
-    #[test]
-    fn transfer_timeout_uses_class_specific_deadline_and_clears_state() {
-        let timeouts = TimeoutConfig {
-            ordinary_transfer: Duration::from_secs(2),
-            snapshot_transfer: Duration::from_secs(8),
-            ..TimeoutConfig::default()
-        };
-        let now = Instant::now();
-        let mut reassembler = Reassembler::new(timeouts);
-        let source = vec![1; MAX_CHUNK_PAYLOAD + 1];
-        let control = TransferChunkIter::new(TransferClass::Control, 1, &source)
-            .unwrap()
-            .collect::<Vec<_>>();
-
-        assert_eq!(reassembler.push(now, &control[0]).unwrap(), None);
-        assert_eq!(
-            reassembler.next_deadline(),
-            Some(now + Duration::from_secs(2))
-        );
-        assert_eq!(
-            reassembler.push(now + Duration::from_secs(2), &control[1]),
-            Err(ChunkError::TimedOut(Duration::from_secs(2)))
-        );
-        let retry = TransferChunkIter::new(TransferClass::Control, 2, &source)
-            .unwrap()
-            .collect::<Vec<_>>();
-        assert_eq!(reassembler.push(now, &retry[0]).unwrap(), None);
-        assert!(reassembler.push(now, &retry[1]).unwrap().is_some());
-
-        let snapshot = TransferChunkIter::new(TransferClass::Snapshot, 3, &source)
-            .unwrap()
-            .collect::<Vec<_>>();
-        assert_eq!(reassembler.push(now, &snapshot[0]).unwrap(), None);
-        assert_eq!(
-            reassembler
-                .push(now + Duration::from_secs(2), &snapshot[1])
-                .unwrap()
-                .unwrap()
-                .transfer_id,
-            3
-        );
-    }
-
-    #[test]
-    fn transfer_timeout_fires_without_another_chunk() {
-        let timeouts = TimeoutConfig {
-            ordinary_transfer: Duration::from_secs(2),
-            snapshot_transfer: Duration::from_secs(8),
-            ..TimeoutConfig::default()
-        };
-        let start = Instant::now();
-        let source = vec![1; MAX_CHUNK_PAYLOAD + 1];
-        let first = TransferChunkIter::new(TransferClass::Snapshot, 1, &source)
-            .unwrap()
-            .next()
-            .unwrap();
-        let mut reassembler = Reassembler::new(timeouts);
-
-        assert_eq!(reassembler.push(start, &first).unwrap(), None);
-        assert_eq!(
-            reassembler.check_timeout(start + Duration::from_secs(7)),
-            Ok(())
-        );
-        assert_eq!(
-            reassembler.check_timeout(start + Duration::from_secs(8)),
-            Err(ChunkError::TimedOut(Duration::from_secs(8)))
-        );
-        assert_eq!(reassembler.next_deadline(), None);
-    }
-
-    #[test]
-    fn exact_payload_lengths_are_required() {
-        let source = vec![3; MAX_CHUNK_PAYLOAD + 1];
-        let mut chunks = TransferChunkIter::new(TransferClass::Control, 3, &source)
-            .unwrap()
-            .collect::<Vec<_>>();
-        chunks[0].0.pop();
-        let mut reassembler = Reassembler::new(TimeoutConfig::default());
-
-        assert_eq!(
-            reassembler.push(Instant::now(), &chunks[0]),
-            Err(ChunkError::InvalidPayloadLength {
-                actual: MAX_CHUNK_PAYLOAD - 1,
-                expected: MAX_CHUNK_PAYLOAD,
-            })
-        );
-    }
-
-    #[test]
-    fn forged_count_or_total_is_rejected_and_clears_state() {
-        let source = vec![4; MAX_CHUNK_PAYLOAD + 1];
-        let chunks = TransferChunkIter::new(TransferClass::Control, 12, &source)
-            .unwrap()
-            .collect::<Vec<_>>();
-        let now = Instant::now();
-        let mut reassembler = Reassembler::new(TimeoutConfig::default());
-
-        let mut forged_count = chunks[0].to_vec();
-        forged_count[16..20].copy_from_slice(&3_u32.to_be_bytes());
-        assert_eq!(
-            reassembler.push(now, &forged_count),
-            Err(ChunkError::InvalidChunkCount {
-                actual: 3,
-                expected: 2,
-            })
-        );
-
-        assert_eq!(reassembler.push(now, &chunks[0]).unwrap(), None);
-        let mut forged_total = chunks[1].to_vec();
-        forged_total[20..24].copy_from_slice(&(source.len() as u32 - 1).to_be_bytes());
-        assert_eq!(
-            reassembler.push(now, &forged_total),
-            Err(ChunkError::InvalidChunkCount {
-                actual: 2,
-                expected: 1,
-            })
-        );
-
-        let retry = TransferChunkIter::new(TransferClass::Control, 13, &source)
-            .unwrap()
-            .collect::<Vec<_>>();
-        assert_eq!(reassembler.push(now, &retry[0]).unwrap(), None);
-        assert!(reassembler.push(now, &retry[1]).unwrap().is_some());
-    }
-}
+#[path = "chunk_tests.rs"]
+mod tests;

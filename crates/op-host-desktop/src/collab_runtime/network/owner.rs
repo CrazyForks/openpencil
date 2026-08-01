@@ -7,9 +7,9 @@ use std::time::{Duration, Instant};
 
 use op_collab::{ByeReason, ConnectionKey, Epoch, SessionId};
 use op_collab_transport::{
-    accept_secure_tcp, ConnectionLimiter, DeviceStaticKey, DiscoveryError, DiscoveryPublisher,
-    JoinIntent, PendingHandshakeGuard, ServerPrelude, SharedQueueBudget, StaticKeyStore,
-    TransportConfig,
+    accept_secure_tcp_guarded, ConnectionLimiter, DeviceStaticKey, DiscoveryError,
+    DiscoveryPublisher, JoinIntent, PendingHandshakeGuard, ServerPrelude, SharedQueueBudget,
+    StaticKeyStore, TransportConfig,
 };
 use socket2::{Domain, Protocol, Socket, Type};
 
@@ -128,7 +128,9 @@ fn run_inner(
         return Ok(());
     }
 
-    let limiter = ConnectionLimiter::new(config.connections)
+    // Built from this runtime's timeouts, not the defaults, so the silent-peer
+    // reclaim window tracks whatever `config` actually configured.
+    let limiter = ConnectionLimiter::with_timeouts(config.connections, config.timeouts)
         .map_err(|_| CollabRuntimeFailure::ResourceLimit)?;
     let shared_budget = SharedQueueBudget::new(config.connections.global_queued_bytes)
         .map_err(|_| CollabRuntimeFailure::ResourceLimit)?;
@@ -424,7 +426,10 @@ fn run_peer_inner(args: PeerArgs) -> Option<CollabRuntimeFailure> {
         phase,
         done: _,
     } = args;
-    let mut connection = match accept_secure_tcp(stream, &key, &prelude, config) {
+    // Guarded accept enforces the first-message socket deadline. A silent peer
+    // exits this worker before dropping its continuously charged pending seat,
+    // so live sockets/threads can never outnumber the global guard ceiling.
+    let mut connection = match accept_secure_tcp_guarded(stream, &key, &prelude, config, &pending) {
         Ok(connection) => connection,
         Err(error) => return Some(runtime_failure(&error)),
     };

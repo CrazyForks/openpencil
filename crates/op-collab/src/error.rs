@@ -37,6 +37,10 @@ pub enum ProtocolError {
     SensitiveCredentialRequiresDedicatedCodec,
     #[error("collaboration envelope exceeds the {limit}-byte limit: {actual} bytes")]
     EnvelopeTooLarge { actual: usize, limit: usize },
+    #[error(
+        "inbound collaboration envelope exceeds the guest-direction {limit}-byte limit: {actual} bytes"
+    )]
+    GuestEnvelopeTooLarge { actual: usize, limit: usize },
     #[error("collaboration transaction exceeds the {limit}-byte limit: {actual} bytes")]
     TransactionTooLarge { actual: usize, limit: usize },
     #[error("collaboration protocol version {actual} is unsupported; expected {expected}")]

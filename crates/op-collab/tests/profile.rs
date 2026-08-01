@@ -188,9 +188,113 @@ fn fixed_profile_bounds_and_https_rules_apply_on_encode_and_decode() {
         peer_id: PeerId::from("valid"),
         role: Role::Editor,
         display_name: Some("Kay 沈".into()),
-        avatar_url: Some("https://[::1]:8443/avatar.png?size=80".into()),
+        avatar_url: Some("https://[2606:4700:4700::1111]:8443/avatar.png?size=80".into()),
     });
     assert!(valid.to_json_vec().is_ok());
+}
+
+#[test]
+fn invisible_and_bidirectional_display_names_are_rejected() {
+    for spoofed in [
+        // Renders identically to an existing roster entry named "alice".
+        "alice\u{200b}",
+        "ali\u{200d}ce",
+        "alice\u{feff}",
+        "alice\u{00ad}bob",
+        "alice\u{2060}",
+        // Reorders the glyphs shown to every other participant.
+        "\u{200e}alice",
+        "\u{200f}alice",
+        "\u{202e}alice",
+        "\u{2066}alice\u{2069}",
+        // Other non-graphic code points implied by the same contract.
+        "alice\u{2028}bob",
+        "alice\u{061c}",
+        "alice\u{e0041}",
+    ] {
+        assert_invalid_profile(Some(spoofed.into()), None, "participant.display_name", true);
+    }
+}
+
+#[test]
+fn legitimate_unicode_display_names_still_pass() {
+    for accepted in [
+        "Kay 沈",
+        "沈凯 (设计)",
+        "Renée Dupont",
+        "김민준",
+        "Иван Петров",
+        "أحمد",
+        "Ada 😀",
+        "नमस्ते",
+    ] {
+        let valid = frame(Participant {
+            participant_id: ParticipantId::from("participant-valid"),
+            peer_id: PeerId::from("valid"),
+            role: Role::Editor,
+            display_name: Some(accepted.into()),
+            avatar_url: None,
+        });
+        let encoded = valid
+            .to_json_vec()
+            .unwrap_or_else(|error| panic!("`{accepted}` must remain a valid name: {error}"));
+        assert_eq!(FrameEnvelope::from_json_slice(&encoded).unwrap(), valid);
+    }
+}
+
+#[test]
+fn avatar_urls_naming_non_public_addresses_are_rejected() {
+    for invalid in [
+        // Cloud instance metadata, and the private/loopback blocks.
+        "https://169.254.169.254/latest/meta-data/",
+        "https://10.0.0.1/avatar.png",
+        "https://172.16.0.1/avatar.png",
+        "https://192.168.1.1/avatar.png",
+        "https://127.0.0.1:8443/avatar.png",
+        "https://0.0.0.0/avatar.png",
+        "https://100.64.0.1/avatar.png",
+        "https://255.255.255.255/avatar.png",
+        "https://239.0.0.1/avatar.png",
+        // The IPv6 equivalents.
+        "https://[::1]/avatar.png",
+        "https://[::]/avatar.png",
+        "https://[fe80::1]/avatar.png",
+        "https://[fd00::1]/avatar.png",
+        "https://[ff02::1]/avatar.png",
+        // IPv4-mapped, IPv4-compatible, and NAT64-embedded aliases.
+        "https://[::ffff:169.254.169.254]/avatar.png",
+        "https://[::ffff:10.0.0.1]:8443/avatar.png",
+        "https://[::10.0.0.1]/avatar.png",
+        "https://[64:ff9b::a00:1]/avatar.png",
+    ] {
+        assert_invalid_profile(None, Some(invalid.into()), "participant.avatar_url", true);
+    }
+}
+
+#[test]
+fn public_ip_literal_and_dns_avatar_urls_still_pass() {
+    for accepted in [
+        "https://1.1.1.1/avatar.png",
+        "https://93.184.216.34:8443/avatar.png?size=80",
+        "https://[2606:4700:4700::1111]/avatar.png",
+        "https://[64:ff9b::101:101]/avatar.png",
+        "https://profiles.example/avatar.png",
+        // A DNS name may still resolve to a private address; refusing that is
+        // the fetch layer's job, so host names keep their existing behaviour.
+        "https://internal.corp.example/avatar.png",
+    ] {
+        let valid = frame(Participant {
+            participant_id: ParticipantId::from("participant-valid"),
+            peer_id: PeerId::from("valid"),
+            role: Role::Editor,
+            display_name: None,
+            avatar_url: Some(accepted.into()),
+        });
+        let encoded = valid
+            .to_json_vec()
+            .unwrap_or_else(|error| panic!("`{accepted}` must remain a valid avatar: {error}"));
+        assert_eq!(FrameEnvelope::from_json_slice(&encoded).unwrap(), valid);
+    }
 }
 
 #[test]

@@ -306,3 +306,47 @@ fn uncertain_unregister_failure_stops_publisher() {
         .is_err());
     assert!(publisher.is_stopped());
 }
+
+#[test]
+fn ipv4_link_local_advertisements_are_not_dialled() {
+    let link_local = IpAddr::V4(Ipv4Addr::new(169, 254, 13, 37));
+    let routable = IpAddr::V4(Ipv4Addr::new(192, 0, 2, 10));
+    assert!(!is_usable_address(&link_local));
+    assert!(!is_usable_address(&IpAddr::V6("fe80::1".parse().unwrap())));
+    assert!(is_usable_address(&routable));
+
+    // A mixed advertisement keeps only the routable address.
+    let mixed = service(
+        "openpencil-mixed",
+        &valid_properties(),
+        &[link_local, routable],
+        45123,
+    );
+    let parsed = parse_service_info(&mixed, Instant::now()).unwrap();
+    assert_eq!(
+        parsed.addresses(),
+        [SocketAddr::new(routable, 45123)].as_slice()
+    );
+
+    // A link-local-only advertisement leaves nothing to dial.
+    let only = service(
+        "openpencil-link-local",
+        &valid_properties(),
+        &[link_local],
+        45123,
+    );
+    assert!(matches!(
+        parse_service_info(&only, Instant::now()),
+        Err(DiscoveryError::InvalidMetadata)
+    ));
+
+    // Publishing one is refused on the same rule as its IPv6 counterpart.
+    assert!(matches!(
+        validate_publish_addresses(&[link_local]),
+        Err(DiscoveryError::InvalidAddress)
+    ));
+    assert!(matches!(
+        build_service_info(ID, 45123, &[link_local], "instance", "host.local."),
+        Err(DiscoveryError::InvalidAddress)
+    ));
+}

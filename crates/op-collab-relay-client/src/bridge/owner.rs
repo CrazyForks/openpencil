@@ -16,6 +16,7 @@ use crate::error::{
     TunnelError,
 };
 use crate::limits::{RelayLimits, DEFAULT_OWNER_LANE_COUNT, MAX_OWNER_LANE_COUNT};
+use crate::reauth_budget::ReauthBudget;
 use crate::session::{cancelled, pump, sleep_or_cancel, ClientReauthContext};
 
 /// A bounded pool of owner relay lanes.
@@ -380,11 +381,15 @@ async fn run_lane(
             return Err(TunnelError::Cancelled);
         }
         let started_at = Instant::now();
+        // One budget per lane connection: a lane that reconnects starts over,
+        // and a lane that is spammed cannot borrow another lane's headroom.
+        let mut reauth_budget = ReauthBudget::new(limits);
         let socket = establish_relay_with_ready_hook(
             &endpoint,
             &route,
             op_collab_relay_protocol::RelayRole::Owner,
             &auth,
+            &mut reauth_budget,
             &mut cancel,
             started_at,
             limits,
@@ -421,6 +426,7 @@ async fn run_lane(
                 role: op_collab_relay_protocol::RelayRole::Owner,
                 route: route.route(),
             },
+            &mut reauth_budget,
             &mut cancel,
             started_at,
             limits,

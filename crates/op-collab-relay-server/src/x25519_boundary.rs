@@ -209,9 +209,19 @@ fn read_private_key_file(path: &Path, maximum: usize) -> Result<Vec<u8>, PinnedX
     }
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt as _;
+        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
         if metadata.permissions().mode() & 0o077 != 0 {
             return Err(PinnedX25519KeyError::UnsafePermissions);
+        }
+        // Mode bits alone do not establish trust: a 0600 key owned by another
+        // local account is readable by that account, not just by this process.
+        // Requiring the running user to own it closes that gap. Root is allowed
+        // because it can read the file regardless of ownership.
+        let owner = metadata.uid();
+        // SAFETY: `getuid` is always successful and takes no arguments.
+        let current = unsafe { libc::getuid() };
+        if owner != current && current != 0 {
+            return Err(PinnedX25519KeyError::UnsafeOwner);
         }
     }
     if metadata.len() > maximum as u64 {
@@ -264,6 +274,8 @@ pub enum PinnedX25519KeyError {
     UnsafeFile,
     #[error("relay X25519 key file permissions must deny group and other access")]
     UnsafePermissions,
+    #[error("relay X25519 key file must be owned by the user running the relay")]
+    UnsafeOwner,
     #[error("relay X25519 key file exceeds {maximum} bytes")]
     FileTooLarge { maximum: usize },
     #[error("relay X25519 key file is malformed")]
