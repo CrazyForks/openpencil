@@ -456,10 +456,37 @@ fn reachable_live_port_file() -> Option<(u16, u32)> {
 /// Both candidates are confirmed with a JSON-RPC `ping`. Returns `None`
 /// when nothing is reachable.
 pub(crate) fn discover_running_port() -> Option<u16> {
-    if let Some((port, _)) = reachable_live_port_file() {
-        return Some(port);
+    discover_running_endpoint().map(|(port, _)| port)
+}
+
+/// The reachable MCP endpoint and the instance token that authenticates it.
+///
+/// The live endpoint authenticates every stateful call, so the port alone is
+/// not enough to drive it — the token has to travel with it.
+pub(crate) fn discover_running_endpoint() -> Option<(u16, String)> {
+    if let Some((port, _, token)) = read_live_port_file() {
+        if crate::mcp_http_cli::mcp_ping_live(port, &token) {
+            return Some((port, token));
+        }
     }
-    reachable_headless_server().map(|info| info.port)
+    reachable_headless_server().map(|info| (info.port, info.token))
+}
+
+/// The instance token for `port`, or empty when this process cannot find one.
+///
+/// Used when the caller pinned `--port` explicitly: the token still has to be
+/// looked up, and an empty result simply means the request goes out unauthenticated
+/// and the endpoint decides.
+pub(crate) fn token_for_port(port: u16) -> String {
+    if let Some((live_port, _, token)) = read_live_port_file() {
+        if live_port == port {
+            return token;
+        }
+    }
+    running_mcp_from_pid_file()
+        .filter(|info| info.port == port)
+        .map(|info| info.token)
+        .unwrap_or_default()
 }
 
 pub(crate) fn ensure_document_file(path: &Path) -> Result<(), CliError> {

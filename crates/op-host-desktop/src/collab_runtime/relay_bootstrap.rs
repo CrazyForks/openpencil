@@ -75,8 +75,11 @@ pub(super) struct RelayBootstrap {
     generation: u64,
     signed_payload: Box<[u8]>,
     regions: Vec<RelayBootstrapRegion>,
-    /// Whether this run persisted the document that arms the anti-rollback
-    /// generation floor for the next start.
+    /// Whether the anti-rollback generation floor is intact around this load.
+    ///
+    /// False when the cache could not be read (this run had no floor to check
+    /// the fetched generation against) or could not be written (the next start
+    /// will have none).
     ///
     /// A failed cache write degrades rather than failing the bootstrap: the
     /// document was still fully verified, and an unwritable configuration
@@ -174,14 +177,20 @@ impl EnvironmentRelayBootstrapProvider {
             .get_or_init(|| Mutex::new(()))
             .lock()
             .map_err(|_| BootstrapError::Cache)?;
-        // An absent cache is an empty floor and reads as `Ok(None)`, so the
-        // unwritable-configuration-directory case never reaches this error
-        // path — only a cache that exists and is corrupt, unreadable, or not a
-        // regular file does. That is an anomaly rather than a first run, and
-        // continuing past it would let the anomaly itself disarm the
-        // generation floor, so resolution stops here. The write side degrades
-        // instead; see the persist step below.
-        let cached = read_cache(&self.cache_path, self.endpoint.as_str())?;
+        // A cache that exists but is corrupt, unreadable, or not a regular file
+        // leaves this start with no generation floor — the same position an
+        // absent cache leaves it in, which reads as `Ok(None)` and has always
+        // been allowed. The threat model already accepts a missing floor:
+        // deleting the file achieves it, and corrupting or chmod-ing the file
+        // needs no more privilege than deleting it, so refusing here buys no
+        // security while turning a damaged cache into a hard inability to
+        // collaborate. Resolution therefore continues without a floor, and the
+        // degradation is recorded rather than swallowed — it travels with the
+        // returned document as `rollback_floor_armed`.
+        let (cached, cache_readable) = match read_cache(&self.cache_path, self.endpoint.as_str()) {
+            Ok(cached) => (cached, true),
+            Err(_) => (None, false),
+        };
         let cached_verified = cached.as_ref().and_then(|cached| {
             verify_bootstrap(
                 cached.body.as_bytes(),
@@ -260,7 +269,7 @@ impl EnvironmentRelayBootstrapProvider {
         // and `reject_rollback` have already accepted the document, so the
         // verifier stays exactly as fail-closed as before.
         let mut verified = verified;
-        verified.rollback_floor_armed = match String::from_utf8(body) {
+        let persisted = match String::from_utf8(body) {
             Ok(body) => write_cache(
                 &self.cache_path,
                 &BootstrapCache {
@@ -272,6 +281,9 @@ impl EnvironmentRelayBootstrapProvider {
             .is_ok(),
             Err(_) => false,
         };
+        // Both halves matter: an unreadable cache cost this run its floor, and
+        // a failed write costs the next start its floor.
+        verified.rollback_floor_armed = cache_readable && persisted;
         Ok(Arc::new(verified))
     }
 

@@ -73,10 +73,13 @@ fn run(args: &[String]) -> Result<String, CliError> {
             | Command::ToolCallJson { .. }
             | Command::Export { .. }
     );
-    let target_port = if port_explicit || !needs_server {
-        port
+    // The live MCP endpoint authenticates every stateful call, so the token
+    // has to be resolved alongside the port rather than after it.
+    let (target_port, target_token) = if port_explicit || !needs_server {
+        (port, app_control_cli::token_for_port(port))
     } else {
-        app_control_cli::discover_running_port().unwrap_or(port)
+        app_control_cli::discover_running_endpoint()
+            .unwrap_or_else(|| (port, app_control_cli::token_for_port(port)))
     };
     let out = match command {
         Command::Help => USAGE.to_string(),
@@ -100,7 +103,7 @@ fn run(args: &[String]) -> Result<String, CliError> {
         }
         Command::InstallSkill { target } => skill_install_cli::run_install(target.as_deref())?,
         Command::UninstallSkill { target } => skill_install_cli::run_uninstall(target.as_deref())?,
-        Command::ToolsList => post(target_port, &tools_list_body())?,
+        Command::ToolsList => post(target_port, &target_token, &tools_list_body())?,
         Command::ImportFigma { fig_path, out_path } => {
             figma_cli::run_import_figma(&fig_path, &out_path)?
         }
@@ -113,10 +116,10 @@ fn run(args: &[String]) -> Result<String, CliError> {
             out_path,
         } => html_cli::run_import_snapshot(&json_path, &out_path)?,
         Command::ToolCall { tool, args } => {
-            post(target_port, &tool_call_body(&tool, &args_to_json(&args)))?
+            post(target_port, &target_token, &tool_call_body(&tool, &args_to_json(&args)))?
         }
         Command::ToolCallJson { tool, args_json } => {
-            post(target_port, &tool_call_body(&tool, &args_json))?
+            post(target_port, &target_token, &tool_call_body(&tool, &args_json))?
         }
         Command::Export {
             item_id,
@@ -126,6 +129,7 @@ fn run(args: &[String]) -> Result<String, CliError> {
             scale,
         } => export_cli::run_export(
             target_port,
+            &target_token,
             item_id.as_deref(),
             &output,
             &format,

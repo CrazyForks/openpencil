@@ -175,7 +175,12 @@ impl McpLiveServer {
         let (req_tx, req_rx) = mpsc::channel();
         let (stop_tx, stop_rx) = mpsc::channel();
         let token = make_live_token();
-        let server_token = token.clone();
+        // The connection threads need both halves of the admission material:
+        // the token they must see on every state-touching request, and the
+        // port they actually bound (so `Host` can be pinned to it — the
+        // DNS-rebinding check). Bundled so `server_loop`'s argument list
+        // stays the same width.
+        let admission = Arc::new(LiveAdmission::new(token.clone(), bound_port));
         let quit_flag = Arc::new(AtomicBool::new(false));
         let server_quit = Arc::clone(&quit_flag);
         let wake_ui: UiWake = Arc::new(wake_ui);
@@ -188,7 +193,7 @@ impl McpLiveServer {
                     listener,
                     req_tx,
                     stop_rx,
-                    server_token,
+                    admission,
                     server_quit,
                     wake_ui,
                     server_identity,
@@ -458,10 +463,12 @@ fn command_invalidates_layout(cmd: &EditorCommand) -> bool {
     }
 }
 
+mod admission;
 mod connection;
 mod doc_sync;
 mod ui_requests;
 
+use admission::*;
 use connection::*;
 use doc_sync::*;
 use ui_requests::*;

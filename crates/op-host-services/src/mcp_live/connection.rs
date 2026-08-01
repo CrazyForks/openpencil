@@ -20,7 +20,7 @@ pub(super) fn server_loop(
     listener: TcpListener,
     req_tx: Sender<UiRequest>,
     stop_rx: Receiver<()>,
-    token: String,
+    admission: Arc<LiveAdmission>,
     quit_flag: Arc<AtomicBool>,
     wake_ui: UiWake,
     client_identity: Arc<Mutex<Option<(String, String)>>>,
@@ -57,7 +57,7 @@ pub(super) fn server_loop(
                 // pings. Threads are short-lived and detached.
                 conn_count.fetch_add(1, Ordering::AcqRel);
                 let req_tx = req_tx.clone();
-                let token = token.clone();
+                let admission = Arc::clone(&admission);
                 let lock = Arc::clone(&stateful_lock);
                 let quit = Arc::clone(&quit_flag);
                 let conns = Arc::clone(&conn_count);
@@ -78,7 +78,7 @@ pub(super) fn server_loop(
                         if let Err(e) = serve_connection(
                             &mut stream,
                             &req_tx,
-                            &token,
+                            &admission,
                             &lock,
                             &quit,
                             &wake,
@@ -113,13 +113,25 @@ pub(super) fn server_loop(
 pub(super) fn serve_connection<S: std::io::Read + std::io::Write>(
     stream: &mut S,
     req_tx: &Sender<UiRequest>,
-    token: &str,
+    admission: &LiveAdmission,
     stateful_lock: &Mutex<()>,
     quit_flag: &AtomicBool,
     wake_ui: &UiWake,
     client_identity: &Mutex<Option<(String, String)>>,
 ) -> Result<(), McpLiveError> {
     let req = crate::mcp_serve::read_http_request(stream)?;
+    let token = admission.token();
+    // Gate 1 (see `admission.rs`): browser screening, ahead of ALL routing —
+    // including the preflight and the stateless probes, so a foreign page
+    // cannot even fingerprint this endpoint. `Host`/`Origin` are not
+    // page-forgeable, which is what closes DNS rebinding.
+    if let Err(denial) = admission::check_boundary(&req, admission) {
+        return write_http(
+            stream,
+            denial.http_status(),
+            &admission::denial_json_rpc(&req.body, denial),
+        );
+    }
     if req.method == "OPTIONS" {
         return write_http(stream, "204 No Content", "");
     }
@@ -128,6 +140,17 @@ pub(super) fn serve_connection<S: std::io::Read + std::io::Write>(
     // client (`setSyncDocument` → POST `{document}`) drive THIS editor's
     // on-screen canvas, mirroring `apps/web/server/api/mcp/document.post.ts`.
     if crate::mcp_serve::is_document_sync_route(&req.method, &req.path) {
+        // Whole-document replacement of the live (possibly SHARED) document
+        // — the single most destructive thing this endpoint can do, so it
+        // takes the token gate before the body is even parsed. The REST
+        // route answers `{ok,error}`, not JSON-RPC.
+        if let Err(denial) = admission::check_token(&req, admission) {
+            return write_http(
+                stream,
+                denial.http_status(),
+                &admission::denial_rest(denial),
+            );
+        }
         return serve_document_sync(stream, req_tx, wake_ui, stateful_lock, &req.body);
     }
     if req.path != "/mcp" && req.path != "/" {
@@ -174,6 +197,20 @@ pub(super) fn serve_connection<S: std::io::Read + std::io::Write>(
             return write_json_rpc_response(stream, &live_ping_response(&id, token));
         }
         crate::mcp_serve::Stateless::NeedsState => {}
+    }
+    // Gate 2 (see `admission.rs`): everything from here down reads or writes
+    // the live document — every `tools/call`, not just the write ones — so it
+    // requires the per-instance token. This sits IN FRONT of
+    // `CollabGatePolicy` (which still runs on the UI thread for each apply)
+    // and does not replace it: the policy decides what a session permits, this
+    // decides who is allowed to ask at all. Refusals are a JSON-RPC error
+    // carrying the caller's id, never a silent pass.
+    if let Err(denial) = admission::check_token(&req, admission) {
+        return write_http(
+            stream,
+            denial.http_status(),
+            &admission::denial_json_rpc(&req.body, denial),
+        );
     }
     // Everything below observes or mutates shared state — the live
     // `EditorState` OR a `--file` document on disk (a read-modify-write).

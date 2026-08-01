@@ -50,6 +50,7 @@ pub(crate) fn map_export(flags: &Flags) -> Result<Command, CliError> {
 
 pub(crate) fn run_export(
     port: u16,
+    token: &str,
     item_id: Option<&str>,
     output: &str,
     format: &str,
@@ -68,6 +69,7 @@ pub(crate) fn run_export(
     }
     let response = post(
         port,
+        token,
         &tool_call_body("export_item", &Value::Object(arguments).to_string()),
     )?;
     write_export_response(&response, Path::new(output))

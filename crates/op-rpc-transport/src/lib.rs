@@ -188,6 +188,10 @@ impl From<HttpTransportError> for String {
 pub struct TcpJsonRpc {
     addr: SocketAddr,
     path: String,
+    /// Per-instance token for the live MCP endpoint, sent as
+    /// `X-OpenPencil-Token`. Empty means "send no header", which is what the
+    /// endpoint's tokenless probes (`initialize`, `ping`) still accept.
+    token: String,
 }
 
 impl TcpJsonRpc {
@@ -195,6 +199,7 @@ impl TcpJsonRpc {
         Self {
             addr: SocketAddr::from(([127, 0, 0, 1], port)),
             path: path.to_string(),
+            token: String::new(),
         }
     }
 
@@ -202,11 +207,27 @@ impl TcpJsonRpc {
         Self::localhost(port, MCP_PATH)
     }
 
+    /// Authenticates subsequent requests with the endpoint's instance token.
+    ///
+    /// The live MCP endpoint authenticates every stateful call, so a client
+    /// that omits this gets `401` on anything beyond the discovery probes.
+    #[must_use]
+    pub fn with_token(mut self, token: &str) -> Self {
+        self.token = token.to_string();
+        self
+    }
+
     pub fn http_post_request(&self, body: &str) -> String {
+        let authorization = if self.token.is_empty() {
+            String::new()
+        } else {
+            format!("X-OpenPencil-Token: {}\r\n", self.token)
+        };
         format!(
             "POST {} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n\
-             Content-Length: {}\r\nConnection: close\r\n\r\n{}",
+             {}Content-Length: {}\r\nConnection: close\r\n\r\n{}",
             self.path,
+            authorization,
             body.len(),
             body
         )

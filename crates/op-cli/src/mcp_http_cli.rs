@@ -102,6 +102,7 @@ pub(crate) fn http_request(body: &str) -> String {
 /// service accepts but never replies from hanging the CLI indefinitely.
 fn post_raw(
     port: u16,
+    token: &str,
     body: &str,
     timeout: std::time::Duration,
 ) -> Result<(u16, String), CliError> {
@@ -109,6 +110,7 @@ fn post_raw(
     // failure domain; flatten it into the CLI's `Transport` variant, whose
     // payload is the exact sentence `op:` prints.
     TcpJsonRpc::local_mcp(port)
+        .with_token(token)
         .post_raw(body, timeout)
         .map(|reply| (reply.status, reply.body))
         .map_err(|e| CliError::Transport(e.to_string()))
@@ -120,8 +122,8 @@ fn post_raw(
 /// `tools/call` content envelope is unwrapped to the raw tool result, and an
 /// `isError` tool result (or a JSON-RPC transport error) is surfaced as an
 /// error — so `op` exits non-zero on a failed tool, like the TS CLI.
-pub(crate) fn post(port: u16, body: &str) -> Result<String, CliError> {
-    let (status, reply) = post_raw(port, body, POST_TIMEOUT)?;
+pub(crate) fn post(port: u16, token: &str, body: &str) -> Result<String, CliError> {
+    let (status, reply) = post_raw(port, token, body, POST_TIMEOUT)?;
     if !(200..300).contains(&status) {
         return Err(CliError::Transport(format!(
             "MCP server on 127.0.0.1:{port} returned HTTP {status}: {reply}"
@@ -204,7 +206,7 @@ fn is_web_canvas_health(body: &str) -> bool {
 /// `/api/mcp/*`, not `/mcp`) — so discovery never mis-routes tool calls.
 fn ping_result(port: u16) -> Option<Value> {
     let body = serde_json::to_string(&JsonRpcRequest::new(0, "ping", Value::Null)).ok()?;
-    let (status, body) = post_raw(port, &body, PING_TIMEOUT).ok()?;
+    let (status, body) = post_raw(port, "", &body, PING_TIMEOUT).ok()?;
     if !(200..300).contains(&status) {
         return None;
     }
@@ -256,7 +258,7 @@ pub(crate) fn request_shutdown(port: u16, token: &str) -> bool {
         serde_json::json!({ "token": token }),
     ))
     .expect("shutdown JSON-RPC request serializes");
-    match post_raw(port, &body, SHUTDOWN_TIMEOUT) {
+    match post_raw(port, "", &body, SHUTDOWN_TIMEOUT) {
         Ok((status, body)) if (200..300).contains(&status) => serde_json::from_str::<Value>(&body)
             .ok()
             .and_then(|v| {

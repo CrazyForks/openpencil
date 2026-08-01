@@ -301,8 +301,20 @@ than "routing metadata" in the narrow sense, and is stated here explicitly:
 - **The full admission ticket**, presented as the WSS `Authorization: Bearer`
   credential and verified by the relay. Its claims carry the global account
   subject, the device id, and — when present — the display name and avatar
-  URL. A relay operator can therefore reconstruct which accounts collaborate
-  with each other, from which devices, and when.
+  URL. Scope this precisely: peer admission today requires the remote ticket's
+  subject to equal the *local* account (`expected_subject` is the local
+  account on both sides, and a mismatch is rejected as `WrongSubject`), so the
+  product currently pairs only devices of the same account. What a relay
+  operator reconstructs is therefore **which devices of a given account sync,
+  from where, and when** — not a cross-account collaboration graph. That graph
+  becomes possible the moment cross-account collaboration ships, which is why
+  the credential is worth minimizing before then.
+
+  Note also that the relay reads exactly one field out of this ticket, the
+  expiry it clamps the session deadline to. The subject, device id, `jti`,
+  display name, and avatar URL are format-checked and then discarded — they
+  are never compared, stored, or returned by the authorization path. The
+  disclosure is therefore gratuitous rather than load-bearing.
 - **The client hello**: route id, role, caller device X25519 public key,
   possession proof, and the embedded signed locator (owner Noise static key,
   region, validity window, discovery id).
@@ -314,10 +326,36 @@ than "routing metadata" in the narrow sense, and is stated here explicitly:
 
 Residual risk: this is a disclosure to the relay operator, not to the network,
 and it is inherent to operating a relay that authenticates before forwarding.
-It is accepted for the first-party relay. Two mitigations are open work: moving
-to a claim-minimized relay credential that proves route authorization without
-carrying account identity, and replacing the cleartext `session_id` in the
-prologue with a binding commitment. Until then, the deployment requirement is
+It is accepted for the first-party relay. Two mitigations were investigated. A claim-minimized relay credential that
+carries no account identity is open work, and is designed: the relay's
+authorization output is `(route, role, expiry)`, none of which comes from the
+ticket's identity claims, so the credential can be reduced to an
+audience-scoped token carrying only issuer, audience, version, scope, the
+channel binding to the caller's X25519 key, and the time bounds. Two honest
+limits on what that buys. First, it de-identifies but does not make the relay's
+view unlinkable: the device's X25519 static key is persistent and travels in
+cleartext in every hello, so the operator still builds a permanent *device*
+graph — it simply can no longer name the nodes or join them to the account
+namespace used by support, billing, and every other first-party service.
+Second, an operator who runs both the issuer and the relay can re-identify a
+connection by joining on the channel-binding key and the issuance timestamp, so
+against the first party the change is close to symbolic; its real value is
+against relay compromise, log leakage, a third-party or regional relay
+operator, and relay-scoped lawful-access requests. Implementation is blocked on
+the private provider ABI, which mints the credential.
+Replacing the cleartext `session_id` in the prologue with a binding commitment
+was prototyped and **rejected**: the prologue is not merely a binding, it is the
+only channel by which a guest learns the session id at all. The LAN join path
+reads it straight out of the prelude, the mDNS record deliberately carries no
+session identifier, and the relay invite carries only the locator and route
+capability. A commitment would therefore require publishing the session id
+somewhere a guest can reach before connecting — on LAN that means the mDNS
+record, which trades a handle visible to one relay operator for a handle
+broadcast to the whole local network. The marginal gain was also narrower than
+it first appeared: the relay already holds the `discovery_id` inside the signed
+locator for the whole session, so only cross-epoch correlation would have been
+closed. Closing this properly needs the session id added to the invite and a
+different LAN join handshake — a product change, not a protocol tweak. Until then, the deployment requirement is
 that relay and locator operators must not persist bearer headers, hello bytes,
 or client addresses beyond what an incident needs, and must not log them at
 all: no relay or locator code path interpolates ticket, key, or identity

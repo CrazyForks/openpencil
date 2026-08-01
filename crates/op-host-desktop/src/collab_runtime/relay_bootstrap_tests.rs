@@ -618,7 +618,16 @@ fn provider_sends_etag_and_accepts_only_matching_not_modified() {
     let _ = std::fs::remove_dir_all(cache_root);
 }
 
-fn assert_bad_cache_cannot_disarm_rollback_floor(
+/// A damaged cache degrades to "no floor" instead of blocking bootstrap.
+///
+/// This is a deliberate weakening relative to failing closed, and the test
+/// states its cost plainly: with the floor gone, the lower-generation document
+/// IS accepted. It is accepted because refusing bought no security — deleting
+/// the cache file already achieves a missing floor and needs no more privilege
+/// than corrupting it — while it did cost the ability to collaborate at all on
+/// a machine with a damaged or unreadable cache. What must not happen is the
+/// loss passing silently, so `rollback_floor_armed` has to report it.
+fn assert_bad_cache_degrades_to_an_unarmed_rollback_floor(
     label: &str,
     damage_cache: impl FnOnce(&std::path::Path),
 ) {
@@ -680,25 +689,36 @@ fn assert_bad_cache_cannot_disarm_rollback_floor(
         development_http: true,
         cache_path,
     };
-    assert_eq!(provider.load_inner(NOW).unwrap_err(), BootstrapError::Cache);
+    let loaded = provider
+        .load_inner(NOW)
+        .expect("a damaged cache degrades instead of blocking bootstrap");
+    assert_eq!(
+        loaded.generation,
+        valid_payload().generation,
+        "with no floor the lower-generation document is accepted — this is the cost of degrading"
+    );
+    assert!(
+        !loaded.rollback_floor_armed,
+        "a damaged cache must report the anti-rollback floor as unarmed"
+    );
     stop_sender.send(()).ok();
     assert!(
-        !server.join().unwrap(),
-        "an unsafe cache must fail before a lower-generation response is fetched"
+        server.join().unwrap(),
+        "degrading means the fetch proceeds rather than stopping at the damaged cache"
     );
     let _ = std::fs::remove_dir_all(cache_root);
 }
 
 #[test]
-fn corrupt_cache_cannot_disarm_the_rollback_floor() {
-    assert_bad_cache_cannot_disarm_rollback_floor("corrupt", |path| {
+fn corrupt_cache_degrades_to_an_unarmed_rollback_floor() {
+    assert_bad_cache_degrades_to_an_unarmed_rollback_floor("corrupt", |path| {
         std::fs::write(path, b"not json").unwrap();
     });
 }
 
 #[cfg(unix)]
 #[test]
-fn unreadable_cache_cannot_disarm_the_rollback_floor() {
+fn unreadable_cache_degrades_to_an_unarmed_rollback_floor() {
     use std::os::unix::fs::PermissionsExt as _;
 
     let probe = std::env::temp_dir().join(format!(
@@ -716,7 +736,7 @@ fn unreadable_cache_cannot_disarm_the_rollback_floor() {
     if can_still_read {
         return;
     }
-    assert_bad_cache_cannot_disarm_rollback_floor("unreadable", |path| {
+    assert_bad_cache_degrades_to_an_unarmed_rollback_floor("unreadable", |path| {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).unwrap();
     });
 }
