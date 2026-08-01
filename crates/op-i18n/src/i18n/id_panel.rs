@@ -80,6 +80,16 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "promptCenter.item.componentFormLab.title" => "Form Lab · Sistem komponen formulir",
         "promptCenter.item.modifyPolishCurrent.title" => "Sempurnakan layar saat ini",
         "promptCenter.item.modifyCompleteStates.title" => "Lengkapi status komponen",
+        "collab.ownerConfirm.title" => "Konfirmasi siapa yang Anda ikuti",
+        "collab.ownerConfirm.hint" => "Belum ada apa pun dari sesi ini yang dimuat.",
+        "collab.ownerConfirm.account" => "Akun terverifikasi",
+        "collab.ownerConfirm.device" => "Perangkat terverifikasi",
+        "collab.ownerConfirm.claimedName" => "Nama pilihan akun ini (belum terverifikasi)",
+        "collab.action.confirmOwner" => "Gabung sesi ini",
+        "collab.action.rejectOwner" => "Jangan gabung",
+        "collab.error.ownerNotConfirmed" => {
+            "Anda tidak mengonfirmasi host, jadi tidak ada yang dimuat."
+        }
         _ => return super::id_collab::lookup(key),
     })
 }

@@ -23,8 +23,8 @@ pub use pinned_verifiers::{
 };
 pub use production::{
     run_production, ProductionRelayAuthConfig, ProductionRelayAuthConfigError,
-    ProductionRelayError, HOME_REGION_ENV, LOCATOR_KEYS_FILE_ENV, POLICY_MAX_AGE_ENV,
-    RELAY_X25519_KEYS_FILE_ENV, TICKET_POLICY_FILE_ENV,
+    ProductionRelayError, HOME_REGION_ENV, LEGACY_TICKET_BEARER_ENV, LOCATOR_KEYS_FILE_ENV,
+    POLICY_MAX_AGE_ENV, RELAY_X25519_KEYS_FILE_ENV, TICKET_POLICY_FILE_ENV,
 };
 pub use server::{run, run_until, run_with_authenticator, run_with_authenticator_until};
 pub use x25519_boundary::{

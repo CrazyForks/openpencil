@@ -83,9 +83,12 @@ impl CollabPanel<'_> {
                     }
                 }
             }
+            // The confirmation screen's two decisions live in the fixed action
+            // row, which is hit-tested before this match runs.
             CollabPanelScreen::Unavailable
             | CollabPanelScreen::Home
             | CollabPanelScreen::Create
+            | CollabPanelScreen::ConfirmOwner(_)
             | CollabPanelScreen::Progress { .. } => {}
         }
         Some(CollabPanelHit::Inside)
@@ -155,9 +158,12 @@ impl CollabPanel<'_> {
                     }
                 }
             }
+            // The confirmation screen's two decisions live in the fixed action
+            // row, which is hit-tested before this match runs.
             CollabPanelScreen::Unavailable
             | CollabPanelScreen::Home
             | CollabPanelScreen::Create
+            | CollabPanelScreen::ConfirmOwner(_)
             | CollabPanelScreen::Progress { .. } => {}
         }
         None
@@ -386,5 +392,7 @@ fn hover_for_action(action: &CollabUiAction) -> Option<CollabPanelHover> {
         CollabUiAction::ApproveAdmissionEditor { .. } => CollabPanelHover::ApproveAdmissionEditor,
         CollabUiAction::ApproveAdmissionViewer { .. } => CollabPanelHover::ApproveAdmissionViewer,
         CollabUiAction::RejectAdmission { .. } => CollabPanelHover::RejectAdmission,
+        CollabUiAction::ConfirmOwnerIdentity { .. } => CollabPanelHover::ConfirmOwnerIdentity,
+        CollabUiAction::RejectOwnerIdentity { .. } => CollabPanelHover::RejectOwnerIdentity,
     })
 }

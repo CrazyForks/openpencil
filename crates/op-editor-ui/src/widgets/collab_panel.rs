@@ -1,7 +1,10 @@
 //! Paint and hit-test surface for the collaboration popover.
 //!
-//! The panel consumes only the sanitized models from `collab_ui`; network,
-//! ticket, stable-subject, and device data never enter this widget.
+//! The panel consumes only the sanitized models from `collab_ui`; network and
+//! ticket data never enter this widget. The single deliberate exception is the
+//! guest's owner-confirmation screen, whose entire purpose is to show the
+//! verified account subject and device id so a human can decide whether to
+//! join — see `collab_panel_owner_confirm`.
 
 use crate::theme::Theme;
 use crate::widgets::collab_ui::{
@@ -18,6 +21,9 @@ mod paint;
 use paint::{paint_button, paint_participant, paint_text};
 #[path = "collab_panel_interaction.rs"]
 mod interaction;
+#[path = "collab_panel_owner_confirm.rs"]
+mod owner_confirm;
+use owner_confirm::{CONFIRM_OWNER_HEAD_HEIGHT, CONFIRM_OWNER_ROW_HEIGHT};
 
 pub const COLLAB_PANEL_WIDTH: f32 = 340.0;
 const HEADER_HEIGHT: f32 = 44.0;
@@ -205,6 +211,9 @@ impl Widget for CollabPanel<'_> {
                     Point2D::new(rect.origin.x + PAD + 26.0, body_top + 31.0),
                     400,
                 );
+            }
+            CollabPanelScreen::ConfirmOwner(confirm) => {
+                self.paint_owner_confirmation(cx, rect, body_top, confirm);
             }
             CollabPanelScreen::Join {
                 address,

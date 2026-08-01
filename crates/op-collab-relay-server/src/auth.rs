@@ -231,12 +231,24 @@ pub trait RelayPossessionPolicy: Send + Sync {
     ) -> bool;
 }
 
-/// Signed-ticket relay authentication with strict or explicit reduced policy.
+/// Signed-bearer relay authentication with strict or explicit reduced policy.
+///
+/// The bearer is a *claim-minimized relay token*: it proves a live issuer
+/// session bound to the caller's X25519 key and nothing else. The relay reads
+/// exactly one field out of it — the signed expiry it clamps the session
+/// deadline to. Route and role come from the Ed25519-signed locator plus the
+/// `RouteCapability` in the hello, never from bearer claims.
+///
+/// During migration the relay also accepts the legacy full collaboration
+/// ticket. That path is gated by [`Self::with_full_collab_ticket_accepted`]
+/// and still yields only an expiry, so the relay cannot read the account
+/// subject or device id even from a legacy bearer.
 pub struct CollabTicketRelayAuthenticator<F, V, P> {
     ticket_verifier: CollabTicketVerifier<F>,
     expected_home_region: RelayRegion,
     locator_verifier: V,
     possession_policy: P,
+    accept_full_collab_ticket: bool,
 }
 
 impl<F, V, B> CollabTicketRelayAuthenticator<F, V, RequireRelayChallengeProof<B>>
@@ -268,6 +280,7 @@ where
             expected_home_region,
             locator_verifier,
             possession_policy: RequireRelayChallengeProof::new(proof_boundary),
+            accept_full_collab_ticket: true,
         }
     }
 }
@@ -298,7 +311,26 @@ where
             expected_home_region,
             locator_verifier,
             possession_policy: TicketDhBindingOnly,
+            accept_full_collab_ticket: true,
         }
+    }
+}
+
+impl<F, V, P> CollabTicketRelayAuthenticator<F, V, P> {
+    /// Select whether the legacy full collaboration ticket is still accepted
+    /// as a relay bearer.
+    ///
+    /// Dual-accept defaults to on so pre-migration clients keep connecting.
+    /// Turning it off is a one-way narrowing of what identity ever reaches the
+    /// relay operator and should only happen once the fleet has moved.
+    ///
+    /// There is deliberately no client-side "try minimized, retry with the
+    /// full ticket on rejection" fallback anywhere in this system: a curious
+    /// relay could trigger that downgrade at will simply by rejecting the
+    /// minimized token.
+    pub fn with_full_collab_ticket_accepted(mut self, accepted: bool) -> Self {
+        self.accept_full_collab_ticket = accepted;
+        self
     }
 }
 
@@ -366,14 +398,24 @@ where
         {
             return Err(fail());
         }
-        let verified_ticket = self
+        // The only fact taken from the bearer is its signed expiry. The
+        // credential kind is discriminated on the JWS `typ` before any claim
+        // parsing, and both shapes collapse to an expiry, so no identity
+        // claim is reachable from here even on the legacy dual-accept path.
+        let verified_bearer = self
             .ticket_verifier
-            .verify_at(credential.as_bytes(), caller_dh, now_unix, cache_now)
+            .verify_relay_bearer_at(
+                credential.as_bytes(),
+                caller_dh,
+                now_unix,
+                cache_now,
+                self.accept_full_collab_ticket,
+            )
             .map_err(|_| fail())?;
         if !self.possession_policy.verify(hello, credential, challenge) {
             return Err(fail());
         }
-        let expires_at_unix = verified_ticket
+        let expires_at_unix = verified_bearer
             .expires_at_unix_seconds()
             .min(hello.expires_at_unix());
         let expires_at_unix = NonZeroU64::new(expires_at_unix).ok_or_else(fail)?;
@@ -393,6 +435,7 @@ impl<F, V, P> fmt::Debug for CollabTicketRelayAuthenticator<F, V, P> {
             .field("expected_home_region", &self.expected_home_region)
             .field("locator_verifier", &"[CONFIGURED]")
             .field("possession_policy", &"[CONFIGURED]")
+            .field("accept_full_collab_ticket", &self.accept_full_collab_ticket)
             .finish()
     }
 }

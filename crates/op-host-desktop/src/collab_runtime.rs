@@ -6,6 +6,7 @@ mod discarded_edit;
 mod effects;
 mod effects_wire;
 mod failure;
+mod guest_confirmation;
 mod local_edit;
 mod network;
 mod poll;
@@ -25,6 +26,7 @@ use actor::{
     PendingGuestAdmission,
 };
 use admission::PendingOwnerAdmissions;
+use guest_confirmation::PendingOwnerConfirmation;
 use network::{
     DiscoveryNetwork, EventSink, PendingNetworkLaunch, Retirement, SessionNetwork,
     TerminalEventLane, TerminalEventReceiver,
@@ -68,6 +70,7 @@ pub(crate) struct DesktopCollabRuntime {
     actor: Option<EditorActor>,
     pending_guest: Option<PendingGuestAdmission>,
     pending_owner: PendingOwnerAdmissions,
+    pending_owner_confirmation: Option<PendingOwnerConfirmation>,
     discovered: HashMap<String, DiscoveredEndpoint>,
     last_join: Option<GuestConnectionRoute>,
     pinned_owner_static: Option<[u8; 32]>,
@@ -138,6 +141,7 @@ impl DesktopCollabRuntime {
             actor: None,
             pending_guest: None,
             pending_owner: PendingOwnerAdmissions::default(),
+            pending_owner_confirmation: None,
             discovered: HashMap::new(),
             last_join: None,
             pinned_owner_static: None,
@@ -220,6 +224,10 @@ impl DesktopCollabRuntime {
             }
             CollabUiAction::RejectAdmission { request_key } => {
                 self.reject_owner_admission(&request_key, host)
+            }
+            action @ (CollabUiAction::ConfirmOwnerIdentity { .. }
+            | CollabUiAction::RejectOwnerIdentity { .. }) => {
+                self.resolve_owner_confirmation(&action, host)
             }
         };
         if let Err(error) = result {
@@ -306,6 +314,7 @@ impl DesktopCollabRuntime {
         self.actor = None;
         self.pending_guest = None;
         self.pending_owner.clear();
+        self.clear_owner_confirmation(host);
         self.discovered.clear();
         self.last_join = None;
         self.pinned_owner_static = None;
@@ -525,12 +534,16 @@ impl DesktopCollabRuntime {
                 auth,
                 intent,
             } => self.peer_authenticated(connection, auth, intent, host),
+            NetworkEvent::OwnerIdentityUnconfirmed { connection, auth } => {
+                self.owner_identity_unconfirmed(connection, auth, host)
+            }
             NetworkEvent::GuestAuthenticated {
                 connection,
                 session_id,
                 epoch,
                 remote_static,
             } => {
+                self.clear_owner_confirmation(host);
                 self.pinned_owner_static = Some(remote_static);
                 self.pending_guest = Some(PendingGuestAdmission {
                     connection,

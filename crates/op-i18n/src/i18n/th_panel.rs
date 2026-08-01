@@ -78,6 +78,14 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "promptCenter.item.componentFormLab.title" => "Form Lab · ระบบคอมโพเนนต์ฟอร์ม",
         "promptCenter.item.modifyPolishCurrent.title" => "ปรับแต่งหน้าจอปัจจุบัน",
         "promptCenter.item.modifyCompleteStates.title" => "เติมสถานะคอมโพเนนต์ให้ครบ",
+        "collab.ownerConfirm.title" => "ยืนยันว่าคุณกำลังเข้าร่วมกับใคร",
+        "collab.ownerConfirm.hint" => "ยังไม่มีเนื้อหาใดจากเซสชันนี้ถูกโหลด",
+        "collab.ownerConfirm.account" => "บัญชีที่ยืนยันแล้ว",
+        "collab.ownerConfirm.device" => "อุปกรณ์ที่ยืนยันแล้ว",
+        "collab.ownerConfirm.claimedName" => "ชื่อที่บัญชีนี้ตั้งเอง (ยังไม่ยืนยัน)",
+        "collab.action.confirmOwner" => "เข้าร่วมเซสชันนี้",
+        "collab.action.rejectOwner" => "ไม่เข้าร่วม",
+        "collab.error.ownerNotConfirmed" => "คุณไม่ได้ยืนยันผู้จัด จึงไม่มีการโหลดข้อมูลใด",
         _ => return super::th_collab::lookup(key),
     })
 }

@@ -80,6 +80,14 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "promptCenter.item.componentFormLab.title" => "Form Lab · 폼 컴포넌트 시스템",
         "promptCenter.item.modifyPolishCurrent.title" => "현재 화면 다듬기",
         "promptCenter.item.modifyCompleteStates.title" => "컴포넌트 상태 완성하기",
+        "collab.ownerConfirm.title" => "참여할 상대를 확인하세요",
+        "collab.ownerConfirm.hint" => "이 세션의 내용은 아직 아무것도 불러오지 않았습니다.",
+        "collab.ownerConfirm.account" => "검증된 계정",
+        "collab.ownerConfirm.device" => "검증된 기기",
+        "collab.ownerConfirm.claimedName" => "이 계정이 정한 이름(검증되지 않음)",
+        "collab.action.confirmOwner" => "이 세션에 참여",
+        "collab.action.rejectOwner" => "참여 안 함",
+        "collab.error.ownerNotConfirmed" => "호스트를 확인하지 않아 아무것도 불러오지 않았습니다.",
         _ => return super::ko_collab::lookup(key),
     })
 }

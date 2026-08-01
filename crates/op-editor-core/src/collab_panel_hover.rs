@@ -23,6 +23,8 @@ pub enum CollabPanelHover {
     ApproveAdmissionEditor,
     ApproveAdmissionViewer,
     RejectAdmission,
+    ConfirmOwnerIdentity,
+    RejectOwnerIdentity,
 }
 
 impl crate::CollabUiState {

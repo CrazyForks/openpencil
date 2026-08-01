@@ -41,6 +41,12 @@ impl fmt::Debug for CollabUiAction {
                 formatter.write_str("ApproveAdmissionViewer([REDACTED])")
             }
             Self::RejectAdmission { .. } => formatter.write_str("RejectAdmission([REDACTED])"),
+            Self::ConfirmOwnerIdentity { .. } => {
+                formatter.write_str("ConfirmOwnerIdentity([REDACTED])")
+            }
+            Self::RejectOwnerIdentity { .. } => {
+                formatter.write_str("RejectOwnerIdentity([REDACTED])")
+            }
         }
     }
 }

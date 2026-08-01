@@ -82,6 +82,14 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "promptCenter.item.componentFormLab.title" => "Form Lab · Hệ thống thành phần biểu mẫu",
         "promptCenter.item.modifyPolishCurrent.title" => "Tinh chỉnh màn hình hiện tại",
         "promptCenter.item.modifyCompleteStates.title" => "Hoàn thiện các trạng thái thành phần",
+        "collab.ownerConfirm.title" => "Xác nhận bạn đang tham gia phiên của ai",
+        "collab.ownerConfirm.hint" => "Chưa có nội dung nào của phiên này được tải.",
+        "collab.ownerConfirm.account" => "Tài khoản đã xác minh",
+        "collab.ownerConfirm.device" => "Thiết bị đã xác minh",
+        "collab.ownerConfirm.claimedName" => "Tên do tài khoản này tự đặt (chưa xác minh)",
+        "collab.action.confirmOwner" => "Tham gia phiên này",
+        "collab.action.rejectOwner" => "Không tham gia",
+        "collab.error.ownerNotConfirmed" => "Bạn chưa xác nhận chủ phiên nên không tải gì cả.",
         _ => return super::vi_collab::lookup(key),
     })
 }

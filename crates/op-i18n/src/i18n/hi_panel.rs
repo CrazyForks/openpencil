@@ -76,6 +76,14 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "promptCenter.item.componentFormLab.title" => "Form Lab · फ़ॉर्म कॉम्पोनेंट प्रणाली",
         "promptCenter.item.modifyPolishCurrent.title" => "वर्तमान स्क्रीन को निखारें",
         "promptCenter.item.modifyCompleteStates.title" => "कॉम्पोनेंट की अवस्थाएँ पूरी करें",
+        "collab.ownerConfirm.title" => "पुष्टि करें कि आप किससे जुड़ रहे हैं",
+        "collab.ownerConfirm.hint" => "इस सत्र से अभी तक कुछ भी लोड नहीं हुआ है।",
+        "collab.ownerConfirm.account" => "सत्यापित खाता",
+        "collab.ownerConfirm.device" => "सत्यापित डिवाइस",
+        "collab.ownerConfirm.claimedName" => "इस खाते द्वारा चुना गया नाम (सत्यापित नहीं)",
+        "collab.action.confirmOwner" => "इस सत्र में शामिल हों",
+        "collab.action.rejectOwner" => "शामिल न हों",
+        "collab.error.ownerNotConfirmed" => "आपने होस्ट की पुष्टि नहीं की, इसलिए कुछ भी लोड नहीं हुआ।",
         _ => return super::hi_collab::lookup(key),
     })
 }

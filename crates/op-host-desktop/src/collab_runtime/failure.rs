@@ -127,6 +127,9 @@ pub(super) fn disconnect_notice(failure: CollabRuntimeFailure) -> CollabNoticeKi
             CollabNoticeKind::Connect(CollabConnectErrorUi::RegionUnavailable)
         }
         CollabRuntimeFailure::TicketRejected => CollabNoticeKind::TicketExpired,
+        CollabRuntimeFailure::OwnerIdentityRejected => {
+            CollabNoticeKind::Connect(CollabConnectErrorUi::OwnerNotConfirmed)
+        }
         CollabRuntimeFailure::AuthenticationUnavailable => {
             CollabNoticeKind::Reject(CollabRejectUiCode::Authentication)
         }
@@ -152,6 +155,12 @@ fn setup_failure_notice(failure: CollabRuntimeFailure) -> Option<CollabNoticeKin
         )),
         CollabRuntimeFailure::RelayRegionUnavailable => Some(CollabNoticeKind::Connect(
             CollabConnectErrorUi::RegionUnavailable,
+        )),
+        // A declined host is a completed setup decision, not a live session
+        // that broke: the runtime retires the workers and returns to Idle
+        // instead of offering a reconnect.
+        CollabRuntimeFailure::OwnerIdentityRejected => Some(CollabNoticeKind::Connect(
+            CollabConnectErrorUi::OwnerNotConfirmed,
         )),
         _ => None,
     }

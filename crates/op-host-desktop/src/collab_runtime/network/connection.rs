@@ -279,6 +279,11 @@ pub(super) fn drive_guest(
                         return Some(runtime_failure(&error));
                     }
                 }
+                // The confirmation gate ran before this loop was reachable, so
+                // a decision arriving here is a duplicate click on a prompt
+                // that is already answered. Drop it: it must not be able to
+                // re-open or re-decide an admitted connection.
+                Ok(GuestNetworkCommand::OwnerIdentityDecision(_)) => {}
                 Ok(GuestNetworkCommand::VerifyRenewal(ticket)) => {
                     let now_unix_ms = match unix_time_ms() {
                         Ok(now) => now,

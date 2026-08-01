@@ -28,6 +28,12 @@ impl CollabPanel<'_> {
             CollabPanelScreen::Unavailable | CollabPanelScreen::SignInRequired => 82.0,
             CollabPanelScreen::Home | CollabPanelScreen::Create => 66.0,
             CollabPanelScreen::Progress { .. } => 70.0,
+            CollabPanelScreen::ConfirmOwner(confirm) => {
+                CONFIRM_OWNER_HEAD_HEIGHT
+                    + (confirm.authoritative.len() + usize::from(confirm.claimed_name.is_some()))
+                        as f32
+                        * CONFIRM_OWNER_ROW_HEIGHT
+            }
             CollabPanelScreen::Join { discovered, .. } => {
                 let visible_rows = discovered.len().clamp(1, MAX_VISIBLE_ENDPOINTS);
                 106.0 + visible_rows as f32 * ROW_HEIGHT

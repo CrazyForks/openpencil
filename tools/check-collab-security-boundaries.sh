@@ -426,6 +426,36 @@ require_literal crates/op-collab-transport/src/chunk_tests.rs \
 require_literal crates/op-host-desktop/src/collab_runtime/relay_bootstrap_tests.rs \
     "payload_rejects_exact_cross_region_key_reuse" \
     "cross-region exact key-reuse regression test"
+# Cross-account collaboration replaced the subject-equality check with an
+# explicit policy, and the two sides get different answers because they do not
+# have the same ability to tell who the peer is. The owner admits any issued
+# account because a human approves each guest against the verified identity; a
+# guest admits one only when the owner's key was pinned out of band. Losing
+# that asymmetry — by having the account check relax wherever nothing else
+# authenticates the peer — is silent, so pin both halves here.
+require_literal crates/op-collab-transport/src/admission.rs \
+    "pub enum PeerIdentityPolicy" \
+    "explicit peer account admission policy"
+require_literal crates/op-collab-transport/src/admission_tests.rs \
+    "any_issued_account_admits_a_foreign_subject_but_keeps_every_other_check" \
+    "cross-account admission keeps issuer, expiry, and key binding"
+require_literal crates/op-host-desktop/src/collab_runtime/network/owner.rs \
+    "PeerIdentityPolicy::AnyIssuedAccount" \
+    "owner admits any issued account behind its approval gate"
+# The guest half of that asymmetry. A guest has no approval prompt of its own,
+# so it may accept a foreign account only when the owner's key was pinned out
+# of band or the user confirmed the verified identity. Both regression guards
+# are pinned: dropping either one is silent, because the code still compiles
+# and every other check still passes while nothing authenticates the peer.
+require_cfg_test_literal \
+    "an_unpinned_join_without_confirmation_still_requires_this_account" \
+    "guest refuses a foreign account with neither a pin nor a confirmation"
+require_cfg_test_literal \
+    "an_unpinned_join_admits_a_foreign_account_only_behind_the_confirmation_gate" \
+    "guest cross-account admission stays behind the confirmation gate"
+require_literal crates/op-auth-bridge/src/collab_relay_token.rs \
+    "VerifiedRelayTokenClaims" \
+    "claim-minimized relay bearer"
 for non_clone_type in OpaqueTicket RenewTicket CollabMessage FrameEnvelope; do
     require_literal crates/op-collab/tests/credential_ownership.rs \
         "assert_not_impl_any!($non_clone_type: Clone);" \

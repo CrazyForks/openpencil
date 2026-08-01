@@ -135,6 +135,10 @@ impl DesktopCollabRuntime {
         // retired transport.
         self.advance_generation();
         self.pending_network_launch = None;
+        // The worker that was blocked on the guest's confirmation is going
+        // away; its routing key must not outlive it and answer for whatever
+        // connects next.
+        self.pending_owner_confirmation = None;
         self.reap_retirement();
         if self.retirement.is_some() {
             debug_assert!(self.network.is_none() && self.discovery.is_none());

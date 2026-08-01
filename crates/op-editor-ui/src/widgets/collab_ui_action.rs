@@ -25,6 +25,8 @@ pub(super) fn action_model(
         CollabUiAction::ApproveAdmissionEditor { .. } => "collab.action.approveEditor",
         CollabUiAction::ApproveAdmissionViewer { .. } => "collab.action.approveViewer",
         CollabUiAction::RejectAdmission { .. } => "collab.action.rejectAdmission",
+        CollabUiAction::ConfirmOwnerIdentity { .. } => "collab.action.confirmOwner",
+        CollabUiAction::RejectOwnerIdentity { .. } => "collab.action.rejectOwner",
     };
     CollabPanelActionModel {
         action,

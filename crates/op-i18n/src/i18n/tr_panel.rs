@@ -72,6 +72,14 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "promptCenter.item.componentFormLab.title" => "Form Lab · Form bileşeni sistemi",
         "promptCenter.item.modifyPolishCurrent.title" => "Mevcut ekranı iyileştir",
         "promptCenter.item.modifyCompleteStates.title" => "Bileşen durumlarını tamamla",
+        "collab.ownerConfirm.title" => "Kime katıldığınızı onaylayın",
+        "collab.ownerConfirm.hint" => "Bu oturumdan henüz hiçbir şey yüklenmedi.",
+        "collab.ownerConfirm.account" => "Doğrulanmış hesap",
+        "collab.ownerConfirm.device" => "Doğrulanmış cihaz",
+        "collab.ownerConfirm.claimedName" => "Bu hesabın seçtiği ad (doğrulanmadı)",
+        "collab.action.confirmOwner" => "Bu oturuma katıl",
+        "collab.action.rejectOwner" => "Katılma",
+        "collab.error.ownerNotConfirmed" => "Sunucuyu onaylamadınız, bu yüzden hiçbir şey yüklenmedi.",
         _ => return super::tr_collab::lookup(key),
     })
 }

@@ -45,7 +45,18 @@ type WebSocket = WebSocketStream<TcpStream>;
 pub(crate) type WebSocketSink = SplitSink<WebSocket, Message>;
 pub(crate) type WebSocketSource = SplitStream<WebSocket>;
 
-const _: () = assert!(MAX_RELAY_BEARER_BYTES == op_auth_bridge::MAX_COLLAB_TICKET_BYTES);
+// The bearer ceiling must admit every credential shape the relay accepts.
+// This is a relation, not an equality: while dual-accept is on, a bearer may
+// still be a full collaboration ticket, and once clients have moved it will
+// be the much smaller claim-minimized relay token.
+//
+// Do NOT shrink `MAX_RELAY_BEARER_BYTES` to the relay-token bound here. It
+// feeds `MAX_RELAY_REAUTH_RESPONSE_TEXT_BYTES`, which sizes `max_message_size`
+// on BOTH ends of the socket, so a one-sided shrink breaks online
+// reauthentication with an opaque capacity error. Retiring the larger ceiling
+// is a separate, coordinated change.
+const _: () = assert!(MAX_RELAY_BEARER_BYTES >= op_auth_bridge::MAX_COLLAB_TICKET_BYTES);
+const _: () = assert!(MAX_RELAY_BEARER_BYTES >= op_auth_bridge::MAX_COLLAB_RELAY_TOKEN_BYTES);
 
 pub(crate) struct ConnectionServices {
     pub(crate) config: Arc<RelayConfig>,

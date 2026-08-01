@@ -24,6 +24,13 @@ pub const TICKET_POLICY_FILE_ENV: &str = "OPENPENCIL_COLLAB_RELAY_TICKET_POLICY_
 pub const LOCATOR_KEYS_FILE_ENV: &str = "OPENPENCIL_COLLAB_RELAY_LOCATOR_KEYS_FILE";
 pub const RELAY_X25519_KEYS_FILE_ENV: &str = "OPENPENCIL_COLLAB_RELAY_X25519_KEYS_FILE";
 pub const POLICY_MAX_AGE_ENV: &str = "OPENPENCIL_COLLAB_RELAY_POLICY_MAX_AGE_SECONDS";
+/// Migration switch for the legacy full-collaboration-ticket relay bearer.
+///
+/// `accept` (the default) dual-accepts the claim-minimized relay token and the
+/// legacy ticket so pre-migration clients keep connecting. `reject` narrows the
+/// relay to the minimized token only. Any other value fails closed at startup
+/// rather than silently picking a policy.
+pub const LEGACY_TICKET_BEARER_ENV: &str = "OPENPENCIL_COLLAB_RELAY_LEGACY_TICKET_BEARER";
 
 const DEFAULT_POLICY_MAX_AGE_SECONDS: u64 = 60;
 const MAX_POLICY_MAX_AGE_SECONDS: u64 = 60 * 60;
@@ -35,6 +42,7 @@ pub struct ProductionRelayAuthConfig {
     relay_x25519_keys_file: Option<PathBuf>,
     policy_max_age_seconds: NonZeroU64,
     allow_ticket_binding_only: bool,
+    accept_legacy_ticket_bearer: bool,
 }
 
 impl ProductionRelayAuthConfig {
@@ -64,6 +72,7 @@ impl ProductionRelayAuthConfig {
             None => NonZeroU64::new(DEFAULT_POLICY_MAX_AGE_SECONDS)
                 .expect("default policy max age is non-zero"),
         };
+        let accept_legacy_ticket_bearer = legacy_ticket_bearer_from_env()?;
         Self::new(
             home_region,
             ticket_policy_file,
@@ -72,6 +81,7 @@ impl ProductionRelayAuthConfig {
             policy_max_age_seconds,
             allow_ticket_binding_only,
         )
+        .map(|config| config.with_legacy_ticket_bearer(accept_legacy_ticket_bearer))
     }
 
     pub fn new(
@@ -113,7 +123,17 @@ impl ProductionRelayAuthConfig {
             relay_x25519_keys_file,
             policy_max_age_seconds,
             allow_ticket_binding_only,
+            // Migration default: keep accepting the legacy bearer so clients
+            // that predate the minimized relay token can still connect.
+            accept_legacy_ticket_bearer: true,
         })
+    }
+
+    /// Select whether the legacy full collaboration ticket is still accepted
+    /// as a relay bearer. See [`LEGACY_TICKET_BEARER_ENV`].
+    pub const fn with_legacy_ticket_bearer(mut self, accepted: bool) -> Self {
+        self.accept_legacy_ticket_bearer = accepted;
+        self
     }
 
     pub const fn home_region(&self) -> RelayRegion {
@@ -122,6 +142,26 @@ impl ProductionRelayAuthConfig {
 
     pub const fn reduced_assurance(&self) -> bool {
         self.allow_ticket_binding_only
+    }
+
+    pub const fn accepts_legacy_ticket_bearer(&self) -> bool {
+        self.accept_legacy_ticket_bearer
+    }
+}
+
+fn legacy_ticket_bearer_from_env() -> Result<bool, ProductionRelayAuthConfigError> {
+    match env::var_os(LEGACY_TICKET_BEARER_ENV) {
+        None => Ok(true),
+        Some(value) => {
+            let value = value.into_string().map_err(|_| {
+                ProductionRelayAuthConfigError::NonUnicode(LEGACY_TICKET_BEARER_ENV)
+            })?;
+            match value.as_str() {
+                "" | "accept" => Ok(true),
+                "reject" => Ok(false),
+                _ => Err(ProductionRelayAuthConfigError::InvalidLegacyTicketBearer),
+            }
+        }
     }
 }
 
@@ -138,6 +178,10 @@ impl fmt::Debug for ProductionRelayAuthConfig {
             )
             .field("policy_max_age_seconds", &self.policy_max_age_seconds)
             .field("allow_ticket_binding_only", &self.allow_ticket_binding_only)
+            .field(
+                "accept_legacy_ticket_bearer",
+                &self.accept_legacy_ticket_bearer,
+            )
             .finish()
     }
 }
@@ -168,7 +212,8 @@ pub async fn run_production(
             auth_config.home_region,
             locator_verifier,
             proof_boundary,
-        );
+        )
+        .with_full_collab_ticket_accepted(auth_config.accept_legacy_ticket_bearer);
         run_with_authenticator(relay_config, Arc::new(authenticator)).await?;
     } else {
         debug_assert!(auth_config.allow_ticket_binding_only);
@@ -176,7 +221,8 @@ pub async fn run_production(
             ticket_verifier,
             auth_config.home_region,
             locator_verifier,
-        );
+        )
+        .with_full_collab_ticket_accepted(auth_config.accept_legacy_ticket_bearer);
         run_with_authenticator(relay_config, Arc::new(authenticator)).await?;
     }
     Ok(())
@@ -233,6 +279,8 @@ pub enum ProductionRelayAuthConfigError {
     PathNotAbsolute(&'static str),
     #[error("production relay policy max age must be between 1 and 3600 seconds")]
     InvalidPolicyMaxAge,
+    #[error("production relay legacy ticket bearer policy must be `accept` or `reject`")]
+    InvalidLegacyTicketBearer,
     #[error(
         "a relay X25519 key file is required unless \
          --allow-ticket-binding-only is explicitly selected"

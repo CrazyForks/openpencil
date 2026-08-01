@@ -80,6 +80,14 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "promptCenter.item.componentFormLab.title" => "Form Lab · フォームコンポーネントシステム",
         "promptCenter.item.modifyPolishCurrent.title" => "現在の画面を磨く",
         "promptCenter.item.modifyCompleteStates.title" => "コンポーネント状態を補完",
+        "collab.ownerConfirm.title" => "参加先の相手を確認してください",
+        "collab.ownerConfirm.hint" => "このセッションの内容はまだ何も読み込まれていません。",
+        "collab.ownerConfirm.account" => "検証済みアカウント",
+        "collab.ownerConfirm.device" => "検証済みデバイス",
+        "collab.ownerConfirm.claimedName" => "このアカウントが設定した名前（未検証）",
+        "collab.action.confirmOwner" => "このセッションに参加",
+        "collab.action.rejectOwner" => "参加しない",
+        "collab.error.ownerNotConfirmed" => "ホストを確認しなかったため、何も読み込まれませんでした。",
         _ => return super::ja_collab::lookup(key),
     })
 }

@@ -89,6 +89,14 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "promptCenter.item.componentFormLab.title" => "Form Lab · Form System",
         "promptCenter.item.modifyPolishCurrent.title" => "Polish the Current Screen",
         "promptCenter.item.modifyCompleteStates.title" => "Complete Component States",
+        "collab.ownerConfirm.title" => "Confirm who you are joining",
+        "collab.ownerConfirm.hint" => "Nothing from this session has been loaded yet.",
+        "collab.ownerConfirm.account" => "Verified account",
+        "collab.ownerConfirm.device" => "Verified device",
+        "collab.ownerConfirm.claimedName" => "Name chosen by this account (not verified)",
+        "collab.action.confirmOwner" => "Join this session",
+        "collab.action.rejectOwner" => "Do not join",
+        "collab.error.ownerNotConfirmed" => "You did not confirm the host, so nothing was loaded.",
         _ => return super::en_collab::lookup(key),
     })
 }

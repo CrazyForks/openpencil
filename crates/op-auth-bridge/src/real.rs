@@ -58,7 +58,11 @@ pub(crate) fn collab_ticket_provider() -> &'static dyn CollabTicketProvider {
     }
     #[cfg(op_auth_collab_ticket_prebuilt)]
     {
-        if linked_abi_version() >= crate::COLLAB_TICKET_ABI_VERSION {
+        let linked = linked_abi_version();
+        if linked >= crate::COLLAB_RELAY_TOKEN_ABI_VERSION {
+            return crate::real_collab_ticket::provider_with_relay_token();
+        }
+        if linked >= crate::COLLAB_TICKET_ABI_VERSION {
             return crate::real_collab_ticket::provider();
         }
         &UNAVAILABLE_COLLAB_TICKET_PROVIDER

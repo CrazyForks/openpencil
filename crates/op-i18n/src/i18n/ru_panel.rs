@@ -72,6 +72,14 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "promptCenter.item.componentFormLab.title" => "Form Lab · Система компонентов форм",
         "promptCenter.item.modifyPolishCurrent.title" => "Улучшить текущий экран",
         "promptCenter.item.modifyCompleteStates.title" => "Дополнить состояния компонентов",
+        "collab.ownerConfirm.title" => "Подтвердите, к кому вы присоединяетесь",
+        "collab.ownerConfirm.hint" => "Из этого сеанса пока ничего не загружено.",
+        "collab.ownerConfirm.account" => "Подтверждённый аккаунт",
+        "collab.ownerConfirm.device" => "Подтверждённое устройство",
+        "collab.ownerConfirm.claimedName" => "Имя, выбранное этим аккаунтом (не подтверждено)",
+        "collab.action.confirmOwner" => "Присоединиться к сеансу",
+        "collab.action.rejectOwner" => "Не присоединяться",
+        "collab.error.ownerNotConfirmed" => "Вы не подтвердили ведущего, поэтому ничего не загружено.",
         _ => return super::ru_collab::lookup(key),
     })
 }

@@ -98,6 +98,9 @@ pub enum CollabConnectErrorUi {
     RegionUnavailable,
     RateLimited,
     Incompatible,
+    /// The guest was shown the verified owner identity and declined it, or the
+    /// prompt went unanswered. No session data was ever applied.
+    OwnerNotConfirmed,
 }
 
 impl CollabConnectErrorUi {
@@ -108,6 +111,7 @@ impl CollabConnectErrorUi {
             Self::RegionUnavailable => "collab.error.regionUnavailable",
             Self::RateLimited => "collab.error.rateLimited",
             Self::Incompatible => "collab.join.incompatible",
+            Self::OwnerNotConfirmed => "collab.error.ownerNotConfirmed",
         }
     }
 }

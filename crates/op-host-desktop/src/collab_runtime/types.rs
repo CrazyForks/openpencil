@@ -21,6 +21,10 @@ pub(crate) enum CollabRuntimeFailure {
     Transport,
     Protocol,
     ResourceLimit,
+    /// A guest was shown the verified owner identity and declined it, or left
+    /// the prompt unanswered. Distinct from a transport failure: the session
+    /// was reachable and authentic, the human simply refused it.
+    OwnerIdentityRejected,
 }
 
 impl CollabRuntimeFailure {
@@ -77,6 +81,14 @@ pub(super) enum NetworkEvent {
         connection: ConnectionKey,
         auth: VerifiedAuthMetadata,
         intent: JoinIntent,
+    },
+    /// A guest verified the owner's ticket over an unpinned join and must now
+    /// have the identity behind it confirmed by a human. The worker is blocked
+    /// on the decision: no document, snapshot, presence, or session name has
+    /// been received, let alone applied.
+    OwnerIdentityUnconfirmed {
+        connection: ConnectionKey,
+        auth: VerifiedAuthMetadata,
     },
     GuestAuthenticated {
         connection: ConnectionKey,
@@ -192,6 +204,15 @@ pub(super) enum GuestNetworkCommand {
         coalesce_key: Option<u64>,
     },
     VerifyRenewal(OpaqueTicket),
+    /// The human's answer to `NetworkEvent::OwnerIdentityUnconfirmed`.
+    OwnerIdentityDecision(GuestOwnerDecision),
+}
+
+/// A guest's explicit decision about the verified owner identity it was shown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum GuestOwnerDecision {
+    Confirm,
+    Reject,
 }
 
 pub(super) enum PeerNetworkCommand {

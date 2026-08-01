@@ -75,6 +75,9 @@ fn fast_provider_result_extends_a_five_second_ticket_before_shutdown() {
     let shutdown_at = terminal_shutdown_at(start, expires_at);
     let admission = LocalAdmission {
         ticket: OpaqueCollabTicket::new(b"header.payload.signature".to_vec()).unwrap(),
+        relay_bearer: super::RelayBearerCredentialSource::MinimizedRelayToken(
+            op_auth_bridge::OpaqueCollabRelayToken::new(b"relay.token.signature".to_vec()).unwrap(),
+        ),
         auth: renewed.clone(),
     };
     let (sender, receiver) = mpsc::channel();

@@ -76,6 +76,14 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         }
         "promptCenter.item.modifyPolishCurrent.title" => "Aprimorar a tela atual",
         "promptCenter.item.modifyCompleteStates.title" => "Completar estados dos componentes",
+        "collab.ownerConfirm.title" => "Confirme a quem você vai se juntar",
+        "collab.ownerConfirm.hint" => "Nada desta sessão foi carregado ainda.",
+        "collab.ownerConfirm.account" => "Conta verificada",
+        "collab.ownerConfirm.device" => "Dispositivo verificado",
+        "collab.ownerConfirm.claimedName" => "Nome escolhido por esta conta (não verificado)",
+        "collab.action.confirmOwner" => "Entrar nesta sessão",
+        "collab.action.rejectOwner" => "Não entrar",
+        "collab.error.ownerNotConfirmed" => "Você não confirmou o anfitrião, então nada foi carregado.",
         _ => return super::pt_collab::lookup(key),
     })
 }

@@ -11,10 +11,12 @@ use ed25519_dalek::{Signer as _, SigningKey};
 
 use crate::{
     collab_claims::{CollabJwsHeader, UnverifiedCollabClaims},
+    collab_relay_token::UnverifiedRelayTokenClaims,
     CollabJwksFetchError, CollabJwksFetchRequest, CollabJwksFetchResponse, CollabJwksFetcher,
-    CollabTicketError, CollabVerifierConfig, CollabVerifierConfigError, OpaqueCollabTicket,
-    COLLAB_JWS_ALGORITHM, COLLAB_JWS_TYPE, COLLAB_TICKET_AUDIENCE, COLLAB_TICKET_SCOPE,
-    COLLAB_TICKET_VERSION,
+    CollabTicketError, CollabVerifierConfig, CollabVerifierConfigError, OpaqueCollabRelayToken,
+    OpaqueCollabTicket, COLLAB_JWS_ALGORITHM, COLLAB_JWS_TYPE, COLLAB_TICKET_AUDIENCE,
+    COLLAB_TICKET_SCOPE, COLLAB_TICKET_VERSION, RELAY_TOKEN_AUDIENCE, RELAY_TOKEN_JWS_TYPE,
+    RELAY_TOKEN_SCOPE, RELAY_TOKEN_VERSION,
 };
 
 pub const TEST_COLLAB_ISSUER: &str = "https://collab.test.invalid";
@@ -102,6 +104,30 @@ impl fmt::Debug for TestCollabTicketSpec {
     }
 }
 
+/// Fixture inputs for the claim-minimized relay token.
+///
+/// There is deliberately no subject, device, ticket-id, or profile field —
+/// the credential has none, and a fixture that offered them would invite a
+/// test to assert a property the production token cannot have.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TestRelayTokenSpec {
+    pub dh_pub_x25519: [u8; 32],
+    pub issued_at_unix_seconds: u64,
+    pub not_before_unix_seconds: u64,
+    pub expires_at_unix_seconds: u64,
+}
+
+impl TestRelayTokenSpec {
+    pub fn valid_at(now_unix_seconds: u64, dh_pub_x25519: [u8; 32]) -> Self {
+        Self {
+            dh_pub_x25519,
+            issued_at_unix_seconds: now_unix_seconds,
+            not_before_unix_seconds: now_unix_seconds,
+            expires_at_unix_seconds: now_unix_seconds.saturating_add(15 * 60),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct TestCollabIssuer {
     active: TestCollabSigningKey,
@@ -167,6 +193,51 @@ impl TestCollabIssuer {
         let signature = key.sign(signing_input.as_bytes()).to_bytes();
         let compact = format!("{signing_input}.{}", URL_SAFE_NO_PAD.encode(signature));
         OpaqueCollabTicket::new(compact.into_bytes()).map_err(TestCollabIssuerError::Ticket)
+    }
+
+    /// Mint a claim-minimized relay token with the same signing key.
+    ///
+    /// Sharing one key across both credential shapes is exactly the
+    /// production arrangement, so the non-confusability tests exercise the
+    /// real risk rather than a key-separated stand-in.
+    pub fn issue_relay_token(
+        &self,
+        spec: &TestRelayTokenSpec,
+    ) -> Result<OpaqueCollabRelayToken, TestCollabIssuerError> {
+        let compact = self.sign_relay_token(spec)?;
+        OpaqueCollabRelayToken::new(compact.into_bytes()).map_err(TestCollabIssuerError::Ticket)
+    }
+
+    /// The same bytes without the size/type wrapper, for negative tests that
+    /// deliberately feed a relay token to the ticket parser.
+    pub fn sign_relay_token(
+        &self,
+        spec: &TestRelayTokenSpec,
+    ) -> Result<String, TestCollabIssuerError> {
+        let key = self.active.signing_key();
+        let header = CollabJwsHeader {
+            alg: COLLAB_JWS_ALGORITHM.to_owned(),
+            typ: RELAY_TOKEN_JWS_TYPE.to_owned(),
+            kid: self.active.key_id().to_owned(),
+        };
+        let claims = UnverifiedRelayTokenClaims {
+            iss: TEST_COLLAB_ISSUER.to_owned(),
+            aud: RELAY_TOKEN_AUDIENCE.to_owned(),
+            ver: RELAY_TOKEN_VERSION,
+            dh_pub_x25519: URL_SAFE_NO_PAD.encode(spec.dh_pub_x25519),
+            scope: RELAY_TOKEN_SCOPE.to_owned(),
+            iat: spec.issued_at_unix_seconds,
+            nbf: spec.not_before_unix_seconds,
+            exp: spec.expires_at_unix_seconds,
+        };
+        let header = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&header)?);
+        let claims = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims)?);
+        let signing_input = format!("{header}.{claims}");
+        let signature = key.sign(signing_input.as_bytes()).to_bytes();
+        Ok(format!(
+            "{signing_input}.{}",
+            URL_SAFE_NO_PAD.encode(signature)
+        ))
     }
 
     pub fn jwks_json(&self) -> Result<Vec<u8>, TestCollabIssuerError> {

@@ -277,6 +277,9 @@ fn full_auth_requires_v2_fresh_challenge_and_exact_bearer() {
 #[path = "production_auth_max_ticket_tests.rs"]
 mod max_ticket_tests;
 
+#[path = "production_auth_relay_token_tests.rs"]
+mod relay_token_tests;
+
 #[test]
 fn replayed_stale_wrong_bearer_and_wrong_route_proofs_fail() {
     let now = unix_now();

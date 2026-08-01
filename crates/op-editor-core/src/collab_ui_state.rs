@@ -332,6 +332,15 @@ pub enum CollabUiAction {
     RejectAdmission {
         request_key: CollabAdmissionRequestKey,
     },
+    /// Guest accepts the verified owner identity it was shown and lets the
+    /// join proceed. Nothing from the session is applied before this.
+    ConfirmOwnerIdentity {
+        request_key: CollabAdmissionRequestKey,
+    },
+    /// Guest declines the verified owner identity; the connection closes.
+    RejectOwnerIdentity {
+        request_key: CollabAdmissionRequestKey,
+    },
 }
 
 /// Complete shared display state. Authentication/session actors publish only
@@ -346,9 +355,11 @@ pub struct CollabUiState {
     /// Set while the host runtime holds a replayable conflict-discarded edit.
     pub discarded_edit: Option<CollabDiscardedEditUi>,
     pub pending_action: Option<CollabUiAction>,
-    authenticated: Option<AuthenticatedCollabSession>,
+    pub(crate) authenticated: Option<AuthenticatedCollabSession>,
     pub(crate) public_session: CollabPublicSessionUi,
     pub(crate) pending_admissions: Arc<Vec<PendingCollabAdmissionUi>>,
+    /// Guest-side owner identity awaiting an explicit human confirmation.
+    pub(crate) pending_owner_confirmation: Option<crate::PendingOwnerConfirmationUi>,
     participants: Arc<Vec<CollabParticipantUi>>,
     presence: Arc<Vec<RemotePresenceUi>>,
     queued_presence: Option<Vec<RemotePresenceUi>>,
@@ -368,6 +379,7 @@ impl Default for CollabUiState {
             authenticated: None,
             public_session: CollabPublicSessionUi::default(),
             pending_admissions: Arc::new(Vec::new()),
+            pending_owner_confirmation: None,
             participants: Arc::new(Vec::new()),
             presence: Arc::new(Vec::new()),
             queued_presence: None,
@@ -417,6 +429,9 @@ impl CollabUiState {
             session.share_endpoint = None;
         }
         self.set_phase(phase);
+        // The join decision has been made; retiring the projection keeps a
+        // stale prompt from reappearing over a live session.
+        self.clear_owner_confirmation();
         if self.authenticated.as_ref() != Some(&session) {
             self.panel.hover = None;
         }
@@ -436,6 +451,7 @@ impl CollabUiState {
         self.authenticated = None;
         self.public_session = CollabPublicSessionUi::default();
         self.clear_pending_admissions();
+        self.clear_owner_confirmation();
         self.discarded_edit = None;
         self.participants = Arc::new(Vec::new());
         self.clear_presence();

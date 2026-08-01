@@ -18,6 +18,10 @@ impl std::fmt::Debug for CollabPanelScreen {
                 .debug_struct("Progress")
                 .field("message", message)
                 .finish(),
+            Self::ConfirmOwner(model) => formatter
+                .debug_tuple("ConfirmOwner")
+                .field(&**model)
+                .finish(),
             Self::Session {
                 session_name,
                 role_label,
@@ -61,6 +65,8 @@ impl std::fmt::Debug for CollabPanelActionModel {
             CollabUiAction::ApproveAdmissionEditor { .. } => "ApproveAdmissionEditor([REDACTED])",
             CollabUiAction::ApproveAdmissionViewer { .. } => "ApproveAdmissionViewer([REDACTED])",
             CollabUiAction::RejectAdmission { .. } => "RejectAdmission([REDACTED])",
+            CollabUiAction::ConfirmOwnerIdentity { .. } => "ConfirmOwnerIdentity([REDACTED])",
+            CollabUiAction::RejectOwnerIdentity { .. } => "RejectOwnerIdentity([REDACTED])",
         };
         formatter
             .debug_struct("CollabPanelActionModel")

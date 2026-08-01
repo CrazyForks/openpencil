@@ -1,4 +1,4 @@
-use crate::CollabTicketError;
+use crate::{collab_relay_token::MAX_COLLAB_RELAY_TOKEN_BYTES, CollabTicketError};
 use std::fmt;
 use std::num::NonZeroU64;
 use zeroize::Zeroizing;
@@ -76,6 +76,63 @@ impl OpaqueCollabTicket {
     pub fn expose(&self) -> &[u8] {
         &self.0
     }
+
+    pub(crate) fn into_bytes(self) -> Zeroizing<Vec<u8>> {
+        self.0
+    }
+}
+
+/// Signed claim-minimized relay-token bytes returned by the private provider.
+///
+/// A distinct type from [`OpaqueCollabTicket`] so a host cannot accidentally
+/// hand the identity-bearing ticket to the relay bearer path (or the reverse)
+/// through a plain byte buffer. The credentials are also cryptographically
+/// non-confusable — see [`crate::collab_relay_token`] — but the type keeps the
+/// mistake from compiling in the first place.
+pub struct OpaqueCollabRelayToken(Zeroizing<Vec<u8>>);
+
+impl OpaqueCollabRelayToken {
+    pub fn new(bytes: Vec<u8>) -> Result<Self, CollabTicketError> {
+        // Wrap before validation so rejected credential-bearing input is also
+        // zeroized on every return path.
+        let bytes = Zeroizing::new(bytes);
+        if bytes.is_empty() || bytes.len() > MAX_COLLAB_RELAY_TOKEN_BYTES {
+            return Err(CollabTicketError::InvalidTicketSize {
+                actual: bytes.len(),
+                maximum: MAX_COLLAB_RELAY_TOKEN_BYTES,
+            });
+        }
+        Ok(Self(bytes))
+    }
+
+    /// Reinterpret a provider payload delivered over the shared poll ABI.
+    ///
+    /// Consuming, so the credential is never duplicated across two live
+    /// buffers, and re-validated against the smaller relay-token ceiling.
+    pub fn from_provider_payload(ticket: OpaqueCollabTicket) -> Result<Self, CollabTicketError> {
+        let bytes = ticket.into_bytes();
+        if bytes.is_empty() || bytes.len() > MAX_COLLAB_RELAY_TOKEN_BYTES {
+            return Err(CollabTicketError::InvalidTicketSize {
+                actual: bytes.len(),
+                maximum: MAX_COLLAB_RELAY_TOKEN_BYTES,
+            });
+        }
+        Ok(Self(bytes))
+    }
+
+    /// Expose the token only to the transport/verifier boundary.
+    pub fn expose(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl fmt::Debug for OpaqueCollabRelayToken {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("OpaqueCollabRelayToken")
+            .field("bytes", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl fmt::Debug for OpaqueCollabTicket {
@@ -117,6 +174,26 @@ pub trait CollabTicketProvider: Send + Sync {
     fn poll_ticket(&self, id: CollabTicketRequestId) -> CollabTicketPoll;
 
     fn cancel_ticket(&self, id: CollabTicketRequestId);
+
+    /// Whether the linked provider can mint the claim-minimized relay token.
+    ///
+    /// Defaults to false so an older ABI keeps working for peer collaboration
+    /// while the host falls back to the full ticket as its relay bearer.
+    fn relay_token_available(&self) -> bool {
+        false
+    }
+
+    /// Begin a claim-minimized relay-token request bound to the same
+    /// device-held X25519 key as the collaboration ticket.
+    ///
+    /// The returned handle lives in the same namespace as [`Self::begin_ticket`],
+    /// so [`Self::poll_ticket`] and [`Self::cancel_ticket`] drive it too.
+    fn begin_relay_token(
+        &self,
+        _request: CollabTicketRequest,
+    ) -> Result<CollabTicketRequestId, CollabTicketError> {
+        Err(CollabTicketError::Unavailable)
+    }
 }
 
 /// Default provider for builds without the proprietary ABI implementation.

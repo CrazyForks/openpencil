@@ -22,6 +22,8 @@ compile_error!("the local op-auth archive override requires target debug asserti
 mod collab_claims;
 mod collab_jwks;
 mod collab_jwks_cache;
+mod collab_relay_token;
+mod collab_relay_token_verifier;
 #[cfg(any(test, feature = "test-issuer"))]
 mod collab_test_issuer;
 mod collab_ticket;
@@ -61,15 +63,23 @@ pub use collab_jwks_cache::{
     CollabJwksFetcher, DEFAULT_FAILED_REFRESH_BACKOFF_SECONDS, DEFAULT_MAX_COLLAB_JWKS_AGE_SECONDS,
     DEFAULT_MAX_COLLAB_JWKS_ETAG_BYTES, DEFAULT_UNKNOWN_KID_REFRESH_SECONDS,
 };
+pub use collab_relay_token::{
+    VerifiedRelayTokenClaims, MAX_COLLAB_RELAY_TOKEN_BYTES, RELAY_TOKEN_AUDIENCE,
+    RELAY_TOKEN_JWS_TYPE, RELAY_TOKEN_SCOPE, RELAY_TOKEN_VERSION,
+};
+pub use collab_relay_token_verifier::{
+    RelayBearerKind, RelayBearerVerifyError, VerifiedRelayBearer,
+};
 #[cfg(any(test, feature = "test-issuer"))]
 pub use collab_test_issuer::{
     StaticTestJwksFetcher, TestCollabIssuer, TestCollabIssuerError, TestCollabSigningKey,
-    TestCollabTicketSpec, TEST_AVATAR_URL, TEST_COLLAB_ISSUER, TEST_COLLAB_JWKS_ENDPOINT,
-    TEST_DEVICE_ID, TEST_DISPLAY_NAME, TEST_SUBJECT, TEST_TICKET_ID,
+    TestCollabTicketSpec, TestRelayTokenSpec, TEST_AVATAR_URL, TEST_COLLAB_ISSUER,
+    TEST_COLLAB_JWKS_ENDPOINT, TEST_DEVICE_ID, TEST_DISPLAY_NAME, TEST_SUBJECT, TEST_TICKET_ID,
 };
 pub use collab_ticket::{
     CollabTicketPoll, CollabTicketProvider, CollabTicketRequest, CollabTicketRequestId,
-    OpaqueCollabTicket, UnavailableCollabTicketProvider, MAX_COLLAB_TICKET_BYTES,
+    OpaqueCollabRelayToken, OpaqueCollabTicket, UnavailableCollabTicketProvider,
+    MAX_COLLAB_TICKET_BYTES,
 };
 pub use collab_ticket_error::{CollabTicketError, CollabTicketProviderErrorCode};
 pub use collab_union_policy::{
@@ -90,7 +100,7 @@ pub use status::AuthStatus;
 pub const REQUIRED_ABI_VERSION: u32 = 1;
 
 /// Newest supported base authentication ABI.
-pub const MAX_SUPPORTED_ABI_VERSION: u32 = 2;
+pub const MAX_SUPPORTED_ABI_VERSION: u32 = 3;
 
 /// Optional ABI revision that adds the collaboration-ticket capability.
 ///
@@ -98,6 +108,16 @@ pub const MAX_SUPPORTED_ABI_VERSION: u32 = 2;
 /// build-time negotiation must not disable the existing account UI merely
 /// because an older prebuilt cannot issue collaboration tickets.
 pub const COLLAB_TICKET_ABI_VERSION: u32 = 2;
+
+/// Optional ABI revision that adds the claim-minimized relay-token capability.
+///
+/// Appending `op_auth_collab_relay_token_begin` to the C ABI is a real ABI
+/// change, so this is a deliberate bump rather than a reuse of
+/// [`COLLAB_TICKET_ABI_VERSION`]. It is negotiated independently: an ABI-v2
+/// prebuilt keeps issuing collaboration tickets and the host keeps using the
+/// full ticket as its relay bearer, which the relay still dual-accepts.
+/// The private `op-auth-ffi` `ABI_VERSION` must move in step.
+pub const COLLAB_RELAY_TOKEN_ABI_VERSION: u32 = 3;
 
 /// `poll` handle that reports the signed-in session instead of a flow.
 pub const SESSION_HANDLE: u64 = 0;
@@ -352,11 +372,19 @@ mod abi_tests {
     use super::*;
 
     #[test]
-    fn base_account_api_accepts_v1_and_v2_only() {
+    fn base_account_api_accepts_v1_through_v3_only() {
         assert!(!supports_base_abi(0));
         assert!(supports_base_abi(1));
         assert!(supports_base_abi(2));
-        assert!(!supports_base_abi(3));
+        assert!(supports_base_abi(3));
+        assert!(!supports_base_abi(4));
+    }
+
+    #[test]
+    fn relay_token_capability_is_negotiated_above_the_ticket_capability() {
+        const { assert!(COLLAB_RELAY_TOKEN_ABI_VERSION > COLLAB_TICKET_ABI_VERSION) };
+        assert_eq!(COLLAB_RELAY_TOKEN_ABI_VERSION, MAX_SUPPORTED_ABI_VERSION);
+        assert!(supports_base_abi(COLLAB_RELAY_TOKEN_ABI_VERSION));
     }
 
     #[test]
