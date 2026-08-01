@@ -71,6 +71,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.reject.readOnly" => "Vous disposez uniquement d’un accès en lecture.",
         "collab.reject.unsupported" => "Le propriétaire ne prend pas en charge cette modification.",
         "collab.reject.conflict" => "Cette modification entre en conflit avec une version plus récente.",
+        "collab.reject.conflictDetail" => "Abandonné : {{fields}} sur « {{node}} ».",
+        "collab.action.reapply" => "Réappliquer ma modification",
         "collab.reject.resourceLimit" => "Cette modification dépasse les limites de la session.",
         "collab.reject.authentication" => "Votre autorisation collaborative n’est plus valide.",
         "collab.reject.unknown" => "Le propriétaire a refusé cette modification.",

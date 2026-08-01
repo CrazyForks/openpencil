@@ -79,6 +79,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.reject.readOnly" => "이 세션에서는 보기 권한만 있습니다.",
         "collab.reject.unsupported" => "소유자가 이 편집을 지원하지 않습니다.",
         "collab.reject.conflict" => "이 편집이 최신 변경과 충돌합니다.",
+        "collab.reject.conflictDetail" => "삭제됨: {{node}}의 {{fields}}.",
+        "collab.action.reapply" => "내 편집 다시 적용",
         "collab.reject.resourceLimit" => "이 편집이 세션 제한을 초과합니다.",
         "collab.reject.authentication" => "협업 인증이 더 이상 유효하지 않습니다.",
         "collab.reject.unknown" => "소유자가 이 편집을 거부했습니다.",

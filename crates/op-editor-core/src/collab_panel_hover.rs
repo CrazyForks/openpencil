@@ -18,6 +18,7 @@ pub enum CollabPanelHover {
     Retry,
     Leave,
     DiscardPending,
+    ReapplyDiscarded,
     SaveAsFork,
     ApproveAdmissionEditor,
     ApproveAdmissionViewer,

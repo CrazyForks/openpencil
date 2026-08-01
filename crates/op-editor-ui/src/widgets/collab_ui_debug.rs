@@ -56,6 +56,7 @@ impl std::fmt::Debug for CollabPanelActionModel {
             CollabUiAction::Retry => "Retry",
             CollabUiAction::Leave => "Leave",
             CollabUiAction::DiscardPending => "DiscardPending",
+            CollabUiAction::ReapplyDiscarded => "ReapplyDiscarded",
             CollabUiAction::SaveAsFork => "SaveAsFork",
             CollabUiAction::ApproveAdmissionEditor { .. } => "ApproveAdmissionEditor([REDACTED])",
             CollabUiAction::ApproveAdmissionViewer { .. } => "ApproveAdmissionViewer([REDACTED])",

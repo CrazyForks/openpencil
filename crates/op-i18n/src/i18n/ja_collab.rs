@@ -81,6 +81,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.reject.readOnly" => "このセッションでは閲覧のみ可能です。",
         "collab.reject.unsupported" => "オーナーはこの編集に対応していません。",
         "collab.reject.conflict" => "この編集は新しい変更と競合しています。",
+        "collab.reject.conflictDetail" => "破棄: {{node}} の {{fields}}。",
+        "collab.action.reapply" => "自分の編集を再適用",
         "collab.reject.resourceLimit" => "この編集はセッションの上限を超えています。",
         "collab.reject.authentication" => "共同編集の認証が無効になりました。",
         "collab.reject.unknown" => "オーナーがこの編集を拒否しました。",

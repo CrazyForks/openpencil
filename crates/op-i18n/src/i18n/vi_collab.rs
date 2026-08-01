@@ -81,6 +81,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.reject.readOnly" => "Bạn chỉ có quyền xem trong phiên này.",
         "collab.reject.unsupported" => "Chủ sở hữu không hỗ trợ chỉnh sửa đó.",
         "collab.reject.conflict" => "Chỉnh sửa đó xung đột với thay đổi mới hơn.",
+        "collab.reject.conflictDetail" => "Đã loại bỏ: {{fields}} trên “{{node}}”.",
+        "collab.action.reapply" => "Áp dụng lại chỉnh sửa của tôi",
         "collab.reject.resourceLimit" => "Chỉnh sửa đó vượt giới hạn của phiên.",
         "collab.reject.authentication" => "Quyền cộng tác của bạn không còn hợp lệ.",
         "collab.reject.unknown" => "Chủ sở hữu đã từ chối chỉnh sửa đó.",

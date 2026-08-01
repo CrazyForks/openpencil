@@ -32,6 +32,7 @@ impl fmt::Debug for CollabUiAction {
             Self::Retry => formatter.write_str("Retry"),
             Self::Leave => formatter.write_str("Leave"),
             Self::DiscardPending => formatter.write_str("DiscardPending"),
+            Self::ReapplyDiscarded => formatter.write_str("ReapplyDiscarded"),
             Self::SaveAsFork => formatter.write_str("SaveAsFork"),
             Self::ApproveAdmissionEditor { .. } => {
                 formatter.write_str("ApproveAdmissionEditor([REDACTED])")

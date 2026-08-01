@@ -209,3 +209,62 @@ fn guest_model_never_projects_owner_invite() {
     assert!(invite.is_none());
     assert!(connection.is_some());
 }
+
+#[test]
+fn conflict_notice_names_the_discarded_fields_and_offers_reapply() {
+    use op_editor_core::{
+        CollabDiscardedEditUi, CollabNoticeKind, CollabPendingEditUi, CollabUiRole,
+    };
+
+    let mut ui = EditorUiState::default();
+    ui.collab.availability = CollabAvailability::Ready;
+    ui.collab.set_authenticated_session(
+        CollabConnectionPhase::Active,
+        AuthenticatedCollabSession {
+            session_name: "Design".into(),
+            role: CollabUiRole::Editor,
+            share_endpoint: None,
+        },
+        Vec::new(),
+    );
+    ui.collab.discarded_edit = Some(CollabDiscardedEditUi::bounded(
+        "Hero card",
+        ["x".to_string(), "x".to_string(), "fill".to_string()],
+    ));
+    ui.collab
+        .set_notice(CollabNoticeKind::EditConflictDiscarded, 7);
+
+    let model = CollabPanelModel::for_editor_ui(&ui);
+    let notice = model.notice.expect("conflict notice is projected");
+    assert!(notice.contains("x, fill"), "deduplicated fields: {notice}");
+    assert!(notice.contains("Hero card"), "node label: {notice}");
+    assert!(model
+        .actions
+        .iter()
+        .any(|action| action.action == CollabUiAction::ReapplyDiscarded));
+
+    // A plain conflict rejection (for example the pending-edit gate) never
+    // borrows the stashed detail.
+    ui.collab.set_notice(
+        CollabNoticeKind::Reject(op_editor_core::CollabRejectUiCode::Conflict),
+        8,
+    );
+    let plain = CollabPanelModel::for_editor_ui(&ui);
+    let plain_notice = plain.notice.expect("plain conflict notice is projected");
+    assert!(
+        !plain_notice.contains("Hero card"),
+        "stale detail leaked: {plain_notice}"
+    );
+
+    // An in-flight edit hides the replay button until the lane is free.
+    ui.collab.pending_edit = CollabPendingEditUi::Submitting;
+    let busy = CollabPanelModel::for_editor_ui(&ui);
+    assert!(busy
+        .actions
+        .iter()
+        .all(|action| action.action != CollabUiAction::ReapplyDiscarded));
+
+    // Tearing the session down clears the stashed projection.
+    ui.collab.clear_authenticated();
+    assert!(ui.collab.discarded_edit.is_none());
+}

@@ -83,6 +83,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.reject.readOnly" => "В этом сеансе у вас доступ только для чтения.",
         "collab.reject.unsupported" => "Владелец не поддерживает это изменение.",
         "collab.reject.conflict" => "Изменение конфликтует с более новой версией.",
+        "collab.reject.conflictDetail" => "Отменено: {{fields}} у «{{node}}».",
+        "collab.action.reapply" => "Повторно применить моё изменение",
         "collab.reject.resourceLimit" => "Изменение превышает ограничения сеанса.",
         "collab.reject.authentication" => {
             "Разрешение на совместную работу больше не действительно."

@@ -64,6 +64,16 @@ pub enum PendingCancelReason {
     AlreadySatisfied,
 }
 
+/// One optimistic local edit that lost to authoritative history and was
+/// rolled back. `changes` preserves the dropped local intent so hosts can
+/// stash it for a user-driven replay instead of losing the edit silently.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CancelledPendingEdit {
+    pub client_op_id: ClientOpId,
+    pub reason: PendingCancelReason,
+    pub changes: EditChanges,
+}
+
 #[derive(Clone)]
 pub struct PendingEdit {
     pub(crate) client_op_id: ClientOpId,
@@ -135,7 +145,7 @@ pub(crate) struct GuestPostInstall {
     pub pending: Option<PendingEdit>,
     pub state: GuestConnectionState,
     pub discard_buffer_through: Option<CommitSeq>,
-    pub pending_cancel: Option<(ClientOpId, PendingCancelReason)>,
+    pub pending_cancel: Option<CancelledPendingEdit>,
     pub undo_index_add: Option<UndoIndexEntry>,
 }
 
@@ -254,6 +264,8 @@ pub enum GuestEffect {
     PendingCancelled {
         client_op_id: ClientOpId,
         reason: PendingCancelReason,
+        /// The dropped local intent, for host-side stash and replay.
+        changes: EditChanges,
     },
     /// Verify an owner renewal against the existing Noise-bound transport
     /// identity before replacing that connection's expiry deadline.

@@ -50,7 +50,9 @@ pub enum SupportedNodeField {
 }
 
 impl SupportedNodeField {
-    pub(crate) const fn wire_name(self) -> &'static str {
+    /// Canonical schema field name, also used as the display token in
+    /// conflict notices.
+    pub const fn wire_name(self) -> &'static str {
         match self {
             Self::Name => "name",
             Self::X => "x",

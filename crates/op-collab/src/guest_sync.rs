@@ -399,6 +399,7 @@ impl GuestSessionCore {
             self.stage_pending_rollback(
                 pending.client_op_id,
                 PendingCancelReason::Rejected(reject.code),
+                pending.changes,
             )
         }
     }
@@ -445,6 +446,7 @@ impl GuestSessionCore {
             return self.stage_pending_rollback(
                 pending.client_op_id,
                 PendingCancelReason::Rejected(reject.code),
+                pending.changes,
             );
         }
 

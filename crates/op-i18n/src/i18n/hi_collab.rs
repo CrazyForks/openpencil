@@ -73,6 +73,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.reject.readOnly" => "इस सत्र में आपके पास केवल देखने की अनुमति है।",
         "collab.reject.unsupported" => "स्वामी उस संपादन का समर्थन नहीं करता।",
         "collab.reject.conflict" => "वह संपादन नए परिवर्तन से टकराता है।",
+        "collab.reject.conflictDetail" => "छोड़ा गया: “{{node}}” पर {{fields}}।",
+        "collab.action.reapply" => "मेरा संपादन फिर से लागू करें",
         "collab.reject.resourceLimit" => "वह संपादन सत्र की सीमा से बड़ा है।",
         "collab.reject.authentication" => "आपका सहयोग प्राधिकरण अब मान्य नहीं है।",
         "collab.reject.unknown" => "स्वामी ने वह संपादन अस्वीकार कर दिया।",

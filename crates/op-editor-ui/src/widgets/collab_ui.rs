@@ -297,6 +297,12 @@ fn panel_session_or_pre_auth(
                 if collab.phase == CollabConnectionPhase::Reconnecting {
                     actions.push(action_model(ui, CollabUiAction::Retry, true));
                 }
+                if collab.phase == CollabConnectionPhase::Active
+                    && collab.discarded_edit.is_some()
+                    && collab.pending_edit == CollabPendingEditUi::None
+                {
+                    actions.push(action_model(ui, CollabUiAction::ReapplyDiscarded, true));
+                }
                 actions.push(action_model(ui, CollabUiAction::Leave, false));
             }
             (
@@ -399,13 +405,26 @@ pub fn gate_reason_text(ui: &EditorUiState, reason: CollabGateReason) -> &'stati
 
 pub fn notice_text(ui: &EditorUiState, kind: op_editor_core::CollabNoticeKind) -> String {
     let message = op_i18n::translate(ui.locale, kind.i18n_key());
-    if let op_editor_core::CollabNoticeKind::UnsupportedEdit(feature) = kind {
-        format!(
-            "{message} {}",
-            op_i18n::translate(ui.locale, feature.i18n_key())
-        )
-    } else {
-        message.to_string()
+    match kind {
+        op_editor_core::CollabNoticeKind::UnsupportedEdit(feature) => {
+            format!(
+                "{message} {}",
+                op_i18n::translate(ui.locale, feature.i18n_key())
+            )
+        }
+        // Only the cancellation that produced the stash names it; a plain
+        // `Reject(Conflict)` (for example the pending-edit gate) must not
+        // borrow an older discarded edit's detail.
+        op_editor_core::CollabNoticeKind::EditConflictDiscarded => {
+            let Some(discarded) = ui.collab.discarded_edit.as_ref() else {
+                return message.to_string();
+            };
+            let detail = op_i18n::translate(ui.locale, "collab.reject.conflictDetail")
+                .replace("{{fields}}", &discarded.fields.join(", "))
+                .replace("{{node}}", &discarded.node_label);
+            format!("{message} {detail}")
+        }
+        _ => message.to_string(),
     }
 }
 

@@ -26,6 +26,7 @@ mod hash;
 mod id_high_water;
 mod profile_validation;
 mod protocol;
+mod reapply;
 mod serde_context;
 mod session;
 mod session_roster;
@@ -60,8 +61,8 @@ pub use frame_direction::{
 };
 pub use guest::GuestSessionCore;
 pub use guest_types::{
-    GuestConnectionState, GuestEffect, GuestError, GuestInstallReason, GuestSessionConfig,
-    PendingCancelReason, PendingEdit, PendingEditStatus, PreparedGuestInstall,
+    CancelledPendingEdit, GuestConnectionState, GuestEffect, GuestError, GuestInstallReason,
+    GuestSessionConfig, PendingCancelReason, PendingEdit, PendingEditStatus, PreparedGuestInstall,
     DEFAULT_GUEST_COMMIT_BUFFER_BYTES, DEFAULT_GUEST_COMMIT_BUFFER_ENTRIES,
     DEFAULT_GUEST_UNDO_INDEX_ENTRIES, MAX_GUEST_COMMIT_BUFFER_BYTES,
     MAX_GUEST_COMMIT_BUFFER_ENTRIES, MAX_GUEST_UNDO_INDEX_ENTRIES,
@@ -84,6 +85,7 @@ pub use protocol::{
     MAX_OPS_PER_TXN, MAX_PRESENCE_BYTES, MAX_PROCESSED_SUBTREE_NODES_PER_OP, MAX_TREE_DEPTH,
     MAX_TXN_BYTES, MAX_VALIDATION_NODE_VISITS_PER_TXN,
 };
+pub use reapply::{reapply_property_changes, ReapplyError};
 pub use session::OwnerSessionCore;
 pub use session_types::{
     AdmissionGrant, BoundUndoRequest, ConnectionKey, OwnerEffect, OwnerSessionConfig,

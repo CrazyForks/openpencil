@@ -71,6 +71,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.reject.readOnly" => "Bu oturumda yalnızca görüntüleme erişiminiz var.",
         "collab.reject.unsupported" => "Sahip bu düzenlemeyi desteklemiyor.",
         "collab.reject.conflict" => "Bu düzenleme daha yeni bir değişiklikle çakışıyor.",
+        "collab.reject.conflictDetail" => "Atıldı: “{{node}}” üzerindeki {{fields}}.",
+        "collab.action.reapply" => "Düzenlememi yeniden uygula",
         "collab.reject.resourceLimit" => "Bu düzenleme oturum sınırlarını aşıyor.",
         "collab.reject.authentication" => "İşbirliği yetkiniz artık geçerli değil.",
         "collab.reject.unknown" => "Sahip bu düzenlemeyi reddetti.",

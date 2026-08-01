@@ -71,6 +71,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.reject.readOnly" => "Você tem apenas acesso de leitura nesta sessão.",
         "collab.reject.unsupported" => "O proprietário não aceita essa edição.",
         "collab.reject.conflict" => "Essa edição entra em conflito com uma alteração mais recente.",
+        "collab.reject.conflictDetail" => "Descartado: {{fields}} em “{{node}}”.",
+        "collab.action.reapply" => "Reaplicar minha edição",
         "collab.reject.resourceLimit" => "Essa edição ultrapassa os limites da sessão.",
         "collab.reject.authentication" => "Sua autorização de colaboração não é mais válida.",
         "collab.reject.unknown" => "O proprietário rejeitou essa edição.",

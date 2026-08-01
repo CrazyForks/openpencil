@@ -274,11 +274,12 @@ pub use collab_public_ui::{
 };
 pub use collab_ui_state::{
     AuthenticatedCollabSession, CollabAvailability, CollabCanvasPoint, CollabConnectionPhase,
-    CollabNotice, CollabNoticeKind, CollabPanelState, CollabPanelView, CollabParticipantUi,
-    CollabPendingEditUi, CollabRejectUiCode, CollabShareEndpoint, CollabUiAction, CollabUiRole,
-    CollabUiState, DiscoveredCollabEndpoint, RemotePresenceUi, COLLAB_PRESENCE_FRAME_INTERVAL_MS,
-    MAX_COLLAB_DISPLAY_NAME_CHARS, MAX_COLLAB_SHARE_ENDPOINT_CHARS, MAX_COLLAB_UI_PARTICIPANTS,
-    MAX_COLLAB_UI_SELECTION_IDS,
+    CollabDiscardedEditUi, CollabNotice, CollabNoticeKind, CollabPanelState, CollabPanelView,
+    CollabParticipantUi, CollabPendingEditUi, CollabRejectUiCode, CollabShareEndpoint,
+    CollabUiAction, CollabUiRole, CollabUiState, DiscoveredCollabEndpoint, RemotePresenceUi,
+    COLLAB_PRESENCE_FRAME_INTERVAL_MS, MAX_COLLAB_DISCARDED_FIELDS,
+    MAX_COLLAB_DISCARDED_NODE_LABEL_CHARS, MAX_COLLAB_DISPLAY_NAME_CHARS,
+    MAX_COLLAB_SHARE_ENDPOINT_CHARS, MAX_COLLAB_UI_PARTICIPANTS, MAX_COLLAB_UI_SELECTION_IDS,
 };
 pub use color_picker::{hsv_to_rgb, parse_hex_alpha, parse_hex_rgb, rgb_to_hex, rgb_to_hsv};
 pub use command::{

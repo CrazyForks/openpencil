@@ -71,6 +71,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.reject.readOnly" => "Anda hanya memiliki akses lihat dalam sesi ini.",
         "collab.reject.unsupported" => "Pemilik tidak mendukung edit tersebut.",
         "collab.reject.conflict" => "Edit tersebut bertentangan dengan perubahan yang lebih baru.",
+        "collab.reject.conflictDetail" => "Dibuang: {{fields}} pada “{{node}}”.",
+        "collab.action.reapply" => "Terapkan ulang suntingan saya",
         "collab.reject.resourceLimit" => "Edit tersebut melampaui batas sesi.",
         "collab.reject.authentication" => "Otorisasi kolaborasi Anda tidak lagi valid.",
         "collab.reject.unknown" => "Pemilik menolak edit tersebut.",

@@ -1,11 +1,11 @@
 use jian_ops_schema::{node::PenNode, PenDocument};
 use op_collab::{
-    apply_txn, canonical_document_hash, diff_supported, ApplyContext, ClientOpId, CollabMessage,
-    Commit, CommitAuthor, CommitSeq, DiffContext, Epoch, FrameEnvelope, GuestConnectionState,
-    GuestEffect, GuestError, GuestSessionConfig, GuestSessionCore, OpaqueTicket, Participant,
-    ParticipantId, PeerId, PeerNamespace, PendingCancelReason, PendingEditStatus, Reject,
-    RejectCode, RenewTicket, Role, SessionId, Snapshot, Submit, Welcome, WireLimits,
-    CANONICAL_HASH_VERSION,
+    apply_txn, canonical_document_hash, diff_supported, reapply_property_changes, ApplyContext,
+    ClientOpId, CollabMessage, Commit, CommitAuthor, CommitSeq, DiffContext, EditChanges, Epoch,
+    FrameEnvelope, GuestConnectionState, GuestEffect, GuestError, GuestSessionConfig,
+    GuestSessionCore, OpaqueTicket, Participant, ParticipantId, PeerId, PeerNamespace,
+    PendingCancelReason, PendingEditStatus, Reject, RejectCode, RenewTicket, Role, SessionId,
+    Snapshot, Submit, Welcome, WireLimits, CANONICAL_HASH_VERSION,
 };
 
 fn initial_document() -> PenDocument {
@@ -284,13 +284,57 @@ fn conflicting_remote_property_cancels_pending_after_atomic_install() {
         effect,
         GuestEffect::PendingCancelled {
             reason: PendingCancelReason::PropertyConflict { node_id, field },
+            changes: EditChanges::Property(changes),
             ..
-        } if node_id == "base" && field == "x"
+        } if node_id == "base"
+            && field == "x"
+            && changes
+                .iter()
+                .any(|change| change.node_id == "base" && change.field.wire_name() == "x")
     )));
     assert_eq!(
         canonical_document_hash(core.displayed_document().unwrap()).unwrap(),
         canonical_document_hash(&remote).unwrap()
     );
+}
+
+#[test]
+fn cancelled_pending_changes_replay_over_the_new_authoritative_document() {
+    let initial = initial_document();
+    let mut core = guest(Role::Editor);
+    install_initial(&mut core, &initial);
+    let local = set_position(&initial, 10.0, 0.0);
+    core.begin_local_edit(&local).unwrap();
+
+    let remote = set_position(&initial, 20.0, 0.0);
+    let prepared = take_install(
+        core.accept_frame(frame(CollabMessage::Commit(owner_commit(
+            1, 1, &initial, &remote,
+        ))))
+        .unwrap(),
+    );
+    let effects = finalize(&mut core, prepared);
+    let changes = effects
+        .iter()
+        .find_map(|effect| match effect {
+            GuestEffect::PendingCancelled {
+                changes: EditChanges::Property(changes),
+                ..
+            } => Some(changes.clone()),
+            _ => None,
+        })
+        .expect("property conflict carries the dropped changes");
+
+    // Explicit user replay reasserts the dropped x=10 over the remote x=20.
+    let replayed = reapply_property_changes(core.displayed_document().unwrap(), &changes).unwrap();
+    assert_eq!(
+        canonical_document_hash(&replayed).unwrap(),
+        canonical_document_hash(&set_position(&initial, 10.0, 0.0)).unwrap()
+    );
+
+    // A deleted target refuses the replay instead of resurrecting the node.
+    let empty: PenDocument = serde_json::from_str(r#"{"version":"1.0","children":[]}"#).unwrap();
+    assert!(reapply_property_changes(&empty, &changes).is_err());
 }
 
 #[test]

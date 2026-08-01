@@ -28,7 +28,7 @@ pub(crate) enum PendingRebase {
 pub(crate) type CarriedPending = (
     Arc<PenDocument>,
     Option<PendingEdit>,
-    Option<(crate::ClientOpId, PendingCancelReason)>,
+    Option<crate::CancelledPendingEdit>,
 );
 
 impl GuestSessionCore {
@@ -199,10 +199,11 @@ impl GuestSessionCore {
                 Ok(vec![GuestEffect::PendingCancelled {
                     client_op_id: pending.client_op_id,
                     reason: PendingCancelReason::AlreadySatisfied,
+                    changes: pending.changes,
                 }])
             }
             PendingRebase::Conflict(reason) => {
-                self.stage_pending_rollback(pending.client_op_id, reason)
+                self.stage_pending_rollback(pending.client_op_id, reason, pending.changes)
             }
         }
     }
@@ -211,6 +212,7 @@ impl GuestSessionCore {
         &mut self,
         client_op_id: crate::ClientOpId,
         reason: PendingCancelReason,
+        changes: EditChanges,
     ) -> Result<Vec<GuestEffect>, GuestError> {
         let confirmed = self
             .confirmed_document
@@ -231,7 +233,11 @@ impl GuestSessionCore {
                 pending: None,
                 state: self.state,
                 discard_buffer_through: None,
-                pending_cancel: Some((client_op_id, reason)),
+                pending_cancel: Some(crate::CancelledPendingEdit {
+                    client_op_id,
+                    reason,
+                    changes,
+                }),
                 undo_index_add: None,
             },
         )?;
@@ -383,7 +389,11 @@ pub(crate) fn carry_pending_over_confirmed(
         PendingRebase::Conflict(reason) => Ok((
             confirmed.clone(),
             None,
-            Some((pending.client_op_id.clone(), reason)),
+            Some(crate::CancelledPendingEdit {
+                client_op_id: pending.client_op_id.clone(),
+                reason,
+                changes: pending.changes.clone(),
+            }),
         )),
     }
 }

@@ -390,10 +390,11 @@ impl GuestSessionCore {
                 through_seq: prepared.post.confirmed_seq,
             })));
         }
-        if let Some((client_op_id, reason)) = prepared.post.pending_cancel {
+        if let Some(cancelled) = prepared.post.pending_cancel {
             effects.push(GuestEffect::PendingCancelled {
-                client_op_id,
-                reason,
+                client_op_id: cancelled.client_op_id,
+                reason: cancelled.reason,
+                changes: cancelled.changes,
             });
         }
         effects.extend(self.continue_after_install()?);

@@ -70,6 +70,9 @@ pub(crate) struct DesktopCollabRuntime {
     pinned_owner_static: Option<[u8; 32]>,
     transaction_active: bool,
     save_as_fork_requested: bool,
+    /// Property changes of the most recent conflict-discarded local edit,
+    /// kept for a user-driven replay via `CollabUiAction::ReapplyDiscarded`.
+    discarded_property_edit: Option<Vec<op_collab::NodeFieldChange>>,
     status: VecDeque<CollabStatusEvent>,
     generation: u64,
     clock_start: Instant,
@@ -137,6 +140,7 @@ impl DesktopCollabRuntime {
             pinned_owner_static: None,
             transaction_active: false,
             save_as_fork_requested: false,
+            discarded_property_edit: None,
             status: VecDeque::new(),
             generation: 1,
             clock_start: Instant::now(),
@@ -197,6 +201,10 @@ impl DesktopCollabRuntime {
                 Ok(())
             }
             CollabUiAction::Retry => self.retry_guest(host),
+            CollabUiAction::ReapplyDiscarded => {
+                self.reapply_discarded(host);
+                Ok(())
+            }
             CollabUiAction::SaveAsFork => {
                 self.save_as_fork_requested = true;
                 Ok(())
@@ -272,6 +280,40 @@ impl DesktopCollabRuntime {
                 false
             }
         }
+    }
+
+    /// Resubmit the stashed conflict-discarded property edit as a brand-new
+    /// local edit over the current authoritative document.
+    ///
+    /// The replay deliberately reasserts the dropped desired values over
+    /// whatever the fields hold now; it goes through the normal local-edit
+    /// pipeline, so a fresh conflict simply produces a fresh stash.
+    fn reapply_discarded(&mut self, host: &mut WidgetHostNative) {
+        if self.discarded_property_edit.is_none() {
+            return;
+        }
+        if !self.begin_local_edit(host) {
+            // Busy or read-only; begin_local_edit already raised the notice.
+            // The stash is kept so the user can retry once the lane is free.
+            return;
+        }
+        let changes = self
+            .discarded_property_edit
+            .take()
+            .expect("stash presence was checked above");
+        host.editor_state_mut().editor_ui.collab.discarded_edit = None;
+        match op_collab::reapply_property_changes(&host.editor_state().doc, &changes) {
+            Ok(desired) => {
+                // Mutating the document inside the capture mirrors a GUI
+                // gesture: end_local_edit diffs it and bumps the revision.
+                host.editor_state_mut().doc = desired;
+            }
+            Err(_) => {
+                // The target node no longer exists; finish as a no-op.
+                self.set_notice(host, CollabNoticeKind::Reject(CollabRejectUiCode::Conflict));
+            }
+        }
+        self.finish_local_edit(host);
     }
 
     /// Route Cmd/Ctrl+Z to M1 selective undo; `false` preserves standalone history.
@@ -351,6 +393,7 @@ impl DesktopCollabRuntime {
         self.last_join = None;
         self.pinned_owner_static = None;
         self.transaction_active = false;
+        self.clear_discarded_stash(host);
         self.last_presence_sent = None;
         self.last_local_presence = None;
         self.pending_local_presence = None;
@@ -696,6 +739,7 @@ impl DesktopCollabRuntime {
                     self.actor = Some(EditorActor::Guest(guest));
                     self.retire_workers();
                     self.transaction_active = false;
+                    self.clear_discarded_stash(host);
                     self.set_notice(host, CollabNoticeKind::EpochChanged);
                     self.push_status(CollabStatusEvent::SessionEnded);
                     return Ok(());

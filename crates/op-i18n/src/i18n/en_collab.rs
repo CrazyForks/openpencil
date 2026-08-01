@@ -81,6 +81,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.reject.readOnly" => "You have view-only access to this session.",
         "collab.reject.unsupported" => "The owner does not support that edit.",
         "collab.reject.conflict" => "That edit conflicts with a newer change.",
+        "collab.reject.conflictDetail" => "Discarded: {{fields}} on “{{node}}”.",
+        "collab.action.reapply" => "Reapply my edit",
         "collab.reject.resourceLimit" => "That edit is too large for this session.",
         "collab.reject.authentication" => "Your collaboration authorization is no longer valid.",
         "collab.reject.unknown" => "The owner rejected that edit.",

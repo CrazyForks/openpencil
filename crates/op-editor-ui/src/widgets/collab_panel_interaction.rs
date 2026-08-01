@@ -381,6 +381,7 @@ fn hover_for_action(action: &CollabUiAction) -> Option<CollabPanelHover> {
         CollabUiAction::Retry => CollabPanelHover::Retry,
         CollabUiAction::Leave => CollabPanelHover::Leave,
         CollabUiAction::DiscardPending => CollabPanelHover::DiscardPending,
+        CollabUiAction::ReapplyDiscarded => CollabPanelHover::ReapplyDiscarded,
         CollabUiAction::SaveAsFork => CollabPanelHover::SaveAsFork,
         CollabUiAction::ApproveAdmissionEditor { .. } => CollabPanelHover::ApproveAdmissionEditor,
         CollabUiAction::ApproveAdmissionViewer { .. } => CollabPanelHover::ApproveAdmissionViewer,

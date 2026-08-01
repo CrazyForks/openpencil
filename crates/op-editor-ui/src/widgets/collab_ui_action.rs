@@ -20,6 +20,7 @@ pub(super) fn action_model(
         CollabUiAction::Retry => "collab.action.retry",
         CollabUiAction::Leave => "collab.action.leave",
         CollabUiAction::DiscardPending => "collab.action.discardPending",
+        CollabUiAction::ReapplyDiscarded => "collab.action.reapply",
         CollabUiAction::SaveAsFork => "collab.action.saveAsFork",
         CollabUiAction::ApproveAdmissionEditor { .. } => "collab.action.approveEditor",
         CollabUiAction::ApproveAdmissionViewer { .. } => "collab.action.approveViewer",

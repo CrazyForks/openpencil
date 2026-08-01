@@ -71,6 +71,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.reject.readOnly" => "你在此工作階段中只有檢視權限。",
         "collab.reject.unsupported" => "擁有者不支援該編輯。",
         "collab.reject.conflict" => "該編輯與較新的變更衝突。",
+        "collab.reject.conflictDetail" => "已捨棄:{{node}} 的 {{fields}}。",
+        "collab.action.reapply" => "重新套用我的編輯",
         "collab.reject.resourceLimit" => "該編輯超出工作階段的大小限制。",
         "collab.reject.authentication" => "你的協作授權已失效。",
         "collab.reject.unknown" => "擁有者拒絕了該編輯。",

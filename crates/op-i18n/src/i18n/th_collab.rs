@@ -71,6 +71,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.reject.readOnly" => "คุณมีสิทธิ์ดูเท่านั้นในเซสชันนี้",
         "collab.reject.unsupported" => "เจ้าของไม่รองรับการแก้ไขนี้",
         "collab.reject.conflict" => "การแก้ไขนี้ขัดแย้งกับการเปลี่ยนแปลงที่ใหม่กว่า",
+        "collab.reject.conflictDetail" => "ถูกละทิ้ง: {{fields}} ที่ “{{node}}”",
+        "collab.action.reapply" => "ใช้การแก้ไขของฉันอีกครั้ง",
         "collab.reject.resourceLimit" => "การแก้ไขนี้เกินขีดจำกัดของเซสชัน",
         "collab.reject.authentication" => "สิทธิ์การทำงานร่วมกันของคุณใช้ไม่ได้แล้ว",
         "collab.reject.unknown" => "เจ้าของปฏิเสธการแก้ไขนี้",

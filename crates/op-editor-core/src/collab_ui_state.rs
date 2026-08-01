@@ -311,6 +311,11 @@ pub enum CollabNoticeKind {
     OwnerLeft,
     EpochChanged,
     Reject(CollabRejectUiCode),
+    /// A pending local edit lost a concurrency conflict and was rolled back,
+    /// with the dropped intent stashed for replay. Distinct from
+    /// `Reject(Conflict)` so the notice detail (node/fields) is only ever
+    /// attached to the cancellation that produced the stash.
+    EditConflictDiscarded,
     UndoConflict,
     UnsupportedEdit(crate::collab_gate::CollabUnsupportedFeature),
 }
@@ -330,6 +335,7 @@ impl CollabNoticeKind {
             Self::Reject(CollabRejectUiCode::ResourceLimit) => "collab.reject.resourceLimit",
             Self::Reject(CollabRejectUiCode::Authentication) => "collab.reject.authentication",
             Self::Reject(CollabRejectUiCode::Unknown) => "collab.reject.unknown",
+            Self::EditConflictDiscarded => "collab.reject.conflict",
             Self::UndoConflict => "collab.status.undoConflict",
             Self::UnsupportedEdit(_) => "collab.status.unsupportedEdit",
         }
@@ -340,6 +346,63 @@ impl CollabNoticeKind {
 pub struct CollabNotice {
     pub kind: CollabNoticeKind,
     pub created_at_ms: u64,
+}
+
+/// Display bound for the conflict-detail node label.
+pub const MAX_COLLAB_DISCARDED_NODE_LABEL_CHARS: usize = 40;
+/// Display bound for the number of conflicting field names shown.
+pub const MAX_COLLAB_DISCARDED_FIELDS: usize = 8;
+
+/// Display projection of one local edit that lost a collaboration conflict
+/// and was rolled back. The raw replayable changes stay in the host runtime;
+/// this carries only what the notice and the Reapply action need to paint.
+#[derive(Clone, PartialEq, Eq)]
+pub struct CollabDiscardedEditUi {
+    pub node_label: String,
+    /// Wire names of the dropped fields, deduplicated and bounded.
+    pub fields: Vec<String>,
+}
+
+impl std::fmt::Debug for CollabDiscardedEditUi {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The node label is authored document content; keep it out of debug
+        // dumps like the rest of the collaboration display projection. Field
+        // names are fixed schema tokens and stay visible for diagnosis.
+        formatter
+            .debug_struct("CollabDiscardedEditUi")
+            .field("node_label", &"[REDACTED]")
+            .field("fields", &self.fields)
+            .finish()
+    }
+}
+
+impl CollabDiscardedEditUi {
+    pub fn bounded(
+        node_label: impl Into<String>,
+        fields: impl IntoIterator<Item = String>,
+    ) -> Self {
+        let node_label: String = node_label
+            .into()
+            .trim()
+            .chars()
+            .filter(|character| !character.is_control())
+            .take(MAX_COLLAB_DISCARDED_NODE_LABEL_CHARS)
+            .collect();
+        let mut bounded = Vec::new();
+        for field in fields {
+            if field.is_empty() || bounded.iter().any(|existing| existing == &field) {
+                continue;
+            }
+            bounded.push(field);
+            if bounded.len() == MAX_COLLAB_DISCARDED_FIELDS {
+                break;
+            }
+        }
+        Self {
+            node_label,
+            fields: bounded,
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -362,6 +425,8 @@ pub enum CollabUiAction {
     Retry,
     Leave,
     DiscardPending,
+    /// Resubmit the stashed conflict-discarded local edit as a new edit.
+    ReapplyDiscarded,
     SaveAsFork,
     ApproveAdmissionEditor {
         request_key: CollabAdmissionRequestKey,
@@ -383,6 +448,8 @@ pub struct CollabUiState {
     pub panel: CollabPanelState,
     pub pending_edit: CollabPendingEditUi,
     pub notice: Option<CollabNotice>,
+    /// Set while the host runtime holds a replayable conflict-discarded edit.
+    pub discarded_edit: Option<CollabDiscardedEditUi>,
     pub pending_action: Option<CollabUiAction>,
     authenticated: Option<AuthenticatedCollabSession>,
     pub(crate) public_session: CollabPublicSessionUi,
@@ -401,6 +468,7 @@ impl Default for CollabUiState {
             panel: CollabPanelState::default(),
             pending_edit: CollabPendingEditUi::None,
             notice: None,
+            discarded_edit: None,
             pending_action: None,
             authenticated: None,
             public_session: CollabPublicSessionUi::default(),
@@ -473,6 +541,7 @@ impl CollabUiState {
         self.authenticated = None;
         self.public_session = CollabPublicSessionUi::default();
         self.clear_pending_admissions();
+        self.discarded_edit = None;
         self.participants = Arc::new(Vec::new());
         self.clear_presence();
     }

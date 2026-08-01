@@ -71,6 +71,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.reject.readOnly" => "Sie haben in dieser Sitzung nur Lesezugriff.",
         "collab.reject.unsupported" => "Der Eigentümer unterstützt diese Bearbeitung nicht.",
         "collab.reject.conflict" => "Diese Bearbeitung steht mit einer neueren Änderung in Konflikt.",
+        "collab.reject.conflictDetail" => "Verworfen: {{fields}} bei „{{node}}“.",
+        "collab.action.reapply" => "Meine Änderung erneut anwenden",
         "collab.reject.resourceLimit" => "Diese Bearbeitung überschreitet die Sitzungsgrenzen.",
         "collab.reject.authentication" => "Ihre Berechtigung zur Zusammenarbeit ist nicht mehr gültig.",
         "collab.reject.unknown" => "Der Eigentümer hat diese Bearbeitung abgelehnt.",
