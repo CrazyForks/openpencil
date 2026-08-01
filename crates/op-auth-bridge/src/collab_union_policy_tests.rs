@@ -1,14 +1,29 @@
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
 use ed25519_dalek::{Signer as _, SigningKey};
+use serde::Deserialize;
 use serde_json::{json, Value};
+use sha2::{Digest as _, Sha256};
 
 use super::*;
 
 const ISSUER: &str = "https://collab.example.com";
 const NOW: u64 = 1_800_000_000;
-const PRODUCTION_FIXTURE_SIGNATURE: &str = "aeno37t6xdvD-UX4JnBXn4TyV3mh\
-    ZY8FWD2dkMtmTCVXwobarKlRDaXIsRxrf1O4MMYh_QggcwOBUUMDqd9hAw";
+const GO_V2_FIXTURE: &str = include_str!("../tests/fixtures/zseven-sso-go-union-policy-v2.json");
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GoUnionPolicyFixture {
+    description: String,
+    security_notice: String,
+    profile_version: u32,
+    now_unix_seconds: u64,
+    root_x: String,
+    canonical_unsigned_json: String,
+    canonical_message_sha256: String,
+    policy_json: String,
+    legacy_v1_domain_signature: String,
+}
 
 fn sequence_key(first_byte: u8) -> SigningKey {
     let mut seed = [0_u8; 32];
@@ -34,21 +49,24 @@ fn key(region: &str, kid: &str, first_byte: u8, activated: i64) -> Value {
     })
 }
 
-fn production_fixture() -> Value {
+fn policy_fixture() -> Value {
     json!({
-        "version": 1,
+        "version": 2,
         "generation": 7,
         "issuer": ISSUER,
         "not_before_unix": 1_799_900_000,
         "not_after_unix": 1_800_500_000,
-        "required_regions": ["cn", "global"],
+        "required_regions": [
+            {"region": "cn", "recovery_epoch": 7},
+            {"region": "global", "recovery_epoch": 11},
+        ],
         "keys": [
             key("cn", "active_key", 1, 1_700_000_300),
             key("cn", "next_key", 41, 0),
             key("global", "remote_active_key", 81, 1_700_000_300),
             key("global", "remote_next_key", 121, 0),
         ],
-        "signature": PRODUCTION_FIXTURE_SIGNATURE,
+        "signature": "",
     })
 }
 
@@ -79,8 +97,23 @@ fn parse_test_policy(value: Value, now: u64) -> Result<CollabUnionPolicy, Collab
     )
 }
 
+fn parse_test_body(
+    body: &[u8],
+    maximum_body_bytes: usize,
+    expected_issuer: &str,
+    now: u64,
+) -> Result<CollabUnionPolicy, CollabUnionPolicyError> {
+    CollabUnionPolicy::from_json_with_root(
+        body,
+        maximum_body_bytes,
+        expected_issuer,
+        now,
+        test_signing_key().verifying_key().to_bytes(),
+    )
+}
+
 fn policy_with_retired() -> Value {
-    let mut value = production_fixture();
+    let mut value = policy_fixture();
     let mut retired = key("cn", "retired_key", 5, 1_700_000_100);
     retired["retired_at_unix"] = json!(1_700_000_200);
     retired["not_after_unix"] = json!(1_800_000_100);
@@ -90,12 +123,14 @@ fn policy_with_retired() -> Value {
 }
 
 #[test]
-fn verifies_the_frozen_go_production_root_fixture() {
-    let body = serde_json::to_vec(&production_fixture()).unwrap();
-    let policy = CollabUnionPolicy::from_json(&body, 64 * 1024, ISSUER, NOW).unwrap();
+fn verifies_a_v2_policy_with_a_test_only_root() {
+    let policy = parse_test_policy(policy_fixture(), NOW).unwrap();
     assert_eq!(policy.generation(), 7);
     assert_eq!(policy.issuer(), ISSUER);
     assert_eq!(policy.key_count(), 4);
+    assert_eq!(policy.recovery_epoch("cn"), Some(7));
+    assert_eq!(policy.recovery_epoch("global"), Some(11));
+    assert_eq!(policy.recovery_epoch("missing"), None);
     assert_eq!(
         policy.verification_key_at("active_key", NOW),
         Some(sequence_key(1).verifying_key().to_bytes())
@@ -104,12 +139,64 @@ fn verifies_the_frozen_go_production_root_fixture() {
 }
 
 #[test]
+fn verifies_the_frozen_go_production_root_fixture() {
+    let fixture: GoUnionPolicyFixture = serde_json::from_str(GO_V2_FIXTURE).unwrap();
+    assert!(!fixture.description.is_empty());
+    assert!(fixture.security_notice.contains("no private key"));
+    assert_eq!(fixture.profile_version, COLLAB_UNION_POLICY_VERSION);
+
+    let wire: PolicyWire = serde_json::from_str(&fixture.policy_json).unwrap();
+    let canonical = canonicalize(wire, ISSUER).unwrap();
+    let unsigned_json = serde_json::to_string(&canonical.unsigned).unwrap();
+    assert_eq!(unsigned_json, fixture.canonical_unsigned_json);
+
+    let message = canonical_message_for_test(fixture.policy_json.as_bytes(), ISSUER).unwrap();
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&message)),
+        fixture.canonical_message_sha256
+    );
+    assert_eq!(fixture.root_x, COLLAB_UNION_POLICY_ROOT_X);
+    let policy = CollabUnionPolicy::from_json(
+        fixture.policy_json.as_bytes(),
+        64 * 1024,
+        ISSUER,
+        fixture.now_unix_seconds,
+    )
+    .unwrap();
+    assert_eq!(policy.recovery_epoch("cn"), Some(7));
+    assert_eq!(policy.recovery_epoch("global"), Some(11));
+
+    let mut legacy_domain: Value = serde_json::from_str(&fixture.policy_json).unwrap();
+    legacy_domain["signature"] = json!(fixture.legacy_v1_domain_signature);
+    let legacy_domain = serde_json::to_vec(&legacy_domain).unwrap();
+    assert_eq!(
+        CollabUnionPolicy::from_json(&legacy_domain, 64 * 1024, ISSUER, fixture.now_unix_seconds,),
+        Err(CollabUnionPolicyError::InvalidSignature)
+    );
+}
+
+#[test]
+fn production_v2_policy_root_is_pinned() {
+    let root = decode_fixed::<32>(COLLAB_UNION_POLICY_ROOT_X).unwrap();
+    let mut spki = vec![
+        0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
+    ];
+    spki.extend_from_slice(&root);
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&spki)),
+        "53700c011a688b8077850f1330567c265f97cd5e34c9b67aa6695a3fe8afb20c"
+    );
+}
+
+#[test]
 fn canonical_sorting_matches_go_for_reordered_wire_arrays() {
-    let mut fixture = production_fixture();
-    fixture["required_regions"] = json!(["global", "cn"]);
+    let mut fixture = policy_fixture();
+    fixture["required_regions"] = json!([
+        {"region": "global", "recovery_epoch": 11},
+        {"region": "cn", "recovery_epoch": 7},
+    ]);
     fixture["keys"].as_array_mut().unwrap().reverse();
-    let body = serde_json::to_vec(&fixture).unwrap();
-    assert!(CollabUnionPolicy::from_json(&body, 64 * 1024, ISSUER, NOW).is_ok());
+    assert!(parse_test_policy(fixture, NOW).is_ok());
 }
 
 #[test]
@@ -118,12 +205,12 @@ fn next_keys_never_verify_and_retired_overlap_expires_at_not_after() {
     retired["retired_at_unix"] = json!(NOW - 100);
     retired["not_after_unix"] = json!(NOW + 50);
     let value = json!({
-        "version": 1,
+        "version": 2,
         "generation": 2,
         "issuer": ISSUER,
         "not_before_unix": NOW - 100,
         "not_after_unix": NOW + 300,
-        "required_regions": ["cn"],
+        "required_regions": [{"region": "cn", "recovery_epoch": 7}],
         "keys": [
             key("cn", "active", 1, (NOW - 200) as i64),
             key("cn", "next", 2, 0),
@@ -140,12 +227,12 @@ fn next_keys_never_verify_and_retired_overlap_expires_at_not_after() {
 
 #[test]
 fn enforces_generation_monotonicity_and_same_generation_immutability() {
-    let mut current = production_fixture();
+    let mut current = policy_fixture();
     current["generation"] = json!(2);
     current["signature"] = json!("");
     let current = parse_test_policy(current, NOW).unwrap();
 
-    let mut older = production_fixture();
+    let mut older = policy_fixture();
     older["generation"] = json!(1);
     older["signature"] = json!("");
     let older = parse_test_policy(older, NOW).unwrap();
@@ -154,9 +241,9 @@ fn enforces_generation_monotonicity_and_same_generation_immutability() {
         Err(CollabUnionPolicyError::GenerationRollback)
     );
 
-    let mut rewritten = production_fixture();
+    let mut rewritten = policy_fixture();
     rewritten["generation"] = json!(2);
-    rewritten["keys"][0]["published_at_unix"] = json!(1_700_000_001);
+    rewritten["required_regions"][0]["recovery_epoch"] = json!(8);
     rewritten["signature"] = json!("");
     let rewritten = parse_test_policy(rewritten, NOW).unwrap();
     assert_eq!(
@@ -164,8 +251,9 @@ fn enforces_generation_monotonicity_and_same_generation_immutability() {
         Err(CollabUnionPolicyError::GenerationRewrite)
     );
 
-    let mut newer = production_fixture();
+    let mut newer = policy_fixture();
     newer["generation"] = json!(3);
+    newer["required_regions"][0]["recovery_epoch"] = json!(8);
     newer["signature"] = json!("");
     assert!(parse_test_policy(newer, NOW)
         .unwrap()
@@ -174,29 +262,96 @@ fn enforces_generation_monotonicity_and_same_generation_immutability() {
 }
 
 #[test]
-fn rejects_invalid_authority_profile_and_resource_bounds() {
-    let valid_body = serde_json::to_vec(&production_fixture()).unwrap();
+fn rejects_v1_bodies_and_invalid_recovery_epoch_records() {
+    let root = test_signing_key().verifying_key().to_bytes();
+
+    let mut old_version = policy_fixture();
+    old_version["version"] = json!(1);
     assert_eq!(
-        CollabUnionPolicy::from_json(&valid_body, valid_body.len() - 1, ISSUER, NOW),
+        CollabUnionPolicy::from_json_with_root(
+            &serde_json::to_vec(&old_version).unwrap(),
+            64 * 1024,
+            ISSUER,
+            NOW,
+            root,
+        ),
+        Err(CollabUnionPolicyError::InvalidProfile)
+    );
+
+    let mut old_body = policy_fixture();
+    old_body["version"] = json!(1);
+    old_body["required_regions"] = json!(["cn", "global"]);
+    assert_eq!(
+        CollabUnionPolicy::from_json_with_root(
+            &serde_json::to_vec(&old_body).unwrap(),
+            64 * 1024,
+            ISSUER,
+            NOW,
+            root,
+        ),
+        Err(CollabUnionPolicyError::MalformedJson)
+    );
+
+    let mut zero_epoch = policy_fixture();
+    zero_epoch["required_regions"][0]["recovery_epoch"] = json!(0);
+    assert_eq!(
+        CollabUnionPolicy::from_json_with_root(
+            &serde_json::to_vec(&zero_epoch).unwrap(),
+            64 * 1024,
+            ISSUER,
+            NOW,
+            root,
+        ),
+        Err(CollabUnionPolicyError::InvalidRegions)
+    );
+
+    let valid = serde_json::from_str::<GoUnionPolicyFixture>(GO_V2_FIXTURE)
+        .unwrap()
+        .policy_json;
+    for body in [
+        valid.replacen(",\"recovery_epoch\":7", "", 1),
+        valid.replacen(
+            "\"recovery_epoch\":7",
+            "\"recovery_epoch\":7,\"recovery_epoch\":8",
+            1,
+        ),
+        valid.replacen(
+            "\"recovery_epoch\":7",
+            "\"recovery_epoch\":7,\"unexpected\":true",
+            1,
+        ),
+    ] {
+        assert_eq!(
+            CollabUnionPolicy::from_json_with_root(body.as_bytes(), 64 * 1024, ISSUER, NOW, root,),
+            Err(CollabUnionPolicyError::MalformedJson)
+        );
+    }
+}
+
+#[test]
+fn rejects_invalid_authority_profile_and_resource_bounds() {
+    let valid_body = sign_value(policy_fixture(), &test_signing_key());
+    assert_eq!(
+        parse_test_body(&valid_body, valid_body.len() - 1, ISSUER, NOW),
         Err(CollabUnionPolicyError::InvalidBodySize)
     );
     assert_eq!(
-        CollabUnionPolicy::from_json(&valid_body, 64 * 1024, "https://other.example", NOW),
+        parse_test_body(&valid_body, 64 * 1024, "https://other.example", NOW),
         Err(CollabUnionPolicyError::InvalidIssuer)
     );
     assert_eq!(
-        CollabUnionPolicy::from_json(&valid_body, 64 * 1024, ISSUER, 1_799_899_999),
+        parse_test_body(&valid_body, 64 * 1024, ISSUER, 1_799_899_999),
         Err(CollabUnionPolicyError::Inactive)
     );
     assert_eq!(
-        CollabUnionPolicy::from_json(&valid_body, 64 * 1024, ISSUER, 1_800_500_000),
+        parse_test_body(&valid_body, 64 * 1024, ISSUER, 1_800_500_000),
         Err(CollabUnionPolicyError::Inactive)
     );
 
-    let mut unknown = production_fixture();
+    let mut unknown = policy_fixture();
     unknown["unexpected"] = json!(true);
     assert_eq!(
-        CollabUnionPolicy::from_json(
+        parse_test_body(
             &serde_json::to_vec(&unknown).unwrap(),
             64 * 1024,
             ISSUER,
@@ -205,10 +360,10 @@ fn rejects_invalid_authority_profile_and_resource_bounds() {
         Err(CollabUnionPolicyError::MalformedJson)
     );
 
-    let mut tampered = production_fixture();
+    let mut tampered = policy_fixture();
     tampered["generation"] = json!(8);
     assert_eq!(
-        CollabUnionPolicy::from_json(
+        parse_test_body(
             &serde_json::to_vec(&tampered).unwrap(),
             64 * 1024,
             ISSUER,
@@ -220,11 +375,11 @@ fn rejects_invalid_authority_profile_and_resource_bounds() {
 
 #[test]
 fn rejects_any_union_key_outside_its_signed_active_time() {
-    let mut future_published = production_fixture();
+    let mut future_published = policy_fixture();
     future_published["keys"][0]["published_at_unix"] = json!(NOW + 1);
     future_published["signature"] = json!("");
 
-    let mut future_activated = production_fixture();
+    let mut future_activated = policy_fixture();
     future_activated["keys"][0]["activated_at_unix"] = json!(NOW + 1);
     future_activated["signature"] = json!("");
 
@@ -253,15 +408,18 @@ fn rejects_incomplete_or_ambiguous_regional_unions() {
     let cases = [
         (
             {
-                let mut value = production_fixture();
-                value["required_regions"] = json!(["cn", "cn"]);
+                let mut value = policy_fixture();
+                value["required_regions"] = json!([
+                    {"region": "cn", "recovery_epoch": 7},
+                    {"region": "cn", "recovery_epoch": 8},
+                ]);
                 value
             },
             CollabUnionPolicyError::InvalidRegions,
         ),
         (
             {
-                let mut value = production_fixture();
+                let mut value = policy_fixture();
                 value["keys"].as_array_mut().unwrap().remove(1);
                 value
             },
@@ -269,7 +427,7 @@ fn rejects_incomplete_or_ambiguous_regional_unions() {
         ),
         (
             {
-                let mut value = production_fixture();
+                let mut value = policy_fixture();
                 value["keys"][1]["x"] = value["keys"][0]["x"].clone();
                 value
             },
@@ -277,7 +435,7 @@ fn rejects_incomplete_or_ambiguous_regional_unions() {
         ),
         (
             {
-                let mut value = production_fixture();
+                let mut value = policy_fixture();
                 value["keys"][1]["not_after_unix"] = json!(1_900_000_000_i64);
                 value
             },
@@ -318,12 +476,14 @@ fn accepts_the_maximum_eight_region_twenty_four_key_union() {
         keys.push(retired);
     }
     let value = json!({
-        "version": 1,
+        "version": 2,
         "generation": 9,
         "issuer": ISSUER,
         "not_before_unix": NOW - 100,
         "not_after_unix": NOW + 300,
-        "required_regions": regions,
+        "required_regions": regions.into_iter().enumerate().map(|(index, region)| {
+            json!({"region": region, "recovery_epoch": index + 1})
+        }).collect::<Vec<_>>(),
         "keys": keys,
         "signature": "",
     });

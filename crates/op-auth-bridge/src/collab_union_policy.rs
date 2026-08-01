@@ -12,13 +12,13 @@ use crate::{
     HARD_MAX_COLLAB_JWKS_BYTES,
 };
 
-pub const COLLAB_UNION_POLICY_VERSION: u32 = 1;
+pub const COLLAB_UNION_POLICY_VERSION: u32 = 2;
 pub const MAX_COLLAB_UNION_POLICY_REGIONS: usize = 8;
 pub const MAX_COLLAB_UNION_POLICY_KEYS: usize = 24;
 pub const MAX_COLLAB_UNION_POLICY_LIFETIME_SECONDS: i64 = 7 * 24 * 60 * 60;
-pub const COLLAB_UNION_POLICY_ROOT_X: &str = "wiQJcA9o-bydBkfIVnVUJzKA4wtv8Dapn0JYhS_bZ-I";
+pub const COLLAB_UNION_POLICY_ROOT_X: &str = "5SVj-_jnJbuZlpDoD3M9x1eZAPDFLSq5jRb-c0xUh5A";
 
-const POLICY_DOMAIN: &[u8] = b"openpencil/collab-union-policy/v1\0";
+const POLICY_DOMAIN: &[u8] = b"openpencil/collab-union-policy/v2\0";
 const MAX_REGION_ID_BYTES: usize = 32;
 const MAX_KEY_ID_BYTES: usize = 128;
 
@@ -29,6 +29,7 @@ pub struct CollabUnionPolicy {
     issuer: String,
     not_before_unix: i64,
     not_after_unix: i64,
+    recovery_epochs: BTreeMap<String, u64>,
     keyset: CollabJwks,
     verification_keys: BTreeMap<String, PolicyVerificationKey>,
     canonical_message: Vec<u8>,
@@ -84,6 +85,12 @@ impl CollabUnionPolicy {
             issuer: canonical.unsigned.issuer,
             not_before_unix: canonical.unsigned.not_before_unix,
             not_after_unix: canonical.unsigned.not_after_unix,
+            recovery_epochs: canonical
+                .unsigned
+                .required_regions
+                .iter()
+                .map(|region| (region.region.clone(), region.recovery_epoch))
+                .collect(),
             keyset: CollabJwks::from_verification_keys(canonical.keys),
             verification_keys: canonical.verification_keys,
             canonical_message: message,
@@ -102,6 +109,11 @@ impl CollabUnionPolicy {
 
     pub fn key_count(&self) -> usize {
         self.keyset.len()
+    }
+
+    /// Returns the offline-authorized recovery lineage for a required region.
+    pub fn recovery_epoch(&self, region: &str) -> Option<u64> {
+        self.recovery_epochs.get(region).copied()
     }
 
     pub(crate) fn keyset(&self) -> &CollabJwks {
@@ -153,6 +165,22 @@ impl CollabUnionPolicy {
     }
 }
 
+#[cfg(test)]
+fn canonical_message_for_test(
+    body: &[u8],
+    expected_issuer: &str,
+) -> Result<Vec<u8>, CollabUnionPolicyError> {
+    let wire: PolicyWire =
+        serde_json::from_slice(body).map_err(|_| CollabUnionPolicyError::MalformedJson)?;
+    let canonical = canonicalize(wire, expected_issuer)?;
+    let unsigned_json = serde_json::to_vec(&canonical.unsigned)
+        .map_err(|_| CollabUnionPolicyError::InvalidProfile)?;
+    let mut message = Vec::with_capacity(POLICY_DOMAIN.len() + unsigned_json.len());
+    message.extend_from_slice(POLICY_DOMAIN);
+    message.extend_from_slice(&unsigned_json);
+    Ok(message)
+}
+
 impl std::fmt::Debug for CollabUnionPolicy {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -161,6 +189,7 @@ impl std::fmt::Debug for CollabUnionPolicy {
             .field("issuer", &self.issuer)
             .field("not_before_unix", &self.not_before_unix)
             .field("not_after_unix", &self.not_after_unix)
+            .field("region_count", &self.recovery_epochs.len())
             .field("key_count", &self.keyset.len())
             .finish()
     }
@@ -174,7 +203,7 @@ struct PolicyWire {
     issuer: String,
     not_before_unix: i64,
     not_after_unix: i64,
-    required_regions: Vec<String>,
+    required_regions: Vec<PolicyRegion>,
     keys: Vec<PolicyKey>,
     signature: String,
 }
@@ -191,6 +220,13 @@ struct PolicyKey {
     not_after_unix: i64,
 }
 
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PolicyRegion {
+    region: String,
+    recovery_epoch: u64,
+}
+
 #[derive(Serialize)]
 struct UnsignedPolicy {
     version: u32,
@@ -198,7 +234,7 @@ struct UnsignedPolicy {
     issuer: String,
     not_before_unix: i64,
     not_after_unix: i64,
-    required_regions: Vec<String>,
+    required_regions: Vec<PolicyRegion>,
     keys: Vec<PolicyKey>,
 }
 
@@ -250,16 +286,19 @@ fn canonicalize(
     }
 
     let mut regions = wire.required_regions;
-    regions.sort();
-    if regions.iter().any(|region| !valid_region_id(region))
-        || regions.windows(2).any(|pair| pair[0] == pair[1])
+    regions.sort_by(|left, right| left.region.cmp(&right.region));
+    if regions
+        .iter()
+        .any(|region| !valid_region_id(&region.region) || region.recovery_epoch == 0)
+        || regions
+            .windows(2)
+            .any(|pair| pair[0].region == pair[1].region)
     {
         return Err(CollabUnionPolicyError::InvalidRegions);
     }
     let mut region_states = regions
         .iter()
-        .cloned()
-        .map(|region| (region, RegionState::default()))
+        .map(|region| (region.region.clone(), RegionState::default()))
         .collect::<BTreeMap<_, _>>();
 
     let mut keys = wire.keys;

@@ -96,11 +96,13 @@ Domestic and overseas sites may use different `OPENPENCIL_SSO_URL` values only
 when both issuers produce the same logical `iss` and globally stable account
 `sub`. Each region keeps its own HSM private keys. Every regional policy mirror
 must publish the same canonical envelope signed by the offline root pinned in
-this crate. The verifier requires the exact issuer, a live seven-day-or-shorter
-window, at most 8 regions/24 keys, one active plus one next key per region,
-globally unique `kid` and public keys, and safe overlap metadata. Next keys are
-integrity-checked but cannot verify tickets before activation; expired overlap
-keys fail closed. A process rejects generation rollback and same-generation
+this crate. Policy v2 binds every required region to a non-zero
+`recovery_epoch`; v1 envelopes fail closed. The verifier requires the exact
+issuer, a live seven-day-or-shorter window, at most 8 unique regions/24 keys,
+one active plus one next key per region, globally unique `kid` and public keys,
+and safe overlap metadata. Next keys are integrity-checked but cannot verify
+tickets before activation; expired overlap keys fail closed. A process rejects
+generation rollback and same-generation rewrites, including recovery-epoch
 rewrites. Neither tickets, the private provider, discovery, peers, nor a
 regional mirror can replace the offline root.
 

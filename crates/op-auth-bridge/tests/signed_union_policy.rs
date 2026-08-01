@@ -5,17 +5,22 @@ use base64::Engine as _;
 use ed25519_dalek::{Signer as _, SigningKey};
 use op_auth_bridge::{
     CollabJwksCacheLimits, CollabJwksError, CollabJwksFetchError, CollabJwksFetchRequest,
-    CollabJwksFetchResponse, CollabJwksFetcher, CollabTicketVerifier, CollabVerifierConfig,
-    CollabVerifyError,
+    CollabJwksFetchResponse, CollabJwksFetcher, CollabTicketVerifier, CollabUnionPolicyError,
+    CollabVerifierConfig, CollabVerifyError,
 };
+use serde::Deserialize;
 use serde_json::json;
 
 const ISSUER: &str = "https://collab.example.com";
 const ENDPOINT: &str = "https://cn.example/api/v1/collab/policy";
 const NOW: u64 = 1_800_000_000;
 const BINDING: [u8; 32] = [0x42; 32];
-const SIGNATURE: &str = "aeno37t6xdvD-UX4JnBXn4TyV3mh\
-    ZY8FWD2dkMtmTCVXwobarKlRDaXIsRxrf1O4MMYh_QggcwOBUUMDqd9hAw";
+const GO_V2_FIXTURE: &str = include_str!("fixtures/zseven-sso-go-union-policy-v2.json");
+
+#[derive(Deserialize)]
+struct GoUnionPolicyFixture {
+    policy_json: String,
+}
 
 fn sequence_key(first_byte: u8) -> SigningKey {
     let mut seed = [0_u8; 32];
@@ -37,7 +42,7 @@ fn policy_key(region: &str, kid: &str, first_byte: u8, activated: i64) -> serde_
     })
 }
 
-fn policy_body() -> Vec<u8> {
+fn legacy_policy_body() -> Vec<u8> {
     serde_json::to_vec(&json!({
         "version": 1,
         "generation": 7,
@@ -51,12 +56,19 @@ fn policy_body() -> Vec<u8> {
             policy_key("global", "remote_active_key", 81, 1_700_000_300),
             policy_key("global", "remote_next_key", 121, 0),
         ],
-        "signature": SIGNATURE,
+        "signature": "",
     }))
     .unwrap()
 }
 
-struct FrozenPolicy;
+fn policy_body() -> Vec<u8> {
+    serde_json::from_str::<GoUnionPolicyFixture>(GO_V2_FIXTURE)
+        .unwrap()
+        .policy_json
+        .into_bytes()
+}
+
+struct FrozenPolicy(Vec<u8>);
 
 impl CollabJwksFetcher for FrozenPolicy {
     fn fetch(
@@ -64,7 +76,7 @@ impl CollabJwksFetcher for FrozenPolicy {
         request: CollabJwksFetchRequest<'_>,
     ) -> Result<CollabJwksFetchResponse, CollabJwksFetchError> {
         assert_eq!(request.endpoint, ENDPOINT);
-        let body = policy_body();
+        let body = self.0.clone();
         assert!(body.len() <= request.maximum_body_bytes);
         Ok(CollabJwksFetchResponse::Modified {
             body,
@@ -105,22 +117,42 @@ fn ticket(kid: &str, signing_key: &SigningKey) -> Vec<u8> {
 }
 
 #[test]
-fn signed_union_policy_verifies_active_ticket_and_blocks_next_key() {
+fn production_root_signed_v2_policy_verifies_active_ticket_and_blocks_next_key() {
     let verifier = CollabTicketVerifier::new(
         CollabVerifierConfig::new_signed_policy(ISSUER, ENDPOINT).unwrap(),
-        FrozenPolicy,
+        FrozenPolicy(policy_body()),
         CollabJwksCacheLimits::default(),
     )
     .unwrap();
     let now = Instant::now();
 
     let verified = verifier
-        .verify_at(&ticket("active_key", &sequence_key(1)), &BINDING, NOW, now)
+        .verify_at(&ticket("cn-active", &sequence_key(1)), &BINDING, NOW, now)
         .unwrap();
     assert_eq!(verified.issuer(), ISSUER);
-
     assert_eq!(
-        verifier.verify_at(&ticket("next_key", &sequence_key(41)), &BINDING, NOW, now),
+        verifier.verify_at(&ticket("cn-next", &sequence_key(2)), &BINDING, NOW, now),
         Err(CollabVerifyError::Jwks(CollabJwksError::UnknownKey))
+    );
+}
+
+#[test]
+fn legacy_v1_signed_union_policy_fails_closed() {
+    let verifier = CollabTicketVerifier::new(
+        CollabVerifierConfig::new_signed_policy(ISSUER, ENDPOINT).unwrap(),
+        FrozenPolicy(legacy_policy_body()),
+        CollabJwksCacheLimits::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        verifier.verify_at(
+            &ticket("active_key", &sequence_key(1)),
+            &BINDING,
+            NOW,
+            Instant::now(),
+        ),
+        Err(CollabVerifyError::Jwks(CollabJwksError::Policy(
+            CollabUnionPolicyError::MalformedJson
+        )))
     );
 }
