@@ -451,14 +451,6 @@ fn reachable_live_port_file() -> Option<(u16, u32)> {
     crate::mcp_http_cli::mcp_ping_live(port, &token).then_some((port, pid))
 }
 
-/// Discover the port of a running OpenPencil MCP server for `op <tool>`
-/// calls, preferring the live editor over a CLI-managed headless server.
-/// Both candidates are confirmed with a JSON-RPC `ping`. Returns `None`
-/// when nothing is reachable.
-pub(crate) fn discover_running_port() -> Option<u16> {
-    discover_running_endpoint().map(|(port, _)| port)
-}
-
 /// The reachable MCP endpoint and the instance token that authenticates it.
 ///
 /// The live endpoint authenticates every stateful call, so the port alone is

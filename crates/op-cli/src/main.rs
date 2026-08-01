@@ -115,12 +115,16 @@ fn run(args: &[String]) -> Result<String, CliError> {
             json_path,
             out_path,
         } => html_cli::run_import_snapshot(&json_path, &out_path)?,
-        Command::ToolCall { tool, args } => {
-            post(target_port, &target_token, &tool_call_body(&tool, &args_to_json(&args)))?
-        }
-        Command::ToolCallJson { tool, args_json } => {
-            post(target_port, &target_token, &tool_call_body(&tool, &args_json))?
-        }
+        Command::ToolCall { tool, args } => post(
+            target_port,
+            &target_token,
+            &tool_call_body(&tool, &args_to_json(&args)),
+        )?,
+        Command::ToolCallJson { tool, args_json } => post(
+            target_port,
+            &target_token,
+            &tool_call_body(&tool, &args_json),
+        )?,
         Command::Export {
             item_id,
             selection: _,

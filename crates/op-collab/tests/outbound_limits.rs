@@ -71,8 +71,10 @@ fn guest_inbound_ceiling_is_derived_from_the_per_message_caps() {
         guest_to_owner_envelope_limit(WireLimits::default()),
         MAX_GUEST_TO_OWNER_ENVELOPE_BYTES as usize
     );
-    assert!(MAX_GUEST_TO_OWNER_ENVELOPE_BYTES > MAX_TXN_BYTES);
-    assert!(MAX_GUEST_TO_OWNER_ENVELOPE_BYTES < MAX_ENVELOPE_BYTES);
+    const {
+        assert!(MAX_GUEST_TO_OWNER_ENVELOPE_BYTES > MAX_TXN_BYTES);
+        assert!(MAX_GUEST_TO_OWNER_ENVELOPE_BYTES < MAX_ENVELOPE_BYTES);
+    }
     let tight = WireLimits {
         max_envelope_bytes: 4_096,
         ..WireLimits::default()
