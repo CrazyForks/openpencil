@@ -1,0 +1,158 @@
+//! Fail-closed handling for setup and network failures, plus the
+//! failure-to-notice mappings. Split off `collab_runtime/effects.rs` at the
+//! 800-line cap; pure code motion.
+
+use op_editor_core::{
+    CollabConnectErrorUi, CollabConnectionPhase, CollabNoticeKind, CollabRejectUiCode,
+};
+use op_host_native::WidgetHostNative;
+
+use super::actor::{set_guest_ui, EditorActor};
+use super::types::{CollabRuntimeFailure, CollabStatusEvent};
+use super::DesktopCollabRuntime;
+
+impl DesktopCollabRuntime {
+    pub(super) fn fail(&mut self, host: &mut WidgetHostNative, failure: CollabRuntimeFailure) {
+        if let Some(notice) = setup_failure_notice(failure) {
+            self.push_status(CollabStatusEvent::Failed(failure));
+            if self.actor.is_none() {
+                self.retire_workers();
+                self.pending_guest = None;
+                host.disable_collaboration_ids();
+                host.editor_state_mut()
+                    .editor_ui
+                    .collab
+                    .set_phase(CollabConnectionPhase::Idle);
+            }
+            self.set_notice(host, notice);
+            return;
+        }
+        if matches!(
+            failure,
+            CollabRuntimeFailure::ResourceLimit | CollabRuntimeFailure::Transport
+        ) {
+            self.fail_network(host, failure);
+            return;
+        }
+        let notice = if failure.is_authentication() {
+            CollabNoticeKind::Reject(CollabRejectUiCode::Authentication)
+        } else if failure == CollabRuntimeFailure::ResourceLimit {
+            CollabNoticeKind::Reject(CollabRejectUiCode::ResourceLimit)
+        } else {
+            CollabNoticeKind::Reject(CollabRejectUiCode::Unknown)
+        };
+        self.set_notice(host, notice);
+        self.push_status(CollabStatusEvent::Failed(failure));
+        if matches!(self.actor, Some(EditorActor::Guest(_))) {
+            if let Some(EditorActor::Guest(guest)) = self.actor.as_ref() {
+                set_guest_ui(host, guest, CollabConnectionPhase::Reconnecting);
+            }
+        } else if self.actor.is_none() {
+            self.retire_workers();
+            self.pending_guest = None;
+            host.disable_collaboration_ids();
+            host.editor_state_mut()
+                .editor_ui
+                .collab
+                .set_phase(CollabConnectionPhase::Idle);
+        }
+        host.mark_editor_state_dirty();
+    }
+
+    /// Fail session-wide network errors closed: owners keep the standalone document;
+    /// guests keep confirmed and pending state read-only for an idempotent retry.
+    pub(super) fn fail_network(
+        &mut self,
+        host: &mut WidgetHostNative,
+        failure: CollabRuntimeFailure,
+    ) {
+        self.push_status(CollabStatusEvent::Failed(failure));
+        match self.actor.as_ref() {
+            Some(EditorActor::Owner(_)) => {
+                self.leave(host);
+            }
+            Some(EditorActor::Guest(_)) => {
+                self.retire_workers();
+                self.pending_guest = None;
+                self.transaction_active = false;
+                let mut session_ended = false;
+                if let Some(EditorActor::Guest(guest)) = self.actor.as_mut() {
+                    let ended =
+                        guest.session.core().state() == op_collab::GuestConnectionState::Ended;
+                    let _ = guest.session.disconnect(host);
+                    guest.connection = None;
+                    if ended {
+                        set_guest_ui(host, guest, CollabConnectionPhase::Ended);
+                    } else {
+                        set_guest_ui(host, guest, CollabConnectionPhase::Reconnecting);
+                        self.push_status(CollabStatusEvent::Reconnecting);
+                    }
+                    session_ended = ended;
+                }
+                if session_ended {
+                    self.clear_discarded_stash(host);
+                }
+            }
+            None => {
+                self.retire_workers();
+                self.pending_guest = None;
+                self.transaction_active = false;
+                host.disable_collaboration_ids();
+                host.editor_state_mut()
+                    .editor_ui
+                    .collab
+                    .set_phase(CollabConnectionPhase::Idle);
+            }
+        }
+        self.set_notice(host, disconnect_notice(failure));
+        host.mark_editor_state_dirty();
+    }
+
+    pub(super) fn network_stopped(&mut self, host: &mut WidgetHostNative) {
+        if self.network.is_some() {
+            self.fail_network(host, CollabRuntimeFailure::Transport);
+        }
+    }
+}
+
+pub(super) fn disconnect_notice(failure: CollabRuntimeFailure) -> CollabNoticeKind {
+    match failure {
+        CollabRuntimeFailure::RelayInviteUnavailable => {
+            CollabNoticeKind::Connect(CollabConnectErrorUi::InviteUnavailable)
+        }
+        CollabRuntimeFailure::RelayUnavailable => {
+            CollabNoticeKind::Connect(CollabConnectErrorUi::RelayUnavailable)
+        }
+        CollabRuntimeFailure::RelayRegionUnavailable => {
+            CollabNoticeKind::Connect(CollabConnectErrorUi::RegionUnavailable)
+        }
+        CollabRuntimeFailure::TicketRejected => CollabNoticeKind::TicketExpired,
+        CollabRuntimeFailure::AuthenticationUnavailable => {
+            CollabNoticeKind::Reject(CollabRejectUiCode::Authentication)
+        }
+        CollabRuntimeFailure::ResourceLimit => {
+            CollabNoticeKind::Reject(CollabRejectUiCode::ResourceLimit)
+        }
+        CollabRuntimeFailure::SecureKeyUnavailable
+        | CollabRuntimeFailure::ClockUnavailable
+        | CollabRuntimeFailure::InvalidAddress
+        | CollabRuntimeFailure::InvalidSession
+        | CollabRuntimeFailure::Transport
+        | CollabRuntimeFailure::Protocol => CollabNoticeKind::DisconnectedReadOnly,
+    }
+}
+
+fn setup_failure_notice(failure: CollabRuntimeFailure) -> Option<CollabNoticeKind> {
+    match failure {
+        CollabRuntimeFailure::RelayInviteUnavailable => Some(CollabNoticeKind::Connect(
+            CollabConnectErrorUi::InviteUnavailable,
+        )),
+        CollabRuntimeFailure::RelayUnavailable => Some(CollabNoticeKind::Connect(
+            CollabConnectErrorUi::RelayUnavailable,
+        )),
+        CollabRuntimeFailure::RelayRegionUnavailable => Some(CollabNoticeKind::Connect(
+            CollabConnectErrorUi::RegionUnavailable,
+        )),
+        _ => None,
+    }
+}

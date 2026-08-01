@@ -177,7 +177,7 @@ fn relay_setup_failures_use_connect_notices() {
         ),
     ] {
         assert_eq!(
-            super::super::effects::disconnect_notice(failure),
+            super::super::failure::disconnect_notice(failure),
             CollabNoticeKind::Connect(expected)
         );
     }

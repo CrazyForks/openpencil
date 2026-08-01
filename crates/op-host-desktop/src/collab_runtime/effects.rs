@@ -2,13 +2,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use op_collab::{
-    Bye, ByeReason, CollabMessage, ConnectionKey, EditChanges, GuestEffect, NodeFieldChange,
-    OwnerEffect, ParticipantPresence, PendingCancelReason, Point, Presence, RejectCode,
-    UndoOutcome, UndoResult, Viewport,
+    Bye, ByeReason, CollabMessage, ConnectionKey, GuestEffect, OwnerEffect, ParticipantPresence,
+    Point, Presence, UndoOutcome, UndoResult, Viewport,
 };
 use op_editor_core::{
-    CollabConnectErrorUi, CollabConnectionPhase, CollabDiscardedEditUi, CollabNoticeKind,
-    CollabPendingEditUi, CollabRejectUiCode, DiscoveredCollabEndpoint, RemotePresenceUi,
+    CollabConnectionPhase, CollabNoticeKind, CollabPendingEditUi, CollabRejectUiCode,
+    DiscoveredCollabEndpoint, RemotePresenceUi,
 };
 use op_editor_host_core::collab::{
     GuestEditorOutput, GuestLocalEditResolution, LocalEditResolution, OwnerEditorOutput,
@@ -16,6 +15,7 @@ use op_editor_host_core::collab::{
 use op_host_native::WidgetHostNative;
 
 use super::actor::{set_guest_ui, set_owner_ui, EditorActor, GuestActor, OwnerActor};
+use super::failure::disconnect_notice;
 use super::network::NetworkCommandSendError;
 use super::types::{
     CollabRuntimeError, CollabRuntimeFailure, CollabStatusEvent, DiscoveredEndpoint,
@@ -436,70 +436,6 @@ impl DesktopCollabRuntime {
         }
     }
 
-    /// A pending local edit was rolled back. `AlreadySatisfied` means the
-    /// authoritative history already contains the same values — nothing was
-    /// lost, so no toast. A genuine concurrency loss (property conflict or an
-    /// owner-side precondition failure) stashes the dropped property intent
-    /// for the panel's Reapply action and names it in the toast; every other
-    /// rejection maps to its own notice and clears any older stash, so a
-    /// policy or size rejection never offers to resubmit a forbidden edit.
-    fn observe_pending_cancelled(
-        &mut self,
-        reason: PendingCancelReason,
-        changes: EditChanges,
-        host: &mut WidgetHostNative,
-    ) {
-        let concurrency_loss = matches!(
-            reason,
-            PendingCancelReason::PropertyConflict { .. }
-                | PendingCancelReason::StructuralConflict
-                | PendingCancelReason::Rejected(RejectCode::PreconditionFailed)
-        );
-        let notice = match reason {
-            PendingCancelReason::AlreadySatisfied => return,
-            PendingCancelReason::PropertyConflict { .. }
-            | PendingCancelReason::StructuralConflict
-            | PendingCancelReason::Rejected(RejectCode::PreconditionFailed) => {
-                CollabNoticeKind::Reject(CollabRejectUiCode::Conflict)
-            }
-            PendingCancelReason::Rejected(RejectCode::StaleBase) => {
-                CollabNoticeKind::Reject(CollabRejectUiCode::StaleBase)
-            }
-            PendingCancelReason::Rejected(RejectCode::PermissionDenied) => {
-                CollabNoticeKind::Reject(CollabRejectUiCode::ReadOnly)
-            }
-            PendingCancelReason::Rejected(
-                RejectCode::UnsupportedEdit | RejectCode::InvalidOperation,
-            ) => CollabNoticeKind::Reject(CollabRejectUiCode::Unsupported),
-            PendingCancelReason::Rejected(RejectCode::ResourceLimit) => {
-                CollabNoticeKind::Reject(CollabRejectUiCode::ResourceLimit)
-            }
-            PendingCancelReason::Rejected(
-                RejectCode::ExpiredClientOpId | RejectCode::CounterGap | RejectCode::SessionChanged,
-            ) => CollabNoticeKind::Reject(CollabRejectUiCode::Unknown),
-        };
-        match changes {
-            EditChanges::Property(changes) if concurrency_loss && !changes.is_empty() => {
-                let projection = discarded_edit_projection(&changes, &host.editor_state().doc);
-                self.discarded_property_edit = Some(changes);
-                host.editor_state_mut().editor_ui.collab.discarded_edit = Some(projection);
-                // The stash-bearing notice kind is the only one whose text
-                // names the discarded node/fields.
-                self.set_notice(host, CollabNoticeKind::EditConflictDiscarded);
-                return;
-            }
-            _ => self.clear_discarded_stash(host),
-        }
-        self.set_notice(host, notice);
-    }
-
-    /// Drop the replayable stash together with its display projection so the
-    /// two can never diverge.
-    pub(super) fn clear_discarded_stash(&mut self, host: &mut WidgetHostNative) {
-        self.discarded_property_edit = None;
-        host.editor_state_mut().editor_ui.collab.discarded_edit = None;
-    }
-
     fn observe_undo_result(&self, result: &UndoResult, host: &mut WidgetHostNative) {
         if let Some(notice) = undo_notice(result.outcome, result.details.is_some()) {
             self.set_notice(host, notice);
@@ -526,108 +462,6 @@ impl DesktopCollabRuntime {
             .editor_ui
             .collab
             .queue_presence_update(item);
-    }
-
-    pub(super) fn fail(&mut self, host: &mut WidgetHostNative, failure: CollabRuntimeFailure) {
-        if let Some(notice) = setup_failure_notice(failure) {
-            self.push_status(CollabStatusEvent::Failed(failure));
-            if self.actor.is_none() {
-                self.retire_workers();
-                self.pending_guest = None;
-                host.disable_collaboration_ids();
-                host.editor_state_mut()
-                    .editor_ui
-                    .collab
-                    .set_phase(CollabConnectionPhase::Idle);
-            }
-            self.set_notice(host, notice);
-            return;
-        }
-        if matches!(
-            failure,
-            CollabRuntimeFailure::ResourceLimit | CollabRuntimeFailure::Transport
-        ) {
-            self.fail_network(host, failure);
-            return;
-        }
-        let notice = if failure.is_authentication() {
-            CollabNoticeKind::Reject(CollabRejectUiCode::Authentication)
-        } else if failure == CollabRuntimeFailure::ResourceLimit {
-            CollabNoticeKind::Reject(CollabRejectUiCode::ResourceLimit)
-        } else {
-            CollabNoticeKind::Reject(CollabRejectUiCode::Unknown)
-        };
-        self.set_notice(host, notice);
-        self.push_status(CollabStatusEvent::Failed(failure));
-        if matches!(self.actor, Some(EditorActor::Guest(_))) {
-            if let Some(EditorActor::Guest(guest)) = self.actor.as_ref() {
-                set_guest_ui(host, guest, CollabConnectionPhase::Reconnecting);
-            }
-        } else if self.actor.is_none() {
-            self.retire_workers();
-            self.pending_guest = None;
-            host.disable_collaboration_ids();
-            host.editor_state_mut()
-                .editor_ui
-                .collab
-                .set_phase(CollabConnectionPhase::Idle);
-        }
-        host.mark_editor_state_dirty();
-    }
-
-    /// Fail session-wide network errors closed: owners keep the standalone document;
-    /// guests keep confirmed and pending state read-only for an idempotent retry.
-    pub(super) fn fail_network(
-        &mut self,
-        host: &mut WidgetHostNative,
-        failure: CollabRuntimeFailure,
-    ) {
-        self.push_status(CollabStatusEvent::Failed(failure));
-        match self.actor.as_ref() {
-            Some(EditorActor::Owner(_)) => {
-                self.leave(host);
-            }
-            Some(EditorActor::Guest(_)) => {
-                self.retire_workers();
-                self.pending_guest = None;
-                self.transaction_active = false;
-                let mut session_ended = false;
-                if let Some(EditorActor::Guest(guest)) = self.actor.as_mut() {
-                    let ended =
-                        guest.session.core().state() == op_collab::GuestConnectionState::Ended;
-                    let _ = guest.session.disconnect(host);
-                    guest.connection = None;
-                    if ended {
-                        set_guest_ui(host, guest, CollabConnectionPhase::Ended);
-                    } else {
-                        set_guest_ui(host, guest, CollabConnectionPhase::Reconnecting);
-                        self.push_status(CollabStatusEvent::Reconnecting);
-                    }
-                    session_ended = ended;
-                }
-                if session_ended {
-                    self.clear_discarded_stash(host);
-                }
-            }
-            None => {
-                self.retire_workers();
-                self.pending_guest = None;
-                self.transaction_active = false;
-                host.disable_collaboration_ids();
-                host.editor_state_mut()
-                    .editor_ui
-                    .collab
-                    .set_phase(CollabConnectionPhase::Idle);
-            }
-        }
-        self.set_notice(host, disconnect_notice(failure));
-        host.mark_editor_state_dirty();
-    }
-
-    pub(super) fn network_stopped(&mut self, host: &mut WidgetHostNative) {
-        if self.network.is_some() {
-            self.fail_network(host, CollabRuntimeFailure::Transport);
-        }
     }
 
     pub(super) fn connection_closed(
@@ -790,91 +624,6 @@ pub(super) fn command_send_error(error: NetworkCommandSendError) -> CollabRuntim
     }
 }
 
-/// Bounded display projection of the dropped property changes: the layer
-/// labels of every distinct target node (in change order) plus the
-/// deduplicated field names, so a multi-node edit never attributes one
-/// node's fields to another.
-fn discarded_edit_projection(
-    changes: &[NodeFieldChange],
-    doc: &jian_ops_schema::PenDocument,
-) -> CollabDiscardedEditUi {
-    let mut node_ids: Vec<&str> = Vec::new();
-    for change in changes {
-        if !node_ids.contains(&change.node_id.as_str()) {
-            node_ids.push(change.node_id.as_str());
-        }
-    }
-    let labels = node_ids
-        .iter()
-        .map(|node_id| node_display_label(doc, node_id))
-        .collect::<Vec<_>>()
-        .join(", ");
-    CollabDiscardedEditUi::bounded(
-        labels,
-        changes
-            .iter()
-            .map(|change| change.field.wire_name().to_string()),
-    )
-}
-
-/// Layer-panel label rules: authored node name, else the id as a last resort.
-fn node_display_label(doc: &jian_ops_schema::PenDocument, node_id: &str) -> String {
-    use op_editor_core::PenNodeExt as _;
-
-    let id = op_editor_core::NodeId::new(node_id);
-    let node = doc
-        .pages
-        .as_ref()
-        .into_iter()
-        .flatten()
-        .find_map(|page| op_editor_core::walkers::find_node(&page.children, &id))
-        .or_else(|| op_editor_core::walkers::find_node(&doc.children, &id));
-    node.and_then(|node| node.base().name.clone())
-        .unwrap_or_else(|| node_id.to_owned())
-}
-
-pub(super) fn disconnect_notice(failure: CollabRuntimeFailure) -> CollabNoticeKind {
-    match failure {
-        CollabRuntimeFailure::RelayInviteUnavailable => {
-            CollabNoticeKind::Connect(CollabConnectErrorUi::InviteUnavailable)
-        }
-        CollabRuntimeFailure::RelayUnavailable => {
-            CollabNoticeKind::Connect(CollabConnectErrorUi::RelayUnavailable)
-        }
-        CollabRuntimeFailure::RelayRegionUnavailable => {
-            CollabNoticeKind::Connect(CollabConnectErrorUi::RegionUnavailable)
-        }
-        CollabRuntimeFailure::TicketRejected => CollabNoticeKind::TicketExpired,
-        CollabRuntimeFailure::AuthenticationUnavailable => {
-            CollabNoticeKind::Reject(CollabRejectUiCode::Authentication)
-        }
-        CollabRuntimeFailure::ResourceLimit => {
-            CollabNoticeKind::Reject(CollabRejectUiCode::ResourceLimit)
-        }
-        CollabRuntimeFailure::SecureKeyUnavailable
-        | CollabRuntimeFailure::ClockUnavailable
-        | CollabRuntimeFailure::InvalidAddress
-        | CollabRuntimeFailure::InvalidSession
-        | CollabRuntimeFailure::Transport
-        | CollabRuntimeFailure::Protocol => CollabNoticeKind::DisconnectedReadOnly,
-    }
-}
-
-fn setup_failure_notice(failure: CollabRuntimeFailure) -> Option<CollabNoticeKind> {
-    match failure {
-        CollabRuntimeFailure::RelayInviteUnavailable => Some(CollabNoticeKind::Connect(
-            CollabConnectErrorUi::InviteUnavailable,
-        )),
-        CollabRuntimeFailure::RelayUnavailable => Some(CollabNoticeKind::Connect(
-            CollabConnectErrorUi::RelayUnavailable,
-        )),
-        CollabRuntimeFailure::RelayRegionUnavailable => Some(CollabNoticeKind::Connect(
-            CollabConnectErrorUi::RegionUnavailable,
-        )),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -894,36 +643,6 @@ mod tests {
             undo_notice(UndoOutcome::Rejected, false),
             Some(CollabNoticeKind::UndoConflict)
         );
-    }
-
-    #[test]
-    fn discarded_projection_labels_every_distinct_node() {
-        let doc: jian_ops_schema::PenDocument = serde_json::from_value(serde_json::json!({
-            "version": "1.0",
-            "children": [
-                {"type": "rectangle", "id": "a", "name": "Alpha", "x": 0, "y": 0},
-                {"type": "rectangle", "id": "b", "x": 0, "y": 0}
-            ]
-        }))
-        .unwrap();
-        let change = |node_id: &str, field: op_collab::SupportedNodeField| NodeFieldChange {
-            page: op_collab::PageRef::DocumentRoot,
-            node_id: node_id.to_owned(),
-            field,
-            before: op_collab::FieldValue::Missing,
-            desired: op_collab::FieldValue::Value(serde_json::json!(1.0)),
-        };
-        let projection = discarded_edit_projection(
-            &[
-                change("a", op_collab::SupportedNodeField::X),
-                change("b", op_collab::SupportedNodeField::Y),
-                change("a", op_collab::SupportedNodeField::X),
-            ],
-            &doc,
-        );
-        // Named node uses its layer name; a nameless node falls back to id.
-        assert_eq!(projection.node_label, "Alpha, b");
-        assert_eq!(projection.fields, vec!["x".to_string(), "y".to_string()]);
     }
 
     #[test]

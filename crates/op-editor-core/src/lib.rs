@@ -32,6 +32,7 @@ pub mod clipboard;
 pub mod codegen;
 pub mod collab_admission_ui;
 pub mod collab_gate;
+pub mod collab_notice_ui;
 pub mod collab_panel_hover;
 pub mod collab_public_ui;
 mod collab_ui_debug;
