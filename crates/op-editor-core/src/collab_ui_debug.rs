@@ -10,9 +10,8 @@ impl fmt::Debug for CollabPanelState {
             .debug_struct("CollabPanelState")
             .field("open", &self.open)
             .field("view", &self.view)
-            .field("join_address", &"[REDACTED]")
+            .field("join_input", &"[REDACTED]")
             .field("join_address_focused", &self.join_address_focused)
-            .field("join_address_selected", &self.join_address_selected)
             .field("hover", &self.hover)
             .field("discovered", &self.discovered)
             .finish()
@@ -58,10 +57,8 @@ mod tests {
 
     #[test]
     fn join_address_is_redacted_from_debug() {
-        let panel = CollabPanelState {
-            join_address: "opc1_secret-route-capability".to_owned(),
-            ..CollabPanelState::default()
-        };
+        let mut panel = CollabPanelState::default();
+        panel.join_input.set_text("opc1_secret-route-capability");
         let debug = format!("{panel:?}");
         assert!(debug.contains("[REDACTED]"));
         assert!(!debug.contains("secret-route-capability"));

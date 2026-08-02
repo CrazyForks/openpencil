@@ -25,6 +25,7 @@ impl WidgetHost {
             let changed = op_editor_ui::widgets::collab_ui::join_address_text(
                 &mut self.editor_state.editor_ui,
                 c,
+                self.now_ms,
             )
             .unwrap_or(false);
             if changed {
@@ -130,6 +131,7 @@ impl WidgetHost {
         if self.editor_state.editor_ui.collab_join_input_active() {
             let changed = op_editor_ui::widgets::collab_ui::join_address_backspace(
                 &mut self.editor_state.editor_ui,
+                self.now_ms,
             )
             .unwrap_or(false);
             if changed {
@@ -338,25 +340,19 @@ impl WidgetHost {
         if self.apply_image_panel_delete() {
             return true;
         }
-        // A whole-field selection in the join input makes Delete a clear.
-        // Without one, `delete_owned_by_chrome_input` below still swallows
-        // the key before it can reach the canvas selection.
-        if self.editor_state.editor_ui.collab_join_input_active()
-            && self
-                .editor_state
-                .editor_ui
-                .collab
-                .panel
-                .join_address_selected
-        {
-            let changed = op_editor_ui::widgets::collab_ui::join_address_backspace(
+        // Forward deletion in the join input. A no-op falls through to
+        // `delete_owned_by_chrome_input`, which still swallows the key
+        // before it can reach the canvas selection.
+        if self.editor_state.editor_ui.collab_join_input_active() {
+            let changed = op_editor_ui::widgets::collab_ui::join_address_delete_forward(
                 &mut self.editor_state.editor_ui,
+                self.now_ms,
             )
             .unwrap_or(false);
             if changed {
                 self.mark_dirty();
+                return true;
             }
-            return true;
         }
         // The open font picker owns Delete. Its search draft handles
         // Backspace separately; forward-delete must never reach the canvas

@@ -183,6 +183,7 @@ impl WidgetHostNative {
         if self.editor_state.editor_ui.collab_join_input_active() {
             if op_editor_ui::widgets::collab_ui::join_address_select_all(
                 &mut self.editor_state.editor_ui,
+                self.now_ms,
             ) == Some(true)
             {
                 self.mark_dirty();

@@ -80,10 +80,18 @@ pub struct CollabPanel<'a> {
     ui: &'a EditorUiState,
     model: CollabPanelModel,
     theme: Theme,
+    /// Frame clock for the join field's caret blink. Hit-test-only callers
+    /// construct with 0 — geometry never depends on it.
+    now_ms: u64,
 }
 
 impl<'a> CollabPanel<'a> {
     pub fn for_editor_ui(ui: &'a EditorUiState) -> Option<Self> {
+        Self::for_editor_ui_at(ui, 0)
+    }
+
+    /// Build with a frame clock so the join field's caret blinks.
+    pub fn for_editor_ui_at(ui: &'a EditorUiState, now_ms: u64) -> Option<Self> {
         if !ui.collab.panel.open {
             return None;
         }
@@ -92,6 +100,7 @@ impl<'a> CollabPanel<'a> {
             ui,
             model: CollabPanelModel::for_editor_ui(ui),
             theme: theme_for(ui),
+            now_ms,
         })
     }
 }
@@ -219,7 +228,7 @@ impl Widget for CollabPanel<'_> {
                 self.paint_owner_confirmation(cx, rect, body_top, confirm);
             }
             CollabPanelScreen::Join {
-                address,
+                address: _,
                 discovered,
             } => {
                 paint_text(
@@ -253,42 +262,30 @@ impl Widget for CollabPanel<'_> {
                     1.0,
                 );
                 let clear = self.clear_join_rect(rect, body_top + 22.0);
-                let text_width = if clear.is_some() {
-                    input.size.x - 18.0 - CLEAR_BUTTON_SIZE
+                let text_inset = if clear.is_some() {
+                    CLEAR_BUTTON_SIZE + 5.0
                 } else {
-                    input.size.x - 18.0
+                    0.0
                 };
-                let shown = if address.is_empty() {
-                    op_i18n::translate(self.ui.locale, "collab.join.codePlaceholder").to_string()
-                } else {
-                    crate::util::ellipsize_to_width(address, text_width, |text| {
-                        cx.backend.measure_text(text, 12.0)
-                    })
-                };
-                if !address.is_empty()
-                    && self.ui.collab.panel.join_address_focused
-                    && self.ui.collab.panel.join_address_selected
-                {
-                    let selection = Rect::xywh(
-                        input.origin.x + 6.0,
-                        input.origin.y + 6.0,
-                        cx.backend.measure_text(&shown, 12.0).min(text_width) + 6.0,
-                        input.size.y - 12.0,
-                    );
-                    cx.backend
-                        .fill_round_rect(selection, 4.0, self.theme.ring.with_alpha(0.35));
-                }
-                paint_text(
+                // Value, placeholder, selection highlight, and blinking caret
+                // all render through the unified text-input view.
+                let view_rect = Rect::xywh(
+                    input.origin.x,
+                    input.origin.y,
+                    input.size.x - text_inset,
+                    input.size.y,
+                );
+                crate::widgets::property_panel_text_input::paint_text_input_view(
                     cx,
-                    &shown,
+                    &self.theme,
+                    &self.ui.collab.panel.join_input,
+                    view_rect,
                     12.0,
-                    if address.is_empty() {
-                        self.theme.muted_foreground
-                    } else {
-                        self.theme.foreground
-                    },
-                    Point2D::new(input.origin.x + 9.0, input.origin.y + 21.0),
-                    400,
+                    9.0,
+                    input.origin.y + 21.0,
+                    self.now_ms,
+                    op_i18n::translate(self.ui.locale, "collab.join.codePlaceholder"),
+                    self.ui.collab.panel.join_address_focused,
                 );
                 if let Some(clear) = clear {
                     if self.ui.collab.panel.hover == Some(CollabPanelHover::ClearJoinAddress) {

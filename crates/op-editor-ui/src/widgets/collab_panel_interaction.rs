@@ -310,7 +310,7 @@ impl CollabPanel<'_> {
     /// Clear (×) affordance inside the join field. `None` while the field is
     /// empty so an idle input never paints or hit-tests a dead button.
     pub(super) fn clear_join_rect(&self, panel: Rect, y: f32) -> Option<Rect> {
-        if self.ui.collab.panel.join_address.is_empty() {
+        if self.ui.collab.panel.join_input.text().is_empty() {
             return None;
         }
         let input = self.address_rect(panel, y);

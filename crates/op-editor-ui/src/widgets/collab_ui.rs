@@ -346,7 +346,7 @@ fn panel_session_or_pre_auth(
                 || collab.phase == CollabConnectionPhase::Discovering
             {
                 let mut actions = Vec::new();
-                let endpoint = collab.panel.join_address.trim();
+                let endpoint = collab.panel.join_input.text().trim();
                 if !endpoint.is_empty() {
                     actions.push(CollabPanelActionModel {
                         action: CollabUiAction::JoinAddress {
@@ -366,7 +366,7 @@ fn panel_session_or_pre_auth(
                 actions.push(action_model(ui, CollabUiAction::Cancel, false));
                 (
                     CollabPanelScreen::Join {
-                        address: collab.panel.join_address.clone(),
+                        address: collab.panel.join_input.text().to_owned(),
                         discovered: collab.panel.discovered.as_ref().clone(),
                     },
                     actions,
@@ -464,20 +464,20 @@ pub fn apply_panel_hit(
         CollabPanelHit::Close => {
             ui.collab.panel.open = false;
             ui.collab.panel.join_address_focused = false;
-            ui.collab.panel.join_address_selected = false;
             ui.collab.panel.hover = None;
             true
         }
         CollabPanelHit::FocusJoinAddress => {
-            // A plain click focuses with a collapsed caret; it never keeps a
-            // stale whole-field selection alive.
+            // A plain click focuses with a collapsed caret at the end; it
+            // never keeps a stale whole-field selection alive.
             ui.collab.panel.join_address_focused = true;
-            ui.collab.panel.join_address_selected = false;
+            let input = &mut ui.collab.panel.join_input;
+            let end = input.text().len();
+            input.set_caret(end, 0);
             true
         }
         CollabPanelHit::ClearJoinAddress => {
-            ui.collab.panel.join_address.clear();
-            ui.collab.panel.join_address_selected = false;
+            ui.collab.panel.join_input.set_text("");
             ui.collab.panel.join_address_focused = true;
             ui.collab.panel.hover = None;
             true
@@ -490,7 +490,6 @@ pub fn apply_panel_hit(
             ui.login_modal_hover = None;
             ui.collab.panel.open = false;
             ui.collab.panel.join_address_focused = false;
-            ui.collab.panel.join_address_selected = false;
             ui.collab.panel.hover = None;
             true
         }
@@ -500,28 +499,22 @@ pub fn apply_panel_hit(
         CollabPanelHit::CopyInvite(_) => false,
         CollabPanelHit::Inside => {
             ui.collab.panel.join_address_focused = false;
-            ui.collab.panel.join_address_selected = false;
             true
         }
         CollabPanelHit::Action(CollabUiAction::OpenCreate) => {
             ui.collab.panel.view = op_editor_core::CollabPanelView::Create;
             ui.collab.panel.join_address_focused = false;
-            ui.collab.panel.join_address_selected = false;
             ui.collab.panel.hover = None;
             true
         }
         CollabPanelHit::Action(CollabUiAction::OpenJoin) => {
             ui.collab.panel.view = op_editor_core::CollabPanelView::Join;
             ui.collab.panel.join_address_focused = true;
-            ui.collab.panel.join_address_selected = false;
             ui.collab.panel.hover = None;
             true
         }
         CollabPanelHit::Action(CollabUiAction::BeginDiscovery) => {
             ui.collab.panel.view = op_editor_core::CollabPanelView::Join;
-            // Find-nearby keeps the field focused; a surviving whole-field
-            // selection would make the next keystroke destructive.
-            ui.collab.panel.join_address_selected = false;
             request_action(ui, CollabUiAction::BeginDiscovery)
         }
         CollabPanelHit::Action(CollabUiAction::Cancel)
@@ -529,13 +522,11 @@ pub fn apply_panel_hit(
         {
             ui.collab.panel.view = op_editor_core::CollabPanelView::Home;
             ui.collab.panel.join_address_focused = false;
-            ui.collab.panel.join_address_selected = false;
             ui.collab.panel.hover = None;
             true
         }
         CollabPanelHit::Action(action) => {
             ui.collab.panel.join_address_focused = false;
-            ui.collab.panel.join_address_selected = false;
             request_action(ui, action)
         }
     }
@@ -543,27 +534,25 @@ pub fn apply_panel_hit(
 
 /// Typed-character routing for the invite-or-`host:port` field. `None` means
 /// the collaboration input is not focused; `Some` means it owns the key.
-pub fn join_address_text(ui: &mut EditorUiState, character: char) -> Option<bool> {
+pub fn join_address_text(ui: &mut EditorUiState, character: char, now_ms: u64) -> Option<bool> {
     if !ui.collab.panel.join_address_focused {
         return None;
     }
-    if character.is_control() {
+    if character.is_control() || !join_address_char_allowed(character) {
         return Some(false);
     }
-    if !join_address_char_allowed(character) {
+    let input = &mut ui.collab.panel.join_input;
+    // The cap applies to the post-edit length: typing over a selection must
+    // still be able to replace a full field.
+    let selected = input
+        .highlight_range()
+        .map(|(start, end)| end - start)
+        .unwrap_or(0);
+    if input.text().chars().count() - selected >= MAX_JOIN_TARGET_CHARS {
         return Some(false);
     }
-    // A whole-field selection replaces on type, like every range-selection
-    // input: the first accepted character clears the old value. The length
-    // cap below deliberately runs AFTER the take — a full field must still
-    // be replaceable by typing over the selection.
-    if std::mem::take(&mut ui.collab.panel.join_address_selected) {
-        ui.collab.panel.join_address.clear();
-    }
-    if ui.collab.panel.join_address.chars().count() >= MAX_JOIN_TARGET_CHARS {
-        return Some(false);
-    }
-    ui.collab.panel.join_address.push(character);
+    let mut buffer = [0_u8; 4];
+    input.insert_str(character.encode_utf8(&mut buffer), now_ms);
     ui.collab.panel.hover = None;
     Some(true)
 }
@@ -575,19 +564,29 @@ fn join_address_char_allowed(character: char) -> bool {
     character.is_ascii_alphanumeric() || matches!(character, '.' | ':' | '-' | '[' | ']' | '_')
 }
 
-pub fn join_address_backspace(ui: &mut EditorUiState) -> Option<bool> {
+pub fn join_address_backspace(ui: &mut EditorUiState, now_ms: u64) -> Option<bool> {
     if !ui.collab.panel.join_address_focused {
         return None;
     }
-    if std::mem::take(&mut ui.collab.panel.join_address_selected) {
-        let changed = !ui.collab.panel.join_address.is_empty();
-        ui.collab.panel.join_address.clear();
-        if changed {
-            ui.collab.panel.hover = None;
-        }
-        return Some(changed);
+    let input = &mut ui.collab.panel.join_input;
+    let before = input.text().to_owned();
+    input.backspace(now_ms);
+    let changed = input.text() != before;
+    if changed {
+        ui.collab.panel.hover = None;
     }
-    let changed = ui.collab.panel.join_address.pop().is_some();
+    Some(changed)
+}
+
+/// Forward deletion (the Delete key) on the focused join field.
+pub fn join_address_delete_forward(ui: &mut EditorUiState, now_ms: u64) -> Option<bool> {
+    if !ui.collab.panel.join_address_focused {
+        return None;
+    }
+    let input = &mut ui.collab.panel.join_input;
+    let before = input.text().to_owned();
+    input.delete_forward(now_ms);
+    let changed = input.text() != before;
     if changed {
         ui.collab.panel.hover = None;
     }
@@ -596,19 +595,23 @@ pub fn join_address_backspace(ui: &mut EditorUiState) -> Option<bool> {
 
 /// Cmd/Ctrl+A on the focused join field — whole-field selection. `None`
 /// means the field is not focused and the chord belongs to someone else.
-pub fn join_address_select_all(ui: &mut EditorUiState) -> Option<bool> {
+pub fn join_address_select_all(ui: &mut EditorUiState, now_ms: u64) -> Option<bool> {
     if !ui.collab.panel.join_address_focused {
         return None;
     }
-    let selectable = !ui.collab.panel.join_address.is_empty();
-    ui.collab.panel.join_address_selected = selectable;
+    let input = &mut ui.collab.panel.join_input;
+    let selectable = !input.text().is_empty();
+    if selectable {
+        input.select_all();
+        input.touch(now_ms);
+    }
     Some(selectable)
 }
 
 /// Clipboard paste into the focused join field. Replaces the whole field —
 /// an invite code is pasted as a unit, and append semantics silently
 /// produced corrupt old+new concatenations. `None` means not focused.
-pub fn join_address_paste(ui: &mut EditorUiState, text: &str) -> Option<bool> {
+pub fn join_address_paste(ui: &mut EditorUiState, text: &str, now_ms: u64) -> Option<bool> {
     if !ui.collab.panel.join_address_focused {
         return None;
     }
@@ -620,8 +623,9 @@ pub fn join_address_paste(ui: &mut EditorUiState, text: &str) -> Option<bool> {
     if sanitized.is_empty() {
         return Some(false);
     }
-    ui.collab.panel.join_address = sanitized;
-    ui.collab.panel.join_address_selected = false;
+    let input = &mut ui.collab.panel.join_input;
+    input.set_text(sanitized);
+    input.touch(now_ms);
     ui.collab.panel.hover = None;
     Some(true)
 }
@@ -630,7 +634,7 @@ pub fn join_address_submit(ui: &mut EditorUiState) -> Option<bool> {
     if !ui.collab.panel.join_address_focused {
         return None;
     }
-    let endpoint = ui.collab.panel.join_address.trim();
+    let endpoint = ui.collab.panel.join_input.text().trim();
     if endpoint.is_empty() {
         return Some(false);
     }
@@ -638,7 +642,6 @@ pub fn join_address_submit(ui: &mut EditorUiState) -> Option<bool> {
         endpoint: endpoint.to_string(),
     };
     ui.collab.panel.join_address_focused = false;
-    ui.collab.panel.join_address_selected = false;
     ui.collab.panel.hover = None;
     Some(request_action(ui, action))
 }

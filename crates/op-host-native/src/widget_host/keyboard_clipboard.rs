@@ -38,6 +38,7 @@ impl WidgetHostNative {
             let changed = op_editor_ui::widgets::collab_ui::join_address_paste(
                 &mut self.editor_state.editor_ui,
                 text,
+                self.now_ms,
             )
             .unwrap_or(false);
             if changed {

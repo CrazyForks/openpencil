@@ -21,7 +21,7 @@ fn focus_join(host: &mut WidgetHostNative) {
     collab.panel.open = true;
     collab.panel.view = CollabPanelView::Join;
     collab.panel.join_address_focused = true;
-    collab.panel.join_address.clear();
+    collab.panel.join_input.set_text("");
 }
 
 fn host_with_selected_node() -> WidgetHostNative {
@@ -52,17 +52,17 @@ fn join_field_owns_native_text_ime_paste_backspace_and_enter() {
     assert!(host.apply_input_paste("opc1_Ab-9\n"));
     assert!(host.apply_ime_commit("Z"));
     assert_eq!(
-        host.editor_state().editor_ui.collab.panel.join_address,
+        host.editor_state().editor_ui.collab.panel.join_input.text(),
         "opc1_Ab-9Z"
     );
     assert!(host.apply_text('/'), "rejected input is still consumed");
     assert_eq!(
-        host.editor_state().editor_ui.collab.panel.join_address,
+        host.editor_state().editor_ui.collab.panel.join_input.text(),
         "opc1_Ab-9Z"
     );
     assert!(host.apply_backspace());
     assert_eq!(
-        host.editor_state().editor_ui.collab.panel.join_address,
+        host.editor_state().editor_ui.collab.panel.join_input.text(),
         "opc1_Ab-9"
     );
 
@@ -269,20 +269,21 @@ fn native_join_paste_replaces_and_select_all_clears() {
     assert!(host.apply_input_paste("opc1_first-code"));
     assert!(host.apply_input_paste("opc1_second-code"));
     assert_eq!(
-        host.editor_state().editor_ui.collab.panel.join_address,
+        host.editor_state().editor_ui.collab.panel.join_input.text(),
         "opc1_second-code",
         "a pasted invite replaces the stale one instead of appending"
     );
 
     // Cmd/Ctrl+A owns the chord and selects the whole field...
     assert!(host.apply_select_all());
-    assert!(
-        host.editor_state()
-            .editor_ui
-            .collab
-            .panel
-            .join_address_selected
-    );
+    assert!(host
+        .editor_state()
+        .editor_ui
+        .collab
+        .panel
+        .join_input
+        .highlight_range()
+        .is_some());
     // ...so one Backspace clears it.
     assert!(host.apply_backspace());
     assert!(host
@@ -290,7 +291,8 @@ fn native_join_paste_replaces_and_select_all_clears() {
         .editor_ui
         .collab
         .panel
-        .join_address
+        .join_input
+        .text()
         .is_empty());
 }
 
@@ -298,12 +300,11 @@ fn native_join_paste_replaces_and_select_all_clears() {
 fn native_join_delete_clears_selection_and_never_deletes_nodes() {
     let mut host = host_with_selected_node();
     let before = host.editor_state().active_children().len();
-    host.editor_state_mut().editor_ui.collab.panel.join_address = "opc1_code".into();
-    host.editor_state_mut()
-        .editor_ui
-        .collab
-        .panel
-        .join_address_selected = true;
+    {
+        let input = &mut host.editor_state_mut().editor_ui.collab.panel.join_input;
+        input.set_text("opc1_code");
+        input.select_all();
+    }
 
     assert!(host.apply_delete());
     assert!(host
@@ -311,7 +312,8 @@ fn native_join_delete_clears_selection_and_never_deletes_nodes() {
         .editor_ui
         .collab
         .panel
-        .join_address
+        .join_input
+        .text()
         .is_empty());
     // Delete with an empty, unselected field is still swallowed.
     assert!(!host.apply_delete());

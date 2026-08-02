@@ -162,7 +162,7 @@ fn join_controls_hover_only_when_they_are_interactive() {
     ui.collab.availability = CollabAvailability::Ready;
     ui.collab.panel.open = true;
     ui.collab.panel.view = CollabPanelView::Join;
-    ui.collab.panel.join_address = "opc1_public-invite".into();
+    ui.collab.panel.join_input.set_text("opc1_public-invite");
     ui.collab.panel.discovered = Arc::new(vec![
         DiscoveredCollabEndpoint {
             discovery_id: "compatible".into(),
@@ -527,7 +527,7 @@ fn height_clamped_body_paint_is_clipped_above_action_row() {
     ui.collab.availability = CollabAvailability::Ready;
     ui.collab.panel.open = true;
     ui.collab.panel.view = CollabPanelView::Join;
-    ui.collab.panel.join_address = "198.51.100.42:443".into();
+    ui.collab.panel.join_input.set_text("198.51.100.42:443");
     let panel = CollabPanel::for_editor_ui(&ui).unwrap();
     let rect = panel.rect_at(
         Rect::xywh(600.0, 8.0, 100.0, 26.0),
@@ -720,7 +720,7 @@ fn join_clear_button_wins_inside_the_input_and_needs_content() {
     ui.collab.availability = CollabAvailability::Ready;
     ui.collab.panel.open = true;
     ui.collab.panel.view = CollabPanelView::Join;
-    ui.collab.panel.join_address = "opc1_public-invite".into();
+    ui.collab.panel.join_input.set_text("opc1_public-invite");
 
     let panel = CollabPanel::for_editor_ui(&ui).unwrap();
     let rect = panel.rect_at(Rect::xywh(600.0, 8.0, 100.0, 26.0), viewport());

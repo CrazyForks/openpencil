@@ -340,9 +340,10 @@ impl WidgetHost {
         // Shared collaboration popover. Web builds normally keep the
         // capability unavailable for M1, but the real surface is present for
         // future satellite hosts and never reaches native transport APIs.
-        if let Some(panel) =
-            op_editor_ui::widgets::CollabPanel::for_editor_ui(&self.editor_state.editor_ui)
-        {
+        if let Some(panel) = op_editor_ui::widgets::CollabPanel::for_editor_ui_at(
+            &self.editor_state.editor_ui,
+            self.now_ms,
+        ) {
             let top_bar =
                 op_editor_ui::widgets::TopBar::for_editor_ui(&self.editor_state.editor_ui)
                     .with_traffic_controls(false);

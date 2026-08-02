@@ -82,7 +82,7 @@ fn join_model_exposes_only_discovery_endpoint_data() {
     let mut ui = EditorUiState::default();
     ui.collab.availability = CollabAvailability::Ready;
     ui.collab.panel.view = CollabPanelView::Join;
-    ui.collab.panel.join_address = "10.0.0.2:43120".to_string();
+    ui.collab.panel.join_input.set_text("10.0.0.2:43120");
     ui.collab.panel.discovered = std::sync::Arc::new(vec![DiscoveredCollabEndpoint {
         discovery_id: "opaque-1".to_string(),
         endpoint: "10.0.0.3:43120".to_string(),

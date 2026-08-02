@@ -21,7 +21,7 @@ fn focus_join(host: &mut WidgetHost) {
     collab.panel.open = true;
     collab.panel.view = CollabPanelView::Join;
     collab.panel.join_address_focused = true;
-    collab.panel.join_address.clear();
+    collab.panel.join_input.set_text("");
 }
 
 fn host_with_selected_node() -> WidgetHost {
@@ -51,17 +51,17 @@ fn join_field_owns_web_text_ime_paste_backspace_and_enter() {
     let ime = crate::event::ime::composition_end("Z".to_string());
     assert!(host.apply_ime(&ime));
     assert_eq!(
-        host.editor_state.editor_ui.collab.panel.join_address,
+        host.editor_state.editor_ui.collab.panel.join_input.text(),
         "opc1_Ab-9Z"
     );
     assert!(host.apply_text('/'), "rejected input is still consumed");
     assert_eq!(
-        host.editor_state.editor_ui.collab.panel.join_address,
+        host.editor_state.editor_ui.collab.panel.join_input.text(),
         "opc1_Ab-9Z"
     );
     assert!(host.apply_backspace());
     assert_eq!(
-        host.editor_state.editor_ui.collab.panel.join_address,
+        host.editor_state.editor_ui.collab.panel.join_input.text(),
         "opc1_Ab-9"
     );
 
@@ -258,7 +258,8 @@ fn web_join_clipboard_replaces_and_select_all_clears() {
     assert!(host.apply_clipboard_text("opc1_first-code"));
     assert!(host.apply_clipboard_text("opc1_second-code"));
     assert_eq!(
-        host.editor_state.editor_ui.collab.panel.join_address, "opc1_second-code",
+        host.editor_state.editor_ui.collab.panel.join_input.text(),
+        "opc1_second-code",
         "a pasted invite replaces the stale one instead of appending"
     );
 
@@ -266,24 +267,26 @@ fn web_join_clipboard_replaces_and_select_all_clears() {
     let ime = crate::event::ime::composition_end("Z".to_string());
     assert!(host.apply_ime(&ime));
     assert_eq!(
-        host.editor_state.editor_ui.collab.panel.join_address,
+        host.editor_state.editor_ui.collab.panel.join_input.text(),
         "opc1_second-codeZ"
     );
 
     assert!(host.apply_select_all());
-    assert!(
-        host.editor_state
-            .editor_ui
-            .collab
-            .panel
-            .join_address_selected
-    );
+    assert!(host
+        .editor_state
+        .editor_ui
+        .collab
+        .panel
+        .join_input
+        .highlight_range()
+        .is_some());
     assert!(host.apply_backspace());
     assert!(host
         .editor_state
         .editor_ui
         .collab
         .panel
-        .join_address
+        .join_input
+        .text()
         .is_empty());
 }

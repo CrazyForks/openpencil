@@ -106,15 +106,14 @@ pub struct DiscoveredCollabEndpoint {
     pub compatible: bool,
 }
 
-#[derive(Clone, PartialEq, Eq, Default)]
+#[derive(Clone, PartialEq, Default)]
 pub struct CollabPanelState {
     pub open: bool,
     pub view: CollabPanelView,
-    pub join_address: String,
+    /// The invite-or-`host:port` field, on the unified single-line input
+    /// component (caret, blink, selection, click-to-position all shared).
+    pub join_input: jian_core::text_input::TextInputState,
     pub join_address_focused: bool,
-    /// Whole-field selection for the plain-string join field (Cmd/Ctrl+A).
-    /// The next typed character or Backspace replaces/clears the field.
-    pub join_address_selected: bool,
     pub hover: Option<CollabPanelHover>,
     pub discovered: Arc<Vec<DiscoveredCollabEndpoint>>,
 }

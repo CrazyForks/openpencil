@@ -503,9 +503,10 @@ impl WidgetHostNative {
         // Collaboration popover — a real shared widget anchored to the
         // collaboration status chip. It consumes only sanitized UI state;
         // the native session actor drains queued actions separately.
-        if let Some(panel) =
-            op_editor_ui::widgets::CollabPanel::for_editor_ui(&self.editor_state.editor_ui)
-        {
+        if let Some(panel) = op_editor_ui::widgets::CollabPanel::for_editor_ui_at(
+            &self.editor_state.editor_ui,
+            self.now_ms,
+        ) {
             let anchor = top_bar.collaboration_chip_rect_estimated(top_bar_rect);
             let panel_rect = panel.rect_at(
                 anchor,
