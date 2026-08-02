@@ -26,6 +26,9 @@ use super::relay_bootstrap::{
 };
 use super::types::{CollabRuntimeError, CollabRuntimeFailure};
 
+mod guest_runtime;
+pub(in crate::collab_runtime) use guest_runtime::report_secure_transport_failure;
+
 const RELAY_HOME_REGION_ENV: &str = "OPENPENCIL_COLLAB_RELAY_HOME_REGION";
 #[cfg(any(test, debug_assertions))]
 const RELAY_DEV_UNSIGNED_ENV: &str = "OPENPENCIL_COLLAB_RELAY_DEV_UNSIGNED";
@@ -322,95 +325,6 @@ pub(super) struct GuestRelayRuntime {
     expected_discovery_id: String,
     expected_remote_static: [u8; 32],
     bridge: RelayGuestBridge,
-}
-
-impl GuestRelayRuntime {
-    pub(super) fn start(
-        request: &RelayGuestRequest,
-        key: std::sync::Arc<DeviceStaticKey>,
-        local: std::sync::Arc<std::sync::RwLock<LocalAdmission>>,
-    ) -> Result<Self, CollabRuntimeFailure> {
-        // Resolve and verify the invite on the guest network worker. The UI
-        // only parses enough of the bounded invite to select its claimed
-        // region and render status.
-        let bootstrap = request.provider.load()?;
-        let (invite, home_region) = match &request.secret {
-            RelayJoinSecret::Invite(invite) => (invite.as_ref().clone(), request.home_region),
-            RelayJoinSecret::Pairing(code) => {
-                let invite = claim_pairing_invite(
-                    &bootstrap,
-                    code,
-                    request.control_plane.as_ref(),
-                    &key,
-                    &local,
-                )?;
-                let claimed_region = invite.locator().claims().home_region();
-                (invite, claimed_region)
-            }
-        };
-        let region = bootstrap.region(home_region)?;
-        let endpoint = region.relay_endpoint.clone();
-        let development_unsigned = development_unsigned_allowed(&endpoint);
-        let now = unix_time_ms().map_err(|_| CollabRuntimeFailure::RelayUnavailable)? / 1_000;
-        let route = if development_unsigned {
-            invite
-                .verify(&AcceptAllDevelopmentLocator, now)
-                .map_err(invite_verify_failure)?
-        } else {
-            invite
-                .verify(&region.locator_verifier, now)
-                .map_err(invite_verify_failure)?
-        };
-        // No region cross-check here: `home_region` is itself derived from the
-        // (canonically parsed) invite claims on both branches, so the verify
-        // step above is the authoritative gate.
-        let expected_discovery_id = route
-            .locator()
-            .claims()
-            .expected_discovery_id()
-            .as_str()
-            .to_owned();
-        let expected_remote_static = *route.locator().claims().owner_noise_static().as_bytes();
-        let auth = LocalAdmission::relay_auth_extension(*key.public_key())
-            .map_err(|error| error.failure)?;
-        let handshake = RelayHandshake::new(route, auth);
-        let authenticator = if development_unsigned {
-            None
-        } else {
-            Some(
-                LocalAdmission::challenge_bound_relay_authenticator(
-                    local,
-                    key,
-                    Arc::clone(&region.relay_x25519_keys),
-                )
-                .map_err(|error| error.failure)?,
-            )
-        };
-        let bridge = op_host_services::chat_runtime::block_on_anywhere(async move {
-            if development_unsigned {
-                start_development_guest_bridge(endpoint, handshake).await
-            } else {
-                RelayGuestBridge::start(
-                    endpoint,
-                    handshake,
-                    authenticator.ok_or(CollabRuntimeFailure::RelayUnavailable)?,
-                )
-                .await
-                .map_err(|_| CollabRuntimeFailure::RelayUnavailable)
-            }
-        })?;
-        let local_addr = bridge.local_addr();
-        Ok(Self {
-            local_addr,
-            expected_discovery_id,
-            expected_remote_static,
-            bridge,
-        })
-    }
-
-    pub(super) const fn local_addr(&self) -> SocketAddr {
-        self.local_addr
-    }
 }
 
 impl std::fmt::Debug for GuestRelayRuntime {

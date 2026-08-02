@@ -14,7 +14,9 @@ use op_collab_transport::{
 use subtle::ConstantTimeEq;
 
 use super::super::auth::{production_verifier, unix_time_ms, LocalAdmission, LocalTicketRenewer};
-use super::super::relay::{relay_guest_target, GuestConnectionRoute, GuestRelayRuntime};
+use super::super::relay::{
+    relay_guest_target, report_secure_transport_failure, GuestConnectionRoute, GuestRelayRuntime,
+};
 use super::super::types::{
     CollabRuntimeFailure, GuestNetworkCommand, NetworkEvent, TerminalNetworkEvent,
 };
@@ -275,7 +277,7 @@ fn run_inner(
     let overall_deadline = Instant::now()
         .checked_add(join_budget)
         .ok_or(CollabRuntimeFailure::Transport)?;
-    let (prelude, mut connection) = connect_address_sequence_cancellable(
+    let connected = connect_address_sequence_cancellable(
         &addresses,
         overall_deadline,
         key.as_ref(),
@@ -283,8 +285,18 @@ fn run_inner(
         expected_remote_static.as_ref(),
         config,
         cancellation,
-    )
-    .map_err(|error| relay_join_failure(&error, relay_join))?;
+    );
+    let (prelude, mut connection) = match connected {
+        Ok(connected) => connected,
+        Err(error) => {
+            let failure = relay_join_failure(&error, relay_join);
+            if let Some(relay) = relay_runtime.as_ref() {
+                let (relay_phase, relay_failure) = relay.bridge_diagnostic();
+                report_secure_transport_failure(failure, relay_phase, relay_failure);
+            }
+            return Err(failure);
+        }
+    };
     let remote_static = *connection.remote_static();
     let (hello, expected_issuer, expected_subject) = {
         let local = local
