@@ -140,6 +140,32 @@ impl WidgetHost {
         true
     }
 
+    pub(in crate::widget_host) fn try_scroll_scene_template_center(
+        &mut self,
+        x: f32,
+        y: f32,
+        delta_y: f32,
+        viewport_width: f32,
+        viewport_height: f32,
+    ) -> bool {
+        let Some(panel_rect) = self.scene_template_panel_rect(viewport_width, viewport_height)
+        else {
+            return false;
+        };
+        let Some(dirty) = op_editor_ui::widgets::press_flow::scroll_scene_template_center(
+            &mut self.editor_state,
+            panel_rect,
+            Point2D::new(x, y),
+            delta_y,
+        ) else {
+            return false;
+        };
+        if dirty {
+            self.mark_dirty();
+        }
+        true
+    }
+
     pub(in crate::widget_host) fn try_scroll_prompt_center(
         &mut self,
         x: f32,

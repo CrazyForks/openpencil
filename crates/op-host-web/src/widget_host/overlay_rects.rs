@@ -122,6 +122,15 @@ impl WidgetHost {
     }
 
     /// Floating Prompt Center rect — `None` when closed.
+    /// Scene Template Center rect — `None` when closed.
+    pub(in crate::widget_host) fn scene_template_panel_rect(
+        &self,
+        viewport_w: f32,
+        viewport_h: f32,
+    ) -> Option<Rect> {
+        overlay_geometry::scene_template_panel_rect(&self.editor_state, viewport_w, viewport_h)
+    }
+
     pub(in crate::widget_host) fn prompt_center_panel_rect(
         &self,
         viewport_w: f32,

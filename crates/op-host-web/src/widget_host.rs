@@ -173,6 +173,7 @@ mod release_input;
 mod resize_drag;
 #[cfg(test)]
 mod resize_drag_tests;
+mod scene_template_press;
 mod scroll;
 mod settings_caret;
 #[cfg(test)]

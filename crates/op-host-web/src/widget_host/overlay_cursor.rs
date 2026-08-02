@@ -188,6 +188,26 @@ impl WidgetHost {
             }
         }
         if let Some(panel_rect) =
+            self.scene_template_panel_rect(self.last_viewport_w, self.last_viewport_h)
+        {
+            let (owns_point, changed) =
+                op_editor_ui::widgets::press_flow::hover_scene_template_center(
+                    &mut self.editor_state,
+                    panel_rect,
+                    Point2D::new(x, y),
+                );
+            if changed {
+                self.mark_dirty();
+            }
+            if owns_point {
+                // Clear hover in every layer beneath before claiming the
+                // pointer. Skipping this is what let the colour-variable
+                // popover leak hover to the layer underneath (2026-07-29).
+                self.clear_hover_below_topmost_panel();
+                return true;
+            }
+        }
+        if let Some(panel_rect) =
             self.prompt_center_panel_rect(self.last_viewport_w, self.last_viewport_h)
         {
             let (owns_point, changed) =

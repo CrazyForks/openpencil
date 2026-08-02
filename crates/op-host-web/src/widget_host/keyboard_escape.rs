@@ -14,6 +14,10 @@ use op_editor_core::host_escape_transitions as escape;
 impl WidgetHost {
     /// Escape — handles one layer per press.
     pub fn apply_escape(&mut self) -> bool {
+        if self.editor_state.editor_ui.escape_scene_template_center() {
+            self.mark_dirty();
+            return true;
+        }
         if self.editor_state.editor_ui.escape_prompt_center() {
             self.mark_dirty();
             return true;
