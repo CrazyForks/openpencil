@@ -113,6 +113,10 @@ fn generating_frame_label_paints_vector_icon_and_keeps_full_hit_area() {
         backend.strokes,
         crate::widgets::icons::Icon::Sparkles.paths().len()
     );
+    // Far along the label's width (past the icon and into the text) and
+    // vertically mid-band: the frame's top edge is y = 40, so the label box
+    // spans y = 19 .. 37. Probing the middle keeps this a test of the FULL
+    // hit area rather than of one band edge.
     assert_eq!(
         crate::widgets::canvas_frame_labels::frame_label_at_point(
             std::slice::from_ref(&frame),
@@ -120,7 +124,7 @@ fn generating_frame_label_paints_vector_icon_and_keeps_full_hit_area() {
             Point2D::ZERO,
             &state.viewport,
             clip,
-            Point2D::new(170.0, 20.0),
+            Point2D::new(170.0, 28.0),
         ),
         Some("n1".into())
     );

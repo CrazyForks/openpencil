@@ -466,18 +466,21 @@ const MAX_ROW_WIDTH: f64 = 8200.0;
 ///
 /// The canvas paints each top-level frame's name ABOVE the frame at a FIXED
 /// screen-space offset that does not scale with zoom
-/// (`canvas_frame_labels.rs`: baseline at `sy - 18`, label box top at
-/// `sy - 32`). So a row gap equal to the column gap makes every second-row
-/// label collide with the bottom edge of the row above — 80 doc px is only
-/// ~11-17 screen px at the zoom where a wrapped canvas is actually viewed,
-/// well inside the label's fixed 32 px footprint (user report 2026-08-02).
+/// (`canvas_frame_labels.rs`: the label box top sits `LABEL_BOX_TOP_OFFSET`
+/// = 21 px above the frame). So a row gap equal to the column gap makes
+/// every second-row label collide with the bottom edge of the row above —
+/// 80 doc px is only ~11-17 screen px at the zoom where a wrapped canvas is
+/// actually viewed, well inside that band (user report 2026-08-02).
 ///
 /// 240 doc px is the allowance: fitting a wrapped multi-row canvas to the
 /// screen lands around zoom 0.14-0.22 (a 3-wide 1920 deck is 6000 doc px
 /// across, framed by `zoom_to_fit` into a 944-1424 px canvas region), where
-/// 240 doc px reads as 33-52 screen px — the label's 32 px plus breathing
-/// room. Horizontal spacing is untouched: labels are left-aligned to their
-/// own frame and never reach sideways.
+/// 240 doc px reads as 33-52 screen px — the label's 21 px plus breathing
+/// room. Kept at 240 after the label band was tightened from 32 px to 21:
+/// the extra margin costs nothing on an infinite canvas, and the narrow end
+/// of the zoom range is the case worth over-serving. Horizontal spacing is
+/// untouched: labels are left-aligned to their own frame and never reach
+/// sideways.
 const ROW_LABEL_HEADROOM: f64 = 240.0;
 
 /// How many screen roots fit in one row at `board_width`.

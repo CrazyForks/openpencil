@@ -96,7 +96,7 @@ fn hover_and_double_press_drill_exactly_one_level_then_consume_stamp() {
 #[test]
 fn frame_label_hover_targets_the_root() {
     let mut host = seed();
-    // Frame labels span y = root_top - 32 .. root_top - 4 and begin
+    // Frame labels span y = root_top - 21 .. root_top - 3 and begin
     // four pixels left of the frame. Pick a point over "Root Frame".
     let label_point = screen_at(&host, 524.0, 82.0);
 

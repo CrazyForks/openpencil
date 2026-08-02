@@ -238,13 +238,13 @@ BOARD_GAP_X = 120
 
 # Vertical gap. Larger than the horizontal one because the canvas paints each
 # frame's name ABOVE the frame at a fixed screen-space offset that does not
-# scale with zoom (canvas_frame_labels.rs: baseline at sy-18, label box top at
-# sy-32). At the zoom where a 3x2 deck is framed to the screen (~0.14-0.22 —
-# the deck is 6000 doc px across, fitted into a 944-1424 px canvas region), a
-# 120 doc px row gap is only ~16-26 screen px, i.e. NARROWER than the label's
-# fixed 32 px footprint, so every second-row label sat on the bottom edge of
-# the row above (reported 2026-08-02). The extra 240 doc px reads as 33-52
-# screen px there, clearing the label with room to spare. Mirrors
+# scale with zoom (canvas_frame_labels.rs: the label box top sits 21 px above
+# the frame). At the zoom where a 3x2 deck is framed to the screen (~0.14-0.22
+# — the deck is 6000 doc px across, fitted into a 944-1424 px canvas region), a
+# 120 doc px row gap is only ~16-26 screen px, i.e. barely wider than the
+# label band itself, so every second-row label sat on the bottom edge of the
+# row above (reported 2026-08-02). The extra 240 doc px reads as 33-52 screen
+# px there, clearing the label with room to spare. Mirrors
 # `scaffold.rs::ROW_LABEL_HEADROOM`, which fixes the generated multi-screen
 # canvas the same way.
 BOARD_GAP_Y = BOARD_GAP_X + 240
