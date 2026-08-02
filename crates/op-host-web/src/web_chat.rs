@@ -352,10 +352,7 @@ pub(crate) fn prepare_turn(state: &mut EditorState) -> Option<PreparedTurn> {
         "history": history_json,
         "attachments": attachments_json,
         "document": state.doc,
-        "editorMeta": op_pen_loader::EditorMeta {
-            active_page_index: state.ui.active_page_index,
-            preserve_authored_geometry: state.editor_ui.preserve_authored_geometry,
-        },
+        "editorMeta": op_pen_loader::EditorMeta::from_state(state),
         "selectedIds": selected_ids,
         "activePageId": active_page_id,
     });

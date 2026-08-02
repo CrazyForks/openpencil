@@ -371,6 +371,7 @@ fn document_sync_metadata_overrides_nested_fields_independently() {
     let embedded = op_pen_loader::EditorMeta {
         active_page_index: 5,
         preserve_authored_geometry: true,
+        scenario: None,
     };
 
     let page_override = parse_document_sync_request(
@@ -382,6 +383,7 @@ fn document_sync_metadata_overrides_nested_fields_independently() {
         op_pen_loader::EditorMeta {
             active_page_index: 2,
             preserve_authored_geometry: true,
+            scenario: None,
         }
     );
 
@@ -394,6 +396,7 @@ fn document_sync_metadata_overrides_nested_fields_independently() {
         op_pen_loader::EditorMeta {
             active_page_index: 5,
             preserve_authored_geometry: false,
+            scenario: None,
         }
     );
 
@@ -412,6 +415,7 @@ fn document_sync_metadata_overrides_nested_fields_independently() {
         op_pen_loader::EditorMeta {
             active_page_index: 2,
             preserve_authored_geometry: true,
+            scenario: None,
         }
     );
 }

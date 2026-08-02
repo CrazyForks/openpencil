@@ -383,11 +383,16 @@ fn apply_document_response<C: RepaintContext + 'static>(
                     |doc, _version, active_page_index, preserve_authored_geometry| {
                         let host = inner_ref.host_mut();
                         host.replace_document_from_sync(doc, undoable);
+                        // The live-sync wire carries no scenario field, so
+                        // keep whatever the open document already had rather
+                        // than letting every sync erase its tag.
+                        let scenario = host.editor_state().editor_ui.scenario;
                         op_pen_loader::apply_editor_meta(
                             host.editor_state_mut(),
                             op_pen_loader::EditorMeta {
                                 active_page_index,
                                 preserve_authored_geometry,
+                                scenario,
                             },
                         );
                         inner_ref.repaint().is_ok()

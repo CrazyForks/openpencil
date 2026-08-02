@@ -20,6 +20,8 @@ use op_host_services::chat_canvas_tools::{chat_tool_channel, ChatToolRequest};
 use op_host_services::chat_system_prompt::chat_history_from_transcript;
 use op_host_services::design_agent_tools::{design_tool_defs, root_seed_prompt_is_mobile};
 
+use op_editor_core::scene_template_catalog::TemplateScene;
+
 use super::clear_fresh_starter_frame_for_design;
 
 /// Parses recognized force-loop / force-orchestrator environment values.
@@ -156,6 +158,38 @@ pub(super) fn design_agent_loop_enabled(state: &op_editor_core::EditorState, pro
         prompt,
         canvas_has_mobile_screen_root(state),
     )
+}
+
+/// What a design turn establishes the document to be, if anything.
+///
+/// Two facts have to line up: the prompt asks for a deck, AND the page held
+/// nothing before the turn started. The second condition is the load-bearing
+/// one — generating a deck onto a canvas that already holds someone's app
+/// design adds slides to their document, it does not turn their document into
+/// a deck, and relabelling it would change what Preview does to work they
+/// never asked us to reinterpret. Nothing else is inferred: artboard size in
+/// particular says nothing, since 1920×1080 documents that are not decks are
+/// ordinary.
+///
+/// Pure so the policy is testable without a host or a model.
+pub(crate) fn design_turn_scenario(prompt: &str, page_was_empty: bool) -> Option<TemplateScene> {
+    (page_was_empty
+        && op_orchestrator::detect_design_type(prompt).type_ == op_orchestrator::DesignType::Slides)
+        .then_some(TemplateScene::Slides)
+}
+
+/// Apply [`design_turn_scenario`] before the turn touches the canvas.
+///
+/// MUST run before the starter frame is cleared for the generation — after
+/// that the page is empty for every prompt and the fact gate would wave
+/// through decks generated onto real work. A turn that establishes nothing
+/// leaves any existing tag alone.
+pub(super) fn stamp_design_turn_scenario(state: &mut op_editor_core::EditorState, prompt: &str) {
+    let page_was_empty =
+        state.active_children().is_empty() || super::active_page_is_blank_starter_frame(state);
+    if let Some(scenario) = design_turn_scenario(prompt, page_was_empty) {
+        state.editor_ui.scenario = Some(scenario);
+    }
 }
 
 /// When the selected chat model is a ready builtin (API-key) entry,
@@ -356,6 +390,64 @@ mod tests {
             resolve_design_thinking(None, ThinkingMode::Enabled),
             ThinkingMode::Enabled
         );
+    }
+
+    // ── document scenario stamped by a generation turn ────────────────────
+    #[test]
+    fn only_a_deck_prompt_on_an_empty_page_establishes_a_slides_document() {
+        for deck_prompt in ["a pitch deck for our seed round", "做一个季度汇报 PPT"] {
+            assert_eq!(
+                design_turn_scenario(deck_prompt, true),
+                Some(TemplateScene::Slides),
+                "{deck_prompt}"
+            );
+            // The same ask against existing work adds slides to someone's
+            // document; it does not redefine what that document is.
+            assert_eq!(
+                design_turn_scenario(deck_prompt, false),
+                None,
+                "{deck_prompt}"
+            );
+        }
+        for other_prompt in [
+            "design an admin analytics dashboard",
+            "a mobile onboarding screen",
+            "a landing page for a coffee shop",
+        ] {
+            assert_eq!(
+                design_turn_scenario(other_prompt, true),
+                None,
+                "{other_prompt}"
+            );
+        }
+    }
+
+    #[test]
+    fn stamping_reads_the_canvas_the_user_still_has() {
+        // A pristine starter canvas is empty as far as authored content goes.
+        let mut starter = op_editor_core::EditorState::starter();
+        stamp_design_turn_scenario(&mut starter, "build me a 6-slide pitch deck");
+        assert_eq!(starter.editor_ui.scenario, Some(TemplateScene::Slides));
+
+        // A canvas with the user's own work keeps its identity, tag or none.
+        let mut working = op_editor_core::EditorState::starter();
+        let mut next_id = 20;
+        working.create_node_for_tool(
+            op_editor_core::Tool::Rect,
+            &mut next_id,
+            24.0,
+            32.0,
+            120.0,
+            80.0,
+        );
+        stamp_design_turn_scenario(&mut working, "build me a 6-slide pitch deck");
+        assert_eq!(working.editor_ui.scenario, None);
+
+        // A turn that establishes nothing never clears an existing tag.
+        let mut tagged = op_editor_core::EditorState::starter();
+        tagged.editor_ui.scenario = Some(TemplateScene::Carousel);
+        stamp_design_turn_scenario(&mut tagged, "design an admin analytics dashboard");
+        assert_eq!(tagged.editor_ui.scenario, Some(TemplateScene::Carousel));
     }
 
     // ── prompt-aware design-loop routing ───────────────────────────

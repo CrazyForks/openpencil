@@ -143,10 +143,7 @@ fn write_canonical_document(
         &state.doc,
         &thumbnails,
         "editorMeta",
-        &op_pen_loader::EditorMeta {
-            active_page_index: state.ui.active_page_index,
-            preserve_authored_geometry: state.editor_ui.preserve_authored_geometry,
-        },
+        &op_pen_loader::EditorMeta::from_state(state),
     )
     .map(|_| ())
     .map_err(|error| SavePayloadError::WriteDocument(error.to_string()))

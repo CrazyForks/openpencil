@@ -79,8 +79,7 @@ fn save_decision(
     if let Err(error) = copy_document_to_current_schema_path(
         source_path,
         &staging_path,
-        state.ui.active_page_index,
-        state.editor_ui.preserve_authored_geometry,
+        op_pen_loader::EditorMeta::from_state(state),
         report.normalized_legacy,
     ) {
         remove_file_if_present(&staging_path);

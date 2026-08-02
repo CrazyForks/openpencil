@@ -179,6 +179,7 @@ fn parse_standard_turn_body_reads_canvas_snapshot_fields() {
         Some(op_pen_loader::EditorMeta {
             active_page_index: 3,
             preserve_authored_geometry: true,
+            scenario: None,
         })
     );
     assert_eq!(req.selected_ids, vec!["n1".to_string(), "n2".to_string()]);

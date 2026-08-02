@@ -229,6 +229,21 @@ pub struct EditorUiState {
     /// authored parent-local geometry. The scene builder can use this
     /// flag to skip the expensive flex/text layout pass.
     pub preserve_authored_geometry: bool,
+    /// What this document IS — a deck, a carousel, a tutorial card set —
+    /// when that is known as a FACT rather than guessed: the scene of the
+    /// template it was opened from, or the design type of the generation
+    /// that filled an empty canvas. `None` means "an ordinary design", the
+    /// only honest answer for a document nobody told us about.
+    ///
+    /// It is UI POLICY only — what Preview does, what chrome offers — and
+    /// never touches the document model, so a wrong or absent tag costs a
+    /// nicety, never content. Deliberately NOT inferred from artboard
+    /// dimensions: 1920×1080 documents that are not decks are ordinary, and
+    /// dimension-guessing has repeatedly mislabelled them here.
+    ///
+    /// Round-trips through `editorMeta` beside
+    /// [`Self::preserve_authored_geometry`].
+    pub scenario: Option<crate::scene_template_catalog::TemplateScene>,
     // --- Canvas preview (Play) mode -------------------------------
     /// Preview (Play) mode flag + device / screen switcher state.
     pub preview: PreviewState,

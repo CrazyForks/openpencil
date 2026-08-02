@@ -81,11 +81,8 @@ fn document_value_with_editor_meta(
     };
     object.insert(
         "editorMeta".to_string(),
-        serde_json::to_value(op_pen_loader::EditorMeta {
-            active_page_index: state.ui.active_page_index,
-            preserve_authored_geometry: state.editor_ui.preserve_authored_geometry,
-        })
-        .map_err(|e| DocumentExportError::SerializeEditorMeta(e.to_string()))?,
+        serde_json::to_value(op_pen_loader::EditorMeta::from_state(state))
+            .map_err(|e| DocumentExportError::SerializeEditorMeta(e.to_string()))?,
     );
     Ok(document)
 }

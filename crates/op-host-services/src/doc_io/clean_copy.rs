@@ -16,8 +16,7 @@ use std::path::Path;
 pub fn copy_clean_document_with_editor_meta_to_path(
     source_path: &Path,
     target_path: &Path,
-    active_page_index: usize,
-    preserve_authored_geometry: bool,
+    meta: EditorMeta,
 ) -> Result<(), DocIoError> {
     let source_file = std::fs::File::open(source_path).map_err(|error| DocIoError::Open {
         path: source_path.display().to_string(),
@@ -58,15 +57,8 @@ pub fn copy_clean_document_with_editor_meta_to_path(
         // `op_pen_loader::EditorMetaWriteError` belongs to a crate this pass
         // does not own; render it with `to_string` so the adapter survives if
         // that crate reshapes its error.
-        op_pen_loader::write_source_with_editor_meta(
-            &mut writer,
-            source,
-            EditorMeta {
-                active_page_index,
-                preserve_authored_geometry,
-            },
-        )
-        .map_err(|error| DocIoError::Serialize(error.to_string()))?;
+        op_pen_loader::write_source_with_editor_meta(&mut writer, source, meta)
+            .map_err(|error| DocIoError::Serialize(error.to_string()))?;
         std::io::Write::flush(&mut writer).map_err(|error| DocIoError::Io(error.to_string()))?;
         drop(writer);
         commit_staged_document(&tmp, target_path)
@@ -84,8 +76,7 @@ pub fn copy_clean_document_with_editor_meta_to_path(
 pub fn copy_document_to_current_schema_path(
     source_path: &Path,
     target_path: &Path,
-    active_page_index: usize,
-    preserve_authored_geometry: bool,
+    meta: EditorMeta,
     normalize_legacy: bool,
 ) -> Result<(), DocIoError> {
     let source_file = std::fs::File::open(source_path).map_err(|error| DocIoError::Open {
@@ -119,11 +110,6 @@ pub fn copy_document_to_current_schema_path(
             path: source_path.display().to_string(),
             detail: error.to_string(),
         })?;
-    let meta = EditorMeta {
-        active_page_index,
-        preserve_authored_geometry,
-    };
-
     let (tmp, file) = create_sibling_temp(target_path)?;
     let write_result = (|| {
         let mut writer = std::io::BufWriter::with_capacity(1024 * 1024, file);
@@ -178,8 +164,16 @@ mod tests {
         std::fs::write(sidecar_path(&target), r#"{"active_page_index":0}"#)
             .expect("write stale target sidecar");
 
-        copy_clean_document_with_editor_meta_to_path(&source, &target, 4, true)
-            .expect("clean copy save");
+        copy_clean_document_with_editor_meta_to_path(
+            &source,
+            &target,
+            EditorMeta {
+                active_page_index: 4,
+                preserve_authored_geometry: true,
+                scenario: None,
+            },
+        )
+        .expect("clean copy save");
 
         let target_json = std::fs::read_to_string(&target).expect("read target");
         let parsed: serde_json::Value =
@@ -199,8 +193,16 @@ mod tests {
             "",
         );
         std::fs::write(&source, source_without_meta).expect("rewrite source without metadata");
-        copy_clean_document_with_editor_meta_to_path(&source, &target, 2, false)
-            .expect("clean copy appends metadata");
+        copy_clean_document_with_editor_meta_to_path(
+            &source,
+            &target,
+            EditorMeta {
+                active_page_index: 2,
+                preserve_authored_geometry: false,
+                scenario: None,
+            },
+        )
+        .expect("clean copy appends metadata");
         let appended: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&target).expect("read metadata-appended target"))
                 .expect("metadata-appended target stays valid");

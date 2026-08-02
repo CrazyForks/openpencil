@@ -24,10 +24,7 @@ impl BridgeDocumentSnapshot {
         Some(Self {
             pair: (state.document_generation(), state.document_revision()),
             document_json: serde_json::to_string(&state.doc).ok()?.into(),
-            editor_meta: EditorMeta {
-                active_page_index: state.ui.active_page_index,
-                preserve_authored_geometry: state.editor_ui.preserve_authored_geometry,
-            },
+            editor_meta: EditorMeta::from_state(state),
         })
     }
 

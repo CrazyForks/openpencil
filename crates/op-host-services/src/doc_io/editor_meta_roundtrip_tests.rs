@@ -55,6 +55,70 @@ fn authored_geometry_mode_survives_save_load_and_source_round_trips() {
 }
 
 #[test]
+fn scenario_survives_save_load_and_ignores_an_unknown_tag() {
+    use op_editor_core::scene_template_catalog::TemplateScene;
+
+    let mut state = EditorState::from_document(
+        jian_ops_schema::load_str(
+            r#"{"version":"1.0.0","children":[{"type":"frame","id":"slide-1","width":1920,"height":1080}]}"#,
+        )
+        .expect("fixture parses")
+        .value,
+    );
+    state.editor_ui.scenario = Some(TemplateScene::Slides);
+    let path = temp_op_path();
+
+    save_to_path(&state, &path).expect("save succeeds");
+    let source = std::fs::read_to_string(&path).expect("saved source");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&source).expect("saved JSON")["editorMeta"]
+            ["scenario"],
+        "slides",
+        "the tag is written as the kebab-case scene name"
+    );
+
+    for reopened in [
+        load_editor_state(&path, op_editor_core::Locale::EnUs).expect("path load succeeds"),
+        load_editor_state_from_source(&source, op_editor_core::Locale::EnUs)
+            .expect("source load succeeds"),
+    ] {
+        assert_eq!(reopened.editor_ui.scenario, Some(TemplateScene::Slides));
+    }
+
+    // A tag from a future build, a hand edit, or the wrong type must cost the
+    // hint and nothing else — the document still opens.
+    for garbage in [
+        r#""interpretive-dance""#,
+        r#"7"#,
+        r#"null"#,
+        r#"{"scene":"slides"}"#,
+    ] {
+        let state = load_editor_state_from_source(
+            &format!(
+                r#"{{"version":"1.0.0","editorMeta":{{"activePageIndex":0,"scenario":{garbage}}},"children":[]}}"#
+            ),
+            op_editor_core::Locale::EnUs,
+        )
+        .unwrap_or_else(|error| panic!("{garbage} must still load: {error}"));
+        assert_eq!(state.editor_ui.scenario, None, "{garbage}");
+    }
+
+    let _ = std::fs::remove_file(path);
+}
+
+/// A document saved before the tag existed opens as an ordinary design.
+#[test]
+fn source_without_a_scenario_tag_loads_untagged() {
+    let state = load_editor_state_from_source(
+        r#"{"version":"1.0.0","editorMeta":{"activePageIndex":0},"children":[]}"#,
+        op_editor_core::Locale::EnUs,
+    )
+    .expect("legacy metadata loads");
+
+    assert_eq!(state.editor_ui.scenario, None);
+}
+
+#[test]
 fn source_without_geometry_metadata_keeps_legacy_normal_layout() {
     let state = load_editor_state_from_source(
         r#"{"version":"1.0.0","editorMeta":{"activePageIndex":0},"children":[]}"#,

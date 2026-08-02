@@ -16,8 +16,7 @@ use std::io::Write;
 /// Immutable document + view-state + thumbnail snapshot for a background save.
 pub struct CanonicalSaveSnapshot {
     document: SharedDoc,
-    active_page_index: usize,
-    preserve_authored_geometry: bool,
+    editor_meta: EditorMeta,
     image_thumbnails: ImageThumbSnapshot,
 }
 
@@ -45,8 +44,7 @@ impl CanonicalSaveSnapshot {
             .or(history_anchor);
         Self {
             document: SharedDoc::capture(&state.doc, anchor),
-            active_page_index: state.ui.active_page_index,
-            preserve_authored_geometry: state.editor_ui.preserve_authored_geometry,
+            editor_meta: EditorMeta::from_state(state),
             image_thumbnails: jian_ops_schema::image_thumbs::capture_snapshot(),
         }
     }
@@ -55,12 +53,9 @@ impl CanonicalSaveSnapshot {
         &self.document
     }
 
-    pub fn active_page_index(&self) -> usize {
-        self.active_page_index
-    }
-
-    pub fn preserve_authored_geometry(&self) -> bool {
-        self.preserve_authored_geometry
+    /// The view state this snapshot will embed under `editorMeta`.
+    pub fn editor_meta(&self) -> EditorMeta {
+        self.editor_meta
     }
 
     pub(crate) fn image_thumbnails(&self) -> &ImageThumbSnapshot {
@@ -84,11 +79,15 @@ pub fn write_canonical_document<W: Write>(
     active_page_index: usize,
 ) -> Result<StreamingSaveStats, DocIoError> {
     let thumbnails = jian_ops_schema::image_thumbs::capture_snapshot();
+    // Document-only entry point: with no `EditorState` in hand the active page
+    // is the only truthful field, and every other one keeps its legacy default.
     write_canonical_document_with_thumbnails(
         writer,
         document,
-        active_page_index,
-        false,
+        EditorMeta {
+            active_page_index,
+            ..EditorMeta::default()
+        },
         &thumbnails,
     )
 }
@@ -96,17 +95,10 @@ pub fn write_canonical_document<W: Write>(
 pub(super) fn write_canonical_document_with_thumbnails<W: Write>(
     writer: &mut W,
     document: &PenDocument,
-    active_page_index: usize,
-    preserve_authored_geometry: bool,
+    meta: EditorMeta,
     thumbnails: &ImageThumbSnapshot,
 ) -> Result<StreamingSaveStats, DocIoError> {
-    write_serializable_document_with_thumbnails(
-        writer,
-        document,
-        active_page_index,
-        preserve_authored_geometry,
-        thumbnails,
-    )
+    write_serializable_document_with_thumbnails(writer, document, meta, thumbnails)
 }
 
 pub(super) fn write_serializable_document_with_thumbnails<
@@ -115,8 +107,7 @@ pub(super) fn write_serializable_document_with_thumbnails<
 >(
     writer: &mut W,
     document: &D,
-    active_page_index: usize,
-    preserve_authored_geometry: bool,
+    meta: EditorMeta,
     thumbnails: &ImageThumbSnapshot,
 ) -> Result<StreamingSaveStats, DocIoError> {
     let stats = jian_ops_schema::image_table::write_document_with_extension(
@@ -124,10 +115,7 @@ pub(super) fn write_serializable_document_with_thumbnails<
         document,
         thumbnails,
         "editorMeta",
-        &EditorMeta {
-            active_page_index,
-            preserve_authored_geometry,
-        },
+        &meta,
     )
     // `jian_ops_schema` is not owned by this pass — carry its sentence
     // verbatim so the wire text is unchanged.
@@ -194,8 +182,10 @@ mod tests {
         write_serializable_document_with_thumbnails(
             &mut bytes,
             snapshot.document(),
-            3,
-            snapshot.preserve_authored_geometry(),
+            EditorMeta {
+                active_page_index: 3,
+                ..snapshot.editor_meta()
+            },
             snapshot.image_thumbnails(),
         )
         .expect("stream shared snapshot");
@@ -238,7 +228,7 @@ mod tests {
 
         let snapshot = CanonicalSaveSnapshot::capture(&state);
 
-        assert!(snapshot.preserve_authored_geometry());
+        assert!(snapshot.editor_meta().preserve_authored_geometry);
     }
 
     #[test]

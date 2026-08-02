@@ -47,6 +47,9 @@ impl DocumentSyncRequest<'_> {
             preserve_authored_geometry: self
                 .preserve_authored_geometry
                 .unwrap_or(embedded.preserve_authored_geometry),
+            // No wrapper override exists for the scenario tag, so the
+            // document's own value always survives the merge.
+            scenario: embedded.scenario,
         }
     }
 }

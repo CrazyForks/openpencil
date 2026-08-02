@@ -32,8 +32,7 @@ enum SavePayload {
     Canonical(Box<op_host_services::doc_io::CanonicalSaveSnapshot>),
     CleanBoundOp {
         source_path: PathBuf,
-        active_page_index: usize,
-        preserve_authored_geometry: bool,
+        editor_meta: op_pen_loader::EditorMeta,
     },
 }
 
@@ -67,8 +66,7 @@ impl SaveSnapshot {
         Self {
             payload: SavePayload::CleanBoundOp {
                 source_path,
-                active_page_index: state.ui.active_page_index,
-                preserve_authored_geometry: state.editor_ui.preserve_authored_geometry,
+                editor_meta: op_pen_loader::EditorMeta::from_state(state),
             },
             document_epoch,
             generation: state.document_generation(),
@@ -340,13 +338,11 @@ impl SaveSession {
                     }
                     SavePayload::CleanBoundOp {
                         source_path,
-                        active_page_index,
-                        preserve_authored_geometry,
+                        editor_meta,
                     } => op_host_services::doc_io::copy_clean_document_with_editor_meta_to_path(
                         source_path,
                         &worker_path,
-                        *active_page_index,
-                        *preserve_authored_geometry,
+                        *editor_meta,
                     ),
                 }
                 // `doc_io` belongs to `op-host-services`, a crate this pass

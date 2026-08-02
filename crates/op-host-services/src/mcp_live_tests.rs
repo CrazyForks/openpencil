@@ -303,6 +303,7 @@ fn pump_flags_document_replaced_only_for_replace_document_requests() {
             editor_meta: op_pen_loader::EditorMeta {
                 active_page_index: 1,
                 preserve_authored_geometry: true,
+                scenario: None,
             },
             ack: ack_tx,
         })
@@ -324,6 +325,7 @@ fn pump_flags_document_replaced_only_for_replace_document_requests() {
             editor_meta: op_pen_loader::EditorMeta {
                 active_page_index: 0,
                 preserve_authored_geometry: false,
+                scenario: None,
             },
             ack: ack_tx,
         })

@@ -58,6 +58,9 @@ pub(crate) fn convert_fig_json(body: &str) -> Result<String> {
         &op_pen_loader::EditorMeta {
             active_page_index: 0,
             preserve_authored_geometry: true,
+            // A Figma import is whatever the source file was; nothing here
+            // establishes it as a deck or a card set.
+            scenario: None,
         },
     )
     .map_err(|error| FigmaConvertError::Encode {

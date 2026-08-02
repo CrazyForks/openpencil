@@ -6,10 +6,11 @@
 //! slice; it never materializes or rewrites the document-sized JSON tree.
 
 use crate::editor_meta_error::EditorMetaWriteError;
+use op_editor_core::scene_template_catalog::TemplateScene;
 
 /// Editor state that affects how a canonical document is reopened.
 ///
-/// Both fields default to their legacy behavior, so files written before a
+/// Every field defaults to its legacy behavior, so files written before a
 /// field existed remain compatible. Snake-case aliases accept the former
 /// sidecar spelling as well as the canonical camel-case wire spelling.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -22,6 +23,64 @@ pub struct EditorMeta {
     /// Figma import instead of resolving the tree through flex layout.
     #[serde(default, alias = "preserve_authored_geometry")]
     pub preserve_authored_geometry: bool,
+    /// What the document is for — see `EditorUiState::scenario`. Written as
+    /// the kebab-case scene name; anything unrecognized reads back as `None`
+    /// so a stale or hand-edited tag can never fail a load.
+    #[serde(
+        default,
+        with = "scenario_serde",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub scenario: Option<TemplateScene>,
+}
+
+impl EditorMeta {
+    /// Capture the editor state a save must carry into the file.
+    ///
+    /// The inverse of [`apply_editor_meta`]. Every writer goes through this
+    /// so a field added to the metadata is persisted by all of them at once,
+    /// instead of surviving only the save paths someone remembered.
+    pub fn from_state(state: &op_editor_core::EditorState) -> Self {
+        Self {
+            active_page_index: state.ui.active_page_index,
+            preserve_authored_geometry: state.editor_ui.preserve_authored_geometry,
+            scenario: state.editor_ui.scenario,
+        }
+    }
+}
+
+/// Wire adapter for [`EditorMeta::scenario`].
+///
+/// A scenario is an editor-only UI hint: refusing to open someone's document
+/// because that hint is a number, a future scene name, or `null` would trade
+/// a nicety for their file, so every value this does not recognize decodes to
+/// `None`. Absent stays absent — the field is omitted when unset rather than
+/// written as `null`, keeping old readers and byte-comparison tests unchanged.
+mod scenario_serde {
+    use super::TemplateScene;
+    use serde::{Deserialize, Deserializer, Serializer};
+    use std::str::FromStr;
+
+    pub(super) fn serialize<S: Serializer>(
+        value: &Option<TemplateScene>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        match value {
+            Some(scene) => serializer.serialize_str(scene.as_str()),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<TemplateScene>, D::Error> {
+        // Any JSON at all parses into `Value`, so the only error this can
+        // propagate is a malformed document the caller must fail on anyway.
+        Ok(match serde_json::Value::deserialize(deserializer)? {
+            serde_json::Value::String(name) => TemplateScene::from_str(&name).ok(),
+            _ => None,
+        })
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -31,6 +90,8 @@ struct WireEditorMeta {
     active_page_index: usize,
     #[serde(default, alias = "preserve_authored_geometry")]
     preserve_authored_geometry: Option<bool>,
+    #[serde(default, with = "scenario_serde")]
+    scenario: Option<TemplateScene>,
 }
 
 /// Parsed metadata plus compatibility inference used for migration decisions.
@@ -68,6 +129,7 @@ pub fn extract_editor_meta_with_report(src: &str) -> Option<EditorMetaExtraction
             preserve_authored_geometry: wire
                 .preserve_authored_geometry
                 .unwrap_or(scan.first_page_has_figma_id),
+            scenario: wire.scenario,
         },
         inferred_preserve_authored_geometry,
     })
@@ -207,6 +269,7 @@ pub fn apply_editor_meta(state: &mut op_editor_core::EditorState, meta: EditorMe
         .max(1);
     state.ui.active_page_index = meta.active_page_index.min(page_count - 1);
     state.editor_ui.preserve_authored_geometry = meta.preserve_authored_geometry;
+    state.editor_ui.scenario = meta.scenario;
 }
 
 /// Apply saved metadata, or use the legacy reopen policy when it is absent.
@@ -223,6 +286,10 @@ pub fn apply_editor_meta_or_legacy_fallback(
         return;
     }
     state.editor_ui.preserve_authored_geometry = false;
+    // No metadata means nothing is KNOWN about what the document is for, and
+    // an unknown scenario must read as `None` rather than inherit whatever
+    // the caller's state happened to carry in.
+    state.editor_ui.scenario = None;
     state.ui.active_page_index = state
         .doc
         .pages
@@ -430,6 +497,7 @@ mod tests {
             Some(EditorMeta {
                 active_page_index: 3,
                 preserve_authored_geometry: true,
+                scenario: None,
             })
         );
         assert_eq!(
@@ -439,6 +507,7 @@ mod tests {
             Some(EditorMeta {
                 active_page_index: 2,
                 preserve_authored_geometry: true,
+                scenario: None,
             })
         );
     }
@@ -450,6 +519,7 @@ mod tests {
             Some(EditorMeta {
                 active_page_index: 7,
                 preserve_authored_geometry: false,
+                scenario: None,
             })
         );
     }
@@ -463,6 +533,7 @@ mod tests {
             Some(EditorMeta {
                 active_page_index: 0,
                 preserve_authored_geometry: true,
+                scenario: None,
             })
         );
         assert_eq!(
@@ -472,6 +543,7 @@ mod tests {
             Some(EditorMeta {
                 active_page_index: 0,
                 preserve_authored_geometry: true,
+                scenario: None,
             })
         );
     }
@@ -490,6 +562,7 @@ mod tests {
                 Some(EditorMeta {
                     active_page_index: 0,
                     preserve_authored_geometry: false,
+                    scenario: None,
                 })
             );
         }
@@ -518,6 +591,7 @@ mod tests {
             Some(EditorMeta {
                 active_page_index: 0,
                 preserve_authored_geometry: false,
+                scenario: None,
             })
         );
     }
@@ -536,6 +610,7 @@ mod tests {
             EditorMeta {
                 active_page_index: 99,
                 preserve_authored_geometry: true,
+                scenario: None,
             },
         );
 
@@ -578,6 +653,7 @@ mod tests {
             Some(EditorMeta {
                 active_page_index: 4,
                 preserve_authored_geometry: true,
+                scenario: None,
             })
         );
     }
@@ -613,6 +689,7 @@ mod tests {
             EditorMeta {
                 active_page_index: 7,
                 preserve_authored_geometry: true,
+                scenario: None,
             },
         )
         .expect("streaming metadata rewrite");
@@ -628,6 +705,7 @@ mod tests {
             Some(EditorMeta {
                 active_page_index: 7,
                 preserve_authored_geometry: true,
+                scenario: None,
             })
         );
     }
@@ -651,6 +729,7 @@ mod tests {
                 EditorMeta {
                     active_page_index: 2,
                     preserve_authored_geometry: false,
+                    scenario: None,
                 },
             )
             .expect("append metadata");
@@ -677,6 +756,7 @@ mod tests {
             EditorMeta {
                 active_page_index: 2,
                 preserve_authored_geometry: true,
+                scenario: None,
             },
         )
         .expect("current-schema rewrite");

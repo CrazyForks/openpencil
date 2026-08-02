@@ -80,8 +80,7 @@ pub fn save_to_path(state: &EditorState, path: &std::path::Path) -> Result<(), D
     let thumbnails = jian_ops_schema::image_thumbs::capture_snapshot();
     save_document_with_thumbnails_to_path(
         &state.doc,
-        state.ui.active_page_index,
-        state.editor_ui.preserve_authored_geometry,
+        op_pen_loader::EditorMeta::from_state(state),
         &thumbnails,
         path,
     )
@@ -99,8 +98,16 @@ pub fn save_document_to_path(
     let thumbnails = jian_ops_schema::image_thumbs::capture_snapshot();
     // This document-only compatibility entry point predates the authored-
     // geometry latch. Without an EditorState there is no truthful value to
-    // capture, so retain the legacy normal-layout default.
-    save_document_with_thumbnails_to_path(document, active_page_index, false, &thumbnails, path)
+    // capture, so every other metadata field retains its legacy default.
+    save_document_with_thumbnails_to_path(
+        document,
+        op_pen_loader::EditorMeta {
+            active_page_index,
+            ..op_pen_loader::EditorMeta::default()
+        },
+        &thumbnails,
+        path,
+    )
 }
 
 /// Save a self-contained snapshot captured for a background job.
@@ -110,8 +117,7 @@ pub fn save_snapshot_to_path(
 ) -> Result<(), DocIoError> {
     save_serializable_document_with_thumbnails_to_path(
         snapshot.document(),
-        snapshot.active_page_index(),
-        snapshot.preserve_authored_geometry(),
+        snapshot.editor_meta(),
         snapshot.image_thumbnails(),
         path,
     )
@@ -119,26 +125,18 @@ pub fn save_snapshot_to_path(
 
 fn save_document_with_thumbnails_to_path(
     document: &jian_ops_schema::PenDocument,
-    active_page_index: usize,
-    preserve_authored_geometry: bool,
+    meta: op_pen_loader::EditorMeta,
     thumbnails: &jian_ops_schema::image_thumbs::ImageThumbSnapshot,
     path: &std::path::Path,
 ) -> Result<(), DocIoError> {
-    save_serializable_document_with_thumbnails_to_path(
-        document,
-        active_page_index,
-        preserve_authored_geometry,
-        thumbnails,
-        path,
-    )
+    save_serializable_document_with_thumbnails_to_path(document, meta, thumbnails, path)
 }
 
 fn save_serializable_document_with_thumbnails_to_path<
     D: serde::Serialize + jian_ops_schema::image_table::SaveImageOrder + ?Sized,
 >(
     document: &D,
-    active_page_index: usize,
-    preserve_authored_geometry: bool,
+    meta: op_pen_loader::EditorMeta,
     thumbnails: &jian_ops_schema::image_thumbs::ImageThumbSnapshot,
     path: &std::path::Path,
 ) -> Result<(), DocIoError> {
@@ -150,8 +148,7 @@ fn save_serializable_document_with_thumbnails_to_path<
         canonical_save::write_serializable_document_with_thumbnails(
             &mut writer,
             document,
-            active_page_index,
-            preserve_authored_geometry,
+            meta,
             thumbnails,
         )?;
         std::io::Write::flush(&mut writer).map_err(|e| DocIoError::Io(e.to_string()))?;

@@ -53,6 +53,7 @@ impl Default for EditorUiState {
             file_drop_active: false,
             file_drop_target: None,
             preserve_authored_geometry: false,
+            scenario: None,
             preview: PreviewState::default(),
             agent_settings_open: false,
             agent_settings: crate::agent_settings::AgentSettings::default(),

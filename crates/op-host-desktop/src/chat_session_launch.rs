@@ -47,7 +47,7 @@ fn prepare_design_request_and_snapshot(
 // split out at the 800-line cap; see module docs there.
 #[path = "chat_session_launch_design.rs"]
 pub(super) mod launch_design;
-use launch_design::launch_design_loop_turn;
+use launch_design::{launch_design_loop_turn, stamp_design_turn_scenario};
 
 /// Drain `chat.pending_send` (raised by `ChatState::begin_send`) and
 /// route it.
@@ -99,6 +99,10 @@ pub fn launch_if_pending(
             return true;
         }
     } else if matches!(classify_intent(&effective_user_text), Intent::Design) {
+        // Record what this turn establishes the document to be BEFORE either
+        // design route can clear the starter frame — once the page is empty
+        // the "was it empty?" fact is gone. See `design_turn_scenario`.
+        stamp_design_turn_scenario(host.editor_state_mut(), &effective_user_text);
         // Phase 2.3: When the design-agent-loop flag is ON and a built-in
         // provider is configured, run the agentic tool-loop with the 14-tool
         // design toolset instead of the orchestrator pipeline. Flag OFF falls
@@ -421,11 +425,15 @@ fn launch_cli_standard_turn(
     // starter sample clears eagerly when the keyword pre-gate already
     // reads design intent. A keyword-design turn the LLM later
     // classifies as chat loses only the untouched starter sample.
-    if matches!(classify_intent(user_text), Intent::Design)
-        && super::allow_ai_bulk_write(host)
-        && clear_fresh_starter_frame_for_design(host.editor_state_mut())
-    {
-        host.mark_editor_state_dirty();
+    if matches!(classify_intent(user_text), Intent::Design) {
+        // Same ordering rule as the builtin route: the scenario fact is read
+        // while the page still shows what the user had.
+        stamp_design_turn_scenario(host.editor_state_mut(), user_text);
+        if super::allow_ai_bulk_write(host)
+            && clear_fresh_starter_frame_for_design(host.editor_state_mut())
+        {
+            host.mark_editor_state_dirty();
+        }
     }
 
     // Route inputs, post-clear (TS reads the live doc at this point).
