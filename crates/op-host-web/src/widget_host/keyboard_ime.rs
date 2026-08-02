@@ -95,6 +95,28 @@ impl WidgetHost {
         }
         consumed
     }
+
+    /// Clipboard-paste routing. Identical to `apply_paste_text` except that
+    /// the join field takes the payload as a whole-field replacement: an
+    /// invite code is pasted as a unit, and char-by-char append silently
+    /// concatenated a new code onto a stale one. IME commits must NOT come
+    /// through here — mid-composition text is an insertion, not a paste.
+    pub fn apply_clipboard_text(&mut self, text: &str) -> bool {
+        if self.editor_state.editor_ui.collab_join_input_active() {
+            let changed = op_editor_ui::widgets::collab_ui::join_address_paste(
+                &mut self.editor_state.editor_ui,
+                text,
+            )
+            .unwrap_or(false);
+            if changed {
+                self.mark_dirty();
+            }
+            // Consumed either way: the browser default must never route the
+            // payload into the hidden IME input behind the focused field.
+            return true;
+        }
+        self.apply_paste_text(text)
+    }
 }
 
 #[cfg(test)]

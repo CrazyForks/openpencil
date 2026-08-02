@@ -464,11 +464,22 @@ pub fn apply_panel_hit(
         CollabPanelHit::Close => {
             ui.collab.panel.open = false;
             ui.collab.panel.join_address_focused = false;
+            ui.collab.panel.join_address_selected = false;
             ui.collab.panel.hover = None;
             true
         }
         CollabPanelHit::FocusJoinAddress => {
+            // A plain click focuses with a collapsed caret; it never keeps a
+            // stale whole-field selection alive.
             ui.collab.panel.join_address_focused = true;
+            ui.collab.panel.join_address_selected = false;
+            true
+        }
+        CollabPanelHit::ClearJoinAddress => {
+            ui.collab.panel.join_address.clear();
+            ui.collab.panel.join_address_selected = false;
+            ui.collab.panel.join_address_focused = true;
+            ui.collab.panel.hover = None;
             true
         }
         CollabPanelHit::OpenSignIn => {
@@ -479,6 +490,7 @@ pub fn apply_panel_hit(
             ui.login_modal_hover = None;
             ui.collab.panel.open = false;
             ui.collab.panel.join_address_focused = false;
+            ui.collab.panel.join_address_selected = false;
             ui.collab.panel.hover = None;
             true
         }
@@ -488,22 +500,28 @@ pub fn apply_panel_hit(
         CollabPanelHit::CopyInvite(_) => false,
         CollabPanelHit::Inside => {
             ui.collab.panel.join_address_focused = false;
+            ui.collab.panel.join_address_selected = false;
             true
         }
         CollabPanelHit::Action(CollabUiAction::OpenCreate) => {
             ui.collab.panel.view = op_editor_core::CollabPanelView::Create;
             ui.collab.panel.join_address_focused = false;
+            ui.collab.panel.join_address_selected = false;
             ui.collab.panel.hover = None;
             true
         }
         CollabPanelHit::Action(CollabUiAction::OpenJoin) => {
             ui.collab.panel.view = op_editor_core::CollabPanelView::Join;
             ui.collab.panel.join_address_focused = true;
+            ui.collab.panel.join_address_selected = false;
             ui.collab.panel.hover = None;
             true
         }
         CollabPanelHit::Action(CollabUiAction::BeginDiscovery) => {
             ui.collab.panel.view = op_editor_core::CollabPanelView::Join;
+            // Find-nearby keeps the field focused; a surviving whole-field
+            // selection would make the next keystroke destructive.
+            ui.collab.panel.join_address_selected = false;
             request_action(ui, CollabUiAction::BeginDiscovery)
         }
         CollabPanelHit::Action(CollabUiAction::Cancel)
@@ -511,11 +529,13 @@ pub fn apply_panel_hit(
         {
             ui.collab.panel.view = op_editor_core::CollabPanelView::Home;
             ui.collab.panel.join_address_focused = false;
+            ui.collab.panel.join_address_selected = false;
             ui.collab.panel.hover = None;
             true
         }
         CollabPanelHit::Action(action) => {
             ui.collab.panel.join_address_focused = false;
+            ui.collab.panel.join_address_selected = false;
             request_action(ui, action)
         }
     }
@@ -527,17 +547,20 @@ pub fn join_address_text(ui: &mut EditorUiState, character: char) -> Option<bool
     if !ui.collab.panel.join_address_focused {
         return None;
     }
-    if character.is_control()
-        || ui.collab.panel.join_address.chars().count() >= MAX_JOIN_TARGET_CHARS
-    {
+    if character.is_control() {
         return Some(false);
     }
-    // The runtime performs authoritative SocketAddr/hostname validation.
-    // This presentation filter merely keeps whitespace and shell-like
-    // punctuation out of the one-line endpoint field.
-    if !(character.is_ascii_alphanumeric()
-        || matches!(character, '.' | ':' | '-' | '[' | ']' | '_'))
-    {
+    if !join_address_char_allowed(character) {
+        return Some(false);
+    }
+    // A whole-field selection replaces on type, like every range-selection
+    // input: the first accepted character clears the old value. The length
+    // cap below deliberately runs AFTER the take — a full field must still
+    // be replaceable by typing over the selection.
+    if std::mem::take(&mut ui.collab.panel.join_address_selected) {
+        ui.collab.panel.join_address.clear();
+    }
+    if ui.collab.panel.join_address.chars().count() >= MAX_JOIN_TARGET_CHARS {
         return Some(false);
     }
     ui.collab.panel.join_address.push(character);
@@ -545,15 +568,62 @@ pub fn join_address_text(ui: &mut EditorUiState, character: char) -> Option<bool
     Some(true)
 }
 
+/// Presentation filter for the invite-or-`host:port` field. The runtime
+/// performs authoritative validation; this merely keeps whitespace and
+/// shell-like punctuation out of the one-line endpoint field.
+fn join_address_char_allowed(character: char) -> bool {
+    character.is_ascii_alphanumeric() || matches!(character, '.' | ':' | '-' | '[' | ']' | '_')
+}
+
 pub fn join_address_backspace(ui: &mut EditorUiState) -> Option<bool> {
     if !ui.collab.panel.join_address_focused {
         return None;
+    }
+    if std::mem::take(&mut ui.collab.panel.join_address_selected) {
+        let changed = !ui.collab.panel.join_address.is_empty();
+        ui.collab.panel.join_address.clear();
+        if changed {
+            ui.collab.panel.hover = None;
+        }
+        return Some(changed);
     }
     let changed = ui.collab.panel.join_address.pop().is_some();
     if changed {
         ui.collab.panel.hover = None;
     }
     Some(changed)
+}
+
+/// Cmd/Ctrl+A on the focused join field — whole-field selection. `None`
+/// means the field is not focused and the chord belongs to someone else.
+pub fn join_address_select_all(ui: &mut EditorUiState) -> Option<bool> {
+    if !ui.collab.panel.join_address_focused {
+        return None;
+    }
+    let selectable = !ui.collab.panel.join_address.is_empty();
+    ui.collab.panel.join_address_selected = selectable;
+    Some(selectable)
+}
+
+/// Clipboard paste into the focused join field. Replaces the whole field —
+/// an invite code is pasted as a unit, and append semantics silently
+/// produced corrupt old+new concatenations. `None` means not focused.
+pub fn join_address_paste(ui: &mut EditorUiState, text: &str) -> Option<bool> {
+    if !ui.collab.panel.join_address_focused {
+        return None;
+    }
+    let sanitized: String = text
+        .chars()
+        .filter(|character| !character.is_control() && join_address_char_allowed(*character))
+        .take(MAX_JOIN_TARGET_CHARS)
+        .collect();
+    if sanitized.is_empty() {
+        return Some(false);
+    }
+    ui.collab.panel.join_address = sanitized;
+    ui.collab.panel.join_address_selected = false;
+    ui.collab.panel.hover = None;
+    Some(true)
 }
 
 pub fn join_address_submit(ui: &mut EditorUiState) -> Option<bool> {
@@ -568,6 +638,7 @@ pub fn join_address_submit(ui: &mut EditorUiState) -> Option<bool> {
         endpoint: endpoint.to_string(),
     };
     ui.collab.panel.join_address_focused = false;
+    ui.collab.panel.join_address_selected = false;
     ui.collab.panel.hover = None;
     Some(request_action(ui, action))
 }

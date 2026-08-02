@@ -180,6 +180,15 @@ impl WidgetHostNative {
     }
 
     fn apply_input_select_all(&mut self) -> bool {
+        if self.editor_state.editor_ui.collab_join_input_active() {
+            if op_editor_ui::widgets::collab_ui::join_address_select_all(
+                &mut self.editor_state.editor_ui,
+            ) == Some(true)
+            {
+                self.mark_dirty();
+            }
+            return true;
+        }
         if self.apply_image_panel_select_all() {
             return true;
         }

@@ -249,3 +249,41 @@ fn web_collab_sign_in_hands_press_ownership_to_modal() {
     assert!(!host.editor_state.editor_ui.login_modal_open);
     assert!(host.editor_state.editor_ui.collab.panel.open);
 }
+
+#[test]
+fn web_join_clipboard_replaces_and_select_all_clears() {
+    let mut host = WidgetHost::new();
+    focus_join(&mut host);
+
+    assert!(host.apply_clipboard_text("opc1_first-code"));
+    assert!(host.apply_clipboard_text("opc1_second-code"));
+    assert_eq!(
+        host.editor_state.editor_ui.collab.panel.join_address, "opc1_second-code",
+        "a pasted invite replaces the stale one instead of appending"
+    );
+
+    // IME commits keep insert semantics — only the clipboard replaces.
+    let ime = crate::event::ime::composition_end("Z".to_string());
+    assert!(host.apply_ime(&ime));
+    assert_eq!(
+        host.editor_state.editor_ui.collab.panel.join_address,
+        "opc1_second-codeZ"
+    );
+
+    assert!(host.apply_select_all());
+    assert!(
+        host.editor_state
+            .editor_ui
+            .collab
+            .panel
+            .join_address_selected
+    );
+    assert!(host.apply_backspace());
+    assert!(host
+        .editor_state
+        .editor_ui
+        .collab
+        .panel
+        .join_address
+        .is_empty());
+}

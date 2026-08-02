@@ -31,6 +31,20 @@ impl WidgetHostNative {
     /// dropped since these inputs are single-line. Returns `true` if
     /// anything was inserted.
     pub fn apply_input_paste(&mut self, text: &str) -> bool {
+        // The join field takes a pasted invite code as a whole-field
+        // replacement: char-by-char append silently concatenated a new code
+        // onto a stale one, producing an invalid join target.
+        if self.editor_state.editor_ui.collab_join_input_active() {
+            let changed = op_editor_ui::widgets::collab_ui::join_address_paste(
+                &mut self.editor_state.editor_ui,
+                text,
+            )
+            .unwrap_or(false);
+            if changed {
+                self.mark_dirty();
+            }
+            return true;
+        }
         let mut inserted = false;
         for c in text.chars() {
             if c.is_control() {

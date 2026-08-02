@@ -92,7 +92,10 @@ impl EditorUiState {
     }
 
     /// Drop even a stale Join-field focus bit when another surface takes over.
+    /// The whole-field selection dies with the focus so a later refocus never
+    /// resurrects a destructive replace-on-type state.
     pub fn blur_collab_join_input(&mut self) -> bool {
+        self.collab.panel.join_address_selected = false;
         std::mem::take(&mut self.collab.panel.join_address_focused)
     }
 

@@ -562,7 +562,7 @@ fn handle_paste_event<C: RepaintContext + 'static>(
         let text = dt.get_data("text/plain").unwrap_or_default();
         if !text.is_empty() {
             let mut b = inner.borrow_mut();
-            if b.host_mut().apply_paste_text(&text) {
+            if b.host_mut().apply_clipboard_text(&text) {
                 let _ = b.repaint();
             }
         }
@@ -621,7 +621,7 @@ fn handle_paste_event<C: RepaintContext + 'static>(
     let text = dt.get_data("text/plain").unwrap_or_default();
     if !text.is_empty() {
         let mut b = inner.borrow_mut();
-        if b.host_mut().apply_paste_text(&text) {
+        if b.host_mut().apply_clipboard_text(&text) {
             evt.prevent_default();
             let _ = b.repaint();
             return;

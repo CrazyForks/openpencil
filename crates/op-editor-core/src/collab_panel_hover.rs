@@ -14,6 +14,7 @@ pub enum CollabPanelHover {
     Connect,
     Cancel,
     JoinAddress,
+    ClearJoinAddress,
     Discovered(usize),
     Retry,
     Leave,

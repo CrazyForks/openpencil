@@ -268,3 +268,85 @@ fn conflict_notice_names_the_discarded_fields_and_offers_reapply() {
     ui.collab.clear_authenticated();
     assert!(ui.collab.discarded_edit.is_none());
 }
+
+#[test]
+fn paste_replaces_the_whole_join_field() {
+    let mut ui = EditorUiState::default();
+    ui.collab.panel.join_address_focused = true;
+    ui.collab.panel.join_address = "opc1_stale-old-code".into();
+
+    assert_eq!(join_address_paste(&mut ui, "opc1_fresh_code\n"), Some(true));
+    assert_eq!(ui.collab.panel.join_address, "opc1_fresh_code");
+
+    // Whitespace-only payloads change nothing rather than clearing the field.
+    assert_eq!(join_address_paste(&mut ui, " \n\t"), Some(false));
+    assert_eq!(ui.collab.panel.join_address, "opc1_fresh_code");
+
+    ui.collab.panel.join_address_focused = false;
+    assert_eq!(join_address_paste(&mut ui, "opc1_x"), None);
+}
+
+#[test]
+fn select_all_then_backspace_clears_and_type_replaces() {
+    let mut ui = EditorUiState::default();
+    ui.collab.panel.join_address_focused = true;
+    ui.collab.panel.join_address = "opc1_very-long-invite".into();
+
+    assert_eq!(join_address_select_all(&mut ui), Some(true));
+    assert!(ui.collab.panel.join_address_selected);
+    assert_eq!(join_address_backspace(&mut ui), Some(true));
+    assert!(ui.collab.panel.join_address.is_empty());
+    assert!(!ui.collab.panel.join_address_selected);
+
+    // Select-all on an empty field selects nothing.
+    assert_eq!(join_address_select_all(&mut ui), Some(false));
+    assert!(!ui.collab.panel.join_address_selected);
+
+    ui.collab.panel.join_address = "opc1_old".into();
+    assert_eq!(join_address_select_all(&mut ui), Some(true));
+    assert_eq!(join_address_text(&mut ui, 'x'), Some(true));
+    assert_eq!(ui.collab.panel.join_address, "x");
+    assert!(!ui.collab.panel.join_address_selected);
+}
+
+#[test]
+fn clear_hit_empties_the_field_and_keeps_focus() {
+    let mut ui = EditorUiState::default();
+    ui.collab.availability = CollabAvailability::Ready;
+    ui.collab.panel.open = true;
+    ui.collab.panel.view = CollabPanelView::Join;
+    ui.collab.panel.join_address = "opc1_something".into();
+    ui.collab.panel.join_address_selected = true;
+
+    assert!(apply_panel_hit(
+        &mut ui,
+        crate::widgets::collab_panel::CollabPanelHit::ClearJoinAddress,
+    ));
+    assert!(ui.collab.panel.join_address.is_empty());
+    assert!(ui.collab.panel.join_address_focused);
+    assert!(!ui.collab.panel.join_address_selected);
+}
+
+#[test]
+fn blur_paths_drop_the_whole_field_selection() {
+    let mut ui = EditorUiState::default();
+    ui.collab.panel.join_address_focused = true;
+    ui.collab.panel.join_address = "opc1_abc".into();
+    ui.collab.panel.join_address_selected = true;
+
+    assert!(apply_panel_hit(
+        &mut ui,
+        crate::widgets::collab_panel::CollabPanelHit::Inside,
+    ));
+    assert!(!ui.collab.panel.join_address_focused);
+    assert!(!ui.collab.panel.join_address_selected);
+
+    // Re-focusing by click never resurrects a stale selection.
+    ui.collab.panel.join_address_selected = true;
+    assert!(apply_panel_hit(
+        &mut ui,
+        crate::widgets::collab_panel::CollabPanelHit::FocusJoinAddress,
+    ));
+    assert!(ui.collab.panel.join_address_focused);
+    assert!(!ui.collab.panel.join_address_selected);
+}

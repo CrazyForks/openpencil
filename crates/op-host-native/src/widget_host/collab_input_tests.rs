@@ -260,3 +260,64 @@ fn native_collab_sign_in_hands_press_ownership_to_modal() {
     assert!(!host.editor_state().editor_ui.login_modal_open);
     assert!(host.editor_state().editor_ui.collab.panel.open);
 }
+
+#[test]
+fn native_join_paste_replaces_and_select_all_clears() {
+    let mut host = WidgetHostNative::new();
+    focus_join(&mut host);
+
+    assert!(host.apply_input_paste("opc1_first-code"));
+    assert!(host.apply_input_paste("opc1_second-code"));
+    assert_eq!(
+        host.editor_state().editor_ui.collab.panel.join_address,
+        "opc1_second-code",
+        "a pasted invite replaces the stale one instead of appending"
+    );
+
+    // Cmd/Ctrl+A owns the chord and selects the whole field...
+    assert!(host.apply_select_all());
+    assert!(
+        host.editor_state()
+            .editor_ui
+            .collab
+            .panel
+            .join_address_selected
+    );
+    // ...so one Backspace clears it.
+    assert!(host.apply_backspace());
+    assert!(host
+        .editor_state()
+        .editor_ui
+        .collab
+        .panel
+        .join_address
+        .is_empty());
+}
+
+#[test]
+fn native_join_delete_clears_selection_and_never_deletes_nodes() {
+    let mut host = host_with_selected_node();
+    let before = host.editor_state().active_children().len();
+    host.editor_state_mut().editor_ui.collab.panel.join_address = "opc1_code".into();
+    host.editor_state_mut()
+        .editor_ui
+        .collab
+        .panel
+        .join_address_selected = true;
+
+    assert!(host.apply_delete());
+    assert!(host
+        .editor_state()
+        .editor_ui
+        .collab
+        .panel
+        .join_address
+        .is_empty());
+    // Delete with an empty, unselected field is still swallowed.
+    assert!(!host.apply_delete());
+    assert_eq!(
+        host.editor_state().active_children().len(),
+        before,
+        "canvas selection behind the panel must survive"
+    );
+}

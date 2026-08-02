@@ -35,6 +35,14 @@ impl CollabPanel<'_> {
                 }
             }
             CollabPanelScreen::Join { discovered, .. } => {
+                // The clear affordance sits inside the input rect, so it must
+                // win before the focus hit.
+                if self
+                    .clear_join_rect(panel, body_top + 22.0)
+                    .is_some_and(|rect| rect.contains(point))
+                {
+                    return Some(CollabPanelHit::ClearJoinAddress);
+                }
                 if self.address_rect(panel, body_top + 22.0).contains(point) {
                     return Some(CollabPanelHit::FocusJoinAddress);
                 }
@@ -123,6 +131,12 @@ impl CollabPanel<'_> {
                 }
             }
             CollabPanelScreen::Join { discovered, .. } => {
+                if self
+                    .clear_join_rect(panel, body_top + 22.0)
+                    .is_some_and(|rect| rect.contains(point))
+                {
+                    return Some(CollabPanelHover::ClearJoinAddress);
+                }
                 if self.address_rect(panel, body_top + 22.0).contains(point) {
                     return Some(CollabPanelHover::JoinAddress);
                 }
@@ -291,6 +305,21 @@ impl CollabPanel<'_> {
             panel.size.x - PAD * 2.0,
             INPUT_HEIGHT,
         )
+    }
+
+    /// Clear (×) affordance inside the join field. `None` while the field is
+    /// empty so an idle input never paints or hit-tests a dead button.
+    pub(super) fn clear_join_rect(&self, panel: Rect, y: f32) -> Option<Rect> {
+        if self.ui.collab.panel.join_address.is_empty() {
+            return None;
+        }
+        let input = self.address_rect(panel, y);
+        Some(Rect::xywh(
+            input.origin.x + input.size.x - CLEAR_BUTTON_SIZE - 5.0,
+            input.origin.y + (input.size.y - CLEAR_BUTTON_SIZE) / 2.0,
+            CLEAR_BUTTON_SIZE,
+            CLEAR_BUTTON_SIZE,
+        ))
     }
 
     pub(super) fn sign_in_rect(&self, panel: Rect, body_top: f32) -> Rect {

@@ -713,3 +713,50 @@ fn share_address_label_is_localized() {
         "分享地址"
     );
 }
+
+#[test]
+fn join_clear_button_wins_inside_the_input_and_needs_content() {
+    let mut ui = EditorUiState::default();
+    ui.collab.availability = CollabAvailability::Ready;
+    ui.collab.panel.open = true;
+    ui.collab.panel.view = CollabPanelView::Join;
+    ui.collab.panel.join_address = "opc1_public-invite".into();
+
+    let panel = CollabPanel::for_editor_ui(&ui).unwrap();
+    let rect = panel.rect_at(Rect::xywh(600.0, 8.0, 100.0, 26.0), viewport());
+    let body_top = panel.body_top(rect);
+    let clear = panel
+        .clear_join_rect(rect, body_top + 22.0)
+        .expect("non-empty field exposes the clear affordance");
+    assert!(
+        panel
+            .address_rect(rect, body_top + 22.0)
+            .contains(center(clear)),
+        "clear button sits inside the input"
+    );
+    assert_eq!(
+        panel.hit_test(rect, center(clear)),
+        Some(CollabPanelHit::ClearJoinAddress)
+    );
+    assert_eq!(
+        panel.hover_at(rect, center(clear)),
+        Some(CollabPanelHover::ClearJoinAddress)
+    );
+    // Outside the button the input still takes focus.
+    let input = panel.address_rect(rect, body_top + 22.0);
+    let left = Point2D::new(input.origin.x + 8.0, input.origin.y + input.size.y / 2.0);
+    assert_eq!(
+        panel.hit_test(rect, left),
+        Some(CollabPanelHit::FocusJoinAddress)
+    );
+
+    // An empty field paints and hit-tests no dead button.
+    let mut empty = EditorUiState::default();
+    empty.collab.availability = CollabAvailability::Ready;
+    empty.collab.panel.open = true;
+    empty.collab.panel.view = CollabPanelView::Join;
+    let panel = CollabPanel::for_editor_ui(&empty).unwrap();
+    let rect = panel.rect_at(Rect::xywh(600.0, 8.0, 100.0, 26.0), viewport());
+    let body_top = panel.body_top(rect);
+    assert!(panel.clear_join_rect(rect, body_top + 22.0).is_none());
+}

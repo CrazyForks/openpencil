@@ -12,6 +12,7 @@ impl fmt::Debug for CollabPanelState {
             .field("view", &self.view)
             .field("join_address", &"[REDACTED]")
             .field("join_address_focused", &self.join_address_focused)
+            .field("join_address_selected", &self.join_address_selected)
             .field("hover", &self.hover)
             .field("discovered", &self.discovered)
             .finish()

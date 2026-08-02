@@ -33,6 +33,7 @@ const INPUT_HEIGHT: f32 = 32.0;
 const ACTION_HEIGHT: f32 = 32.0;
 const ACTION_GAP: f32 = 8.0;
 const NOTICE_HEIGHT: f32 = 42.0;
+const CLEAR_BUTTON_SIZE: f32 = 22.0;
 const CONNECTION_PATH_HEIGHT: f32 = 28.0;
 const INVITE_HEIGHT: f32 = 48.0;
 const SHARE_ENDPOINT_HEIGHT: f32 = 38.0;
@@ -45,6 +46,7 @@ const MAX_VISIBLE_ENDPOINTS: usize = 6;
 pub enum CollabPanelHit {
     Close,
     FocusJoinAddress,
+    ClearJoinAddress,
     OpenSignIn,
     CopyInvite(String),
     CopyShareEndpoint(String),
@@ -57,6 +59,7 @@ impl std::fmt::Debug for CollabPanelHit {
         match self {
             Self::Close => formatter.write_str("Close"),
             Self::FocusJoinAddress => formatter.write_str("FocusJoinAddress"),
+            Self::ClearJoinAddress => formatter.write_str("ClearJoinAddress"),
             Self::OpenSignIn => formatter.write_str("OpenSignIn"),
             Self::CopyInvite(_) => formatter.write_str("CopyInvite([REDACTED])"),
             Self::CopyShareEndpoint(_) => formatter.write_str("CopyShareEndpoint([REDACTED])"),
@@ -229,8 +232,10 @@ impl Widget for CollabPanel<'_> {
                 );
                 let input = self.address_rect(rect, body_top + 22.0);
                 cx.backend.fill_round_rect(input, 6.0, self.theme.input);
-                let input_hovered =
-                    self.ui.collab.panel.hover == Some(CollabPanelHover::JoinAddress);
+                let input_hovered = matches!(
+                    self.ui.collab.panel.hover,
+                    Some(CollabPanelHover::JoinAddress | CollabPanelHover::ClearJoinAddress)
+                );
                 if input_hovered && !self.ui.collab.panel.join_address_focused {
                     cx.backend
                         .fill_round_rect(input, 6.0, self.theme.button_hover);
@@ -247,13 +252,32 @@ impl Widget for CollabPanel<'_> {
                     },
                     1.0,
                 );
+                let clear = self.clear_join_rect(rect, body_top + 22.0);
+                let text_width = if clear.is_some() {
+                    input.size.x - 18.0 - CLEAR_BUTTON_SIZE
+                } else {
+                    input.size.x - 18.0
+                };
                 let shown = if address.is_empty() {
                     op_i18n::translate(self.ui.locale, "collab.join.codePlaceholder").to_string()
                 } else {
-                    crate::util::ellipsize_to_width(address, input.size.x - 18.0, |text| {
+                    crate::util::ellipsize_to_width(address, text_width, |text| {
                         cx.backend.measure_text(text, 12.0)
                     })
                 };
+                if !address.is_empty()
+                    && self.ui.collab.panel.join_address_focused
+                    && self.ui.collab.panel.join_address_selected
+                {
+                    let selection = Rect::xywh(
+                        input.origin.x + 6.0,
+                        input.origin.y + 6.0,
+                        cx.backend.measure_text(&shown, 12.0).min(text_width) + 6.0,
+                        input.size.y - 12.0,
+                    );
+                    cx.backend
+                        .fill_round_rect(selection, 4.0, self.theme.ring.with_alpha(0.35));
+                }
                 paint_text(
                     cx,
                     &shown,
@@ -266,6 +290,24 @@ impl Widget for CollabPanel<'_> {
                     Point2D::new(input.origin.x + 9.0, input.origin.y + 21.0),
                     400,
                 );
+                if let Some(clear) = clear {
+                    if self.ui.collab.panel.hover == Some(CollabPanelHover::ClearJoinAddress) {
+                        cx.backend
+                            .fill_round_rect(clear, 6.0, self.theme.button_hover);
+                    }
+                    let icon_size = 12.0;
+                    draw_icon(
+                        cx.backend,
+                        Icon::Close,
+                        Point2D::new(
+                            clear.origin.x + (clear.size.x - icon_size) / 2.0,
+                            clear.origin.y + (clear.size.y - icon_size) / 2.0,
+                        ),
+                        icon_size,
+                        self.theme.muted_foreground,
+                        1.5,
+                    );
+                }
                 paint_text(
                     cx,
                     op_i18n::translate(self.ui.locale, "collab.join.publicHint"),

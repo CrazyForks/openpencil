@@ -112,6 +112,9 @@ pub struct CollabPanelState {
     pub view: CollabPanelView,
     pub join_address: String,
     pub join_address_focused: bool,
+    /// Whole-field selection for the plain-string join field (Cmd/Ctrl+A).
+    /// The next typed character or Backspace replaces/clears the field.
+    pub join_address_selected: bool,
     pub hover: Option<CollabPanelHover>,
     pub discovered: Arc<Vec<DiscoveredCollabEndpoint>>,
 }
