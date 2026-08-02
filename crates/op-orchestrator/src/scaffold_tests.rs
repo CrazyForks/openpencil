@@ -520,10 +520,13 @@ fn wide_screen_group_boards_wrap_onto_a_second_row() {
     );
 
     // The fifth board is the wrap: back to the left edge, one board height
-    // plus a gutter further down.
+    // plus a gutter plus the frame-name label's headroom further down.
     assert_eq!(
         positions[4],
-        (start_x, start_y + 1080.0 + SCREEN_GROUP_GAP),
+        (
+            start_x,
+            start_y + 1080.0 + SCREEN_GROUP_GAP + ROW_LABEL_HEADROOM
+        ),
         "board 5 starts a new row: {positions:?}"
     );
     assert_eq!(
@@ -583,7 +586,7 @@ fn content_sized_boards_still_step_down_by_the_preset_height() {
     let positions = root_positions(nodes);
     assert_eq!(
         positions[4],
-        (0.0, 900.0 + SCREEN_GROUP_GAP),
+        (0.0, 900.0 + SCREEN_GROUP_GAP + ROW_LABEL_HEADROOM),
         "the desktop preset height drives the row step: {positions:?}"
     );
 }

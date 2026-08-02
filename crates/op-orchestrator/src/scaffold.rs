@@ -462,6 +462,24 @@ pub(crate) const SCREEN_GROUP_GAP: f64 = 80.0;
 /// - 390 mobile       → 17 per row, i.e. unchanged for any realistic fan-out
 const MAX_ROW_WIDTH: f64 = 8200.0;
 
+/// Extra vertical clearance between rows, on top of `SCREEN_GROUP_GAP`.
+///
+/// The canvas paints each top-level frame's name ABOVE the frame at a FIXED
+/// screen-space offset that does not scale with zoom
+/// (`canvas_frame_labels.rs`: baseline at `sy - 18`, label box top at
+/// `sy - 32`). So a row gap equal to the column gap makes every second-row
+/// label collide with the bottom edge of the row above — 80 doc px is only
+/// ~11-17 screen px at the zoom where a wrapped canvas is actually viewed,
+/// well inside the label's fixed 32 px footprint (user report 2026-08-02).
+///
+/// 240 doc px is the allowance: fitting a wrapped multi-row canvas to the
+/// screen lands around zoom 0.14-0.22 (a 3-wide 1920 deck is 6000 doc px
+/// across, framed by `zoom_to_fit` into a 944-1424 px canvas region), where
+/// 240 doc px reads as 33-52 screen px — the label's 32 px plus breathing
+/// room. Horizontal spacing is untouched: labels are left-aligned to their
+/// own frame and never reach sideways.
+const ROW_LABEL_HEADROOM: f64 = 240.0;
+
 /// How many screen roots fit in one row at `board_width`.
 ///
 /// Always ≥ 1: a board wider than the whole row budget still has to go
@@ -527,14 +545,16 @@ pub(crate) fn build_screen_group_scaffold(
 
     // Roots wrap into rows instead of one endless strip (see `MAX_ROW_WIDTH`).
     // `y` is the top of the FIRST row; each later row steps down by a board
-    // height plus the same gutter the columns use. The row step reads the
+    // height, the same gutter the columns use, and the label headroom the
+    // columns do NOT need (see `ROW_LABEL_HEADROOM`). The row step reads the
     // height the scaffold actually builds with — a plan's `height: 0` means
     // "size me from content", and `build_root_frame_node` presets that to the
     // device-class artboard, so both must ask `resolved_root_height` or the
     // rows would overlap by exactly the amount that preset adds.
     let per_row = boards_per_row(rf.width);
     let column_step = rf.width + SCREEN_GROUP_GAP;
-    let row_step = resolved_root_height(rf.height, rf.width) + SCREEN_GROUP_GAP;
+    let row_step =
+        resolved_root_height(rf.height, rf.width) + SCREEN_GROUP_GAP + ROW_LABEL_HEADROOM;
 
     for (index, group) in groups.iter().enumerate() {
         // Placeholder id: `{root_frame.id}-{screen}` — mirrors the deleted
