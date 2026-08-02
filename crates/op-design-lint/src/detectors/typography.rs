@@ -43,6 +43,75 @@ const DEFAULT_LARGE_THRESHOLD: f64 = 2.0;
 /// Severity is always `info` (detect-only): the right replacement color
 /// depends on the design system + theme + intent, so `suggested_value` is
 /// `Null` and the issue is surfaced for the user / agent to decide.
+/// One text node whose resolved colour sits too close to its background.
+///
+/// The detector deliberately suggests no replacement (see `check_text`), but a
+/// repair pass still needs the two RESOLVED colours to pick one. They exist
+/// only inside the issue's prose `reason`, so this exposes them structurally
+/// rather than making a fix parse an error message.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LowContrastText {
+    pub node_id: String,
+    pub text_color: String,
+    pub bg_color: String,
+    pub ratio: f64,
+    pub threshold: f64,
+    /// Large text is allowed a looser ratio, and a repair must honour the
+    /// same distinction the detector used.
+    pub is_large: bool,
+}
+
+/// Resolved low-contrast text/background pairs, in walk order.
+pub fn low_contrast_text(root: &PenNode, doc: &PenDocument) -> Vec<LowContrastText> {
+    let empty_vars = Variables::new();
+    let variables = doc.variables.as_ref().unwrap_or(&empty_vars);
+    let theme = default_theme(doc.themes.as_ref());
+    let mut found = Vec::new();
+    collect_low_contrast(root, &[], variables, &theme, &mut found);
+    found
+}
+
+fn collect_low_contrast<'a>(
+    node: &'a PenNode,
+    ancestors: &[&'a PenNode],
+    variables: &Variables,
+    theme: &Theme,
+    found: &mut Vec<LowContrastText>,
+) {
+    if !is_node_visible(node) {
+        return;
+    }
+    if let PenNode::Text(text) = node {
+        if let Some(raw_text) = first_solid_color(text.fill.as_ref()) {
+            if let Some(text_color) = resolve_color_ref(&raw_text, variables, theme) {
+                let bg_color = ancestor_bg_color(ancestors, variables, theme);
+                let ratio = color_contrast(&text_color, &bg_color);
+                let is_large = is_large_text(text);
+                let threshold = if is_large {
+                    DEFAULT_LARGE_THRESHOLD
+                } else {
+                    DEFAULT_NORMAL_THRESHOLD
+                };
+                if ratio.is_finite() && ratio < threshold {
+                    found.push(LowContrastText {
+                        node_id: node_id(node).to_string(),
+                        text_color,
+                        bg_color,
+                        ratio,
+                        threshold,
+                        is_large,
+                    });
+                }
+            }
+        }
+    }
+    let mut next = ancestors.to_vec();
+    next.push(node);
+    for child in children(node) {
+        collect_low_contrast(child, &next, variables, theme, found);
+    }
+}
+
 pub fn detect_text_bg_contrast(root: &PenNode, doc: &PenDocument) -> Vec<Issue> {
     let mut issues = Vec::new();
     let empty_vars = Variables::new();

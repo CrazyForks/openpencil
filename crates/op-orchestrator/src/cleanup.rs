@@ -507,6 +507,12 @@ fn run_cleanup_passes_with_summary_and_policy(
         // reach it in the same state.
         patch_root_section_gap(sink, &rid);
         debug_probe_child_height(sink, &rid, "root_gap");
+        // Text that resolves to ~1:1 against its own background is not
+        // styled, it is missing. The lint crate has detected this since
+        // 2026-05, but the generation path called exactly one of its
+        // detectors, so it only ever fired for a user running
+        // `lint_document` by hand.
+        crate::text_contrast_repair::repair_text_contrast(sink, &rid);
         // Transparent wrapper padding inside an already-padded/gapped column →
         // double inset: misaligned section edges + starved children (a padded
         // "Key Metrics" strip squeezed its KPI cards until label touched icon).

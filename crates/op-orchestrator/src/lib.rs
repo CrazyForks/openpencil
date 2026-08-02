@@ -82,6 +82,7 @@ pub(crate) mod spread_screen_roots;
 pub mod stub_repair;
 pub mod subagent;
 pub mod table_repair;
+pub(crate) mod text_contrast_repair;
 pub mod tree_heuristics;
 pub mod unfilled_screens;
 pub(crate) mod unify_shared_nav;
