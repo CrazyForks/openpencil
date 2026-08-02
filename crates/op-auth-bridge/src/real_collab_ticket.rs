@@ -34,6 +34,13 @@ extern "C" {
         dh_pub_x25519_len: usize,
         request_id: *mut u64,
     ) -> i32;
+    fn op_auth_collab_ticket_poll(request_id: u64, status: *mut OpAuthCollabTicketStatus) -> i32;
+    fn op_auth_collab_ticket_cancel(request_id: u64);
+    fn op_auth_string_free(ptr: *mut u8, len: usize);
+}
+
+#[cfg(op_auth_collab_relay_token_prebuilt)]
+extern "C" {
     /// ABI v3. Shares the request-id namespace with the ticket begin call, so
     /// poll/cancel are unchanged.
     fn op_auth_collab_relay_token_begin(
@@ -41,9 +48,6 @@ extern "C" {
         dh_pub_x25519_len: usize,
         request_id: *mut u64,
     ) -> i32;
-    fn op_auth_collab_ticket_poll(request_id: u64, status: *mut OpAuthCollabTicketStatus) -> i32;
-    fn op_auth_collab_ticket_cancel(request_id: u64);
-    fn op_auth_string_free(ptr: *mut u8, len: usize);
 }
 
 struct RealCollabTicketProvider {
@@ -54,6 +58,7 @@ static REAL_COLLAB_TICKET_PROVIDER: RealCollabTicketProvider = RealCollabTicketP
     relay_token_capable: false,
 };
 
+#[cfg(op_auth_collab_relay_token_prebuilt)]
 static REAL_COLLAB_TICKET_PROVIDER_WITH_RELAY_TOKEN: RealCollabTicketProvider =
     RealCollabTicketProvider {
         relay_token_capable: true,
@@ -63,6 +68,7 @@ pub(crate) fn provider() -> &'static dyn CollabTicketProvider {
     &REAL_COLLAB_TICKET_PROVIDER
 }
 
+#[cfg(op_auth_collab_relay_token_prebuilt)]
 pub(crate) fn provider_with_relay_token() -> &'static dyn CollabTicketProvider {
     &REAL_COLLAB_TICKET_PROVIDER_WITH_RELAY_TOKEN
 }
@@ -102,20 +108,28 @@ impl CollabTicketProvider for RealCollabTicketProvider {
         if !self.relay_token_capable {
             return Err(CollabTicketError::Unavailable);
         }
-        let mut raw_request_id = 0_u64;
-        // SAFETY: the public key and out-pointer remain valid for the call,
-        // and the symbol exists whenever the linked ABI is at least v3.
-        let code = unsafe {
-            op_auth_collab_relay_token_begin(
-                request.dh_pub_x25519().as_ptr(),
-                request.dh_pub_x25519().len(),
-                &mut raw_request_id,
-            )
-        };
-        if code != ABI_OK {
-            return Err(provider_failure(code));
+        #[cfg(not(op_auth_collab_relay_token_prebuilt))]
+        {
+            let _ = request;
+            return Err(CollabTicketError::Unavailable);
         }
-        CollabTicketRequestId::new(raw_request_id).ok_or_else(|| provider_failure(0))
+        #[cfg(op_auth_collab_relay_token_prebuilt)]
+        {
+            let mut raw_request_id = 0_u64;
+            // SAFETY: the public key and out-pointer remain valid for the call,
+            // and the symbol exists whenever the linked ABI is at least v3.
+            let code = unsafe {
+                op_auth_collab_relay_token_begin(
+                    request.dh_pub_x25519().as_ptr(),
+                    request.dh_pub_x25519().len(),
+                    &mut raw_request_id,
+                )
+            };
+            if code != ABI_OK {
+                return Err(provider_failure(code));
+            }
+            CollabTicketRequestId::new(raw_request_id).ok_or_else(|| provider_failure(0))
+        }
     }
 
     fn poll_ticket(&self, id: CollabTicketRequestId) -> CollabTicketPoll {

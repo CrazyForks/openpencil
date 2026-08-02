@@ -195,6 +195,8 @@ mod property_popovers;
 mod release;
 mod release_feedback;
 mod scene_state;
+#[cfg(test)]
+mod scene_template_host_tests;
 mod scene_template_press;
 mod screen_switcher;
 #[cfg(all(test, not(target_os = "windows")))]

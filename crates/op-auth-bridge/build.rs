@@ -19,6 +19,7 @@ const DEV_FEATURE_ENV: &str = "CARGO_FEATURE_DEV_ABI_V2";
 fn main() {
     println!("cargo:rustc-check-cfg=cfg(op_auth_prebuilt)");
     println!("cargo:rustc-check-cfg=cfg(op_auth_collab_ticket_prebuilt)");
+    println!("cargo:rustc-check-cfg=cfg(op_auth_collab_relay_token_prebuilt)");
     println!("cargo:rustc-check-cfg=cfg(op_auth_development_prebuilt)");
     println!("cargo:rerun-if-changed=prebuilt");
     println!("cargo:rerun-if-changed=prebuilt_link_compat.rs");
@@ -73,12 +74,15 @@ fn main() {
         };
 
     println!("cargo:rustc-cfg=op_auth_prebuilt");
-    if abi_version == 2 {
+    if abi_version >= 2 {
         assert!(
             development_override || signed_provenance,
             "production ABI-v2 archives require signed provenance"
         );
         println!("cargo:rustc-cfg=op_auth_collab_ticket_prebuilt");
+    }
+    if abi_version >= 3 {
+        println!("cargo:rustc-cfg=op_auth_collab_relay_token_prebuilt");
     }
     println!("cargo:rustc-env=OP_AUTH_PREBUILT_ABI_VERSION={abi_version}");
     let link_dir = rust_host_link_directory(&target, &prebuilt_dir, artifact, expected_sha256);

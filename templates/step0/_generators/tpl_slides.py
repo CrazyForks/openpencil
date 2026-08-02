@@ -231,8 +231,18 @@ def closing():
     return s
 
 
+# Horizontal gap between boards on the canvas. Without explicit positions
+# every frame defaults to the origin and the deck stacks into one visible
+# slide — the other five are underneath it (reported 2026-08-02).
+BOARD_GAP = 120
+
+
 def build():
-    return [cover(), agenda(), points(), metrics(), chart(), closing()]
+    boards = [cover(), agenda(), points(), metrics(), chart(), closing()]
+    for index, board in enumerate(boards):
+        board["x"] = index * (W + BOARD_GAP)
+        board["y"] = 0
+    return boards
 
 
 if __name__ == "__main__":

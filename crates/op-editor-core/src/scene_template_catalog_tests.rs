@@ -156,3 +156,39 @@ fn every_scene_has_a_distinct_label_so_the_filter_row_is_unambiguous() {
         assert_eq!(scene.as_str().parse::<TemplateScene>(), Ok(scene));
     }
 }
+
+/// Multi-frame templates must lay their boards out, not stack them.
+///
+/// A frame with no `x`/`y` defaults to the origin, so a six-slide deck opened
+/// as one visible board with five hidden underneath it (reported 2026-08-02).
+/// Per-frame rendering never shows this — only opening the document does.
+#[test]
+fn a_multi_frame_template_positions_every_frame() {
+    for template in scene_template_catalogue() {
+        if template.frames < 2 {
+            continue;
+        }
+        let parsed: serde_json::Value =
+            serde_json::from_str(template.document()).expect("valid json");
+        let children = parsed["children"].as_array().expect("children");
+
+        let mut seen: Vec<(f64, f64)> = Vec::new();
+        for (index, frame) in children.iter().enumerate() {
+            let x = frame["x"].as_f64().unwrap_or_else(|| {
+                panic!(
+                    "{}: frame {index} has no x — it would stack at the origin",
+                    template.id
+                )
+            });
+            let y = frame["y"]
+                .as_f64()
+                .unwrap_or_else(|| panic!("{}: frame {index} has no y", template.id));
+            assert!(
+                !seen.contains(&(x, y)),
+                "{}: frame {index} sits on top of an earlier one at ({x}, {y})",
+                template.id
+            );
+            seen.push((x, y));
+        }
+    }
+}
