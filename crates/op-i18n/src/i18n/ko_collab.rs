@@ -24,7 +24,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.action.copyInviteLink" => "초대 링크 복사",
         "collab.action.findNearby" => "주변 찾기",
         "collab.join.code" => "초대 코드 또는 IP 주소",
-        "collab.join.codePlaceholder" => "opc1_… 또는 192.168.1.8:43120",
+        "collab.join.codePlaceholder" => "A2C4E6G8J0 또는 192.168.1.8:43120",
         "collab.join.publicHint" => "초대 코드로 인터넷을 통해 안전하게 연결할 수 있습니다.",
         "collab.join.nearby" => "주변 세션",
         "collab.session.invite" => "공개 초대 코드",
@@ -37,6 +37,11 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.region.global" => "글로벌",
         "collab.error.inviteUnavailable" => "이 초대를 사용할 수 없거나 만료되었습니다.",
         "collab.error.relayUnavailable" => "공개 릴레이를 일시적으로 사용할 수 없습니다.",
+        "collab.error.inviteInvalid" => "초대 코드가 유효하지 않습니다. 확인 후 다시 시도하세요.",
+        "collab.error.inviteExpired" => {
+            "초대 코드가 만료되었습니다. 소유자에게 새 코드를 요청하세요."
+        }
+        "collab.error.relayNotConfigured" => "이 기기에는 공용 릴레이가 구성되어 있지 않습니다.",
         "collab.error.regionUnavailable" => "초대의 홈 릴레이 지역을 사용할 수 없습니다.",
         "collab.error.rateLimited" => "연결 시도가 너무 많습니다. 잠시 후 다시 시도하세요.",
         "collab.action.discardPending" => "대기 중 편집 버리기",

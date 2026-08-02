@@ -47,8 +47,8 @@ use winit::event_loop::EventLoopProxy;
 
 use crate::DesktopEvent;
 use relay::{
-    guest_route_from_invite, owner_request_from_environment, EnvironmentRelayLocatorControlPlane,
-    GuestConnectionRoute, RelayLocatorControlPlane,
+    guest_route_from_invite, guest_route_from_pairing_code, owner_request_from_environment,
+    EnvironmentRelayLocatorControlPlane, GuestConnectionRoute, RelayLocatorControlPlane,
 };
 use types::{
     CollabRuntimeError, CollabRuntimeFailure, CollabStatusEvent, DiscoveredEndpoint, NetworkEvent,
@@ -348,7 +348,7 @@ impl DesktopCollabRuntime {
             Some(
                 owner_request_from_environment(Arc::clone(&self.relay_locator_control_plane))?
                     .ok_or_else(|| {
-                        CollabRuntimeError::new(CollabRuntimeFailure::RelayUnavailable)
+                        CollabRuntimeError::new(CollabRuntimeFailure::RelayNotConfigured)
                     })?,
             )
         } else {
@@ -407,7 +407,15 @@ impl DesktopCollabRuntime {
     ) -> Result<(), CollabRuntimeError> {
         let endpoint = endpoint.trim();
         if endpoint.starts_with(op_collab_relay_protocol::RELAY_INVITE_PREFIX) {
-            let route = guest_route_from_invite(endpoint)?;
+            let route =
+                guest_route_from_invite(endpoint, Arc::clone(&self.relay_locator_control_plane))?;
+            return self.start_guest_route(host, route, JoinIntent::New);
+        }
+        if op_collab_relay_protocol::PairingCode::looks_like(endpoint) {
+            let route = guest_route_from_pairing_code(
+                endpoint,
+                Arc::clone(&self.relay_locator_control_plane),
+            )?;
             return self.start_guest_route(host, route, JoinIntent::New);
         }
         let endpoint = endpoint
@@ -594,6 +602,20 @@ impl DesktopCollabRuntime {
         let mut owner = OwnerActor::new(ready.session_id, ready.epoch, ready.auth, host)?;
         owner.set_share_endpoint(ready.share_endpoint);
         set_owner_ui(host, &owner);
+        // A relay session whose pairing-code publish failed has no shareable
+        // code; surface that instead of showing a silent, uninvitable
+        // session. The session itself stays up (LAN share still works).
+        if ready.invite.is_none()
+            && matches!(
+                ready.connection_path,
+                op_editor_core::CollabConnectionPathUi::Relay { .. }
+            )
+        {
+            self.set_notice(
+                host,
+                CollabNoticeKind::Connect(op_editor_core::CollabConnectErrorUi::RelayUnavailable),
+            );
+        }
         host.editor_state_mut()
             .editor_ui
             .collab

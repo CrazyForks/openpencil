@@ -24,6 +24,18 @@ require_literal() {
     grep -F -- "$pattern" "$file" >/dev/null
 }
 
+require_literal_count() {
+    expected=$1
+    pattern=$2
+    file=$3
+    actual=$(grep -Fc -- "$pattern" "$file" || true)
+    if [ "$actual" -ne "$expected" ]; then
+        printf 'error: expected %s occurrence(s) of %s in %s, found %s\n' \
+            "$expected" "$pattern" "$file" "$actual" >&2
+        exit 1
+    fi
+}
+
 require_single_upstream_server() {
     upstream=$1
     expected=$2
@@ -137,16 +149,25 @@ for pattern in \
     "if (\$ssl_server_name != $expected_inner_host) {" \
     "if (\$http_host != $expected_inner_host) {" \
     'if ($request_uri != "/v1/locator") {' \
+    'if ($request_uri != "/v1/pairing-code") {' \
+    'if ($request_uri != "/v1/pairing-code/claim") {' \
     'client_header_buffer_size 64k;' \
     'large_client_header_buffers 2 64k;' \
     'keepalive_requests 1;' \
     'keepalive_timeout 0;' \
     'location = /v1/locator {' \
+    'location = /v1/pairing-code {' \
+    'location = /v1/pairing-code/claim {' \
     'limit_except POST {' \
     'if ($http_transfer_encoding != "") {' \
     'if ($http_content_encoding != "") {' \
     'if ($content_length != "191") {' \
+    'if ($content_length != "49") {' \
     'client_max_body_size 191;' \
+    'client_max_body_size 624;' \
+    'client_max_body_size 49;' \
+    'client_body_buffer_size 624;' \
+    'client_body_buffer_size 49;' \
     'proxy_pass_request_headers off;' \
     "proxy_set_header Host $expected_inner_host;" \
     'proxy_set_header Authorization $http_authorization;' \
@@ -156,6 +177,11 @@ for pattern in \
     'proxy_set_header Transfer-Encoding "";' \
     'proxy_set_header Content-Encoding "";' \
     'proxy_pass http://openpencil_locator/v1/locator;' \
+    'proxy_pass http://openpencil_locator/v1/pairing-code;' \
+    'proxy_pass http://openpencil_locator/v1/pairing-code/claim;' \
+    'application/vnd.openpencil.relay-pairing-publish-v1' \
+    'application/vnd.openpencil.relay-pairing-claim-v1' \
+    'application/vnd.openpencil.relay-sealed-invite-v1' \
     'proxy_request_buffering on;' \
     'proxy_buffering off;' \
     'location / {' \
@@ -172,13 +198,29 @@ require_single_upstream_server \
 require_single_upstream_server \
     openpencil_locator 'locator:8092' "$https_config"
 
-for config in "$global_config" "$cn_config" "$https_config"; do
+for config in "$global_config" "$cn_config"; do
     [ "$(grep -Ec '^[[:space:]]*proxy_pass[[:space:]]+' "$config" || true)" -eq 1 ]
     if grep -Eq '^[[:space:]]*include[[:space:]]+' "$config"; then
         echo "Nginx include directives are forbidden in fixed locator-edge configs" >&2
         exit 1
     fi
 done
+require_literal_count 3 'location = /v1/' "$https_config"
+require_literal_count 3 'limit_except POST {' "$https_config"
+require_literal_count 3 'proxy_pass_request_headers off;' "$https_config"
+require_literal_count 3 'proxy_set_header Authorization $http_authorization;' "$https_config"
+require_literal_count 3 'if ($http_transfer_encoding != "") {' "$https_config"
+require_literal_count 3 'if ($http_content_encoding != "") {' "$https_config"
+require_literal_count 3 'proxy_request_buffering on;' "$https_config"
+require_literal_count 3 'proxy_buffering off;' "$https_config"
+if [ "$(grep -Ec '^[[:space:]]*proxy_pass[[:space:]]+' "$https_config" || true)" -ne 3 ]; then
+    echo "CN inner-HTTPS locator ingress must use exactly three fixed upstream routes" >&2
+    exit 1
+fi
+if grep -Eq '^[[:space:]]*include[[:space:]]+' "$https_config"; then
+    echo "Nginx include directives are forbidden in fixed locator-edge configs" >&2
+    exit 1
+fi
 
 if grep -Eq \
     'proxy_pass[[:space:]]+\$|proxy_next_upstream[[:space:]]+(on|error|timeout|http_)' \
@@ -195,7 +237,7 @@ then
     exit 1
 fi
 if grep -F '/healthz' "$https_config" >/dev/null; then
-    echo "the overseas locator ingress must expose only POST /v1/locator" >&2
+    echo "the overseas locator ingress must expose only the three exact POST /v1 routes" >&2
     exit 1
 fi
 

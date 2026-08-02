@@ -11,15 +11,25 @@ pub const MAX_COLLAB_INVITE_CODE_CHARS: usize = 1_024;
 #[derive(Clone, PartialEq, Eq)]
 pub struct CollabInviteCode(String);
 
+/// Crockford base32 alphabet of the 10-char short pairing code. Kept in sync
+/// with `op_collab_relay_protocol::PAIRING_CODE_ALPHABET`; duplicated so the
+/// wasm-clean editor core does not grow a protocol-crate dependency.
+const PAIRING_CODE_ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+const PAIRING_CODE_CHARS: usize = 10;
+
 impl CollabInviteCode {
     pub fn new(value: impl Into<String>) -> Option<Self> {
         let value = value.into();
-        let valid = value.starts_with("opc1_")
+        let long_invite = value.starts_with("opc1_")
             && value.chars().count() <= MAX_COLLAB_INVITE_CODE_CHARS
             && value
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'));
-        valid.then_some(Self(value))
+        let pairing_code = value.len() == PAIRING_CODE_CHARS
+            && value
+                .bytes()
+                .all(|byte| PAIRING_CODE_ALPHABET.contains(&byte));
+        (long_invite || pairing_code).then_some(Self(value))
     }
 
     pub fn as_str(&self) -> &str {
@@ -94,7 +104,14 @@ impl CollabConnectionPathUi {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CollabConnectErrorUi {
     InviteUnavailable,
+    /// The invite string itself is malformed — it never named a route.
+    InviteInvalid,
+    /// The invite was authentic but its pairing window is over.
+    InviteExpired,
     RelayUnavailable,
+    /// This device has no relay bootstrap configured; connecting cannot work
+    /// until the app is set up, so the copy must not suggest waiting.
+    RelayNotConfigured,
     RegionUnavailable,
     RateLimited,
     Incompatible,
@@ -107,7 +124,10 @@ impl CollabConnectErrorUi {
     pub const fn i18n_key(self) -> &'static str {
         match self {
             Self::InviteUnavailable => "collab.error.inviteUnavailable",
+            Self::InviteInvalid => "collab.error.inviteInvalid",
+            Self::InviteExpired => "collab.error.inviteExpired",
             Self::RelayUnavailable => "collab.error.relayUnavailable",
+            Self::RelayNotConfigured => "collab.error.relayNotConfigured",
             Self::RegionUnavailable => "collab.error.regionUnavailable",
             Self::RateLimited => "collab.error.rateLimited",
             Self::Incompatible => "collab.join.incompatible",
@@ -157,6 +177,20 @@ mod tests {
         assert!(!debug.contains("super-secret"));
         assert!(debug.contains("[REDACTED]"));
         assert!(CollabInviteCode::new("not-an-openpencil-invite").is_none());
+        // 10-char short pairing codes are displayable invites too.
+        assert!(CollabInviteCode::new("A2C4E6G8J0").is_some());
+        assert!(
+            CollabInviteCode::new("A2C4E6G8J").is_none(),
+            "length is exact"
+        );
+        assert!(
+            CollabInviteCode::new("A2C4E6G8JU").is_none(),
+            "U is outside the Crockford alphabet"
+        );
+        assert!(
+            CollabInviteCode::new("a2c4e6g8j0").is_none(),
+            "display form is canonical uppercase"
+        );
         assert!(CollabInviteCode::new(format!(
             "opc1_{}",
             "a".repeat(MAX_COLLAB_INVITE_CODE_CHARS)

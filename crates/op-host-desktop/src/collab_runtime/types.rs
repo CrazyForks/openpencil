@@ -16,7 +16,16 @@ pub(crate) enum CollabRuntimeFailure {
     InvalidAddress,
     InvalidSession,
     RelayInviteUnavailable,
+    /// The invite string failed to parse — wrong shape, corrupt, or
+    /// truncated. Distinct from an authentic invite whose window lapsed.
+    RelayInviteInvalid,
+    /// The invite verified but its pairing window is over (or not yet open).
+    RelayInviteExpired,
     RelayUnavailable,
+    /// No relay bootstrap endpoint is configured on this device. Distinct
+    /// from a configured relay that failed to load: the fix is local setup,
+    /// not waiting for the service to recover.
+    RelayNotConfigured,
     RelayRegionUnavailable,
     Transport,
     Protocol,

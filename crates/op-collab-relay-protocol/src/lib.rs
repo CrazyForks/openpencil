@@ -9,6 +9,7 @@ mod control;
 mod error;
 mod invite;
 mod locator;
+mod pairing;
 mod reauth;
 mod sensitive;
 
@@ -31,6 +32,10 @@ pub use locator::{
     LOCATOR_CANONICAL_SIGNING_BYTES, LOCATOR_PREFIX, MAX_EXPECTED_DISCOVERY_ID_BYTES,
     MAX_INVITE_CHARS, MAX_LOCATOR_KEY_ID_BYTES, MAX_PAIRING_LIFETIME_SECS,
     RELAY_LOCATOR_BINARY_BYTES, RELAY_PROTOCOL_VERSION,
+};
+pub use pairing::{
+    PairingCode, SealedPairingInvite, MAX_SEALED_INVITE_BYTES, PAIRING_CODE_ALPHABET,
+    PAIRING_CODE_CHARS, PAIRING_CODE_ID_BYTES, SEALED_INVITE_NONCE_BYTES, SEALED_INVITE_TAG_BYTES,
 };
 pub use reauth::{
     is_valid_relay_bearer_token, RelayReauthChallengeV1, RelayReauthResponseV1,

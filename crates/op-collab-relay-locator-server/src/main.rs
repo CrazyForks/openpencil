@@ -1,5 +1,6 @@
 use op_collab_relay_locator_server::{
-    build_production_publisher, serve_listener_until, LocatorServerConfig, ProductionLocatorConfig,
+    build_production_pairing, build_production_publisher, serve_listener_until,
+    LocatorServerConfig, ProductionLocatorConfig,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -38,7 +39,14 @@ async fn main() {
             std::process::exit(2);
         }
     };
-    if let Err(error) = run(server, publisher).await {
+    let pairing = match build_production_pairing(&production) {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::error!(%error, "pairing service dependencies unavailable");
+            std::process::exit(2);
+        }
+    };
+    if let Err(error) = run(server, publisher, pairing).await {
         tracing::error!(%error, "locator service stopped with an error");
         std::process::exit(1);
     }
@@ -47,9 +55,10 @@ async fn main() {
 async fn run(
     config: LocatorServerConfig,
     publisher: std::sync::Arc<dyn op_collab_relay_locator_server::LocatorPublisher>,
+    pairing: std::sync::Arc<dyn op_collab_relay_locator_server::PairingEndpoints>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
-    serve_listener_until(listener, config, publisher, shutdown_signal()).await?;
+    serve_listener_until(listener, config, publisher, pairing, shutdown_signal()).await?;
     Ok(())
 }
 

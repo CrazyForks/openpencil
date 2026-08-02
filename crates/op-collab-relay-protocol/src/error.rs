@@ -116,4 +116,8 @@ pub enum RelayProtocolError {
     PossessionProofTooLong { actual: usize, maximum: usize },
     #[error("secure random generation is unavailable")]
     RandomUnavailable,
+    #[error("pairing code is malformed or does not match")]
+    InvalidPairingCode,
+    #[error("sealed pairing invite is malformed")]
+    InvalidSealedInvite,
 }

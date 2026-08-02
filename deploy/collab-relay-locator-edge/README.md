@@ -16,7 +16,8 @@ owner POST inner HTTPS /v1/locator
   -> private CN locator-federation listener
   -> unwrap outer mTLS only
   -> fixed private CN inner-HTTPS listener
-  -> exact-host, exact POST /v1/locator policy
+  -> exact-host policy; exact POST /v1/locator, /v1/pairing-code,
+     /v1/pairing-code/claim
   -> existing CN locator service :8092
   -> existing ticket verification and HSM locator signing
 ```

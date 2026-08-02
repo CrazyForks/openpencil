@@ -63,6 +63,7 @@ new_fixture() {
     cp "$gate_source" "$fixture_root/tools/check-collab-security-boundaries.sh"
     cp "$script_dir/check-collab-deployment-boundaries.sh" \
         "$fixture_root/tools/check-collab-deployment-boundaries.sh"
+    cp "$script_dir/check-collab-security-boundaries-cases.sh" "$fixture_root/tools/"
     cp "$script_dir/check-op-auth-prebuilt.sh" "$fixture_root/tools/check-op-auth-prebuilt.sh"
     cp "$script_dir/check-op-auth-prebuilt.test.sh" "$fixture_root/tools/check-op-auth-prebuilt.test.sh"
     cp "$script_dir/package-op-auth-prebuilt.sh" "$fixture_root/tools/package-op-auth-prebuilt.sh"
@@ -92,7 +93,8 @@ EOF
 This file exists so the executable boundary gate can verify its public contract.
 EOF
 
-    write_collab_security_workflow_fixture
+    cp "$script_dir/../.github/workflows/collab-security.yml" \
+        "$fixture_root/.github/workflows/collab-security.yml"
 
     cat > "$fixture_root/deploy/collab-relay-edge/global-nginx.conf" <<'EOF'
 stream {
@@ -229,6 +231,24 @@ location = /v1/locator {
     client_max_body_size 191;
     proxy_set_header Authorization $http_authorization;
 }
+location = /v1/pairing-code {
+    if ($request_uri != "/v1/pairing-code") { return 404; }
+    limit_except POST { deny all; }
+    client_max_body_size 624; client_body_buffer_size 624;
+    if ($http_content_type != "application/vnd.openpencil.relay-pairing-publish-v1") { return 415; }
+    proxy_pass_request_headers off;
+    proxy_pass http://locator:8092/v1/pairing-code;
+}
+location = /v1/pairing-code/claim {
+    if ($request_uri != "/v1/pairing-code/claim") { return 404; }
+    limit_except POST { deny all; }
+    client_max_body_size 49; client_body_buffer_size 49;
+    if ($content_length != "49") { return 400; }
+    if ($http_content_type != "application/vnd.openpencil.relay-pairing-claim-v1") { return 415; }
+    if ($http_accept != "application/vnd.openpencil.relay-sealed-invite-v1") { return 406; }
+    proxy_pass_request_headers off;
+    proxy_pass http://locator:8092/v1/pairing-code/claim;
+}
 location / {
     return 404;
 }
@@ -310,11 +330,33 @@ server {
         if ($request_uri != "/v1/locator") {
             return 404;
         }
+        limit_except POST {
+            deny all;
+        }
         proxy_pass_request_headers off;
         proxy_set_header Authorization $http_authorization;
         proxy_set_header Transfer-Encoding "";
         proxy_set_header Content-Encoding "";
     }
+    location = /v1/pairing-code {
+        if ($request_uri != "/v1/pairing-code") { return 404; }
+        limit_except POST { deny all; }
+        client_max_body_size 624; client_body_buffer_size 624;
+        if ($http_content_type != "application/vnd.openpencil.relay-pairing-publish-v1") { return 415; }
+        proxy_pass_request_headers off;
+        proxy_pass http://openpencil_locator/v1/pairing-code;
+    }
+    location = /v1/pairing-code/claim {
+        if ($request_uri != "/v1/pairing-code/claim") { return 404; }
+        limit_except POST { deny all; }
+        client_max_body_size 49; client_body_buffer_size 49;
+        if ($content_length != "49") { return 400; }
+        if ($http_content_type != "application/vnd.openpencil.relay-pairing-claim-v1") { return 415; }
+        if ($http_accept != "application/vnd.openpencil.relay-sealed-invite-v1") { return 406; }
+        proxy_pass_request_headers off;
+        proxy_pass http://openpencil_locator/v1/pairing-code/claim;
+    }
+    location / { return 404; }
 }
 EOF
     for locator_edge_file in \

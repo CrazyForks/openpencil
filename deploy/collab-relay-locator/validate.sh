@@ -37,6 +37,20 @@ for pattern in \
     'if ($request_uri != "/v1/locator") {' \
     'if ($http_host = "") {' \
     'client_max_body_size 191;' \
+    'location = /v1/pairing-code {' \
+    'if ($request_uri != "/v1/pairing-code") {' \
+    'client_max_body_size 624;' \
+    'client_body_buffer_size 624;' \
+    'application/vnd.openpencil.relay-pairing-publish-v1' \
+    'proxy_pass http://locator:8092/v1/pairing-code;' \
+    'location = /v1/pairing-code/claim {' \
+    'if ($request_uri != "/v1/pairing-code/claim") {' \
+    'client_max_body_size 49;' \
+    'client_body_buffer_size 49;' \
+    'if ($content_length != "49") {' \
+    'application/vnd.openpencil.relay-pairing-claim-v1' \
+    'application/vnd.openpencil.relay-sealed-invite-v1' \
+    'proxy_pass http://locator:8092/v1/pairing-code/claim;' \
     'proxy_set_header Authorization $http_authorization;' \
     'proxy_set_header Host $http_host;' \
     'proxy_buffering off;' \
@@ -47,6 +61,30 @@ for pattern in \
 do
     require_literal "$pattern" "$nginx_config"
 done
+
+for counted_pattern in \
+    'limit_except POST {' \
+    'if ($http_transfer_encoding != "") {' \
+    'if ($http_content_encoding != "") {' \
+    'proxy_pass_request_headers off;' \
+    'proxy_set_header Transfer-Encoding "";' \
+    'proxy_set_header Content-Encoding "";' \
+    'proxy_request_buffering on;'
+do
+    if [ "$(grep -Fc -- "$counted_pattern" "$nginx_config" || true)" -ne 2 ]; then
+        echo "pairing ingress must enforce $counted_pattern on both routes" >&2
+        exit 1
+    fi
+done
+
+if [ "$(grep -Ec '^location = /v1/' "$nginx_config" || true)" -ne 3 ]; then
+    echo "locator ingress must expose exactly three /v1 routes" >&2
+    exit 1
+fi
+if [ "$(grep -Ec '^[[:space:]]*proxy_pass[[:space:]]+http://locator:8092/' "$nginx_config" || true)" -ne 4 ]; then
+    echo "locator ingress must use exactly four fixed locator upstream routes" >&2
+    exit 1
+fi
 
 for pattern in \
     'limit_req_zone $binary_remote_addr zone=openpencil_locator_per_source:10m rate=10r/s;' \

@@ -18,14 +18,18 @@ use op_auth_bridge::{
 #[cfg(unix)]
 use op_collab_policy_file::PinnedPolicyFileFetcher;
 #[cfg(unix)]
-use op_collab_relay_control_plane::{RegionBoundOwnerPublishPolicy, RelayLocatorPublishService};
+use op_collab_relay_control_plane::{
+    RegionBoundOwnerPublishPolicy, RelayLocatorPublishService, RelayPairingService,
+};
 use op_collab_relay_protocol::{LocatorKeyId, RelayRegion};
 
+#[cfg(unix)]
+use crate::InMemoryPairingStore;
 #[cfg(unix)]
 use crate::UnixHsmRelayLocatorSigner;
 use crate::{
     ExpectedUnixPeer, HsmSignerConfigError, HsmSignerError, LocatorHttpLimits, LocatorPublisher,
-    LocatorServerConfig, LocatorServerConfigError, DEFAULT_LOCATOR_LISTEN,
+    LocatorServerConfig, LocatorServerConfigError, PairingEndpoints, DEFAULT_LOCATOR_LISTEN,
 };
 
 pub const LOCATOR_LISTEN_ENV: &str = "OPENPENCIL_COLLAB_LOCATOR_LISTEN";
@@ -156,14 +160,7 @@ pub fn build_production_publisher(
     config: &ProductionLocatorConfig,
 ) -> Result<Arc<dyn LocatorPublisher>, ProductionLocatorConfigError> {
     let verifier_config = CollabVerifierConfig::production();
-    let fetcher = PinnedPolicyFileFetcher::new(
-        &verifier_config,
-        &config.ticket_policy_file,
-        config.policy_max_age_seconds,
-    );
-    fetcher
-        .validate_source(DEFAULT_MAX_COLLAB_JWKS_BYTES)
-        .map_err(|_| ProductionLocatorConfigError::UnsafePolicyFile)?;
+    let fetcher = validated_policy_fetcher(config, &verifier_config)?;
     let ticket_verifier =
         CollabTicketVerifier::new(verifier_config, fetcher, CollabJwksCacheLimits::default())?;
     let signer = UnixHsmRelayLocatorSigner::new(
@@ -182,10 +179,48 @@ pub fn build_production_publisher(
     )))
 }
 
+/// NOTE: the in-memory store is process-local. Behind a multi-replica or
+/// restarting deployment, publish and claim can land on different instances
+/// and 404; such deployments need a shared `PairingCodeStore` impl.
+#[cfg(unix)]
+pub fn build_production_pairing(
+    config: &ProductionLocatorConfig,
+) -> Result<Arc<dyn PairingEndpoints>, ProductionLocatorConfigError> {
+    let verifier_config = CollabVerifierConfig::production();
+    let fetcher = validated_policy_fetcher(config, &verifier_config)?;
+    Ok(Arc::new(RelayPairingService::production(
+        fetcher,
+        InMemoryPairingStore::default(),
+    )?))
+}
+
+#[cfg(unix)]
+fn validated_policy_fetcher(
+    config: &ProductionLocatorConfig,
+    verifier_config: &CollabVerifierConfig,
+) -> Result<PinnedPolicyFileFetcher, ProductionLocatorConfigError> {
+    let fetcher = PinnedPolicyFileFetcher::new(
+        verifier_config,
+        &config.ticket_policy_file,
+        config.policy_max_age_seconds,
+    );
+    fetcher
+        .validate_source(DEFAULT_MAX_COLLAB_JWKS_BYTES)
+        .map_err(|_| ProductionLocatorConfigError::UnsafePolicyFile)?;
+    Ok(fetcher)
+}
+
 #[cfg(not(unix))]
 pub fn build_production_publisher(
     _config: &ProductionLocatorConfig,
 ) -> Result<Arc<dyn LocatorPublisher>, ProductionLocatorConfigError> {
+    Err(ProductionLocatorConfigError::UnsupportedPlatform)
+}
+
+#[cfg(not(unix))]
+pub fn build_production_pairing(
+    _config: &ProductionLocatorConfig,
+) -> Result<Arc<dyn PairingEndpoints>, ProductionLocatorConfigError> {
     Err(ProductionLocatorConfigError::UnsupportedPlatform)
 }
 

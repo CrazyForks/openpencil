@@ -420,6 +420,16 @@ mv \
 expect_failure "requires per-source locator ingress throttling" \
     "locator per-source ingress boundary"
 
+new_fixture locator-pairing-route-removed
+awk '!index($0, "location = /v1/pairing-code {")' \
+    "$fixture_root/deploy/collab-relay-locator/nginx-location.conf" \
+    > "$fixture_root/deploy/collab-relay-locator/nginx-location.conf.next"
+mv \
+    "$fixture_root/deploy/collab-relay-locator/nginx-location.conf.next" \
+    "$fixture_root/deploy/collab-relay-locator/nginx-location.conf"
+expect_failure "requires the pairing publish route at the locator ingress" \
+    "locator exact-route ingress boundary"
+
 new_fixture locator-edge-crl-secure-ownership-removed
 awk '!index($0, "CRL/CA files must be root:101 mode 0440")' \
     "$fixture_root/deploy/collab-relay-locator-edge/rotate-cn-crl.sh" \
@@ -464,6 +474,16 @@ mv \
     "$fixture_root/deploy/collab-relay-locator-edge/cn-locator-https-nginx.conf.next" \
     "$fixture_root/deploy/collab-relay-locator-edge/cn-locator-https-nginx.conf"
 expect_failure "requires an exact inner HTTPS Host at the CN locator terminator" \
+    "CN locator exact inner-HTTPS boundary"
+
+new_fixture locator-edge-pairing-claim-route-removed
+awk '!index($0, "location = /v1/pairing-code/claim {")' \
+    "$fixture_root/deploy/collab-relay-locator-edge/cn-locator-https-nginx.conf" \
+    > "$fixture_root/deploy/collab-relay-locator-edge/cn-locator-https-nginx.conf.next"
+mv \
+    "$fixture_root/deploy/collab-relay-locator-edge/cn-locator-https-nginx.conf.next" \
+    "$fixture_root/deploy/collab-relay-locator-edge/cn-locator-https-nginx.conf"
+expect_failure "requires the pairing claim route at the CN locator terminator" \
     "CN locator exact inner-HTTPS boundary"
 
 new_fixture locator-edge-source-rate-removed

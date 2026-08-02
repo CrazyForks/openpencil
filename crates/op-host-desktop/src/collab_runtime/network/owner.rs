@@ -113,7 +113,7 @@ fn run_inner(
             .map_err(|_| CollabRuntimeFailure::Protocol)?,
     );
     let (invite, connection_path) = match relay.as_ref() {
-        Some(relay) => (Some(relay.invite()), relay.path()),
+        Some(relay) => (relay.invite(), relay.path()),
         None => (None, op_editor_core::CollabConnectionPathUi::Lan),
     };
     if !sink.send(NetworkEvent::OwnerReady {

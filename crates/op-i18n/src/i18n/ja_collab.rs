@@ -24,7 +24,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.action.copyInviteLink" => "招待リンクをコピー",
         "collab.action.findNearby" => "近くを検索",
         "collab.join.code" => "招待コードまたは IP アドレス",
-        "collab.join.codePlaceholder" => "opc1_… または 192.168.1.8:43120",
+        "collab.join.codePlaceholder" => "A2C4E6G8J0 または 192.168.1.8:43120",
         "collab.join.publicHint" => "招待コードでインターネット経由の安全な接続ができます。",
         "collab.join.nearby" => "近くのセッション",
         "collab.session.invite" => "公開招待コード",
@@ -37,6 +37,11 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.region.global" => "グローバル",
         "collab.error.inviteUnavailable" => "この招待は利用できないか、有効期限が切れています。",
         "collab.error.relayUnavailable" => "公開リレーは一時的に利用できません。",
+        "collab.error.inviteInvalid" => "招待コードが無効です。確認してもう一度お試しください。",
+        "collab.error.inviteExpired" => {
+            "招待コードの有効期限が切れています。オーナーに新しいコードを依頼してください。"
+        }
+        "collab.error.relayNotConfigured" => "このデバイスには公開リレーが設定されていません。",
         "collab.error.regionUnavailable" => "招待のホームリレー地域は利用できません。",
         "collab.error.rateLimited" => "接続試行が多すぎます。しばらくしてから再試行してください。",
         "collab.action.discardPending" => "保留中の編集を破棄",

@@ -24,7 +24,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.action.copyInviteLink" => "Скопировать ссылку приглашения",
         "collab.action.findNearby" => "Найти поблизости",
         "collab.join.code" => "Код приглашения или IP-адрес",
-        "collab.join.codePlaceholder" => "opc1_… или 192.168.1.8:43120",
+        "collab.join.codePlaceholder" => "A2C4E6G8J0 или 192.168.1.8:43120",
         "collab.join.publicHint" => "Коды приглашений безопасно подключают через Интернет.",
         "collab.join.nearby" => "Сеансы поблизости",
         "collab.session.invite" => "Публичный код приглашения",
@@ -37,6 +37,15 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.region.global" => "Глобальный",
         "collab.error.inviteUnavailable" => "Приглашение недоступно или срок его действия истёк.",
         "collab.error.relayUnavailable" => "Публичный ретранслятор временно недоступен.",
+        "collab.error.inviteInvalid" => {
+            "Недействительный код приглашения. Проверьте его и попробуйте снова."
+        }
+        "collab.error.inviteExpired" => {
+            "Срок действия кода приглашения истёк. Запросите новый у владельца."
+        }
+        "collab.error.relayNotConfigured" => {
+            "На этом устройстве не настроен публичный ретранслятор."
+        }
         "collab.error.regionUnavailable" => "Домашний регион ретранслятора приглашения недоступен.",
         "collab.error.rateLimited" => "Слишком много попыток подключения. Повторите позже.",
         "collab.action.discardPending" => "Отменить ожидающее изменение",

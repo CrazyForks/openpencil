@@ -241,6 +241,20 @@ done
 for locator_ingress_anchor in \
     "location = /v1/locator {" \
     'if ($request_uri != "/v1/locator") {' \
+    "location = /v1/pairing-code {" \
+    'if ($request_uri != "/v1/pairing-code") {' \
+    "client_max_body_size 624;" \
+    "client_body_buffer_size 624;" \
+    'application/vnd.openpencil.relay-pairing-publish-v1' \
+    "proxy_pass http://locator:8092/v1/pairing-code;" \
+    "location = /v1/pairing-code/claim {" \
+    'if ($request_uri != "/v1/pairing-code/claim") {' \
+    "client_max_body_size 49;" \
+    "client_body_buffer_size 49;" \
+    'if ($content_length != "49") {' \
+    'application/vnd.openpencil.relay-pairing-claim-v1' \
+    'application/vnd.openpencil.relay-sealed-invite-v1' \
+    "proxy_pass http://locator:8092/v1/pairing-code/claim;" \
     'if ($http_host = "") {' \
     "client_max_body_size 191;" \
     'proxy_set_header Authorization $http_authorization;' \
@@ -249,6 +263,12 @@ for locator_ingress_anchor in \
     require_literal deploy/collab-relay-locator/nginx-location.conf \
         "$locator_ingress_anchor" "locator exact-route ingress boundary"
 done
+require_literal_count deploy/collab-relay-locator/nginx-location.conf \
+    'limit_except POST {' 2 \
+    "locator pairing ingress POST-only boundary"
+require_literal_count deploy/collab-relay-locator/nginx-location.conf \
+    'proxy_pass_request_headers off;' 2 \
+    "locator pairing ingress header isolation boundary"
 for locator_limit_anchor in \
     'limit_req_zone $binary_remote_addr zone=openpencil_locator_per_source:10m rate=10r/s;' \
     'limit_conn_zone $binary_remote_addr zone=openpencil_locator_connections:10m;' \
@@ -320,6 +340,20 @@ for locator_edge_https_anchor in \
     'if ($ssl_server_name != locator.example.cn) {' \
     'if ($http_host != locator.example.cn) {' \
     'if ($request_uri != "/v1/locator") {' \
+    'if ($request_uri != "/v1/pairing-code") {' \
+    'if ($request_uri != "/v1/pairing-code/claim") {' \
+    'location = /v1/pairing-code {' \
+    'location = /v1/pairing-code/claim {' \
+    'client_max_body_size 624;' \
+    'client_max_body_size 49;' \
+    'client_body_buffer_size 624;' \
+    'client_body_buffer_size 49;' \
+    'if ($content_length != "49") {' \
+    'application/vnd.openpencil.relay-pairing-publish-v1' \
+    'application/vnd.openpencil.relay-pairing-claim-v1' \
+    'application/vnd.openpencil.relay-sealed-invite-v1' \
+    'proxy_pass http://openpencil_locator/v1/pairing-code;' \
+    'proxy_pass http://openpencil_locator/v1/pairing-code/claim;' \
     'keepalive_requests 1;' \
     'keepalive_timeout 0;' \
     'client_header_buffer_size 64k;' \
@@ -331,6 +365,12 @@ for locator_edge_https_anchor in \
     require_literal deploy/collab-relay-locator-edge/cn-locator-https-nginx.conf \
         "$locator_edge_https_anchor" "CN locator exact inner-HTTPS boundary"
 done
+require_literal_count deploy/collab-relay-locator-edge/cn-locator-https-nginx.conf \
+    'limit_except POST {' 3 \
+    "CN locator exact inner-HTTPS POST-only boundary"
+require_literal_count deploy/collab-relay-locator-edge/cn-locator-https-nginx.conf \
+    'proxy_pass_request_headers off;' 3 \
+    "CN locator exact inner-HTTPS header isolation boundary"
 for locator_edge_rate_anchor in \
     "ct state new" \
     "meter locator_edge_new_v4" \

@@ -374,6 +374,44 @@ engineering surface (an approval prompt for a plausible-looking name) rather
 than a cryptographic one. Deliberate re-sharing by an authorized participant is
 out of scope, consistent with the rest of this model.
 
+### Short pairing codes
+
+The 10-character pairing code is the only invite surface production sessions
+expose (the ~500-char `opc1_` fragment is retired from every UI; it survives
+only as a hidden compatibility parse on join and in development-unsigned
+loops). The full invite is sealed (encrypt-then-MAC under keys derived from
+the code) and stored on the locator control plane under a `code_id` that is an
+independent derivation of the code, so holding the stored blob does not reveal
+the sealing key, and holding the lookup id does not reveal the code.
+
+The first character names the relay region; a guest therefore claims from
+exactly one control plane, and neither the `code_id` nor the guest's bearer
+ticket is ever presented to a region that is not part of the session. The
+remaining nine characters are random: 45 bits of entropy.
+
+Brute-force controls: an online guess requires presenting a `code_id` — which
+requires the code — through a ticket-authenticated, per-IP and globally
+rate-limited HTTPS endpoint; every stored blob expires with the locator
+pairing window (≤ 1 hour) and carries a bounded per-code claim budget.
+Store-abuse controls: a slot is never released before its expiry (an
+exhausted claim budget leaves a tombstone), so a code holder cannot burn the
+budget and substitute their own sealed invite under the same id; entries are
+attributed to the ticket-verified device key with a per-device cap, so one
+account cannot squat the global capacity.
+
+Accepted residual risk: the control-plane operator holding a sealed blob can
+grind the 45-bit code space offline. Because the sealing key is symmetric,
+that is an authenticity loss as well as a confidentiality loss — a grinding
+operator can forge the blob a guest claims and steer the join toward a
+session it controls. Two gates remain: the forged locator must verify under
+the same region's signing keys (which that operator does control), and the
+guest still sees the owner-identity confirmation screen before any document
+data is applied, so the forgery must also survive a human check of the
+displayed owner account. Owners who cannot accept operator-grindable codes
+should share over LAN. Code publishing is owner-side best-effort; when it
+fails the session surfaces a relay notice and remains joinable over LAN
+only.
+
 ### Local process boundary during a session
 
 The desktop exposes an HTTP JSON-RPC MCP endpoint on `127.0.0.1` so external

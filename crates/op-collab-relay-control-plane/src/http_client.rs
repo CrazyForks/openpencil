@@ -133,6 +133,18 @@ impl<V: RelayLocatorVerifier> RelayLocatorHttpClient<V> {
     }
 }
 
+impl<V> RelayLocatorHttpClient<V> {
+    /// Internal accessors for the pairing client arms, which reuse this
+    /// client's hardened builder and validated endpoint host.
+    pub(crate) fn http_client(&self) -> &Client {
+        &self.client
+    }
+
+    pub(crate) fn endpoint_clone(&self) -> Url {
+        self.endpoint.clone()
+    }
+}
+
 impl<V> fmt::Debug for RelayLocatorHttpClient<V> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -158,7 +170,7 @@ fn parse_endpoint(endpoint: &str) -> Result<Url, RelayLocatorIssueError> {
     Ok(endpoint)
 }
 
-fn authorization_header(ticket: &[u8]) -> Result<HeaderValue, RelayLocatorIssueError> {
+pub(crate) fn authorization_header(ticket: &[u8]) -> Result<HeaderValue, RelayLocatorIssueError> {
     if ticket.is_empty() || ticket.len() > MAX_COLLAB_TICKET_BYTES || !valid_b64token(ticket) {
         return Err(RelayLocatorIssueError::InvalidPublishCredential);
     }

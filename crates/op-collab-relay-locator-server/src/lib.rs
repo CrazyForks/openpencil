@@ -3,6 +3,7 @@
 mod config;
 mod hsm;
 mod http;
+mod pairing_store;
 mod production;
 
 pub use config::{
@@ -15,11 +16,13 @@ pub use hsm::{
     HSM_SIGN_REQUEST_BYTES, HSM_SIGN_RESPONSE_BYTES,
 };
 pub use http::{
-    serve_listener_until, LocatorPublisher, LocatorServerError, MAX_HTTP_HEADERS,
+    serve_listener_until, LocatorPublisher, LocatorServerError, PairingEndpoints, MAX_HTTP_HEADERS,
     MAX_HTTP_HEADER_BYTES,
 };
+pub use pairing_store::InMemoryPairingStore;
 pub use production::{
-    build_production_publisher, ProductionLocatorConfig, ProductionLocatorConfigError,
+    build_production_pairing, build_production_publisher, ProductionLocatorConfig,
+    ProductionLocatorConfigError,
 };
 
 #[cfg(test)]

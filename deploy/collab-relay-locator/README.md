@@ -18,7 +18,8 @@ only from its fixed trusted addresses; never trust a public
 `X-Forwarded-For`. The ingress checks the raw `$request_uri`, so queries and
 percent-encoded path aliases cannot be normalized into the route, and it
 requires a real client `Host` header instead of Nginx's fallback host. Only
-exact `POST /v1/locator` is accepted. `/healthz` returns an empty 204 and
+exact `POST /v1/locator`, `POST /v1/pairing-code`, and
+`POST /v1/pairing-code/claim` are accepted. `/healthz` returns an empty 204 and
 exposes no configuration or dependency status.
 
 The server enforces:

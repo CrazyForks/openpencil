@@ -120,8 +120,17 @@ pub(super) fn disconnect_notice(failure: CollabRuntimeFailure) -> CollabNoticeKi
         CollabRuntimeFailure::RelayInviteUnavailable => {
             CollabNoticeKind::Connect(CollabConnectErrorUi::InviteUnavailable)
         }
+        CollabRuntimeFailure::RelayInviteInvalid => {
+            CollabNoticeKind::Connect(CollabConnectErrorUi::InviteInvalid)
+        }
+        CollabRuntimeFailure::RelayInviteExpired => {
+            CollabNoticeKind::Connect(CollabConnectErrorUi::InviteExpired)
+        }
         CollabRuntimeFailure::RelayUnavailable => {
             CollabNoticeKind::Connect(CollabConnectErrorUi::RelayUnavailable)
+        }
+        CollabRuntimeFailure::RelayNotConfigured => {
+            CollabNoticeKind::Connect(CollabConnectErrorUi::RelayNotConfigured)
         }
         CollabRuntimeFailure::RelayRegionUnavailable => {
             CollabNoticeKind::Connect(CollabConnectErrorUi::RegionUnavailable)
@@ -150,8 +159,17 @@ fn setup_failure_notice(failure: CollabRuntimeFailure) -> Option<CollabNoticeKin
         CollabRuntimeFailure::RelayInviteUnavailable => Some(CollabNoticeKind::Connect(
             CollabConnectErrorUi::InviteUnavailable,
         )),
+        CollabRuntimeFailure::RelayInviteInvalid => Some(CollabNoticeKind::Connect(
+            CollabConnectErrorUi::InviteInvalid,
+        )),
+        CollabRuntimeFailure::RelayInviteExpired => Some(CollabNoticeKind::Connect(
+            CollabConnectErrorUi::InviteExpired,
+        )),
         CollabRuntimeFailure::RelayUnavailable => Some(CollabNoticeKind::Connect(
             CollabConnectErrorUi::RelayUnavailable,
+        )),
+        CollabRuntimeFailure::RelayNotConfigured => Some(CollabNoticeKind::Connect(
+            CollabConnectErrorUi::RelayNotConfigured,
         )),
         CollabRuntimeFailure::RelayRegionUnavailable => Some(CollabNoticeKind::Connect(
             CollabConnectErrorUi::RegionUnavailable,

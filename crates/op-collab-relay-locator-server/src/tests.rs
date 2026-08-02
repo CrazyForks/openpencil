@@ -11,11 +11,18 @@ use std::{
 #[cfg(unix)]
 use ed25519_dalek::Verifier as _;
 use ed25519_dalek::{Signer as _, SigningKey};
+use op_auth_bridge::{
+    CollabJwksCacheLimits, CollabTicketVerifier, OpaqueCollabTicket, StaticTestJwksFetcher,
+    TestCollabIssuer, TestCollabTicketSpec,
+};
 #[cfg(unix)]
 use op_collab_relay_control_plane::RelayLocatorSigner;
 use op_collab_relay_control_plane::{
-    OwnerPublishDraft, OwnerPublishRequest, RelayLocatorPublishServiceError, RelayPublishLifetime,
-    SignedLocatorResponse, MAX_PUBLISH_AUTHORIZATION_BYTES,
+    OwnerPublishDraft, OwnerPublishRequest, PairingClaimRequest, PairingCodeStore,
+    PairingPublishRequest, RelayLocatorPublishServiceError, RelayPairingService,
+    RelayPublishLifetime, SignedLocatorResponse, MAX_PAIRING_PUBLISH_REQUEST_BYTES,
+    MAX_PUBLISH_AUTHORIZATION_BYTES, PAIRING_CLAIM_CONTENT_TYPE, PAIRING_CLAIM_PATH,
+    PAIRING_PUBLISH_CONTENT_TYPE, PAIRING_PUBLISH_PATH, SEALED_INVITE_CONTENT_TYPE,
 };
 use op_collab_relay_protocol::{
     ExpectedDiscoveryId, LocatorKeyId, LocatorSignature, OwnerNoiseStatic, RelayRegion,
@@ -30,8 +37,8 @@ use tokio::{
 use crate::{
     config::{client_rate_per_second, LOCATOR_CLIENT_RATE_PER_SECOND_ENV},
     http::rate_limit::RateLimiter,
-    serve_listener_until, LocatorHttpLimits, LocatorPublisher, LocatorServerConfig,
-    LocatorServerConfigError,
+    serve_listener_until, InMemoryPairingStore, LocatorHttpLimits, LocatorPublisher,
+    LocatorServerConfig, LocatorServerConfigError, PairingEndpoints,
 };
 #[cfg(unix)]
 use crate::{
@@ -39,6 +46,8 @@ use crate::{
 };
 
 const OWNER_KEY: [u8; 32] = [0x42; 32];
+const PAIRING_OWNER_KEY: [u8; 32] = [0x51; 32];
+const PAIRING_GUEST_KEY: [u8; 32] = [0x52; 32];
 const TEST_BEARER: &[u8] = b"header.payload.signature";
 const TEST_KEY_ID: &str = "locator-test-key";
 
@@ -193,7 +202,108 @@ async fn real_http_route_rejects_method_query_headers_bearer_and_body() {
     let response = server.request(exact_publish_request(&oversized)).await;
     assert!(
         response.starts_with("HTTP/1.1 413 "),
-        "unexpected oversized-body response: {response:?}"
+        "the locator route's own body-limit layer must refuse before the handler: {response:?}"
+    );
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn real_http_pairing_publish_claim_round_trip_keeps_claim_budget() {
+    let (pairing, owner_ticket, guest_ticket) = pairing_fixture(InMemoryPairingStore::default());
+    let server = TestServer::start_with_pairing(
+        Arc::new(SigningPublisher::immediate()),
+        pairing,
+        LocatorHttpLimits::default(),
+    )
+    .await;
+    let code_id = [0x31; 16];
+    let sealed = b"opaque-sealed-pairing-invite";
+    let publish = PairingPublishRequest::new(PAIRING_OWNER_KEY, code_id, 60, sealed.to_vec())
+        .expect("pairing publish")
+        .encode_binary();
+    let response = server
+        .request(pairing_publish_wire(&publish, Some(owner_ticket.expose())))
+        .await;
+    assert!(
+        response.starts_with("HTTP/1.1 204 No Content\r\n"),
+        "{response:?}"
+    );
+    assert!(http_body(&response).is_empty());
+
+    let claim = PairingClaimRequest::new(PAIRING_GUEST_KEY, code_id).encode_binary();
+    let request = pairing_claim_wire(&claim, Some(guest_ticket.expose()));
+    for _ in 0..2 {
+        let response = server.request(request.clone()).await;
+        assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response:?}");
+        assert!(response.contains(&format!(
+            "\r\ncontent-type: {SEALED_INVITE_CONTENT_TYPE}\r\n"
+        )));
+        assert_eq!(http_body(&response).as_bytes(), sealed);
+    }
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn real_http_pairing_rejects_unknown_expired_headers_bearer_and_oversize() {
+    let store = InMemoryPairingStore::default();
+    let expired_code_id = [0x41; 16];
+    store
+        .put(
+            [0x0F; 32],
+            expired_code_id,
+            b"expired-sealed-invite".to_vec(),
+            unix_now().saturating_sub(2),
+            unix_now().saturating_sub(1),
+        )
+        .expect("seed expired code");
+    let (pairing, owner_ticket, guest_ticket) = pairing_fixture(store);
+    let server = TestServer::start_with_pairing(
+        Arc::new(SigningPublisher::immediate()),
+        pairing,
+        LocatorHttpLimits::default(),
+    )
+    .await;
+
+    for code_id in [[0x42; 16], expired_code_id] {
+        let claim = PairingClaimRequest::new(PAIRING_GUEST_KEY, code_id).encode_binary();
+        let response = server
+            .request(pairing_claim_wire(&claim, Some(guest_ticket.expose())))
+            .await;
+        assert!(
+            response.starts_with("HTTP/1.1 404 Not Found\r\n"),
+            "{response:?}"
+        );
+    }
+
+    let publish =
+        PairingPublishRequest::new(PAIRING_OWNER_KEY, [0x43; 16], 60, b"sealed-invite".to_vec())
+            .expect("pairing publish")
+            .encode_binary();
+    let response = server
+        .request(pairing_wire(
+            PAIRING_PUBLISH_PATH,
+            &publish,
+            "application/octet-stream",
+            None,
+            Some(owner_ticket.expose()),
+        ))
+        .await;
+    assert!(response.starts_with("HTTP/1.1 400 Bad Request\r\n"));
+
+    let response = server.request(pairing_publish_wire(&publish, None)).await;
+    assert!(response.starts_with("HTTP/1.1 401 Unauthorized\r\n"));
+    assert!(response.contains("\r\nwww-authenticate: Bearer\r\n"));
+
+    let oversized = vec![0_u8; MAX_PAIRING_PUBLISH_REQUEST_BYTES + 1];
+    let response = server
+        .request(pairing_publish_wire(
+            &oversized,
+            Some(owner_ticket.expose()),
+        ))
+        .await;
+    assert!(
+        response.starts_with("HTTP/1.1 413 "),
+        "the pairing route's own body-limit layer must refuse before the handler: {response:?}"
     );
     server.stop().await;
 }
@@ -476,12 +586,21 @@ struct TestServer {
 
 impl TestServer {
     async fn start(publisher: Arc<dyn LocatorPublisher>, limits: LocatorHttpLimits) -> Self {
+        let (pairing, _, _) = pairing_fixture(InMemoryPairingStore::default());
+        Self::start_with_pairing(publisher, pairing, limits).await
+    }
+
+    async fn start_with_pairing(
+        publisher: Arc<dyn LocatorPublisher>,
+        pairing: Arc<dyn PairingEndpoints>,
+        limits: LocatorHttpLimits,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
         let address = listener.local_addr().expect("address");
         let config = LocatorServerConfig::new(address, limits).expect("config");
         let (shutdown, receiver) = oneshot::channel();
         let task = tokio::spawn(async move {
-            serve_listener_until(listener, config, publisher, async {
+            serve_listener_until(listener, config, publisher, pairing, async {
                 let _ = receiver.await;
             })
             .await
@@ -535,6 +654,78 @@ fn publish_wire(path: &str, body: &[u8], authorization: &str, include_accept: bo
          Content-Type: application/vnd.openpencil.relay-owner-publish-v1\r\n\
          {accept}Authorization: {authorization}\r\n\
          Content-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    let mut request = headers.into_bytes();
+    request.extend_from_slice(body);
+    request
+}
+
+fn pairing_fixture(
+    store: InMemoryPairingStore,
+) -> (
+    Arc<dyn PairingEndpoints>,
+    OpaqueCollabTicket,
+    OpaqueCollabTicket,
+) {
+    let now = unix_now();
+    let issuer = TestCollabIssuer::initial();
+    let owner_ticket = issuer
+        .issue(&TestCollabTicketSpec::valid_at(now, PAIRING_OWNER_KEY))
+        .expect("owner ticket");
+    let guest_ticket = issuer
+        .issue(&TestCollabTicketSpec::valid_at(now, PAIRING_GUEST_KEY))
+        .expect("guest ticket");
+    let verifier = CollabTicketVerifier::new(
+        TestCollabIssuer::verifier_config().expect("verifier config"),
+        StaticTestJwksFetcher::new(issuer.jwks_json().expect("JWKS"), 300),
+        CollabJwksCacheLimits::default(),
+    )
+    .expect("ticket verifier");
+    (
+        Arc::new(RelayPairingService::new(verifier, store)),
+        owner_ticket,
+        guest_ticket,
+    )
+}
+
+fn pairing_publish_wire(body: &[u8], ticket: Option<&[u8]>) -> Vec<u8> {
+    pairing_wire(
+        PAIRING_PUBLISH_PATH,
+        body,
+        PAIRING_PUBLISH_CONTENT_TYPE,
+        None,
+        ticket,
+    )
+}
+
+fn pairing_claim_wire(body: &[u8], ticket: Option<&[u8]>) -> Vec<u8> {
+    pairing_wire(
+        PAIRING_CLAIM_PATH,
+        body,
+        PAIRING_CLAIM_CONTENT_TYPE,
+        Some(SEALED_INVITE_CONTENT_TYPE),
+        ticket,
+    )
+}
+
+fn pairing_wire(
+    path: &str,
+    body: &[u8],
+    content_type: &str,
+    accept: Option<&str>,
+    ticket: Option<&[u8]>,
+) -> Vec<u8> {
+    let accept = accept.map_or_else(String::new, |value| format!("Accept: {value}\r\n"));
+    let authorization = ticket.map_or_else(String::new, |value| {
+        format!(
+            "Authorization: Bearer {}\r\n",
+            std::str::from_utf8(value).expect("ASCII ticket")
+        )
+    });
+    let headers = format!(
+        "POST {path} HTTP/1.1\r\nHost: test\r\nContent-Type: {content_type}\r\n\
+         {accept}{authorization}Content-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     );
     let mut request = headers.into_bytes();

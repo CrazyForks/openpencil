@@ -11,6 +11,9 @@
 mod error;
 mod http_client;
 mod issuer;
+mod pairing_client;
+mod pairing_service;
+mod pairing_wire;
 mod publish;
 mod service;
 
@@ -22,6 +25,17 @@ pub use http_client::{
 };
 pub use issuer::{
     RelayLocatorIssuer, RelayLocatorSigner, SignedLocatorResponse, TicketVerifiedOwnerBinding,
+};
+pub use pairing_client::PairingClaimError;
+pub use pairing_service::{
+    PairingCodeStore, PairingPutOutcome, PairingStoreRejection, RelayPairingService,
+    RelayPairingServiceError,
+};
+pub use pairing_wire::{
+    PairingClaimRequest, PairingPublishRequest, MAX_PAIRING_CODE_TTL_SECS,
+    MAX_PAIRING_PUBLISH_REQUEST_BYTES, MIN_PAIRING_PUBLISH_REQUEST_BYTES,
+    PAIRING_CLAIM_CONTENT_TYPE, PAIRING_CLAIM_PATH, PAIRING_CLAIM_REQUEST_BYTES,
+    PAIRING_PUBLISH_CONTENT_TYPE, PAIRING_PUBLISH_PATH, SEALED_INVITE_CONTENT_TYPE,
 };
 pub use publish::{
     OwnerPublishDraft, OwnerPublishRequest, RelayPublishLifetime, SecretInviteCode,

@@ -8,18 +8,18 @@ use op_collab::{Epoch, SessionId};
 use op_collab_relay_client::DEFAULT_OWNER_LANE_COUNT;
 use op_collab_relay_client::{RelayEndpoint, RelayGuestBridge, RelayHandshake, RelayOwnerBridge};
 use op_collab_relay_control_plane::{
-    OwnerPublishDraft, RelayLocatorHttpClient, RelayPublishLifetime,
+    OwnerPublishDraft, PairingClaimError, PairingClaimRequest, PairingPublishRequest,
+    RelayLocatorHttpClient, RelayPublishLifetime, MAX_PAIRING_CODE_TTL_SECS,
 };
 use op_collab_relay_protocol::{
-    ExpectedDiscoveryId, LocatorKeyId, LocatorSignature, OwnerNoiseStatic, RelayInviteV1,
-    RelayLocatorVerifier, RelayRegion, RouteCapability, RouteId, UnsignedRelayLocatorV1,
-    VerifiedRelayRoute, MAX_PAIRING_LIFETIME_SECS,
+    ExpectedDiscoveryId, LocatorKeyId, LocatorSignature, OwnerNoiseStatic, PairingCode,
+    RelayInviteV1, RelayLocatorVerifier, RelayRegion, RouteCapability, RouteId,
+    SealedPairingInvite, UnsignedRelayLocatorV1, VerifiedRelayRoute, MAX_PAIRING_LIFETIME_SECS,
 };
 use op_collab_transport::{DeviceStaticKey, ServerPrelude};
 use op_editor_core::{CollabConnectionPathUi, CollabInviteCode, CollabRelayRegion};
 
 use super::auth::{unix_time_ms, LocalAdmission};
-#[cfg(test)]
 use super::relay_bootstrap::RelayBootstrap;
 use super::relay_bootstrap::{
     provider_from_environment, Ed25519LocatorVerifier, RelayBootstrapProvider, RelayBootstrapRegion,
@@ -83,11 +83,20 @@ impl GuestConnectionRoute {
     }
 }
 
+/// What the guest holds before the relay route is resolved: either the full
+/// invite, or a short pairing code that redeems to one on the network worker.
+#[derive(Clone)]
+pub(super) enum RelayJoinSecret {
+    Invite(Box<RelayInviteV1>),
+    Pairing(PairingCode),
+}
+
 #[derive(Clone)]
 pub(super) struct RelayGuestRequest {
-    invite: RelayInviteV1,
+    secret: RelayJoinSecret,
     home_region: RelayRegion,
     provider: std::sync::Arc<dyn RelayBootstrapProvider>,
+    control_plane: std::sync::Arc<dyn RelayLocatorControlPlane>,
 }
 
 pub(super) struct RelayOwnerRequest {
@@ -109,6 +118,23 @@ pub(crate) trait RelayLocatorControlPlane: Send + Sync {
         ticket: &OpaqueCollabTicket,
         region: &RelayBootstrapRegion,
     ) -> Result<VerifiedRelayRoute, CollabRuntimeFailure>;
+
+    /// Store a sealed invite under a short pairing code. Best-effort: a
+    /// failure must leave the long invite flow untouched.
+    fn publish_pairing_code(
+        &self,
+        request: &PairingPublishRequest,
+        ticket: &OpaqueCollabTicket,
+        region: &RelayBootstrapRegion,
+    ) -> Result<(), CollabRuntimeFailure>;
+
+    /// Redeem a short pairing code id for the sealed invite blob.
+    fn claim_pairing_code(
+        &self,
+        request: &PairingClaimRequest,
+        ticket: &OpaqueCollabTicket,
+        region: &RelayBootstrapRegion,
+    ) -> Result<SealedPairingInvite, CollabRuntimeFailure>;
 }
 
 pub(crate) struct EnvironmentRelayLocatorControlPlane;
@@ -131,12 +157,43 @@ impl RelayLocatorControlPlane for EnvironmentRelayLocatorControlPlane {
             .verify(&verifier, now)
             .map_err(|_| CollabRuntimeFailure::RelayUnavailable)
     }
+
+    fn publish_pairing_code(
+        &self,
+        request: &PairingPublishRequest,
+        ticket: &OpaqueCollabTicket,
+        region: &RelayBootstrapRegion,
+    ) -> Result<(), CollabRuntimeFailure> {
+        let client = locator_http_client(region)?;
+        client
+            .publish_pairing_code(request, ticket)
+            .map_err(|_| CollabRuntimeFailure::RelayUnavailable)
+    }
+
+    fn claim_pairing_code(
+        &self,
+        request: &PairingClaimRequest,
+        ticket: &OpaqueCollabTicket,
+        region: &RelayBootstrapRegion,
+    ) -> Result<SealedPairingInvite, CollabRuntimeFailure> {
+        let client = locator_http_client(region)?;
+        client
+            .claim_pairing_code(request, ticket)
+            .map_err(|error| match error {
+                PairingClaimError::NotFound => CollabRuntimeFailure::RelayInviteUnavailable,
+                PairingClaimError::Rejected => CollabRuntimeFailure::RelayInviteInvalid,
+                PairingClaimError::TransportUnavailable => CollabRuntimeFailure::RelayUnavailable,
+            })
+    }
 }
 
 pub(super) struct OwnerRelayRuntime {
     listener: TcpListener,
     prelude: std::sync::Arc<ServerPrelude>,
-    invite: CollabInviteCode,
+    /// Short pairing code, present only when the control plane accepted the
+    /// sealed publish. The long `opc1_` fragment is deliberately never
+    /// surfaced — it is unusable for human sharing.
+    invite: Option<CollabInviteCode>,
     path: CollabConnectionPathUi,
     bridge: RelayOwnerBridge,
 }
@@ -190,8 +247,16 @@ impl OwnerRelayRuntime {
                 .map_err(|error| error.failure)?,
             )
         };
-        let invite = CollabInviteCode::new(RelayInviteV1::new(&route).to_fragment())
-            .ok_or(CollabRuntimeFailure::RelayUnavailable)?;
+        // Production surfaces only the 10-char pairing code; the ~500-char
+        // `opc1_` fragment is unusable for human sharing and is no longer
+        // shown. The development-unsigned loop has no control plane to hold
+        // a sealed code, so it keeps the long fragment for local testing.
+        let invite = if development_unsigned {
+            CollabInviteCode::new(RelayInviteV1::new(&route).to_fragment())
+        } else {
+            publish_owner_pairing_code(&route, request.control_plane.as_ref(), region, &local)
+                .and_then(|code| CollabInviteCode::new(code.expose_str().to_owned()))
+        };
         let auth = LocalAdmission::relay_auth_extension(*key.public_key())
             .map_err(|error| error.failure)?;
         let handshake = RelayHandshake::new(route, auth);
@@ -233,7 +298,7 @@ impl OwnerRelayRuntime {
         std::sync::Arc::clone(&self.prelude)
     }
 
-    pub(super) fn invite(&self) -> CollabInviteCode {
+    pub(super) fn invite(&self) -> Option<CollabInviteCode> {
         self.invite.clone()
     }
 
@@ -269,24 +334,36 @@ impl GuestRelayRuntime {
         // only parses enough of the bounded invite to select its claimed
         // region and render status.
         let bootstrap = request.provider.load()?;
-        let region = bootstrap.region(request.home_region)?;
+        let (invite, home_region) = match &request.secret {
+            RelayJoinSecret::Invite(invite) => (invite.as_ref().clone(), request.home_region),
+            RelayJoinSecret::Pairing(code) => {
+                let invite = claim_pairing_invite(
+                    &bootstrap,
+                    code,
+                    request.control_plane.as_ref(),
+                    &key,
+                    &local,
+                )?;
+                let claimed_region = invite.locator().claims().home_region();
+                (invite, claimed_region)
+            }
+        };
+        let region = bootstrap.region(home_region)?;
         let endpoint = region.relay_endpoint.clone();
         let development_unsigned = development_unsigned_allowed(&endpoint);
         let now = unix_time_ms().map_err(|_| CollabRuntimeFailure::RelayUnavailable)? / 1_000;
         let route = if development_unsigned {
-            request
-                .invite
+            invite
                 .verify(&AcceptAllDevelopmentLocator, now)
-                .map_err(|_| CollabRuntimeFailure::RelayInviteUnavailable)?
+                .map_err(invite_verify_failure)?
         } else {
-            request
-                .invite
+            invite
                 .verify(&region.locator_verifier, now)
-                .map_err(|_| CollabRuntimeFailure::RelayInviteUnavailable)?
+                .map_err(invite_verify_failure)?
         };
-        if route.locator().claims().home_region() != request.home_region {
-            return Err(CollabRuntimeFailure::RelayInviteUnavailable);
-        }
+        // No region cross-check here: `home_region` is itself derived from the
+        // (canonically parsed) invite claims on both branches, so the verify
+        // step above is the authoritative gate.
         let expected_discovery_id = route
             .locator()
             .claims()
@@ -362,23 +439,53 @@ pub(super) fn owner_request_from_environment(
 
 pub(super) fn guest_route_from_invite(
     invite: &str,
+    control_plane: Arc<dyn RelayLocatorControlPlane>,
 ) -> Result<GuestConnectionRoute, CollabRuntimeError> {
     let invite = RelayInviteV1::from_fragment(invite)
-        .map_err(|_| runtime_error(CollabRuntimeFailure::RelayInviteUnavailable))?;
+        .map_err(|_| runtime_error(CollabRuntimeFailure::RelayInviteInvalid))?;
     let provider = provider_from_environment()?
-        .ok_or_else(|| runtime_error(CollabRuntimeFailure::RelayUnavailable))?;
-    Ok(guest_route_from_parsed_invite(invite, provider))
+        .ok_or_else(|| runtime_error(CollabRuntimeFailure::RelayNotConfigured))?;
+    Ok(guest_route_from_parsed_invite(
+        invite,
+        provider,
+        control_plane,
+    ))
+}
+
+/// Short pairing codes resolve to the full invite on the guest network
+/// worker; only the bounded code shape is parsed on the UI thread.
+pub(super) fn guest_route_from_pairing_code(
+    code: &str,
+    control_plane: Arc<dyn RelayLocatorControlPlane>,
+) -> Result<GuestConnectionRoute, CollabRuntimeError> {
+    let code = PairingCode::parse(code)
+        .map_err(|_| runtime_error(CollabRuntimeFailure::RelayInviteInvalid))?;
+    // The claimable region rides in the code's first character, so a guest
+    // needs no home-region configuration and the UI shows the true region.
+    let home_region = code
+        .region()
+        .ok_or_else(|| runtime_error(CollabRuntimeFailure::RelayInviteInvalid))?;
+    let provider = provider_from_environment()?
+        .ok_or_else(|| runtime_error(CollabRuntimeFailure::RelayNotConfigured))?;
+    Ok(GuestConnectionRoute::Relay(Box::new(RelayGuestRequest {
+        secret: RelayJoinSecret::Pairing(code),
+        home_region,
+        provider,
+        control_plane,
+    })))
 }
 
 fn guest_route_from_parsed_invite(
     invite: RelayInviteV1,
     provider: Arc<dyn RelayBootstrapProvider>,
+    control_plane: Arc<dyn RelayLocatorControlPlane>,
 ) -> GuestConnectionRoute {
     let region = invite.locator().claims().home_region();
     GuestConnectionRoute::Relay(Box::new(RelayGuestRequest {
-        invite,
+        secret: RelayJoinSecret::Invite(Box::new(invite)),
         home_region: region,
         provider,
+        control_plane,
     }))
 }
 
@@ -588,6 +695,102 @@ const fn ui_region(region: RelayRegion) -> CollabRelayRegion {
     match region {
         RelayRegion::Cn => CollabRelayRegion::China,
         RelayRegion::Global => CollabRelayRegion::Global,
+    }
+}
+
+/// Redeem a short pairing code from exactly the region named in its first
+/// character. A single-region claim keeps the code id and the guest's
+/// bearer ticket away from control planes that were never part of the
+/// session.
+fn claim_pairing_invite(
+    bootstrap: &RelayBootstrap,
+    code: &PairingCode,
+    control_plane: &dyn RelayLocatorControlPlane,
+    key: &DeviceStaticKey,
+    local: &std::sync::RwLock<LocalAdmission>,
+) -> Result<RelayInviteV1, CollabRuntimeFailure> {
+    let code_region = code
+        .region()
+        .ok_or(CollabRuntimeFailure::RelayInviteInvalid)?;
+    let region = bootstrap.region(code_region)?;
+    let request = PairingClaimRequest::new(*key.public_key(), code.code_id());
+    // Copy the ticket out of the admission lock: the claim is a blocking
+    // HTTP round-trip and must not stall ticket renewal for its duration.
+    let ticket = {
+        let admission = local
+            .read()
+            .map_err(|_| CollabRuntimeFailure::RelayUnavailable)?;
+        op_auth_bridge::OpaqueCollabTicket::new(admission.relay_ticket().expose().to_vec())
+            .map_err(|_| CollabRuntimeFailure::AuthenticationUnavailable)?
+    };
+    let sealed = control_plane.claim_pairing_code(&request, &ticket, region)?;
+    sealed
+        .open(code)
+        .map_err(|_| CollabRuntimeFailure::RelayInviteInvalid)
+}
+
+/// Best-effort short-code publish for the owner. Every failure path returns
+/// `None`: the session still starts (and keeps its LAN share address), but
+/// the owner panel shows no public code and the runtime raises a relay
+/// notice so the gap is visible instead of silent.
+fn publish_owner_pairing_code(
+    route: &VerifiedRelayRoute,
+    control_plane: &dyn RelayLocatorControlPlane,
+    region: &RelayBootstrapRegion,
+    local: &std::sync::RwLock<LocalAdmission>,
+) -> Option<PairingCode> {
+    let now = unix_time_ms().ok()? / 1_000;
+    let ttl = route
+        .locator()
+        .claims()
+        .expires_at_unix()
+        .saturating_sub(now)
+        .min(u64::from(MAX_PAIRING_CODE_TTL_SECS));
+    let ttl = u32::try_from(ttl).ok().filter(|ttl| *ttl > 0)?;
+    let owner_static = *route.locator().claims().owner_noise_static().as_bytes();
+    let invite = RelayInviteV1::new(route);
+    let ticket = {
+        let admission = local.read().ok()?;
+        op_auth_bridge::OpaqueCollabTicket::new(admission.relay_ticket().expose().to_vec()).ok()?
+    };
+    // Two attempts with independently random codes: a duplicate-id refusal
+    // or a transient control-plane hiccup should not cost the session its
+    // only shareable code.
+    for _ in 0..2 {
+        let Ok(code) = PairingCode::generate_for(region.region) else {
+            return None;
+        };
+        let Ok(sealed) = SealedPairingInvite::seal_random(&code, &invite) else {
+            return None;
+        };
+        let Ok(request) = PairingPublishRequest::new(
+            owner_static,
+            code.code_id(),
+            ttl,
+            sealed.as_bytes().to_vec(),
+        ) else {
+            return None;
+        };
+        if control_plane
+            .publish_pairing_code(&request, &ticket, region)
+            .is_ok()
+        {
+            return Some(code);
+        }
+    }
+    None
+}
+
+/// Classify a failed invite verification: an authentic-but-lapsed pairing
+/// window is the user-fixable case and gets its own message; every other
+/// verification failure collapses to "invalid".
+fn invite_verify_failure(
+    error: op_collab_relay_protocol::RelayProtocolError,
+) -> CollabRuntimeFailure {
+    use op_collab_relay_protocol::RelayProtocolError as E;
+    match error {
+        E::Expired | E::NotYetValid => CollabRuntimeFailure::RelayInviteExpired,
+        _ => CollabRuntimeFailure::RelayInviteInvalid,
     }
 }
 

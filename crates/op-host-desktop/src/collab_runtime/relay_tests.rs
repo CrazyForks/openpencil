@@ -65,6 +65,57 @@ impl RelayLocatorControlPlane for SigningControlPlane {
     ) -> Result<VerifiedRelayRoute, CollabRuntimeFailure> {
         self.publish_for_test(draft, ticket)
     }
+
+    fn publish_pairing_code(
+        &self,
+        _request: &op_collab_relay_control_plane::PairingPublishRequest,
+        _ticket: &OpaqueCollabTicket,
+        _region: &RelayBootstrapRegion,
+    ) -> Result<(), CollabRuntimeFailure> {
+        Err(CollabRuntimeFailure::RelayUnavailable)
+    }
+
+    fn claim_pairing_code(
+        &self,
+        _request: &op_collab_relay_control_plane::PairingClaimRequest,
+        _ticket: &OpaqueCollabTicket,
+        _region: &RelayBootstrapRegion,
+    ) -> Result<op_collab_relay_protocol::SealedPairingInvite, CollabRuntimeFailure> {
+        Err(CollabRuntimeFailure::RelayInviteUnavailable)
+    }
+}
+
+/// Control plane that fails everything — parsed-invite tests only need a
+/// value to thread through, never a live publish.
+struct UnusedControlPlane;
+
+impl RelayLocatorControlPlane for UnusedControlPlane {
+    fn publish_route(
+        &self,
+        _draft: OwnerPublishDraft,
+        _ticket: &OpaqueCollabTicket,
+        _region: &RelayBootstrapRegion,
+    ) -> Result<VerifiedRelayRoute, CollabRuntimeFailure> {
+        Err(CollabRuntimeFailure::RelayUnavailable)
+    }
+
+    fn publish_pairing_code(
+        &self,
+        _request: &op_collab_relay_control_plane::PairingPublishRequest,
+        _ticket: &OpaqueCollabTicket,
+        _region: &RelayBootstrapRegion,
+    ) -> Result<(), CollabRuntimeFailure> {
+        Err(CollabRuntimeFailure::RelayUnavailable)
+    }
+
+    fn claim_pairing_code(
+        &self,
+        _request: &op_collab_relay_control_plane::PairingClaimRequest,
+        _ticket: &OpaqueCollabTicket,
+        _region: &RelayBootstrapRegion,
+    ) -> Result<op_collab_relay_protocol::SealedPairingInvite, CollabRuntimeFailure> {
+        Err(CollabRuntimeFailure::RelayInviteUnavailable)
+    }
 }
 
 struct SingleKeyVerifier {
@@ -139,7 +190,11 @@ fn injected_control_plane_publishes_a_ticket_bound_owner_route() {
     let provider = std::sync::Arc::new(CountingBootstrapProvider(
         std::sync::atomic::AtomicUsize::new(0),
     ));
-    let route = guest_route_from_parsed_invite(invite, provider.clone());
+    let route = guest_route_from_parsed_invite(
+        invite,
+        provider.clone(),
+        std::sync::Arc::new(UnusedControlPlane),
+    );
     assert_eq!(
         provider.0.load(std::sync::atomic::Ordering::SeqCst),
         0,
@@ -168,8 +223,20 @@ fn relay_setup_failures_use_connect_notices() {
             CollabConnectErrorUi::InviteUnavailable,
         ),
         (
+            CollabRuntimeFailure::RelayInviteInvalid,
+            CollabConnectErrorUi::InviteInvalid,
+        ),
+        (
+            CollabRuntimeFailure::RelayInviteExpired,
+            CollabConnectErrorUi::InviteExpired,
+        ),
+        (
             CollabRuntimeFailure::RelayUnavailable,
             CollabConnectErrorUi::RelayUnavailable,
+        ),
+        (
+            CollabRuntimeFailure::RelayNotConfigured,
+            CollabConnectErrorUi::RelayNotConfigured,
         ),
         (
             CollabRuntimeFailure::RelayRegionUnavailable,
@@ -180,5 +247,65 @@ fn relay_setup_failures_use_connect_notices() {
             super::super::failure::disconnect_notice(failure),
             CollabNoticeKind::Connect(expected)
         );
+    }
+}
+
+#[test]
+fn pairing_code_route_carries_the_code_and_skips_bootstrap_http() {
+    let provider = std::sync::Arc::new(CountingBootstrapProvider(
+        std::sync::atomic::AtomicUsize::new(0),
+    ));
+    let code = op_collab_relay_protocol::PairingCode::parse("2A2C4E6G8J").unwrap();
+    let route = GuestConnectionRoute::Relay(Box::new(RelayGuestRequest {
+        secret: RelayJoinSecret::Pairing(code),
+        home_region: RelayRegion::Global,
+        provider: provider.clone(),
+        control_plane: std::sync::Arc::new(UnusedControlPlane),
+    }));
+    assert_eq!(
+        provider.0.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "building a pairing route must not fetch bootstrap HTTP"
+    );
+    assert_eq!(
+        route.connection_path(),
+        CollabConnectionPathUi::Relay {
+            home_region: CollabRelayRegion::Global
+        }
+    );
+}
+
+#[test]
+fn malformed_pairing_code_fails_as_invalid_invite_before_any_setup() {
+    for rejected in [
+        "A2C4E6G8J",  // one char short
+        "A2C4E6G8J0", // right shape, no region tag — a 10-char hostname
+    ] {
+        let result =
+            guest_route_from_pairing_code(rejected, std::sync::Arc::new(UnusedControlPlane));
+        match result {
+            Ok(_) => panic!("{rejected:?} must not become a pairing route"),
+            Err(error) => {
+                assert_eq!(error.failure, CollabRuntimeFailure::RelayInviteInvalid)
+            }
+        }
+    }
+    // A region-tagged code passes parse + region derivation without any
+    // home-region environment; in this env-less test the next gate is the
+    // missing bootstrap configuration, proving no region env is consulted.
+    let result =
+        guest_route_from_pairing_code("2A2C4E6G8J", std::sync::Arc::new(UnusedControlPlane));
+    match result {
+        Ok(route) => assert_eq!(
+            route.connection_path(),
+            CollabConnectionPathUi::Relay {
+                home_region: CollabRelayRegion::Global
+            }
+        ),
+        Err(error) => assert_eq!(
+            error.failure,
+            CollabRuntimeFailure::RelayNotConfigured,
+            "the only acceptable env-less failure is the bootstrap gate"
+        ),
     }
 }
