@@ -14,7 +14,7 @@ use op_editor_ui::{Point2D, Rect};
 /// Minimum cursor travel (logical px) from the node-drag press point
 /// before a move is committed. A pure click with sub-pixel jitter then
 /// never mutates the document — kills "first click breaks the layout".
-const NODE_DRAG_THRESHOLD_PX: f32 = 4.0;
+pub(in crate::widget_host) const NODE_DRAG_THRESHOLD_PX: f32 = 4.0;
 const MAX_SMART_GUIDE_NODES: usize = 1_000;
 
 impl WidgetHostNative {

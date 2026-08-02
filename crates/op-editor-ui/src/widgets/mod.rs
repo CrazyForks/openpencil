@@ -328,7 +328,7 @@ pub mod property_panel_color_variables;
 mod property_panel_color_variables_tests;
 pub(crate) mod settings_form;
 pub mod shape_picker;
-pub mod slideshow_counter;
+pub mod slideshow_toolbar;
 pub mod status_bar;
 pub mod top_bar;
 mod top_bar_geometry;
@@ -364,7 +364,7 @@ pub use canvas_viewport_widget::widget_text_inset_left;
 pub use preview_device_switcher::PreviewDeviceSwitcher;
 pub use scene_paint_options::{paint_scene_page_with, paint_scene_subtree, PaintSceneOptions};
 pub use screen_switcher_pills::ScreenSwitcherPills;
-pub use slideshow_counter::SlideshowCounter;
+pub use slideshow_toolbar::SlideshowToolbar;
 
 pub use icons::{draw_icon, draw_icon_catalog_entry, draw_icon_data, Icon, IconPathData};
 

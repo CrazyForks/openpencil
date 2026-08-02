@@ -494,6 +494,19 @@ pub struct WidgetHostNative {
     /// Last preview pointer position in DOCUMENT space — the release
     /// dispatches its Up here (the OS reports release without coords).
     pub(in crate::widget_host) preview_last_doc: Option<(f32, f32)>,
+    /// Screen-space point a presenting press landed on, held until the
+    /// release decides whether the gesture was a click (advance the deck) or
+    /// a drag (do nothing). `None` outside a slideshow press.
+    ///
+    /// Screen space, not document space: the presenting stage covers the
+    /// hidden rails, which the editor's screen-to-document mapping still
+    /// treats as off-canvas, and a press there would have no document point
+    /// at all. Screen coordinates also make the slop comparison the same
+    /// numbers the threshold is written in.
+    pub(in crate::widget_host) slideshow_press_screen: Option<(f32, f32)>,
+    /// Last cursor position seen while presenting — the release's other half
+    /// of the click-versus-drag comparison.
+    pub(in crate::widget_host) slideshow_cursor: Option<(f32, f32)>,
     /// Track C-4: the SCREEN-space x a preview press started at, when
     /// that press began within the edge-swipe dead zone (device-frame
     /// content-local x < 24px) — the iOS-style "swipe from the left

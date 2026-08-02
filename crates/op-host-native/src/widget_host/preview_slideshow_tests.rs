@@ -7,8 +7,11 @@
 #![cfg(all(test, not(target_os = "windows")))]
 
 use super::WidgetHostNative;
+use op_editor_core::preview_slideshow::SlideshowToolbarButton;
 use op_editor_core::scene_template_catalog::TemplateScene;
 use op_editor_core::{EditorState, PreviewDeviceKind};
+use op_editor_ui::widgets::SlideshowToolbar;
+use op_editor_ui::Point2D;
 use std::sync::{LazyLock, Mutex, MutexGuard};
 
 static TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
@@ -171,4 +174,369 @@ fn a_deck_with_no_boards_falls_back_to_ordinary_preview() {
     assert!(!host.preview_slideshow_active());
     assert!(!host.preview_dispatch_key("ArrowRight", false));
     assert!(host.apply_escape());
+}
+
+// ── presenting toolbar + click-to-advance ─────────────────────────────────
+
+const VW: f32 = 1200.0;
+const VH: f32 = 800.0;
+
+fn presenting_host() -> WidgetHostNative {
+    let mut host = host_with(THREE_BOARD_DECK, Some(TemplateScene::Slides));
+    // `apply_cursor_move` resolves overlays against the cached viewport, the
+    // way the runner leaves it after a frame.
+    host.last_viewport_w = VW;
+    host.last_viewport_h = VH;
+    host.enter_preview((VW, VH));
+    assert!(host.preview_slideshow_active(), "fixture presents");
+    host
+}
+
+fn toolbar_point(host: &WidgetHostNative, button: SlideshowToolbarButton) -> Point2D {
+    let canvas = host.preview_canvas_rect(VW, VH);
+    let label = host
+        .editor_state
+        .preview_slideshow()
+        .expect("presenting")
+        .counter_label();
+    let rect = SlideshowToolbar::button_rects(canvas, &label)
+        .into_iter()
+        .find(|(candidate, _)| *candidate == button)
+        .expect("every control has a rect")
+        .1;
+    Point2D::new(
+        rect.origin.x + rect.size.x / 2.0,
+        rect.origin.y + rect.size.y / 2.0,
+    )
+}
+
+/// A point on the presented board, clear of the toolbar.
+fn board_point(host: &WidgetHostNative) -> Point2D {
+    let canvas = host.preview_canvas_rect(VW, VH);
+    Point2D::new(
+        canvas.origin.x + canvas.size.x / 2.0,
+        canvas.origin.y + canvas.size.y / 4.0,
+    )
+}
+
+/// Press and release at one point, with the cursor tracked the way the
+/// runner tracks it — the release reads the maintained hover.
+fn click(host: &mut WidgetHostNative, point: Point2D) {
+    host.apply_cursor_move(point.x, point.y);
+    host.apply_press(point.x, point.y, VW, VH);
+    host.apply_release_with_viewport(VW, VH);
+}
+
+#[test]
+fn the_toolbar_steps_the_deck_and_exits() {
+    let _guard = test_lock();
+    let mut host = presenting_host();
+
+    let next = toolbar_point(&host, SlideshowToolbarButton::Next);
+    click(&mut host, next);
+    assert_eq!(board_on_screen(&host).as_deref(), Some("slide-2"));
+
+    let previous = toolbar_point(&host, SlideshowToolbarButton::Previous);
+    click(&mut host, previous);
+    assert_eq!(board_on_screen(&host).as_deref(), Some("slide-1"));
+
+    // Exit takes the same path Escape does.
+    let exit = toolbar_point(&host, SlideshowToolbarButton::Exit);
+    click(&mut host, exit);
+    assert!(!host.preview_slideshow_active());
+    assert!(!host.editor_state.editor_ui.preview.mode);
+}
+
+#[test]
+fn pressing_the_counter_is_swallowed_without_advancing() {
+    let _guard = test_lock();
+    let mut host = presenting_host();
+    let canvas = host.preview_canvas_rect(VW, VH);
+    let label = host
+        .editor_state
+        .preview_slideshow()
+        .expect("presenting")
+        .counter_label();
+    let pill = SlideshowToolbar::pill_rect(canvas, &label);
+    let counter = Point2D::new(
+        pill.origin.x + pill.size.x / 2.0,
+        pill.origin.y + pill.size.y / 2.0,
+    );
+    assert_eq!(
+        SlideshowToolbar::hit_test(canvas, &label, counter),
+        None,
+        "the fixture point really is the counter, not a button"
+    );
+
+    click(&mut host, counter);
+
+    assert_eq!(
+        board_on_screen(&host).as_deref(),
+        Some("slide-1"),
+        "a press on the toolbar must never reach the board underneath"
+    );
+}
+
+#[test]
+fn clicking_the_board_advances_and_holds_at_the_last_slide() {
+    let _guard = test_lock();
+    let mut host = presenting_host();
+    let point = board_point(&host);
+
+    click(&mut host, point);
+    assert_eq!(board_on_screen(&host).as_deref(), Some("slide-2"));
+    click(&mut host, point);
+    assert_eq!(board_on_screen(&host).as_deref(), Some("slide-3"));
+
+    // No wrap, and no exit-on-click: an accidental exit mid-talk costs the
+    // presenter more than a dead click does.
+    click(&mut host, point);
+    assert_eq!(board_on_screen(&host).as_deref(), Some("slide-3"));
+    assert!(host.preview_slideshow_active());
+}
+
+#[test]
+fn dragging_across_the_board_does_not_advance() {
+    let _guard = test_lock();
+    let mut host = presenting_host();
+    let start = board_point(&host);
+
+    host.apply_cursor_move(start.x, start.y);
+    host.apply_press(start.x, start.y, VW, VH);
+    host.apply_cursor_move(start.x + 240.0, start.y + 40.0);
+    host.apply_release_with_viewport(VW, VH);
+
+    assert_eq!(
+        board_on_screen(&host).as_deref(),
+        Some("slide-1"),
+        "a drag is not a click"
+    );
+}
+
+#[test]
+fn every_presenter_key_moves_the_deck() {
+    let _guard = test_lock();
+    let mut host = presenting_host();
+
+    assert!(host.preview_dispatch_key("ArrowDown", false));
+    assert_eq!(board_on_screen(&host).as_deref(), Some("slide-2"));
+    assert!(host.preview_dispatch_key("ArrowUp", false));
+    assert_eq!(board_on_screen(&host).as_deref(), Some("slide-1"));
+
+    assert!(host.preview_slideshow_to_end(true));
+    assert_eq!(board_on_screen(&host).as_deref(), Some("slide-3"));
+    assert!(
+        !host.preview_slideshow_to_end(true),
+        "already at the last board"
+    );
+    assert!(host.preview_slideshow_to_end(false));
+    assert_eq!(board_on_screen(&host).as_deref(), Some("slide-1"));
+}
+
+/// The highest-risk surface of the presenting press path: a preview that is
+/// NOT presenting must route presses exactly as it did before — into the
+/// live runtime, with none of the slideshow bookkeeping armed.
+#[test]
+fn a_non_presenting_preview_still_routes_presses_to_the_runtime() {
+    let _guard = test_lock();
+    let mut host = host_with(THREE_BOARD_DECK, None);
+    host.last_viewport_w = VW;
+    host.last_viewport_h = VH;
+    host.enter_preview((VW, VH));
+    assert!(!host.preview_slideshow_active());
+    let point = board_point(&host);
+
+    // Let the enter animation finish: while it plays, preview discards
+    // pointer input on purpose, which would hide what this test is checking.
+    host.set_now_ms(host.now_ms + 5_000);
+    host.apply_cursor_move(point.x, point.y);
+    assert!(host.apply_press(point.x, point.y, VW, VH));
+
+    assert!(
+        host.preview_press_active,
+        "the runtime owns the gesture outside a presentation"
+    );
+    assert!(host.slideshow_press_screen.is_none());
+    assert!(host
+        .editor_state
+        .editor_ui
+        .preview
+        .toolbar_pressed
+        .is_none());
+
+    assert!(host.apply_release_with_viewport(VW, VH));
+    assert!(!host.preview_press_active, "the runtime got its pointer up");
+
+    // Chrome is untouched too: ordinary preview keeps its rails, so the
+    // stage stays the editing canvas region and the StatusBar still answers.
+    let stage = host.preview_canvas_rect(VW, VH);
+    assert!(
+        stage.origin.x > 0.0 && stage.size.x < VW,
+        "an ordinary preview is still bounded by the rails"
+    );
+    let status =
+        op_editor_ui::widgets::host_canvas_geometry::status_bar_rect(&host.editor_state, VW, VH)
+            .expect("the status bar is painted in ordinary preview");
+    // Aim at a real control rather than the pill's middle, which is the
+    // zoom readout and deliberately inert.
+    let bar = op_editor_ui::widgets::StatusBar::for_editor(&host.editor_state);
+    let control = (0..status.size.x as i32)
+        .map(|dx| {
+            Point2D::new(
+                status.origin.x + dx as f32,
+                status.origin.y + status.size.y / 2.0,
+            )
+        })
+        .find(|point| bar.control_at(status, *point).is_some())
+        .expect("the status bar has controls");
+    let zoom_before = host.editor_state.viewport.zoom;
+    host.apply_press(control.x, control.y, VW, VH);
+    assert_ne!(
+        host.editor_state.viewport.zoom, zoom_before,
+        "its zoom controls still work outside a presentation"
+    );
+}
+
+// ── presenting hides the editing chrome ───────────────────────────────────
+
+/// The stage a presentation paints on: everything under the TopBar.
+///
+/// This is the whole mechanism — no panel state changes, so the rails come
+/// back on their own the moment the presentation ends.
+#[test]
+fn presenting_takes_the_full_stage_and_gives_it_back_on_exit() {
+    let _guard = test_lock();
+    let mut host = host_with(THREE_BOARD_DECK, Some(TemplateScene::Slides));
+    host.last_viewport_w = VW;
+    host.last_viewport_h = VH;
+    let editing_stage = host.preview_canvas_rect(VW, VH);
+    assert!(
+        editing_stage.origin.x > 0.0 && editing_stage.size.x < VW,
+        "the editing canvas is bounded by the rails"
+    );
+
+    host.enter_preview((VW, VH));
+    let presenting_stage = host.preview_canvas_rect(VW, VH);
+    assert_eq!(presenting_stage.origin.x, 0.0);
+    assert_eq!(presenting_stage.size.x, VW);
+    assert!(presenting_stage.origin.y > 0.0, "the TopBar keeps its band");
+
+    host.apply_escape();
+
+    assert_eq!(
+        host.preview_canvas_rect(VW, VH).origin.x,
+        editing_stage.origin.x,
+        "leaving the presentation restores the editing stage untouched"
+    );
+    assert_eq!(
+        host.preview_canvas_rect(VW, VH).size.x,
+        editing_stage.size.x
+    );
+    assert!(
+        host.editor_state.editor_ui.sidebar_open,
+        "the rails were hidden by paint policy, never by closing them"
+    );
+}
+
+/// A press where a hidden widget used to be belongs to the deck.
+///
+/// The StatusBar's tier sits ABOVE preview in the press ladder, so without
+/// the presenting gate its controls would still answer — a dead patch over
+/// the slide that silently zoomed the canvas instead of advancing.
+#[test]
+fn a_press_where_the_hidden_status_bar_sat_advances_the_deck() {
+    let _guard = test_lock();
+    let mut host = presenting_host();
+    let status =
+        op_editor_ui::widgets::host_canvas_geometry::status_bar_rect(&host.editor_state, VW, VH)
+            .expect("the editor would paint a status bar here");
+    let point = Point2D::new(
+        status.origin.x + status.size.x / 2.0,
+        status.origin.y + status.size.y / 2.0,
+    );
+    let zoom_before = host.editor_state.viewport.zoom;
+
+    click(&mut host, point);
+
+    assert_eq!(
+        board_on_screen(&host).as_deref(),
+        Some("slide-2"),
+        "the press fell through to the board"
+    );
+    assert_eq!(
+        host.editor_state.viewport.zoom, zoom_before,
+        "and never reached the hidden zoom controls"
+    );
+}
+
+/// Same for the left rail's band.
+#[test]
+fn a_press_over_the_hidden_layer_rail_advances_the_deck() {
+    let _guard = test_lock();
+    let mut host = presenting_host();
+    let rail =
+        op_editor_ui::widgets::host_canvas_geometry::layer_panel_rect(&host.editor_state, VH);
+    let point = Point2D::new(
+        rail.origin.x + rail.size.x / 2.0,
+        rail.origin.y + rail.size.y / 2.0,
+    );
+
+    click(&mut host, point);
+
+    assert_eq!(board_on_screen(&host).as_deref(), Some("slide-2"));
+}
+
+/// The chrome really is unpainted, not merely unclickable: the left rail's
+/// band shows the slide while presenting, and the panel again after exit.
+#[test]
+fn the_rails_are_not_painted_while_presenting() {
+    use crate::backend::{NativeBackend, NativeFrameBackend};
+
+    let _guard = test_lock();
+    const W: i32 = 800;
+    const H: i32 = 600;
+
+    fn rail_pixel(host: &mut WidgetHostNative, backend: &mut NativeBackend) -> [u8; 3] {
+        let mut surface =
+            skia_safe::surfaces::raster_n32_premul((W, H)).expect("raster surface allocated");
+        surface.canvas().clear(skia_safe::Color::BLACK);
+        {
+            let mut frame = NativeFrameBackend::new(backend, surface.canvas());
+            host.paint(&mut frame, W as f32, H as f32);
+        }
+        let stride = (W * 4) as usize;
+        let mut pixels = vec![0u8; stride * H as usize];
+        let info = skia_safe::ImageInfo::new(
+            (W, H),
+            skia_safe::ColorType::RGBA8888,
+            skia_safe::AlphaType::Premul,
+            None,
+        );
+        assert!(surface.read_pixels(&info, &mut pixels, stride, (0, 0)));
+        // Inside the left rail, well below the TopBar.
+        let offset = 300 * stride + 40 * 4;
+        [pixels[offset], pixels[offset + 1], pixels[offset + 2]]
+    }
+
+    let mut backend = NativeBackend::with_dpi(1.0);
+    let mut host = host_with(THREE_BOARD_DECK, Some(TemplateScene::Slides));
+    host.last_viewport_w = W as f32;
+    host.last_viewport_h = H as f32;
+    host.enter_preview((W as f32, H as f32));
+    host.mark_paint_dirty_for_test();
+    let presenting = rail_pixel(&mut host, &mut backend);
+
+    host.apply_escape();
+    host.mark_paint_dirty_for_test();
+    let editing = rail_pixel(&mut host, &mut backend);
+
+    // The deck's slides are white; the layer rail is not.
+    assert!(
+        presenting.iter().all(|channel| *channel > 200),
+        "the slide should reach the rail's band while presenting, got {presenting:?}"
+    );
+    assert_ne!(
+        presenting, editing,
+        "the rail must be painted again once the presentation ends"
+    );
 }

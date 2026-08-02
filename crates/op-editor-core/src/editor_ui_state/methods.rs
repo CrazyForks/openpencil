@@ -49,6 +49,8 @@ impl EditorUiState {
         self.preview.screen_switcher_hover = None;
         self.preview.screen_switcher_pressed = None;
         self.preview.slideshow = None;
+        self.preview.toolbar_hover = None;
+        self.preview.toolbar_pressed = None;
     }
 
     /// Flip Preview mode on/off. Returns the new state (`true` =

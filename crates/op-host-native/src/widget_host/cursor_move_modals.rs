@@ -162,8 +162,14 @@ impl WidgetHostNative {
         // off-canvas moves fall through so top-bar hover still works
         // while previewing.
         if self.preview.is_some() {
-            self.screen_switcher_hover(x, y, self.last_viewport_w, self.last_viewport_h);
-            self.preview_switcher_hover(x, y, self.last_viewport_w, self.last_viewport_h);
+            // Neither switcher paints while a deck is presenting, so only the
+            // presenting toolbar tracks the cursor there.
+            if self.preview_slideshow_active() {
+                self.slideshow_toolbar_hover(x, y, self.last_viewport_w, self.last_viewport_h);
+            } else {
+                self.screen_switcher_hover(x, y, self.last_viewport_w, self.last_viewport_h);
+                self.preview_switcher_hover(x, y, self.last_viewport_w, self.last_viewport_h);
+            }
             if self.preview_dispatch_move(x, y) {
                 return Some(true);
             }

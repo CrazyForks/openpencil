@@ -27,6 +27,14 @@ impl WidgetHostNative {
         let viewport_height = ctx.viewport_height;
         let in_git_panel = ctx.in_git_panel;
         let in_chat_model_picker = ctx.in_chat_model_picker;
+        // Presenting hides every surface this tier owns — the StatusBar, the
+        // rail-resize gutters, the property-panel popovers (`paint.rs`). A
+        // hidden widget must not keep claiming presses, or the deck would
+        // have dead patches where the chrome used to be; falling through
+        // hands the press to the preview tier, which advances the slide.
+        if self.preview_slideshow_active() {
+            return None;
+        }
         // 0a1. Image-fill popover. Property overlays are painted after the
         // VariablesPanel, chat, StatusBar, marquee, and rail chrome, so the
         // visible popup must own their overlap before those lower surfaces.
@@ -218,6 +226,16 @@ impl WidgetHostNative {
         // runtime (taps on switches / buttons, caret placement) and is
         // swallowed so no editor selection / node-creation fires.
         if self.preview.is_some() {
+            // Presenting a deck owns the whole canvas: the toolbar first,
+            // then the board, which advances the deck on release. Neither
+            // switcher paints while presenting, and the runtime is not fed —
+            // a slide is being shown, not filled in.
+            if self.preview_slideshow_active() {
+                if !self.slideshow_toolbar_press(x, y, viewport_width, viewport_height) {
+                    self.slideshow_board_press(x, y);
+                }
+                return Some(true);
+            }
             if self.screen_switcher_press(x, y, viewport_width, viewport_height) {
                 return Some(true);
             }

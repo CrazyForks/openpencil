@@ -14,6 +14,18 @@
 use crate::scene_template_catalog::TemplateScene;
 use crate::{EditorState, PenNodeExt};
 
+/// A control on the presenting toolbar.
+///
+/// Lives here rather than in the widget layer for the same reason
+/// `PreviewDeviceKind` does: the host records which control is pressed /
+/// hovered in editor state, and the widget only reads it back to paint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SlideshowToolbarButton {
+    Previous,
+    Next,
+    Exit,
+}
+
 /// Which board of a deck the slideshow is currently presenting.
 ///
 /// The board list is captured when the slideshow starts rather than
@@ -83,6 +95,30 @@ impl SlideshowState {
         let moved = target != self.index;
         self.index = target;
         moved
+    }
+
+    /// Jump straight to a board, clamped into the deck. Returns whether the
+    /// board on screen changed. Backs Home / End, which a presenter uses to
+    /// get to the title or the closing slide without walking the deck.
+    pub fn go_to(&mut self, index: usize) -> bool {
+        if self.boards.is_empty() {
+            return false;
+        }
+        let target = index.min(self.boards.len() - 1);
+        let moved = target != self.index;
+        self.index = target;
+        moved
+    }
+
+    /// Whether a board exists before / after the one on screen. Drives the
+    /// toolbar's disabled ends, so what the buttons look like and what they
+    /// do come from one answer.
+    pub fn can_go_back(&self) -> bool {
+        self.index > 0
+    }
+
+    pub fn can_go_forward(&self) -> bool {
+        self.index + 1 < self.boards.len()
     }
 
     /// The presenter's position, e.g. `"3 / 6"`.
@@ -156,6 +192,23 @@ impl EditorState {
             .slideshow
             .as_mut()
             .is_some_and(|slideshow| slideshow.step(delta))
+    }
+
+    /// Jump the running slideshow to the first (`false`) or last (`true`)
+    /// board — Home / End. Returns whether the board on screen changed.
+    pub fn preview_slideshow_to_end(&mut self, last: bool) -> bool {
+        self.editor_ui
+            .preview
+            .slideshow
+            .as_mut()
+            .is_some_and(|slideshow| {
+                let target = if last {
+                    slideshow.len().saturating_sub(1)
+                } else {
+                    0
+                };
+                slideshow.go_to(target)
+            })
     }
 }
 

@@ -58,6 +58,12 @@ pub struct PreviewState {
     /// [`crate::preview_slideshow`]. `None` for every other document, and
     /// cleared on exit like the rest of this struct's live state.
     pub slideshow: Option<crate::preview_slideshow::SlideshowState>,
+    /// Presenting-toolbar control under the cursor (hover wash), and the one
+    /// currently pressed. Same press/hover/release contract as
+    /// [`Self::switcher_hover`] / [`Self::switcher_pressed`]: a control
+    /// activates on RELEASE only while the cursor is still on it.
+    pub toolbar_hover: Option<crate::preview_slideshow::SlideshowToolbarButton>,
+    pub toolbar_pressed: Option<crate::preview_slideshow::SlideshowToolbarButton>,
 }
 
 /// PropertyPanel Size-section fill / hug / clip toggles.

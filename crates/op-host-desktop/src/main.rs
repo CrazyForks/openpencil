@@ -60,6 +60,7 @@ mod image_search_session;
 mod ime_window;
 mod keyboard_clipboard_payload;
 mod keyboard_input;
+mod keyboard_presenting;
 mod kit_io;
 mod kit_persistence;
 mod kit_persistence_error;

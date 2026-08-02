@@ -13,6 +13,7 @@
 //! makes the neighbouring boards disappear and the surround read as a
 //! letterbox.
 
+use super::input::NODE_DRAG_THRESHOLD_PX;
 use super::*;
 use op_editor_ui::Point2D;
 
@@ -57,7 +58,15 @@ impl WidgetHostNative {
         // its own aspect. Canvas is the device mode that adds no chrome, so
         // the switcher (hidden while presenting) still reads truthfully if
         // the user leaves the slideshow.
+        //
+        // `initialize_device_preview` ran first and inferred Desktop from the
+        // board's width, building a device frame with it. That frame has to
+        // go, not just be painted around: a left-over frame makes Exit start
+        // the device merge animation instead of leaving, so the presentation
+        // would refuse to close.
         self.editor_state.editor_ui.preview.device = Some(PreviewDeviceKind::Canvas);
+        self.clear_device_preview_state();
+        self.preview_mode_transition = None;
         self.frame_slideshow_board(canvas_size);
         true
     }
@@ -132,7 +141,7 @@ impl WidgetHostNative {
         frame_backend: &mut dyn op_editor_ui::RenderBackend,
         canvas_rect: Rect,
     ) {
-        use op_editor_ui::widgets::{PaintCx, SlideshowCounter};
+        use op_editor_ui::widgets::{PaintCx, SlideshowToolbar};
 
         let Some(session) = self.preview.as_ref() else {
             return;
@@ -156,12 +165,149 @@ impl WidgetHostNative {
             );
             frame_backend.restore();
         }
+        // The toolbar paints last so it sits above the board — it is the one
+        // thing on screen that must stay reachable whatever the slide draws.
         let label = slideshow.counter_label();
-        let counter = SlideshowCounter { label: &label };
+        let toolbar = SlideshowToolbar {
+            label: &label,
+            can_go_back: slideshow.can_go_back(),
+            can_go_forward: slideshow.can_go_forward(),
+            hover: self.editor_state.editor_ui.preview.toolbar_hover,
+            pressed: self.editor_state.editor_ui.preview.toolbar_pressed,
+        };
         let mut cx = PaintCx {
             backend: frame_backend,
         };
-        counter.paint(&mut cx, canvas_rect, &self.theme);
+        toolbar.paint(&mut cx, canvas_rect, &self.theme);
+    }
+
+    /// The counter label the toolbar is currently laid out against.
+    ///
+    /// Every geometry call needs it, and taking it from the live slideshow
+    /// each time is what keeps hit-test and paint measuring the same pill.
+    fn slideshow_toolbar_label(&self) -> Option<String> {
+        Some(self.editor_state.preview_slideshow()?.counter_label())
+    }
+
+    /// Record which toolbar control a press landed on, and whether the press
+    /// belonged to the toolbar at all.
+    ///
+    /// A press on the counter or on the pill's padding returns `true` with
+    /// nothing pressed: it is still the toolbar's press, so it must not fall
+    /// through and advance the deck underneath.
+    pub(in crate::widget_host) fn slideshow_toolbar_press(
+        &mut self,
+        x: f32,
+        y: f32,
+        viewport_w: f32,
+        viewport_h: f32,
+    ) -> bool {
+        use op_editor_ui::widgets::SlideshowToolbar;
+        let Some(label) = self.slideshow_toolbar_label() else {
+            return false;
+        };
+        let canvas = self.preview_canvas_rect(viewport_w, viewport_h);
+        let point = Point2D::new(x, y);
+        if !SlideshowToolbar::contains(canvas, &label, point) {
+            return false;
+        }
+        self.editor_state.editor_ui.preview.toolbar_pressed =
+            SlideshowToolbar::hit_test(canvas, &label, point);
+        self.mark_dirty();
+        true
+    }
+
+    /// Maintain the toolbar hover wash, and track the cursor for the
+    /// click-versus-drag test. Mirrors `preview_switcher_hover`, and the
+    /// hover it maintains is what the release below checks the press against.
+    pub(crate) fn slideshow_toolbar_hover(
+        &mut self,
+        x: f32,
+        y: f32,
+        viewport_w: f32,
+        viewport_h: f32,
+    ) {
+        use op_editor_ui::widgets::SlideshowToolbar;
+        self.slideshow_cursor = Some((x, y));
+        let Some(label) = self.slideshow_toolbar_label() else {
+            return;
+        };
+        let canvas = self.preview_canvas_rect(viewport_w, viewport_h);
+        let hit = SlideshowToolbar::hit_test(canvas, &label, Point2D::new(x, y));
+        if self.editor_state.editor_ui.preview.toolbar_hover != hit {
+            self.editor_state.editor_ui.preview.toolbar_hover = hit;
+            self.mark_dirty();
+        }
+    }
+
+    /// Activate a toolbar control on release, when the cursor is still on the
+    /// control the press landed on — the same contract the device switcher
+    /// uses, so a press dragged off the button cancels instead of firing.
+    ///
+    /// Returns whether a toolbar press was in flight (the release is
+    /// consumed either way, so a cancelled press never reaches the board).
+    pub(in crate::widget_host) fn slideshow_toolbar_release(&mut self) -> bool {
+        use op_editor_core::preview_slideshow::SlideshowToolbarButton;
+        let Some(pressed) = self.editor_state.editor_ui.preview.toolbar_pressed.take() else {
+            return false;
+        };
+        if self.editor_state.editor_ui.preview.toolbar_hover == Some(pressed) {
+            match pressed {
+                SlideshowToolbarButton::Previous => {
+                    self.preview_slideshow_step(-1);
+                }
+                SlideshowToolbarButton::Next => {
+                    self.preview_slideshow_step(1);
+                }
+                // Exactly the path Escape takes, so there is one way out of a
+                // presentation however the user asks for it.
+                SlideshowToolbarButton::Exit => self.exit_preview(),
+            }
+        }
+        self.mark_dirty();
+        true
+    }
+
+    /// Jump to the first (`last = false`) or last board — Home / End.
+    pub fn preview_slideshow_to_end(&mut self, last: bool) -> bool {
+        if !self.preview_slideshow_active() {
+            return false;
+        }
+        if !self.editor_state.preview_slideshow_to_end(last) {
+            return false;
+        }
+        self.mark_dirty();
+        true
+    }
+
+    /// Remember where a press on the board landed, so the release can tell a
+    /// click from a drag.
+    ///
+    /// Presses on the board belong to the presentation, not to the widget
+    /// runtime: a slide is being shown, not filled in, so nothing is
+    /// forwarded to the runtime while presenting.
+    pub(in crate::widget_host) fn slideshow_board_press(&mut self, x: f32, y: f32) {
+        self.slideshow_press_screen = Some((x, y));
+        self.slideshow_cursor = Some((x, y));
+    }
+
+    /// Advance on release, unless the pointer travelled far enough to be a
+    /// drag. Returns whether a board press was in flight.
+    ///
+    /// The deck clamps at the last board: a click there does nothing rather
+    /// than wrapping or exiting. An accidental exit costs the presenter their
+    /// place in front of an audience; a dead click costs nothing.
+    pub(in crate::widget_host) fn slideshow_board_release(&mut self) -> bool {
+        let Some((press_x, press_y)) = self.slideshow_press_screen.take() else {
+            return false;
+        };
+        let (last_x, last_y) = self.slideshow_cursor.unwrap_or((press_x, press_y));
+        let travel = (last_x - press_x).abs().max((last_y - press_y).abs());
+        if travel <= NODE_DRAG_THRESHOLD_PX {
+            self.preview_slideshow_step(1);
+        }
+        self.mark_dirty();
+        true
     }
 }
 

@@ -105,18 +105,24 @@ impl WidgetHostNative {
         // paint pass. Every widget builder below reads `editor_state`
         // directly; the canvas reads `self.layout_scene`.
         self.refresh_layout_scene();
+        // Presenting a deck hides the EDITING chrome — rails, tool column,
+        // chat, status bar. It is paint-side policy only: no panel state is
+        // touched, so leaving the presentation restores exactly the layout
+        // the user had without anything having to remember it. The TopBar
+        // stays: it carries the preview toggle, so there is always a visible
+        // way out besides Esc and the toolbar's own exit.
+        let presenting = self.preview_slideshow_active();
         if self.device_mode_active() && self.preview_device_frame.is_none() {
             // Paint owns authoritative viewport dimensions; enter-time
             // cached dimensions can still be zero on a fresh host.
             self.recompute_device_frame(viewport_width, viewport_height);
         }
         if self.preview_slideshow_active() {
-            // Same reason: the presented board is framed against the canvas
-            // size paint actually has, so a slide advanced by a key press or
-            // a window resized mid-presentation both land framed.
-            let (_cx0, _cy0, slide_w, slide_h) =
-                self.canvas_region(viewport_width, viewport_height);
-            self.frame_slideshow_board((slide_w, slide_h));
+            // Same reason: the presented board is framed against the stage
+            // paint actually has, so a slide advanced by a key press or a
+            // window resized mid-presentation both land framed.
+            let stage = self.preview_canvas_rect(viewport_width, viewport_height);
+            self.frame_slideshow_board((stage.size.x, stage.size.y));
         }
         let ui = &self.editor_state.editor_ui;
 
@@ -133,8 +139,9 @@ impl WidgetHostNative {
             top_bar.paint(&mut cx, top_bar_rect);
         }
 
-        // 3. LayerPanel — skipped when the sidebar is collapsed.
-        if ui.sidebar_open {
+        // 3. LayerPanel — skipped when the sidebar is collapsed, and while
+        //    presenting (see `presenting` above).
+        if ui.sidebar_open && !presenting {
             // Compute the active drop target so the panel can paint
             // the drop-indicator line during a drag-to-reorder.
             let layer_panel_rect =
@@ -196,13 +203,17 @@ impl WidgetHostNative {
                 // (the untouched design scene) makes preview
                 // pixel-identical to design plus live. The editor's
                 // selection / handles / grid do NOT paint in preview.
-                frame.fill_rect(canvas_rect, self.theme.canvas_surface);
-                if self.preview_slideshow_active() {
+                if presenting {
                     // A deck is PRESENTED: one board, letterboxed, no device
                     // silhouette and no switchers — neither a phone bezel nor
-                    // a screen router says anything about a slide.
-                    self.paint_slideshow(&mut *frame, canvas_rect);
+                    // a screen router says anything about a slide. The stage
+                    // is the full width under the TopBar, since the rails
+                    // that would have bounded it are not painted.
+                    let stage = self.preview_canvas_rect(viewport_width, viewport_height);
+                    frame.fill_rect(stage, self.theme.canvas_surface);
+                    self.paint_slideshow(&mut *frame, stage);
                 } else {
+                    frame.fill_rect(canvas_rect, self.theme.canvas_surface);
                     if self.device_mode_active() {
                         self.paint_device_frame(&mut *frame, canvas_rect);
                     } else if let Some(preview) = self.preview.as_ref() {
@@ -308,7 +319,7 @@ impl WidgetHostNative {
         );
         let property_panel_width = ui.property_panel_width;
         let right_rail_x = viewport_width - property_panel_width;
-        if let Some(panel) = property_panel.as_ref() {
+        if let Some(panel) = property_panel.as_ref().filter(|_| !presenting) {
             let property_rect = canvas_geometry::property_panel_rect(
                 &self.editor_state,
                 viewport_width,
@@ -353,7 +364,7 @@ impl WidgetHostNative {
             .size
             .y;
         let toolbar_rect = canvas_geometry::toolbar_rect(&self.editor_state, toolbar_h);
-        if canvas_geometry::toolbar_fits(canvas_w) {
+        if canvas_geometry::toolbar_fits(canvas_w) && !presenting {
             let mut cx = PaintCx {
                 backend: &mut *frame,
             };
@@ -363,7 +374,10 @@ impl WidgetHostNative {
         // 7. AIChatPlaceholder — painted LAST so it sits on top
         //    of the toolbar in any overlap region (matches the
         //    user's requested z-order: chat above toolbar).
-        if let Some(chat_rect) = self.ai_chat_rect(viewport_width, viewport_height) {
+        if let Some(chat_rect) = self
+            .ai_chat_rect(viewport_width, viewport_height)
+            .filter(|_| !presenting)
+        {
             // Owner-stamp so paint stores the canonical build under THIS host's
             // owner — the display-frame cursor hint reads it back by that owner.
             let chat = AIChatPlaceholder::from_editor_at(&self.editor_state, self.now_ms)
@@ -377,6 +391,7 @@ impl WidgetHostNative {
         // 8. StatusBar — floating bottom-right.
         if let Some(status_rect) =
             canvas_geometry::status_bar_rect(&self.editor_state, viewport_width, viewport_height)
+                .filter(|_| !presenting)
         {
             let status = StatusBar::for_editor(&self.editor_state);
             let mut cx = PaintCx {
@@ -429,7 +444,7 @@ impl WidgetHostNative {
         // 8.6. PropertyPanel overlays — painted after canvas floating
         //      controls so the image-fill popover can cover the zoom
         //      status pill when it extends into the canvas.
-        if let Some(panel) = property_panel.as_ref() {
+        if let Some(panel) = property_panel.as_ref().filter(|_| !presenting) {
             let property_rect = Rect {
                 origin: Point2D::new(right_rail_x, TOP_BAR_HEIGHT),
                 size: Point2D::new(

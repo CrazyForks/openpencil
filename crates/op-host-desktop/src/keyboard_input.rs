@@ -14,6 +14,14 @@ impl DesktopApp {
     /// `KeyboardInput` event in `app_handler.rs`.
     pub(crate) fn handle_key_pressed(&mut self, logical_key: &Key, text: Option<&str>) {
         use op_editor_core::ReorderDirection;
+        // A presentation claims its keys before the editor table below —
+        // several of them (Backspace, Enter, Home, End, Space) have an
+        // earlier arm there that would otherwise win. See
+        // `keyboard_presenting`.
+        if self.handle_presenting_key(logical_key) {
+            self.request_redraw(true);
+            return;
+        }
         let mut consumed = false;
         let nudge = if self.shift_modifier { 10.0 } else { 1.0 };
         // Settings and Git inputs retain text, navigation, and clipboard
@@ -44,20 +52,6 @@ impl DesktopApp {
                 if self.launch_chat_if_pending() {
                     self.request_redraw(true);
                 }
-            }
-            // Presenting a deck: Space and Page Up / Down are the keys a
-            // remote clicker sends, so they advance slides. They precede the
-            // space-pan arm below — panning a letterboxed board would only
-            // slide it off the surface.
-            Key::Named(NamedKey::Space | NamedKey::PageDown)
-                if self.host.preview_slideshow_active() =>
-            {
-                self.host.preview_slideshow_step(1);
-                consumed = true;
-            }
-            Key::Named(NamedKey::PageUp) if self.host.preview_slideshow_active() => {
-                self.host.preview_slideshow_step(-1);
-                consumed = true;
             }
             Key::Named(NamedKey::Space) if !self.zoom_modifier && !self.host.input_active_pub() => {
                 // Transient space-pan (TS parity) — released in the

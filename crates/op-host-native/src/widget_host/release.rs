@@ -20,6 +20,15 @@ impl WidgetHostNative {
         if self.preview_switcher_release() {
             return true;
         }
+        // Presenting a deck: the toolbar's own release first, then the
+        // board's click-to-advance. Both precede the runtime release below,
+        // which a presentation never arms.
+        if self.slideshow_toolbar_release() {
+            return true;
+        }
+        if self.slideshow_board_release() {
+            return true;
+        }
         // Live preview drag → pointer Up into the runtime.
         if self.preview_dispatch_release() {
             return true;

@@ -2,6 +2,7 @@
 //! screen-to-scene input transforms.
 
 use op_editor_core::PreviewDeviceKind;
+use op_editor_ui::widgets::TOP_BAR_HEIGHT;
 use op_editor_ui::{Point2D, Rect};
 
 /// Pinned-strip geometry in the device frame's screen space — shared by
@@ -666,6 +667,18 @@ impl super::WidgetHostNative {
 
     /// Canvas rect shared by switcher paint and hit-testing.
     pub(crate) fn preview_canvas_rect(&self, viewport_w: f32, viewport_h: f32) -> Rect {
+        if self.preview_slideshow_active() {
+            // Presenting hides the rails, so the stage is everything under
+            // the TopBar. Derived, never stored: panel state is untouched, so
+            // the moment the presentation ends this returns the ordinary
+            // canvas region again with nothing to restore. Paint, the board
+            // fit and the toolbar's hit-test all read it, so they cannot
+            // disagree about where the stage is.
+            return Rect {
+                origin: Point2D::new(0.0, TOP_BAR_HEIGHT),
+                size: Point2D::new(viewport_w, (viewport_h - TOP_BAR_HEIGHT).max(0.0)),
+            };
+        }
         let (canvas_x, canvas_y, canvas_w, canvas_h) = self.canvas_region(viewport_w, viewport_h);
         Rect {
             origin: Point2D::new(canvas_x, canvas_y),

@@ -264,11 +264,14 @@ impl WidgetHostNative {
         // shown, not filled in.
         if self.preview_slideshow_active() {
             match key {
-                "ArrowRight" => {
+                // Keynote's conventions: either axis steps the deck, so a
+                // presenter's muscle memory works whichever key they reach
+                // for.
+                "ArrowRight" | "ArrowDown" => {
                     self.preview_slideshow_step(1);
                     return true;
                 }
-                "ArrowLeft" => {
+                "ArrowLeft" | "ArrowUp" => {
                     self.preview_slideshow_step(-1);
                     return true;
                 }

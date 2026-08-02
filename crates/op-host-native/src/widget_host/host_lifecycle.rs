@@ -83,6 +83,8 @@ impl WidgetHostNative {
             preview_mode_transition: None,
             preview_press_active: false,
             preview_last_doc: None,
+            slideshow_press_screen: None,
+            slideshow_cursor: None,
             preview_edge_swipe_start_x: None,
             chat_panel_owner: op_editor_ui::widgets::AIChatPlaceholder::next_owner(),
             layer_panel_owner: op_editor_ui::widgets::LayerPanel::next_layer_panel_owner(),

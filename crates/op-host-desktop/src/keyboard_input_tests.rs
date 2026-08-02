@@ -472,3 +472,96 @@ fn html_paste_guard() {
         "<div>x</div>"
     ));
 }
+
+// ── presenter keys while a deck is presenting ─────────────────────────────
+
+/// Three 16:9 boards, tagged as a deck — what the presenting path expects.
+const PRESENTING_DECK: &str = r##"{
+    "version": "1.0.0",
+    "children": [
+        { "type": "frame", "id": "slide-1", "x": 0, "y": 0,
+          "width": 1920, "height": 1080,
+          "fill": [{"type":"solid","color":"#ffffff"}], "children": [] },
+        { "type": "frame", "id": "slide-2", "x": 2100, "y": 0,
+          "width": 1920, "height": 1080,
+          "fill": [{"type":"solid","color":"#eeeeee"}], "children": [] },
+        { "type": "frame", "id": "slide-3", "x": 4200, "y": 0,
+          "width": 1920, "height": 1080,
+          "fill": [{"type":"solid","color":"#dddddd"}], "children": [] }
+    ]
+}"##;
+
+fn presenting_app() -> DesktopApp {
+    let document = jian_ops_schema::load_str(PRESENTING_DECK)
+        .expect("parse deck fixture")
+        .value;
+    let mut app = DesktopApp::new(None);
+    let mut state = op_editor_core::EditorState::from_document(document);
+    state.editor_ui.scenario = Some(op_editor_core::scene_template_catalog::TemplateScene::Slides);
+    app.host.install_imported_state(state);
+    app.host.enter_preview((1200.0, 800.0));
+    assert!(app.host.preview_slideshow_active(), "fixture presents");
+    app
+}
+
+fn board(app: &DesktopApp) -> String {
+    app.host
+        .editor_state()
+        .preview_slideshow()
+        .and_then(|slideshow| slideshow.current_board())
+        .expect("presenting")
+        .to_string()
+}
+
+fn press(app: &mut DesktopApp, key: NamedKey) {
+    app.handle_key_pressed(&Key::Named(key), None);
+}
+
+/// Enter, Backspace, Home and End all have an established editor or chat
+/// meaning, and each is matched EARLIER in the key ladder than the arms
+/// added here. This is the test that the presenting arms really do come
+/// first — reordering them silently sends Backspace back to node deletion
+/// mid-presentation.
+#[test]
+fn presenting_claims_enter_backspace_home_and_end_from_the_editor() {
+    let mut app = presenting_app();
+
+    press(&mut app, NamedKey::Enter);
+    assert_eq!(board(&app), "slide-2");
+    press(&mut app, NamedKey::Backspace);
+    assert_eq!(board(&app), "slide-1");
+    assert_eq!(
+        app.host.editor_state().active_children().len(),
+        3,
+        "Backspace must not have deleted a board"
+    );
+
+    press(&mut app, NamedKey::End);
+    assert_eq!(board(&app), "slide-3");
+    press(&mut app, NamedKey::Home);
+    assert_eq!(board(&app), "slide-1");
+
+    // Space and Page Down stay on the deck too, and never start a space-pan.
+    press(&mut app, NamedKey::Space);
+    assert_eq!(board(&app), "slide-2");
+    press(&mut app, NamedKey::PageDown);
+    assert_eq!(board(&app), "slide-3");
+    press(&mut app, NamedKey::PageUp);
+    assert_eq!(board(&app), "slide-2");
+}
+
+/// The same keys keep their editor meaning when nothing is presenting.
+#[test]
+fn the_editor_keeps_those_keys_when_no_deck_is_presenting() {
+    let mut app = DesktopApp::new(None);
+    let state = app.host.editor_state_mut();
+    state.set_single_selection(op_editor_core::NodeId::new("n10"));
+    assert_eq!(state.active_children().len(), 1);
+
+    press(&mut app, NamedKey::Backspace);
+
+    assert!(
+        app.host.editor_state().active_children().is_empty(),
+        "Backspace still deletes the selection outside a presentation"
+    );
+}
