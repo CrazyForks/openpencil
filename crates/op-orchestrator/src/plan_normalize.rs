@@ -167,6 +167,25 @@ pub fn normalize(plan: &mut OrchestratorPlan, req: &DesignRequest) -> NormInfo {
     let preserve_requested_root_height =
         plan_normalize_dimensions::apply_requested_root_dimensions(plan, req);
 
+    // A deck's board is the projector: 16:9, fixed, and never resized to fit
+    // its content. Without this, `adjust_root_height_to_content` grew a cover
+    // slide to 1920x2277 (measured 2026-08-02) — the aspect ratio the whole
+    // slides contract rests on, gone. `preserve_requested_root_height` already
+    // exists for prompt-stated sizes; a deck's height is stated by its design
+    // type instead, and deserves the same protection.
+    let is_deck = crate::design_type::detect_design_type(&req.prompt).type_
+        == crate::design_type::DesignType::Slides;
+    if is_deck {
+        plan.root_frame.layout = Some("vertical".into());
+        // Overwrite rather than fill a hole: a model that plans 1920x0 or
+        // 1920x675 is proposing a board that is not 16:9, and the slide is
+        // the one shape here that is not up for negotiation.
+        let preset = crate::design_type::detect_design_type(&req.prompt);
+        plan.root_frame.width = preset.width;
+        plan.root_frame.height = preset.root_height;
+    }
+    let preserve_requested_root_height = preserve_requested_root_height || is_deck;
+
     let is_mobile = plan.root_frame.width <= MOBILE_MAX_WIDTH;
 
     if is_mobile {
@@ -367,6 +386,38 @@ mod tests {
         let mut p = plan(390.0, vec![subtask("hero", "Hero")]);
         let info = normalize(&mut p, &req());
         assert!(info.is_mobile);
+    }
+
+    #[test]
+    fn a_deck_board_keeps_its_projector_aspect_whatever_the_model_planned() {
+        // A cover slide shipped at 1920x2277 because the root height was
+        // resized to its content; the deck contract says the board is fixed.
+        for planned in [(1920.0, 0.0), (1200.0, 675.0), (1920.0, 2277.0)] {
+            let mut p = plan(planned.0, vec![subtask("s1", "Slide")]);
+            p.root_frame.height = planned.1;
+            let info = normalize(&mut p, &req_with_prompt("做一个 6 页的季度汇报 PPT"));
+            assert_eq!(
+                (p.root_frame.width, p.root_frame.height),
+                (1920.0, 1080.0),
+                "planned {planned:?} must be pinned to the projector board"
+            );
+            assert!(
+                info.preserve_requested_root_height,
+                "content-fitting must not be allowed to grow a slide"
+            );
+        }
+    }
+
+    #[test]
+    fn a_non_deck_plan_is_not_pinned() {
+        let mut p = plan(1200.0, vec![subtask("s1", "Hero")]);
+        p.root_frame.height = 0.0;
+        let info = normalize(&mut p, &req_with_prompt("a marketing landing page"));
+        assert_eq!(p.root_frame.width, 1200.0);
+        assert!(
+            !info.preserve_requested_root_height,
+            "a scrolling page still sizes to its content"
+        );
     }
 
     #[test]
