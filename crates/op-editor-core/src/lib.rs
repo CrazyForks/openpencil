@@ -113,6 +113,7 @@ pub mod path_bounds;
 pub mod path_edit;
 pub mod pen;
 pub mod pen_node_ext;
+pub mod preview_slideshow;
 pub mod prompt_center_catalog;
 pub mod prompt_center_keyboard;
 pub mod property_edit_mutators;

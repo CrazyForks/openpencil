@@ -180,6 +180,9 @@ mod preview_frame_geometry_tests;
 #[cfg(all(test, not(target_os = "windows")))]
 mod preview_frame_tests;
 mod preview_input;
+mod preview_slideshow;
+#[cfg(test)]
+mod preview_slideshow_tests;
 #[cfg(test)]
 mod prompt_center_host_tests;
 mod prompt_center_press;

@@ -199,6 +199,7 @@ mod tests {
         let meta = EditorMeta {
             active_page_index: 1,
             preserve_authored_geometry: true,
+            scenario: None,
         };
         let disk = externalize_for_disk(&serialized, meta);
         assert_eq!(

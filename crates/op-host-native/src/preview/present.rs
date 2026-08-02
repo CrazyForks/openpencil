@@ -35,6 +35,22 @@ impl PreviewSession {
             .map(|node| (node.id.clone(), node.bounds))
     }
 
+    /// Scene-space rect of one top-level root by schema id.
+    ///
+    /// The slideshow presents a board the user picked with the arrow keys
+    /// rather than whichever root happens to be first, so it needs to ask
+    /// for a specific one. Only top-level children are searched: a board is
+    /// a page root by definition, and matching a nested node would frame
+    /// something inside a slide.
+    pub fn root_scene_rect(&self, node_id: &str) -> Option<Rect> {
+        self.scene
+            .active_page()?
+            .children
+            .iter()
+            .find(|node| node.id == node_id)
+            .map(|node| node.bounds)
+    }
+
     /// The framed root's own resolved background fill, if any. The
     /// device frame's fixed silhouette (`frame_size` in
     /// `widget_host::preview_frame`) doesn't always match the screen's

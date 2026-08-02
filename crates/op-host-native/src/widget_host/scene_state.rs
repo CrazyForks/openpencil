@@ -283,6 +283,10 @@ impl WidgetHostNative {
         preserved.figma_import_in_progress = false;
         preserved.file_name_display = state.editor_ui.file_name_display.take();
         preserved.preserve_authored_geometry = state.editor_ui.preserve_authored_geometry;
+        // Both of these describe the DOCUMENT, not the shell: retaining the
+        // replaced document's scenario would leave the editor presenting an
+        // import as though it were the deck the user had open before.
+        preserved.scenario = state.editor_ui.scenario;
         // Dirty/saved state belongs to the incoming document. The rest of the
         // live shell UI is intentionally retained, but inheriting this flag
         // from the replaced editor would make a saved import appear dirty (or

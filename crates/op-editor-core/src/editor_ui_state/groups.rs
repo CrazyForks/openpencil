@@ -53,6 +53,11 @@ pub struct PreviewState {
     /// APP MODE screen-switcher pill currently pressed (activates on
     /// RELEASE inside the same pill, mirroring [`Self::switcher_pressed`]).
     pub screen_switcher_pressed: Option<usize>,
+    /// The deck being presented, when this preview is a slideshow rather
+    /// than the interactive app preview — see
+    /// [`crate::preview_slideshow`]. `None` for every other document, and
+    /// cleared on exit like the rest of this struct's live state.
+    pub slideshow: Option<crate::preview_slideshow::SlideshowState>,
 }
 
 /// PropertyPanel Size-section fill / hug / clip toggles.

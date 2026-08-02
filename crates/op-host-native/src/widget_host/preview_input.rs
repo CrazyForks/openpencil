@@ -258,6 +258,23 @@ impl WidgetHostNative {
     /// runtime emitted any semantic event.
     pub fn preview_dispatch_key(&mut self, key: &str, shift: bool) -> bool {
         use jian_core::gesture::pointer::Modifiers;
+        // Presenting a deck: the arrow keys move through the slides. They
+        // are checked before the runtime sees them because during a
+        // presentation that IS what they mean — a slide's widgets are being
+        // shown, not filled in.
+        if self.preview_slideshow_active() {
+            match key {
+                "ArrowRight" => {
+                    self.preview_slideshow_step(1);
+                    return true;
+                }
+                "ArrowLeft" => {
+                    self.preview_slideshow_step(-1);
+                    return true;
+                }
+                _ => {}
+            }
+        }
         let mods = if shift {
             Modifiers::SHIFT
         } else {

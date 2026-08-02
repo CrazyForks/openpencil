@@ -214,6 +214,16 @@ impl PreviewSession {
     /// entry screen is mounted. Docs with no screen markers keep today's
     /// exact active-page workbench behavior, unchanged.
     ///
+    /// ## Presenting a deck
+    ///
+    /// `presenting` says the host is about to run this document as a
+    /// slideshow (`op_editor_core::preview_slideshow`). A deck's boards are
+    /// slides, not screens: routing them would present them in route order
+    /// instead of the authored order, and would leave every board but the
+    /// mounted one out of the scene the presentation has to draw. So both
+    /// the screen projection and its auto-wire fallback are skipped, and
+    /// the session keeps the plain workbench scene with every board in it.
+    ///
     /// Returns [`PreviewEnterError`] if serialization, parsing, runtime
     /// build, or layout fails — the host then declines to enter preview and
     /// surfaces the rendered message.
@@ -223,6 +233,7 @@ impl PreviewSession {
         active_theme: &std::collections::BTreeMap<String, String>,
         active_page_index: usize,
         preserve_authored_geometry: bool,
+        presenting: bool,
     ) -> Result<Self, PreviewEnterError> {
         let _ = canvas_size; // layout is root-derived, not canvas-derived.
 
@@ -235,7 +246,9 @@ impl PreviewSession {
         // here); either way the CALLER's document is never mutated. See
         // `auto_wire`'s module doc for the "any marker → skip entirely"
         // rationale.
-        let auto_wired = auto_wire::auto_wire_for_preview(doc, active_page_index);
+        let auto_wired = (!presenting)
+            .then(|| auto_wire::auto_wire_for_preview(doc, active_page_index))
+            .flatten();
         let doc: &jian_ops_schema::PenDocument = auto_wired.as_ref().unwrap_or(doc);
 
         // Prepare the document EXACTLY as the design canvas does before
@@ -273,11 +286,13 @@ impl PreviewSession {
         // still carries a `ScreenVariantTable` for responsive breakpoint
         // variants, which this preview path doesn't consume yet (Phase 3
         // scope: breakpoint-aware preview UI).
-        let (projected, ws) = jian_ops_schema::screen_projection::project_screens(&prepared);
-        projection_warnings.extend(ws.iter().map(|w| format!("preview: {w}")));
-        if let Some((normalized, _variants)) = projected {
-            prepared = std::borrow::Cow::Owned(normalized);
-            app_projected = true;
+        if !presenting {
+            let (projected, ws) = jian_ops_schema::screen_projection::project_screens(&prepared);
+            projection_warnings.extend(ws.iter().map(|w| format!("preview: {w}")));
+            if let Some((normalized, _variants)) = projected {
+                prepared = std::borrow::Cow::Owned(normalized);
+                app_projected = true;
+            }
         }
 
         // Project the editor's ACTIVE page so the runtime's roots match

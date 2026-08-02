@@ -85,6 +85,7 @@ mod tests {
             Some(EditorMeta {
                 active_page_index: 2,
                 preserve_authored_geometry: true,
+                scenario: None,
             })
         );
     }

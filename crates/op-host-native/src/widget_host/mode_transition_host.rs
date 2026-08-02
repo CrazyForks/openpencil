@@ -61,6 +61,8 @@ impl WidgetHostNative {
             &self.editor_state.ui.variables.active_theme,
             self.editor_state.ui.active_page_index,
             self.editor_state.editor_ui.preserve_authored_geometry,
+            // A deck is presented, not routed — see `PreviewSession::enter`.
+            op_editor_core::preview_slideshow::slideshow_for_document(&self.editor_state).is_some(),
         ) {
             Ok(mut session) => {
                 let source_rect = session.framed_root().map(|(_, rect)| {
@@ -71,10 +73,17 @@ impl WidgetHostNative {
                 self.editor_state.editor_ui.preview.warnings = session.warnings().to_vec();
                 self.preview = Some(session);
                 self.initialize_device_preview();
+                // A deck presents instead of running interactively: this
+                // frames board 0 and takes over the canvas until Esc. It
+                // runs after `initialize_device_preview` so the device pick
+                // it overrides is the settled one.
+                let presenting = self.begin_slideshow_if_deck(canvas_size);
                 // APP MODE: center the viewport on the entry screen (a
                 // workbench-mode session has no screen rect, so this is
                 // a no-op there).
-                self.center_preview_entry_if_canvas(canvas_size);
+                if !presenting {
+                    self.center_preview_entry_if_canvas(canvas_size);
+                }
                 // Only a FRAMED entry (Phone/Desktop) has a device
                 // silhouette to merge into; plain Canvas-mode preview
                 // paints the same scene painter at the canvas's own

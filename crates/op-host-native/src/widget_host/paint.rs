@@ -110,6 +110,14 @@ impl WidgetHostNative {
             // cached dimensions can still be zero on a fresh host.
             self.recompute_device_frame(viewport_width, viewport_height);
         }
+        if self.preview_slideshow_active() {
+            // Same reason: the presented board is framed against the canvas
+            // size paint actually has, so a slide advanced by a key press or
+            // a window resized mid-presentation both land framed.
+            let (_cx0, _cy0, slide_w, slide_h) =
+                self.canvas_region(viewport_width, viewport_height);
+            self.frame_slideshow_board((slide_w, slide_h));
+        }
         let ui = &self.editor_state.editor_ui;
 
         // 2. TopBar.
@@ -189,22 +197,29 @@ impl WidgetHostNative {
                 // pixel-identical to design plus live. The editor's
                 // selection / handles / grid do NOT paint in preview.
                 frame.fill_rect(canvas_rect, self.theme.canvas_surface);
-                if self.device_mode_active() {
-                    self.paint_device_frame(&mut *frame, canvas_rect);
-                } else if let Some(preview) = self.preview.as_ref() {
-                    preview.paint_scene(
-                        &mut *frame,
-                        canvas_rect,
-                        (
-                            self.editor_state.viewport.pan_x,
-                            self.editor_state.viewport.pan_y,
-                        ),
-                        self.editor_state.viewport.zoom,
-                        self.now_ms,
-                    );
+                if self.preview_slideshow_active() {
+                    // A deck is PRESENTED: one board, letterboxed, no device
+                    // silhouette and no switchers — neither a phone bezel nor
+                    // a screen router says anything about a slide.
+                    self.paint_slideshow(&mut *frame, canvas_rect);
+                } else {
+                    if self.device_mode_active() {
+                        self.paint_device_frame(&mut *frame, canvas_rect);
+                    } else if let Some(preview) = self.preview.as_ref() {
+                        preview.paint_scene(
+                            &mut *frame,
+                            canvas_rect,
+                            (
+                                self.editor_state.viewport.pan_x,
+                                self.editor_state.viewport.pan_y,
+                            ),
+                            self.editor_state.viewport.zoom,
+                            self.now_ms,
+                        );
+                    }
+                    self.paint_preview_switcher(&mut *frame, canvas_rect);
+                    self.paint_screen_switcher(&mut *frame, canvas_rect);
                 }
-                self.paint_preview_switcher(&mut *frame, canvas_rect);
-                self.paint_screen_switcher(&mut *frame, canvas_rect);
             } else if !self.serve_canvas_from_pan_cache(frame, canvas_rect) {
                 // PAINT path — the canvas reads editor state + the
                 // layout-resolved render scene (`refresh_layout_scene`).

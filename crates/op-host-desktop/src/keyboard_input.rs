@@ -45,6 +45,20 @@ impl DesktopApp {
                     self.request_redraw(true);
                 }
             }
+            // Presenting a deck: Space and Page Up / Down are the keys a
+            // remote clicker sends, so they advance slides. They precede the
+            // space-pan arm below — panning a letterboxed board would only
+            // slide it off the surface.
+            Key::Named(NamedKey::Space | NamedKey::PageDown)
+                if self.host.preview_slideshow_active() =>
+            {
+                self.host.preview_slideshow_step(1);
+                consumed = true;
+            }
+            Key::Named(NamedKey::PageUp) if self.host.preview_slideshow_active() => {
+                self.host.preview_slideshow_step(-1);
+                consumed = true;
+            }
             Key::Named(NamedKey::Space) if !self.zoom_modifier && !self.host.input_active_pub() => {
                 // Transient space-pan (TS parity) — released in the
                 // app handler's KeyboardInput Released arm.
