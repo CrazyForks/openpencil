@@ -130,7 +130,33 @@ fn finish_loaded_state(mut state: EditorState, meta: Option<EditorMeta>) -> Edit
     } else {
         state.ui.active_page_index = first_page_with_content(&state);
     }
+    collapse_top_level_layers(&mut state);
     state
+}
+
+/// Start every top-level frame collapsed in the LayerPanel.
+///
+/// A fully expanded tree is unreadable the moment a document has depth: a
+/// six-slide deck opens as ~90 rows and the boards themselves scroll off the
+/// panel, so the one thing the list is for — seeing what the document
+/// contains — is the first thing lost. Collapsed roots show the six slides
+/// and let the user open the one they want.
+///
+/// `collapsed_layers` is view-only state: not serialized, not in the undo
+/// snapshot, and toggling it pushes no history. So this changes what the
+/// panel shows on open and nothing about the document.
+fn collapse_top_level_layers(state: &mut EditorState) {
+    let ids: Vec<op_editor_core::NodeId> = state
+        .active_children()
+        .iter()
+        .filter(|node| {
+            // Only containers collapse; a leaf has nothing to hide and would
+            // just render a dead disclosure arrow.
+            op_editor_core::PenNodeExt::children(*node).is_some_and(|kids| !kids.is_empty())
+        })
+        .map(|node| op_editor_core::NodeId::new(op_editor_core::PenNodeExt::id_str(node)))
+        .collect();
+    state.editor_ui.collapsed_layers.extend(ids);
 }
 
 fn first_page_with_content(state: &EditorState) -> usize {

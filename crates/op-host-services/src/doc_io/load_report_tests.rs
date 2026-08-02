@@ -105,3 +105,39 @@ fn reports_only_adopted_sidecar_and_reliable_editor_meta_inference() {
     let _ = std::fs::remove_file(inferred);
     let _ = std::fs::remove_file(ordinary);
 }
+
+/// Top-level frames open collapsed in the LayerPanel.
+///
+/// A six-slide deck expands to ~90 rows, pushing the boards themselves off
+/// the panel — the list stops answering "what is in this document", which is
+/// the only question it exists for.
+#[test]
+fn loading_collapses_top_level_frames_but_not_leaves() {
+    let source = serde_json::json!({
+        "version": "1.0",
+        "children": [
+            {
+                "type": "frame", "id": "board-1", "name": "01", "width": 1920, "height": 1080,
+                "children": [{"type": "text", "id": "t1", "content": "hi"}]
+            },
+            {
+                "type": "frame", "id": "board-2", "name": "02", "width": 1920, "height": 1080,
+                "children": [{"type": "text", "id": "t2", "content": "hi"}]
+            },
+            // A childless top-level node: collapsing it would only render a
+            // disclosure arrow that does nothing.
+            {"type": "rectangle", "id": "loose", "name": "Loose", "width": 10, "height": 10}
+        ]
+    })
+    .to_string();
+
+    let state =
+        super::load_editor_state_from_source(&source, op_editor_core::Locale::EnUs).expect("loads");
+    let collapsed = &state.editor_ui.collapsed_layers;
+    assert!(collapsed.contains(&op_editor_core::NodeId::new("board-1")));
+    assert!(collapsed.contains(&op_editor_core::NodeId::new("board-2")));
+    assert!(
+        !collapsed.contains(&op_editor_core::NodeId::new("loose")),
+        "a leaf has nothing to collapse"
+    );
+}
