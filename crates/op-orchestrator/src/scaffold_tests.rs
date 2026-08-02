@@ -429,3 +429,161 @@ fn a_screen_group_per_slide_emits_a_root_per_slide() {
     let unique: std::collections::BTreeSet<&String> = placeholder_ids.iter().collect();
     assert_eq!(unique.len(), placeholder_ids.len(), "{placeholder_ids:?}");
 }
+
+/// `count` screen groups of `width`×`height` boards, one subtask per group —
+/// the shape the deck / multi-screen fan-out plans arrive in.
+fn screen_group_plan(
+    width: f64,
+    height: f64,
+    count: usize,
+) -> (OrchestratorPlan, Vec<crate::screen_groups::ScreenGroup>) {
+    let mut plan = OrchestratorPlan {
+        root_frame: RootFrameSpec {
+            id: "page".into(),
+            name: "Deck".into(),
+            width,
+            height,
+            layout: None,
+            gap: None,
+            padding: None,
+            fill: None,
+        },
+        subtasks: Vec::new(),
+        style_guide_name: None,
+    };
+    let mut groups = Vec::with_capacity(count);
+    for i in 0..count {
+        let screen = format!("{:02} Screen", i + 1);
+        groups.push(crate::screen_groups::ScreenGroup {
+            screen: screen.clone(),
+            indices: vec![i],
+        });
+        plan.subtasks.push(Subtask {
+            id: screen.clone(),
+            label: screen.clone(),
+            region: Region { width, height },
+            id_prefix: screen.clone(),
+            parent_frame_id: None,
+            elements: None,
+            screen: Some(screen),
+            generated_root_id: None,
+            existing_section_labels: None,
+            retry_feedback: None,
+        });
+    }
+    (plan, groups)
+}
+
+/// `(x, y)` of every scaffolded root, in insertion order.
+fn root_positions(nodes: &[jian_ops_schema::node::PenNode]) -> Vec<(f64, f64)> {
+    nodes
+        .iter()
+        .map(|n| {
+            (
+                n.base().x.expect("scaffold roots carry x"),
+                n.base().y.expect("scaffold roots carry y"),
+            )
+        })
+        .collect()
+}
+
+/// Six 1920px slides in one strip are ~12,000px across — readable only by
+/// panning, and twenty would be unusable. Wide boards wrap into rows.
+#[test]
+fn wide_screen_group_boards_wrap_onto_a_second_row() {
+    let (plan, groups) = screen_group_plan(1920.0, 1080.0, 6);
+    let start_x = 100.0;
+    let start_y = 200.0;
+
+    let (cmds, _, _) = build_screen_group_scaffold(&plan, &groups, false, start_x, start_y)
+        .expect("scaffold builds");
+
+    assert_eq!(cmds.len(), 1, "the deck is still scaffolded in one insert");
+    let EditorCommand::InsertSubtree { nodes, .. } = &cmds[0] else {
+        panic!("expected a top-level InsertSubtree, got {:?}", cmds[0]);
+    };
+    assert_eq!(nodes.len(), 6, "one root per slide");
+
+    let positions = root_positions(nodes);
+
+    // Four 1920 boards fit under the row budget, so the first row runs
+    // left-to-right along `start_y`.
+    for row_0 in positions.windows(2).take(3) {
+        assert!(
+            row_0[1].0 > row_0[0].0,
+            "first row advances rightwards: {positions:?}"
+        );
+    }
+    assert!(
+        positions[..4].iter().all(|(_, y)| *y == start_y),
+        "the first row shares one top edge: {positions:?}"
+    );
+
+    // The fifth board is the wrap: back to the left edge, one board height
+    // plus a gutter further down.
+    assert_eq!(
+        positions[4],
+        (start_x, start_y + 1080.0 + SCREEN_GROUP_GAP),
+        "board 5 starts a new row: {positions:?}"
+    );
+    assert_eq!(
+        positions[5].1, positions[4].1,
+        "board 6 joins the second row: {positions:?}"
+    );
+
+    // Overlapping boards are the failure this whole layout exists to avoid.
+    let unique: std::collections::BTreeSet<(u64, u64)> = positions
+        .iter()
+        .map(|(x, y)| (x.to_bits(), y.to_bits()))
+        .collect();
+    assert_eq!(unique.len(), positions.len(), "{positions:?}");
+}
+
+/// The wrap is decided from board width alone, so a phone-width fan-out —
+/// which was never too wide to read — keeps its single row.
+#[test]
+fn mobile_width_screen_groups_stay_on_one_row() {
+    let (plan, groups) = screen_group_plan(390.0, 844.0, 3);
+
+    let (cmds, _, _) =
+        build_screen_group_scaffold(&plan, &groups, true, 0.0, 0.0).expect("scaffold builds");
+    let EditorCommand::InsertSubtree { nodes, .. } = &cmds[0] else {
+        panic!("expected a top-level InsertSubtree, got {:?}", cmds[0]);
+    };
+
+    let positions = root_positions(nodes);
+    assert!(
+        positions.iter().all(|(_, y)| *y == 0.0),
+        "phone screens still read as one row: {positions:?}"
+    );
+    assert_eq!(
+        positions,
+        vec![
+            (0.0, 0.0),
+            (390.0 + SCREEN_GROUP_GAP, 0.0),
+            (2.0 * (390.0 + SCREEN_GROUP_GAP), 0.0),
+        ],
+        "column pitch is unchanged"
+    );
+}
+
+/// A plan whose `rootFrame.height` is 0 ("size me from content") still gets a
+/// row step: the scaffold presets that to the device-class artboard, so the
+/// wrap must step down by the same preset or row two lands on top of row one.
+#[test]
+fn content_sized_boards_still_step_down_by_the_preset_height() {
+    let (plan, groups) = screen_group_plan(1920.0, 0.0, 5);
+
+    let (cmds, _, _) =
+        build_screen_group_scaffold(&plan, &groups, false, 0.0, 0.0).expect("scaffold builds");
+    let EditorCommand::InsertSubtree { nodes, .. } = &cmds[0] else {
+        panic!("expected a top-level InsertSubtree, got {:?}", cmds[0]);
+    };
+
+    let positions = root_positions(nodes);
+    assert_eq!(
+        positions[4],
+        (0.0, 900.0 + SCREEN_GROUP_GAP),
+        "the desktop preset height drives the row step: {positions:?}"
+    );
+}

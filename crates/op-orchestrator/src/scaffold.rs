@@ -271,14 +271,18 @@ fn resolve_section_gap(plan_gap: Option<f64>) -> f64 {
 /// mobile 844 / desktop 900 — so the canvas reads as a complete page being
 /// filled in; `adjust_root_height_to_content` (the LAST pass) still writes
 /// the definitive number at the end.
-fn root_height_json(height: f64, width: f64) -> serde_json::Value {
+fn resolved_root_height(height: f64, width: f64) -> f64 {
     if height > 0.0 {
-        serde_json::json!(height)
+        height
     } else if width <= 480.0 {
-        serde_json::json!(844)
+        844.0
     } else {
-        serde_json::json!(900)
+        900.0
     }
+}
+
+fn root_height_json(height: f64, width: f64) -> serde_json::Value {
+    serde_json::json!(resolved_root_height(height, width))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -442,6 +446,41 @@ fn build_scaffold_root_node_at(
 /// "next screen goes here" idea.
 pub(crate) const SCREEN_GROUP_GAP: f64 = 80.0;
 
+/// Canvas width a single row of screen roots is allowed to span before the
+/// next root wraps onto a new row.
+///
+/// One unbroken strip does not survive wide boards: six 1920px slides are
+/// ~12,000px across, so the deck can only ever be read by panning, and
+/// twenty would be unusable. The wrap point is decided from the BOARD WIDTH
+/// alone — never from the design type or the screen name — because width is
+/// the fact that makes a strip unreadable, while "is this a deck" is a guess
+/// that misfires on every design that doesn't match the naming we expected.
+///
+/// At 8200px the rule lands where each device class wants it:
+/// - 1920 deck board  → 4 per row (a six-slide deck reads as 4 + 2)
+/// - 1200 desktop     → 6 per row
+/// - 390 mobile       → 17 per row, i.e. unchanged for any realistic fan-out
+const MAX_ROW_WIDTH: f64 = 8200.0;
+
+/// How many screen roots fit in one row at `board_width`.
+///
+/// Always ≥ 1: a board wider than the whole row budget still has to go
+/// somewhere, and one-per-row is the honest answer. Non-finite or
+/// non-positive widths (a malformed plan) fall back to the same floor
+/// rather than producing a NaN column index.
+fn boards_per_row(board_width: f64) -> usize {
+    let step = board_width + SCREEN_GROUP_GAP;
+    if !step.is_finite() || step <= 0.0 {
+        return 1;
+    }
+    let fit = (MAX_ROW_WIDTH / step).floor();
+    if fit < 1.0 {
+        1
+    } else {
+        fit as usize
+    }
+}
+
 /// `(commands, placeholder_ids, baselines)` — mirrors the deleted concurrent
 /// path's own `ConcurrentScaffoldResult` alias (same shape, same reason:
 /// clippy's `type_complexity` on the raw 3-tuple-of-Vecs).
@@ -452,7 +491,8 @@ pub(crate) type ScreenGroupScaffoldResult = (Vec<EditorCommand>, Vec<String>, Ve
 /// the concurrent worker machinery it was bundled with. This revival is
 /// STRUCTURE ONLY: `run.rs` still runs every group's subtasks strictly
 /// SEQUENTIALLY (no concurrency revived), so this just returns N `InsertSubtree`
-/// commands, one per group, laid out left-to-right starting at `(start_x, y)`.
+/// commands, one per group, laid out left-to-right from `(start_x, y)` and
+/// wrapped into rows once a row would outgrow `MAX_ROW_WIDTH`.
 ///
 /// Each root inherits `plan.root_frame`'s width/height/layout/gap/fill
 /// VERBATIM (no per-group size inference) — a screen-group scaffold is
@@ -484,9 +524,19 @@ pub(crate) fn build_screen_group_scaffold(
     let mut nodes = Vec::with_capacity(groups.len());
     let mut placeholder_ids = Vec::with_capacity(groups.len());
     let mut baselines = Vec::with_capacity(groups.len());
-    let mut next_x = start_x;
 
-    for group in groups {
+    // Roots wrap into rows instead of one endless strip (see `MAX_ROW_WIDTH`).
+    // `y` is the top of the FIRST row; each later row steps down by a board
+    // height plus the same gutter the columns use. The row step reads the
+    // height the scaffold actually builds with — a plan's `height: 0` means
+    // "size me from content", and `build_root_frame_node` presets that to the
+    // device-class artboard, so both must ask `resolved_root_height` or the
+    // rows would overlap by exactly the amount that preset adds.
+    let per_row = boards_per_row(rf.width);
+    let column_step = rf.width + SCREEN_GROUP_GAP;
+    let row_step = resolved_root_height(rf.height, rf.width) + SCREEN_GROUP_GAP;
+
+    for (index, group) in groups.iter().enumerate() {
         // Placeholder id: `{root_frame.id}-{screen}` — mirrors the deleted
         // concurrent path's `original_id` scheme. Only used as a join key
         // until the caller remaps it to the real post-insert id.
@@ -514,8 +564,8 @@ pub(crate) fn build_screen_group_scaffold(
         let node = build_root_frame_node(
             &placeholder_id,
             &frame_name,
-            next_x,
-            y,
+            start_x + (index % per_row) as f64 * column_step,
+            y + (index / per_row) as f64 * row_step,
             rf.width,
             rf.height,
             layout,
@@ -529,7 +579,6 @@ pub(crate) fn build_screen_group_scaffold(
         // Baseline: mobile root has 1 scaffold child (status bar); desktop
         // has 0 — mirrors the deleted concurrent path's identical baseline.
         baselines.push(usize::from(is_mobile));
-        next_x += rf.width + SCREEN_GROUP_GAP;
     }
 
     // ONE insert carrying every root, not one insert per root. A top-level

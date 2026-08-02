@@ -231,17 +231,24 @@ def closing():
     return s
 
 
-# Horizontal gap between boards on the canvas. Without explicit positions
-# every frame defaults to the origin and the deck stacks into one visible
-# slide — the other five are underneath it (reported 2026-08-02).
+# Gap between boards on the canvas, used on both axes. Without explicit
+# positions every frame defaults to the origin and the deck stacks into one
+# visible slide — the other five are underneath it (reported 2026-08-02).
 BOARD_GAP = 120
+
+# Boards per row. Six 1920px slides in one strip are ~12,000px across, which
+# can only be read by panning; wrapping them into a 3x2 grid matches the
+# preview thumbnail and follows the same convention the generator uses for
+# multi-screen roots (`scaffold.rs::MAX_ROW_WIDTH`, which wraps 1920px boards
+# by width rather than by design type).
+BOARDS_PER_ROW = 3
 
 
 def build():
     boards = [cover(), agenda(), points(), metrics(), chart(), closing()]
     for index, board in enumerate(boards):
-        board["x"] = index * (W + BOARD_GAP)
-        board["y"] = 0
+        board["x"] = (index % BOARDS_PER_ROW) * (W + BOARD_GAP)
+        board["y"] = (index // BOARDS_PER_ROW) * (H + BOARD_GAP)
     return boards
 
 
