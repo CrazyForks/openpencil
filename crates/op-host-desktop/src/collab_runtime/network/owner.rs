@@ -24,6 +24,7 @@ use super::super::types::{
 use super::connection::{drive_owner_peer, runtime_failure, DriverControl, DriverIdentity};
 use super::owner_lifecycle::{PeerControl, PeerPhase, PeerRegistry};
 use super::share_endpoint::select_share_endpoint;
+use super::transport_diagnostic::report_owner_secure_transport_failure;
 use super::EventSink;
 
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(25);
@@ -249,6 +250,7 @@ fn run_inner(
                     prelude: accepted_prelude,
                     shared_budget: shared_budget.clone(),
                     config: source.transport_config(config),
+                    source,
                     connection_id,
                     session_id: session_id.clone(),
                     epoch,
@@ -416,6 +418,7 @@ struct PeerArgs {
     prelude: Arc<ServerPrelude>,
     shared_budget: SharedQueueBudget,
     config: TransportConfig,
+    source: OwnerStreamSource,
     connection_id: ConnectionKey,
     session_id: SessionId,
     epoch: Epoch,
@@ -458,6 +461,7 @@ fn run_peer_inner(args: PeerArgs) -> Option<CollabRuntimeFailure> {
         prelude,
         shared_budget,
         config,
+        source,
         connection_id,
         session_id,
         epoch,
@@ -473,7 +477,12 @@ fn run_peer_inner(args: PeerArgs) -> Option<CollabRuntimeFailure> {
     // so live sockets/threads can never outnumber the global guard ceiling.
     let mut connection = match accept_secure_tcp_guarded(stream, &key, &prelude, config, &pending) {
         Ok(connection) => connection,
-        Err(error) => return Some(runtime_failure(&error)),
+        Err(error) => {
+            if source == OwnerStreamSource::Relay {
+                report_owner_secure_transport_failure(&error);
+            }
+            return Some(runtime_failure(&error));
+        }
     };
     let (hello, expected_issuer) = {
         let local = match local.read() {

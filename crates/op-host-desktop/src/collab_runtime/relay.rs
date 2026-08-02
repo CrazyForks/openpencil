@@ -27,7 +27,6 @@ use super::relay_bootstrap::{
 use super::types::{CollabRuntimeError, CollabRuntimeFailure};
 
 mod guest_runtime;
-pub(in crate::collab_runtime) use guest_runtime::report_secure_transport_failure;
 
 const RELAY_HOME_REGION_ENV: &str = "OPENPENCIL_COLLAB_RELAY_HOME_REGION";
 #[cfg(any(test, debug_assertions))]

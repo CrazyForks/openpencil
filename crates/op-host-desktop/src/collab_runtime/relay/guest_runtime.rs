@@ -54,36 +54,6 @@ fn at_stage_with<T>(
     }
 }
 
-struct RelayGuestTransportFailure {
-    failure: CollabRuntimeFailure,
-    relay_phase: op_collab_relay_client::RelayBridgePhase,
-    relay_failure: Option<op_collab_relay_client::RelayFailureKind>,
-}
-
-impl std::fmt::Display for RelayGuestTransportFailure {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "RelayGuestStageFailed {{ stage: SecureTransport, failure: {:?}, relay_phase: {:?}, \
-             relay_failure: {:?} }}",
-            self.failure, self.relay_phase, self.relay_failure
-        )
-    }
-}
-
-pub(in crate::collab_runtime) fn report_secure_transport_failure(
-    failure: CollabRuntimeFailure,
-    relay_phase: op_collab_relay_client::RelayBridgePhase,
-    relay_failure: Option<op_collab_relay_client::RelayFailureKind>,
-) {
-    let diagnostic = RelayGuestTransportFailure {
-        failure,
-        relay_phase,
-        relay_failure,
-    };
-    eprintln!("[collab] {diagnostic}");
-}
-
 impl GuestRelayRuntime {
     pub(in crate::collab_runtime) fn start(
         request: &RelayGuestRequest,
@@ -229,20 +199,5 @@ mod tests {
 
         assert_eq!(result, Ok(7));
         assert!(!emitted);
-    }
-
-    #[test]
-    fn secure_transport_diagnostic_contains_only_safe_enums() {
-        let diagnostic = RelayGuestTransportFailure {
-            failure: CollabRuntimeFailure::RelayUnavailable,
-            relay_phase: op_collab_relay_client::RelayBridgePhase::Failed,
-            relay_failure: Some(op_collab_relay_client::RelayFailureKind::ConnectTimeout),
-        };
-
-        assert_eq!(
-            diagnostic.to_string(),
-            "RelayGuestStageFailed { stage: SecureTransport, failure: RelayUnavailable, \
-             relay_phase: Failed, relay_failure: Some(ConnectTimeout) }"
-        );
     }
 }

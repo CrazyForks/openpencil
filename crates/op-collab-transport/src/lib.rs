@@ -61,6 +61,7 @@ pub use driver_io::IncrementalRecordDecoder;
 pub use error::{
     AdmissionError, ChunkError, ConfigError, FrameTransportError, KeyStoreError,
     NoiseTransportError, PreludeError, QueueError, RecordError, RuntimeError,
+    RuntimeErrorDiagnostic, RuntimeErrorPhase,
 };
 pub use frame::{
     decode_frame_transfer, encode_frame_transfer, frame_transfer_class, EncodedFrameTransfer,

@@ -10,6 +10,7 @@ mod owner;
 mod owner_lifecycle;
 mod share_endpoint;
 mod shutdown;
+mod transport_diagnostic;
 
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};

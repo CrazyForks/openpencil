@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{fmt, time::Duration};
 
 use crate::TransferClass;
 
@@ -231,4 +231,375 @@ pub enum RuntimeError {
     WriteTimeout,
     #[error("the secure connection is no longer usable after a fatal error")]
     ConnectionClosed,
+}
+
+/// Credential-free phase classification for a [`RuntimeError`].
+///
+/// The variants deliberately carry no protocol fields, identifiers, lengths,
+/// endpoints, third-party errors, or cryptographic material. When the failure
+/// originated in IO, [`RuntimeErrorDiagnostic::io_kind`] provides the only
+/// additional detail that is safe to emit in a diagnostic log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RuntimeErrorPhase {
+    Configuration,
+    Tcp,
+    Prelude,
+    Noise,
+    Record,
+    Chunk,
+    Frame,
+    Admission,
+    Queue,
+    Transfer,
+    RateLimit,
+    Discovery,
+    Idle,
+    Read,
+    Write,
+    Closed,
+}
+
+impl fmt::Display for RuntimeErrorPhase {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Configuration => "Configuration",
+            Self::Tcp => "Tcp",
+            Self::Prelude => "Prelude",
+            Self::Noise => "Noise",
+            Self::Record => "Record",
+            Self::Chunk => "Chunk",
+            Self::Frame => "Frame",
+            Self::Admission => "Admission",
+            Self::Queue => "Queue",
+            Self::Transfer => "Transfer",
+            Self::RateLimit => "RateLimit",
+            Self::Discovery => "Discovery",
+            Self::Idle => "Idle",
+            Self::Read => "Read",
+            Self::Write => "Write",
+            Self::Closed => "Closed",
+        })
+    }
+}
+
+/// A log-safe diagnostic derived from a [`RuntimeError`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RuntimeErrorDiagnostic {
+    pub phase: RuntimeErrorPhase,
+    pub io_kind: Option<std::io::ErrorKind>,
+}
+
+impl fmt::Display for RuntimeErrorDiagnostic {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.io_kind {
+            Some(kind) => write!(formatter, "{}({kind:?})", self.phase),
+            None => self.phase.fmt(formatter),
+        }
+    }
+}
+
+impl RuntimeError {
+    /// Returns a credential-free diagnostic suitable for local logging.
+    pub fn safe_diagnostic(&self) -> RuntimeErrorDiagnostic {
+        match self {
+            Self::InvalidConfig(_) => diagnostic(RuntimeErrorPhase::Configuration, None),
+            Self::Io(error) => diagnostic(RuntimeErrorPhase::Tcp, Some(error.kind())),
+            Self::Noise(error) => match error {
+                NoiseTransportError::Configuration(_) => diagnostic(RuntimeErrorPhase::Noise, None),
+                NoiseTransportError::Io(error) => {
+                    diagnostic(RuntimeErrorPhase::Noise, Some(error.kind()))
+                }
+                NoiseTransportError::Handshake(_) => diagnostic(RuntimeErrorPhase::Noise, None),
+                NoiseTransportError::HandshakeFrameLength(_) => {
+                    diagnostic(RuntimeErrorPhase::Noise, None)
+                }
+                NoiseTransportError::MissingRemoteStatic => {
+                    diagnostic(RuntimeErrorPhase::Noise, None)
+                }
+                NoiseTransportError::PendingSeatUnavailable => {
+                    diagnostic(RuntimeErrorPhase::Noise, None)
+                }
+            },
+            Self::Prelude(error) => match error {
+                PreludeError::Io(error) => {
+                    diagnostic(RuntimeErrorPhase::Prelude, Some(error.kind()))
+                }
+                PreludeError::Malformed => diagnostic(RuntimeErrorPhase::Prelude, None),
+                PreludeError::Magic => diagnostic(RuntimeErrorPhase::Prelude, None),
+                PreludeError::UnsupportedTransportVersion { .. } => {
+                    diagnostic(RuntimeErrorPhase::Prelude, None)
+                }
+                PreludeError::UnsupportedCollabVersion { .. } => {
+                    diagnostic(RuntimeErrorPhase::Prelude, None)
+                }
+                PreludeError::InvalidIdentifier { .. } => {
+                    diagnostic(RuntimeErrorPhase::Prelude, None)
+                }
+                PreludeError::TooLarge { .. } => diagnostic(RuntimeErrorPhase::Prelude, None),
+                PreludeError::Utf8 => diagnostic(RuntimeErrorPhase::Prelude, None),
+            },
+            Self::Record(error) => match error {
+                RecordError::Io(error) => diagnostic(RuntimeErrorPhase::Record, Some(error.kind())),
+                RecordError::InvalidLength { .. } => diagnostic(RuntimeErrorPhase::Record, None),
+                RecordError::Encrypt(_) => diagnostic(RuntimeErrorPhase::Record, None),
+                RecordError::Decrypt(_) => diagnostic(RuntimeErrorPhase::Record, None),
+            },
+            Self::Chunk(_) => diagnostic(RuntimeErrorPhase::Chunk, None),
+            Self::Frame(_) => diagnostic(RuntimeErrorPhase::Frame, None),
+            Self::Admission(error) => match error {
+                AdmissionError::Verification => diagnostic(RuntimeErrorPhase::Admission, None),
+                AdmissionError::WrongIssuer => diagnostic(RuntimeErrorPhase::Admission, None),
+                AdmissionError::WrongSubject => diagnostic(RuntimeErrorPhase::Admission, None),
+                AdmissionError::StaticKeyMismatch => diagnostic(RuntimeErrorPhase::Admission, None),
+                AdmissionError::Expired => diagnostic(RuntimeErrorPhase::Admission, None),
+                AdmissionError::RenewalIdentityChanged => {
+                    diagnostic(RuntimeErrorPhase::Admission, None)
+                }
+                AdmissionError::RenewalDidNotExtend => {
+                    diagnostic(RuntimeErrorPhase::Admission, None)
+                }
+                AdmissionError::InvalidState => diagnostic(RuntimeErrorPhase::Admission, None),
+                AdmissionError::AdmissionTimedOut => diagnostic(RuntimeErrorPhase::Admission, None),
+                AdmissionError::TicketExpired => diagnostic(RuntimeErrorPhase::Admission, None),
+                AdmissionError::Malformed => diagnostic(RuntimeErrorPhase::Admission, None),
+                AdmissionError::TooLarge { .. } => diagnostic(RuntimeErrorPhase::Admission, None),
+                AdmissionError::InvalidIdentifier { .. } => {
+                    diagnostic(RuntimeErrorPhase::Admission, None)
+                }
+            },
+            Self::Queue(_) => diagnostic(RuntimeErrorPhase::Queue, None),
+            Self::UnexpectedClass { .. } => diagnostic(RuntimeErrorPhase::Transfer, None),
+            Self::ForbiddenInboundClass(_) => diagnostic(RuntimeErrorPhase::Transfer, None),
+            Self::TransferIdExhausted => diagnostic(RuntimeErrorPhase::Transfer, None),
+            Self::RateLimited => diagnostic(RuntimeErrorPhase::RateLimit, None),
+            Self::DiscoveryIdMismatch => diagnostic(RuntimeErrorPhase::Discovery, None),
+            Self::IdleTimeout => diagnostic(RuntimeErrorPhase::Idle, None),
+            Self::ReadTimeout => diagnostic(RuntimeErrorPhase::Read, None),
+            Self::WriteTimeout => diagnostic(RuntimeErrorPhase::Write, None),
+            Self::ConnectionClosed => diagnostic(RuntimeErrorPhase::Closed, None),
+        }
+    }
+}
+
+const fn diagnostic(
+    phase: RuntimeErrorPhase,
+    io_kind: Option<std::io::ErrorKind>,
+) -> RuntimeErrorDiagnostic {
+    RuntimeErrorDiagnostic { phase, io_kind }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn safe_diagnostic_covers_every_runtime_error_variant() {
+        let cases = [
+            (
+                RuntimeError::InvalidConfig(ConfigError::InvalidValue { field: "sensitive" }),
+                RuntimeErrorPhase::Configuration,
+            ),
+            (
+                RuntimeError::Io(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "sensitive TCP context",
+                )),
+                RuntimeErrorPhase::Tcp,
+            ),
+            (
+                RuntimeError::Noise(NoiseTransportError::PendingSeatUnavailable),
+                RuntimeErrorPhase::Noise,
+            ),
+            (
+                RuntimeError::Prelude(PreludeError::Malformed),
+                RuntimeErrorPhase::Prelude,
+            ),
+            (
+                RuntimeError::Record(RecordError::InvalidLength {
+                    actual: 65_537,
+                    maximum: 65_536,
+                }),
+                RuntimeErrorPhase::Record,
+            ),
+            (
+                RuntimeError::Chunk(ChunkError::ReplayedTransferId {
+                    actual: 9_876_543_210,
+                    previous: 1_234_567_890,
+                }),
+                RuntimeErrorPhase::Chunk,
+            ),
+            (
+                RuntimeError::Frame(FrameTransportError::SensitiveTransferNotShareable),
+                RuntimeErrorPhase::Frame,
+            ),
+            (
+                RuntimeError::Admission(AdmissionError::Verification),
+                RuntimeErrorPhase::Admission,
+            ),
+            (
+                RuntimeError::Queue(QueueError::Full),
+                RuntimeErrorPhase::Queue,
+            ),
+            (
+                RuntimeError::UnexpectedClass {
+                    expected: TransferClass::Ticket,
+                    actual: TransferClass::Control,
+                },
+                RuntimeErrorPhase::Transfer,
+            ),
+            (
+                RuntimeError::ForbiddenInboundClass(TransferClass::Snapshot),
+                RuntimeErrorPhase::Transfer,
+            ),
+            (
+                RuntimeError::TransferIdExhausted,
+                RuntimeErrorPhase::Transfer,
+            ),
+            (RuntimeError::RateLimited, RuntimeErrorPhase::RateLimit),
+            (
+                RuntimeError::DiscoveryIdMismatch,
+                RuntimeErrorPhase::Discovery,
+            ),
+            (RuntimeError::IdleTimeout, RuntimeErrorPhase::Idle),
+            (RuntimeError::ReadTimeout, RuntimeErrorPhase::Read),
+            (RuntimeError::WriteTimeout, RuntimeErrorPhase::Write),
+            (RuntimeError::ConnectionClosed, RuntimeErrorPhase::Closed),
+        ];
+
+        for (error, expected_phase) in cases {
+            let actual = error.safe_diagnostic();
+            assert_eq!(actual.phase, expected_phase);
+            assert_eq!(
+                actual.io_kind.is_some(),
+                expected_phase == RuntimeErrorPhase::Tcp
+            );
+        }
+    }
+
+    #[test]
+    fn safe_diagnostic_preserves_only_the_four_io_kinds() {
+        let cases = [
+            (
+                RuntimeError::Io(secret_io(
+                    std::io::ErrorKind::PermissionDenied,
+                    "TCP_SECRET",
+                )),
+                RuntimeErrorPhase::Tcp,
+                std::io::ErrorKind::PermissionDenied,
+            ),
+            (
+                RuntimeError::Noise(NoiseTransportError::Io(secret_io(
+                    std::io::ErrorKind::ConnectionReset,
+                    "NOISE_SECRET",
+                ))),
+                RuntimeErrorPhase::Noise,
+                std::io::ErrorKind::ConnectionReset,
+            ),
+            (
+                RuntimeError::Prelude(PreludeError::Io(secret_io(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "PRELUDE_SECRET",
+                ))),
+                RuntimeErrorPhase::Prelude,
+                std::io::ErrorKind::UnexpectedEof,
+            ),
+            (
+                RuntimeError::Record(RecordError::Io(secret_io(
+                    std::io::ErrorKind::BrokenPipe,
+                    "RECORD_SECRET",
+                ))),
+                RuntimeErrorPhase::Record,
+                std::io::ErrorKind::BrokenPipe,
+            ),
+        ];
+
+        for (error, phase, io_kind) in cases {
+            assert_eq!(
+                error.safe_diagnostic(),
+                RuntimeErrorDiagnostic {
+                    phase,
+                    io_kind: Some(io_kind),
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn safe_diagnostic_formats_do_not_leak_sensitive_error_details() {
+        let secrets = [
+            "TCP_SECRET",
+            "NOISE_SECRET",
+            "PRELUDE_SECRET",
+            "RECORD_SECRET",
+        ];
+        let errors = [
+            RuntimeError::Io(secret_io(std::io::ErrorKind::Other, secrets[0])),
+            RuntimeError::Noise(NoiseTransportError::Io(secret_io(
+                std::io::ErrorKind::Other,
+                secrets[1],
+            ))),
+            RuntimeError::Prelude(PreludeError::Io(secret_io(
+                std::io::ErrorKind::Other,
+                secrets[2],
+            ))),
+            RuntimeError::Record(RecordError::Io(secret_io(
+                std::io::ErrorKind::Other,
+                secrets[3],
+            ))),
+        ];
+
+        for (error, secret) in errors.into_iter().zip(secrets) {
+            let diagnostic = error.safe_diagnostic();
+            let debug = format!("{diagnostic:?}");
+            let display = diagnostic.to_string();
+            assert!(!debug.contains(secret));
+            assert!(!display.contains(secret));
+            assert!(debug.contains("Other"));
+            assert!(display.contains("Other"));
+        }
+    }
+
+    #[test]
+    fn safe_diagnostic_drops_lengths_ids_and_identifier_values() {
+        let errors = [
+            RuntimeError::InvalidConfig(ConfigError::InvalidValue {
+                field: "SECRET_FIELD_NAME",
+            }),
+            RuntimeError::Prelude(PreludeError::TooLarge {
+                actual: 4_294_967_291,
+                maximum: 4_294_967_290,
+            }),
+            RuntimeError::Chunk(ChunkError::ReplayedTransferId {
+                actual: 9_876_543_210,
+                previous: 1_234_567_890,
+            }),
+        ];
+
+        for error in errors {
+            let diagnostic = error.safe_diagnostic();
+            let rendered = format!("{diagnostic:?} {diagnostic}");
+            assert!(!rendered.contains("SECRET_FIELD_NAME"));
+            assert!(!rendered.contains("4294967291"));
+            assert!(!rendered.contains("4294967290"));
+            assert!(!rendered.contains("9876543210"));
+            assert!(!rendered.contains("1234567890"));
+        }
+    }
+
+    #[test]
+    fn static_key_mismatch_is_reduced_to_the_admission_phase() {
+        assert_eq!(
+            RuntimeError::Admission(AdmissionError::StaticKeyMismatch).safe_diagnostic(),
+            RuntimeErrorDiagnostic {
+                phase: RuntimeErrorPhase::Admission,
+                io_kind: None,
+            }
+        );
+    }
+
+    fn secret_io(kind: std::io::ErrorKind, message: &'static str) -> std::io::Error {
+        std::io::Error::new(kind, message)
+    }
 }

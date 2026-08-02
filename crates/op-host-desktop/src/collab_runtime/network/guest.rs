@@ -14,9 +14,7 @@ use op_collab_transport::{
 use subtle::ConstantTimeEq;
 
 use super::super::auth::{production_verifier, unix_time_ms, LocalAdmission, LocalTicketRenewer};
-use super::super::relay::{
-    relay_guest_target, report_secure_transport_failure, GuestConnectionRoute, GuestRelayRuntime,
-};
+use super::super::relay::{relay_guest_target, GuestConnectionRoute, GuestRelayRuntime};
 use super::super::types::{
     CollabRuntimeFailure, GuestNetworkCommand, NetworkEvent, TerminalNetworkEvent,
 };
@@ -25,6 +23,7 @@ use super::connection::{
 };
 use super::guest_confirmation::{await_owner_confirmation, GuestConfirmationOutcome};
 use super::guest_identity::{guest_admission_plan, GuestOwnerConfirmation};
+use super::transport_diagnostic::report_relay_secure_transport_failure;
 use super::EventSink;
 
 pub(super) struct GuestTarget {
@@ -292,7 +291,7 @@ fn run_inner(
             let failure = relay_join_failure(&error, relay_join);
             if let Some(relay) = relay_runtime.as_ref() {
                 let (relay_phase, relay_failure) = relay.bridge_diagnostic();
-                report_secure_transport_failure(failure, relay_phase, relay_failure);
+                report_relay_secure_transport_failure(failure, relay_phase, relay_failure, &error);
             }
             return Err(failure);
         }
