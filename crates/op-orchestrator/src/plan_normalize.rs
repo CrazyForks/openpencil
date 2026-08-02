@@ -39,6 +39,9 @@ pub struct NormInfo {
     /// The request explicitly fixed both root dimensions, so fresh-root
     /// cleanup must preserve the requested height instead of growing it.
     pub preserve_requested_root_height: bool,
+    /// A presentation deck. Its boards are fixed 16:9 surfaces, so cleanup
+    /// centres their content instead of letting it pile up at the top edge.
+    pub is_deck: bool,
 }
 
 /// 移动端宽度上限(含)—— ≤ 此值视为移动端单屏。
@@ -263,6 +266,7 @@ pub fn normalize(plan: &mut OrchestratorPlan, req: &DesignRequest) -> NormInfo {
     NormInfo {
         is_mobile,
         preserve_requested_root_height,
+        is_deck,
     }
 }
 

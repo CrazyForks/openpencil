@@ -257,6 +257,10 @@ fn find_root<'a>(state: &'a EditorState, root_id: &str) -> Option<&'a PenNode> {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct CleanupPolicy {
     pub(crate) preserve_requested_root_height: bool,
+    /// Deck boards are fixed 16:9 surfaces. Their content is centred rather
+    /// than left to stack from the top edge, which on a 1080-tall board reads
+    /// as a half-empty slide.
+    pub(crate) is_deck: bool,
 }
 
 /// 阶段 4 清理 pass —— 在全部 subtask 插入完成后运行。
@@ -369,6 +373,43 @@ pub fn run_cleanup_passes_with_summary(
     );
 }
 
+/// Centre a deck board's content on its fixed 16:9 surface.
+///
+/// A slide root is 1080 tall no matter how much content it holds, and its
+/// sections hug their own height, so without this they stack from the top and
+/// leave the lower half blank — measured on every generated deck.
+///
+/// Only `justifyContent` is written. Stretching the sections to fill instead
+/// would distort whatever the model composed; centring changes where the block
+/// sits, not what it is.
+fn centre_deck_board_content(sink: &mut dyn DocSink, root_id: &str) {
+    let Some(root) = sink
+        .state()
+        .active_children()
+        .iter()
+        .find(|node| node.id_str() == root_id)
+    else {
+        return;
+    };
+    let value = serde_json::to_value(root).unwrap_or(serde_json::Value::Null);
+    // Respect an explicit distribution: a board that deliberately pushes
+    // content apart (space_between) or pins it low is a composition, not the
+    // default top-stack this repairs.
+    if value
+        .get("justifyContent")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|mode| !mode.is_empty())
+    {
+        return;
+    }
+    let node_id = NodeId::new(root.id_str());
+    sink.apply(EditorCommand::PatchNodeData {
+        node_id,
+        patch_json: r#"{"justifyContent":"center"}"#.to_string(),
+        page_id: None,
+    });
+}
+
 /// Write the repaired root gap as a property patch.
 ///
 /// Deliberately NOT an `apply_root_transform`: that rebuilds the subtree and
@@ -400,6 +441,18 @@ fn patch_root_section_gap(sink: &mut dyn DocSink, root_id: &str) {
         patch_json: format!(r#"{{"gap":{gap}}}"#),
         page_id: None,
     });
+}
+
+/// Test-only alias so policy-dependent passes can be driven directly.
+#[cfg(test)]
+pub(crate) fn run_cleanup_passes_with_summary_and_policy_for_tests(
+    sink: &mut dyn DocSink,
+    plan: &OrchestratorPlan,
+    root_ids: &[&str],
+    summary: &mut RepairSummary,
+    policy: CleanupPolicy,
+) {
+    run_cleanup_passes_with_summary_and_policy(sink, plan, root_ids, summary, policy);
 }
 
 fn run_cleanup_passes_with_summary_and_policy(
@@ -507,6 +560,9 @@ fn run_cleanup_passes_with_summary_and_policy(
         // reach it in the same state.
         patch_root_section_gap(sink, &rid);
         debug_probe_child_height(sink, &rid, "root_gap");
+        if policy.is_deck {
+            centre_deck_board_content(sink, &rid);
+        }
         // Text that resolves to ~1:1 against its own background is not
         // styled, it is missing. The lint crate has detected this since
         // 2026-05, but the generation path called exactly one of its

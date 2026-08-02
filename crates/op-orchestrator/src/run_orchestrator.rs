@@ -629,6 +629,7 @@ impl Orchestrator {
                 &mut quality,
                 CleanupPolicy {
                     preserve_requested_root_height: norm.preserve_requested_root_height,
+                    is_deck: norm.is_deck,
                 },
             );
         }

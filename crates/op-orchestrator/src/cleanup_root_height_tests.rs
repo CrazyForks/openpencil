@@ -492,6 +492,7 @@ fn cleanup_policy_preserves_only_requested_fixed_root_height() {
         &[&preserved_root_id],
         &mut summary,
         CleanupPolicy {
+            is_deck: false,
             preserve_requested_root_height: true,
         },
     );
@@ -559,4 +560,119 @@ fn cleanup_recolors_safe_dark_bottom_nav_on_light_mobile_root() {
             .any(|c| matches!(c, EditorCommand::SetNodeFillHex { hex, .. } if hex == "#FFF8F0")),
         "cleanup should replace safe-dark bottom nav fill with the light mobile root surface"
     );
+}
+
+/// A deck board centres its content instead of stacking it from the top.
+///
+/// The board is a fixed 1080 tall while its sections hug their own height, so
+/// the default leaves the lower half of every slide blank.
+#[test]
+fn a_deck_board_centres_its_content() {
+    use op_editor_core::{EditorCommand, NodeId};
+
+    let mut sink = VecDocSink::new();
+    let tree: jian_ops_schema::node::PenNode = serde_json::from_value(serde_json::json!({
+        "type": "frame",
+        "id": "board",
+        "name": "Cover",
+        "width": 1920,
+        "height": 1080,
+        "layout": "vertical",
+        "children": [
+            {"type": "frame", "id": "s1", "name": "Title", "width": "fill_container", "height": "fit_content"},
+            {"type": "frame", "id": "s2", "name": "Body", "width": "fill_container", "height": "fit_content"},
+            {"type": "frame", "id": "s3", "name": "Meta", "width": "fill_container", "height": "fit_content"}
+        ]
+    }))
+    .expect("board");
+    sink.state.apply(EditorCommand::InsertSubtree {
+        nodes: vec![tree],
+        parent_id: NodeId::NONE,
+        page_id: None,
+    });
+    let root_id = sink.state.active_children()[0].id_str().to_string();
+
+    let mut summary = crate::repair_summary::RepairSummary::default();
+    crate::cleanup::run_cleanup_passes_with_summary_and_policy_for_tests(
+        &mut sink,
+        &deck_plan(&root_id),
+        &[&root_id],
+        &mut summary,
+        CleanupPolicy {
+            is_deck: true,
+            preserve_requested_root_height: true,
+        },
+    );
+
+    let root = serde_json::to_value(&sink.state.active_children()[0]).expect("serialize");
+    assert_eq!(
+        root["justifyContent"].as_str(),
+        Some("center"),
+        "a deck board must centre its content"
+    );
+    assert_eq!(
+        root["height"].as_f64(),
+        Some(1080.0),
+        "centring must not disturb the pinned board height"
+    );
+}
+
+/// An authored distribution is a composition, not the default top-stack.
+#[test]
+fn a_deck_board_with_an_explicit_distribution_is_left_alone() {
+    use op_editor_core::{EditorCommand, NodeId};
+
+    let mut sink = VecDocSink::new();
+    let tree: jian_ops_schema::node::PenNode = serde_json::from_value(serde_json::json!({
+        "type": "frame",
+        "id": "board",
+        "name": "Cover",
+        "width": 1920,
+        "height": 1080,
+        "layout": "vertical",
+        "justifyContent": "space_between",
+        "children": [
+            {"type": "frame", "id": "s1", "name": "Title", "width": "fill_container", "height": "fit_content"},
+            {"type": "frame", "id": "s2", "name": "Meta", "width": "fill_container", "height": "fit_content"}
+        ]
+    }))
+    .expect("board");
+    sink.state.apply(EditorCommand::InsertSubtree {
+        nodes: vec![tree],
+        parent_id: NodeId::NONE,
+        page_id: None,
+    });
+    let root_id = sink.state.active_children()[0].id_str().to_string();
+
+    let mut summary = crate::repair_summary::RepairSummary::default();
+    crate::cleanup::run_cleanup_passes_with_summary_and_policy_for_tests(
+        &mut sink,
+        &deck_plan(&root_id),
+        &[&root_id],
+        &mut summary,
+        CleanupPolicy {
+            is_deck: true,
+            preserve_requested_root_height: true,
+        },
+    );
+
+    let root = serde_json::to_value(&sink.state.active_children()[0]).expect("serialize");
+    assert_eq!(root["justifyContent"].as_str(), Some("space_between"));
+}
+
+fn deck_plan(root_id: &str) -> crate::plan::OrchestratorPlan {
+    crate::plan::OrchestratorPlan {
+        root_frame: crate::plan::RootFrameSpec {
+            id: root_id.to_string(),
+            name: "Deck".into(),
+            width: 1920.0,
+            height: 1080.0,
+            layout: Some("vertical".into()),
+            gap: None,
+            padding: None,
+            fill: None,
+        },
+        subtasks: Vec::new(),
+        style_guide_name: None,
+    }
 }
