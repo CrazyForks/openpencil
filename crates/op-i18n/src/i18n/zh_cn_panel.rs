@@ -119,6 +119,10 @@ pub fn lookup(key: &str) -> Option<&'static str> {
             "封面、目录、要点、数据、图表和结尾，16:9 投影比例，替换文案即可上台。"
         }
         "fileMenu.newFromTemplate" => "从模板新建",
+        "fileMenu.exportSlideshowHtml" => "导出放映 HTML...",
+        "dialog.slideshowHtmlTitle" => "导出放映",
+        "dialog.slideshowHtmlSummary" => "已导出 {{count}} 张幻灯片到：",
+        "dialog.slideshowHtmlEmpty" => "当前演示文稿没有可导出的幻灯片。",
         _ => return super::zh_cn_collab::lookup(key),
     })
 }

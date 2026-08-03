@@ -110,6 +110,10 @@ pub fn lookup(key: &str) -> Option<&'static str> {
             "Couverture, sommaire, points clés, données, graphique et conclusion au format 16:9. Remplacez les textes et présentez."
         }
         "fileMenu.newFromTemplate" => "Nouveau à partir d’un modèle",
+        "fileMenu.exportSlideshowHtml" => "Exporter le diaporama HTML...",
+        "dialog.slideshowHtmlTitle" => "Exporter le diaporama",
+        "dialog.slideshowHtmlSummary" => "{{count}} diapositives exportées vers :",
+        "dialog.slideshowHtmlEmpty" => "Cette présentation n'a aucune diapositive visible à exporter.",
         _ => return super::fr_collab::lookup(key),
     })
 }

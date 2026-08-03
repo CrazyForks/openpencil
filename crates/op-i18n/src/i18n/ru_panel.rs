@@ -106,6 +106,10 @@ pub fn lookup(key: &str) -> Option<&'static str> {
             "Обложка, повестка, ключевые тезисы, данные, диаграмма и финал в формате 16:9. Замените текст — и можно выступать."
         }
         "fileMenu.newFromTemplate" => "Создать из шаблона",
+        "fileMenu.exportSlideshowHtml" => "Экспортировать слайд-шоу в HTML...",
+        "dialog.slideshowHtmlTitle" => "Экспорт слайд-шоу",
+        "dialog.slideshowHtmlSummary" => "Экспортировано слайдов ({{count}}) в:",
+        "dialog.slideshowHtmlEmpty" => "В этой презентации нет видимых слайдов для экспорта.",
         _ => return super::ru_collab::lookup(key),
     })
 }

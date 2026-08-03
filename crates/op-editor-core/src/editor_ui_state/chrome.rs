@@ -62,6 +62,10 @@ pub enum FileAction {
     /// `op_editor_core::export_batch` for the plan, and the host's
     /// batch exporter for the render loop).
     ExportAllFrames,
+    /// File ▸ "Export slideshow HTML" — host picks one output file and
+    /// writes the deck as a self-contained slideshow page (see the
+    /// host's `export_html` module for the render + markup).
+    ExportSlideshowHtml,
     ImportFigma,
     /// Complete or cancel a prepared multi-page Figma import. Native
     /// desktop owns the prepared tree; web safely ignores this action.

@@ -79,6 +79,7 @@ mod model_refresh_host;
 mod persistence;
 mod persistence_error;
 mod persistence_export_batch;
+mod persistence_export_html;
 mod persistence_image;
 mod prompt_center_store;
 mod provider_probe_host;

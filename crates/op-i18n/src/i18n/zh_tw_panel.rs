@@ -110,6 +110,10 @@ pub fn lookup(key: &str) -> Option<&'static str> {
             "封面、目錄、要點、資料、圖表和結尾，16:9 投影比例，替換文案即可上台。"
         }
         "fileMenu.newFromTemplate" => "從範本新增",
+        "fileMenu.exportSlideshowHtml" => "匯出放映 HTML...",
+        "dialog.slideshowHtmlTitle" => "匯出放映",
+        "dialog.slideshowHtmlSummary" => "已匯出 {{count}} 張投影片到：",
+        "dialog.slideshowHtmlEmpty" => "目前簡報沒有可匯出的投影片。",
         _ => return super::zh_tw_collab::lookup(key),
     })
 }

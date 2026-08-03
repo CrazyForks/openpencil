@@ -200,6 +200,7 @@ impl WidgetHostNative {
                     FileMenuChoice::SaveAs => op_editor_core::CollabGateAction::SaveFork,
                     FileMenuChoice::ExportImage
                     | FileMenuChoice::ExportAllFrames
+                    | FileMenuChoice::ExportSlideshowHtml
                     | FileMenuChoice::ClearRecent
                     // Opening the centre only shows a panel; the document is
                     // replaced later, and that step re-runs the gate itself.
@@ -226,6 +227,7 @@ impl WidgetHostNative {
                     FileMenuChoice::SaveAs => FileAction::SaveAs,
                     FileMenuChoice::ExportImage => FileAction::ExportImage,
                     FileMenuChoice::ExportAllFrames => FileAction::ExportAllFrames,
+                    FileMenuChoice::ExportSlideshowHtml => FileAction::ExportSlideshowHtml,
                     FileMenuChoice::OpenRecent(i) => FileAction::OpenRecent(i),
                     FileMenuChoice::ClearRecent => FileAction::ClearRecent,
                     // Handled above — it opens a panel rather than queuing a

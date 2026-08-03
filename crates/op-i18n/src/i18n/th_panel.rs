@@ -114,6 +114,10 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.action.confirmOwner" => "เข้าร่วมเซสชันนี้",
         "collab.action.rejectOwner" => "ไม่เข้าร่วม",
         "collab.error.ownerNotConfirmed" => "คุณไม่ได้ยืนยันผู้จัด จึงไม่มีการโหลดข้อมูลใด",
+        "fileMenu.exportSlideshowHtml" => "ส่งออกสไลด์โชว์เป็น HTML...",
+        "dialog.slideshowHtmlTitle" => "ส่งออกสไลด์โชว์",
+        "dialog.slideshowHtmlSummary" => "ส่งออก {{count}} สไลด์ไปยัง:",
+        "dialog.slideshowHtmlEmpty" => "งานนำเสนอนี้ไม่มีสไลด์ที่มองเห็นให้ส่งออก",
         _ => return super::th_collab::lookup(key),
     })
 }

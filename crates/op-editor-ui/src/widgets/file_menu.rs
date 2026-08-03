@@ -2,9 +2,13 @@
 //!
 //! Mirrors `apps/web/src/components/editor/top-bar.tsx` file menu
 //! verbatim: New / Open / Save / Save As / Export image, then a
-//! "Recent files" header + entries, finally Clear history. Hosts that
-//! can write a whole frame set at once get one extra row under Export
-//! image (see `EditorUiState::batch_frame_export_supported`).
+//! "Recent files" header + entries, finally Clear history. Two more
+//! rows can appear under Export image, each gated on a host capability
+//! flag: a whole frame set at once
+//! (`EditorUiState::batch_frame_export_supported`) and, on a deck
+//! document, the self-contained slideshow page
+//! (`EditorUiState::deck_html_export_supported`). Everything after the
+//! export section shifts with however many of them are present.
 
 use crate::theme::Theme;
 use crate::widgets::editor_state_ext::theme_for;
@@ -27,6 +31,7 @@ fn t(ui: &EditorUiState, key: &str) -> &'static str {
         "saveAs" => "fileMenu.saveAs",
         "exportImage" => "fileMenu.exportImage",
         "exportAllFrames" => "fileMenu.exportAllFrames",
+        "exportSlideshowHtml" => "fileMenu.exportSlideshowHtml",
         "recentFiles" => "fileMenu.recentFiles",
         "noRecentFiles" => "fileMenu.noRecentFiles",
         "clearHistory" => "fileMenu.clearHistory",
@@ -68,6 +73,10 @@ pub enum FileMenuChoice {
     /// selected frames) as one PNG each. Only offered by hosts that set
     /// `EditorUiState::batch_frame_export_supported`.
     ExportAllFrames,
+    /// Export the deck as one self-contained slideshow `.html`. Offered
+    /// only when the host sets `EditorUiState::deck_html_export_supported`
+    /// AND the document is tagged as a deck.
+    ExportSlideshowHtml,
     OpenRecent(usize),
     ClearRecent,
 }
@@ -135,10 +144,27 @@ impl<'a> FileMenu<'a> {
         self.ui.batch_frame_export_supported
     }
 
+    /// Whether the deck-slideshow row is offered. Two conditions, both
+    /// necessary: the host can write the file at all, and the document
+    /// is a deck — exporting a dashboard as a slideshow would be an
+    /// offer with no meaning behind it.
+    fn has_deck_html_row(&self) -> bool {
+        self.ui.deck_html_export_supported
+            && self.ui.scenario
+                == Some(op_editor_core::scene_template_catalog::TemplateScene::Slides)
+    }
+
     /// Rows in the export section (Export image, plus the optional
-    /// Export-all-frames row below it).
+    /// Export-all-frames and Export-slideshow rows below it).
     fn export_rows(&self) -> usize {
-        1 + usize::from(self.has_export_all_row())
+        1 + usize::from(self.has_export_all_row()) + usize::from(self.has_deck_html_row())
+    }
+
+    /// Row index of the deck-slideshow row — directly under whichever
+    /// export rows precede it. Only meaningful when
+    /// [`FileMenu::has_deck_html_row`] holds.
+    fn deck_html_row(&self) -> usize {
+        6 + usize::from(self.has_export_all_row())
     }
 
     /// Row index of the first recent-file entry. Everything after the
@@ -207,6 +233,9 @@ impl<'a> FileMenu<'a> {
             4 => Some(FileMenuChoice::SaveAs),
             5 => Some(FileMenuChoice::ExportImage),
             6 if self.has_export_all_row() => Some(FileMenuChoice::ExportAllFrames),
+            row if self.has_deck_html_row() && row == self.deck_html_row() => {
+                Some(FileMenuChoice::ExportSlideshowHtml)
+            }
             row if row >= recent_start && row < recent_start + self.recent.len() => {
                 Some(FileMenuChoice::OpenRecent(row - recent_start))
             }
@@ -384,6 +413,20 @@ impl<'a> Widget for FileMenu<'a> {
                 &self.export_all_label(),
                 "",
                 h(6),
+            );
+            y += ROW_HEIGHT;
+        }
+        if self.has_deck_html_row() {
+            let row = self.deck_html_row();
+            paint_row(
+                cx,
+                &self.theme,
+                rect.origin.x,
+                y,
+                Icon::Play,
+                t(self.ui, "exportSlideshowHtml"),
+                "",
+                h(row),
             );
             y += ROW_HEIGHT;
         }

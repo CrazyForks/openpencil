@@ -66,6 +66,13 @@ pub(crate) fn drain_pending_file_action<C: RepaintContext + 'static>(inner: &Inn
             // exhaustive without inventing a web-only fan-out of
             // downloads.
         }
+        FileAction::ExportSlideshowHtml => {
+            // Same shape as the batch row above: web leaves
+            // `deck_html_export_supported` at `false`, so the File menu
+            // never paints the row that raises this. Kept as an explicit
+            // no-op branch so the shared action stays exhaustive without
+            // inventing a browser download path here.
+        }
         FileAction::ImportFigma => import_figma(inner),
         FileAction::FinishFigmaImport(_) => {
             // Desktop alone holds a PreparedFig between modal steps.

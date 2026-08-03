@@ -4,6 +4,7 @@
 
 use super::*;
 use jian_widgets::components::menu::MenuHit;
+use op_editor_core::scene_template_catalog::TemplateScene;
 
 fn menu_panel(menu: &FileMenu<'_>) -> Rect {
     Rect {
@@ -141,6 +142,121 @@ fn batch_export_row_paints_under_export_image_and_shifts_the_recents() {
     let plain_ui = EditorUiState::default();
     let without = FileMenu::for_editor_ui(&plain_ui, two_recents());
     assert_eq!(menu.height(), without.height() + ROW_HEIGHT);
+}
+
+/// y of the second row under Export image — where the deck-slideshow
+/// row paints on a desktop host that also offers the batch row.
+fn deck_html_row_y(panel: Rect) -> f32 {
+    export_all_row_y(panel) + ROW_HEIGHT
+}
+
+/// A desktop-shaped host: both export capabilities advertised.
+fn desktop_ui(scenario: Option<TemplateScene>) -> EditorUiState {
+    EditorUiState {
+        batch_frame_export_supported: true,
+        deck_html_export_supported: true,
+        scenario,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn the_deck_row_paints_under_the_batch_row_and_shifts_the_recents() {
+    let ui = desktop_ui(Some(TemplateScene::Slides));
+    let menu = FileMenu::for_editor_ui(&ui, two_recents());
+    let panel = menu_panel(&menu);
+
+    assert_eq!(
+        menu.choice_for_row(6),
+        Some(FileMenuChoice::ExportAllFrames)
+    );
+    assert_eq!(
+        menu.choice_for_row(7),
+        Some(FileMenuChoice::ExportSlideshowHtml)
+    );
+    assert_eq!(menu.choice_for_row(8), Some(FileMenuChoice::OpenRecent(0)));
+    assert_eq!(menu.choice_for_row(10), Some(FileMenuChoice::ClearRecent));
+
+    // Hit-test agrees with the paint walk.
+    assert_eq!(
+        menu.hit(
+            panel,
+            Point2D::new(panel.origin.x + 20.0, deck_html_row_y(panel))
+        ),
+        MenuHit::Row(7)
+    );
+
+    let batch_only_ui = EditorUiState {
+        batch_frame_export_supported: true,
+        ..Default::default()
+    };
+    let without = FileMenu::for_editor_ui(&batch_only_ui, two_recents());
+    assert_eq!(menu.height(), without.height() + ROW_HEIGHT);
+}
+
+#[test]
+fn only_a_deck_document_is_offered_the_slideshow_export() {
+    for scenario in [None, Some(TemplateScene::Carousel)] {
+        let ui = desktop_ui(scenario);
+        let menu = FileMenu::for_editor_ui(&ui, two_recents());
+        let panel = menu_panel(&menu);
+
+        // Row 7 is the first recent file again, not a slideshow row.
+        assert_eq!(
+            menu.choice_for_row(7),
+            Some(FileMenuChoice::OpenRecent(0)),
+            "scenario={scenario:?}"
+        );
+        assert_eq!(
+            menu.hit(
+                panel,
+                Point2D::new(panel.origin.x + 20.0, deck_html_row_y(panel))
+            ),
+            MenuHit::Inside,
+            "scenario={scenario:?}"
+        );
+    }
+}
+
+#[test]
+fn a_host_without_the_exporter_never_paints_the_deck_row() {
+    // Web: a deck document, but no save picker + offscreen rasteriser.
+    let ui = EditorUiState {
+        scenario: Some(TemplateScene::Slides),
+        ..Default::default()
+    };
+    assert!(!ui.deck_html_export_supported);
+    let menu = FileMenu::for_editor_ui(&ui, two_recents());
+
+    assert_eq!(menu.choice_for_row(5), Some(FileMenuChoice::ExportImage));
+    assert_eq!(menu.choice_for_row(6), Some(FileMenuChoice::OpenRecent(0)));
+    let plain_ui = EditorUiState::default();
+    let plain = FileMenu::for_editor_ui(&plain_ui, two_recents());
+    assert_eq!(menu.height(), plain.height());
+}
+
+#[test]
+fn the_deck_row_sits_directly_under_export_image_when_batch_export_is_absent() {
+    let ui = EditorUiState {
+        deck_html_export_supported: true,
+        scenario: Some(TemplateScene::Slides),
+        ..Default::default()
+    };
+    let menu = FileMenu::for_editor_ui(&ui, two_recents());
+    let panel = menu_panel(&menu);
+
+    assert_eq!(
+        menu.choice_for_row(6),
+        Some(FileMenuChoice::ExportSlideshowHtml)
+    );
+    assert_eq!(menu.choice_for_row(7), Some(FileMenuChoice::OpenRecent(0)));
+    assert_eq!(
+        menu.hit(
+            panel,
+            Point2D::new(panel.origin.x + 20.0, export_all_row_y(panel))
+        ),
+        MenuHit::Row(6)
+    );
 }
 
 #[test]

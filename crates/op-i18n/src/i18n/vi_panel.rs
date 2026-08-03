@@ -118,6 +118,10 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.action.confirmOwner" => "Tham gia phiên này",
         "collab.action.rejectOwner" => "Không tham gia",
         "collab.error.ownerNotConfirmed" => "Bạn chưa xác nhận chủ phiên nên không tải gì cả.",
+        "fileMenu.exportSlideshowHtml" => "Xuất trình chiếu HTML...",
+        "dialog.slideshowHtmlTitle" => "Xuất trình chiếu",
+        "dialog.slideshowHtmlSummary" => "Đã xuất {{count}} trang chiếu tới:",
+        "dialog.slideshowHtmlEmpty" => "Bản trình bày này không có trang chiếu nào để xuất.",
         _ => return super::vi_collab::lookup(key),
     })
 }

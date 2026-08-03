@@ -123,6 +123,10 @@ pub fn lookup(key: &str) -> Option<&'static str> {
             "A cover, agenda, key points, data, charts, and a closing slide in 16:9 presentation format. Replace the copy and present."
         }
         "fileMenu.newFromTemplate" => "New from Template",
+        "fileMenu.exportSlideshowHtml" => "Export slideshow HTML...",
+        "dialog.slideshowHtmlTitle" => "Export slideshow",
+        "dialog.slideshowHtmlSummary" => "Exported {{count}} slides to:",
+        "dialog.slideshowHtmlEmpty" => "This deck has no visible slides to export.",
         _ => return super::en_collab::lookup(key),
     })
 }

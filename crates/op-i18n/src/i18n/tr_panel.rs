@@ -108,6 +108,10 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.action.confirmOwner" => "Bu oturuma katıl",
         "collab.action.rejectOwner" => "Katılma",
         "collab.error.ownerNotConfirmed" => "Sunucuyu onaylamadınız, bu yüzden hiçbir şey yüklenmedi.",
+        "fileMenu.exportSlideshowHtml" => "Slayt gösterisini HTML olarak dışa aktar...",
+        "dialog.slideshowHtmlTitle" => "Slayt gösterisini dışa aktar",
+        "dialog.slideshowHtmlSummary" => "{{count}} slayt şuraya aktarıldı:",
+        "dialog.slideshowHtmlEmpty" => "Bu sunuda dışa aktarılacak görünür slayt yok.",
         _ => return super::tr_collab::lookup(key),
     })
 }

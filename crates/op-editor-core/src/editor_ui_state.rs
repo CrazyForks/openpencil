@@ -502,6 +502,13 @@ pub struct EditorUiState {
     /// Desktop sets it; hosts that leave it `false` omit the File-menu
     /// row entirely rather than paint a dead one.
     pub batch_frame_export_supported: bool,
+    /// Whether this host can write a deck out as a self-contained
+    /// slideshow `.html` — it needs a save picker plus the offscreen
+    /// raster exporter. Desktop sets it; hosts that leave it `false`
+    /// omit the File-menu row entirely. Paired with a `Slides` scenario
+    /// at the row's gate: presenting is the only reading of the export,
+    /// so a document that is not a deck must not offer it.
+    pub deck_html_export_supported: bool,
     /// Whether a host already ran font enumeration (so an empty list
     /// is "machine has none" rather than "not loaded yet").
     pub system_fonts_loaded: bool,

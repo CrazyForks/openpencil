@@ -50,6 +50,9 @@ impl DesktopApp {
         host.editor_state_mut()
             .editor_ui
             .batch_frame_export_supported = true;
+        // And for the deck-slideshow row: same save picker + offscreen
+        // exporter. The row still only appears on a deck document.
+        host.editor_state_mut().editor_ui.deck_html_export_supported = true;
         // Account gate + session restore. The bridge links the proprietary
         // auth library when a prebuilt exists for this target; stub builds
         // keep every account entry point hidden unless the dev fake-login

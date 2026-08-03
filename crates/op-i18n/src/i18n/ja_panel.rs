@@ -116,6 +116,10 @@ pub fn lookup(key: &str) -> Option<&'static str> {
             "表紙、目次、要点、データ、グラフ、締めの6ページ構成。16:9の投影比率で、テキストを差し替えるだけで発表できます。"
         }
         "fileMenu.newFromTemplate" => "テンプレートから新規作成",
+        "fileMenu.exportSlideshowHtml" => "スライドショー HTML を書き出し...",
+        "dialog.slideshowHtmlTitle" => "スライドショーを書き出し",
+        "dialog.slideshowHtmlSummary" => "{{count}} 枚のスライドを次の場所に書き出しました:",
+        "dialog.slideshowHtmlEmpty" => "このプレゼンテーションには書き出せるスライドがありません。",
         _ => return super::ja_collab::lookup(key),
     })
 }

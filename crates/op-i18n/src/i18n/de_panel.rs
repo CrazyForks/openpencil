@@ -108,6 +108,10 @@ pub fn lookup(key: &str) -> Option<&'static str> {
             "Cover, Agenda, Kernpunkte, Daten, Diagramm und Abschluss im 16:9-Format. Texte ersetzen und präsentieren."
         }
         "fileMenu.newFromTemplate" => "Neu aus Vorlage",
+        "fileMenu.exportSlideshowHtml" => "Diashow als HTML exportieren...",
+        "dialog.slideshowHtmlTitle" => "Diashow exportieren",
+        "dialog.slideshowHtmlSummary" => "{{count}} Folien exportiert nach:",
+        "dialog.slideshowHtmlEmpty" => "Diese Präsentation hat keine sichtbaren Folien zum Exportieren.",
         _ => return super::de_collab::lookup(key),
     })
 }

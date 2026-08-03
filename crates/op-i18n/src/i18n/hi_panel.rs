@@ -110,6 +110,10 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.action.confirmOwner" => "इस सत्र में शामिल हों",
         "collab.action.rejectOwner" => "शामिल न हों",
         "collab.error.ownerNotConfirmed" => "आपने होस्ट की पुष्टि नहीं की, इसलिए कुछ भी लोड नहीं हुआ।",
+        "fileMenu.exportSlideshowHtml" => "स्लाइडशो HTML निर्यात करें...",
+        "dialog.slideshowHtmlTitle" => "स्लाइडशो निर्यात करें",
+        "dialog.slideshowHtmlSummary" => "{{count}} स्लाइड यहाँ निर्यात की गईं:",
+        "dialog.slideshowHtmlEmpty" => "इस प्रस्तुति में निर्यात करने योग्य कोई स्लाइड नहीं है।",
         _ => return super::hi_collab::lookup(key),
     })
 }

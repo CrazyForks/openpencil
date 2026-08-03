@@ -110,6 +110,10 @@ pub fn lookup(key: &str) -> Option<&'static str> {
             "Capa, agenda, pontos-chave, dados, gráfico e encerramento, no formato 16:9. Substitua os textos e apresente."
         }
         "fileMenu.newFromTemplate" => "Novo a partir de um modelo",
+        "fileMenu.exportSlideshowHtml" => "Exportar apresentação HTML...",
+        "dialog.slideshowHtmlTitle" => "Exportar apresentação",
+        "dialog.slideshowHtmlSummary" => "{{count}} slides exportados para:",
+        "dialog.slideshowHtmlEmpty" => "Esta apresentação não tem slides visíveis para exportar.",
         _ => return super::pt_collab::lookup(key),
     })
 }

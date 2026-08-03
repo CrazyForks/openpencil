@@ -114,6 +114,10 @@ pub fn lookup(key: &str) -> Option<&'static str> {
             "표지, 목차, 핵심 내용, 데이터, 차트, 마무리로 구성된 16:9 발표 자료로, 문구만 바꾸면 바로 발표할 수 있습니다."
         }
         "fileMenu.newFromTemplate" => "템플릿에서 새로 만들기",
+        "fileMenu.exportSlideshowHtml" => "슬라이드쇼 HTML 내보내기...",
+        "dialog.slideshowHtmlTitle" => "슬라이드쇼 내보내기",
+        "dialog.slideshowHtmlSummary" => "슬라이드 {{count}}장을 다음 위치로 내보냈습니다:",
+        "dialog.slideshowHtmlEmpty" => "이 프레젠테이션에는 내보낼 슬라이드가 없습니다.",
         _ => return super::ko_collab::lookup(key),
     })
 }

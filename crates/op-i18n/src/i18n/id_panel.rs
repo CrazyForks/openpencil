@@ -118,6 +118,10 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.error.ownerNotConfirmed" => {
             "Anda tidak mengonfirmasi host, jadi tidak ada yang dimuat."
         }
+        "fileMenu.exportSlideshowHtml" => "Ekspor tayangan slide HTML...",
+        "dialog.slideshowHtmlTitle" => "Ekspor tayangan slide",
+        "dialog.slideshowHtmlSummary" => "{{count}} slide diekspor ke:",
+        "dialog.slideshowHtmlEmpty" => "Presentasi ini tidak memiliki slide yang terlihat untuk diekspor.",
         _ => return super::id_collab::lookup(key),
     })
 }

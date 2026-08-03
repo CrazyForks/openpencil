@@ -132,6 +132,7 @@ impl Default for EditorUiState {
             imported_font_families: std::sync::Arc::new(Vec::new()),
             font_import_supported: false,
             batch_frame_export_supported: false,
+            deck_html_export_supported: false,
             property_color_variable_picker_scroll: Default::default(),
             property_color_variable_picker_hover: None,
             system_fonts_loaded: false,
