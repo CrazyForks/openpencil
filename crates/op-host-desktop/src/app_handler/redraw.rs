@@ -47,7 +47,16 @@ impl DesktopApp {
         } else {
             true
         };
-        if collaboration_transition_ready && self.collab_runtime.drain_ui_action(&mut self.host) {
+        // A press that queues an action also opens the gesture's local-edit
+        // capture, and the session's document actor refuses to activate a
+        // peer (or run any other document transition) while that capture is
+        // open. Draining here would turn every in-panel approval into a
+        // spurious failure, so wait for the matching release — which finishes
+        // the capture and requests another frame.
+        if collaboration_transition_ready
+            && !self.collab_runtime.local_edit_in_flight()
+            && self.collab_runtime.drain_ui_action(&mut self.host)
+        {
             self.redraw_dirty = true;
         }
         if self.collab_runtime.take_save_as_fork_request() {

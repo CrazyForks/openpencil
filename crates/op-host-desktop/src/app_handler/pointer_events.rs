@@ -400,7 +400,18 @@ impl DesktopApp {
             .apply_release_with_viewport(self.viewport_width, self.viewport_height);
         self.collab_runtime.finish_local_edit(&mut self.host);
         self.sync_native_ime();
-        if consumed {
+        // The redraw pass defers collaboration actions queued mid-gesture
+        // until the capture closes, so a release that leaves one pending must
+        // schedule the frame that drains it — even when the release itself
+        // changed nothing on screen.
+        let drain_pending = self
+            .host
+            .editor_state()
+            .editor_ui
+            .collab
+            .pending_action
+            .is_some();
+        if consumed || drain_pending {
             self.request_redraw(true);
         }
     }

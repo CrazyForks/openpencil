@@ -10,6 +10,16 @@ use super::types::CollabRuntimeError;
 use super::DesktopCollabRuntime;
 
 impl DesktopCollabRuntime {
+    /// Whether a GUI edit capture is open right now.
+    ///
+    /// A pointer gesture is one transaction: press opens the capture, release
+    /// closes it. Actions queued by that same press (approving an admission,
+    /// for example) must not be drained mid-gesture, because the session's
+    /// document actor refuses to act while a capture is in flight.
+    pub(crate) const fn local_edit_in_flight(&self) -> bool {
+        self.transaction_active
+    }
+
     /// Start one GUI-owned edit capture; `false` means busy or no live session is bound.
     pub(crate) fn begin_local_edit(&mut self, host: &mut WidgetHostNative) -> bool {
         if self.transaction_active {
