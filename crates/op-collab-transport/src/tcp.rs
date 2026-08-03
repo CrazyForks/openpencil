@@ -293,6 +293,14 @@ fn accept_secure_tcp_inner(
     on_first_message: &mut dyn FnMut() -> Result<(), crate::NoiseTransportError>,
 ) -> Result<SecureConnection<TcpStream>, RuntimeError> {
     let config = config.validate()?;
+    // The handshake below bounds its reads with `set_read_timeout`, which the
+    // OS honours only on a blocking socket. Owner listeners poll with
+    // `set_nonblocking(true)`, and BSD/macOS `accept` INHERITS that flag onto
+    // the accepted stream (Linux does not), so without this reset the very
+    // first responder read returns `WouldBlock` instantly and the owner tears
+    // down every inbound connection before the initiator's first Noise frame
+    // can arrive. The connect path already normalizes the same way.
+    stream.set_nonblocking(false)?;
     configure_tcp_common(&stream, config)?;
     let started_at = Instant::now();
     let deadline =
@@ -585,6 +593,50 @@ mod tests {
         );
         assert!(matches!(result, Err(RuntimeError::DiscoveryIdMismatch)));
         assert!(server.join().unwrap());
+    }
+
+    /// Owner listeners poll with `set_nonblocking(true)`, and BSD/macOS
+    /// `accept` inherits that flag onto the accepted stream. The handshake
+    /// bounds its reads with `set_read_timeout`, which the OS honours only on
+    /// a blocking socket, so an inherited flag made the first responder read
+    /// return `WouldBlock` instantly and killed every inbound connection
+    /// before the initiator's first Noise frame could arrive. The accept path
+    /// must therefore normalize blocking mode itself.
+    #[test]
+    fn accept_completes_on_a_stream_inheriting_the_listener_nonblocking_flag() {
+        let config = TransportConfig::default();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let address = listener.local_addr().unwrap();
+        let owner_key = DeviceStaticKey::from_private([31_u8; 32]).unwrap();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = loop {
+                match listener.accept() {
+                    Ok(pair) => break pair,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("accept failed: {error}"),
+                }
+            };
+            // Simulate the platform that hands back an inherited flag even
+            // where the host OS would not, so the guard is exercised on every
+            // target rather than only on BSD/macOS.
+            stream.set_nonblocking(true).unwrap();
+            accept_secure_tcp(stream, &owner_key, &server_prelude(), config).is_ok()
+        });
+
+        let connected = connect_secure_tcp(
+            address,
+            &DeviceStaticKey::from_private([32_u8; 32]).unwrap(),
+            Some("00112233445566778899aabbccddeeff"),
+            config,
+        );
+        assert!(
+            server.join().unwrap(),
+            "a nonblocking accepted stream must still complete the handshake"
+        );
+        assert!(connected.is_ok(), "the initiator must complete too");
     }
 
     #[test]
