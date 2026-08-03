@@ -394,6 +394,7 @@ impl<'a> Widget for CanvasViewport<'a> {
                 &self.collab_presence,
                 rect,
                 viewport,
+                self.pencil_cursor_style,
             );
         }
 

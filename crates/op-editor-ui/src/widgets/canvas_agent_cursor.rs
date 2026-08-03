@@ -577,6 +577,34 @@ pub(crate) fn paint_agent_cursors(
     }
 }
 
+/// Paint one remote collaborator's pointer with the agent-cursor look —
+/// same silhouette, contact shadow, white rim, and capsule name tag — in the
+/// participant's own colour. Collaboration presence and agent activity are
+/// different sources, but on canvas they are both "someone else's pointer",
+/// so they must not read as two unrelated visual languages.
+pub(crate) fn paint_presence_cursor(
+    cx: &mut PaintCx<'_>,
+    pos: Point2D,
+    color: Color,
+    name: &str,
+    style: op_editor_core::PencilCursorStyle,
+) {
+    let sprite = CursorSprite {
+        pos,
+        alpha: 1.0,
+        color,
+        name: (!name.is_empty()).then(|| name.to_owned()),
+        current_rect: None,
+    };
+    // `now_ms` only drives the breathing border, which a presence cursor
+    // never carries (`current_rect` is None).
+    paint_sprite(cx, &sprite, 0, &silhouette_for(style));
+}
+
+#[path = "canvas_cursor_silhouette.rs"]
+mod silhouette_geometry;
+use silhouette_geometry::{paint_rim, paint_soft_shadow};
+
 /// Slow breathing cycle for the current-element border.
 const BREATH_PERIOD_MS: u64 = 1_800;
 
@@ -612,56 +640,6 @@ pub(crate) fn paint_cursor_swatch(
         cx.backend
             .fill_polygon(&at(silhouette.tip), Color::WHITE.with_alpha(0.95));
     }
-}
-
-/// Uniformly outset a silhouette by `offset` px about its centroid. Used for
-/// both the shadow layers and the white rim: a filled outset paints the rim as
-/// GEOMETRY, so its width is exact everywhere and no stroke joins can notch it
-/// (the trait's fallback polygon stroke drew each edge as its own capped
-/// segment — every vertex of the densely-sampled arc showed a jaggy).
-fn outset(body: &[Point2D], offset: f32, shift_x: f32, shift_y: f32) -> Vec<Point2D> {
-    let n = body.len() as f32;
-    let (mut sum_x, mut sum_y) = (0.0f32, 0.0f32);
-    for p in body {
-        sum_x += p.x;
-        sum_y += p.y;
-    }
-    let (cx, cy) = (sum_x / n, sum_y / n);
-    let radius = body
-        .iter()
-        .map(|p| ((p.x - cx).powi(2) + (p.y - cy).powi(2)).sqrt())
-        .fold(1.0f32, f32::max);
-    let k = 1.0 + offset / radius;
-    body.iter()
-        .map(|p| Point2D::new(cx + (p.x - cx) * k + shift_x, cy + (p.y - cy) * k + shift_y))
-        .collect()
-}
-
-/// Width of the white rim (px of outset beyond the body silhouette).
-const RIM: f32 = 1.6;
-
-/// Pencil-style contact shadow: narrow neutral-black feather, shifted a
-/// half-pixel left/down. Filled expansions keep the fallback painter soft
-/// without introducing the jagged polygon joins produced by strokes.
-fn paint_soft_shadow(cx: &mut PaintCx<'_>, body: &[Point2D], alpha_scale: f32) {
-    // The shadow sits outside the white rim; largest/faintest paints first.
-    for (offset, alpha) in [
-        (RIM + 1.6, 0.030),
-        (RIM + 1.2, 0.040),
-        (RIM + 0.8, 0.050),
-        (RIM + 0.4, 0.060),
-    ] {
-        let ring = outset(body, offset, -0.5, 0.5);
-        cx.backend
-            .fill_polygon(&ring, Color::BLACK.with_alpha(alpha * alpha_scale));
-    }
-}
-
-/// The white rim, painted as a filled outset the body then covers — a solid
-/// ring of exactly `RIM` px with no stroke joins to notch it.
-fn paint_rim(cx: &mut PaintCx<'_>, body: &[Point2D], alpha: f32) {
-    cx.backend
-        .fill_polygon(&outset(body, RIM, 0.0, 0.0), Color::WHITE.with_alpha(alpha));
 }
 
 fn paint_sprite(cx: &mut PaintCx<'_>, sprite: &CursorSprite, now_ms: u64, silhouette: &Silhouette) {

@@ -5,13 +5,8 @@
 
 use crate::layout_scene::SceneNode;
 use crate::widgets::PaintCx;
-use crate::{Color, Point2D, Rect, TextLayout};
-use op_editor_core::{CollabUiState, Viewport};
-
-const CURSOR_SIZE: f32 = 12.0;
-const LABEL_FONT_SIZE: f32 = 10.0;
-const LABEL_HEIGHT: f32 = 19.0;
-const LABEL_PAD_X: f32 = 6.0;
+use crate::{Color, Point2D, Rect};
+use op_editor_core::{CollabUiState, PencilCursorStyle, Viewport};
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct CollabPresencePaint {
@@ -53,6 +48,7 @@ pub(super) fn paint(
     items: &[CollabPresencePaint],
     canvas_rect: Rect,
     viewport: &Viewport,
+    cursor_style: PencilCursorStyle,
 ) {
     for item in items {
         let outline = item.color.with_alpha(0.9);
@@ -71,7 +67,15 @@ pub(super) fn paint(
             stroke_outline(cx, rect, outline);
         }
         if let Some(cursor) = item.cursor {
-            paint_cursor(cx, item, doc_point_to_screen(cursor, canvas_rect, viewport));
+            // Remote collaborators share the agent-cursor look so canvas
+            // pointers read as one visual language.
+            super::canvas_agent_cursor::paint_presence_cursor(
+                cx,
+                doc_point_to_screen(cursor, canvas_rect, viewport),
+                item.color,
+                &item.display_name,
+                cursor_style,
+            );
         }
     }
 }
@@ -132,38 +136,6 @@ fn stroke_outline(cx: &mut PaintCx<'_>, rect: Rect, color: Color) {
         Point2D::new(left, top),
         color,
         1.5,
-    );
-}
-
-fn paint_cursor(cx: &mut PaintCx<'_>, item: &CollabPresencePaint, point: Point2D) {
-    let cursor = [
-        point,
-        Point2D::new(point.x + CURSOR_SIZE * 0.78, point.y + CURSOR_SIZE),
-        Point2D::new(point.x + CURSOR_SIZE * 0.35, point.y + CURSOR_SIZE * 0.82),
-    ];
-    cx.backend.fill_polygon(&cursor, item.color);
-    cx.backend
-        .stroke_line(cursor[0], cursor[1], Color::WHITE.with_alpha(0.8), 0.75);
-
-    let text_width = cx.backend.measure_text(&item.display_name, LABEL_FONT_SIZE);
-    let label = Rect::xywh(
-        point.x + CURSOR_SIZE * 0.6,
-        point.y + CURSOR_SIZE,
-        text_width + LABEL_PAD_X * 2.0,
-        LABEL_HEIGHT,
-    );
-    cx.backend.fill_round_rect(label, 5.0, item.color);
-    let layout = TextLayout::single_run(
-        &item.display_name,
-        "system-ui",
-        LABEL_FONT_SIZE,
-        Color::WHITE.to_jian(),
-        Point2D::ZERO,
-    )
-    .with_font_weight(500);
-    cx.backend.draw_text(
-        &layout,
-        Point2D::new(label.origin.x + LABEL_PAD_X, label.origin.y + 13.0),
     );
 }
 
