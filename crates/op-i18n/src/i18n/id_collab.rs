@@ -41,6 +41,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.error.inviteExpired" => "Kode undangan sudah kedaluwarsa. Minta kode baru kepada pemilik.",
         "collab.error.relayNotConfigured" => "Relay publik belum dikonfigurasi di perangkat ini.",
         "collab.error.regionUnavailable" => "Wilayah asal relay undangan tidak tersedia.",
+        "collab.error.secureKeyUnavailable" => "Kunci aman perangkat tidak tersedia. Periksa akses keychain lalu coba lagi.",
         "collab.error.rateLimited" => "Terlalu banyak percobaan koneksi. Coba lagi sebentar lagi.",
         "collab.action.discardPending" => "Buang edit tertunda",
         "collab.action.saveAsFork" => "Simpan sebagai cabang",

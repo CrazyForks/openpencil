@@ -41,6 +41,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.error.inviteExpired" => "邀請碼已過期，請向發起者索取新的邀請碼。",
         "collab.error.relayNotConfigured" => "此裝置尚未設定公網中繼。",
         "collab.error.regionUnavailable" => "邀請碼所屬的中繼區域無法使用。",
+        "collab.error.secureKeyUnavailable" => {
+            "無法存取裝置安全金鑰，請檢查系統鑰匙圈存取權限後重試。"
+        }
         "collab.error.rateLimited" => "連線嘗試過於頻繁，請稍後再試。",
         "collab.action.discardPending" => "捨棄待確認編輯",
         "collab.action.saveAsFork" => "另存為分支副本",

@@ -41,6 +41,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.error.inviteExpired" => "Mã mời đã hết hạn. Hãy xin chủ phiên một mã mới.",
         "collab.error.relayNotConfigured" => "Thiết bị này chưa cấu hình relay công cộng.",
         "collab.error.regionUnavailable" => "Khu vực relay chính của lời mời không khả dụng.",
+        "collab.error.secureKeyUnavailable" => "Không thể truy cập khóa bảo mật của thiết bị. Hãy kiểm tra quyền truy cập chuỗi khóa rồi thử lại.",
         "collab.error.rateLimited" => "Có quá nhiều lần thử kết nối. Hãy thử lại sau.",
         "collab.action.discardPending" => "Bỏ chỉnh sửa đang chờ",
         "collab.action.saveAsFork" => "Lưu thành bản phân nhánh",

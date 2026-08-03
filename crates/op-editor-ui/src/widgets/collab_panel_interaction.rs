@@ -91,11 +91,19 @@ impl CollabPanel<'_> {
                     }
                 }
             }
+            CollabPanelScreen::Create => {
+                for (rect, region) in self.region_option_rects(panel, body_top) {
+                    if rect.contains(point) {
+                        return Some(CollabPanelHit::Action(CollabUiAction::SetRelayRegion {
+                            region,
+                        }));
+                    }
+                }
+            }
             // The confirmation screen's two decisions live in the fixed action
             // row, which is hit-tested before this match runs.
             CollabPanelScreen::Unavailable
             | CollabPanelScreen::Home
-            | CollabPanelScreen::Create
             | CollabPanelScreen::ConfirmOwner(_)
             | CollabPanelScreen::Progress { .. } => {}
         }
@@ -172,11 +180,17 @@ impl CollabPanel<'_> {
                     }
                 }
             }
+            CollabPanelScreen::Create => {
+                for (rect, region) in self.region_option_rects(panel, body_top) {
+                    if rect.contains(point) {
+                        return Some(CollabPanelHover::Region(region));
+                    }
+                }
+            }
             // The confirmation screen's two decisions live in the fixed action
             // row, which is hit-tested before this match runs.
             CollabPanelScreen::Unavailable
             | CollabPanelScreen::Home
-            | CollabPanelScreen::Create
             | CollabPanelScreen::ConfirmOwner(_)
             | CollabPanelScreen::Progress { .. } => {}
         }
@@ -389,6 +403,38 @@ impl CollabPanel<'_> {
             .collect()
     }
 
+    /// The two service-region options on the create screen. Empty on every
+    /// other screen so stale geometry never hit-tests.
+    pub(super) fn region_option_rects(
+        &self,
+        panel: Rect,
+        body_top: f32,
+    ) -> Vec<(Rect, op_editor_core::CollabRelayRegion)> {
+        if self.model.screen != CollabPanelScreen::Create {
+            return Vec::new();
+        }
+        let width = (panel.size.x - PAD * 2.0 - ACTION_GAP) / 2.0;
+        let y = body_top + 66.0;
+        [
+            op_editor_core::CollabRelayRegion::China,
+            op_editor_core::CollabRelayRegion::Global,
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, region)| {
+            (
+                Rect::xywh(
+                    panel.origin.x + PAD + index as f32 * (width + ACTION_GAP),
+                    y,
+                    width,
+                    REGION_OPTION_HEIGHT,
+                ),
+                region,
+            )
+        })
+        .collect()
+    }
+
     pub(super) fn discovered_rect(&self, panel: Rect, first_y: f32, index: usize) -> Rect {
         Rect::xywh(
             panel.origin.x + PAD,
@@ -408,6 +454,7 @@ fn hover_for_action(action: &CollabUiAction) -> Option<CollabPanelHover> {
         CollabUiAction::OpenCreate => CollabPanelHover::OpenCreate,
         CollabUiAction::Start => CollabPanelHover::Start,
         CollabUiAction::StartLan => CollabPanelHover::StartLan,
+        CollabUiAction::SetRelayRegion { region } => CollabPanelHover::Region(*region),
         CollabUiAction::OpenJoin => CollabPanelHover::OpenJoin,
         CollabUiAction::BeginDiscovery => CollabPanelHover::BeginDiscovery,
         CollabUiAction::JoinDiscovered { .. } => return None,

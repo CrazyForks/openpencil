@@ -47,6 +47,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
             "На этом устройстве не настроен публичный ретранслятор."
         }
         "collab.error.regionUnavailable" => "Домашний регион ретранслятора приглашения недоступен.",
+        "collab.error.secureKeyUnavailable" => "Защищённый ключ устройства недоступен. Проверьте доступ к связке ключей и повторите попытку.",
         "collab.error.rateLimited" => "Слишком много попыток подключения. Повторите позже.",
         "collab.action.discardPending" => "Отменить ожидающее изменение",
         "collab.action.saveAsFork" => "Сохранить как ответвление",

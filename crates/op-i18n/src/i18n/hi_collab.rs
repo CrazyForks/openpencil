@@ -41,6 +41,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.error.inviteExpired" => "यह आमंत्रण कोड समाप्त हो गया है। स्वामी से नया कोड माँगें।",
         "collab.error.relayNotConfigured" => "इस डिवाइस पर कोई सार्वजनिक रिले कॉन्फ़िगर नहीं है।",
         "collab.error.regionUnavailable" => "आमंत्रण का होम रिले क्षेत्र उपलब्ध नहीं है।",
+        "collab.error.secureKeyUnavailable" => {
+            "डिवाइस की सुरक्षित कुंजी उपलब्ध नहीं है। कीचेन एक्सेस जांचें और फिर से प्रयास करें।"
+        }
         "collab.error.rateLimited" => "बहुत अधिक कनेक्शन प्रयास हुए। थोड़ी देर बाद फिर प्रयास करें।",
         "collab.action.discardPending" => "लंबित संपादन छोड़ें",
         "collab.action.saveAsFork" => "अलग प्रति के रूप में सहेजें",

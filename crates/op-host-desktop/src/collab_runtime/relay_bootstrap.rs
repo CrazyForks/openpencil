@@ -30,7 +30,11 @@ mod bootstrap_url;
 #[path = "relay_bootstrap_cache.rs"]
 mod bootstrap_cache;
 
-use bootstrap_cache::{read_cache, write_cache, BootstrapCache};
+#[path = "relay_bootstrap_select.rs"]
+mod bootstrap_select;
+
+use bootstrap_cache::{endpoint_cache_file, read_cache, write_cache, BootstrapCache};
+pub(super) use bootstrap_select::bootstrap_provider;
 
 pub(super) const BOOTSTRAP_URL_ENV: &str = "OPENPENCIL_COLLAB_BOOTSTRAP_URL";
 #[cfg(any(test, debug_assertions))]
@@ -40,6 +44,8 @@ const BOOTSTRAP_DEV_ROOT_KEYS_ENV: &str = "OPENPENCIL_COLLAB_BOOTSTRAP_DEV_ROOT_
 
 const BOOTSTRAP_PATH: &str = "/api/v1/collaboration/bootstrap";
 const BOOTSTRAP_CONTEXT: &[u8] = b"openpencil/op-hub/collaboration-bootstrap/v1\0";
+/// Legacy shared-file name, kept for the fixed cache paths tests construct.
+#[cfg(test)]
 const BOOTSTRAP_CACHE_FILE: &str = "collaboration-bootstrap-v1.json";
 const BOOTSTRAP_CONTENT_TYPE: &str = "application/json";
 const BOOTSTRAP_VERSION: u64 = 1;
@@ -133,20 +139,6 @@ impl RelayLocatorVerifier for Ed25519LocatorVerifier {
     }
 }
 
-pub(super) fn provider_from_environment(
-) -> Result<Option<Arc<dyn RelayBootstrapProvider>>, CollabRuntimeError> {
-    let Some(raw) = std::env::var_os(BOOTSTRAP_URL_ENV) else {
-        return Ok(None);
-    };
-    let raw = raw
-        .to_str()
-        .filter(|value| !value.is_empty() && value.len() <= MAX_URL_BYTES)
-        .ok_or_else(relay_runtime_error)?;
-    let provider =
-        EnvironmentRelayBootstrapProvider::new(raw).map_err(|_| relay_runtime_error())?;
-    Ok(Some(Arc::new(provider)))
-}
-
 struct EnvironmentRelayBootstrapProvider {
     endpoint: Url,
     roots: HashMap<String, VerifyingKey>,
@@ -161,8 +153,11 @@ impl EnvironmentRelayBootstrapProvider {
         if development_http {
             add_development_roots(&mut roots)?;
         }
+        // One cache record per endpoint: with the built-in dual hubs a user
+        // can switch regions back and forth, and a shared file would let the
+        // switch overwrite the other hub's anti-rollback generation floor.
         let cache_path = op_config_store::ConfigStore::user()
-            .and_then(|store| store.path(BOOTSTRAP_CACHE_FILE))
+            .and_then(|store| store.path(&endpoint_cache_file(endpoint.as_str())))
             .map_err(|_| BootstrapError::Cache)?;
         Ok(Self {
             endpoint,

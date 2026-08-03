@@ -7,9 +7,11 @@ mod effects;
 mod effects_wire;
 mod failure;
 mod guest_confirmation;
+mod guest_routes;
 mod local_edit;
 mod network;
 mod poll;
+mod region_pref;
 pub(crate) mod relay;
 mod relay_bootstrap;
 mod support;
@@ -34,9 +36,7 @@ use network::{
 use op_collab::{
     CollabMessage, ConnectionKey, Epoch, FrameEnvelope, OpaqueTicket, Role, SessionId,
 };
-use op_collab_transport::{
-    JoinIntent, ResumeHint, SharedQueueBudget, StaticKeyStore, TransportConfig,
-};
+use op_collab_transport::{JoinIntent, SharedQueueBudget, StaticKeyStore, TransportConfig};
 use op_editor_core::{
     CollabAvailability, CollabConnectionPhase, CollabNoticeKind, CollabPendingEditUi,
     CollabRejectUiCode, CollabUiAction,
@@ -47,8 +47,8 @@ use winit::event_loop::EventLoopProxy;
 
 use crate::DesktopEvent;
 use relay::{
-    guest_route_from_invite, guest_route_from_pairing_code, owner_request_from_environment,
-    EnvironmentRelayLocatorControlPlane, GuestConnectionRoute, RelayLocatorControlPlane,
+    owner_request, EnvironmentRelayLocatorControlPlane, GuestConnectionRoute,
+    RelayLocatorControlPlane,
 };
 use types::{
     CollabRuntimeError, CollabRuntimeFailure, CollabStatusEvent, DiscoveredEndpoint, NetworkEvent,
@@ -76,6 +76,9 @@ pub(crate) struct DesktopCollabRuntime {
     pinned_owner_static: Option<[u8; 32]>,
     transaction_active: bool,
     save_as_fork_requested: bool,
+    /// Runtime-owned service-region preference (lazily loaded from disk);
+    /// the panel field is just its per-frame projection.
+    relay_region_pref: Option<op_editor_core::CollabRelayRegion>,
     /// Property changes of the most recent conflict-discarded local edit,
     /// kept for a user-driven replay via `CollabUiAction::ReapplyDiscarded`.
     discarded_property_edit: Option<Vec<op_collab::NodeFieldChange>>,
@@ -147,6 +150,7 @@ impl DesktopCollabRuntime {
             pinned_owner_static: None,
             transaction_active: false,
             save_as_fork_requested: false,
+            relay_region_pref: None,
             discarded_property_edit: None,
             status: VecDeque::new(),
             generation: 1,
@@ -167,7 +171,11 @@ impl DesktopCollabRuntime {
         }
     }
 
+    // `sync_relay_region` / `preferred_region` / `set_relay_region` live in
+    // `region_pref` alongside the persistence they wrap.
+
     pub(crate) fn refresh_availability(&mut self, host: &mut WidgetHostNative) -> bool {
+        self.sync_relay_region(host);
         let next = if !op_auth_bridge::collab_ticket_available() {
             CollabAvailability::Unavailable
         } else if host.editor_state().editor_ui.account.is_signed_in() {
@@ -197,6 +205,10 @@ impl DesktopCollabRuntime {
             CollabUiAction::OpenCreate => Ok(()),
             CollabUiAction::Start => self.start_owner(host, true),
             CollabUiAction::StartLan => self.start_owner(host, false),
+            CollabUiAction::SetRelayRegion { region } => {
+                self.set_relay_region(host, region);
+                Ok(())
+            }
             CollabUiAction::OpenJoin => Ok(()),
             CollabUiAction::BeginDiscovery => self.begin_discovery(host),
             CollabUiAction::JoinDiscovered { discovery_id } => {
@@ -345,12 +357,10 @@ impl DesktopCollabRuntime {
     ) -> Result<(), CollabRuntimeError> {
         self.require_ready(host)?;
         let relay = if use_public_relay {
-            Some(
-                owner_request_from_environment(Arc::clone(&self.relay_locator_control_plane))?
-                    .ok_or_else(|| {
-                        CollabRuntimeError::new(CollabRuntimeFailure::RelayNotConfigured)
-                    })?,
-            )
+            Some(owner_request(
+                Arc::clone(&self.relay_locator_control_plane),
+                self.preferred_region(),
+            )?)
         } else {
             None
         };
@@ -380,81 +390,8 @@ impl DesktopCollabRuntime {
         Ok(())
     }
 
-    fn join_discovered(
-        &mut self,
-        host: &mut WidgetHostNative,
-        discovery_id: &str,
-    ) -> Result<(), CollabRuntimeError> {
-        let discovered = self
-            .discovered
-            .get(discovery_id)
-            .cloned()
-            .ok_or_else(CollabRuntimeError::invalid_session)?;
-        if !discovered.compatible {
-            return Err(CollabRuntimeError::invalid_session());
-        }
-        self.start_guest_route(
-            host,
-            GuestConnectionRoute::lan(discovered.addresses, Some(discovered.discovery_id), None),
-            JoinIntent::New,
-        )
-    }
-
-    fn join_address(
-        &mut self,
-        host: &mut WidgetHostNative,
-        endpoint: &str,
-    ) -> Result<(), CollabRuntimeError> {
-        let endpoint = endpoint.trim();
-        if endpoint.starts_with(op_collab_relay_protocol::RELAY_INVITE_PREFIX) {
-            let route =
-                guest_route_from_invite(endpoint, Arc::clone(&self.relay_locator_control_plane))?;
-            return self.start_guest_route(host, route, JoinIntent::New);
-        }
-        if op_collab_relay_protocol::PairingCode::looks_like(endpoint) {
-            let route = guest_route_from_pairing_code(
-                endpoint,
-                Arc::clone(&self.relay_locator_control_plane),
-            )?;
-            return self.start_guest_route(host, route, JoinIntent::New);
-        }
-        let endpoint = endpoint
-            .parse()
-            .map_err(|_| CollabRuntimeError::new(CollabRuntimeFailure::InvalidAddress))?;
-        self.start_guest_route(
-            host,
-            GuestConnectionRoute::lan(vec![endpoint], None, None),
-            JoinIntent::New,
-        )
-    }
-
-    fn retry_guest(&mut self, host: &mut WidgetHostNative) -> Result<(), CollabRuntimeError> {
-        let route = self
-            .last_join
-            .clone()
-            .ok_or_else(CollabRuntimeError::invalid_session)?;
-        let Some(EditorActor::Guest(guest)) = self.actor.as_ref() else {
-            return Err(CollabRuntimeError::invalid_session());
-        };
-        let core = guest.session.core();
-        let intent = JoinIntent::Resume(ResumeHint {
-            participant_id: core.participant_id().clone(),
-            peer_id: core.peer_id().clone(),
-            peer_namespace: core.peer_namespace().clone(),
-            role: core.role(),
-        });
-        // Discovery ids rotate while a session is live. Resume is bound by
-        // the Noise static, verified ticket, and core resume identity, so the
-        // initial mDNS id must not become a stale reconnect pin.
-        let expected_remote_static = self
-            .pinned_owner_static
-            .ok_or_else(CollabRuntimeError::invalid_session)?;
-        self.spawn_guest_route(
-            host,
-            route.retry_with_owner_static(expected_remote_static),
-            intent,
-        )
-    }
+    // `join_discovered` / `join_address` / `retry_guest` live in
+    // `guest_routes` (split at the 800-line cap).
 
     fn start_guest_route(
         &mut self,

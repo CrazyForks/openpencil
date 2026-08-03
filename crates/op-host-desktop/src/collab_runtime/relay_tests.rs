@@ -158,6 +158,39 @@ fn development_unsigned_requires_all_three_gates() {
 }
 
 #[test]
+fn home_region_prefers_env_override_and_falls_back_to_the_preference() {
+    assert_eq!(
+        resolve_home_region(None, RelayRegion::Cn).unwrap(),
+        RelayRegion::Cn
+    );
+    assert_eq!(
+        resolve_home_region(None, RelayRegion::Global).unwrap(),
+        RelayRegion::Global
+    );
+    assert_eq!(
+        resolve_home_region(Some("cn"), RelayRegion::Global).unwrap(),
+        RelayRegion::Cn
+    );
+    assert_eq!(
+        resolve_home_region(Some("global"), RelayRegion::Cn).unwrap(),
+        RelayRegion::Global
+    );
+    let invalid = resolve_home_region(Some("moon"), RelayRegion::Cn).unwrap_err();
+    assert_eq!(
+        invalid.failure,
+        CollabRuntimeFailure::RelayRegionUnavailable,
+        "an unrecognized override must not silently re-home the session"
+    );
+}
+
+#[test]
+fn protocol_region_round_trips_the_ui_region() {
+    for region in [RelayRegion::Cn, RelayRegion::Global] {
+        assert_eq!(protocol_region(ui_region(region)), region);
+    }
+}
+
+#[test]
 fn injected_control_plane_publishes_a_ticket_bound_owner_route() {
     let signing = SigningKey::from_bytes(&[9_u8; 32]);
     let verifying_key = signing.verifying_key();
@@ -281,8 +314,11 @@ fn malformed_pairing_code_fails_as_invalid_invite_before_any_setup() {
         "A2C4E6G8J",  // one char short
         "A2C4E6G8J0", // right shape, no region tag — a 10-char hostname
     ] {
-        let result =
-            guest_route_from_pairing_code(rejected, std::sync::Arc::new(UnusedControlPlane));
+        let result = guest_route_from_pairing_code(
+            rejected,
+            std::sync::Arc::new(UnusedControlPlane),
+            RelayRegion::Cn,
+        );
         match result {
             Ok(_) => panic!("{rejected:?} must not become a pairing route"),
             Err(error) => {
@@ -291,10 +327,16 @@ fn malformed_pairing_code_fails_as_invalid_invite_before_any_setup() {
         }
     }
     // A region-tagged code passes parse + region derivation without any
-    // home-region environment; in this env-less test the next gate is the
-    // missing bootstrap configuration, proving no region env is consulted.
-    let result =
-        guest_route_from_pairing_code("2A2C4E6G8J", std::sync::Arc::new(UnusedControlPlane));
+    // home-region environment: the route's region comes from the code, not
+    // from the caller's service-region preference (deliberately Cn here).
+    // With build-injected hubs the route materializes; an uninjected build
+    // may only fail at the bootstrap-configuration gate. Either way this
+    // proves no region environment is consulted.
+    let result = guest_route_from_pairing_code(
+        "2A2C4E6G8J",
+        std::sync::Arc::new(UnusedControlPlane),
+        RelayRegion::Cn,
+    );
     match result {
         Ok(route) => assert_eq!(
             route.connection_path(),
@@ -305,7 +347,7 @@ fn malformed_pairing_code_fails_as_invalid_invite_before_any_setup() {
         Err(error) => assert_eq!(
             error.failure,
             CollabRuntimeFailure::RelayNotConfigured,
-            "the only acceptable env-less failure is the bootstrap gate"
+            "the only acceptable failure is the bootstrap-configuration gate"
         ),
     }
 }

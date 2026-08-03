@@ -87,24 +87,10 @@ pub enum CollabUiRole {
     Viewer,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum CollabPanelView {
-    #[default]
-    Home,
-    Create,
-    Join,
-    Session,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DiscoveredCollabEndpoint {
-    /// Opaque discovery-row identity. It is not a session or account id.
-    pub discovery_id: String,
-    /// User-enterable LAN endpoint such as `192.168.1.8:43120`.
-    pub endpoint: String,
-    /// Protocol/schema compatibility derived without exposing session data.
-    pub compatible: bool,
-}
+// Panel chrome types live in `collab_panel_hover` (split at the 800-line
+// cap); re-export them so existing `collab_ui_state::*` import paths stay
+// stable.
+pub use crate::collab_panel_hover::{CollabPanelView, DiscoveredCollabEndpoint};
 
 #[derive(Clone, PartialEq, Default)]
 pub struct CollabPanelState {
@@ -116,6 +102,10 @@ pub struct CollabPanelState {
     pub join_address_focused: bool,
     pub hover: Option<CollabPanelHover>,
     pub discovered: Arc<Vec<DiscoveredCollabEndpoint>>,
+    /// Preferred public-relay service region. Selects which built-in hub
+    /// serves the signed bootstrap document and, for an owner, which region
+    /// the session is published in. Persisted by the host runtime.
+    pub relay_region: crate::CollabRelayRegion,
 }
 
 /// Authenticated session display data. A runtime must not construct this from
@@ -310,6 +300,10 @@ pub enum CollabUiAction {
     Start,
     /// Start a direct session restricted to the local network.
     StartLan,
+    /// Select the public-relay service region (persisted by the runtime).
+    SetRelayRegion {
+        region: crate::CollabRelayRegion,
+    },
     OpenJoin,
     BeginDiscovery,
     JoinDiscovered {

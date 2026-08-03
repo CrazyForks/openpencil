@@ -44,8 +44,9 @@ impl std::fmt::Debug for CollabInviteCode {
 }
 
 /// The region that owns the relay route for the lifetime of a session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CollabRelayRegion {
+    #[default]
     China,
     Global,
 }
@@ -115,6 +116,10 @@ pub enum CollabConnectErrorUi {
     RegionUnavailable,
     RateLimited,
     Incompatible,
+    /// The platform secure key store refused or lost this device's static
+    /// key; no connection was attempted, so the copy must not read as a
+    /// transient network drop.
+    SecureKeyUnavailable,
     /// The guest was shown the verified owner identity and declined it, or the
     /// prompt went unanswered. No session data was ever applied.
     OwnerNotConfirmed,
@@ -131,6 +136,7 @@ impl CollabConnectErrorUi {
             Self::RegionUnavailable => "collab.error.regionUnavailable",
             Self::RateLimited => "collab.error.rateLimited",
             Self::Incompatible => "collab.join.incompatible",
+            Self::SecureKeyUnavailable => "collab.error.secureKeyUnavailable",
             Self::OwnerNotConfirmed => "collab.error.ownerNotConfirmed",
         }
     }

@@ -117,6 +117,12 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     env:
       OP_VERSION: ${{ needs.version.outputs.version }}
+      # Production collaboration hub URLs live only in repository secrets and
+      # are baked in at compile time (option_env! in relay_bootstrap_select.rs);
+      # the source tree deliberately carries no production endpoint. A fork or
+      # secretless build simply produces a binary without built-in hubs.
+      OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_CN: ${{ secrets.OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_CN }}
+      OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_GLOBAL: ${{ secrets.OPENPENCIL_BUILD_COLLAB_BOOTSTRAP_URL_GLOBAL }}
       HAS_APPLE_CERTIFICATE: ${{ secrets.CSC_LINK != '' && secrets.CSC_KEY_PASSWORD != '' && secrets.APPLE_ID != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '' && 'true' || 'false' }}
       HAS_WINDOWS_CERTIFICATE: ${{ secrets.WIN_CSC_LINK != '' && secrets.WIN_CSC_KEY_PASSWORD != '' && 'true' || 'false' }}
       TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}

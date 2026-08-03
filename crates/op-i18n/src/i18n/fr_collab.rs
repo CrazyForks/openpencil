@@ -41,6 +41,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.error.inviteExpired" => "Ce code d'invitation a expiré. Demandez-en un nouveau au propriétaire.",
         "collab.error.relayNotConfigured" => "Aucun relais public n'est configuré sur cet appareil.",
         "collab.error.regionUnavailable" => "La région du relais principal de l’invitation est indisponible.",
+        "collab.error.secureKeyUnavailable" => "La clé sécurisée de l'appareil est indisponible. Vérifiez l'accès au trousseau, puis réessayez.",
         "collab.error.rateLimited" => "Trop de tentatives de connexion. Réessayez bientôt.",
         "collab.action.discardPending" => "Ignorer la modification en attente",
         "collab.action.saveAsFork" => "Enregistrer comme copie divergente",

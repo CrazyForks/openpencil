@@ -41,6 +41,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.error.inviteExpired" => "This invite code has expired. Ask the owner for a new one.",
         "collab.error.relayNotConfigured" => "No public relay is configured on this device.",
         "collab.error.regionUnavailable" => "The invite's home relay region is unavailable.",
+        "collab.error.secureKeyUnavailable" => "The device's secure key is unavailable. Check system keychain access and try again.",
         "collab.error.rateLimited" => "Too many connection attempts. Try again shortly.",
         "collab.action.discardPending" => "Discard pending edit",
         "collab.action.saveAsFork" => "Save as a fork",

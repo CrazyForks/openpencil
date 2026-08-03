@@ -26,7 +26,9 @@ impl CollabPanel<'_> {
         };
         let body = match &self.model.screen {
             CollabPanelScreen::Unavailable | CollabPanelScreen::SignInRequired => 82.0,
-            CollabPanelScreen::Home | CollabPanelScreen::Create => 66.0,
+            CollabPanelScreen::Home => 66.0,
+            // Message + the service-region selector (label + option row).
+            CollabPanelScreen::Create => 66.0 + REGION_SECTION_HEIGHT,
             CollabPanelScreen::Progress { .. } => 70.0,
             CollabPanelScreen::ConfirmOwner(confirm) => {
                 CONFIRM_OWNER_HEAD_HEIGHT
@@ -65,6 +67,61 @@ impl CollabPanel<'_> {
             }
         };
         HEADER_HEIGHT + notice + body + self.actions_height() + PAD
+    }
+
+    /// Notice text wrapped to the bubble: up to two lines, greedy per-char
+    /// breaking (CJK-safe), with the second line ellipsized when the message
+    /// still doesn't fit. A single-line message stays vertically centred.
+    pub(super) fn paint_notice_text(&self, cx: &mut PaintCx<'_>, notice: &str, bubble: Rect) {
+        const FONT: f32 = 11.0;
+        let max_width = bubble.size.x - 18.0;
+        let split = {
+            let mut end = notice.len();
+            for (index, _) in notice.char_indices().skip(1) {
+                if cx.backend.measure_text(&notice[..index], FONT) > max_width {
+                    end = notice
+                        .char_indices()
+                        .take_while(|(byte, _)| *byte < index)
+                        .last()
+                        .map(|(byte, _)| byte)
+                        .unwrap_or(index);
+                    break;
+                }
+            }
+            end
+        };
+        let first = &notice[..split];
+        let rest = notice[split..].trim_start();
+        if rest.is_empty() {
+            paint_text(
+                cx,
+                first,
+                FONT,
+                self.theme.foreground,
+                Point2D::new(bubble.origin.x + 9.0, bubble.origin.y + 25.0),
+                400,
+            );
+            return;
+        }
+        let second = crate::util::ellipsize_to_width(rest, max_width, |text| {
+            cx.backend.measure_text(text, FONT)
+        });
+        paint_text(
+            cx,
+            first,
+            FONT,
+            self.theme.foreground,
+            Point2D::new(bubble.origin.x + 9.0, bubble.origin.y + 17.0),
+            400,
+        );
+        paint_text(
+            cx,
+            &second,
+            FONT,
+            self.theme.foreground,
+            Point2D::new(bubble.origin.x + 9.0, bubble.origin.y + 33.0),
+            400,
+        );
     }
 
     pub(super) fn paint_message(
@@ -152,6 +209,9 @@ pub(super) fn paint_button(
         theme.secondary_foreground
     };
     let width = cx.backend.measure_text(label, 11.0);
+    // Centre against the button's own height. A hardcoded baseline was tuned
+    // for the 32 px action row and left every 28 px button (admission
+    // decisions, service-region options) painting its label low.
     paint_text(
         cx,
         label,
@@ -159,7 +219,7 @@ pub(super) fn paint_button(
         color.with_alpha(if enabled { 1.0 } else { 0.6 }),
         Point2D::new(
             rect.origin.x + (rect.size.x - width) / 2.0,
-            rect.origin.y + 21.0,
+            jian_widgets::centered_text_baseline_y(rect, 11.0),
         ),
         500,
     );

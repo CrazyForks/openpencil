@@ -41,6 +41,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.error.inviteExpired" => "Dieser Einladungscode ist abgelaufen. Bitte einen neuen anfordern.",
         "collab.error.relayNotConfigured" => "Auf diesem Gerät ist kein öffentliches Relay konfiguriert.",
         "collab.error.regionUnavailable" => "Die Heimatregion des Einladungs-Relays ist nicht verfügbar.",
+        "collab.error.secureKeyUnavailable" => "Der sichere Geräteschlüssel ist nicht verfügbar. Prüfen Sie den Schlüsselbund-Zugriff und versuchen Sie es erneut.",
         "collab.error.rateLimited" => "Zu viele Verbindungsversuche. Versuche es gleich erneut.",
         "collab.action.discardPending" => "Ausstehende Bearbeitung verwerfen",
         "collab.action.saveAsFork" => "Als Abzweigung speichern",

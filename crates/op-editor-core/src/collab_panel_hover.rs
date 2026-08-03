@@ -1,4 +1,24 @@
-//! Secret-free pointer identities for the collaboration popover.
+//! Secret-free pointer identities and chrome types for the collaboration
+//! popover.
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CollabPanelView {
+    #[default]
+    Home,
+    Create,
+    Join,
+    Session,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscoveredCollabEndpoint {
+    /// Opaque discovery-row identity. It is not a session or account id.
+    pub discovery_id: String,
+    /// User-enterable LAN endpoint such as `192.168.1.8:43120`.
+    pub endpoint: String,
+    /// Protocol/schema compatibility derived without exposing session data.
+    pub compatible: bool,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CollabPanelHover {
@@ -9,6 +29,7 @@ pub enum CollabPanelHover {
     OpenCreate,
     Start,
     StartLan,
+    Region(crate::CollabRelayRegion),
     OpenJoin,
     BeginDiscovery,
     Connect,

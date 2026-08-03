@@ -41,6 +41,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.error.inviteExpired" => "邀请码已过期，请向发起者索取新的邀请码。",
         "collab.error.relayNotConfigured" => "此设备尚未配置公网中继。",
         "collab.error.regionUnavailable" => "邀请码所属的中继区域不可用。",
+        "collab.error.secureKeyUnavailable" => {
+            "无法访问设备安全密钥，请检查系统钥匙串访问权限后重试。"
+        }
         "collab.error.rateLimited" => "连接尝试过于频繁，请稍后重试。",
         "collab.action.discardPending" => "丢弃待确认编辑",
         "collab.action.saveAsFork" => "另存为分叉",

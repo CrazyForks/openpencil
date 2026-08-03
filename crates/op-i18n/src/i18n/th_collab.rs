@@ -41,6 +41,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.error.inviteExpired" => "รหัสเชิญหมดอายุแล้ว โปรดขอรหัสใหม่จากเจ้าของ",
         "collab.error.relayNotConfigured" => "อุปกรณ์นี้ยังไม่ได้กำหนดค่ารีเลย์สาธารณะ",
         "collab.error.regionUnavailable" => "ภูมิภาคหลักของรีเลย์สำหรับคำเชิญไม่พร้อมใช้งาน",
+        "collab.error.secureKeyUnavailable" => {
+            "ไม่สามารถเข้าถึงคีย์ความปลอดภัยของอุปกรณ์ได้ โปรดตรวจสอบสิทธิ์พวงกุญแจแล้วลองอีกครั้ง"
+        }
         "collab.error.rateLimited" => "พยายามเชื่อมต่อมากเกินไป โปรดลองอีกครั้งในภายหลัง",
         "collab.action.discardPending" => "ละทิ้งการแก้ไขที่รออยู่",
         "collab.action.saveAsFork" => "บันทึกเป็นสำเนาแยก",

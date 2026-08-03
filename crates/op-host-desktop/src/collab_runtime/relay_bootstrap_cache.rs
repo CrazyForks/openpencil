@@ -7,7 +7,22 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use sha2::{Digest as _, Sha256};
+
 use super::{strong_etag, BootstrapError, MAX_CACHE_BYTES, MAX_ETAG_BYTES, MAX_RESPONSE_BYTES};
+
+/// Endpoint-scoped cache file name so each hub keeps its own anti-rollback
+/// generation floor. The endpoint is hashed rather than embedded: it keeps
+/// the name filesystem-safe and avoids writing the configured URL into a
+/// directory listing.
+pub(super) fn endpoint_cache_file(endpoint: &str) -> String {
+    let digest = Sha256::digest(endpoint.as_bytes());
+    let mut suffix = String::with_capacity(16);
+    for byte in &digest[..8] {
+        suffix.push_str(&format!("{byte:02x}"));
+    }
+    format!("collaboration-bootstrap-v1-{suffix}.json")
+}
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

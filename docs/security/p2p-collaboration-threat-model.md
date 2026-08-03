@@ -154,10 +154,19 @@ timing tests remain production gates.
 ### Signed collaboration bootstrap and cross-region relay routing
 
 The desktop's former direct injection of five relay/locator endpoint and public
-key values is retired. Production now configures
-`OPENPENCIL_COLLAB_BOOTSTRAP_URL`, while an owner additionally retains
-`OPENPENCIL_COLLAB_RELAY_HOME_REGION=cn|global` as a local home selector. A
-guest obtains its home region only from the signed invite. The embedded
+key values is retired. Release builds carry two built-in production hub URLs
+(one per region) injected at compile time from the release pipeline's secret
+store — the open-source tree contains no production endpoint, and a build
+without the injection keeps the relay purely environment-configured. A
+persisted user preference selects which hub serves the signed bootstrap
+document, and — absent an override — which region an owner publishes in. Both
+hubs serve the same signed document verified against the same embedded root,
+so the preference is a reachability choice, not a trust choice. `OPENPENCIL_COLLAB_BOOTSTRAP_URL` remains as an
+operator override that wins when set and stays fail-closed on an invalid
+value, and an owner may still pin
+`OPENPENCIL_COLLAB_RELAY_HOME_REGION=cn|global` as a local home selector that
+overrides the preference. A guest obtains its home region only from the
+signed invite or the region-tagged pairing code. The embedded
 `openpencil-collab-root-v1` Ed25519 public key currently has the same bytes as
 the collaboration union-policy root, but the two source constants are not yet
 single-sourced; deployment and tests must not assume source-level coupling.

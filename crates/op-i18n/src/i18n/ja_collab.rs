@@ -43,6 +43,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         }
         "collab.error.relayNotConfigured" => "このデバイスには公開リレーが設定されていません。",
         "collab.error.regionUnavailable" => "招待のホームリレー地域は利用できません。",
+        "collab.error.secureKeyUnavailable" => "デバイスのセキュアキーにアクセスできません。キーチェーンのアクセス権を確認して再試行してください。",
         "collab.error.rateLimited" => "接続試行が多すぎます。しばらくしてから再試行してください。",
         "collab.action.discardPending" => "保留中の編集を破棄",
         "collab.action.saveAsFork" => "分岐として保存",

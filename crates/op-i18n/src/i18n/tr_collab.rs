@@ -41,6 +41,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.error.inviteExpired" => "Bu davet kodunun süresi doldu. Sahibinden yeni bir kod isteyin.",
         "collab.error.relayNotConfigured" => "Bu cihazda genel aktarıcı yapılandırılmamış.",
         "collab.error.regionUnavailable" => "Davetin ana aktarıcı bölgesi kullanılamıyor.",
+        "collab.error.secureKeyUnavailable" => "Cihazın güvenli anahtarına erişilemiyor. Anahtar zinciri erişimini kontrol edip yeniden deneyin.",
         "collab.error.rateLimited" => "Çok fazla bağlantı denemesi. Kısa süre sonra yeniden deneyin.",
         "collab.action.discardPending" => "Bekleyen düzenlemeyi at",
         "collab.action.saveAsFork" => "Çatal olarak kaydet",

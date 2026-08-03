@@ -41,6 +41,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.error.inviteExpired" => "El código de invitación ha caducado. Pide uno nuevo al propietario.",
         "collab.error.relayNotConfigured" => "No hay ningún relé público configurado en este dispositivo.",
         "collab.error.regionUnavailable" => "La región de origen del relé no está disponible.",
+        "collab.error.secureKeyUnavailable" => "La clave segura del dispositivo no está disponible. Comprueba el acceso al llavero y vuelve a intentarlo.",
         "collab.error.rateLimited" => "Demasiados intentos de conexión. Inténtalo de nuevo pronto.",
         "collab.action.discardPending" => "Descartar edición pendiente",
         "collab.action.saveAsFork" => "Guardar como bifurcación",

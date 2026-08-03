@@ -52,6 +52,12 @@ impl std::fmt::Debug for CollabPanelActionModel {
             CollabUiAction::OpenCreate => "OpenCreate",
             CollabUiAction::Start => "Start",
             CollabUiAction::StartLan => "StartLan",
+            CollabUiAction::SetRelayRegion {
+                region: op_editor_core::CollabRelayRegion::China,
+            } => "SetRelayRegion(China)",
+            CollabUiAction::SetRelayRegion {
+                region: op_editor_core::CollabRelayRegion::Global,
+            } => "SetRelayRegion(Global)",
             CollabUiAction::OpenJoin => "OpenJoin",
             CollabUiAction::BeginDiscovery => "BeginDiscovery",
             CollabUiAction::JoinDiscovered { .. } => "JoinDiscovered([REDACTED])",

@@ -11,6 +11,7 @@ pub(super) fn action_model(
         CollabUiAction::OpenCreate => "collab.action.start",
         CollabUiAction::Start => "collab.connection.relay",
         CollabUiAction::StartLan => "collab.connection.lan",
+        CollabUiAction::SetRelayRegion { region } => region.i18n_key(),
         CollabUiAction::OpenJoin => "collab.action.join",
         CollabUiAction::BeginDiscovery => "collab.action.findNearby",
         CollabUiAction::JoinDiscovered { .. } | CollabUiAction::JoinAddress { .. } => {

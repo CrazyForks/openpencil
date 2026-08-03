@@ -43,6 +43,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         }
         "collab.error.relayNotConfigured" => "이 기기에는 공용 릴레이가 구성되어 있지 않습니다.",
         "collab.error.regionUnavailable" => "초대의 홈 릴레이 지역을 사용할 수 없습니다.",
+        "collab.error.secureKeyUnavailable" => {
+            "기기 보안 키에 액세스할 수 없습니다. 키체인 접근 권한을 확인한 후 다시 시도하세요."
+        }
         "collab.error.rateLimited" => "연결 시도가 너무 많습니다. 잠시 후 다시 시도하세요.",
         "collab.action.discardPending" => "대기 중 편집 버리기",
         "collab.action.saveAsFork" => "분기본으로 저장",

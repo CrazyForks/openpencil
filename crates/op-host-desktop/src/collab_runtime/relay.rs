@@ -22,7 +22,7 @@ use op_editor_core::{CollabConnectionPathUi, CollabInviteCode, CollabRelayRegion
 use super::auth::{unix_time_ms, LocalAdmission};
 use super::relay_bootstrap::RelayBootstrap;
 use super::relay_bootstrap::{
-    provider_from_environment, Ed25519LocatorVerifier, RelayBootstrapProvider, RelayBootstrapRegion,
+    bootstrap_provider, Ed25519LocatorVerifier, RelayBootstrapProvider, RelayBootstrapRegion,
 };
 use super::types::{CollabRuntimeError, CollabRuntimeFailure};
 
@@ -336,28 +336,37 @@ impl std::fmt::Debug for GuestRelayRuntime {
     }
 }
 
-pub(super) fn owner_request_from_environment(
+pub(super) fn owner_request(
     control_plane: std::sync::Arc<dyn RelayLocatorControlPlane>,
-) -> Result<Option<RelayOwnerRequest>, CollabRuntimeError> {
-    let Some(provider) = provider_from_environment()? else {
-        return Ok(None);
+    preferred_region: RelayRegion,
+) -> Result<RelayOwnerRequest, CollabRuntimeError> {
+    let provider = bootstrap_provider(preferred_region)?;
+    // `var_os` keeps a present-but-non-Unicode override fail-closed instead
+    // of letting it read as "unset" and silently re-home the session.
+    let env_value = match std::env::var_os(RELAY_HOME_REGION_ENV) {
+        Some(value) => Some(
+            value
+                .into_string()
+                .map_err(|_| runtime_error(CollabRuntimeFailure::RelayRegionUnavailable))?,
+        ),
+        None => None,
     };
-    let home_region = parse_home_region(std::env::var(RELAY_HOME_REGION_ENV).ok().as_deref())?;
-    Ok(Some(RelayOwnerRequest {
+    let home_region = resolve_home_region(env_value.as_deref(), preferred_region)?;
+    Ok(RelayOwnerRequest {
         home_region,
         provider,
         control_plane,
-    }))
+    })
 }
 
 pub(super) fn guest_route_from_invite(
     invite: &str,
     control_plane: Arc<dyn RelayLocatorControlPlane>,
+    preferred_region: RelayRegion,
 ) -> Result<GuestConnectionRoute, CollabRuntimeError> {
     let invite = RelayInviteV1::from_fragment(invite)
         .map_err(|_| runtime_error(CollabRuntimeFailure::RelayInviteInvalid))?;
-    let provider = provider_from_environment()?
-        .ok_or_else(|| runtime_error(CollabRuntimeFailure::RelayNotConfigured))?;
+    let provider = bootstrap_provider(preferred_region)?;
     Ok(guest_route_from_parsed_invite(
         invite,
         provider,
@@ -367,9 +376,14 @@ pub(super) fn guest_route_from_invite(
 
 /// Short pairing codes resolve to the full invite on the guest network
 /// worker; only the bounded code shape is parsed on the UI thread.
+///
+/// `preferred_region` only picks the hub that serves the signed bootstrap
+/// document (both hubs publish both regions); the claim itself is routed by
+/// the region riding in the code.
 pub(super) fn guest_route_from_pairing_code(
     code: &str,
     control_plane: Arc<dyn RelayLocatorControlPlane>,
+    preferred_region: RelayRegion,
 ) -> Result<GuestConnectionRoute, CollabRuntimeError> {
     let code = PairingCode::parse(code)
         .map_err(|_| runtime_error(CollabRuntimeFailure::RelayInviteInvalid))?;
@@ -378,8 +392,7 @@ pub(super) fn guest_route_from_pairing_code(
     let home_region = code
         .region()
         .ok_or_else(|| runtime_error(CollabRuntimeFailure::RelayInviteInvalid))?;
-    let provider = provider_from_environment()?
-        .ok_or_else(|| runtime_error(CollabRuntimeFailure::RelayNotConfigured))?;
+    let provider = bootstrap_provider(preferred_region)?;
     Ok(GuestConnectionRoute::Relay(Box::new(RelayGuestRequest {
         secret: RelayJoinSecret::Pairing(code),
         home_region,
@@ -412,11 +425,18 @@ pub(super) fn relay_guest_target(
     )
 }
 
-fn parse_home_region(value: Option<&str>) -> Result<RelayRegion, CollabRuntimeError> {
-    match value {
+/// The owner's home region: the environment override wins when set (and an
+/// unrecognized value stays a hard error rather than silently re-homing the
+/// session); otherwise the user's service-region preference applies.
+fn resolve_home_region(
+    env_value: Option<&str>,
+    preferred: RelayRegion,
+) -> Result<RelayRegion, CollabRuntimeError> {
+    match env_value {
         Some("cn") => Ok(RelayRegion::Cn),
         Some("global") => Ok(RelayRegion::Global),
-        _ => Err(runtime_error(CollabRuntimeFailure::RelayRegionUnavailable)),
+        Some(_) => Err(runtime_error(CollabRuntimeFailure::RelayRegionUnavailable)),
+        None => Ok(preferred),
     }
 }
 
@@ -608,6 +628,13 @@ const fn ui_region(region: RelayRegion) -> CollabRelayRegion {
     match region {
         RelayRegion::Cn => CollabRelayRegion::China,
         RelayRegion::Global => CollabRelayRegion::Global,
+    }
+}
+
+pub(super) const fn protocol_region(region: CollabRelayRegion) -> RelayRegion {
+    match region {
+        CollabRelayRegion::China => RelayRegion::Cn,
+        CollabRelayRegion::Global => RelayRegion::Global,
     }
 }
 

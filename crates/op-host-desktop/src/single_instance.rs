@@ -69,8 +69,32 @@ pub struct PrimaryHandle {
 }
 
 /// Run the gate. `initial_file` is the document parsed from argv, if any.
+/// Resolve the guard port. Debug builds accept `OPENPENCIL_DEV_INSTANCE_PORT`
+/// so a second dev instance can run side-by-side (e.g. collaboration testing
+/// with two accounts via two `HOME` directories); release builds keep the
+/// fixed port so end users always get single-instance behaviour.
+fn instance_port() -> u16 {
+    #[cfg(any(test, debug_assertions))]
+    {
+        let configured = std::env::var("OPENPENCIL_DEV_INSTANCE_PORT").ok();
+        instance_port_from(configured.as_deref())
+    }
+    #[cfg(not(any(test, debug_assertions)))]
+    {
+        INSTANCE_PORT
+    }
+}
+
+#[cfg(any(test, debug_assertions))]
+fn instance_port_from(configured: Option<&str>) -> u16 {
+    configured
+        .and_then(|value| value.parse::<u16>().ok())
+        .filter(|port| *port != 0)
+        .unwrap_or(INSTANCE_PORT)
+}
+
 pub fn acquire(initial_file: Option<&Path>) -> Acquire {
-    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, INSTANCE_PORT));
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, instance_port()));
     match TcpListener::bind(addr) {
         Ok(listener) => Acquire::Primary(PrimaryHandle {
             listener: Some(listener),
@@ -250,5 +274,16 @@ mod tests {
         stream.flush().unwrap();
         assert!(!server.join().unwrap(), "non-magic frame must be rejected");
         assert!(queue.lock().unwrap().is_empty());
+    }
+
+    /// The dev override accepts a valid port and falls back to the fixed
+    /// guard port on absent, malformed, or reserved values.
+    #[test]
+    fn dev_instance_port_override_parses_strictly() {
+        assert_eq!(instance_port_from(None), INSTANCE_PORT);
+        assert_eq!(instance_port_from(Some("47901")), 47901);
+        assert_eq!(instance_port_from(Some("0")), INSTANCE_PORT);
+        assert_eq!(instance_port_from(Some("not-a-port")), INSTANCE_PORT);
+        assert_eq!(instance_port_from(Some("70000")), INSTANCE_PORT);
     }
 }

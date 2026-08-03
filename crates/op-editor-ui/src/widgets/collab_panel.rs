@@ -39,6 +39,8 @@ const INVITE_HEIGHT: f32 = 48.0;
 const SHARE_ENDPOINT_HEIGHT: f32 = 38.0;
 const ADMISSION_HEIGHT: f32 = 62.0;
 const ADMISSION_ACTION_HEIGHT: f32 = 28.0;
+const REGION_OPTION_HEIGHT: f32 = 28.0;
+const REGION_SECTION_HEIGHT: f32 = 62.0;
 const MAX_VISIBLE_PARTICIPANTS: usize = 8;
 const MAX_VISIBLE_ENDPOINTS: usize = 6;
 
@@ -173,14 +175,7 @@ impl Widget for CollabPanel<'_> {
             );
             cx.backend
                 .fill_round_rect(notice_rect, 7.0, self.theme.primary.with_alpha(0.10));
-            paint_text(
-                cx,
-                notice,
-                11.0,
-                self.theme.foreground,
-                Point2D::new(notice_rect.origin.x + 9.0, notice_rect.origin.y + 25.0),
-                400,
-            );
+            self.paint_notice_text(cx, notice, notice_rect);
             body_top += NOTICE_HEIGHT + 8.0;
         }
 
@@ -205,6 +200,27 @@ impl Widget for CollabPanel<'_> {
             }
             CollabPanelScreen::Create => {
                 self.paint_message(cx, rect, body_top, "collab.create.choose");
+                paint_text(
+                    cx,
+                    op_i18n::translate(self.ui.locale, "collab.session.region"),
+                    11.0,
+                    self.theme.muted_foreground,
+                    Point2D::new(rect.origin.x + PAD, body_top + 56.0),
+                    500,
+                );
+                let selected = self.ui.collab.panel.relay_region;
+                for (button, region) in self.region_option_rects(rect, body_top) {
+                    paint_button(
+                        cx,
+                        &self.theme,
+                        button,
+                        op_i18n::translate(self.ui.locale, region.i18n_key()),
+                        region == selected,
+                        true,
+                        self.ui.collab.panel.hover
+                            == Some(op_editor_core::CollabPanelHover::Region(region)),
+                    );
+                }
             }
             CollabPanelScreen::Progress { message } => {
                 draw_icon(
@@ -627,3 +643,7 @@ impl Widget for CollabPanel<'_> {
 #[cfg(test)]
 #[path = "collab_panel_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "collab_panel_region_tests.rs"]
+mod region_tests;

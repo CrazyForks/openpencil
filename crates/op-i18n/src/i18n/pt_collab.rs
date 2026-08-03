@@ -41,6 +41,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.error.inviteExpired" => "Este código de convite expirou. Peça um novo ao proprietário.",
         "collab.error.relayNotConfigured" => "Nenhum relay público está configurado neste dispositivo.",
         "collab.error.regionUnavailable" => "A região principal do relay do convite está indisponível.",
+        "collab.error.secureKeyUnavailable" => "A chave segura do dispositivo está indisponível. Verifique o acesso às chaves do sistema e tente novamente.",
         "collab.error.rateLimited" => "Muitas tentativas de conexão. Tente novamente em breve.",
         "collab.action.discardPending" => "Descartar edição pendente",
         "collab.action.saveAsFork" => "Salvar como ramificação",

@@ -145,8 +145,12 @@ pub(super) fn disconnect_notice(failure: CollabRuntimeFailure) -> CollabNoticeKi
         CollabRuntimeFailure::ResourceLimit => {
             CollabNoticeKind::Reject(CollabRejectUiCode::ResourceLimit)
         }
-        CollabRuntimeFailure::SecureKeyUnavailable
-        | CollabRuntimeFailure::ClockUnavailable
+        // A refused key store is a hard local condition, not a dropped
+        // session — the reconnect copy would mislead.
+        CollabRuntimeFailure::SecureKeyUnavailable => {
+            CollabNoticeKind::Connect(CollabConnectErrorUi::SecureKeyUnavailable)
+        }
+        CollabRuntimeFailure::ClockUnavailable
         | CollabRuntimeFailure::InvalidAddress
         | CollabRuntimeFailure::InvalidSession
         | CollabRuntimeFailure::Transport
@@ -179,6 +183,9 @@ fn setup_failure_notice(failure: CollabRuntimeFailure) -> Option<CollabNoticeKin
         // instead of offering a reconnect.
         CollabRuntimeFailure::OwnerIdentityRejected => Some(CollabNoticeKind::Connect(
             CollabConnectErrorUi::OwnerNotConfirmed,
+        )),
+        CollabRuntimeFailure::SecureKeyUnavailable => Some(CollabNoticeKind::Connect(
+            CollabConnectErrorUi::SecureKeyUnavailable,
         )),
         _ => None,
     }

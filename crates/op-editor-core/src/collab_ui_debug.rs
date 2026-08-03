@@ -14,6 +14,7 @@ impl fmt::Debug for CollabPanelState {
             .field("join_address_focused", &self.join_address_focused)
             .field("hover", &self.hover)
             .field("discovered", &self.discovered)
+            .field("relay_region", &self.relay_region)
             .finish()
     }
 }
@@ -24,6 +25,10 @@ impl fmt::Debug for CollabUiAction {
             Self::OpenCreate => formatter.write_str("OpenCreate"),
             Self::Start => formatter.write_str("Start"),
             Self::StartLan => formatter.write_str("StartLan"),
+            Self::SetRelayRegion { region } => formatter
+                .debug_struct("SetRelayRegion")
+                .field("region", region)
+                .finish(),
             Self::OpenJoin => formatter.write_str("OpenJoin"),
             Self::BeginDiscovery => formatter.write_str("BeginDiscovery"),
             Self::JoinDiscovered { .. } => formatter.write_str("JoinDiscovered([REDACTED])"),
