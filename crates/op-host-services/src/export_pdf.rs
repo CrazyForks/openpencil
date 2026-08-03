@@ -12,7 +12,7 @@
 //! `export/scene_painter.rs`), so PDF / PNG / screenshots stay in
 //! lockstep with the editor canvas.
 
-use op_editor_ui::layout_scene::{LayoutScene, ScenePage};
+use op_editor_ui::layout_scene::{LayoutScene, SceneNode, ScenePage};
 use op_editor_ui::Rect;
 use std::path::Path as StdPath;
 
@@ -177,6 +177,66 @@ pub fn export_pdf(scene: &LayoutScene, target: &StdPath) -> Result<(), ExportErr
     std::fs::write(target, &buf).map_err(|e| ExportError::Write(e.to_string()))
 }
 
+/// Emit one PDF page per deck board — the deck flavour of [`export_pdf`].
+///
+/// A deck is authored and presented one board at a time, so its PDF has to
+/// be one board per page: the page-level [`export_pdf`] would render the
+/// whole page bounding box, i.e. every slide plus the canvas gaps between
+/// them, onto a single sheet.
+///
+/// Two properties are load-bearing and both are inherited rather than
+/// re-derived:
+///
+/// * **Page order is the slideshow's order** — [`active_page_boards`]
+///   (document child order) is the single source of truth for which board
+///   comes after which. Sorting by geometry here would let the exported
+///   file disagree with what Preview presents the moment an author nudges
+///   a slide on the canvas.
+/// * **No margin, page size == board size** — a projector or PDF viewer
+///   scales the page to fill the screen, so any inset would letterbox the
+///   slide and change its aspect ratio. Content that overflows the board
+///   is cropped by the MediaBox, which is exactly what presenting does.
+///
+/// [`active_page_boards`]: op_editor_core::preview_slideshow::active_page_boards
+pub fn export_deck_pdf(
+    state: &op_editor_core::EditorState,
+    target: &StdPath,
+) -> Result<(), ExportError> {
+    let boards = op_editor_core::preview_slideshow::active_page_boards(state);
+    let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
+    // Without a resolvable active page no board can be looked up at all —
+    // that is "nothing to export", not a separate failure mode.
+    let Some(page) = scene.active_page() else {
+        return Err(ExportError::NothingToExport);
+    };
+    let slides: Vec<&SceneNode> = boards
+        .iter()
+        .filter_map(|id| page.find(id))
+        // Hidden boards are skipped for the same reason the slideshow
+        // never presents them. A degenerate board is dropped too: skia
+        // cannot open a zero-extent page.
+        .filter(|node| !node.hidden && node.bounds.size.x > 0.0 && node.bounds.size.y > 0.0)
+        .collect();
+    if slides.is_empty() {
+        return Err(ExportError::NothingToExport);
+    }
+    let mut buf: Vec<u8> = Vec::new();
+    {
+        let mut pdf = skia_safe::pdf::new_document(&mut buf, None);
+        for node in slides {
+            let bounds = node.bounds;
+            let mut on_page =
+                pdf.begin_page(skia_safe::Size::new(bounds.size.x, bounds.size.y), None);
+            let canvas = on_page.canvas();
+            canvas.translate((-bounds.origin.x, -bounds.origin.y));
+            crate::export::paint_node(canvas, node);
+            pdf = on_page.end_page();
+        }
+        pdf.close();
+    }
+    std::fs::write(target, &buf).map_err(|e| ExportError::Write(e.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,5 +365,186 @@ mod tests {
         let res = export_pdf(&scene, &tmp);
         assert!(res.is_err(), "expected Err on all-empty, got {res:?}");
         assert_eq!(res.unwrap_err().to_string(), "nothing to export");
+    }
+
+    // ─── Deck (Slides scenario) export ─────────────────────────────────
+
+    use op_editor_core::scene_template_catalog::TemplateScene;
+    use op_editor_core::EditorState;
+
+    /// A deck state from a canonical document body — the same fixture
+    /// shape `export_batch::tests::deck_state` uses, plus the scenario tag
+    /// without which the document is not a deck at all.
+    fn deck_state(children_json: &str) -> EditorState {
+        let doc = jian_ops_schema::load_str(&format!(
+            r#"{{"version":"1.0.0","children":[{children_json}]}}"#
+        ))
+        .expect("fixture JSON parses")
+        .value;
+        let mut state = EditorState::from_document(doc);
+        state.editor_ui.scenario = Some(TemplateScene::Slides);
+        state
+    }
+
+    fn board_json(id: &str, x: f32, y: f32, w: f32, h: f32, extra: &str) -> String {
+        format!(
+            r##"{{"type":"frame","id":"{id}","name":"{id}","x":{x},"y":{y},
+                 "width":{w},"height":{h},
+                 "fill":[{{"type":"solid","color":"#204080"}}]{extra}}}"##
+        )
+    }
+
+    fn temp_pdf(tag: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        std::env::temp_dir().join(format!(
+            "op-deck-pdf-{tag}-{}-{nanos}.pdf",
+            std::process::id()
+        ))
+    }
+
+    /// Number of page objects in a PDF. skia writes each page dictionary
+    /// uncompressed, so the type key is greppable in the raw bytes.
+    fn count_pages(bytes: &[u8]) -> usize {
+        let text = String::from_utf8_lossy(bytes);
+        text.matches("/Type /Page\n").count() + text.matches("/Type /Page ").count()
+    }
+
+    /// `(width, height)` of every `/MediaBox [x0 y0 x1 y1]` in the file,
+    /// in page order. Parsed rather than string-matched so the assertions
+    /// state the geometry instead of skia's number formatting.
+    fn media_boxes(bytes: &[u8]) -> Vec<(f32, f32)> {
+        let text = String::from_utf8_lossy(bytes).into_owned();
+        text.match_indices("/MediaBox")
+            .filter_map(|(at, _)| {
+                let rest = &text[at + "/MediaBox".len()..];
+                let open = rest.find('[')?;
+                let close = rest.find(']')?;
+                let nums: Vec<f32> = rest[open + 1..close]
+                    .split_whitespace()
+                    .filter_map(|n| n.parse::<f32>().ok())
+                    .collect();
+                (nums.len() == 4).then(|| (nums[2] - nums[0], nums[3] - nums[1]))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn deck_pdf_emits_one_page_per_visible_board() {
+        let state = deck_state(&format!(
+            "{},{},{}",
+            board_json("s1", 0.0, 0.0, 320.0, 180.0, ""),
+            board_json("s2", 400.0, 0.0, 320.0, 180.0, ""),
+            board_json("s3", 800.0, 0.0, 320.0, 180.0, "")
+        ));
+        let tmp = temp_pdf("count");
+
+        export_deck_pdf(&state, &tmp).expect("deck PDF");
+
+        let bytes = std::fs::read(&tmp).unwrap();
+        assert_eq!(&bytes[..5], b"%PDF-", "missing %PDF- header");
+        assert_eq!(count_pages(&bytes), 3, "one page per board");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn deck_pdf_pages_are_exactly_board_sized_with_no_margin() {
+        // Two deliberately different sizes: a single shared page size (what
+        // the non-deck exporter emits) could not satisfy both.
+        let state = deck_state(&format!(
+            "{},{}",
+            board_json("s1", 0.0, 0.0, 320.0, 180.0, ""),
+            board_json("s2", 500.0, 40.0, 640.0, 360.0, "")
+        ));
+        let tmp = temp_pdf("mediabox");
+
+        export_deck_pdf(&state, &tmp).expect("deck PDF");
+
+        let bytes = std::fs::read(&tmp).unwrap();
+        assert_eq!(
+            media_boxes(&bytes),
+            vec![(320.0, 180.0), (640.0, 360.0)],
+            "each page must be its own board's size, un-inset"
+        );
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn deck_pdf_skips_hidden_boards() {
+        let state = deck_state(&format!(
+            "{},{},{}",
+            board_json("s1", 0.0, 0.0, 320.0, 180.0, ""),
+            board_json("s2", 400.0, 0.0, 640.0, 360.0, r#","visible":false"#),
+            board_json("s3", 1200.0, 0.0, 200.0, 100.0, "")
+        ));
+        let tmp = temp_pdf("hidden");
+
+        export_deck_pdf(&state, &tmp).expect("deck PDF");
+
+        let bytes = std::fs::read(&tmp).unwrap();
+        assert_eq!(count_pages(&bytes), 2, "hidden board must not get a page");
+        assert_eq!(
+            media_boxes(&bytes),
+            vec![(320.0, 180.0), (200.0, 100.0)],
+            "the visible boards keep their own sizes and order"
+        );
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn deck_pdf_reports_nothing_to_export_when_every_board_is_hidden() {
+        let state = deck_state(&format!(
+            "{},{}",
+            board_json("s1", 0.0, 0.0, 320.0, 180.0, r#","visible":false"#),
+            board_json("s2", 400.0, 0.0, 320.0, 180.0, r#","visible":false"#)
+        ));
+        let tmp = temp_pdf("all-hidden");
+
+        let res = export_deck_pdf(&state, &tmp);
+
+        assert!(res.is_err(), "expected Err, got {res:?}");
+        assert_eq!(res.unwrap_err().to_string(), "nothing to export");
+        assert!(!tmp.exists(), "no file should be written");
+    }
+
+    #[test]
+    fn deck_pdf_reports_nothing_to_export_without_any_board() {
+        // Loose annotation beside the deck, no frames: nothing is a slide.
+        let state = deck_state(
+            r##"{"type":"rectangle","id":"note","x":0,"y":0,"width":40,"height":40,
+                "fill":[{"type":"solid","color":"#ffffff"}]}"##,
+        );
+        let tmp = temp_pdf("no-boards");
+
+        let res = export_deck_pdf(&state, &tmp);
+
+        assert!(res.is_err(), "expected Err, got {res:?}");
+        assert_eq!(res.unwrap_err().to_string(), "nothing to export");
+        assert!(!tmp.exists(), "no file should be written");
+    }
+
+    #[test]
+    fn deck_pdf_page_order_follows_document_children_not_geometry() {
+        // The second child sits above-left of the first on the canvas, so a
+        // geometry sort would swap them. Sizes differ so the page order is
+        // readable straight off the MediaBox list.
+        let state = deck_state(&format!(
+            "{},{}",
+            board_json("s1", 900.0, 900.0, 320.0, 180.0, ""),
+            board_json("s2", 0.0, 0.0, 640.0, 360.0, "")
+        ));
+        let tmp = temp_pdf("order");
+
+        export_deck_pdf(&state, &tmp).expect("deck PDF");
+
+        let bytes = std::fs::read(&tmp).unwrap();
+        assert_eq!(
+            media_boxes(&bytes),
+            vec![(320.0, 180.0), (640.0, 360.0)],
+            "authored child order wins over canvas position"
+        );
+        let _ = std::fs::remove_file(&tmp);
     }
 }

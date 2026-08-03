@@ -50,9 +50,10 @@ pub(crate) fn drain_pending_file_action<C: RepaintContext + 'static>(inner: &Inn
             // format/scale picker dialog; Export raises
             // `ExportImageConfirm` which lands below.
             let mut b = inner.borrow_mut();
-            let ui = &mut b.host_mut().editor_state_mut().editor_ui;
-            ui.image_panel.close_popovers();
-            ui.export_dialog_open = true;
+            b.host_mut()
+                .editor_state_mut()
+                .editor_ui
+                .open_export_dialog();
             b.host_mut().mark_editor_state_dirty();
             let _ = b.repaint();
         }

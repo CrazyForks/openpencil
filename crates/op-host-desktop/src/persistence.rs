@@ -298,6 +298,7 @@ fn export_editor_state_to_path(
     path: &std::path::Path,
 ) -> Result<(), op_host_services::export::ExportError> {
     use op_editor_core::editor_ui_state::ExportFormat as Fmt;
+    use op_editor_core::scene_template_catalog::TemplateScene;
 
     let fmt = state.editor_ui.export_format;
     let scale = state.editor_ui.export_scale;
@@ -309,6 +310,12 @@ fn export_editor_state_to_path(
         None
     };
     if fmt == Fmt::Pdf {
+        // A deck's pages are its boards, not its canvas pages: the
+        // page-level exporter would put every slide plus the gaps
+        // between them on one sheet.
+        if state.editor_ui.scenario == Some(TemplateScene::Slides) {
+            return op_host_services::export_pdf::export_deck_pdf(state, path);
+        }
         // PDF is intentionally multi-page; keep the full builder for it.
         let scene = op_pen_loader::editor_state_to_layout_scene(state);
         return op_host_services::export_pdf::export_pdf(&scene, path);
@@ -373,9 +380,7 @@ pub fn run_action(
         FileAction::ExportImage => {
             // main.rs intercepts ExportImage to open the picker; this
             // fallback keeps external callers working.
-            let ui = &mut host.editor_state_mut().editor_ui;
-            ui.image_panel.close_popovers();
-            ui.export_dialog_open = true;
+            host.editor_state_mut().editor_ui.open_export_dialog();
             host.mark_editor_state_dirty();
             ActionOutcome::Noop
         }

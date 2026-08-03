@@ -266,8 +266,7 @@ impl DesktopApp {
                 let eui = &mut self.host.editor_state_mut().editor_ui;
                 eui.file_menu_open = false;
                 eui.file_menu.hover = None;
-                eui.image_panel.close_popovers();
-                eui.export_dialog_open = true;
+                eui.open_export_dialog();
                 self.host.mark_editor_state_dirty();
                 self.request_redraw(true);
             } else if matches!(action, op_editor_core::editor_ui_state::FileAction::Save) {

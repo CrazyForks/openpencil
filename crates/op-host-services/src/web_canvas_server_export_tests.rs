@@ -78,6 +78,37 @@ fn post_export_pdf_uses_request_active_page_index() {
 }
 
 #[test]
+fn post_export_pdf_gives_a_deck_one_page_per_board() {
+    use base64::Engine as _;
+
+    let mut s = fresh_state();
+    // `editorMeta.scenario` is what makes this a deck — the two boards are
+    // otherwise ordinary frames, and their differing sizes prove each page
+    // is its own board rather than one shared sheet.
+    let export_body = r##"{"document":{"version":"1.0.0","editorMeta":{"scenario":"slides"},"children":[
+        {"id":"s1","type":"frame","name":"Cover","x":0,"y":0,"width":320,"height":180,"fill":[{"type":"solid","color":"#204080"}]},
+        {"id":"s2","type":"frame","name":"Agenda","x":400,"y":0,"width":640,"height":360,"fill":[{"type":"solid","color":"#204080"}]}
+    ]}}"##;
+
+    let r = handle_web_canvas_request("POST", "/api/export/pdf", export_body, &mut s);
+
+    assert!(r.status.starts_with("200"), "{}", r.body);
+    let parsed: serde_json::Value = serde_json::from_str(&r.body).expect("json body");
+    let pdf = base64::engine::general_purpose::STANDARD
+        .decode(parsed["dataBase64"].as_str().expect("dataBase64 string"))
+        .expect("base64 pdf");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("/MediaBox [0 0 320 180]") && text.contains("/MediaBox [0 0 640 360]"),
+        "expected one un-inset page per board, got MediaBoxes: {:?}",
+        text.match_indices("/MediaBox")
+            .map(|(at, _)| text[at..(at + 40).min(text.len())].to_string())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(s.version, 0, "export must not mutate sync version");
+}
+
+#[test]
 fn post_export_raster_returns_base64_png_without_replacing_daemon_document() {
     use base64::Engine as _;
     use op_editor_core::PenNodeExt;

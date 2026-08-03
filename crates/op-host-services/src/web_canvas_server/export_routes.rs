@@ -135,9 +135,18 @@ pub(super) fn export_pdf_download(body: &str, state: &WebCanvasState) -> WebRepl
 
 pub(super) fn build_pdf_download(body: &str, fallback: &EditorState) -> Result<Vec<u8>> {
     let editor = export_editor_from_body(body, fallback)?;
-    let scene = op_pen_loader::editor_state_to_layout_scene(&editor);
     let tmp = tmp_export_path("pdf");
-    crate::export_pdf::export_pdf(&scene, &tmp)?;
+    // The scenario tag survives the round-trip through `editorMeta`, so a
+    // deck posted from the browser must get the same slide-per-page file
+    // the desktop writes rather than one sheet holding every board.
+    if editor.editor_ui.scenario
+        == Some(op_editor_core::scene_template_catalog::TemplateScene::Slides)
+    {
+        crate::export_pdf::export_deck_pdf(&editor, &tmp)?;
+    } else {
+        let scene = op_pen_loader::editor_state_to_layout_scene(&editor);
+        crate::export_pdf::export_pdf(&scene, &tmp)?;
+    }
     let bytes = std::fs::read(&tmp).map_err(|e| WebCanvasError::Io(e.to_string()))?;
     let _ = std::fs::remove_file(&tmp);
     Ok(bytes)

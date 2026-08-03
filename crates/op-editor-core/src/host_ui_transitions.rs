@@ -7,7 +7,8 @@
 use jian_ops_schema::node::PenNode;
 
 use crate::agent_settings::SettingsFocus;
-use crate::editor_ui_state::{CompositingPickerTarget, EditorUiState};
+use crate::editor_ui_state::{CompositingPickerTarget, EditorUiState, ExportFormat};
+use crate::scene_template_catalog::TemplateScene;
 use crate::state::EditorState;
 use crate::{EditorCommand, NodeId};
 
@@ -62,6 +63,36 @@ impl EditorUiState {
         if !self.design_md_panel.open {
             self.design_md_panel.hover = None;
         }
+    }
+
+    /// Open the File ▸ Export dialog, preset to the format this
+    /// document's scenario is delivered in.
+    ///
+    /// Every host routes its Export entry point through here so the
+    /// preset cannot exist on one platform and not the other. The
+    /// scenario only picks the starting format — the picker still offers
+    /// all of them — but a deck whose deliverable is a PDF should not
+    /// make the presenter re-pick PDF on every export.
+    pub fn open_export_dialog(&mut self) {
+        self.image_panel.close_popovers();
+        if let Some(format) = scenario_default_export_format(self.scenario) {
+            self.export_format = format;
+        }
+        self.export_dialog_open = true;
+    }
+}
+
+/// The format a scenario's documents are delivered in, or `None` when the
+/// scenario has no opinion and the user's own last choice stands.
+pub fn scenario_default_export_format(scenario: Option<TemplateScene>) -> Option<ExportFormat> {
+    match scenario {
+        // A deck is delivered as a slide-per-page PDF — see
+        // `op_host_services::export_pdf::export_deck_pdf`.
+        Some(TemplateScene::Slides) => Some(ExportFormat::Pdf),
+        Some(TemplateScene::Tutorial)
+        | Some(TemplateScene::Comparison)
+        | Some(TemplateScene::Carousel)
+        | None => None,
     }
 }
 
@@ -192,4 +223,48 @@ pub fn apply_chat_design_block(
         return true;
     }
     false
+}
+
+#[cfg(test)]
+mod export_dialog_tests {
+    use super::*;
+
+    #[test]
+    fn opening_a_deck_export_dialog_presets_pdf() {
+        let mut ui = EditorUiState {
+            scenario: Some(TemplateScene::Slides),
+            export_format: ExportFormat::Png,
+            ..Default::default()
+        };
+
+        ui.open_export_dialog();
+
+        assert!(ui.export_dialog_open);
+        assert_eq!(ui.export_format, ExportFormat::Pdf);
+    }
+
+    #[test]
+    fn opening_a_non_deck_export_dialog_keeps_the_users_format() {
+        for scenario in [
+            None,
+            Some(TemplateScene::Tutorial),
+            Some(TemplateScene::Comparison),
+            Some(TemplateScene::Carousel),
+        ] {
+            let mut ui = EditorUiState {
+                scenario,
+                export_format: ExportFormat::Webp,
+                ..Default::default()
+            };
+
+            ui.open_export_dialog();
+
+            assert!(ui.export_dialog_open);
+            assert_eq!(
+                ui.export_format,
+                ExportFormat::Webp,
+                "scenario {scenario:?} must not overrule the picked format"
+            );
+        }
+    }
 }
