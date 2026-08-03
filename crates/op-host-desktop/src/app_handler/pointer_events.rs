@@ -390,6 +390,20 @@ impl DesktopApp {
         }
     }
 
+    /// Close a gesture whose release never arrives.
+    ///
+    /// A native modal or a focus switch can swallow the left-button release.
+    /// The redraw pass gates collaboration draining on the gesture's capture,
+    /// so leaving it open would starve a queued action (an admission approval,
+    /// for example) until some later unrelated click happened to close it.
+    pub(super) fn on_focus_lost(&mut self) {
+        if !self.collab_runtime.local_edit_in_flight() {
+            return;
+        }
+        self.collab_runtime.finish_local_edit(&mut self.host);
+        self.request_redraw(true);
+    }
+
     pub(super) fn on_left_release(&mut self) {
         // Drain pending cursor moves before release so drag-end commits final position.
         if self.drain_pending_cursor_move() {

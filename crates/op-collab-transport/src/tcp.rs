@@ -626,6 +626,12 @@ mod tests {
             accept_secure_tcp(stream, &owner_key, &server_prelude(), config).is_ok()
         });
 
+        // Hold the initiator back so the responder's first read provably runs
+        // against an empty receive buffer. Without this the kernel may have
+        // already buffered the initiator's frame, and the read would succeed
+        // even on a nonblocking socket — letting the test pass with the
+        // blocking-mode reset removed.
+        std::thread::sleep(Duration::from_millis(120));
         let connected = connect_secure_tcp(
             address,
             &DeviceStaticKey::from_private([32_u8; 32]).unwrap(),

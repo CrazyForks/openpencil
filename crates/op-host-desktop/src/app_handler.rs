@@ -508,6 +508,7 @@ impl ApplicationHandler<DesktopEvent> for DesktopApp {
                 button: MouseButton::Left,
                 ..
             } => self.on_left_release(),
+            WindowEvent::Focused(false) => self.on_focus_lost(),
             WindowEvent::MouseWheel { delta, .. } => self.on_mouse_wheel(delta),
             WindowEvent::PinchGesture { delta, .. } => self.on_pinch_gesture(delta),
             // CJK composition: preedit updates paint through the
