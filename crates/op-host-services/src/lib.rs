@@ -68,6 +68,7 @@ mod export_html_structured;
 mod export_html_template;
 pub mod export_hyperframes;
 pub mod export_pdf;
+pub mod export_pptx;
 mod figma_convert;
 mod figma_convert_error;
 mod import_html_url;
