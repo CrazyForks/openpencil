@@ -454,6 +454,48 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
                 },
             )?;
         }
+        // beforeinput → the text that never opens a composition. CJK
+        // punctuation (《 》 【 】 —— ……) is resolved by the IME the instant
+        // the key is pressed, so `compositionend` never fires for it and the
+        // raw `keydown` carries the untransformed key, not what the IME
+        // produced. This is the only path that sees the real character; the
+        // `keydown` handler yields its text branch while this input owns
+        // focus so the two never both type.
+        {
+            let inner = inner.clone();
+            add_listener::<web_sys::InputEvent, _, _>(
+                &ime_target,
+                "beforeinput",
+                &mut listeners,
+                move |evt| {
+                    let Some(text) = crate::event::ime::beforeinput_text(
+                        &evt.input_type(),
+                        evt.data().as_deref(),
+                        evt.is_composing(),
+                    ) else {
+                        return;
+                    };
+                    let Ok(mut b) = inner.try_borrow_mut() else {
+                        return;
+                    };
+                    b.host.set_clocks(now_ms_perf(), now_unix_secs());
+                    let consumed = b.host.apply_paste_text(&text);
+                    // The buffer is a throwaway: never read, always cleared,
+                    // so it cannot accumulate across keystrokes.
+                    if let Some(ime) = b.ime.as_ref() {
+                        ime.clear();
+                    }
+                    if consumed {
+                        crate::repaint_coalescer::request();
+                    }
+                    // Enter is not an `insertText`, but a send can still be
+                    // queued by a field reacting to the inserted text.
+                    drop(b);
+                    crate::web_chat::drain_chat_flags(&inner);
+                    crate::web_image_panel::drain_image_jobs(&inner);
+                },
+            )?;
+        }
     }
     // keydown → text input + editor shortcuts. `apply_key` is a stub on this
     // host; real input is dispatched per-key to apply_text / apply_backspace /
@@ -618,7 +660,9 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
                         // A resulting printable char still types via apply_text.
                         if !evt.alt_key() && b.host.apply_tool_shortcut(key.as_str()) {
                             consumed = true;
-                        } else {
+                        } else if crate::event::ime::keydown_should_insert_text(
+                            b.ime.as_ref().is_some_and(|ime| ime.owns_dom_focus()),
+                        ) {
                             let mut chars = key.chars();
                             if let (Some(c), None) = (chars.next(), chars.next()) {
                                 if !c.is_control() && b.host.apply_text(c) {

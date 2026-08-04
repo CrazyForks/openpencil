@@ -130,6 +130,8 @@ mod image_panel_selection;
 #[cfg(test)]
 mod image_panel_selection_tests;
 mod ime;
+#[cfg(test)]
+mod ime_punctuation_tests;
 mod input;
 #[cfg(test)]
 mod input_clipboard_tests;

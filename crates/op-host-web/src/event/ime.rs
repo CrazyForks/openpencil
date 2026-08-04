@@ -81,3 +81,115 @@ pub fn composition_end(text_utf8: String) -> ImeEvent {
         text: text_utf8,
     }
 }
+
+/// Text a `beforeinput` event on the hidden IME capture input should
+/// deliver to the editor, or `None` when this path does not own the
+/// event.
+///
+/// Composition events only cover IME output that opens a candidate
+/// session. CJK punctuation (《 》 【 】 —— ……) is resolved the instant
+/// the key is pressed, so no composition ever starts and
+/// `compositionend` never fires — the character reaches the page only
+/// as a plain `insertText` on the focused element.
+///
+/// Everything else is left alone: an in-flight composition is owned by
+/// `compositionend`, and non-text input types (Backspace, Enter, paste)
+/// keep their existing handlers.
+pub fn beforeinput_text(
+    input_type: &str,
+    data: Option<&str>,
+    is_composing: bool,
+) -> Option<String> {
+    if is_composing || input_type != "insertText" {
+        return None;
+    }
+    let data = data?;
+    (!data.is_empty()).then(|| data.to_string())
+}
+
+/// Whether the window `keydown` handler should type printable text.
+///
+/// While the hidden IME capture input actually owns DOM focus, every
+/// text-producing key also raises `beforeinput` on it, and that is the
+/// authoritative source: it carries what the IME produced (《) rather
+/// than the raw key the layout would have given (`<`). Typing from both
+/// paths would double every character, so `keydown` yields.
+///
+/// The gate reads REAL DOM focus, not the intent to focus, so a failed
+/// `focus()` degrades to the pre-IME `keydown` behaviour instead of
+/// silently swallowing every keystroke.
+pub fn keydown_should_insert_text(ime_input_owns_focus: bool) -> bool {
+    !ime_input_owns_focus
+}
+
+#[cfg(test)]
+mod beforeinput_tests {
+    use super::{beforeinput_text, keydown_should_insert_text};
+
+    /// The reported bug's web twin: 《 opens no composition, so it
+    /// arrives only as a plain `insertText`.
+    #[test]
+    fn plain_insert_text_carries_cjk_punctuation() {
+        assert_eq!(
+            beforeinput_text("insertText", Some("《"), false).as_deref(),
+            Some("《")
+        );
+        for piece in ["》", "【", "】", "——", "……", "，", "。"] {
+            assert_eq!(
+                beforeinput_text("insertText", Some(piece), false).as_deref(),
+                Some(piece),
+                "{piece:?} must be delivered by the beforeinput path"
+            );
+        }
+    }
+
+    /// An in-flight composition is owned by `compositionend`; taking it
+    /// here too would double every composed word.
+    #[test]
+    fn composing_input_is_left_to_composition_end() {
+        assert_eq!(beforeinput_text("insertText", Some("你好"), true), None);
+        assert_eq!(
+            beforeinput_text("insertCompositionText", Some("ni"), true),
+            None
+        );
+    }
+
+    /// Non-text input types keep their existing handlers.
+    #[test]
+    fn other_input_types_are_not_ours() {
+        for input_type in [
+            "deleteContentBackward",
+            "deleteContentForward",
+            "insertLineBreak",
+            "insertParagraph",
+            "insertFromPaste",
+            "insertFromDrop",
+            "historyUndo",
+        ] {
+            assert_eq!(
+                beforeinput_text(input_type, Some("x"), false),
+                None,
+                "{input_type:?} must not be typed by the IME path"
+            );
+        }
+    }
+
+    #[test]
+    fn absent_or_empty_data_delivers_nothing() {
+        assert_eq!(beforeinput_text("insertText", None, false), None);
+        assert_eq!(beforeinput_text("insertText", Some(""), false), None);
+    }
+
+    /// Ordinary Latin typing also arrives as `insertText` — it is
+    /// delivered here because `keydown` yields while the hidden input
+    /// owns focus (the two gates are complementary, never both on).
+    #[test]
+    fn ordinary_typing_is_delivered_once_by_exactly_one_path() {
+        assert_eq!(
+            beforeinput_text("insertText", Some("a"), false).as_deref(),
+            Some("a")
+        );
+        assert!(!keydown_should_insert_text(true));
+        assert!(keydown_should_insert_text(false));
+    }
+}

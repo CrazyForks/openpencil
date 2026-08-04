@@ -3919,6 +3919,7 @@ dependencies = [
  "jian-ops-schema",
  "jian-scene",
  "jian-widgets",
+ "op-ai-skills",
  "op-editor-core",
  "op-i18n",
  "op-util",

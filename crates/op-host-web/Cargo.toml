@@ -113,6 +113,9 @@ features = [
   # Compile-time binding toggles only — the `web` stub baseline stays green.
   "IdbDatabase",
   "IdbFactory",
+  # `beforeinput` on the hidden IME capture input — the only path that sees
+  # IME output which never opens a composition (CJK punctuation).
+  "InputEvent",
   "IdbObjectStore",
   "IdbOpenDbRequest",
   "IdbRequest",

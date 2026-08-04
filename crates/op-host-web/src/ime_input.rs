@@ -111,7 +111,10 @@ impl ImeInput {
         &self.input
     }
 
-    fn owns_dom_focus(&self) -> bool {
+    /// Whether this input is `document.activeElement` right now. The
+    /// `keydown` text gate reads this (not the cached flag) so a failed
+    /// `focus()` falls back to typing from `keydown`.
+    pub(crate) fn owns_dom_focus(&self) -> bool {
         self.input
             .owner_document()
             .and_then(|document| document.active_element())
