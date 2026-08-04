@@ -115,6 +115,7 @@ mod helpers;
 mod history_guard;
 mod host_lifecycle;
 mod host_requests;
+mod html_import_diagnostics_dispatch;
 mod icon_picker_press;
 #[cfg(test)]
 mod icon_picker_press_tests;

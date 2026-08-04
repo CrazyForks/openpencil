@@ -324,10 +324,11 @@ fn import_until_resolved(session: SessionRef) {
         }
         finish(
             &session,
-            Ok(IngestedDoc {
-                state: op_editor_core::EditorState::from_document(imported.document),
-                warnings: imported.warnings,
-            }),
+            Ok(IngestedDoc::from_html(
+                op_editor_core::EditorState::from_document(imported.document),
+                imported.warnings,
+                &imported.diagnostics,
+            )),
         );
         return;
     }
@@ -366,10 +367,10 @@ fn probe_import(
     };
     let mut imported = op_html::import_html_document(&html, &options, Some(&fetcher), None);
     if manifest.html_entry_count > 1 {
-        imported.warnings.push(format!(
-            "multiple HTML entries found ({}); selected {}",
-            manifest.html_entry_count, entry.relative_path
-        ));
+        imported.push_warning(op_html::ImportWarning::MultipleHtmlEntries {
+            count: manifest.html_entry_count,
+            entry: entry.relative_path.clone(),
+        });
     }
     let missing = requested.into_inner().into_iter().collect();
     Ok((imported, missing))

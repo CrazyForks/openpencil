@@ -1,10 +1,27 @@
 pub mod cascade;
 mod cascade_conditions;
+
+pub use cascade_conditions::MediaQueryError;
 mod cascade_parser;
 mod cascade_shared;
 pub mod declarations;
 pub mod selectors;
 mod selectors_parser;
+
+/// Evaluate a media condition outside the stylesheet parser.
+///
+/// `<source media>` and the `sizes` attribute both carry the same grammar as
+/// an `@media` prelude, so responsive image selection reuses the stylesheet
+/// evaluator instead of growing a second one. A condition the evaluator cannot
+/// parse does not match, matching the "unknown queries never apply" rule the
+/// parser already follows — and the reasons come back with the answer so the
+/// caller can report them instead of dropping a source without explanation.
+pub(crate) fn media_condition_applies(
+    condition: &str,
+    viewport: (f64, f64),
+) -> (bool, Vec<MediaQueryError>) {
+    cascade_conditions::media_list(condition, viewport)
+}
 
 #[cfg(test)]
 mod cascade_tests {
@@ -219,9 +236,27 @@ mod cascade_tests {
             "}".repeat(70)
         );
         let (_, warnings) = parse_stylesheet(&deeply_nested, 0);
+        let warnings = crate::render_warnings(&warnings);
         assert!(warnings
             .iter()
             .any(|warning| warning.contains("depth limit")));
+    }
+
+    /// `or` joins alternatives at the top level of a condition and inside a
+    /// parenthesised group; a group that is itself a condition is not a feature.
+    #[test]
+    fn media_conditions_support_or_at_the_top_level_and_nested() {
+        let css = "@media (max-width:300px) or (min-width:500px){p{color:red}}\
+            @media ((max-width:300px) or (orientation:landscape)) and (min-height:100px)\
+                {p{display:block}}\
+            @media (max-width:300px) or (max-width:400px){p{opacity:.5}}";
+        let (rules, warnings) = parse_stylesheet_for_viewport(css, 0, 600.0, 400.0);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let node = el("p", "", "");
+        let style = compute_style_for_viewport(&[&node], &rules, None, 16.0, 600.0, 400.0);
+        assert_eq!(style.get("color"), Some("red"));
+        assert_eq!(style.get("display"), Some("block"));
+        assert_eq!(style.get("opacity"), None);
     }
 
     #[test]
@@ -229,6 +264,7 @@ mod cascade_tests {
         let css = "p{--tokens:{foreground:red;meta:{x:y}};content:var(--tokens);\
             &:hover{color:blue}}@container card (width>1px){p{color:red}}";
         let (rules, warnings) = parse_stylesheet(css, 0);
+        let warnings = crate::render_warnings(&warnings);
         assert!(warnings
             .iter()
             .any(|warning| warning.contains("CSS nesting")));

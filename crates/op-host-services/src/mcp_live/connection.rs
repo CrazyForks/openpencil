@@ -119,21 +119,43 @@ pub(super) fn serve_connection<S: std::io::Read + std::io::Write>(
     wake_ui: &UiWake,
     client_identity: &Mutex<Option<(String, String)>>,
 ) -> Result<(), McpLiveError> {
-    let req = crate::mcp_serve::read_http_request(stream)?;
+    // A refused body FRAMING (over a route's declared cap, or missing the
+    // `Content-Length` a route requires) is a client fault detected before a
+    // single body byte was read — answer it with its own status instead of
+    // letting it bubble out as a 500. See `mcp_serve::read_http_request`.
+    let req = match crate::mcp_serve::read_http_request(stream) {
+        Ok(req) => req,
+        Err(crate::mcp_serve::McpServeError::Framing { status, message }) => {
+            return write_http_with_origin(
+                stream,
+                status,
+                &crate::mcp_serve::rest_error_body(&message),
+                None,
+            );
+        }
+        Err(e) => return Err(e.into()),
+    };
     let token = admission.token();
+    // The one origin this request may be answered to (never `*`) — computed
+    // once and threaded through every reply below, refusals included.
+    let cors_origin = admission::cors_origin_for(&req, admission);
     // Gate 1 (see `admission.rs`): browser screening, ahead of ALL routing —
     // including the preflight and the stateless probes, so a foreign page
     // cannot even fingerprint this endpoint. `Host`/`Origin` are not
     // page-forgeable, which is what closes DNS rebinding.
     if let Err(denial) = admission::check_boundary(&req, admission) {
-        return write_http(
+        return write_http_with_origin(
             stream,
             denial.http_status(),
             &admission::denial_json_rpc(&req.body, denial),
+            cors_origin,
         );
     }
     if req.method == "OPTIONS" {
-        return write_http(stream, "204 No Content", "");
+        // The preflight is scoped exactly like the request it precedes: a
+        // browser only proceeds when the reply names ITS origin, so this is
+        // what stops a non-accepted extension from reaching the ingress.
+        return write_http_with_origin(stream, "204 No Content", "", cors_origin);
     }
     // TS live-canvas whole-document sync (REST `POST /api/mcp/document`),
     // distinct from the JSON-RPC `/mcp` path below. Lets a TS whole-doc-sync
@@ -145,13 +167,27 @@ pub(super) fn serve_connection<S: std::io::Read + std::io::Write>(
         // takes the token gate before the body is even parsed. The REST
         // route answers `{ok,error}`, not JSON-RPC.
         if let Err(denial) = admission::check_token(&req, admission) {
-            return write_http(
+            return write_http_with_origin(
                 stream,
                 denial.http_status(),
                 &admission::denial_rest(denial),
+                cors_origin,
             );
         }
         return serve_document_sync(stream, req_tx, wake_ui, stateful_lock, &req.body);
+    }
+    // Insert-only browser-extension ingress (`POST /api/import/web-snapshot`).
+    // Deliberately ahead of the token gate — see `snapshot_ingest` for why
+    // this one route is untokened and what that does (and does not) grant.
+    if snapshot_ingest::is_snapshot_ingest_route(&req.method, &req.path) {
+        return snapshot_ingest::serve_snapshot_ingest(
+            stream,
+            req_tx,
+            wake_ui,
+            stateful_lock,
+            &req,
+            cors_origin,
+        );
     }
     if req.path != "/mcp" && req.path != "/" {
         return write_http(stream, "404 Not Found", r#"{"error":"Not found"}"#);
@@ -206,10 +242,11 @@ pub(super) fn serve_connection<S: std::io::Read + std::io::Write>(
     // decides who is allowed to ask at all. Refusals are a JSON-RPC error
     // carrying the caller's id, never a silent pass.
     if let Err(denial) = admission::check_token(&req, admission) {
-        return write_http(
+        return write_http_with_origin(
             stream,
             denial.http_status(),
             &admission::denial_json_rpc(&req.body, denial),
+            cors_origin,
         );
     }
     // Everything below observes or mutates shared state — the live

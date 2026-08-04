@@ -35,6 +35,19 @@ impl WidgetHostNative {
             }
             return Some(changed);
         }
+        // Post-import HTML diagnostics notice — tints its own buttons and
+        // owns the cursor only while it is under the card, so hovers below
+        // keep working around it.
+        if self.editor_state.editor_ui.html_import_diagnostics_open
+            && self.update_html_import_diagnostics_hover(
+                x,
+                y,
+                self.last_viewport_w,
+                self.last_viewport_h,
+            )
+        {
+            return Some(true);
+        }
         if self.editor_state.editor_ui.agent_settings_open {
             return Some(self.update_agent_settings_hover(x, y));
         }

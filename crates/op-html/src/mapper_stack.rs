@@ -1,5 +1,6 @@
-use jian_ops_schema::node::base::PenNodeBase;
 use jian_ops_schema::node::PenNode;
+
+use super::node_access::{node_base, node_base_mut};
 
 pub(super) const Z_INDEX_HINT: &str = "__op_html_z_index:";
 
@@ -98,56 +99,8 @@ fn take_z_index(node: &mut PenNode) -> Option<i32> {
     }
 }
 
-fn node_base_mut(node: &mut PenNode) -> &mut PenNodeBase {
-    match node {
-        PenNode::Frame(node) => &mut node.base,
-        PenNode::Group(node) => &mut node.base,
-        PenNode::Rectangle(node) => &mut node.base,
-        PenNode::Ellipse(node) => &mut node.base,
-        PenNode::Line(node) => &mut node.base,
-        PenNode::Polygon(node) => &mut node.base,
-        PenNode::Path(node) => &mut node.base,
-        PenNode::Text(node) => &mut node.base,
-        PenNode::TextInput(node) => &mut node.base,
-        PenNode::Image(node) => &mut node.base,
-        PenNode::IconFont(node) => &mut node.base,
-        PenNode::TextArea(node) => &mut node.base,
-        PenNode::Select(node) => &mut node.base,
-        PenNode::Switch(node) => &mut node.base,
-        PenNode::Checkbox(node) => &mut node.base,
-        PenNode::Slider(node) => &mut node.base,
-        PenNode::RadioGroup(node) => &mut node.base,
-        PenNode::NumberInput(node) => &mut node.base,
-        PenNode::Progress(node) => &mut node.base,
-        PenNode::Tabs(node) => &mut node.base,
-        PenNode::Ref(node) => &mut node.base,
-    }
-}
-
 fn has_explicit_position(node: &PenNode) -> bool {
-    let base = match node {
-        PenNode::Frame(node) => &node.base,
-        PenNode::Group(node) => &node.base,
-        PenNode::Rectangle(node) => &node.base,
-        PenNode::Ellipse(node) => &node.base,
-        PenNode::Line(node) => &node.base,
-        PenNode::Polygon(node) => &node.base,
-        PenNode::Path(node) => &node.base,
-        PenNode::Text(node) => &node.base,
-        PenNode::TextInput(node) => &node.base,
-        PenNode::Image(node) => &node.base,
-        PenNode::IconFont(node) => &node.base,
-        PenNode::TextArea(node) => &node.base,
-        PenNode::Select(node) => &node.base,
-        PenNode::Switch(node) => &node.base,
-        PenNode::Checkbox(node) => &node.base,
-        PenNode::Slider(node) => &node.base,
-        PenNode::RadioGroup(node) => &node.base,
-        PenNode::NumberInput(node) => &node.base,
-        PenNode::Progress(node) => &node.base,
-        PenNode::Tabs(node) => &node.base,
-        PenNode::Ref(node) => &node.base,
-    };
+    let base = node_base(node);
     base.x.is_some() || base.y.is_some()
 }
 

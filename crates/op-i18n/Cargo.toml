@@ -7,3 +7,8 @@ license.workspace = true
 description = "OpenPencil i18n — Locale enum + 15-locale string tables"
 
 [dependencies]
+
+[dev-dependencies]
+# Test-only: the HTML-import warning key guard reads the importer's code list
+# directly, so a new `ImportWarning` variant cannot ship without its copy.
+op-html = { path = "../op-html" }

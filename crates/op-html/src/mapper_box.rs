@@ -1,3 +1,4 @@
+use crate::import_warning::ImportWarning;
 use jian_ops_schema::node::container::Padding;
 use jian_ops_schema::sizing::{SizeLimits, SizingBehavior};
 
@@ -5,6 +6,38 @@ use crate::css::cascade::ComputedStyle;
 use crate::length::{parse_length, LengthCtx};
 
 use crate::mapper::MapCtx;
+
+/// Every CSS `overflow` value other than `visible` paints clipped: `auto` and
+/// `scroll` establish a scroll container whose overflow is hidden on a static
+/// canvas exactly as `hidden` is.
+///
+/// The schema has one node-level flag rather than a per-axis pair, so a
+/// non-visible value on EITHER axis clips both. That over-clips the classic
+/// `overflow-x: visible; overflow-y: auto` pair — which CSS itself already
+/// blockifies to `auto auto` — and is the closest representable behaviour.
+pub(super) fn clips_content(style: &ComputedStyle, context: &mut MapCtx<'_>) -> bool {
+    let mut scrollable = false;
+    let clips = ["overflow-x", "overflow-y", "overflow"]
+        .into_iter()
+        .filter_map(|name| style.get(name))
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| {
+            matches!(
+                value.as_str(),
+                "hidden" | "clip" | "auto" | "scroll" | "overlay"
+            )
+        })
+        .inspect(|value| scrollable |= matches!(value.as_str(), "auto" | "scroll" | "overlay"))
+        .count()
+        > 0;
+    // `hidden` / `clip` really do hide the overflow, so clipping them is exact.
+    // A scroll container's content is reachable in a browser and is not on a
+    // static canvas, which is a content loss worth reporting.
+    if scrollable {
+        context.warn_once(ImportWarning::OverflowScrollClipped);
+    }
+    clips
+}
 
 pub(super) fn map_padding(
     style: &ComputedStyle,
@@ -22,13 +55,11 @@ pub(super) fn map_padding(
     let margins = margin_names.map(|name| resolve(style, name, context));
     let padding_values = padding_names.map(|name| resolve(style, name, context));
     if margins.iter().flatten().any(|value| *value < 0.0) {
-        context.warn_once("negative CSS margins are not representable and were ignored");
+        context.warn_once(ImportWarning::NegativeMarginsIgnored);
     }
     let positive_margin = margins.iter().flatten().any(|value| *value > 0.0);
     if has_visual_box && positive_margin {
-        context.warn_once(
-            "CSS margins on visual boxes cannot be represented without changing the box and were ignored",
-        );
+        context.warn_once(ImportWarning::MarginsOnVisualBoxIgnored);
     }
     let values = std::array::from_fn(|index| {
         padding_values[index].unwrap_or(0.0)
@@ -86,10 +117,9 @@ fn expand_number(sizing: &mut Option<SizingBehavior>, extra: f64, context: &mut 
     }
     match sizing {
         Some(SizingBehavior::Number(value)) => *value += extra,
-        Some(SizingBehavior::Keyword(_)) | Some(SizingBehavior::Expression(_)) => context
-            .warn_once(
-                "content-box percentage sizing cannot include padding exactly and was approximated",
-            ),
+        Some(SizingBehavior::Keyword(_)) | Some(SizingBehavior::Expression(_)) => {
+            context.warn_once(ImportWarning::ContentBoxPercentageApproximated)
+        }
         None => {}
     }
 }
@@ -137,7 +167,7 @@ fn resolve_value(value: &str, style: &ComputedStyle, context: &MapCtx<'_>) -> Op
             font_size: style.font_size,
             root_font_size: context.opts.base_font_size,
             viewport_w: context.opts.viewport_width,
-            viewport_h: context.opts.viewport_width * 0.625,
+            viewport_h: context.opts.viewport_height(),
         },
     )?;
     let value = length.resolve(context.containing_width);
@@ -162,6 +192,7 @@ mod tests {
             opts: &options,
             rules: &[],
             warnings: Vec::new(),
+            warned: Default::default(),
             next_id: 0,
             node_count: 0,
             containing_width: 600.0,
@@ -169,10 +200,12 @@ mod tests {
             containing_width_is_definite: true,
             positioned_width: 600.0,
             positioned_height: 400.0,
+            auto_margin_handled_by_parent: false,
+            pending_base_outcome: Default::default(),
         };
         let border = border_widths(&style, &context);
         let padding = map_padding(&style, &mut context, border, visual || border != [0.0; 4]);
-        (padding, context.warnings)
+        (padding, crate::render_warnings(&context.warnings))
     }
 
     #[test]

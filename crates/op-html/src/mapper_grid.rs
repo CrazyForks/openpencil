@@ -1,3 +1,4 @@
+use crate::import_warning::ImportWarning;
 use jian_ops_schema::node::base::{NumberOrExpression, PenNodeBase};
 use jian_ops_schema::node::container::{AlignItems, ContainerProps, LayoutMode};
 use jian_ops_schema::node::{FrameNode, PenNode};
@@ -6,6 +7,8 @@ use jian_ops_schema::sizing::{SizingBehavior, SizingKeyword};
 use crate::css::cascade::ComputedStyle;
 use crate::length::{parse_length, LengthCtx};
 
+use super::grid_place as place;
+use super::node_access::{node_base, set_node_width};
 use super::MapCtx;
 
 const DEFAULT_AUTO_TRACK_MIN: f64 = 240.0;
@@ -24,8 +27,11 @@ pub(super) fn grid_row_gap(style: &ComputedStyle, context: &MapCtx<'_>) -> Optio
 pub(super) fn wrap_grid_rows(
     context: &mut MapCtx<'_>,
     style: &ComputedStyle,
-    children: Vec<PenNode>,
+    mut children: Vec<PenNode>,
 ) -> Vec<PenNode> {
+    // Placement carriers are stripped unconditionally: every early return
+    // below must still hand back nodes free of the private hint.
+    let placements = place::take_placements(&mut children);
     if children.is_empty() || !is_grid(style) {
         return children;
     }
@@ -34,6 +40,7 @@ pub(super) fn wrap_grid_rows(
     };
     let mut front = Vec::new();
     let mut flow = Vec::new();
+    let mut flow_placements = Vec::new();
     let mut back = Vec::new();
     for (index, node) in children.into_iter().enumerate() {
         if is_grid_overlay(&node) {
@@ -43,6 +50,7 @@ pub(super) fn wrap_grid_rows(
                 back.push(node);
             }
         } else {
+            flow_placements.push(placements[index]);
             flow.push(node);
         }
     }
@@ -57,10 +65,16 @@ pub(super) fn wrap_grid_rows(
         return front;
     }
 
-    let row_count = flow.len().div_ceil(columns);
+    let (packed, notes) = place::pack_rows(&flow_placements, columns);
+    if notes.skipped_cells {
+        context.warn_once(ImportWarning::GridEmptyCellsPacked);
+    }
+    if notes.reflowed_start {
+        context.warn_once(ImportWarning::GridSpanReflowed);
+    }
     // The current grid element reserves its slot before synthetic rows.
-    if context.node_count.saturating_add(row_count) > crate::MAX_OUTPUT_NODES {
-        context.warn_once("CSS grid row wrappers omitted because the node limit was reached");
+    if context.node_count.saturating_add(packed.len()) > crate::MAX_OUTPUT_NODES {
+        context.warn_once(ImportWarning::GridRowsNodeLimit);
         front.extend(flow);
         front.extend(back);
         return front;
@@ -69,20 +83,30 @@ pub(super) fn wrap_grid_rows(
     let gap = gap_value(style, context, "column-gap").unwrap_or(0.0);
     let column_gap = (gap > 0.0).then_some(NumberOrExpression::Number(gap));
     let track_widths = resolved_track_widths(style, context, columns, gap);
+    if track_widths.is_none()
+        && packed
+            .iter()
+            .flatten()
+            .any(|cell| cell.span > 1 || cell.start > 0)
+    {
+        context.warn_once(ImportWarning::GridTrackWidthsUnresolved);
+    }
     let align_items = style
         .get("align-items")
         .and_then(AlignItems::from_css)
         .or(Some(AlignItems::Stretch));
     let mut source = flow.into_iter();
-    let mut rows = Vec::with_capacity(row_count);
-    loop {
-        let mut row_children: Vec<_> = source.by_ref().take(columns).collect();
+    let mut rows = Vec::with_capacity(packed.len());
+    for cells in &packed {
+        let mut row_children: Vec<_> = source.by_ref().take(cells.len()).collect();
         if row_children.is_empty() {
             break;
         }
         if let Some(widths) = &track_widths {
-            for (child, width) in row_children.iter_mut().zip(widths) {
-                set_node_width(child, *width);
+            for (child, cell) in row_children.iter_mut().zip(cells) {
+                if let Some(width) = place::cell_width(widths, *cell, gap) {
+                    set_node_width(child, width);
+                }
             }
         }
         let row = PenNode::Frame(FrameNode {
@@ -124,39 +148,6 @@ pub(super) fn wrap_grid_rows(
 fn is_grid_overlay(node: &PenNode) -> bool {
     let base = node_base(node);
     base.x.is_some() || base.y.is_some()
-}
-
-macro_rules! base_match {
-    ($node:expr; $($variant:ident),+ $(,)?) => {
-        match $node { $(PenNode::$variant(node) => &node.base,)+ }
-    };
-}
-
-fn node_base(node: &PenNode) -> &PenNodeBase {
-    base_match!(node; Frame, Group, Rectangle, Ellipse, Line, Polygon, Path, Text,
-        TextInput, Image, IconFont, TextArea, Select, Switch, Checkbox, Slider,
-        RadioGroup, NumberInput, Progress, Tabs, Ref)
-}
-
-macro_rules! direct_width_slot {
-    ($node:expr; $($variant:ident),+ $(,)?) => {
-        match $node { $(PenNode::$variant(node) => Some(&mut node.width),)+
-            _ => None }
-    };
-}
-
-fn set_node_width(node: &mut PenNode, width: f64) {
-    let slot = match node {
-        PenNode::Frame(node) => Some(&mut node.container.width),
-        PenNode::Group(node) => Some(&mut node.container.width),
-        PenNode::Rectangle(node) => Some(&mut node.container.width),
-        node => direct_width_slot!(node; Ellipse, Polygon, Path, Text, TextInput,
-            Image, IconFont, TextArea, Select, Switch, Checkbox, Slider,
-            RadioGroup, NumberInput, Progress, Tabs),
-    };
-    if let Some(slot) = slot {
-        *slot = Some(SizingBehavior::Number(width));
-    }
 }
 
 fn is_grid(style: &ComputedStyle) -> bool {
@@ -347,7 +338,7 @@ fn resolved_length(
             font_size,
             root_font_size: context.opts.base_font_size,
             viewport_w: context.opts.viewport_width,
-            viewport_h: context.opts.viewport_width * 0.625,
+            viewport_h: context.opts.viewport_height(),
         },
     )?;
     let value = length.resolve(reference);
@@ -639,13 +630,16 @@ mod tests {
             opts: options,
             rules: &[],
             warnings: Vec::new(),
+            warned: Default::default(),
             next_id: 100,
             node_count: 0,
             containing_width: options.viewport_width,
-            containing_height: options.viewport_width * 0.625,
+            containing_height: options.viewport_height(),
             containing_width_is_definite: true,
             positioned_width: options.viewport_width,
-            positioned_height: options.viewport_width * 0.625,
+            positioned_height: options.viewport_height(),
+            auto_margin_handled_by_parent: false,
+            pending_base_outcome: Default::default(),
         }
     }
 

@@ -298,16 +298,18 @@ fn import_until_resolved(session: SessionRef) {
     };
     apply_entry_name_fallback(&mut imported, &entry_path);
     if html_entry_count > 1 {
-        imported.warnings.push(format!(
-            "multiple HTML entries found ({html_entry_count}); selected {entry_path}"
-        ));
+        imported.push_warning(op_html::ImportWarning::MultipleHtmlEntries {
+            count: html_entry_count,
+            entry: entry_path.clone(),
+        });
     }
     finish(
         &session,
-        Ok(IngestedDoc {
-            state: op_editor_core::EditorState::from_document(imported.document),
-            warnings: imported.warnings,
-        }),
+        Ok(IngestedDoc::from_html(
+            op_editor_core::EditorState::from_document(imported.document),
+            imported.warnings,
+            &imported.diagnostics,
+        )),
     );
 }
 

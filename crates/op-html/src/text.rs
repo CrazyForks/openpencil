@@ -1,3 +1,4 @@
+use crate::import_warning::ImportWarning;
 use jian_ops_schema::node::base::PenNodeBase;
 use jian_ops_schema::node::text::{
     FontStyleKind as TextFontStyle, FontWeight, TextAlign, TextContent, TextNode,
@@ -142,7 +143,7 @@ fn build_text_node_in_path(
     path: &[&DomElement],
 ) -> Option<PenNode> {
     if context.node_count >= crate::MAX_OUTPUT_NODES {
-        context.warn_once("node limit reached while mapping HTML");
+        context.warn_once(ImportWarning::NodeLimitMapping);
         return None;
     }
     let base_style = segment_style(block_style, nearest_href(path));
@@ -183,6 +184,7 @@ fn build_text_node_in_path(
         )
     };
     let text_box = layout::map_text_box(block_style, path, context);
+    let effects = crate::mapper::map_text_shadow(block_style, context);
     let mut text = TextNode {
         base: PenNodeBase {
             id: context.generate_id(),
@@ -211,7 +213,7 @@ fn build_text_node_in_path(
             .get("color")
             .and_then(parse_css_color)
             .map(|color| vec![solid_fill(color)]),
-        effects: None,
+        effects,
         state: None,
         bindings: None,
         events: None,
@@ -231,7 +233,7 @@ fn build_text_node_in_path(
 
 fn collect_segments(
     node: &DomNode,
-    context: &MapCtx<'_>,
+    context: &mut MapCtx<'_>,
     path: &[&DomElement],
     parent_style: &ComputedStyle,
     inherited: &SegStyle,
@@ -254,11 +256,12 @@ fn collect_segments(
                 Some(parent_style),
                 context.opts.base_font_size,
                 context.opts.viewport_width,
-                context.opts.viewport_width * 0.625,
+                context.opts.viewport_height(),
             );
             if computed.get("display") == Some("none") {
                 return;
             }
+            crate::mapper::warn_segment_text_shadow(context, parent_style, &computed);
             let href = if element.tag == "a" {
                 element.attr("href").map(str::to_string)
             } else {
@@ -520,7 +523,7 @@ fn text_length_context(style: &ComputedStyle, context: &MapCtx<'_>) -> LengthCtx
         font_size: style.font_size,
         root_font_size: context.opts.base_font_size,
         viewport_w: context.opts.viewport_width,
-        viewport_h: context.opts.viewport_width * 0.625,
+        viewport_h: context.opts.viewport_height(),
     }
 }
 
@@ -564,13 +567,16 @@ mod tests {
             opts: &options,
             rules: &rules,
             warnings: Vec::new(),
+            warned: Default::default(),
             next_id: 0,
             node_count: 0,
             containing_width: options.viewport_width,
-            containing_height: options.viewport_width * 0.625,
+            containing_height: options.viewport_height(),
             containing_width_is_definite: true,
             positioned_width: options.viewport_width,
-            positioned_height: options.viewport_width * 0.625,
+            positioned_height: options.viewport_height(),
+            auto_margin_handled_by_parent: false,
+            pending_base_outcome: Default::default(),
         };
         let crate::dom::DomNode::Element(root) = &dom.body[0] else {
             panic!()

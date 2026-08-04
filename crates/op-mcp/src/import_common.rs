@@ -23,6 +23,31 @@ pub struct ImportPlacement {
     pub page_id: Option<String>,
 }
 
+/// Parse the optional `viewportHeight` import arg (CSS pixels). Absent or
+/// blank keeps the importer's aspect-derived default.
+pub fn parse_viewport_height(
+    args: &BTreeMap<String, String>,
+) -> Result<Option<f64>, (ToolErrorCode, String)> {
+    let Some(raw) = args
+        .get("viewportHeight")
+        .or_else(|| args.get("viewport_height"))
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    raw.parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .map(Some)
+        .ok_or_else(|| {
+            (
+                ToolErrorCode::InvalidArgument,
+                "viewportHeight: expected a positive number of CSS pixels".to_string(),
+            )
+        })
+}
+
 /// Parse the shared placement args. `Err` carries the typed tool error
 /// to return to the caller.
 pub fn parse_import_placement(

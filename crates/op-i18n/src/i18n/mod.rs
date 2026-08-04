@@ -79,6 +79,17 @@ mod zh_tw_panel;
 /// too is returned unchanged. `'static` keeps widget builders from cloning a
 /// `String` per frame.
 pub fn translate(locale: Locale, key: &'static str) -> &'static str {
+    translate_dynamic(locale, key).unwrap_or(key)
+}
+
+/// Translate a key that is only known at run time.
+///
+/// `translate` cannot serve keys built at run time because its "unknown key
+/// falls back to itself" contract needs a `'static` input. Callers that carry
+/// a `String` key — the HTML-import diagnostics panel, whose keys come from
+/// the importer's warning codes — use this instead and supply their own
+/// fallback text when it returns `None`.
+pub fn translate_dynamic(locale: Locale, key: &str) -> Option<&'static str> {
     let lookup = match locale {
         Locale::EnUs => en::lookup(key),
         Locale::ZhCn => zh_cn::lookup(key),
@@ -96,7 +107,7 @@ pub fn translate(locale: Locale, key: &'static str) -> &'static str {
         Locale::Vi => vi::lookup(key),
         Locale::Id => id::lookup(key),
     };
-    lookup.or_else(|| en::lookup(key)).unwrap_or(key)
+    lookup.or_else(|| en::lookup(key))
 }
 
 /// CLDR-style cardinal plural category.
@@ -205,6 +216,9 @@ mod catalog_integrity_tests;
 mod figma_property_panel_key_tests;
 #[cfg(test)]
 mod html_import_key_tests;
+
+#[cfg(test)]
+mod html_import_warning_key_tests;
 #[cfg(test)]
 mod missing_fonts_key_tests;
 #[cfg(test)]

@@ -24,6 +24,16 @@ pub const UA_STYLESHEET: &str = concat!(
     "s,del,strike{text-decoration:line-through}a{color:#0066cc;text-decoration:underline}",
     "code,pre{font-family:monospace}hr{margin:8px 0}",
     "button{font-family:Arial;font-size:13.3333px;font-style:normal;font-weight:400;font-stretch:100%;line-height:normal;text-align:center}",
+    // Table box tree. `thead`/`tbody`/`tfoot` use `display:contents` so their
+    // rows flatten into the table in document order (html5ever also inserts an
+    // implicit `tbody`), and `col`/`colgroup` are read as attributes by the
+    // table post-pass rather than mapped to nodes.
+    "table{display:table;border-collapse:separate;border-spacing:2px}",
+    "thead,tbody,tfoot{display:contents}tr{display:table-row}td,th{display:table-cell}",
+    "th{font-weight:700;text-align:center}caption{display:block;text-align:center}",
+    "colgroup,col{display:none}",
+    // Replaced-element metadata children never paint on their own.
+    "source,track,param{display:none}",
 );
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]

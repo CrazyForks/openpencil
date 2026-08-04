@@ -111,7 +111,14 @@ use winit::window::Window;
 const INITIAL_VIEWPORT_W: f32 = 1440.0;
 const INITIAL_VIEWPORT_H: f32 = 900.0;
 
-type HtmlPasteResult = (Vec<jian_ops_schema::node::PenNode>, Vec<String>);
+/// Worker payload of a clipboard HTML decode: the mapped nodes plus the
+/// importer's TYPED degradations. The typed form (not the rendered strings)
+/// is what the post-import diagnostics overlay needs — it localizes each row
+/// from the warning's code + structured args.
+type HtmlPasteResult = (
+    Vec<jian_ops_schema::node::PenNode>,
+    Vec<op_html::ImportWarning>,
+);
 type PendingHtmlPaste = (u64, std::sync::mpsc::Receiver<HtmlPasteResult>);
 
 #[derive(Clone, Copy, Debug)]

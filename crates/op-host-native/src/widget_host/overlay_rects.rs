@@ -241,10 +241,33 @@ impl WidgetHostNative {
         overlay_geometry::icon_picker_panel_rect(&self.editor_state, viewport_w, viewport_h)
     }
 
+    /// The post-import HTML diagnostics card — `None` while it is
+    /// dismissed or the last import degraded nothing. The whole card
+    /// counts, not just the scrollable rows viewport: the header is
+    /// opaque chrome and a wheel / press over it must not reach the
+    /// canvas underneath.
+    pub(in crate::widget_host) fn html_import_diagnostics_rect(
+        &self,
+        viewport_w: f32,
+        viewport_h: f32,
+    ) -> Option<Rect> {
+        op_editor_ui::widgets::html_import_diagnostics_flow::panel_rect(
+            &self.editor_state,
+            viewport_w,
+            viewport_h,
+        )
+    }
+
     /// Whether `point` is inside ANY top-most floating panel
     /// (Design-MD or Component-Browser). Used by the input gates so
     /// wheel / pan / right-press / hover side-effects do not leak to
     /// the canvas / lower layers beneath the panel.
+    ///
+    /// The HTML-import diagnostics card joins them: it is non-modal
+    /// (an outside press still reaches the canvas) but it is opaque, so
+    /// input landing ON it belongs to it. `over_floating_overlay` ORs
+    /// this in, which is also what keeps `text_edit_press_offset` from
+    /// placing a caret through the card.
     pub(in crate::widget_host) fn over_topmost_panel(
         &self,
         x: f32,
@@ -253,8 +276,11 @@ impl WidgetHostNative {
         viewport_h: f32,
     ) -> bool {
         let p = Point2D::new(x, y);
-        self.design_md_panel_rect(viewport_w, viewport_h)
+        self.html_import_diagnostics_rect(viewport_w, viewport_h)
             .is_some_and(|r| (r).contains(p))
+            || self
+                .design_md_panel_rect(viewport_w, viewport_h)
+                .is_some_and(|r| (r).contains(p))
             || self
                 .variables_panel_rect(viewport_w, viewport_h)
                 .is_some_and(|r| (r).contains(p))

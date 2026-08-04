@@ -466,6 +466,10 @@ fn command_invalidates_layout(cmd: &EditorCommand) -> bool {
 mod admission;
 mod connection;
 mod doc_sync;
+/// `pub(crate)` for two consts only: the shared HTTP parser
+/// (`mcp_serve::read_http_request`) has to recognise this route's path to
+/// apply its smaller body cap before reading a body.
+pub(crate) mod snapshot_ingest;
 mod ui_requests;
 
 use admission::*;

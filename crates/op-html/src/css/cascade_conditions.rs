@@ -11,7 +11,7 @@ const MAX_CONDITION_DEPTH: usize = 64;
 /// import's warning list, so the `Display` text is user-visible and must
 /// stay byte-identical to the strings this replaced.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum MediaQueryError {
+pub enum MediaQueryError {
     /// `@media` with no condition parts at all.
     EmptyQuery,
     /// A media TYPE (`all`/`screen`/`print`/…) that is not recognised.
@@ -61,13 +61,13 @@ impl std::fmt::Display for MediaQueryError {
 
 impl std::error::Error for MediaQueryError {}
 
-pub(super) fn media_list(input: &str, viewport: (f64, f64)) -> (bool, Vec<String>) {
+pub(super) fn media_list(input: &str, viewport: (f64, f64)) -> (bool, Vec<MediaQueryError>) {
     let mut warnings = Vec::new();
     let applies = split_top_level(input, ",").into_iter().any(|query| {
         match media_query(query.trim(), viewport) {
             Ok(value) => value,
             Err(reason) => {
-                warnings.push(reason.to_string());
+                warnings.push(reason);
                 false
             }
         }
@@ -77,6 +77,17 @@ pub(super) fn media_list(input: &str, viewport: (f64, f64)) -> (bool, Vec<String
 
 fn media_query(input: &str, viewport: (f64, f64)) -> Result<bool, MediaQueryError> {
     let mut query = input.trim();
+    // A `<media-condition>` may be or-joined. CSS forbids mixing `and` and
+    // `or` at the same level without parentheses, so splitting on the top-level
+    // `or` first and running each branch as its own query is unambiguous.
+    let alternatives = split_top_level(query, "or");
+    if alternatives.len() > 1 {
+        let mut applies = false;
+        for alternative in alternatives {
+            applies |= media_query(alternative, viewport)?;
+        }
+        return Ok(applies);
+    }
     let mut negate = false;
     if let Some(rest) = strip_keyword(query, "not") {
         negate = true;
@@ -109,6 +120,11 @@ fn media_query(input: &str, viewport: (f64, f64)) -> Result<bool, MediaQueryErro
 fn media_feature(input: &str, viewport: (f64, f64)) -> Result<bool, MediaQueryError> {
     let inner = strip_outer_parens(input)
         .ok_or_else(|| MediaQueryError::UnsupportedCondition(input.to_string()))?;
+    // A parenthesised group can be a whole nested condition rather than a
+    // feature: `((max-width:20em) or (orientation:portrait))`.
+    if split_top_level(inner, "or").len() > 1 || split_top_level(inner, "and").len() > 1 {
+        return media_query(inner, viewport);
+    }
     if let Some((name, value)) = split_once_top_level(inner, ':') {
         return media_colon_feature(name, value, viewport);
     }

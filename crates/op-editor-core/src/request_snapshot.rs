@@ -23,7 +23,7 @@
 //! | `ui`             | yes (~13)        | cloned          |
 //! | `selection`      | yes (~9)         | cloned          |
 //! | `history`        | yes — `get_history_depth` reads `past/future.len()` | cloned |
-//! | `editor_ui`      | yes — `document_save` reads `preserve_authored_geometry` | cloned, except collaboration session/profile state |
+//! | `editor_ui`      | yes — `document_save` reads `preserve_authored_geometry` | cloned, except collaboration session/profile state and the HTML-import diagnostics rows |
 //! | `viewport`       | yes — `get_viewport` | cloned      |
 //! | `ui_kits`        | yes — `batch_program` kit lookup | cloned |
 //! | `components`     | yes — `tools.rs` resolved_root | cloned |
@@ -39,6 +39,15 @@
 //! all of which grow with session length rather than with the document.
 //! Collaboration state is also detached: off-thread document consumers
 //! neither need nor may retain authenticated participant profiles.
+//!
+//! `editor_ui.html_import_diagnostics` follows the same rule from the
+//! opposite direction: it is purely overlay copy (up to `MAX_DIAGNOSTIC_ROWS`
+//! rows, each with a code, a locale key, args, and an English sentence), no
+//! `EditorCommand` or snapshot consumer reads it, and it is at its largest
+//! right after the import a worker is most likely to be asked about. It is
+//! taken out with the same take/clone/restore move as `collab`. The scalar
+//! `_total` / `_open` / `_expanded` flags stay: they are three words and
+//! keep the struct's defaults meaningful.
 //!
 //! No `EditorCommand` reads `chat` / `codegen` / `theme_presets`
 //! either, so re-applying a command against the narrowed copy behaves
@@ -59,9 +68,11 @@ pub fn narrowed_snapshot(state: &mut EditorState) -> EditorState {
     let codegen = std::mem::take(&mut state.codegen);
     let theme_presets = std::mem::take(&mut state.theme_presets);
     let collab = std::mem::take(&mut state.editor_ui.collab);
+    let diagnostics = std::mem::take(&mut state.editor_ui.html_import_diagnostics);
 
     let snapshot = state.clone();
 
+    state.editor_ui.html_import_diagnostics = diagnostics;
     state.editor_ui.collab = collab;
     state.chat = chat;
     state.codegen = codegen;
@@ -100,10 +111,20 @@ mod tests {
             )],
         );
 
+        state.editor_ui.html_import_diagnostics =
+            vec![crate::html_import_diagnostics::HtmlImportDiagnostic::new(
+                "layout.float_ignored",
+                "htmlImport.warn.layout.float_ignored",
+                Vec::new(),
+                "CSS float ignored during structured HTML import",
+            )];
+        state.editor_ui.html_import_diagnostics_total = 1;
+
         let snapshot = narrowed_snapshot(&mut state);
 
         // The live state is untouched by the detour.
         assert_eq!(state.chat.title, "long running turn");
+        assert_eq!(state.editor_ui.html_import_diagnostics.len(), 1);
         assert_eq!(state.theme_presets.len(), 1);
         assert_eq!(state.editor_ui.collab.participants().len(), 1);
         // The snapshot keeps everything a consumer reads...
@@ -114,5 +135,9 @@ mod tests {
         assert!(snapshot.theme_presets.is_empty());
         assert!(snapshot.editor_ui.collab.participants().is_empty());
         assert!(snapshot.editor_ui.collab.authenticated_session().is_none());
+        // Overlay-only rows are worker-side dead weight; the scalar total
+        // survives so the struct still describes what happened.
+        assert!(snapshot.editor_ui.html_import_diagnostics.is_empty());
+        assert_eq!(snapshot.editor_ui.html_import_diagnostics_total, 1);
     }
 }

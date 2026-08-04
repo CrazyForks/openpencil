@@ -509,6 +509,23 @@ pub struct EditorUiState {
     /// at the row's gate: presenting is the only reading of the export,
     /// so a document that is not a deck must not offer it.
     pub deck_html_export_supported: bool,
+    /// Rows of the post-import HTML diagnostics overlay, in the order the
+    /// importer reported them. Empty means the last import degraded nothing.
+    pub html_import_diagnostics: Vec<crate::html_import_diagnostics::HtmlImportDiagnostic>,
+    /// How many degradations that import reported, including any the
+    /// `MAX_DIAGNOSTIC_ROWS` cap dropped from `html_import_diagnostics`.
+    pub html_import_diagnostics_total: usize,
+    /// Whether the overlay is visible. Dismissing clears it; the rows stay so
+    /// a later surface can still list them without re-importing.
+    pub html_import_diagnostics_open: bool,
+    /// Whether the overlay shows its per-warning rows or only the summary.
+    pub html_import_diagnostics_expanded: bool,
+    /// Vertical scroll offset of the expanded rows. The header and actions
+    /// stay fixed while a long list scrolls.
+    pub html_import_diagnostics_scroll: jian_core::scroll::ScrollState,
+    /// Hovered overlay control — cursor-move updates it, paint tints from it.
+    pub html_import_diagnostics_hover:
+        Option<crate::html_import_diagnostics::HtmlImportDiagnosticsHover>,
     /// Whether a host already ran font enumeration (so an empty list
     /// is "machine has none" rather than "not loaded yet").
     pub system_fonts_loaded: bool,

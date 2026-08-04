@@ -190,4 +190,47 @@ fn middle_pan_press_is_blocked_by_every_topmost_floating_panel() {
         .component_browser_panel_rect(VIEWPORT_W, VIEWPORT_H)
         .expect("Component Browser rect");
     assert_panel_blocks_middle_pan(&mut components, rect, "Component Browser");
+
+    // The HTML-import diagnostics card is non-modal but opaque: a wheel or
+    // pan started on its header must not reach the canvas beneath it.
+    let mut diagnostics = WidgetHost::new();
+    diagnostics.show_html_import_diagnostics(vec![
+        op_editor_core::html_import_diagnostics::HtmlImportDiagnostic::new(
+            "layout.float_ignored",
+            "htmlImport.warn.layout.float_ignored",
+            Vec::new(),
+            "CSS float ignored during structured HTML import",
+        ),
+    ]);
+    let rect = diagnostics
+        .html_import_diagnostics_rect(VIEWPORT_W, VIEWPORT_H)
+        .expect("diagnostics card rect");
+    assert_panel_blocks_middle_pan(&mut diagnostics, rect, "HTML import diagnostics");
+}
+
+#[test]
+fn a_dismissed_diagnostics_card_stops_owning_its_rect() {
+    let mut host = WidgetHost::new();
+    host.show_html_import_diagnostics(vec![
+        op_editor_core::html_import_diagnostics::HtmlImportDiagnostic::new(
+            "layout.float_ignored",
+            "htmlImport.warn.layout.float_ignored",
+            Vec::new(),
+            "CSS float ignored during structured HTML import",
+        ),
+    ]);
+    let rect = host
+        .html_import_diagnostics_rect(VIEWPORT_W, VIEWPORT_H)
+        .expect("diagnostics card rect");
+    let point = Point2D::new(
+        rect.origin.x + rect.size.x / 2.0,
+        rect.origin.y + rect.size.y / 2.0,
+    );
+    assert!(host.over_topmost_panel(point.x, point.y, VIEWPORT_W, VIEWPORT_H));
+
+    op_editor_ui::widgets::html_import_diagnostics_flow::dismiss(&mut host.editor_state);
+    assert!(host
+        .html_import_diagnostics_rect(VIEWPORT_W, VIEWPORT_H)
+        .is_none());
+    assert!(!host.over_topmost_panel(point.x, point.y, VIEWPORT_W, VIEWPORT_H));
 }

@@ -3,6 +3,8 @@ use super::cascade_conditions::{media_list, supports_condition};
 use super::cascade_shared::{is_ident, matching, split_top_level, top_level_delimiter};
 use super::declarations::parse_declarations;
 use super::selectors::parse_selector_list;
+use crate::font_face::WebFont;
+use crate::import_warning::ImportWarning;
 use std::collections::{BTreeMap, BTreeSet};
 
 const MAX_AT_RULE_DEPTH: usize = 64;
@@ -16,6 +18,7 @@ pub struct StylesheetParser {
     layers: BTreeMap<String, CascadeLayer>,
     next_layers: BTreeMap<String, u32>,
     next_anonymous_layer: u32,
+    web_fonts: Vec<WebFont>,
 }
 
 impl StylesheetParser {
@@ -26,6 +29,7 @@ impl StylesheetParser {
             layers: BTreeMap::new(),
             next_layers: BTreeMap::new(),
             next_anonymous_layer: 0,
+            web_fonts: Vec::new(),
         }
     }
 
@@ -33,7 +37,14 @@ impl StylesheetParser {
         self.order
     }
 
-    pub fn parse(&mut self, css: &str) -> (Vec<StyleRule>, Vec<String>) {
+    /// `@font-face` families seen across every sheet this parser consumed.
+    /// The importer never downloads them; `font_face::warn_undownloaded`
+    /// reports the ones imported text actually asks for.
+    pub(crate) fn web_fonts(&self) -> &[WebFont] {
+        &self.web_fonts
+    }
+
+    pub fn parse(&mut self, css: &str) -> (Vec<StyleRule>, Vec<ImportWarning>) {
         self.parse_inner(css, None)
     }
 
@@ -42,7 +53,7 @@ impl StylesheetParser {
         css: &str,
         viewport_w: f64,
         viewport_h: f64,
-    ) -> (Vec<StyleRule>, Vec<String>) {
+    ) -> (Vec<StyleRule>, Vec<ImportWarning>) {
         self.parse_inner(css, Some((viewport_w, viewport_h)))
     }
 
@@ -50,7 +61,7 @@ impl StylesheetParser {
         &mut self,
         css: &str,
         viewport: Option<(f64, f64)>,
-    ) -> (Vec<StyleRule>, Vec<String>) {
+    ) -> (Vec<StyleRule>, Vec<ImportWarning>) {
         let cleaned = strip_comments(css);
         let mut parser = SheetParser {
             css: &cleaned,
@@ -97,7 +108,7 @@ impl StylesheetParser {
     }
 }
 
-pub fn parse_stylesheet(css: &str, first_order: usize) -> (Vec<StyleRule>, Vec<String>) {
+pub fn parse_stylesheet(css: &str, first_order: usize) -> (Vec<StyleRule>, Vec<ImportWarning>) {
     parse_stylesheet_with_origin(css, first_order, StyleOrigin::Author)
 }
 
@@ -105,7 +116,7 @@ pub fn parse_stylesheet_with_origin(
     css: &str,
     first_order: usize,
     origin: StyleOrigin,
-) -> (Vec<StyleRule>, Vec<String>) {
+) -> (Vec<StyleRule>, Vec<ImportWarning>) {
     StylesheetParser::new(origin, first_order).parse(css)
 }
 
@@ -114,7 +125,7 @@ pub fn parse_stylesheet_for_viewport(
     first_order: usize,
     viewport_w: f64,
     viewport_h: f64,
-) -> (Vec<StyleRule>, Vec<String>) {
+) -> (Vec<StyleRule>, Vec<ImportWarning>) {
     parse_stylesheet_for_viewport_with_origin(
         css,
         first_order,
@@ -130,7 +141,7 @@ pub fn parse_stylesheet_for_viewport_with_origin(
     viewport_w: f64,
     viewport_h: f64,
     origin: StyleOrigin,
-) -> (Vec<StyleRule>, Vec<String>) {
+) -> (Vec<StyleRule>, Vec<ImportWarning>) {
     StylesheetParser::new(origin, first_order).parse_for_viewport(css, viewport_w, viewport_h)
 }
 
@@ -139,7 +150,7 @@ struct SheetParser<'a, 'b> {
     context: &'b mut StylesheetParser,
     viewport: Option<(f64, f64)>,
     rules: Vec<StyleRule>,
-    warnings: Vec<String>,
+    warnings: Vec<ImportWarning>,
     warned: BTreeSet<String>,
 }
 
@@ -153,9 +164,9 @@ impl SheetParser<'_, '_> {
         active_layer: Option<CascadeLayer>,
     ) {
         if depth > MAX_AT_RULE_DEPTH {
-            self.warn(format!(
-                "nested at-rule depth limit ({MAX_AT_RULE_DEPTH}) reached; inner rules ignored"
-            ));
+            self.warn(ImportWarning::AtRuleDepthLimit {
+                max_depth: MAX_AT_RULE_DEPTH,
+            });
             return;
         }
         while at < end {
@@ -175,7 +186,7 @@ impl SheetParser<'_, '_> {
                 continue;
             }
             let Some(close) = matching(self.css, delimiter, b'{', b'}', end) else {
-                self.warn("unterminated CSS rule ignored".to_string());
+                self.warn(ImportWarning::UnterminatedRule);
                 return;
             };
             if prelude.starts_with('@') {
@@ -188,10 +199,16 @@ impl SheetParser<'_, '_> {
                     active_layer.clone(),
                 );
             } else if !prelude.is_empty() {
+                // `::marker` never reaches the selector parser (it rejects
+                // unknown pseudo-elements), so the drop is reported here where
+                // the raw prelude is still available.
+                if selects_marker_pseudo(&prelude) {
+                    self.warn(ImportWarning::MarkerRulesUnsupported);
+                }
                 let (declaration_text, contained_nesting) =
                     declarations_only(&self.css[delimiter + 1..close]);
                 if contained_nesting {
-                    self.warn("CSS nesting is not supported; nested style rules ignored".into());
+                    self.warn(ImportWarning::NestingUnsupported);
                 }
                 let declarations = parse_declarations(&declaration_text);
                 let selectors = parse_selector_list(&prelude);
@@ -223,12 +240,16 @@ impl SheetParser<'_, '_> {
                         self.context
                             .register_layer(qualify_layer(layer_scope, layer));
                     } else if !layer.is_empty() {
-                        self.warn(format!("invalid @layer name '{layer}' ignored"));
+                        self.warn(ImportWarning::InvalidLayerName {
+                            name: layer.to_string(),
+                        });
                     }
                 }
             }
             "charset" | "namespace" => {}
-            _ => self.warn(format!("unsupported @{name} statement ignored")),
+            _ => self.warn(ImportWarning::UnsupportedAtStatement {
+                name: name.to_string(),
+            }),
         }
     }
 
@@ -242,9 +263,9 @@ impl SheetParser<'_, '_> {
         active_layer: Option<CascadeLayer>,
     ) {
         if depth >= MAX_AT_RULE_DEPTH {
-            self.warn(format!(
-                "nested at-rule depth limit ({MAX_AT_RULE_DEPTH}) reached; inner rules ignored"
-            ));
+            self.warn(ImportWarning::AtRuleDepthLimit {
+                max_depth: MAX_AT_RULE_DEPTH,
+            });
             return;
         }
         let (name, condition) = at_name(prelude);
@@ -253,13 +274,13 @@ impl SheetParser<'_, '_> {
                 Some(viewport) => {
                     let (applies, warnings) = media_list(condition, viewport);
                     for warning in warnings {
-                        self.warn(warning);
+                        self.warn(ImportWarning::MediaQuery(warning));
                     }
                     if applies {
                         self.parse_range(start, end, depth + 1, layer_scope, active_layer);
                     }
                 }
-                None => self.warn("@media rules ignored because no viewport was provided".into()),
+                None => self.warn(ImportWarning::MediaWithoutViewport),
             },
             "supports" => {
                 if supports_condition(condition, 0).unwrap_or(false) {
@@ -274,20 +295,30 @@ impl SheetParser<'_, '_> {
                     let layer = self.context.register_layer(qualified.clone());
                     (qualified, layer)
                 } else {
-                    self.warn(format!("invalid @layer block name '{condition}' ignored"));
+                    self.warn(ImportWarning::InvalidLayerBlockName {
+                        name: condition.to_string(),
+                    });
                     return;
                 };
                 self.parse_range(start, end, depth + 1, Some(qualified), Some(layer));
             }
-            "font-face" | "property" | "keyframes" => {}
+            "font-face" => {
+                let declarations = parse_declarations(&self.css[start..end]);
+                if let Some(font) = crate::font_face::from_declarations(&declarations) {
+                    self.context.web_fonts.push(font);
+                }
+            }
+            "property" | "keyframes" => {}
             name if name.ends_with("keyframes") => {}
-            "container" => self.warn("unsupported @container block ignored".into()),
-            _ => self.warn(format!("unsupported @{name} block ignored")),
+            "container" => self.warn(ImportWarning::UnsupportedContainerBlock),
+            _ => self.warn(ImportWarning::UnsupportedAtBlock {
+                name: name.to_string(),
+            }),
         }
     }
 
-    fn warn(&mut self, warning: String) {
-        if self.warned.insert(warning.clone()) {
+    fn warn(&mut self, warning: ImportWarning) {
+        if self.warned.insert(warning.to_string()) {
             self.warnings.push(warning);
         }
     }
@@ -449,4 +480,47 @@ fn looks_like_custom_declaration(input: &str) -> bool {
     let name = input[..colon].trim();
     name.strip_prefix("--")
         .is_some_and(|rest| !rest.is_empty() && rest.chars().all(is_ident))
+}
+
+/// Whether a selector prelude really selects the `::marker` pseudo-element.
+///
+/// A raw substring test fires on any prelude that merely mentions the word —
+/// `[data-role="li::marker"]`, `a[href*="::marker"]` — so the match is anchored
+/// on a colon that starts a pseudo-element token, skips quoted strings, and
+/// requires the name to end at an identifier boundary.
+fn selects_marker_pseudo(prelude: &str) -> bool {
+    let lower = prelude.to_ascii_lowercase();
+    let bytes = lower.as_bytes();
+    let (mut quote, mut escaped) = (None, false);
+    for at in 0..bytes.len() {
+        let byte = bytes[at];
+        if let Some(active) = quote {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == active {
+                quote = None;
+            }
+            continue;
+        }
+        match byte {
+            b'\'' | b'"' => quote = Some(byte),
+            b':' => {
+                let rest = &lower[at..];
+                for prefix in ["::marker", ":marker"] {
+                    if rest.starts_with(prefix)
+                        && lower[at + prefix.len()..]
+                            .chars()
+                            .next()
+                            .is_none_or(|character| !is_ident(character))
+                    {
+                        return true;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }

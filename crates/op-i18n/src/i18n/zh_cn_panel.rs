@@ -123,6 +123,291 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "dialog.slideshowHtmlTitle" => "导出放映",
         "dialog.slideshowHtmlSummary" => "已导出 {{count}} 张幻灯片到：",
         "dialog.slideshowHtmlEmpty" => "当前演示文稿没有可导出的幻灯片。",
+        // HTML import diagnostics — one entry per `ImportWarning::code`.
+        "htmlImport.warn.content.empty_input" => "可导入的 HTML 内容不可用。",
+        "htmlImport.warn.content.empty_body" => "HTML 正文中可导入的内容不可用。",
+        "htmlImport.warn.content.dom_depth_truncated" => {
+            "嵌套层级超过 {{max_depth}} 层的 HTML 已丢弃。"
+        }
+        "htmlImport.warn.content.node_limit_truncated" => "已达节点数上限，页面剩余内容已略去。",
+        "htmlImport.warn.content.node_limit_mapping" => "已达节点数上限，部分 HTML 树已略去。",
+        "htmlImport.warn.content.node_limit_inline_row" => "已达节点数上限，某个内联排版行已略去。",
+        "htmlImport.warn.content.node_limit_pseudo" => "已达节点数上限，生成的伪元素已略去。",
+        "htmlImport.warn.css.at_rule_depth_limit" => {
+            "嵌套超过 {{max_depth}} 层 @ 规则的 CSS 规则已忽略。"
+        }
+        "htmlImport.warn.css.unterminated_rule" => "未闭合的 CSS 规则已忽略。",
+        "htmlImport.warn.css.marker_rules_unsupported" => "CSS ::marker 规则未导入。",
+        "htmlImport.warn.css.nesting_unsupported" => "嵌套的 CSS 样式规则已忽略。",
+        "htmlImport.warn.css.invalid_layer_name" => "无效的 @layer 名称 '{{name}}' 已忽略。",
+        "htmlImport.warn.css.unsupported_statement" => "不支持的 @{{name}} 语句已忽略。",
+        "htmlImport.warn.css.media_without_viewport" => "没有视口的 @media 规则已忽略。",
+        "htmlImport.warn.css.invalid_layer_block_name" => {
+            "无效的 @layer 块名称 '{{name}}' 已忽略。"
+        }
+        "htmlImport.warn.css.unsupported_container_block" => "@container 块已忽略。",
+        "htmlImport.warn.css.unsupported_block" => "不支持的 @{{name}} 块已忽略。",
+        "htmlImport.warn.font.web_font_not_downloaded" => {
+            "@font-face 网络字体 '{{family}}' 不可用。"
+        }
+        "htmlImport.warn.layout.percentage_absolute_offset_inferred" => {
+            "绝对定位元素的百分比偏移已近似处理。"
+        }
+        "htmlImport.warn.layout.percentage_relative_offset_inferred" => {
+            "百分比的 position:relative 偏移已近似处理。"
+        }
+        "htmlImport.warn.layout.aspect_ratio_no_definite_axis" => {
+            "没有确定轴向的 CSS aspect-ratio 已忽略。"
+        }
+        "htmlImport.warn.layout.aspect_ratio_indefinite_container" => {
+            "位于不确定包含块内的 CSS aspect-ratio 已忽略。"
+        }
+        "htmlImport.warn.layout.position_sticky_ignored" => "CSS position:sticky 已忽略。",
+        "htmlImport.warn.layout.grid_tracks_approximated" => "不支持的 CSS 网格轨道已近似处理。",
+        "htmlImport.warn.layout.float_ignored" => "CSS float 已忽略。",
+        "htmlImport.warn.layout.mix_blend_mode_no_node_equivalent" => {
+            "节点级的 CSS mix-blend-mode 已近似处理。"
+        }
+        "htmlImport.warn.layout.overflow_scroll_clipped" => {
+            "CSS overflow: auto / scroll 已近似处理。"
+        }
+        "htmlImport.warn.layout.negative_margins_ignored" => "负的 CSS 外边距已忽略。",
+        "htmlImport.warn.layout.margins_on_visual_box_ignored" => "视觉盒上的 CSS 外边距已忽略。",
+        "htmlImport.warn.layout.content_box_percentage_approximated" => {
+            "content-box 的百分比尺寸已近似处理。"
+        }
+        "htmlImport.warn.layout.grid_empty_cells_packed" => {
+            "显式起始线留下的空 CSS 网格单元已近似处理。"
+        }
+        "htmlImport.warn.layout.grid_span_reflowed" => {
+            "跨度与起始线不匹配的 CSS 网格项已近似处理。"
+        }
+        "htmlImport.warn.layout.grid_rows_node_limit" => {
+            "已达节点数上限，CSS 网格行的包装容器已略去。"
+        }
+        "htmlImport.warn.layout.grid_track_widths_unresolved" => {
+            "使用 auto-fit / auto-fill 的 CSS 网格轨道宽度已近似处理。"
+        }
+        "htmlImport.warn.layout.grid_template_areas_ignored" => {
+            "CSS grid-template-areas 定位未导入。"
+        }
+        "htmlImport.warn.layout.grid_row_placement_ignored" => "CSS grid-row 定位未导入。",
+        "htmlImport.warn.layout.grid_column_unsupported" => {
+            "CSS grid-column `{{value}}` 已近似处理。"
+        }
+        "htmlImport.warn.layout.block_auto_margins_ignored" => "块轴方向的 CSS 自动外边距未导入。",
+        "htmlImport.warn.layout.auto_margin_node_limit" => {
+            "已达节点数上限，CSS 自动外边距对齐已略去。"
+        }
+        "htmlImport.warn.layout.flow_offset_no_definite_size" => {
+            "尺寸不确定的元素上的 CSS 流内偏移已丢弃。"
+        }
+        "htmlImport.warn.layout.flow_offset_node_limit" => {
+            "已达节点数上限，某个 CSS 流内偏移已略去。"
+        }
+        "htmlImport.warn.layout.flow_offset_approximated" => {
+            "CSS 流内偏移（position:relative 内缩、transform 平移）已近似处理。"
+        }
+        "htmlImport.warn.layout.flow_offset_no_wrapper" => {
+            "某个盒无法承载偏移包装容器，其 CSS 流内偏移已丢弃。"
+        }
+        "htmlImport.warn.layout.flex_wrap_column_not_emulated" => {
+            "列向弹性容器上的 flex-wrap 未导入。"
+        }
+        "htmlImport.warn.layout.flex_wrap_reverse_plain" => "flex-wrap:wrap-reverse 已近似处理。",
+        "htmlImport.warn.layout.flex_wrap_indefinite_width" => {
+            "宽度不确定的容器上的 flex-wrap 已忽略。"
+        }
+        "htmlImport.warn.layout.flex_align_content_ignored" => {
+            "换行弹性容器上的 CSS align-content 未导入。"
+        }
+        "htmlImport.warn.layout.flex_wrap_indeterminate_children" => {
+            "子项主轴尺寸不确定时的 flex-wrap 已忽略。"
+        }
+        "htmlImport.warn.layout.flex_wrap_node_limit" => {
+            "已达节点数上限，flex-wrap 的换行行已略去。"
+        }
+        "htmlImport.warn.transform.unsupported_syntax" => "不支持的 CSS transform 语法已忽略。",
+        "htmlImport.warn.transform.unsupported_function" => {
+            "不支持的 CSS transform 函数（3D、matrix3d）已忽略。"
+        }
+        "htmlImport.warn.transform.percentage_translation_dropped" => {
+            "不确定轴向上的百分比 CSS transform 平移已丢弃。"
+        }
+        "htmlImport.warn.transform.non_finite_matrix" => "产生非有限矩阵的 CSS transform 已忽略。",
+        "htmlImport.warn.transform.skew_dropped" => "CSS transform 斜切已丢弃。",
+        "htmlImport.warn.transform.degenerate_scale" => {
+            "缩放为零或非有限的 CSS transform 已近似处理。"
+        }
+        "htmlImport.warn.transform.mirroring_absolute" => "CSS transform 镜像已近似处理。",
+        "htmlImport.warn.transform.origin_z_ignored" => "CSS transform-origin 的 Z 轴偏移已忽略。",
+        "htmlImport.warn.transform.scale_not_baked" => {
+            "无法烘焙进节点尺寸的 CSS transform 缩放已丢弃。"
+        }
+        "htmlImport.warn.transform.scale_baked" => {
+            "烘焙进节点尺寸的 CSS transform 缩放已近似处理。"
+        }
+        "htmlImport.warn.transform.scale_auto_size_ignored" => {
+            "自动尺寸元素上的 CSS transform 缩放已忽略。"
+        }
+        "htmlImport.warn.visual.background_repeat_approximated" => {
+            "带方向或带间隔的 CSS background-repeat 已近似处理。"
+        }
+        "htmlImport.warn.visual.background_tile_size_ignored" => {
+            "显式指定的 CSS 背景平铺尺寸已忽略。"
+        }
+        "htmlImport.warn.visual.background_size_auto_box" => {
+            "自动尺寸元素上的 CSS background-size 已近似处理。"
+        }
+        "htmlImport.warn.visual.background_size_needs_intrinsic_size" => {
+            "需要图片固有尺寸的 CSS background-size 已近似处理。"
+        }
+        "htmlImport.warn.visual.background_position_unsupported" => {
+            "不支持的 CSS background-position 已忽略。"
+        }
+        "htmlImport.warn.visual.background_image_url_empty" => "空的 CSS 背景图片 URL 已忽略。",
+        "htmlImport.warn.visual.conic_gradient_ignored" => "CSS 锥形渐变已忽略。",
+        "htmlImport.warn.visual.background_image_layer_unsupported" => {
+            "不支持的 CSS background-image 图层已忽略。"
+        }
+        "htmlImport.warn.visual.background_color_unresolved" => "无法解析的 CSS 背景色已忽略。",
+        "htmlImport.warn.visual.background_position_dropped" => "CSS background-position 已忽略。",
+        "htmlImport.warn.visual.border_colors_approximated" => {
+            "分边设置的 CSS 边框颜色已近似处理。"
+        }
+        "htmlImport.warn.visual.border_styles_approximated" => {
+            "各边不一致的 CSS 边框样式已近似处理。"
+        }
+        "htmlImport.warn.visual.border_style_complex" => "复杂的 CSS 边框样式已近似处理。",
+        "htmlImport.warn.visual.border_style_unsupported" => "不支持的 CSS 边框样式已近似处理。",
+        "htmlImport.warn.visual.border_radius_elliptical" => "椭圆形的 CSS 边框圆角已近似处理。",
+        "htmlImport.warn.visual.border_radius_unsupported" => "不支持的 CSS 边框圆角已忽略。",
+        "htmlImport.warn.visual.box_shadow_layer_unsupported" => {
+            "不支持的 CSS box-shadow 图层已忽略。"
+        }
+        "htmlImport.warn.visual.gradient_interpolation_ignored" => "CSS 渐变的颜色插值方式已忽略。",
+        "htmlImport.warn.visual.linear_gradient_direction_unsupported" => {
+            "不支持的 CSS linear-gradient 方向已忽略。"
+        }
+        "htmlImport.warn.visual.gradient_color_hints_ignored" => "CSS 渐变的颜色提示点已忽略。",
+        "htmlImport.warn.visual.gradient_color_stop_unsupported" => "不支持的 CSS 渐变色标已忽略。",
+        "htmlImport.warn.visual.gradient_too_few_stops" => "可用色标少于两个的 CSS 渐变已忽略。",
+        "htmlImport.warn.visual.gradient_repeating_approximated" => "重复的 CSS 渐变已近似处理。",
+        "htmlImport.warn.visual.gradient_stops_clamped" => "超出范围的 CSS 渐变色标已近似处理。",
+        "htmlImport.warn.visual.blur_radius_unsupported" => "不支持的 CSS 模糊半径已忽略。",
+        "htmlImport.warn.visual.filter_drop_shadow_unsupported" => {
+            "不支持的 CSS filter drop-shadow() 已忽略。"
+        }
+        "htmlImport.warn.visual.filter_function_unsupported" => "不支持的 CSS filter 函数已忽略。",
+        "htmlImport.warn.visual.backdrop_filter_unsupported" => {
+            "不支持的 CSS backdrop-filter 函数已忽略。"
+        }
+        "htmlImport.warn.visual.background_blend_mode_unsupported" => {
+            "不支持的 CSS background-blend-mode 已忽略。"
+        }
+        "htmlImport.warn.visual.mix_blend_mode_on_fills" => {
+            "单个填充上的 CSS mix-blend-mode 已近似处理。"
+        }
+        "htmlImport.warn.visual.mix_blend_mode_unsupported" => {
+            "不支持的 CSS mix-blend-mode 已忽略。"
+        }
+        "htmlImport.warn.visual.property_not_representable" => "CSS {{property}} 已忽略。",
+        "htmlImport.warn.visual.gradient_background_size_ignored" => {
+            "渐变上的 CSS background-size 已忽略。"
+        }
+        "htmlImport.warn.visual.radial_gradient_position_unsupported" => {
+            "不支持的 CSS radial-gradient 位置已忽略。"
+        }
+        "htmlImport.warn.visual.radial_gradient_elliptical" => {
+            "椭圆形的 CSS radial-gradient 已近似处理。"
+        }
+        "htmlImport.warn.visual.radial_gradient_extent_approximated" => {
+            "CSS radial-gradient 的范围关键字已近似处理。"
+        }
+        "htmlImport.warn.visual.radial_gradient_size_unsupported" => {
+            "不支持的 CSS radial-gradient 尺寸已忽略。"
+        }
+        "htmlImport.warn.text.shadow_layer_unsupported" => "不支持的 CSS text-shadow 图层已忽略。",
+        "htmlImport.warn.text.shadow_extra_layers_ignored" => {
+            "第一层之后的 CSS text-shadow 图层已忽略。"
+        }
+        "htmlImport.warn.text.shadow_on_inline_ignored" => "内联元素上的 CSS text-shadow 已忽略。",
+        "htmlImport.warn.list.style_image_ignored" => "CSS list-style-image 未导入。",
+        "htmlImport.warn.list.marker_position_outside_approximated" => {
+            "`list-style-position: outside` 的悬挂标记已近似处理。"
+        }
+        "htmlImport.warn.list.style_type_unsupported" => {
+            "不支持的 CSS list-style-type `{{value}}` 已近似处理。"
+        }
+        "htmlImport.warn.media.object_fit_scale_down" => "CSS object-fit:scale-down 已近似处理。",
+        "htmlImport.warn.media.object_fit_none_ignored" => "CSS object-fit:none 已忽略。",
+        "htmlImport.warn.media.object_position_ignored" => "CSS object-position 已忽略。",
+        "htmlImport.warn.media.image_mix_blend_mode_unsupported" => {
+            "图片上不支持的 CSS mix-blend-mode 已忽略。"
+        }
+        "htmlImport.warn.media.inline_svg_placeholder" => "内联的 <svg> 元素已作为占位符导入。",
+        "htmlImport.warn.media.input_type_fallback" => "不支持的 <input> 类型已近似处理。",
+        "htmlImport.warn.media.element_placeholder" => "<{{tag}}> 元素已作为占位符导入。",
+        "htmlImport.warn.media.picture_undecodable_types" => {
+            "仅含无法解码源类型的 <picture> 已近似处理。"
+        }
+        "htmlImport.warn.table.rowspan_ignored" => "HTML rowspan 属性未导入。",
+        "htmlImport.warn.table.row_groups_unflattened" => {
+            "行组未被 CSS 扁平化的表格，其列宽已近似处理。"
+        }
+        "htmlImport.warn.table.indefinite_width_approximated" => {
+            "宽度不确定的 CSS 表格，其列宽已近似处理。"
+        }
+        "htmlImport.warn.resource.invalid_base_href" => "无效的 <base href> {{href}} 已忽略。",
+        "htmlImport.warn.resource.base_href_outside_origin" => {
+            "项目源之外的 <base href> {{href}} 已忽略。"
+        }
+        "htmlImport.warn.resource.external_stylesheet_skipped" => "外部样式表 {{url}} 不可用。",
+        "htmlImport.warn.resource.image_outside_origin" => {
+            "项目源之外的图片 {{url}} 已作为占位符导入。"
+        }
+        "htmlImport.warn.resource.image_unavailable" => "不可用的图片 {{url}} 已作为占位符导入。",
+        "htmlImport.warn.resource.css_import_invalid" => "无效的 CSS @import {{prelude}} 已忽略。",
+        "htmlImport.warn.resource.css_import_unresolvable" => "CSS @import {{reference}} 不可用。",
+        "htmlImport.warn.resource.css_import_cycle" => "循环引用的 CSS @import {{url}} 已忽略。",
+        "htmlImport.warn.resource.css_import_depth_limit" => {
+            "超出 {{max_depth}} 层深度的 CSS @import {{url}} 已忽略。"
+        }
+        "htmlImport.warn.resource.css_import_unavailable" => "CSS @import {{url}} 不可用。",
+        "htmlImport.warn.project.multiple_html_entries" => {
+            "发现 {{count}} 个 HTML 入口，已选用 {{entry}}，其余已近似处理。"
+        }
+        "htmlImport.warn.snapshot.truncated" => "部分浏览器快照已丢弃。",
+        "htmlImport.warn.snapshot.node_limit" => "已达节点数上限，快照剩余内容已略去。",
+        "htmlImport.warn.snapshot.tainted_images" => {
+            "{{count}} 张受 CORS 污染的图片以远程 URL 保留，不可用。"
+        }
+        "htmlImport.warn.snapshot.invalid_rect" => "矩形缺失或无效的快照节点已丢弃。",
+        "htmlImport.warn.snapshot.unknown_kind" => "类型未知的快照节点已丢弃。",
+        "htmlImport.warn.snapshot.rejected" => "浏览器快照（{{reason}}）已丢弃。",
+        "htmlImport.warn.snapshot.unsupported_transform" => "不支持的快照变换已忽略。",
+        "htmlImport.warn.css.media_empty_query" => "空的 @media 查询已忽略。",
+        "htmlImport.warn.css.media_unsupported_type" => "不支持的 @media 类型 '{{name}}' 已忽略。",
+        "htmlImport.warn.css.media_unsupported_condition" => {
+            "不支持的 @media 条件 '{{input}}' 已忽略。"
+        }
+        "htmlImport.warn.css.media_invalid_orientation" => {
+            "无效的 @media 方向 '{{value}}' 已忽略。"
+        }
+        "htmlImport.warn.css.media_unsupported_feature" => {
+            "不支持的 @media 特性 '{{name}}' 已忽略。"
+        }
+        "htmlImport.warn.css.media_unsupported_range" => {
+            "不支持的 @media 范围 '({{input}})' 已忽略。"
+        }
+        "htmlImport.warn.css.media_invalid_range" => "无效的 @media 范围 '({{input}})' 已忽略。",
+        "htmlImport.warn.css.media_invalid_length" => "无效的 @media 长度 '{{value}}' 已忽略。",
+        "htmlImport.diagnostics.title" => "HTML 导入完成",
+        "htmlImport.diagnostics.summary" => "降级项：{{count}}",
+        "htmlImport.diagnostics.dismiss" => "关闭",
+        "htmlImport.diagnostics.expand" => "显示详情",
+        "htmlImport.diagnostics.collapse" => "隐藏详情",
+        "htmlImport.diagnostics.more" => "+{{count}} 项",
         _ => return super::zh_cn_collab::lookup(key),
     })
 }

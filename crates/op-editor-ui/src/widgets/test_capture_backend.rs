@@ -1,12 +1,19 @@
-//! Test-only `RenderBackend` stub that records `fill_round_rect` calls
-//! and ignores everything else. Shared by widget test modules that only
-//! assert on round-rect fills (button feedback washes, panel row tints).
+//! Test-only `RenderBackend` stub that records `fill_round_rect` and
+//! `draw_text` calls and ignores everything else. Shared by widget test
+//! modules that assert on round-rect fills (button feedback washes, panel row
+//! tints) or on the exact strings a widget painted (wrapping / ellipsizing).
+//!
+//! `measure_text` is intentionally left at the trait default (the width
+//! heuristic in `jian_widgets::painter`), so tests measure the same way a
+//! font-less environment does.
 
 use crate::{Color, Point2D, Rect, RenderBackend, TextLayout};
 
 #[derive(Default)]
 pub(crate) struct CaptureBackend {
     pub(crate) round_fills: Vec<(Rect, f32, Color)>,
+    /// `(text, origin)` of every `draw_text`, in paint order.
+    pub(crate) texts: Vec<(String, Point2D)>,
 }
 
 impl RenderBackend for CaptureBackend {
@@ -18,7 +25,11 @@ impl RenderBackend for CaptureBackend {
 
     fn stroke_rect(&mut self, _rect: Rect, _color: Color, _width: f32) {}
 
-    fn draw_text(&mut self, _layout: &TextLayout, _origin: Point2D) {}
+    fn draw_text(&mut self, layout: &TextLayout, origin: Point2D) {
+        for run in layout.runs() {
+            self.texts.push((run.content.clone(), origin));
+        }
+    }
 
     fn clip_rect(&mut self, _rect: Rect) {}
 

@@ -1,9 +1,10 @@
+use crate::import_warning::ImportWarning;
 use std::cmp::Ordering;
 
 use jian_ops_schema::constraints::{Constraints, HConstraint, VConstraint};
 use jian_ops_schema::node::base::PenNodeBase;
 use jian_ops_schema::node::container::{AlignItems, ContainerProps, LayoutMode};
-use jian_ops_schema::sizing::{SizingBehavior, SizingKeyword};
+use jian_ops_schema::sizing::{SizeLimits, SizingBehavior, SizingKeyword};
 
 use crate::css::cascade::{compute_style_for_viewport, ComputedStyle};
 use crate::dom::{DomElement, DomNode};
@@ -29,7 +30,7 @@ pub(crate) fn infer_child_alignment(
                     Some(parent_style),
                     context.opts.base_font_size,
                     context.opts.viewport_width,
-                    context.opts.viewport_width * 0.625,
+                    context.opts.viewport_height(),
                 );
                 (style.get("display") != Some("none")
                     && !matches!(style.get("position"), Some("absolute" | "fixed")))
@@ -39,10 +40,13 @@ pub(crate) fn infer_child_alignment(
             DomNode::Text(_) => None,
         })
         .collect();
+    let is_auto = |style: &ComputedStyle, name: &str| {
+        style.get(name).is_some_and(|value| value.trim() == "auto")
+    };
     (!styles.is_empty()
-        && styles.iter().all(|style| {
-            style.get("margin-left") == Some("auto") && style.get("margin-right") == Some("auto")
-        }))
+        && styles
+            .iter()
+            .all(|style| is_auto(style, "margin-left") && is_auto(style, "margin-right")))
     .then_some(AlignItems::Center)
 }
 
@@ -227,7 +231,7 @@ fn constrain_legacy_axis(
     }
 }
 
-fn is_inline_level(style: &ComputedStyle) -> bool {
+pub(super) fn is_inline_level(style: &ComputedStyle) -> bool {
     matches!(
         style.get("display").map(str::trim),
         Some(
@@ -243,10 +247,14 @@ fn is_inline_level(style: &ComputedStyle) -> bool {
     )
 }
 
-fn layout_for(style: &ComputedStyle) -> LayoutMode {
+/// The single funnel every caller uses to pick a Jian layout axis. A table row
+/// lays its cells out inline, which is exactly a horizontal frame; everything
+/// else that is not a row-direction flex container stacks vertically.
+pub(crate) fn layout_for(style: &ComputedStyle) -> LayoutMode {
     match (style.get("display"), style.get("flex-direction")) {
         (Some("flex" | "inline-flex"), Some("column" | "column-reverse")) => LayoutMode::Vertical,
         (Some("flex" | "inline-flex"), _) => LayoutMode::Horizontal,
+        (Some("table-row"), _) => LayoutMode::Horizontal,
         _ => LayoutMode::Vertical,
     }
 }
@@ -319,9 +327,180 @@ pub(super) fn apply_position(
         },
     });
     if left_percent || top_percent || right_percent || bottom_percent {
-        context.warn_once(
-            "percentage absolute offsets resolved against the inferred containing block",
+        context.warn_once(ImportWarning::PercentageAbsoluteOffsetInferred);
+    }
+}
+
+/// The element's own used size on one axis derived from its computed style
+/// alone. Used where the resolved `ContainerProps` is not available (pseudo
+/// elements, replaced elements, the document root).
+pub(super) fn style_axis_size(
+    style: &ComputedStyle,
+    context: &MapCtx<'_>,
+    property: &str,
+    reference: f64,
+) -> f64 {
+    own_size(style.get(property), style.font_size, reference, context)
+}
+
+/// CSS `position: relative` offsets. Jian has no "shift without affecting
+/// flow" semantics, so the caller re-parents the node inside a fixed-size
+/// wrapper and offsets it there; the surrounding flow keeps the original box.
+///
+/// The approximation itself is reported by `mapper_offset::wrap_offset`, at
+/// the point the wrapper is actually built (or refused) — describing a wrapper
+/// here would be wrong for every caller that never builds one.
+pub(super) fn relative_offset(style: &ComputedStyle, context: &mut MapCtx<'_>) -> (f64, f64) {
+    if style.get("position") != Some("relative") {
+        return (0.0, 0.0);
+    }
+    let axis = |start: &str, end: &str, reference: f64, context: &MapCtx<'_>| {
+        let (value, percent) =
+            position_value(style.get(start), style.font_size, reference, context);
+        let (value, percent) = match value {
+            Some(value) => (Some(value), percent),
+            None => {
+                let (value, percent) =
+                    position_value(style.get(end), style.font_size, reference, context);
+                (value.map(|value| -value), percent)
+            }
+        };
+        (
+            value.filter(|value| value.is_finite()).unwrap_or(0.0),
+            percent,
+        )
+    };
+    let (x, x_percent) = axis("left", "right", context.containing_width, context);
+    let (y, y_percent) = axis("top", "bottom", context.containing_height, context);
+    if (x != 0.0 && x_percent) || (y != 0.0 && y_percent) {
+        context.warn_once(ImportWarning::PercentageRelativeOffsetInferred);
+    }
+    (x, y)
+}
+
+/// Bake `aspect-ratio` into the missing axis. Runs after the sizing defaults
+/// so a Tailwind `aspect-video` box whose width became `FillContainer` still
+/// resolves a concrete height.
+pub(super) fn apply_aspect_ratio(
+    container: &mut ContainerProps,
+    style: &ComputedStyle,
+    context: &mut MapCtx<'_>,
+) {
+    let limits = container.limits;
+    apply_aspect_ratio_axes(
+        &mut container.width,
+        &mut container.height,
+        &limits,
+        style,
+        context,
+    );
+}
+
+/// Axis form, shared with the replaced-element path in `special.rs` where the
+/// two axes do not live inside a `ContainerProps`.
+pub(crate) fn apply_aspect_ratio_axes(
+    width: &mut Option<SizingBehavior>,
+    height: &mut Option<SizingBehavior>,
+    limits: &SizeLimits,
+    style: &ComputedStyle,
+    context: &mut MapCtx<'_>,
+) {
+    let Some(ratio) = parse_aspect_ratio(style.get("aspect-ratio")) else {
+        return;
+    };
+    let width_is_auto = axis_is_auto(width.as_ref());
+    let height_is_auto = axis_is_auto(height.as_ref());
+    if width_is_auto == height_is_auto {
+        // Both axes auto (no anchor to derive from) or both authored
+        // (the author's explicit sizes win over the ratio).
+        if width_is_auto {
+            context.warn_once(ImportWarning::AspectRatioNoDefiniteAxis);
+        }
+        return;
+    }
+    if height_is_auto {
+        // A non-`Number` anchor (a `FillContainer` `width:100%`) only resolves
+        // through the containing block. When that block is itself indefinite —
+        // a shrink-to-fit ancestor, say — `resolved_axis` would hand back the
+        // viewport and bake a hard pixel height from a number CSS never had.
+        let anchor_is_number =
+            matches!(width.as_ref(), Some(SizingBehavior::Number(value)) if value.is_finite());
+        if !anchor_is_number && !context.containing_width_is_definite {
+            context.warn_once(ImportWarning::AspectRatioIndefiniteContainer);
+            return;
+        }
+        let resolved = resolved_axis(
+            width.as_ref(),
+            limits.min_width,
+            limits.max_width,
+            context.containing_width,
         );
+        if resolved > 0.0 {
+            *height = Some(SizingBehavior::Number(resolved / ratio));
+        }
+    } else {
+        // The block-axis anchor has no `containing_height_is_definite` twin to
+        // check; heights are indefinite far more often than widths, so a
+        // `height:100%` anchor here is already best-effort.
+        let resolved = resolved_axis(
+            height.as_ref(),
+            limits.min_height,
+            limits.max_height,
+            context.containing_height,
+        );
+        if resolved > 0.0 {
+            *width = Some(SizingBehavior::Number(resolved * ratio));
+        }
+    }
+}
+
+/// `FitContent` is what the sizing defaults leave behind for an auto axis,
+/// so it counts as "not authored" for aspect-ratio purposes.
+fn axis_is_auto(sizing: Option<&SizingBehavior>) -> bool {
+    matches!(
+        sizing,
+        None | Some(SizingBehavior::Keyword(SizingKeyword::FitContent))
+    )
+}
+
+/// `aspect-ratio: <w> [/ <h>]`. `auto` and the `auto <ratio>` pair form both
+/// resolve to the plain ratio when one is present.
+pub(super) fn parse_aspect_ratio(value: Option<&str>) -> Option<f64> {
+    let value = value?.trim();
+    if value.is_empty() || value.eq_ignore_ascii_case("auto") {
+        return None;
+    }
+    let mut width = None;
+    let mut height = None;
+    for token in value.split('/') {
+        for part in token.split_whitespace() {
+            if part.eq_ignore_ascii_case("auto") {
+                continue;
+            }
+            let number = part.parse::<f64>().ok()?;
+            if width.is_none() {
+                width = Some(number);
+            } else if height.is_none() {
+                height = Some(number);
+            } else {
+                return None;
+            }
+        }
+    }
+    let ratio = width? / height.unwrap_or(1.0);
+    (ratio.is_finite() && ratio > 0.0).then_some(ratio)
+}
+
+/// Multiply a numeric axis by a `transform: scale()` factor. Auto axes are
+/// left alone: replacing `FitContent` with a guessed number would break
+/// content hugging far worse than losing the scale.
+pub(super) fn scale_axis(sizing: &mut Option<SizingBehavior>, factor: f64) -> bool {
+    match sizing {
+        Some(SizingBehavior::Number(value)) => {
+            *value *= factor;
+            true
+        }
+        _ => false,
     }
 }
 
@@ -334,7 +513,7 @@ fn own_size(value: Option<&str>, font_size: f64, reference: f64, context: &MapCt
                     font_size,
                     root_font_size: context.opts.base_font_size,
                     viewport_w: context.opts.viewport_width,
-                    viewport_h: context.opts.viewport_width * 0.625,
+                    viewport_h: context.opts.viewport_height(),
                 },
             )
         })
@@ -364,7 +543,7 @@ fn position_value(
             font_size,
             root_font_size: context.opts.base_font_size,
             viewport_w: context.opts.viewport_width,
-            viewport_h: context.opts.viewport_width * 0.625,
+            viewport_h: context.opts.viewport_height(),
         },
     );
     length.map_or((None, false), |length| {
@@ -402,17 +581,8 @@ pub(super) fn warn_for_degradations(
     supports_image_blend: bool,
     context: &mut MapCtx<'_>,
 ) {
-    if style.get("position") == Some("relative")
-        && ["top", "right", "bottom", "left"]
-            .iter()
-            .any(|property| has_offset(style, property))
-    {
-        context.warn_once(
-            "CSS relative-position offsets were ignored to preserve auto-layout flow order",
-        );
-    }
     if style.get("position") == Some("sticky") {
-        context.warn_once("CSS position:sticky has no static canvas equivalent and was ignored");
+        context.warn_once(ImportWarning::PositionStickyIgnored);
     }
     if matches!(style.get("display"), Some("grid" | "inline-grid")) {
         if let Some(columns) = style.get("grid-template-columns") {
@@ -420,26 +590,143 @@ pub(super) fn warn_for_degradations(
                 && !columns.contains("auto-fit")
                 && !columns.contains("auto-fill")
             {
-                context.warn_once("unsupported CSS grid tracks approximated as a vertical frame");
+                context.warn_once(ImportWarning::GridTracksApproximated);
             }
         }
-    }
-    if matches!(style.get("flex-wrap"), Some("wrap" | "wrap-reverse")) {
-        context.warn_once("flex-wrap ignored; imported auto-layout does not wrap");
     }
     if style
         .get("float")
         .is_some_and(|value| value != "none" && value != "initial")
     {
-        context.warn_once("CSS float ignored during structured HTML import");
+        context.warn_once(ImportWarning::FloatIgnored);
     }
     if !supports_image_blend
         && style
             .get("mix-blend-mode")
             .is_some_and(|value| value != "normal")
     {
-        context.warn_once(
-            "CSS mix-blend-mode has no node-level equivalent; fill blending is used where possible",
+        context.warn_once(ImportWarning::MixBlendModeNoNodeEquivalent);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn style(pairs: &[(&str, &str)]) -> ComputedStyle {
+        ComputedStyle {
+            props: pairs
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect::<BTreeMap<_, _>>(),
+            font_size: 16.0,
+        }
+    }
+
+    fn context(options: &crate::HtmlImportOptions) -> MapCtx<'_> {
+        MapCtx {
+            opts: options,
+            rules: &[],
+            warnings: Vec::new(),
+            warned: Default::default(),
+            next_id: 0,
+            node_count: 0,
+            containing_width: options.viewport_width,
+            containing_height: options.viewport_height(),
+            containing_width_is_definite: true,
+            positioned_width: options.viewport_width,
+            positioned_height: options.viewport_height(),
+            auto_margin_handled_by_parent: false,
+            pending_base_outcome: Default::default(),
+        }
+    }
+
+    #[test]
+    fn parses_the_ratio_forms_tailwind_emits() {
+        assert_eq!(parse_aspect_ratio(Some("16 / 9")), Some(16.0 / 9.0));
+        assert_eq!(parse_aspect_ratio(Some("1/1")), Some(1.0));
+        assert_eq!(parse_aspect_ratio(Some("1.5")), Some(1.5));
+        assert_eq!(parse_aspect_ratio(Some("auto")), None);
+        assert_eq!(parse_aspect_ratio(Some("auto 4 / 3")), Some(4.0 / 3.0));
+        assert_eq!(parse_aspect_ratio(Some("0 / 5")), None);
+        assert_eq!(parse_aspect_ratio(None), None);
+    }
+
+    #[test]
+    fn fills_whichever_axis_the_author_left_auto() {
+        let options = crate::HtmlImportOptions::default();
+        let mut context = context(&options);
+        let style = style(&[("aspect-ratio", "16 / 9")]);
+
+        // Definite width, auto height (the Tailwind `aspect-video` case).
+        let mut width = Some(SizingBehavior::Number(640.0));
+        let mut height = Some(SizingBehavior::Keyword(SizingKeyword::FitContent));
+        apply_aspect_ratio_axes(
+            &mut width,
+            &mut height,
+            &SizeLimits::default(),
+            &style,
+            &mut context,
         );
+        assert_eq!(height, Some(SizingBehavior::Number(360.0)));
+
+        // Definite height, auto width.
+        let mut width = None;
+        let mut height = Some(SizingBehavior::Number(180.0));
+        apply_aspect_ratio_axes(
+            &mut width,
+            &mut height,
+            &SizeLimits::default(),
+            &style,
+            &mut context,
+        );
+        assert_eq!(width, Some(SizingBehavior::Number(320.0)));
+
+        // Both authored: the explicit sizes win, silently.
+        let mut width = Some(SizingBehavior::Number(100.0));
+        let mut height = Some(SizingBehavior::Number(100.0));
+        apply_aspect_ratio_axes(
+            &mut width,
+            &mut height,
+            &SizeLimits::default(),
+            &style,
+            &mut context,
+        );
+        assert_eq!(width, Some(SizingBehavior::Number(100.0)));
+        assert_eq!(height, Some(SizingBehavior::Number(100.0)));
+        assert!(context.warnings.is_empty(), "{:?}", context.warnings);
+
+        // Neither axis definite: nothing to anchor on, so warn.
+        let mut width = Some(SizingBehavior::Keyword(SizingKeyword::FitContent));
+        let mut height = None;
+        apply_aspect_ratio_axes(
+            &mut width,
+            &mut height,
+            &SizeLimits::default(),
+            &style,
+            &mut context,
+        );
+        assert!(height.is_none());
+        assert_eq!(context.warnings.len(), 1);
+    }
+
+    #[test]
+    fn a_fill_container_width_resolves_against_the_containing_block() {
+        let options = crate::HtmlImportOptions {
+            viewport_width: 1000.0,
+            ..Default::default()
+        };
+        let mut context = context(&options);
+        let mut width = Some(SizingBehavior::Keyword(SizingKeyword::FillContainer));
+        let mut height = Some(SizingBehavior::Keyword(SizingKeyword::FitContent));
+        apply_aspect_ratio_axes(
+            &mut width,
+            &mut height,
+            &SizeLimits::default(),
+            &style(&[("aspect-ratio", "2")]),
+            &mut context,
+        );
+        assert_eq!(height, Some(SizingBehavior::Number(500.0)));
     }
 }

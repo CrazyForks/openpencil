@@ -32,10 +32,11 @@ pub(crate) enum HtmlImportError {
     /// `op_html` refused the archive or the document. Its message is carried
     /// verbatim.
     Import(String),
-    /// The import produced a document with no children. Carries the
-    /// importer's first warning when it recorded one, since that names the
-    /// actual reason (an unreachable stylesheet, an empty body, …); otherwise
-    /// the generic sentence below.
+    /// The import produced a document with no children. Carries EVERY
+    /// warning the importer recorded, newline-joined, since the reason is
+    /// often spread across several of them (an unreachable stylesheet AND an
+    /// empty body); `None` when it recorded none, giving the generic sentence
+    /// below. Reporting only the first hid the rest from the dialog.
     NoImportableContent(Option<String>),
 }
 

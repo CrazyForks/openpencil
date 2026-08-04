@@ -1,10 +1,12 @@
-use std::collections::BTreeMap;
+use crate::import_warning::ImportWarning;
+use std::collections::{BTreeMap, BTreeSet};
 
 use jian_ops_schema::constraints::{Constraints, HConstraint, VConstraint};
 use jian_ops_schema::node::base::{NumberOrExpression, PenNodeBase};
-use jian_ops_schema::node::container::{ContainerProps, LayoutMode};
+use jian_ops_schema::node::container::{ContainerProps, CornerRadius, LayoutMode};
 use jian_ops_schema::node::image::{ImageFitMode, ImageNode};
-use jian_ops_schema::node::text::{FontStyleKind, FontWeight, TextAlign, TextContent, TextNode};
+use jian_ops_schema::node::path::{PathFillRule, PathNode};
+use jian_ops_schema::node::text::TextAlign;
 use jian_ops_schema::node::{FrameNode, ImageSrc, PenNode};
 use jian_ops_schema::sizing::SizingBehavior;
 use jian_ops_schema::style::{BlendMode, PenFill, SolidFillBody};
@@ -17,6 +19,11 @@ use crate::{
     wrap_imported_document, HtmlDocumentResult, HtmlImportOptions, HtmlImportResult,
     MAX_OUTPUT_NODES,
 };
+
+#[path = "snapshot_stack.rs"]
+mod snapshot_stack;
+#[path = "snapshot_text.rs"]
+mod text_run;
 
 const MAX_SNAPSHOT_BYTES: usize = 32 * 1024 * 1024;
 
@@ -77,10 +84,12 @@ impl std::error::Error for SnapshotError {}
 pub fn import_snapshot(json: &str, opts: &HtmlImportOptions) -> HtmlImportResult {
     match import_snapshot_inner(json, opts) {
         Ok(result) => result,
-        Err(error) => HtmlImportResult {
-            nodes: Vec::new(),
-            warnings: vec![error.to_string()],
-        },
+        Err(error) => HtmlImportResult::new(
+            Vec::new(),
+            vec![ImportWarning::SnapshotRejected {
+                reason: error.to_string(),
+            }],
+        ),
     }
 }
 
@@ -115,6 +124,14 @@ fn import_snapshot_inner(
         .filter(|title| !title.is_empty())
         .unwrap_or("Web Snapshot");
     let mut context = SnapshotCtx::new(opts);
+    // A picked subtree usually starts below the element carrying the page
+    // backdrop, so the capture reports it separately. Without it a dark-theme
+    // page lands on the importer's white default and every light-on-dark run
+    // reads as washed out.
+    context.page_background = object
+        .get("background")
+        .and_then(Value::as_str)
+        .and_then(parse_css_color);
     let root_node = context
         .map_element(root, root_rect, None, Some(title))
         .ok_or(SnapshotError::RootConversionFailed)?;
@@ -123,21 +140,17 @@ fn import_snapshot_inner(
         .and_then(Value::as_bool)
         .unwrap_or(false)
     {
-        context.warn_once("browser snapshot was truncated during extraction");
+        context.warn_once(ImportWarning::SnapshotTruncated);
     }
     if context.output_truncated {
-        context.warn_once("node limit reached (20000), remaining snapshot content dropped");
+        context.warn_once(ImportWarning::SnapshotNodeLimit);
     }
     if context.tainted_images > 0 {
-        context.warnings.push(format!(
-            "{} images kept as remote URLs (CORS-tainted)",
-            context.tainted_images
-        ));
+        context.warnings.push(ImportWarning::SnapshotTaintedImages {
+            count: context.tainted_images,
+        });
     }
-    Ok(HtmlImportResult {
-        nodes: vec![root_node],
-        warnings: context.warnings,
-    })
+    Ok(HtmlImportResult::new(vec![root_node], context.warnings))
 }
 
 #[derive(Clone, Copy)]
@@ -150,7 +163,11 @@ struct Rect {
 
 impl Rect {
     fn from_node(node: &Map<String, Value>) -> Option<Self> {
-        let rect = node.get("rect")?.as_object()?;
+        Self::from_field(node, "rect")
+    }
+
+    fn from_field(node: &Map<String, Value>, key: &str) -> Option<Self> {
+        let rect = node.get(key)?.as_object()?;
         let value = Self {
             x: rect.get("x")?.as_f64()?,
             y: rect.get("y")?.as_f64()?,
@@ -169,11 +186,18 @@ impl Rect {
 
 struct SnapshotCtx<'a> {
     opts: &'a HtmlImportOptions,
-    warnings: Vec<String>,
+    warnings: Vec<ImportWarning>,
+    /// Rendered text of every warning already in `warnings` — see
+    /// [`crate::mapper::MapCtx::warned`]. Keeps `warn_once` a hash probe
+    /// instead of re-rendering the stored list on every call.
+    warned: BTreeSet<String>,
     next_id: usize,
     node_count: usize,
     output_truncated: bool,
     tainted_images: usize,
+    /// The page's own backdrop colour, used for the root frame when the
+    /// captured root has no background of its own.
+    page_background: Option<String>,
 }
 
 impl<'a> SnapshotCtx<'a> {
@@ -181,10 +205,12 @@ impl<'a> SnapshotCtx<'a> {
         Self {
             opts,
             warnings: Vec::new(),
+            warned: Default::default(),
             next_id: 0,
             node_count: 0,
             output_truncated: false,
             tainted_images: 0,
+            page_background: None,
         }
     }
 
@@ -199,27 +225,50 @@ impl<'a> SnapshotCtx<'a> {
         Some(id)
     }
 
-    fn warn_once(&mut self, warning: &str) {
-        if !self.warnings.iter().any(|existing| existing == warning) {
-            self.warnings.push(warning.to_string());
+    /// Record `warning` unless an identical rendered message is already
+    /// stored. Dedupe semantics are rendered-string equality, exactly as
+    /// before; the set keeps it O(1) per call instead of O(n).
+    fn warn_once(&mut self, warning: ImportWarning) {
+        if self.warned.insert(warning.to_string()) {
+            self.warnings.push(warning);
         }
     }
 
     fn map_child(&mut self, value: &Value, parent_rect: Rect) -> Option<PenNode> {
         let object = value.as_object()?;
         let Some(rect) = Rect::from_node(object) else {
-            self.warn_once("snapshot node with missing or invalid rect was skipped");
+            self.warn_once(ImportWarning::SnapshotInvalidRect);
             return None;
         };
         match object.get("kind").and_then(Value::as_str) {
             Some("element") => self.map_element(object, rect, Some(parent_rect), None),
             Some("text") => self.map_text(object, rect, parent_rect),
-            Some("image") => self.map_image(object, rect, parent_rect),
+            // A captured `<svg>` carries both shapes: the image serialization
+            // every importer understands and, when the capture could reduce it
+            // to one flat fill, native path data. `"vector"` is an interim
+            // capture shape that carried the path data alone.
+            Some("image") | Some("vector") => self.map_vector_or_image(object, rect, parent_rect),
             _ => {
-                self.warn_once("snapshot node with unknown kind was skipped");
+                self.warn_once(ImportWarning::SnapshotUnknownKind);
                 None
             }
         }
+    }
+
+    /// Prefer native path geometry, fall back to the image serialization.
+    ///
+    /// The fallback is what keeps a missing or empty `d` from dropping the
+    /// node: a captured `<svg>` always carries `src` too, so "no usable path
+    /// data" degrades to exactly the image node this importer produced before
+    /// vectorization existed rather than silently losing the icon.
+    fn map_vector_or_image(
+        &mut self,
+        object: &Map<String, Value>,
+        rect: Rect,
+        parent_rect: Rect,
+    ) -> Option<PenNode> {
+        self.map_vector(object, rect, parent_rect)
+            .or_else(|| self.map_image(object, rect, parent_rect))
     }
 
     fn map_element(
@@ -231,12 +280,40 @@ impl<'a> SnapshotCtx<'a> {
     ) -> Option<PenNode> {
         let id = self.allocate_id()?;
         let styles = style_map(object);
-        let mut container = self.container_from_styles(&styles);
+        let mut container = self.container_from_styles(&styles, rect);
         container.layout = Some(LayoutMode::None);
         container.width = Some(SizingBehavior::Number(rect.w));
         container.height = Some(SizingBehavior::Number(rect.h));
+        if container.clip_content == Some(true)
+            && !has_corner_radius(&container)
+            && clip_is_inert(object, rect)
+        {
+            // `overflow: hidden` on a box that nothing overflowed clips
+            // nothing in the browser — it is the standard truncation wrapper
+            // (`overflow: hidden` + `text-overflow: ellipsis`) sitting exactly
+            // around text that fit. Keeping it means the one thing that does
+            // differ here — a fallback font a few percent wider — gets its
+            // tail cut off, which is how "openpencil" imported as
+            // "openpenci". A box the capture *did* overflow keeps its clip:
+            // there the browser truncated too, and a scroll container must
+            // not spill its contents.
+            //
+            // A rounded box always keeps its clip, however contained its
+            // children are: `overflow: hidden` + `border-radius` is the
+            // rounded-card idiom, where the clip is not there to truncate but
+            // to round off a child that fills the box (a header image, a
+            // coloured strip). Dropping it there paints square corners over
+            // the parent's radius — geometry the child rects cannot reveal,
+            // because the child is inside the box and only its *corners*
+            // stick out.
+            container.clip_content = None;
+        }
         if parent_rect.is_none() && container.fill.is_none() {
-            container.fill = Some(vec![solid_fill("#ffffff".into())]);
+            let backdrop = self
+                .page_background
+                .clone()
+                .unwrap_or_else(|| "#ffffff".into());
+            container.fill = Some(vec![solid_fill(backdrop)]);
         }
         let name = root_name.map(str::to_string).or_else(|| {
             object
@@ -246,16 +323,28 @@ impl<'a> SnapshotCtx<'a> {
         });
         let mut base = self.base(id, name, rect, parent_rect);
         self.apply_base_styles(&mut base, &styles);
-        let children = object
+        // `z-index` takes effect on a flex / grid item even while it stays
+        // `position: static`, so the children's stacking depends on *this*
+        // element's `display`.
+        let flex_or_grid_parent = snapshot_stack::is_flex_or_grid(styles.get("display"));
+        // Map in DOM order (id allocation and the node budget must follow the
+        // capture), then re-lay the survivors into canonical front-to-back
+        // order. Snapshot frames position every child explicitly, so this
+        // moves paint only.
+        let ordered = object
             .get("children")
             .and_then(Value::as_array)
             .map(|children| {
                 children
                     .iter()
-                    .filter_map(|child| self.map_child(child, rect))
+                    .filter_map(|child| {
+                        let bucket = snapshot_stack::paint_bucket(child, flex_or_grid_parent);
+                        self.map_child(child, rect).map(|node| (bucket, node))
+                    })
                     .collect()
             })
             .unwrap_or_default();
+        let children = snapshot_stack::to_front_to_back(ordered);
         Some(PenNode::Frame(FrameNode {
             base,
             container,
@@ -275,78 +364,6 @@ impl<'a> SnapshotCtx<'a> {
         }))
     }
 
-    fn map_text(
-        &mut self,
-        object: &Map<String, Value>,
-        rect: Rect,
-        parent_rect: Rect,
-    ) -> Option<PenNode> {
-        let text = object.get("text").and_then(Value::as_str)?.to_string();
-        if text.trim().is_empty() {
-            return None;
-        }
-        let id = self.allocate_id()?;
-        let styles = style_map(object);
-        let font_size = styles
-            .get("font-size")
-            .and_then(|value| parse_px(value))
-            .unwrap_or(self.opts.base_font_size);
-        let font_weight = styles.get("font-weight").map(|value| {
-            value
-                .parse::<u32>()
-                .map(FontWeight::Number)
-                .unwrap_or_else(|_| FontWeight::Keyword(value.clone()))
-        });
-        let font_style = match styles.get("font-style").map(String::as_str) {
-            Some("italic" | "oblique") => Some(FontStyleKind::Italic),
-            Some("normal") => Some(FontStyleKind::Normal),
-            _ => None,
-        };
-        let line_height = styles
-            .get("line-height")
-            .and_then(|value| parse_px(value))
-            .filter(|_| font_size > 0.0)
-            .map(|height| height / font_size);
-        let letter_spacing = styles
-            .get("letter-spacing")
-            .filter(|value| value.as_str() != "normal")
-            .and_then(|value| parse_px(value));
-        let text_align = styles
-            .get("text-align")
-            .and_then(|value| parse_text_align(value));
-        let fill = styles
-            .get("color")
-            .and_then(|value| parse_css_color(value))
-            .map(|color| vec![solid_fill(color)]);
-        Some(PenNode::Text(TextNode {
-            base: self.base(id, Some("Text".into()), rect, Some(parent_rect)),
-            limits: Default::default(),
-            width: Some(SizingBehavior::Number(rect.w)),
-            height: Some(SizingBehavior::Number(rect.h)),
-            content: TextContent::Plain(text),
-            font_family: styles.get("font-family").cloned(),
-            font_size: Some(font_size),
-            font_weight,
-            font_style,
-            letter_spacing,
-            line_height,
-            text_align,
-            text_align_vertical: None,
-            text_growth: None,
-            underline: None,
-            strikethrough: None,
-            fill,
-            effects: None,
-            state: None,
-            bindings: None,
-            events: None,
-            lifecycle: None,
-            semantics: None,
-            gestures: None,
-            route: None,
-        }))
-    }
-
     fn map_image(
         &mut self,
         object: &Map<String, Value>,
@@ -355,12 +372,14 @@ impl<'a> SnapshotCtx<'a> {
     ) -> Option<PenNode> {
         let id = self.allocate_id()?;
         let styles = style_map(object);
-        let visual = self.container_from_styles(&styles);
+        let visual = self.container_from_styles(&styles, rect);
         let object_fit = match styles.get("object-fit").map(String::as_str) {
             Some("cover") => Some(ImageFitMode::Crop),
             Some("contain") => Some(ImageFitMode::Fit),
-            Some("fill") => Some(ImageFitMode::Fill),
-            _ => None,
+            // A snapshot only records `object-fit` when it differs from the
+            // CSS initial value, and an `<svg>` / `<canvas>` node has no such
+            // property at all: both mean "paint into the whole box".
+            _ => Some(ImageFitMode::Fill),
         };
         let blend_mode = match styles
             .get("mix-blend-mode")
@@ -373,7 +392,7 @@ impl<'a> SnapshotCtx<'a> {
             .get("mix-blend-mode")
             .is_some_and(|value| crate::mapper::map_blend_mode(value).is_none())
         {
-            self.warn_once("unsupported CSS mix-blend-mode was ignored on an image");
+            self.warn_once(ImportWarning::ImageMixBlendModeUnsupported);
         }
         if object
             .get("tainted")
@@ -426,6 +445,73 @@ impl<'a> SnapshotCtx<'a> {
         }))
     }
 
+    /// An inline `<svg>` the capture reduced to a single filled path.
+    ///
+    /// Skia has no SVG codec, so the data-URI image the capture falls back to
+    /// paints as an undecodable placeholder — which is what turned every
+    /// icon button into an empty box. A `path` node is painted natively, and
+    /// the renderer fits path data to the node box *by its bounds*, so the
+    /// node has to be the artwork's own bounding box (`vectorRect`) rather
+    /// than the element's used box (`rect`, which is what the image fallback
+    /// needs). An `<svg>` sized larger than its art — an icon in a padded
+    /// button, or Material's full-viewBox sizing rect — differs between the
+    /// two by exactly the amount the glyph would be stretched.
+    fn map_vector(
+        &mut self,
+        object: &Map<String, Value>,
+        rect: Rect,
+        parent_rect: Rect,
+    ) -> Option<PenNode> {
+        let data = object.get("d").and_then(Value::as_str)?.trim().to_string();
+        if data.is_empty() {
+            return None;
+        }
+        let rect = Rect::from_field(object, "vectorRect")
+            .filter(|rect| rect.w > 0.0 && rect.h > 0.0)
+            .unwrap_or(rect);
+        let id = self.allocate_id()?;
+        let styles = style_map(object);
+        let mut base = self.base(id, Some("svg".into()), rect, Some(parent_rect));
+        // Opacity only, deliberately: `rect` came out of the capture's root
+        // CTM, which already carries every transform between the artwork and
+        // the page. Re-applying the element's CSS `transform` on top would
+        // rotate geometry that is already in its final place. (The capture
+        // only vectorizes an axis-aligned CTM, so there is no rotation left to
+        // carry either way.)
+        self.apply_opacity(&mut base, &styles);
+        let fill = object
+            .get("fill")
+            .and_then(Value::as_str)
+            .and_then(parse_css_color)
+            .map(|color| vec![solid_fill(color)]);
+        let fill_rule = match object.get("fillRule").and_then(Value::as_str) {
+            Some("evenodd") => Some(PathFillRule::Evenodd),
+            _ => None,
+        };
+        Some(PenNode::Path(PathNode {
+            base,
+            icon_id: None,
+            d: Some(data),
+            anchors: None,
+            closed: None,
+            fill_rule,
+            mask: None,
+            width: Some(SizingBehavior::Number(rect.w)),
+            height: Some(SizingBehavior::Number(rect.h)),
+            limits: Default::default(),
+            fill,
+            stroke: None,
+            effects: None,
+            state: None,
+            bindings: None,
+            events: None,
+            lifecycle: None,
+            semantics: None,
+            gestures: None,
+            route: None,
+        }))
+    }
+
     fn base(
         &self,
         id: String,
@@ -459,34 +545,59 @@ impl<'a> SnapshotCtx<'a> {
         }
     }
 
-    fn container_from_styles(&mut self, styles: &BTreeMap<String, String>) -> ContainerProps {
-        let computed = computed_style(styles, self.opts.base_font_size);
+    /// Resolve the shared visual mapping (fills, radii, shadows, stroke) for
+    /// one captured node.
+    ///
+    /// `rect` is the browser's used box, and it is threaded in as the node's
+    /// own size *and* as the containing block. Percentage-relative visuals —
+    /// `border-radius: 50%` on an avatar, `background-size: cover`,
+    /// `background-position: center` on a sprite — resolve against the used
+    /// box in CSS; resolving them against the viewport (the previous
+    /// behaviour, since a snapshot carries no `width` declaration) turned a
+    /// circular avatar into a square and cropped every sprite at the wrong
+    /// offset.
+    fn container_from_styles(
+        &mut self,
+        styles: &BTreeMap<String, String>,
+        rect: Rect,
+    ) -> ContainerProps {
+        let mut styles = styles.clone();
+        styles.insert("width".into(), format!("{}px", rect.w));
+        styles.insert("height".into(), format!("{}px", rect.h));
+        let computed = computed_style(&styles, self.opts.base_font_size);
         let rules = [];
         let mut map_context = MapCtx {
             opts: self.opts,
             rules: &rules,
             warnings: Vec::new(),
+            warned: Default::default(),
             next_id: 0,
             node_count: 0,
-            containing_width: self.opts.viewport_width,
-            containing_height: self.opts.viewport_width * 0.625,
+            containing_width: rect.w,
+            containing_height: rect.h,
             containing_width_is_definite: true,
-            positioned_width: self.opts.viewport_width,
-            positioned_height: self.opts.viewport_width * 0.625,
+            positioned_width: rect.w,
+            positioned_height: rect.h,
+            auto_margin_handled_by_parent: false,
+            pending_base_outcome: Default::default(),
         };
         let container = container_props_from(&computed, &mut map_context);
         for warning in map_context.warnings {
-            self.warn_once(&warning);
+            self.warn_once(warning);
         }
         container
     }
 
-    fn apply_base_styles(&mut self, base: &mut PenNodeBase, styles: &BTreeMap<String, String>) {
+    fn apply_opacity(&mut self, base: &mut PenNodeBase, styles: &BTreeMap<String, String>) {
         base.opacity = styles
             .get("opacity")
             .and_then(|value| value.parse::<f64>().ok())
             .filter(|value| value.is_finite())
             .map(NumberOrExpression::Number);
+    }
+
+    fn apply_base_styles(&mut self, base: &mut PenNodeBase, styles: &BTreeMap<String, String>) {
+        self.apply_opacity(base, styles);
         let Some(transform) = styles.get("transform") else {
             return;
         };
@@ -496,11 +607,56 @@ impl<'a> SnapshotCtx<'a> {
         if let Some(rotation) = matrix_rotation(transform) {
             base.rotation = Some(rotation);
         } else {
-            self.warn_once(
-                "unsupported snapshot transform ignored (only matrix rotation imported)",
-            );
+            self.warn_once(ImportWarning::SnapshotUnsupportedTransform);
         }
     }
+}
+
+/// Half a CSS pixel: the rounding the capture applies to every rect, so
+/// anything smaller is noise rather than real overflow.
+const OVERFLOW_EPSILON: f64 = 0.5;
+
+/// Does this container round any of its corners?
+fn has_corner_radius(container: &ContainerProps) -> bool {
+    match &container.corner_radius {
+        Some(CornerRadius::Uniform(radius)) => *radius != 0.0,
+        Some(CornerRadius::PerCorner(radii)) => radii.iter().any(|radius| *radius != 0.0),
+        None => false,
+    }
+}
+
+/// Does this element's captured subtree stay inside `rect`?
+///
+/// Only text-shaped content qualifies: an image or vector descendant may be
+/// relying on the clip for its crop (a circular avatar behind an
+/// `overflow: hidden` wrapper), so those boxes keep clipping whatever their
+/// geometry says.
+fn clip_is_inert(object: &Map<String, Value>, rect: Rect) -> bool {
+    let Some(children) = object.get("children").and_then(Value::as_array) else {
+        return true;
+    };
+    children.iter().all(|child| {
+        let Some(child) = child.as_object() else {
+            return true;
+        };
+        if matches!(
+            child.get("kind").and_then(Value::as_str),
+            Some("image" | "vector")
+        ) {
+            return false;
+        }
+        let Some(child_rect) = Rect::from_node(child) else {
+            return true;
+        };
+        if child_rect.x < rect.x - OVERFLOW_EPSILON
+            || child_rect.y < rect.y - OVERFLOW_EPSILON
+            || child_rect.x + child_rect.w > rect.x + rect.w + OVERFLOW_EPSILON
+            || child_rect.y + child_rect.h > rect.y + rect.h + OVERFLOW_EPSILON
+        {
+            return false;
+        }
+        clip_is_inert(child, rect)
+    })
 }
 
 fn style_map(object: &Map<String, Value>) -> BTreeMap<String, String> {
@@ -607,91 +763,5 @@ fn solid_fill(color: String) -> PenFill {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::HtmlImportOptions;
-    use jian_ops_schema::node::container::LayoutMode;
-    use jian_ops_schema::node::PenNode;
-
-    const SAMPLE: &str = include_str!("../tests/fixtures/snapshot_v1_sample.json");
-
-    #[test]
-    fn snapshot_extractor_contract_markers_are_present() {
-        for marker in [
-            "getComputedStyle",
-            "getBoundingClientRect",
-            "createRange",
-            "toDataURL",
-            "clipboard.writeText",
-            "snapshot.json",
-            "version: 1",
-            "truncated",
-        ] {
-            assert!(
-                SNAPSHOT_EXTRACTOR_JS.contains(marker),
-                "extractor is missing {marker}"
-            );
-        }
-    }
-
-    #[test]
-    fn sample_snapshot_converts_to_absolute_tree() {
-        let result = import_snapshot(SAMPLE, &HtmlImportOptions::default());
-        assert!(result.nodes.len() == 1, "warnings: {:?}", result.warnings);
-        let PenNode::Frame(root) = &result.nodes[0] else {
-            panic!()
-        };
-        assert!(matches!(
-            root.container.layout,
-            None | Some(LayoutMode::None)
-        ));
-        let children = root.children.as_ref().unwrap();
-        let PenNode::Frame(card) = &children[0] else {
-            panic!("card frame")
-        };
-        assert_eq!(card.base.x, Some(24.0));
-        assert_eq!(card.base.y, Some(24.0));
-        use jian_ops_schema::sizing::SizingBehavior;
-        use jian_ops_schema::style::StrokeThickness;
-        assert!(matches!(card.container.width, Some(SizingBehavior::Number(w)) if w == 300.0));
-        assert!(matches!(
-            card.container.stroke.as_ref().map(|stroke| &stroke.thickness),
-            Some(StrokeThickness::Uniform(width)) if *width == 1.0
-        ));
-        let PenNode::Text(text) = &card.children.as_ref().unwrap()[0] else {
-            panic!("text run")
-        };
-        assert_eq!(text.base.x, Some(16.0));
-        assert_eq!(text.font_size, Some(16.0));
-        assert_eq!(text.line_height, Some(1.5));
-        let PenNode::Image(image) = &children[1] else {
-            panic!("image")
-        };
-        assert!(image.src.as_str().starts_with("data:image/png"));
-    }
-
-    #[test]
-    fn computed_order_box_shadow_parses() {
-        let result = import_snapshot(SAMPLE, &HtmlImportOptions::default());
-        let PenNode::Frame(root) = &result.nodes[0] else {
-            panic!()
-        };
-        let PenNode::Frame(card) = &root.children.as_ref().unwrap()[0] else {
-            panic!()
-        };
-        let effects = card.container.effects.as_ref().expect("shadow");
-        assert!(
-            matches!(&effects[0], jian_ops_schema::style::PenEffect::Shadow(shadow)
-            if shadow.offset_y == 4.0 && shadow.blur == 8.0 && shadow.color == "#00000040")
-        );
-    }
-
-    #[test]
-    fn bad_version_and_bad_json_warn_not_panic() {
-        let result = import_snapshot("{\"version\":2,\"root\":{}}", &HtmlImportOptions::default());
-        assert!(result.nodes.is_empty());
-        assert!(result.warnings[0].contains("version"));
-        let malformed = import_snapshot("not json", &HtmlImportOptions::default());
-        assert!(malformed.nodes.is_empty());
-    }
-}
+#[path = "snapshot_tests.rs"]
+mod tests;

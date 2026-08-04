@@ -37,6 +37,13 @@ impl WidgetHost {
                 return Some(true);
             }
         }
+        // Post-import HTML diagnostics — a non-modal notice painted just
+        // under the missing-font modal, so it hit-tests right after it. Only
+        // presses inside its own card are consumed (native parity).
+        if self.dispatch_html_import_diagnostics_press(x, y, viewport_width, viewport_height) {
+            self.close_image_popovers_for_higher_overlay();
+            return Some(true);
+        }
         // Floating Design-MD panel — painted top-most, so it
         // hit-tests first: a click on its rect is the panel's before
         // any lower layer can claim it (mirrors native press order).

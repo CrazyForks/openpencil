@@ -1,3 +1,4 @@
+use crate::import_warning::ImportWarning;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
@@ -347,6 +348,7 @@ pub(crate) fn import_html_entry_with_fetcher(
 ) -> HtmlImportResult {
     let project_options = HtmlImportOptions {
         viewport_width: options.viewport_width,
+        viewport_height: options.viewport_height,
         base_font_size: options.base_font_size,
         document_name: options.document_name.clone(),
         base_url: Some(virtual_url(entry_path)),
@@ -365,9 +367,10 @@ pub(crate) fn import_html_entry_with_fetcher(
         }
     }
     if html_entry_count > 1 {
-        imported.warnings.push(format!(
-            "multiple HTML entries found ({html_entry_count}); selected {entry_path}"
-        ));
+        imported.push_warning(ImportWarning::MultipleHtmlEntries {
+            count: html_entry_count,
+            entry: entry_path.to_string(),
+        });
     }
     imported
 }

@@ -115,7 +115,7 @@ fn has_visual_box(style: &ComputedStyle, context: &MapCtx<'_>) -> bool {
         font_size: style.font_size,
         root_font_size: context.opts.base_font_size,
         viewport_w: context.opts.viewport_width,
-        viewport_h: context.opts.viewport_width * 0.625,
+        viewport_h: context.opts.viewport_height(),
     };
     let nonzero = |name: &str| {
         style

@@ -1,3 +1,4 @@
+use crate::import_warning::ImportWarning;
 use jian_ops_schema::node::base::PenNodeBase;
 use jian_ops_schema::node::{FrameNode, PenNode};
 use jian_ops_schema::sizing::{SizingBehavior, SizingKeyword};
@@ -41,7 +42,7 @@ pub(crate) fn map_pseudo(
     let required_nodes = 1 + usize::from(!generated.is_empty());
     // The originating element reserves its slot before generated content.
     if context.node_count.saturating_add(required_nodes) > crate::MAX_OUTPUT_NODES {
-        context.warn_once("generated pseudo-elements omitted because the node limit was reached");
+        context.warn_once(ImportWarning::NodeLimitPseudo);
         return None;
     }
     let mut container = container_props_from(&style, context);
@@ -53,7 +54,10 @@ pub(crate) fn map_pseudo(
         name: Some(name.to_string()),
         ..Default::default()
     };
-    apply_base_style(&mut base, &style, context);
+    // Generated content is never re-parented into an offset wrapper, so an
+    // in-flow shift on it has nowhere to go.
+    let outcome = apply_base_style(&mut base, &style, context);
+    crate::mapper::warn_dropped_flow_offset(context, outcome);
 
     let children = if generated.is_empty() {
         Vec::new()
@@ -122,7 +126,7 @@ fn resolved_pseudo(
         context.opts.base_font_size,
         pseudo,
         context.opts.viewport_width,
-        context.opts.viewport_width * 0.625,
+        context.opts.viewport_height(),
     );
     if style.get("display").is_some_and(is_none_keyword) {
         return None;
@@ -335,7 +339,7 @@ mod tests {
 
     fn map(css: &str, element: &DomElement, pseudo: PseudoElement) -> Option<MappedPseudo> {
         let options = crate::HtmlImportOptions::default();
-        let viewport_h = options.viewport_width * 0.625;
+        let viewport_h = options.viewport_height();
         let (rules, _warnings) =
             parse_stylesheet_for_viewport(css, 0, options.viewport_width, viewport_h);
         let parent = compute_style_for_viewport(
@@ -350,6 +354,7 @@ mod tests {
             opts: &options,
             rules: &rules,
             warnings: Vec::new(),
+            warned: Default::default(),
             next_id: 0,
             node_count: 0,
             containing_width: options.viewport_width,
@@ -357,6 +362,8 @@ mod tests {
             containing_width_is_definite: true,
             positioned_width: options.viewport_width,
             positioned_height: viewport_h,
+            auto_margin_handled_by_parent: false,
+            pending_base_outcome: Default::default(),
         };
         map_pseudo(&mut context, &[element], &parent, pseudo)
     }

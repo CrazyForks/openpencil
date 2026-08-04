@@ -34,9 +34,13 @@ pub(super) fn map_import_html(positionals: &[String], flags: &Flags) -> Result<C
     let source = required_pos(
         positionals,
         1,
-        "Usage: op import:html <file.html|url> [--x N] [--y N] [--parent P] [--page PAGE] [--out out.op]",
+        "Usage: op import:html <file.html|url> [--x N] [--y N] [--parent P] [--page PAGE] [--viewport-height N] [--out out.op]",
     )?;
     let is_url = source.starts_with("http://") || source.starts_with("https://");
+    let viewport_height = match flag_value(flags, "viewport-height") {
+        Some(raw) => Some(parse_viewport_height(&raw)?.to_string()),
+        None => None,
+    };
     if let Some(out_path) = flag_value(flags, "out") {
         if is_url {
             return Err(CliError::usage(
@@ -46,6 +50,7 @@ pub(super) fn map_import_html(positionals: &[String], flags: &Flags) -> Result<C
         return Ok(Command::ImportHtml {
             html_path: source,
             out_path,
+            viewport_height,
         });
     }
 
@@ -64,6 +69,9 @@ pub(super) fn map_import_html(positionals: &[String], flags: &Flags) -> Result<C
             pairs.push(pair(key, value));
         }
     }
+    if let Some(height) = viewport_height {
+        pairs.push(pair("viewportHeight", height));
+    }
     push_file_path(&mut pairs, flags);
     tool_call(
         if is_url {
@@ -73,6 +81,15 @@ pub(super) fn map_import_html(positionals: &[String], flags: &Flags) -> Result<C
         },
         pairs,
     )
+}
+
+/// `--viewport-height` accepts a positive finite number of CSS pixels.
+fn parse_viewport_height(raw: &str) -> Result<f64, CliError> {
+    raw.trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .ok_or_else(|| CliError::usage("--viewport-height expects a positive number of CSS pixels"))
 }
 
 pub(super) fn map_import_snapshot(
@@ -106,7 +123,12 @@ pub(super) fn map_import_snapshot(
     tool_call("import_web_snapshot", pairs)
 }
 
-pub(super) fn run_import_html(html_path: &str, out_path: &str) -> Result<String, CliError> {
+pub(super) fn run_import_html(
+    html_path: &str,
+    out_path: &str,
+    viewport_height: Option<&str>,
+) -> Result<String, CliError> {
+    let viewport_height = viewport_height.map(parse_viewport_height).transpose()?;
     let source_bytes = std::fs::read(html_path)
         .map_err(|error| CliError::Io(format!("read {html_path:?}: {error}")))?;
     let source = op_html::html_encoding::decode_html_bytes(&source_bytes);
@@ -124,6 +146,7 @@ pub(super) fn run_import_html(html_path: &str, out_path: &str) -> Result<String,
     let options = op_html::HtmlImportOptions {
         document_name: Some(document_name),
         base_url: Some(format!("{LOCAL_RESOURCE_ORIGIN}document.html")),
+        viewport_height,
         ..op_html::HtmlImportOptions::default()
     };
     let imported = op_html::import_html_document(source.as_ref(), &options, Some(&fetcher), None);
@@ -325,6 +348,7 @@ mod tests {
             Command::ImportHtml {
                 html_path: "a.html".to_string(),
                 out_path: "a.op".to_string(),
+                viewport_height: None,
             }
         );
     }
@@ -353,6 +377,7 @@ mod tests {
         let result = super::run_import_html(
             input.to_str().expect("UTF-8 input path"),
             output.to_str().expect("UTF-8 output path"),
+            None,
         )
         .expect("import UTF-16 HTML");
         let document = std::fs::read_to_string(&output).expect("read imported document");

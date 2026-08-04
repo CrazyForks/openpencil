@@ -102,6 +102,7 @@ mod history_guard;
 mod host_lifecycle;
 mod hover_clear;
 mod hover_property_panel;
+mod html_import_diagnostics_press;
 mod icon_picker_press;
 mod image_crop_drag;
 #[cfg(test)]

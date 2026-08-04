@@ -122,6 +122,397 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "dialog.slideshowHtmlTitle" => "Xuất trình chiếu",
         "dialog.slideshowHtmlSummary" => "Đã xuất {{count}} trang chiếu tới:",
         "dialog.slideshowHtmlEmpty" => "Bản trình bày này không có trang chiếu nào để xuất.",
+        // HTML import diagnostics — one entry per `ImportWarning::code`.
+        "htmlImport.warn.content.empty_input" => "Nội dung HTML có thể nhập không khả dụng.",
+        "htmlImport.warn.content.empty_body" => {
+            "Nội dung có thể nhập trong phần thân HTML không khả dụng."
+        }
+        "htmlImport.warn.content.dom_depth_truncated" => {
+            "HTML lồng sâu hơn {{max_depth}} cấp đã bị loại bỏ."
+        }
+        "htmlImport.warn.content.node_limit_truncated" => {
+            "Đã đạt giới hạn nút; phần nội dung trang còn lại đã bị lược bỏ."
+        }
+        "htmlImport.warn.content.node_limit_mapping" => {
+            "Đã đạt giới hạn nút; một phần cây HTML đã bị lược bỏ."
+        }
+        "htmlImport.warn.content.node_limit_inline_row" => {
+            "Đã đạt giới hạn nút; một hàng định dạng nội dòng đã bị lược bỏ."
+        }
+        "htmlImport.warn.content.node_limit_pseudo" => {
+            "Đã đạt giới hạn nút; các phần tử giả được sinh ra đã bị lược bỏ."
+        }
+        "htmlImport.warn.css.at_rule_depth_limit" => {
+            "Các quy tắc CSS lồng sâu hơn {{max_depth}} at-rule đã bị bỏ qua."
+        }
+        "htmlImport.warn.css.unterminated_rule" => "Một quy tắc CSS chưa kết thúc đã bị bỏ qua.",
+        "htmlImport.warn.css.marker_rules_unsupported" => {
+            "Các quy tắc CSS ::marker không được nhập."
+        }
+        "htmlImport.warn.css.nesting_unsupported" => "Các quy tắc kiểu CSS lồng nhau đã bị bỏ qua.",
+        "htmlImport.warn.css.invalid_layer_name" => {
+            "Tên @layer không hợp lệ '{{name}}' đã bị bỏ qua."
+        }
+        "htmlImport.warn.css.unsupported_statement" => {
+            "Câu lệnh @{{name}} không được hỗ trợ đã bị bỏ qua."
+        }
+        "htmlImport.warn.css.media_without_viewport" => {
+            "Các quy tắc @media không có khung nhìn đã bị bỏ qua."
+        }
+        "htmlImport.warn.css.invalid_layer_block_name" => {
+            "Tên khối @layer không hợp lệ '{{name}}' đã bị bỏ qua."
+        }
+        "htmlImport.warn.css.unsupported_container_block" => "Khối @container đã bị bỏ qua.",
+        "htmlImport.warn.css.unsupported_block" => "Khối @{{name}} không được hỗ trợ đã bị bỏ qua.",
+        "htmlImport.warn.font.web_font_not_downloaded" => {
+            "Phông chữ web @font-face '{{family}}' không khả dụng."
+        }
+        "htmlImport.warn.layout.percentage_absolute_offset_inferred" => {
+            "Các độ lệch theo phần trăm của một phần tử định vị tuyệt đối đã được xấp xỉ."
+        }
+        "htmlImport.warn.layout.percentage_relative_offset_inferred" => {
+            "Các độ lệch position:relative theo phần trăm đã được xấp xỉ."
+        }
+        "htmlImport.warn.layout.aspect_ratio_no_definite_axis" => {
+            "CSS aspect-ratio không có trục xác định đã bị bỏ qua."
+        }
+        "htmlImport.warn.layout.aspect_ratio_indefinite_container" => {
+            "CSS aspect-ratio bên trong khối chứa không xác định đã bị bỏ qua."
+        }
+        "htmlImport.warn.layout.position_sticky_ignored" => "CSS position:sticky đã bị bỏ qua.",
+        "htmlImport.warn.layout.grid_tracks_approximated" => {
+            "Các dải lưới CSS không được hỗ trợ đã được xấp xỉ."
+        }
+        "htmlImport.warn.layout.float_ignored" => "CSS float đã bị bỏ qua.",
+        "htmlImport.warn.layout.mix_blend_mode_no_node_equivalent" => {
+            "CSS mix-blend-mode ở cấp nút đã được xấp xỉ."
+        }
+        "htmlImport.warn.layout.overflow_scroll_clipped" => {
+            "CSS overflow: auto / scroll đã được xấp xỉ."
+        }
+        "htmlImport.warn.layout.negative_margins_ignored" => "Các lề CSS âm đã bị bỏ qua.",
+        "htmlImport.warn.layout.margins_on_visual_box_ignored" => {
+            "Các lề CSS trên một hộp hiển thị đã bị bỏ qua."
+        }
+        "htmlImport.warn.layout.content_box_percentage_approximated" => {
+            "Kích thước theo phần trăm của content-box đã được xấp xỉ."
+        }
+        "htmlImport.warn.layout.grid_empty_cells_packed" => {
+            "Các ô lưới CSS trống do đường bắt đầu tường minh để lại đã được xấp xỉ."
+        }
+        "htmlImport.warn.layout.grid_span_reflowed" => {
+            "Một mục lưới CSS có span không vừa với đường bắt đầu đã được xấp xỉ."
+        }
+        "htmlImport.warn.layout.grid_rows_node_limit" => {
+            "Đã đạt giới hạn nút; các lớp bọc hàng lưới CSS đã bị lược bỏ."
+        }
+        "htmlImport.warn.layout.grid_track_widths_unresolved" => {
+            "Chiều rộng dải lưới CSS dùng auto-fit / auto-fill đã được xấp xỉ."
+        }
+        "htmlImport.warn.layout.grid_template_areas_ignored" => {
+            "Cách sắp đặt theo CSS grid-template-areas không được nhập."
+        }
+        "htmlImport.warn.layout.grid_row_placement_ignored" => {
+            "Cách sắp đặt theo CSS grid-row không được nhập."
+        }
+        "htmlImport.warn.layout.grid_column_unsupported" => {
+            "CSS grid-column `{{value}}` đã được xấp xỉ."
+        }
+        "htmlImport.warn.layout.block_auto_margins_ignored" => {
+            "Các lề auto theo trục khối của CSS không được nhập."
+        }
+        "htmlImport.warn.layout.auto_margin_node_limit" => {
+            "Đã đạt giới hạn nút; căn chỉnh bằng lề auto của CSS đã bị lược bỏ."
+        }
+        "htmlImport.warn.layout.flow_offset_no_definite_size" => {
+            "Một độ lệch trong luồng CSS trên phần tử không có kích thước xác định đã bị loại bỏ."
+        }
+        "htmlImport.warn.layout.flow_offset_node_limit" => {
+            "Đã đạt giới hạn nút; một độ lệch trong luồng CSS đã bị lược bỏ."
+        }
+        "htmlImport.warn.layout.flow_offset_approximated" => {
+            "Các độ lệch trong luồng CSS (inset của position:relative, tịnh tiến transform) đã được xấp xỉ."
+        }
+        "htmlImport.warn.layout.flow_offset_no_wrapper" => {
+            "Một độ lệch trong luồng CSS trên hộp không thể chứa lớp bọc độ lệch đã bị loại bỏ."
+        }
+        "htmlImport.warn.layout.flex_wrap_column_not_emulated" => {
+            "flex-wrap trên vùng chứa flex dạng cột không được nhập."
+        }
+        "htmlImport.warn.layout.flex_wrap_reverse_plain" => {
+            "flex-wrap:wrap-reverse đã được xấp xỉ."
+        }
+        "htmlImport.warn.layout.flex_wrap_indefinite_width" => {
+            "flex-wrap trên vùng chứa không có chiều rộng xác định đã bị bỏ qua."
+        }
+        "htmlImport.warn.layout.flex_align_content_ignored" => {
+            "CSS align-content trên vùng chứa flex có xuống dòng không được nhập."
+        }
+        "htmlImport.warn.layout.flex_wrap_indeterminate_children" => {
+            "flex-wrap với kích thước trục chính của phần tử con không xác định đã bị bỏ qua."
+        }
+        "htmlImport.warn.layout.flex_wrap_node_limit" => {
+            "Đã đạt giới hạn nút; các hàng flex-wrap đã bị lược bỏ."
+        }
+        "htmlImport.warn.transform.unsupported_syntax" => {
+            "Cú pháp CSS transform không được hỗ trợ đã bị bỏ qua."
+        }
+        "htmlImport.warn.transform.unsupported_function" => {
+            "Các hàm CSS transform không được hỗ trợ (3D, matrix3d) đã bị bỏ qua."
+        }
+        "htmlImport.warn.transform.percentage_translation_dropped" => {
+            "Một phép tịnh tiến CSS transform theo phần trăm trên trục không xác định đã bị loại bỏ."
+        }
+        "htmlImport.warn.transform.non_finite_matrix" => {
+            "Một CSS transform tạo ra ma trận không hữu hạn đã bị bỏ qua."
+        }
+        "htmlImport.warn.transform.skew_dropped" => "Phép nghiêng của CSS transform đã bị loại bỏ.",
+        "htmlImport.warn.transform.degenerate_scale" => {
+            "Một CSS transform có tỉ lệ bằng không hoặc không hữu hạn đã được xấp xỉ."
+        }
+        "htmlImport.warn.transform.mirroring_absolute" => {
+            "Phép lật gương của CSS transform đã được xấp xỉ."
+        }
+        "htmlImport.warn.transform.origin_z_ignored" => {
+            "Độ lệch Z của CSS transform-origin đã bị bỏ qua."
+        }
+        "htmlImport.warn.transform.scale_not_baked" => {
+            "Một tỉ lệ CSS transform không thể gộp vào kích thước nút đã bị loại bỏ."
+        }
+        "htmlImport.warn.transform.scale_baked" => {
+            "Tỉ lệ CSS transform được gộp vào kích thước nút đã được xấp xỉ."
+        }
+        "htmlImport.warn.transform.scale_auto_size_ignored" => {
+            "Tỉ lệ CSS transform trên phần tử có kích thước tự động đã bị bỏ qua."
+        }
+        "htmlImport.warn.visual.background_repeat_approximated" => {
+            "CSS background-repeat theo hướng hoặc có giãn cách đã được xấp xỉ."
+        }
+        "htmlImport.warn.visual.background_tile_size_ignored" => {
+            "Kích thước ô lát nền CSS khai báo tường minh đã bị bỏ qua."
+        }
+        "htmlImport.warn.visual.background_size_auto_box" => {
+            "CSS background-size trên phần tử có kích thước tự động đã được xấp xỉ."
+        }
+        "htmlImport.warn.visual.background_size_needs_intrinsic_size" => {
+            "CSS background-size cần kích thước nội tại của ảnh đã được xấp xỉ."
+        }
+        "htmlImport.warn.visual.background_position_unsupported" => {
+            "Một CSS background-position không được hỗ trợ đã bị bỏ qua."
+        }
+        "htmlImport.warn.visual.background_image_url_empty" => {
+            "Một URL ảnh nền CSS rỗng đã bị bỏ qua."
+        }
+        "htmlImport.warn.visual.conic_gradient_ignored" => {
+            "Các chuyển sắc hình nón của CSS đã bị bỏ qua."
+        }
+        "htmlImport.warn.visual.background_image_layer_unsupported" => {
+            "Một lớp CSS background-image không được hỗ trợ đã bị bỏ qua."
+        }
+        "htmlImport.warn.visual.background_color_unresolved" => {
+            "Một màu nền CSS không phân giải được đã bị bỏ qua."
+        }
+        "htmlImport.warn.visual.background_position_dropped" => {
+            "CSS background-position đã bị bỏ qua."
+        }
+        "htmlImport.warn.visual.border_colors_approximated" => {
+            "Màu viền CSS theo từng cạnh đã được xấp xỉ."
+        }
+        "htmlImport.warn.visual.border_styles_approximated" => {
+            "Các kiểu viền CSS hỗn hợp theo từng cạnh đã được xấp xỉ."
+        }
+        "htmlImport.warn.visual.border_style_complex" => {
+            "Một kiểu viền CSS phức tạp đã được xấp xỉ."
+        }
+        "htmlImport.warn.visual.border_style_unsupported" => {
+            "Một kiểu viền CSS không được hỗ trợ đã được xấp xỉ."
+        }
+        "htmlImport.warn.visual.border_radius_elliptical" => {
+            "Các bán kính viền CSS dạng elip đã được xấp xỉ."
+        }
+        "htmlImport.warn.visual.border_radius_unsupported" => {
+            "Một bán kính viền CSS không được hỗ trợ đã bị bỏ qua."
+        }
+        "htmlImport.warn.visual.box_shadow_layer_unsupported" => {
+            "Một lớp CSS box-shadow không được hỗ trợ đã bị bỏ qua."
+        }
+        "htmlImport.warn.visual.gradient_interpolation_ignored" => {
+            "Phương pháp nội suy màu của chuyển sắc CSS đã bị bỏ qua."
+        }
+        "htmlImport.warn.visual.linear_gradient_direction_unsupported" => {
+            "Một hướng CSS linear-gradient không được hỗ trợ đã bị bỏ qua."
+        }
+        "htmlImport.warn.visual.gradient_color_hints_ignored" => {
+            "Các điểm gợi ý màu của chuyển sắc CSS đã bị bỏ qua."
+        }
+        "htmlImport.warn.visual.gradient_color_stop_unsupported" => {
+            "Một điểm dừng màu của chuyển sắc CSS không được hỗ trợ đã bị bỏ qua."
+        }
+        "htmlImport.warn.visual.gradient_too_few_stops" => {
+            "Một chuyển sắc CSS có ít hơn hai điểm dừng dùng được đã bị bỏ qua."
+        }
+        "htmlImport.warn.visual.gradient_repeating_approximated" => {
+            "Một chuyển sắc CSS lặp lại đã được xấp xỉ."
+        }
+        "htmlImport.warn.visual.gradient_stops_clamped" => {
+            "Các điểm dừng chuyển sắc CSS nằm ngoài phạm vi đã được xấp xỉ."
+        }
+        "htmlImport.warn.visual.blur_radius_unsupported" => {
+            "Một bán kính làm mờ CSS không được hỗ trợ đã bị bỏ qua."
+        }
+        "htmlImport.warn.visual.filter_drop_shadow_unsupported" => {
+            "Một CSS filter drop-shadow() không được hỗ trợ đã bị bỏ qua."
+        }
+        "htmlImport.warn.visual.filter_function_unsupported" => {
+            "Một hàm CSS filter không được hỗ trợ đã bị bỏ qua."
+        }
+        "htmlImport.warn.visual.backdrop_filter_unsupported" => {
+            "Một hàm CSS backdrop-filter không được hỗ trợ đã bị bỏ qua."
+        }
+        "htmlImport.warn.visual.background_blend_mode_unsupported" => {
+            "Một CSS background-blend-mode không được hỗ trợ đã bị bỏ qua."
+        }
+        "htmlImport.warn.visual.mix_blend_mode_on_fills" => {
+            "CSS mix-blend-mode trên từng lớp tô đã được xấp xỉ."
+        }
+        "htmlImport.warn.visual.mix_blend_mode_unsupported" => {
+            "Một CSS mix-blend-mode không được hỗ trợ đã bị bỏ qua."
+        }
+        "htmlImport.warn.visual.property_not_representable" => "CSS {{property}} đã bị bỏ qua.",
+        "htmlImport.warn.visual.gradient_background_size_ignored" => {
+            "CSS background-size trên một chuyển sắc đã bị bỏ qua."
+        }
+        "htmlImport.warn.visual.radial_gradient_position_unsupported" => {
+            "Một vị trí CSS radial-gradient không được hỗ trợ đã bị bỏ qua."
+        }
+        "htmlImport.warn.visual.radial_gradient_elliptical" => {
+            "Một CSS radial-gradient dạng elip đã được xấp xỉ."
+        }
+        "htmlImport.warn.visual.radial_gradient_extent_approximated" => {
+            "Một từ khóa phạm vi của CSS radial-gradient đã được xấp xỉ."
+        }
+        "htmlImport.warn.visual.radial_gradient_size_unsupported" => {
+            "Một kích thước CSS radial-gradient không được hỗ trợ đã bị bỏ qua."
+        }
+        "htmlImport.warn.text.shadow_layer_unsupported" => {
+            "Một lớp CSS text-shadow không được hỗ trợ đã bị bỏ qua."
+        }
+        "htmlImport.warn.text.shadow_extra_layers_ignored" => {
+            "Các lớp CSS text-shadow sau lớp đầu tiên đã bị bỏ qua."
+        }
+        "htmlImport.warn.text.shadow_on_inline_ignored" => {
+            "CSS text-shadow trên một phần tử nội dòng đã bị bỏ qua."
+        }
+        "htmlImport.warn.list.style_image_ignored" => "CSS list-style-image không được nhập.",
+        "htmlImport.warn.list.marker_position_outside_approximated" => {
+            "Một dấu đầu dòng treo `list-style-position: outside` đã được xấp xỉ."
+        }
+        "htmlImport.warn.list.style_type_unsupported" => {
+            "CSS list-style-type `{{value}}` không được hỗ trợ đã được xấp xỉ."
+        }
+        "htmlImport.warn.media.object_fit_scale_down" => {
+            "CSS object-fit:scale-down đã được xấp xỉ."
+        }
+        "htmlImport.warn.media.object_fit_none_ignored" => "CSS object-fit:none đã bị bỏ qua.",
+        "htmlImport.warn.media.object_position_ignored" => "CSS object-position đã bị bỏ qua.",
+        "htmlImport.warn.media.image_mix_blend_mode_unsupported" => {
+            "Một CSS mix-blend-mode không được hỗ trợ trên ảnh đã bị bỏ qua."
+        }
+        "htmlImport.warn.media.inline_svg_placeholder" => {
+            "Một phần tử <svg> nội dòng đã được nhập dưới dạng phần giữ chỗ."
+        }
+        "htmlImport.warn.media.input_type_fallback" => {
+            "Một kiểu <input> không được hỗ trợ đã được xấp xỉ."
+        }
+        "htmlImport.warn.media.element_placeholder" => {
+            "Phần tử <{{tag}}> đã được nhập dưới dạng phần giữ chỗ."
+        }
+        "htmlImport.warn.media.picture_undecodable_types" => {
+            "Một <picture> chỉ có các kiểu nguồn không giải mã được đã được xấp xỉ."
+        }
+        "htmlImport.warn.table.rowspan_ignored" => "Thuộc tính HTML rowspan không được nhập.",
+        "htmlImport.warn.table.row_groups_unflattened" => {
+            "Chiều rộng cột của bảng có nhóm hàng không được CSS làm phẳng đã được xấp xỉ."
+        }
+        "htmlImport.warn.table.indefinite_width_approximated" => {
+            "Chiều rộng cột của bảng CSS không có chiều rộng xác định đã được xấp xỉ."
+        }
+        "htmlImport.warn.resource.invalid_base_href" => {
+            "<base href> không hợp lệ {{href}} đã bị bỏ qua."
+        }
+        "htmlImport.warn.resource.base_href_outside_origin" => {
+            "<base href> {{href}} nằm ngoài nguồn gốc của dự án đã bị bỏ qua."
+        }
+        "htmlImport.warn.resource.external_stylesheet_skipped" => {
+            "Bảng kiểu bên ngoài {{url}} không khả dụng."
+        }
+        "htmlImport.warn.resource.image_outside_origin" => {
+            "Ảnh {{url}} nằm ngoài nguồn gốc của dự án đã được nhập dưới dạng phần giữ chỗ."
+        }
+        "htmlImport.warn.resource.image_unavailable" => {
+            "Ảnh không khả dụng {{url}} đã được nhập dưới dạng phần giữ chỗ."
+        }
+        "htmlImport.warn.resource.css_import_invalid" => {
+            "CSS @import {{prelude}} không hợp lệ đã bị bỏ qua."
+        }
+        "htmlImport.warn.resource.css_import_unresolvable" => {
+            "CSS @import {{reference}} không khả dụng."
+        }
+        "htmlImport.warn.resource.css_import_cycle" => {
+            "CSS @import {{url}} bị lặp vòng đã bị bỏ qua."
+        }
+        "htmlImport.warn.resource.css_import_depth_limit" => {
+            "CSS @import {{url}} vượt quá độ sâu {{max_depth}} đã bị bỏ qua."
+        }
+        "htmlImport.warn.resource.css_import_unavailable" => "CSS @import {{url}} không khả dụng.",
+        "htmlImport.warn.project.multiple_html_entries" => {
+            "Đã tìm thấy {{count}} mục HTML đầu vào; {{entry}} được chọn và phần còn lại đã được xấp xỉ."
+        }
+        "htmlImport.warn.snapshot.truncated" => "Một phần ảnh chụp trình duyệt đã bị loại bỏ.",
+        "htmlImport.warn.snapshot.node_limit" => {
+            "Đã đạt giới hạn nút; phần nội dung ảnh chụp còn lại đã bị lược bỏ."
+        }
+        "htmlImport.warn.snapshot.tainted_images" => {
+            "{{count}} ảnh bị nhiễm CORS, giữ dưới dạng URL từ xa, không khả dụng."
+        }
+        "htmlImport.warn.snapshot.invalid_rect" => {
+            "Một nút ảnh chụp có khung chữ nhật bị thiếu hoặc không hợp lệ đã bị loại bỏ."
+        }
+        "htmlImport.warn.snapshot.unknown_kind" => {
+            "Một nút ảnh chụp thuộc loại không xác định đã bị loại bỏ."
+        }
+        "htmlImport.warn.snapshot.rejected" => "Ảnh chụp trình duyệt ({{reason}}) đã bị loại bỏ.",
+        "htmlImport.warn.snapshot.unsupported_transform" => {
+            "Một phép biến đổi trong ảnh chụp không được hỗ trợ đã bị bỏ qua."
+        }
+        "htmlImport.warn.css.media_empty_query" => "Một truy vấn @media rỗng đã bị bỏ qua.",
+        "htmlImport.warn.css.media_unsupported_type" => {
+            "Kiểu @media không được hỗ trợ '{{name}}' đã bị bỏ qua."
+        }
+        "htmlImport.warn.css.media_unsupported_condition" => {
+            "Điều kiện @media không được hỗ trợ '{{input}}' đã bị bỏ qua."
+        }
+        "htmlImport.warn.css.media_invalid_orientation" => {
+            "Hướng @media không hợp lệ '{{value}}' đã bị bỏ qua."
+        }
+        "htmlImport.warn.css.media_unsupported_feature" => {
+            "Đặc tính @media không được hỗ trợ '{{name}}' đã bị bỏ qua."
+        }
+        "htmlImport.warn.css.media_unsupported_range" => {
+            "Khoảng @media không được hỗ trợ '({{input}})' đã bị bỏ qua."
+        }
+        "htmlImport.warn.css.media_invalid_range" => {
+            "Khoảng @media không hợp lệ '({{input}})' đã bị bỏ qua."
+        }
+        "htmlImport.warn.css.media_invalid_length" => {
+            "Độ dài @media không hợp lệ '{{value}}' đã bị bỏ qua."
+        }
+        "htmlImport.diagnostics.title" => "Đã nhập xong HTML",
+        "htmlImport.diagnostics.summary" => "Mục bị suy giảm: {{count}}",
+        "htmlImport.diagnostics.dismiss" => "Đóng",
+        "htmlImport.diagnostics.expand" => "Xem chi tiết",
+        "htmlImport.diagnostics.collapse" => "Ẩn chi tiết",
+        "htmlImport.diagnostics.more" => "+{{count}} mục nữa",
         _ => return super::vi_collab::lookup(key),
     })
 }

@@ -1,9 +1,9 @@
+use crate::import_warning::ImportWarning;
 use jian_ops_schema::node::container::CornerRadius;
 use jian_ops_schema::node::ImageSrc;
 use jian_ops_schema::style::{
-    BlendMode, BlurBody, GradientStop, ImageFillBody, ImageFillMode, LinearGradientBody, PenEffect,
-    PenFill, PenStroke, RadialGradientBody, ShadowBody, SolidFillBody, StrokeAlign,
-    StrokeThickness,
+    BlendMode, BlurBody, GradientStop, ImageFillBody, LinearGradientBody, PenEffect, PenFill,
+    PenStroke, RadialGradientBody, ShadowBody, SolidFillBody, StrokeAlign, StrokeThickness,
 };
 
 use crate::color::parse_css_color;
@@ -19,8 +19,21 @@ use syntax::{
     split_whitespace_top_level, strip_interpolation_method,
 };
 
-pub(super) fn map_fill(style: &ComputedStyle, context: &mut MapCtx<'_>) -> Option<Vec<PenFill>> {
+#[path = "mapper_background.rs"]
+mod background;
+
+/// `node` is the element's used border-box size, needed to resolve
+/// `background-size` / `background-position` into an image-fill placement.
+/// `definite` reports per axis whether that size is real or a stand-in for an
+/// unresolved `auto`; a fabricated axis must not become a crop transform.
+pub(super) fn map_fill(
+    style: &ComputedStyle,
+    context: &mut MapCtx<'_>,
+    node: (f64, f64),
+    definite: (bool, bool),
+) -> Option<Vec<PenFill>> {
     let mut fills = Vec::new();
+    let mut position_dropped = false;
     if let Some(images) = style.get("background-image") {
         for (index, image) in split_top_level(images, ',').into_iter().enumerate() {
             if image.eq_ignore_ascii_case("none") {
@@ -30,16 +43,21 @@ pub(super) fn map_fill(style: &ComputedStyle, context: &mut MapCtx<'_>) -> Optio
             if let Some(mut gradient) = map_gradient(image, style, context) {
                 set_fill_blend(&mut gradient, blend);
                 fills.push(gradient);
+                // A gradient paints across the whole box; it has no placement
+                // the schema could offset.
+                position_dropped |= background::position_is_dropped(style, index);
             } else if let Some(url) = extract_url(image) {
                 if url.is_empty() {
-                    context.warn_once("empty CSS background image URL was ignored");
+                    context.warn_once(ImportWarning::BackgroundImageUrlEmpty);
                     continue;
                 }
+                let geometry = background::image_layer(style, index, node, definite, context);
+                position_dropped |= geometry.position_dropped;
                 fills.push(PenFill::Image(ImageFillBody {
                     url: ImageSrc::from(url),
-                    mode: background_image_mode(style, index, context),
+                    mode: geometry.mode,
                     original_size: None,
-                    transform: None,
+                    transform: geometry.transform,
                     tile_scale: None,
                     explain: None,
                     opacity: None,
@@ -52,10 +70,13 @@ pub(super) fn map_fill(style: &ComputedStyle, context: &mut MapCtx<'_>) -> Optio
                     highlights: None,
                     shadows: None,
                 }));
-            } else if image.to_ascii_lowercase().contains("conic-gradient(") {
-                context.warn_once("conic gradients are not representable and were ignored");
-            } else if resolve_color(image, style).is_none() {
-                context.warn_once("unsupported CSS background-image layer was ignored");
+            } else {
+                if image.to_ascii_lowercase().contains("conic-gradient(") {
+                    context.warn_once(ImportWarning::ConicGradientIgnored);
+                } else if resolve_color(image, style).is_none() {
+                    context.warn_once(ImportWarning::BackgroundImageLayerUnsupported);
+                }
+                position_dropped |= background::position_is_dropped(style, index);
             }
         }
     }
@@ -66,8 +87,11 @@ pub(super) fn map_fill(style: &ComputedStyle, context: &mut MapCtx<'_>) -> Optio
                 fills.push(solid_fill(color, blend));
             }
         } else if !value.eq_ignore_ascii_case("transparent") {
-            context.warn_once("unresolved CSS background color was ignored");
+            context.warn_once(ImportWarning::BackgroundColorUnresolved);
         }
+    }
+    if position_dropped {
+        context.warn_once(ImportWarning::BackgroundPositionDropped);
     }
     warn_background_geometry(style, context);
     (!fills.is_empty()).then_some(fills)
@@ -108,7 +132,7 @@ pub(super) fn map_stroke(style: &ComputedStyle, context: &mut MapCtx<'_>) -> Opt
         .cloned()
         .or_else(|| (resolved_colors.len() < visible_side_count).then(|| "#000000".into()))?;
     if resolved_colors.iter().any(|candidate| candidate != &color) {
-        context.warn_once("per-side border colors approximated using the first opaque color");
+        context.warn_once(ImportWarning::BorderColorsApproximated);
     }
     let uniform = widths.iter().all(|width| *width == widths[0]);
     let thickness = if uniform {
@@ -123,7 +147,7 @@ pub(super) fn map_stroke(style: &ComputedStyle, context: &mut MapCtx<'_>) -> Opt
         .map(|(_, value)| value.to_ascii_lowercase());
     let style_name = visible_styles.next().unwrap_or_else(|| "solid".into());
     if visible_styles.any(|candidate| candidate != style_name) {
-        context.warn_once("mixed per-side border styles approximated using the first style");
+        context.warn_once(ImportWarning::BorderStylesApproximated);
     }
     let dash_pattern = match style_name.to_ascii_lowercase().as_str() {
         "dotted" => Some(vec![1.0, widths.iter().copied().fold(1.0, f32::max) * 2.0]),
@@ -132,12 +156,12 @@ pub(super) fn map_stroke(style: &ComputedStyle, context: &mut MapCtx<'_>) -> Opt
             widths.iter().copied().fold(1.0, f32::max) * 2.0,
         ]),
         "double" | "groove" | "ridge" | "inset" | "outset" => {
-            context.warn_once("complex CSS border style approximated as a solid stroke");
+            context.warn_once(ImportWarning::BorderStyleComplex);
             None
         }
         "solid" => None,
         _ => {
-            context.warn_once("unsupported CSS border style approximated as a solid stroke");
+            context.warn_once(ImportWarning::BorderStyleUnsupported);
             None
         }
     };
@@ -176,7 +200,7 @@ pub(super) fn map_corner_radius(
         };
         any = true;
         if value.contains('/') {
-            context.warn_once("elliptical CSS border radii approximated using horizontal radii");
+            context.warn_once(ImportWarning::BorderRadiusElliptical);
         }
         if let Some(radius) = parse_length(
             value.split('/').next().unwrap_or(value),
@@ -184,7 +208,7 @@ pub(super) fn map_corner_radius(
         ) {
             radii[index] = radius.resolve(reference).max(0.0);
         } else {
-            context.warn_once("unsupported CSS border radius was ignored");
+            context.warn_once(ImportWarning::BorderRadiusUnsupported);
         }
     }
     if !any {
@@ -207,10 +231,10 @@ pub(super) fn map_effects(
             if shadow.eq_ignore_ascii_case("none") {
                 continue;
             }
-            if let Some(shadow) = map_shadow(shadow, style, context) {
+            if let Some(shadow) = map_shadow(shadow, style, context, true) {
                 effects.push(PenEffect::Shadow(shadow));
             } else {
-                context.warn_once("unsupported CSS box-shadow layer was ignored");
+                context.warn_once(ImportWarning::BoxShadowLayerUnsupported);
             }
         }
     }
@@ -221,6 +245,58 @@ pub(super) fn map_effects(
         map_filter(filter, true, style, context, &mut effects);
     }
     (!effects.is_empty()).then_some(effects)
+}
+
+/// CSS `text-shadow` → a text node's shadow effect.
+///
+/// `text-shadow` shares `box-shadow`'s `<offset-x> <offset-y> <blur> <color>`
+/// grammar minus `spread` and `inset`, so it reuses the same parser — with the
+/// stricter grammar enforced: a fourth length or an `inset` keyword makes the
+/// layer invalid CSS, which a browser drops rather than paints. The schema
+/// keeps one effect list per text node and the text painter honours a single
+/// shadow, so only the first layer survives — CSS paints the first layer on top,
+/// which makes it the one worth keeping.
+pub(crate) fn map_text_shadow(
+    style: &ComputedStyle,
+    context: &mut MapCtx<'_>,
+) -> Option<Vec<PenEffect>> {
+    let value = style.get("text-shadow")?;
+    if value.trim().eq_ignore_ascii_case("none") {
+        return None;
+    }
+    let layers = split_top_level(value, ',');
+    let mut shadow = None;
+    for layer in &layers {
+        match map_shadow(layer, style, context, false) {
+            Some(parsed) if shadow.is_none() => shadow = Some(parsed),
+            Some(_) => {}
+            None => context.warn_once(ImportWarning::TextShadowLayerUnsupported),
+        }
+    }
+    let shadow = shadow?;
+    if layers.len() > 1 {
+        context.warn_once(ImportWarning::TextShadowExtraLayersIgnored);
+    }
+    Some(vec![PenEffect::Shadow(shadow)])
+}
+
+/// Report a `text-shadow` authored on an inline element inside a text block.
+///
+/// The schema carries effects per TEXT NODE, not per styled segment, so only
+/// the block's own shadow reaches the document; a `<span style="text-shadow:…">`
+/// inside a paragraph is silently dropped without this. `text-shadow` inherits,
+/// so a segment that merely repeats its parent's value is not a drop.
+pub(crate) fn warn_segment_text_shadow(
+    context: &mut MapCtx<'_>,
+    parent: &ComputedStyle,
+    segment: &ComputedStyle,
+) {
+    let value = segment.get("text-shadow");
+    if value != parent.get("text-shadow")
+        && value.is_some_and(|value| !value.trim().eq_ignore_ascii_case("none"))
+    {
+        context.warn_once(ImportWarning::TextShadowOnInlineIgnored);
+    }
 }
 
 fn map_gradient(value: &str, style: &ComputedStyle, context: &mut MapCtx<'_>) -> Option<PenFill> {
@@ -255,14 +331,14 @@ fn map_gradient(value: &str, style: &ComputedStyle, context: &mut MapCtx<'_>) ->
         if parse_color_stops(prelude, style).is_none() {
             let (direction, interpolation) = strip_interpolation_method(prelude);
             if interpolation {
-                context.warn_once("CSS gradient color interpolation method was ignored");
+                context.warn_once(ImportWarning::GradientInterpolationIgnored);
             }
             if direction.is_empty() {
                 // The default CSS direction is top to bottom.
             } else if let Some(parsed) = parse_gradient_angle(direction) {
                 angle = parsed;
             } else {
-                context.warn_once("unsupported CSS linear-gradient direction was ignored");
+                context.warn_once(ImportWarning::LinearGradientDirectionUnsupported);
             }
             parts.remove(0);
         }
@@ -272,21 +348,21 @@ fn map_gradient(value: &str, style: &ComputedStyle, context: &mut MapCtx<'_>) ->
         if let Some(mut parsed) = parse_color_stops(part, style) {
             stops.append(&mut parsed);
         } else if parse_stop_position(part).is_some() {
-            context.warn_once("CSS gradient color hints are not representable and were ignored");
+            context.warn_once(ImportWarning::GradientColorHintsIgnored);
         } else {
-            context.warn_once("unsupported CSS gradient color stop was ignored");
+            context.warn_once(ImportWarning::GradientColorStopUnsupported);
         }
     }
     if stops.len() < 2 {
-        context.warn_once("CSS gradient with fewer than two usable stops was ignored");
+        context.warn_once(ImportWarning::GradientTooFewStops);
         return None;
     }
     distribute_stops(&mut stops);
     if repeating {
-        context.warn_once("repeating CSS gradient approximated using one gradient cycle");
+        context.warn_once(ImportWarning::GradientRepeatingApproximated);
     }
     if stops.iter().any(|stop| !(0.0..=1.0).contains(&stop.offset)) {
-        context.warn_once("out-of-range CSS gradient stops were clamped to the fill bounds");
+        context.warn_once(ImportWarning::GradientStopsClamped);
         stops
             .iter_mut()
             .for_each(|stop| stop.offset = stop.offset.clamp(0.0, 1.0));
@@ -407,13 +483,21 @@ fn distribute_stops(stops: &mut [ParsedStop]) {
     }
 }
 
-fn map_shadow(value: &str, style: &ComputedStyle, context: &MapCtx<'_>) -> Option<ShadowBody> {
+/// `spread_and_inset_allowed` is the `box-shadow` grammar; `text-shadow` uses
+/// the same production without the fourth length and without `inset`, and a
+/// layer that uses either is invalid rather than approximable.
+fn map_shadow(
+    value: &str,
+    style: &ComputedStyle,
+    context: &MapCtx<'_>,
+    spread_and_inset_allowed: bool,
+) -> Option<ShadowBody> {
     let mut inner = false;
     let mut color = resolve_color("currentcolor", style).unwrap_or_else(|| "#000000".into());
     let mut lengths = Vec::new();
     for token in split_whitespace_top_level(value) {
         if token.eq_ignore_ascii_case("inset") {
-            if inner {
+            if inner || !spread_and_inset_allowed {
                 return None;
             }
             inner = true;
@@ -425,7 +509,8 @@ fn map_shadow(value: &str, style: &ComputedStyle, context: &MapCtx<'_>) -> Optio
             return None;
         }
     }
-    if !(2..=4).contains(&lengths.len()) {
+    let maximum_lengths = if spread_and_inset_allowed { 4 } else { 3 };
+    if !(2..=maximum_lengths).contains(&lengths.len()) {
         return None;
     }
     Some(ShadowBody {
@@ -462,20 +547,20 @@ fn map_filter(
                     PenEffect::Blur(blur)
                 });
             } else {
-                context.warn_once("unsupported CSS blur radius was ignored");
+                context.warn_once(ImportWarning::BlurRadiusUnsupported);
             }
         } else if !backdrop {
             if let Some(body) = exact_function_body(function, "drop-shadow") {
-                if let Some(shadow) = map_shadow(body, style, context) {
+                if let Some(shadow) = map_shadow(body, style, context, true) {
                     effects.push(PenEffect::Shadow(shadow));
                 } else {
-                    context.warn_once("unsupported CSS filter drop-shadow was ignored");
+                    context.warn_once(ImportWarning::FilterDropShadowUnsupported);
                 }
             } else {
-                context.warn_once("unsupported CSS filter function was ignored");
+                context.warn_once(ImportWarning::FilterFunctionUnsupported);
             }
         } else {
-            context.warn_once("unsupported CSS backdrop-filter function was ignored");
+            context.warn_once(ImportWarning::BackdropFilterUnsupported);
         }
     }
 }
@@ -521,7 +606,7 @@ fn length_context(style: &ComputedStyle, context: &MapCtx<'_>) -> LengthCtx {
         font_size: style.font_size,
         root_font_size: context.opts.base_font_size,
         viewport_w: context.opts.viewport_width,
-        viewport_h: context.opts.viewport_width * 0.625,
+        viewport_h: context.opts.viewport_height(),
     }
 }
 
@@ -556,7 +641,7 @@ fn layer_blend_mode(
     {
         let blend = map_blend_mode(value);
         if blend.is_none() {
-            context.warn_once("unsupported CSS background-blend-mode was ignored");
+            context.warn_once(ImportWarning::BackgroundBlendModeUnsupported);
         }
         blend
     } else {
@@ -567,11 +652,11 @@ fn layer_blend_mode(
 fn mix_blend_mode(style: &ComputedStyle, context: &mut MapCtx<'_>) -> Option<BlendMode> {
     let value = style.get("mix-blend-mode")?;
     if !value.eq_ignore_ascii_case("normal") {
-        context.warn_once("CSS mix-blend-mode approximated on individual fills");
+        context.warn_once(ImportWarning::MixBlendModeOnFills);
     }
     let blend = map_blend_mode(value);
     if blend.is_none() {
-        context.warn_once("unsupported CSS mix-blend-mode was ignored");
+        context.warn_once(ImportWarning::MixBlendModeUnsupported);
     }
     blend
 }
@@ -598,60 +683,12 @@ pub(crate) fn map_blend_mode(value: &str) -> Option<BlendMode> {
     }
 }
 
-fn background_image_mode(
-    style: &ComputedStyle,
-    index: usize,
-    context: &mut MapCtx<'_>,
-) -> Option<ImageFillMode> {
-    let size = style
-        .get("background-size")
-        .and_then(|value| layer_value(value, index))
-        .unwrap_or("auto")
-        .trim()
-        .to_ascii_lowercase();
-    match size.as_str() {
-        "cover" => return Some(ImageFillMode::Crop),
-        "contain" => return Some(ImageFillMode::Fit),
-        _ => {}
-    }
-    let repeat = style
-        .get("background-repeat")
-        .and_then(|value| layer_value(value, index))
-        .unwrap_or("repeat")
-        .trim()
-        .to_ascii_lowercase();
-    if repeat != "no-repeat" {
-        if repeat != "repeat" {
-            context.warn_once("directional or spaced CSS background repeat approximated as tile");
-        }
-        if !matches_ignore_ascii_case(&size, &["auto", "auto auto"]) {
-            context.warn_once(
-                "explicit CSS background tile size is not representable and was ignored",
-            );
-        }
-        return Some(ImageFillMode::Tile);
-    }
-    match size.as_str() {
-        "auto" | "auto auto" => Some(ImageFillMode::Fill),
-        _ => {
-            context.warn_once("explicit CSS background image size was approximated as fill");
-            Some(ImageFillMode::Fill)
-        }
-    }
-}
-
 fn layer_value(value: &str, index: usize) -> Option<&str> {
     let layers = split_top_level(value, ',');
     (!layers.is_empty()).then(|| layers[index % layers.len()])
 }
 
 fn warn_background_geometry(style: &ComputedStyle, context: &mut MapCtx<'_>) {
-    if style
-        .get("background-position")
-        .is_some_and(|value| !layers_match(value, &["0% 0%", "left top", "initial"]))
-    {
-        context.warn_once("CSS background-position is not representable and was ignored");
-    }
     for (name, default) in [
         ("background-origin", "padding-box"),
         ("background-clip", "border-box"),
@@ -661,17 +698,17 @@ fn warn_background_geometry(style: &ComputedStyle, context: &mut MapCtx<'_>) {
             .get(name)
             .is_some_and(|value| !layers_match(value, &[default]))
         {
-            context.warn_once(&format!("CSS {name} is not representable and was ignored"));
+            context.warn_once(ImportWarning::PropertyNotRepresentable {
+                property: name.to_string(),
+            });
         }
     }
     if style
         .get("background-image")
         .is_some_and(|value| value.to_ascii_lowercase().contains("gradient("))
-        && style
-            .get("background-size")
-            .is_some_and(|value| !layers_match(value, &["auto", "auto auto"]))
+        && background::gradient_size_is_dropped(style)
     {
-        context.warn_once("CSS background-size on gradients is not representable and was ignored");
+        context.warn_once(ImportWarning::GradientBackgroundSizeIgnored);
     }
 }
 
@@ -687,7 +724,7 @@ fn parse_radial_prelude(
 ) -> (Option<f32>, Option<f32>, Option<f32>) {
     let (value, interpolation) = strip_interpolation_method(value);
     if interpolation {
-        context.warn_once("CSS gradient color interpolation method was ignored");
+        context.warn_once(ImportWarning::GradientInterpolationIgnored);
     }
     let lower = value.to_ascii_lowercase();
     let (geometry, position) = lower.find(" at ").map_or((lower.as_str(), None), |index| {
@@ -697,17 +734,15 @@ fn parse_radial_prelude(
         .and_then(parse_radial_position)
         .map_or((None, None), |(x, y)| (Some(x), Some(y)));
     if position.is_some() && cx.is_none() {
-        context.warn_once("unsupported CSS radial-gradient position was ignored");
+        context.warn_once(ImportWarning::RadialGradientPositionUnsupported);
     }
     let mut radius = None;
     for token in geometry.split_whitespace() {
         match token {
             "" | "circle" => {}
-            "ellipse" => {
-                context.warn_once("elliptical CSS radial-gradient approximated as circular")
-            }
+            "ellipse" => context.warn_once(ImportWarning::RadialGradientElliptical),
             "closest-side" | "closest-corner" | "farthest-side" | "farthest-corner" => {
-                context.warn_once("CSS radial-gradient extent keyword was approximated")
+                context.warn_once(ImportWarning::RadialGradientExtentApproximated)
             }
             _ => {
                 if let Some(percent) = token
@@ -716,7 +751,7 @@ fn parse_radial_prelude(
                 {
                     radius = Some((percent / 100.0).max(0.0));
                 } else {
-                    context.warn_once("unsupported CSS radial-gradient size was ignored");
+                    context.warn_once(ImportWarning::RadialGradientSizeUnsupported);
                 }
             }
         }

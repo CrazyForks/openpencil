@@ -308,8 +308,12 @@ fn install_ingested_document<C: RepaintContext + 'static>(
     for warning in &ingested.warnings {
         console_warn(&format!("[{log_tag}] warning: {warning}"));
     }
+    let diagnostics = ingested.diagnostics;
     let mut b = inner.borrow_mut();
     b.host_mut().install_unsaved_ingested_state(ingested.state);
+    // After the install, so the fresh state carries the report rather than
+    // having it wiped by the replacement.
+    b.host_mut().show_html_import_diagnostics(diagnostics);
     let (w, h) = b.viewport_size();
     b.host_mut().fit_content_to_viewport(w, h);
     let _ = b.repaint();
@@ -592,12 +596,23 @@ fn handle_paste_event<C: RepaintContext + 'static>(
         for warning in &result.warnings {
             console_warn(&format!("[import-html] {warning}"));
         }
-        if !result.nodes.is_empty() {
-            let mut b = inner.borrow_mut();
+        let mut b = inner.borrow_mut();
+        // A pasted page degrades exactly like an imported file, so it raises
+        // the same GUI report instead of console-only warnings. Publishing an
+        // empty list also clears a stale card, matching the file-ingest path.
+        b.host_mut().show_html_import_diagnostics(
+            op_editor_core::html_import_diagnostics::rows_from_parts(op_html::diagnostic_parts(
+                &result.diagnostics,
+            )),
+        );
+        let inserted = if result.nodes.is_empty() {
+            false
+        } else {
             let (w, h) = b.viewport_size();
-            if b.host_mut().paste_figma_nodes(result.nodes, w, h) {
-                let _ = b.repaint();
-            }
+            b.host_mut().paste_figma_nodes(result.nodes, w, h)
+        };
+        if inserted || !result.diagnostics.is_empty() {
+            let _ = b.repaint();
         }
         return;
     }

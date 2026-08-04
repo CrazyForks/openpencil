@@ -95,7 +95,7 @@ fn parse(style: &ComputedStyle, value: &str, context: &MapCtx<'_>) -> Option<Css
             font_size: style.font_size,
             root_font_size: context.opts.base_font_size,
             viewport_w: context.opts.viewport_width,
-            viewport_h: context.opts.viewport_width * 0.625,
+            viewport_h: context.opts.viewport_height(),
         },
     )
 }
@@ -205,6 +205,7 @@ mod tests {
             opts: &options,
             rules: &[],
             warnings: Vec::new(),
+            warned: Default::default(),
             next_id: 0,
             node_count: 0,
             containing_width: 600.0,
@@ -212,6 +213,8 @@ mod tests {
             containing_width_is_definite: true,
             positioned_width: 600.0,
             positioned_height: 400.0,
+            auto_margin_handled_by_parent: false,
+            pending_base_outcome: Default::default(),
         };
         let element = element(tag);
         check(map_text_box(&style(props), &[&element], &context));

@@ -22,6 +22,7 @@ mod drop_plan;
 mod export_error;
 mod image_fill_upload;
 mod ingest_error;
+mod ingested_doc;
 mod save_payload;
 mod save_queue;
 
@@ -29,6 +30,7 @@ pub use drop_plan::{drop_batch_plan, drop_kind, DropBatchPlan, DropKind};
 pub use export_error::DocumentExportError;
 pub use image_fill_upload::apply_fill_image_data_url;
 pub use ingest_error::DocumentIngestError;
+pub use ingested_doc::IngestedDoc;
 pub use save_payload::{
     acknowledge_browser_download, parse_save_response, save_ack_matches_document, save_file_name,
     save_snapshot_matches_document, serialize_save_payload, SavePayloadTarget,
@@ -36,14 +38,6 @@ pub use save_payload::{
 #[cfg(test)]
 pub use save_payload::{save_request_body, serialize_document};
 pub use save_queue::LatestSaveQueue;
-
-/// An ingested document plus the loader's best-effort schema
-/// warnings (the desktop logs these to stderr; the web glue routes
-/// them to `console.warn`).
-pub struct IngestedDoc {
-    pub state: EditorState,
-    pub warnings: Vec<String>,
-}
 
 pub fn export_svg_document(state: &EditorState) -> Result<String, DocumentExportError> {
     let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
@@ -272,7 +266,7 @@ pub fn ingest_op_source(
     let mut state = EditorState::from_document(loaded.value);
     op_pen_loader::apply_editor_meta_or_legacy_fallback(&mut state, editor_meta);
     preserve_app_preferences(previous, &mut state);
-    Ok(IngestedDoc { state, warnings })
+    Ok(IngestedDoc::new(state, warnings))
 }
 
 /// Parse a binary Figma `.fig` export into a fresh `EditorState`.
@@ -288,10 +282,7 @@ pub fn ingest_figma_bytes(
         .map_err(|e| DocumentIngestError::FigmaParse(e.to_string()))?;
     let mut state = EditorState::from_document(import.document);
     state.editor_ui.preserve_authored_geometry = true;
-    Ok(IngestedDoc {
-        state,
-        warnings: import.warnings,
-    })
+    Ok(IngestedDoc::new(state, import.warnings))
 }
 
 /// Install payload returned by the isolated Figma import Worker.
@@ -312,7 +303,7 @@ pub fn ingest_figma_temp_source(
     warnings.extend(loaded.warnings.iter().map(|warning| format!("{warning:?}")));
     let mut state = EditorState::from_document(loaded.value);
     state.editor_ui.preserve_authored_geometry = true;
-    Ok(IngestedDoc { state, warnings })
+    Ok(IngestedDoc::new(state, warnings))
 }
 
 #[cfg(test)]
@@ -324,10 +315,11 @@ fn ingest_html_project(
     if imported.document.children.is_empty() {
         return Err(DocumentIngestError::HtmlProjectEmpty);
     }
-    Ok(IngestedDoc {
-        state: EditorState::from_document(imported.document),
-        warnings: imported.warnings,
-    })
+    Ok(IngestedDoc::from_html(
+        EditorState::from_document(imported.document),
+        imported.warnings,
+        &imported.diagnostics,
+    ))
 }
 
 /// Carry app-level preferences from the state being replaced into a

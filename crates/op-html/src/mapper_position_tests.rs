@@ -79,10 +79,17 @@ fn relative_offsets_and_sticky_position_report_static_canvas_degradation() {
          </div>",
         &HtmlImportOptions::default(),
     );
-    assert!(result
-        .warnings
-        .iter()
-        .any(|warning| warning.contains("relative-position offsets")));
+    // The span is inline-level, so it has no definite box to reserve in flow
+    // and the wrapper cannot be built. The warning now says exactly that
+    // instead of describing a wrapper that was never created.
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("CSS in-flow offset dropped")),
+        "{:?}",
+        result.warnings
+    );
     assert!(result
         .warnings
         .iter()

@@ -126,3 +126,23 @@ pub(super) fn write_http<S: std::io::Write>(
         stream, status, body,
     )?)
 }
+
+/// Same lift for the origin-scoped writer. `cors_origin` is echoed verbatim
+/// as `Access-Control-Allow-Origin` when `Some`, and the header is omitted
+/// entirely when `None`. Callers on this endpoint pass the ONE origin the
+/// admission boundary accepted (`admission::cors_origin_for`) — the
+/// permissive `*` that [`write_http`] emits is not a value any browser-facing
+/// route here should answer with.
+pub(super) fn write_http_with_origin<S: std::io::Write>(
+    stream: &mut S,
+    status: &str,
+    body: &str,
+    cors_origin: Option<&str>,
+) -> Result<(), McpLiveError> {
+    Ok(crate::mcp_serve::write_mcp_http_response_with_origin(
+        stream,
+        status,
+        body,
+        cors_origin,
+    )?)
+}

@@ -5,7 +5,7 @@ use std::time::Duration;
 use jian_ops_schema::node::PenNode;
 use op_editor_core::EditorCommand;
 use op_html::{import_html_with_resources, HtmlImportOptions};
-use op_mcp::import_common::{count_subtree_nodes, parse_import_placement};
+use op_mcp::import_common::{count_subtree_nodes, parse_import_placement, parse_viewport_height};
 use op_mcp::{McpTool, ToolErrorCode, ToolOutcome};
 use reqwest::header::{CONTENT_TYPE, LOCATION};
 
@@ -30,6 +30,10 @@ impl McpTool for ImportHtmlUrl {
     fn call(&self, args: &BTreeMap<String, String>) -> ToolOutcome {
         let Some(raw_url) = args.get("url") else {
             return ToolOutcome::Err(ToolErrorCode::MissingArgument, "url is required".into());
+        };
+        let viewport_height = match parse_viewport_height(args) {
+            Ok(value) => value,
+            Err((code, message)) => return ToolOutcome::Err(code, message),
         };
         let placement = match parse_import_placement(args) {
             Ok(placement) => placement,
@@ -85,6 +89,7 @@ impl McpTool for ImportHtmlUrl {
         };
         let options = HtmlImportOptions {
             base_url: Some(page.final_url.to_string()),
+            viewport_height,
             ..HtmlImportOptions::default()
         };
         let result = import_html_with_resources(&html, &options, Some(&fetcher), None);

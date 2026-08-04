@@ -47,6 +47,18 @@ impl WidgetHost {
             }
             return changed;
         }
+        // Post-import HTML diagnostics notice — tints its own buttons and
+        // owns the cursor only while it is under the card.
+        if self.editor_state.editor_ui.html_import_diagnostics_open
+            && self.update_html_import_diagnostics_hover(
+                x,
+                y,
+                self.last_viewport_w,
+                self.last_viewport_h,
+            )
+        {
+            return true;
+        }
         // Sign-in modal — owns the cursor while open (native parity).
         if self.editor_state.editor_ui.account_ui_available
             && self.editor_state.editor_ui.login_modal_open

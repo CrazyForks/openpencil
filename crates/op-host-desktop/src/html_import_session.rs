@@ -7,6 +7,7 @@
 //! the same `figma_import_in_progress` overlay flag so the paint
 //! side needs no new UI state.
 
+use op_editor_core::html_import_diagnostics::HtmlImportDiagnostic;
 use op_editor_core::EditorState;
 use op_host_native::WidgetHostNative;
 use std::path::{Path, PathBuf};
@@ -22,11 +23,22 @@ use op_host_services::doc_io::ErrorKind;
 /// references — same convention as `op-cli`'s `html_cli.rs`.
 const LOCAL_RESOURCE_ORIGIN: &str = "https://openpencil.local/";
 
+/// A finished parse: the shared `PreparedImport` the install path wants,
+/// plus the typed degradations the post-import diagnostics overlay shows.
+///
+/// `PreparedImport` is owned by `figma_import_session` and carries only
+/// rendered warning strings, so the typed list rides alongside it instead of
+/// widening a struct two import paths share.
+struct HtmlPrepared {
+    prepared: PreparedImport,
+    diagnostics: Vec<HtmlImportDiagnostic>,
+}
+
 /// One in-flight HTML page or ZIP project parse — the source path
 /// (for the error dialog) plus the worker-thread receiver.
 pub struct HtmlImportSession {
     path: PathBuf,
-    rx: Receiver<Result<PreparedImport, HtmlImportError>>,
+    rx: Receiver<Result<HtmlPrepared, HtmlImportError>>,
 }
 
 /// Spawn a worker thread that reads `path`, converts a single page or
@@ -60,7 +72,7 @@ pub fn spawn(host: &mut WidgetHostNative, path: PathBuf) -> HtmlImportSession {
     HtmlImportSession { path, rx }
 }
 
-fn parse_path(path: &Path) -> Result<PreparedImport, HtmlImportError> {
+fn parse_path(path: &Path) -> Result<HtmlPrepared, HtmlImportError> {
     let file_name = path
         .file_stem()
         .and_then(|s| s.to_str())
@@ -103,15 +115,33 @@ fn parse_path(path: &Path) -> Result<PreparedImport, HtmlImportError> {
         op_html::import_html_document(source.as_ref(), &opts, Some(&fetcher), Some(&transform))
     };
     if result.document.children.is_empty() {
+        // Every warning, not just the first: an empty import usually has
+        // several contributing reasons and the dialog is the only place the
+        // user ever sees them.
         return Err(HtmlImportError::NoImportableContent(
-            result.warnings.first().cloned(),
+            (!result.warnings.is_empty()).then(|| result.warnings.join("\n")),
         ));
     }
+    let diagnostics = diagnostic_rows(&result.diagnostics);
     let state = EditorState::from_document(result.document);
-    Ok(PreparedImport {
-        state,
-        warnings: result.warnings,
+    Ok(HtmlPrepared {
+        prepared: PreparedImport {
+            state,
+            warnings: result.warnings,
+        },
+        diagnostics,
     })
+}
+
+/// The diagnostics overlay's rows for one importer run.
+///
+/// The conversion itself is single-sourced across two crates — `op-html` owns
+/// which fields a warning contributes (`diagnostic_parts`), `op-editor-core`
+/// owns what a row is made of (`rows_from_parts`) — because neither may depend
+/// on the other. This is just the desktop's single call site for the pair, so
+/// the file-import and clipboard-paste paths cannot drift apart.
+pub(crate) fn diagnostic_rows(warnings: &[op_html::ImportWarning]) -> Vec<HtmlImportDiagnostic> {
+    op_editor_core::html_import_diagnostics::rows_from_parts(op_html::diagnostic_parts(warnings))
 }
 
 fn is_zip_path(path: &Path) -> bool {
@@ -196,7 +226,11 @@ pub fn pump(
         return PumpOutcome::Idle;
     };
     match sess.rx.try_recv() {
-        Ok(Ok(mut prepared)) => {
+        Ok(Ok(landed)) => {
+            let HtmlPrepared {
+                mut prepared,
+                diagnostics,
+            } = landed;
             for warning in &prepared.warnings {
                 eprintln!("[import-html] warning: {warning}");
             }
@@ -212,6 +246,11 @@ pub fn pump(
                 *session = None;
                 return PumpOutcome::Cancelled;
             }
+            // Publish AFTER the install: it replaces `EditorState` whole,
+            // so a report written before would be thrown away with it. This
+            // forwards EVERY warning, not just the first — the old pump only
+            // echoed them to a stderr no GUI user ever reads.
+            host.show_html_import_diagnostics(diagnostics);
             // HTML imports do not auto-create an adjacent `.op`; their next
             // Save intentionally routes through Save As.
             *current_path = None;
@@ -290,9 +329,12 @@ mod tests {
     #[test]
     fn installed_html_import_is_dirty_until_saved() {
         let (tx, rx) = mpsc::channel();
-        tx.send(Ok(PreparedImport {
-            state: EditorState::new(),
-            warnings: Vec::new(),
+        tx.send(Ok(HtmlPrepared {
+            prepared: PreparedImport {
+                state: EditorState::new(),
+                warnings: Vec::new(),
+            },
+            diagnostics: Vec::new(),
         }))
         .expect("queue prepared import");
         let mut session = Some(HtmlImportSession {
@@ -323,7 +365,7 @@ mod tests {
               <body><img src=\"hero icon.png\"><p class=\"x\">t</p></body></html>",
         )
         .unwrap();
-        let prepared = parse_path(&dir.join("page.html")).expect("parse");
+        let prepared = parse_path(&dir.join("page.html")).expect("parse").prepared;
         assert!(
             prepared
                 .warnings
@@ -344,7 +386,7 @@ mod tests {
         source.extend_from_slice(b"</p></body></html>");
         std::fs::write(&path, source).expect("write GBK fixture");
 
-        let prepared = parse_path(&path).expect("parse GBK HTML");
+        let prepared = parse_path(&path).expect("parse GBK HTML").prepared;
         let document = serde_json::to_string(&prepared.state.doc).expect("serialize document");
 
         let _ = std::fs::remove_file(&path);
@@ -410,7 +452,7 @@ mod tests {
         ]);
         std::fs::write(&path, bytes).expect("write zip fixture");
 
-        let prepared = parse_path(&path).expect("parse zip project");
+        let prepared = parse_path(&path).expect("parse zip project").prepared;
 
         let _ = std::fs::remove_file(&path);
         assert!(!prepared.state.doc.children.is_empty());

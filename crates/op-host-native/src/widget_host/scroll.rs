@@ -378,6 +378,9 @@ impl WidgetHostNative {
         if self.try_scroll_missing_fonts_picker(x, y, delta_y, viewport_width, viewport_height) {
             return true;
         }
+        if self.try_scroll_html_import_diagnostics(x, y, delta_y, viewport_width, viewport_height) {
+            return true;
+        }
         if self.try_scroll_settings_font_picker(x, y, delta_y, viewport_width, viewport_height) {
             return true;
         }
@@ -571,6 +574,9 @@ impl WidgetHostNative {
         viewport_height: f32,
     ) -> bool {
         if self.try_scroll_missing_fonts_picker(x, y, dy, viewport_width, viewport_height) {
+            return true;
+        }
+        if self.try_scroll_html_import_diagnostics(x, y, dy, viewport_width, viewport_height) {
             return true;
         }
         if self.try_scroll_settings_font_picker(x, y, dy, viewport_width, viewport_height) {

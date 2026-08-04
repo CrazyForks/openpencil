@@ -314,6 +314,10 @@ mod git_panel_text;
 mod git_panel_tracked_picker;
 #[cfg(test)]
 mod git_panel_tracked_picker_tests;
+pub mod html_import_diagnostics_flow;
+pub mod html_import_diagnostics_panel;
+#[cfg(test)]
+mod html_import_diagnostics_panel_tests;
 pub mod icon_picker_panel;
 pub mod ime_preedit_overlay;
 pub mod import_menu;
@@ -383,6 +387,7 @@ pub use component_browser_panel::{
 pub use design_md_panel::{DesignMdHit, DesignMdPanel, DESIGN_MD_PANEL_H, DESIGN_MD_PANEL_W};
 pub use export_dialog::{ExportDialog, ExportDialogHit, ExportFormat};
 pub use git_panel::{GitPanel, GitPanelHit, GIT_PANEL_INSET, GIT_PANEL_WIDTH};
+pub use html_import_diagnostics_panel::{HtmlImportDiagnosticsHit, HtmlImportDiagnosticsPanel};
 pub use icon_picker_panel::{
     IconPickerHit, IconPickerPanel, ICONIFY_LOAD_MORE_LIMIT, ICON_PICKER_PANEL_H,
     ICON_PICKER_PANEL_W,

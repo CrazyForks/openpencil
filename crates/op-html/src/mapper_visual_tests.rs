@@ -1,5 +1,6 @@
 use super::*;
 use crate::css::cascade::StyleRule;
+use jian_ops_schema::style::ImageFillMode;
 use std::collections::BTreeMap;
 
 fn computed(properties: &[(&str, &str)]) -> ComputedStyle {
@@ -19,16 +20,19 @@ fn run<T>(action: impl FnOnce(&mut MapCtx<'_>) -> T) -> (T, Vec<String>) {
         opts: &options,
         rules: &rules,
         warnings: Vec::new(),
+        warned: Default::default(),
         next_id: 0,
         node_count: 0,
         containing_width: options.viewport_width,
-        containing_height: options.viewport_width * 0.625,
+        containing_height: options.viewport_height(),
         containing_width_is_definite: true,
         positioned_width: options.viewport_width,
-        positioned_height: options.viewport_width * 0.625,
+        positioned_height: options.viewport_height(),
+        auto_margin_handled_by_parent: false,
+        pending_base_outcome: Default::default(),
     };
     let output = action(&mut context);
-    (output, context.warnings)
+    (output, crate::render_warnings(&context.warnings))
 }
 
 #[test]
@@ -56,7 +60,8 @@ fn layered_background_keeps_css_order_color_and_variable_stops() {
         ("background-size", "cover,contain"),
         ("background-color", "#123456"),
     ]);
-    let (fills, warnings) = run(|context| map_fill(&style, context).unwrap());
+    let (fills, warnings) =
+        run(|context| map_fill(&style, context, (400.0, 300.0), (true, true)).unwrap());
     let PenFill::LinearGradient(gradient) = &fills[0] else {
         panic!("top CSS layer must remain the first fill")
     };
@@ -156,7 +161,7 @@ fn border_style_uses_medium_width_and_initial_current_color() {
 #[test]
 fn transparent_fill_is_skipped_and_unsupported_visuals_warn_once() {
     let transparent = computed(&[("background-color", "rgb(1 2 3 / 0)")]);
-    let (fill, _) = run(|context| map_fill(&transparent, context));
+    let (fill, _) = run(|context| map_fill(&transparent, context, (400.0, 300.0), (true, true)));
     assert!(fill.is_none());
 
     let unsupported = computed(&[
@@ -165,7 +170,7 @@ fn transparent_fill_is_skipped_and_unsupported_visuals_warn_once() {
         ("filter", "brightness(2) brightness(3)"),
     ]);
     let (_, warnings) = run(|context| {
-        map_fill(&unsupported, context);
+        map_fill(&unsupported, context, (400.0, 300.0), (true, true));
         map_effects(&unsupported, context);
     });
     assert_eq!(
@@ -207,4 +212,148 @@ fn omitted_gradient_stops_are_interpolated() {
         (stops[0].offset, stops[1].offset, stops[2].offset),
         (0.0, 0.5, 1.0)
     );
+}
+
+#[test]
+fn text_shadow_keeps_the_first_layer_and_reports_the_rest() {
+    let style = computed(&[("text-shadow", "1px 2px 3px #ff0000, 0 0 9px blue")]);
+    let (effects, warnings) = run(|context| map_text_shadow(&style, context).unwrap());
+    let [PenEffect::Shadow(shadow)] = effects.as_slice() else {
+        panic!("expected exactly one shadow, found {effects:?}")
+    };
+    assert_eq!(
+        (shadow.offset_x, shadow.offset_y, shadow.blur),
+        (1.0, 2.0, 3.0)
+    );
+    assert_eq!(shadow.color, "#ff0000");
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("after the first")),
+        "{warnings:?}"
+    );
+
+    let none = computed(&[("text-shadow", "none")]);
+    let (effects, _) = run(|context| map_text_shadow(&none, context));
+    assert!(effects.is_none());
+
+    let broken = computed(&[("text-shadow", "totally-not-a-shadow")]);
+    let (effects, warnings) = run(|context| map_text_shadow(&broken, context));
+    assert!(effects.is_none());
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.contains("unsupported CSS text-shadow")),
+        "{warnings:?}"
+    );
+}
+
+/// `text-shadow` has no `spread` and no `inset`; a layer that uses either is
+/// invalid CSS, which a browser drops rather than paints.
+#[test]
+fn text_shadow_rejects_the_box_shadow_only_grammar() {
+    for invalid in ["1px 2px 3px 4px #ff0000", "inset 1px 2px 3px #ff0000"] {
+        let style = computed(&[("text-shadow", invalid)]);
+        let (effects, warnings) = run(|context| map_text_shadow(&style, context));
+        assert!(effects.is_none(), "{invalid}: {effects:?}");
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("unsupported CSS text-shadow")),
+            "{invalid}: {warnings:?}"
+        );
+    }
+
+    // The same shapes stay legal on `box-shadow`.
+    let boxed = computed(&[("box-shadow", "inset 1px 2px 3px 4px #ff0000")]);
+    let (effects, _) = run(|context| map_effects(&boxed, context).unwrap());
+    let [PenEffect::Shadow(shadow)] = effects.as_slice() else {
+        panic!("expected a box shadow, found {effects:?}")
+    };
+    assert_eq!((shadow.spread, shadow.inner), (4.0, Some(true)));
+}
+
+/// The schema keeps effects per text NODE, so a shadow authored on an inline
+/// element inside a paragraph cannot survive and says so.
+#[test]
+fn a_segment_level_text_shadow_is_reported() {
+    let result = crate::import_html(
+        "<p>plain <span style='text-shadow:0 1px 2px #000000'>shadowed</span></p>",
+        &crate::HtmlImportOptions::default(),
+    );
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("text-shadow on an inline element")),
+        "{:?}",
+        result.warnings
+    );
+
+    // A segment that merely inherits the block's shadow is not a drop.
+    let inherited = crate::import_html(
+        "<p style='text-shadow:0 1px 2px #000000'>plain <span>same</span></p>",
+        &crate::HtmlImportOptions::default(),
+    );
+    assert!(
+        !inherited
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("text-shadow on an inline element")),
+        "{:?}",
+        inherited.warnings
+    );
+}
+
+#[test]
+fn text_shadow_inherits_onto_descendant_text_nodes() {
+    use jian_ops_schema::node::PenNode;
+    let result = crate::import_html(
+        "<div style='text-shadow:0 1px 2px #000000'><p>copy</p></div>",
+        &crate::HtmlImportOptions::default(),
+    );
+    let PenNode::Frame(root) = &result.nodes[0] else {
+        panic!()
+    };
+    let PenNode::Frame(division) = &root.children.as_ref().unwrap()[0] else {
+        panic!()
+    };
+    let PenNode::Frame(paragraph) = &division.children.as_ref().unwrap()[0] else {
+        panic!()
+    };
+    let PenNode::Text(text) = &paragraph.children.as_ref().unwrap()[0] else {
+        panic!()
+    };
+    assert!(matches!(
+        text.effects.as_deref(),
+        Some([PenEffect::Shadow(_)])
+    ));
+}
+
+#[test]
+fn every_non_visible_overflow_value_clips() {
+    use jian_ops_schema::node::PenNode;
+    for (declaration, expected) in [
+        ("overflow:visible", None),
+        ("overflow:hidden", Some(true)),
+        ("overflow:clip", Some(true)),
+        ("overflow:auto", Some(true)),
+        ("overflow:scroll", Some(true)),
+        ("overflow-y:auto", Some(true)),
+        ("overflow-x:hidden;overflow-y:visible", Some(true)),
+        ("overflow:visible auto", Some(true)),
+    ] {
+        let html = format!("<div style='{declaration}'>x</div>");
+        let result = crate::import_html(&html, &crate::HtmlImportOptions::default());
+        let PenNode::Frame(root) = &result.nodes[0] else {
+            panic!()
+        };
+        let PenNode::Frame(division) = &root.children.as_ref().unwrap()[0] else {
+            panic!()
+        };
+        assert_eq!(
+            division.container.clip_content, expected,
+            "declaration: {declaration}"
+        );
+    }
 }

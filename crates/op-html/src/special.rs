@@ -1,3 +1,4 @@
+use crate::import_warning::ImportWarning;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use jian_ops_schema::node::base::{BoolOrExpression, NumberOrExpression, PenNodeBase};
@@ -14,13 +15,17 @@ use crate::css::cascade::ComputedStyle;
 use crate::dom::{DomElement, DomNode};
 use crate::mapper::{container_props_from, MapCtx};
 
+/// `path` carries the ancestor chain because a replaced element can depend on
+/// its parent: an `<img>` inside `<picture>` selects its source from the
+/// sibling `<source>` list.
 pub fn map_special(
     context: &mut MapCtx<'_>,
-    element: &DomElement,
+    path: &[&DomElement],
     style: &ComputedStyle,
 ) -> Option<Option<PenNode>> {
+    let element = *path.last()?;
     let node = match element.tag.as_str() {
-        "img" => map_image(context, element, style),
+        "img" => map_image(context, path, element, style),
         "svg" => map_svg(context, element, style),
         "input" => map_input(context, element, style),
         "textarea" => map_text_area(context, element, style),
@@ -123,6 +128,8 @@ fn visual_props(context: &mut MapCtx<'_>, style: &ComputedStyle) -> VisualProps 
     }
 }
 
+/// Every replaced element ends here, so the in-flow outcome `apply_base_style`
+/// produces is parked on the context for `map_element::finish_leaf` to drain.
 fn base(context: &mut MapCtx<'_>, name: &str, style: &ComputedStyle) -> PenNodeBase {
     let mut base = PenNodeBase {
         id: context.generate_id(),
@@ -138,18 +145,24 @@ fn finish(context: &mut MapCtx<'_>, node: PenNode) -> PenNode {
     node
 }
 
-fn map_image(context: &mut MapCtx<'_>, element: &DomElement, style: &ComputedStyle) -> PenNode {
+fn map_image(
+    context: &mut MapCtx<'_>,
+    path: &[&DomElement],
+    element: &DomElement,
+    style: &ComputedStyle,
+) -> PenNode {
+    let source = crate::srcset::resolve_image_source(context, path, element);
     let visual = visual_props(context, style);
     let object_fit = match style.get("object-fit") {
         Some("cover") => Some(ImageFitMode::Crop),
         Some("contain") => Some(ImageFitMode::Fit),
         Some("fill") => Some(ImageFitMode::Fill),
         Some("scale-down") => {
-            context.warn_once("CSS object-fit:scale-down approximated as contain");
+            context.warn_once(ImportWarning::ObjectFitScaleDown);
             Some(ImageFitMode::Fit)
         }
         Some("none") => {
-            context.warn_once("CSS object-fit:none has no image-node equivalent and was ignored");
+            context.warn_once(ImportWarning::ObjectFitNoneIgnored);
             None
         }
         _ => None,
@@ -158,18 +171,21 @@ fn map_image(context: &mut MapCtx<'_>, element: &DomElement, style: &ComputedSty
         .get("object-position")
         .is_some_and(|value| !is_default_object_position(value))
     {
-        context.warn_once(
-            "CSS object-position has no image-node equivalent; the image remains centered",
-        );
+        context.warn_once(ImportWarning::ObjectPositionIgnored);
     }
     let mut image_base = base(context, "img", style);
     image_base.blend_mode = image_blend_mode(context, style);
+    // `aspect-ratio` applies to replaced elements too, and only after the
+    // legacy `width` / `height` attributes have supplied their fallback.
+    let mut width = visual.width.or_else(|| numeric_attr(element, "width"));
+    let mut height = visual.height.or_else(|| numeric_attr(element, "height"));
+    crate::mapper::apply_aspect_ratio_axes(&mut width, &mut height, &visual.limits, style, context);
     let node = PenNode::Image(ImageNode {
         base: image_base,
-        src: ImageSrc::from(element.attr("src").unwrap_or("")),
+        src: ImageSrc::from(source),
         object_fit,
-        width: visual.width.or_else(|| numeric_attr(element, "width")),
-        height: visual.height.or_else(|| numeric_attr(element, "height")),
+        width,
+        height,
         corner_radius: visual.corner_radius,
         effects: visual.effects,
         exposure: None,
@@ -214,14 +230,14 @@ fn image_blend_mode(context: &mut MapCtx<'_>, style: &ComputedStyle) -> Option<B
         Some(BlendMode::Normal) => None,
         Some(mode) => Some(mode),
         None => {
-            context.warn_once("unsupported CSS mix-blend-mode was ignored on an image");
+            context.warn_once(ImportWarning::ImageMixBlendModeUnsupported);
             None
         }
     }
 }
 
 fn map_svg(context: &mut MapCtx<'_>, element: &DomElement, style: &ComputedStyle) -> PenNode {
-    context.warn_once("inline <svg> imported as image placeholder");
+    context.warn_once(ImportWarning::InlineSvgPlaceholder);
     let source = serialize_element(element);
     let src = format!("data:image/svg+xml;base64,{}", STANDARD.encode(source));
     let visual = visual_props(context, style);
@@ -321,7 +337,7 @@ fn map_input(context: &mut MapCtx<'_>, element: &DomElement, style: &ComputedSty
             ..Default::default()
         }),
         _ => {
-            context.warn_once("unsupported input type imported as a text input");
+            context.warn_once(ImportWarning::InputTypeFallback);
             PenNode::TextInput(TextInputNode {
                 base: base(context, "input", style),
                 width: visual.width,
@@ -449,7 +465,9 @@ fn map_placeholder(
     element: &DomElement,
     style: &ComputedStyle,
 ) -> PenNode {
-    context.warn_once(&format!("<{}> imported as a placeholder", element.tag));
+    context.warn_once(ImportWarning::ElementPlaceholder {
+        tag: element.tag.clone(),
+    });
     let mut container = container_props_from(style, context);
     container.width = container.width.or_else(|| numeric_attr(element, "width"));
     container.height = container.height.or_else(|| numeric_attr(element, "height"));
@@ -542,247 +560,5 @@ fn solid_fill(color: &str) -> PenFill {
 }
 
 #[cfg(test)]
-mod tests {
-    use jian_ops_schema::node::base::NumberOrExpression;
-    use jian_ops_schema::node::container::CornerRadius;
-    use jian_ops_schema::node::PenNode;
-    use jian_ops_schema::sizing::SizingBehavior;
-    use jian_ops_schema::style::{BlendMode, PenFill};
-
-    fn element_with(tag: &str, attrs: Vec<(&str, &str)>) -> crate::dom::DomElement {
-        crate::dom::DomElement {
-            tag: tag.into(),
-            attrs: attrs
-                .into_iter()
-                .map(|(name, value)| (name.to_string(), value.to_string()))
-                .collect(),
-            children: Vec::new(),
-        }
-    }
-
-    fn map_it(element: crate::dom::DomElement) -> Option<PenNode> {
-        let (rules, _) = crate::css::cascade::parse_stylesheet("", 0);
-        let options = crate::HtmlImportOptions::default();
-        let mut context = crate::mapper::MapCtx {
-            opts: &options,
-            rules: &rules,
-            warnings: Vec::new(),
-            next_id: 0,
-            node_count: 0,
-            containing_width: options.viewport_width,
-            containing_height: options.viewport_width * 0.625,
-            containing_width_is_definite: true,
-            positioned_width: options.viewport_width,
-            positioned_height: options.viewport_width * 0.625,
-        };
-        crate::mapper::map_element(&mut context, &[&element], None)
-    }
-
-    #[test]
-    fn img_maps_to_image_node() {
-        let node = map_it(element_with(
-            "img",
-            vec![
-                ("src", "https://x.dev/a.png"),
-                ("width", "120"),
-                ("height", "80"),
-            ],
-        ));
-        let Some(PenNode::Image(image)) = node else {
-            panic!("expected image")
-        };
-        assert_eq!(image.src.as_str(), "https://x.dev/a.png");
-        assert!(matches!(
-            image.width,
-            Some(SizingBehavior::Number(value)) if value == 120.0
-        ));
-    }
-
-    #[test]
-    fn special_nodes_receive_computed_base_and_visual_styles() {
-        let node = map_it(element_with(
-            "img",
-            vec![
-                ("src", "hero.png"),
-                (
-                    "style",
-                    "position:absolute;left:12px;top:8px;opacity:.4;\
-                     transform:rotate(15deg);width:50px;height:40px;\
-                     border-radius:6px;filter:blur(2px)",
-                ),
-            ],
-        ));
-        let Some(PenNode::Image(image)) = node else {
-            panic!("expected image")
-        };
-        assert_eq!(image.base.x, Some(12.0));
-        assert_eq!(image.base.y, Some(8.0));
-        assert_eq!(image.base.rotation, Some(15.0));
-        assert!(matches!(
-            image.base.opacity,
-            Some(NumberOrExpression::Number(value)) if value == 0.4
-        ));
-        assert!(matches!(
-            image.width,
-            Some(SizingBehavior::Number(value)) if value == 50.0
-        ));
-        assert!(matches!(
-            image.height,
-            Some(SizingBehavior::Number(value)) if value == 40.0
-        ));
-        assert!(matches!(
-            image.corner_radius,
-            Some(CornerRadius::Uniform(value)) if value == 6.0
-        ));
-        assert!(image
-            .effects
-            .as_ref()
-            .is_some_and(|effects| !effects.is_empty()));
-    }
-
-    #[test]
-    fn horizontal_rule_and_radio_keep_css_visuals() {
-        let Some(PenNode::Rectangle(rule)) = map_it(element_with(
-            "hr",
-            vec![(
-                "style",
-                "width:80px;height:3px;background:#123456;border-radius:2px;opacity:.5",
-            )],
-        )) else {
-            panic!("expected rectangle")
-        };
-        assert!(matches!(
-            rule.container.width,
-            Some(SizingBehavior::Number(value)) if value == 80.0
-        ));
-        assert!(matches!(
-            rule.container.height,
-            Some(SizingBehavior::Number(value)) if value == 3.0
-        ));
-        assert!(matches!(
-            rule.container.fill.as_deref(),
-            Some([PenFill::Solid(fill)]) if fill.color == "#123456"
-        ));
-        assert!(matches!(
-            rule.base.opacity,
-            Some(NumberOrExpression::Number(value)) if value == 0.5
-        ));
-
-        let Some(PenNode::RadioGroup(radio)) = map_it(element_with(
-            "input",
-            vec![
-                ("type", "radio"),
-                (
-                    "style",
-                    "width:24px;height:24px;background:#abcdef;border-radius:12px",
-                ),
-            ],
-        )) else {
-            panic!("expected radio group")
-        };
-        assert!(matches!(
-            radio.fill.as_deref(),
-            Some([PenFill::Solid(fill)]) if fill.color == "#abcdef"
-        ));
-        assert!(matches!(
-            radio.corner_radius,
-            Some(CornerRadius::Uniform(value)) if value == 12.0
-        ));
-    }
-
-    #[test]
-    fn inline_svg_becomes_data_url_image() {
-        let mut svg = element_with("svg", vec![("viewBox", "0 0 10 10")]);
-        svg.children.push(crate::dom::DomNode::Element(element_with(
-            "rect",
-            vec![("width", "10")],
-        )));
-        let Some(PenNode::Image(image)) = map_it(svg) else {
-            panic!()
-        };
-        assert!(image.src.as_str().starts_with("data:image/svg+xml;base64,"));
-    }
-
-    #[test]
-    fn form_controls_map_to_widget_nodes() {
-        assert!(matches!(
-            map_it(element_with(
-                "input",
-                vec![("type", "text"), ("placeholder", "Name")]
-            )),
-            Some(PenNode::TextInput(input)) if input.placeholder.as_deref() == Some("Name")
-        ));
-        assert!(matches!(
-            map_it(element_with(
-                "input",
-                vec![("type", "checkbox"), ("checked", "")]
-            )),
-            Some(PenNode::Checkbox(_))
-        ));
-        assert!(matches!(
-            map_it(element_with(
-                "input",
-                vec![("type", "range"), ("min", "0"), ("max", "10")]
-            )),
-            Some(PenNode::Slider(slider)) if slider.max == Some(10.0)
-        ));
-        assert!(matches!(
-            map_it(element_with(
-                "progress",
-                vec![("value", "3"), ("max", "10")]
-            )),
-            Some(PenNode::Progress(_))
-        ));
-    }
-
-    #[test]
-    fn select_collects_options() {
-        let mut select = element_with("select", vec![]);
-        let mut option = element_with("option", vec![("value", "a"), ("selected", "")]);
-        option
-            .children
-            .push(crate::dom::DomNode::Text("Alpha".into()));
-        select.children.push(crate::dom::DomNode::Element(option));
-        let Some(PenNode::Select(select)) = map_it(select) else {
-            panic!()
-        };
-        assert_eq!(select.value.as_deref(), Some("a"));
-        let options = select.options.as_ref().unwrap();
-        assert_eq!(options[0].label, "Alpha");
-    }
-
-    #[test]
-    fn button_is_frame_with_role() {
-        let mut button = element_with("button", vec![]);
-        button.children.push(crate::dom::DomNode::Text("Go".into()));
-        let Some(PenNode::Frame(frame)) = map_it(button) else {
-            panic!()
-        };
-        assert_eq!(frame.base.role.as_deref(), Some("button"));
-    }
-
-    #[test]
-    fn image_blending_is_preserved_while_unrepresentable_position_is_reported() {
-        let result = crate::import_html(
-            "<img src='hero.png' style='object-fit:cover;object-position:65% bottom;\
-                                        mix-blend-mode:multiply'>",
-            &crate::HtmlImportOptions::default(),
-        );
-        assert!(result
-            .warnings
-            .iter()
-            .any(|warning| warning.contains("object-position")));
-        assert!(result
-            .warnings
-            .iter()
-            .all(|warning| !warning.contains("mix-blend-mode")));
-        let node = map_it(element_with(
-            "img",
-            vec![("src", "hero.png"), ("style", "mix-blend-mode:multiply")],
-        ));
-        let Some(PenNode::Image(image)) = node else {
-            panic!("expected image node")
-        };
-        assert_eq!(image.base.blend_mode, Some(BlendMode::Multiply));
-    }
-}
+#[path = "special_tests.rs"]
+mod tests;

@@ -1,3 +1,4 @@
+use crate::import_warning::ImportWarning;
 use base64::Engine as _;
 use jian_ops_schema::node::PenNode;
 use jian_ops_schema::style::PenFill;
@@ -19,7 +20,7 @@ const PLACEHOLDER_GRAY_PNG: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg
 pub(crate) struct ResourceBudget;
 
 impl ResourceBudget {
-    pub(crate) fn take(&mut self, _warnings: &mut Vec<String>) -> bool {
+    pub(crate) fn take(&mut self, _warnings: &mut Vec<ImportWarning>) -> bool {
         true
     }
 }
@@ -50,24 +51,28 @@ pub(crate) fn resolve_resource_url(base: Option<&str>, href: &str) -> Option<Str
 pub(crate) fn select_document_base(
     document_url: Option<&str>,
     candidates: &[String],
-    warnings: &mut Vec<String>,
+    warnings: &mut Vec<ImportWarning>,
 ) -> Option<String> {
     for href in candidates {
         let Some(resolved) = resolve_url(document_url, href) else {
-            warnings.push(format!("invalid <base href> ignored: {href}"));
+            warnings.push(ImportWarning::InvalidBaseHref {
+                href: href.to_string(),
+            });
             continue;
         };
         let Ok(parsed) = Url::parse(&resolved) else {
             continue;
         };
         if !matches!(parsed.scheme(), "http" | "https") {
-            warnings.push(format!("invalid <base href> ignored: {href}"));
+            warnings.push(ImportWarning::InvalidBaseHref {
+                href: href.to_string(),
+            });
             continue;
         }
         if !resource_url_allowed(document_url, &resolved) {
-            warnings.push(format!(
-                "<base href> outside the HTML project origin ignored: {href}"
-            ));
+            warnings.push(ImportWarning::BaseHrefOutsideOrigin {
+                href: href.to_string(),
+            });
             continue;
         }
         return Some(resolved);
@@ -109,7 +114,7 @@ pub(crate) fn embed_images(
     fetcher: &ResourceFetcher<'_>,
     transform: Option<&ImageTransform<'_>>,
     budget: &mut ResourceBudget,
-    warnings: &mut Vec<String>,
+    warnings: &mut Vec<ImportWarning>,
 ) -> usize {
     let mut cache = HashMap::new();
     nodes
@@ -128,7 +133,7 @@ fn embed_node_images(
     fetcher: &ResourceFetcher<'_>,
     transform: Option<&ImageTransform<'_>>,
     budget: &mut ResourceBudget,
-    warnings: &mut Vec<String>,
+    warnings: &mut Vec<ImportWarning>,
     cache: &mut HashMap<String, String>,
 ) -> usize {
     let mut count = 0;
@@ -246,7 +251,7 @@ fn embed_fills(
     fetcher: &ResourceFetcher<'_>,
     transform: Option<&ImageTransform<'_>>,
     budget: &mut ResourceBudget,
-    warnings: &mut Vec<String>,
+    warnings: &mut Vec<ImportWarning>,
     cache: &mut HashMap<String, String>,
 ) -> usize {
     let mut count = 0;
@@ -272,7 +277,7 @@ fn embed_url(
     fetcher: &ResourceFetcher<'_>,
     transform: Option<&ImageTransform<'_>>,
     budget: &mut ResourceBudget,
-    warnings: &mut Vec<String>,
+    warnings: &mut Vec<ImportWarning>,
     cache: &mut HashMap<String, String>,
 ) -> Option<String> {
     if url.starts_with("data:") {
@@ -281,9 +286,9 @@ fn embed_url(
     let resolved = match resolve_resource_url(base_url, url) {
         Some(resolved) => resolved,
         None if base_url.is_some_and(is_virtual_project_base) => {
-            warnings.push(format!(
-                "image resource outside the HTML project origin, using placeholder: {url}"
-            ));
+            warnings.push(ImportWarning::ImageOutsideOrigin {
+                url: url.to_string(),
+            });
             return Some(PLACEHOLDER_GRAY_PNG.to_string());
         }
         None => url.to_string(),
@@ -300,9 +305,9 @@ fn embed_url(
             blob_to_data_url(transformed.as_deref().unwrap_or(&bytes))
         }
         None => {
-            warnings.push(format!(
-                "image resource unavailable, using placeholder: {resolved}"
-            ));
+            warnings.push(ImportWarning::ImageUnavailable {
+                url: resolved.to_string(),
+            });
             PLACEHOLDER_GRAY_PNG.to_string()
         }
     };

@@ -2,7 +2,9 @@ use std::{collections::BTreeMap, fs};
 
 use op_html::{import_html, HtmlImportOptions};
 
-use super::import_common::{import_result_to_outcome, parse_import_placement};
+use super::import_common::{
+    import_result_to_outcome, parse_import_placement, parse_viewport_height,
+};
 use super::{McpTool, ToolErrorCode, ToolOutcome};
 
 pub struct ImportHtml;
@@ -44,7 +46,15 @@ impl McpTool for ImportHtml {
             Err((code, message)) => return ToolOutcome::Err(code, message),
         };
 
-        let result = import_html(&html, &HtmlImportOptions::default());
+        let viewport_height = match parse_viewport_height(args) {
+            Ok(value) => value,
+            Err((code, message)) => return ToolOutcome::Err(code, message),
+        };
+        let options = HtmlImportOptions {
+            viewport_height,
+            ..HtmlImportOptions::default()
+        };
+        let result = import_html(&html, &options);
         import_result_to_outcome(result, placement)
     }
 }

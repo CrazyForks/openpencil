@@ -747,6 +747,18 @@ impl WidgetHostNative {
             );
         }
 
+        // Post-import HTML diagnostics notice — painted above every panel
+        // but under the missing-font modal, mirroring its press tier.
+        if let Some(panel) =
+            op_editor_ui::widgets::HtmlImportDiagnosticsPanel::for_editor(&self.editor_state)
+        {
+            let panel_rect = panel.rect(viewport_width, viewport_height);
+            let mut cx = PaintCx {
+                backend: &mut *frame,
+            };
+            panel.paint(&mut cx, panel_rect);
+        }
+
         // Missing-font prompt — absolute top-most modal after every other
         // overlay, matching its first-tier press routing.
         if let Some(panel) =

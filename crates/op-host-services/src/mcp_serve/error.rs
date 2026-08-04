@@ -38,6 +38,17 @@ pub enum McpServeError {
     /// The peer's HTTP framing is malformed, truncated, or over a declared
     /// size cap — a client fault detected before any handler ran.
     Protocol(String),
+    /// A route's own framing precondition refused the request BEFORE the
+    /// body was read: `413` when the declared `Content-Length` exceeds that
+    /// route's cap, `411` when a route that requires the header did not get
+    /// one. Distinct from [`McpServeError::Protocol`] because nothing was
+    /// consumed off the socket — the caller answers with `status` instead of
+    /// logging a 500. Carries the status line so the transport does not have
+    /// to re-derive it from the message.
+    Framing {
+        status: &'static str,
+        message: String,
+    },
     /// A REST route's own body validation refused the payload: the framing
     /// parsed, but the JSON does not describe what the route needs (today
     /// only `doc_sync`'s `/api/mcp/document` envelope check). A client fault
@@ -60,7 +71,8 @@ impl fmt::Display for McpServeError {
             | McpServeError::Protocol(m)
             | McpServeError::Validation(m)
             | McpServeError::Io(m)
-            | McpServeError::Config(m) => f.write_str(m),
+            | McpServeError::Config(m)
+            | McpServeError::Framing { message: m, .. } => f.write_str(m),
         }
     }
 }

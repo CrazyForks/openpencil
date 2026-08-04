@@ -2,7 +2,7 @@
 //! dispatch table. Split out of `app_handler.rs` to keep that file
 //! under the repo's 800-line-per-file cap.
 
-use crate::{chat_session, design_session, persistence, DesktopApp};
+use crate::{chat_session, design_session, html_import_session, persistence, DesktopApp};
 use base64::Engine as _;
 use winit::keyboard::{Key, NamedKey};
 
@@ -587,7 +587,8 @@ impl DesktopApp {
         // self-terminating CPU decode, staleness handled by the epoch guard.
         std::thread::spawn(move || {
             let result = op_html::import_html(&html, &op_html::HtmlImportOptions::default());
-            let _ = tx.send((result.nodes, result.warnings));
+            // TYPED diagnostics travel: the overlay localizes each row.
+            let _ = tx.send((result.nodes, result.diagnostics));
         });
         // Epoch-guard the decode (see `try_figma_clipboard_paste`).
         self.pending_html_paste = Some((self.host.document_epoch(), rx));
@@ -604,18 +605,24 @@ impl DesktopApp {
         };
         let epoch = *epoch;
         match rx.try_recv() {
-            Ok((nodes, warnings)) => {
+            Ok((nodes, diagnostics)) => {
                 self.pending_html_paste = None;
-                for warning in &warnings {
+                for warning in op_html::render_warnings(&diagnostics) {
                     eprintln!("[import-html] warning: {warning}");
                 }
                 // Drop the result if the document was replaced while
                 // the worker was decoding.
-                epoch == self.host.document_epoch()
-                    && !nodes.is_empty()
-                    && self
-                        .host
-                        .paste_figma_nodes(nodes, self.viewport_width, self.viewport_height)
+                if epoch != self.host.document_epoch() {
+                    return false;
+                }
+                // A pasted page degrades exactly like an imported file, so it
+                // gets the same GUI report instead of stderr-only warnings the
+                // user never sees; an empty list clears a stale card.
+                let rows = html_import_session::diagnostic_rows(&diagnostics);
+                let reported = !rows.is_empty();
+                self.host.show_html_import_diagnostics(rows);
+                let (w, h) = (self.viewport_width, self.viewport_height);
+                (!nodes.is_empty() && self.host.paste_figma_nodes(nodes, w, h)) || reported
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => false,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {

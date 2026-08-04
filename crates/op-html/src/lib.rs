@@ -10,8 +10,16 @@ pub mod color;
 pub mod css;
 pub mod css_encoding;
 pub mod dom;
+pub(crate) mod font_face;
 pub mod html_encoding;
+pub mod import_warning;
+mod import_warning_display;
+#[cfg(test)]
+mod import_warning_samples;
+#[cfg(test)]
+mod import_warning_tests;
 pub mod length;
+pub(crate) mod list_markers;
 pub mod mapper;
 mod project;
 mod project_zip;
@@ -19,9 +27,15 @@ mod project_zip_range;
 pub mod resources;
 pub mod snapshot;
 pub mod special;
+pub(crate) mod srcset;
 pub mod text;
+pub mod transform;
 mod zip_encoding;
 
+pub use import_warning::{
+    diagnostic_parts, render_warnings, ImportDiagnosticParts, ImportWarning,
+    ALL_IMPORT_WARNING_CODES, IMPORT_WARNING_KEY_PREFIX,
+};
 pub use project::{
     import_html_project, import_html_project_document, import_html_project_document_with_transform,
     import_html_project_with_transform, select_html_entry, HtmlProjectError, HtmlProjectFile,
@@ -43,8 +57,16 @@ pub use project_zip_range::{
 };
 pub use snapshot::{import_snapshot, import_snapshot_document};
 
+pub use css::MediaQueryError;
+
 #[cfg(test)]
 mod e2e_tests;
+
+#[cfg(test)]
+mod e2e_tailwind_tests;
+
+#[cfg(test)]
+mod e2e_content_tests;
 
 #[cfg(test)]
 mod stylesheet_resource_tests;
@@ -54,15 +76,34 @@ mod project_zip_range_unicode_tests;
 
 pub struct HtmlImportOptions {
     pub viewport_width: f64,
+    /// Import viewport height. `None` keeps the historical 16:10 estimate
+    /// (`viewport_width * 0.625`). Every `vh` / `100vh` / `max-height` media
+    /// query resolves against `HtmlImportOptions::viewport_height()`.
+    pub viewport_height: Option<f64>,
     pub base_font_size: f64,
     pub document_name: Option<String>,
     pub base_url: Option<String>,
+}
+
+/// The 16:10 fallback applied when the caller does not pin a viewport height.
+pub const DEFAULT_VIEWPORT_ASPECT: f64 = 0.625;
+
+impl HtmlImportOptions {
+    /// Single resolution point for the import viewport height. Non-finite or
+    /// non-positive overrides fall back to the aspect-derived default so a
+    /// bad caller value can never poison percentage/`vh` resolution.
+    pub fn viewport_height(&self) -> f64 {
+        self.viewport_height
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .unwrap_or(self.viewport_width * DEFAULT_VIEWPORT_ASPECT)
+    }
 }
 
 impl Default for HtmlImportOptions {
     fn default() -> Self {
         Self {
             viewport_width: 1440.0,
+            viewport_height: None,
             base_font_size: 16.0,
             document_name: None,
             base_url: None,
@@ -72,12 +113,65 @@ impl Default for HtmlImportOptions {
 
 pub struct HtmlImportResult {
     pub nodes: Vec<PenNode>,
+    /// Rendered warning text, in emission order. Kept for the CLI JSON and
+    /// MCP payloads, whose wording callers already depend on.
     pub warnings: Vec<String>,
+    /// The same warnings, typed. Each carries a stable
+    /// [`ImportWarning::code`] and an [`ImportWarning::i18n_key`] for the
+    /// post-import diagnostics panel.
+    pub diagnostics: Vec<ImportWarning>,
 }
 
+impl HtmlImportResult {
+    /// Append one more diagnostic, keeping the rendered mirror in step.
+    pub fn push_warning(&mut self, warning: ImportWarning) {
+        self.warnings.push(warning.to_string());
+        self.diagnostics.push(warning);
+    }
+
+    /// Build a result from typed diagnostics, rendering the compatibility
+    /// string list from them so the two views can never drift.
+    pub fn new(nodes: Vec<PenNode>, diagnostics: Vec<ImportWarning>) -> Self {
+        Self {
+            nodes,
+            warnings: import_warning::render_warnings(&diagnostics),
+            diagnostics,
+        }
+    }
+}
+
+/// A whole imported document plus both views of what degraded.
+///
+/// **Mirror invariant:** `warnings` is `render_warnings(&diagnostics)` — same
+/// length, same order, element `i` of one is the rendered form of element `i`
+/// of the other. Callers rely on it (`op-cli` prints `warnings` while the
+/// hosts localize `diagnostics`, and a test asserts the two agree), so build
+/// one with [`HtmlDocumentResult::new`] and extend it only through
+/// [`HtmlDocumentResult::push_warning`]; a bare struct literal or a direct
+/// `warnings.push` can silently break the pairing.
 pub struct HtmlDocumentResult {
     pub document: PenDocument,
     pub warnings: Vec<String>,
+    /// Typed mirror of `warnings`; see [`HtmlImportResult::diagnostics`].
+    pub diagnostics: Vec<ImportWarning>,
+}
+
+impl HtmlDocumentResult {
+    /// Build a result from typed diagnostics, rendering the compatibility
+    /// string list from them so the two views can never drift.
+    pub fn new(document: PenDocument, diagnostics: Vec<ImportWarning>) -> Self {
+        Self {
+            document,
+            warnings: import_warning::render_warnings(&diagnostics),
+            diagnostics,
+        }
+    }
+
+    /// Append one more diagnostic, keeping the rendered mirror in step.
+    pub fn push_warning(&mut self, warning: ImportWarning) {
+        self.warnings.push(warning.to_string());
+        self.diagnostics.push(warning);
+    }
 }
 
 pub fn import_html(source: &str, opts: &HtmlImportOptions) -> HtmlImportResult {
@@ -92,29 +186,22 @@ pub fn import_html_with_resources(
 ) -> HtmlImportResult {
     let mut warnings = Vec::new();
     if source.trim().is_empty() {
-        warnings.push("no importable content: input HTML is empty".to_string());
-        return HtmlImportResult {
-            nodes: Vec::new(),
-            warnings,
-        };
+        warnings.push(ImportWarning::EmptyInput);
+        return HtmlImportResult::new(Vec::new(), warnings);
     }
     let mut parsed = dom::parse_dom(source);
     if parsed.depth_truncated {
-        warnings.push(format!(
-            "HTML nesting exceeded {} levels and deeper content was dropped",
-            dom::MAX_DOM_DEPTH
-        ));
+        warnings.push(ImportWarning::DomDepthTruncated {
+            max_depth: dom::MAX_DOM_DEPTH,
+        });
     }
     if parsed.body.is_empty() {
-        warnings.push("no importable content: input HTML produced an empty body".to_string());
-        return HtmlImportResult {
-            nodes: Vec::new(),
-            warnings,
-        };
+        warnings.push(ImportWarning::EmptyBody);
+        return HtmlImportResult::new(Vec::new(), warnings);
     }
     let mut remaining = MAX_OUTPUT_NODES - 1;
     if truncate_dom_nodes(&mut parsed.body, &mut remaining) {
-        warnings.push("node limit reached (20000), remaining content dropped".to_string());
+        warnings.push(ImportWarning::NodeLimitTruncated);
     }
     let resource_base = resources::select_document_base(
         opts.base_url.as_deref(),
@@ -122,7 +209,7 @@ pub fn import_html_with_resources(
         &mut warnings,
     );
 
-    let viewport_height = opts.viewport_width * 0.625;
+    let viewport_height = opts.viewport_height();
     let mut ua_parser =
         css::cascade::StylesheetParser::new(css::cascade::StyleOrigin::UserAgent, 0);
     let (mut rules, ua_warnings) = ua_parser.parse_for_viewport(
@@ -154,7 +241,9 @@ pub fn import_html_with_resources(
                     .as_deref()
                     .and_then(|url| fetcher.and_then(|fetch| fetch(url)))
                 else {
-                    warnings.push(format!("external stylesheet skipped: {display_url}"));
+                    warnings.push(ImportWarning::ExternalStylesheetSkipped {
+                        url: display_url.to_string(),
+                    });
                     continue;
                 };
                 let decoded = css_encoding::decode_css_bytes(&bytes);
@@ -173,6 +262,9 @@ pub fn import_html_with_resources(
         rules.extend(author_rules);
         warnings.extend(stylesheet_warnings);
     }
+    // Kept before the parser is dropped; reported once the mapped nodes reveal
+    // which of the declared families text actually asks for.
+    let web_fonts = author_parser.web_fonts().to_vec();
 
     let body = dom::DomElement {
         tag: "body".to_string(),
@@ -216,6 +308,7 @@ pub fn import_html_with_resources(
     );
     let mapping_opts = HtmlImportOptions {
         viewport_width: opts.viewport_width,
+        viewport_height: Some(viewport_height),
         base_font_size: root_font_size,
         document_name: opts.document_name.clone(),
         base_url: resource_base.clone(),
@@ -224,6 +317,7 @@ pub fn import_html_with_resources(
         opts: &mapping_opts,
         rules: &rules,
         warnings: Vec::new(),
+        warned: Default::default(),
         next_id: 0,
         node_count: 1,
         containing_width: opts.viewport_width,
@@ -231,6 +325,8 @@ pub fn import_html_with_resources(
         containing_width_is_definite: true,
         positioned_width: opts.viewport_width,
         positioned_height: viewport_height,
+        auto_margin_handled_by_parent: false,
+        pending_base_outcome: Default::default(),
     };
     let root_id = context.generate_id();
     let mut container = mapper::container_props_from(&body_style, &mut context);
@@ -238,9 +334,11 @@ pub fn import_html_with_resources(
     container.height = container
         .height
         .or(Some(SizingBehavior::Keyword(SizingKeyword::FitContent)));
+    let mut body_children_centered = false;
     if container.align_items.is_none() {
         container.align_items =
             mapper::infer_child_alignment(&context, &body_path, &body_style, &body.children);
+        body_children_centered = container.align_items.is_some();
     }
     if container.fill.is_none() {
         container.fill = Some(vec![solid_fill("#ffffff")]);
@@ -255,7 +353,10 @@ pub fn import_html_with_resources(
         name: Some(name),
         ..Default::default()
     };
-    mapper::apply_base_style(&mut base, &body_style, &mut context);
+    // The document root has no parent to reserve an un-shifted box in, so an
+    // in-flow offset on `<body>` is reported rather than silently applied.
+    let body_outcome = mapper::apply_base_style(&mut base, &body_style, &mut context);
+    mapper::warn_dropped_flow_offset(&mut context, body_outcome);
     if base
         .explain
         .as_deref()
@@ -280,10 +381,13 @@ pub fn import_html_with_resources(
         context.positioned_width = context.containing_width;
         context.positioned_height = context.containing_height;
     }
+    context.auto_margin_handled_by_parent = body_children_centered;
     let children = if body_display_none {
         Vec::new()
     } else {
-        mapper::map_container_children(&mut context, &body_path, &body_style, &body.children)
+        let children =
+            mapper::map_container_children(&mut context, &body_path, &body_style, &body.children);
+        mapper::apply_flex_wrap(&mut context, &body_style, &mut container, children)
     };
     let root = PenNode::Frame(FrameNode {
         base,
@@ -304,6 +408,7 @@ pub fn import_html_with_resources(
     });
     warnings.extend(context.warnings);
     let mut nodes = vec![root];
+    font_face::warn_undownloaded(&web_fonts, &nodes, &mut warnings);
     if let Some(fetcher) = fetcher {
         resources::embed_images(
             &mut nodes,
@@ -314,7 +419,7 @@ pub fn import_html_with_resources(
             &mut warnings,
         );
     }
-    HtmlImportResult { nodes, warnings }
+    HtmlImportResult::new(nodes, warnings)
 }
 
 pub fn import_html_document(
@@ -331,8 +436,8 @@ pub(crate) fn wrap_imported_document(imported: HtmlImportResult) -> HtmlDocument
         PenNode::Frame(frame) => frame.base.name.clone(),
         _ => None,
     });
-    HtmlDocumentResult {
-        document: PenDocument {
+    HtmlDocumentResult::new(
+        PenDocument {
             version: "1.0".to_string(),
             name,
             themes: None,
@@ -350,8 +455,8 @@ pub(crate) fn wrap_imported_document(imported: HtmlImportResult) -> HtmlDocument
             design_md: None,
             conversion: None,
         },
-        warnings: imported.warnings,
-    }
+        imported.diagnostics,
+    )
 }
 
 pub(crate) const MAX_OUTPUT_NODES: usize = 20_000;

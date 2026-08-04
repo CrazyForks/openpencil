@@ -379,15 +379,41 @@ pub fn read_http_request<S: std::io::Read>(stream: &mut S) -> Result<HttpRequest
     // boundary mid-slice; that panic would also bypass the live server's
     // connection-count decrement. A malformed length falls back to 0 (empty
     // body) rather than erroring.
-    let content_length = headers
-        .lines()
-        .find_map(|l| {
-            let (name, value) = l.trim().split_once(':')?;
-            name.eq_ignore_ascii_case("content-length")
-                .then(|| value.trim().parse::<usize>().ok())
-                .flatten()
-        })
-        .unwrap_or(0);
+    let declared_length = headers.lines().find_map(|l| {
+        let (name, value) = l.trim().split_once(':')?;
+        name.eq_ignore_ascii_case("content-length")
+            .then(|| value.trim().parse::<usize>().ok())
+            .flatten()
+    });
+    let content_length = declared_length.unwrap_or(0);
+    // The live endpoint's browser-extension snapshot ingress is the one
+    // body-carrying route reachable WITHOUT the per-instance token, so it
+    // caps its body far below the endpoint-wide `MAX_BODY` — and does it
+    // here, before a single body byte is read, so an untokened caller
+    // cannot make this process buffer 64 MiB. See
+    // `mcp_live::snapshot_ingest::MAX_SNAPSHOT_BODY`.
+    if method == "POST" && path == crate::mcp_live::snapshot_ingest::SNAPSHOT_INGEST_PATH {
+        let limit = crate::mcp_live::snapshot_ingest::MAX_SNAPSHOT_BODY;
+        match declared_length {
+            // The extension always sends `Content-Length` (it POSTs a
+            // string body through `fetch`), so a missing one is not a
+            // client this route has to serve — and serving it would mean
+            // reading an unbounded body to find out how big it is.
+            None => {
+                return Err(McpServeError::Framing {
+                    status: "411 Length Required",
+                    message: "web snapshot ingress requires a Content-Length header".into(),
+                })
+            }
+            Some(declared) if declared > limit => {
+                return Err(McpServeError::Framing {
+                    status: "413 Payload Too Large",
+                    message: format!("web snapshot body exceeds {} MiB", limit / (1024 * 1024)),
+                })
+            }
+            Some(_) => {}
+        }
+    }
     if path == "/api/settings/credentials"
         && content_length > crate::web_credentials::MAX_CREDENTIAL_BODY_BYTES
     {

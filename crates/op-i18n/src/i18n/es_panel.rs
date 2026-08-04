@@ -114,6 +114,399 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "dialog.slideshowHtmlTitle" => "Exportar presentación",
         "dialog.slideshowHtmlSummary" => "Se exportaron {{count}} diapositivas a:",
         "dialog.slideshowHtmlEmpty" => "Esta presentación no tiene diapositivas visibles para exportar.",
+        // HTML import diagnostics — one entry per `ImportWarning::code`.
+        "htmlImport.warn.content.empty_input" => "El contenido HTML importable no está disponible.",
+        "htmlImport.warn.content.empty_body" => {
+            "El contenido importable del cuerpo HTML no está disponible."
+        }
+        "htmlImport.warn.content.dom_depth_truncated" => {
+            "Se descartó el HTML anidado a más de {{max_depth}} niveles."
+        }
+        "htmlImport.warn.content.node_limit_truncated" => {
+            "Se alcanzó el límite de nodos; se omitió el resto del contenido de la página."
+        }
+        "htmlImport.warn.content.node_limit_mapping" => {
+            "Se alcanzó el límite de nodos; se omitió parte del árbol HTML."
+        }
+        "htmlImport.warn.content.node_limit_inline_row" => {
+            "Se alcanzó el límite de nodos; se omitió una fila de formato en línea."
+        }
+        "htmlImport.warn.content.node_limit_pseudo" => {
+            "Se alcanzó el límite de nodos; se omitieron los pseudoelementos generados."
+        }
+        "htmlImport.warn.css.at_rule_depth_limit" => {
+            "Se ignoraron las reglas CSS anidadas en más de {{max_depth}} reglas @."
+        }
+        "htmlImport.warn.css.unterminated_rule" => "Se ignoró una regla CSS sin terminar.",
+        "htmlImport.warn.css.marker_rules_unsupported" => {
+            "No se importaron las reglas CSS ::marker."
+        }
+        "htmlImport.warn.css.nesting_unsupported" => {
+            "Se ignoraron las reglas de estilo CSS anidadas."
+        }
+        "htmlImport.warn.css.invalid_layer_name" => {
+            "Se ignoró el nombre de @layer no válido '{{name}}'."
+        }
+        "htmlImport.warn.css.unsupported_statement" => {
+            "Se ignoró la instrucción @{{name}} no admitida."
+        }
+        "htmlImport.warn.css.media_without_viewport" => {
+            "Se ignoraron las reglas @media sin ventana gráfica."
+        }
+        "htmlImport.warn.css.invalid_layer_block_name" => {
+            "Se ignoró el nombre de bloque @layer no válido '{{name}}'."
+        }
+        "htmlImport.warn.css.unsupported_container_block" => "Se ignoró el bloque @container.",
+        "htmlImport.warn.css.unsupported_block" => "Se ignoró el bloque @{{name}} no admitido.",
+        "htmlImport.warn.font.web_font_not_downloaded" => {
+            "La fuente web @font-face '{{family}}' no está disponible."
+        }
+        "htmlImport.warn.layout.percentage_absolute_offset_inferred" => {
+            "Se aproximaron los desplazamientos en porcentaje de un elemento con posición absoluta."
+        }
+        "htmlImport.warn.layout.percentage_relative_offset_inferred" => {
+            "Se aproximaron los desplazamientos en porcentaje de position:relative."
+        }
+        "htmlImport.warn.layout.aspect_ratio_no_definite_axis" => {
+            "Se ignoró el aspect-ratio CSS sin un eje definido."
+        }
+        "htmlImport.warn.layout.aspect_ratio_indefinite_container" => {
+            "Se ignoró el aspect-ratio CSS dentro de un bloque contenedor indefinido."
+        }
+        "htmlImport.warn.layout.position_sticky_ignored" => "Se ignoró position:sticky de CSS.",
+        "htmlImport.warn.layout.grid_tracks_approximated" => {
+            "Se aproximaron las pistas de cuadrícula CSS no admitidas."
+        }
+        "htmlImport.warn.layout.float_ignored" => "Se ignoró float de CSS.",
+        "htmlImport.warn.layout.mix_blend_mode_no_node_equivalent" => {
+            "Se aproximó mix-blend-mode de CSS a nivel de nodo."
+        }
+        "htmlImport.warn.layout.overflow_scroll_clipped" => {
+            "Se aproximó overflow: auto / scroll de CSS."
+        }
+        "htmlImport.warn.layout.negative_margins_ignored" => {
+            "Se ignoraron los márgenes CSS negativos."
+        }
+        "htmlImport.warn.layout.margins_on_visual_box_ignored" => {
+            "Se ignoraron los márgenes CSS de una caja visual."
+        }
+        "htmlImport.warn.layout.content_box_percentage_approximated" => {
+            "Se aproximó el dimensionamiento en porcentaje de content-box."
+        }
+        "htmlImport.warn.layout.grid_empty_cells_packed" => {
+            "Se aproximaron las celdas vacías de cuadrícula CSS dejadas por líneas de inicio explícitas."
+        }
+        "htmlImport.warn.layout.grid_span_reflowed" => {
+            "Se aproximó un elemento de cuadrícula CSS cuya extensión no cabía en su línea de inicio."
+        }
+        "htmlImport.warn.layout.grid_rows_node_limit" => {
+            "Se alcanzó el límite de nodos; se omitieron los envoltorios de filas de cuadrícula CSS."
+        }
+        "htmlImport.warn.layout.grid_track_widths_unresolved" => {
+            "Se aproximaron los anchos de pista de cuadrícula CSS con auto-fit / auto-fill."
+        }
+        "htmlImport.warn.layout.grid_template_areas_ignored" => {
+            "No se importó la colocación con grid-template-areas de CSS."
+        }
+        "htmlImport.warn.layout.grid_row_placement_ignored" => {
+            "No se importó la colocación con grid-row de CSS."
+        }
+        "htmlImport.warn.layout.grid_column_unsupported" => {
+            "Se aproximó grid-column `{{value}}` de CSS."
+        }
+        "htmlImport.warn.layout.block_auto_margins_ignored" => {
+            "No se importaron los márgenes automáticos CSS en el eje de bloque."
+        }
+        "htmlImport.warn.layout.auto_margin_node_limit" => {
+            "Se alcanzó el límite de nodos; se omitió la alineación por márgenes automáticos CSS."
+        }
+        "htmlImport.warn.layout.flow_offset_no_definite_size" => {
+            "Se descartó un desplazamiento CSS en flujo sobre un elemento sin tamaño definido."
+        }
+        "htmlImport.warn.layout.flow_offset_node_limit" => {
+            "Se alcanzó el límite de nodos; se omitió un desplazamiento CSS en flujo."
+        }
+        "htmlImport.warn.layout.flow_offset_approximated" => {
+            "Se aproximaron los desplazamientos CSS en flujo (separaciones de position:relative, traslación de transform)."
+        }
+        "htmlImport.warn.layout.flow_offset_no_wrapper" => {
+            "Se descartó un desplazamiento CSS en flujo en una caja que no admite un envoltorio de desplazamiento."
+        }
+        "htmlImport.warn.layout.flex_wrap_column_not_emulated" => {
+            "No se importó flex-wrap en un contenedor flex en columna."
+        }
+        "htmlImport.warn.layout.flex_wrap_reverse_plain" => "Se aproximó flex-wrap:wrap-reverse.",
+        "htmlImport.warn.layout.flex_wrap_indefinite_width" => {
+            "Se ignoró flex-wrap en un contenedor sin ancho definido."
+        }
+        "htmlImport.warn.layout.flex_align_content_ignored" => {
+            "No se importó align-content de CSS en un contenedor flex con ajuste de línea."
+        }
+        "htmlImport.warn.layout.flex_wrap_indeterminate_children" => {
+            "Se ignoró flex-wrap con tamaños indeterminados de los hijos en el eje principal."
+        }
+        "htmlImport.warn.layout.flex_wrap_node_limit" => {
+            "Se alcanzó el límite de nodos; se omitieron las filas de flex-wrap."
+        }
+        "htmlImport.warn.transform.unsupported_syntax" => {
+            "Se ignoró una sintaxis de transform CSS no admitida."
+        }
+        "htmlImport.warn.transform.unsupported_function" => {
+            "Se ignoraron las funciones de transform CSS no admitidas (3D, matrix3d)."
+        }
+        "htmlImport.warn.transform.percentage_translation_dropped" => {
+            "Se descartó una traslación en porcentaje de transform CSS sobre un eje indefinido."
+        }
+        "htmlImport.warn.transform.non_finite_matrix" => {
+            "Se ignoró un transform CSS que produjo una matriz no finita."
+        }
+        "htmlImport.warn.transform.skew_dropped" => "Se descartó el sesgado del transform CSS.",
+        "htmlImport.warn.transform.degenerate_scale" => {
+            "Se aproximó un transform CSS con escala cero o no finita."
+        }
+        "htmlImport.warn.transform.mirroring_absolute" => {
+            "Se aproximó el reflejo del transform CSS."
+        }
+        "htmlImport.warn.transform.origin_z_ignored" => {
+            "Se ignoró el desplazamiento Z de transform-origin de CSS."
+        }
+        "htmlImport.warn.transform.scale_not_baked" => {
+            "Se descartó una escala de transform CSS que no pudo integrarse en el tamaño del nodo."
+        }
+        "htmlImport.warn.transform.scale_baked" => {
+            "Se aproximó la escala de transform CSS integrada en el tamaño del nodo."
+        }
+        "htmlImport.warn.transform.scale_auto_size_ignored" => {
+            "Se ignoró la escala de transform CSS en un elemento de tamaño automático."
+        }
+        "htmlImport.warn.visual.background_repeat_approximated" => {
+            "Se aproximó el background-repeat CSS direccional o con espaciado."
+        }
+        "htmlImport.warn.visual.background_tile_size_ignored" => {
+            "Se ignoró un tamaño explícito de mosaico de fondo CSS."
+        }
+        "htmlImport.warn.visual.background_size_auto_box" => {
+            "Se aproximó background-size de CSS en un elemento de tamaño automático."
+        }
+        "htmlImport.warn.visual.background_size_needs_intrinsic_size" => {
+            "Se aproximó el background-size CSS que necesita el tamaño intrínseco de la imagen."
+        }
+        "htmlImport.warn.visual.background_position_unsupported" => {
+            "Se ignoró un background-position CSS no admitido."
+        }
+        "htmlImport.warn.visual.background_image_url_empty" => {
+            "Se ignoró una URL vacía de imagen de fondo CSS."
+        }
+        "htmlImport.warn.visual.conic_gradient_ignored" => {
+            "Se ignoraron los degradados cónicos CSS."
+        }
+        "htmlImport.warn.visual.background_image_layer_unsupported" => {
+            "Se ignoró una capa de background-image CSS no admitida."
+        }
+        "htmlImport.warn.visual.background_color_unresolved" => {
+            "Se ignoró un color de fondo CSS sin resolver."
+        }
+        "htmlImport.warn.visual.background_position_dropped" => {
+            "Se ignoró background-position de CSS."
+        }
+        "htmlImport.warn.visual.border_colors_approximated" => {
+            "Se aproximaron los colores de borde CSS por lado."
+        }
+        "htmlImport.warn.visual.border_styles_approximated" => {
+            "Se aproximaron los estilos de borde CSS mixtos por lado."
+        }
+        "htmlImport.warn.visual.border_style_complex" => {
+            "Se aproximó un estilo de borde CSS complejo."
+        }
+        "htmlImport.warn.visual.border_style_unsupported" => {
+            "Se aproximó un estilo de borde CSS no admitido."
+        }
+        "htmlImport.warn.visual.border_radius_elliptical" => {
+            "Se aproximaron los radios de borde CSS elípticos."
+        }
+        "htmlImport.warn.visual.border_radius_unsupported" => {
+            "Se ignoró un radio de borde CSS no admitido."
+        }
+        "htmlImport.warn.visual.box_shadow_layer_unsupported" => {
+            "Se ignoró una capa de box-shadow CSS no admitida."
+        }
+        "htmlImport.warn.visual.gradient_interpolation_ignored" => {
+            "Se ignoró el método de interpolación de color del degradado CSS."
+        }
+        "htmlImport.warn.visual.linear_gradient_direction_unsupported" => {
+            "Se ignoró una dirección de linear-gradient CSS no admitida."
+        }
+        "htmlImport.warn.visual.gradient_color_hints_ignored" => {
+            "Se ignoraron las sugerencias de color de los degradados CSS."
+        }
+        "htmlImport.warn.visual.gradient_color_stop_unsupported" => {
+            "Se ignoró una parada de color de degradado CSS no admitida."
+        }
+        "htmlImport.warn.visual.gradient_too_few_stops" => {
+            "Se ignoró un degradado CSS con menos de dos paradas utilizables."
+        }
+        "htmlImport.warn.visual.gradient_repeating_approximated" => {
+            "Se aproximó un degradado CSS repetido."
+        }
+        "htmlImport.warn.visual.gradient_stops_clamped" => {
+            "Se aproximaron las paradas de degradado CSS fuera de rango."
+        }
+        "htmlImport.warn.visual.blur_radius_unsupported" => {
+            "Se ignoró un radio de desenfoque CSS no admitido."
+        }
+        "htmlImport.warn.visual.filter_drop_shadow_unsupported" => {
+            "Se ignoró un drop-shadow() de filtro CSS no admitido."
+        }
+        "htmlImport.warn.visual.filter_function_unsupported" => {
+            "Se ignoró una función de filtro CSS no admitida."
+        }
+        "htmlImport.warn.visual.backdrop_filter_unsupported" => {
+            "Se ignoró una función backdrop-filter CSS no admitida."
+        }
+        "htmlImport.warn.visual.background_blend_mode_unsupported" => {
+            "Se ignoró un background-blend-mode CSS no admitido."
+        }
+        "htmlImport.warn.visual.mix_blend_mode_on_fills" => {
+            "Se aproximó mix-blend-mode de CSS en rellenos individuales."
+        }
+        "htmlImport.warn.visual.mix_blend_mode_unsupported" => {
+            "Se ignoró un mix-blend-mode CSS no admitido."
+        }
+        "htmlImport.warn.visual.property_not_representable" => "Se ignoró {{property}} de CSS.",
+        "htmlImport.warn.visual.gradient_background_size_ignored" => {
+            "Se ignoró background-size de CSS en un degradado."
+        }
+        "htmlImport.warn.visual.radial_gradient_position_unsupported" => {
+            "Se ignoró una posición de radial-gradient CSS no admitida."
+        }
+        "htmlImport.warn.visual.radial_gradient_elliptical" => {
+            "Se aproximó un radial-gradient CSS elíptico."
+        }
+        "htmlImport.warn.visual.radial_gradient_extent_approximated" => {
+            "Se aproximó una palabra clave de extensión de radial-gradient CSS."
+        }
+        "htmlImport.warn.visual.radial_gradient_size_unsupported" => {
+            "Se ignoró un tamaño de radial-gradient CSS no admitido."
+        }
+        "htmlImport.warn.text.shadow_layer_unsupported" => {
+            "Se ignoró una capa de text-shadow CSS no admitida."
+        }
+        "htmlImport.warn.text.shadow_extra_layers_ignored" => {
+            "Se ignoraron las capas de text-shadow CSS posteriores a la primera."
+        }
+        "htmlImport.warn.text.shadow_on_inline_ignored" => {
+            "Se ignoró text-shadow de CSS en un elemento en línea."
+        }
+        "htmlImport.warn.list.style_image_ignored" => "No se importó list-style-image de CSS.",
+        "htmlImport.warn.list.marker_position_outside_approximated" => {
+            "Se aproximó un marcador colgante con `list-style-position: outside`."
+        }
+        "htmlImport.warn.list.style_type_unsupported" => {
+            "Se aproximó el list-style-type CSS no admitido `{{value}}`."
+        }
+        "htmlImport.warn.media.object_fit_scale_down" => {
+            "Se aproximó object-fit:scale-down de CSS."
+        }
+        "htmlImport.warn.media.object_fit_none_ignored" => "Se ignoró object-fit:none de CSS.",
+        "htmlImport.warn.media.object_position_ignored" => "Se ignoró object-position de CSS.",
+        "htmlImport.warn.media.image_mix_blend_mode_unsupported" => {
+            "Se ignoró un mix-blend-mode CSS no admitido en una imagen."
+        }
+        "htmlImport.warn.media.inline_svg_placeholder" => {
+            "Un elemento <svg> en línea se importó como marcador de posición."
+        }
+        "htmlImport.warn.media.input_type_fallback" => {
+            "Se aproximó un tipo de <input> no admitido."
+        }
+        "htmlImport.warn.media.element_placeholder" => {
+            "El elemento <{{tag}}> se importó como marcador de posición."
+        }
+        "htmlImport.warn.media.picture_undecodable_types" => {
+            "Se aproximó un <picture> cuyos tipos de origen no se pueden descodificar."
+        }
+        "htmlImport.warn.table.rowspan_ignored" => "No se importó el atributo HTML rowspan.",
+        "htmlImport.warn.table.row_groups_unflattened" => {
+            "Se aproximaron los anchos de columna de una tabla cuyos grupos de filas no aplanó el CSS."
+        }
+        "htmlImport.warn.table.indefinite_width_approximated" => {
+            "Se aproximaron los anchos de columna de una tabla CSS sin ancho definido."
+        }
+        "htmlImport.warn.resource.invalid_base_href" => {
+            "Se ignoró el <base href> no válido {{href}}."
+        }
+        "htmlImport.warn.resource.base_href_outside_origin" => {
+            "Se ignoró el <base href> {{href}} fuera del origen del proyecto."
+        }
+        "htmlImport.warn.resource.external_stylesheet_skipped" => {
+            "La hoja de estilos externa {{url}} no está disponible."
+        }
+        "htmlImport.warn.resource.image_outside_origin" => {
+            "La imagen {{url}} fuera del origen del proyecto se importó como marcador de posición."
+        }
+        "htmlImport.warn.resource.image_unavailable" => {
+            "La imagen no disponible {{url}} se importó como marcador de posición."
+        }
+        "htmlImport.warn.resource.css_import_invalid" => {
+            "Se ignoró el @import CSS no válido {{prelude}}."
+        }
+        "htmlImport.warn.resource.css_import_unresolvable" => {
+            "El @import CSS {{reference}} no está disponible."
+        }
+        "htmlImport.warn.resource.css_import_cycle" => "Se ignoró el @import CSS cíclico {{url}}.",
+        "htmlImport.warn.resource.css_import_depth_limit" => {
+            "Se ignoró el @import CSS {{url}} más allá del nivel {{max_depth}}."
+        }
+        "htmlImport.warn.resource.css_import_unavailable" => {
+            "El @import CSS {{url}} no está disponible."
+        }
+        "htmlImport.warn.project.multiple_html_entries" => {
+            "Se encontraron {{count}} entradas HTML; se eligió {{entry}} y se aproximó el resto."
+        }
+        "htmlImport.warn.snapshot.truncated" => "Se descartó parte de la captura del navegador.",
+        "htmlImport.warn.snapshot.node_limit" => {
+            "Se alcanzó el límite de nodos; se omitió el resto del contenido de la captura."
+        }
+        "htmlImport.warn.snapshot.tainted_images" => {
+            "{{count}} imágenes contaminadas por CORS, conservadas como URL remotas, no están disponibles."
+        }
+        "htmlImport.warn.snapshot.invalid_rect" => {
+            "Se descartó un nodo de la captura con un rectángulo ausente o no válido."
+        }
+        "htmlImport.warn.snapshot.unknown_kind" => {
+            "Se descartó un nodo de la captura de tipo desconocido."
+        }
+        "htmlImport.warn.snapshot.rejected" => "Se descartó la captura del navegador ({{reason}}).",
+        "htmlImport.warn.snapshot.unsupported_transform" => {
+            "Se ignoró una transformación no admitida de la captura."
+        }
+        "htmlImport.warn.css.media_empty_query" => "Se ignoró una consulta @media vacía.",
+        "htmlImport.warn.css.media_unsupported_type" => {
+            "Se ignoró el tipo de @media no admitido '{{name}}'."
+        }
+        "htmlImport.warn.css.media_unsupported_condition" => {
+            "Se ignoró la condición de @media no admitida '{{input}}'."
+        }
+        "htmlImport.warn.css.media_invalid_orientation" => {
+            "Se ignoró la orientación de @media no válida '{{value}}'."
+        }
+        "htmlImport.warn.css.media_unsupported_feature" => {
+            "Se ignoró la característica de @media no admitida '{{name}}'."
+        }
+        "htmlImport.warn.css.media_unsupported_range" => {
+            "Se ignoró el rango de @media no admitido '({{input}})'."
+        }
+        "htmlImport.warn.css.media_invalid_range" => {
+            "Se ignoró el rango de @media no válido '({{input}})'."
+        }
+        "htmlImport.warn.css.media_invalid_length" => {
+            "Se ignoró la longitud de @media no válida '{{value}}'."
+        }
+        "htmlImport.diagnostics.title" => "Importación de HTML finalizada",
+        "htmlImport.diagnostics.summary" => "Elementos degradados: {{count}}",
+        "htmlImport.diagnostics.dismiss" => "Cerrar",
+        "htmlImport.diagnostics.expand" => "Mostrar detalles",
+        "htmlImport.diagnostics.collapse" => "Ocultar detalles",
+        "htmlImport.diagnostics.more" => "+{{count}} más",
         _ => return super::es_collab::lookup(key),
     })
 }

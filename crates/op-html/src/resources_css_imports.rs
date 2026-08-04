@@ -1,3 +1,4 @@
+use crate::import_warning::ImportWarning;
 use std::collections::HashSet;
 
 use crate::css_encoding::decode_css_bytes;
@@ -20,7 +21,7 @@ pub(crate) fn expand_stylesheet_imports(
     source_identity: Option<&str>,
     fetcher: Option<&ResourceFetcher<'_>>,
     budget: &mut ResourceBudget,
-    warnings: &mut Vec<String>,
+    warnings: &mut Vec<ImportWarning>,
 ) -> String {
     let mut active = HashSet::new();
     if let Some(url) = source_identity {
@@ -42,7 +43,7 @@ fn expand_inner(
     source_url: Option<&str>,
     fetcher: Option<&ResourceFetcher<'_>>,
     budget: &mut ResourceBudget,
-    warnings: &mut Vec<String>,
+    warnings: &mut Vec<ImportWarning>,
     active: &mut HashSet<String>,
     depth: usize,
 ) -> String {
@@ -73,28 +74,32 @@ fn expand_inner(
         append_rebased(&mut output, &source[cursor..item_start], source_url);
         let import_prelude = prelude["@import".len()..].trim();
         let Some(parsed) = parse_import(import_prelude) else {
-            warnings.push(format!("invalid CSS @import ignored: {prelude}"));
+            warnings.push(ImportWarning::CssImportInvalid {
+                prelude: prelude.to_string(),
+            });
             cursor = delimiter + 1;
             continue;
         };
         let Some(resolved) = resolve_resource_url(source_url, &parsed.reference) else {
-            warnings.push(format!(
-                "CSS @import URL could not be resolved or left the project origin: {}",
-                parsed.reference
-            ));
+            warnings.push(ImportWarning::CssImportUnresolvable {
+                reference: parsed.reference.to_string(),
+            });
             cursor = delimiter + 1;
             continue;
         };
         let canonical = canonical_url(&resolved);
         if active.contains(&canonical) {
-            warnings.push(format!("CSS @import cycle ignored: {resolved}"));
+            warnings.push(ImportWarning::CssImportCycle {
+                url: resolved.to_string(),
+            });
             cursor = delimiter + 1;
             continue;
         }
         if depth >= MAX_STYLESHEET_IMPORT_DEPTH {
-            warnings.push(format!(
-                "CSS @import depth limit ({MAX_STYLESHEET_IMPORT_DEPTH}) reached: {resolved}"
-            ));
+            warnings.push(ImportWarning::CssImportDepthLimit {
+                max_depth: MAX_STYLESHEET_IMPORT_DEPTH,
+                url: resolved.to_string(),
+            });
             cursor = delimiter + 1;
             continue;
         }
@@ -103,7 +108,9 @@ fn expand_inner(
             continue;
         }
         let Some(bytes) = fetcher.and_then(|fetch| fetch(&resolved)) else {
-            warnings.push(format!("CSS @import unavailable: {resolved}"));
+            warnings.push(ImportWarning::CssImportUnavailable {
+                url: resolved.to_string(),
+            });
             cursor = delimiter + 1;
             continue;
         };
@@ -320,7 +327,7 @@ mod tests {
             &mut budget,
             &mut warnings,
         );
-        (output, warnings)
+        (output, crate::render_warnings(&warnings))
     }
 
     #[test]
