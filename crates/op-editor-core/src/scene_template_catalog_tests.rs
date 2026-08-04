@@ -140,6 +140,22 @@ colour = "red"
     );
 }
 
+/// A scene with no templates paints a chip that filters the grid to empty.
+///
+/// The scene enum and the catalogue are edited separately — adding a variant
+/// is a compiler-guided change, adding its templates is not — so nothing else
+/// stops a chip from shipping ahead of the documents it filters for.
+#[test]
+fn every_scene_has_at_least_one_template_so_no_filter_chip_is_dead() {
+    for scene in TemplateScene::ALL {
+        assert!(
+            scene_templates_for(scene).next().is_some(),
+            "scene `{}` has no templates — its filter chip would show an empty grid",
+            scene.as_str()
+        );
+    }
+}
+
 #[test]
 fn every_scene_has_a_distinct_label_so_the_filter_row_is_unambiguous() {
     let labels: Vec<&str> = TemplateScene::ALL

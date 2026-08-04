@@ -46,6 +46,13 @@ CARDS = [
     ("knowledge-carousel", "knowledge-carousel-overview.png"),
     ("before-after", "before-after.png"),
     ("slide-deck", [f"slide-deck-{i:02d}.png" for i in range(1, 7)]),
+    ("knowledge-card-vertical", "knowledge-card-vertical.png"),
+    ("knowledge-card-square", "knowledge-card-square.png"),
+    ("pitch-deck-dark", [f"pitch-deck-dark-{i:02d}.png" for i in range(1, 7)]),
+    ("lecture-deck-light",
+     [f"lecture-deck-light-{i:02d}.png" for i in range(1, 7)]),
+    ("minimal-keynote", [f"minimal-keynote-{i:02d}.png" for i in range(1, 9)]),
+    ("gradient-tech", [f"gradient-tech-{i:02d}.png" for i in range(1, 7)]),
 ]
 
 # Gap between tiles, in source pixels — scaled down with everything else.

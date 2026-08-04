@@ -8,7 +8,10 @@ OUT=$R/templates/step0/previews
 TMP=$(mktemp -d)
 mkdir -p "$OUT"
 
-for t in screenshot-tutorial knowledge-carousel before-after slide-deck; do
+for t in screenshot-tutorial knowledge-carousel before-after slide-deck \
+         knowledge-card-vertical knowledge-card-square \
+         pitch-deck-dark lecture-deck-light \
+         minimal-keynote gradient-tech; do
   # The documents themselves are shipped assets (embedded by the scene
   # template catalogue); this directory keeps only the generators and the
   # full-resolution renders they produce.

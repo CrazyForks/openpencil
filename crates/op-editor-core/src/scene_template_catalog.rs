@@ -27,6 +27,14 @@ const SCREENSHOT_TUTORIAL_OP: &str =
 const KNOWLEDGE_CAROUSEL_OP: &str = include_str!("../assets/scene_templates/knowledge-carousel.op");
 const BEFORE_AFTER_OP: &str = include_str!("../assets/scene_templates/before-after.op");
 const SLIDE_DECK_OP: &str = include_str!("../assets/scene_templates/slide-deck.op");
+const KNOWLEDGE_CARD_VERTICAL_OP: &str =
+    include_str!("../assets/scene_templates/knowledge-card-vertical.op");
+const KNOWLEDGE_CARD_SQUARE_OP: &str =
+    include_str!("../assets/scene_templates/knowledge-card-square.op");
+const PITCH_DECK_DARK_OP: &str = include_str!("../assets/scene_templates/pitch-deck-dark.op");
+const LECTURE_DECK_LIGHT_OP: &str = include_str!("../assets/scene_templates/lecture-deck-light.op");
+const MINIMAL_KEYNOTE_OP: &str = include_str!("../assets/scene_templates/minimal-keynote.op");
+const GRADIENT_TECH_OP: &str = include_str!("../assets/scene_templates/gradient-tech.op");
 
 /// Return the embedded document JSON for a template id.
 ///
@@ -40,6 +48,12 @@ pub fn scene_template_document(template_id: &str) -> Option<&'static str> {
         "knowledge-carousel" => Some(KNOWLEDGE_CAROUSEL_OP),
         "before-after" => Some(BEFORE_AFTER_OP),
         "slide-deck" => Some(SLIDE_DECK_OP),
+        "knowledge-card-vertical" => Some(KNOWLEDGE_CARD_VERTICAL_OP),
+        "knowledge-card-square" => Some(KNOWLEDGE_CARD_SQUARE_OP),
+        "pitch-deck-dark" => Some(PITCH_DECK_DARK_OP),
+        "lecture-deck-light" => Some(LECTURE_DECK_LIGHT_OP),
+        "minimal-keynote" => Some(MINIMAL_KEYNOTE_OP),
+        "gradient-tech" => Some(GRADIENT_TECH_OP),
         _ => None,
     }
 }
@@ -55,14 +69,22 @@ pub enum TemplateScene {
     Carousel,
     /// Presentation decks.
     Slides,
+    /// Single-board social cards — one finished image, not a sequence.
+    ///
+    /// Distinct from [`Self::Carousel`]: a carousel's unit of meaning is the
+    /// swipe across several boards, so its templates ship a whole sequence. A
+    /// card is delivered on its own, which is what makes "title + points +
+    /// byline" a complete layout rather than a page of one.
+    Card,
 }
 
 impl TemplateScene {
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::Tutorial,
         Self::Comparison,
         Self::Carousel,
         Self::Slides,
+        Self::Card,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -71,6 +93,7 @@ impl TemplateScene {
             Self::Comparison => "comparison",
             Self::Carousel => "carousel",
             Self::Slides => "slides",
+            Self::Card => "card",
         }
     }
 
@@ -81,16 +104,23 @@ impl TemplateScene {
             Self::Comparison => "sceneTemplate.scene.comparison",
             Self::Carousel => "sceneTemplate.scene.carousel",
             Self::Slides => "sceneTemplate.scene.slides",
+            Self::Card => "sceneTemplate.scene.card",
         }
     }
 
     /// Label shown when the catalogue key is not yet translated.
+    ///
+    /// Chip-sized nouns, not descriptions: the filter row is a single
+    /// non-wrapping line. `Carousel` reads "轮播" rather than "知识卡片"
+    /// because the latter is what a [`Self::Card`] chip means — two chips
+    /// labelled the same thing is worse than a slightly drier word.
     pub const fn title_fallback(self) -> &'static str {
         match self {
             Self::Tutorial => "教程图",
             Self::Comparison => "对比图",
-            Self::Carousel => "知识卡片",
+            Self::Carousel => "轮播",
             Self::Slides => "PPT",
+            Self::Card => "卡片",
         }
     }
 }
@@ -104,6 +134,7 @@ impl FromStr for TemplateScene {
             "comparison" => Ok(Self::Comparison),
             "carousel" => Ok(Self::Carousel),
             "slides" => Ok(Self::Slides),
+            "card" => Ok(Self::Card),
             _ => Err(()),
         }
     }

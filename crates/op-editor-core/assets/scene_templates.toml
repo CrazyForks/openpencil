@@ -46,6 +46,30 @@ frame_width = 1920
 frame_height = 1080
 
 [[template]]
+id = "knowledge-card-vertical"
+scene = "card"
+title_key = "sceneTemplate.item.knowledgeCardVertical.title"
+title_fallback = "知识卡片 · 竖版"
+summary_key = "sceneTemplate.item.knowledgeCardVertical.summary"
+summary_fallback = "3:4 单张图文卡，标题、四条要点和署名条，换掉文案就能发小红书。"
+tags = ["卡片", "知识", "小红书", "图文", "card", "note"]
+frames = 1
+frame_width = 1080
+frame_height = 1440
+
+[[template]]
+id = "knowledge-card-square"
+scene = "card"
+title_key = "sceneTemplate.item.knowledgeCardSquare.title"
+title_fallback = "知识卡片 · 方版"
+summary_key = "sceneTemplate.item.knowledgeCardSquare.summary"
+summary_fallback = "1:1 方形卡，同一套版式的紧凑版，适合公众号头图与朋友圈。"
+tags = ["卡片", "知识", "方形", "公众号", "card", "square"]
+frames = 1
+frame_width = 1080
+frame_height = 1080
+
+[[template]]
 id = "before-after"
 scene = "comparison"
 title_key = "sceneTemplate.item.beforeAfter.title"
@@ -56,3 +80,51 @@ tags = ["对比", "前后", "复盘", "comparison", "before after"]
 frames = 1
 frame_width = 1600
 frame_height = 900
+
+[[template]]
+id = "pitch-deck-dark"
+scene = "slides"
+title_key = "sceneTemplate.item.pitchDeckDark.title"
+title_fallback = "路演 deck · 深色"
+summary_key = "sceneTemplate.item.pitchDeckDark.summary"
+summary_fallback = "封面、问题、方案、数据、里程碑和联系页，深底大字，适合融资路演与产品发布。"
+tags = ["路演", "融资", "创业", "深色", "PPT", "pitch", "deck", "startup", "dark"]
+frames = 6
+frame_width = 1920
+frame_height = 1080
+
+[[template]]
+id = "lecture-deck-light"
+scene = "slides"
+title_key = "sceneTemplate.item.lectureDeckLight.title"
+title_fallback = "课件 deck · 浅色"
+summary_key = "sceneTemplate.item.lectureDeckLight.summary"
+summary_fallback = "课程封面、学习目标、概念讲解、例题、对比表和小结作业，纸白底耐看，适合上课投影。"
+tags = ["课件", "教学", "讲课", "教育", "PPT", "lecture", "teaching", "course", "light"]
+frames = 6
+frame_width = 1920
+frame_height = 1080
+
+[[template]]
+id = "minimal-keynote"
+scene = "slides"
+title_key = "sceneTemplate.item.minimalKeynote.title"
+title_fallback = "极简 Keynote"
+summary_key = "sceneTemplate.item.minimalKeynote.summary"
+summary_fallback = "纯白留白、超大字号、一页一个意思，八页里没有一张卡片，适合发布会与主题演讲。"
+tags = ["极简", "留白", "发布会", "演讲", "keynote", "minimal", "PPT", "slides"]
+frames = 8
+frame_width = 1920
+frame_height = 1080
+
+[[template]]
+id = "gradient-tech"
+scene = "slides"
+title_key = "sceneTemplate.item.gradientTech.title"
+title_fallback = "渐变科技风"
+summary_key = "sceneTemplate.item.gradientTech.summary"
+summary_fallback = "深色渐变底加玻璃拟态卡，含架构、性能对比与客户墙，适合开发者产品发布。"
+tags = ["渐变", "科技", "玻璃", "深色", "开发者", "gradient", "tech", "glass", "PPT"]
+frames = 6
+frame_width = 1920
+frame_height = 1080

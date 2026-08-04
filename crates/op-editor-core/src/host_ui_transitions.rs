@@ -89,9 +89,15 @@ pub fn scenario_default_export_format(scenario: Option<TemplateScene>) -> Option
         // A deck is delivered as a slide-per-page PDF — see
         // `op_host_services::export_pdf::export_deck_pdf`.
         Some(TemplateScene::Slides) => Some(ExportFormat::Pdf),
+        // A card is delivered as a PNG, but so is a tutorial and a carousel,
+        // and the user's own last choice (WebP for a lighter upload, say) is
+        // as valid. Presetting here would silently overwrite that on every
+        // export; the deck is the only scenario with a format its delivery
+        // actually depends on.
         Some(TemplateScene::Tutorial)
         | Some(TemplateScene::Comparison)
         | Some(TemplateScene::Carousel)
+        | Some(TemplateScene::Card)
         | None => None,
     }
 }

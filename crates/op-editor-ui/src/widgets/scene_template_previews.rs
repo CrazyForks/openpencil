@@ -36,6 +36,12 @@ pub(crate) fn scene_template_preview(template_id: &str) -> Option<(u64, &'static
         "knowledge-carousel" => preview!(2, "knowledge-carousel"),
         "before-after" => preview!(3, "before-after"),
         "slide-deck" => preview!(4, "slide-deck"),
+        "knowledge-card-vertical" => preview!(5, "knowledge-card-vertical"),
+        "knowledge-card-square" => preview!(6, "knowledge-card-square"),
+        "pitch-deck-dark" => preview!(7, "pitch-deck-dark"),
+        "lecture-deck-light" => preview!(8, "lecture-deck-light"),
+        "minimal-keynote" => preview!(9, "minimal-keynote"),
+        "gradient-tech" => preview!(10, "gradient-tech"),
         _ => None,
     }
 }
