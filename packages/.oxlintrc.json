@@ -5,5 +5,13 @@
     "perf": "warn"
   },
   "plugins": ["react", "typescript", "import", "unicorn"],
-  "ignorePatterns": ["node_modules", "out", "dist", "**/routeTree.gen.ts", "**/*.gen.*"]
+  "ignorePatterns": [
+    "node_modules",
+    "out",
+    "dist",
+    "**/routeTree.gen.ts",
+    "**/*.gen.*",
+    "op-chrome-extension/vendor/**",
+    "op-chrome-extension/wasm/**"
+  ]
 }
