@@ -176,6 +176,13 @@ fn compact_subagent_skills<T: SkillNamed>(
             "cjk-typography",
             "mobile-app",
             "mobile-ui",
+            // Deck teaching. Keyword-gated at the resolve layer (deck words
+            // only), so a no-op on every non-deck prompt. Required on a deck:
+            // the allow-set used to drop `slides` unconditionally, so a
+            // Basic-tier model asked for a PPT got the generic page skills and
+            // none of the 16:9 contract — measured 2026-08-04.
+            "slides",
+            "deck-patterns",
             "icon-catalog",
             "style-defaults",
             "elements",
@@ -204,6 +211,13 @@ fn compact_subagent_skills<T: SkillNamed>(
                 // under the tight retry budget. (Codex review 2026-06-06.)
                 "design-system",
                 "cjk-typography",
+                // Kept on the retry for the same reason as the allow-set above:
+                // keyword-gated, so a no-op off a deck, and on a deck the retry
+                // has to keep the 16:9 contract or it regenerates a scrolling
+                // page. `deck-patterns` is deliberately omitted — the retry
+                // wants the smallest viable prompt, and `slides` carries the
+                // non-negotiable format/typography rules on its own.
+                "slides",
                 // Kept on the retry too: `build_subagent_prompt` still injects
                 // the AVAILABLE COMPONENTS manifest on a reduced-complexity
                 // retry (the manifest block is gated on the library being

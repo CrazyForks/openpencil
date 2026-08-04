@@ -3,7 +3,7 @@ name: shapes-and-decks
 description: Full worked examples for concentric progress rings/donuts/gauges and stacked-card decks (companion depth to the layout skill's compact rules)
 phase: [generation]
 trigger:
-  keywords: [ring, donut, gauge, pie chart, progress ring, activity ring, deck, stacked card, card stack, swipeable, flashcard, 进度环, 甜甜圈, 仪表盘, 堆叠卡]
+  keywords: [ring, donut, gauge, pie chart, progress ring, activity ring, card deck, stacked deck, stacked card, card stack, swipeable, flashcard, 进度环, 甜甜圈, 仪表盘, 堆叠卡]
 priority: 28
 budget: 1200
 category: knowledge

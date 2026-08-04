@@ -4,7 +4,7 @@ description: Orchestrator task decomposition — splits UI requests into cohesiv
 phase: [planning]
 trigger: null
 priority: 0
-budget: 3000
+budget: 3500
 category: base
 ---
 
@@ -44,7 +44,15 @@ OTHERWISE classify by purpose:
    - Every subtask MUST carry a `screen` field naming that slide, and no two may share a value. This field is what makes each slide its own frame; without it the whole deck collapses onto one board.
    - Each subtask's region is the full slide: {"width":1920,"height":1080}
    - Structure per slide: one idea — a takeaway title plus its supporting content. NO status bar, NO navigation bar, NO footer.
-   - Honour an explicitly requested slide count ("6 页"/"5-slide"); otherwise plan 5-8 slides covering cover, agenda, the argument, evidence, and a close.
+   - Honour an explicitly requested slide count ("6 页"/"5-slide"); otherwise plan 5-8 slides.
+   - OUTLINE MODE — pick the running order from the deck's PURPOSE, then name each subtask after the slide it produces (that name is the board's title, so it must read as a slide title, not as "Section 3"):
+     - Pitch / 路演 / 融资: cover - the problem (3 pains) - the solution - proof data (3 KPIs) - milestones/roadmap - the ask + contact.
+     - Lecture / 课件 / 培训: cover - learning objectives - the concept - a worked example (numbered steps) - a comparison of the two things students confuse - summary + homework.
+     - Report / 汇报 / 季度: cover - agenda - what we did (3 points) - results (3 KPIs) - a trend chart with its takeaway - next steps.
+     - Product launch / 发布: cover - the change in the market - the product - three capabilities - evidence/benchmark - availability + CTA.
+     - Anything else: cover - agenda - 2-4 argument slides - one evidence slide - closing.
+   - COPY LIMITS (a slide is a visual aid, not a document — plan the amount, do not leave it to the generator): slide title <= 14 CJK chars / ~10 English words. Bullet or card item <= 20 CJK chars / ~14 English words. Total body copy per slide <= 80 CJK chars / ~55 English words. At most 3 cards, 3 KPIs, 5 timeline nodes, or 5 bullets on one slide — if the content needs more, plan another slide instead.
+   - The "elements" field for a slide names the slide's ONE takeaway plus its supporting parts (e.g. "takeaway title, 3 KPI cards each with value + unit + label + note"), never a list of paragraphs.
 
 CRITICAL — "MOBILE" MEANS MOBILE-SIZED SCREEN, NOT A PHONE MOCKUP:
 When the user says "mobile"/"移动端"/"手机" + a screen type (login, profile, settings, etc.), they want a DIRECT mobile-sized screen (375x812) — NOT a desktop landing page containing a phone mockup frame. A "mobile login page" = type 2 (375x812 login screen). Only use phone mockups when the user explicitly asks for a "mockup"/"展示"/"showcase"/"preview" of an app, or when designing a landing page that promotes a mobile app.

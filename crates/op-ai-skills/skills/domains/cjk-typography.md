@@ -5,7 +5,7 @@ phase: [generation]
 trigger:
   keywords:
     - "/[\\u4e00-\\u9fff\\u3040-\\u309f\\u30a0-\\u30ff\\uac00-\\ud7af]/"
-priority: 25
+priority: 21
 budget: 500
 category: domain
 ---

@@ -4,8 +4,8 @@ description: Presentation slide / deck design — 16:9 layout contracts, slide t
 phase: [generation]
 trigger:
   keywords: [slide, slides, deck, presentation, pitch deck, keynote, ppt, 幻灯片, 演示, 演示文稿, 路演]
-priority: 28
-budget: 1800
+priority: 24
+budget: 2400
 category: domain
 ---
 
@@ -16,6 +16,53 @@ You design slides readable in real conditions (projector, Zoom, mobile). Priorit
 ## Adapt the style guide (critical, first)
 
 The selected style guide is a brand/product palette — it is NOT slide-optimized. ALWAYS adapt it for slides: scale type up to the sizes below, widen spacing, raise contrast, simplify. If the guide's body size or contrast would hurt readability on a projector, override it. Readability beats brand fidelity every time. Pull core/accent/neutral from the guide, then enforce the slide sizes regardless of the guide's own scale.
+
+## Style tiers — pick ONE for the whole deck, then hold it on every slide
+
+Route the tier from the request (rules below), then use that tier's palette, type scale and element cap verbatim. When a style guide IS selected, keep its accent HUE but move the values onto the tier's roles so the contrast floors below still hold. Hex values and contrast ratios here are measured, not estimates — the listed floor pair is the one that fails first when you swap the accent, so re-measure THAT pair, never the title.
+
+S1 WARM-WHITE BUSINESS — default. Reports, quarterly reviews, corporate updates, 汇报.
+
+- bg `#FFFFFF` · surface `#F4F6F9` · ink `#0B1220` · muted `#5A6B85` · accent `#2F5BEA` · accent-soft `#E4EAFD` · border `#DCE2EC`
+- Contrast: ink/bg 18.72 · muted/bg 5.42 · accent/bg 5.52 · muted/accent-soft 4.51 (FLOOR)
+- Type: cover 104/700 · page title 64/700 · card title 34–40/600 · body 26–32/400 · KPI 140/700 · eyebrow 24/600
+- ≤6 elements per slide. Cards carry the `surface` fill; the slide background stays `bg`.
+- NEVER: a second accent hue; a coloured page background on anything but the closing slide.
+
+S2 DARK PITCH — 深色 / 暗色 / dark / 科技感 / tech / 路演 / investor pitch.
+
+- bg `#0B1220` · surface `#18263F` · ink `#F2F6FF` · muted `#93A4C4` · accent `#4D8DFF` · accent-soft `#16233D` · border `#24314D`
+- Contrast: ink/bg 17.30 · muted/bg 7.44 · accent/bg 5.86 · accent/surface 4.73 (FLOOR)
+- Type: cover 88–112/700 lh 1.12 · page title 64/700 · card title 38/600 · body 26–30/400 · KPI 140/700 with its unit at 44/600
+- EXACTLY TWO background levels (bg + surface). ≤5 elements per slide.
+- NEVER: a third grey plane — on dark, hierarchy comes from weight and the accent, not from stacking more greys. NEVER body text lighter-weight than `muted`, drop shadows, or a second accent.
+
+S3 LIGHT LECTURE — 课件 / 教学 / 培训 / lecture / course / tutorial / workshop.
+
+- bg `#F2EEE2` (paper, deliberately not pure white — pure white lights the whole room) · surface `#FFFFFF` · ink `#17211C` · muted `#55635A` · accent `#1B6B4C` · accent-soft `#D8E9DE` · border `#D9D2C2`
+- Contrast: ink/bg 14.25 · accent/bg 5.56 · white-on-accent 6.45 · muted/accent-soft 5.01 (FLOOR)
+- Type: cover 100/700 · page title 64/700 · step/objective title 30–38/600 · body 26–30/400 at lineHeight 1.5–1.6 (denser than a pitch — the audience is taking notes)
+- ≤8 elements per slide. The numbered circle is this tier's signature: a filled accent circle with a white digit is the highest-contrast point on the page.
+- NEVER: a procedure slide with no visible step order; body below 26.
+
+S4 MINIMAL KEYNOTE — 极简 / 简约 / minimal / keynote / "one big idea".
+
+- Pick ONE ground and never mix: S1's `#FFFFFF`/`#0B1220` pair, or S2's `#0B1220`/`#F2F6FF` pair. Exactly one accent, used at most once per slide.
+- Type: statement 88–140/700 lh 1.12 · one supporting line 30–34/400. Nothing else.
+- ≤4 elements per slide, counting the accent bar.
+- NEVER: bullet lists, cards, borders, tables, icons, or a slide carrying title + subtitle + body + footer at once.
+
+## Route the tier from the request
+
+Scan the user's words in this order and take the FIRST hit; scan the deck's subject only if no style word appears:
+
+1. 深色/暗色/黑色/dark/night/科技感/tech/cyber/neon → S2. 路演/pitch/投资人/investor/融资 also → S2.
+2. 极简/简约/minimal/keynote/性冷淡/one big idea/less is more → S4.
+3. 课件/教学/讲义/培训/lecture/course/tutorial/workshop/教程 → S3.
+4. 浅色/明亮/light/白底/商务/汇报/季度/年度/report/review/corporate → S1.
+5. No style word at all → S1.
+
+An explicit brand colour in the request overrides the tier's accent (keep every other role). A tier is a whole-deck decision — never switch tiers between slides of one deck.
 
 ## Format
 

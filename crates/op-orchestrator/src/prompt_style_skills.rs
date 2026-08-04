@@ -30,6 +30,24 @@ pub(super) fn is_mobile_full_screen(plan: &OrchestratorPlan) -> bool {
     plan.subtasks.len() >= 2
 }
 
+/// 该 plan 是否代表一块投影幻灯片(16:9 定尺画板)。
+///
+/// The deck preset is a fixed 1920x1080 board (`design_type::DECK_PRESET`), and
+/// `decomposition` mandates that size for every type-4 plan — nothing else in
+/// the corpus asks for a root that is both this wide AND fixed-height (landing
+/// pages and dashboards carry `height = 0` so they auto-expand). That pair is
+/// therefore the deck signature.
+///
+/// It exists for the same reason `is_mobile_full_screen` feeds the budget
+/// override below: the deck teaching (`slides` + `deck-patterns`) is ~4000
+/// tokens, so on the plain non-mobile tier budgets (Basic 5200 / Standard 6500,
+/// against ~6200 of always-kept Base skills) BOTH are dropped for
+/// `BudgetExhausted` and a weak model designs a deck with no deck guidance at
+/// all — measured 2026-08-04, before this arm existed.
+pub(super) fn is_deck_board(plan: &OrchestratorPlan) -> bool {
+    plan.root_frame.width >= 1600.0 && plan.root_frame.height >= 900.0
+}
+
 /// Build the sub-agent style-guide instruction block for the planner-selected
 /// guide. Port of `buildSubAgentStyleGuideInstruction`
 /// (orchestrator-sub-agent-compact.ts:78-124).

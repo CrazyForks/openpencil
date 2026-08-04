@@ -195,10 +195,21 @@ pub(super) fn build_subagent_prompt_core(
     // compact filter; the `mobile-ui` rules used to be appended to the user prompt
     // (uncounted) and now live in a budgeted skill, so the budget grows by ~its
     // size — the TOTAL prompt is unchanged, the rules just moved user→system.
+    // A deck board gets its own arm for the same reason mobile does: the
+    // `slides` + `deck-patterns` teaching is ~4000 tokens on top of ~6200 of
+    // always-kept Base skills, so under the plain 5200 / 6500 arms both are
+    // dropped for BudgetExhausted and the model designs slides with no slide
+    // guidance. 11500 covers the always-kept Base set (which on this path
+    // includes `style-defaults`, loaded by the `noStyleGuideMatch` flag) plus
+    // `cjk-typography` and both deck skills whole; at 10600 `slides` still lost
+    // its tail, which `prompt_deck_skill_tests` asserts against.
+    let is_deck = is_deck_board(plan);
     let budget_override = match tier {
         ModelTier::Basic if is_mobile_layout || is_mobile_screen => Some(9200),
+        ModelTier::Basic if is_deck => Some(11500),
         ModelTier::Basic => Some(5200),
         ModelTier::Standard if is_mobile_layout => Some(9500),
+        ModelTier::Standard if is_deck => Some(11500),
         ModelTier::Standard => Some(6500),
         ModelTier::Full => None,
     };

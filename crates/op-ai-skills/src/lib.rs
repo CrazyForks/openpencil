@@ -21,6 +21,8 @@ use include_dir::{include_dir, Dir};
 pub mod budget;
 pub mod color;
 pub mod compose;
+#[cfg(test)]
+mod deck_corpus_tests;
 pub mod design_systems;
 pub mod frontmatter;
 pub mod loader;
@@ -84,7 +86,11 @@ const GUIDELINE_TOPICS: &[(&str, &[&str], &[&str])] = &[
         &["table"],
         &["dashboard", "product-principles"],
     ),
-    ("slides", &["deck", "presentation"], &["slides"]),
+    (
+        "slides",
+        &["deck", "presentation"],
+        &["slides", "deck-patterns"],
+    ),
     ("form", &["form-ui"], &["form-ui"]),
     ("design-system", &[], &["design-system-composition"]),
     ("interactivity", &[], &["interactivity"]),
@@ -396,11 +402,21 @@ mod tests {
             lp.contains("DESIGN CRAFT"),
             "landing-page must include design craft"
         );
-        // slides resolves to the slide layout contracts.
+        // slides resolves to the slide layout contracts AND the pattern
+        // skeletons — an external agent asking for slide guidance needs both
+        // the tier/format rules and the structures that satisfy them.
         let sl = guideline_for("slides").expect("slides guideline present");
         assert!(
             sl.to_uppercase().contains("SLIDE"),
             "slides must include slide guidance"
+        );
+        assert!(
+            sl.contains("## Style tiers — pick ONE for the whole deck"),
+            "slides guideline must carry the style tiers"
+        );
+        assert!(
+            sl.contains("DECK PATTERNS — SLIDE SKELETONS"),
+            "slides guideline must carry the pattern skeletons"
         );
         // dashboard / table both resolve.
         assert!(
