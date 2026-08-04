@@ -66,6 +66,7 @@ pub mod export_batch;
 pub mod export_html;
 mod export_html_structured;
 mod export_html_template;
+pub mod export_hyperframes;
 pub mod export_pdf;
 mod figma_convert;
 mod figma_convert_error;

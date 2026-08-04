@@ -94,7 +94,11 @@ pub fn export_deck_html(state: &EditorState, target: &Path) -> Result<DeckHtmlEx
 ///
 /// Read from the document rather than the scene: the resolved
 /// `SceneNode` carries geometry and paint, not the authored layer name.
-fn board_name(state: &EditorState, board_id: &str) -> String {
+///
+/// Shared with `export_hyperframes`: a board must be labelled the same
+/// in the slideshow a presenter opens and in the composition a renderer
+/// walks, or the two artifacts disagree about what a slide is called.
+pub(crate) fn board_name(state: &EditorState, board_id: &str) -> String {
     state
         .active_children()
         .iter()
