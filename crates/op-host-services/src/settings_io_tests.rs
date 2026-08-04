@@ -246,13 +246,47 @@ fn six_cli_mcp_payload_migrates_to_new_cli_count() {
     )
     .unwrap();
     let mut dst = EditorState::new();
-    dst.editor_ui.agent_settings.mcp_cli_enabled = [true; 7];
+    dst.editor_ui.agent_settings.mcp_cli_enabled = [true; 12];
 
     apply_payload(&mut dst, payload);
 
     assert_eq!(
         dst.editor_ui.agent_settings.mcp_cli_enabled,
-        [true, false, false, true, true, false, false]
+        [true, false, false, true, true, false, false, false, false, false, false, false]
+    );
+}
+
+#[test]
+fn seven_cli_mcp_payload_keeps_its_toggles_and_leaves_the_new_clis_off() {
+    let payload: SettingsPayload = serde_json::from_str(
+        r#"{"version":1,"mcp_cli_enabled":[true,false,true,false,true,false,true]}"#,
+    )
+    .unwrap();
+    let mut dst = EditorState::new();
+    dst.editor_ui.agent_settings.mcp_cli_enabled = [true; 12];
+
+    apply_payload(&mut dst, payload);
+
+    assert_eq!(
+        dst.editor_ui.agent_settings.mcp_cli_enabled,
+        [true, false, true, false, true, false, true, false, false, false, false, false]
+    );
+}
+
+#[test]
+fn eleven_cli_mcp_payload_keeps_its_toggles_and_leaves_zcode_off() {
+    let payload: SettingsPayload = serde_json::from_str(
+        r#"{"version":1,"mcp_cli_enabled":[true,false,true,false,true,false,true,true,false,true,false]}"#,
+    )
+    .unwrap();
+    let mut dst = EditorState::new();
+    dst.editor_ui.agent_settings.mcp_cli_enabled = [true; 12];
+
+    apply_payload(&mut dst, payload);
+
+    assert_eq!(
+        dst.editor_ui.agent_settings.mcp_cli_enabled,
+        [true, false, true, false, true, false, true, true, false, true, false, false]
     );
 }
 
@@ -268,7 +302,7 @@ fn eight_cli_mcp_payload_drops_gemini_without_shifting_later_clis() {
 
     assert_eq!(
         dst.editor_ui.agent_settings.mcp_cli_enabled,
-        [true, false, false, true, false, true, true]
+        [true, false, false, true, false, true, true, false, false, false, false, false]
     );
 }
 

@@ -193,17 +193,25 @@ pub fn next_image_gen_profile_id(profiles: &[ImageGenProfile]) -> u64 {
         .saturating_add(1)
 }
 
-/// Remove the retired Gemini CLI MCP slot from positional v1 settings.
-/// Historical layouts had six or eight slots; the current seven-slot layout
-/// keeps every other CLI in its original relative order.
-pub fn migrate_mcp_cli_flags(flags: Vec<bool>) -> [bool; 7] {
-    let mut migrated = [false; 7];
+/// Map a positional v1 `mcp_cli_enabled` array onto the current layout.
+/// The current layout has twelve slots: the seven-slot layout plus Gemini
+/// CLI / Qwen Code / Cursor / Kimi / ZCode appended. Older files may carry
+/// six or eight slots, both of which still held a since-retired Gemini CLI
+/// slot at index 2 — those get it dropped so every other CLI keeps its
+/// toggle. Every other historical length is a prefix of the current layout.
+pub fn migrate_mcp_cli_flags(flags: Vec<bool>) -> [bool; 12] {
+    let mut migrated = [false; 12];
     match flags.len() {
-        7 => migrated.copy_from_slice(&flags),
-        8.. => {
+        // Current layout (or a longer one written by a newer build).
+        12.. => migrated.copy_from_slice(&flags[..12]),
+        // Prefixes of the current layout: the CLIs added after them stay off.
+        11 => migrated[..11].copy_from_slice(&flags),
+        7 => migrated[..7].copy_from_slice(&flags),
+        // Legacy layouts that carried the retired Gemini CLI at index 2.
+        8..=10 => {
             migrated[0] = flags[0];
             migrated[1] = flags[1];
-            migrated[2..].copy_from_slice(&flags[3..8]);
+            migrated[2..7].copy_from_slice(&flags[3..8]);
         }
         3..=6 => {
             migrated[0] = flags[0];

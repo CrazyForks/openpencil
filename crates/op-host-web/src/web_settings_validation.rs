@@ -326,7 +326,7 @@ fn validate_general_semantics(payload: &SettingsPayload) -> Result<(), SettingsV
     if payload
         .mcp_cli_enabled
         .as_ref()
-        .is_some_and(|enabled| !matches!(enabled.len(), 6..=8))
+        .is_some_and(|enabled| !matches!(enabled.len(), 6..=8 | 11 | 12))
     {
         return Err(SettingsValidationError::McpCliLayout);
     }

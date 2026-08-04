@@ -388,3 +388,358 @@ fn detects_legacy_codex_openpencil_server_config() {
 
     let _ = fs::remove_dir_all(home);
 }
+
+/// Index of `cli` in `McpCli::ALL`, which is what `mcp_cli_enabled` and
+/// `detect_enabled_clis_*` are keyed by.
+fn cli_index(cli: McpCli) -> usize {
+    McpCli::ALL
+        .iter()
+        .position(|candidate| *candidate == cli)
+        .expect("CLI is registered in McpCli::ALL")
+}
+
+/// The server map for `cli`, read from wherever that CLI keeps it.
+fn server_map(cli: McpCli, path: &Path) -> Map<String, Value> {
+    let root = read_json_object(path).expect("config parses");
+    let servers = if cli == McpCli::ZCode {
+        root.get("mcp")
+            .and_then(Value::as_object)
+            .and_then(|mcp| mcp.get("servers"))
+    } else {
+        root.get("mcpServers")
+    };
+    servers
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default()
+}
+
+fn server_entry(path: &Path) -> Map<String, Value> {
+    server_entry_for(McpCli::ClaudeCode, path)
+}
+
+fn server_entry_for(cli: McpCli, path: &Path) -> Map<String, Value> {
+    server_map(cli, path)
+        .get(SERVER_NAME)
+        .and_then(Value::as_object)
+        .cloned()
+        .expect("openpencil server entry")
+}
+
+#[test]
+fn gemini_cli_and_antigravity_write_separate_files_under_dot_gemini() {
+    let home = Path::new("/test/home");
+    assert_eq!(
+        config_path(McpCli::GeminiCli, home, false),
+        home.join(".gemini").join("settings.json")
+    );
+    assert_eq!(
+        config_path(McpCli::Antigravity, home, false),
+        home.join(".gemini").join("config").join("mcp_config.json")
+    );
+    assert_eq!(
+        config_path(McpCli::QwenCode, home, false),
+        home.join(".qwen").join("settings.json")
+    );
+    assert_eq!(
+        config_path(McpCli::Cursor, home, false),
+        home.join(".cursor").join("mcp.json")
+    );
+    assert_eq!(
+        config_path(McpCli::Kimi, home, false),
+        home.join(".kimi-code").join("mcp.json"),
+        "explicit-home lookups must ignore KIMI_CODE_HOME"
+    );
+    assert_eq!(
+        config_path(McpCli::ZCode, home, false),
+        home.join(".zcode").join("cli").join("config.json")
+    );
+}
+
+/// Shape verified against what `gemini mcp add --transport http` (Gemini CLI
+/// 0.30.0) writes to `~/.gemini/settings.json`.
+#[test]
+fn mcp_gemini_cli_writes_type_http_and_leaves_antigravity_alone() {
+    let home = temp_home("gemini-cli");
+    let path = home.join(".gemini").join("settings.json");
+    fs::create_dir_all(path.parent().expect("parent")).expect("create gemini dir");
+    fs::write(&path, r#"{"selectedAuthType":"oauth-personal"}"#).expect("seed settings");
+
+    set_cli_enabled_at_home(McpCli::GeminiCli, true, 3500, &home).expect("install");
+    let entry = server_entry(&path);
+    assert_eq!(entry.get("type").and_then(Value::as_str), Some("http"));
+    assert_eq!(
+        entry.get("url").and_then(Value::as_str),
+        Some("http://127.0.0.1:3500/mcp")
+    );
+    let root = read_json_object(&path).expect("parse");
+    assert_eq!(
+        root.get("selectedAuthType").and_then(Value::as_str),
+        Some("oauth-personal"),
+        "unrelated Gemini settings must survive"
+    );
+    assert!(
+        !config_path(McpCli::Antigravity, &home, false).exists(),
+        "Antigravity's own config file must not be created"
+    );
+
+    set_cli_enabled_at_home(McpCli::GeminiCli, false, 3500, &home).expect("uninstall");
+    let root = read_json_object(&path).expect("parse");
+    assert!(!root.contains_key("mcpServers"), "{root:?}");
+    assert_eq!(
+        root.get("selectedAuthType").and_then(Value::as_str),
+        Some("oauth-personal")
+    );
+
+    let _ = fs::remove_dir_all(home);
+}
+
+/// Qwen Code reads a bare `url` as SSE (`qwen mcp list` prints `(sse)`); only
+/// `httpUrl` selects streamable HTTP, which is what `qwen mcp add --transport
+/// http` writes itself.
+#[test]
+fn mcp_qwen_config_uses_http_url_key_and_preserves_other_servers() {
+    let home = temp_home("qwen");
+    let path = home.join(".qwen").join("settings.json");
+    fs::create_dir_all(path.parent().expect("parent")).expect("create qwen dir");
+    fs::write(
+        &path,
+        r#"{"ui":{"theme":"Default"},"mcpServers":{"other":{"command":"echo","args":["hi"]}}}"#,
+    )
+    .expect("seed settings");
+
+    set_cli_enabled_at_home(McpCli::QwenCode, true, 3600, &home).expect("install");
+    let entry = server_entry(&path);
+    assert_eq!(
+        entry.get("httpUrl").and_then(Value::as_str),
+        Some("http://127.0.0.1:3600/mcp")
+    );
+    assert!(!entry.contains_key("url"), "{entry:?}");
+    let text = fs::read_to_string(&path).expect("read installed");
+    assert!(text.contains(r#""other""#), "{text}");
+    assert!(text.contains(r#""theme""#), "{text}");
+
+    set_cli_enabled_at_home(McpCli::QwenCode, false, 3600, &home).expect("uninstall");
+    let text = fs::read_to_string(&path).expect("read uninstalled");
+    assert!(!text.contains(r#""openpencil""#), "{text}");
+    assert!(text.contains(r#""other""#), "{text}");
+
+    let _ = fs::remove_dir_all(home);
+}
+
+/// Cursor's config reader keys off `url` (it builds a `streamableHttp` server
+/// from it) and ignores the extra `type`, so the shared JSON shape works. The
+/// file is shared with the Cursor editor by design.
+#[test]
+fn mcp_cursor_config_install_and_uninstall_preserves_other_servers() {
+    let home = temp_home("cursor");
+    let path = home.join(".cursor").join("mcp.json");
+    fs::create_dir_all(path.parent().expect("parent")).expect("create cursor dir");
+    fs::write(
+        &path,
+        r#"{"mcpServers":{"other":{"url":"https://example.com/mcp"}}}"#,
+    )
+    .expect("seed config");
+
+    set_cli_enabled_at_home(McpCli::Cursor, true, 3700, &home).expect("install");
+    let entry = server_entry(&path);
+    assert_eq!(
+        entry.get("url").and_then(Value::as_str),
+        Some("http://127.0.0.1:3700/mcp")
+    );
+    let text = fs::read_to_string(&path).expect("read installed");
+    assert!(text.contains(r#""other""#), "{text}");
+
+    set_cli_enabled_at_home(McpCli::Cursor, false, 3700, &home).expect("uninstall");
+    let text = fs::read_to_string(&path).expect("read uninstalled");
+    assert!(!text.contains(r#""openpencil""#), "{text}");
+    assert!(text.contains(r#""other""#), "{text}");
+
+    let _ = fs::remove_dir_all(home);
+}
+
+/// An empty `~/.cursor/mcp.json` is what a fresh Cursor install leaves behind;
+/// the writer must treat it as an empty object rather than a parse failure.
+#[test]
+fn mcp_cursor_config_installs_into_an_empty_file() {
+    let home = temp_home("cursor-empty");
+    let path = home.join(".cursor").join("mcp.json");
+    fs::create_dir_all(path.parent().expect("parent")).expect("create cursor dir");
+    fs::write(&path, "").expect("seed empty config");
+
+    set_cli_enabled_at_home(McpCli::Cursor, true, 3701, &home).expect("install");
+
+    assert_eq!(
+        server_entry(&path).get("url").and_then(Value::as_str),
+        Some("http://127.0.0.1:3701/mcp")
+    );
+
+    let _ = fs::remove_dir_all(home);
+}
+
+/// Shape verified against kimi-code 0.31.0's own config schema: a union
+/// discriminated on `transport`, with `url` carrying the endpoint.
+#[test]
+fn mcp_kimi_config_uses_transport_key_and_preserves_other_servers() {
+    let home = temp_home("kimi");
+    let path = home.join(".kimi-code").join("mcp.json");
+    fs::create_dir_all(path.parent().expect("parent")).expect("create kimi dir");
+    fs::write(
+        &path,
+        r#"{"mcpServers":{"other":{"command":"echo","args":["hi"]}}}"#,
+    )
+    .expect("seed config");
+
+    set_cli_enabled_at_home(McpCli::Kimi, true, 3800, &home).expect("install");
+    let entry = server_entry(&path);
+    assert_eq!(
+        entry.get("url").and_then(Value::as_str),
+        Some("http://127.0.0.1:3800/mcp")
+    );
+    assert_eq!(entry.get("transport").and_then(Value::as_str), Some("http"));
+    let text = fs::read_to_string(&path).expect("read installed");
+    assert!(text.contains(r#""other""#), "{text}");
+
+    set_cli_enabled_at_home(McpCli::Kimi, false, 3800, &home).expect("uninstall");
+    let text = fs::read_to_string(&path).expect("read uninstalled");
+    assert!(!text.contains(r#""openpencil""#), "{text}");
+    assert!(text.contains(r#""other""#), "{text}");
+
+    let _ = fs::remove_dir_all(home);
+}
+
+#[test]
+fn new_clis_install_idempotently_and_round_trip_through_detection() {
+    let clis = [
+        McpCli::GeminiCli,
+        McpCli::QwenCode,
+        McpCli::Cursor,
+        McpCli::Kimi,
+        McpCli::ZCode,
+    ];
+    for cli in clis {
+        let home = temp_home(&format!("roundtrip-{}", cli_index(cli)));
+        let idx = cli_index(cli);
+
+        assert!(!detect_enabled_clis_at_home(&home)[idx], "{cli:?}");
+
+        let path = set_cli_enabled_at_home(cli, true, 3900, &home).expect("install");
+        set_cli_enabled_at_home(cli, true, 3900, &home).expect("idempotent install");
+        let flags = detect_enabled_clis_at_home(&home);
+        assert!(flags[idx], "{cli:?} {flags:?}");
+        assert_eq!(
+            flags.iter().filter(|enabled| **enabled).count(),
+            1,
+            "{cli:?} must not switch any other CLI on: {flags:?}"
+        );
+        assert_eq!(server_map(cli, &path).len(), 1, "{cli:?}");
+
+        set_cli_enabled_at_home(cli, false, 3900, &home).expect("uninstall");
+        assert!(!detect_enabled_clis_at_home(&home)[idx], "{cli:?}");
+
+        let _ = fs::remove_dir_all(home);
+    }
+}
+
+/// ZCode keys its server map at the nested `mcp.servers` path, not a
+/// top-level `mcpServers`. Shape and nesting both come from the shipped
+/// app bundle: its config descriptor declares
+/// `userConfigDirSegments:[".zcode","cli"], fileName:"config.json",
+/// configKeyName:"mcp.servers"`, its reader special-cases that key name into
+/// `root.mcp.servers`, and its settings form documents entries as
+/// `{"type":"http","url":…}`.
+#[test]
+fn mcp_zcode_config_writes_the_nested_mcp_servers_path() {
+    let home = temp_home("zcode");
+    let path = home.join(".zcode").join("cli").join("config.json");
+    fs::create_dir_all(path.parent().expect("parent")).expect("create zcode dir");
+    fs::write(&path, r#"{"theme":"dark"}"#).expect("seed config");
+
+    set_cli_enabled_at_home(McpCli::ZCode, true, 3900, &home).expect("install");
+
+    let root = read_json_object(&path).expect("parse");
+    assert!(
+        !root.contains_key("mcpServers"),
+        "ZCode must not get a top-level mcpServers key: {root:?}"
+    );
+    let entry = server_entry_for(McpCli::ZCode, &path);
+    assert_eq!(entry.get("type").and_then(Value::as_str), Some("http"));
+    assert_eq!(
+        entry.get("url").and_then(Value::as_str),
+        Some("http://127.0.0.1:3900/mcp")
+    );
+    assert_eq!(root.get("theme").and_then(Value::as_str), Some("dark"));
+
+    set_cli_enabled_at_home(McpCli::ZCode, false, 3900, &home).expect("uninstall");
+    let root = read_json_object(&path).expect("parse");
+    assert!(!root.contains_key("mcp"), "{root:?}");
+    assert_eq!(root.get("theme").and_then(Value::as_str), Some("dark"));
+
+    let _ = fs::remove_dir_all(home);
+}
+
+/// `mcp` carries ZCode's own settings alongside `servers`, and `servers`
+/// carries the user's own MCP entries. Neither may be disturbed — on install
+/// or on uninstall.
+#[test]
+fn mcp_zcode_preserves_sibling_keys_under_mcp_and_foreign_servers() {
+    let home = temp_home("zcode-siblings");
+    let path = home.join(".zcode").join("cli").join("config.json");
+    fs::create_dir_all(path.parent().expect("parent")).expect("create zcode dir");
+    fs::write(
+        &path,
+        r#"{"mcp":{"timeoutMs":5000,"servers":{"other":{"type":"http","url":"https://example.com/mcp"}}}}"#,
+    )
+    .expect("seed config");
+
+    set_cli_enabled_at_home(McpCli::ZCode, true, 3901, &home).expect("install");
+
+    let servers = server_map(McpCli::ZCode, &path);
+    assert_eq!(servers.len(), 2, "{servers:?}");
+    assert!(servers.contains_key("other"), "{servers:?}");
+    let mcp = read_json_object(&path)
+        .expect("parse")
+        .get("mcp")
+        .and_then(Value::as_object)
+        .cloned()
+        .expect("mcp object");
+    assert_eq!(
+        mcp.get("timeoutMs").and_then(Value::as_u64),
+        Some(5000),
+        "sibling keys under `mcp` must survive install"
+    );
+
+    set_cli_enabled_at_home(McpCli::ZCode, false, 3901, &home).expect("uninstall");
+
+    let servers = server_map(McpCli::ZCode, &path);
+    assert_eq!(servers.len(), 1, "{servers:?}");
+    assert!(servers.contains_key("other"), "{servers:?}");
+    let mcp = read_json_object(&path)
+        .expect("parse")
+        .get("mcp")
+        .and_then(Value::as_object)
+        .cloned()
+        .expect("mcp object must survive uninstall");
+    assert_eq!(mcp.get("timeoutMs").and_then(Value::as_u64), Some(5000));
+
+    let _ = fs::remove_dir_all(home);
+}
+
+/// Detection must not confuse ZCode's nesting with the flat layout: a
+/// top-level `mcpServers` in ZCode's file is not a ZCode integration.
+#[test]
+fn zcode_detection_ignores_a_top_level_mcp_servers_key() {
+    let home = temp_home("zcode-detect");
+    let path = home.join(".zcode").join("cli").join("config.json");
+    fs::create_dir_all(path.parent().expect("parent")).expect("create zcode dir");
+    fs::write(
+        &path,
+        r#"{"mcpServers":{"openpencil":{"type":"http","url":"http://127.0.0.1:3100/mcp"}}}"#,
+    )
+    .expect("seed config");
+
+    let zcode_idx = cli_index(McpCli::ZCode);
+    assert!(!detect_enabled_clis_at_home(&home)[zcode_idx]);
+
+    let _ = fs::remove_dir_all(home);
+}

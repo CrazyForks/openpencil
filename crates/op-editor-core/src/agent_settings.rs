@@ -78,10 +78,19 @@ pub enum McpCli {
     GithubCopilot,
     Antigravity,
     GrokBuild,
+    GeminiCli,
+    QwenCode,
+    Cursor,
+    Kimi,
+    ZCode,
 }
 
 impl McpCli {
-    pub const ALL: [McpCli; 7] = [
+    /// Append-only: `mcp_cli_enabled` is indexed positionally by this
+    /// array, and `migrate_mcp_cli_flags` reads persisted settings by the
+    /// same index. Inserting in the middle silently reassigns a user's
+    /// saved toggles to the wrong CLIs.
+    pub const ALL: [McpCli; 12] = [
         McpCli::ClaudeCode,
         McpCli::Codex,
         McpCli::OpenCode,
@@ -89,6 +98,11 @@ impl McpCli {
         McpCli::GithubCopilot,
         McpCli::Antigravity,
         McpCli::GrokBuild,
+        McpCli::GeminiCli,
+        McpCli::QwenCode,
+        McpCli::Cursor,
+        McpCli::Kimi,
+        McpCli::ZCode,
     ];
 
     pub fn label(self) -> &'static str {
@@ -100,6 +114,11 @@ impl McpCli {
             McpCli::GithubCopilot => "GitHub Copilot CLI",
             McpCli::Antigravity => "Antigravity CLI",
             McpCli::GrokBuild => "Grok Build CLI",
+            McpCli::GeminiCli => "Gemini CLI",
+            McpCli::QwenCode => "Qwen Code CLI",
+            McpCli::Cursor => "Cursor",
+            McpCli::Kimi => "Kimi CLI",
+            McpCli::ZCode => "ZCode",
         }
     }
 }
@@ -221,7 +240,7 @@ pub struct AgentSettings {
     pub acp_agent_connection: BTreeMap<String, AcpAgentConnection>,
     pub scroll_y: jian_core::scroll::ScrollState,
     pub mcp_server: McpServer,
-    pub mcp_cli_enabled: [bool; 7],
+    pub mcp_cli_enabled: [bool; 12],
     pub mcp_client_config_copied_at_ms: Option<u64>,
     pub hover_agent_settings_close: bool,
     pub hover_mcp_server_button: bool,
@@ -292,7 +311,7 @@ impl Default for AgentSettings {
             acp_agent_connection: BTreeMap::new(),
             scroll_y: Default::default(),
             mcp_server: McpServer::default(),
-            mcp_cli_enabled: [false; 7],
+            mcp_cli_enabled: [false; 12],
             mcp_client_config_copied_at_ms: None,
             hover_agent_settings_close: false,
             hover_mcp_server_button: false,

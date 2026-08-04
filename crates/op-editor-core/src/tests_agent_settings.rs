@@ -31,7 +31,12 @@ fn default_settings_are_quiescent() {
 #[test]
 fn tab_and_cli_arrays_cover_all_variants() {
     assert_eq!(AgentSettingsTab::ALL.len(), 6);
-    assert_eq!(McpCli::ALL.len(), 7);
+    assert_eq!(McpCli::ALL.len(), 12);
+    assert_eq!(
+        AgentSettings::default().mcp_cli_enabled.len(),
+        McpCli::ALL.len(),
+        "the toggle array is indexed by McpCli::ALL"
+    );
 }
 
 #[test]

@@ -78,7 +78,7 @@ fn legacy_mcp_flags_drop_gemini_without_shifting_google_antigravity() {
     );
     assert_eq!(
         state.editor_ui.agent_settings.mcp_cli_enabled,
-        [true, false, false, true, false, true, true]
+        [true, false, false, true, false, true, true, false, false, false, false, false]
     );
     let rewritten = writes
         .iter()
@@ -87,7 +87,9 @@ fn legacy_mcp_flags_drop_gemini_without_shifting_google_antigravity() {
     let value: serde_json::Value = serde_json::from_str(rewritten).expect("rewritten settings");
     assert_eq!(
         value["mcp_cli_enabled"],
-        serde_json::json!([true, false, false, true, false, true, true])
+        serde_json::json!([
+            true, false, false, true, false, true, true, false, false, false, false, false
+        ])
     );
 }
 

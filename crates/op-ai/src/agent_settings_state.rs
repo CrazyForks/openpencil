@@ -75,8 +75,10 @@ impl AgentProvider {
 
 /// Terminal-side MCP integrations the user can flip on/off. Order
 /// matches the product's MCP settings grid (Claude / Codex / OpenCode /
-/// Kiro / Copilot / Antigravity / Grok Build) so the index is
-/// reusable for both layout and `mcp_cli_enabled[i]`.
+/// Kiro / Copilot / Antigravity / Grok Build / Gemini / Qwen / Cursor /
+/// Kimi / ZCode) so the index is reusable for both layout and
+/// `mcp_cli_enabled[i]`. Kept in sync with
+/// `op_editor_core::agent_settings::McpCli`; append only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum McpCli {
     ClaudeCode,
@@ -86,10 +88,15 @@ pub enum McpCli {
     GithubCopilot,
     Antigravity,
     GrokBuild,
+    GeminiCli,
+    QwenCode,
+    Cursor,
+    Kimi,
+    ZCode,
 }
 
 impl McpCli {
-    pub const ALL: [McpCli; 7] = [
+    pub const ALL: [McpCli; 12] = [
         McpCli::ClaudeCode,
         McpCli::Codex,
         McpCli::OpenCode,
@@ -97,6 +104,11 @@ impl McpCli {
         McpCli::GithubCopilot,
         McpCli::Antigravity,
         McpCli::GrokBuild,
+        McpCli::GeminiCli,
+        McpCli::QwenCode,
+        McpCli::Cursor,
+        McpCli::Kimi,
+        McpCli::ZCode,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -107,6 +119,11 @@ impl McpCli {
             McpCli::GithubCopilot => "GitHub Copilot CLI",
             McpCli::Antigravity => "Antigravity CLI",
             McpCli::GrokBuild => "Grok Build CLI",
+            McpCli::GeminiCli => "Gemini CLI",
+            McpCli::QwenCode => "Qwen Code CLI",
+            McpCli::Cursor => "Cursor",
+            McpCli::Kimi => "Kimi CLI",
+            McpCli::ZCode => "ZCode",
         }
     }
 }
@@ -146,7 +163,7 @@ pub struct AgentSettings {
     /// host on wheel input.
     pub scroll_y: f32,
     pub mcp_server: McpServer,
-    pub mcp_cli_enabled: [bool; 7],
+    pub mcp_cli_enabled: [bool; 12],
     pub images_advanced_open: bool,
     pub images_search_ready: bool,
     /// Currently-focused editable input on the modal. `None` while
@@ -173,7 +190,7 @@ impl Default for AgentSettings {
             connected: [false; 6],
             scroll_y: 0.0,
             mcp_server: McpServer::default(),
-            mcp_cli_enabled: [false; 7],
+            mcp_cli_enabled: [false; 12],
             images_advanced_open: true,
             images_search_ready: true,
             focus: None,
