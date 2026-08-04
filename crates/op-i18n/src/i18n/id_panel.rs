@@ -84,11 +84,16 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.searchPlaceholder" => "Cari adegan atau templat…",
         "sceneTemplate.empty" => "Tidak ada templat yang cocok",
         "sceneTemplate.frames" => "{{count}} halaman",
+        "sceneTemplate.generate.placeholder" => "Jelaskan topik, AI membuat seluruh presentasi",
+        "sceneTemplate.generate.button" => "Buat",
+        "sceneTemplate.generate.hint" => "Dokumen baru, dibuat dari topik Anda sebagai presentasi lengkap.",
+        "sceneTemplate.generate.promptTemplate" => "Buatkan presentasi (PPT) untuk topik berikut: {{topic}}",
         "sceneTemplate.filter.all" => "Semua",
-        "sceneTemplate.scene.tutorial" => "Gambar tutorial",
-        "sceneTemplate.scene.comparison" => "Gambar perbandingan",
-        "sceneTemplate.scene.carousel" => "Kartu pengetahuan",
-        "sceneTemplate.scene.slides" => "PPT",
+        "sceneTemplate.scene.tutorial" => "Tutorial",
+        "sceneTemplate.scene.comparison" => "Perbandingan",
+        "sceneTemplate.scene.carousel" => "Karusel",
+        "sceneTemplate.scene.slides" => "Slide",
+        "sceneTemplate.scene.card" => "Kartu",
         "sceneTemplate.item.screenshotTutorial.title" => {
             "Kartu tutorial tangkapan layar 3 langkah"
         }
@@ -107,6 +112,18 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.item.slideDeck.summary" => {
             "Berisi sampul, agenda, poin utama, data, grafik, dan penutup dalam rasio presentasi 16:9. Cukup ganti teksnya, lalu siap dipresentasikan."
         }
+        "sceneTemplate.item.knowledgeCardVertical.title" => "Kartu pengetahuan · Potret",
+        "sceneTemplate.item.knowledgeCardVertical.summary" => "Satu kartu 3:4 dengan judul, empat poin utama, dan baris nama. Ganti teksnya lalu terbitkan.",
+        "sceneTemplate.item.knowledgeCardSquare.title" => "Kartu pengetahuan · Persegi",
+        "sceneTemplate.item.knowledgeCardSquare.summary" => "Kartu 1:1 dengan tata letak yang sama, cukup ringkas untuk gambar sampul atau unggahan sosial.",
+        "sceneTemplate.item.pitchDeckDark.title" => "Pitch deck · Gelap",
+        "sceneTemplate.item.pitchDeckDark.summary" => "Sampul, masalah, solusi, angka, peta jalan, dan halaman kontak. Huruf besar di latar gelap, untuk penggalangan dana dan peluncuran.",
+        "sceneTemplate.item.lectureDeckLight.title" => "Slide kuliah · Terang",
+        "sceneTemplate.item.lectureDeckLight.summary" => "Sampul kursus, tujuan belajar, penjelasan konsep, contoh soal, tabel perbandingan, dan rangkuman. Latar putih kertas, nyaman sepanjang kelas.",
+        "sceneTemplate.item.minimalKeynote.title" => "Keynote minimalis",
+        "sceneTemplate.item.minimalKeynote.summary" => "Ruang kosong luas, tipografi besar, satu gagasan per halaman — delapan halaman tanpa satu pun kartu. Untuk peluncuran dan keynote.",
+        "sceneTemplate.item.gradientTech.title" => "Tech gradien",
+        "sceneTemplate.item.gradientTech.summary" => "Latar gradien gelap dengan kartu kaca buram: arsitektur, perbandingan performa, dan dinding klien. Untuk peluncuran produk developer.",
         "fileMenu.newFromTemplate" => "Buat dari templat",
         "collab.ownerConfirm.title" => "Konfirmasi siapa yang Anda ikuti",
         "collab.ownerConfirm.hint" => "Belum ada apa pun dari sesi ini yang dimuat.",
@@ -119,6 +136,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
             "Anda tidak mengonfirmasi host, jadi tidak ada yang dimuat."
         }
         "fileMenu.exportSlideshowHtml" => "Ekspor tayangan slide HTML...",
+        "fileMenu.exportPptx" => "Ekspor PowerPoint...",
         "dialog.slideshowHtmlTitle" => "Ekspor tayangan slide",
         "dialog.slideshowHtmlSummary" => "{{count}} slide diekspor ke:",
         "dialog.slideshowHtmlEmpty" => "Presentasi ini tidak memiliki slide yang terlihat untuk diekspor.",
@@ -501,6 +519,22 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "htmlImport.diagnostics.expand" => "Tampilkan detail",
         "htmlImport.diagnostics.collapse" => "Sembunyikan detail",
         "htmlImport.diagnostics.more" => "+{{count}} lainnya",
+        "dialog.pptxTitle" => "Ekspor PowerPoint",
+        "dialog.pptxSummary" => "{{count}} slide diekspor ke:",
+        "dialog.pptxEmpty" => "Presentasi ini tidak memiliki slide yang terlihat untuk diekspor.",
+        "settings.agents.acpQuickAdd" => "Tambah cepat",
+        "settings.agents.acpPresetAdd" => "Tambah",
+        "settings.agents.acpNotInstalled" => "Belum terpasang",
+        "assetCenter.title" => "Pusat Aset",
+        "assetCenter.tab.templates" => "Templat",
+        "assetCenter.tab.styles" => "Gaya",
+        "assetCenter.style.empty" => "Tidak ada gaya yang cocok",
+        "assetCenter.style.pinned" => "Disematkan",
+        "assetCenter.style.searchPlaceholder" => "Cari gaya atau tag",
+        "assetCenter.style.generateHint" => "Dokumen baru dari topik Anda, dengan gaya yang disematkan.",
+        "slidesPanel.tabSlides" => "Slide",
+        "slidesPanel.tabCards" => "Kartu",
+        "slidesPanel.present" => "Presentasikan",
         _ => return super::id_collab::lookup(key),
     })
 }

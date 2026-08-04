@@ -2,10 +2,13 @@
 
 use op_editor_core::scene_template_catalog::SceneTemplateDefinition;
 
+use op_editor_core::SceneTemplateFocus;
+
 use super::scene_template_panel::{
-    filter_hover_token, SceneTemplatePanel, CARD_H, CARD_PREVIEW_ASPECT, CARD_PREVIEW_INSET,
-    CHIP_H, CHIP_LABEL_SIZE, CLOSE_BTN, HEADER_H, PAD, SCENE_TEMPLATE_CLOSE_HOVER,
-    SEARCH_TEXT_SIZE,
+    filter_hover_token, tab_hover_token, SceneTemplatePanel, CARD_H, CARD_PREVIEW_ASPECT,
+    CARD_PREVIEW_INSET, CHIP_H, CHIP_LABEL_SIZE, CLOSE_BTN, GENERATE_HINT_SIZE,
+    GENERATE_INPUT_PAD_X, GENERATE_TEXT_SIZE, HEADER_H, PAD, SCENE_TEMPLATE_CLOSE_HOVER,
+    SCENE_TEMPLATE_GENERATE_HOVER, SEARCH_PAD_X, SEARCH_TEXT_SIZE,
 };
 use crate::widgets::button::paint_button_feedback_wash;
 use crate::widgets::canvas_viewport_image::{
@@ -29,15 +32,56 @@ impl SceneTemplatePanel<'_> {
         cx.backend
             .stroke_round_rect(panel, 12.0, self.theme.border, 1.0);
         self.paint_header(cx, panel);
+        self.paint_tab_chips(cx, panel);
         self.paint_search(cx, panel);
         self.paint_filter_chips(cx, panel);
-        self.paint_cards(cx, panel);
+        self.paint_generate_row(cx, panel);
+        match self.tab() {
+            op_editor_core::AssetCenterTab::Templates => self.paint_cards(cx, panel),
+            op_editor_core::AssetCenterTab::Styles => self.paint_style_cards(cx, panel),
+        }
+    }
+
+    /// The tab row. Chips rather than underlined labels: the filter row
+    /// directly below already reads as chips, and two chip rows with
+    /// different selection colours is a smaller vocabulary than two
+    /// different selection idioms stacked on each other.
+    fn paint_tab_chips(&self, cx: &mut PaintCx<'_>, panel: Rect) {
+        for (index, (rect, tab)) in self.tab_chip_rects(panel).into_iter().enumerate() {
+            let active = self.tab() == tab;
+            let (fill, foreground) = if active {
+                (self.theme.primary, self.theme.primary_foreground)
+            } else {
+                (self.theme.muted, self.theme.muted_foreground)
+            };
+            cx.backend.fill_round_rect(rect, CHIP_H / 2.0, fill);
+            paint_button_feedback_wash(
+                cx.backend,
+                &self.theme,
+                rect,
+                CHIP_H / 2.0,
+                self.state.editor_ui.scene_template_center.hover == Some(tab_hover_token(index)),
+                self.is_pressed(tab_hover_token(index)),
+            );
+            let label = self.tab_label(tab);
+            let label_w = estimated_text_width(label, CHIP_LABEL_SIZE);
+            self.paint_text(
+                cx,
+                label,
+                Point2D::new(
+                    rect.origin.x + ((rect.size.x - label_w) / 2.0).max(5.0),
+                    rect.origin.y + 16.0,
+                ),
+                CHIP_LABEL_SIZE,
+                foreground,
+            );
+        }
     }
 
     fn paint_header(&self, cx: &mut PaintCx<'_>, panel: Rect) {
         self.paint_text(
             cx,
-            self.t("sceneTemplate.title", "场景模板"),
+            self.t("assetCenter.title", "资产中心"),
             Point2D::new(panel.origin.x + PAD, panel.origin.y + 29.0),
             15.0,
             self.theme.foreground,
@@ -85,13 +129,100 @@ impl SceneTemplatePanel<'_> {
             &self.state.editor_ui.scene_template_center.search,
             rect,
             SEARCH_TEXT_SIZE,
-            32.0,
+            SEARCH_PAD_X,
             rect.origin.y + 19.0,
             self.now_ms(),
-            self.t("sceneTemplate.searchPlaceholder", "搜索场景或模板"),
-            // The panel has one text field, so it owns the caret whenever the
-            // panel is open — no focus enum needed.
-            true,
+            match self.tab() {
+                op_editor_core::AssetCenterTab::Templates => {
+                    self.t("sceneTemplate.searchPlaceholder", "搜索场景或模板")
+                }
+                op_editor_core::AssetCenterTab::Styles => {
+                    self.t("assetCenter.style.searchPlaceholder", "搜索风格或标签")
+                }
+            },
+            self.field_focused(SceneTemplateFocus::Search),
+        );
+    }
+
+    /// The prompt-to-deck row: a topic field, a generate button, and one line
+    /// saying what pressing it does. The sentence is not decoration — the row
+    /// replaces the document, and a control that quietly discards the canvas
+    /// has to say so before it is pressed, not after.
+    fn paint_generate_row(&self, cx: &mut PaintCx<'_>, panel: Rect) {
+        let Some(input) = self.generate_input_rect(panel) else {
+            return;
+        };
+        let button = self
+            .generate_button_rect(panel)
+            .expect("the button rect exists whenever the input does");
+
+        cx.backend.fill_round_rect(input, 7.0, self.theme.muted);
+        cx.backend
+            .stroke_round_rect(input, 7.0, self.theme.border, 1.0);
+        draw_icon(
+            cx.backend,
+            Icon::Sparkles,
+            Point2D::new(input.origin.x + 9.0, input.origin.y + 8.0),
+            16.0,
+            self.theme.muted_foreground,
+            1.4,
+        );
+        paint_text_input_view(
+            cx,
+            &self.theme,
+            &self.state.editor_ui.scene_template_center.generate,
+            input,
+            GENERATE_TEXT_SIZE,
+            GENERATE_INPUT_PAD_X,
+            input.origin.y + 21.0,
+            self.now_ms(),
+            self.t(
+                "sceneTemplate.generate.placeholder",
+                "描述主题，AI 直接生成整副演示文稿",
+            ),
+            self.field_focused(SceneTemplateFocus::Generate),
+        );
+
+        cx.backend.fill_round_rect(button, 7.0, self.theme.primary);
+        paint_button_feedback_wash(
+            cx.backend,
+            &self.theme,
+            button,
+            7.0,
+            self.state.editor_ui.scene_template_center.hover == Some(SCENE_TEMPLATE_GENERATE_HOVER),
+            self.is_pressed(SCENE_TEMPLATE_GENERATE_HOVER),
+        );
+        let label = self.t("sceneTemplate.generate.button", "生成");
+        let label_w = estimated_text_width(label, GENERATE_TEXT_SIZE);
+        self.paint_text(
+            cx,
+            label,
+            Point2D::new(
+                button.origin.x + ((button.size.x - label_w) / 2.0).max(6.0),
+                button.origin.y + 21.0,
+            ),
+            GENERATE_TEXT_SIZE,
+            self.theme.primary_foreground,
+        );
+
+        self.paint_text(
+            cx,
+            // The deck-specific wording belongs to the Templates tab, where
+            // the row is gated to the slides scene. On the Styles tab the row
+            // means "generate anything, in this aesthetic".
+            match self.tab() {
+                op_editor_core::AssetCenterTab::Templates => self.t(
+                    "sceneTemplate.generate.hint",
+                    "新建一个文档，按主题直接生成整副演示文稿。",
+                ),
+                op_editor_core::AssetCenterTab::Styles => self.t(
+                    "assetCenter.style.generateHint",
+                    "新建一个文档，按主题生成；已钉住的风格会被直接采用。",
+                ),
+            },
+            Point2D::new(input.origin.x + 2.0, input.origin.y + input.size.y + 17.0),
+            GENERATE_HINT_SIZE,
+            self.theme.muted_foreground,
         );
     }
 
@@ -273,7 +404,7 @@ impl SceneTemplatePanel<'_> {
         )
     }
 
-    fn t(&self, key: &'static str, fallback: &'static str) -> &'static str {
+    pub(super) fn t(&self, key: &'static str, fallback: &'static str) -> &'static str {
         let translated = op_i18n::translate(self.locale, key);
         if translated == key {
             fallback
@@ -282,7 +413,7 @@ impl SceneTemplatePanel<'_> {
         }
     }
 
-    fn paint_text(
+    pub(super) fn paint_text(
         &self,
         cx: &mut PaintCx<'_>,
         text: &str,
@@ -301,7 +432,7 @@ impl SceneTemplatePanel<'_> {
     }
 }
 
-fn truncate_to_width(text: &str, max_width: f32, size: f32) -> String {
+pub(super) fn truncate_to_width(text: &str, max_width: f32, size: f32) -> String {
     if estimated_text_width(text, size) <= max_width {
         return text.to_string();
     }

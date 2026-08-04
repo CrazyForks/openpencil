@@ -30,6 +30,7 @@ fn make_request(validation_enabled: bool) -> DesignRequest {
         append_context: None,
         validation_enabled,
         visual_ref_enabled: false,
+        pinned_style_guide: None,
     }
 }
 

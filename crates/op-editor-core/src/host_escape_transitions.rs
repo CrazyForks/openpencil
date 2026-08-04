@@ -35,6 +35,16 @@ impl EditorUiState {
         true
     }
 
+    /// Close the TopBar export quick menu.
+    pub fn escape_export_quick_menu(&mut self) -> bool {
+        if !self.export_quick_menu_open {
+            return false;
+        }
+        self.export_quick_menu_open = false;
+        self.export_quick_menu_hover = None;
+        true
+    }
+
     /// Close an open layer / page right-click context menu
     /// (layer-context-menu.tsx:101 — keydown Escape → onClose).
     pub fn escape_layer_context_menu(&mut self) -> bool {
@@ -81,10 +91,19 @@ impl EditorUiState {
         true
     }
 
-    /// Close the Prompt Center before Escape reaches chat focus or selection.
-    /// Escape closes the Scene Template Center. It has one flat layer — no
-    /// inline form like the Prompt Center's — so a single press dismisses it.
+    /// Escape leaves the Scene Template Center one layer at a time: a focused
+    /// generate topic returns focus to the search field first, and only a
+    /// second press closes the panel. The alternative — closing outright —
+    /// throws away a typed topic on the keystroke people reach for to undo a
+    /// mis-click into the field.
     pub fn escape_scene_template_center(&mut self) -> bool {
+        if !self.scene_template_center.open {
+            return false;
+        }
+        if self.scene_template_center.focus == crate::SceneTemplateFocus::Generate {
+            self.scene_template_center.focus = crate::SceneTemplateFocus::Search;
+            return true;
+        }
         self.close_scene_template_center()
     }
 

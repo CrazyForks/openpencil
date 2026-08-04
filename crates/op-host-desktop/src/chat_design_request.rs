@@ -48,6 +48,9 @@ pub(crate) fn build_design_request(
         concurrency: state.chat.agent_team_size,
         validation_enabled: true,
         visual_ref_enabled: false,
+        // Policy the user set in the Asset Center: it overrides the
+        // style guide the prompt would otherwise infer.
+        pinned_style_guide: state.editor_ui.pinned_style_guide.clone(),
     }
 }
 
@@ -72,6 +75,25 @@ mod tests {
         // No selected model entry → no model id (CLI agents pick their own).
         assert_eq!(req.model, None);
         assert!(req.append_context.is_none());
+    }
+
+    #[test]
+    fn a_pinned_style_guide_rides_the_request() {
+        // The pin is the user overriding style inference; if it does not
+        // reach the request, the Asset Center's selected card is decoration.
+        let mut state = EditorState::new();
+        assert_eq!(
+            build_design_request("draw a dashboard".into(), &state, None).pinned_style_guide,
+            None
+        );
+
+        state.editor_ui.pinned_style_guide = Some("nordic-frost-light".into());
+        let req = build_design_request("draw a dashboard".into(), &state, None);
+
+        assert_eq!(
+            req.pinned_style_guide.as_deref(),
+            Some("nordic-frost-light")
+        );
     }
 
     #[test]

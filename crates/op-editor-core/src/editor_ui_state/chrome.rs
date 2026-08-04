@@ -66,6 +66,10 @@ pub enum FileAction {
     /// writes the deck as a self-contained slideshow page (see the
     /// host's `export_html` module for the render + markup).
     ExportSlideshowHtml,
+    /// File ▸ "Export PowerPoint" — host picks one output file and
+    /// writes the deck as an editable `.pptx` (see the host's
+    /// `export_pptx` module for the package + DrawingML emission).
+    ExportPptx,
     ImportFigma,
     /// Complete or cancel a prepared multi-page Figma import. Native
     /// desktop owns the prepared tree; web safely ignores this action.

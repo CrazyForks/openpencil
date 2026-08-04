@@ -372,6 +372,7 @@ fn document_sync_metadata_overrides_nested_fields_independently() {
         active_page_index: 5,
         preserve_authored_geometry: true,
         scenario: None,
+        pinned_style_guide: None,
     };
 
     let page_override = parse_document_sync_request(
@@ -379,11 +380,12 @@ fn document_sync_metadata_overrides_nested_fields_independently() {
     )
     .expect("active-page override");
     assert_eq!(
-        page_override.resolved_editor_meta(Some(embedded)),
+        page_override.resolved_editor_meta(Some(embedded.clone())),
         op_pen_loader::EditorMeta {
             active_page_index: 2,
             preserve_authored_geometry: true,
             scenario: None,
+            pinned_style_guide: None,
         }
     );
 
@@ -392,17 +394,21 @@ fn document_sync_metadata_overrides_nested_fields_independently() {
     )
     .expect("geometry override");
     assert_eq!(
-        geometry_override.resolved_editor_meta(Some(embedded)),
+        geometry_override.resolved_editor_meta(Some(embedded.clone())),
         op_pen_loader::EditorMeta {
             active_page_index: 5,
             preserve_authored_geometry: false,
             scenario: None,
+            pinned_style_guide: None,
         }
     );
 
     let legacy = parse_document_sync_request(r#"{"document":{"version":"1.0","children":[]}}"#)
         .expect("legacy wrapper");
-    assert_eq!(legacy.resolved_editor_meta(Some(embedded)), embedded);
+    assert_eq!(
+        legacy.resolved_editor_meta(Some(embedded.clone())),
+        embedded
+    );
     assert_eq!(legacy.resolved_editor_meta(None), Default::default());
 
     let nested = parse_document_sync_request(
@@ -411,11 +417,12 @@ fn document_sync_metadata_overrides_nested_fields_independently() {
     .expect("nested metadata request");
     assert_eq!(nested.embedded_editor_meta, Some(embedded));
     assert_eq!(
-        nested.resolved_editor_meta(nested.embedded_editor_meta),
+        nested.resolved_editor_meta(nested.embedded_editor_meta.clone()),
         op_pen_loader::EditorMeta {
             active_page_index: 2,
             preserve_authored_geometry: true,
             scenario: None,
+            pinned_style_guide: None,
         }
     );
 }

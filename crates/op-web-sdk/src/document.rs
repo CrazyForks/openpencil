@@ -20,6 +20,7 @@ impl Viewer {
             .unwrap_or(1)
             .max(1);
         self.active_page = editor_meta
+            .as_ref()
             .map(|meta| meta.active_page_index.min(page_count - 1))
             .unwrap_or_else(|| {
                 doc.pages
@@ -28,6 +29,7 @@ impl Viewer {
                     .unwrap_or(0)
             });
         self.preserve_authored_geometry = editor_meta
+            .as_ref()
             .map(|meta| meta.preserve_authored_geometry)
             .unwrap_or(false);
         self.doc = Some(doc);

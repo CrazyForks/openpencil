@@ -58,8 +58,12 @@ impl WidgetHost {
         overlay_geometry::locale_picker_rect(&self.editor_state, viewport_w)
     }
 
+    /// The rail rect the LAYERS tree gets — the whole rail, less the
+    /// slides tab row when this document shows one. Every layer-tree
+    /// caller goes through here, so the tab row can never shift the
+    /// painted rows out from under their own click targets.
     pub(in crate::widget_host) fn layer_panel_rect(&self, viewport_h: f32) -> Rect {
-        canvas_geometry::layer_panel_rect(&self.editor_state, viewport_h)
+        self.layers_content_rect(viewport_h)
     }
 
     pub(in crate::widget_host) fn toolbar_rect(&mut self, _viewport_w: f32) -> Rect {

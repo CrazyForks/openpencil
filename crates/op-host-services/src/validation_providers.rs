@@ -580,6 +580,7 @@ mod tests {
             append_context: None,
             validation_enabled: enabled,
             visual_ref_enabled: false,
+            pinned_style_guide: None,
         }
     }
 

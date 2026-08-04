@@ -21,7 +21,7 @@ use crate::widgets::host_canvas_geometry::{
     canvas_rect, canvas_region, TOOLBAR_INSET_X, TOOLBAR_INSET_Y,
 };
 use crate::widgets::{
-    ImportMenu, LayoutCx, LocalePicker, ShapePicker, Toolbar, TopBar, Widget,
+    ExportQuickMenu, ImportMenu, LayoutCx, LocalePicker, ShapePicker, Toolbar, TopBar, Widget,
     COMPONENT_BROWSER_PANEL_H, COMPONENT_BROWSER_PANEL_W, DESIGN_MD_PANEL_H, DESIGN_MD_PANEL_W,
     ICON_PICKER_PANEL_H, ICON_PICKER_PANEL_W, IMPORT_MENU_WIDTH, LOCALE_PICKER_WIDTH,
     PROMPT_CENTER_PANEL_H, PROMPT_CENTER_PANEL_W, SCENE_TEMPLATE_PANEL_H, SCENE_TEMPLATE_PANEL_W,
@@ -66,6 +66,35 @@ pub fn zoom_to_fit(state: &mut EditorState, scene: &LayoutScene, viewport_w: f32
             .viewport
             .fit_to_with_max_zoom(content, canvas_w, canvas_h, 64.0, 1.0);
     }
+}
+
+/// Zoom + pan so ONE node fills the canvas region — the deck
+/// filmstrip's click-to-navigate. Returns whether the camera moved.
+///
+/// Same `fit_to_with_max_zoom` the StatusBar's search action uses, so a
+/// slide is framed by exactly the math a whole page is; only the content
+/// rect differs. Camera-only: nothing here touches the document, so
+/// navigating a deck never lands on the undo stack.
+pub fn zoom_to_fit_node(
+    state: &mut EditorState,
+    scene: &LayoutScene,
+    node_id: &str,
+    viewport_w: f32,
+    viewport_h: f32,
+) -> bool {
+    let Some(bounds) = scene
+        .active_page()
+        .and_then(|page| page.find(node_id))
+        .map(|node| node.aggregate_bounds())
+    else {
+        return false;
+    };
+    let (_l, _t, canvas_w, canvas_h) = canvas_region(state, viewport_w, viewport_h);
+    let before = state.viewport;
+    state
+        .viewport
+        .fit_to_with_max_zoom(bounds, canvas_w, canvas_h, 48.0, 1.0);
+    state.viewport != before
 }
 
 /// Intrinsic height of the floating tool column for the current tool
@@ -146,6 +175,14 @@ pub fn locale_picker_rect(state: &EditorState, viewport_w: f32) -> Rect {
         origin: Point2D::new(x, globe.origin.y + globe.size.y + 6.0),
         size: Point2D::new(LOCALE_PICKER_WIDTH, LocalePicker::panel_height()),
     }
+}
+
+/// Export quick-menu dropdown rect — hangs under the TopBar download
+/// button, right-aligned to it and clamped inside the viewport.
+pub fn export_quick_menu_rect(state: &EditorState, viewport_w: f32) -> Rect {
+    let bar = top_bar_rect(viewport_w);
+    let anchor = TopBar::for_editor_ui(&state.editor_ui).export_button_rect(bar);
+    ExportQuickMenu::for_editor_ui(&state.editor_ui).rect_at(anchor, viewport_w)
 }
 
 /// Placement shared by all three draggable floating panels: centred on

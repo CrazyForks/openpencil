@@ -88,11 +88,16 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.searchPlaceholder" => "搜尋場景或範本",
         "sceneTemplate.empty" => "沒有符合的範本",
         "sceneTemplate.frames" => "{{count}} 頁",
+        "sceneTemplate.generate.placeholder" => "描述主題，AI 直接產生整份簡報",
+        "sceneTemplate.generate.button" => "產生",
+        "sceneTemplate.generate.hint" => "新增一個文件，依主題直接產生整份簡報。",
+        "sceneTemplate.generate.promptTemplate" => "為以下主題製作一份簡報（PPT）：{{topic}}",
         "sceneTemplate.filter.all" => "全部",
         "sceneTemplate.scene.tutorial" => "教學圖",
         "sceneTemplate.scene.comparison" => "對比圖",
-        "sceneTemplate.scene.carousel" => "知識卡片",
+        "sceneTemplate.scene.carousel" => "輪播",
         "sceneTemplate.scene.slides" => "簡報",
+        "sceneTemplate.scene.card" => "卡片",
         "sceneTemplate.item.screenshotTutorial.title" => "三步截圖教學卡",
         "sceneTemplate.item.screenshotTutorial.summary" => {
             "封面、三個操作步驟和結尾行動呼籲，替換截圖與說明即可發布。"
@@ -109,8 +114,33 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.item.slideDeck.summary" => {
             "封面、目錄、要點、資料、圖表和結尾，16:9 投影比例，替換文案即可上台。"
         }
+        "sceneTemplate.item.knowledgeCardVertical.title" => "知識卡片 · 直式",
+        "sceneTemplate.item.knowledgeCardVertical.summary" => {
+            "3:4 單張圖文卡，標題、四條重點和署名列，換掉文案就能發布。"
+        }
+        "sceneTemplate.item.knowledgeCardSquare.title" => "知識卡片 · 方形",
+        "sceneTemplate.item.knowledgeCardSquare.summary" => {
+            "1:1 方形卡，同一套版式的精簡版，適合貼文封面與社群分享。"
+        }
+        "sceneTemplate.item.pitchDeckDark.title" => "路演 deck · 深色",
+        "sceneTemplate.item.pitchDeckDark.summary" => {
+            "封面、問題、方案、數據、里程碑與聯絡頁，深底大字，適合募資路演與產品發表。"
+        }
+        "sceneTemplate.item.lectureDeckLight.title" => "課件 deck · 淺色",
+        "sceneTemplate.item.lectureDeckLight.summary" => {
+            "課程封面、學習目標、概念講解、例題、對照表與總結作業，紙白底耐看，適合課堂投影。"
+        }
+        "sceneTemplate.item.minimalKeynote.title" => "極簡 Keynote",
+        "sceneTemplate.item.minimalKeynote.summary" => {
+            "純白留白、超大字級、一頁一個意思，八頁裡沒有一張卡片，適合發表會與主題演講。"
+        }
+        "sceneTemplate.item.gradientTech.title" => "漸層科技風",
+        "sceneTemplate.item.gradientTech.summary" => {
+            "深色漸層底加毛玻璃卡，含架構、效能對比與客戶牆，適合開發者產品發表。"
+        }
         "fileMenu.newFromTemplate" => "從範本新增",
         "fileMenu.exportSlideshowHtml" => "匯出放映 HTML...",
+        "fileMenu.exportPptx" => "匯出 PowerPoint...",
         "dialog.slideshowHtmlTitle" => "匯出放映",
         "dialog.slideshowHtmlSummary" => "已匯出 {{count}} 張投影片到：",
         "dialog.slideshowHtmlEmpty" => "目前簡報沒有可匯出的投影片。",
@@ -401,6 +431,22 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "htmlImport.diagnostics.expand" => "顯示詳細資料",
         "htmlImport.diagnostics.collapse" => "隱藏詳細資料",
         "htmlImport.diagnostics.more" => "另有 {{count}} 項",
+        "dialog.pptxTitle" => "匯出 PowerPoint",
+        "dialog.pptxSummary" => "已匯出 {{count}} 張投影片到：",
+        "dialog.pptxEmpty" => "目前簡報沒有可匯出的投影片。",
+        "settings.agents.acpQuickAdd" => "快速新增",
+        "settings.agents.acpPresetAdd" => "新增",
+        "settings.agents.acpNotInstalled" => "未安裝",
+        "assetCenter.title" => "資產中心",
+        "assetCenter.tab.templates" => "範本",
+        "assetCenter.tab.styles" => "風格",
+        "assetCenter.style.empty" => "沒有符合的風格",
+        "assetCenter.style.pinned" => "已釘選",
+        "assetCenter.style.searchPlaceholder" => "搜尋風格或標籤",
+        "assetCenter.style.generateHint" => "新建一個文件，依主題生成；已釘選的風格會直接採用。",
+        "slidesPanel.tabSlides" => "投影片",
+        "slidesPanel.tabCards" => "卡片",
+        "slidesPanel.present" => "放映",
         _ => return super::zh_tw_collab::lookup(key),
     })
 }

@@ -82,9 +82,6 @@ fn insert_target_frame_mobile(sink: &mut VecDocSink, hint_id: &str) -> String {
 fn req_append(live_target_id: &str) -> DesignRequest {
     DesignRequest {
         prompt: "add a pricing section".into(),
-        model: None,
-        provider: None,
-        design_md: None,
         concurrency: 1,
         append_context: Some(AppendContext {
             target_parent_id: live_target_id.into(),
@@ -92,18 +89,13 @@ fn req_append(live_target_id: &str) -> DesignRequest {
             existing_section_labels: vec!["Hero".into(), "Features".into()],
             is_mobile: false,
         }),
-        validation_enabled: true,
-
-        visual_ref_enabled: false,
+        ..Default::default()
     }
 }
 
 fn req_append_concurrent(live_target_id: &str) -> DesignRequest {
     DesignRequest {
         prompt: "add more screens".into(),
-        model: None,
-        provider: None,
-        design_md: None,
         concurrency: 4,
         append_context: Some(AppendContext {
             target_parent_id: live_target_id.into(),
@@ -111,9 +103,7 @@ fn req_append_concurrent(live_target_id: &str) -> DesignRequest {
             existing_section_labels: vec![],
             is_mobile: false,
         }),
-        validation_enabled: true,
-
-        visual_ref_enabled: false,
+        ..Default::default()
     }
 }
 
@@ -353,14 +343,9 @@ fn non_append_mode_takes_normal_sequential_path() {
 
     let req = DesignRequest {
         prompt: "a landing page".into(),
-        model: None,
-        provider: None,
-        design_md: None,
         concurrency: 1,
         append_context: None, // no append context
-        validation_enabled: true,
-
-        visual_ref_enabled: false,
+        ..Default::default()
     };
 
     let summary = futures::executor::block_on(Orchestrator::new().run(
@@ -409,13 +394,10 @@ fn non_append_mode_resolves_scaffold_root_when_empty_frame_is_replaced() {
     let abort = AbortFlag::new();
     let req = DesignRequest {
         prompt: "a mobile food app".into(),
-        model: None,
-        provider: None,
-        design_md: None,
         concurrency: 1,
         append_context: None,
         validation_enabled: false,
-        visual_ref_enabled: false,
+        ..Default::default()
     };
 
     let summary = futures::executor::block_on(Orchestrator::new().run(
@@ -493,9 +475,6 @@ fn append_mode_wins_over_dashboard_branch() {
     // `should_use_dashboard_columns` would return true.
     let req = DesignRequest {
         prompt: "an analytics admin dashboard".into(),
-        model: None,
-        provider: None,
-        design_md: None,
         concurrency: 1,
         append_context: Some(AppendContext {
             target_parent_id: live_id.clone(),
@@ -503,9 +482,7 @@ fn append_mode_wins_over_dashboard_branch() {
             existing_section_labels: vec!["Hero".into()],
             is_mobile: false,
         }),
-        validation_enabled: true,
-
-        visual_ref_enabled: false,
+        ..Default::default()
     };
 
     let llm = ScriptedLlm::new(vec![
@@ -671,9 +648,6 @@ fn append_cleanup_leaves_preexisting_nav_surface_untouched() {
 
     let req = DesignRequest {
         prompt: "add a hero section".into(),
-        model: None,
-        provider: None,
-        design_md: None,
         concurrency: 1,
         append_context: Some(AppendContext {
             target_parent_id: live_target_id.clone(),
@@ -681,8 +655,7 @@ fn append_cleanup_leaves_preexisting_nav_surface_untouched() {
             existing_section_labels: vec![],
             is_mobile: true,
         }),
-        validation_enabled: true,
-        visual_ref_enabled: false,
+        ..Default::default()
     };
 
     futures::executor::block_on(Orchestrator::new().run(
@@ -753,13 +726,9 @@ fn fresh_doc_cleanup_still_runs_over_scaffold_root() {
 
     let req = DesignRequest {
         prompt: "a landing page".into(),
-        model: None,
-        provider: None,
-        design_md: None,
         concurrency: 1,
         append_context: None, // fresh doc — non-append path
-        validation_enabled: true,
-        visual_ref_enabled: false,
+        ..Default::default()
     };
 
     let summary = futures::executor::block_on(Orchestrator::new().run(

@@ -190,6 +190,7 @@ impl WidgetHostNative {
             || eui.export_dialog_open
             || eui.figma_import_open
             || eui.file_menu_open
+            || eui.export_quick_menu_open
             || eui.locale_picker.open
             || eui.shape_picker.open
             || eui.layer_context_menu.is_some()

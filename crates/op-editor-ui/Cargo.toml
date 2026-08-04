@@ -28,6 +28,10 @@ jian-scene = { path = "../../vendor/jian/crates/jian-scene", version = "0.0.1" }
 # i18n string tables + the canonical editor state model.
 op-i18n = { path = "../op-i18n" }
 op-editor-core = { path = "../op-editor-core" }
+# The Asset Center's Styles tab reads the canonical style-guide registry —
+# the same corpus generation ranks against, so the panel can never offer a
+# guide the pipeline does not have. Pure Rust, no IO, wasm32-clean.
+op-ai-skills = { path = "../op-ai-skills" }
 # Canonical hex-color parsing + XML escaping (dependency-free, wasm-clean).
 op-util = { path = "../op-util" }
 

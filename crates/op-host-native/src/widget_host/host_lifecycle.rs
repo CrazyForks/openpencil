@@ -88,6 +88,7 @@ impl WidgetHostNative {
             preview_edge_swipe_start_x: None,
             chat_panel_owner: op_editor_ui::widgets::AIChatPlaceholder::next_owner(),
             layer_panel_owner: op_editor_ui::widgets::LayerPanel::next_layer_panel_owner(),
+            slide_thumbs: Default::default(),
             last_chat_session_index,
             auth_login_handle: None,
             auth_pending_browser_url: None,

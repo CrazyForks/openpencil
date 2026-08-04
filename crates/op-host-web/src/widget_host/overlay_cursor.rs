@@ -493,6 +493,18 @@ impl WidgetHost {
                 return true;
             }
         }
+        if self.editor_state.editor_ui.export_quick_menu_open {
+            use op_editor_ui::widgets::ExportQuickMenu;
+            self.refresh_layout_scene();
+            let panel = self.export_quick_menu_rect(self.last_viewport_w);
+            let menu = ExportQuickMenu::for_editor_ui(&self.editor_state.editor_ui);
+            let new_hover = menu.hovered_at(panel, Point2D::new(x, y));
+            if new_hover != self.editor_state.editor_ui.export_quick_menu_hover {
+                self.editor_state.editor_ui.export_quick_menu_hover = new_hover;
+                self.mark_dirty();
+                return true;
+            }
+        }
         if self.editor_state.editor_ui.import_menu_open {
             use op_editor_ui::widgets::ImportMenu;
             self.refresh_layout_scene();

@@ -97,6 +97,7 @@ fn req_validation_enabled() -> DesignRequest {
         validation_enabled: true,
 
         visual_ref_enabled: false,
+        pinned_style_guide: None,
     }
 }
 
@@ -111,6 +112,7 @@ fn req_validation_disabled() -> DesignRequest {
         validation_enabled: false,
 
         visual_ref_enabled: false,
+        pinned_style_guide: None,
     }
 }
 
@@ -331,6 +333,7 @@ fn dashboard_validation_enabled_emits_validation_done() {
             validation_enabled: true,
 
             visual_ref_enabled: false,
+            pinned_style_guide: None,
         },
         &mut sink,
         &llm,
@@ -392,6 +395,7 @@ fn dashboard_validation_disabled_no_validation_events() {
             validation_enabled: false,
 
             visual_ref_enabled: false,
+            pinned_style_guide: None,
         },
         &mut sink,
         &llm,
@@ -436,6 +440,7 @@ fn concurrent_validation_enabled_emits_validation_done() {
             validation_enabled: true,
 
             visual_ref_enabled: false,
+            pinned_style_guide: None,
         },
         &mut sink,
         &llm,
@@ -497,6 +502,7 @@ fn concurrent_validation_disabled_no_validation_events() {
             validation_enabled: false,
 
             visual_ref_enabled: false,
+            pinned_style_guide: None,
         },
         &mut sink,
         &llm,

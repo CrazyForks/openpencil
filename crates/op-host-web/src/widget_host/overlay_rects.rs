@@ -70,6 +70,13 @@ impl WidgetHost {
         Some(menu.rect_at(anchor))
     }
 
+    /// The export quick-menu dropdown rect — anchored under the TopBar
+    /// download button. Shared with paint + hit-test through
+    /// `host_overlay_geometry` so the three can never drift.
+    pub(in crate::widget_host) fn export_quick_menu_rect(&self, viewport_w: f32) -> Rect {
+        overlay_geometry::export_quick_menu_rect(&self.editor_state, viewport_w)
+    }
+
     /// Whether `point` is inside an open chrome dropdown that paints
     /// above floating panels. These dropdowns are visually topmost, so
     /// their hover/click handling must win over the Variables panel
@@ -89,6 +96,7 @@ impl WidgetHost {
             || self
                 .file_menu_rect(viewport_w)
                 .is_some_and(|r| (r).contains(p))
+            || (ui.export_quick_menu_open && (self.export_quick_menu_rect(viewport_w)).contains(p))
     }
 
     pub(in crate::widget_host) fn import_menu_rect(

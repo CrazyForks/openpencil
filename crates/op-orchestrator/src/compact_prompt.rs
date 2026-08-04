@@ -35,6 +35,7 @@ Start the response with { and end with }. No prose. No markdown. No tool calls."
 pub fn build_compact_planning_prompt(
     prompt: &str,
     design_md: Option<&DesignMdSpec>,
+    pinned: Option<&str>,
 ) -> CompactPlanningPrompt {
     let preset = detect_design_type(prompt);
     let platform = if preset.type_ == DesignType::MobileScreen {
@@ -44,18 +45,22 @@ pub fn build_compact_planning_prompt(
     };
     let tags = infer_tags_from_prompt(prompt);
 
-    // 选 guide(无 design.md 时)。
+    // 选 guide(无 design.md 时)。A pin short-circuits the tag match through
+    // the same resolver the rich path uses, so both planning modes agree on
+    // what "pinned" means and on when a stale pin gets logged.
     let selected_guide = if design_md.is_some() {
         None
     } else {
-        select_style_guide(
-            style_guide_registry(),
-            &SelectOptions {
-                tags: tags.clone(),
-                name: None,
-                platform: Some(platform),
-            },
-        )
+        crate::style_guide_context::resolve_pinned_style_guide(pinned).or_else(|| {
+            select_style_guide(
+                style_guide_registry(),
+                &SelectOptions {
+                    tags: tags.clone(),
+                    name: None,
+                    platform: Some(platform),
+                },
+            )
+        })
     };
     let guide_bg =
         selected_guide.and_then(|g| extract_style_guide_values(&g.content).colors.background);
@@ -217,7 +222,7 @@ mod tests {
 
     #[test]
     fn compact_mobile_prompt_shape() {
-        let cp = build_compact_planning_prompt("a mobile login screen", None);
+        let cp = build_compact_planning_prompt("a mobile login screen", None, None);
         assert!(cp.system.starts_with("You are a UI planning assistant."));
         assert!(cp.system.contains("width=375 and height=812"));
         assert!(cp.system.contains("Create 2-4 cohesive subtasks"));
@@ -230,7 +235,7 @@ mod tests {
 
     #[test]
     fn a_deck_prompt_carries_the_projector_size_and_per_slide_screens() {
-        let cp = build_compact_planning_prompt("做一个季度汇报 PPT", None);
+        let cp = build_compact_planning_prompt("做一个季度汇报 PPT", None, None);
         let text = format!("{}\n{}", cp.system, cp.user_prompt);
         assert!(
             text.contains("width=1920") && text.contains("height=1080"),
@@ -250,7 +255,7 @@ mod tests {
 
     #[test]
     fn compact_landing_prompt_picks_a_guide() {
-        let cp = build_compact_planning_prompt("a fintech marketing site", None);
+        let cp = build_compact_planning_prompt("a fintech marketing site", None, None);
         assert!(cp.system.contains("width=1200 and height=0"));
         // 无 design.md → 从 catalog 选了个 guide 名
         assert!(!cp.selected_style_guide_name.is_empty());
@@ -258,8 +263,11 @@ mod tests {
 
     #[test]
     fn compact_prompt_honors_explicit_dimension_pair() {
-        let cp =
-            build_compact_planning_prompt("Design a 1440×900 desktop operations dashboard", None);
+        let cp = build_compact_planning_prompt(
+            "Design a 1440×900 desktop operations dashboard",
+            None,
+            None,
+        );
         assert!(cp.system.contains("width=1440 and height=900"));
         assert!(!cp.system.contains("width=1200 and height=0"));
     }
@@ -268,6 +276,7 @@ mod tests {
     fn compact_prompt_honors_explicit_wide_root() {
         let cp = build_compact_planning_prompt(
             "Design a desktop landing page. Make the root exactly 1440px wide.",
+            None,
             None,
         );
         assert!(cp.system.contains("width=1440 and height=0"));
@@ -286,7 +295,7 @@ mod tests {
             layout_principles: None,
             generation_notes: None,
         };
-        let cp = build_compact_planning_prompt("a page", Some(&spec));
+        let cp = build_compact_planning_prompt("a page", Some(&spec), None);
         assert_eq!(cp.selected_style_guide_name, "design-md-custom");
         assert!(cp.system.contains("USER DESIGN SYSTEM"));
     }

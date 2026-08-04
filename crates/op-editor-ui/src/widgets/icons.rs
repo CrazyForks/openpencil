@@ -237,6 +237,8 @@ pub enum Icon {
     FileText,
     /// Lucide `file-search.svg` — git overflow "switch tracked file".
     FileSearch,
+    /// Lucide `file-down.svg` — export-menu PDF row.
+    FileDown,
     /// Lucide `user-x.svg` — git overflow "clear commit author".
     UserX,
     /// Lucide `key.svg` — git overflow "SSH keys".
@@ -348,6 +350,7 @@ impl Icon {
             Icon::Upload => UPLOAD,
             Icon::FileText => FILE_TEXT,
             Icon::FileSearch => FILE_SEARCH,
+            Icon::FileDown => FILE_DOWN,
             Icon::UserX => USER_X,
             Icon::Key => KEY,
             Icon::LogOut => LOG_OUT,
@@ -473,6 +476,7 @@ impl Icon {
             "upload" => Icon::Upload,
             "file-text" => Icon::FileText,
             "file-search" => Icon::FileSearch,
+            "file-down" => Icon::FileDown,
             "user-x" => Icon::UserX,
             "key" => Icon::Key,
             "log-out" | "logout" => Icon::LogOut,

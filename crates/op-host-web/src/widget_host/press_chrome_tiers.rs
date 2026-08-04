@@ -81,6 +81,15 @@ impl WidgetHost {
             }
         }
 
+        // Deck filmstrip — the page navigator a slide deck floats at the
+        // bottom of the canvas. Same tier as the StatusBar (canvas chrome
+        // above the canvas, below the modals) and AFTER it, because the
+        // two pills can overlap on a narrow canvas and paint puts the
+        // zoom controls on top. Mirrors the native ladder.
+        if self.deck_filmstrip_press(x, y, viewport_width, viewport_height) {
+            return Some(true);
+        }
+
         // Chat paints after the TopBar. In a short maximized viewport the
         // upward model dropdown can cover the bar, so route that visible slice
         // before the lower TopBar surface. Higher dropdowns/modals already ran.
@@ -161,6 +170,8 @@ impl WidgetHost {
                 | TopBarHit::OpenAgentSettings
                 | TopBarHit::Collaboration
                 | TopBarHit::ToggleFileMenu
+                | TopBarHit::OpenExportMenu
+                | TopBarHit::OpenAssetCenter
                 | TopBarHit::OpenImportMenu => {}
                 TopBarHit::ToggleGitPanel => {
                     self.editor_state.editor_ui.git_panel.open ^= true;

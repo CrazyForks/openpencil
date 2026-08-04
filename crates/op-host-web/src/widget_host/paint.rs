@@ -98,6 +98,18 @@ impl WidgetHost {
         // paint pass. Every widget builder below reads `editor_state`
         // directly; the canvas reads `self.layout_scene`.
         self.refresh_layout_scene();
+        // Resolved ahead of the long immutable borrow below, because
+        // deriving it needs `&mut self` (mirrors native paint.rs).
+        // Painted just before the StatusBar.
+        let filmstrip = self.deck_filmstrip_frame(viewport_width, viewport_height);
+        // The rail's slides tab, resolved for the same reason: deriving
+        // it needs `&mut self`, and it OWNS the rail when it is on show.
+        let rail_open = self.editor_state.editor_ui.sidebar_open;
+        let slides_panel = if rail_open {
+            self.slides_panel_frame(viewport_width, viewport_height)
+        } else {
+            None
+        };
         let ui = &self.editor_state.editor_ui;
 
         let top_bar = self.top_bar();
@@ -109,9 +121,13 @@ impl WidgetHost {
             top_bar.paint(&mut cx, top_bar_rect);
         }
 
-        if ui.sidebar_open {
-            let layer_panel_rect =
-                canvas_geometry::layer_panel_rect(&self.editor_state, viewport_height);
+        // 3a. Slides tab — the same rail showing the deck's page
+        //     navigator instead of the layer tree.
+        if let Some(slides) = &slides_panel {
+            self.paint_slides_panel(&mut *backend, slides);
+        }
+        if rail_open && slides_panel.is_none() {
+            let layer_panel_rect = self.layer_panel_rect(viewport_height);
             // While a drag is active, paint against a panel with the
             // source's subtree excluded — see native paint.rs. The
             // panel walks the canonical `PenNode` tree off
@@ -141,10 +157,17 @@ impl WidgetHost {
                 }
             }
             layer_panel.now_ms = self.now_ms;
-            let mut cx = PaintCx {
-                backend: &mut *backend,
-            };
-            layer_panel.paint(&mut cx, layer_panel_rect);
+            {
+                let mut cx = PaintCx {
+                    backend: &mut *backend,
+                };
+                layer_panel.paint(&mut cx, layer_panel_rect);
+            }
+            // The tab row heads the rail in BOTH tabs — it is how the
+            // user gets back to the slides.
+            if let Some(tabs) = self.slides_tab_row(viewport_height) {
+                self.paint_slides_tab_row(&mut *backend, &tabs);
+            }
         }
 
         let (canvas_left, _canvas_y, canvas_w, canvas_h) =
@@ -242,6 +265,14 @@ impl WidgetHost {
                 backend: &mut *backend,
             };
             chat.paint(&mut cx, chat_rect);
+        }
+
+        // Deck filmstrip — floating bottom-centre, painted below the
+        // StatusBar because the two can overlap on a narrow canvas and
+        // the zoom pill must stay clickable (the press ladder resolves
+        // them in this same order). Mirrors native paint §7.5.
+        if let Some(strip) = filmstrip.as_ref() {
+            self.paint_deck_filmstrip(&mut *backend, strip);
         }
 
         if let Some(status_rect) =
@@ -363,6 +394,18 @@ impl WidgetHost {
         if let Some(menu_rect) = self.file_menu_rect(viewport_width) {
             use op_editor_ui::widgets::file_menu::FileMenu;
             let menu = FileMenu::from_editor_ui(&self.editor_state.editor_ui, self.wall_now_secs);
+            let mut cx = PaintCx {
+                backend: &mut *backend,
+            };
+            menu.paint(&mut cx, menu_rect);
+        }
+
+        // Export quick menu — anchored under the TopBar download button,
+        // same overlay band as the file menu it shortcuts (native §10b).
+        if ui.export_quick_menu_open {
+            use op_editor_ui::widgets::ExportQuickMenu;
+            let menu_rect = self.export_quick_menu_rect(viewport_width);
+            let menu = ExportQuickMenu::for_editor_ui(&self.editor_state.editor_ui);
             let mut cx = PaintCx {
                 backend: &mut *backend,
             };

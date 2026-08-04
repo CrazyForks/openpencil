@@ -97,11 +97,16 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.searchPlaceholder" => "搜索场景或模板",
         "sceneTemplate.empty" => "没有匹配的模板",
         "sceneTemplate.frames" => "{{count}} 页",
+        "sceneTemplate.generate.placeholder" => "描述主题，AI 直接生成整副演示文稿",
+        "sceneTemplate.generate.button" => "生成",
+        "sceneTemplate.generate.hint" => "新建一个文档，按主题直接生成整副演示文稿。",
+        "sceneTemplate.generate.promptTemplate" => "为以下主题制作一份演示文稿（PPT）：{{topic}}",
         "sceneTemplate.filter.all" => "全部",
         "sceneTemplate.scene.tutorial" => "教程图",
         "sceneTemplate.scene.comparison" => "对比图",
-        "sceneTemplate.scene.carousel" => "知识卡片",
+        "sceneTemplate.scene.carousel" => "轮播",
         "sceneTemplate.scene.slides" => "PPT",
+        "sceneTemplate.scene.card" => "卡片",
         "sceneTemplate.item.screenshotTutorial.title" => "三步截图教程卡",
         "sceneTemplate.item.screenshotTutorial.summary" => {
             "封面、三个操作步骤和结尾行动号召，替换截图与说明即可发布。"
@@ -118,8 +123,33 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.item.slideDeck.summary" => {
             "封面、目录、要点、数据、图表和结尾，16:9 投影比例，替换文案即可上台。"
         }
+        "sceneTemplate.item.knowledgeCardVertical.title" => "知识卡片 · 竖版",
+        "sceneTemplate.item.knowledgeCardVertical.summary" => {
+            "3:4 单张图文卡，标题、四条要点和署名条，换掉文案就能发小红书。"
+        }
+        "sceneTemplate.item.knowledgeCardSquare.title" => "知识卡片 · 方版",
+        "sceneTemplate.item.knowledgeCardSquare.summary" => {
+            "1:1 方形卡，同一套版式的紧凑版，适合公众号头图与朋友圈。"
+        }
+        "sceneTemplate.item.pitchDeckDark.title" => "路演 deck · 深色",
+        "sceneTemplate.item.pitchDeckDark.summary" => {
+            "封面、问题、方案、数据、里程碑和联系页，深底大字，适合融资路演与产品发布。"
+        }
+        "sceneTemplate.item.lectureDeckLight.title" => "课件 deck · 浅色",
+        "sceneTemplate.item.lectureDeckLight.summary" => {
+            "课程封面、学习目标、概念讲解、例题、对比表和小结作业，纸白底耐看，适合上课投影。"
+        }
+        "sceneTemplate.item.minimalKeynote.title" => "极简 Keynote",
+        "sceneTemplate.item.minimalKeynote.summary" => {
+            "纯白留白、超大字号、一页一个意思，八页里没有一张卡片，适合发布会与主题演讲。"
+        }
+        "sceneTemplate.item.gradientTech.title" => "渐变科技风",
+        "sceneTemplate.item.gradientTech.summary" => {
+            "深色渐变底加玻璃拟态卡，含架构、性能对比与客户墙，适合开发者产品发布。"
+        }
         "fileMenu.newFromTemplate" => "从模板新建",
         "fileMenu.exportSlideshowHtml" => "导出放映 HTML...",
+        "fileMenu.exportPptx" => "导出 PowerPoint...",
         "dialog.slideshowHtmlTitle" => "导出放映",
         "dialog.slideshowHtmlSummary" => "已导出 {{count}} 张幻灯片到：",
         "dialog.slideshowHtmlEmpty" => "当前演示文稿没有可导出的幻灯片。",
@@ -408,6 +438,22 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "htmlImport.diagnostics.expand" => "显示详情",
         "htmlImport.diagnostics.collapse" => "隐藏详情",
         "htmlImport.diagnostics.more" => "+{{count}} 项",
+        "dialog.pptxTitle" => "导出 PowerPoint",
+        "dialog.pptxSummary" => "已导出 {{count}} 张幻灯片到：",
+        "dialog.pptxEmpty" => "当前演示文稿没有可导出的幻灯片。",
+        "settings.agents.acpQuickAdd" => "快速添加",
+        "settings.agents.acpPresetAdd" => "添加",
+        "settings.agents.acpNotInstalled" => "未安装",
+        "assetCenter.title" => "资产中心",
+        "assetCenter.tab.templates" => "模板",
+        "assetCenter.tab.styles" => "风格",
+        "assetCenter.style.empty" => "没有匹配的风格",
+        "assetCenter.style.pinned" => "已钉住",
+        "assetCenter.style.searchPlaceholder" => "搜索风格或标签",
+        "assetCenter.style.generateHint" => "新建一个文档，按主题生成；已钉住的风格会被直接采用。",
+        "slidesPanel.tabSlides" => "幻灯片",
+        "slidesPanel.tabCards" => "卡片",
+        "slidesPanel.present" => "放映",
         _ => return super::zh_cn_collab::lookup(key),
     })
 }

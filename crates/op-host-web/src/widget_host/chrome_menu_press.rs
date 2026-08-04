@@ -49,6 +49,7 @@ impl WidgetHost {
                     FileMenuChoice::ExportImage => FileAction::ExportImage,
                     FileMenuChoice::ExportAllFrames => FileAction::ExportAllFrames,
                     FileMenuChoice::ExportSlideshowHtml => FileAction::ExportSlideshowHtml,
+                    FileMenuChoice::ExportPptx => FileAction::ExportPptx,
                     FileMenuChoice::OpenRecent(i) => FileAction::OpenRecent(i),
                     FileMenuChoice::ClearRecent => FileAction::ClearRecent,
                     // Handled above — it opens a panel, not a file action.
@@ -64,6 +65,39 @@ impl WidgetHost {
                 self.blur_text_inputs_on_blank_press();
                 self.editor_state.editor_ui.file_menu_open = false;
                 self.editor_state.editor_ui.file_menu.hover = None;
+                self.mark_dirty();
+            }
+        }
+    }
+
+    /// Export quick-menu press dispatcher. The row → `FileAction` walk is
+    /// shared with the native host; only the blur / repaint tail is web's.
+    ///
+    /// Rows the browser cannot serve never reach here: their capability
+    /// flags stay `false`, so `export_menu_rows` leaves them out of the
+    /// menu exactly as it leaves them out of the File menu.
+    pub(in crate::widget_host) fn dispatch_export_quick_menu_press(
+        &mut self,
+        x: f32,
+        y: f32,
+        viewport_width: f32,
+    ) {
+        use op_editor_ui::widgets::press_flow::{self, ExportQuickMenuPress};
+        self.refresh_layout_scene();
+        let panel_rect = self.export_quick_menu_rect(viewport_width);
+        match press_flow::press_export_quick_menu(
+            &mut self.editor_state,
+            panel_rect,
+            op_editor_ui::Point2D::new(x, y),
+        ) {
+            ExportQuickMenuPress::Swallow => {}
+            ExportQuickMenuPress::Applied => self.mark_dirty(),
+            ExportQuickMenuPress::Outside => {
+                // Silent outside-close is a blank press — blur inputs too.
+                self.blur_text_inputs_on_blank_press();
+                op_editor_core::host_press_transitions::close_export_quick_menu(
+                    &mut self.editor_state.editor_ui,
+                );
                 self.mark_dirty();
             }
         }

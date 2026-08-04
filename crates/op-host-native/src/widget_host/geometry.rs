@@ -111,6 +111,7 @@ impl WidgetHostNative {
             changed |= ui.hovered_layer_id.take().is_some();
             changed |= ui.hovered_page_index.take().is_some();
             changed |= ui.file_menu.hover.take().is_some();
+            changed |= ui.export_quick_menu_hover.take().is_some();
             changed |= ui.locale_picker.hover.take().is_some();
             changed |= ui.shape_picker.hover.take().is_some();
             changed |= ui.fill_type_picker.hover.take().is_some();
@@ -225,6 +226,7 @@ impl WidgetHostNative {
             changed |= ui.hovered_layer_id.take().is_some();
             changed |= ui.hovered_page_index.take().is_some();
             changed |= ui.file_menu.hover.take().is_some();
+            changed |= ui.export_quick_menu_hover.take().is_some();
             changed |= ui.locale_picker.hover.take().is_some();
             changed |= ui.shape_picker.hover.take().is_some();
             changed |= ui.fill_type_picker.hover.take().is_some();
@@ -311,6 +313,18 @@ impl WidgetHostNative {
             let new_hover = menu.hovered_at(panel, Point2D::new(x, y));
             if new_hover != self.editor_state.editor_ui.file_menu.hover {
                 self.editor_state.editor_ui.file_menu.hover = new_hover;
+                self.mark_dirty();
+                return true;
+            }
+        }
+        if self.editor_state.editor_ui.export_quick_menu_open {
+            use op_editor_ui::widgets::ExportQuickMenu;
+            self.refresh_layout_scene();
+            let panel = self.export_quick_menu_rect(self.last_viewport_w);
+            let menu = ExportQuickMenu::for_editor_ui(&self.editor_state.editor_ui);
+            let new_hover = menu.hovered_at(panel, Point2D::new(x, y));
+            if new_hover != self.editor_state.editor_ui.export_quick_menu_hover {
+                self.editor_state.editor_ui.export_quick_menu_hover = new_hover;
                 self.mark_dirty();
                 return true;
             }
@@ -506,10 +520,7 @@ impl WidgetHostNative {
             && x >= 0.0
             && x <= panel_w
         {
-            let layer_rect = Rect {
-                origin: Point2D::new(0.0, TOP_BAR_HEIGHT),
-                size: Point2D::new(panel_w, (viewport_h - TOP_BAR_HEIGHT).max(0.0)),
-            };
+            let layer_rect = self.layers_content_rect(viewport_h);
             let panel = self.layer_panel();
             match panel.hit_test(layer_rect, Point2D::new(x, y)) {
                 Some(LayerPanelHit::Layer(id))

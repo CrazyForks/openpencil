@@ -73,6 +73,13 @@ pub(crate) fn drain_pending_file_action<C: RepaintContext + 'static>(inner: &Inn
             // no-op branch so the shared action stays exhaustive without
             // inventing a browser download path here.
         }
+        FileAction::ExportPptx => {
+            // Same shape as the two export rows above: the deck rows are
+            // gated on `deck_html_export_supported`, which web leaves at
+            // `false`, so this action never reaches a browser. Kept as an
+            // explicit no-op branch so the shared action stays
+            // exhaustive.
+        }
         FileAction::ImportFigma => import_figma(inner),
         FileAction::FinishFigmaImport(_) => {
             // Desktop alone holds a PreparedFig between modal steps.

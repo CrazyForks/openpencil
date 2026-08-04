@@ -150,6 +150,11 @@ fn deck_html_row_y(panel: Rect) -> f32 {
     export_all_row_y(panel) + ROW_HEIGHT
 }
 
+/// y of the PowerPoint row, directly under the slideshow one.
+fn deck_pptx_row_y(panel: Rect) -> f32 {
+    deck_html_row_y(panel) + ROW_HEIGHT
+}
+
 /// A desktop-shaped host: both export capabilities advertised.
 fn desktop_ui(scenario: Option<TemplateScene>) -> EditorUiState {
     EditorUiState {
@@ -161,7 +166,7 @@ fn desktop_ui(scenario: Option<TemplateScene>) -> EditorUiState {
 }
 
 #[test]
-fn the_deck_row_paints_under_the_batch_row_and_shifts_the_recents() {
+fn the_deck_rows_paint_under_the_batch_row_and_shift_the_recents() {
     let ui = desktop_ui(Some(TemplateScene::Slides));
     let menu = FileMenu::for_editor_ui(&ui, two_recents());
     let panel = menu_panel(&menu);
@@ -174,8 +179,9 @@ fn the_deck_row_paints_under_the_batch_row_and_shifts_the_recents() {
         menu.choice_for_row(7),
         Some(FileMenuChoice::ExportSlideshowHtml)
     );
-    assert_eq!(menu.choice_for_row(8), Some(FileMenuChoice::OpenRecent(0)));
-    assert_eq!(menu.choice_for_row(10), Some(FileMenuChoice::ClearRecent));
+    assert_eq!(menu.choice_for_row(8), Some(FileMenuChoice::ExportPptx));
+    assert_eq!(menu.choice_for_row(9), Some(FileMenuChoice::OpenRecent(0)));
+    assert_eq!(menu.choice_for_row(11), Some(FileMenuChoice::ClearRecent));
 
     // Hit-test agrees with the paint walk.
     assert_eq!(
@@ -185,28 +191,42 @@ fn the_deck_row_paints_under_the_batch_row_and_shifts_the_recents() {
         ),
         MenuHit::Row(7)
     );
+    assert_eq!(
+        menu.hit(
+            panel,
+            Point2D::new(panel.origin.x + 20.0, deck_pptx_row_y(panel))
+        ),
+        MenuHit::Row(8)
+    );
 
     let batch_only_ui = EditorUiState {
         batch_frame_export_supported: true,
         ..Default::default()
     };
     let without = FileMenu::for_editor_ui(&batch_only_ui, two_recents());
-    assert_eq!(menu.height(), without.height() + ROW_HEIGHT);
+    assert_eq!(menu.height(), without.height() + ROW_HEIGHT * 2.0);
 }
 
 #[test]
-fn only_a_deck_document_is_offered_the_slideshow_export() {
+fn only_a_deck_document_is_offered_the_deck_exports() {
     for scenario in [None, Some(TemplateScene::Carousel)] {
         let ui = desktop_ui(scenario);
         let menu = FileMenu::for_editor_ui(&ui, two_recents());
         let panel = menu_panel(&menu);
 
-        // Row 7 is the first recent file again, not a slideshow row.
+        // Rows 7 and 8 are the recent files again, not deck-export rows.
         assert_eq!(
             menu.choice_for_row(7),
             Some(FileMenuChoice::OpenRecent(0)),
             "scenario={scenario:?}"
         );
+        assert_eq!(
+            menu.choice_for_row(8),
+            Some(FileMenuChoice::OpenRecent(1)),
+            "scenario={scenario:?}"
+        );
+        // The first place a deck row could paint is the divider gutter
+        // under the batch row.
         assert_eq!(
             menu.hit(
                 panel,
@@ -219,7 +239,7 @@ fn only_a_deck_document_is_offered_the_slideshow_export() {
 }
 
 #[test]
-fn a_host_without_the_exporter_never_paints_the_deck_row() {
+fn a_host_without_the_exporter_never_paints_the_deck_rows() {
     // Web: a deck document, but no save picker + offscreen rasteriser.
     let ui = EditorUiState {
         scenario: Some(TemplateScene::Slides),
@@ -236,7 +256,7 @@ fn a_host_without_the_exporter_never_paints_the_deck_row() {
 }
 
 #[test]
-fn the_deck_row_sits_directly_under_export_image_when_batch_export_is_absent() {
+fn the_deck_rows_sit_directly_under_export_image_when_batch_export_is_absent() {
     let ui = EditorUiState {
         deck_html_export_supported: true,
         scenario: Some(TemplateScene::Slides),
@@ -249,13 +269,21 @@ fn the_deck_row_sits_directly_under_export_image_when_batch_export_is_absent() {
         menu.choice_for_row(6),
         Some(FileMenuChoice::ExportSlideshowHtml)
     );
-    assert_eq!(menu.choice_for_row(7), Some(FileMenuChoice::OpenRecent(0)));
+    assert_eq!(menu.choice_for_row(7), Some(FileMenuChoice::ExportPptx));
+    assert_eq!(menu.choice_for_row(8), Some(FileMenuChoice::OpenRecent(0)));
     assert_eq!(
         menu.hit(
             panel,
             Point2D::new(panel.origin.x + 20.0, export_all_row_y(panel))
         ),
         MenuHit::Row(6)
+    );
+    assert_eq!(
+        menu.hit(
+            panel,
+            Point2D::new(panel.origin.x + 20.0, deck_html_row_y(panel))
+        ),
+        MenuHit::Row(7)
     );
 }
 

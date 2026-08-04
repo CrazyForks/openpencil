@@ -65,6 +65,10 @@ impl WidgetHost {
             self.mark_dirty();
             return true;
         }
+        if self.editor_state.editor_ui.escape_export_quick_menu() {
+            self.mark_dirty();
+            return true;
+        }
         if self.editor_state.editor_ui.escape_layer_context_menu() {
             self.mark_dirty();
             return true;

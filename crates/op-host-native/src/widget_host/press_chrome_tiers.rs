@@ -68,6 +68,17 @@ impl WidgetHostNative {
             }
         }
 
+        // Deck filmstrip — the page navigator a slide deck floats at the
+        // bottom of the canvas. It sits in this tier because it is the
+        // same kind of surface as the StatusBar (canvas chrome, above the
+        // canvas, below the modals), and AFTER the StatusBar because the
+        // two pills can overlap on a narrow canvas and paint puts the
+        // zoom controls on top. A press anywhere on the strip is the
+        // strip's, so the canvas behind it never sees it.
+        if !in_git_panel && self.deck_filmstrip_press(x, y, viewport_width, viewport_height) {
+            return Some(true);
+        }
+
         // 0z. Panel-resize gutter — ±4 px from rail edges. The gutter is
         // lower than the floating image-fill card even where their bounds
         // overlap.
@@ -147,6 +158,8 @@ impl WidgetHostNative {
                 | TopBarHit::OpenAgentSettings
                 | TopBarHit::Collaboration
                 | TopBarHit::ToggleFileMenu
+                | TopBarHit::OpenExportMenu
+                | TopBarHit::OpenAssetCenter
                 | TopBarHit::OpenImportMenu => return Some(true),
                 TopBarHit::ToggleFullscreen => {
                     // The widget host doesn't own the winit window — raise

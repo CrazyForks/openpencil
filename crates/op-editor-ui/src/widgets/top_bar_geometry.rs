@@ -80,25 +80,55 @@ impl TopBar {
         self.embed != op_editor_core::EmbedHost::VsCode
     }
 
-    pub fn globe_rect(&self, top_bar_rect: Rect) -> Rect {
+    /// Right-cluster layout (right → left): Maximize (hidden in a VS Code
+    /// embed) | Play (native only) | Download | Sun | Globe. This is how
+    /// many normal-width icon slots sit right of the Download button.
+    fn right_icon_slots_after_export(&self) -> f32 {
+        let mut slots = 0.0;
+        if self.fullscreen_button_visible() {
+            slots += 1.0;
+        }
+        if self.preview_button_visible() {
+            slots += 1.0;
+        }
+        slots
+    }
+
+    /// Export quick-menu button — a plain icon button directly left of
+    /// Play. Shown on every document (the menu decides which rows apply),
+    /// so it needs no visibility predicate; paint, hit-test, and the
+    /// dropdown anchor all route through here.
+    pub fn export_button_rect(&self, top_bar_rect: Rect) -> Rect {
         let right = top_bar_rect.origin.x + top_bar_rect.size.x;
-        // Right-cluster layout (right → left): Maximize (hidden in a
-        // VS Code embed) | Play (native only) | Sun | Globe. Icon buttons
-        // are normal ICON_BUTTON wide; Globe is the wider
-        // GLOBE_BUTTON_WIDTH so the chevron fits.
-        let icon_count =
-            1.0 + if self.fullscreen_button_visible() {
-                1.0
-            } else {
-                0.0
-            } + if self.preview_button_visible() {
-                1.0
-            } else {
-                0.0
-            };
-        let globe_x = right - PAD - ICON_BUTTON * icon_count - GLOBE_BUTTON_WIDTH;
         Rect {
-            origin: Point2D::new(globe_x, top_bar_rect.origin.y + 8.0),
+            origin: Point2D::new(
+                right - PAD - ICON_BUTTON * (self.right_icon_slots_after_export() + 1.0),
+                top_bar_rect.origin.y + 8.0,
+            ),
+            size: Point2D::new(ICON_BUTTON, ICON_BUTTON),
+        }
+    }
+
+    /// Asset Center button — a palette glyph directly left of Download.
+    ///
+    /// It sits with Download rather than with the theme/locale cluster
+    /// because both act on the document's content; Sun and Globe act on the
+    /// application. Offered on every document, so it needs no visibility
+    /// predicate.
+    pub fn asset_center_button_rect(&self, top_bar_rect: Rect) -> Rect {
+        let export = self.export_button_rect(top_bar_rect);
+        Rect {
+            origin: Point2D::new(export.origin.x - ICON_BUTTON, export.origin.y),
+            size: Point2D::new(ICON_BUTTON, ICON_BUTTON),
+        }
+    }
+
+    pub fn globe_rect(&self, top_bar_rect: Rect) -> Rect {
+        // Globe is the wider GLOBE_BUTTON_WIDTH; it hangs off the theme
+        // button's left edge so the whole cluster shifts as one.
+        let theme = self.theme_button_rect(top_bar_rect);
+        Rect {
+            origin: Point2D::new(theme.origin.x - GLOBE_BUTTON_WIDTH, theme.origin.y),
             size: Point2D::new(GLOBE_BUTTON_WIDTH, ICON_BUTTON),
         }
     }
@@ -224,25 +254,14 @@ impl TopBar {
         }
     }
 
-    /// Theme toggle button. Its x-position shifts right in the web/wasm build
-    /// where the Preview button is hidden, and in a VS Code embed where the
-    /// Maximize button is hidden.
+    /// Theme toggle button — directly left of the Asset Center button. Its
+    /// x-position shifts right in the web/wasm build where the Preview
+    /// button is hidden, and in a VS Code embed where the Maximize button
+    /// is hidden.
     pub(super) fn theme_button_rect(&self, top_bar_rect: Rect) -> Rect {
-        let right = top_bar_rect.origin.x + top_bar_rect.size.x;
-        let right_icons = if self.fullscreen_button_visible() {
-            1.0
-        } else {
-            0.0
-        } + if self.preview_button_visible() {
-            1.0
-        } else {
-            0.0
-        };
+        let asset_center = self.asset_center_button_rect(top_bar_rect);
         Rect {
-            origin: Point2D::new(
-                right - PAD - ICON_BUTTON * (right_icons + 1.0),
-                top_bar_rect.origin.y + 8.0,
-            ),
+            origin: Point2D::new(asset_center.origin.x - ICON_BUTTON, asset_center.origin.y),
             size: Point2D::new(ICON_BUTTON, ICON_BUTTON),
         }
     }

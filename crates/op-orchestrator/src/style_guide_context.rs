@@ -289,6 +289,30 @@ pub(crate) fn style_guide_prompt_score(
     score
 }
 
+/// Resolve a user-pinned style-guide name against the registry.
+///
+/// This is the single short-circuit every planning path shares: a hit means
+/// the pin wins outright and no ranking runs, a miss means the pin is stale
+/// (a guide renamed or retired between releases) and the caller falls back to
+/// its own inference. A stale pin is logged rather than surfaced as an error —
+/// the user asked for an aesthetic, not for the request to fail — but it is
+/// logged, because a pin that silently stops applying is otherwise invisible.
+pub(crate) fn resolve_pinned_style_guide(
+    pinned: Option<&str>,
+) -> Option<&'static ParsedStyleGuide> {
+    let name = pinned.map(str::trim).filter(|name| !name.is_empty())?;
+    match style_guide_registry().iter().find(|g| g.name == name) {
+        Some(guide) => Some(guide),
+        None => {
+            tracing::warn!(
+                pinned = %name,
+                "pinned style guide is not in the registry — falling back to prompt ranking"
+            );
+            None
+        }
+    }
+}
+
 /// 对全 catalog 按加权分降序排名(不过滤)—— port of
 /// `rankStyleGuidesForPrompt`。平局:platform-match 优先,再 name 升序。
 pub(crate) fn rank_style_guides_for_prompt(
@@ -373,8 +397,14 @@ pub(crate) fn build_planning_style_guide_context(
     model: Option<&str>,
     mode: PlanningMode,
     design_md: Option<&DesignMdSpec>,
+    pinned: Option<&str>,
 ) -> PlanningStyleGuideContext {
     // —— design.md 分支:不碰 catalog ——
+    //
+    // design.md outranks a pinned guide on purpose: it is a design system the
+    // user wrote down, and this branch's contract (`styleGuideName:
+    // design-md-custom`) is what the rest of the pipeline reads. A pin is a
+    // catalog choice, and there is no catalog here to choose from.
     if let Some(spec) = design_md {
         let policy = build_design_md_style_policy(spec);
         let bg_hint = infer_design_md_background(spec);
@@ -419,6 +449,35 @@ pub(crate) fn build_planning_style_guide_context(
             snippet_count: 0,
             top_guide_names: vec!["design-md-custom".to_string()],
             snippet_guide_names: Vec::new(),
+        };
+    }
+
+    // —— pinned 分支:短路排序,恒选钉住的那一份 ——
+    //
+    // The catalog is offered as a menu the model picks from, so a pin cannot
+    // be expressed by re-ordering it — the model would still be free to pick
+    // something else. It is expressed by shrinking the menu to one entry.
+    if let Some(guide) = resolve_pinned_style_guide(pinned) {
+        let lines: Vec<String> = vec![
+            "The user pinned a style guide in the Asset Center. Use it — do NOT \
+             pick a different one."
+                .to_string(),
+            format_guide_metadata_line(guide, mode),
+            String::new(),
+            format_guide_snippet(guide),
+            String::new(),
+            "Output directives:".to_string(),
+            format!(
+                "- Set \"styleGuideName\": \"{}\" (exact string).",
+                guide.name
+            ),
+        ];
+        return PlanningStyleGuideContext {
+            available_style_guides: lines.join("\n"),
+            metadata_count: 1,
+            snippet_count: 1,
+            top_guide_names: vec![guide.name.clone()],
+            snippet_guide_names: vec![guide.name.clone()],
         };
     }
 
@@ -470,166 +529,5 @@ pub(crate) fn build_planning_style_guide_context(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn catalog_context_lists_all_guides() {
-        let ctx = build_planning_style_guide_context(
-            "a fintech dashboard",
-            Some("claude-opus"),
-            PlanningMode::Rich,
-            None,
-        );
-        assert_eq!(ctx.metadata_count, style_guide_registry().len());
-        assert!(ctx.snippet_count > 0); // Rich + full tier → 有 snippet
-        assert!(ctx
-            .available_style_guides
-            .contains("Available style guides"));
-    }
-
-    #[test]
-    fn minimal_mode_has_no_snippets() {
-        let ctx = build_planning_style_guide_context(
-            "a fintech dashboard",
-            Some("claude-opus"),
-            PlanningMode::Minimal,
-            None,
-        );
-        assert_eq!(ctx.snippet_count, 0);
-    }
-
-    #[test]
-    fn design_md_branch_skips_catalog() {
-        let spec = jian_ops_schema::DesignMdSpec {
-            raw: String::new(),
-            project_name: None,
-            visual_theme: Some("calm".into()),
-            color_palette: None,
-            typography: None,
-            component_styles: None,
-            layout_principles: None,
-            generation_notes: None,
-        };
-        let ctx = build_planning_style_guide_context(
-            "a page",
-            Some("claude-opus"),
-            PlanningMode::Rich,
-            Some(&spec),
-        );
-        assert_eq!(ctx.metadata_count, 0);
-        assert_eq!(ctx.top_guide_names, vec!["design-md-custom".to_string()]);
-        assert!(ctx.available_style_guides.contains("custom design system"));
-    }
-
-    #[test]
-    fn unmatched_prompt_yields_only_tone_tag() {
-        // tone 组(dark/light 互斥 if/else)永远 push 一个 tag,故 `tags`
-        // 永不为空 —— TS 末尾的 `['minimal','light-mode']` 兜底是死分支。
-        // 无关键词命中的 prompt → 只剩 tone tag(light-mode)。
-        assert_eq!(infer_tags_from_prompt("xyz123"), vec!["light-mode"]);
-    }
-
-    #[test]
-    fn tone_and_visual_tags() {
-        let t = infer_tags_from_prompt("a dark minimalist dashboard");
-        assert!(t.contains(&"dark-mode".to_string()));
-        assert!(t.contains(&"minimal".to_string()));
-    }
-
-    #[test]
-    fn industry_food_pushes_two_tags() {
-        let t = infer_tags_from_prompt("a food delivery app");
-        assert!(t.contains(&"food".to_string()));
-        assert!(t.contains(&"warm-tones".to_string()));
-        assert!(t.contains(&"friendly".to_string()));
-    }
-
-    #[test]
-    fn food_delivery_ranks_warm_food_mobile_guide_first() {
-        let tags = infer_tags_from_prompt("a food delivery mobile app");
-        let ranked = rank_style_guides_for_prompt(&tags, Platform::Mobile);
-        assert_eq!(
-            ranked.first().map(|guide| guide.name.as_str()),
-            Some("warm-food-mobile-light"),
-            "food delivery should prefer the food-specific mobile guide"
-        );
-    }
-
-    #[test]
-    fn developer_pushes_developer_and_monospace() {
-        let t = infer_tags_from_prompt("a coding tool");
-        assert!(t.contains(&"developer".to_string()));
-        assert!(t.contains(&"monospace".to_string()));
-    }
-
-    #[test]
-    fn no_dedup_source_order() {
-        // fintech 可被多组 push;不去重(TS 行为)
-        let t = infer_tags_from_prompt("a fintech banking finance app");
-        assert!(t.iter().filter(|x| *x == "fintech").count() >= 1);
-        // light-mode 总在最前(tone 组最先)
-        assert_eq!(t[0], "light-mode");
-    }
-
-    #[test]
-    fn wallet_app_for_gift_cards_is_apple_wallet_not_fintech() {
-        // "gift cards" (plural) is apple-wallet context → must NOT push fintech.
-        let t = infer_tags_from_prompt("a wallet app for gift cards");
-        assert!(!t.contains(&"fintech".to_string()));
-    }
-
-    #[test]
-    fn rank_ranks_full_registry_no_filter() {
-        let ranked = rank_style_guides_for_prompt(&["fintech".to_string()], Platform::Webapp);
-        // 排名不过滤 —— 全 catalog 都在
-        assert_eq!(ranked.len(), style_guide_registry().len());
-    }
-
-    #[test]
-    fn rank_industry_tag_outweighs_plain_tag() {
-        // fintech(industry,+30)的 guide 应排在只命中普通 tag(+10)的前面
-        let ranked = rank_style_guides_for_prompt(
-            &["fintech".to_string(), "minimal".to_string()],
-            Platform::Webapp,
-        );
-        assert!(!ranked.is_empty());
-        // 首个的分数 >= 其后任意(降序)
-        let s0 = style_guide_prompt_score(
-            ranked[0],
-            &["fintech".into(), "minimal".into()],
-            Platform::Webapp,
-        );
-        let s1 = style_guide_prompt_score(
-            ranked[ranked.len() - 1],
-            &["fintech".into(), "minimal".into()],
-            Platform::Webapp,
-        );
-        assert!(s0 >= s1);
-    }
-
-    #[test]
-    fn metadata_line_is_name_only_no_type_or_color() {
-        // Softened: names only — no `:: tags` (type) and no ` bg:` (color).
-        let g = &style_guide_registry()[0];
-        let line = format_guide_metadata_line(g, PlanningMode::Rich);
-        assert_eq!(line, format!("- {} [{}]", g.name, g.platform.as_str()));
-        assert!(!line.contains(" :: "), "type tags must be dropped: {line}");
-        assert!(!line.contains(" bg:"), "bg color must be dropped: {line}");
-    }
-
-    #[test]
-    fn snippet_drops_color_type_radius_keeps_fonts() {
-        // Softened: the snippet suggests font direction only — no colors,
-        // no type tags, no radius.
-        let g = &style_guide_registry()[0];
-        let snip = format_guide_snippet(g);
-        assert!(snip.starts_with(&format!("### {} [", g.name)));
-        assert!(
-            !snip.contains("tags:"),
-            "type tags must be dropped:\n{snip}"
-        );
-        assert!(!snip.contains("colors:"), "colors must be dropped:\n{snip}");
-        assert!(!snip.contains("radius:"), "radius must be dropped:\n{snip}");
-    }
-}
+#[path = "style_guide_context_tests.rs"]
+mod tests;

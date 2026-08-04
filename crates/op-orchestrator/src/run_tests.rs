@@ -29,6 +29,7 @@ fn req() -> DesignRequest {
         validation_enabled: true,
 
         visual_ref_enabled: false,
+        pinned_style_guide: None,
     }
 }
 
@@ -45,6 +46,7 @@ fn req_standard() -> DesignRequest {
         validation_enabled: true,
 
         visual_ref_enabled: false,
+        pinned_style_guide: None,
     }
 }
 
@@ -64,6 +66,7 @@ fn req_basic() -> DesignRequest {
         validation_enabled: true,
 
         visual_ref_enabled: false,
+        pinned_style_guide: None,
     }
 }
 

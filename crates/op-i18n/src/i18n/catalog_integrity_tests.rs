@@ -251,7 +251,7 @@ fn placeholders(value: &str) -> BTreeSet<String> {
 fn every_locale_has_exactly_the_english_key_set() {
     let all_tables = tables();
     let expected = table_keys(all_tables[0].0, all_tables[0].1, all_tables[0].2);
-    assert_eq!(expected.len(), 1445, "update the intentional catalog size");
+    assert_eq!(expected.len(), 1479, "update the intentional catalog size");
 
     for (name, main, git, lookup) in all_tables {
         let actual = table_keys(name, main, git);
@@ -283,6 +283,7 @@ fn scene_template_catalog_is_complete_in_all_fifteen_locales() {
         "sceneTemplate.scene.comparison",
         "sceneTemplate.scene.carousel",
         "sceneTemplate.scene.slides",
+        "sceneTemplate.scene.card",
         "sceneTemplate.item.screenshotTutorial.title",
         "sceneTemplate.item.screenshotTutorial.summary",
         "sceneTemplate.item.knowledgeCarousel.title",
@@ -291,6 +292,18 @@ fn scene_template_catalog_is_complete_in_all_fifteen_locales() {
         "sceneTemplate.item.beforeAfter.summary",
         "sceneTemplate.item.slideDeck.title",
         "sceneTemplate.item.slideDeck.summary",
+        "sceneTemplate.item.knowledgeCardVertical.title",
+        "sceneTemplate.item.knowledgeCardVertical.summary",
+        "sceneTemplate.item.knowledgeCardSquare.title",
+        "sceneTemplate.item.knowledgeCardSquare.summary",
+        "sceneTemplate.item.pitchDeckDark.title",
+        "sceneTemplate.item.pitchDeckDark.summary",
+        "sceneTemplate.item.lectureDeckLight.title",
+        "sceneTemplate.item.lectureDeckLight.summary",
+        "sceneTemplate.item.minimalKeynote.title",
+        "sceneTemplate.item.minimalKeynote.summary",
+        "sceneTemplate.item.gradientTech.title",
+        "sceneTemplate.item.gradientTech.summary",
         "fileMenu.newFromTemplate",
     ] {
         for (name, _, _, lookup) in tables() {

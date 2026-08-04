@@ -38,6 +38,7 @@ fn req() -> DesignRequest {
         validation_enabled: true,
 
         visual_ref_enabled: false,
+        pinned_style_guide: None,
     }
 }
 
@@ -80,6 +81,8 @@ fn subtask() -> crate::plan::Subtask {
 // mounts with `use super::*` so it sees both them and `crate::prompt`.
 #[path = "prompt_components_tests.rs"]
 mod components_tests;
+#[path = "prompt_deck_skill_tests.rs"]
+mod deck_skill_tests;
 #[path = "prompt_planning_tests.rs"]
 mod planning_tests;
 #[path = "prompt_skill_budget_tests.rs"]

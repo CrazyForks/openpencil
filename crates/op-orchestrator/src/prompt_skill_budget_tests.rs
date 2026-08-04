@@ -73,7 +73,8 @@ fn worst_case_style_guide_context() -> (String, String) {
         for model in models {
             for prompt in prompts {
                 for spec in [None, Some(&design_md)] {
-                    let ctx = build_planning_style_guide_context(prompt, Some(model), mode, spec, None);
+                    let ctx =
+                        build_planning_style_guide_context(prompt, Some(model), mode, spec, None);
                     if ctx.available_style_guides.chars().count() > worst.0.chars().count() {
                         let label = format!(
                             "mode={mode:?} model={model:?} design_md={} prompt={prompt:?}",

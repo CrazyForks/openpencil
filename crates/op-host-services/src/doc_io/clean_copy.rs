@@ -171,6 +171,7 @@ mod tests {
                 active_page_index: 4,
                 preserve_authored_geometry: true,
                 scenario: None,
+                pinned_style_guide: None,
             },
         )
         .expect("clean copy save");
@@ -200,6 +201,7 @@ mod tests {
                 active_page_index: 2,
                 preserve_authored_geometry: false,
                 scenario: None,
+                pinned_style_guide: None,
             },
         )
         .expect("clean copy appends metadata");

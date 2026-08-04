@@ -248,7 +248,7 @@ impl WebCanvasState {
                 });
             }
         }
-        let editor_meta = request.resolved_editor_meta(request.embedded_editor_meta);
+        let editor_meta = request.resolved_editor_meta(request.embedded_editor_meta.clone());
         if request.metadata_only {
             // Active-page changes do not mutate canonical document content.
             // Apply the scalar pair without replacing the identical document,

@@ -13,7 +13,7 @@ use op_editor_core::scene_template_catalog::TemplateScene;
 /// Every field defaults to its legacy behavior, so files written before a
 /// field existed remain compatible. Snake-case aliases accept the former
 /// sidecar spelling as well as the canonical camel-case wire spelling.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EditorMeta {
     /// Zero-based active page index at save time.
@@ -32,6 +32,16 @@ pub struct EditorMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub scenario: Option<TemplateScene>,
+    /// Style guide pinned in the Asset Center — see
+    /// `EditorUiState::pinned_style_guide`. Written as the guide's `name`;
+    /// anything that is not a non-empty string reads back as `None` for the
+    /// same reason [`EditorMeta::scenario`] does.
+    #[serde(
+        default,
+        with = "pinned_style_guide_serde",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pinned_style_guide: Option<String>,
 }
 
 impl EditorMeta {
@@ -45,6 +55,7 @@ impl EditorMeta {
             active_page_index: state.ui.active_page_index,
             preserve_authored_geometry: state.editor_ui.preserve_authored_geometry,
             scenario: state.editor_ui.scenario,
+            pinned_style_guide: state.editor_ui.pinned_style_guide.clone(),
         }
     }
 }
@@ -83,6 +94,36 @@ mod scenario_serde {
     }
 }
 
+/// Wire adapter for [`EditorMeta::pinned_style_guide`].
+///
+/// The pin is a hint about future generations, so the same rule the scenario
+/// tag follows applies: a number, an object, `null`, or a blank string is
+/// dropped rather than failing the load. An unrecognized *name* is kept —
+/// only the generation path can say whether the registry still carries it,
+/// and it falls back to automatic ranking when it does not.
+mod pinned_style_guide_serde {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub(super) fn serialize<S: Serializer>(
+        value: &Option<String>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        match value {
+            Some(name) => serializer.serialize_str(name),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<String>, D::Error> {
+        Ok(match serde_json::Value::deserialize(deserializer)? {
+            serde_json::Value::String(name) if !name.trim().is_empty() => Some(name),
+            _ => None,
+        })
+    }
+}
+
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WireEditorMeta {
@@ -92,10 +133,12 @@ struct WireEditorMeta {
     preserve_authored_geometry: Option<bool>,
     #[serde(default, with = "scenario_serde")]
     scenario: Option<TemplateScene>,
+    #[serde(default, with = "pinned_style_guide_serde")]
+    pinned_style_guide: Option<String>,
 }
 
 /// Parsed metadata plus compatibility inference used for migration decisions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditorMetaExtraction {
     pub meta: EditorMeta,
     /// The short-lived Figma writer omitted the geometry bit and it was
@@ -130,6 +173,7 @@ pub fn extract_editor_meta_with_report(src: &str) -> Option<EditorMetaExtraction
                 .preserve_authored_geometry
                 .unwrap_or(scan.first_page_has_figma_id),
             scenario: wire.scenario,
+            pinned_style_guide: wire.pinned_style_guide,
         },
         inferred_preserve_authored_geometry,
     })
@@ -270,6 +314,7 @@ pub fn apply_editor_meta(state: &mut op_editor_core::EditorState, meta: EditorMe
     state.ui.active_page_index = meta.active_page_index.min(page_count - 1);
     state.editor_ui.preserve_authored_geometry = meta.preserve_authored_geometry;
     state.editor_ui.scenario = meta.scenario;
+    state.editor_ui.pinned_style_guide = meta.pinned_style_guide;
 }
 
 /// Apply saved metadata, or use the legacy reopen policy when it is absent.
@@ -290,6 +335,7 @@ pub fn apply_editor_meta_or_legacy_fallback(
     // an unknown scenario must read as `None` rather than inherit whatever
     // the caller's state happened to carry in.
     state.editor_ui.scenario = None;
+    state.editor_ui.pinned_style_guide = None;
     state.ui.active_page_index = state
         .doc
         .pages
@@ -485,295 +531,5 @@ fn compound_value_end(bytes: &[u8], start: usize) -> Option<usize> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn extracts_camel_and_legacy_snake_case_fields() {
-        assert_eq!(
-            extract_editor_meta(
-                r#"{"version":"1","editorMeta":{"activePageIndex":3,"preserveAuthoredGeometry":true},"children":[]}"#,
-            ),
-            Some(EditorMeta {
-                active_page_index: 3,
-                preserve_authored_geometry: true,
-                scenario: None,
-            })
-        );
-        assert_eq!(
-            extract_editor_meta(
-                r#"{"editorMeta":{"active_page_index":2,"preserve_authored_geometry":true}}"#,
-            ),
-            Some(EditorMeta {
-                active_page_index: 2,
-                preserve_authored_geometry: true,
-                scenario: None,
-            })
-        );
-    }
-
-    #[test]
-    fn absent_preserve_field_keeps_legacy_false_semantics() {
-        assert_eq!(
-            extract_editor_meta(r#"{"editorMeta":{"activePageIndex":7},"children":[]}"#),
-            Some(EditorMeta {
-                active_page_index: 7,
-                preserve_authored_geometry: false,
-                scenario: None,
-            })
-        );
-    }
-
-    #[test]
-    fn missing_preserve_field_recovers_figma_geometry_from_canonical_page_id() {
-        assert_eq!(
-            extract_editor_meta(
-                r#"{"version":"1","pages":[{"id":"figma-page-12","name":"Imported","children":[]}],"children":[],"editorMeta":{"activePageIndex":0}}"#,
-            ),
-            Some(EditorMeta {
-                active_page_index: 0,
-                preserve_authored_geometry: true,
-                scenario: None,
-            })
-        );
-        assert_eq!(
-            extract_editor_meta(
-                r#"{"editorMeta":{"active_page_index":0},"pages":[{"id":"figma-page-0","name":"Imported","children":[]}],"children":[]}"#,
-            ),
-            Some(EditorMeta {
-                active_page_index: 0,
-                preserve_authored_geometry: true,
-                scenario: None,
-            })
-        );
-    }
-
-    #[test]
-    fn explicit_false_overrides_figma_page_migration_for_both_spellings() {
-        for meta in [
-            r#"{"activePageIndex":0,"preserveAuthoredGeometry":false}"#,
-            r#"{"active_page_index":0,"preserve_authored_geometry":false}"#,
-        ] {
-            let src = format!(
-                r#"{{"version":"1","pages":[{{"id":"figma-page-0","name":"Imported","children":[]}}],"children":[],"editorMeta":{meta}}}"#
-            );
-            assert_eq!(
-                extract_editor_meta(&src),
-                Some(EditorMeta {
-                    active_page_index: 0,
-                    preserve_authored_geometry: false,
-                    scenario: None,
-                })
-            );
-        }
-    }
-
-    #[test]
-    fn missing_metadata_does_not_migrate_even_with_a_figma_page_id() {
-        let src = r#"{"version":"1","pages":[{"id":"figma-page-0","name":"Imported","children":[]}],"children":[]}"#;
-        let document = jian_ops_schema::load_str(src).expect("fixture").value;
-        let mut state = op_editor_core::EditorState::from_document(document);
-        state.editor_ui.preserve_authored_geometry = true;
-
-        let meta = extract_editor_meta(src);
-        apply_editor_meta_or_legacy_fallback(&mut state, meta);
-
-        assert_eq!(meta, None);
-        assert!(!state.editor_ui.preserve_authored_geometry);
-    }
-
-    #[test]
-    fn figma_like_but_noncanonical_page_id_does_not_trigger_migration() {
-        assert_eq!(
-            extract_editor_meta(
-                r#"{"version":"1","pages":[{"id":"figma-page-preview","name":"Ordinary","children":[]}],"children":[],"editorMeta":{"activePageIndex":0}}"#,
-            ),
-            Some(EditorMeta {
-                active_page_index: 0,
-                preserve_authored_geometry: false,
-                scenario: None,
-            })
-        );
-    }
-
-    #[test]
-    fn applying_metadata_clamps_page_and_restores_geometry_mode() {
-        let document = jian_ops_schema::load_str(
-            r#"{"version":"1","pages":[{"id":"p1","name":"One","children":[]},{"id":"p2","name":"Two","children":[]}],"children":[]}"#,
-        )
-        .expect("fixture")
-        .value;
-        let mut state = op_editor_core::EditorState::from_document(document);
-
-        apply_editor_meta(
-            &mut state,
-            EditorMeta {
-                active_page_index: 99,
-                preserve_authored_geometry: true,
-                scenario: None,
-            },
-        );
-
-        assert_eq!(state.ui.active_page_index, 1);
-        assert!(state.editor_ui.preserve_authored_geometry);
-    }
-
-    #[test]
-    fn absent_metadata_resets_preserve_and_opens_first_nonempty_page() {
-        let document = jian_ops_schema::load_str(
-            r#"{"version":"1","pages":[
-              {"id":"p1","name":"Empty","children":[]},
-              {"id":"p2","name":"Content","children":[
-                {"type":"rectangle","id":"visible","width":10,"height":10}
-              ]}
-            ],"children":[]}"#,
-        )
-        .expect("fixture")
-        .value;
-        let mut state = op_editor_core::EditorState::from_document(document);
-        state.editor_ui.preserve_authored_geometry = true;
-
-        apply_editor_meta_or_legacy_fallback(&mut state, None);
-
-        assert_eq!(state.ui.active_page_index, 1);
-        assert!(!state.editor_ui.preserve_authored_geometry);
-    }
-
-    #[test]
-    fn escaped_strings_nested_values_and_duplicate_keys_are_bounded_correctly() {
-        let src = r#"{
-          "note":"quoted \"editorMeta\" and braces } ]",
-          "plugin":{"editorMeta":{"preserveAuthoredGeometry":false}},
-          "editorMeta":{"activePageIndex":1},
-          "editor\u004deta":{"activePageIndex":4,"preserveAuthoredGeometry":true},
-          "children":[]
-        }"#;
-        assert_eq!(
-            extract_editor_meta(src),
-            Some(EditorMeta {
-                active_page_index: 4,
-                preserve_authored_geometry: true,
-                scenario: None,
-            })
-        );
-    }
-
-    #[test]
-    fn nested_absent_and_invalid_metadata_are_ignored() {
-        assert_eq!(
-            extract_editor_meta(
-                r#"{"plugin":{"editorMeta":{"preserveAuthoredGeometry":true}},"children":[]}"#,
-            ),
-            None
-        );
-        assert_eq!(extract_editor_meta(r#"{"children":[]}"#), None);
-        assert_eq!(extract_editor_meta(r#"{"editorMeta":"invalid"}"#), None);
-    }
-
-    #[test]
-    fn streaming_rewrite_preserves_legacy_document_bytes_outside_editor_meta() {
-        let src = concat!(
-            "{\n",
-            "  \"version\":\"0.8.0\",\n",
-            "  \"futureExtension\":{\"keep\":true},\n",
-            "  \"editorMeta\":{\"activePageIndex\":1,\"oldField\":\"kept-nowhere\"},\n",
-            "  \"children\":[]\n",
-            "}\n"
-        );
-        let old_meta = r#"{"activePageIndex":1,"oldField":"kept-nowhere"}"#;
-        let mut output = Vec::new();
-
-        write_source_with_editor_meta(
-            &mut output,
-            src,
-            EditorMeta {
-                active_page_index: 7,
-                preserve_authored_geometry: true,
-                scenario: None,
-            },
-        )
-        .expect("streaming metadata rewrite");
-
-        let output = String::from_utf8(output).expect("UTF-8 output");
-        let expected = src.replace(
-            old_meta,
-            r#"{"activePageIndex":7,"preserveAuthoredGeometry":true}"#,
-        );
-        assert_eq!(output, expected, "only the metadata value may change");
-        assert_eq!(
-            extract_editor_meta(&output),
-            Some(EditorMeta {
-                active_page_index: 7,
-                preserve_authored_geometry: true,
-                scenario: None,
-            })
-        );
-    }
-
-    #[test]
-    fn streaming_rewrite_appends_metadata_to_empty_and_nonempty_roots() {
-        for (src, expected_prefix) in [
-            (
-                "{}\n",
-                r#"{"editorMeta":{"activePageIndex":2,"preserveAuthoredGeometry":false}}"#,
-            ),
-            (
-                "{\"version\":\"1\",\"children\":[]}\n",
-                r#"{"version":"1","children":[],"editorMeta":{"activePageIndex":2,"preserveAuthoredGeometry":false}}"#,
-            ),
-        ] {
-            let mut output = Vec::new();
-            write_source_with_editor_meta(
-                &mut output,
-                src,
-                EditorMeta {
-                    active_page_index: 2,
-                    preserve_authored_geometry: false,
-                    scenario: None,
-                },
-            )
-            .expect("append metadata");
-            let output = String::from_utf8(output).expect("UTF-8 output");
-            assert_eq!(output, format!("{expected_prefix}\n"));
-        }
-    }
-
-    #[test]
-    fn streaming_rewrite_rejects_non_object_sources() {
-        let mut output = Vec::new();
-        assert!(write_source_with_editor_meta(&mut output, "[]", EditorMeta::default()).is_err());
-        assert!(output.is_empty());
-    }
-
-    #[test]
-    fn current_schema_rewrite_preserves_nested_unknown_fields() {
-        let source = r#"{"version":"2.8","formatVersion":"1.0","children":[{"type":"rectangle","id":"r","futureNodeField":{"mustSurvive":true}}],"editorMeta":{"activePageIndex":9}}"#;
-        let mut output = Vec::new();
-
-        write_source_with_current_schema(
-            &mut output,
-            source,
-            EditorMeta {
-                active_page_index: 2,
-                preserve_authored_geometry: true,
-                scenario: None,
-            },
-        )
-        .expect("current-schema rewrite");
-
-        let parsed: serde_json::Value = serde_json::from_slice(&output).expect("valid JSON");
-        assert_eq!(
-            parsed["formatVersion"],
-            jian_ops_schema::version::FORMAT_VERSION_CURRENT
-        );
-        assert_eq!(
-            parsed["children"][0]["futureNodeField"]["mustSurvive"],
-            true
-        );
-        assert_eq!(parsed["editorMeta"]["activePageIndex"], 2);
-        assert_eq!(
-            parsed["editorMeta"]["preserveAuthoredGeometry"],
-            serde_json::Value::Bool(true)
-        );
-    }
-}
+#[path = "editor_meta_tests.rs"]
+mod tests;

@@ -52,6 +52,9 @@ pub use scene_template_panel::{
     SceneTemplateHit, SceneTemplatePanel, SCENE_TEMPLATE_CLOSE_HOVER, SCENE_TEMPLATE_PANEL_H,
     SCENE_TEMPLATE_PANEL_W,
 };
+pub mod asset_center_style_cards;
+#[cfg(test)]
+mod asset_center_tab_tests;
 #[cfg(test)]
 mod prompt_center_shared_flow_tests;
 pub mod property_panel;
@@ -131,6 +134,7 @@ pub mod property_panel_widget;
 mod property_panel_widget_tests;
 mod scene_template_panel_paint;
 pub(crate) mod scene_template_previews;
+mod scene_template_style_paint;
 pub mod text_input;
 pub(crate) mod text_input_backend;
 mod text_selection;
@@ -287,12 +291,16 @@ pub mod align_toolbar;
 pub mod color_picker;
 mod component_browser_kits;
 pub mod component_browser_panel;
+pub mod deck_filmstrip;
+pub mod deck_filmstrip_flow;
 pub(crate) mod design_md_line_cache;
 pub mod design_md_markdown;
 pub mod design_md_panel;
 #[cfg(test)]
 mod design_md_panel_tests;
 pub mod export_dialog;
+pub mod export_menu_rows;
+pub mod export_quick_menu;
 pub mod figma_import;
 pub mod figma_import_progress;
 pub mod file_drop_overlay;
@@ -333,6 +341,8 @@ pub mod property_panel_color_variables;
 mod property_panel_color_variables_tests;
 pub(crate) mod settings_form;
 pub mod shape_picker;
+pub mod slides_panel;
+pub mod slides_panel_flow;
 pub mod slideshow_toolbar;
 pub mod status_bar;
 pub mod top_bar;
@@ -385,8 +395,10 @@ pub use component_browser_panel::{
     ComponentBrowserHit, ComponentBrowserPanel, COMPONENT_BROWSER_PANEL_H,
     COMPONENT_BROWSER_PANEL_W,
 };
+pub use deck_filmstrip::{DeckFilmstrip, FilmstripChip, FilmstripLayout, FILMSTRIP_HEIGHT};
 pub use design_md_panel::{DesignMdHit, DesignMdPanel, DESIGN_MD_PANEL_H, DESIGN_MD_PANEL_W};
 pub use export_dialog::{ExportDialog, ExportDialogHit, ExportFormat};
+pub use export_quick_menu::{ExportQuickMenu, ExportQuickMenuHit};
 pub use git_panel::{GitPanel, GitPanelHit, GIT_PANEL_INSET, GIT_PANEL_WIDTH};
 pub use html_import_diagnostics_panel::{HtmlImportDiagnosticsHit, HtmlImportDiagnosticsPanel};
 pub use icon_picker_panel::{
@@ -401,6 +413,7 @@ pub use prompt_center_panel::{
     PROMPT_CENTER_PANEL_W,
 };
 pub use shape_picker::{ShapeChoice, ShapePicker, SHAPE_PICKER_WIDTH};
+pub use slides_panel::{SlidesPanel, SlidesPanelLayout, SlidesPanelTabs, SLIDES_TAB_ROW_HEIGHT};
 pub use status_bar::{StatusBar, STATUS_BAR_HEIGHT, STATUS_BAR_WIDTH};
 pub use top_bar::{TopBar, TopBarHit, TOP_BAR_HEIGHT};
 pub use top_bar_window_control::WindowControl;

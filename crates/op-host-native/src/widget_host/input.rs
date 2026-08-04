@@ -627,6 +627,17 @@ impl WidgetHostNative {
         if let Some(consumed) = self.cursor_move_topbar_tiers(&mut ctx) {
             return consumed;
         }
+        // Tier 7b — the left rail's slides tab. Above the base tier's
+        // layer-row hover because when the slides tab is showing there
+        // are no layer rows under the cursor to hover, and its tab row
+        // sits over the tree in the other tab. A live row drag keeps
+        // ownership wherever the pointer went, so a reorder does not
+        // cancel the moment the cursor leaves the rail.
+        let slides_hover =
+            self.slides_panel_hover(x, y, self.last_viewport_w, self.last_viewport_h);
+        if slides_hover.0 {
+            return slides_hover.1;
+        }
         // Tier 8 — single-shot chat probe. Deliberately NOT a consuming
         // tier: the late drags below must still run, so chat ownership is
         // returned and acted on by the base tier.

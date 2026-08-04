@@ -273,7 +273,7 @@ fn apply_request_snapshot(
                 broadcast_version = Some(version);
             }
         }
-        if let Some(meta) = req.editor_meta {
+        if let Some(meta) = req.editor_meta.clone() {
             op_pen_loader::apply_editor_meta(&mut guard.editor, meta);
         }
         if let Some(size) = req.agent_team_size {
@@ -488,6 +488,7 @@ fn stream_new_design_route<W: Write>(
             .clamp(1, 6),
         validation_enabled: true,
         visual_ref_enabled: false,
+        pinned_style_guide: snapshot.editor_ui.pinned_style_guide.clone(),
     };
     // Share one provider Arc between the design LLM and (optionally) the
     // vision validator, so the real vision loop reuses the same auth/model

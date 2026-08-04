@@ -9,8 +9,9 @@
 
 use op_editor_core::host_press_transitions as core_press;
 use op_editor_core::ui_draft::LayerContextTarget;
-use op_editor_core::{BooleanOp, EditorState, Tool};
+use op_editor_core::{BooleanOp, EditorState, ExportQuickRow, Tool};
 
+use crate::widgets::export_quick_menu::{ExportQuickMenu, ExportQuickMenuHit};
 use crate::widgets::layer_context_menu::LayerContextAction;
 use crate::widgets::property_panel_fill;
 use crate::widgets::{
@@ -197,6 +198,64 @@ pub fn press_locale_picker(
     }
 }
 
+// ─── Export quick menu ─────────────────────────────────────────────────
+
+/// Outcome of a press routed to the open TopBar export dropdown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportQuickMenuPress {
+    /// A row was picked: its file action is queued and the menu closed.
+    Applied,
+    /// Menu chrome — swallow, keep it open.
+    Swallow,
+    /// Outside press — the host blurs its text inputs (a blank press),
+    /// then closes the menu.
+    Outside,
+}
+
+/// Export-dropdown press. Caller must have checked
+/// `editor_ui.export_quick_menu_open` and resolved `panel_rect`.
+pub fn press_export_quick_menu(
+    state: &mut EditorState,
+    panel_rect: Rect,
+    point: Point2D,
+) -> ExportQuickMenuPress {
+    let menu = ExportQuickMenu::for_editor_ui(&state.editor_ui);
+    match menu.hit(panel_rect, point) {
+        ExportQuickMenuHit::Row(row) => {
+            apply_export_quick_row(state, row);
+            ExportQuickMenuPress::Applied
+        }
+        ExportQuickMenuHit::Inside => ExportQuickMenuPress::Swallow,
+        ExportQuickMenuHit::Outside => ExportQuickMenuPress::Outside,
+    }
+}
+
+/// Queue the file action behind an export-menu row and close the menu.
+///
+/// Every row reuses the File menu's own action, so nothing new happens
+/// downstream: the same host handler runs whichever entry point raised it.
+/// PDF is the one row that skips a dialog — it sets the format the export
+/// dialog would have set and commits straight to the save picker, because
+/// picking PDF *is* the choice the dialog would have asked for.
+///
+/// No collaboration gate here: every export maps to
+/// `CollabGateAction::LocalUi`, which the policy admits unconditionally.
+pub fn apply_export_quick_row(state: &mut EditorState, row: ExportQuickRow) {
+    use op_editor_core::editor_ui_state::{ExportFormat, FileAction};
+    let action = match row {
+        ExportQuickRow::Pptx => FileAction::ExportPptx,
+        ExportQuickRow::Pdf => {
+            state.editor_ui.export_format = ExportFormat::Pdf;
+            FileAction::ExportImageConfirm
+        }
+        ExportQuickRow::SlideshowHtml => FileAction::ExportSlideshowHtml,
+        ExportQuickRow::Image => FileAction::ExportImage,
+        ExportQuickRow::AllFrames => FileAction::ExportAllFrames,
+    };
+    state.editor_ui.pending_file_action = Some(action);
+    core_press::close_export_quick_menu(&mut state.editor_ui);
+}
+
 // ─── Shape picker ──────────────────────────────────────────────────────
 
 /// Outcome of a press routed to the open toolbar shape dropdown.
@@ -279,6 +338,26 @@ pub fn apply_shared_top_bar_hit(
         }
         TopBarHit::ToggleLocale => {
             core_press::toggle_locale_picker(&mut state.editor_ui);
+            TopBarPress::Handled
+        }
+        TopBarHit::OpenExportMenu => {
+            core_press::toggle_export_quick_menu(&mut state.editor_ui);
+            TopBarPress::Handled
+        }
+        // Same dismissal set the export button applies: the Asset Center is
+        // a full-size panel, so leaving a dropdown open would float it over
+        // a grid the user can no longer reach past.
+        TopBarHit::OpenAssetCenter => {
+            core_press::close_export_quick_menu(&mut state.editor_ui);
+            core_press::close_locale_picker(&mut state.editor_ui);
+            state.editor_ui.file_menu_open = false;
+            state.editor_ui.file_menu.hover = None;
+            state.editor_ui.import_menu_open = false;
+            state.editor_ui.import_menu.open = false;
+            state.editor_ui.import_menu.hover = None;
+            state.editor_ui.account_menu_open = false;
+            state.editor_ui.open_scene_template_center(now_ms);
+            state.chat.blur_input(now_ms);
             TopBarPress::Handled
         }
         TopBarHit::OpenAgentSettings => {

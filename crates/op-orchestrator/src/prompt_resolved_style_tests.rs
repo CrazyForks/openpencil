@@ -29,6 +29,7 @@ fn req() -> DesignRequest {
         append_context: None,
         validation_enabled: true,
         visual_ref_enabled: false,
+        pinned_style_guide: None,
     }
 }
 

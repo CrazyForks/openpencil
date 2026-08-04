@@ -78,6 +78,9 @@ impl DesktopApp {
                 | NamedKey::ArrowUp
                 | NamedKey::ArrowDown,
             ) if prompt_center_open => consumed = true,
+            Key::Named(ref arrow) if self.scene_template_owns_arrow(arrow) => {
+                consumed = self.apply_scene_template_arrow(arrow);
+            }
             // Preview (Play) mode owns Tab + arrows: Tab advances the
             // widget focus chain (the runner otherwise drops Tab as a
             // control char, so the user could never focus an input

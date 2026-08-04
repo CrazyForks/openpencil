@@ -124,6 +124,12 @@ impl WidgetHostNative {
             let stage = self.preview_canvas_rect(viewport_width, viewport_height);
             self.frame_slideshow_board((stage.size.x, stage.size.y));
         }
+        // Resolved here, ahead of the long immutable borrow below, because
+        // deriving it needs `&mut self` (it refreshes the scene to find the
+        // boards). Painted at §7.5.
+        let filmstrip = (!presenting)
+            .then(|| self.deck_filmstrip_frame(viewport_width, viewport_height))
+            .flatten();
         let ui = &self.editor_state.editor_ui;
 
         // 2. TopBar.
@@ -139,13 +145,25 @@ impl WidgetHostNative {
             top_bar.paint(&mut cx, top_bar_rect);
         }
 
-        // 3. LayerPanel — skipped when the sidebar is collapsed, and while
-        //    presenting (see `presenting` above).
-        if ui.sidebar_open && !presenting {
+        // 3. The left rail — skipped when the sidebar is collapsed and
+        //    while presenting (see `presenting` above). It shows either
+        //    the deck's slides navigator, which OWNS the rail when it is
+        //    on show, or the Pages + Layers tree.
+        let rail_open = ui.sidebar_open && !presenting;
+        let slides_panel = if rail_open {
+            self.slides_panel_frame(viewport_width, viewport_height)
+        } else {
+            None
+        };
+        if let Some(slides) = &slides_panel {
+            self.paint_slides_panel(frame, slides);
+        }
+        if rail_open && slides_panel.is_none() {
             // Compute the active drop target so the panel can paint
             // the drop-indicator line during a drag-to-reorder.
-            let layer_panel_rect =
-                canvas_geometry::layer_panel_rect(&self.editor_state, viewport_height);
+            // The rail is the tab row's leftovers when a tab row shows,
+            // so paint and hit-test both start from the same rect.
+            let layer_panel_rect = self.layers_content_rect(viewport_height);
             // Build the panel for paint. While a drag is active,
             // exclude the source's subtree so the rendered row stack
             // mirrors the post-commit layout — both the visible rows
@@ -179,10 +197,18 @@ impl WidgetHostNative {
                 }
             }
             layer_panel.now_ms = self.now_ms;
-            let mut cx = PaintCx {
-                backend: &mut *frame,
-            };
-            layer_panel.paint(&mut cx, layer_panel_rect);
+            {
+                let mut cx = PaintCx {
+                    backend: &mut *frame,
+                };
+                layer_panel.paint(&mut cx, layer_panel_rect);
+            }
+            // The tab row heads the rail in BOTH tabs — it is how the
+            // user gets back to the slides — so it paints over the
+            // layer tree's own card background here.
+            if let Some(tabs) = self.slides_tab_row(viewport_height) {
+                self.paint_slides_tab_row(frame, &tabs);
+            }
         }
 
         // 4. CanvasViewport — middle band, respects sidebar
@@ -388,6 +414,15 @@ impl WidgetHostNative {
             chat.paint(&mut cx, chat_rect);
         }
 
+        // 7.5. Deck filmstrip — floating bottom-centre, below the
+        //      StatusBar in z-order because the two can overlap on a
+        //      narrow canvas and the zoom pill must stay clickable
+        //      (the press ladder resolves them in this same order).
+        //      Hidden while presenting, like every other canvas chrome.
+        if let Some(strip) = filmstrip.as_ref() {
+            self.paint_deck_filmstrip(&mut *frame, strip);
+        }
+
         // 8. StatusBar — floating bottom-right.
         if let Some(status_rect) =
             canvas_geometry::status_bar_rect(&self.editor_state, viewport_width, viewport_height)
@@ -548,33 +583,15 @@ impl WidgetHostNative {
             panel.paint(&mut cx, panel_rect);
         }
 
-        // 10b. File-menu dropdown — anchored under TopBar's
-        //      folder+chevron button.
+        // 10b. TopBar dropdowns — the File menu and the export quick menu
+        //      (bodies in `paint_chrome_menus.rs`). Only one is open at a
+        //      time; the file menu paints first so a stale flag can never
+        //      hide the shortcut behind it.
         if ui.file_menu_open {
-            use op_editor_ui::widgets::file_menu::FileMenu;
-            use op_editor_ui::widgets::top_bar::TopBar;
-            let top_bar_rect = Rect {
-                origin: Point2D::new(0.0, 0.0),
-                size: Point2D::new(viewport_width, op_editor_ui::widgets::TOP_BAR_HEIGHT),
-            };
-            let anchor =
-                TopBar::file_menu_rect(top_bar_rect, self.editor_state.editor_ui.window_fullscreen);
-            let now_secs = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            // Selected-frame count only names the batch-export row; it
-            // leaves row geometry untouched, so the hit-test call sites
-            // keep building the menu without it.
-            let selected_frames =
-                op_editor_core::export_batch::selected_frame_count(&self.editor_state);
-            let menu = FileMenu::from_editor_ui(&self.editor_state.editor_ui, now_secs)
-                .with_selected_frames(selected_frames);
-            let menu_rect = menu.rect_at(anchor);
-            let mut cx = PaintCx {
-                backend: &mut *frame,
-            };
-            menu.paint(&mut cx, menu_rect);
+            self.paint_file_menu_overlay(frame, viewport_width);
+        }
+        if ui.export_quick_menu_open {
+            self.paint_export_quick_menu_overlay(frame, viewport_width);
         }
 
         // 10c. Figma import modal — full-viewport scrim + centred card.

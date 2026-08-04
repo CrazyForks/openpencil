@@ -38,7 +38,7 @@ fn compact_planning_prompt_matches_ts_golden() {
         });
         let golden: CompactGolden = serde_json::from_str(&raw)
             .unwrap_or_else(|e| panic!("malformed golden {}.json: {e}", c.name));
-        let got = build_compact_planning_prompt(&c.prompt, None);
+        let got = build_compact_planning_prompt(&c.prompt, None, None);
         assert_eq!(got.system, golden.system, "case {}: system drift", c.name);
         assert_eq!(
             got.user_prompt, golden.user_prompt,

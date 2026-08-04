@@ -27,10 +27,7 @@ impl WidgetHost {
             && x <= panel_w
         {
             self.refresh_layout_scene();
-            let layer_rect = Rect {
-                origin: Point2D::new(0.0, TOP_BAR_HEIGHT),
-                size: Point2D::new(panel_w, (viewport_h - TOP_BAR_HEIGHT).max(0.0)),
-            };
+            let layer_rect = self.layer_panel_rect(viewport_h);
             let panel = self.layer_panel();
             match panel.hit_test(layer_rect, Point2D::new(x, y)) {
                 Some(LayerPanelHit::Layer(id))
@@ -87,6 +84,7 @@ impl WidgetHost {
             changed |= ui.hovered_layer_id.take().is_some();
             changed |= ui.hovered_page_index.take().is_some();
             changed |= ui.file_menu.hover.take().is_some();
+            changed |= ui.export_quick_menu_hover.take().is_some();
             changed |= ui.locale_picker.hover.take().is_some();
             changed |= ui.shape_picker.hover.take().is_some();
             changed |= ui.fill_type_picker.hover.take().is_some();
@@ -179,6 +177,7 @@ impl WidgetHost {
             changed |= ui.hovered_layer_id.take().is_some();
             changed |= ui.hovered_page_index.take().is_some();
             changed |= ui.file_menu.hover.take().is_some();
+            changed |= ui.export_quick_menu_hover.take().is_some();
             changed |= ui.locale_picker.hover.take().is_some();
             changed |= ui.shape_picker.hover.take().is_some();
             changed |= ui.fill_type_picker.hover.take().is_some();

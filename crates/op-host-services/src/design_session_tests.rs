@@ -61,6 +61,7 @@ mod spawn_worker_tests {
             append_context: None,
             validation_enabled: false,
             visual_ref_enabled: false,
+            pinned_style_guide: None,
         }
     }
 
@@ -196,6 +197,7 @@ mod subtask_retry_tests {
             append_context: None,
             validation_enabled: false,
             visual_ref_enabled: false,
+            pinned_style_guide: None,
         }
     }
 

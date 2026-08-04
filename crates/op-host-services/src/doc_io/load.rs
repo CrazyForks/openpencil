@@ -96,6 +96,7 @@ fn parse_editor_state_source(
         normalized_legacy: canonical.compatibility.normalized_legacy,
         patched_legacy_version: canonical.compatibility.patched_legacy_version,
         inferred_editor_meta: embedded
+            .as_ref()
             .is_some_and(|extraction| extraction.inferred_preserve_authored_geometry),
         used_legacy_sidecar: false,
         rewrite_blocked_by_schema_warning,

@@ -4,9 +4,9 @@
 //! Split out of the `editor_ui_state` spine (800-line file ceiling).
 
 use super::{
-    DesignMdPanelState, EditorUiState, EmbedHost, ExportFormat, FlexLayout, GitPanelState, Locale,
-    PencilCursorStyle, PreviewState, PromptCenterState, PropertyTab, SceneTemplateCenterState,
-    SizeToggleState, ThemeMode, UpdateStatus,
+    DeckFilmstripState, DesignMdPanelState, EditorUiState, EmbedHost, ExportFormat, FlexLayout,
+    GitPanelState, Locale, PencilCursorStyle, PreviewState, PromptCenterState, PropertyTab,
+    SceneTemplateCenterState, SizeToggleState, ThemeMode, UpdateStatus,
 };
 use crate::tool::Tool;
 use std::collections::HashSet;
@@ -24,6 +24,8 @@ impl Default for EditorUiState {
             collab: Default::default(),
             file_menu_open: false,
             file_menu: Default::default(),
+            export_quick_menu_open: false,
+            export_quick_menu_hover: None,
             pending_file_action: None,
             recent_files: Vec::new(),
             file_name_display: None,
@@ -55,6 +57,8 @@ impl Default for EditorUiState {
             preserve_authored_geometry: false,
             scenario: None,
             preview: PreviewState::default(),
+            deck_filmstrip: DeckFilmstripState::default(),
+            slides_panel: super::SlidesPanelState::default(),
             agent_settings_open: false,
             agent_settings: crate::agent_settings::AgentSettings::default(),
             agent_settings_drag: None,
@@ -133,6 +137,8 @@ impl Default for EditorUiState {
             font_import_supported: false,
             batch_frame_export_supported: false,
             deck_html_export_supported: false,
+            slide_thumbnails_supported: false,
+            scene_template_generate_supported: false,
             property_color_variable_picker_scroll: Default::default(),
             property_color_variable_picker_hover: None,
             html_import_diagnostics: Vec::new(),
@@ -193,6 +199,7 @@ impl Default for EditorUiState {
             design_md_panel: DesignMdPanelState::default(),
             prompt_center: PromptCenterState::default(),
             scene_template_center: SceneTemplateCenterState::default(),
+            pinned_style_guide: None,
             component_browser_open: false,
             canvas_hover_node: None,
             entered_container: None,

@@ -218,6 +218,12 @@ impl WidgetHostNative {
         if self.pan_cache_restore.is_some() {
             next = bookkeeping::earliest(next, self.now_ms.saturating_add(16));
         }
+        // Slides-tab thumbnails: the rail renders a bounded batch per
+        // frame and waits out an edit before re-rendering, so it asks
+        // for the next wake here rather than dirtying the whole host.
+        if let Some(at) = self.slide_thumbs.wake_deadline_ms() {
+            next = bookkeeping::earliest(next, at);
+        }
         // While previewing, keep the loop ticking (~30 fps) so the live
         // runtime's caret blink + any time-driven widget state animates.
         if self.preview.is_some() {

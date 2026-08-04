@@ -342,7 +342,7 @@ impl SaveSession {
                     } => op_host_services::doc_io::copy_clean_document_with_editor_meta_to_path(
                         source_path,
                         &worker_path,
-                        *editor_meta,
+                        editor_meta.clone(),
                     ),
                 }
                 // `doc_io` belongs to `op-host-services`, a crate this pass

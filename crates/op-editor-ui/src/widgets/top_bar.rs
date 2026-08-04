@@ -82,6 +82,10 @@ pub enum TopBarHit {
     ToggleTheme,
     /// Globe icon — cycle through UI locales.
     ToggleLocale,
+    /// Download icon — toggle the scenario-aware export quick menu.
+    OpenExportMenu,
+    /// Palette icon — open the Asset Center (templates + styles).
+    OpenAssetCenter,
     /// Agents and MCP chip — open the agent settings modal.
     OpenAgentSettings,
     /// Collaboration status / participant chip — open the collaboration
@@ -454,6 +458,15 @@ impl TopBar {
         // hidden) → toggle Preview mode.
         if self.preview_button_visible() && self.preview_button_rect(rect).contains(point) {
             return Some(TopBarHit::TogglePreview);
+        }
+        // Download (just left of Play) → export quick menu. Offered on
+        // every document; the menu itself decides which rows apply.
+        if (self.export_button_rect(rect)).contains(point) {
+            return Some(TopBarHit::OpenExportMenu);
+        }
+        // Palette (just left of Download) → Asset Center.
+        if (self.asset_center_button_rect(rect)).contains(point) {
+            return Some(TopBarHit::OpenAssetCenter);
         }
         let sun_rect = self.theme_button_rect(rect);
         if (sun_rect).contains(point) {

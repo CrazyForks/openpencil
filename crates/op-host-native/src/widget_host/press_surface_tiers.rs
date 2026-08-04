@@ -13,8 +13,8 @@ use super::{
 };
 use op_editor_core::host_press_transitions as core_press;
 use op_editor_ui::widgets::chat_click_flow;
-use op_editor_ui::widgets::{AIChatHit, AIChatPlaceholder, Toolbar, TOP_BAR_HEIGHT};
-use op_editor_ui::{Point2D, Rect};
+use op_editor_ui::widgets::{AIChatHit, AIChatPlaceholder, Toolbar};
+use op_editor_ui::Point2D;
 
 impl WidgetHostNative {
     /// `None` — neither the Git panel nor the chat claimed the press.
@@ -156,17 +156,17 @@ impl WidgetHostNative {
         let (x, y) = (ctx.x, ctx.y);
         let viewport_width = ctx.viewport_width;
         let viewport_height = ctx.viewport_height;
+        // 2b. The rail's slides tab owns the whole rail while it is on
+        //     show, and its tab row takes clicks even while the layer
+        //     tree owns the rest — so it is asked first.
+        if self.slides_panel_press(x, y, viewport_width, viewport_height) {
+            return Some(true);
+        }
         // 3. apply_click — LayerPanel + chat-defocus. Peek the
         //    LayerPanel hit-test for a drag-to-reorder candidate.
         if self.editor_state.editor_ui.sidebar_open {
             use op_editor_ui::widgets::LayerPanelHit;
-            let layer_rect = Rect {
-                origin: Point2D::new(0.0, TOP_BAR_HEIGHT),
-                size: Point2D::new(
-                    self.editor_state.editor_ui.layer_panel_width,
-                    (viewport_height - TOP_BAR_HEIGHT).max(0.0),
-                ),
-            };
+            let layer_rect = self.layers_content_rect(viewport_height);
             let panel = self.layer_panel();
             if let Some(LayerPanelHit::Layer(node_id)) =
                 panel.hit_test(layer_rect, Point2D::new(x, y))

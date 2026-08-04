@@ -7,15 +7,18 @@
 //! flag: a whole frame set at once
 //! (`EditorUiState::batch_frame_export_supported`) and, on a deck
 //! document, the self-contained slideshow page
-//! (`EditorUiState::deck_html_export_supported`). Everything after the
-//! export section shifts with however many of them are present.
+//! (`EditorUiState::deck_html_export_supported`, which gates the whole
+//! deck-export family — the slideshow page and the editable PowerPoint
+//! deck have the same host requirements, a save picker plus the
+//! offscreen rasteriser, so one flag answers for both). Everything after
+//! the export section shifts with however many of them are present.
 
 use crate::theme::Theme;
 use crate::widgets::editor_state_ext::theme_for;
-use crate::widgets::icons::{draw_icon, Icon};
+use crate::widgets::export_menu_rows;
 use crate::widgets::menu_paint;
-use crate::widgets::{LayoutBox, LayoutCx, PaintCx, Widget, WidgetId};
-use crate::{Color, Point2D, Rect, TextLayout};
+use crate::widgets::WidgetId;
+use crate::{Point2D, Rect};
 pub use jian_widgets::components::menu::MenuHit;
 use op_editor_core::editor_ui_state::EditorUiState;
 
@@ -32,6 +35,7 @@ fn t(ui: &EditorUiState, key: &str) -> &'static str {
         "exportImage" => "fileMenu.exportImage",
         "exportAllFrames" => "fileMenu.exportAllFrames",
         "exportSlideshowHtml" => "fileMenu.exportSlideshowHtml",
+        "exportPptx" => "fileMenu.exportPptx",
         "recentFiles" => "fileMenu.recentFiles",
         "noRecentFiles" => "fileMenu.noRecentFiles",
         "clearHistory" => "fileMenu.clearHistory",
@@ -60,6 +64,15 @@ const SHORTCUT_FONT: f32 = 11.0;
 const FONT_FAMILY: &str = "system-ui";
 const RECENT_COLUMN_GAP: f32 = 10.0;
 
+#[path = "file_menu_paint.rs"]
+mod paint;
+
+// The paint bodies moved to `file_menu_paint.rs` at the 800-line cap. The
+// re-export keeps `file_menu::truncate_to_width` at the path its callers
+// already use; the row-column geometry and the measured truncation core
+// stayed here, next to the rest of the row map they belong to.
+pub(crate) use paint::truncate_to_width;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileMenuChoice {
     NewFile,
@@ -77,6 +90,12 @@ pub enum FileMenuChoice {
     /// only when the host sets `EditorUiState::deck_html_export_supported`
     /// AND the document is tagged as a deck.
     ExportSlideshowHtml,
+    /// Export the deck as an editable PowerPoint `.pptx` — same gate as
+    /// [`FileMenuChoice::ExportSlideshowHtml`], one row below it. The two
+    /// answer different questions: the HTML page is for presenting as
+    /// authored, the `.pptx` is for handing the deck to someone who will
+    /// keep working on it.
+    ExportPptx,
     OpenRecent(usize),
     ClearRecent,
 }
@@ -137,34 +156,34 @@ impl<'a> FileMenu<'a> {
         Self::for_editor_ui(ui, recent)
     }
 
-    /// Whether the batch frame-export row is offered — hosts without a
-    /// directory picker + offscreen exporter leave it out entirely
-    /// rather than paint a dead row.
+    /// Whether the batch frame-export row is offered. Both export
+    /// surfaces read the same predicate — see `export_menu_rows`.
     fn has_export_all_row(&self) -> bool {
-        self.ui.batch_frame_export_supported
+        export_menu_rows::batch_frame_export_available(self.ui)
     }
 
-    /// Whether the deck-slideshow row is offered. Two conditions, both
-    /// necessary: the host can write the file at all, and the document
-    /// is a deck — exporting a dashboard as a slideshow would be an
-    /// offer with no meaning behind it.
-    fn has_deck_html_row(&self) -> bool {
-        self.ui.deck_html_export_supported
-            && self.ui.scenario
-                == Some(op_editor_core::scene_template_catalog::TemplateScene::Slides)
+    /// Whether the deck-export rows are offered — same predicate the
+    /// TopBar quick menu gates its deck rows on.
+    fn has_deck_export_rows(&self) -> bool {
+        export_menu_rows::deck_export_available(self.ui)
     }
 
     /// Rows in the export section (Export image, plus the optional
-    /// Export-all-frames and Export-slideshow rows below it).
+    /// Export-all-frames row and the two deck-export rows below it).
     fn export_rows(&self) -> usize {
-        1 + usize::from(self.has_export_all_row()) + usize::from(self.has_deck_html_row())
+        1 + usize::from(self.has_export_all_row()) + 2 * usize::from(self.has_deck_export_rows())
     }
 
     /// Row index of the deck-slideshow row — directly under whichever
     /// export rows precede it. Only meaningful when
-    /// [`FileMenu::has_deck_html_row`] holds.
+    /// [`FileMenu::has_deck_export_rows`] holds.
     fn deck_html_row(&self) -> usize {
         6 + usize::from(self.has_export_all_row())
+    }
+
+    /// Row index of the PowerPoint row, directly under the slideshow one.
+    fn deck_pptx_row(&self) -> usize {
+        self.deck_html_row() + 1
     }
 
     /// Row index of the first recent-file entry. Everything after the
@@ -233,8 +252,11 @@ impl<'a> FileMenu<'a> {
             4 => Some(FileMenuChoice::SaveAs),
             5 => Some(FileMenuChoice::ExportImage),
             6 if self.has_export_all_row() => Some(FileMenuChoice::ExportAllFrames),
-            row if self.has_deck_html_row() && row == self.deck_html_row() => {
+            row if self.has_deck_export_rows() && row == self.deck_html_row() => {
                 Some(FileMenuChoice::ExportSlideshowHtml)
+            }
+            row if self.has_deck_export_rows() && row == self.deck_pptx_row() => {
+                Some(FileMenuChoice::ExportPptx)
             }
             row if row >= recent_start && row < recent_start + self.recent.len() => {
                 Some(FileMenuChoice::OpenRecent(row - recent_start))
@@ -304,353 +326,11 @@ impl<'a> FileMenu<'a> {
     }
 }
 
-// Shared menu-row geometry/paint bodies live in `menu_paint` (see its
-// doc for the hover-tint colour rationale); these thin wrappers bind
-// this menu's width/row/pad constants.
-fn paint_row_tint(cx: &mut PaintCx<'_>, theme: &Theme, x: f32, y: f32) {
-    menu_paint::paint_row_tint(cx, theme, x, y, MENU_WIDTH, ROW_HEIGHT);
-}
-
+// Shared menu-row geometry lives in `menu_paint`; this thin wrapper binds
+// this menu's width/row constants. Its paint twin sits beside the rest of
+// the paint code in `file_menu_paint.rs`.
 fn row_hit(x: f32, y: f32, point: Point2D) -> bool {
     menu_paint::row_hit(x, y, point, MENU_WIDTH, ROW_HEIGHT)
-}
-
-impl<'a> Widget for FileMenu<'a> {
-    fn id(&self) -> WidgetId {
-        self.id
-    }
-
-    fn layout(&self, _cx: &LayoutCx) -> LayoutBox {
-        LayoutBox {
-            rect: Rect {
-                origin: Point2D::new(0.0, 0.0),
-                size: Point2D::new(MENU_WIDTH, self.height()),
-            },
-        }
-    }
-
-    fn paint(&self, cx: &mut PaintCx<'_>, rect: Rect) {
-        cx.backend.fill_round_rect(rect, 10.0, self.theme.card);
-        cx.backend
-            .stroke_round_rect(rect, 10.0, self.theme.border, 1.0);
-        let h = |row: usize| self.menu.hover == Some(row);
-        let mut y = rect.origin.y + PAD_Y;
-        paint_row(
-            cx,
-            &self.theme,
-            rect.origin.x,
-            y,
-            Icon::Plus,
-            t(self.ui, "new"),
-            "⌘N",
-            h(0),
-        );
-        y += ROW_HEIGHT;
-        paint_row(
-            cx,
-            &self.theme,
-            rect.origin.x,
-            y,
-            Icon::LayoutDashboard,
-            t(self.ui, "newFromTemplate"),
-            "",
-            h(1),
-        );
-        y += ROW_HEIGHT;
-        paint_row(
-            cx,
-            &self.theme,
-            rect.origin.x,
-            y,
-            Icon::FolderOpen,
-            t(self.ui, "open"),
-            "⌘O",
-            h(2),
-        );
-        y += ROW_HEIGHT;
-        y = paint_divider(cx, &self.theme, rect, y);
-        paint_row(
-            cx,
-            &self.theme,
-            rect.origin.x,
-            y,
-            Icon::Save,
-            t(self.ui, "save"),
-            "⌘S",
-            h(3),
-        );
-        y += ROW_HEIGHT;
-        paint_row(
-            cx,
-            &self.theme,
-            rect.origin.x,
-            y,
-            Icon::Save,
-            t(self.ui, "saveAs"),
-            "⌘⇧S",
-            h(4),
-        );
-        y += ROW_HEIGHT;
-        y = paint_divider(cx, &self.theme, rect, y);
-        paint_row(
-            cx,
-            &self.theme,
-            rect.origin.x,
-            y,
-            Icon::Download,
-            t(self.ui, "exportImage"),
-            "⌘⇧P",
-            h(5),
-        );
-        y += ROW_HEIGHT;
-        if self.has_export_all_row() {
-            paint_row(
-                cx,
-                &self.theme,
-                rect.origin.x,
-                y,
-                Icon::LayoutGrid,
-                &self.export_all_label(),
-                "",
-                h(6),
-            );
-            y += ROW_HEIGHT;
-        }
-        if self.has_deck_html_row() {
-            let row = self.deck_html_row();
-            paint_row(
-                cx,
-                &self.theme,
-                rect.origin.x,
-                y,
-                Icon::Play,
-                t(self.ui, "exportSlideshowHtml"),
-                "",
-                h(row),
-            );
-            y += ROW_HEIGHT;
-        }
-        y = paint_divider(cx, &self.theme, rect, y);
-        paint_header(cx, &self.theme, rect.origin.x, y, t(self.ui, "recentFiles"));
-        y += HEADER_HEIGHT;
-        if self.recent.is_empty() {
-            paint_empty(
-                cx,
-                &self.theme,
-                rect.origin.x,
-                y,
-                t(self.ui, "noRecentFiles"),
-            );
-            y += ROW_HEIGHT;
-        } else {
-            let recent_start = self.recent_row_start();
-            for (i, entry) in self.recent.iter().enumerate() {
-                paint_recent_row(
-                    cx,
-                    &self.theme,
-                    rect.origin.x,
-                    y,
-                    entry,
-                    h(recent_start + i),
-                );
-                y += ROW_HEIGHT;
-            }
-        }
-        y = paint_divider(cx, &self.theme, rect, y);
-        if self.recent.is_empty() {
-            paint_row_disabled(
-                cx,
-                &self.theme,
-                rect.origin.x,
-                y,
-                Icon::Trash,
-                t(self.ui, "clearHistory"),
-                "",
-            );
-        } else {
-            paint_row(
-                cx,
-                &self.theme,
-                rect.origin.x,
-                y,
-                Icon::Trash,
-                t(self.ui, "clearHistory"),
-                "",
-                h(self.recent_row_start() + self.recent.len()),
-            );
-        }
-    }
-
-    fn access_node(&self) -> accesskit::Node {
-        let mut node = accesskit::Node::new(accesskit::Role::Menu);
-        node.set_label(op_i18n::translate(self.ui.locale, "a11y.fileMenu"));
-        node
-    }
-}
-
-// Paint-context + geometry args threaded through; a struct adds no gain.
-#[allow(clippy::too_many_arguments)]
-fn paint_row(
-    cx: &mut PaintCx<'_>,
-    theme: &Theme,
-    x: f32,
-    y: f32,
-    icon: Icon,
-    label: &str,
-    shortcut: &str,
-    hovered: bool,
-) {
-    if hovered {
-        paint_row_tint(cx, theme, x, y);
-    }
-    draw_icon(
-        cx.backend,
-        icon,
-        Point2D::new(x + PAD_X, y + (ROW_HEIGHT - ICON_SIZE) / 2.0),
-        ICON_SIZE,
-        theme.muted_foreground,
-        1.4,
-    );
-    let label_layout = TextLayout::single_run(
-        label,
-        FONT_FAMILY,
-        13.0,
-        (theme.foreground).to_jian(),
-        Point2D::new(0.0, 0.0),
-    );
-    cx.backend.draw_text(
-        &label_layout,
-        Point2D::new(x + PAD_X + ICON_SIZE + 10.0, y + ROW_HEIGHT / 2.0 + 5.0),
-    );
-    if !shortcut.is_empty() {
-        let sw = cx
-            .backend
-            .measure_text_family(shortcut, SHORTCUT_FONT, FONT_FAMILY);
-        let sl = TextLayout::single_run(
-            shortcut,
-            FONT_FAMILY,
-            SHORTCUT_FONT,
-            (theme.muted_foreground).to_jian(),
-            Point2D::new(0.0, 0.0),
-        );
-        cx.backend.draw_text(
-            &sl,
-            Point2D::new(x + MENU_WIDTH - PAD_X - sw, y + ROW_HEIGHT / 2.0 + 4.0),
-        );
-    }
-}
-
-/// Like `paint_row` but at ~50% opacity foreground colour so the
-/// row reads as inactive. Used for menu items whose backend isn't
-/// wired (Export image / Clear history). Pairs with `hit_test`
-/// returning `None` for the same coordinates.
-fn paint_row_disabled(
-    cx: &mut PaintCx<'_>,
-    theme: &Theme,
-    x: f32,
-    y: f32,
-    icon: Icon,
-    label: &str,
-    shortcut: &str,
-) {
-    let dim = Color {
-        r: theme.muted_foreground.r,
-        g: theme.muted_foreground.g,
-        b: theme.muted_foreground.b,
-        a: theme.muted_foreground.a * 0.55,
-    };
-    draw_icon(
-        cx.backend,
-        icon,
-        Point2D::new(x + PAD_X, y + (ROW_HEIGHT - ICON_SIZE) / 2.0),
-        ICON_SIZE,
-        dim,
-        1.4,
-    );
-    let label_layout = TextLayout::single_run(
-        label,
-        FONT_FAMILY,
-        13.0,
-        (dim).to_jian(),
-        Point2D::new(0.0, 0.0),
-    );
-    cx.backend.draw_text(
-        &label_layout,
-        Point2D::new(x + PAD_X + ICON_SIZE + 10.0, y + ROW_HEIGHT / 2.0 + 5.0),
-    );
-    if !shortcut.is_empty() {
-        let sw = cx
-            .backend
-            .measure_text_family(shortcut, SHORTCUT_FONT, FONT_FAMILY);
-        let sl = TextLayout::single_run(
-            shortcut,
-            FONT_FAMILY,
-            SHORTCUT_FONT,
-            (dim).to_jian(),
-            Point2D::new(0.0, 0.0),
-        );
-        cx.backend.draw_text(
-            &sl,
-            Point2D::new(x + MENU_WIDTH - PAD_X - sw, y + ROW_HEIGHT / 2.0 + 4.0),
-        );
-    }
-}
-
-fn paint_recent_row(
-    cx: &mut PaintCx<'_>,
-    theme: &Theme,
-    x: f32,
-    y: f32,
-    entry: &RecentEntry,
-    hovered: bool,
-) {
-    if hovered {
-        paint_row_tint(cx, theme, x, y);
-    }
-    draw_icon(
-        cx.backend,
-        Icon::FileText,
-        Point2D::new(x + PAD_X, y + (ROW_HEIGHT - ICON_SIZE) / 2.0),
-        ICON_SIZE,
-        theme.muted_foreground,
-        1.4,
-    );
-    // The age column keeps a stable right edge. The name is both measured
-    // and clipped before that column, so even an unexpected platform-font
-    // metric cannot paint over the age.
-    let aw = cx
-        .backend
-        .measure_text_family(&entry.age, SHORTCUT_FONT, FONT_FAMILY);
-    let (name_x, name_budget, age_x) = recent_row_columns(x, aw);
-    let display_name = truncate_to_width(cx, &entry.name, 13.0, name_budget);
-    let name_layout = TextLayout::single_run(
-        &display_name,
-        FONT_FAMILY,
-        13.0,
-        (theme.foreground).to_jian(),
-        Point2D::new(0.0, 0.0),
-    );
-    if name_budget > 0.0 {
-        cx.backend.save();
-        cx.backend.clip_rect(Rect {
-            origin: Point2D::new(name_x, y),
-            size: Point2D::new(name_budget, ROW_HEIGHT),
-        });
-        cx.backend.draw_text(
-            &name_layout,
-            Point2D::new(name_x, y + ROW_HEIGHT / 2.0 + 5.0),
-        );
-        cx.backend.restore();
-    }
-    let age_layout = TextLayout::single_run(
-        &entry.age,
-        FONT_FAMILY,
-        SHORTCUT_FONT,
-        (theme.muted_foreground).to_jian(),
-        Point2D::new(0.0, 0.0),
-    );
-    cx.backend
-        .draw_text(&age_layout, Point2D::new(age_x, y + ROW_HEIGHT / 2.0 + 4.0));
 }
 
 fn recent_row_columns(x: f32, age_width: f32) -> (f32, f32, f32) {
@@ -662,25 +342,14 @@ fn recent_row_columns(x: f32, age_width: f32) -> (f32, f32, f32) {
     (name_x, name_budget, age_x)
 }
 
-/// Truncate `s` so it fits `max_w` pixels at `font_size`, appending
-/// `…` when characters are dropped. Uses the backend's measurer so
-/// CJK glyph widths are honoured (a 13-px ASCII "pencil-demo.op" and
-/// the equivalent CJK string have very different advances).
-///
-/// `pub(crate)` (not private) — `screen_switcher_pills.rs` reuses it to
-/// ellipsize a screen name into a fixed-width pill.
-pub(crate) fn truncate_to_width(
-    cx: &mut PaintCx<'_>,
+/// `pub(crate)` so widgets that ellipsize into a fixed-width slot can
+/// test their budget against an injected advance model — the backend
+/// measurer is not reachable from a widget's pure tests.
+pub(crate) fn truncate_to_width_measured(
     s: &str,
-    font_size: f32,
     max_w: f32,
+    mut measure: impl FnMut(&str) -> f32,
 ) -> String {
-    truncate_to_width_measured(s, max_w, |text| {
-        cx.backend.measure_text_family(text, font_size, FONT_FAMILY)
-    })
-}
-
-fn truncate_to_width_measured(s: &str, max_w: f32, mut measure: impl FnMut(&str) -> f32) -> String {
     if max_w <= 0.0 {
         return String::new();
     }
@@ -707,39 +376,6 @@ fn truncate_to_width_measured(s: &str, max_w: f32, mut measure: impl FnMut(&str)
     } else {
         format!("{}…", kept)
     }
-}
-
-fn paint_empty(cx: &mut PaintCx<'_>, theme: &Theme, x: f32, y: f32, label: &str) {
-    let lw = cx.backend.measure_text_family(label, 12.0, FONT_FAMILY);
-    let lay = TextLayout::single_run(
-        label,
-        FONT_FAMILY,
-        12.0,
-        (theme.muted_foreground).to_jian(),
-        Point2D::new(0.0, 0.0),
-    );
-    cx.backend.draw_text(
-        &lay,
-        Point2D::new(x + (MENU_WIDTH - lw) / 2.0, y + ROW_HEIGHT / 2.0 + 4.0),
-    );
-}
-
-fn paint_header(cx: &mut PaintCx<'_>, theme: &Theme, x: f32, y: f32, label: &str) {
-    let layout = TextLayout::single_run(
-        label,
-        FONT_FAMILY,
-        11.0,
-        (theme.muted_foreground).to_jian(),
-        Point2D::new(0.0, 0.0),
-    );
-    cx.backend.draw_text(
-        &layout,
-        Point2D::new(x + PAD_X, y + HEADER_HEIGHT / 2.0 + 4.0),
-    );
-}
-
-fn paint_divider(cx: &mut PaintCx<'_>, theme: &Theme, rect: Rect, y: f32) -> f32 {
-    menu_paint::paint_divider(cx, theme, rect, y, MENU_WIDTH, PAD_X, DIVIDER_GAP)
 }
 
 fn file_name(path: &str) -> String {

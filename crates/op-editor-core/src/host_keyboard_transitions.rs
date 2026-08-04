@@ -31,6 +31,12 @@ pub use crate::prompt_center_keyboard::{
     text as prompt_center_text,
 };
 
+pub use crate::scene_template_keyboard::{
+    backspace as scene_template_backspace, delete_forward as scene_template_delete_forward,
+    move_caret as scene_template_caret, select_all as scene_template_select_all,
+    text as scene_template_text,
+};
+
 // ─── Legacy draft mirrors ──────────────────────────────────────────────
 //
 // The widget layer still paints the caret from the flat

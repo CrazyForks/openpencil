@@ -269,6 +269,14 @@ pub(crate) const FILE_SEARCH: &[&str] = &[
     "M2 14A3 3 0 1 0 8 14A3 3 0 1 0 2 14Z",
 ];
 
+// Lucide `file-down.svg` — export-a-document row in the export menu.
+pub(crate) const FILE_DOWN: &[&str] = &[
+    "M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z",
+    "M14 2v6h6",
+    "M12 18v-6",
+    "m9 15 3 3 3-3",
+];
+
 // Lucide `user-x.svg` — circle cx=9 cy=7 r=4 + two <line> → "M…L…".
 pub(crate) const USER_X: &[&str] = &[
     "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2",

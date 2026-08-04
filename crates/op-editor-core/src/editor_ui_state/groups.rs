@@ -80,6 +80,56 @@ pub struct SizeToggleState {
     pub clip_content: bool,
 }
 
+/// A chip drag in flight on the deck filmstrip.
+///
+/// `press_x` is kept alongside the live `pointer_x` so the release can
+/// tell a click (navigate to the slide) from a drag (reorder the deck):
+/// the two are the same gesture until the pointer has travelled far
+/// enough, and deciding on release rather than on press is what lets a
+/// slightly shaky click still navigate.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FilmstripDrag {
+    /// Index of the chip being dragged, in page order.
+    pub from: usize,
+    /// Where the press landed, in screen px.
+    pub press_x: f32,
+    /// Where the cursor is now, in screen px.
+    pub pointer_x: f32,
+}
+
+/// Deck filmstrip (page navigator) state.
+///
+/// Only transient pointer bookkeeping lives here — which chip the
+/// cursor is over, which one a press landed on, and the drag in flight.
+/// The page order itself is NOT mirrored here: it is the document's own
+/// child order (`crate::preview_slideshow::active_page_boards`), and a
+/// second copy of it would be a second answer to "what order are the
+/// slides in".
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct DeckFilmstripState {
+    /// Chip under the cursor — drives the hover wash.
+    pub hover: Option<usize>,
+    /// Chip a press landed on. Activates on RELEASE while the cursor is
+    /// still on it, the same contract the presenting toolbar uses.
+    pub pressed: Option<usize>,
+    /// The reorder gesture in flight, once the pointer has moved.
+    pub drag: Option<FilmstripDrag>,
+}
+
+impl DeckFilmstripState {
+    /// Forget every in-flight pointer interaction. Returns whether
+    /// anything was live — hosts use that as the repaint signal.
+    ///
+    /// Called whenever the strip stops being reachable (leaving the
+    /// document, entering Preview), so a gesture cannot survive the
+    /// strip it belongs to.
+    pub fn clear(&mut self) -> bool {
+        let live = self.hover.is_some() || self.pressed.is_some() || self.drag.is_some();
+        *self = Self::default();
+        live
+    }
+}
+
 /// Floating Design-MD panel state.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DesignMdPanelState {
@@ -306,6 +356,52 @@ pub enum SceneFilter {
     Scene(TemplateScene),
 }
 
+/// Which Scene Template Center field owns the keyboard.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SceneTemplateFocus {
+    /// The catalogue search field, focused whenever the panel opens.
+    #[default]
+    Search,
+    /// The generate row's topic field.
+    Generate,
+}
+
+/// Which asset family the Asset Center is showing.
+///
+/// The panel started life as a template gallery and grew into the shared
+/// home for every reusable asset, so the tab is an enum rather than a
+/// boolean: the planned Design Systems / Scripts tabs must be one variant
+/// plus one match arm, not a second layout branch.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AssetCenterTab {
+    /// The shipped scene templates — the panel's original content.
+    #[default]
+    Templates,
+    /// The style-guide catalogue, one card per guide.
+    Styles,
+}
+
+impl AssetCenterTab {
+    /// Every tab, in the order the chip row paints them.
+    pub const ALL: [AssetCenterTab; 2] = [AssetCenterTab::Templates, AssetCenterTab::Styles];
+
+    /// i18n key for this tab's chip label.
+    pub fn title_key(self) -> &'static str {
+        match self {
+            AssetCenterTab::Templates => "assetCenter.tab.templates",
+            AssetCenterTab::Styles => "assetCenter.tab.styles",
+        }
+    }
+
+    /// Label used when the locale table has no entry for [`Self::title_key`].
+    pub fn title_fallback(self) -> &'static str {
+        match self {
+            AssetCenterTab::Templates => "模板",
+            AssetCenterTab::Styles => "风格",
+        }
+    }
+}
+
 /// Grouped state for the non-modal Scene Template Center panel.
 ///
 /// Deliberately smaller than [`PromptCenterState`]: a template is opened,
@@ -318,6 +414,12 @@ pub struct SceneTemplateCenterState {
     pub open: bool,
     /// Search text, caret, selection, and IME state.
     pub search: jian_core::text_input::TextInputState,
+    /// Topic text for the generate row.
+    pub generate: jian_core::text_input::TextInputState,
+    /// Which of the two fields the keyboard writes into.
+    pub focus: SceneTemplateFocus,
+    /// Which asset family the panel is showing.
+    pub tab: AssetCenterTab,
     /// Active catalogue filter.
     pub filter: SceneFilter,
     /// Vertical card-grid scroll.
@@ -330,6 +432,11 @@ pub struct SceneTemplateCenterState {
     /// opening a document is a host capability (file dialogs, unsaved-work
     /// prompts), not a widget one.
     pub pending_open: Option<String>,
+    /// Raised when the generate row is submitted, carrying the raw topic
+    /// the user typed. Drained by the host for the same reason
+    /// `pending_open` is: replacing the document and launching a chat
+    /// turn are host capabilities, not widget ones.
+    pub pending_generate: Option<String>,
 }
 
 impl Default for SceneTemplateCenterState {
@@ -337,10 +444,14 @@ impl Default for SceneTemplateCenterState {
         Self {
             open: false,
             search: Default::default(),
+            generate: Default::default(),
+            focus: SceneTemplateFocus::Search,
+            tab: AssetCenterTab::default(),
             filter: SceneFilter::All,
             scroll: Default::default(),
             hover: None,
             pending_open: None,
+            pending_generate: None,
         }
     }
 }
@@ -351,6 +462,7 @@ impl SceneTemplateCenterState {
         self.open = true;
         self.hover = None;
         self.scroll.offset = 0.0;
+        self.focus = SceneTemplateFocus::Search;
         self.search.touch(now_ms);
     }
 
@@ -358,6 +470,21 @@ impl SceneTemplateCenterState {
     pub fn close(&mut self) {
         self.open = false;
         self.hover = None;
+    }
+
+    /// Switch tabs, dropping the scroll offset and hover token.
+    ///
+    /// Both are indices into the grid the previous tab painted, so carrying
+    /// them across would scroll the new grid to a row that has nothing to do
+    /// with what the user was looking at. Returns whether anything moved.
+    pub fn select_tab(&mut self, tab: AssetCenterTab) -> bool {
+        if self.tab == tab {
+            return false;
+        }
+        self.tab = tab;
+        self.scroll.offset = 0.0;
+        self.hover = None;
+        true
     }
 
     /// Request that the host open `template_id` and close the panel.
@@ -369,5 +496,35 @@ impl SceneTemplateCenterState {
     /// Drain a pending open request.
     pub fn take_pending_open(&mut self) -> Option<String> {
         self.pending_open.take()
+    }
+
+    /// Mutable keyboard-owned field.
+    pub fn focused_input_mut(&mut self) -> &mut jian_core::text_input::TextInputState {
+        match self.focus {
+            SceneTemplateFocus::Search => &mut self.search,
+            SceneTemplateFocus::Generate => &mut self.generate,
+        }
+    }
+
+    /// Request that the host generate a document for the typed topic.
+    ///
+    /// An all-whitespace topic is not a request — the button is live but
+    /// pressing it with nothing typed must do nothing rather than launch a
+    /// turn about the empty string.
+    pub fn request_generate(&mut self) -> bool {
+        let topic = self.generate.text().trim().to_string();
+        if topic.is_empty() {
+            return false;
+        }
+        self.pending_generate = Some(topic);
+        self.generate.set_text("");
+        self.focus = SceneTemplateFocus::Search;
+        self.close();
+        true
+    }
+
+    /// Drain a pending generate request.
+    pub fn take_pending_generate(&mut self) -> Option<String> {
+        self.pending_generate.take()
     }
 }

@@ -15,8 +15,7 @@ use super::WidgetHostNative;
 use op_editor_ui::widgets::press_flow::{
     self, LayerContextMenuPress, LayerContextStep, PropertyOverlayPress,
 };
-use op_editor_ui::widgets::TOP_BAR_HEIGHT;
-use op_editor_ui::{Point2D, Rect};
+use op_editor_ui::Point2D;
 
 impl WidgetHostNative {
     // `pub(in crate::widget_host)` so the instance-panel tests can
@@ -123,13 +122,7 @@ impl WidgetHostNative {
             // blur inputs like the sidebar-open fall-through below.
             return self.blur_text_inputs_on_blank_press();
         }
-        let layer_rect = Rect {
-            origin: Point2D::new(0.0, TOP_BAR_HEIGHT),
-            size: Point2D::new(
-                self.editor_state.editor_ui.layer_panel_width,
-                (viewport_h - TOP_BAR_HEIGHT).max(0.0),
-            ),
-        };
+        let layer_rect = self.layers_content_rect(viewport_h);
         let panel = self.layer_panel();
         let hit = panel.hit_test(layer_rect, Point2D::new(x, y));
         match press_flow::open_layer_context_menu(&mut self.editor_state, hit, x, y) {

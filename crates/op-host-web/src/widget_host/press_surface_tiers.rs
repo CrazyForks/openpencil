@@ -125,6 +125,12 @@ impl WidgetHost {
         let (x, y) = (ctx.x, ctx.y);
         let viewport_width = ctx.viewport_width;
         let viewport_height = ctx.viewport_height;
+        // 2b. The rail's slides tab owns the whole rail while it is on
+        //     show, and its tab row takes clicks even while the layer
+        //     tree owns the rest — so it is asked first.
+        if self.slides_panel_press(x, y, viewport_width, viewport_height) {
+            return Some(true);
+        }
         // 3. apply_click — LayerPanel + chat-defocus.
         //    Pre-seed a `layer_drag` candidate when the press lands
         //    on a Layer row so a subsequent move past the threshold

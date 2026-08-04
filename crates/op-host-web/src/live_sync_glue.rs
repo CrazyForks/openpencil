@@ -387,12 +387,15 @@ fn apply_document_response<C: RepaintContext + 'static>(
                         // keep whatever the open document already had rather
                         // than letting every sync erase its tag.
                         let scenario = host.editor_state().editor_ui.scenario;
+                        let pinned_style_guide =
+                            host.editor_state().editor_ui.pinned_style_guide.clone();
                         op_pen_loader::apply_editor_meta(
                             host.editor_state_mut(),
                             op_pen_loader::EditorMeta {
                                 active_page_index,
                                 preserve_authored_geometry,
                                 scenario,
+                                pinned_style_guide,
                             },
                         );
                         inner_ref.repaint().is_ok()

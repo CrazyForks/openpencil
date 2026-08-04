@@ -17,8 +17,8 @@ use super::WidgetHostNative;
 use op_editor_core::host_press_transitions as core_press;
 use op_editor_ui::widgets::chat_click_flow::{self, ChatClickStep, ChatHostAction};
 use op_editor_ui::widgets::press_flow::{self, LayerPanelClick};
-use op_editor_ui::widgets::{AIChatPlaceholder, Toolbar, TOP_BAR_HEIGHT};
-use op_editor_ui::{Point2D, Rect};
+use op_editor_ui::widgets::{AIChatPlaceholder, Toolbar};
+use op_editor_ui::Point2D;
 
 impl WidgetHostNative {
     /// Route a press inside the model picker before lower rail/panel widgets.
@@ -78,13 +78,7 @@ impl WidgetHostNative {
             return false;
         }
         use op_editor_ui::widgets::{DropPosition, LayerPanel};
-        let layer_rect = Rect {
-            origin: Point2D::new(0.0, TOP_BAR_HEIGHT),
-            size: Point2D::new(
-                self.editor_state.editor_ui.layer_panel_width,
-                (viewport_h - TOP_BAR_HEIGHT).max(0.0),
-            ),
-        };
+        let layer_rect = self.layers_content_rect(viewport_h);
         // Build with source excluded so indicator y matches post-commit.
         let panel = LayerPanel::from_editor_with_drag_source(&self.editor_state, &d.source);
         let cursor = Point2D::new(d.current_x, d.current_y);
@@ -173,13 +167,7 @@ impl WidgetHostNative {
         if !self.editor_state.editor_ui.sidebar_open {
             return was_focused;
         }
-        let layer_rect = Rect {
-            origin: Point2D::new(0.0, TOP_BAR_HEIGHT),
-            size: Point2D::new(
-                self.editor_state.editor_ui.layer_panel_width,
-                (viewport_height - TOP_BAR_HEIGHT).max(0.0),
-            ),
-        };
+        let layer_rect = self.layers_content_rect(viewport_height);
         let panel = self.layer_panel();
         if let Some(hit) = panel.hit_test(layer_rect, Point2D::new(x, y)) {
             let mutation = match &hit {

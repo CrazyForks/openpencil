@@ -268,6 +268,20 @@ impl WidgetHost {
         delta_y: f32,
         viewport_height: f32,
     ) -> bool {
+        // The slides tab owns the rail's wheel while it is on show; the
+        // layer tree only sees the event when the tree is what the rail
+        // is showing.
+        if let Some(dirty) = self.slides_panel_scroll(
+            Point2D::new(x, y),
+            delta_y,
+            self.last_viewport_w,
+            viewport_height,
+        ) {
+            if dirty {
+                self.mark_dirty();
+            }
+            return true;
+        }
         let rect = self.layer_panel_rect(viewport_height);
         let panel = self.layer_panel();
         let Some(dirty) = scroll_flow::scroll_layer_panel(

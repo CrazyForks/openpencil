@@ -18,6 +18,13 @@ impl WidgetHostNative {
             }
             return true;
         }
+        if let Some(changed) = shared::scene_template_backspace(&mut self.editor_state, self.now_ms)
+        {
+            if changed {
+                self.mark_dirty();
+            }
+            return true;
+        }
         // Preview mode: Backspace edits the focused runtime widget, not
         // the editor selection.
         if self.preview.is_some() {
@@ -254,6 +261,14 @@ impl WidgetHostNative {
     pub fn apply_delete(&mut self) -> bool {
         if let Some(changed) =
             shared::prompt_center_delete_forward(&mut self.editor_state, self.now_ms)
+        {
+            if changed {
+                self.mark_dirty();
+            }
+            return true;
+        }
+        if let Some(changed) =
+            shared::scene_template_delete_forward(&mut self.editor_state, self.now_ms)
         {
             if changed {
                 self.mark_dirty();

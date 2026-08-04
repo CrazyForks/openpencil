@@ -204,6 +204,19 @@ impl DesktopApp {
             &mut self.current_path,
             self.window.as_ref(),
         );
+        // A topic typed into the same panel's generate row replaces the
+        // document too, then queues a chat turn on it. The launch has to
+        // happen here rather than waiting for the next pointer / key event:
+        // nothing else is guaranteed to arrive, so a queued turn would sit
+        // unsent until the user happened to touch the window again.
+        if crate::scene_template_generate::drain_pending_scene_template_generate(
+            &mut self.host,
+            &mut self.current_path,
+            self.window.as_ref(),
+        ) {
+            self.launch_chat_if_pending();
+            should_paint = true;
+        }
         should_paint
     }
 }

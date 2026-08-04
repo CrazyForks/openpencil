@@ -57,6 +57,27 @@ fn every_scene_chip_is_reachable_and_none_overlap() {
     }
 }
 
+/// The filter row is one line with no wrap or scroll, so it has to fit in
+/// every locale — and the locale with the longest labels is not the default
+/// one the test above runs in. Adding a scene adds a chip, which is exactly
+/// when the row runs off the panel edge for languages that spell the scene
+/// names out.
+#[test]
+fn the_filter_row_fits_the_panel_in_every_locale() {
+    for locale in op_editor_core::Locale::ALL {
+        let mut state = open_state();
+        state.editor_ui.locale = locale;
+        let panel = SceneTemplatePanel::for_editor(&state).expect("open");
+        let chips = panel.filter_chip_rects(PANEL);
+        let (last, _) = chips.last().copied().expect("chips");
+        let overflow = last.origin.x + last.size.x - (PANEL.origin.x + PANEL.size.x - PAD);
+        assert!(
+            overflow <= 0.0,
+            "{locale:?}: the filter row overflows the panel by {overflow:.1}px"
+        );
+    }
+}
+
 #[test]
 fn cards_are_laid_out_two_per_row_inside_the_viewport() {
     let state = open_state();

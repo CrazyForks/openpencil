@@ -51,7 +51,10 @@ impl BridgeDocumentSnapshot {
     }
 
     pub(super) fn externalized_json(&self) -> String {
-        crate::document_json::externalize_for_disk(self.document_json.as_ref(), self.editor_meta)
+        crate::document_json::externalize_for_disk(
+            self.document_json.as_ref(),
+            self.editor_meta.clone(),
+        )
     }
 }
 
@@ -86,6 +89,7 @@ mod tests {
                 active_page_index: 2,
                 preserve_authored_geometry: true,
                 scenario: None,
+                pinned_style_guide: None,
             })
         );
     }

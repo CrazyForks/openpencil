@@ -1,6 +1,6 @@
 //! Shared Scene Template Center press transitions for native and web hosts.
 
-use op_editor_core::{ButtonPressTarget, EditorState};
+use op_editor_core::{ButtonPressTarget, EditorState, SceneTemplateFocus};
 
 use crate::widgets::{SceneTemplateHit, SceneTemplatePanel};
 use crate::{Point2D, Rect};
@@ -34,10 +34,24 @@ pub fn press_scene_template_center(
         SceneTemplateHit::Close => state.editor_ui.close_scene_template_center(),
         SceneTemplateHit::FocusSearch(offset) => {
             let center = &mut state.editor_ui.scene_template_center;
-            let changed = center.search.caret() != offset;
+            let changed =
+                center.search.caret() != offset || center.focus != SceneTemplateFocus::Search;
+            center.focus = SceneTemplateFocus::Search;
             center.search.set_caret(offset, now_ms);
             changed
         }
+        SceneTemplateHit::FocusGenerate(offset) => {
+            let center = &mut state.editor_ui.scene_template_center;
+            let changed =
+                center.generate.caret() != offset || center.focus != SceneTemplateFocus::Generate;
+            center.focus = SceneTemplateFocus::Generate;
+            center.generate.set_caret(offset, now_ms);
+            changed
+        }
+        // Nothing typed is not a request: the button stays live so it can
+        // still take the press (and not fall through to the grid), but an
+        // empty topic must not replace the document with a blank one.
+        SceneTemplateHit::Generate => state.editor_ui.scene_template_center.request_generate(),
         SceneTemplateHit::SelectFilter(filter) => {
             let center = &mut state.editor_ui.scene_template_center;
             let changed =
@@ -50,8 +64,24 @@ pub fn press_scene_template_center(
             center.hover = None;
             changed
         }
+        SceneTemplateHit::SelectTab(tab) => state.editor_ui.scene_template_center.select_tab(tab),
         SceneTemplateHit::SelectTemplate(id) => {
             state.editor_ui.scene_template_center.request_open(id);
+            true
+        }
+        // Pinning is policy, not a document edit: it is applied inline (no
+        // host round-trip like `pending_open` needs) and it never touches
+        // the node tree — the next generation reads it, nothing else does.
+        // Pressing the pinned card again unpins, so the same gesture that
+        // set the policy is the one that clears it, and at most one guide
+        // is ever pinned.
+        SceneTemplateHit::ToggleStyleGuide(name) => {
+            let pinned = &mut state.editor_ui.pinned_style_guide;
+            *pinned = if pinned.as_deref() == Some(name.as_str()) {
+                None
+            } else {
+                Some(name)
+            };
             true
         }
         SceneTemplateHit::Inside => false,

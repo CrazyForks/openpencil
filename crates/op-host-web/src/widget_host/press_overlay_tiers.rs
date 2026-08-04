@@ -241,6 +241,14 @@ impl WidgetHost {
             self.dispatch_file_menu_press(x, y, viewport_width);
             return Some(true);
         }
+        // Export quick menu — same tier as the file menu it shortcuts, and
+        // above the TopBar so a second press on the download button closes
+        // it instead of re-toggling it open (native §0a).
+        if self.editor_state.editor_ui.export_quick_menu_open {
+            self.close_image_popovers_for_higher_overlay();
+            self.dispatch_export_quick_menu_press(x, y, viewport_width);
+            return Some(true);
+        }
         if self.editor_state.editor_ui.export_dialog_open {
             self.close_image_popovers_for_higher_overlay();
             self.dispatch_export_dialog_press(x, y, viewport_width, viewport_height);

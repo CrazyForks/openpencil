@@ -194,6 +194,7 @@ fn append_does_not_mutate_preexisting_styled_node() {
         }),
         validation_enabled: true,
         visual_ref_enabled: false,
+        pinned_style_guide: None,
     };
 
     futures::executor::block_on(Orchestrator::new().run(

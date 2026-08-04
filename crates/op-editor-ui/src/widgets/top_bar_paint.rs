@@ -248,8 +248,8 @@ impl TopBar {
 
         // ── Right cluster ──────────────────────────────────────
         // Right → left: Maximize (hidden in a VS Code embed) | Play
-        // (native only) | Sun | Globe+Chevron. Globe is a wider compound
-        // button (signals the dropdown affordance).
+        // (native only) | Download | Sun | Globe+Chevron. Globe is a wider
+        // compound button (signals the dropdown affordance).
         let mut rx = rect.origin.x + rect.size.x - PAD;
 
         // Fullscreen — hidden inside a VS Code embed (the container's own
@@ -287,6 +287,31 @@ impl TopBar {
                 self.is_pressed(TopBarButton::TogglePreview),
             );
         }
+
+        // Export quick menu — a download glyph on every document; the
+        // dropdown decides which formats the document actually offers.
+        rx -= ICON_BUTTON;
+        paint_icon_button(
+            cx,
+            &self.theme,
+            rx,
+            center_y,
+            Icon::Download,
+            self.is_hovered(TopBarButton::OpenExportMenu),
+            self.is_pressed(TopBarButton::OpenExportMenu),
+        );
+
+        // Asset Center — templates and styles the document can draw on.
+        rx -= ICON_BUTTON;
+        paint_icon_button(
+            cx,
+            &self.theme,
+            rx,
+            center_y,
+            Icon::Palette,
+            self.is_hovered(TopBarButton::OpenAssetCenter),
+            self.is_pressed(TopBarButton::OpenAssetCenter),
+        );
 
         // Theme toggle — Sun in dark mode (click → light); Moon in
         // light mode (click → dark).

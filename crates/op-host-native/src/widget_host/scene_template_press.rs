@@ -31,3 +31,7 @@ impl WidgetHostNative {
         true
     }
 }
+
+#[cfg(test)]
+#[path = "scene_template_generate_tests.rs"]
+mod scene_template_generate_tests;

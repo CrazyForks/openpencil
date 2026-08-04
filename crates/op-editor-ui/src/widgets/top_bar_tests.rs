@@ -181,9 +181,13 @@ fn narrow_dirty_title_drops_git_before_filename_extension_or_status() {
     bar.agent_count = 0;
     bar.mcp_count = 0;
     bar.label_agents_and_mcp = "Agents & MCP";
+    // Two ICON_BUTTONs wider than the fixture used before the export and
+    // Asset Center buttons joined the right cluster: the title slot ends
+    // where that cluster begins, so the window that produces "Git dropped,
+    // name intact" moved right by exactly the width of the new buttons.
     let rect = Rect {
         origin: Point2D::ZERO,
-        size: Point2D::new(620.0, TOP_BAR_HEIGHT),
+        size: Point2D::new(620.0 + ICON_BUTTON * 2.0, TOP_BAR_HEIGHT),
     };
 
     let layout = bar.title_layout(rect, title_test_width);
@@ -339,14 +343,14 @@ fn agent_chip_hit_area_tracks_measured_text_width() {
 fn maximize_button_hit_tests_to_toggle_fullscreen() {
     // The Play button is unconditionally available (desktop-only, not
     // experimental-gated); this test asserts the full Maximize | Play |
-    // Sun cluster layout.
+    // Download | Sun cluster layout.
     let bar = TopBar::new("Untitled");
     let rect = Rect {
         origin: Point2D::new(0.0, 0.0),
         size: Point2D::new(1000.0, TOP_BAR_HEIGHT),
     };
     let cy = 8.0 + ICON_BUTTON / 2.0;
-    // Right cluster (right -> left): Maximize | Play | Sun.
+    // Right cluster (right -> left): Maximize | Play | Download | Sun.
     // Rightmost icon (Maximize) -> ToggleFullscreen.
     let fs_cx = 1000.0 - PAD - ICON_BUTTON / 2.0;
     assert_eq!(
@@ -359,11 +363,102 @@ fn maximize_button_hit_tests_to_toggle_fullscreen() {
         bar.hit_test(rect, Point2D::new(play_cx, cy)),
         Some(TopBarHit::TogglePreview),
     );
-    // 3rd from right (Sun) -> ToggleTheme.
-    let sun_cx = 1000.0 - PAD - 2.0 * ICON_BUTTON - ICON_BUTTON / 2.0;
+    // 3rd from right (Download) -> OpenExportMenu.
+    let export_cx = 1000.0 - PAD - 2.0 * ICON_BUTTON - ICON_BUTTON / 2.0;
+    assert_eq!(
+        bar.hit_test(rect, Point2D::new(export_cx, cy)),
+        Some(TopBarHit::OpenExportMenu),
+    );
+    // 4th from right (Palette) -> OpenAssetCenter.
+    let asset_cx = 1000.0 - PAD - 3.0 * ICON_BUTTON - ICON_BUTTON / 2.0;
+    assert_eq!(
+        bar.hit_test(rect, Point2D::new(asset_cx, cy)),
+        Some(TopBarHit::OpenAssetCenter),
+    );
+    // 5th from right (Sun) -> ToggleTheme.
+    let sun_cx = 1000.0 - PAD - 4.0 * ICON_BUTTON - ICON_BUTTON / 2.0;
     assert_eq!(
         bar.hit_test(rect, Point2D::new(sun_cx, cy)),
         Some(TopBarHit::ToggleTheme),
+    );
+}
+
+/// The export button anchors its own dropdown, so paint, hit-test and the
+/// anchor must all agree on where it is — and it must not steal the Play
+/// button's slot on a host that hides Play (web).
+#[test]
+fn export_button_sits_left_of_play_and_right_of_theme() {
+    let bar = TopBar::new("Untitled");
+    let rect = Rect {
+        origin: Point2D::new(0.0, 0.0),
+        size: Point2D::new(1000.0, TOP_BAR_HEIGHT),
+    };
+    let export = bar.export_button_rect(rect);
+    let cy = export.origin.y + export.size.y / 2.0;
+    assert_eq!(
+        bar.hit_test(rect, Point2D::new(export.origin.x + 2.0, cy)),
+        Some(TopBarHit::OpenExportMenu),
+        "left edge of the painted button is inside its hit area",
+    );
+    assert_eq!(
+        bar.hit_test(
+            rect,
+            Point2D::new(export.origin.x + export.size.x - 2.0, cy)
+        ),
+        Some(TopBarHit::OpenExportMenu),
+        "right edge of the painted button is inside its hit area",
+    );
+    // Neighbours: Play claims the slot to the right, theme the one left.
+    if bar.preview_button_visible() {
+        assert_eq!(
+            bar.hit_test(
+                rect,
+                Point2D::new(export.origin.x + export.size.x + ICON_BUTTON / 2.0, cy)
+            ),
+            Some(TopBarHit::TogglePreview),
+        );
+    }
+    assert_eq!(
+        bar.hit_test(rect, Point2D::new(export.origin.x - ICON_BUTTON / 2.0, cy)),
+        Some(TopBarHit::OpenAssetCenter),
+    );
+    assert_eq!(
+        bar.hit_test(
+            rect,
+            Point2D::new(export.origin.x - ICON_BUTTON - ICON_BUTTON / 2.0, cy)
+        ),
+        Some(TopBarHit::ToggleTheme),
+    );
+}
+
+/// The whole cluster is derived from one walker, so hiding Play (web) or
+/// Maximize (VS Code embed) must slide Download, Sun and Globe right by
+/// exactly one slot each and leave no gap.
+#[test]
+fn right_cluster_stays_gapless_when_neighbours_are_hidden() {
+    let mut bar = TopBar::new("Untitled");
+    bar.embed = op_editor_core::EmbedHost::VsCode;
+    let rect = Rect {
+        origin: Point2D::new(0.0, 0.0),
+        size: Point2D::new(1000.0, TOP_BAR_HEIGHT),
+    };
+    let export = bar.export_button_rect(rect);
+    let asset_center = bar.asset_center_button_rect(rect);
+    assert_eq!(asset_center.origin.x + ICON_BUTTON, export.origin.x);
+    let theme = Rect {
+        origin: Point2D::new(asset_center.origin.x - ICON_BUTTON, export.origin.y),
+        size: Point2D::new(ICON_BUTTON, ICON_BUTTON),
+    };
+    let globe = bar.globe_rect(rect);
+    assert_eq!(globe.origin.x + globe.size.x, theme.origin.x);
+    let cy = export.origin.y + export.size.y / 2.0;
+    assert_eq!(
+        bar.hit_test(rect, Point2D::new(theme.origin.x + 2.0, cy)),
+        Some(TopBarHit::ToggleTheme),
+    );
+    assert_eq!(
+        bar.hit_test(rect, Point2D::new(globe.origin.x + 2.0, cy)),
+        Some(TopBarHit::ToggleLocale),
     );
 }
 

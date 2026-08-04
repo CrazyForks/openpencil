@@ -33,12 +33,18 @@ pub fn close_shape_picker(ui: &mut EditorUiState) {
 /// Toggle the TopBar locale dropdown (same open/reset shape as the
 /// shape picker).
 pub fn toggle_locale_picker(ui: &mut EditorUiState) {
-    let picker = &mut ui.locale_picker;
-    picker.open = !picker.open;
-    picker.hover = None;
-    picker.pressed = None;
-    if picker.open {
-        picker.scroll.offset = 0.0;
+    let opened = {
+        let picker = &mut ui.locale_picker;
+        picker.open = !picker.open;
+        picker.hover = None;
+        picker.pressed = None;
+        if picker.open {
+            picker.scroll.offset = 0.0;
+        }
+        picker.open
+    };
+    if opened {
+        close_export_quick_menu(ui);
     }
 }
 
@@ -55,6 +61,9 @@ pub fn toggle_import_menu(ui: &mut EditorUiState) {
     ui.import_menu_open = open;
     ui.import_menu.open = open;
     ui.import_menu.hover = None;
+    if open {
+        close_export_quick_menu(ui);
+    }
 }
 
 /// Toggle the TopBar file menu. The host still clears the layer-panel
@@ -62,6 +71,33 @@ pub fn toggle_import_menu(ui: &mut EditorUiState) {
 pub fn toggle_file_menu(ui: &mut EditorUiState) {
     ui.file_menu_open ^= true;
     ui.file_menu.hover = None;
+    if ui.file_menu_open {
+        close_export_quick_menu(ui);
+    }
+}
+
+/// Toggle the TopBar export quick menu. Opening it closes the other
+/// TopBar dropdowns: they share one overlay tier, so two open menus would
+/// leave the lower one painted but unreachable.
+pub fn toggle_export_quick_menu(ui: &mut EditorUiState) {
+    let open = !ui.export_quick_menu_open;
+    ui.export_quick_menu_open = open;
+    ui.export_quick_menu_hover = None;
+    if open {
+        ui.file_menu_open = false;
+        ui.file_menu.hover = None;
+        ui.import_menu_open = false;
+        ui.import_menu.open = false;
+        ui.import_menu.hover = None;
+        ui.account_menu_open = false;
+        close_locale_picker(ui);
+    }
+}
+
+/// Close the export quick menu (row pick + outside dismiss share this).
+pub fn close_export_quick_menu(ui: &mut EditorUiState) {
+    ui.export_quick_menu_open = false;
+    ui.export_quick_menu_hover = None;
 }
 
 // ─── Canvas ────────────────────────────────────────────────────────────

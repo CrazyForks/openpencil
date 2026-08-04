@@ -247,6 +247,7 @@ fn req(prompt: &str) -> DesignRequest {
         validation_enabled: true,
 
         visual_ref_enabled: false,
+        pinned_style_guide: None,
     }
 }
 
@@ -274,6 +275,7 @@ fn req_with_design_md(prompt: &str) -> DesignRequest {
         validation_enabled: true,
 
         visual_ref_enabled: false,
+        pinned_style_guide: None,
     }
 }
 

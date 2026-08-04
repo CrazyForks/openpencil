@@ -20,6 +20,12 @@ impl WidgetHostNative {
             }
             return true;
         }
+        if let Some(changed) = shared::scene_template_text(&mut self.editor_state, c, self.now_ms) {
+            if changed {
+                self.mark_dirty();
+            }
+            return true;
+        }
         // Preview (Play) mode owns the keyboard: printable chars go to
         // the live runtime's focused widget, never editor editing.
         if self.preview.is_some() {

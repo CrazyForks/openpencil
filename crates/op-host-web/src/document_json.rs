@@ -57,7 +57,7 @@ pub(crate) fn with_borrowed_parsed_document<T, R>(
         .document
         .take()
         .expect("parsed document is consumed at most once");
-    Some(replace(&mut host, document, parsed.editor_meta))
+    Some(replace(&mut host, document, parsed.editor_meta.clone()))
 }
 
 /// Convert live inline document JSON to the compact on-disk form. Invalid
@@ -200,8 +200,9 @@ mod tests {
             active_page_index: 1,
             preserve_authored_geometry: true,
             scenario: None,
+            pinned_style_guide: None,
         };
-        let disk = externalize_for_disk(&serialized, meta);
+        let disk = externalize_for_disk(&serialized, meta.clone());
         assert_eq!(
             op_pen_loader::extract_editor_meta(&disk),
             Some(meta),

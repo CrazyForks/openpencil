@@ -282,14 +282,7 @@ mod tests {
     fn req_with_prompt(prompt: &str) -> DesignRequest {
         DesignRequest {
             prompt: prompt.into(),
-            model: None,
-            provider: None,
-            design_md: None,
-            concurrency: 1,
-            append_context: None,
-            validation_enabled: true,
-
-            visual_ref_enabled: false,
+            ..Default::default()
         }
     }
 
@@ -600,14 +593,7 @@ mod tests {
     fn dash_req(prompt: &str) -> DesignRequest {
         DesignRequest {
             prompt: prompt.into(),
-            model: None,
-            provider: None,
-            design_md: None,
-            concurrency: 1,
-            append_context: None,
-            validation_enabled: true,
-
-            visual_ref_enabled: false,
+            ..Default::default()
         }
     }
 

@@ -295,6 +295,7 @@ fn persisted_request_json() -> String {
         append_context: None,
         validation_enabled: false,
         visual_ref_enabled: false,
+        pinned_style_guide: None,
     })
     .unwrap()
 }

@@ -69,6 +69,7 @@ pub mod edit_transaction;
 pub mod editor_ui_state;
 pub mod export_batch;
 pub mod export_dialog_state;
+pub mod export_quick_menu_state;
 pub mod figma_import_state;
 pub mod fill_order;
 pub mod fills;
@@ -125,6 +126,8 @@ pub mod rename;
 pub mod render_backend;
 pub mod request_snapshot;
 pub mod scene_template_catalog;
+pub mod scene_template_keyboard;
+pub mod scene_template_prompt;
 pub mod scene_vars;
 pub mod selection;
 pub mod selection_resolve;
@@ -316,18 +319,20 @@ pub use edit_transaction::{
     CompletedLocalEdit, EditOrigin, LocalEditCapture, LocalEditError, LocalEditOutcome,
 };
 pub use editor_ui_state::{
-    BooleanOp, CloneField, CloneFormState, CommitDiffPatch, CommitDiffSummary, CommitDiffView,
-    CompositingPickerTarget, CustomPrompt, DesignMdPanelState, DesignMdRequest, EditorUiState,
-    EmbedHost, ExportFormat, FileAction, FillType, FlexLayout, FontPickerPurpose,
-    GitBranchPickerMode, GitCandidateFile, GitCommitSummary, GitDiffTarget, GitDiffView,
-    GitFileEntry, GitOverflowView, GitPanelAction, GitPanelState, ImageAdjustmentField,
-    ImageFillMode, LayerContextMenuState, Locale, MergeConflictRow, MergeResolveFile,
-    MergeResolveState, MissingFontSurface, PaddingEditMode, PageRenameState, PencilCursorStyle,
-    PreviewDeviceKind, PreviewState, PromptCenterFocus, PromptCenterState, PromptFilter,
-    PropertyTab, RecentFile, SceneFilter, SceneTemplateCenterState, SizeToggleState, ThemeMode,
-    UpdateStatus, VariableRowFocus,
+    AssetCenterTab, BooleanOp, CloneField, CloneFormState, CommitDiffPatch, CommitDiffSummary,
+    CommitDiffView, CompositingPickerTarget, CustomPrompt, DeckFilmstripState, DesignMdPanelState,
+    DesignMdRequest, EditorUiState, EmbedHost, ExportFormat, FileAction, FillType, FilmstripDrag,
+    FlexLayout, FontPickerPurpose, GitBranchPickerMode, GitCandidateFile, GitCommitSummary,
+    GitDiffTarget, GitDiffView, GitFileEntry, GitOverflowView, GitPanelAction, GitPanelState,
+    ImageAdjustmentField, ImageFillMode, LayerContextMenuState, LeftPanelTab, Locale,
+    MergeConflictRow, MergeResolveFile, MergeResolveState, MissingFontSurface, PaddingEditMode,
+    PageRenameState, PencilCursorStyle, PreviewDeviceKind, PreviewState, PromptCenterFocus,
+    PromptCenterState, PromptFilter, PropertyTab, RecentFile, SceneFilter,
+    SceneTemplateCenterState, SceneTemplateFocus, SizeToggleState, SlidesDrag, SlidesPanelState,
+    SlidesPanelTarget, ThemeMode, UpdateStatus, VariableRowFocus,
 };
 pub use export_dialog_state::ExportDialogButton;
+pub use export_quick_menu_state::ExportQuickRow;
 pub use figma_import_state::{FigmaImportButton, FigmaImportPage, FigmaImportSelection};
 pub use fill_order::move_fill;
 pub use fills::{

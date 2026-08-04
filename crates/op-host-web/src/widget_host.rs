@@ -82,6 +82,7 @@ mod collab_input_tests;
 mod color_picker_press;
 mod component_browser_press;
 mod cursor_input;
+mod deck_filmstrip;
 #[cfg(test)]
 mod deferred_press_tests;
 mod design_md_press;
@@ -183,6 +184,7 @@ mod shape_create;
 #[cfg(test)]
 mod shape_create_tests;
 mod shape_picker_press;
+mod slides_panel;
 mod text_drag;
 mod text_edit_caret;
 #[cfg(test)]

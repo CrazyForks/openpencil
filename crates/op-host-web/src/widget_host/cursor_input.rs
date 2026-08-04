@@ -492,6 +492,15 @@ impl WidgetHost {
         // three panels painted after Chat may suppress ordinary Chat ownership.
         let over_topmost = !picker_open
             && self.over_true_topmost_panel(point, self.last_viewport_w, self.last_viewport_h);
+        // Deck filmstrip — same tier as the StatusBar (body in
+        // `deck_filmstrip.rs`, mirroring native).
+        if let Some(dirty) = self.deck_filmstrip_cursor_tier(point, over_topmost) {
+            return dirty;
+        }
+        // The left rail's slides tab (body in `slides_panel.rs`).
+        if let Some(dirty) = self.slides_panel_cursor_tier(point, over_topmost) {
+            return dirty;
+        }
         // StatusBar paints and presses above Chat. Preserve its ownership
         // before the model picker truncates LayerPanel / toolbar / base UI.
         if let Some(status_rect) = self.status_bar_rect(self.last_viewport_w, self.last_viewport_h)

@@ -22,6 +22,10 @@ pub enum TopBarButton {
     ToggleTheme,
     /// Globe + chevron — opens the locale picker.
     ToggleLocale,
+    /// Download icon — opens the scenario-aware export quick menu.
+    OpenExportMenu,
+    /// Palette icon — opens the Asset Center (templates + styles).
+    OpenAssetCenter,
     /// Agents-and-MCP chip — opens the agent settings modal.
     OpenAgentSettings,
     /// Collaboration status / participant chip — opens the shared

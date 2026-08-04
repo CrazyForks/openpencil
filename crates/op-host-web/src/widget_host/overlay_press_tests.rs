@@ -604,6 +604,107 @@ fn file_menu_row_press_raises_pending_file_action() {
 }
 
 #[test]
+fn export_quick_menu_paints_and_miss_click_closes() {
+    let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.export_quick_menu_open = true;
+
+    let menu_rect = host.export_quick_menu_rect(W);
+    let mut backend = CaptureBackend::default();
+    host.paint_editor(&mut backend, W, H);
+    assert!(
+        painted_inside(&backend, menu_rect),
+        "export menu should paint at {menu_rect:?}"
+    );
+
+    assert!(host.apply_press(100.0, 500.0, W, H));
+    assert!(!host.editor_state.editor_ui.export_quick_menu_open);
+    assert!(host.editor_state.editor_ui.pending_file_action.is_none());
+}
+
+/// The browser leaves `deck_html_export_supported` at `false`, so the two
+/// deck-file rows must be absent even on a deck — their `FileAction`s are
+/// no-ops here, and an offer nothing answers is worse than no offer.
+#[test]
+fn export_quick_menu_hides_rows_the_browser_cannot_serve() {
+    use op_editor_core::scene_template_catalog::TemplateScene;
+    use op_editor_core::ExportQuickRow;
+    use op_editor_ui::widgets::ExportQuickMenu;
+
+    let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.scenario = Some(TemplateScene::Slides);
+    let menu = ExportQuickMenu::for_editor_ui(&host.editor_state.editor_ui);
+    assert_eq!(
+        menu.rows(),
+        &[ExportQuickRow::Pdf, ExportQuickRow::Image],
+        "no PowerPoint / slideshow-HTML rows without the host capability"
+    );
+}
+
+#[test]
+fn export_quick_menu_row_press_raises_pending_file_action() {
+    use op_editor_ui::widgets::ExportQuickMenu;
+
+    let mut host = WidgetHost::new();
+    host.editor_state.editor_ui.export_quick_menu_open = true;
+
+    let menu_rect = host.export_quick_menu_rect(W);
+    let menu = ExportQuickMenu::for_editor_ui(&host.editor_state.editor_ui);
+    assert!(
+        !menu.rows().is_empty(),
+        "every document offers an image row"
+    );
+    let x = menu_rect.origin.x + menu_rect.size.x / 2.0;
+    let mut probe = menu_rect.origin.y + 2.0;
+    let mut row = None;
+    while probe < menu_rect.origin.y + menu_rect.size.y {
+        if menu.hovered_at(menu_rect, Point2D::new(x, probe)).is_some() {
+            row = Some(probe);
+            break;
+        }
+        probe += 2.0;
+    }
+    let row_y = row.expect("export menu has at least one actionable row");
+
+    assert!(host.apply_press(x, row_y, W, H));
+    assert!(!host.editor_state.editor_ui.export_quick_menu_open);
+    assert_eq!(
+        host.editor_state.editor_ui.pending_file_action,
+        Some(op_editor_core::editor_ui_state::FileAction::ExportImage)
+    );
+}
+
+/// The download button and its dropdown must agree with each other and
+/// stay clear of the theme / Play buttons around them.
+#[test]
+fn download_button_press_opens_the_export_menu() {
+    let mut host = WidgetHost::new();
+    let bar = op_editor_ui::widgets::TopBar::for_editor_ui(&host.editor_state.editor_ui);
+    let top_bar_rect = Rect {
+        origin: Point2D::new(0.0, 0.0),
+        size: Point2D::new(W, TOP_BAR_HEIGHT),
+    };
+    let button = bar.export_button_rect(top_bar_rect);
+    assert_eq!(
+        bar.hit_test(
+            top_bar_rect,
+            Point2D::new(
+                button.origin.x + button.size.x / 2.0,
+                button.origin.y + button.size.y / 2.0
+            )
+        ),
+        Some(TopBarHit::OpenExportMenu)
+    );
+
+    assert!(host.apply_press(
+        button.origin.x + button.size.x / 2.0,
+        button.origin.y + button.size.y / 2.0,
+        W,
+        H,
+    ));
+    assert!(host.editor_state.editor_ui.export_quick_menu_open);
+}
+
+#[test]
 fn shape_picker_icon_row_opens_icon_picker_panel() {
     let mut host = WidgetHost::new();
     host.editor_state.editor_ui.shape_picker.open = true;

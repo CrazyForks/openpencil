@@ -55,7 +55,7 @@ impl CanonicalSaveSnapshot {
 
     /// The view state this snapshot will embed under `editorMeta`.
     pub fn editor_meta(&self) -> EditorMeta {
-        self.editor_meta
+        self.editor_meta.clone()
     }
 
     pub(crate) fn image_thumbnails(&self) -> &ImageThumbSnapshot {

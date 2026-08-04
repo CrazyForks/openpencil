@@ -33,7 +33,7 @@ pub(super) fn serve_document_sync<S: std::io::Read + std::io::Write>(
             );
         }
     };
-    let editor_meta = request.resolved_editor_meta(request.embedded_editor_meta);
+    let editor_meta = request.resolved_editor_meta(request.embedded_editor_meta.clone());
     if request.metadata_only {
         let _guard = stateful_lock
             .lock()

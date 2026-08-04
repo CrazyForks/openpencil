@@ -279,6 +279,8 @@ pub fn topbar_button_hover(
         W::OpenImportMenu => O::OpenImportMenu,
         W::ToggleTheme => O::ToggleTheme,
         W::ToggleLocale => O::ToggleLocale,
+        W::OpenExportMenu => O::OpenExportMenu,
+        W::OpenAssetCenter => O::OpenAssetCenter,
         W::OpenAgentSettings => O::OpenAgentSettings,
         W::Collaboration => O::OpenCollaboration,
         W::ToggleGitPanel => O::ToggleGitPanel,

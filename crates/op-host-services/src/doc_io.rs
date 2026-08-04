@@ -226,6 +226,9 @@ pub fn preserve_app_preferences(previous: &EditorState, next: &mut EditorState) 
     next.editor_ui.font_import_supported = previous.editor_ui.font_import_supported;
     next.editor_ui.batch_frame_export_supported = previous.editor_ui.batch_frame_export_supported;
     next.editor_ui.deck_html_export_supported = previous.editor_ui.deck_html_export_supported;
+    next.editor_ui.slide_thumbnails_supported = previous.editor_ui.slide_thumbnails_supported;
+    next.editor_ui.scene_template_generate_supported =
+        previous.editor_ui.scene_template_generate_supported;
     next.editor_ui.system_fonts_loaded = previous.editor_ui.system_fonts_loaded;
     next.editor_ui.system_font_families = previous.editor_ui.system_font_families.clone();
     next.editor_ui.bundled_font_families = previous.editor_ui.bundled_font_families.clone();

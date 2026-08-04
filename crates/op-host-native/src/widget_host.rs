@@ -91,6 +91,7 @@ mod cursor_move_drags;
 mod cursor_move_modals;
 mod cursor_move_overlays;
 mod cursor_move_panels;
+mod deck_filmstrip;
 #[cfg(test)]
 mod deferred_press_tests;
 mod design_md_press;
@@ -98,6 +99,8 @@ mod design_md_press;
 mod design_md_press_tests;
 #[cfg(test)]
 mod document_epoch_tests;
+#[cfg(test)]
+mod export_quick_menu_tests;
 mod figma_import_scroll;
 #[cfg(test)]
 mod figma_import_tests;
@@ -155,6 +158,7 @@ mod overlay_rects;
 #[cfg(test)]
 mod page_switch_center_tests;
 mod paint;
+mod paint_chrome_menus;
 mod paint_floating_panels;
 mod paint_pan_cache;
 #[cfg(test)]
@@ -220,6 +224,8 @@ mod shape_picker_press;
 #[cfg(test)]
 mod shortcut_surface_tests;
 mod shortcuts;
+mod slides_panel;
+mod slides_panel_thumbs;
 mod text_edit_press;
 // Windows CI DirectWrite/Skia text layout aborts inside these text-edit
 // fixtures before Rust can report an assertion. macOS + Linux keep coverage.
@@ -533,6 +539,10 @@ pub struct WidgetHostNative {
     /// `force_rotate_layer_panel_owner` (revision counters restart at 0,
     /// so the key alone can alias across documents).
     pub(in crate::widget_host) layer_panel_owner: u64,
+    /// Rendered board thumbnails for the left rail's slides tab. Its own
+    /// cache, keyed on `(board id, document revision)` — deliberately
+    /// disjoint from the scene cache and the canvas pan cache.
+    pub(in crate::widget_host) slide_thumbs: slides_panel_thumbs::SlideThumbCache,
     /// Active chat-session (tab) index observed at the last owner rotation.
     /// When the active session changes, [`Self::rotate_chat_owner_if_session_changed`]
     /// rotates `chat_panel_owner` so the new tab's transcript never reads the

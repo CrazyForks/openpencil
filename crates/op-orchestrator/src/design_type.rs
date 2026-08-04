@@ -228,6 +228,46 @@ mod tests {
         }
     }
 
+    /// The Scene Template Center's generate row takes a topic, not a prompt,
+    /// and wraps it before sending. That wrapper is the only thing telling
+    /// this classifier the result is a deck — an unwrapped "Q3 复盘" reads as
+    /// a landing page and the slides entry point would hand back a
+    /// 1200-wide scrolling page. Asserted per locale because the wrapper is
+    /// translated: a translation that loses the trigger word breaks the
+    /// entry point silently, and it breaks here instead.
+    #[test]
+    fn the_generate_rows_wrapper_reads_as_a_deck_in_every_locale() {
+        use op_editor_core::scene_template_prompt::slides_generate_prompt;
+
+        // Topics chosen to be hostile: none says "deck" on its own, and the
+        // last two carry a component trigger ("卡片" / "card") that would win
+        // the classifier's first rung without the wrapper's disqualifier.
+        for topic in [
+            "Q3 复盘",
+            "quarterly review",
+            "如何做用户访谈",
+            "会员卡片权益",
+            "our loyalty card program",
+        ] {
+            assert_ne!(
+                detect_design_type(topic).type_,
+                DesignType::Slides,
+                "{topic}: a bare topic should not already read as a deck, \
+                 or this test proves nothing about the wrapper"
+            );
+            for locale in op_editor_core::Locale::ALL {
+                let wrapped = slides_generate_prompt(locale, topic).expect("a topic wraps");
+                let preset = detect_design_type(&wrapped);
+                assert_eq!(
+                    preset.type_,
+                    DesignType::Slides,
+                    "{locale:?} / {topic}: {wrapped}"
+                );
+                assert_eq!((preset.width, preset.height), (1920.0, 1080.0));
+            }
+        }
+    }
+
     #[test]
     fn a_deck_beats_the_single_component_reading() {
         // "the cover card of my deck" is a deck; the component trigger `card`

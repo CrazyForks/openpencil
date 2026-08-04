@@ -53,6 +53,15 @@ impl DesktopApp {
         // And for the deck-slideshow row: same save picker + offscreen
         // exporter. The row still only appears on a deck document.
         host.editor_state_mut().editor_ui.deck_html_export_supported = true;
+        // And for the slides tab's board thumbnails: desktop owns the
+        // offscreen renderer they are painted with.
+        host.editor_state_mut().editor_ui.slide_thumbnails_supported = true;
+        // And for the Scene Template Center's prompt-to-deck row: desktop
+        // owns both halves it needs — replacing the document with a blank
+        // starter and launching the chat turn that fills it.
+        host.editor_state_mut()
+            .editor_ui
+            .scene_template_generate_supported = true;
         // Account gate + session restore. The bridge links the proprietary
         // auth library when a prebuilt exists for this target; stub builds
         // keep every account entry point hidden unless the dev fake-login

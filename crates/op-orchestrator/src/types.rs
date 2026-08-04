@@ -669,6 +669,36 @@ pub struct DesignRequest {
     /// construction sites; defaults `false`.
     #[serde(default = "default_visual_ref_enabled")]
     pub visual_ref_enabled: bool,
+    /// Style guide the user pinned in the Asset Center, by `name`.
+    ///
+    /// When it names a guide the registry still carries, planning uses that
+    /// one instead of ranking the catalog against the prompt — the pin is the
+    /// user overriding the inference, so a prompt that reads "fintech" must
+    /// not pull the fintech guide out from under a pinned brutalist one. A
+    /// name the registry has dropped falls back to the ranking with a log.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_style_guide: Option<String>,
+}
+
+/// Mirrors the serde defaults exactly, so a request built through `Default`
+/// and one decoded from `{"prompt":"…"}` are the same request. Its purpose is
+/// to let call sites name only the fields they care about — a request struct
+/// with a dozen fields is otherwise re-listed in full at every site, and each
+/// new field becomes a mechanical edit across all of them.
+impl Default for DesignRequest {
+    fn default() -> Self {
+        Self {
+            prompt: String::new(),
+            model: None,
+            provider: None,
+            design_md: None,
+            concurrency: 1,
+            append_context: None,
+            validation_enabled: default_validation_enabled(),
+            visual_ref_enabled: default_visual_ref_enabled(),
+            pinned_style_guide: None,
+        }
+    }
 }
 
 fn default_validation_enabled() -> bool {

@@ -33,6 +33,17 @@ impl WidgetHostNative {
         if self.preview_dispatch_release() {
             return true;
         }
+        // Deck filmstrip — a chip click frames its board, a chip drag
+        // reorders the deck. Both resolve here rather than on press so a
+        // press that turned out to be a drag is not also a navigation.
+        if self.deck_filmstrip_release(viewport_w, viewport_h) {
+            return true;
+        }
+        // The rail's slides tab — same click-or-drag contract as the
+        // filmstrip, resolved on release for the same reason.
+        if self.slides_panel_release(viewport_w, viewport_h) {
+            return true;
+        }
         // Pen owns the release while authoring (TS onMouseUp).
         if self.apply_pen_release() {
             return true;
@@ -194,6 +205,17 @@ impl WidgetHostNative {
 
     pub fn apply_release(&mut self) -> bool {
         let pressed_released = self.release_pressed_feedback();
+        // The filmstrip needs a viewport to re-derive its chip rects; the
+        // cached one is what every other viewport-less path here uses, and
+        // leaving the gesture open would strand a chip mid-drag.
+        if self.deck_filmstrip_release(self.last_viewport_w, self.last_viewport_h) {
+            return true;
+        }
+        // Same for the rail's slides tab — a row drag left open would
+        // strand the deck mid-reorder.
+        if self.slides_panel_release(self.last_viewport_w, self.last_viewport_h) {
+            return true;
+        }
         // Pen owns the release while authoring (TS onMouseUp).
         if self.apply_pen_release() {
             return true;

@@ -652,7 +652,7 @@ pub(crate) fn reconcile_starter_ghost(state: &mut EditorState, any_session_runni
     false
 }
 
-fn active_page_is_blank_starter_frame(state: &EditorState) -> bool {
+pub(crate) fn active_page_is_blank_starter_frame(state: &EditorState) -> bool {
     let children = state.active_children();
     let [only] = children else {
         return false;

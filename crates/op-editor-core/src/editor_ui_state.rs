@@ -48,6 +48,7 @@ pub mod git_panel;
 pub mod groups;
 mod methods;
 pub mod pickers;
+pub mod slides_panel_state;
 #[cfg(test)]
 mod tests;
 
@@ -62,14 +63,16 @@ pub use git_panel::{
     MergeResolveFile, MergeResolveState,
 };
 pub use groups::{
-    CustomPrompt, DesignMdPanelState, PreviewState, PromptCenterFocus, PromptCenterState,
-    PromptFilter, SceneFilter, SceneTemplateCenterState, SizeToggleState,
+    AssetCenterTab, CustomPrompt, DeckFilmstripState, DesignMdPanelState, FilmstripDrag,
+    PreviewState, PromptCenterFocus, PromptCenterState, PromptFilter, SceneFilter,
+    SceneTemplateCenterState, SceneTemplateFocus, SizeToggleState,
 };
 pub use pickers::{
     CanvasDropIndicator, CanvasOverlayLine, CanvasOverlayRect, CompositingPickerTarget,
     EffectParamFocus, FontPickerPurpose, LayerContextMenuState, MissingFontSurface,
     PageRenameState, PreviewDeviceKind, VariableRowFocus,
 };
+pub use slides_panel_state::{LeftPanelTab, SlidesDrag, SlidesPanelState, SlidesPanelTarget};
 
 use crate::node_id::NodeId;
 use crate::tool::Tool;
@@ -136,6 +139,12 @@ pub struct EditorUiState {
     /// Shared file-menu interaction state; `hover = None` means no
     /// actionable row hovered.
     pub file_menu: jian_widgets::components::menu::MenuState,
+    /// TopBar export quick-menu dropdown open (anchored under the
+    /// download button in the right cluster). Shares the file menu's
+    /// overlay tier — only one chrome dropdown is reachable at a time.
+    pub export_quick_menu_open: bool,
+    /// Which export quick-menu row the cursor is over.
+    pub export_quick_menu_hover: Option<crate::export_quick_menu_state::ExportQuickRow>,
     /// Pending file-menu action for the host runner to handle.
     pub pending_file_action: Option<FileAction>,
     /// Recent files (head = newest, cap 10).
@@ -247,6 +256,14 @@ pub struct EditorUiState {
     // --- Canvas preview (Play) mode -------------------------------
     /// Preview (Play) mode flag + device / screen switcher state.
     pub preview: PreviewState,
+    /// Hover / press / drag bookkeeping for the deck filmstrip — the
+    /// page navigator a [`crate::scene_template_catalog::TemplateScene::Slides`]
+    /// document floats at the bottom of the canvas.
+    pub deck_filmstrip: DeckFilmstripState,
+    /// Left-rail tab selection plus the slides tab's hover / press /
+    /// drag bookkeeping. The tab row itself only appears for scenario
+    /// documents that have a page navigator to offer.
+    pub slides_panel: SlidesPanelState,
     /// Floating `Cmd+,` agent-settings modal open.
     pub agent_settings_open: bool,
     pub agent_settings: crate::agent_settings::AgentSettings,
@@ -526,6 +543,21 @@ pub struct EditorUiState {
     /// Hovered overlay control — cursor-move updates it, paint tints from it.
     pub html_import_diagnostics_hover:
         Option<crate::html_import_diagnostics::HtmlImportDiagnosticsHover>,
+    /// Whether this host can render real board thumbnails for the left
+    /// rail's slides tab — it needs a local offscreen scene renderer.
+    /// Native sets it; hosts that leave it `false` still get the tab,
+    /// the numbers, the names, click-to-navigate and drag-to-reorder,
+    /// and the thumbnail box carries the slide number instead of a
+    /// picture. A rail that silently showed empty plates would read as
+    /// broken rather than as unsupported.
+    pub slide_thumbnails_supported: bool,
+    /// Whether this host can turn a typed topic into a generated deck —
+    /// it needs both halves of the chain: replacing the document with a
+    /// blank starter, and launching a chat turn on it. Desktop sets it;
+    /// hosts that leave it `false` omit the Scene Template Center's
+    /// generate row entirely rather than paint a control whose press
+    /// would go nowhere.
+    pub scene_template_generate_supported: bool,
     /// Whether a host already ran font enumeration (so an empty list
     /// is "machine has none" rather than "not loaded yet").
     pub system_fonts_loaded: bool,
@@ -687,6 +719,15 @@ pub struct EditorUiState {
     pub prompt_center: PromptCenterState,
     /// Floating Scene Template Center panel.
     pub scene_template_center: SceneTemplateCenterState,
+    /// Style guide the user pinned in the Asset Center, by `name`.
+    ///
+    /// Policy, not data: it never touches the node tree, it only tells the
+    /// next generation which aesthetic to use instead of letting the prompt
+    /// pick one. Persisted with the document (see `EditorMeta`) because "this
+    /// file looks like that" outlives the session that decided it. A name the
+    /// registry no longer carries is not an error — generation falls back to
+    /// its own ranking.
+    pub pinned_style_guide: Option<String>,
 
     // --- Component browser ------------------------------------------
     /// Whether the floating Component-Browser panel is shown.

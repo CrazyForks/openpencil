@@ -183,7 +183,11 @@ pub fn build_orchestrator_prompt(
         PlanningMode::Compact => {
             // TS fastTimeout=true path: getBuiltinPlanningTimeouts(model)
             let t = apply_profile_to_timeouts(builtin_planning_timeouts(profile.tier), multiplier);
-            let cp = build_compact_planning_prompt(&req.prompt, req.design_md.as_ref());
+            let cp = build_compact_planning_prompt(
+                &req.prompt,
+                req.design_md.as_ref(),
+                req.pinned_style_guide.as_deref(),
+            );
             PlanningPrompt {
                 call_request: CallRequest {
                     system_prompt: cp.system,
@@ -207,6 +211,7 @@ pub fn build_orchestrator_prompt(
                 req.model.as_deref(),
                 mode,
                 req.design_md.as_ref(),
+                req.pinned_style_guide.as_deref(),
             );
             let opts = op_ai_skills::ResolveOptions {
                 dynamic_content: HashMap::from([(
