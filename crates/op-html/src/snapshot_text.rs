@@ -23,6 +23,7 @@ use std::collections::BTreeMap;
 use jian_ops_schema::node::text::{FontStyleKind, FontWeight, TextContent, TextGrowth, TextNode};
 use jian_ops_schema::node::PenNode;
 use jian_ops_schema::sizing::{SizeLimits, SizingBehavior};
+use jian_ops_schema::style::{FontStyleKind as SegmentFontStyle, StyledTextSegment};
 use serde_json::{Map, Value};
 
 use super::{parse_px, parse_text_align, solid_fill, Rect, SnapshotCtx};
@@ -120,7 +121,7 @@ impl SnapshotCtx<'_> {
             limits: sizing.limits,
             width: sizing.width,
             height: sizing.height,
-            content: TextContent::Plain(text),
+            content: styled_content(object, text),
             font_family: styles.get("font-family").cloned(),
             font_size: Some(font_size),
             font_weight,
@@ -142,6 +143,74 @@ impl SnapshotCtx<'_> {
             gestures: None,
             route: None,
         }))
+    }
+}
+
+/// Build the text node's content from a folded inline block's `segments`.
+///
+/// The extractor collapses a block whose children are all inline (bare text
+/// plus `<a>` / `<code>` / `<span>`) into ONE positioned text node carrying the
+/// concatenated text as styled `segments`, so the run flows and wraps once
+/// instead of each inline child stacking at the block origin (the overlap this
+/// fixes). A payload with no `segments` (an older capture) or one that reduces
+/// to a single unstyled run falls back to plain text.
+fn styled_content(object: &Map<String, Value>, plain: String) -> TextContent {
+    let Some(items) = object.get("segments").and_then(Value::as_array) else {
+        return TextContent::Plain(plain);
+    };
+    let mut segments = Vec::new();
+    for item in items {
+        let Some(segment) = item.as_object() else {
+            continue;
+        };
+        let Some(text) = segment.get("text").and_then(Value::as_str) else {
+            continue;
+        };
+        if text.is_empty() {
+            continue;
+        }
+        let styles = segment.get("styles").and_then(Value::as_object);
+        let style = |key: &str| styles.and_then(|map| map.get(key)).and_then(Value::as_str);
+        let decoration = style("text-decoration-line").unwrap_or("");
+        segments.push(StyledTextSegment {
+            text: text.to_string(),
+            font_family: style("font-family").map(str::to_string),
+            font_size: style("font-size")
+                .and_then(parse_px)
+                .map(|value| value as f32),
+            font_weight: style("font-weight").and_then(|value| value.parse::<u32>().ok()),
+            font_style: match style("font-style") {
+                Some("italic" | "oblique") => Some(SegmentFontStyle::Italic),
+                Some("normal") => Some(SegmentFontStyle::Normal),
+                _ => None,
+            },
+            fill: style("color").and_then(parse_css_color),
+            underline: decoration.contains("underline").then_some(true),
+            strikethrough: decoration.contains("line-through").then_some(true),
+            href: segment
+                .get("href")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        });
+    }
+    // A lone run carrying no overrides is indistinguishable from plain text —
+    // keep the node simple so the common single-`<span>` block does not pay for
+    // styled content it does not use.
+    let trivial = segments.len() <= 1
+        && segments.iter().all(|segment| {
+            segment.font_family.is_none()
+                && segment.font_size.is_none()
+                && segment.font_weight.is_none()
+                && segment.font_style.is_none()
+                && segment.fill.is_none()
+                && segment.underline.is_none()
+                && segment.strikethrough.is_none()
+                && segment.href.is_none()
+        });
+    if segments.is_empty() || trivial {
+        TextContent::Plain(plain)
+    } else {
+        TextContent::Styled(segments)
     }
 }
 

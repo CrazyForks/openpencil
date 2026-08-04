@@ -765,3 +765,7 @@ fn solid_fill(color: String) -> PenFill {
 #[cfg(test)]
 #[path = "snapshot_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "snapshot_inline_tests.rs"]
+mod inline_tests;

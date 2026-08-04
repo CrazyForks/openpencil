@@ -78,6 +78,18 @@
     "text-align",
     "white-space",
   ];
+  // Per-run overrides carried on a folded inline block's `segments` (see
+  // `buildInlineText`). These are the properties an inline `<a>` / `<code>` /
+  // `<span>` changes against its block: colour, the monospace family and
+  // smaller size of code, bold / italic, and link underlines.
+  var SEGMENT_STYLE_KEYS = [
+    "color",
+    "font-family",
+    "font-size",
+    "font-weight",
+    "font-style",
+    "text-decoration-line",
+  ];
   // Computed values that carry no information: the importer's own defaults
   // are identical, so emitting them only inflates the payload (they are the
   // majority of every element's style block on a real page).
@@ -101,6 +113,7 @@
     position: "static",
     "z-index": "auto",
     "white-space": "normal",
+    "text-decoration-line": "none",
     display: "block",
   };
 
@@ -608,6 +621,138 @@
     return result;
   }
 
+  // Inline elements that fold into their block's text flow rather than
+  // becoming a positioned node of their own. Anything with its own box
+  // (inline-block, media, a shadow root) is deliberately absent.
+  var INLINE_FLOW_TAGS = {
+    a: true, code: true, span: true, b: true, strong: true, i: true,
+    em: true, u: true, s: true, small: true, mark: true, sub: true,
+    sup: true, abbr: true, cite: true, q: true, kbd: true, samp: true,
+    time: true, label: true, bdi: true, bdo: true, del: true, ins: true,
+    strike: true, big: true, tt: true, nobr: true,
+  };
+
+  // Text, an ignorable node, or an inline element whose subtree is inline all
+  // the way down — i.e. a node that joins a normal inline flow.
+  function isInlineFlow(node) {
+    if (node.nodeType === Node.TEXT_NODE) return true;
+    if (node.nodeType !== Node.ELEMENT_NODE) return true;
+    var tag = tagOf(node);
+    if (SKIP_TAGS[tag]) return true;
+    if (MEDIA_TAGS[tag] || node.shadowRoot || !INLINE_FLOW_TAGS[tag]) return false;
+    if (window.getComputedStyle(node).display !== "inline") return false;
+    return Array.prototype.every.call(node.childNodes, isInlineFlow);
+  }
+
+  // Does this element lay its children out as ONE run of flowing inline text
+  // mixing bare text with inline elements? Those are the blocks the per-child
+  // capture smeared — each wrapped child's rect was the union of its line
+  // boxes, so consecutive children stacked at the block's left edge.
+  function isInlineTextBlock(element, computed) {
+    var display = computed.display;
+    if (
+      display !== "block" &&
+      display !== "inline-block" &&
+      display !== "list-item" &&
+      display.indexOf("table-cell") === -1
+    ) {
+      return false;
+    }
+    var sawInlineElement = false;
+    var sawText = false;
+    var kids = element.childNodes;
+    for (var index = 0; index < kids.length; index += 1) {
+      var kid = kids[index];
+      if (!isInlineFlow(kid)) return false;
+      if (kid.nodeType === Node.ELEMENT_NODE && !SKIP_TAGS[tagOf(kid)]) {
+        sawInlineElement = true;
+      } else if (kid.nodeType === Node.TEXT_NODE && kid.textContent.trim()) {
+        sawText = true;
+      }
+    }
+    // Fold only mixed content — a pure-text block already captures as one
+    // node with the right box, so leave that untouched.
+    return sawInlineElement && (sawText || element.childNodes.length > 1);
+  }
+
+  // The `href` of the nearest enclosing `<a>` up to (and including) `root`.
+  function nearestHref(node, root) {
+    for (var element = node; element; element = element.parentElement) {
+      if (tagOf(element) === "a") {
+        var href = element.getAttribute("href");
+        if (href) return href;
+      }
+      if (element === root) break;
+    }
+    return null;
+  }
+
+  // Walk the inline text of `element` in document order into styled runs,
+  // collapsing whitespace across inline boundaries as CSS does: `\s+` → one
+  // space, a straddling boundary space → one, block-edge space dropped.
+  function inlineSegments(element) {
+    var walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null);
+    var segments = [];
+    var spaceOpen = true;
+    var node;
+    while ((node = walker.nextNode())) {
+      var text = (node.textContent || "").replace(/\s+/g, " ");
+      if (spaceOpen && text.charAt(0) === " ") text = text.slice(1);
+      if (!text) continue;
+      spaceOpen = text.charAt(text.length - 1) === " ";
+      var parent = node.parentElement || element;
+      var href = nearestHref(parent, element);
+      var styles = copyStyles(window.getComputedStyle(parent), SEGMENT_STYLE_KEYS);
+      var key = JSON.stringify(styles) + " " + (href || "");
+      var previous = segments[segments.length - 1];
+      if (previous && previous.key === key) {
+        previous.text += text;
+      } else {
+        segments.push({ text: text, styles: styles, href: href, key: key });
+      }
+    }
+    if (segments.length) {
+      var last = segments[segments.length - 1];
+      last.text = last.text.replace(/ $/, "");
+      if (!last.text) segments.pop();
+    }
+    return segments;
+  }
+
+  // One folded text node for a whole inline formatting context. Positioned at
+  // the inline content's own box (a range over the element's contents excludes
+  // padding and spans every line) and wrapped there once — never one node per
+  // inline child stacked at the block origin. Inline box decorations (a
+  // `<code>` pill background, a badge border) are the one thing it cannot
+  // carry and are dropped.
+  function buildInlineText(element, blockComputed) {
+    var range = document.createRange();
+    range.selectNodeContents(element);
+    var rect = range.getBoundingClientRect();
+    var lines = range.getClientRects().length;
+    if (typeof range.detach === "function") range.detach();
+    if (rect.width < 0.5 || rect.height < 0.5 || !takeNode()) return null;
+    var segments = inlineSegments(element);
+    var text = "";
+    for (var index = 0; index < segments.length; index += 1) {
+      text += segments[index].text;
+    }
+    if (!text.trim()) return null;
+    var emitted = segments.map(function (segment) {
+      var out = { text: segment.text, styles: segment.styles };
+      if (segment.href) out.href = segment.href;
+      return out;
+    });
+    return {
+      kind: "text",
+      rect: pageRect(rect),
+      text: text,
+      lines: lines || 1,
+      styles: copyStyles(blockComputed, TEXT_STYLE_KEYS),
+      segments: emitted,
+    };
+  }
+
   function buildElement(element) {
     var tag = tagOf(element);
     if (SKIP_TAGS[tag]) return null;
@@ -618,6 +763,18 @@
       return buildImage(element, computed, rect);
     }
     if (!takeNode()) return null;
+    // A block that lays its children out as one inline text flow collapses to
+    // a single positioned text node with styled runs — see `buildInlineText`.
+    if (isInlineTextBlock(element, computed)) {
+      var folded = buildInlineText(element, computed);
+      return {
+        kind: "element",
+        tag: tag,
+        rect: pageRect(rect),
+        styles: elementStyles(computed),
+        children: folded ? [folded] : [],
+      };
+    }
     var children = [];
     var collect = function (child) {
       if (truncated) return;
