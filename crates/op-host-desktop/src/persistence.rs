@@ -593,12 +593,11 @@ fn show_error_dialog(
     }
     body.push_str("\n\n");
     body.push_str(detail);
-    rfd::MessageDialog::new()
-        .set_title(op_i18n::translate(locale, title_key))
-        .set_description(&body)
-        .set_level(rfd::MessageLevel::Error)
-        .set_buttons(rfd::MessageButtons::Ok)
-        .show();
+    crate::message_dialog::alert(
+        op_i18n::translate(locale, title_key),
+        &body,
+        rfd::MessageLevel::Error,
+    );
 }
 
 /// Public re-export of the native error dialog — used by the

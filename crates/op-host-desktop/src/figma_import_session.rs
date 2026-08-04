@@ -113,16 +113,17 @@ pub(crate) fn prompt_output_mode(
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| output_path.display().to_string());
         let body = op_i18n::translate(locale, "figma.overwriteBody").replace("{{name}}", &name);
-        match rfd::MessageDialog::new()
-            .set_title(op_i18n::translate(locale, "figma.overwriteTitle"))
-            .set_description(&body)
-            .set_level(rfd::MessageLevel::Warning)
-            .set_buttons(rfd::MessageButtons::YesNoCancel)
-            .show()
-        {
-            rfd::MessageDialogResult::Yes => ExistingOutputDecision::Replace,
-            rfd::MessageDialogResult::No => ExistingOutputDecision::NumberedCopy,
-            _ => ExistingOutputDecision::Cancel,
+        match crate::message_dialog::ask_yes_no_cancel(
+            op_i18n::translate(locale, "figma.overwriteTitle"),
+            &body,
+            rfd::MessageLevel::Warning,
+        ) {
+            Some(crate::message_dialog::Choice::Yes) => ExistingOutputDecision::Replace,
+            // No — or no dialog backend (`None`): take the
+            // non-destructive default instead of silently aborting
+            // the import.
+            Some(crate::message_dialog::Choice::No) | None => ExistingOutputDecision::NumberedCopy,
+            Some(crate::message_dialog::Choice::Cancel) => ExistingOutputDecision::Cancel,
         }
     }) {
         Ok(mode) => mode,

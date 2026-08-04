@@ -142,12 +142,7 @@ fn remove_font(host: &mut WidgetHostNative, family: &str) {
 /// keyed to Open/Save/Export document errors, which don't fit here, so
 /// this uses a plain rfd message box.
 fn show_font_error_dialog(detail: &str) {
-    rfd::MessageDialog::new()
-        .set_title("Font import failed")
-        .set_description(detail)
-        .set_level(rfd::MessageLevel::Error)
-        .set_buttons(rfd::MessageButtons::Ok)
-        .show();
+    crate::message_dialog::alert("Font import failed", detail, rfd::MessageLevel::Error);
 }
 
 #[cfg(test)]

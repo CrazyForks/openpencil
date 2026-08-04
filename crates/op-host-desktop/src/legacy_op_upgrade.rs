@@ -46,15 +46,14 @@ pub(crate) fn prompt_and_save(
         .unwrap_or_else(|| source_path.display().to_string());
     let body =
         op_i18n::translate(locale, "dialog.upgradeOpBody").replace("{{name}}", name.as_str());
-    let decision = match rfd::MessageDialog::new()
-        .set_title(op_i18n::translate(locale, "dialog.upgradeOpTitle"))
-        .set_description(&body)
-        .set_level(rfd::MessageLevel::Info)
-        .set_buttons(rfd::MessageButtons::YesNoCancel)
-        .show()
-    {
-        rfd::MessageDialogResult::Yes => UpgradeDecision::ReplaceOriginal,
-        rfd::MessageDialogResult::No => UpgradeDecision::NumberedCopy,
+    let decision = match crate::message_dialog::ask_yes_no_cancel(
+        op_i18n::translate(locale, "dialog.upgradeOpTitle"),
+        &body,
+        rfd::MessageLevel::Info,
+    ) {
+        Some(crate::message_dialog::Choice::Yes) => UpgradeDecision::ReplaceOriginal,
+        Some(crate::message_dialog::Choice::No) => UpgradeDecision::NumberedCopy,
+        // Cancel — or no dialog backend (`None`): open the file as-is.
         _ => UpgradeDecision::Skip,
     };
     if decision == UpgradeDecision::Skip {

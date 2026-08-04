@@ -123,16 +123,11 @@ impl DesktopApp {
         // output via its `{{detail}}` slot (stderr / path / IO text).
         let detail =
             op_i18n::translate(locale, err.i18n_key()).replace("{{detail}}", &err.i18n_detail());
-        rfd::MessageDialog::new()
-            .set_title(op_i18n::translate(locale, title_key))
-            .set_description(format!(
-                "{}\n\n{}",
-                op_i18n::translate(locale, body_key),
-                detail,
-            ))
-            .set_level(rfd::MessageLevel::Error)
-            .set_buttons(rfd::MessageButtons::Ok)
-            .show();
+        crate::message_dialog::alert(
+            op_i18n::translate(locale, title_key),
+            &format!("{}\n\n{}", op_i18n::translate(locale, body_key), detail),
+            rfd::MessageLevel::Error,
+        );
     }
 
     pub(crate) fn request_redraw(&mut self, dirty: bool) -> bool {

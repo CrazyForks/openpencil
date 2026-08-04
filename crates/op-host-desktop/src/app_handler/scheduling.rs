@@ -35,12 +35,11 @@ fn show_gpu_init_error_dialog(err: &SharedSkiaError) {
          请更新显卡驱动后重试。\n\n\
          Details: {err}"
     );
-    rfd::MessageDialog::new()
-        .set_title("OpenPencil — Graphics initialization failed / 图形初始化失败")
-        .set_description(&body)
-        .set_level(rfd::MessageLevel::Error)
-        .set_buttons(rfd::MessageButtons::Ok)
-        .show();
+    crate::message_dialog::alert(
+        "OpenPencil — Graphics initialization failed / 图形初始化失败",
+        &body,
+        rfd::MessageLevel::Error,
+    );
 }
 
 impl DesktopApp {

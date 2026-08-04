@@ -491,19 +491,20 @@ impl DesktopApp {
             return true;
         }
         let locale = self.host.editor_state().editor_ui.locale;
-        let choice = rfd::MessageDialog::new()
-            .set_title(op_i18n::translate(locale, "git.reload.confirmTitle"))
-            .set_description(op_i18n::translate(locale, "git.reload.confirmBody"))
-            .set_level(rfd::MessageLevel::Warning)
-            .set_buttons(rfd::MessageButtons::YesNoCancel)
-            .show();
+        let choice = crate::message_dialog::ask_yes_no_cancel(
+            op_i18n::translate(locale, "git.reload.confirmTitle"),
+            op_i18n::translate(locale, "git.reload.confirmBody"),
+            rfd::MessageLevel::Warning,
+        );
         match choice {
-            rfd::MessageDialogResult::Yes => {
+            // Yes — or no dialog backend on this system (`None`): fail
+            // safe by saving before the reload may proceed.
+            Some(crate::message_dialog::Choice::Yes) | None => {
                 self.host.commit_variable_row_focus_if_any_pub();
                 self.request_background_save() && self.finish_background_saves()
             }
-            rfd::MessageDialogResult::No => true,
-            _ => false,
+            Some(crate::message_dialog::Choice::No) => true,
+            Some(crate::message_dialog::Choice::Cancel) => false,
         }
     }
 
@@ -524,21 +525,24 @@ impl DesktopApp {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| op_i18n::translate(locale, "dialog.untitledDocument").to_string());
         let body = op_i18n::translate(locale, "dialog.closeBody").replace("{{name}}", &name);
-        let choice = rfd::MessageDialog::new()
-            .set_title(op_i18n::translate(locale, "dialog.unsavedTitle"))
-            .set_description(&body)
-            .set_level(rfd::MessageLevel::Warning)
-            .set_buttons(rfd::MessageButtons::YesNoCancel)
-            .show();
+        let choice = crate::message_dialog::ask_yes_no_cancel(
+            op_i18n::translate(locale, "dialog.unsavedTitle"),
+            &body,
+            rfd::MessageLevel::Warning,
+        );
         match choice {
-            rfd::MessageDialogResult::Yes => {
+            // Yes — or no dialog backend on this system (`None`): the
+            // close must never be silently swallowed (#197), so fail
+            // safe by saving (Save-As runs through the portal file
+            // dialog, which works without zenity) and then closing.
+            Some(crate::message_dialog::Choice::Yes) | None => {
                 // Save, then close only if the document actually
                 // persisted (a cancelled Save-As must abort the close).
                 self.host.commit_variable_row_focus_if_any_pub();
                 self.request_background_save() && self.finish_background_saves()
             }
-            rfd::MessageDialogResult::No => true,
-            _ => false,
+            Some(crate::message_dialog::Choice::No) => true,
+            Some(crate::message_dialog::Choice::Cancel) => false,
         }
     }
 }

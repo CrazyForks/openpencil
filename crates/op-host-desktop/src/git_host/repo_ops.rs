@@ -473,12 +473,7 @@ impl DesktopApp {
 
     /// Info/error dialog for the empty-state cards.
     fn show_git_empty_error(&self, msg: &str) {
-        rfd::MessageDialog::new()
-            .set_title("Git")
-            .set_description(msg)
-            .set_level(rfd::MessageLevel::Warning)
-            .set_buttons(rfd::MessageButtons::Ok)
-            .show();
+        crate::message_dialog::alert("Git", msg, rfd::MessageLevel::Warning);
     }
 
     /// Show the generated SSH public key so the user can register it
@@ -486,12 +481,11 @@ impl DesktopApp {
     fn show_ssh_setup_dialog(&self, host: &str, public_key: &str) {
         let locale = self.host.editor_state().editor_ui.locale;
         let body = op_i18n::translate(locale, "git.ssh.readyBody").replace("{{host}}", host);
-        rfd::MessageDialog::new()
-            .set_title(op_i18n::translate(locale, "git.ssh.readyTitle"))
-            .set_description(format!("{body}\n\n{public_key}"))
-            .set_level(rfd::MessageLevel::Info)
-            .set_buttons(rfd::MessageButtons::Ok)
-            .show();
+        crate::message_dialog::alert(
+            op_i18n::translate(locale, "git.ssh.readyTitle"),
+            &format!("{body}\n\n{public_key}"),
+            rfd::MessageLevel::Info,
+        );
     }
 
     /// Report a quarantined merge conflict — the live tree is
@@ -505,11 +499,10 @@ impl DesktopApp {
         let body = op_i18n::translate(locale, "git.merge.conflictBody")
             .replace("{{branch}}", other)
             .replace("{{count}}", &conflicts.files.len().to_string());
-        rfd::MessageDialog::new()
-            .set_title(op_i18n::translate(locale, "git.merge.conflictTitle"))
-            .set_description(format!("{body}\n\n{detail}"))
-            .set_level(rfd::MessageLevel::Warning)
-            .set_buttons(rfd::MessageButtons::Ok)
-            .show();
+        crate::message_dialog::alert(
+            op_i18n::translate(locale, "git.merge.conflictTitle"),
+            &format!("{body}\n\n{detail}"),
+            rfd::MessageLevel::Warning,
+        );
     }
 }

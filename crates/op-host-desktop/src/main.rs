@@ -75,6 +75,7 @@ mod mcp_runtime;
 mod mcp_serve;
 mod menu;
 mod menu_action;
+mod message_dialog;
 mod model_refresh_host;
 mod persistence;
 mod persistence_error;
@@ -513,13 +514,12 @@ fn prompt_update_available(locale: op_editor_core::Locale, version: &str) {
     let body = op_i18n::translate(locale, "dialog.updateBody")
         .replace("{{version}}", version)
         .replace("{{current}}", env!("CARGO_PKG_VERSION"));
-    let choice = rfd::MessageDialog::new()
-        .set_title(op_i18n::translate(locale, "dialog.updateTitle"))
-        .set_description(&body)
-        .set_level(rfd::MessageLevel::Info)
-        .set_buttons(rfd::MessageButtons::YesNo)
-        .show();
-    if matches!(choice, rfd::MessageDialogResult::Yes) {
+    let choice = message_dialog::ask_yes_no(
+        op_i18n::translate(locale, "dialog.updateTitle"),
+        &body,
+        rfd::MessageLevel::Info,
+    );
+    if choice == Some(message_dialog::Choice::Yes) {
         // Download the platform installer in the background and open
         // it when ready; failures fall back to the releases page
         // inside the worker.

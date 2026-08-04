@@ -72,12 +72,7 @@ fn failure_body(locale: Locale, error: &op_host_services::export::ExportError) -
 /// Pop the same style of native dialog `persistence::show_error_dialog`
 /// uses, at a caller-chosen level (the happy path is not an error).
 fn info_dialog(title: &str, body: String, level: rfd::MessageLevel) {
-    rfd::MessageDialog::new()
-        .set_title(title)
-        .set_description(&body)
-        .set_level(level)
-        .set_buttons(rfd::MessageButtons::Ok)
-        .show();
+    crate::message_dialog::alert(title, &body, level);
 }
 
 #[cfg(test)]
