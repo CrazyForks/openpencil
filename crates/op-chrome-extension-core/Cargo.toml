@@ -1,0 +1,37 @@
+# Logic core of the OpenPencil Chrome extension (`packages/op-chrome-extension`).
+#
+# Everything here is pure, host-agnostic logic: it never touches `chrome.*`,
+# the DOM, or the network. The extension's JS is reduced to a glue layer that
+# calls `chrome.*`, executes `fetch`, and paints the popup; every rule that can
+# be decided without a browser API lives in this crate and is unit-tested
+# natively (`cargo test -p op-chrome-extension-core`).
+#
+# MUST stay wasm32-clean: the shipped artifact is a
+# `wasm32-unknown-unknown` cdylib loaded by the popup.
+[package]
+name = "op-chrome-extension-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "OpenPencil Chrome extension logic core — endpoint rules, chunked-transfer integrity, ingress envelopes and reply classification (wasm)"
+
+[lib]
+name = "op_chrome_extension_core"
+path = "src/lib.rs"
+# `cdylib` for the wasm artifact, `rlib` so the native test build links.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Canonical JSON string escaping, shared with op-mcp's hand-rolled JSON-RPC
+# serializer. Dependency-free leaf crate, wasm32-clean by contract.
+op-util = { path = "../op-util" }
+# Used ONLY to parse the (small) HTTP reply bodies the two ingresses answer
+# with. The outbound `tools/call` envelope is built with `format!` +
+# `op_util::json_escape`, mirroring `op-mcp`'s serializer, so the multi-MB
+# snapshot string is escaped in one streaming pass instead of being routed
+# through an intermediate `serde_json::Value`.
+serde_json = { workspace = true }
+# Pin matches op-host-web / op-web-sdk — the wasm-bindgen crate and the
+# installed `wasm-bindgen-cli` must agree exactly.
+wasm-bindgen = "=0.2.117"

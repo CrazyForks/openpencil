@@ -3646,6 +3646,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "op-chrome-extension-core"
+version = "0.8.2"
+dependencies = [
+ "op-util",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "op-cli"
 version = "0.8.2"
 dependencies = [
@@ -4142,6 +4151,9 @@ dependencies = [
 [[package]]
 name = "op-i18n"
 version = "0.8.2"
+dependencies = [
+ "op-html",
+]
 
 [[package]]
 name = "op-mcp"
