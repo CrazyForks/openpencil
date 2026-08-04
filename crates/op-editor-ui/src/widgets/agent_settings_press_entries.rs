@@ -301,6 +301,36 @@ pub(crate) fn apply_entry_hit(
             }
             SettingsPressOutcome::handled()
         }
+        AgentSettingsHit::AddAcpPreset(row) => {
+            commit(state);
+            // The row index is positional over the *visible* presets, so
+            // resolve it to a slug before mutating — adding one row hides
+            // it and renumbers everything after it.
+            let preset_id = state
+                .editor_ui
+                .agent_settings
+                .visible_acp_presets()
+                .get(row)
+                .map(|preset| preset.id);
+            if let Some(preset_id) = preset_id {
+                if let Some(index) = state
+                    .editor_ui
+                    .agent_settings
+                    .add_acp_agent_preset(preset_id)
+                {
+                    // Straight into the ordinary handshake — a preset that
+                    // stopped at "saved" would leave the user to hunt for
+                    // the Connect button they just implicitly asked for.
+                    state
+                        .editor_ui
+                        .agent_settings
+                        .begin_acp_agent_connect(index);
+                    state.editor_ui.agent_settings.hover_acp_preset = None;
+                    state.rebuild_chat_models();
+                }
+            }
+            SettingsPressOutcome::handled()
+        }
         AgentSettingsHit::AddAcpAgent => {
             commit(state);
             state.editor_ui.agent_settings.begin_acp_agent_draft();

@@ -169,12 +169,19 @@ fn localized_acp_header_and_empty_copy_stay_inside_content_width() {
             0,
         );
 
-        assert_eq!(
-            backend.text_effective_points.len(),
-            4,
+        // The header block is the first four runs, in paint order. The
+        // quick-add rows paint after them and are measured separately in
+        // `acp_presets`.
+        assert!(
+            backend.text_effective_points.len() >= 4,
             "{locale:?} empty ACP section should paint title, action, subtitle, and hint"
         );
-        let rows = backend.text_effective_points.clone();
+        let rows: Vec<_> = backend
+            .text_effective_points
+            .iter()
+            .take(4)
+            .cloned()
+            .collect();
         for ((text, point), size) in rows.iter().zip([15.0, 12.0, 12.0, 13.0]) {
             let painted_w = backend.measure_text(text, size);
             assert!(

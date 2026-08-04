@@ -135,6 +135,9 @@ pub enum AgentSettingsHit {
     EditBuiltinAgent(usize),
     RemoveBuiltinAgent(usize),
     AddAcpAgent,
+    /// Quick-add row pressed — positional index into
+    /// `AgentSettings::visible_acp_presets` for the same frame.
+    AddAcpPreset(usize),
     FocusAcpAgent {
         index: usize,
         field: AcpAgentField,

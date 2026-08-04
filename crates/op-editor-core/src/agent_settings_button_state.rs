@@ -16,6 +16,8 @@ pub enum AgentSettingsButton {
     AcpConnection(usize),
     AcpSaveDraft,
     AcpCancelDraft,
+    /// Positional index into the visible quick-add preset rows.
+    AcpAddPreset(usize),
     McpServer,
     McpClientConfigCopy,
     ImageSearchTest,

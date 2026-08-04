@@ -19,6 +19,7 @@ impl WidgetHostNative {
             new_card,
             new_builtin,
             new_acp,
+            new_acp_preset,
             new_preset_hover,
             new_close_hover,
             new_server_hover,
@@ -56,6 +57,11 @@ impl WidgetHostNative {
                 panel.acp_card_at(panel_rect, point).unwrap_or(usize::MAX)
             } else {
                 usize::MAX
+            };
+            let acp_preset = if is_agents {
+                panel.acp_preset_at(panel_rect, point)
+            } else {
+                None
             };
             let preset_hover = if is_agents {
                 panel.builtin_preset_hover_at(panel_rect, point)
@@ -147,6 +153,7 @@ impl WidgetHostNative {
                 card,
                 builtin,
                 acp,
+                acp_preset,
                 preset_hover,
                 close_hover,
                 server_hover,
@@ -187,6 +194,10 @@ impl WidgetHostNative {
         }
         if new_acp != self.editor_state.editor_ui.agent_settings.hover_acp_agent {
             self.editor_state.editor_ui.agent_settings.hover_acp_agent = new_acp;
+            changed = true;
+        }
+        if new_acp_preset != self.editor_state.editor_ui.agent_settings.hover_acp_preset {
+            self.editor_state.editor_ui.agent_settings.hover_acp_preset = new_acp_preset;
             changed = true;
         }
         if new_preset_hover

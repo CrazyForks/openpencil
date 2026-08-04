@@ -66,6 +66,9 @@ impl AgentSettingsPanel<'_> {
                 let acp_y = acp_section_y(content, &self.settings);
                 match agent_settings_acp::hit_test(content, &self.settings, scrolled, acp_y) {
                     AcpHit::AddAgent => return AgentSettingsHit::AddAcpAgent,
+                    AcpHit::AddPreset(index) => {
+                        return AgentSettingsHit::AddAcpPreset(index);
+                    }
                     AcpHit::Focus { index, field } => {
                         return AgentSettingsHit::FocusAcpAgent { index, field };
                     }
@@ -214,6 +217,21 @@ impl AgentSettingsPanel<'_> {
         let scrolled = Point2D::new(point.x, point.y + self.settings.scroll_y.offset);
         let section_y = acp_section_y(content, &self.settings);
         agent_settings_acp::card_at(content, &self.settings, scrolled, section_y)
+    }
+
+    /// Visible quick-add preset row under `point`, for the hosts' hover
+    /// ladder. Same geometry contract as [`Self::acp_card_at`].
+    pub fn acp_preset_at(&self, panel: Rect, point: Point2D) -> Option<usize> {
+        if !(panel).contains(point) {
+            return None;
+        }
+        if !self.mode.shows_external_agents() {
+            return None;
+        }
+        let content = content_rect(panel);
+        let scrolled = Point2D::new(point.x, point.y + self.settings.scroll_y.offset);
+        let section_y = acp_section_y(content, &self.settings);
+        agent_settings_acp::preset_row_at(content, &self.settings, scrolled, section_y)
     }
 
     pub fn builtin_preset_hover_at(

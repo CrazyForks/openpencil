@@ -12,6 +12,31 @@ use crate::DesktopApp;
 // `DesktopApp` field type in `main.rs`) still resolves with zero churn.
 pub use op_host_services::acp_agent_probe_host::AcpAgentConnectJob;
 
+/// Keep the quick-add rows' "is this CLI installed?" map in step with the
+/// settings modal.
+///
+/// Probing on open (rather than once at startup) is what makes the state
+/// recoverable: a user who installs `qwen` while the app is running gets
+/// an un-greyed row on the next open instead of after a restart. Closing
+/// the modal drops the map so the next open re-probes rather than
+/// painting a stale answer. Returns `true` when the map changed.
+pub fn refresh_acp_preset_availability(
+    settings: &mut op_editor_core::AgentSettings,
+    open: bool,
+) -> bool {
+    if !open {
+        let had_entries = !settings.acp_preset_installed.is_empty();
+        settings.acp_preset_installed.clear();
+        return had_entries;
+    }
+    if !settings.acp_preset_installed.is_empty() {
+        return false;
+    }
+    settings.acp_preset_installed =
+        op_host_services::acp_agent_probe_host::probe_acp_preset_availability();
+    !settings.acp_preset_installed.is_empty()
+}
+
 impl DesktopApp {
     pub(crate) fn drain_acp_agent_connect(&mut self) -> bool {
         let mut changed = self.discard_stale_acp_agent_connect_job();
@@ -147,9 +172,60 @@ mod tests {
     use op_host_services::acp_agent_probe_host::AcpAgentProbeOutcome;
     use std::collections::BTreeMap;
 
+    /// A `DesktopApp` whose ACP slate is empty.
+    ///
+    /// `DesktopApp::new` runs the real `settings_io::load`, so it inherits
+    /// whatever ACP agents the developer running the suite happens to have
+    /// configured. Every test below then adds one fixture agent and drives
+    /// it as index 0 / id `acp-1` — which silently becomes a *different*
+    /// agent the moment the machine has one of its own. Clearing here is
+    /// what makes the fixture mean what it reads like.
+    fn app_with_empty_acp_slate() -> DesktopApp {
+        let mut app = DesktopApp::new(None);
+        let settings = &mut app.host.editor_state_mut().editor_ui.agent_settings;
+        settings.acp_agents.clear();
+        settings.acp_agent_connection.clear();
+        settings.pending_acp_agent_connect = None;
+        settings.next_acp_agent_id = 1;
+        app
+    }
+
+    #[test]
+    fn preset_availability_is_probed_on_open_and_dropped_on_close() {
+        let mut settings = op_editor_core::AgentSettings::default();
+        assert!(settings.acp_preset_installed.is_empty());
+
+        assert!(refresh_acp_preset_availability(&mut settings, true));
+        assert_eq!(
+            settings.acp_preset_installed.len(),
+            op_editor_core::ACP_AGENT_PRESETS.len(),
+            "an open modal should classify every preset, installed or not"
+        );
+        // Whatever this machine has, no preset may be left Unknown once the
+        // host has actually looked.
+        for preset in &op_editor_core::ACP_AGENT_PRESETS {
+            assert_ne!(
+                settings.acp_preset_availability(preset.id),
+                op_editor_core::AcpPresetAvailability::Unknown
+            );
+        }
+        assert!(
+            !refresh_acp_preset_availability(&mut settings, true),
+            "a second frame with the modal still open must not re-probe PATH"
+        );
+
+        assert!(refresh_acp_preset_availability(&mut settings, false));
+        assert!(
+            settings.acp_preset_installed.is_empty(),
+            "closing drops the snapshot so reopening re-probes instead of \
+             painting a stale answer"
+        );
+        assert!(!refresh_acp_preset_availability(&mut settings, false));
+    }
+
     #[test]
     fn landed_acp_probe_failure_keeps_agent_disconnected() {
-        let mut app = DesktopApp::new(None);
+        let mut app = app_with_empty_acp_slate();
         let settings = &mut app.host.editor_state_mut().editor_ui.agent_settings;
         settings.add_acp_agent_config(
             "Claude Code",
@@ -182,7 +258,7 @@ mod tests {
 
     #[test]
     fn landed_acp_probe_success_marks_agent_connected() {
-        let mut app = DesktopApp::new(None);
+        let mut app = app_with_empty_acp_slate();
         let settings = &mut app.host.editor_state_mut().editor_ui.agent_settings;
         settings.add_acp_agent_config(
             "Claude Code",
@@ -215,7 +291,7 @@ mod tests {
 
     #[test]
     fn probe_result_is_discarded_when_configuration_changes_in_flight() {
-        let mut app = DesktopApp::new(None);
+        let mut app = app_with_empty_acp_slate();
         let settings = &mut app.host.editor_state_mut().editor_ui.agent_settings;
         settings.add_acp_agent_config(
             "Claude Code",
@@ -257,7 +333,7 @@ mod tests {
 
     #[test]
     fn stale_job_discard_preserves_reconnect_for_edited_configuration() {
-        let mut app = DesktopApp::new(None);
+        let mut app = app_with_empty_acp_slate();
         let settings = &mut app.host.editor_state_mut().editor_ui.agent_settings;
         settings.add_acp_agent_config(
             "Claude Code",
@@ -300,7 +376,7 @@ mod tests {
 
     #[test]
     fn ready_old_job_is_discarded_after_same_config_disconnect_reconnect() {
-        let mut app = DesktopApp::new(None);
+        let mut app = app_with_empty_acp_slate();
         let settings = &mut app.host.editor_state_mut().editor_ui.agent_settings;
         settings.add_acp_agent_config(
             "Claude Code",

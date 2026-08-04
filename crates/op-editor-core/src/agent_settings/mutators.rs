@@ -9,6 +9,10 @@ use super::{
     AcpAgentConfig, AcpConnectionType, AgentSettings, BuiltinAgentConfig, BuiltinAgentKind,
     ImageGenProfile, ImageGenProvider, ImageTestStatus,
 };
+use crate::acp_agent_presets::{
+    acp_agent_preset, matches_preset_transport, AcpAgentPreset, AcpPresetAvailability,
+    ACP_AGENT_PRESETS,
+};
 use crate::agent_settings_builtin_presets::{
     builtin_agent_preset, infer_builtin_agent_preset, BuiltinAgentPresetKey, BUILTIN_AGENT_PRESETS,
 };
@@ -275,6 +279,62 @@ impl AgentSettings {
             connected: false,
         });
         id
+    }
+
+    /// Whether a quick-add preset already has a saved agent behind it —
+    /// either one this table created (same id) or one the user typed by
+    /// hand that happens to have the identical transport. Both cases hide
+    /// the quick-add row, because adding it again would produce a second
+    /// card that connects to the same process.
+    pub fn acp_preset_added(&self, preset: &AcpAgentPreset) -> bool {
+        self.acp_agents.iter().any(|agent| {
+            agent.id == preset.id
+                || (agent.connection_type == AcpConnectionType::Local
+                    && matches_preset_transport(preset, &agent.command, &agent.args))
+        })
+    }
+
+    /// The quick-add rows still worth showing, in table order.
+    pub fn visible_acp_presets(&self) -> Vec<&'static AcpAgentPreset> {
+        ACP_AGENT_PRESETS
+            .iter()
+            .filter(|preset| !self.acp_preset_added(preset))
+            .collect()
+    }
+
+    pub fn acp_preset_availability(&self, preset_id: &str) -> AcpPresetAvailability {
+        match self.acp_preset_installed.get(preset_id) {
+            Some(true) => AcpPresetAvailability::Installed,
+            Some(false) => AcpPresetAvailability::Missing,
+            None => AcpPresetAvailability::Unknown,
+        }
+    }
+
+    /// Add one preset as an ordinary ACP agent and return its index in
+    /// `acp_agents`.
+    ///
+    /// Returns `None` for an unknown slug or an already-configured preset,
+    /// so a double press cannot produce two identical cards. The created
+    /// config is deliberately indistinguishable from a hand-typed one
+    /// apart from its id: it is editable, removable, and connects through
+    /// the same probe.
+    pub fn add_acp_agent_preset(&mut self, preset_id: &str) -> Option<usize> {
+        let preset = acp_agent_preset(preset_id)?;
+        if self.acp_preset_added(preset) {
+            return None;
+        }
+        self.acp_agents.push(AcpAgentConfig {
+            id: preset.id.to_string(),
+            display_name: preset.display_name.to_string(),
+            connection_type: AcpConnectionType::Local,
+            command: preset.command.to_string(),
+            args: preset.args.iter().map(|arg| arg.to_string()).collect(),
+            env: BTreeMap::new(),
+            url: None,
+            enabled: true,
+            connected: false,
+        });
+        Some(self.acp_agents.len() - 1)
     }
 
     pub fn remove_acp_agent(&mut self, id: &str) -> bool {

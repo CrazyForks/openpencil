@@ -315,6 +315,24 @@ pub fn accepts_thinking_body_field(model_id: &str) -> bool {
         || lower.starts_with("abab")
         || lower.contains("glm")
         || lower.starts_with("deepseek")
+        // Kimi 是**逐 model id**,不是整族 —— Moonshot 在族内换了控制字段。
+        // 只有 K2.5 / K2.6 走同形的 `thinking:{type}`(官方 API 参考的逐模型
+        // 表列出 enabled/disabled 两值,默认 enabled)。
+        //
+        // 故意排除、且**绝不能**放宽成 `starts_with("kimi")` 的三类:
+        // - `kimi-k3`(正是内置预设的默认模型):不认 `thinking`,改用顶层
+        //   `reasoning_effort`(low/high/max,默认 max),且文档写明"始终推理"
+        //   关不掉;两个字段同时下发直接 400
+        //   (`cannot specify both 'thinking' and 'reasoning_effort'`)。
+        // - `kimi-k2.7-code*`:只接受 `type:"enabled"`,发 disabled 报
+        //   `only type=enabled is allowed for this model`。
+        // - `kimi-k2-thinking*`:强制开启,要非思考只能换 model id。
+        // 同理不收 `moonshot-*` —— 那是老一代无思考模型,没有可关的东西。
+        //
+        // 出处:platform.kimi.ai/docs/api/chat 的逐模型 thinking /
+        // reasoning_effort 对照表 + docs/models 的在售模型列表。
+        || lower.contains("kimi-k2.5")
+        || lower.contains("kimi-k2.6")
 }
 
 #[cfg(test)]
@@ -355,6 +373,99 @@ mod tests {
                 "{model} asks for thinking off but cannot express it on the wire"
             );
         }
+    }
+
+    /// Models we ship a built-in preset for whose profile asks for thinking
+    /// off but which deliberately do NOT get the body field, each with the
+    /// reason. Being on this list is a decision, not an oversight — that
+    /// distinction is the whole point of the sweep below.
+    const THINKING_FIELD_WITHHELD: &[(&str, &str)] = &[
+        (
+            "gpt-5.4",
+            "OpenAI's official endpoint rejects unknown body fields",
+        ),
+        (
+            "gemini-3-flash-preview",
+            "Google's OpenAI-compat shim is not documented to accept it",
+        ),
+        (
+            "kimi-k3",
+            "K3 always reasons; control is top-level reasoning_effort, and \
+             sending both fields is a documented 400",
+        ),
+        ("qwen-plus", "no verified thinking-disable field"),
+        ("qwen3-coder-plus", "no verified thinking-disable field"),
+        ("doubao-seed-2.0-pro", "no verified thinking-disable field"),
+        ("ark-code-latest", "no verified thinking-disable field"),
+        ("mimo-v2-pro", "no verified thinking-disable field"),
+        ("step-3.5-flash", "no verified thinking-disable field"),
+        ("step-3-coding", "no verified thinking-disable field"),
+        (
+            "nvidia/llama-3.1-nemotron-70b-instruct",
+            "no verified thinking-disable field",
+        ),
+    ];
+
+    /// The blind spot that let kimi-k3 through, closed mechanically.
+    ///
+    /// The previous guard walked a hand-written list of three model ids, so
+    /// it could only catch families someone had already remembered — which
+    /// is not a guard at all. Walking the profile table instead does not
+    /// work either: `thinking_disabled` is set to `true` on nearly every
+    /// entry, including models with no thinking mode to disable, so it
+    /// cannot distinguish "we mean this" from "the constructor defaulted".
+    ///
+    /// The models we actually ship *are* enumerable: the built-in provider
+    /// presets. Every one whose profile asks for thinking off must be
+    /// explicitly classified — either the wire table carries it, or it is
+    /// listed above with a reason. Adding a preset with a new default model
+    /// fails here until someone decides which.
+    #[test]
+    fn every_shipped_preset_model_is_classified_for_the_thinking_field() {
+        for preset in op_editor_core::BUILTIN_AGENT_PRESETS {
+            // The Custom preset's `model` is a form placeholder, not an id.
+            if preset.key == op_editor_core::BuiltinAgentPresetKey::Custom {
+                continue;
+            }
+            let model = preset.model;
+            if !resolve_model_profile(model).thinking_disabled {
+                continue;
+            }
+            let on_the_wire = accepts_thinking_body_field(model);
+            let withheld = THINKING_FIELD_WITHHELD
+                .iter()
+                .any(|(listed, _)| *listed == model);
+            assert!(
+                on_the_wire != withheld,
+                "preset `{}` ships model `{model}`, whose profile asks for \
+                 thinking off, but it is {} — add it to \
+                 `accepts_thinking_body_field` (with a source) or to \
+                 THINKING_FIELD_WITHHELD (with a reason)",
+                preset.display_name,
+                if on_the_wire {
+                    "both sent on the wire AND listed as withheld"
+                } else {
+                    "neither sent on the wire nor listed as withheld"
+                },
+            );
+        }
+    }
+
+    /// Kimi is per-model, not per-family: the preset default (`kimi-k3`)
+    /// must stay OFF the wire table while the two ids that document the
+    /// field stay on it.
+    #[test]
+    fn kimi_thinking_field_is_scoped_to_the_models_that_accept_it() {
+        assert!(accepts_thinking_body_field("kimi-k2.5"));
+        assert!(accepts_thinking_body_field("kimi-k2.6"));
+        assert!(accepts_thinking_body_field("moonshot/kimi-k2.6"));
+        // k3 rejects `thinking` outright (mutually exclusive with
+        // `reasoning_effort`), so a blanket `kimi` prefix would 400 every
+        // request from the shipped Kimi preset.
+        assert!(!accepts_thinking_body_field("kimi-k3"));
+        assert!(!accepts_thinking_body_field("kimi-k2.7-code"));
+        assert!(!accepts_thinking_body_field("kimi-k2-thinking"));
+        assert!(!accepts_thinking_body_field("moonshot-v1-128k"));
     }
 
     #[test]

@@ -154,6 +154,27 @@ pub fn acp_config_for_probe(agent: &CoreAcpAgentConfig) -> op_acp::AcpAgentConfi
     }
 }
 
+/// Whether each quick-add preset's command resolves to a real file on
+/// this machine, keyed by preset id.
+///
+/// Advisory only. It resolves against the same merged login-shell PATH
+/// the spawn path uses (so a GUI launch sees the user's nvm/homebrew
+/// shims), but a `false` here never blocks adding the preset — PATH is a
+/// snapshot, and the ACP handshake is the authority on whether the agent
+/// actually runs.
+pub fn probe_acp_preset_availability() -> std::collections::BTreeMap<String, bool> {
+    op_editor_core::acp_agent_presets::ACP_AGENT_PRESETS
+        .iter()
+        .map(|preset| {
+            let resolved = crate::chat_spawn::find_binary(preset.command);
+            // `find_binary` echoes the bare name back when it finds
+            // nothing, so "resolved to an existing file" is the test.
+            let found = std::path::Path::new(&resolved).is_file();
+            (preset.id.to_string(), found)
+        })
+        .collect()
+}
+
 pub fn format_acp_agent_info(info: &op_acp::AcpAgentInfo, fallback: &str) -> String {
     let name = if info.name.trim().is_empty() {
         fallback.trim()

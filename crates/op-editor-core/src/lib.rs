@@ -8,6 +8,7 @@
 //! UI drafts).
 
 pub mod account_state;
+pub mod acp_agent_presets;
 pub mod agent_indicators;
 mod agent_indicators_tests;
 mod agent_provider_wire;
@@ -241,6 +242,10 @@ mod translate_equivalence_tests;
 
 pub use account_state::{
     AccountMenuRow, AccountState, LoginFlowError, LoginFlowStatus, LoginModalButton,
+};
+pub use acp_agent_presets::{
+    acp_agent_preset, matches_preset_transport, AcpAgentPreset, AcpPresetAvailability,
+    ACP_AGENT_PRESETS,
 };
 pub use agent_settings::{
     AcpAgentConfig, AcpAgentConnectOutcome, AcpAgentConnectPhase, AcpAgentConnectRequest,

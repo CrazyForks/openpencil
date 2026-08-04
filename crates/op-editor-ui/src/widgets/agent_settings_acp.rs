@@ -4,6 +4,7 @@ use crate::theme::Theme;
 use crate::widgets::agent_settings_acp_helpers::{
     connection_type_rect, field_input_rect, form_actions_y, form_card_h,
 };
+use crate::widgets::agent_settings_acp_presets as acp_presets;
 use crate::widgets::agent_settings_caret::settings_input_text;
 use crate::widgets::agent_settings_form_actions::{
     cancel_button_rect, paint_form_actions, save_button_rect,
@@ -38,7 +39,12 @@ const CONNECT_BTN_H: f32 = 28.0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AcpHit {
     AddAgent,
-    Focus { index: usize, field: AcpAgentField },
+    /// Positional index into the visible quick-add preset rows.
+    AddPreset(usize),
+    Focus {
+        index: usize,
+        field: AcpAgentField,
+    },
     FocusDraft(AcpAgentField),
     SaveDraft,
     CancelDraft,
@@ -49,30 +55,51 @@ pub enum AcpHit {
 }
 
 pub fn content_height(settings: &AgentSettings) -> f32 {
+    HEADER_H + SUBTITLE_H + list_height(settings) + acp_presets::block_height(settings)
+}
+
+/// Height of the saved-card list (or the empty hint that stands in for it).
+fn list_height(settings: &AgentSettings) -> f32 {
     let has_draft = settings.acp_agent_draft.is_some();
-    let list_h = if settings.acp_agents.is_empty() && !has_draft {
-        EMPTY_H
-    } else {
-        let saved_h: f32 = settings
-            .acp_agents
-            .iter()
-            .enumerate()
-            .map(|(index, _)| card_height(settings, index) + CARD_GAP)
-            .sum();
-        saved_h
-            + match settings.acp_agent_draft.as_ref() {
-                Some(draft) => form_card_h(draft.connection_type) + CARD_GAP,
-                None => 0.0,
-            }
-    };
-    HEADER_H + SUBTITLE_H + list_h
+    if settings.acp_agents.is_empty() && !has_draft {
+        return EMPTY_H;
+    }
+    let saved_h: f32 = settings
+        .acp_agents
+        .iter()
+        .enumerate()
+        .map(|(index, _)| card_height(settings, index) + CARD_GAP)
+        .sum();
+    saved_h
+        + match settings.acp_agent_draft.as_ref() {
+            Some(draft) => form_card_h(draft.connection_type) + CARD_GAP,
+            None => 0.0,
+        }
+}
+
+/// Y of the first saved card.
+fn cards_y(y: f32) -> f32 {
+    y + HEADER_H + SUBTITLE_H
+}
+
+/// Y of the quick-add block — *below* the saved cards, deliberately.
+///
+/// Putting it above would make every saved card's geometry depend on how
+/// many presets are still unconfigured, so adding one would reflow the
+/// list the user is looking at. Below, the block only ever shrinks off
+/// the bottom.
+fn presets_y(settings: &AgentSettings, y: f32) -> f32 {
+    cards_y(y) + list_height(settings)
 }
 
 pub fn hit_test(content: Rect, settings: &AgentSettings, point: Point2D, y: f32) -> AcpHit {
     if (add_agent_rect(content, y)).contains(point) {
         return AcpHit::AddAgent;
     }
-    let mut card_y = y + HEADER_H + SUBTITLE_H;
+    if let Some(index) = acp_presets::hit_test(content, settings, point, presets_y(settings, y)) {
+        return AcpHit::AddPreset(index);
+    }
+    let mut card_y = cards_y(y);
     for (index, agent) in settings.acp_agents.iter().enumerate() {
         let card = card_rect(
             content.origin.x,
@@ -130,11 +157,22 @@ pub fn card_at(
     settings_form::card_index_at(
         content.origin.x,
         content.size.x,
-        section_y + HEADER_H + SUBTITLE_H,
+        cards_y(section_y),
         CARD_GAP,
         (0..settings.acp_agents.len()).map(|index| card_height(settings, index)),
         point,
     )
+}
+
+/// Hover resolution for the quick-add rows — the twin of [`card_at`] that
+/// both hosts call from their cursor-move ladder.
+pub fn preset_row_at(
+    content: Rect,
+    settings: &AgentSettings,
+    point: Point2D,
+    section_y: f32,
+) -> Option<usize> {
+    acp_presets::row_at(content, settings, point, presets_y(settings, section_y))
 }
 
 pub fn paint_acp_section(
@@ -167,7 +205,7 @@ pub fn paint_acp_section(
         content.size.x,
     );
     if settings.acp_agents.is_empty() && settings.acp_agent_draft.is_none() {
-        return settings_form::paint_empty(
+        let y = settings_form::paint_empty(
             cx,
             theme,
             t_settings(ui, "settings.agents.acpEmpty"),
@@ -175,6 +213,7 @@ pub fn paint_acp_section(
             y,
             content.size.x,
         );
+        return acp_presets::paint(cx, theme, settings, ui, content, y);
     }
     for (index, agent) in settings.acp_agents.iter().enumerate() {
         let card = card_rect(
@@ -210,7 +249,7 @@ pub fn paint_acp_section(
         );
         y += card.size.y + CARD_GAP;
     }
-    y
+    acp_presets::paint(cx, theme, settings, ui, content, y)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -397,7 +436,7 @@ fn paint_avatar(cx: &mut PaintCx<'_>, theme: &Theme, agent: &AcpAgentConfig, car
     );
 }
 
-fn agent_monogram(display_name: &str) -> String {
+pub(crate) fn agent_monogram(display_name: &str) -> String {
     display_name
         .chars()
         .find(|ch| !ch.is_whitespace() && !ch.is_control())

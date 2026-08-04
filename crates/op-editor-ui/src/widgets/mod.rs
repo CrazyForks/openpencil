@@ -218,6 +218,7 @@ pub mod agent_settings_account;
 mod agent_settings_account_gate_tests;
 pub mod agent_settings_acp;
 mod agent_settings_acp_helpers;
+mod agent_settings_acp_presets;
 pub mod agent_settings_builtin;
 mod agent_settings_builtin_layout;
 mod agent_settings_builtin_parts;

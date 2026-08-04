@@ -238,6 +238,13 @@ pub struct AgentSettings {
     pub acp_agent_connect_generation: u64,
     pub pending_acp_agent_connect: Option<AcpAgentConnectRequest>,
     pub acp_agent_connection: BTreeMap<String, AcpAgentConnection>,
+    /// Whether each quick-add preset's binary was found on PATH, keyed by
+    /// preset id. Runtime-only and never persisted: it describes this
+    /// machine right now, and a stale "missing" carried across a restart
+    /// would grey out a CLI the user has since installed. Absent key =
+    /// nobody looked (the browser host never can), which the UI renders as
+    /// the neutral state rather than as "not installed".
+    pub acp_preset_installed: BTreeMap<String, bool>,
     pub scroll_y: jian_core::scroll::ScrollState,
     pub mcp_server: McpServer,
     pub mcp_cli_enabled: [bool; 12],
@@ -281,6 +288,8 @@ pub struct AgentSettings {
     pub hover_acp_agent: usize,
     pub hover_add_provider: bool,
     pub hover_add_acp_agent: bool,
+    /// Index into the *visible* quick-add preset rows under the cursor.
+    pub hover_acp_preset: Option<usize>,
     /// Sidebar nav item under the cursor; `None` = no hover.
     pub hover_nav: Option<AgentSettingsTab>,
     /// Latest browser→daemon credential-sync failure worth showing (web
@@ -309,6 +318,7 @@ impl Default for AgentSettings {
             acp_agent_connect_generation: 0,
             pending_acp_agent_connect: None,
             acp_agent_connection: BTreeMap::new(),
+            acp_preset_installed: BTreeMap::new(),
             scroll_y: Default::default(),
             mcp_server: McpServer::default(),
             mcp_cli_enabled: [false; 12],
@@ -342,6 +352,7 @@ impl Default for AgentSettings {
             hover_acp_agent: usize::MAX,
             hover_add_provider: false,
             hover_add_acp_agent: false,
+            hover_acp_preset: None,
             hover_nav: None,
             web_credential_sync_error: None,
         }

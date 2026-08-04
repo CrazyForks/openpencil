@@ -359,6 +359,17 @@ impl DesktopApp {
         if self.drain_acp_agent_connect() {
             self.redraw_dirty = true;
         }
+        // Keep the ACP quick-add rows' install hints truthful for as long
+        // as the settings modal is on screen.
+        {
+            let open = self.host.editor_state().editor_ui.agent_settings_open;
+            if crate::acp_agent_probe_host::refresh_acp_preset_availability(
+                &mut self.host.editor_state_mut().editor_ui.agent_settings,
+                open,
+            ) {
+                self.redraw_dirty = true;
+            }
+        }
         // Drain the picker-open catalog refresh — a CLI that gained
         // models since the last probe shows up without a restart.
         if self.drain_model_catalog_refresh() {

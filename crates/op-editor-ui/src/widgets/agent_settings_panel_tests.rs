@@ -15,6 +15,7 @@ use op_editor_core::agent_settings::{
 use op_editor_core::{AgentSettingsButton, ButtonPressTarget, EditorState};
 
 mod acp_agents;
+mod acp_presets;
 mod builtin_agents;
 mod chrome;
 mod images_tab;

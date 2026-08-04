@@ -30,6 +30,7 @@ impl WidgetHost {
             image_profile_test_hover,
             image_provider_option_hover,
             new_hover,
+            acp_preset_hover,
         ) = {
             let panel = AgentSettingsPanel::for_web_editor(&self.editor_state);
             let panel_rect = panel.rect(self.last_viewport_w, self.last_viewport_h);
@@ -99,6 +100,12 @@ impl WidgetHost {
                 None
             };
             let new_hover = panel.builtin_preset_hover_at(panel_rect, point);
+            // The whole quick-add row is one hit target, so the press hit
+            // already names the hovered row — no second geometry walk.
+            let acp_preset_hover = match hit {
+                AgentSettingsHit::AddAcpPreset(index) if is_agents => Some(index),
+                _ => None,
+            };
             (
                 close_hover,
                 server_hover,
@@ -114,9 +121,14 @@ impl WidgetHost {
                 image_profile_test_hover,
                 image_provider_option_hover,
                 new_hover,
+                acp_preset_hover,
             )
         };
         let mut changed = false;
+        if acp_preset_hover != self.editor_state.editor_ui.agent_settings.hover_acp_preset {
+            self.editor_state.editor_ui.agent_settings.hover_acp_preset = acp_preset_hover;
+            changed = true;
+        }
         if close_hover
             != self
                 .editor_state
