@@ -139,7 +139,7 @@ would be a remote request)". A `data:` URI cannot execute under this policy;
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | **Capture full page** | Captures the whole page and sends it to the OpenPencil instance at the endpoint under **OpenPencil endpoint** (default `127.0.0.1:3100`). |
 | **Capture element**   | Lets you point at one element and captures only its subtree. See below.                                                                   |
-| **Download JSON**     | Captures and saves `<page-title>-snapshot.json` instead of sending it.                                                                    |
+| **Download .op**      | Captures and saves a ready-to-open `<page-title>.op` document instead of sending it — double-click it to open in OpenPencil.               |
 
 The status area reports node counts, importer warnings, and whether the page hit
 the extractor's 20,000-node cap. The endpoint setting is collapsed by default —
@@ -165,7 +165,7 @@ result comes back two ways:
   naming the element and what happened to it.
 
 The capture is delivered the same way as **whichever of "Capture full page" or
-"Download JSON" you used last** — the choice is remembered in
+"Download .op" you used last** — the choice is remembered in
 `chrome.storage.local` under `lastAction`, and defaults to sending. There is no
 fourth button and no extra prompt: the element pick reuses a decision you have
 already made.
@@ -226,7 +226,7 @@ reverse, or a manifest `__MSG_*` key that some locale cannot resolve.
 
 Which one the **Capture** button uses is decided by the `delivery.rs` rule:
 path 1 unless you are signed in AND have chosen your account under **Send to**,
-in which case path 3. `Download JSON` is always path 2.
+in which case path 3. `Download .op` is always path 2.
 
 ### 1. Send to a running OpenPencil (the button)
 
@@ -277,16 +277,17 @@ OPENPENCIL_EXTENSION_ALLOWED_IDS=abcdefghijklmnopabcdefghijklmnop openpencil-des
 other extension origin is refused. Your unpacked extension's id is on its card
 in `chrome://extensions`.
 
-### 2. Download and import by hand
+### 2. Download and open by hand
 
-`Download JSON` writes the raw snapshot. Import it with either:
+`Download .op` writes a ready-to-open `.op` document (OpenPencil's `PenDocument`
+format — the same conversion `op import:snapshot` performs, run in the browser).
+Open it directly:
 
-```bash
-op import:snapshot ~/Downloads/example-snapshot.json          # into the running editor
-op import:snapshot ~/Downloads/example-snapshot.json --out page.op   # into a new file
-```
+- double-click the `<page-title>.op` file, or
+- drag it onto the app window, or
+- `op open ~/Downloads/example.op`.
 
-or drag the file onto the app.
+No CLI conversion step is needed — the file is already a `.op` document.
 
 ### 3. Send to your OpenPencil account
 
@@ -371,7 +372,7 @@ this destination:
 
 | Ceiling                | Value                          | What you see                                                              |
 | ---------------------- | ------------------------------ | ------------------------------------------------------------------------- |
-| Per capture            | 32 MB, same as the local route | Refused before the upload starts, with the `Download JSON` advice.        |
+| Per capture            | 32 MB, same as the local route | Refused before the upload starts, with the `Download .op` advice.         |
 | Per account            | 50 snapshots or 200 MB         | "Your account inbox is full", naming both ceilings.                       |
 | Per hour               | 20 uploads                     | "Try again in about N minutes", from the hub's own `Retry-After`.         |
 | Retention              | 30 days                        | An unclaimed capture is deleted; the inbox is not storage.                |
@@ -428,7 +429,7 @@ required. It is the same mechanism the loopback import path relies on.)
 | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | `activeTab`                                  | Run the extractor in the tab you clicked the button on — granted per click, no standing access to your browsing. |
 | `scripting`                                  | The injection API itself, for the extractor, the transfer harness and the picker overlay.                        |
-| `downloads`                                  | The `Download JSON` fallback.                                                                                    |
+| `downloads`                                  | The `Download .op` fallback.                                                                                    |
 | `storage`                                    | Remembers the endpoint you typed, the delivery you last used, one pending pick result, and the account row.      |
 | `host_permissions: http://127.0.0.1/*`       | POST the snapshot to your local OpenPencil.                                                                      |
 | `host_permissions: https://op.zseven.cn/*`   | Ask the China hub who is signed in, and open its sign-in page. Used only if you sign in.                         |
@@ -587,7 +588,7 @@ either police three identical files or exempt them. The switcher still offers
 | Privacy policy URL        | Publish [`docs/privacy-policy.md`](docs/privacy-policy.md) and link it. It is written to be published verbatim.                                    |
 | Single purpose            | "Capture the rendered state of a web page and import it into the user's OpenPencil as editable design nodes."                                      |
 | `activeTab` + `scripting` | "Runs the OpenPencil DOM extractor in the tab the user pressed the button on."                                                                     |
-| `downloads`               | "Saves the capture as a JSON file when the user chooses Download JSON."                                                                            |
+| `downloads`               | "Saves the capture as a ready-to-open .op document when the user chooses Download .op."                                                            |
 | `storage`                 | "Stores the user's endpoint, language, region, chosen destination and account display name locally."                                               |
 | `http://127.0.0.1/*`      | "Delivers the capture to the OpenPencil application running on the user's own computer."                                                           |
 | The two `op.zseven.*`     | "Reads the signed-in user's own account profile from the OpenPencil Hub, and uploads a capture to that same account when the user selects it as the destination. Optional; the extension is fully functional signed out." |
@@ -631,15 +632,15 @@ or run `openpencil-desktop --serve-web 3100`. Check the port with
 
 **"This OpenPencil build has no extension ingress"** — the app is listening but
 predates `POST /api/import/web-snapshot`, and its general `/mcp` surface refuses
-browser-extension origins by design. Update the app, or use `Download JSON` +
-`op import:snapshot`. You will also see this if the editor was started with
+browser-extension origins by design. Update the app, or use `Download .op` and
+open the file in OpenPencil. You will also see this if the editor was started with
 `OPENPENCIL_EXTENSION_ALLOWED_IDS` set to a list that does not include this
 extension's id.
 
 **"This capture is larger than 32 MB"** — the snapshot route caps its body at
 32 MB (it is the one ingress that needs no token, so it does not get to make the
-editor buffer an arbitrary amount). Use `Download JSON` + `op import:snapshot`,
-which has no such limit.
+editor buffer an arbitrary amount). Use `Download .op` and open the file in
+OpenPencil, which has no such limit.
 
 **"… did not answer within 15s"** — the connection was accepted but the reply
 never came. The editor is busy or stuck (a modal dialog blocking its UI thread
@@ -676,7 +677,7 @@ it is what clears the badge.
 the worker statically imports the built core, so it does not register until
 `scripts/build-wasm.sh` has run. Run it, then hit **Reload** on the extension
 card. `chrome://extensions` shows the worker's own error next to the card.
-**Capture full page** and **Download JSON** are unaffected; they run in the
+**Capture full page** and **Download .op** are unaffected; they run in the
 popup.
 
 **"The extension is built, but its logic core would not start"** — distinct

@@ -9,7 +9,7 @@
   },
   "captureButton": { "message": "Capture full page" },
   "pickButton": { "message": "Capture element" },
-  "downloadButton": { "message": "Download JSON" },
+  "downloadButton": { "message": "Download .op" },
   "pickHint": { "message": "Click an element to capture it" },
   "pickCancelHint": { "message": "Esc to cancel" },
   "endpointLabel": { "message": "OpenPencil endpoint" },
@@ -54,10 +54,10 @@
     "message": "OpenPencil at $1 accepted the connection but did not answer within $2s. It may be busy or stuck — check the app, then try again."
   },
   "errorNoIngress": {
-    "message": "This OpenPencil build has no extension ingress ($1). Update the app, or use Download JSON and run: op import:snapshot <file>"
+    "message": "This OpenPencil build has no extension ingress ($1). Update the app, or use Download .op and open the file in OpenPencil."
   },
   "errorTooLarge": {
-    "message": "This capture is larger than $1 MB, which OpenPencil's snapshot route refuses. Use Download JSON, then run: op import:snapshot <file>"
+    "message": "This capture is larger than $1 MB, which OpenPencil's snapshot route refuses. Use Download .op, then open the file in OpenPencil."
   },
   "errorImport": { "message": "OpenPencil refused the snapshot: $1" },
   "errorDownload": { "message": "Download failed: $1" },

@@ -9,7 +9,7 @@
   },
   "captureButton": { "message": "ページ全体をキャプチャ" },
   "pickButton": { "message": "要素をキャプチャ" },
-  "downloadButton": { "message": "JSON をダウンロード" },
+  "downloadButton": { "message": ".op をダウンロード" },
   "pickHint": { "message": "キャプチャする要素をクリックしてください" },
   "pickCancelHint": { "message": "Esc でキャンセル" },
   "endpointLabel": { "message": "OpenPencil の接続先" },
@@ -46,10 +46,10 @@
     "message": "$1 は接続を受け付けましたが、$2 秒以内に応答しませんでした。処理中か停止している可能性があります。アプリを確認してからもう一度お試しください。"
   },
   "errorNoIngress": {
-    "message": "この OpenPencil ビルドには拡張機能用の受け口がありません（$1）。アプリを更新するか、「JSON をダウンロード」を使って次を実行してください: op import:snapshot <ファイル>"
+    "message": "この OpenPencil ビルドには拡張機能用の受け口がありません（$1）。アプリを更新するか、「.op をダウンロード」してそのファイルを OpenPencil で開いてください"
   },
   "errorTooLarge": {
-    "message": "このキャプチャは $1 MB を超えており、OpenPencil のスナップショット受け口が受け付けません。「JSON をダウンロード」を使ってから次を実行してください: op import:snapshot <ファイル>"
+    "message": "このキャプチャは $1 MB を超えており、OpenPencil のスナップショット受け口が受け付けません。「.op をダウンロード」してから、そのファイルを OpenPencil で開いてください"
   },
   "errorImport": { "message": "OpenPencil がスナップショットを拒否しました: $1" },
   "errorDownload": { "message": "ダウンロードに失敗しました: $1" },

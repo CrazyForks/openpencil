@@ -9,7 +9,7 @@
   },
   "captureButton": { "message": "Tüm sayfayı yakala" },
   "pickButton": { "message": "Öğe yakala" },
-  "downloadButton": { "message": "JSON indir" },
+  "downloadButton": { "message": ".op indir" },
   "pickHint": { "message": "Yakalamak için bir öğeye tıklayın" },
   "pickCancelHint": { "message": "İptal için Esc" },
   "endpointLabel": { "message": "OpenPencil adresi" },
@@ -54,10 +54,10 @@
     "message": "$1 adresindeki OpenPencil bağlantıyı kabul etti ama $2 saniye içinde yanıt vermedi. Uygulama meşgul ya da takılmış olabilir — kontrol edip yeniden deneyin."
   },
   "errorNoIngress": {
-    "message": "Bu OpenPencil sürümünde uzantı girişi yok ($1). Uygulamayı güncelleyin veya “JSON indir” ile kaydedip şunu çalıştırın: op import:snapshot <dosya>"
+    "message": "Bu OpenPencil sürümünde uzantı girişi yok ($1). Uygulamayı güncelleyin veya “.op indir” ile kaydedip dosyayı OpenPencil’da açın"
   },
   "errorTooLarge": {
-    "message": "Bu yakalama $1 MB’tan büyük ve OpenPencil’ın anlık görüntü yolu bunu reddediyor. “JSON indir” kullanın, ardından şunu çalıştırın: op import:snapshot <dosya>"
+    "message": "Bu yakalama $1 MB’tan büyük ve OpenPencil’ın anlık görüntü yolu bunu reddediyor. “.op indir” kullanın, ardından dosyayı OpenPencil’da açın"
   },
   "errorImport": { "message": "OpenPencil anlık görüntüyü reddetti: $1" },
   "errorDownload": { "message": "İndirme başarısız: $1" },

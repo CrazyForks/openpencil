@@ -352,10 +352,16 @@ fn the_two_absent_states_serialize_as_the_popup_expects() {
         session_to_json(&SessionView::SignedOut),
         r#"{"state":"signedOut"}"#
     );
+    // Compare parsed fields rather than the raw string: serde_json's object
+    // key order depends on whether `preserve_order` is unified into the build
+    // graph (op-html pulls it in transitively via schemars), and the popup
+    // `JSON.parse`s this either way, so ordering is not part of the contract.
     let json = session_to_json(&SessionView::Unavailable {
         detail: "HTTP 503".to_owned(),
     });
-    assert_eq!(json, r#"{"detail":"HTTP 503","state":"error"}"#);
+    let value: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+    assert_eq!(value["state"], "error");
+    assert_eq!(value["detail"], "HTTP 503");
 }
 
 #[test]

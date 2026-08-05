@@ -9,7 +9,7 @@
   },
   "captureButton": { "message": "Capturer la page entière" },
   "pickButton": { "message": "Capturer un élément" },
-  "downloadButton": { "message": "Télécharger le JSON" },
+  "downloadButton": { "message": "Télécharger le .op" },
   "pickHint": { "message": "Cliquez sur un élément pour le capturer" },
   "pickCancelHint": { "message": "Échap pour annuler" },
   "endpointLabel": { "message": "Adresse OpenPencil" },
@@ -56,10 +56,10 @@
     "message": "OpenPencil à l’adresse $1 a accepté la connexion mais n’a pas répondu en $2 s. L’application est peut-être occupée ou bloquée — vérifiez-la, puis réessayez."
   },
   "errorNoIngress": {
-    "message": "Cette version d’OpenPencil ne dispose d’aucun point d’entrée pour les extensions ($1). Mettez l’application à jour, ou utilisez « Télécharger le JSON » puis exécutez : op import:snapshot <fichier>"
+    "message": "Cette version d’OpenPencil ne dispose d’aucun point d’entrée pour les extensions ($1). Mettez l’application à jour, ou utilisez « Télécharger le .op » puis ouvrez le fichier dans OpenPencil"
   },
   "errorTooLarge": {
-    "message": "Cette capture dépasse $1 Mo, ce que la route de capture d’OpenPencil refuse. Utilisez « Télécharger le JSON », puis exécutez : op import:snapshot <fichier>"
+    "message": "Cette capture dépasse $1 Mo, ce que la route de capture d’OpenPencil refuse. Utilisez « Télécharger le .op », puis ouvrez le fichier dans OpenPencil"
   },
   "errorImport": { "message": "OpenPencil a refusé la capture : $1" },
   "errorDownload": { "message": "Échec du téléchargement : $1" },

@@ -26,6 +26,7 @@ mod hub_reply;
 mod hub_time;
 mod ingress;
 mod js_text;
+mod op_export;
 mod transfer;
 mod wasm_api;
 
@@ -45,5 +46,7 @@ mod hub_tests;
 mod ingress_tests;
 #[cfg(test)]
 mod js_text_tests;
+#[cfg(test)]
+mod op_export_tests;
 #[cfg(test)]
 mod transfer_tests;

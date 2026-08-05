@@ -19,6 +19,7 @@ use crate::filename;
 use crate::hub;
 use crate::hub_reply::{self, CreateReply};
 use crate::ingress::{self, Reply};
+use crate::op_export::{self, OpExport};
 use crate::transfer;
 
 /// Endpoint the popup pre-fills when the user has none stored.
@@ -62,10 +63,42 @@ pub fn snapshot_placeholder() -> String {
     ingress::SNAPSHOT_PLACEHOLDER.to_owned()
 }
 
-/// Download file name for a page titled `title`.
-#[wasm_bindgen(js_name = snapshotFilename)]
-pub fn snapshot_filename(title: &str) -> String {
-    filename::snapshot_filename(title)
+/// Download file name for the `.op` document of a page titled `title`.
+#[wasm_bindgen(js_name = opFilename)]
+pub fn op_filename(title: &str) -> String {
+    filename::op_filename(title)
+}
+
+/// Convert an extractor snapshot into a ready-to-open `.op` document.
+///
+/// Returns a small JSON document the popup glue parses with `JSON.parse`:
+///
+/// * `{"ok":true,"op":"<PenDocument JSON>","nodeCount":N,"warnings":[…]}` —
+///   `op` is the exact text to write to a `.op` file.
+/// * `{"ok":false,"error":"…"}` — the capture produced no importable content
+///   (empty page, unsupported snapshot, malformed JSON); the caller must show
+///   an actionable error instead of downloading a broken file.
+///
+/// `title`, when present and non-blank, names the produced document.
+#[wasm_bindgen(js_name = snapshotToOpDocument)]
+pub fn snapshot_to_op_document(snapshot_json: &str, title: Option<String>) -> String {
+    let value = match op_export::snapshot_to_op(snapshot_json, title.as_deref()) {
+        OpExport::Ready {
+            op,
+            node_count,
+            warnings,
+        } => serde_json::json!({
+            "ok": true,
+            "op": op,
+            "nodeCount": node_count,
+            "warnings": warnings,
+        }),
+        OpExport::Failed { error } => serde_json::json!({
+            "ok": false,
+            "error": error,
+        }),
+    };
+    value.to_string()
 }
 
 /// Milliseconds before an in-flight request is aborted.

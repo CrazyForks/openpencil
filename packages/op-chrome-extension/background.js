@@ -188,9 +188,18 @@ async function accountDelivery() {
 
 async function deliver(mode, text, meta, endpoint, account) {
   if (mode === 'download') {
-    const filename = getCore().snapshotFilename(String(meta.title || ''));
+    // Same conversion as the popup: hand back a ready-to-open `.op` document,
+    // not the raw snapshot. An empty capture surfaces as an actionable error
+    // rather than a broken file.
+    const converted = JSON.parse(getCore().snapshotToOpDocument(text, String(meta.title || '')));
+    if (!converted.ok) {
+      const error = new Error(String(converted.error || 'empty capture'));
+      error.code = 'empty';
+      throw error;
+    }
+    const filename = getCore().opFilename(String(meta.title || ''));
     try {
-      await chrome.downloads.download({ url: dataUrl(text), filename, saveAs: false });
+      await chrome.downloads.download({ url: dataUrl(converted.op), filename, saveAs: false });
     } catch (cause) {
       const error = new Error(String((cause && cause.message) || cause));
       error.code = 'download';

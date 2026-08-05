@@ -9,7 +9,7 @@
   },
   "captureButton": { "message": "Capturar página completa" },
   "pickButton": { "message": "Capturar elemento" },
-  "downloadButton": { "message": "Descargar JSON" },
+  "downloadButton": { "message": "Descargar .op" },
   "pickHint": { "message": "Haz clic en un elemento para capturarlo" },
   "pickCancelHint": { "message": "Esc para cancelar" },
   "endpointLabel": { "message": "Dirección de OpenPencil" },
@@ -54,10 +54,10 @@
     "message": "OpenPencil en $1 aceptó la conexión pero no respondió en $2 s. Puede estar ocupado o bloqueado: revisa la aplicación y vuelve a intentarlo."
   },
   "errorNoIngress": {
-    "message": "Esta versión de OpenPencil no tiene entrada para extensiones ($1). Actualiza la aplicación o usa «Descargar JSON» y ejecuta: op import:snapshot <archivo>"
+    "message": "Esta versión de OpenPencil no tiene entrada para extensiones ($1). Actualiza la aplicación o usa «Descargar .op» y abre el archivo en OpenPencil"
   },
   "errorTooLarge": {
-    "message": "Esta captura supera $1 MB, y la ruta de capturas de OpenPencil la rechaza. Usa «Descargar JSON» y luego ejecuta: op import:snapshot <archivo>"
+    "message": "Esta captura supera $1 MB, y la ruta de capturas de OpenPencil la rechaza. Usa «Descargar .op» y luego abre el archivo en OpenPencil"
   },
   "errorImport": { "message": "OpenPencil rechazó la captura: $1" },
   "errorDownload": { "message": "Error al descargar: $1" },

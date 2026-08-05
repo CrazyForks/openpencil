@@ -8,7 +8,7 @@
 //! failure) or a dot-file. The result stays readable — a title only loses
 //! characters it could not have carried anyway.
 //!
-//! This is a port of the JS `snapshotFilename`, chain step for chain step:
+//! The sanitisation chain, step for step:
 //!
 //! ```text
 //! .replace(/[\p{Cc}<>:"/\\|?*%]+/gu, ' ')
@@ -19,14 +19,18 @@
 //! .slice(0, 80)
 //! .replace(/[\s.]+$/, '')
 //! ```
+//!
+//! The offline download is a ready-to-open `.op` document (OpenPencil's
+//! `PenDocument` format), so the sanitised stem carries the `.op` suffix and
+//! the file opens by double-click without any CLI step.
 
 use crate::js_text::{is_js_space, js_trim, truncate_utf16};
 
 /// Longest title stem kept, in UTF-16 code units (JS `slice(0, 80)`).
 const MAX_STEM_UNITS: usize = 80;
 
-/// Suffix every snapshot download carries.
-const SUFFIX: &str = "-snapshot.json";
+/// Suffix every `.op` download carries.
+const SUFFIX: &str = ".op";
 
 /// Stem used when the title sanitises down to nothing.
 const FALLBACK_STEM: &str = "page";
@@ -36,8 +40,8 @@ const FALLBACK_STEM: &str = "page";
 /// `chrome.downloads` is a needless second decoding layer.
 const FORBIDDEN: [char; 10] = ['<', '>', ':', '"', '/', '\\', '|', '?', '*', '%'];
 
-/// Build the download file name for a captured page titled `title`.
-pub fn snapshot_filename(title: &str) -> String {
+/// Build the `.op` download file name for a captured page titled `title`.
+pub fn op_filename(title: &str) -> String {
     let replaced = replace_forbidden_runs(title);
     let collapsed = collapse_space_runs(&replaced);
     let dotted = collapse_dot_runs(&collapsed);

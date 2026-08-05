@@ -9,7 +9,7 @@
   },
   "captureButton": { "message": "Tangkap seluruh halaman" },
   "pickButton": { "message": "Tangkap elemen" },
-  "downloadButton": { "message": "Unduh JSON" },
+  "downloadButton": { "message": "Unduh .op" },
   "pickHint": { "message": "Klik elemen yang ingin ditangkap" },
   "pickCancelHint": { "message": "Esc untuk membatalkan" },
   "endpointLabel": { "message": "Alamat OpenPencil" },
@@ -54,10 +54,10 @@
     "message": "OpenPencil di $1 menerima koneksi tetapi tidak menjawab dalam $2 detik. Aplikasi mungkin sibuk atau macet — periksa aplikasinya, lalu coba lagi."
   },
   "errorNoIngress": {
-    "message": "Versi OpenPencil ini tidak memiliki jalur masuk untuk ekstensi ($1). Perbarui aplikasi, atau gunakan “Unduh JSON” lalu jalankan: op import:snapshot <berkas>"
+    "message": "Versi OpenPencil ini tidak memiliki jalur masuk untuk ekstensi ($1). Perbarui aplikasi, atau gunakan “Unduh .op” lalu buka berkas di OpenPencil"
   },
   "errorTooLarge": {
-    "message": "Tangkapan ini lebih besar dari $1 MB, dan rute cuplikan OpenPencil menolaknya. Gunakan “Unduh JSON”, lalu jalankan: op import:snapshot <berkas>"
+    "message": "Tangkapan ini lebih besar dari $1 MB, dan rute cuplikan OpenPencil menolaknya. Gunakan “Unduh .op”, lalu buka berkas di OpenPencil"
   },
   "errorImport": { "message": "OpenPencil menolak cuplikan: $1" },
   "errorDownload": { "message": "Unduhan gagal: $1" },

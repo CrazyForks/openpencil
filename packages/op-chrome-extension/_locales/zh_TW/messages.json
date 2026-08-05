@@ -9,7 +9,7 @@
   },
   "captureButton": { "message": "擷取整頁" },
   "pickButton": { "message": "擷取元素" },
-  "downloadButton": { "message": "下載 JSON" },
+  "downloadButton": { "message": "下載 .op" },
   "pickHint": { "message": "點選要擷取的元素" },
   "pickCancelHint": { "message": "按 Esc 取消" },
   "endpointLabel": { "message": "OpenPencil 位址" },
@@ -38,10 +38,10 @@
   },
   "errorTimeout": { "message": "$1 已接受連線，但 $2 秒內沒有回應。應用程式可能正忙或已卡住，請檢查後再試一次。" },
   "errorNoIngress": {
-    "message": "此 OpenPencil 版本沒有擴充功能入口（$1）。請更新應用程式，或使用「下載 JSON」後執行：op import:snapshot <檔案>"
+    "message": "此 OpenPencil 版本沒有擴充功能入口（$1）。請更新應用程式，或使用「下載 .op」後在 OpenPencil 中開啟該檔案"
   },
   "errorTooLarge": {
-    "message": "本次擷取超過 $1 MB，超出 OpenPencil 快照入口的上限。請使用「下載 JSON」，然後執行：op import:snapshot <檔案>"
+    "message": "本次擷取超過 $1 MB，超出 OpenPencil 快照入口的上限。請使用「下載 .op」，然後在 OpenPencil 中開啟該檔案"
   },
   "errorImport": { "message": "OpenPencil 拒絕了這份快照：$1" },
   "errorDownload": { "message": "下載失敗：$1" },

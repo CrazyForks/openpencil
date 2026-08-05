@@ -26,6 +26,14 @@ crate-type = ["cdylib", "rlib"]
 # Canonical JSON string escaping, shared with op-mcp's hand-rolled JSON-RPC
 # serializer. Dependency-free leaf crate, wasm32-clean by contract.
 op-util = { path = "../op-util" }
+# The snapshot → `.op` (PenDocument) conversion, shared with the `op` CLI's
+# `import:snapshot` command. wasm32-clean by contract (op-host-web depends on
+# it and builds to wasm32), so the offline download can produce a ready-to-open
+# `.op` document in the browser instead of the raw snapshot JSON.
+op-html = { path = "../op-html" }
+# The canonical `.op` document schema `import_snapshot_document` returns; needed
+# to walk the imported node tree for the reported node count.
+jian-ops-schema = { path = "../../vendor/jian/crates/jian-ops-schema" }
 # Used ONLY to parse the (small) HTTP reply bodies the two ingresses answer
 # with. The outbound `tools/call` envelope is built with `format!` +
 # `op_util::json_escape`, mirroring `op-mcp`'s serializer, so the multi-MB

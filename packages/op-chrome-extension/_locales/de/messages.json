@@ -9,7 +9,7 @@
   },
   "captureButton": { "message": "Ganze Seite erfassen" },
   "pickButton": { "message": "Element erfassen" },
-  "downloadButton": { "message": "JSON herunterladen" },
+  "downloadButton": { "message": ".op herunterladen" },
   "pickHint": { "message": "Klicke auf ein Element, um es zu erfassen" },
   "pickCancelHint": { "message": "Esc zum Abbrechen" },
   "endpointLabel": { "message": "OpenPencil-Adresse" },
@@ -56,10 +56,10 @@
     "message": "OpenPencil unter $1 hat die Verbindung angenommen, aber innerhalb von $2 s nicht geantwortet. Die App ist möglicherweise beschäftigt oder hängt — prüfe sie und versuche es erneut."
   },
   "errorNoIngress": {
-    "message": "Dieser OpenPencil-Build hat keinen Eingang für Erweiterungen ($1). Aktualisiere die App oder nutze „JSON herunterladen“ und führe aus: op import:snapshot <Datei>"
+    "message": "Dieser OpenPencil-Build hat keinen Eingang für Erweiterungen ($1). Aktualisiere die App oder nutze „.op herunterladen“ und öffne die Datei in OpenPencil"
   },
   "errorTooLarge": {
-    "message": "Diese Erfassung ist größer als $1 MB und wird von OpenPencils Momentaufnahme-Route abgelehnt. Nutze „JSON herunterladen“ und führe dann aus: op import:snapshot <Datei>"
+    "message": "Diese Erfassung ist größer als $1 MB und wird von OpenPencils Momentaufnahme-Route abgelehnt. Nutze „.op herunterladen“ und öffne dann die Datei in OpenPencil"
   },
   "errorImport": { "message": "OpenPencil hat die Momentaufnahme abgelehnt: $1" },
   "errorDownload": { "message": "Download fehlgeschlagen: $1" },

@@ -9,7 +9,7 @@
   },
   "captureButton": { "message": "Захватить всю страницу" },
   "pickButton": { "message": "Захватить элемент" },
-  "downloadButton": { "message": "Скачать JSON" },
+  "downloadButton": { "message": "Скачать .op" },
   "pickHint": { "message": "Нажмите на элемент, чтобы захватить его" },
   "pickCancelHint": { "message": "Esc — отмена" },
   "endpointLabel": { "message": "Адрес OpenPencil" },
@@ -54,10 +54,10 @@
     "message": "OpenPencil по адресу $1 принял соединение, но не ответил за $2 с. Приложение может быть занято или зависло — проверьте его и повторите попытку."
   },
   "errorNoIngress": {
-    "message": "В этой сборке OpenPencil нет точки входа для расширений ($1). Обновите приложение либо используйте «Скачать JSON» и выполните: op import:snapshot <файл>"
+    "message": "В этой сборке OpenPencil нет точки входа для расширений ($1). Обновите приложение либо используйте «Скачать .op» и откройте файл в OpenPencil"
   },
   "errorTooLarge": {
-    "message": "Этот снимок больше $1 МБ, и маршрут снимков OpenPencil его отклоняет. Используйте «Скачать JSON», затем выполните: op import:snapshot <файл>"
+    "message": "Этот снимок больше $1 МБ, и маршрут снимков OpenPencil его отклоняет. Используйте «Скачать .op», затем откройте файл в OpenPencil"
   },
   "errorImport": { "message": "OpenPencil отклонил снимок: $1" },
   "errorDownload": { "message": "Не удалось скачать: $1" },

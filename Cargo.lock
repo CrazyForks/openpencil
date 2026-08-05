@@ -3679,6 +3679,8 @@ dependencies = [
 name = "op-chrome-extension-core"
 version = "0.8.2"
 dependencies = [
+ "jian-ops-schema",
+ "op-html",
  "op-util",
  "serde_json",
  "wasm-bindgen",
