@@ -50,6 +50,12 @@ impl WidgetHostNative {
             }
             return had;
         }
+        if self.editor_state.editor_ui.scene_template_center.open {
+            if had {
+                self.mark_dirty();
+            }
+            return had;
+        }
         if self.editor_state.editor_ui.image_panel.search_open
             || self.editor_state.editor_ui.image_panel.generate_open
         {
@@ -93,6 +99,19 @@ impl WidgetHostNative {
             self.mark_dirty();
         }
         if self.editor_state.editor_ui.prompt_center.open {
+            let mut consumed = false;
+            for ch in text.chars() {
+                if !ch.is_control() && self.apply_text(ch) {
+                    consumed = true;
+                }
+            }
+            return consumed;
+        }
+        // Above the canvas-text branch on purpose: the gallery covers the
+        // canvas, so a text node left mid-edit underneath it must not take
+        // the candidate the user composed into the panel. Same stale-focus
+        // rule the Prompt Center branch above encodes.
+        if self.editor_state.editor_ui.scene_template_center.open {
             let mut consumed = false;
             for ch in text.chars() {
                 if !ch.is_control() && self.apply_text(ch) {
@@ -156,6 +175,12 @@ impl WidgetHostNative {
         if let (Some(panel), Some(rect)) = (
             op_editor_ui::widgets::PromptCenterPanel::for_editor(&self.editor_state),
             self.prompt_center_panel_rect(viewport_w, viewport_h),
+        ) {
+            return Some(panel.focused_input_caret_rect(rect));
+        }
+        if let (Some(panel), Some(rect)) = (
+            op_editor_ui::widgets::SceneTemplatePanel::for_editor(&self.editor_state),
+            self.scene_template_panel_rect(viewport_w, viewport_h),
         ) {
             return Some(panel.focused_input_caret_rect(rect));
         }

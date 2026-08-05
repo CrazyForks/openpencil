@@ -133,6 +133,7 @@ pub mod property_panel_widget;
 #[cfg(test)]
 mod property_panel_widget_tests;
 mod scene_template_card_actions;
+mod scene_template_caret;
 mod scene_template_panel_paint;
 pub(crate) mod scene_template_previews;
 mod scene_template_style_paint;

@@ -36,6 +36,11 @@ impl WidgetHost {
                 && self.editor_state.editor_ui.agent_settings.focus.is_some())
             || self.editor_state.editor_ui.icon_picker.open
             || self.editor_state.editor_ui.prompt_center.open
+            // The Asset Center always has one of its two fields focused and
+            // swallows every key. Native carries the same entry; leaving it
+            // out here kept the hidden IME input from ever taking DOM focus,
+            // so composition events never reached the panel.
+            || self.editor_state.editor_ui.scene_template_center.open
             || self.editor_state.editor_ui.chat_model_picker.open
             || self.editor_state.editor_ui.component_browser_open
             || self.editor_state.chat.focused
@@ -60,6 +65,7 @@ impl WidgetHost {
             || editor_ui.preset_name_input_active()
             || editor_ui.icon_picker.open
             || editor_ui.prompt_center.open
+            || editor_ui.scene_template_center.open
             || editor_ui.component_browser_open
             || self.git_commit_focus_active()
             || self.git_remote_focus_active()
@@ -158,6 +164,12 @@ impl WidgetHost {
                 op_editor_core::PromptCenterFocus::SaveTitle => &eui.prompt_center.save_title,
             };
             return slice(input);
+        }
+        if eui.scene_template_center.open {
+            // Copying from the gallery's own fields, not from whatever the
+            // canvas had selected behind it.
+            return op_editor_core::scene_template_keyboard::selected_text(&self.editor_state)
+                .map(str::to_string);
         }
         if eui.agent_settings.focus.is_some() {
             return slice(&eui.settings_input);

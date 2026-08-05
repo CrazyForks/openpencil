@@ -21,6 +21,16 @@ impl WidgetHost {
             }
             return true;
         }
+        // Native parity (`op-host-native/widget_host/keyboard.rs`). Without
+        // this the web Asset Center could not be typed into at all — a
+        // character fell through to the canvas shortcuts, where a bare letter
+        // switches tools behind the open gallery.
+        if let Some(changed) = shared::scene_template_text(&mut self.editor_state, c, self.now_ms) {
+            if changed {
+                self.mark_dirty();
+            }
+            return true;
+        }
         if self.editor_state.editor_ui.collab_join_input_active() {
             let changed = op_editor_ui::widgets::collab_ui::join_address_text(
                 &mut self.editor_state.editor_ui,

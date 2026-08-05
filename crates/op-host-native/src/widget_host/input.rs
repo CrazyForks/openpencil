@@ -55,6 +55,15 @@ impl WidgetHostNative {
                 && self.editor_state.editor_ui.agent_settings.focus.is_some())
             || self.editor_state.editor_ui.icon_picker.open
             || self.editor_state.editor_ui.prompt_center.open
+            // The Asset Center owns the keyboard the whole time it is open —
+            // it always has one of its two fields focused, and
+            // `scene_template_keyboard` swallows every key regardless. Its
+            // absence here is what left the gallery unable to take IME input:
+            // `text_input_focus_active` reads this list, and a `false` there
+            // makes the desktop shell call `set_ime_allowed(false)`, so the
+            // platform never opens a composition session and pinyin produced
+            // nothing at all while ASCII still went through `apply_text`.
+            || self.editor_state.editor_ui.scene_template_center.open
             || self.editor_state.editor_ui.chat_model_picker.open
             || self.editor_state.editor_ui.component_browser_open
             || self.editor_state.chat.focused
