@@ -98,12 +98,9 @@ impl WidgetHost {
         // paint pass. Every widget builder below reads `editor_state`
         // directly; the canvas reads `self.layout_scene`.
         self.refresh_layout_scene();
-        // Resolved ahead of the long immutable borrow below, because
-        // deriving it needs `&mut self` (mirrors native paint.rs).
-        // Painted just before the StatusBar.
-        let filmstrip = self.deck_filmstrip_frame(viewport_width, viewport_height);
-        // The rail's slides tab, resolved for the same reason: deriving
-        // it needs `&mut self`, and it OWNS the rail when it is on show.
+        // The rail's slides tab, resolved ahead of the long immutable
+        // borrow below because deriving it needs `&mut self` (mirrors
+        // native paint.rs), and it OWNS the rail when it is on show.
         let rail_open = self.editor_state.editor_ui.sidebar_open;
         let slides_panel = if rail_open {
             self.slides_panel_frame(viewport_width, viewport_height)
@@ -265,14 +262,6 @@ impl WidgetHost {
                 backend: &mut *backend,
             };
             chat.paint(&mut cx, chat_rect);
-        }
-
-        // Deck filmstrip — floating bottom-centre, painted below the
-        // StatusBar because the two can overlap on a narrow canvas and
-        // the zoom pill must stay clickable (the press ladder resolves
-        // them in this same order). Mirrors native paint §7.5.
-        if let Some(strip) = filmstrip.as_ref() {
-            self.paint_deck_filmstrip(&mut *backend, strip);
         }
 
         if let Some(status_rect) =

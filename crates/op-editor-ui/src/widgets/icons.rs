@@ -274,6 +274,10 @@ pub enum Icon {
     /// Lucide `palette.svg` — color/style palette affordance in the
     /// AI chat bottom toolbar (#27 design: inert icon-only button).
     Palette,
+    /// Custom stacked plates — the left rail's Layers tab, icon mode.
+    LayersStack,
+    /// Custom presentation screen — the left rail's Slides tab, icon mode.
+    PresentationScreen,
 }
 
 impl Icon {
@@ -426,6 +430,8 @@ impl Icon {
             Icon::SquaresSubtract => SQUARES_SUBTRACT,
             Icon::SquaresIntersect => SQUARES_INTERSECT,
             Icon::SquaresExclude => SQUARES_EXCLUDE,
+            Icon::LayersStack => LAYERS_STACK,
+            Icon::PresentationScreen => PRESENTATION_SCREEN,
             Icon::Palette => PALETTE,
         }
     }

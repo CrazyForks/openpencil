@@ -157,26 +157,29 @@ impl SlideThumbCache {
     /// Render up to [`RENDERS_PER_FRAME`] of the requested boards.
     ///
     /// `wanted` is in priority order — hosts pass visible rows first —
-    /// and every entry names a board id plus the scene node to paint.
+    /// and every entry names a board id, the scene node to paint, and
+    /// the raster size that board's own row asked for. The size is
+    /// per-entry rather than per-call because rows are a fixed height
+    /// and each board is fitted into that box on its own aspect, so a
+    /// phone screen and a dashboard on one page want different rasters.
     /// Returns whether anything was rendered, which the host uses to ask
     /// for one more frame so the remaining rows fill in.
     pub(in crate::widget_host) fn render_pending(
         &mut self,
         frame: &mut NativeFrameBackend<'_>,
-        wanted: &[(String, &SceneNode)],
+        wanted: &[(String, &SceneNode, Point2D)],
         revision: u64,
-        size: Point2D,
     ) -> bool {
         let raster_generation = frame.raster_generation();
         let mut rendered = 0usize;
-        for (board_id, node) in wanted {
+        for (board_id, node, size) in wanted {
             if rendered >= RENDERS_PER_FRAME {
                 break;
             }
-            if !self.needs_render(board_id, revision, raster_generation, size) {
+            if !self.needs_render(board_id, revision, raster_generation, *size) {
                 continue;
             }
-            let Some(image) = render_board(frame, node, size) else {
+            let Some(image) = render_board(frame, node, *size) else {
                 continue;
             };
             self.entries.insert(
@@ -184,7 +187,7 @@ impl SlideThumbCache {
                 SlideThumb {
                     revision,
                     raster_generation,
-                    size,
+                    size: *size,
                     image,
                 },
             );
@@ -199,14 +202,13 @@ impl SlideThumbCache {
     pub(in crate::widget_host) fn has_pending(
         &self,
         frame: &mut NativeFrameBackend<'_>,
-        wanted: &[(String, &SceneNode)],
+        wanted: &[(String, &SceneNode, Point2D)],
         revision: u64,
-        size: Point2D,
     ) -> bool {
         let raster_generation = frame.raster_generation();
         wanted
             .iter()
-            .any(|(id, _)| self.needs_render(id, revision, raster_generation, size))
+            .any(|(id, _, size)| self.needs_render(id, revision, raster_generation, *size))
     }
 }
 
@@ -214,7 +216,9 @@ impl SlideThumbCache {
 ///
 /// Paints through the canvas's own scene painter at the zoom that fits
 /// the board into `size`, so a thumbnail carries the same fills, image
-/// crops, clip scopes and styled text the canvas shows.
+/// crops, clip scopes and styled text the canvas shows. `size` is the
+/// row's own fitted rect, so the raster already has the board's aspect
+/// and the fit below is a rounding correction rather than a letterbox.
 fn render_board(
     frame: &mut NativeFrameBackend<'_>,
     node: &SceneNode,

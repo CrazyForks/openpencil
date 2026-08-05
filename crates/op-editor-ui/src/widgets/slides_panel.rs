@@ -3,12 +3,10 @@
 //! One row per top-level board, in page order: a number, a real
 //! rendered thumbnail of the board, and its name. Clicking a row frames
 //! that board; dragging one reorders the deck; the footer starts the
-//! presentation. It is the same navigator the canvas filmstrip is,
-//! given the room to show pictures — and the two share their model
-//! (`FilmstripChip`), their "which slide is the camera on" answer
-//! (`deck_filmstrip_flow::active_chip_index`) and their reorder commit
-//! (`deck_filmstrip_flow::apply_reorder`), so the deck can never be in
-//! two orders at once.
+//! presentation. It is the deck's only navigator — what a slide IS,
+//! which one the camera is on and how a reorder commits all come from
+//! [`crate::widgets::deck_boards`], so the rail can never disagree with
+//! the presentation about the order.
 //!
 //! **This widget paints a thumbnail PLACEHOLDER, never a thumbnail.**
 //! Rendering a board is platform work — a second skia surface per board
@@ -24,9 +22,9 @@
 //! rect, row count, board aspect, scroll offset). Measurement only
 //! decides where a name is cut, never where a row is.
 
-use op_editor_core::{LeftPanelTab, SlidesDrag, SlidesPanelTarget};
+use op_editor_core::{SlidesDrag, SlidesPanelTarget};
 
-use crate::widgets::deck_filmstrip::FilmstripChip;
+use crate::widgets::deck_boards::BoardChip;
 use crate::widgets::icons::{draw_icon, Icon};
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout, Theme};
@@ -41,6 +39,12 @@ const TAB_INSET_X: f32 = 8.0;
 const TAB_INSET_Y: f32 = 5.0;
 const TAB_RADIUS: f32 = 6.0;
 const TAB_FONT: f32 = 12.0;
+/// Glyph size for a tab in icon mode.
+const TAB_ICON_SIZE: f32 = 14.0;
+/// Padding inside a tab, around whatever it holds.
+const TAB_PAD_X: f32 = 8.0;
+/// Gap between a tab's glyph and its label, when it keeps one.
+const TAB_ICON_GAP: f32 = 5.0;
 
 const ROW_PAD_X: f32 = 10.0;
 /// Gutter holding the slide number, left of the thumbnail.
@@ -53,139 +57,34 @@ const NAME_H: f32 = 16.0;
 const ROW_GAP: f32 = 8.0;
 const ROW_FONT: f32 = 11.5;
 const THUMB_RADIUS: f32 = 4.0;
+/// Fixed height of every row's thumbnail box.
+///
+/// The one number that makes a mixed document listable: rows keep this
+/// height whether the page holds 16:9 decks, 3:4 cards or 9:19.5 phone
+/// screens, and each board is fitted into the box rather than the box
+/// being fitted to the board.
+pub const THUMB_BOX_H: f32 = 132.0;
 /// Fallback board aspect (16:9) for a deck whose boards have no
 /// resolvable bounds yet — the scene may not have been built when the
 /// first frame paints.
 pub const DEFAULT_BOARD_ASPECT: f32 = 16.0 / 9.0;
 /// How far a press has to travel before it stops being a click. Matches
-/// the filmstrip's threshold so the two navigators feel the same.
+/// the canvas node-drag threshold so the two gestures feel the same.
 pub const DRAG_THRESHOLD_PX: f32 = 3.0;
 const FOOTER_BUTTON_H: f32 = 30.0;
 const DROP_BAR_H: f32 = 2.0;
 const GHOST_ALPHA: f32 = 0.35;
 
-/// Rects of the two-tab row that heads the rail.
-///
-/// Resolved on its own (not only as part of the full slides layout)
-/// because the row also paints — and takes clicks — while the LAYERS
-/// tab owns the rest of the rail.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct SlidesPanelTabs {
-    pub row: Rect,
-    pub layers: Rect,
-    pub slides: Rect,
-}
+#[path = "slides_panel_tabs.rs"]
+mod tabs;
 
-impl SlidesPanelTabs {
-    /// Lay the tab row across the top of `panel`.
-    pub fn new(panel: Rect) -> Self {
-        let row = Rect {
-            origin: panel.origin,
-            size: Point2D::new(panel.size.x, TAB_ROW_HEIGHT),
-        };
-        let inner_w = (row.size.x - TAB_INSET_X * 2.0).max(0.0);
-        let half = inner_w / 2.0;
-        let y = row.origin.y + TAB_INSET_Y;
-        let h = (TAB_ROW_HEIGHT - TAB_INSET_Y * 2.0).max(0.0);
-        Self {
-            row,
-            layers: Rect {
-                origin: Point2D::new(row.origin.x + TAB_INSET_X, y),
-                size: Point2D::new(half, h),
-            },
-            slides: Rect {
-                origin: Point2D::new(row.origin.x + TAB_INSET_X + half, y),
-                size: Point2D::new(half, h),
-            },
-        }
-    }
-
-    /// Which tab `point` lands on, or `None` when it is off the row.
-    pub fn hit(&self, point: Point2D) -> Option<SlidesPanelTarget> {
-        if !contains(self.row, point) {
-            return None;
-        }
-        if contains(self.layers, point) {
-            return Some(SlidesPanelTarget::LayersTab);
-        }
-        contains(self.slides, point).then_some(SlidesPanelTarget::SlidesTab)
-    }
-
-    /// The rail below the tab row — what the Layers tree gets when it
-    /// is the tab on show.
-    pub fn content_rect(&self, panel: Rect) -> Rect {
-        Rect {
-            origin: Point2D::new(panel.origin.x, panel.origin.y + TAB_ROW_HEIGHT),
-            size: Point2D::new(panel.size.x, (panel.size.y - TAB_ROW_HEIGHT).max(0.0)),
-        }
-    }
-
-    /// Paint the tab row. `active` is the tab currently on show;
-    /// `hover` is whichever tab the cursor is over, if any.
-    pub fn paint(
-        &self,
-        cx: &mut PaintCx<'_>,
-        theme: &Theme,
-        active: LeftPanelTab,
-        hover: Option<SlidesPanelTarget>,
-        layers_label: &str,
-        slides_label: &str,
-    ) {
-        cx.backend.fill_rect(self.row, theme.card);
-        // The segmented track, so the two tabs read as one control
-        // rather than two loose buttons.
-        cx.backend.fill_round_rect(
-            Rect {
-                origin: self.layers.origin,
-                size: Point2D::new(self.layers.size.x + self.slides.size.x, self.layers.size.y),
-            },
-            TAB_RADIUS,
-            theme.muted,
-        );
-        for (rect, tab, label) in [
-            (self.layers, LeftPanelTab::Layers, layers_label),
-            (self.slides, LeftPanelTab::Slides, slides_label),
-        ] {
-            let target = match tab {
-                LeftPanelTab::Layers => SlidesPanelTarget::LayersTab,
-                LeftPanelTab::Slides => SlidesPanelTarget::SlidesTab,
-            };
-            let selected = active == tab;
-            if selected {
-                cx.backend.fill_round_rect(rect, TAB_RADIUS, theme.card);
-                cx.backend
-                    .stroke_round_rect(rect, TAB_RADIUS, theme.border, 1.0);
-            } else if hover == Some(target) {
-                cx.backend
-                    .fill_round_rect(rect, TAB_RADIUS, theme.button_hover);
-            }
-            let color = if selected {
-                theme.foreground
-            } else {
-                theme.muted_foreground
-            };
-            let width = cx.backend.measure_text(label, TAB_FONT);
-            let baseline = rect.origin.y + rect.size.y / 2.0 + TAB_FONT / 2.0 - 1.5;
-            cx.backend.draw_text(
-                &TextLayout::single_run(
-                    label,
-                    "system-ui",
-                    TAB_FONT,
-                    color.to_jian(),
-                    Point2D::ZERO,
-                )
-                .with_font_weight(if selected { 600 } else { 400 }),
-                Point2D::new(rect.origin.x + (rect.size.x - width) / 2.0, baseline),
-            );
-        }
-    }
-}
+pub use tabs::{text_tabs_fit, SlidesPanelTabs};
 
 /// Where the slides tab's rows, list viewport and footer sit.
 ///
 /// Built once per event / per paint and shared by both, which is what
 /// keeps a row's painted rect and its click target identical.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SlidesPanelLayout {
     pub panel: Rect,
     pub tabs: SlidesPanelTabs,
@@ -197,34 +96,43 @@ pub struct SlidesPanelLayout {
     /// How far the row stack is scrolled up.
     pub offset: f32,
     pub count: usize,
-    /// Thumbnail box size — uniform across the deck (see `new`).
-    pub thumb: Point2D,
+    /// The thumbnail BOX every row gets — the same for all of them (see
+    /// `new`). Individual boards are letterboxed inside it.
+    pub thumb_box: Point2D,
+    /// Each board's picture size inside the box, in board order.
+    thumbs: Vec<Point2D>,
 }
 
 impl SlidesPanelLayout {
     /// Lay the slides tab out inside `panel`.
     ///
-    /// `aspect` is the board's width / height. ONE aspect for the whole
-    /// deck, not one per board: uniform tiles keep the list readable as
-    /// a sequence (the eye counts positions, not shapes) and make the
-    /// drag arithmetic a division instead of a scan. Decks are uniform
-    /// by construction, so the first board answers for all of them.
+    /// `aspects` is one width / height per board, in page order.
+    ///
+    /// **Rows are a FIXED height and boards are letterboxed into them.**
+    /// Sizing the row to the board instead would make a mixed document
+    /// unusable: one 3:4 card among the 16:9 boards stretches every row
+    /// in the list to the tallest shape, and a page of phone screens
+    /// gives rows twice the height of the rail. A fixed box also keeps
+    /// the list readable as a sequence — the eye counts positions, not
+    /// shapes — and keeps the drag arithmetic a division instead of a
+    /// scan.
+    ///
+    /// `tabs` is passed in rather than derived because the tab row's
+    /// own geometry depends on the labels, and labels are i18n — which
+    /// this module deliberately knows nothing about. The flow resolves
+    /// both from one place so paint and hit-test cannot disagree.
     ///
     /// `None` when the rail is too small to show a row — a list that
     /// cannot show a slide is worse than no list: it is a strip that
     /// eats clicks and explains nothing.
-    pub fn new(panel: Rect, count: usize, aspect: f32, offset: f32) -> Option<Self> {
-        let tabs = SlidesPanelTabs::new(panel);
-        let thumb_w = panel.size.x - ROW_PAD_X * 2.0 - INDEX_COL_W - INDEX_GAP;
-        let aspect = if aspect.is_finite() && aspect > 0.0 {
-            aspect
-        } else {
-            DEFAULT_BOARD_ASPECT
-        };
-        let thumb_h = thumb_w / aspect;
-        if thumb_w <= 0.0 || !thumb_h.is_finite() || thumb_h <= 0.0 {
+    pub fn new(panel: Rect, tabs: SlidesPanelTabs, aspects: &[f32], offset: f32) -> Option<Self> {
+        let box_w = panel.size.x - ROW_PAD_X * 2.0 - INDEX_COL_W - INDEX_GAP;
+        if box_w <= 0.0 {
             return None;
         }
+        let thumb_box = Point2D::new(box_w, THUMB_BOX_H);
+        let thumbs = aspects.iter().map(|a| fit_into(thumb_box, *a)).collect();
+        let count = aspects.len();
         let list_top = panel.origin.y + TAB_ROW_HEIGHT;
         let list_h = (panel.size.y - TAB_ROW_HEIGHT - FOOTER_HEIGHT).max(0.0);
         if list_h <= 0.0 {
@@ -253,15 +161,17 @@ impl SlidesPanelLayout {
             present,
             offset: 0.0,
             count,
-            thumb: Point2D::new(thumb_w, thumb_h),
+            thumb_box,
+            thumbs,
         };
         layout.offset = offset.clamp(0.0, layout.max_scroll());
         Some(layout)
     }
 
-    /// Height of one row: thumbnail plus the name line under it.
+    /// Height of one row: the thumbnail box plus the name line under it.
+    /// The same for every row, whatever shape the boards are.
     pub fn row_height(&self) -> f32 {
-        self.thumb.y + NAME_GAP + NAME_H
+        THUMB_BOX_H + NAME_GAP + NAME_H
     }
 
     /// Row pitch — a row plus the gap that follows it.
@@ -296,20 +206,41 @@ impl SlidesPanelLayout {
         }
     }
 
-    /// The thumbnail box inside row `index` — the rect a host blits its
-    /// rendered board into.
-    pub fn thumb_rect(&self, index: usize) -> Rect {
+    /// The fixed-size box row `index` gives its thumbnail — the same
+    /// shape in every row, whatever the board inside it looks like.
+    pub fn thumb_box_rect(&self, index: usize) -> Rect {
         let row = self.row_rect(index);
         Rect {
             origin: Point2D::new(
                 row.origin.x + ROW_PAD_X + INDEX_COL_W + INDEX_GAP,
                 row.origin.y,
             ),
-            size: self.thumb,
+            size: self.thumb_box,
         }
     }
 
-    /// The part of row `index`'s thumbnail box that is inside the list
+    /// Where row `index`'s board actually paints: its own aspect scaled
+    /// to fit [`Self::thumb_box_rect`] and centred in it — letterboxed
+    /// above and below for a wide board, pillarboxed either side for a
+    /// tall one. This is the rect a host blits its rendered board into,
+    /// so the picture never stretches to a shape the board is not.
+    pub fn thumb_rect(&self, index: usize) -> Rect {
+        let boxed = self.thumb_box_rect(index);
+        let size = self
+            .thumbs
+            .get(index)
+            .copied()
+            .unwrap_or_else(|| fit_into(self.thumb_box, DEFAULT_BOARD_ASPECT));
+        Rect {
+            origin: Point2D::new(
+                boxed.origin.x + (boxed.size.x - size.x) / 2.0,
+                boxed.origin.y + (boxed.size.y - size.y) / 2.0,
+            ),
+            size,
+        }
+    }
+
+    /// The part of row `index`'s thumbnail that is inside the list
     /// band, or `None` when none of it is.
     ///
     /// A host blitting a rendered board MUST clip to this rather than to
@@ -405,7 +336,7 @@ pub fn drag_is_live(drag: &SlidesDrag) -> bool {
 
 /// The panel, ready to paint.
 pub struct SlidesPanel<'a> {
-    pub chips: &'a [FilmstripChip],
+    pub chips: &'a [BoardChip],
     /// The slide the camera is looking at, if any board resolves.
     pub active: Option<usize>,
     pub hover: Option<SlidesPanelTarget>,
@@ -435,14 +366,9 @@ impl SlidesPanel<'_> {
             },
             theme.border,
         );
-        layout.tabs.paint(
-            cx,
-            theme,
-            LeftPanelTab::Slides,
-            self.hover,
-            self.layers_label,
-            self.slides_label,
-        );
+        layout
+            .tabs
+            .paint(cx, theme, self.hover, self.layers_label, self.slides_label);
 
         cx.backend.save();
         cx.backend.clip_rect(layout.list);
@@ -528,13 +454,10 @@ impl SlidesPanel<'_> {
     ) {
         let active = self.active == Some(index);
         let alpha = if ghosted { GHOST_ALPHA } else { 1.0 };
-        let thumb = Rect {
-            origin: Point2D::new(
-                row.origin.x + ROW_PAD_X + INDEX_COL_W + INDEX_GAP,
-                row.origin.y,
-            ),
-            size: layout.thumb,
-        };
+        // The board's own fitted rect, not the box around it: the plate
+        // has to sit exactly where the host will blit, or a tall card
+        // would show a wide plate with its picture floating inside.
+        let thumb = layout.thumb_rect(index);
         if self.hover == Some(SlidesPanelTarget::Slide(index)) && !ghosted {
             cx.backend.fill_round_rect(
                 Rect {
@@ -605,8 +528,12 @@ impl SlidesPanel<'_> {
         if chip.name.is_empty() {
             return;
         }
+        // Anchored to the row's fixed box, not to the letterboxed
+        // picture: the names have to sit on one baseline down the list,
+        // and a tall board's narrow plate must not indent its own label.
+        let boxed = layout.thumb_box_rect(index);
         let name =
-            crate::widgets::file_menu::truncate_to_width(cx, &chip.name, ROW_FONT, thumb.size.x);
+            crate::widgets::file_menu::truncate_to_width(cx, &chip.name, ROW_FONT, boxed.size.x);
         if name.is_empty() {
             return;
         }
@@ -618,10 +545,30 @@ impl SlidesPanel<'_> {
         cx.backend.draw_text(
             &TextLayout::single_run(&name, "system-ui", ROW_FONT, color.to_jian(), Point2D::ZERO),
             Point2D::new(
-                thumb.origin.x,
-                thumb.origin.y + thumb.size.y + NAME_GAP + ROW_FONT,
+                boxed.origin.x,
+                boxed.origin.y + boxed.size.y + NAME_GAP + ROW_FONT,
             ),
         );
+    }
+}
+
+/// The largest `aspect`-shaped rectangle that fits inside `boxed`.
+///
+/// A non-finite or non-positive aspect falls back to 16:9 rather than
+/// producing a NaN rect — an unresolved board still has to have somewhere
+/// to paint, and the scene has not built one on the first frame after a
+/// document opens.
+fn fit_into(boxed: Point2D, aspect: f32) -> Point2D {
+    let aspect = if aspect.is_finite() && aspect > 0.0 {
+        aspect
+    } else {
+        DEFAULT_BOARD_ASPECT
+    };
+    let by_width = Point2D::new(boxed.x, boxed.x / aspect);
+    if by_width.y <= boxed.y {
+        by_width
+    } else {
+        Point2D::new(boxed.y * aspect, boxed.y)
     }
 }
 
@@ -632,7 +579,7 @@ fn fade(color: Color, alpha: f32) -> Color {
     }
 }
 
-fn contains(rect: Rect, point: Point2D) -> bool {
+pub(super) fn contains(rect: Rect, point: Point2D) -> bool {
     point.x >= rect.origin.x
         && point.x <= rect.origin.x + rect.size.x
         && point.y >= rect.origin.y

@@ -353,11 +353,6 @@ impl WidgetHostNative {
         let point = ctx.point;
         let over_topmost = ctx.over_topmost;
         let chat_or_picker_owns_point = ctx.chat_or_picker_owns_point;
-        // Deck filmstrip — same tier as the StatusBar (body in
-        // `deck_filmstrip.rs`, mirroring web).
-        if let Some(dirty) = self.deck_filmstrip_cursor_tier(point, over_topmost) {
-            return Some(dirty);
-        }
         // StatusBar paints and presses above Chat. Preserve its hover/cursor
         // ownership before the model picker globally truncates lower layers.
         if let Some(status_rect) = self.status_bar_rect(self.last_viewport_w, self.last_viewport_h)

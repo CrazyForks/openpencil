@@ -335,7 +335,15 @@ impl TopBar {
     }
 }
 
-fn estimated_text_width(text: &str, font_size: f32) -> f32 {
+/// Backend-free width estimate, deliberately conservative: ASCII is
+/// charged 0.68 em and everything else a full em, so the answer runs a
+/// little wide of what the shaper will produce.
+///
+/// Shared with the left rail's tab row, which needs the SAME number at
+/// paint time and at hit-test time and has no backend at hit-test time
+/// — over-estimating there drops the row to icons a few pixels early
+/// rather than clipping a label.
+pub(super) fn estimated_text_width(text: &str, font_size: f32) -> f32 {
     text.chars()
         .map(|c| {
             if c.is_ascii() {

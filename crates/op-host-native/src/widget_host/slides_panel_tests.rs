@@ -82,7 +82,7 @@ fn board_geometry(host: &WidgetHostNative) -> std::collections::BTreeMap<String,
 }
 
 #[test]
-fn only_a_deck_document_gets_the_slides_tab() {
+fn any_document_with_boards_gets_the_slides_tab() {
     let _guard = test_lock();
     let mut deck = host_with(Some(TemplateScene::Slides));
     let slides = deck
@@ -92,15 +92,81 @@ fn only_a_deck_document_gets_the_slides_tab() {
     assert_eq!(slides.chips[1].name, "议程");
     assert!(deck.slides_tab_row(VH).is_some());
 
+    // The same three boards with no scenario recorded: an ordinary
+    // design page still gets the navigator, which is the whole point of
+    // the tab being permanent.
     let mut ordinary = host_with(None);
+    let listed = ordinary
+        .slides_panel_frame(VW, VH)
+        .expect("an untagged page with boards still lists them");
+    assert_eq!(listed.chips.len(), 3);
+    assert!(ordinary.slides_tab_row(VH).is_some());
+}
+
+#[test]
+fn a_page_with_no_boards_has_nothing_to_list_and_shows_no_tab() {
+    let _guard = test_lock();
+    let mut empty = WidgetHostNative::new();
+    empty.editor_state.editor_ui.slides_panel.tab = LeftPanelTab::Slides;
+    empty.last_viewport_w = VW;
+    empty.last_viewport_h = VH;
+    empty.editor_state.active_children_mut().clear();
+    assert!(op_editor_core::preview_slideshow::active_page_boards(&empty.editor_state).is_empty());
+    assert!(empty.slides_tab_row(VH).is_none());
+    assert!(empty.slides_panel_frame(VW, VH).is_none());
+    assert_eq!(
+        empty.layers_content_rect(VH).origin.y,
+        op_editor_ui::widgets::TOP_BAR_HEIGHT,
+        "and the layer tree keeps the whole rail"
+    );
+}
+
+/// Rows keep one height whatever shape the boards are, and each board
+/// is letterboxed into that box rather than stretched to fill it.
+#[test]
+fn a_mixed_page_lists_every_board_at_the_same_row_height() {
+    let _guard = test_lock();
+    const MIXED: &str = r##"{
+        "version": "1.0.0",
+        "children": [
+            { "type": "frame", "id": "phone", "name": "Phone", "x": 0, "y": 0,
+              "width": 390, "height": 844, "children": [] },
+            { "type": "frame", "id": "board", "name": "Deck", "x": 600, "y": 0,
+              "width": 1920, "height": 1080, "children": [] },
+            { "type": "frame", "id": "square", "name": "Card", "x": 2700, "y": 0,
+              "width": 1080, "height": 1080, "children": [] }
+        ]
+    }"##;
+    let document = jian_ops_schema::load_str(MIXED)
+        .expect("parse mixed fixture")
+        .value;
+    let mut host = WidgetHostNative::new();
+    host.install_imported_state(EditorState::from_document(document));
+    host.editor_state.editor_ui.slides_panel.tab = LeftPanelTab::Slides;
+    host.last_viewport_w = VW;
+    host.last_viewport_h = VH;
+
+    let slides = host.slides_panel_frame(VW, VH).expect("three boards list");
+    assert_eq!(slides.chips.len(), 3);
+    let heights: Vec<f32> = (0..3).map(|i| slides.layout.row_rect(i).size.y).collect();
     assert!(
-        ordinary.slides_panel_frame(VW, VH).is_none(),
-        "an untagged document is layers-only"
+        heights.windows(2).all(|w| (w[0] - w[1]).abs() < 0.01),
+        "a phone screen and a dashboard must not give different row heights: {heights:?}"
+    );
+    // The phone is pillarboxed, the 16:9 board letterboxed — each keeps
+    // its own shape inside the shared box.
+    let phone = slides.layout.thumb_rect(0);
+    let board = slides.layout.thumb_rect(1);
+    assert!(
+        phone.size.y > phone.size.x,
+        "the phone screen stays portrait"
     );
     assert!(
-        ordinary.slides_tab_row(VH).is_none(),
-        "and shows no tab row to switch with"
+        board.size.x > board.size.y,
+        "the deck board stays landscape"
     );
+    assert!(phone.size.x < slides.layout.thumb_box.x - 1.0);
+    assert!(board.size.y < slides.layout.thumb_box.y - 1.0);
 }
 
 #[test]
@@ -265,14 +331,6 @@ fn the_layer_tree_starts_below_the_tab_row() {
     let tabs = deck.slides_tab_row(VH).expect("tab row");
     let content = deck.layers_content_rect(VH);
     assert_eq!(content.origin.y, tabs.row.origin.y + tabs.row.size.y);
-
-    let ordinary = host_with(None);
-    let full = ordinary.layers_content_rect(VH);
-    assert_eq!(
-        full.origin.y,
-        op_editor_ui::widgets::TOP_BAR_HEIGHT,
-        "a document without a tab row keeps the whole rail"
-    );
 }
 
 #[test]
@@ -301,5 +359,70 @@ fn the_wheel_over_the_rail_scrolls_the_list_and_not_the_canvas() {
     assert_eq!(
         host.editor_state.viewport.zoom, zoom_before,
         "the rail swallowed the wheel"
+    );
+}
+
+/// The left rail's resize gutter must survive the drag going back OVER
+/// the rail. A live resize is pointer capture; the slides tab claims
+/// every point on the rail for its hover wash, and while it ran first the
+/// rail could only ever be dragged wider (regression guard for
+/// `cursor_move_panel_resize_tier`).
+#[test]
+fn the_rail_resize_gutter_drags_narrower_as_well_as_wider() {
+    let _guard = test_lock();
+    let start = {
+        let host = host_with(Some(TemplateScene::Slides));
+        host.editor_state.editor_ui.layer_panel_width
+    };
+    let y = op_editor_ui::widgets::TOP_BAR_HEIGHT + 200.0;
+
+    let mut host = host_with(Some(TemplateScene::Slides));
+    host.apply_press(start, y, VW, VH);
+    assert!(
+        host.is_resizing_panel(),
+        "a press on the gutter starts a resize, not a slide click"
+    );
+    host.apply_cursor_move(start - 40.0, y);
+    assert_eq!(
+        host.editor_state.editor_ui.layer_panel_width,
+        start - 40.0,
+        "dragging left over the rail narrows it"
+    );
+    host.apply_release_with_viewport(VW, VH);
+    assert!(!host.is_resizing_panel());
+
+    let mut host = host_with(Some(TemplateScene::Slides));
+    host.apply_press(start, y, VW, VH);
+    host.apply_cursor_move(start + 40.0, y);
+    assert_eq!(
+        host.editor_state.editor_ui.layer_panel_width,
+        start + 40.0,
+        "dragging right still widens it"
+    );
+}
+
+/// Both halves of the ±4 px gutter start a resize. The inner half sits
+/// over the rail's own content, so the panel press tiers must not reach
+/// it first.
+#[test]
+fn the_inner_half_of_the_gutter_starts_a_resize_too() {
+    let _guard = test_lock();
+    let mut host = host_with(Some(TemplateScene::Slides));
+    let start = host.editor_state.editor_ui.layer_panel_width;
+    let y = op_editor_ui::widgets::TOP_BAR_HEIGHT + 200.0;
+    host.apply_press(start - 2.0, y, VW, VH);
+    assert!(
+        host.is_resizing_panel(),
+        "a press 2 px inside the edge is still the gutter's"
+    );
+    assert_eq!(
+        host.editor_state.editor_ui.slides_panel.pressed, None,
+        "the slides list must not also arm a row press"
+    );
+    host.apply_cursor_move(start - 42.0, y);
+    assert_eq!(
+        host.editor_state.editor_ui.layer_panel_width,
+        start - 40.0,
+        "the drag is measured from the press point, not the edge"
     );
 }

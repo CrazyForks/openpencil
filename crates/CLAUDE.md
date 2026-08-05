@@ -335,7 +335,7 @@ Smoke: `crates/openpencil-shell-web/smoke/step-1b.html` — start `python3 -m ht
 
 Web's `apply_press` runs the same order with two extra tiers split out (`press_import_locale_tiers`, `press_variables_tiers`, `press_font_and_picker_tiers`) because its overlay set differs; the relative priority is identical.
 
-`apply_cursor_move` (native `widget_host/input.rs`) runs its own 10-tier ladder: modals → floating panels → in-flight property/text/crop/node/pen drags (pointer capture) → menus + Git panel → property-panel popovers → StatusBar/align/model-picker → TopBar → the single-shot chat probe (deliberately non-consuming, so the late drags still run) → late pointer-capture drags → base hover. It keeps one owned `PropertyPanel` snapshot per event in `CursorMoveCtx::property_panel_probe` so the expensive snapshot/i18n work happens at most once.
+`apply_cursor_move` (native `widget_host/input.rs`) runs its own 10-tier ladder: modals → floating panels → a live rail-resize drag → in-flight property/text/crop/node/pen drags (pointer capture) → menus + Git panel → property-panel popovers → StatusBar/align/model-picker → TopBar → the left rail's slides tab → the single-shot chat probe (deliberately non-consuming, so the late drags still run) → late pointer-capture drags → base hover. The rail resize sits with the early pointer-capture drags rather than the late ones because its pointer travels back *over* the rail it is resizing, where the slides-tab hover tier would otherwise claim the move — which is exactly why the left rail could once be dragged wider but never narrower. It keeps one owned `PropertyPanel` snapshot per event in `CursorMoveCtx::property_panel_probe` so the expensive snapshot/i18n work happens at most once.
 
 ### Coordinate invariant
 

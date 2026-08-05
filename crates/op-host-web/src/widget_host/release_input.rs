@@ -37,13 +37,9 @@ impl WidgetHost {
         self.last_viewport_w = viewport_w;
         self.last_viewport_h = viewport_h;
         let pressed_released = self.release_pressed_feedback();
-        // Deck filmstrip — a chip click frames its board, a chip drag
-        // reorders the deck. Both resolve on release so a press that
+        // The rail's slides tab — a row click frames its board, a row
+        // drag reorders the deck. Both resolve on release so a press that
         // turned out to be a drag is not also a navigation.
-        if self.deck_filmstrip_release(viewport_w, viewport_h) {
-            return true;
-        }
-        // The rail's slides tab — same click-or-drag contract.
         if self.slides_panel_release(viewport_w, viewport_h) {
             return true;
         }
@@ -123,11 +119,8 @@ impl WidgetHost {
     pub fn apply_release(&mut self) -> bool {
         let pressed_released = self.release_pressed_feedback();
         // The cached viewport is what every other viewport-less path
-        // here uses; leaving the gesture open would strand a chip
+        // here uses; leaving the gesture open would strand a row
         // mid-drag.
-        if self.deck_filmstrip_release(self.last_viewport_w, self.last_viewport_h) {
-            return true;
-        }
         if self.slides_panel_release(self.last_viewport_w, self.last_viewport_h) {
             return true;
         }

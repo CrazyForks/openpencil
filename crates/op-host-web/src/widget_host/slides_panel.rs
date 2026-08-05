@@ -23,15 +23,14 @@
 //! `deck_html_export_supported`.
 
 use super::WidgetHost;
-use op_editor_core::LeftPanelTab;
 use op_editor_ui::widgets::host_canvas_geometry as canvas_geometry;
 use op_editor_ui::widgets::slides_panel_flow as flow;
-use op_editor_ui::widgets::{FilmstripChip, SlidesPanelLayout, SlidesPanelTabs};
+use op_editor_ui::widgets::{BoardChip, SlidesPanelLayout, SlidesPanelTabs};
 use op_editor_ui::{Point2D, Rect};
 
 /// Everything an event or a paint needs about the panel.
 pub(in crate::widget_host) struct SlidesFrame {
-    pub(in crate::widget_host) chips: Vec<FilmstripChip>,
+    pub(in crate::widget_host) chips: Vec<BoardChip>,
     pub(in crate::widget_host) active: Option<usize>,
     pub(in crate::widget_host) layout: SlidesPanelLayout,
 }
@@ -76,7 +75,7 @@ impl WidgetHost {
         self.refresh_layout_scene();
         let layout = flow::layout(&self.editor_state, &chips, &self.layout_scene, panel)?;
         let canvas = canvas_geometry::canvas_rect(&self.editor_state, viewport_w, viewport_h);
-        let active = op_editor_ui::widgets::deck_filmstrip_flow::active_chip_index(
+        let active = op_editor_ui::widgets::deck_boards::active_chip_index(
             &chips,
             &self.layout_scene,
             &self.editor_state,
@@ -96,10 +95,7 @@ impl WidgetHost {
     ) {
         use op_editor_ui::widgets::PaintCx;
         let ui = &self.editor_state.editor_ui;
-        let layers_label = op_editor_ui::widgets::editor_state_ext::translate(ui, "layers.title");
-        let slides_key =
-            flow::slides_tab_label_key(&self.editor_state).unwrap_or("slidesPanel.tabSlides");
-        let slides_label = op_editor_ui::widgets::editor_state_ext::translate(ui, slides_key);
+        let (layers_label, slides_label) = flow::tab_labels(&self.editor_state);
         let present_label =
             op_editor_ui::widgets::editor_state_ext::translate(ui, "slidesPanel.present");
         let widget = flow::widget(
@@ -122,17 +118,12 @@ impl WidgetHost {
         tabs: &SlidesPanelTabs,
     ) {
         use op_editor_ui::widgets::PaintCx;
-        let ui = &self.editor_state.editor_ui;
-        let layers_label = op_editor_ui::widgets::editor_state_ext::translate(ui, "layers.title");
-        let slides_key =
-            flow::slides_tab_label_key(&self.editor_state).unwrap_or("slidesPanel.tabSlides");
-        let slides_label = op_editor_ui::widgets::editor_state_ext::translate(ui, slides_key);
+        let (layers_label, slides_label) = flow::tab_labels(&self.editor_state);
         let mut cx = PaintCx { backend };
         tabs.paint(
             &mut cx,
             &self.theme,
-            LeftPanelTab::Layers,
-            ui.slides_panel.hover,
+            self.editor_state.editor_ui.slides_panel.hover,
             layers_label,
             slides_label,
         );
@@ -208,12 +199,19 @@ impl WidgetHost {
     /// sits over the tree in the other tab. A live row drag keeps
     /// ownership wherever the pointer went, so a reorder does not cancel
     /// the moment the cursor leaves the rail.
+    ///
+    /// `blocked_by_overlay` covers the chat model picker as well as the
+    /// floating panels. Native resolves the picker in an EARLIER tier
+    /// than the rail; web's ladder runs the rail first, so without this
+    /// the rail would claim a move the picker should have seen — and a
+    /// picker left open with no layoutable bounds heals on the very
+    /// dispatch the rail was swallowing.
     pub(in crate::widget_host) fn slides_panel_cursor_tier(
         &mut self,
         point: Point2D,
-        over_topmost: bool,
+        blocked_by_overlay: bool,
     ) -> Option<bool> {
-        if over_topmost {
+        if blocked_by_overlay {
             return None;
         }
         let (owns, changed) =
@@ -240,12 +238,12 @@ impl WidgetHost {
                 }
                 if let flow::SlidesRelease::Reorder { from, to } = outcome {
                     if let Some(chip) = slides.chips.get(from) {
-                        // The filmstrip's own reorder — the two
-                        // navigators can never write the deck order
-                        // differently. No collaboration gate here,
-                        // unlike native's twin: the web host carries no
-                        // collaboration session at all.
-                        op_editor_ui::widgets::deck_filmstrip_flow::apply_reorder(
+                        // The shared deck reorder, so the rail can never
+                        // write the deck order differently from the
+                        // presentation that reads it. No collaboration
+                        // gate here, unlike native's twin: the web host
+                        // carries no collaboration session at all.
+                        op_editor_ui::widgets::deck_boards::apply_reorder(
                             &mut self.editor_state,
                             &chip.id.clone(),
                             to,

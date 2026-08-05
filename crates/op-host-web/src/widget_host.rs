@@ -82,7 +82,6 @@ mod collab_input_tests;
 mod color_picker_press;
 mod component_browser_press;
 mod cursor_input;
-mod deck_filmstrip;
 #[cfg(test)]
 mod deferred_press_tests;
 mod design_md_press;
@@ -175,6 +174,8 @@ mod release_input;
 mod resize_drag;
 #[cfg(test)]
 mod resize_drag_tests;
+#[cfg(test)]
+mod scene_template_ime_tests;
 mod scene_template_press;
 mod scroll;
 mod settings_caret;

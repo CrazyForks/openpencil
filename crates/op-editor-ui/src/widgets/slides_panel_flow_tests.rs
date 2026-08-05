@@ -49,7 +49,7 @@ fn scene() -> LayoutScene {
     }
 }
 
-fn laid_out(state: &EditorState) -> (Vec<FilmstripChip>, SlidesPanelLayout) {
+fn laid_out(state: &EditorState) -> (Vec<BoardChip>, SlidesPanelLayout) {
     let chips = slides(state);
     let layout = layout(state, &chips, &scene(), PANEL).expect("the rail has room");
     (chips, layout)
@@ -64,27 +64,30 @@ fn row_centre(layout: &SlidesPanelLayout, index: usize) -> Point2D {
 }
 
 #[test]
-fn only_scenario_documents_get_a_tab_row() {
+fn any_document_with_boards_gets_a_tab_row() {
     let deck = deck_state(THREE_BOARDS);
     assert!(tab_row_visible(&deck));
-    assert_eq!(slides_tab_label_key(&deck), Some("slidesPanel.tabSlides"));
+    assert_eq!(slides_tab_label_key(&deck), "slidesPanel.tabSlides");
 
-    let mut cards = deck_state(THREE_BOARDS);
-    cards.editor_ui.scenario = Some(TemplateScene::Card);
-    assert!(tab_row_visible(&cards));
-    assert_eq!(slides_tab_label_key(&cards), Some("slidesPanel.tabCards"));
-
+    // An untagged design page with frames on it is exactly the case the
+    // navigator used to be missing from.
     let mut ordinary = deck_state(THREE_BOARDS);
     ordinary.editor_ui.scenario = None;
-    assert!(
-        !tab_row_visible(&ordinary),
-        "an untagged document is layers-only"
-    );
-    assert!(tab_row(&ordinary, PANEL).is_none());
+    assert!(tab_row_visible(&ordinary));
+    assert!(tab_row(&ordinary, PANEL).is_some());
+    assert_eq!(slides_tab_label_key(&ordinary), "slidesPanel.tabSlides");
 
     let mut carousel = deck_state(THREE_BOARDS);
     carousel.editor_ui.scenario = Some(TemplateScene::Carousel);
-    assert!(!tab_row_visible(&carousel));
+    assert!(tab_row_visible(&carousel));
+}
+
+#[test]
+fn the_scenario_names_the_tab_without_gating_it() {
+    let mut cards = deck_state(THREE_BOARDS);
+    cards.editor_ui.scenario = Some(TemplateScene::Card);
+    assert!(tab_row_visible(&cards));
+    assert_eq!(slides_tab_label_key(&cards), "slidesPanel.tabCards");
 }
 
 #[test]
@@ -101,9 +104,8 @@ fn presenting_and_empty_decks_show_no_tab_row() {
 
 #[test]
 fn the_layers_tree_keeps_the_whole_rail_without_a_tab_row() {
-    let mut ordinary = deck_state(THREE_BOARDS);
-    ordinary.editor_ui.scenario = None;
-    assert_eq!(layers_content_rect(&ordinary, PANEL), PANEL);
+    let empty = deck_state(r#"{"version":"1.0.0","children":[]}"#);
+    assert_eq!(layers_content_rect(&empty, PANEL), PANEL);
 
     let deck = deck_state(THREE_BOARDS);
     let content = layers_content_rect(&deck, PANEL);
@@ -114,12 +116,11 @@ fn the_layers_tree_keeps_the_whole_rail_without_a_tab_row() {
 }
 
 #[test]
-fn a_stale_slides_tab_cannot_strand_a_document_that_is_not_a_deck() {
-    let mut ordinary = deck_state(THREE_BOARDS);
-    ordinary.editor_ui.scenario = None;
-    assert_eq!(ordinary.editor_ui.slides_panel.tab, LeftPanelTab::Slides);
-    assert!(!slides_tab_active(&ordinary));
-    assert!(layout(&ordinary, &slides(&ordinary), &scene(), PANEL).is_none());
+fn a_stale_slides_tab_cannot_strand_a_document_with_nothing_to_list() {
+    let mut empty = deck_state(r#"{"version":"1.0.0","children":[]}"#);
+    empty.editor_ui.slides_panel.tab = LeftPanelTab::Slides;
+    assert!(!slides_tab_active(&empty));
+    assert!(layout(&empty, &slides(&empty), &scene(), PANEL).is_none());
 }
 
 #[test]
@@ -134,13 +135,19 @@ fn the_list_carries_the_documents_board_order_and_names() {
 }
 
 #[test]
-fn the_thumbnails_take_the_boards_own_aspect() {
+fn every_board_reports_its_own_aspect() {
     let deck = deck_state(THREE_BOARDS);
     let chips = slides(&deck);
-    let aspect = board_aspect(&chips, &scene());
-    assert!((aspect - 1920.0 / 1080.0).abs() < 0.001);
-    // No scene yet (a freshly opened document) falls back to 16:9.
-    assert!((board_aspect(&chips, &LayoutScene::default()) - DEFAULT_BOARD_ASPECT).abs() < 0.001);
+    let aspects = board_aspects(&chips, &scene());
+    assert_eq!(aspects.len(), chips.len(), "one aspect per board");
+    assert!(aspects.iter().all(|a| (a - 1920.0 / 1080.0).abs() < 0.001));
+    // No scene yet (a freshly opened document) falls back to 16:9 for
+    // every row rather than collapsing the list.
+    let unresolved = board_aspects(&chips, &LayoutScene::default());
+    assert_eq!(unresolved.len(), chips.len());
+    assert!(unresolved
+        .iter()
+        .all(|a| (a - DEFAULT_BOARD_ASPECT).abs() < 0.001));
 }
 
 #[test]
@@ -207,12 +214,12 @@ fn a_drag_dropped_where_it_started_changes_nothing() {
 }
 
 #[test]
-fn the_reorder_is_a_pure_move_command_shared_with_the_filmstrip() {
-    // The panel commits through the filmstrip's own reorder, so the two
+fn the_reorder_is_the_shared_deck_move_command() {
+    // The panel commits through the shared deck reorder, so the two
     // navigators can never write the deck order differently.
     let mut deck = deck_state(THREE_BOARDS);
     let before: Vec<String> = slides(&deck).into_iter().map(|c| c.id).collect();
-    assert!(crate::widgets::deck_filmstrip_flow::apply_reorder(
+    assert!(crate::widgets::deck_boards::apply_reorder(
         &mut deck, "slide-1", 2
     ));
     let after: Vec<String> = slides(&deck).into_iter().map(|c| c.id).collect();
@@ -287,7 +294,13 @@ fn the_footer_button_asks_to_present() {
 #[test]
 fn the_wheel_scrolls_the_list_only_over_the_rail() {
     let mut deck = deck_state(THREE_BOARDS);
-    let tall = SlidesPanelLayout::new(PANEL, 20, DEFAULT_BOARD_ASPECT, 0.0).expect("layout");
+    let tall = SlidesPanelLayout::new(
+        PANEL,
+        SlidesPanelTabs::new(PANEL, LeftPanelTab::Slides, "Layers", "Slides"),
+        &[DEFAULT_BOARD_ASPECT; 20],
+        0.0,
+    )
+    .expect("layout");
     let over = Point2D::new(120.0, 300.0);
     assert_eq!(scroll(&mut deck, Some(&tall), over, -120.0), Some(true));
     assert!(deck.editor_ui.slides_panel.scroll.offset > 0.0);
@@ -295,5 +308,54 @@ fn the_wheel_scrolls_the_list_only_over_the_rail() {
         scroll(&mut deck, Some(&tall), Point2D::new(900.0, 300.0), -120.0),
         None,
         "off the rail the wheel belongs to the canvas"
+    );
+}
+
+/// The tab row's mode has to reach the product through the LOCALE, not
+/// just through a hand-passed label: the flow is the only place either
+/// host resolves the pair from, so this is where "Vietnamese at 180 px
+/// shows icons" is either true or a lie the unit tests cannot catch.
+#[test]
+fn the_tab_row_mode_follows_the_documents_own_labels() {
+    let mut deck = deck_state(THREE_BOARDS);
+    let narrow = Rect {
+        origin: PANEL.origin,
+        size: Point2D::new(180.0, PANEL.size.y),
+    };
+
+    deck.editor_ui.locale = op_editor_core::Locale::EnUs;
+    let (layers, slides) = tab_labels(&deck);
+    assert_eq!((layers, slides), ("Layers", "Slides"));
+    assert!(
+        !tab_row(&deck, narrow).expect("tab row").compact,
+        "English fits the minimum rail, so it keeps its words"
+    );
+
+    deck.editor_ui.locale = op_editor_core::Locale::Vi;
+    let (layers, slides) = tab_labels(&deck);
+    assert!(
+        !layers.is_empty() && !slides.is_empty(),
+        "the Vietnamese catalogue answers for both tabs"
+    );
+    assert!(
+        tab_row(&deck, narrow).expect("tab row").compact,
+        "Vietnamese does not fit the minimum rail, so it falls back to icons"
+    );
+    assert!(
+        !tab_row(&deck, PANEL).expect("tab row").compact,
+        "and gets its words back at the default width"
+    );
+}
+
+/// The scenario still only picks the WORD, and the word is what the
+/// row is measured against — so a scenario rename can flip the mode.
+#[test]
+fn the_scenario_label_is_the_one_the_row_is_measured_against() {
+    let mut cards = deck_state(THREE_BOARDS);
+    cards.editor_ui.scenario = Some(TemplateScene::Card);
+    let (_, slides) = tab_labels(&cards);
+    assert_eq!(
+        slides,
+        crate::widgets::editor_state_ext::translate(&cards.editor_ui, "slidesPanel.tabCards")
     );
 }

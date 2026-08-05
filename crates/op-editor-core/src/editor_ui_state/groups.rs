@@ -80,56 +80,6 @@ pub struct SizeToggleState {
     pub clip_content: bool,
 }
 
-/// A chip drag in flight on the deck filmstrip.
-///
-/// `press_x` is kept alongside the live `pointer_x` so the release can
-/// tell a click (navigate to the slide) from a drag (reorder the deck):
-/// the two are the same gesture until the pointer has travelled far
-/// enough, and deciding on release rather than on press is what lets a
-/// slightly shaky click still navigate.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct FilmstripDrag {
-    /// Index of the chip being dragged, in page order.
-    pub from: usize,
-    /// Where the press landed, in screen px.
-    pub press_x: f32,
-    /// Where the cursor is now, in screen px.
-    pub pointer_x: f32,
-}
-
-/// Deck filmstrip (page navigator) state.
-///
-/// Only transient pointer bookkeeping lives here — which chip the
-/// cursor is over, which one a press landed on, and the drag in flight.
-/// The page order itself is NOT mirrored here: it is the document's own
-/// child order (`crate::preview_slideshow::active_page_boards`), and a
-/// second copy of it would be a second answer to "what order are the
-/// slides in".
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct DeckFilmstripState {
-    /// Chip under the cursor — drives the hover wash.
-    pub hover: Option<usize>,
-    /// Chip a press landed on. Activates on RELEASE while the cursor is
-    /// still on it, the same contract the presenting toolbar uses.
-    pub pressed: Option<usize>,
-    /// The reorder gesture in flight, once the pointer has moved.
-    pub drag: Option<FilmstripDrag>,
-}
-
-impl DeckFilmstripState {
-    /// Forget every in-flight pointer interaction. Returns whether
-    /// anything was live — hosts use that as the repaint signal.
-    ///
-    /// Called whenever the strip stops being reachable (leaving the
-    /// document, entering Preview), so a gesture cannot survive the
-    /// strip it belongs to.
-    pub fn clear(&mut self) -> bool {
-        let live = self.hover.is_some() || self.pressed.is_some() || self.drag.is_some();
-        *self = Self::default();
-        live
-    }
-}
-
 /// Floating Design-MD panel state.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DesignMdPanelState {

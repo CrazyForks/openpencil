@@ -54,17 +54,44 @@ fn row_centre(host: &mut WidgetHost, index: usize) -> Point2D {
 }
 
 #[test]
-fn only_a_deck_document_gets_the_slides_tab() {
+fn any_document_with_boards_gets_the_slides_tab() {
     let mut deck = host_with(Some(TemplateScene::Slides));
     let slides = deck
         .slides_panel_frame(VW, VH)
         .expect("a deck shows the slides tab");
     assert_eq!(slides.chips.len(), 3);
     assert_eq!(slides.chips[1].name, "议程");
+    assert!(deck.slides_tab_row(VH).is_some());
 
+    // The same three boards with no scenario recorded: an ordinary
+    // design page still gets the navigator, which is the whole point of
+    // the tab being permanent. Twin of native's test of the same name.
     let mut ordinary = host_with(None);
-    assert!(ordinary.slides_panel_frame(VW, VH).is_none());
-    assert!(ordinary.slides_tab_row(VH).is_none());
+    let listed = ordinary
+        .slides_panel_frame(VW, VH)
+        .expect("an untagged page with boards still lists them");
+    assert_eq!(listed.chips.len(), 3);
+    assert!(ordinary.slides_tab_row(VH).is_some());
+}
+
+#[test]
+fn a_page_with_no_boards_has_nothing_to_list_and_shows_no_tab() {
+    let mut empty = WidgetHost::new();
+    empty.editor_state.editor_ui.slides_panel.tab = LeftPanelTab::Slides;
+    // The starter document opens with one empty Frame, which IS a board;
+    // clear it so this covers the genuinely empty page.
+    empty.editor_state.active_children_mut().clear();
+    empty.editor_state_dirty = true;
+    empty.last_viewport_w = VW;
+    empty.last_viewport_h = VH;
+    assert!(active_page_boards(&empty.editor_state).is_empty());
+    assert!(empty.slides_tab_row(VH).is_none());
+    assert!(empty.slides_panel_frame(VW, VH).is_none());
+    assert_eq!(
+        empty.layers_content_rect(VH).origin.y,
+        op_editor_ui::widgets::TOP_BAR_HEIGHT,
+        "a document without a tab row keeps the whole rail"
+    );
 }
 
 #[test]
@@ -150,13 +177,6 @@ fn the_layer_tree_starts_below_the_tab_row() {
         deck.layers_content_rect(VH).origin.y,
         tabs.row.origin.y + tabs.row.size.y
     );
-
-    let ordinary = host_with(None);
-    assert_eq!(
-        ordinary.layers_content_rect(VH).origin.y,
-        op_editor_ui::widgets::TOP_BAR_HEIGHT,
-        "a document without a tab row keeps the whole rail"
-    );
 }
 
 #[test]
@@ -185,4 +205,31 @@ fn the_footer_button_enters_preview() {
     host.apply_press(button.x, button.y, VW, VH);
     host.apply_release_with_viewport(VW, VH);
     assert!(host.editor_state.editor_ui.preview.mode);
+}
+
+/// The tab row must not swallow a cursor move while the chat model
+/// picker is open — the picker paints above the rail, and web resolves
+/// it in a LATER tier than the rail (native resolves it earlier). A
+/// picker left open with no layoutable bounds heals on exactly the
+/// dispatch the rail would otherwise have claimed, so this is the guard
+/// that keeps the two hosts' z-order agreeing.
+#[test]
+fn the_tab_row_yields_the_cursor_to_an_open_model_picker() {
+    let mut host = host_with(Some(TemplateScene::Slides));
+    let tabs = host.slides_tab_row(VH).expect("tab row");
+    let on_the_row = Point2D::new(
+        tabs.row.origin.x + 20.0,
+        tabs.row.origin.y + tabs.row.size.y / 2.0,
+    );
+    // Closed picker: the row owns its own pixels.
+    assert!(
+        host.slides_panel_cursor_tier(on_the_row, false).is_some(),
+        "the tab row owns a point on itself"
+    );
+
+    host.editor_state.editor_ui.chat_model_picker.open = true;
+    assert!(
+        host.slides_panel_cursor_tier(on_the_row, true).is_none(),
+        "an overlay above the rail takes the move instead"
+    );
 }

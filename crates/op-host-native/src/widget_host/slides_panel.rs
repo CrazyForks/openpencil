@@ -13,7 +13,7 @@ use super::WidgetHostNative;
 use op_editor_core::LeftPanelTab;
 use op_editor_ui::widgets::host_canvas_geometry as canvas_geometry;
 use op_editor_ui::widgets::slides_panel_flow as flow;
-use op_editor_ui::widgets::{FilmstripChip, SlidesPanelLayout, SlidesPanelTabs};
+use op_editor_ui::widgets::{BoardChip, SlidesPanelLayout, SlidesPanelTabs};
 use op_editor_ui::{Point2D, Rect};
 
 use crate::backend::NativeFrameBackend;
@@ -21,7 +21,7 @@ use crate::backend::NativeFrameBackend;
 /// Everything an event or a paint needs about the panel: the slides,
 /// the one the camera is on, and where the rows are.
 pub(in crate::widget_host) struct SlidesFrame {
-    pub(in crate::widget_host) chips: Vec<FilmstripChip>,
+    pub(in crate::widget_host) chips: Vec<BoardChip>,
     pub(in crate::widget_host) active: Option<usize>,
     pub(in crate::widget_host) layout: SlidesPanelLayout,
 }
@@ -74,9 +74,10 @@ impl WidgetHostNative {
         self.refresh_layout_scene();
         let layout = flow::layout(&self.editor_state, &chips, &self.layout_scene, panel)?;
         let canvas = canvas_geometry::canvas_rect(&self.editor_state, viewport_w, viewport_h);
-        // The same "board nearest the viewport centre" answer the canvas
-        // filmstrip highlights with — two navigators, one current slide.
-        let active = op_editor_ui::widgets::deck_filmstrip_flow::active_chip_index(
+        // "The board nearest the viewport centre" — the same answer the
+        // presentation starts from, so the rail can never highlight a
+        // different slide than the one Play would open on.
+        let active = op_editor_ui::widgets::deck_boards::active_chip_index(
             &chips,
             &self.layout_scene,
             &self.editor_state,
@@ -98,10 +99,7 @@ impl WidgetHostNative {
     ) {
         use op_editor_ui::widgets::PaintCx;
         let ui = &self.editor_state.editor_ui;
-        let layers_label = op_editor_ui::widgets::editor_state_ext::translate(ui, "layers.title");
-        let slides_key =
-            flow::slides_tab_label_key(&self.editor_state).unwrap_or("slidesPanel.tabSlides");
-        let slides_label = op_editor_ui::widgets::editor_state_ext::translate(ui, slides_key);
+        let (layers_label, slides_label) = flow::tab_labels(&self.editor_state);
         let present_label =
             op_editor_ui::widgets::editor_state_ext::translate(ui, "slidesPanel.present");
         let widget = flow::widget(
@@ -129,17 +127,12 @@ impl WidgetHostNative {
         tabs: &SlidesPanelTabs,
     ) {
         use op_editor_ui::widgets::PaintCx;
-        let ui = &self.editor_state.editor_ui;
-        let layers_label = op_editor_ui::widgets::editor_state_ext::translate(ui, "layers.title");
-        let slides_key =
-            flow::slides_tab_label_key(&self.editor_state).unwrap_or("slidesPanel.tabSlides");
-        let slides_label = op_editor_ui::widgets::editor_state_ext::translate(ui, slides_key);
+        let (layers_label, slides_label) = flow::tab_labels(&self.editor_state);
         let mut cx = PaintCx { backend: frame };
         tabs.paint(
             &mut cx,
             &self.theme,
-            LeftPanelTab::Layers,
-            ui.slides_panel.hover,
+            self.editor_state.editor_ui.slides_panel.hover,
             layers_label,
             slides_label,
         );
@@ -187,12 +180,16 @@ impl WidgetHostNative {
             return;
         };
         // Visible rows first, then the rest — scrolling to a slide must
-        // not wait behind rasters nobody is looking at.
-        let mut wanted: Vec<(String, &op_editor_ui::layout_scene::SceneNode)> = Vec::new();
+        // not wait behind rasters nobody is looking at. Each entry
+        // carries its OWN raster size: rows are a fixed height and every
+        // board is fitted into that box on its own aspect, so a raster
+        // baked at one shared size would stretch every board that is not
+        // the shape the deck's first one happened to be.
+        let mut wanted: Vec<(String, &op_editor_ui::layout_scene::SceneNode, Point2D)> = Vec::new();
         for (index, _) in &visible {
             if let Some(chip) = slides.chips.get(*index) {
                 if let Some(node) = page.find(&chip.id) {
-                    wanted.push((chip.id.clone(), node));
+                    wanted.push((chip.id.clone(), node, slides.layout.thumb_rect(*index).size));
                 }
             }
         }
@@ -202,18 +199,11 @@ impl WidgetHostNative {
                 continue;
             }
             if let Some(node) = page.find(&chip.id) {
-                wanted.push((chip.id.clone(), node));
+                wanted.push((chip.id.clone(), node, slides.layout.thumb_rect(index).size));
             }
         }
-        let size = slides.layout.thumb;
-        let rendered = self
-            .slide_thumbs
-            .render_pending(frame, &wanted, revision, size);
-        if rendered
-            || self
-                .slide_thumbs
-                .has_pending(frame, &wanted, revision, size)
-        {
+        let rendered = self.slide_thumbs.render_pending(frame, &wanted, revision);
+        if rendered || self.slide_thumbs.has_pending(frame, &wanted, revision) {
             // Either fresh pixels landed (blit them next frame) or rows
             // are still outstanding (render the next batch then). One
             // frame's grace either way.
@@ -370,17 +360,13 @@ impl WidgetHostNative {
     }
 
     /// Move a board to a new position in the page's child order, through
-    /// the filmstrip's own reorder so the two navigators can never write
-    /// the deck order differently.
+    /// the shared deck reorder so the rail can never write the deck order
+    /// differently from the presentation that reads it.
     fn apply_slides_reorder(&mut self, board_id: &str, to: usize) {
         if !self.collab_allows_document_mutation(op_editor_core::CollabDocumentMutation::NodeMove) {
             return;
         }
-        op_editor_ui::widgets::deck_filmstrip_flow::apply_reorder(
-            &mut self.editor_state,
-            board_id,
-            to,
-        );
+        op_editor_ui::widgets::deck_boards::apply_reorder(&mut self.editor_state, board_id, to);
     }
 
     /// Wheel / trackpad scroll over the slide list.

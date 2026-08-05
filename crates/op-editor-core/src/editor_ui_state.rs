@@ -63,9 +63,9 @@ pub use git_panel::{
     MergeResolveFile, MergeResolveState,
 };
 pub use groups::{
-    AssetCenterTab, CustomPrompt, DeckFilmstripState, DesignMdPanelState, FilmstripDrag,
-    PreviewState, PromptCenterFocus, PromptCenterState, PromptFilter, SceneFilter,
-    SceneTemplateCenterState, SceneTemplateFocus, SizeToggleState,
+    AssetCenterTab, CustomPrompt, DesignMdPanelState, PreviewState, PromptCenterFocus,
+    PromptCenterState, PromptFilter, SceneFilter, SceneTemplateCenterState, SceneTemplateFocus,
+    SizeToggleState,
 };
 pub use pickers::{
     CanvasDropIndicator, CanvasOverlayLine, CanvasOverlayRect, CompositingPickerTarget,
@@ -256,10 +256,6 @@ pub struct EditorUiState {
     // --- Canvas preview (Play) mode -------------------------------
     /// Preview (Play) mode flag + device / screen switcher state.
     pub preview: PreviewState,
-    /// Hover / press / drag bookkeeping for the deck filmstrip — the
-    /// page navigator a [`crate::scene_template_catalog::TemplateScene::Slides`]
-    /// document floats at the bottom of the canvas.
-    pub deck_filmstrip: DeckFilmstripState,
     /// Left-rail tab selection plus the slides tab's hover / press /
     /// drag bookkeeping. The tab row itself only appears for scenario
     /// documents that have a page navigator to offer.

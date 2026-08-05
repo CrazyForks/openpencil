@@ -94,14 +94,10 @@ fn layer_panel_trackpad_pan_scrolls_horizontally() {
         let mut host = WidgetHost::new();
         seed(&mut host, &nested_frame_doc(50));
         let panel = op_editor_ui::widgets::LayerPanel::from_editor(host.editor_state());
-        let rect = op_editor_ui::Rect {
-            origin: op_editor_ui::Point2D::new(0.0, op_editor_ui::widgets::TOP_BAR_HEIGHT),
-            size: op_editor_ui::Point2D::new(
-                host.editor_state().editor_ui.layer_panel_width,
-                VIEWPORT_H - op_editor_ui::widgets::TOP_BAR_HEIGHT,
-            ),
-        };
-        let regions = panel.regions(rect);
+        // Through the host's own rect, not a hand-built one: a document
+        // with top-level frames shows the rail's tab row, and the tree
+        // starts below it.
+        let regions = panel.regions(host.layers_content_rect(VIEWPORT_H));
         assert!(regions.layers.max_horizontal_offset > 0.0);
 
         assert!(host.apply_pan_gesture(

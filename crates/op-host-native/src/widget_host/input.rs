@@ -582,6 +582,13 @@ impl WidgetHostNative {
             self.image_adjustment_drag.is_some() || self.effect_radius_drag.is_some();
         let mut property_panel_probe =
             property_drag_active.then(|| PropertyPanel::for_selection(&self.editor_state));
+        // Tier 3a — a live rail-resize drag. First of the pointer-capture
+        // drags because it is the one whose pointer travels back over the
+        // rail it is resizing, where the hover tiers below would otherwise
+        // claim the move (see `cursor_move_panel_resize_tier`).
+        if let Some(consumed) = self.cursor_move_panel_resize_tier(x) {
+            return consumed;
+        }
         // Tier 3 — in-flight property / text-selection / crop / node / pen
         // drags. Pointer capture: these own the cursor until release.
         if let Some(consumed) =

@@ -429,3 +429,20 @@ pub(crate) const SQUARES_EXCLUDE: &[&str] = &[
     "M16 12v2a2 2 0 0 1-2 2H9a1 1 0 0 0-1 1v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2h0",
     "M4 16a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v3a1 1 0 0 1-1 1h-5a2 2 0 0 0-2 2v2",
 ];
+
+/// Custom stacked-plates glyph — the left rail's Layers tab when the
+/// rail is too narrow for its label. Hand-authored in the shared 24×24
+/// viewBox rather than sourced from lucide: the tab row needs a plate
+/// stack that reads at 14 px, and lucide's `layers` carries rounded
+/// join detail that turns to mush at that size.
+pub(crate) const LAYERS_STACK: &[&str] = &[
+    "M12 3 3 7.5 12 12 21 7.5Z",
+    "M3 12 12 16.5 21 12",
+    "M3 16.5 12 21 21 16.5",
+];
+
+/// Custom presentation-screen glyph — the left rail's Slides tab when
+/// the rail is too narrow for its label. A screen on a stand, which is
+/// what a board in a deck is; the scenario-specific names (cards and
+/// the rest) share it rather than each inventing a glyph.
+pub(crate) const PRESENTATION_SCREEN: &[&str] = &["M3 4h18v11H3Z", "M12 15v3", "M8.5 21h7"];

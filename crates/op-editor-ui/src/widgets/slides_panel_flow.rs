@@ -7,17 +7,17 @@
 //! native↔web `widget_host` pair has drifted apart every time a flow was
 //! written twice; this one is written once.
 //!
-//! The gesture matches the canvas filmstrip's: press marks a row
-//! pressed, movement past the drag threshold turns the press into a
-//! reorder, release either frames the row's board (a click) or moves the
-//! board in the child order (a drag).
+//! The gesture: press marks a row pressed, movement past the drag
+//! threshold turns the press into a reorder, release either frames the
+//! row's board (a click) or moves the board in the child order (a
+//! drag). Deciding on release is what lets a click with a shaky hand
+//! still navigate.
 
 use op_editor_core::scene_template_catalog::TemplateScene;
 use op_editor_core::{EditorState, LeftPanelTab, SlidesDrag, SlidesPanelTarget};
 
 use crate::layout_scene::LayoutScene;
-use crate::widgets::deck_filmstrip::{reorder_target_index, FilmstripChip};
-use crate::widgets::deck_filmstrip_flow::board_chips;
+use crate::widgets::deck_boards::{board_chips, reorder_target_index, BoardChip};
 use crate::widgets::slides_panel::{
     drag_is_live, SlidesPanel, SlidesPanelLayout, SlidesPanelTabs, DEFAULT_BOARD_ASPECT,
 };
@@ -53,37 +53,57 @@ pub enum SlidesRelease {
     Present,
 }
 
-/// Which scenarios put a page navigator in the left rail, and what the
-/// tab is called for each.
+/// What the navigator tab is called for this document.
 ///
-/// Gated on the recorded scenario, exactly like the filmstrip and the
-/// slideshow: a document is a deck because it was authored as one,
-/// never because its boards happen to be 1920×1080. Documents outside
-/// this set show no tab row at all — the rail is the Layers tree it has
-/// always been, with no chrome spent on a navigator they cannot use.
-pub fn slides_tab_label_key(state: &EditorState) -> Option<&'static str> {
+/// The scenario picks the WORD — a deck lists slides, a card set lists
+/// cards — but never whether the tab exists; see [`tab_row_visible`].
+/// A document with no scenario recorded gets the neutral "Slides", which
+/// is what the boards of an ordinary design page are to a navigator.
+pub fn slides_tab_label_key(state: &EditorState) -> &'static str {
     match state.editor_ui.scenario {
-        Some(TemplateScene::Slides) => Some("slidesPanel.tabSlides"),
-        Some(TemplateScene::Card) => Some("slidesPanel.tabCards"),
-        _ => None,
+        Some(TemplateScene::Card) => "slidesPanel.tabCards",
+        _ => "slidesPanel.tabSlides",
     }
 }
 
 /// Whether the left rail shows its tab row for this document.
 ///
+/// **Having boards is the whole test.** The tab used to be gated on the
+/// recorded scenario as well, which meant the navigator — the only place
+/// a page's order is visible, let alone reorderable — was missing from
+/// every document not tagged a deck, including every multi-frame design
+/// a user laid out by hand. A page with frames on it has an order, so it
+/// gets the tab; a page with none has nothing to list, so the rail stays
+/// the Layers tree it has always been. A pristine starter document has
+/// no top-level frame, so a new file still opens without one.
+///
 /// Presenting hides it along with the whole rail, so this answers
 /// `false` there too and no host can paint a navigator over a
 /// presentation.
 pub fn tab_row_visible(state: &EditorState) -> bool {
-    slides_tab_label_key(state).is_some()
-        && !state.editor_ui.preview.mode
-        && !board_chips(state).is_empty()
+    !state.editor_ui.preview.mode && !board_chips(state).is_empty()
+}
+
+/// Both tab labels for this document, already translated.
+///
+/// The single place either host or the layout reads them from: the tab
+/// row's rects are sized from the labels, so a caller resolving its own
+/// copy could paint a pill that does not match the one it hit-tests.
+pub fn tab_labels(state: &EditorState) -> (&'static str, &'static str) {
+    let ui = &state.editor_ui;
+    (
+        crate::widgets::editor_state_ext::translate(ui, "layers.title"),
+        crate::widgets::editor_state_ext::translate(ui, slides_tab_label_key(state)),
+    )
 }
 
 /// The tab row's rects for a rail occupying `panel`, or `None` when
 /// this document shows no tab row.
 pub fn tab_row(state: &EditorState, panel: Rect) -> Option<SlidesPanelTabs> {
-    tab_row_visible(state).then(|| SlidesPanelTabs::new(panel))
+    tab_row_visible(state).then(|| {
+        let (layers, slides) = tab_labels(state);
+        SlidesPanelTabs::new(panel, state.editor_ui.slides_panel.tab, layers, slides)
+    })
 }
 
 /// The rail rect the Layers tree gets: the whole panel, less the tab
@@ -107,25 +127,30 @@ pub fn slides_tab_active(state: &EditorState) -> bool {
 }
 
 /// The slides listed in the panel, in page order.
-pub fn slides(state: &EditorState) -> Vec<FilmstripChip> {
+pub fn slides(state: &EditorState) -> Vec<BoardChip> {
     board_chips(state)
 }
 
-/// Width / height of the deck's boards, for sizing the thumbnails.
+/// Each board's width / height, in page order — one per chip, because
+/// a page may hold a phone screen next to a dashboard and each is fitted
+/// into the row box on its own terms.
 ///
-/// Read off the FIRST board only — see [`SlidesPanelLayout::new`] for
-/// why the list is uniform. Falls back to 16:9 when the scene has not
-/// resolved the board yet, which happens on the first frame after a
-/// document opens.
-pub fn board_aspect(chips: &[FilmstripChip], scene: &LayoutScene) -> f32 {
-    let bounds = chips
-        .first()
-        .and_then(|chip| scene.active_page()?.find(&chip.id))
-        .map(|node| node.aggregate_bounds());
-    match bounds {
-        Some(rect) if rect.size.x > 0.0 && rect.size.y > 0.0 => rect.size.x / rect.size.y,
-        _ => DEFAULT_BOARD_ASPECT,
-    }
+/// Falls back to 16:9 for any board the scene has not resolved yet,
+/// which happens on the first frame after a document opens.
+pub fn board_aspects(chips: &[BoardChip], scene: &LayoutScene) -> Vec<f32> {
+    chips
+        .iter()
+        .map(|chip| {
+            let bounds = scene
+                .active_page()
+                .and_then(|page| page.find(&chip.id))
+                .map(|node| node.aggregate_bounds());
+            match bounds {
+                Some(rect) if rect.size.x > 0.0 && rect.size.y > 0.0 => rect.size.x / rect.size.y,
+                _ => DEFAULT_BOARD_ASPECT,
+            }
+        })
+        .collect()
 }
 
 /// Build the panel's layout for the current document, or `None` when
@@ -134,24 +159,25 @@ pub fn board_aspect(chips: &[FilmstripChip], scene: &LayoutScene) -> f32 {
 /// own way.
 pub fn layout(
     state: &EditorState,
-    chips: &[FilmstripChip],
+    chips: &[BoardChip],
     scene: &LayoutScene,
     panel: Rect,
 ) -> Option<SlidesPanelLayout> {
     if !slides_tab_active(state) {
         return None;
     }
+    let (layers, slides) = tab_labels(state);
     SlidesPanelLayout::new(
         panel,
-        chips.len(),
-        board_aspect(chips, scene),
+        SlidesPanelTabs::new(panel, state.editor_ui.slides_panel.tab, layers, slides),
+        &board_aspects(chips, scene),
         state.editor_ui.slides_panel.scroll.offset,
     )
 }
 
 /// The widget for the current state, ready to paint.
 pub fn widget<'a>(
-    chips: &'a [FilmstripChip],
+    chips: &'a [BoardChip],
     active: Option<usize>,
     state: &EditorState,
     layers_label: &'a str,
@@ -250,7 +276,7 @@ pub fn release(state: &mut EditorState, layout: &SlidesPanelLayout) -> SlidesRel
         };
     }
     // A click activates only while the cursor is still on what it
-    // pressed, the same contract the filmstrip uses.
+    // pressed, the same contract the presenting toolbar uses.
     if hover != Some(pressed) {
         return SlidesRelease::Cancelled;
     }

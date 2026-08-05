@@ -9,8 +9,7 @@
 //! The slide ORDER is deliberately absent: it is the document's own
 //! top-level child order (`crate::preview_slideshow::active_page_boards`)
 //! and a copy here would be a second answer to "what order are the
-//! slides in" — the same rule
-//! [`super::groups::DeckFilmstripState`] follows.
+//! slides in".
 
 use jian_core::scroll::ScrollState;
 
@@ -32,7 +31,7 @@ pub enum LeftPanelTab {
 /// tell a click (jump to the slide) from a drag (reorder the deck) —
 /// the two are the same gesture until the pointer has travelled far
 /// enough, and deciding on release is what lets a shaky click still
-/// navigate. Vertical twin of [`super::groups::FilmstripDrag`].
+/// navigate.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SlidesDrag {
     /// Index of the slide being dragged, in page order.
@@ -66,7 +65,7 @@ pub struct SlidesPanelState {
     /// What the cursor is over — drives every hover wash in the panel.
     pub hover: Option<SlidesPanelTarget>,
     /// What a press landed on. Activates on RELEASE while the cursor is
-    /// still on it, the same contract the filmstrip uses.
+    /// still on it, the same contract the presenting toolbar uses.
     pub pressed: Option<SlidesPanelTarget>,
     /// The reorder gesture in flight, once the pointer has moved.
     pub drag: Option<SlidesDrag>,

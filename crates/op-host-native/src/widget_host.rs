@@ -91,7 +91,6 @@ mod cursor_move_drags;
 mod cursor_move_modals;
 mod cursor_move_overlays;
 mod cursor_move_panels;
-mod deck_filmstrip;
 #[cfg(test)]
 mod deferred_press_tests;
 mod design_md_press;

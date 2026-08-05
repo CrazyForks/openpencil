@@ -124,12 +124,6 @@ impl WidgetHostNative {
             let stage = self.preview_canvas_rect(viewport_width, viewport_height);
             self.frame_slideshow_board((stage.size.x, stage.size.y));
         }
-        // Resolved here, ahead of the long immutable borrow below, because
-        // deriving it needs `&mut self` (it refreshes the scene to find the
-        // boards). Painted at §7.5.
-        let filmstrip = (!presenting)
-            .then(|| self.deck_filmstrip_frame(viewport_width, viewport_height))
-            .flatten();
         let ui = &self.editor_state.editor_ui;
 
         // 2. TopBar.
@@ -412,15 +406,6 @@ impl WidgetHostNative {
                 backend: &mut *frame,
             };
             chat.paint(&mut cx, chat_rect);
-        }
-
-        // 7.5. Deck filmstrip — floating bottom-centre, below the
-        //      StatusBar in z-order because the two can overlap on a
-        //      narrow canvas and the zoom pill must stay clickable
-        //      (the press ladder resolves them in this same order).
-        //      Hidden while presenting, like every other canvas chrome.
-        if let Some(strip) = filmstrip.as_ref() {
-            self.paint_deck_filmstrip(&mut *frame, strip);
         }
 
         // 8. StatusBar — floating bottom-right.

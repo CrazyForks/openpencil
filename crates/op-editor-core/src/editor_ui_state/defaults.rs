@@ -4,9 +4,9 @@
 //! Split out of the `editor_ui_state` spine (800-line file ceiling).
 
 use super::{
-    DeckFilmstripState, DesignMdPanelState, EditorUiState, EmbedHost, ExportFormat, FlexLayout,
-    GitPanelState, Locale, PencilCursorStyle, PreviewState, PromptCenterState, PropertyTab,
-    SceneTemplateCenterState, SizeToggleState, ThemeMode, UpdateStatus,
+    DesignMdPanelState, EditorUiState, EmbedHost, ExportFormat, FlexLayout, GitPanelState, Locale,
+    PencilCursorStyle, PreviewState, PromptCenterState, PropertyTab, SceneTemplateCenterState,
+    SizeToggleState, ThemeMode, UpdateStatus,
 };
 use crate::tool::Tool;
 use std::collections::HashSet;
@@ -57,7 +57,6 @@ impl Default for EditorUiState {
             preserve_authored_geometry: false,
             scenario: None,
             preview: PreviewState::default(),
-            deck_filmstrip: DeckFilmstripState::default(),
             slides_panel: super::SlidesPanelState::default(),
             agent_settings_open: false,
             agent_settings: crate::agent_settings::AgentSettings::default(),

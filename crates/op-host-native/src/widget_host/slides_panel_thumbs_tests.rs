@@ -52,9 +52,19 @@ fn with_frame<R>(f: impl FnOnce(&mut NativeFrameBackend<'_>) -> R) -> R {
 fn wanted<'a>(
     page: &'a ScenePage,
     ids: &[String],
-) -> Vec<(String, &'a op_editor_ui::layout_scene::SceneNode)> {
+) -> Vec<(String, &'a op_editor_ui::layout_scene::SceneNode, Point2D)> {
+    wanted_at(page, ids, THUMB)
+}
+
+/// The same request list at a chosen raster size — every row is fitted
+/// into its own rect, so the size travels with the entry.
+fn wanted_at<'a>(
+    page: &'a ScenePage,
+    ids: &[String],
+    size: Point2D,
+) -> Vec<(String, &'a op_editor_ui::layout_scene::SceneNode, Point2D)> {
     ids.iter()
-        .filter_map(|id| page.find(id).map(|node| (id.clone(), node)))
+        .filter_map(|id| page.find(id).map(|node| (id.clone(), node, size)))
         .collect()
 }
 
@@ -83,19 +93,19 @@ fn a_frame_renders_at_most_the_budget_and_the_next_takes_over() {
 
     with_frame(|frame| {
         let want = wanted(&page, &ids);
-        assert!(cache.render_pending(frame, &want, 1, THUMB));
+        assert!(cache.render_pending(frame, &want, 1));
         assert_eq!(
             cache.renders, RENDERS_PER_FRAME as u64,
             "one frame renders the budget, not the whole deck"
         );
         assert!(
-            cache.has_pending(frame, &want, 1, THUMB),
+            cache.has_pending(frame, &want, 1),
             "the third slide is still outstanding"
         );
         // The next frame picks up exactly what is left.
-        assert!(cache.render_pending(frame, &want, 1, THUMB));
+        assert!(cache.render_pending(frame, &want, 1));
         assert_eq!(cache.renders, 3);
-        assert!(!cache.has_pending(frame, &want, 1, THUMB));
+        assert!(!cache.has_pending(frame, &want, 1));
     });
 
     for id in &ids {
@@ -111,18 +121,18 @@ fn the_same_revision_never_renders_twice() {
     let mut cache = SlideThumbCache::default();
     with_frame(|frame| {
         let want = wanted(&page, &ids);
-        cache.render_pending(frame, &want, 4, THUMB);
-        cache.render_pending(frame, &want, 4, THUMB);
+        cache.render_pending(frame, &want, 4);
+        cache.render_pending(frame, &want, 4);
         let after_fill = cache.renders;
         assert_eq!(after_fill, 3, "three boards, three rasters");
 
         // Same revision, same size: nothing to do.
-        assert!(!cache.render_pending(frame, &want, 4, THUMB));
+        assert!(!cache.render_pending(frame, &want, 4));
         assert_eq!(cache.renders, after_fill, "a cache hit renders nothing");
 
         // A new revision invalidates every board.
-        assert!(cache.has_pending(frame, &want, 5, THUMB));
-        assert!(cache.render_pending(frame, &want, 5, THUMB));
+        assert!(cache.has_pending(frame, &want, 5));
+        assert!(cache.render_pending(frame, &want, 5));
         assert_eq!(cache.renders, after_fill + RENDERS_PER_FRAME as u64);
     });
 }
@@ -135,15 +145,15 @@ fn a_resized_rail_re_renders_and_a_stale_raster_still_draws() {
     let mut cache = SlideThumbCache::default();
     with_frame(|frame| {
         let want = wanted(&page, &ids);
-        cache.render_pending(frame, &want, 1, THUMB);
+        cache.render_pending(frame, &want, 1);
         assert_eq!(cache.renders, 1);
         // Same revision, wider rail — the raster no longer fits its box.
-        let wider = Point2D::new(THUMB.x + 40.0, THUMB.y + 22.0);
-        assert!(cache.has_pending(frame, &want, 1, wider));
+        let wider = wanted_at(&page, &ids, Point2D::new(THUMB.x + 40.0, THUMB.y + 22.0));
+        assert!(cache.has_pending(frame, &wider, 1));
         // Meanwhile the old raster is still there to paint, which is why
         // a resize does not blink the rail back to placeholders.
         assert!(cache.image("slide-1").is_some());
-        cache.render_pending(frame, &want, 1, wider);
+        cache.render_pending(frame, &wider, 1);
         assert_eq!(cache.renders, 2);
     });
 }
@@ -156,8 +166,8 @@ fn boards_the_deck_no_longer_has_are_dropped() {
     let mut cache = SlideThumbCache::default();
     with_frame(|frame| {
         let want = wanted(&page, &ids);
-        cache.render_pending(frame, &want, 1, THUMB);
-        cache.render_pending(frame, &want, 1, THUMB);
+        cache.render_pending(frame, &want, 1);
+        cache.render_pending(frame, &want, 1);
     });
     assert!(cache.image("slide-3").is_some());
     cache.retain_boards(&["slide-1".to_string()]);

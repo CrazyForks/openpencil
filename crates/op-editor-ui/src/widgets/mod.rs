@@ -292,8 +292,7 @@ pub mod align_toolbar;
 pub mod color_picker;
 mod component_browser_kits;
 pub mod component_browser_panel;
-pub mod deck_filmstrip;
-pub mod deck_filmstrip_flow;
+pub mod deck_boards;
 pub(crate) mod design_md_line_cache;
 pub mod design_md_markdown;
 pub mod design_md_panel;
@@ -396,7 +395,7 @@ pub use component_browser_panel::{
     ComponentBrowserHit, ComponentBrowserPanel, COMPONENT_BROWSER_PANEL_H,
     COMPONENT_BROWSER_PANEL_W,
 };
-pub use deck_filmstrip::{DeckFilmstrip, FilmstripChip, FilmstripLayout, FILMSTRIP_HEIGHT};
+pub use deck_boards::BoardChip;
 pub use design_md_panel::{DesignMdHit, DesignMdPanel, DESIGN_MD_PANEL_H, DESIGN_MD_PANEL_W};
 pub use export_dialog::{ExportDialog, ExportDialogHit, ExportFormat};
 pub use export_quick_menu::{ExportQuickMenu, ExportQuickMenuHit};

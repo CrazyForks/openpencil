@@ -14,6 +14,35 @@ use op_editor_ui::widgets::{
 use op_editor_ui::Rect;
 
 impl WidgetHostNative {
+    /// A live rail-resize drag owns the cursor outright. `None` — no
+    /// resize is in flight.
+    ///
+    /// This runs with the other pointer-capture drags (spine tier 3) and
+    /// NOT with the late drags below, because a rail resize is the one
+    /// gesture whose pointer spends half its travel INSIDE the surface it
+    /// is resizing. From the late tier the hover tiers above it — the
+    /// slides tab in particular, which claims every point on the left
+    /// rail — swallowed each move that went back over the rail, so the
+    /// left rail could be dragged wider but never narrower: dragging
+    /// right left the rail and reached this code, dragging left re-entered
+    /// it and never did.
+    pub(in crate::widget_host) fn cursor_move_panel_resize_tier(&mut self, x: f32) -> Option<bool> {
+        let resize = self.panel_resize?;
+        let dx = x - resize.start_x;
+        match resize.kind {
+            PanelResizeKind::LayerRight => {
+                let new_w = (resize.start_width + dx).clamp(PANEL_MIN_WIDTH, PANEL_MAX_WIDTH);
+                self.editor_state.editor_ui.layer_panel_width = new_w;
+            }
+            PanelResizeKind::PropertyLeft => {
+                let new_w = (resize.start_width - dx).clamp(PANEL_MIN_WIDTH, PANEL_MAX_WIDTH);
+                self.editor_state.editor_ui.property_panel_width = new_w;
+            }
+        }
+        self.mark_dirty();
+        Some(true)
+    }
+
     /// `None` — no late drag owns the cursor.
     pub(in crate::widget_host) fn cursor_move_late_drag_tiers(
         &mut self,
@@ -167,21 +196,6 @@ impl WidgetHostNative {
             if !d.active && (y - d.start_y).abs() > 4.0 {
                 d.active = true;
             }
-            return Some(true);
-        }
-        if let Some(resize) = self.panel_resize {
-            let dx = x - resize.start_x;
-            match resize.kind {
-                PanelResizeKind::LayerRight => {
-                    let new_w = (resize.start_width + dx).clamp(PANEL_MIN_WIDTH, PANEL_MAX_WIDTH);
-                    self.editor_state.editor_ui.layer_panel_width = new_w;
-                }
-                PanelResizeKind::PropertyLeft => {
-                    let new_w = (resize.start_width - dx).clamp(PANEL_MIN_WIDTH, PANEL_MAX_WIDTH);
-                    self.editor_state.editor_ui.property_panel_width = new_w;
-                }
-            }
-            self.mark_dirty();
             return Some(true);
         }
         if let Some(resize) = self.chat_resize {
