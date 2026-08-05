@@ -37,6 +37,8 @@ import { getCore } from './core-registry.js';
 const EXTRACTOR_FILE = 'vendor/snapshot-extractor.js';
 /** Sentinel object URL, so the harness only swallows the extractor's own anchor. */
 const CAPTURE_URL = 'blob:openpencil-capture';
+/** Hard ceiling on the lazy-content scroll march before a full-page capture. */
+const SETTLE_BUDGET_MS = 7000;
 
 /* -------------------------------------------------------------------------
  * Functions below run inside the tab (ISOLATED world). They must be
@@ -52,6 +54,13 @@ function beginCapture(captureUrl, keepPickedRoot) {
   // clear whatever a previous element pick left behind, or it would silently
   // capture that old subtree again; a pick capture must keep it.
   if (!keepPickedRoot) delete globalThis.openpencilSnapshotOptions;
+  // An element-pick overlay can still be armed when a capture starts (the
+  // user reopened the popup instead of picking). It is page DOM in this
+  // isolated world, so tear it down or it gets captured as content. After a
+  // committed pick the teardown already ran and this is a no-op; the
+  // abandoned `awaitPick` injection settles through its own timeout.
+  const pick = globalThis.openpencilPick;
+  if (pick && typeof pick.teardown === 'function') pick.teardown();
   if (!state.originals) {
     state.originals = {
       createObjectURL: URL.createObjectURL,
@@ -117,6 +126,64 @@ function readChunk(offset, length) {
 }
 
 /**
+ * Walk the viewport through the whole page so lazy content actually exists
+ * before the extractor reads the DOM, then park the page at the top.
+ *
+ * Three problems, one scroll journey:
+ * - `loading="lazy"` images and IntersectionObserver reveals only load when
+ *   the viewport approaches them — a capture taken from the top of a long
+ *   page otherwise ships placeholders for everything below the fold.
+ * - `content-visibility: auto` sections have no laid-out geometry until
+ *   they have been near the viewport once.
+ * - `position: fixed` / `sticky` chrome sits wherever the CURRENT scroll
+ *   put it; capturing from the very top is the one scroll position where
+ *   viewport coordinates and resting page coordinates agree.
+ *
+ * The march is bounded (deadline + step cap) so an infinite feed cannot
+ * hang the capture: whatever loaded within the budget is what gets
+ * captured. Returns the original scroll offset for `restoreScroll`.
+ */
+async function settlePageForCapture(maxMs) {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const scroller = document.scrollingElement || document.documentElement;
+  const original = { x: window.scrollX, y: window.scrollY };
+  const deadline = Date.now() + maxMs;
+  const step = Math.max(200, window.innerHeight * 0.85);
+  let y = 0;
+  let steps = 0;
+  // Re-read scrollHeight every pass: it grows as lazy sections materialize.
+  while (y < scroller.scrollHeight && Date.now() < deadline && steps < 120) {
+    window.scrollTo(0, y);
+    y += step;
+    steps += 1;
+    // oxlint-disable-next-line no-await-in-loop -- the pause IS the point:
+    // lazy loaders watch the viewport, not a synchronous scroll sweep.
+    await sleep(90);
+  }
+  // Give the images the march started a bounded chance to finish.
+  while (Date.now() < deadline) {
+    const pending = Array.prototype.filter.call(
+      document.images,
+      (image) => !image.complete,
+    );
+    if (pending.length === 0) break;
+    // oxlint-disable-next-line no-await-in-loop
+    await sleep(150);
+  }
+  window.scrollTo(0, 0);
+  await sleep(180);
+  return original;
+}
+
+/** Put the page back where the user left it. */
+function restoreScroll(position) {
+  if (position && typeof position.y === 'number') {
+    window.scrollTo(position.x || 0, position.y);
+  }
+  return true;
+}
+
+/**
  * Teardown, safe to run at any point after `beginCapture`: restore the
  * patched globals and drop the parked snapshot. Restoring is idempotent —
  * `beginCapture` only ever records `originals` once — so this is correct
@@ -169,6 +236,18 @@ async function runInTab(tabId, injection) {
 export async function capturePage(tabId, onProgress, options) {
   const core = getCore();
   const pickedRoot = Boolean(options && options.pickedRoot);
+  // Full-page captures walk the viewport through the page first so lazy
+  // content loads and fixed chrome rests at the top (see
+  // `settlePageForCapture`). A picked element was chosen on screen, already
+  // loaded — scrolling out from under the user's pick would be worse than
+  // capturing it as seen.
+  let scrollBack = null;
+  if (!pickedRoot) {
+    scrollBack = await runInTab(tabId, {
+      func: settlePageForCapture,
+      args: [SETTLE_BUDGET_MS],
+    }).catch(() => null);
+  }
   await runInTab(tabId, { func: beginCapture, args: [CAPTURE_URL, pickedRoot] });
   try {
     await runInTab(tabId, { files: [EXTRACTOR_FILE] });
@@ -231,5 +310,10 @@ export async function capturePage(tabId, onProgress, options) {
     // leave the tab with its own `URL.createObjectURL` / anchor `click` /
     // clipboard back in place and the parked snapshot freed.
     await runInTab(tabId, { func: endCapture }).catch(() => undefined);
+    if (scrollBack) {
+      await runInTab(tabId, { func: restoreScroll, args: [scrollBack] }).catch(
+        () => undefined,
+      );
+    }
   }
 }

@@ -49,6 +49,11 @@ function startPick(stateKey, labels) {
 
   const doc = document;
   const host = doc.createElement('div');
+  // The extractor skips elements carrying this marker: the overlay is
+  // capture chrome, never page content. Belt to `beginCapture`'s braces — a
+  // full-page capture can start while the picker is still armed (popup
+  // reopened without picking), and the overlay must not import as content.
+  host.setAttribute('data-openpencil-ui', '');
   // A max z-index and `position: fixed` put the overlay above page content
   // without touching any page element. `pointer-events: none` keeps
   // `elementFromPoint` and the page's own hover states honest — the overlay

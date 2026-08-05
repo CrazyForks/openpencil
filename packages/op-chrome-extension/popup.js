@@ -310,15 +310,30 @@ async function onDownload() {
   setBusy(true);
   try {
     const { text, meta } = await ensureCapture();
+    // Convert the raw snapshot into a ready-to-open `.op` document (the same
+    // conversion `op import:snapshot` runs), so the download opens directly by
+    // double-click with no CLI step.
+    const converted = JSON.parse(getCore().snapshotToOpDocument(text, String(meta.title || '')));
+    if (!converted.ok) {
+      const error = new Error(String(converted.error || 'empty capture'));
+      error.code = 'empty';
+      throw error;
+    }
     // The page title is attacker-controlled, so the name is sanitised by the
     // core (`filename.rs`) — no title can produce a `..` component or a
     // dot-file.
-    const filename = getCore().snapshotFilename(String(meta.title || ''));
-    const objectUrl = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+    const filename = getCore().opFilename(String(meta.title || ''));
+    // `application/octet-stream`, NOT json: Chrome's download pipeline
+    // second-guesses an unknown suffix against the blob's MIME type and
+    // rewrote `<title>.op` to `<title>.json`. A generic byte stream keeps
+    // the `.op` name the core built.
+    const objectUrl = URL.createObjectURL(new Blob([converted.op], { type: 'application/octet-stream' }));
     const id = await chrome.downloads.download({ url: objectUrl, filename, saveAs: false });
     revokeWhenDownloadSettles(id, objectUrl);
     await rememberAction('download');
-    setStatus(msg('statusDownloaded', [filename]), 'ok', { detail: captureDetail(meta) });
+    setStatus(msg('statusDownloaded', [filename]), 'ok', {
+      detail: captureDetail(meta, converted.warnings),
+    });
   } catch (error) {
     if (isCoreTrap(error)) invalidateCore();
     if (error && (error.code === 'offline' || error.code === 'import')) {
