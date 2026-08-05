@@ -157,10 +157,14 @@ pub(super) fn make_live_token() -> String {
 
 /// Live `ping` reply: OpenPencil identity + `mode:"live"` + the instance
 /// token, so `op` can distinguish this live canvas server from the
-/// headless file server and confirm it owns the discovery file.
+/// headless file server and confirm it owns the discovery file. The
+/// identity rides in `_meta` — the MCP spec's extension point — because
+/// strict clients validate a ping result as exactly `{ _meta? }` and
+/// reject top-level extras (Gemini CLI, issue #199); see
+/// `mcp_serve::ping_response`.
 pub(super) fn live_ping_response(id_raw: &str, token: &str) -> String {
     format!(
-        r#"{{"jsonrpc":"2.0","id":{id_raw},"result":{{"server":"{}","mode":"live","token":"{}"}}}}"#,
+        r#"{{"jsonrpc":"2.0","id":{id_raw},"result":{{"_meta":{{"server":"{}","mode":"live","token":"{}"}}}}}}"#,
         crate::mcp_serve::MCP_SERVER_NAME,
         crate::mcp_serve::json_escape(token)
     )

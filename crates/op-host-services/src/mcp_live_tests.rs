@@ -14,6 +14,34 @@ fn live_ping_response_carries_identity_mode_and_token() {
 }
 
 #[test]
+fn live_ping_result_is_spec_empty_apart_from_meta() {
+    // The live server is the one third-party MCP clients attach to, so it
+    // is the path that regressed in issue #199: a ping result must contain
+    // NOTHING but `_meta` or strict validators (Gemini CLI's
+    // `EmptyResultSchema.strict()`) mark the server disconnected. The
+    // identity trio rides inside `_meta`.
+    let resp = live_ping_response("3", "abc-123");
+    let value: serde_json::Value = serde_json::from_str(&resp).expect("valid JSON");
+    let result = value
+        .get("result")
+        .expect("has result")
+        .as_object()
+        .unwrap();
+    assert_eq!(
+        result.keys().collect::<Vec<_>>(),
+        vec!["_meta"],
+        "live ping result must contain only _meta: {resp}"
+    );
+    let meta = &result["_meta"];
+    assert_eq!(
+        meta.get("server").and_then(|v| v.as_str()),
+        Some(crate::mcp_serve::MCP_SERVER_NAME)
+    );
+    assert_eq!(meta.get("mode").and_then(|v| v.as_str()), Some("live"));
+    assert_eq!(meta.get("token").and_then(|v| v.as_str()), Some("abc-123"));
+}
+
+#[test]
 fn make_live_token_is_nonempty_and_structured() {
     let token = make_live_token();
     assert!(token.contains('-'), "{token}");

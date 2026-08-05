@@ -46,13 +46,21 @@ pub fn ping_response(id_raw: &str, token: Option<&str>) -> String {
     // confirm the pid in its manager file owns this port. The token is
     // passed in (sourced from the env at the call site) so this stays a
     // pure formatter — testable without mutating process-global env.
+    //
+    // The identity fields MUST live under `_meta`, never at the `result`
+    // top level: the MCP spec says a ping result is empty, and strict
+    // clients validate it as exactly `{ _meta? }` (Gemini CLI's
+    // `EmptyResultSchema.strict()` rejected the old top-level shape with
+    // "Unrecognized keys: server, mode, token" — issue #199). `_meta` is
+    // the spec's sanctioned extension point, so the CLI handshake keeps
+    // working without breaking third-party compliance checks.
     match token {
         Some(token) => format!(
-            r#"{{"jsonrpc":"2.0","id":{id_raw},"result":{{"server":"{MCP_SERVER_NAME}","mode":"headless","token":"{token}"}}}}"#
+            r#"{{"jsonrpc":"2.0","id":{id_raw},"result":{{"_meta":{{"server":"{MCP_SERVER_NAME}","mode":"headless","token":"{token}"}}}}}}"#
         ),
         None => {
             format!(
-                r#"{{"jsonrpc":"2.0","id":{id_raw},"result":{{"server":"{MCP_SERVER_NAME}"}}}}"#
+                r#"{{"jsonrpc":"2.0","id":{id_raw},"result":{{"_meta":{{"server":"{MCP_SERVER_NAME}"}}}}}}"#
             )
         }
     }

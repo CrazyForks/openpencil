@@ -210,10 +210,21 @@ fn ping_result(port: u16) -> Option<Value> {
     if !(200..300).contains(&status) {
         return None;
     }
-    let value = serde_json::from_str::<Value>(&body).ok()?;
+    ping_reply_identity(&body)
+}
+
+/// Extract the OpenPencil identity object from a raw `ping` reply, or
+/// `None` for a non-OpenPencil responder. Servers ≥ 0.8.3 nest the
+/// identity under `result._meta` (a spec-compliant ping result is empty
+/// apart from `_meta` — strict clients reject top-level extras, issue
+/// #199); older servers reported it at the `result` top level, so fall
+/// back there to keep discovering a still-running pre-0.8.3 editor.
+fn ping_reply_identity(body: &str) -> Option<Value> {
+    let value = serde_json::from_str::<Value>(body).ok()?;
     let result = value.get("result")?;
-    if result.get("server").and_then(Value::as_str) == Some(MCP_SERVER_NAME) {
-        Some(result.clone())
+    let identity = result.get("_meta").unwrap_or(result);
+    if identity.get("server").and_then(Value::as_str) == Some(MCP_SERVER_NAME) {
+        Some(identity.clone())
     } else {
         None
     }
@@ -325,5 +336,30 @@ mod tests {
             r#"{"server":"someone-else","mode":"web-canvas"}"#
         ));
         assert!(!is_web_canvas_health("not json"));
+    }
+
+    #[test]
+    fn ping_identity_reads_meta_and_falls_back_to_legacy_top_level() {
+        // ≥ 0.8.3 servers nest the identity under `result._meta` (spec-empty
+        // ping result, issue #199).
+        let meta = ping_reply_identity(
+            r#"{"jsonrpc":"2.0","id":0,"result":{"_meta":{"server":"openpencil-mcp","mode":"live","token":"t-1"}}}"#,
+        )
+        .expect("meta identity accepted");
+        assert_eq!(meta.get("token").and_then(Value::as_str), Some("t-1"));
+        // A still-running pre-0.8.3 editor reports identity at the result top
+        // level — discovery must keep working against it.
+        let legacy = ping_reply_identity(
+            r#"{"jsonrpc":"2.0","id":0,"result":{"server":"openpencil-mcp","mode":"headless","token":"t-2"}}"#,
+        )
+        .expect("legacy identity accepted");
+        assert_eq!(legacy.get("token").and_then(Value::as_str), Some("t-2"));
+        // A foreign server (spec-compliant empty result, or another
+        // product's marker) is never treated as OpenPencil.
+        assert!(ping_reply_identity(r#"{"jsonrpc":"2.0","id":0,"result":{}}"#).is_none());
+        assert!(ping_reply_identity(
+            r#"{"jsonrpc":"2.0","id":0,"result":{"_meta":{"server":"someone-else"}}}"#
+        )
+        .is_none());
     }
 }

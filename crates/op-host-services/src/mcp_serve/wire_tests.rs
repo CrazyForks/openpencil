@@ -25,6 +25,31 @@ fn ping_response_embeds_headless_token_when_present() {
 }
 
 #[test]
+fn ping_response_result_is_spec_empty_apart_from_meta() {
+    // The MCP spec says a ping result is empty; strict clients (Gemini
+    // CLI's `EmptyResultSchema.strict()`, issue #199) reject any top-level
+    // key other than `_meta`. The OpenPencil identity must therefore ride
+    // INSIDE `_meta` — a top-level `server`/`mode`/`token` is a regression.
+    for resp in [ping_response("1", None), ping_response("2", Some("tok-9"))] {
+        let value: serde_json::Value = serde_json::from_str(&resp).expect("valid JSON");
+        let result = value
+            .get("result")
+            .expect("has result")
+            .as_object()
+            .unwrap();
+        assert_eq!(
+            result.keys().collect::<Vec<_>>(),
+            vec!["_meta"],
+            "ping result must contain only _meta: {resp}"
+        );
+        assert_eq!(
+            result["_meta"].get("server").and_then(|v| v.as_str()),
+            Some(MCP_SERVER_NAME)
+        );
+    }
+}
+
+#[test]
 fn sanitize_token_rejects_unsafe_or_empty() {
     // Safe tokens (the CLI emits pid-nanos hex) pass through.
     assert_eq!(sanitize_token("abc-123".into()).as_deref(), Some("abc-123"));
