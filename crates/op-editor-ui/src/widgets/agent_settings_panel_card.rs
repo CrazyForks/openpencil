@@ -1,16 +1,20 @@
-//! One provider card on the Agents tab — brand avatar, name, the
-//! probe-derived status line, and the Connect / Disconnect button.
-//! Split out of `agent_settings_panel.rs` for the 800-line cap.
+//! One provider row on the Agents tab — brand avatar, name, the
+//! probe-derived status line, a right-aligned status pill, and the
+//! Connect / Disconnect button. Split out of `agent_settings_panel.rs`
+//! for the 800-line cap.
 //!
 //! The status line mirrors the TS card
-//! (`agent-settings-providers-tab.tsx:242-269`).
+//! (`agent-settings-providers-tab.tsx:242-269`); the pill is the
+//! at-a-glance summary of the same probe state.
 
 use crate::theme::Theme;
 use crate::widgets::agent_settings_i18n::t as t_settings;
 use crate::widgets::agent_settings_panel::{
-    AVATAR_ICON, AVATAR_SIZE, CARD_HEIGHT, CONNECT_BTN_W, NAME_FONT, SUB_FONT,
+    AVATAR_ICON, AVATAR_SIZE, CARD_HEIGHT, NAME_FONT, STATUS_PILL_FONT, SUB_FONT,
 };
-use crate::widgets::agent_settings_panel_geometry::{connect_btn_rect_at, disconnect_btn_rect_at};
+use crate::widgets::agent_settings_panel_geometry::{
+    connect_btn_rect_at, disconnect_btn_rect_at, status_pill_slot_rect_at,
+};
 use crate::widgets::brand_icons::{paint_brand_logo, paint_opencode_logo, BrandLogo};
 use crate::widgets::button::tokens_from_theme;
 use crate::widgets::PaintCx;
@@ -46,12 +50,12 @@ pub(super) fn paint_agent_card(
     .paint(cx.backend, card, &tokens_from_theme(theme));
     let avatar = Rect {
         origin: Point2D::new(
-            card.origin.x + 12.0,
+            card.origin.x + 16.0,
             card.origin.y + (CARD_HEIGHT - AVATAR_SIZE) / 2.0,
         ),
         size: Point2D::new(AVATAR_SIZE, AVATAR_SIZE),
     };
-    cx.backend.fill_round_rect(avatar, 6.0, theme.background);
+    cx.backend.fill_round_rect(avatar, 8.0, theme.background);
     let icon_top_left = Point2D::new(
         avatar.origin.x + (AVATAR_SIZE - AVATAR_ICON) / 2.0,
         avatar.origin.y + (AVATAR_SIZE - AVATAR_ICON) / 2.0,
@@ -96,7 +100,7 @@ pub(super) fn paint_agent_card(
             theme.foreground,
         ),
     }
-    let text_x = card.origin.x + 12.0 + AVATAR_SIZE + 12.0;
+    let text_x = card.origin.x + 16.0 + AVATAR_SIZE + 14.0;
     let name = TextLayout::single_run(
         provider.name(),
         "system-ui",
@@ -105,7 +109,7 @@ pub(super) fn paint_agent_card(
         Point2D::new(0.0, 0.0),
     );
     cx.backend
-        .draw_text(&name, Point2D::new(text_x, card.origin.y + 22.0));
+        .draw_text(&name, Point2D::new(text_x, card.origin.y + 30.0));
     let connected = settings.provider_verified_connected_at(index);
     let conn = &settings.provider_connection[index];
     let sub_localized = t_settings(ui, provider.subtitle_key());
@@ -141,8 +145,14 @@ pub(super) fn paint_agent_card(
     } else {
         (theme.muted_foreground, sub_localized.to_string())
     };
-    let sub_max_w = card.size.x - (12.0 + AVATAR_SIZE + 12.0) - (CONNECT_BTN_W + 24.0);
-    let sub_text = truncate_text(cx, &sub_text, SUB_FONT, sub_max_w);
+    // Bound the status line by the WIDEST action button's left edge, not
+    // by whichever control this row currently paints — the truncation
+    // point then stays put as the row's state changes, and hovering a
+    // connected row cannot slide Disconnect over the text.
+    let sub_max_w = (disconnect_btn_rect_at(card).origin.x - 12.0 - text_x).max(0.0);
+    let sub_text = crate::util::ellipsize_to_width(&sub_text, sub_max_w, |s| {
+        cx.backend.measure_text(s, SUB_FONT)
+    });
     let sub = TextLayout::single_run(
         &sub_text,
         "system-ui",
@@ -151,7 +161,21 @@ pub(super) fn paint_agent_card(
         Point2D::new(0.0, 0.0),
     );
     cx.backend
-        .draw_text(&sub, Point2D::new(text_x, card.origin.y + 38.0));
+        .draw_text(&sub, Point2D::new(text_x, card.origin.y + 48.0));
+    let (pill_color, pill_label) = if probing {
+        (
+            theme.muted_foreground,
+            t_settings(ui, "settings.agents.statusChecking"),
+        )
+    } else if connected {
+        (green, t_settings(ui, "settings.agents.statusConnected"))
+    } else {
+        (
+            theme.muted_foreground,
+            t_settings(ui, "settings.agents.statusNotConnected"),
+        )
+    };
+    paint_status_pill(cx, theme, card, pill_color, pill_label, connected);
     let hovered = settings.hover_provider == index;
     let tokens = tokens_from_theme(theme);
     if connected {
@@ -192,21 +216,60 @@ pub(super) fn paint_agent_card(
     }
 }
 
-/// Trim `text` with a trailing ellipsis so it fits `max_w` — the
-/// provider-card status line carries probe-derived strings of
-/// unbounded length (errors, connection info, install commands).
-fn truncate_text(cx: &mut PaintCx<'_>, text: &str, font_size: f32, max_w: f32) -> String {
-    if cx.backend.measure_text(text, font_size) <= max_w {
-        return text.to_string();
-    }
-    let mut out = String::new();
-    for ch in text.chars() {
-        out.push(ch);
-        if cx.backend.measure_text(&format!("{out}…"), font_size) > max_w {
-            out.pop();
-            out.push('…');
-            return out;
-        }
-    }
-    out
+/// Right-aligned status readout: a coloured dot plus one word of state.
+/// The pill hugs its label inside the row's fixed pill slot, so short
+/// labels ("Connected") do not stretch into an empty capsule while the
+/// slot itself keeps the hit-test geometry measurement-free.
+fn paint_status_pill(
+    cx: &mut PaintCx<'_>,
+    theme: &Theme,
+    card: Rect,
+    color: Color,
+    label: &str,
+    connected: bool,
+) {
+    const DOT: f32 = 7.0;
+    const PAD_LEFT: f32 = 10.0;
+    const PAD_RIGHT: f32 = 12.0;
+    const DOT_GAP: f32 = 7.0;
+
+    let slot = status_pill_slot_rect_at(card);
+    let label_budget = (slot.size.x - PAD_LEFT - DOT - DOT_GAP - PAD_RIGHT).max(0.0);
+    let label = crate::util::ellipsize_to_width(label, label_budget, |s| {
+        cx.backend.measure_text(s, STATUS_PILL_FONT)
+    });
+    let label_w = cx.backend.measure_text(&label, STATUS_PILL_FONT);
+    let pill_w = (PAD_LEFT + DOT + DOT_GAP + label_w + PAD_RIGHT).min(slot.size.x);
+    let pill = Rect {
+        origin: Point2D::new(slot.origin.x + slot.size.x - pill_w, slot.origin.y),
+        size: Point2D::new(pill_w, slot.size.y),
+    };
+    let fill = if connected {
+        color.with_alpha(0.14)
+    } else {
+        theme.muted
+    };
+    cx.backend.fill_round_rect(pill, pill.size.y / 2.0, fill);
+    let dot = Rect {
+        origin: Point2D::new(
+            pill.origin.x + PAD_LEFT,
+            pill.origin.y + (pill.size.y - DOT) / 2.0,
+        ),
+        size: Point2D::new(DOT, DOT),
+    };
+    cx.backend.fill_round_rect(dot, DOT / 2.0, color);
+    let text = TextLayout::single_run(
+        &label,
+        "system-ui",
+        STATUS_PILL_FONT,
+        (color).to_jian(),
+        Point2D::new(0.0, 0.0),
+    );
+    cx.backend.draw_text(
+        &text,
+        Point2D::new(
+            dot.origin.x + DOT + DOT_GAP,
+            jian_widgets::centered_text_baseline_y(pill, STATUS_PILL_FONT),
+        ),
+    );
 }

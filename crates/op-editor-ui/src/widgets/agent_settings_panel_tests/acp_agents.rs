@@ -520,10 +520,21 @@ fn acp_agent_compact_actions_are_hover_only_click_targets() {
     state.editor_ui.agent_settings.add_acp_agent();
     let panel = AgentSettingsPanel::for_editor(&state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
-    let card_y = content_y + 12.0 + 120.0 + 28.0 + 28.0 + 28.0;
+    let content_x = crate::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .x;
+    let content_y = crate::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .y;
+    let content_w = crate::widgets::agent_settings_panel::content_viewport(rect)
+        .size
+        .x;
+    let card_y = content_y
+        + crate::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT
+        + 120.0
+        + 28.0
+        + 28.0
+        + 28.0;
 
     assert_eq!(
         panel.hit_test(

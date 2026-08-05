@@ -12,11 +12,9 @@ fn mcp_running_client_config_paints_copy_icon_like_ts() {
     state.editor_ui.agent_settings.mcp_server.running = true;
     let panel = AgentSettingsPanel::for_editor(&state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
-    let client_config_y = content_y + 36.0 + 52.0 + 8.0;
-    let icon_origin = Point2D::new(content_x + content_w - 27.0, client_config_y + 13.0);
+    let copy = crate::widgets::agent_settings_mcp::client_config_copy_button_rect(
+        crate::widgets::agent_settings_panel::content_viewport(rect),
+    );
     let mut backend = CaptureBackend::default();
     let mut cx = PaintCx {
         backend: &mut backend,
@@ -25,12 +23,11 @@ fn mcp_running_client_config_paints_copy_icon_like_ts() {
     panel.paint(&mut cx, rect);
 
     assert!(
-        backend.icon_strokes.iter().any(|(at, size, _)| {
-            (*size - 10.0).abs() < 0.01
-                && (at.x - icon_origin.x).abs() < 0.01
-                && (at.y - icon_origin.y).abs() < 0.01
-        }),
-        "running MCP client config should expose a TS-like copy icon button"
+        backend
+            .icon_strokes
+            .iter()
+            .any(|(at, size, _)| (*size - 13.0).abs() < 0.01 && copy.contains(*at)),
+        "the custom-configuration section should carry a copy glyph in its action button"
     );
 }
 
@@ -105,15 +102,21 @@ fn mcp_running_client_config_copy_icon_is_clickable() {
     state.editor_ui.agent_settings.mcp_server.running = true;
     let panel = AgentSettingsPanel::for_editor(&state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
-    let client_config_y = content_y + 36.0 + 52.0 + 8.0;
+    let content = crate::widgets::agent_settings_panel::content_viewport(rect);
+    let copy = crate::widgets::agent_settings_mcp::client_config_copy_button_rect(content);
+    // The custom-configuration section sits below the twelve CLI rows, so
+    // scroll it into view before pressing its action.
+    let offset = copy.origin.y - content.origin.y;
+    state.editor_ui.agent_settings.scroll_y.offset = offset;
+    let panel = AgentSettingsPanel::for_editor(&state);
 
     assert_eq!(
         panel.hit_test(
             rect,
-            Point2D::new(content_x + content_w - 22.0, client_config_y + 18.0)
+            Point2D::new(
+                copy.origin.x + copy.size.x / 2.0,
+                copy.origin.y + copy.size.y / 2.0 - offset
+            )
         ),
         AgentSettingsHit::CopyMcpClientConfig
     );
@@ -126,9 +129,15 @@ fn mcp_port_field_is_not_focusable_while_server_is_running() {
     state.editor_ui.agent_settings.mcp_server.running = true;
     let panel = AgentSettingsPanel::for_editor(&state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
+    let content_x = crate::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .x;
+    let content_y = crate::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .y;
+    let content_w = crate::widgets::agent_settings_panel::content_viewport(rect)
+        .size
+        .x;
     let server_card_top = content_y + 36.0;
     let button_x = content_x + content_w - 16.0 - 72.0;
     let port_x = button_x - 8.0 - 64.0;

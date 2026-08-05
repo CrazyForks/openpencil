@@ -6,21 +6,24 @@
 
 use super::*;
 
+use super::{VIEWPORT_H, VIEWPORT_W};
+
 #[test]
 fn close_press_sets_and_release_clears_agent_settings_button() {
     let mut host = WidgetHostNative::new();
     let panel = AgentSettingsPanel::for_editor(host.editor_state());
-    let rect = panel.rect(1200.0, 800.0);
-    let close_x = rect.origin.x + rect.size.x - 24.0;
-    let close_y = rect.origin.y + 24.0;
+    let rect = panel.rect(VIEWPORT_W, VIEWPORT_H);
+    let close = op_editor_ui::widgets::agent_settings_panel::close_button_rect(rect);
+    let close_x = close.origin.x + close.size.x / 2.0;
+    let close_y = close.origin.y + close.size.y / 2.0;
 
-    assert!(host.dispatch_agent_settings_press(close_x, close_y, 1200.0, 800.0));
+    assert!(host.dispatch_agent_settings_press(close_x, close_y, VIEWPORT_W, VIEWPORT_H));
     assert_eq!(
         host.editor_state().editor_ui.pressed_button,
         Some(ButtonPressTarget::AgentSettings(AgentSettingsButton::Close))
     );
 
-    assert!(host.apply_release_with_viewport(1200.0, 800.0));
+    assert!(host.apply_release_with_viewport(VIEWPORT_W, VIEWPORT_H));
     assert_eq!(host.editor_state().editor_ui.pressed_button, None);
 }
 
@@ -119,11 +122,23 @@ fn builtin_agent_compact_switch_toggles_enabled_and_models() {
         .any(|m| m.builtin_provider_id.as_deref() == Some(id.as_str())));
 
     let panel = AgentSettingsPanel::for_editor(host.editor_state());
-    let rect = panel.rect(1200.0, 800.0);
-    let content_w = rect.size.x - 200.0 - 48.0;
-    let x = rect.origin.x + 200.0 + 24.0 + content_w - 90.0;
-    let y = rect.origin.y + 24.0 + 12.0 + 28.0 + 28.0 + 30.0;
-    assert!(host.dispatch_agent_settings_press(x, y, 1200.0, 800.0));
+    let rect = panel.rect(VIEWPORT_W, VIEWPORT_H);
+    let content_w = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .size
+        .x;
+    let x = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .x
+        + content_w
+        - 90.0;
+    let y = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .y
+        + op_editor_ui::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT
+        + 28.0
+        + 28.0
+        + 30.0;
+    assert!(host.dispatch_agent_settings_press(x, y, VIEWPORT_W, VIEWPORT_H));
 
     let state = host.editor_state();
     assert!(!state.editor_ui.agent_settings.builtin_agents[0].enabled);
@@ -148,11 +163,23 @@ fn builtin_agent_compact_edit_focuses_display_name_form() {
         .hover_builtin_agent = 0;
 
     let panel = AgentSettingsPanel::for_editor(host.editor_state());
-    let rect = panel.rect(1200.0, 800.0);
-    let content_w = rect.size.x - 200.0 - 48.0;
-    let x = rect.origin.x + 200.0 + 24.0 + content_w - 52.0;
-    let y = rect.origin.y + 24.0 + 12.0 + 28.0 + 28.0 + 30.0;
-    assert!(host.dispatch_agent_settings_press(x, y, 1200.0, 800.0));
+    let rect = panel.rect(VIEWPORT_W, VIEWPORT_H);
+    let content_w = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .size
+        .x;
+    let x = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .x
+        + content_w
+        - 52.0;
+    let y = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .y
+        + op_editor_ui::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT
+        + 28.0
+        + 28.0
+        + 30.0;
+    assert!(host.dispatch_agent_settings_press(x, y, VIEWPORT_W, VIEWPORT_H));
 
     assert_eq!(
         host.editor_state().editor_ui.agent_settings.focus,
@@ -197,15 +224,22 @@ fn builtin_agent_kind_toggle_commits_focused_api_key_draft() {
         .set_text("sk-kind-toggle");
 
     let panel = AgentSettingsPanel::for_editor(host.editor_state());
-    let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
-    let first_card_y = content_y + 12.0 + 28.0 + 28.0;
+    let rect = panel.rect(VIEWPORT_W, VIEWPORT_H);
+    let content_x = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .x;
+    let content_y = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .y;
+    let content_w = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .size
+        .x;
+    let first_card_y =
+        content_y + op_editor_ui::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT + 28.0 + 28.0;
     let kind_x = content_x + content_w - 172.0 + 120.0;
     let kind_y = first_card_y + 22.0;
 
-    assert!(host.dispatch_agent_settings_press(kind_x, kind_y, 1200.0, 800.0));
+    assert!(host.dispatch_agent_settings_press(kind_x, kind_y, VIEWPORT_W, VIEWPORT_H));
 
     let agent = &host.editor_state().editor_ui.agent_settings.builtin_agents[0];
     assert_eq!(agent.api_key, "sk-kind-toggle");
@@ -250,14 +284,20 @@ fn add_provider_opens_unsaved_builtin_agent_draft() {
     host.set_now_ms(1234);
 
     let panel = AgentSettingsPanel::for_editor(host.editor_state());
-    let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
+    let rect = panel.rect(VIEWPORT_W, VIEWPORT_H);
+    let content_x = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .x;
+    let content_y = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .y;
+    let content_w = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .size
+        .x;
     let add_x = content_x + content_w - 48.0;
-    let add_y = content_y + 24.0;
+    let add_y = content_y + op_editor_ui::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT + 12.0;
 
-    assert!(host.dispatch_agent_settings_press(add_x, add_y, 1200.0, 800.0));
+    assert!(host.dispatch_agent_settings_press(add_x, add_y, VIEWPORT_W, VIEWPORT_H));
     assert_eq!(
         host.editor_state().editor_ui.pressed_button,
         Some(ButtonPressTarget::AgentSettings(
@@ -281,7 +321,7 @@ fn add_provider_opens_unsaved_builtin_agent_draft() {
         1734
     );
 
-    assert!(host.apply_release_with_viewport(1200.0, 800.0));
+    assert!(host.apply_release_with_viewport(VIEWPORT_W, VIEWPORT_H));
     assert_eq!(host.editor_state().editor_ui.pressed_button, None);
 }
 
@@ -289,20 +329,27 @@ fn add_provider_opens_unsaved_builtin_agent_draft() {
 fn builtin_provider_menu_selects_ts_preset_for_draft() {
     let mut host = WidgetHostNative::new();
     let panel = AgentSettingsPanel::for_editor(host.editor_state());
-    let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
+    let rect = panel.rect(VIEWPORT_W, VIEWPORT_H);
+    let content_x = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .x;
+    let content_y = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .y;
+    let content_w = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .size
+        .x;
     let add_x = content_x + content_w - 48.0;
-    let add_y = content_y + 24.0;
+    let add_y = content_y + op_editor_ui::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT + 12.0;
 
-    assert!(host.dispatch_agent_settings_press(add_x, add_y, 1200.0, 800.0));
-    let card_y = content_y + 12.0 + 28.0 + 28.0;
+    assert!(host.dispatch_agent_settings_press(add_x, add_y, VIEWPORT_W, VIEWPORT_H));
+    let card_y =
+        content_y + op_editor_ui::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT + 28.0 + 28.0;
     let provider_x = content_x + 68.0 + 24.0;
     let provider_y = card_y + 60.0;
-    assert!(host.dispatch_agent_settings_press(provider_x, provider_y, 1200.0, 800.0));
+    assert!(host.dispatch_agent_settings_press(provider_x, provider_y, VIEWPORT_W, VIEWPORT_H));
     let minimax_y = card_y + 76.0 + 4.0 + 5.0 * 24.0 + 12.0;
-    assert!(host.dispatch_agent_settings_press(provider_x, minimax_y, 1200.0, 800.0));
+    assert!(host.dispatch_agent_settings_press(provider_x, minimax_y, VIEWPORT_W, VIEWPORT_H));
 
     let draft = host
         .editor_state()
@@ -321,21 +368,28 @@ fn builtin_provider_menu_selects_ts_preset_for_draft() {
 fn save_builtin_agent_draft_persists_provider() {
     let mut host = WidgetHostNative::new();
     let panel = AgentSettingsPanel::for_editor(host.editor_state());
-    let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
+    let rect = panel.rect(VIEWPORT_W, VIEWPORT_H);
+    let content_x = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .x;
+    let content_y = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .y;
+    let content_w = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .size
+        .x;
     let add_x = content_x + content_w - 48.0;
-    let add_y = content_y + 24.0;
+    let add_y = content_y + op_editor_ui::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT + 12.0;
 
-    assert!(host.dispatch_agent_settings_press(add_x, add_y, 1200.0, 800.0));
+    assert!(host.dispatch_agent_settings_press(add_x, add_y, VIEWPORT_W, VIEWPORT_H));
     for c in "sk-test".chars() {
         assert!(host.apply_text(c));
     }
-    let card_y = content_y + 12.0 + 28.0 + 28.0;
+    let card_y =
+        content_y + op_editor_ui::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT + 28.0 + 28.0;
     let save_x = content_x + content_w - 12.0 - 34.0;
     let save_y = card_y + 196.0 + 18.0;
-    assert!(host.dispatch_agent_settings_press(save_x, save_y, 1200.0, 800.0));
+    assert!(host.dispatch_agent_settings_press(save_x, save_y, VIEWPORT_W, VIEWPORT_H));
 
     let settings = &host.editor_state().editor_ui.agent_settings;
     assert_eq!(settings.builtin_agents.len(), 1);
@@ -349,14 +403,24 @@ fn add_acp_agent_press_opens_unsaved_draft() {
     let mut host = WidgetHostNative::new();
     host.set_now_ms(1234);
     let panel = AgentSettingsPanel::for_editor(host.editor_state());
-    let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
+    let rect = panel.rect(VIEWPORT_W, VIEWPORT_H);
+    let content_x = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .x;
+    let content_y = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .y;
+    let content_w = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .size
+        .x;
     let add_x = content_x + content_w - 12.0 - 48.0;
-    let add_y = content_y + 12.0 + 120.0 + 28.0 + 12.0;
+    let add_y = content_y
+        + op_editor_ui::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT
+        + 120.0
+        + 28.0
+        + 12.0;
 
-    assert!(host.dispatch_agent_settings_press(add_x, add_y, 1200.0, 800.0));
+    assert!(host.dispatch_agent_settings_press(add_x, add_y, VIEWPORT_W, VIEWPORT_H));
     assert_eq!(
         host.editor_state().editor_ui.pressed_button,
         Some(ButtonPressTarget::AgentSettings(
@@ -379,7 +443,7 @@ fn add_acp_agent_press_opens_unsaved_draft() {
         1734
     );
 
-    assert!(host.apply_release_with_viewport(1200.0, 800.0));
+    assert!(host.apply_release_with_viewport(VIEWPORT_W, VIEWPORT_H));
     assert_eq!(host.editor_state().editor_ui.pressed_button, None);
 }
 
@@ -387,21 +451,31 @@ fn add_acp_agent_press_opens_unsaved_draft() {
 fn save_acp_agent_draft_persists_agent() {
     let mut host = WidgetHostNative::new();
     let panel = AgentSettingsPanel::for_editor(host.editor_state());
-    let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
+    let rect = panel.rect(VIEWPORT_W, VIEWPORT_H);
+    let content_x = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .x;
+    let content_y = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .y;
+    let content_w = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .size
+        .x;
     let add_x = content_x + content_w - 12.0 - 48.0;
-    let add_y = content_y + 12.0 + 120.0 + 28.0 + 12.0;
+    let add_y = content_y
+        + op_editor_ui::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT
+        + 120.0
+        + 28.0
+        + 12.0;
 
-    assert!(host.dispatch_agent_settings_press(add_x, add_y, 1200.0, 800.0));
+    assert!(host.dispatch_agent_settings_press(add_x, add_y, VIEWPORT_W, VIEWPORT_H));
     for c in "op-agent".chars() {
         assert!(host.apply_text(c));
     }
     let card_y = acp_card_y(content_y);
     let save_x = content_x + content_w - 12.0 - 34.0;
     let save_y = card_y + 332.0 + 18.0;
-    assert!(host.dispatch_agent_settings_press(save_x, save_y, 1200.0, 800.0));
+    assert!(host.dispatch_agent_settings_press(save_x, save_y, VIEWPORT_W, VIEWPORT_H));
 
     let settings = &host.editor_state().editor_ui.agent_settings;
     assert_eq!(settings.acp_agents.len(), 1);
@@ -414,21 +488,31 @@ fn save_acp_agent_draft_persists_agent() {
 fn cancel_acp_agent_draft_discards_unsaved_agent() {
     let mut host = WidgetHostNative::new();
     let panel = AgentSettingsPanel::for_editor(host.editor_state());
-    let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
+    let rect = panel.rect(VIEWPORT_W, VIEWPORT_H);
+    let content_x = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .x;
+    let content_y = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .y;
+    let content_w = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .size
+        .x;
     let add_x = content_x + content_w - 12.0 - 48.0;
-    let add_y = content_y + 12.0 + 120.0 + 28.0 + 12.0;
+    let add_y = content_y
+        + op_editor_ui::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT
+        + 120.0
+        + 28.0
+        + 12.0;
 
-    assert!(host.dispatch_agent_settings_press(add_x, add_y, 1200.0, 800.0));
+    assert!(host.dispatch_agent_settings_press(add_x, add_y, VIEWPORT_W, VIEWPORT_H));
     for c in "op-agent".chars() {
         assert!(host.apply_text(c));
     }
     let card_y = acp_card_y(content_y);
     let cancel_x = content_x + content_w - 12.0 - 68.0 - 8.0 - 34.0;
     let cancel_y = card_y + 332.0 + 18.0;
-    assert!(host.dispatch_agent_settings_press(cancel_x, cancel_y, 1200.0, 800.0));
+    assert!(host.dispatch_agent_settings_press(cancel_x, cancel_y, VIEWPORT_W, VIEWPORT_H));
 
     let settings = &host.editor_state().editor_ui.agent_settings;
     assert!(settings.acp_agents.is_empty());
@@ -453,8 +537,8 @@ fn acp_agent_compact_edit_focuses_display_name_form() {
     assert!(host.dispatch_agent_settings_press(
         content_x + content_w - 156.0,
         card_y + 30.0,
-        1200.0,
-        800.0
+        VIEWPORT_W,
+        VIEWPORT_H
     ));
 
     assert_eq!(

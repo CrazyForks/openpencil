@@ -13,6 +13,12 @@ use op_editor_core::{AgentSettingsButton, BuiltinAgentPresetKey, ButtonPressTarg
 use op_editor_ui::widgets::agent_settings_panel::{AgentSettingsHit, AgentSettingsPanel};
 use op_editor_ui::Point2D;
 
+/// The settings modal is a wide, tall workspace; these fixtures press
+/// absolute rects deep in the Agents tab, so they run in a window big
+/// enough to keep the whole body above the fold.
+pub(super) const VIEWPORT_W: f32 = 1200.0;
+pub(super) const VIEWPORT_H: f32 = 1000.0;
+
 mod agents;
 mod hover;
 mod images;
@@ -20,16 +26,31 @@ mod mcp_system;
 
 fn agent_settings_content_metrics(host: &WidgetHostNative) -> (f32, f32, f32) {
     let panel = AgentSettingsPanel::for_editor(host.editor_state());
-    let rect = panel.rect(1200.0, 800.0);
+    let rect = panel.rect(VIEWPORT_W, VIEWPORT_H);
     (
-        rect.origin.x + 200.0 + 24.0,
-        rect.origin.y + 24.0,
-        rect.size.x - 200.0 - 48.0,
+        op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+            .origin
+            .x,
+        op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+            .origin
+            .y,
+        op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+            .size
+            .x,
     )
 }
 
+/// Body metrics for the Images tab, whose content starts below the hero
+/// the panel paints on its behalf.
+fn agent_settings_images_metrics(host: &WidgetHostNative) -> (f32, f32, f32) {
+    let panel = AgentSettingsPanel::for_editor(host.editor_state());
+    let rect = panel.rect(VIEWPORT_W, VIEWPORT_H);
+    let body = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect);
+    (body.origin.x, body.origin.y, body.size.x)
+}
+
 fn acp_header_y(content_y: f32) -> f32 {
-    content_y + 12.0 + 120.0 + 28.0
+    content_y + op_editor_ui::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT + 120.0 + 28.0
 }
 
 fn acp_card_y(content_y: f32) -> f32 {
@@ -38,7 +59,7 @@ fn acp_card_y(content_y: f32) -> f32 {
 
 fn experimental_switch_y(host: &WidgetHostNative, x: f32) -> f32 {
     let panel = AgentSettingsPanel::for_editor(host.editor_state());
-    let rect = panel.rect(1200.0, 800.0);
+    let rect = panel.rect(VIEWPORT_W, VIEWPORT_H);
     let mut hits = (rect.origin.y.ceil() as i32..(rect.origin.y + rect.size.y).floor() as i32)
         .map(|y| y as f32 + 0.5)
         .filter(|y| {

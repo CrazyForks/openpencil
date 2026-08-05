@@ -381,6 +381,7 @@ pub(crate) fn apply_entry_hit(
         | AgentSettingsHit::TestImageSearch
         | AgentSettingsHit::ToggleAutoUpdate
         | AgentSettingsHit::SelectPencilCursor(_)
+        | AgentSettingsHit::SelectThemeMode(_)
         | AgentSettingsHit::ToggleExperimental
         | AgentSettingsHit::OpenLoginModal
         | AgentSettingsHit::SignOutAccount

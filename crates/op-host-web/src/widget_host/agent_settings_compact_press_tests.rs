@@ -7,18 +7,31 @@ fn content_metrics(host: &WidgetHost) -> (f32, f32, f32) {
     let panel = AgentSettingsPanel::for_web_editor(&host.editor_state);
     let rect = panel.rect(1200.0, 800.0);
     (
-        rect.origin.x + 200.0 + 24.0,
-        rect.origin.y + 24.0,
-        rect.size.x - 200.0 - 48.0,
+        op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+            .origin
+            .x,
+        op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+            .origin
+            .y,
+        op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+            .size
+            .x,
     )
 }
 
 fn builtin_card_y(content_y: f32) -> f32 {
-    content_y + 12.0 + 28.0 + 28.0
+    content_y + op_editor_ui::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT + 28.0 + 28.0
 }
 
 fn acp_card_y(content_y: f32) -> f32 {
-    content_y + 12.0 + 28.0 + 28.0 + 64.0 + 28.0 + 28.0 + 28.0
+    content_y
+        + op_editor_ui::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT
+        + 28.0
+        + 28.0
+        + 64.0
+        + 28.0
+        + 28.0
+        + 28.0
 }
 
 #[test]

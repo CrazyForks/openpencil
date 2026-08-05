@@ -2,7 +2,9 @@
 //! states ported from the TS providers tab
 //! (`agent-settings-providers-tab.tsx:242-269`).
 
-use crate::widgets::agent_settings_panel::{AgentSettingsHit, AgentSettingsPanel};
+use crate::widgets::agent_settings_panel::{
+    content_viewport, AgentSettingsHit, AgentSettingsPanel,
+};
 use crate::widgets::agent_settings_panel_geometry::{agent_card_rect_in, connect_btn_rect_at};
 use crate::widgets::{PaintCx, Widget};
 use crate::{Color, Point2D, Rect, RenderBackend, TextLayout};
@@ -167,9 +169,9 @@ fn not_installed_card_paints_amber_install_guidance() {
     let capture = paint_panel(&mut state);
     let (text, color) = find_text(&capture, "Not installed")
         .expect("not-installed card should show install guidance");
-    // The wider Connect button (76px) costs the sub-line ~20px, so a long
-    // install command may ellipsize at the tail; the actionable prefix must
-    // still paint so the user knows what to run.
+    // The row reserves its right edge for the status pill plus the action
+    // button, so a long install command may ellipsize at the tail; the
+    // actionable prefix must still paint so the user knows what to run.
     assert!(
         text.contains("npm install -g @openai/codex"),
         "guidance line should carry the install command prefix, got: {text}"
@@ -215,16 +217,18 @@ fn long_status_line_truncates_with_ellipsis() {
 
 #[test]
 fn connect_button_hit_still_resolves_for_idle_card() {
-    let state = EditorState::default();
-    let panel = AgentSettingsPanel::for_editor(&state);
-    let rect = panel.rect(1200.0, 800.0);
-    // scroll_y defaults to 0, so the scrolled card rect is also the
-    // screen-space rect.
+    let mut state = EditorState::default();
+    let rect = AgentSettingsPanel::for_editor(&state).rect(1200.0, 800.0);
     let card = agent_card_rect_in(rect, 0, &state.editor_ui.agent_settings);
+    // The external-provider list sits below the fold, so scroll it to the
+    // top of the body and press the button at its resulting screen rect.
+    let offset = card.origin.y - content_viewport(rect).origin.y;
+    state.editor_ui.agent_settings.scroll_y.offset = offset;
+    let panel = AgentSettingsPanel::for_editor(&state);
     let btn = connect_btn_rect_at(card);
     let point = Point2D::new(
         btn.origin.x + btn.size.x / 2.0,
-        btn.origin.y + btn.size.y / 2.0,
+        btn.origin.y + btn.size.y / 2.0 - offset,
     );
     assert_eq!(
         panel.hit_test(rect, point),

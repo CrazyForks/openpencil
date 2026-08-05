@@ -6,6 +6,28 @@
 
 use super::*;
 
+/// Scroll the settings body so `target` is visible and return the screen
+/// point at its centre. The custom-configuration section sits below the
+/// twelve CLI rows, so a press at its unscrolled rect lands outside the
+/// modal.
+fn scroll_to_centre(
+    host: &mut WidgetHostNative,
+    rect: op_editor_ui::Rect,
+    target: op_editor_ui::Rect,
+) -> (f32, f32) {
+    let content = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect);
+    let offset = target.origin.y - content.origin.y;
+    host.editor_state_mut()
+        .editor_ui
+        .agent_settings
+        .scroll_y
+        .offset = offset;
+    (
+        target.origin.x + target.size.x / 2.0,
+        target.origin.y + target.size.y / 2.0 - offset,
+    )
+}
+
 #[test]
 fn starting_mcp_server_commits_port_draft_and_clears_focus() {
     let mut host = WidgetHostNative::new();
@@ -17,17 +39,13 @@ fn starting_mcp_server_commits_port_draft_and_clears_focus() {
         .set_text("3101");
 
     let panel = AgentSettingsPanel::for_editor(host.editor_state());
-    let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
-    let server_card_top = content_y + 36.0;
-    let button_x = content_x + content_w - 16.0 - 72.0;
+    let rect = panel.rect(VIEWPORT_W, VIEWPORT_H);
+    let button = op_editor_ui::widgets::agent_settings_panel::mcp_server_button(rect);
     assert!(host.dispatch_agent_settings_press(
-        button_x + 36.0,
-        server_card_top + 26.0,
-        1200.0,
-        800.0
+        button.origin.x + button.size.x / 2.0,
+        button.origin.y + button.size.y / 2.0,
+        VIEWPORT_W,
+        VIEWPORT_H
     ));
 
     let state = host.editor_state();
@@ -42,7 +60,7 @@ fn starting_mcp_server_commits_port_draft_and_clears_focus() {
         ))
     );
 
-    assert!(host.apply_release_with_viewport(1200.0, 800.0));
+    assert!(host.apply_release_with_viewport(VIEWPORT_W, VIEWPORT_H));
     assert_eq!(host.editor_state().editor_ui.pressed_button, None);
 }
 
@@ -62,17 +80,10 @@ fn copy_mcp_client_config_queues_clipboard_text() {
         .port = 4123;
 
     let panel = AgentSettingsPanel::for_editor(host.editor_state());
-    let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
-    let client_config_y = content_y + 36.0 + 52.0 + 8.0;
-    assert!(host.dispatch_agent_settings_press(
-        content_x + content_w - 22.0,
-        client_config_y + 18.0,
-        1200.0,
-        800.0
-    ));
+    let rect = panel.rect(VIEWPORT_W, VIEWPORT_H);
+    let copy = op_editor_ui::widgets::agent_settings_panel::mcp_copy_config_button(rect);
+    let (x, y) = scroll_to_centre(&mut host, rect, copy);
+    assert!(host.dispatch_agent_settings_press(x, y, VIEWPORT_W, VIEWPORT_H));
 
     assert_eq!(
         host.editor_state().chat.pending_copy_text.as_deref(),
@@ -92,16 +103,13 @@ fn system_auto_update_switch_toggles_preference() {
     );
 
     let panel = AgentSettingsPanel::for_editor(host.editor_state());
-    let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
-    let card_y = content_y + 12.0 + 36.0;
+    let rect = panel.rect(VIEWPORT_W, VIEWPORT_H);
+    let switch = op_editor_ui::widgets::agent_settings_panel::system_auto_update_switch(rect);
     assert!(host.dispatch_agent_settings_press(
-        content_x + content_w - 28.0,
-        card_y + 28.0,
-        1200.0,
-        800.0
+        switch.origin.x + switch.size.x / 2.0,
+        switch.origin.y + switch.size.y / 2.0,
+        VIEWPORT_W,
+        VIEWPORT_H
     ));
 
     assert!(
@@ -130,8 +138,8 @@ fn system_experimental_switch_toggles_preference() {
     assert!(host.dispatch_agent_settings_press(
         switch_x,
         experimental_switch_y(&host, switch_x),
-        1200.0,
-        800.0
+        VIEWPORT_W,
+        VIEWPORT_H
     ));
 
     assert!(
@@ -175,8 +183,8 @@ fn disabling_experimental_leaves_active_preview_running() {
     assert!(host.dispatch_agent_settings_press(
         switch_x,
         experimental_switch_y(&host, switch_x),
-        1200.0,
-        800.0
+        VIEWPORT_W,
+        VIEWPORT_H
     ));
 
     assert!(
@@ -210,8 +218,8 @@ fn disabling_experimental_clears_widget_property_focus() {
     assert!(host.dispatch_agent_settings_press(
         switch_x,
         experimental_switch_y(&host, switch_x),
-        1200.0,
-        800.0
+        VIEWPORT_W,
+        VIEWPORT_H
     ));
 
     assert!(
@@ -231,15 +239,11 @@ fn copying_mcp_client_config_records_feedback_time() {
         .mcp_server
         .running = true;
 
-    let (content_x, content_y, content_w) = agent_settings_content_metrics(&host);
-    let client_config_y = content_y + 36.0 + 52.0 + 8.0;
+    let rect = AgentSettingsPanel::for_editor(host.editor_state()).rect(VIEWPORT_W, VIEWPORT_H);
+    let copy = op_editor_ui::widgets::agent_settings_panel::mcp_copy_config_button(rect);
+    let (x, y) = scroll_to_centre(&mut host, rect, copy);
 
-    assert!(host.dispatch_agent_settings_press(
-        content_x + content_w - 22.0,
-        client_config_y + 18.0,
-        1200.0,
-        800.0
-    ));
+    assert!(host.dispatch_agent_settings_press(x, y, VIEWPORT_W, VIEWPORT_H));
 
     assert_eq!(
         host.editor_state()
@@ -259,6 +263,6 @@ fn copying_mcp_client_config_records_feedback_time() {
         ))
     );
 
-    assert!(host.apply_release_with_viewport(1200.0, 800.0));
+    assert!(host.apply_release_with_viewport(VIEWPORT_W, VIEWPORT_H));
     assert_eq!(host.editor_state().editor_ui.pressed_button, None);
 }

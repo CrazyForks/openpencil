@@ -256,6 +256,7 @@ mod agent_settings_panel_tests;
 pub mod agent_settings_press_entries;
 pub mod agent_settings_press_flow;
 pub mod agent_settings_press_focus;
+mod agent_settings_rows;
 mod agent_settings_switch;
 #[cfg(test)]
 mod agent_settings_switch_style_tests;

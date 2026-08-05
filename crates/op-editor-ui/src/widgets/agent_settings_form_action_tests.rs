@@ -52,9 +52,15 @@ fn rect_eq(a: Rect, b: Rect) -> bool {
 
 fn content_metrics(panel: Rect) -> (f32, f32, f32) {
     (
-        panel.origin.x + 200.0 + 24.0,
-        panel.origin.y + 24.0,
-        panel.size.x - 200.0 - 48.0,
+        crate::widgets::agent_settings_panel::content_viewport(panel)
+            .origin
+            .x,
+        crate::widgets::agent_settings_panel::content_viewport(panel)
+            .origin
+            .y,
+        crate::widgets::agent_settings_panel::content_viewport(panel)
+            .size
+            .x,
     )
 }
 
@@ -79,14 +85,22 @@ fn form_cancel_rect(card: Rect, form_h: f32) -> Rect {
 fn builtin_draft_card(panel: Rect) -> Rect {
     let (content_x, content_y, content_w) = content_metrics(panel);
     Rect {
-        origin: Point2D::new(content_x, content_y + 12.0 + 28.0 + 28.0),
+        origin: Point2D::new(
+            content_x,
+            content_y + crate::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT + 28.0 + 28.0,
+        ),
         size: Point2D::new(content_w, 232.0),
     }
 }
 
 fn acp_draft_card_after_empty_builtin(panel: Rect) -> Rect {
     let (content_x, content_y, content_w) = content_metrics(panel);
-    let acp_header_y = content_y + 12.0 + 28.0 + 28.0 + 64.0 + 28.0;
+    let acp_header_y = content_y
+        + crate::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT
+        + 28.0
+        + 28.0
+        + 64.0
+        + 28.0;
     Rect {
         origin: Point2D::new(content_x, acp_header_y + 28.0 + 28.0),
         size: Point2D::new(content_w, 370.0),

@@ -2,22 +2,41 @@ use super::WidgetHostNative;
 use op_editor_core::{AgentSettingsButton, ButtonPressTarget};
 use op_editor_ui::widgets::agent_settings_panel::AgentSettingsPanel;
 
+/// The settings modal is a wide, tall workspace; these fixtures press
+/// absolute rects deep in the Agents tab, so they run in a window big
+/// enough to keep the whole body above the fold.
+const VIEWPORT_W: f32 = 1200.0;
+const VIEWPORT_H: f32 = 1000.0;
+
 fn content_metrics(host: &WidgetHostNative) -> (f32, f32, f32) {
     let panel = AgentSettingsPanel::for_editor(host.editor_state());
-    let rect = panel.rect(1200.0, 800.0);
+    let rect = panel.rect(VIEWPORT_W, VIEWPORT_H);
     (
-        rect.origin.x + 200.0 + 24.0,
-        rect.origin.y + 24.0,
-        rect.size.x - 200.0 - 48.0,
+        op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+            .origin
+            .x,
+        op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+            .origin
+            .y,
+        op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+            .size
+            .x,
     )
 }
 
 fn builtin_draft_card_y(content_y: f32) -> f32 {
-    content_y + 12.0 + 28.0 + 28.0
+    content_y + op_editor_ui::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT + 28.0 + 28.0
 }
 
 fn acp_draft_card_y(content_y: f32) -> f32 {
-    content_y + 12.0 + 28.0 + 28.0 + 64.0 + 28.0 + 28.0 + 28.0
+    content_y
+        + op_editor_ui::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT
+        + 28.0
+        + 28.0
+        + 64.0
+        + 28.0
+        + 28.0
+        + 28.0
 }
 
 #[test]
@@ -39,8 +58,8 @@ fn builtin_draft_save_press_sets_and_release_clears_agent_settings_button() {
     assert!(host.dispatch_agent_settings_press(
         content_x + content_w - 12.0 - 34.0,
         builtin_draft_card_y(content_y) + 196.0 + 18.0,
-        1200.0,
-        800.0,
+        VIEWPORT_W,
+        VIEWPORT_H,
     ));
     assert_eq!(
         host.editor_state().editor_ui.pressed_button,
@@ -49,7 +68,7 @@ fn builtin_draft_save_press_sets_and_release_clears_agent_settings_button() {
         ))
     );
 
-    assert!(host.apply_release_with_viewport(1200.0, 800.0));
+    assert!(host.apply_release_with_viewport(VIEWPORT_W, VIEWPORT_H));
     assert_eq!(host.editor_state().editor_ui.pressed_button, None);
 }
 
@@ -65,8 +84,8 @@ fn builtin_draft_cancel_press_sets_and_release_clears_agent_settings_button() {
     assert!(host.dispatch_agent_settings_press(
         content_x + content_w - 12.0 - 68.0 - 8.0 - 34.0,
         builtin_draft_card_y(content_y) + 196.0 + 18.0,
-        1200.0,
-        800.0,
+        VIEWPORT_W,
+        VIEWPORT_H,
     ));
     assert_eq!(
         host.editor_state().editor_ui.pressed_button,
@@ -75,7 +94,7 @@ fn builtin_draft_cancel_press_sets_and_release_clears_agent_settings_button() {
         ))
     );
 
-    assert!(host.apply_release_with_viewport(1200.0, 800.0));
+    assert!(host.apply_release_with_viewport(VIEWPORT_W, VIEWPORT_H));
     assert_eq!(host.editor_state().editor_ui.pressed_button, None);
 }
 
@@ -98,8 +117,8 @@ fn acp_draft_save_press_sets_and_release_clears_agent_settings_button() {
     assert!(host.dispatch_agent_settings_press(
         content_x + content_w - 12.0 - 34.0,
         acp_draft_card_y(content_y) + 332.0 + 18.0,
-        1200.0,
-        800.0,
+        VIEWPORT_W,
+        VIEWPORT_H,
     ));
     assert_eq!(
         host.editor_state().editor_ui.pressed_button,
@@ -108,7 +127,7 @@ fn acp_draft_save_press_sets_and_release_clears_agent_settings_button() {
         ))
     );
 
-    assert!(host.apply_release_with_viewport(1200.0, 800.0));
+    assert!(host.apply_release_with_viewport(VIEWPORT_W, VIEWPORT_H));
     assert_eq!(host.editor_state().editor_ui.pressed_button, None);
 }
 
@@ -124,8 +143,8 @@ fn acp_draft_cancel_press_sets_and_release_clears_agent_settings_button() {
     assert!(host.dispatch_agent_settings_press(
         content_x + content_w - 12.0 - 68.0 - 8.0 - 34.0,
         acp_draft_card_y(content_y) + 332.0 + 18.0,
-        1200.0,
-        800.0,
+        VIEWPORT_W,
+        VIEWPORT_H,
     ));
     assert_eq!(
         host.editor_state().editor_ui.pressed_button,
@@ -134,6 +153,6 @@ fn acp_draft_cancel_press_sets_and_release_clears_agent_settings_button() {
         ))
     );
 
-    assert!(host.apply_release_with_viewport(1200.0, 800.0));
+    assert!(host.apply_release_with_viewport(VIEWPORT_W, VIEWPORT_H));
     assert_eq!(host.editor_state().editor_ui.pressed_button, None);
 }

@@ -157,8 +157,15 @@ fn images_tab_expanded_profile_fields_are_focusable() {
     });
     let panel = AgentSettingsPanel::for_editor(&state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
+    let content_x = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x;
+    let content_y = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
+    let content_w = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .size
+        .x;
 
     let gen_top = content_y + 36.0 + 24.0 + 28.0;
     let row_y = gen_top + 36.0 + 8.0;
@@ -177,7 +184,7 @@ fn images_tab_expanded_profile_fields_are_focusable() {
     assert_eq!(
         panel.hit_test(
             rect,
-            crate::Point2D::new(content_x + 430.0, api_field_y + 12.0)
+            crate::Point2D::new(content_x + content_w - 40.0, api_field_y + 12.0)
         ),
         AgentSettingsHit::TestGenConfig(0)
     );
@@ -200,8 +207,15 @@ fn images_tab_profile_test_is_disabled_while_testing_like_ts() {
     });
     let panel = AgentSettingsPanel::for_editor(&state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
+    let content_x = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x;
+    let content_y = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
+    let content_w = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .size
+        .x;
 
     let gen_top = content_y + 36.0 + 24.0 + 28.0;
     let row_y = gen_top + 36.0 + 8.0;
@@ -210,7 +224,7 @@ fn images_tab_profile_test_is_disabled_while_testing_like_ts() {
     assert_eq!(
         panel.hit_test(
             rect,
-            crate::Point2D::new(content_x + 430.0, api_field_y + 12.0)
+            crate::Point2D::new(content_x + content_w - 40.0, api_field_y + 12.0)
         ),
         AgentSettingsHit::Inside
     );
@@ -227,8 +241,12 @@ fn images_tab_expanded_profile_provider_row_is_clickable() {
     });
     let panel = AgentSettingsPanel::for_editor(&state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
+    let content_x = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x;
+    let content_y = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
     let gen_top = content_y + 36.0 + 24.0 + 28.0;
     let row_y = gen_top + 36.0 + 8.0;
     let provider_y = row_y + 32.0 + 8.0 + 36.0;
@@ -255,9 +273,15 @@ fn images_tab_provider_menu_selected_highlight_fills_option_content() {
     state.editor_ui.agent_settings.image_gen_provider_menu_open = Some(0);
     let panel = AgentSettingsPanel::for_editor(&state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
+    let content_x = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x;
+    let content_y = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
+    let content_w = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .size
+        .x;
     let row_inset = 8.0;
     let gen_top = content_y + 36.0 + 24.0 + 28.0;
     let row_y = gen_top + 36.0 + 8.0;
@@ -305,9 +329,15 @@ fn images_tab_provider_menu_hover_paints_option_wash() {
         .hover_image_gen_provider_option = Some((0, ImageGenProvider::Replicate));
     let panel = AgentSettingsPanel::for_editor(&state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
+    let content_x = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x;
+    let content_y = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
+    let content_w = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .size
+        .x;
     let row_inset = 8.0;
     let gen_top = content_y + 36.0 + 24.0 + 28.0;
     let row_y = gen_top + 36.0 + 8.0;
@@ -356,9 +386,15 @@ fn images_tab_provider_menu_pressed_option_uses_shared_feedback() {
     ));
     let panel = AgentSettingsPanel::for_editor(&state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
+    let content_x = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x;
+    let content_y = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
+    let content_w = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .size
+        .x;
     let row_inset = 8.0;
     let gen_top = content_y + 36.0 + 24.0 + 28.0;
     let row_y = gen_top + 36.0 + 8.0;
@@ -417,9 +453,15 @@ fn images_tab_profile_controls_hover_paints_visible_washes() {
     state.editor_ui.agent_settings.hover_image_gen_profile_test = Some(0);
     let panel = AgentSettingsPanel::for_editor(&state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
+    let content_x = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x;
+    let content_y = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
+    let content_w = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .size
+        .x;
     let row = Rect {
         origin: Point2D::new(content_x + 8.0, content_y + 36.0 + 24.0 + 28.0 + 36.0 + 8.0),
         size: Point2D::new(content_w - 16.0, 32.0 + 8.0 + 5.0 * 36.0),
@@ -486,9 +528,15 @@ fn pressed_image_gen_profile_controls_use_shared_button_feedback() {
         state.editor_ui.pressed_button = Some(ButtonPressTarget::AgentSettings(button));
         let panel = AgentSettingsPanel::for_editor(&state);
         let rect = panel.rect(1200.0, 800.0);
-        let content_x = rect.origin.x + 200.0 + 24.0;
-        let content_y = rect.origin.y + 24.0;
-        let content_w = rect.size.x - 200.0 - 48.0;
+        let content_x = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+            .origin
+            .x;
+        let content_y = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+            .origin
+            .y;
+        let content_w = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+            .size
+            .x;
         let row = Rect {
             origin: Point2D::new(content_x + 8.0, content_y + 36.0 + 24.0 + 28.0 + 36.0 + 8.0),
             size: Point2D::new(content_w - 16.0, 32.0 + 8.0 + 5.0 * 36.0),
@@ -548,9 +596,15 @@ fn disabled_image_gen_profile_test_hover_uses_visible_wash() {
     state.editor_ui.agent_settings.hover_image_gen_profile_test = Some(0);
     let panel = AgentSettingsPanel::for_editor(&state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
+    let content_x = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x;
+    let content_y = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
+    let content_w = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .size
+        .x;
     let row = Rect {
         origin: Point2D::new(content_x + 8.0, content_y + 36.0 + 24.0 + 28.0 + 36.0 + 8.0),
         size: Point2D::new(content_w - 16.0, 32.0 + 8.0 + 5.0 * 36.0),
@@ -588,7 +642,9 @@ fn expanded_image_gen_profile_starts_below_add_button_with_clear_gap() {
     });
     let panel = AgentSettingsPanel::for_editor(&state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_y = rect.origin.y + 24.0;
+    let content_y = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
     let gen_top = content_y + 36.0 + 24.0 + 28.0;
     let add_button_bottom = gen_top + 4.0 + 28.0;
     let mut backend = CaptureBackend::default();
@@ -622,8 +678,12 @@ fn expanded_image_gen_profile_card_is_inset_from_content_clip_edges() {
     });
     let panel = AgentSettingsPanel::for_editor(&state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
+    let content_x = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x;
+    let content_w = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .size
+        .x;
     let mut backend = CaptureBackend::default();
     let mut cx = PaintCx {
         backend: &mut backend,

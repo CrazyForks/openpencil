@@ -56,8 +56,11 @@ fn vscode_embed_state() -> EditorState {
     state
 }
 
+/// Centre of tab pill `index` in a strip sized for the VS Code embed's
+/// single visible tab — index 1 therefore lands beside the strip, which
+/// is exactly what the "no second tab" assertion needs.
 fn nav_row_center(panel_rect: Rect, index: usize) -> Point2D {
-    let row = nav_item_rect(panel_rect, index);
+    let row = nav_item_rect(panel_rect, index, 1);
     Point2D::new(
         row.origin.x + row.size.x / 2.0,
         row.origin.y + row.size.y / 2.0,

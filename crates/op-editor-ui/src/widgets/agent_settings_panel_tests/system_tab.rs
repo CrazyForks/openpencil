@@ -1,9 +1,16 @@
-//! System tab: the auto-update card and its click target.
+//! System tab: the auto-update row and its click target.
 //!
 //! Split out of `agent_settings_panel_tests.rs` to keep that file under the
 //! 800-line cap.
 
 use super::*;
+use crate::widgets::agent_settings_rows::{tab_hero_height, ROW_HEIGHT};
+
+/// Centre-y of System row `index`, below the tab's hero block.
+fn system_row_mid_y(rect: Rect, index: usize) -> f32 {
+    let content = crate::widgets::agent_settings_panel::content_viewport(rect);
+    content.origin.y + tab_hero_height(1) + index as f32 * ROW_HEIGHT + ROW_HEIGHT / 2.0
+}
 
 #[test]
 fn system_auto_update_switch_has_click_target() {
@@ -11,11 +18,12 @@ fn system_auto_update_switch_has_click_target() {
     state.editor_ui.agent_settings.tab = AgentSettingsTab::System;
     let panel = AgentSettingsPanel::for_editor(&state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
-    let card_y = content_y + 12.0 + 36.0;
-    let point = crate::Point2D::new(content_x + content_w - 28.0, card_y + 28.0);
+    let content = crate::widgets::agent_settings_panel::content_viewport(rect);
+    // Row order is Appearance, Auto-update, Experimental, Pencil cursor.
+    let point = crate::Point2D::new(
+        content.origin.x + content.size.x - 18.0,
+        system_row_mid_y(rect, 1),
+    );
 
     assert_eq!(
         panel.hit_test(rect, point),
@@ -31,8 +39,9 @@ fn system_tab_reserves_space_for_update_status() {
 
     assert_eq!(
         panel.content_total_height(),
-        378.0,
-        "System tab = title + update status + experimental + pencil-cursor picker"
+        tab_hero_height(1) + 4.0 * ROW_HEIGHT + 32.0 + 24.0,
+        "System tab = hero + Appearance/Auto-update/Experimental/Pencil-cursor rows \
+         + version footnote + bottom pad"
     );
 }
 

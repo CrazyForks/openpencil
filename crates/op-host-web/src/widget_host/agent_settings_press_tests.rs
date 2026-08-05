@@ -12,8 +12,9 @@ fn close_press_sets_and_release_clears_agent_settings_button() {
     let mut host = WidgetHost::new();
     let panel = AgentSettingsPanel::for_web_editor(&host.editor_state);
     let rect = panel.rect(1200.0, 800.0);
-    let close_x = rect.origin.x + rect.size.x - 24.0;
-    let close_y = rect.origin.y + 24.0;
+    let close = op_editor_ui::widgets::agent_settings_panel::close_button_rect(rect);
+    let close_x = close.origin.x + close.size.x / 2.0;
+    let close_y = close.origin.y + close.size.y / 2.0;
 
     assert!(host.dispatch_agent_settings_press(close_x, close_y, 1200.0, 800.0));
     assert_eq!(
@@ -130,10 +131,17 @@ fn toggling_builtin_kind_commits_focused_api_key_draft() {
 
     let panel = AgentSettingsPanel::for_web_editor(&host.editor_state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
-    let first_card_y = content_y + 12.0 + 28.0 + 28.0;
+    let content_x = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .x;
+    let content_y = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .y;
+    let content_w = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .size
+        .x;
+    let first_card_y =
+        content_y + op_editor_ui::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT + 28.0 + 28.0;
     let kind_x = content_x + content_w - 172.0 + 120.0;
     let kind_y = first_card_y + 22.0;
 
@@ -155,11 +163,17 @@ fn add_provider_opens_unsaved_builtin_agent_draft() {
 
     let panel = AgentSettingsPanel::for_web_editor(&host.editor_state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
+    let content_x = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .x;
+    let content_y = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .y;
+    let content_w = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .size
+        .x;
     let add_x = content_x + content_w - 48.0;
-    let add_y = content_y + 24.0;
+    let add_y = content_y + op_editor_ui::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT + 12.0;
 
     assert!(host.dispatch_agent_settings_press(add_x, add_y, 1200.0, 800.0));
     assert_eq!(
@@ -194,11 +208,21 @@ fn web_add_acp_agent_control_is_hidden() {
     let mut host = WidgetHost::new();
     let panel = AgentSettingsPanel::for_web_editor(&host.editor_state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
+    let content_x = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .x;
+    let content_y = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .y;
+    let content_w = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .size
+        .x;
     let add_x = content_x + content_w - 12.0 - 48.0;
-    let add_y = content_y + 12.0 + 120.0 + 28.0 + 12.0;
+    let add_y = content_y
+        + op_editor_ui::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT
+        + 120.0
+        + 28.0
+        + 12.0;
 
     assert_eq!(
         panel.hit_test(rect, Point2D::new(add_x, add_y)),
@@ -218,14 +242,21 @@ fn builtin_provider_menu_selects_ts_preset_for_draft() {
     let mut host = WidgetHost::new();
     let panel = AgentSettingsPanel::for_web_editor(&host.editor_state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
+    let content_x = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .x;
+    let content_y = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .y;
+    let content_w = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .size
+        .x;
     let add_x = content_x + content_w - 48.0;
-    let add_y = content_y + 24.0;
+    let add_y = content_y + op_editor_ui::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT + 12.0;
 
     assert!(host.dispatch_agent_settings_press(add_x, add_y, 1200.0, 800.0));
-    let card_y = content_y + 12.0 + 28.0 + 28.0;
+    let card_y =
+        content_y + op_editor_ui::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT + 28.0 + 28.0;
     let provider_x = content_x + 68.0 + 24.0;
     let provider_y = card_y + 60.0;
     assert!(host.dispatch_agent_settings_press(provider_x, provider_y, 1200.0, 800.0));
@@ -250,17 +281,24 @@ fn save_builtin_agent_draft_persists_provider() {
     let mut host = WidgetHost::new();
     let panel = AgentSettingsPanel::for_web_editor(&host.editor_state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
+    let content_x = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .x;
+    let content_y = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .y;
+    let content_w = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .size
+        .x;
     let add_x = content_x + content_w - 48.0;
-    let add_y = content_y + 24.0;
+    let add_y = content_y + op_editor_ui::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT + 12.0;
 
     assert!(host.dispatch_agent_settings_press(add_x, add_y, 1200.0, 800.0));
     for c in "sk-web".chars() {
         assert!(host.apply_text(c));
     }
-    let card_y = content_y + 12.0 + 28.0 + 28.0;
+    let card_y =
+        content_y + op_editor_ui::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT + 28.0 + 28.0;
     let save_x = content_x + content_w - 12.0 - 34.0;
     let save_y = card_y + 196.0 + 18.0;
     assert!(host.dispatch_agent_settings_press(save_x, save_y, 1200.0, 800.0));
@@ -279,9 +317,15 @@ fn image_generation_add_press_sets_and_release_clears_agent_settings_button() {
 
     let panel = AgentSettingsPanel::for_web_editor(&host.editor_state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
+    let content_x = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x;
+    let content_y = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
+    let content_w = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .size
+        .x;
     let gen_top = content_y + 36.0 + 24.0 + 28.0;
     let add_x = content_x + content_w - 36.0;
     let add_y = gen_top + 18.0;
@@ -317,9 +361,17 @@ fn image_search_test_press_sets_and_release_clears_agent_settings_button() {
 
     let panel = AgentSettingsPanel::for_web_editor(&host.editor_state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
-    let x = rect.origin.x + 200.0 + 24.0 + content_w - 28.0;
+    let content_y = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
+    let content_w = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .size
+        .x;
+    let x = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x
+        + content_w
+        - 28.0;
     let y = content_y + 36.0 + 24.0 + 22.0 + 36.0 + 10.0 + 36.0 + 14.0 + 18.0;
 
     assert!(host.dispatch_agent_settings_press(x, y, 1200.0, 800.0));
@@ -354,14 +406,21 @@ fn image_generation_profile_test_tracks_testing_status_like_ts() {
 
     let panel = AgentSettingsPanel::for_web_editor(&host.editor_state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
+    let content_x = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x;
+    let content_y = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
+    let content_w = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .size
+        .x;
     let gen_top = content_y + 36.0 + 24.0 + 28.0;
     let row_y = gen_top + 36.0 + 8.0;
     let api_field_y = row_y + 32.0 + 8.0 + 36.0 * 2.0;
 
     assert!(host.dispatch_agent_settings_press(
-        content_x + 430.0,
+        content_x + content_w - 40.0,
         api_field_y + 12.0,
         1200.0,
         800.0
@@ -404,8 +463,12 @@ fn image_generation_provider_select_commits_and_closes_menu() {
 
     let panel = AgentSettingsPanel::for_web_editor(&host.editor_state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
+    let content_x = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x;
+    let content_y = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
     let gen_top = content_y + 36.0 + 24.0 + 28.0;
     let row_y = gen_top + 36.0 + 8.0;
     let provider_y = row_y + 32.0 + 8.0 + 36.0;
@@ -497,8 +560,12 @@ fn image_generation_profile_header_click_toggles_editor_closed() {
 
     let panel = AgentSettingsPanel::for_web_editor(&host.editor_state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
+    let content_x = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x;
+    let content_y = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
     let gen_top = content_y + 36.0 + 24.0 + 28.0;
     let row_y = gen_top + 36.0 + 8.0;
 
@@ -522,9 +589,15 @@ fn web_mcp_server_button_is_hidden_when_mcp_tab_is_persisted() {
     host.editor_state.editor_ui.agent_settings.tab = AgentSettingsTab::Mcp;
     let panel = AgentSettingsPanel::for_web_editor(&host.editor_state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
+    let content_x = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .x;
+    let content_y = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .y;
+    let content_w = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .size
+        .x;
     let server_card_top = content_y + 36.0;
     let button_x = content_x + content_w - 16.0 - 72.0;
 
@@ -562,24 +635,25 @@ fn web_mcp_client_config_copy_is_hidden_when_mcp_tab_is_persisted() {
 
     let panel = AgentSettingsPanel::for_web_editor(&host.editor_state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
-    let client_config_y = content_y + 36.0 + 52.0 + 8.0;
+    let content = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect);
+    // The web tab set has no MCP entry, so a persisted `tab = Mcp` falls
+    // back to Agents. Press exactly where the MCP tab would have put its
+    // copy action: whatever the Agents tab paints there, it must never be
+    // the copy. (The old fixture asserted `Inside` at that point, which
+    // only held while the fallback tab happened to be empty there — an
+    // incidental property, not the contract this test is named for.)
+    let copy = op_editor_ui::widgets::agent_settings_panel::mcp_copy_config_button(rect);
+    let scroll = copy.origin.y - content.origin.y;
+    host.editor_state.editor_ui.agent_settings.scroll_y.offset = scroll;
+    let panel = AgentSettingsPanel::for_web_editor(&host.editor_state);
+    let x = copy.origin.x + copy.size.x / 2.0;
+    let y = copy.origin.y + copy.size.y / 2.0 - scroll;
 
-    assert_eq!(
-        panel.hit_test(
-            rect,
-            Point2D::new(content_x + content_w - 22.0, client_config_y + 18.0)
-        ),
-        AgentSettingsHit::Inside
+    assert_ne!(
+        panel.hit_test(rect, Point2D::new(x, y)),
+        AgentSettingsHit::CopyMcpClientConfig
     );
-    assert!(host.dispatch_agent_settings_press(
-        content_x + content_w - 22.0,
-        client_config_y + 18.0,
-        1200.0,
-        800.0
-    ));
+    assert!(host.dispatch_agent_settings_press(x, y, 1200.0, 800.0));
 
     assert_eq!(
         host.editor_state
@@ -589,7 +663,12 @@ fn web_mcp_client_config_copy_is_hidden_when_mcp_tab_is_persisted() {
         None
     );
     assert_eq!(host.editor_state.chat.pending_copy_text.as_deref(), None);
-    assert_eq!(host.editor_state.editor_ui.pressed_button, None);
+    assert_ne!(
+        host.editor_state.editor_ui.pressed_button,
+        Some(ButtonPressTarget::AgentSettings(
+            AgentSettingsButton::McpClientConfigCopy
+        ))
+    );
 }
 
 #[test]
@@ -607,9 +686,15 @@ fn web_mcp_server_button_hover_is_hidden_when_mcp_tab_is_persisted() {
 
     let panel = AgentSettingsPanel::for_web_editor(&host.editor_state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
+    let content_x = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .x;
+    let content_y = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .y;
+    let content_w = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
+        .size
+        .x;
     let server_card_y = content_y + 36.0;
     let button_x = content_x + content_w - 16.0 - 72.0;
 
@@ -637,9 +722,15 @@ fn image_settings_button_hover_tracks_cursor() {
 
     let panel = AgentSettingsPanel::for_web_editor(&host.editor_state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
+    let content_x = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x;
+    let content_y = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
+    let content_w = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .size
+        .x;
 
     assert!(host.update_agent_settings_hover(content_x + content_w - 28.0, content_y + 196.0,));
     assert!(

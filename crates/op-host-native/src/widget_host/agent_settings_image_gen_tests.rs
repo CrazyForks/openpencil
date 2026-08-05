@@ -5,6 +5,12 @@ use op_editor_core::agent_settings::{
 use op_editor_core::{AgentSettingsButton, ButtonPressTarget};
 use op_editor_ui::widgets::agent_settings_panel::AgentSettingsPanel;
 
+/// The settings modal is a wide, tall workspace; these fixtures press
+/// absolute rects deep in the Agents tab, so they run in a window big
+/// enough to keep the whole body above the fold.
+const VIEWPORT_W: f32 = 1200.0;
+const VIEWPORT_H: f32 = 1000.0;
+
 #[test]
 fn image_generation_profile_test_tracks_testing_status_like_ts() {
     let mut host = WidgetHostNative::new();
@@ -24,18 +30,25 @@ fn image_generation_profile_test_tracks_testing_status_like_ts() {
     });
 
     let panel = AgentSettingsPanel::for_editor(host.editor_state());
-    let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
+    let rect = panel.rect(VIEWPORT_W, VIEWPORT_H);
+    let content_x = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x;
+    let content_y = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
+    let content_w = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .size
+        .x;
     let gen_top = content_y + 36.0 + 24.0 + 28.0;
     let row_y = gen_top + 36.0 + 8.0;
     let api_field_y = row_y + 32.0 + 8.0 + 36.0 * 2.0;
 
     assert!(host.dispatch_agent_settings_press(
-        content_x + 430.0,
+        content_x + content_w - 40.0,
         api_field_y + 12.0,
-        1200.0,
-        800.0
+        VIEWPORT_W,
+        VIEWPORT_H
     ));
 
     let profile = &host
@@ -51,15 +64,15 @@ fn image_generation_profile_test_tracks_testing_status_like_ts() {
         ))
     );
 
-    assert!(host.apply_release_with_viewport(1200.0, 800.0));
+    assert!(host.apply_release_with_viewport(VIEWPORT_W, VIEWPORT_H));
     assert_eq!(host.editor_state().editor_ui.pressed_button, None);
 }
 
 #[test]
 fn image_generation_profile_hover_tracks_controls_and_close() {
     let mut host = WidgetHostNative::new();
-    host.last_viewport_w = 1200.0;
-    host.last_viewport_h = 800.0;
+    host.last_viewport_w = VIEWPORT_W;
+    host.last_viewport_h = VIEWPORT_H;
     host.editor_state_mut().editor_ui.agent_settings.tab = AgentSettingsTab::Images;
     host.editor_state_mut()
         .editor_ui
@@ -71,18 +84,31 @@ fn image_generation_profile_hover_tracks_controls_and_close() {
     });
 
     let panel = AgentSettingsPanel::for_editor(host.editor_state());
-    let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
+    let rect = panel.rect(VIEWPORT_W, VIEWPORT_H);
+    let content_x = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x;
+    let content_y = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
+    let content_w = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .size
+        .x;
     let row_x = content_x + 8.0;
     let row_w = content_w - 16.0;
     let gen_top = content_y + 36.0 + 24.0 + 28.0;
     let row_y = gen_top + 36.0 + 8.0;
 
-    assert!(
-        host.update_agent_settings_hover(rect.origin.x + rect.size.x - 24.0, rect.origin.y + 24.0)
-    );
+    assert!(host.update_agent_settings_hover(
+        op_editor_ui::widgets::agent_settings_panel::close_button_rect(rect)
+            .origin
+            .x
+            + 8.0,
+        op_editor_ui::widgets::agent_settings_panel::close_button_rect(rect)
+            .origin
+            .y
+            + 8.0,
+    ));
     assert!(
         host.editor_state()
             .editor_ui

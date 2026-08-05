@@ -12,23 +12,29 @@ fn image_generation_profile_buttons_add_activate_and_remove() {
     host.editor_state_mut().editor_ui.agent_settings.tab = AgentSettingsTab::Images;
 
     let panel = AgentSettingsPanel::for_editor(host.editor_state());
-    let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
+    let rect = panel.rect(VIEWPORT_W, VIEWPORT_H);
+    let content_x = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x;
+    let content_y = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
+    let content_w = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .size
+        .x;
     let gen_top = content_y + 36.0 + 24.0 + 28.0;
 
     assert!(host.dispatch_agent_settings_press(
         content_x + content_w - 36.0,
         gen_top + 14.0,
-        1200.0,
-        800.0
+        VIEWPORT_W,
+        VIEWPORT_H
     ));
     assert!(host.dispatch_agent_settings_press(
         content_x + content_w - 36.0,
         gen_top + 14.0,
-        1200.0,
-        800.0
+        VIEWPORT_W,
+        VIEWPORT_H
     ));
 
     let first = host
@@ -58,8 +64,8 @@ fn image_generation_profile_buttons_add_activate_and_remove() {
     assert!(host.dispatch_agent_settings_press(
         content_x + 23.0,
         second_row_y + 16.0,
-        1200.0,
-        800.0
+        VIEWPORT_W,
+        VIEWPORT_H
     ));
     assert_eq!(
         host.editor_state()
@@ -73,8 +79,8 @@ fn image_generation_profile_buttons_add_activate_and_remove() {
     assert!(host.dispatch_agent_settings_press(
         content_x + content_w - 12.0,
         second_row_y + 16.0,
-        1200.0,
-        800.0
+        VIEWPORT_W,
+        VIEWPORT_H
     ));
     assert_eq!(
         host.editor_state().editor_ui.pressed_button,
@@ -82,7 +88,7 @@ fn image_generation_profile_buttons_add_activate_and_remove() {
             AgentSettingsButton::ImageProfileRemove(1)
         ))
     );
-    assert!(host.apply_release_with_viewport(1200.0, 800.0));
+    assert!(host.apply_release_with_viewport(VIEWPORT_W, VIEWPORT_H));
     assert_eq!(host.editor_state().editor_ui.pressed_button, None);
 
     let settings = &host.editor_state().editor_ui.agent_settings;
@@ -161,15 +167,21 @@ fn image_generation_add_press_sets_and_release_clears_agent_settings_button() {
     host.editor_state_mut().editor_ui.agent_settings.tab = AgentSettingsTab::Images;
 
     let panel = AgentSettingsPanel::for_editor(host.editor_state());
-    let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
+    let rect = panel.rect(VIEWPORT_W, VIEWPORT_H);
+    let content_x = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x;
+    let content_y = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
+    let content_w = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .size
+        .x;
     let gen_top = content_y + 36.0 + 24.0 + 28.0;
     let add_x = content_x + content_w - 36.0;
     let add_y = gen_top + 18.0;
 
-    assert!(host.dispatch_agent_settings_press(add_x, add_y, 1200.0, 800.0));
+    assert!(host.dispatch_agent_settings_press(add_x, add_y, VIEWPORT_W, VIEWPORT_H));
     assert_eq!(
         host.editor_state().editor_ui.pressed_button,
         Some(ButtonPressTarget::AgentSettings(
@@ -177,7 +189,7 @@ fn image_generation_add_press_sets_and_release_clears_agent_settings_button() {
         ))
     );
 
-    assert!(host.apply_release_with_viewport(1200.0, 800.0));
+    assert!(host.apply_release_with_viewport(VIEWPORT_W, VIEWPORT_H));
     assert_eq!(host.editor_state().editor_ui.pressed_button, None);
 }
 
@@ -200,9 +212,13 @@ fn image_generation_provider_click_opens_menu_without_changing_profile() {
     });
 
     let panel = AgentSettingsPanel::for_editor(host.editor_state());
-    let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
+    let rect = panel.rect(VIEWPORT_W, VIEWPORT_H);
+    let content_x = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x;
+    let content_y = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
     let gen_top = content_y + 36.0 + 24.0 + 28.0;
     let row_y = gen_top + 36.0 + 8.0;
     let provider_y = row_y + 32.0 + 8.0 + 36.0;
@@ -210,8 +226,8 @@ fn image_generation_provider_click_opens_menu_without_changing_profile() {
     assert!(host.dispatch_agent_settings_press(
         content_x + 110.0 + 20.0,
         provider_y + 12.0,
-        1200.0,
-        800.0
+        VIEWPORT_W,
+        VIEWPORT_H
     ));
 
     let profile = &host
@@ -241,14 +257,14 @@ fn image_generation_provider_click_opens_menu_without_changing_profile() {
             AgentSettingsButton::ImageProfileProvider(0)
         ))
     );
-    assert!(host.apply_release_with_viewport(1200.0, 800.0));
+    assert!(host.apply_release_with_viewport(VIEWPORT_W, VIEWPORT_H));
     assert_eq!(host.editor_state().editor_ui.pressed_button, None);
 
     assert!(host.dispatch_agent_settings_press(
         content_x + 110.0 + 20.0,
         provider_y + 60.0,
-        1200.0,
-        800.0
+        VIEWPORT_W,
+        VIEWPORT_H
     ));
     let settings = &host.editor_state().editor_ui.agent_settings;
     let profile = &settings.image_gen_profiles[0];
@@ -265,7 +281,7 @@ fn image_generation_provider_click_opens_menu_without_changing_profile() {
         ))
     );
 
-    assert!(host.apply_release_with_viewport(1200.0, 800.0));
+    assert!(host.apply_release_with_viewport(VIEWPORT_W, VIEWPORT_H));
 
     let settings = &host.editor_state().editor_ui.agent_settings;
     let profile = &settings.image_gen_profiles[0];
@@ -300,13 +316,22 @@ fn image_generation_profile_header_click_toggles_editor_closed() {
         .set_text("Config 1");
 
     let panel = AgentSettingsPanel::for_editor(host.editor_state());
-    let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
+    let rect = panel.rect(VIEWPORT_W, VIEWPORT_H);
+    let content_x = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x;
+    let content_y = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
     let gen_top = content_y + 36.0 + 24.0 + 28.0;
     let row_y = gen_top + 36.0 + 8.0;
 
-    assert!(host.dispatch_agent_settings_press(content_x + 72.0, row_y + 16.0, 1200.0, 800.0));
+    assert!(host.dispatch_agent_settings_press(
+        content_x + 72.0,
+        row_y + 16.0,
+        VIEWPORT_W,
+        VIEWPORT_H
+    ));
     assert_eq!(
         host.editor_state().editor_ui.pressed_button,
         Some(ButtonPressTarget::AgentSettings(
@@ -321,7 +346,7 @@ fn image_generation_profile_header_click_toggles_editor_closed() {
         .settings_input
         .text()
         .is_empty());
-    assert!(host.apply_release_with_viewport(1200.0, 800.0));
+    assert!(host.apply_release_with_viewport(VIEWPORT_W, VIEWPORT_H));
     assert_eq!(host.editor_state().editor_ui.pressed_button, None);
 }
 
@@ -378,13 +403,21 @@ fn image_search_test_tracks_invalid_and_testing_status_like_ts() {
         .openverse_client_id = "client".into();
 
     let panel = AgentSettingsPanel::for_editor(host.editor_state());
-    let rect = panel.rect(1200.0, 800.0);
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
-    let x = rect.origin.x + 200.0 + 24.0 + content_w - 28.0;
+    let rect = panel.rect(VIEWPORT_W, VIEWPORT_H);
+    let content_y = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
+    let content_w = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .size
+        .x;
+    let x = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x
+        + content_w
+        - 28.0;
     let y = content_y + 36.0 + 24.0 + 22.0 + 36.0 + 10.0 + 36.0 + 14.0 + 18.0;
 
-    assert!(host.dispatch_agent_settings_press(x, y, 1200.0, 800.0));
+    assert!(host.dispatch_agent_settings_press(x, y, VIEWPORT_W, VIEWPORT_H));
     assert_eq!(
         host.editor_state()
             .editor_ui
@@ -403,7 +436,7 @@ fn image_search_test_tracks_invalid_and_testing_status_like_ts() {
         .editor_ui
         .agent_settings
         .openverse_client_secret = "secret".into();
-    assert!(host.dispatch_agent_settings_press(x, y, 1200.0, 800.0));
+    assert!(host.dispatch_agent_settings_press(x, y, VIEWPORT_W, VIEWPORT_H));
     assert_eq!(
         host.editor_state()
             .editor_ui
@@ -424,6 +457,6 @@ fn image_search_test_tracks_invalid_and_testing_status_like_ts() {
         ))
     );
 
-    assert!(host.apply_release_with_viewport(1200.0, 800.0));
+    assert!(host.apply_release_with_viewport(VIEWPORT_W, VIEWPORT_H));
     assert_eq!(host.editor_state().editor_ui.pressed_button, None);
 }

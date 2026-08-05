@@ -12,9 +12,15 @@ fn images_tab_profile_rows_expose_active_and_remove_targets() {
     state.editor_ui.agent_settings.add_image_gen_profile();
     let panel = AgentSettingsPanel::for_editor(&state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
+    let content_x = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x;
+    let content_y = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
+    let content_w = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .size
+        .x;
 
     let gen_top = content_y + 36.0 + 24.0 + 28.0;
     let row_y = gen_top + 36.0 + 8.0;
@@ -39,9 +45,15 @@ fn images_tab_profile_row_paints_expand_chevron_before_delete_like_ts() {
     state.editor_ui.agent_settings.add_image_gen_profile();
     let panel = AgentSettingsPanel::for_editor(&state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
+    let content_x = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x;
+    let content_y = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
+    let content_w = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .size
+        .x;
     let gen_top = content_y + 36.0 + 24.0 + 28.0;
     let row_y = gen_top + 36.0 + 8.0;
     let row_x = content_x + 8.0;
@@ -88,8 +100,12 @@ fn images_tab_advanced_search_fields_are_focusable() {
     state.editor_ui.agent_settings.images_advanced_open = true;
     let panel = AgentSettingsPanel::for_editor(&state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
+    let content_x = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x;
+    let content_y = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
     let field_x = content_x + 110.0 + 16.0;
     let first_field_y = content_y + 36.0 + 24.0 + 22.0;
 
@@ -139,9 +155,15 @@ fn focused_empty_image_search_placeholder_leaves_gap_after_caret() {
 
     let panel = AgentSettingsPanel::for_editor_at(&state, 100);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
+    let content_x = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x;
+    let content_y = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
+    let content_w = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .size
+        .x;
     let secret_y = content_y + 36.0 + 24.0 + 22.0 + 36.0 + 10.0;
     let field = Rect {
         origin: Point2D::new(content_x + 110.0, secret_y),
@@ -204,9 +226,17 @@ fn images_tab_test_search_requires_some_oauth_text() {
     state.editor_ui.agent_settings.images_advanced_open = true;
     let panel = AgentSettingsPanel::for_editor(&state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
-    let button_x = rect.origin.x + 200.0 + 24.0 + content_w - 28.0;
+    let content_y = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
+    let content_w = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .size
+        .x;
+    let button_x = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x
+        + content_w
+        - 28.0;
     let button_y = content_y + 36.0 + 24.0 + 22.0 + 36.0 + 10.0 + 36.0 + 14.0 + 18.0;
 
     assert_eq!(
@@ -231,9 +261,17 @@ fn images_tab_test_search_is_disabled_while_testing_like_ts() {
     state.editor_ui.agent_settings.images_search_test_status = ImageTestStatus::Testing;
     let panel = AgentSettingsPanel::for_editor(&state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
-    let button_x = rect.origin.x + 200.0 + 24.0 + content_w - 28.0;
+    let content_y = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
+    let content_w = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .size
+        .x;
+    let button_x = crate::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x
+        + content_w
+        - 28.0;
     let button_y = content_y + 36.0 + 24.0 + 22.0 + 36.0 + 10.0 + 36.0 + 14.0 + 18.0;
 
     assert_eq!(

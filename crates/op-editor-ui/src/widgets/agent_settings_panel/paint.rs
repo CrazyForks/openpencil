@@ -1,12 +1,13 @@
-//! Paint pass for [`AgentSettingsPanel`] — the modal frame, sidebar nav,
-//! close button, Agents tab body, and the shared section-header
-//! primitives, plus the `Widget` impl and the drag hook. Carved off
+//! Paint pass for [`AgentSettingsPanel`] — the modal frame, close
+//! button, Agents tab body, and the shared section-header primitives,
+//! plus the `Widget` impl and the drag hook. The top tab strip lives in
+//! the `tabs` sibling and the Agents headline in `hero`. Carved off
 //! `agent_settings_panel.rs` to keep every file under the 800-line cap.
 
 use super::*;
 
 pub(super) fn agents_content_height(settings: &AgentSettings, mode: AgentSettingsPanelMode) -> f32 {
-    let builtin = 12.0 + agent_settings_builtin::content_height(settings);
+    let builtin = AGENTS_HERO_HEIGHT + agent_settings_builtin::content_height(settings);
     if !mode.shows_external_agents() {
         return builtin + 24.0;
     }
@@ -48,7 +49,7 @@ impl<'a> Widget for AgentSettingsPanel<'a> {
                 cx,
                 &self.theme,
                 rect,
-                content_rect(rect),
+                hero_body_rect(content_rect(rect)),
                 self.ui,
                 self.settings.scroll_y.offset,
                 self.now_ms,
@@ -72,9 +73,9 @@ fn paint_panel(
     now_ms: u64,
     mode: AgentSettingsPanelMode,
 ) {
-    cx.backend.fill_round_rect(panel, 14.0, theme.card);
-    cx.backend.stroke_round_rect(panel, 14.0, theme.border, 1.0);
-    paint_sidebar(cx, theme, settings, _ui, panel, mode);
+    cx.backend.fill_round_rect(panel, 18.0, theme.card);
+    cx.backend.stroke_round_rect(panel, 18.0, theme.border, 1.0);
+    super::tabs::paint_tab_strip(cx, theme, settings, _ui, panel, mode);
     let content_rect = content_rect(panel);
     cx.backend.save();
     cx.backend.clip_rect(content_paint_clip_rect(panel));
@@ -88,93 +89,58 @@ fn paint_panel(
             agent_settings_mcp::paint_mcp_tab(cx, theme, settings, _ui, content_rect, now_ms)
         }
         AgentSettingsTab::Images => {
-            agent_settings_images::paint_images_tab(cx, theme, settings, _ui, content_rect, now_ms)
+            paint_secondary_hero(cx, theme, _ui, content_rect, "settings.images");
+            agent_settings_images::paint_images_tab(
+                cx,
+                theme,
+                settings,
+                _ui,
+                hero_body_rect(content_rect),
+                now_ms,
+            )
         }
         AgentSettingsTab::Fonts => {
-            agent_settings_fonts::paint_fonts_tab(cx, theme, _ui, content_rect)
+            paint_secondary_hero(cx, theme, _ui, content_rect, "settings.fonts");
+            agent_settings_fonts::paint_fonts_tab(cx, theme, _ui, hero_body_rect(content_rect))
         }
         AgentSettingsTab::System => {
             agent_settings_system::paint_system_tab(cx, theme, settings, _ui, content_rect)
         }
         AgentSettingsTab::Account => {
-            agent_settings_account::paint_account_tab(cx, theme, _ui, content_rect)
+            paint_secondary_hero(cx, theme, _ui, content_rect, "settings.account");
+            agent_settings_account::paint_account_tab(cx, theme, _ui, hero_body_rect(content_rect))
         }
     }
     cx.backend.restore();
     paint_close(cx, theme, settings, _ui, panel);
 }
 
-fn paint_sidebar(
+/// Hero for the tabs the panel paints one on behalf of. `prefix` names
+/// the i18n family (`settings.images` → `settings.images.heroTitle` +
+/// `.heroSubtitle`), so the key pair can't drift from the tab it belongs
+/// to.
+fn paint_secondary_hero(
     cx: &mut PaintCx<'_>,
     theme: &Theme,
-    settings: &AgentSettings,
     ui: &EditorUiState,
-    panel: Rect,
-    mode: AgentSettingsPanelMode,
+    content: Rect,
+    prefix: &str,
 ) {
-    let sidebar = Rect {
-        origin: panel.origin,
-        size: Point2D::new(SIDEBAR_WIDTH, panel.size.y),
+    let (title, subtitle) = match prefix {
+        "settings.images" => ("settings.images.heroTitle", "settings.images.heroSubtitle"),
+        "settings.fonts" => ("settings.fonts.heroTitle", "settings.fonts.heroSubtitle"),
+        _ => (
+            "settings.account.heroTitle",
+            "settings.account.heroSubtitle",
+        ),
     };
-    cx.backend.fill_rect(
-        Rect {
-            origin: Point2D::new(sidebar.origin.x + sidebar.size.x - 1.0, sidebar.origin.y),
-            size: Point2D::new(1.0, sidebar.size.y),
-        },
-        theme.border,
+    crate::widgets::agent_settings_rows::paint_tab_hero(
+        cx,
+        theme,
+        content,
+        t_settings(ui, title),
+        &[t_settings(ui, subtitle)],
     );
-    let title = TextLayout::single_run(
-        t_settings(ui, "settings.title"),
-        "system-ui",
-        15.0,
-        (theme.foreground).to_jian(),
-        Point2D::new(0.0, 0.0),
-    );
-    cx.backend.draw_text(
-        &title,
-        Point2D::new(panel.origin.x + 16.0, panel.origin.y + 31.0),
-    );
-    let active_tab = mode.active_tab(settings);
-    for (i, tab) in mode.visible_tabs().iter().enumerate() {
-        let r = nav_item_rect(panel, i);
-        let selected = *tab == active_tab;
-        let hovered = !selected && settings.hover_nav == Some(*tab);
-        if selected {
-            cx.backend.fill_round_rect(r, 8.0, theme.muted);
-        } else if hovered {
-            cx.backend.fill_round_rect(r, 8.0, theme.accent);
-        }
-        let icon = match tab {
-            AgentSettingsTab::Agents => Icon::Pen,
-            AgentSettingsTab::Mcp => Icon::Terminal,
-            AgentSettingsTab::Images => Icon::Image,
-            AgentSettingsTab::Fonts => Icon::Type,
-            AgentSettingsTab::System => Icon::Settings,
-            AgentSettingsTab::Account => Icon::User,
-        };
-        let icon_color = if selected {
-            theme.foreground
-        } else {
-            theme.muted_foreground
-        };
-        draw_icon(
-            cx.backend,
-            icon,
-            Point2D::new(r.origin.x + 12.0, r.origin.y + 7.0),
-            14.0,
-            icon_color,
-            1.6,
-        );
-        let label = TextLayout::single_run(
-            tab_i18n_label(ui, *tab),
-            "system-ui",
-            13.0,
-            (icon_color).to_jian(),
-            Point2D::new(0.0, 0.0),
-        );
-        cx.backend
-            .draw_text(&label, Point2D::new(r.origin.x + 38.0, r.origin.y + 18.0));
-    }
 }
 
 fn paint_close(
@@ -212,7 +178,8 @@ fn paint_agents_tab(
     now_ms: u64,
     mode: AgentSettingsPanelMode,
 ) {
-    let mut y = content.origin.y + 12.0;
+    super::hero::paint_agents_hero(cx, theme, ui, content);
+    let mut y = agents_body_top(content);
     y = agent_settings_builtin::paint_builtin_section(cx, theme, settings, ui, content, y, now_ms);
     if !mode.shows_external_agents() {
         return;

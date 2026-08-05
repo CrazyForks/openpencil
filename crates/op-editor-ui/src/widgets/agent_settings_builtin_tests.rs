@@ -14,9 +14,14 @@ fn pure_builtin_provider_base_url_is_read_only_hit_target() {
 
     let panel = AgentSettingsPanel::for_editor(&state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let first_card_y = content_y + 12.0 + 28.0 + 28.0;
+    let content_x = crate::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .x;
+    let content_y = crate::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .y;
+    let first_card_y =
+        content_y + crate::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT + 28.0 + 28.0;
     let point = Point2D::new(content_x + 92.0, first_card_y + 170.0);
 
     assert_eq!(panel.hit_test(rect, point), AgentSettingsHit::Inside);

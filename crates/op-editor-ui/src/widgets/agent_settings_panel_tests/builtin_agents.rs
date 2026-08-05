@@ -13,7 +13,7 @@ fn full_painted_add_provider_action_rect_is_clickable_from_its_left_edge() {
     let content = crate::widgets::agent_settings_panel_geometry::content_rect(panel_rect);
     let action = crate::widgets::agent_settings_header_action::header_action_rect(
         content,
-        content.origin.y + 12.0,
+        content.origin.y + crate::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT,
     );
 
     assert_eq!(
@@ -79,9 +79,14 @@ fn hit_test_resolves_builtin_agent_api_key_field() {
     });
     let panel = AgentSettingsPanel::for_editor(&state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let first_card_y = content_y + 12.0 + 28.0 + 28.0;
+    let content_x = crate::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .x;
+    let content_y = crate::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .y;
+    let first_card_y =
+        content_y + crate::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT + 28.0 + 28.0;
     let point = crate::Point2D::new(content_x + 92.0, first_card_y + 116.0);
 
     assert_eq!(
@@ -161,10 +166,17 @@ fn focused_builtin_agent_field_paints_from_settings_draft() {
 
     let panel = AgentSettingsPanel::for_editor(&state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
-    let first_card_y = content_y + 12.0 + 28.0 + 28.0;
+    let content_x = crate::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .x;
+    let content_y = crate::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .y;
+    let content_w = crate::widgets::agent_settings_panel::content_viewport(rect)
+        .size
+        .x;
+    let first_card_y =
+        content_y + crate::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT + 28.0 + 28.0;
     let api_key_input = Rect {
         origin: Point2D::new(content_x + 12.0 + 68.0, first_card_y + 76.0 + 28.0),
         size: Point2D::new(content_w - 24.0 - 68.0, 24.0),
@@ -235,10 +247,17 @@ fn hit_test_resolves_builtin_agent_compact_switch() {
         .add_builtin_agent_with_defaults("MiniMax", "sk-test", "MiniMax-M2.7");
     let panel = AgentSettingsPanel::for_editor(&state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
-    let content_y = rect.origin.y + 24.0;
-    let first_card_y = content_y + 12.0 + 28.0 + 28.0;
+    let content_x = crate::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .x;
+    let content_w = crate::widgets::agent_settings_panel::content_viewport(rect)
+        .size
+        .x;
+    let content_y = crate::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .y;
+    let first_card_y =
+        content_y + crate::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT + 28.0 + 28.0;
     let point = crate::Point2D::new(content_x + content_w - 90.0, first_card_y + 30.0);
 
     assert_eq!(
@@ -256,10 +275,17 @@ fn builtin_agent_compact_edit_button_is_a_hover_only_click_target() {
         .add_builtin_agent_with_defaults("MiniMax", "sk-test", "MiniMax-M2.7");
     let panel = AgentSettingsPanel::for_editor(&state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_w = rect.size.x - 200.0 - 48.0;
-    let content_y = rect.origin.y + 24.0;
-    let first_card_y = content_y + 12.0 + 28.0 + 28.0;
+    let content_x = crate::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .x;
+    let content_w = crate::widgets::agent_settings_panel::content_viewport(rect)
+        .size
+        .x;
+    let content_y = crate::widgets::agent_settings_panel::content_viewport(rect)
+        .origin
+        .y;
+    let first_card_y =
+        content_y + crate::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT + 28.0 + 28.0;
     let point = crate::Point2D::new(content_x + content_w - 52.0, first_card_y + 30.0);
 
     assert_eq!(panel.hit_test(rect, point), AgentSettingsHit::Inside);

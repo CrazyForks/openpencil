@@ -15,6 +15,7 @@ use crate::widgets::agent_settings_header_action::{
     fit_header_copy, header_action_rect, header_action_text_baseline_y, header_action_text_x,
 };
 use crate::widgets::agent_settings_i18n::t as t_settings;
+use crate::widgets::agent_settings_panel_geometry::agents_body_top;
 use crate::widgets::agent_settings_switch::paint_settings_switch;
 use crate::widgets::brand_icons::{paint_brand_logo, BrandLogo};
 use crate::widgets::button::paint_ghost_button_feedback;
@@ -76,7 +77,7 @@ pub fn content_height(settings: &AgentSettings) -> f32 {
 }
 
 pub fn hit_test(content: Rect, settings: &AgentSettings, point: Point2D) -> BuiltinHit {
-    let y = content.origin.y + 12.0;
+    let y = agents_body_top(content);
     if (add_provider_rect(content, y)).contains(point) {
         return BuiltinHit::AddProvider;
     }
@@ -192,7 +193,7 @@ pub fn card_at(content: Rect, settings: &AgentSettings, point: Point2D) -> Optio
     settings_form::card_index_at(
         content.origin.x,
         content.size.x,
-        content.origin.y + 12.0 + HEADER_HEIGHT + SUBTITLE_HEIGHT + sync_error_height(settings),
+        agents_body_top(content) + HEADER_HEIGHT + SUBTITLE_HEIGHT + sync_error_height(settings),
         CARD_GAP,
         (0..settings.builtin_agents.len()).map(|index| card_height(settings, index)),
         point,
@@ -223,7 +224,7 @@ pub fn preset_scroll_max_at(
 
 fn open_preset_menu_card(content: Rect, settings: &AgentSettings, point: Point2D) -> Option<Rect> {
     let mut card_y =
-        content.origin.y + 12.0 + HEADER_HEIGHT + SUBTITLE_HEIGHT + sync_error_height(settings);
+        agents_body_top(content) + HEADER_HEIGHT + SUBTITLE_HEIGHT + sync_error_height(settings);
     for (index, _) in settings.builtin_agents.iter().enumerate() {
         let card = card_rect(
             content.origin.x,
