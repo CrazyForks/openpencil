@@ -24,6 +24,8 @@ docs/
 !/docs/security/
 /docs/security/*
 !/docs/security/p2p-collaboration-threat-model.md
+!/docs/security/antivirus-false-positives.md
+!/docs/security/code-signing-policy.md
 !/docs/testing/
 /docs/testing/*
 !/docs/testing/p2p-collaboration-platform-acceptance.md

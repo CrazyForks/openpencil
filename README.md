@@ -154,6 +154,8 @@ scoop install openpencil
 
 **Linux / Windows direct download:** [GitHub Releases](https://github.com/ZSeven-W/openpencil/releases) — `.exe` (Windows), `.AppImage` / `.deb` (Linux)
 
+> Antivirus flagged the Windows installer? That's a known heuristic false positive on new, low-prevalence releases — see [how to verify your download](docs/security/antivirus-false-positives.md).
+
 **Nix (Linux x86_64):**
 
 ```bash

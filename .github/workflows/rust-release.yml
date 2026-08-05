@@ -846,6 +846,14 @@ jobs:
     needs: [version, build, web-docker, sdk-packages, vsix]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
+    # id-token + attestations power the build-provenance step below; the
+    # job-level block overrides the workflow defaults, so contents/PR write
+    # must be restated for the release upload and Nix manifest PR.
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+      attestations: write
     env:
       OP_VERSION: ${{ needs.version.outputs.version }}
       TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
@@ -944,6 +952,22 @@ jobs:
           fi
           grep -q "$version" release-files/install-op.sh
           grep -q "$version" release-files/install-op.ps1
+      # Downloaders (and antivirus false-positive triage — see issue #198)
+      # need a way to confirm an asset is the exact file CI produced:
+      # a checksum manifest plus a signed SLSA provenance attestation that
+      # links every asset back to this workflow run and source commit
+      # (verifiable via `gh attestation verify`).
+      - name: Generate SHA256SUMS
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd release-files && sha256sum -- * | sort -k2 > ../SHA256SUMS.txt)
+          mv SHA256SUMS.txt release-files/
+          cat release-files/SHA256SUMS.txt
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: release-files/*
       - name: Prepare release body
         id: body
         shell: bash
@@ -968,6 +992,10 @@ jobs:
             printf '\n## Web Docker Image\n\n'
             printf -- '- Image: `%s`\n' '${{ needs.web-docker.outputs.tag }}'
             printf -- '- Digest: `%s`\n' '${{ needs.web-docker.outputs.digest }}'
+            printf '\n## Verify Your Download\n\n'
+            printf 'Every asset is listed in `SHA256SUMS.txt` and carries a signed build-provenance attestation tying it to this repository, commit, and CI run:\n\n'
+            printf '```bash\ngh attestation verify <downloaded-file> --repo %s\n```\n\n' '${{ github.repository }}'
+            printf 'Some antivirus engines heuristically flag low-prevalence installers — see [docs/security/antivirus-false-positives.md](https://github.com/%s/blob/main/docs/security/antivirus-false-positives.md).\n' '${{ github.repository }}'
           } >> release-body.md
       - name: Create / update GitHub prerelease
         uses: softprops/action-gh-release@v2
