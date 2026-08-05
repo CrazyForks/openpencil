@@ -499,3 +499,33 @@ fn subagent_prompt_basic_mobile_food_keeps_mobile_app_skill() {
         "mobile-app carries bottom-nav and top-rhythm rules and must not be truncated; report={report:?}"
     );
 }
+
+/// gemini-3.6-flash wrote `justify.content:` three times in one slide script
+/// and QuickJS threw the whole board away at the first `.`. The runner now
+/// repairs that shape, but the cheaper fix is the model not writing it — so
+/// the property-naming rule must actually reach the sub-agent prompt.
+#[test]
+fn subagent_prompt_teaches_camelcase_property_names() {
+    let st = Subtask {
+        id: "cover".into(),
+        label: "Cover".into(),
+        region: Region {
+            width: 1920.0,
+            height: 1080.0,
+        },
+        id_prefix: "cover".into(),
+        parent_frame_id: Some("root".into()),
+        elements: None,
+        screen: Some("Cover".into()),
+        generated_root_id: None,
+        existing_section_labels: None,
+        retry_feedback: None,
+    };
+    let (cr, _) = bsp(&st, &plan(), &req(), AbortFlag::new(), false, false);
+    for rule in ["PROPERTY NAMES are camelCase", "justify.content"] {
+        assert!(
+            cr.system_prompt.contains(rule),
+            "sub-agent prompt lost the property-naming rule {rule:?}"
+        );
+    }
+}

@@ -4,7 +4,7 @@
 //! 失败时 `build_fallback_plan` 给一个启发式的可跑 plan(对齐 TS
 //! `buildFallbackPlanFromPrompt`)。
 
-use crate::design_type::{detect_design_type, DesignType};
+use crate::design_type::{detect_design_type, DesignType, DesignTypePreset};
 use crate::types::DesignRequest;
 use serde::{Deserialize, Serialize};
 
@@ -187,6 +187,9 @@ pub fn build_fallback_plan(req: &DesignRequest) -> OrchestratorPlan {
     const SECTION_HEIGHT: f64 = 360.0;
 
     let preset = detect_design_type(&req.prompt);
+    if preset.type_ == DesignType::Slides {
+        return build_fallback_deck_plan(req, preset);
+    }
     if preset.type_ == DesignType::MobileScreen {
         let (width, height) = explicit_mobile_size(&req.prompt)
             .unwrap_or((preset.width, preset.root_height.max(preset.height)));
@@ -299,6 +302,154 @@ pub fn build_fallback_plan(req: &DesignRequest) -> OrchestratorPlan {
     }
 }
 
+/// Heuristic deck fallback — the shape a deck plan MUST have, built without
+/// the planning LLM.
+///
+/// Before this branch existed, a deck request whose planning call failed fell
+/// through to the generic 1200-wide "1-3 stacked sections" skeleton below: the
+/// user asked for a presentation and got one scrolling page. The three things
+/// that make a deck a deck are all decided here:
+///
+/// 1. every board is the projector-shaped 1920x1080 preset, never 1200x0;
+/// 2. ONE subtask per slide, each carrying its OWN `screen` label — that label
+///    is what makes `plan_normalize` fan the subtasks into separate root
+///    frames instead of collapsing them onto one board;
+/// 3. the slide count comes from the request when it states one, and from the
+///    prompt's size otherwise — a fallback must not re-introduce the fixed
+///    page count the corpus was just de-anchored from.
+fn build_fallback_deck_plan(req: &DesignRequest, preset: DesignTypePreset) -> OrchestratorPlan {
+    let count = explicit_slide_count(&req.prompt).unwrap_or(
+        // No count in the request: scale with how much the prompt describes,
+        // the same signal the generic branch uses for its section count.
+        match req.prompt.chars().count() {
+            0..=80 => 5,
+            81..=200 => 6,
+            _ => 8,
+        },
+    );
+
+    let subtasks = fallback_slide_titles(count)
+        .into_iter()
+        .enumerate()
+        .map(|(i, title)| {
+            let id = format!("slide-{}", i + 1);
+            Subtask {
+                id: id.clone(),
+                label: title.clone(),
+                region: Region {
+                    width: preset.width,
+                    height: preset.root_height,
+                },
+                id_prefix: id,
+                // Left to `plan_normalize`, which rewrites it per screen group.
+                parent_frame_id: None,
+                elements: Some(fallback_slide_elements(&title).to_string()),
+                screen: Some(title),
+                generated_root_id: None,
+                existing_section_labels: None,
+                retry_feedback: None,
+            }
+        })
+        .collect();
+
+    OrchestratorPlan {
+        root_frame: RootFrameSpec {
+            id: "deck".into(),
+            name: "Deck".into(),
+            width: preset.width,
+            height: preset.root_height,
+            layout: Some("vertical".into()),
+            gap: Some(0.0),
+            padding: Some(0.0),
+            fill: Some(vec![PlanFill {
+                kind: "solid".into(),
+                color: "#FFFFFF".into(),
+            }]),
+        },
+        subtasks,
+        style_guide_name: None,
+    }
+}
+
+/// A generic running order that grows with the count instead of repeating a
+/// fixed six-step outline: cover, optional agenda, N key points, optional
+/// evidence slide, closing. Every title is distinct, which the `screen`
+/// tagging depends on — two slides sharing a label would land on one board.
+fn fallback_slide_titles(count: usize) -> Vec<String> {
+    let mut titles: Vec<String> = vec!["Cover".into()];
+    let mut tail: Vec<String> = vec!["Closing".into()];
+    if count >= 5 {
+        tail.insert(0, "Evidence".into());
+    }
+    if count >= 4 {
+        titles.push("Agenda".into());
+    }
+    let middle = count.saturating_sub(titles.len() + tail.len());
+    titles.extend((1..=middle).map(|i| format!("Key Point {i}")));
+    titles.extend(tail);
+    titles
+}
+
+/// Per-slide `elements` in the deck corpus's own terms — one takeaway plus its
+/// supporting parts, never a list of paragraphs.
+fn fallback_slide_elements(title: &str) -> &'static str {
+    match title {
+        "Cover" => {
+            "the deck's title on one line, a one-line subtitle, and a meta row \
+             with the presenter and the date"
+        }
+        "Agenda" => "a takeaway title plus 3-5 numbered agenda entries, one short line each",
+        "Evidence" => {
+            "a takeaway title plus the figures that support it — 3 KPI cards \
+             (value + unit + label) or one chart placeholder with its insight \
+             written out"
+        }
+        "Closing" => "a closing headline, one supporting line, and a contact / next-step block",
+        _ => {
+            "this slide's ONE takeaway as the title, plus the supporting \
+             content that makes the point — short phrases, never paragraphs"
+        }
+    }
+}
+
+/// An explicitly requested slide count ("12 页", "10-slide", "8 slides").
+///
+/// Bounded to a plausible deck size so an unrelated number in the prompt (a
+/// year, a pixel size, a price) cannot turn into a 2026-slide plan — the unit
+/// word right after the digits is what qualifies it as a slide count at all.
+fn explicit_slide_count(prompt: &str) -> Option<usize> {
+    const UNITS: [&str; 5] = ["slides", "slide", "pages", "page", "页"];
+    let lower = prompt.to_lowercase();
+    let bytes = lower.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if !bytes[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+        // "10-slide" / "12 页" / "8slides" — only separators may intervene.
+        let mut unit_start = i;
+        while unit_start < bytes.len() && matches!(bytes[unit_start], b' ' | b'-' | b'_' | b'\t') {
+            unit_start += 1;
+        }
+        if UNITS
+            .iter()
+            .any(|unit| lower[unit_start..].starts_with(unit))
+        {
+            if let Ok(count) = lower[start..i].parse::<usize>() {
+                if (2..=30).contains(&count) {
+                    return Some(count);
+                }
+            }
+        }
+    }
+    None
+}
+
 fn explicit_mobile_size(prompt: &str) -> Option<(f64, f64)> {
     let normalized = prompt.replace('×', "x").to_lowercase();
     let bytes = normalized.as_bytes();
@@ -340,6 +491,10 @@ fn explicit_mobile_size(prompt: &str) -> Option<(f64, f64)> {
     }
     None
 }
+
+#[cfg(test)]
+#[path = "plan_fallback_deck_tests.rs"]
+mod fallback_deck_tests;
 
 #[cfg(test)]
 mod tests {

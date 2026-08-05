@@ -16,6 +16,9 @@ use rquickjs::{Context, Function, Runtime};
 #[path = "script_runner_error.rs"]
 mod error;
 
+#[path = "script_runner_dotted_keys.rs"]
+mod dotted_keys;
+
 pub use error::ScriptError;
 
 pub const MAX_SCRIPT_BYTES: usize = 262_144;
@@ -96,6 +99,28 @@ fn truncate_duplicate_script(script: &str) -> Option<String> {
 }
 
 fn eval_after_initial_failure(script: &str, first_err: ScriptError) -> Result<String, ScriptError> {
+    // gemini-3.6-flash writes schema property names with the separator it
+    // reads in the docs — `justify.content:` instead of `justifyContent:`.
+    // A bare dotted key is a SyntaxError at the first `.`, so QuickJS
+    // rejected an otherwise-correct slide before recording one `I(...)`.
+    // Normalize FIRST, then let the rest of the ladder work on the repaired
+    // source: a script can be both mis-keyed and truncated.
+    let script = match dotted_keys::repair_dotted_object_keys(script) {
+        Some(repaired) => match eval_to_program(&repaired) {
+            Ok(p) => {
+                tracing::warn!(
+                    original_len = script.len(),
+                    repaired_len = repaired.len(),
+                    "script failed as-is; dotted-property-key repair recovered a runnable source"
+                );
+                return Ok(p);
+            }
+            Err(_) => repaired,
+        },
+        None => script.to_string(),
+    };
+    let script = script.as_str();
+
     // GLM-5.2 commonly drops the outer `}` when `stroke:{...}` is the final
     // property of an I() object, so QuickJS reaches `)` with `{` still open.
     let balanced = balance_brackets(script);

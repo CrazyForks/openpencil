@@ -137,6 +137,49 @@ fn every_augmented_placeholder_has_a_worst_case_in_this_guard() {
     }
 }
 
+/// `decomposition` is the skill that decides how many slides a deck gets, and
+/// the budget trimmer cuts from the END — so a skill that overruns loses its
+/// tail silently while still looking present in the prompt. Asserting the
+/// LAST line of the corpus file reaches the assembled system prompt is what
+/// proves the whole skill arrived, and the deck rules in its middle with it.
+#[test]
+fn decomposition_reaches_the_planning_prompt_with_its_tail_intact() {
+    let request = DesignRequest {
+        prompt: "帮我做一个 12 页的产品培训课件 PPT".into(),
+        ..req()
+    };
+    let pp = build_orchestrator_prompt(&request, PlanningMode::Rich, AbortFlag::new());
+    let system_prompt = &pp.call_request.system_prompt;
+
+    let body = &op_ai_skills::get_skill_by_name("decomposition")
+        .expect("decomposition registered")
+        .content;
+    let last_line = body
+        .trim_end()
+        .lines()
+        .next_back()
+        .expect("decomposition is not empty");
+    assert!(
+        system_prompt.contains(last_line),
+        "decomposition's last line {last_line:?} never reached the planning prompt — \
+         the skill is over its {} budget (measured {}) and its tail was trimmed",
+        op_ai_skills::get_skill_by_name("decomposition")
+            .expect("registered")
+            .meta
+            .budget,
+        estimate_tokens(body)
+    );
+
+    // The de-anchored slide-count teaching sits mid-file; assert it directly
+    // so a future edit can't drop it while keeping the tail.
+    for rule in ["SLIDE COUNT", "HARD constraint"] {
+        assert!(
+            system_prompt.contains(rule),
+            "planning prompt lost the slide-count rule {rule:?}"
+        );
+    }
+}
+
 #[test]
 fn no_planning_skill_is_dropped_or_truncated_by_the_phase_budget() {
     // End-to-end through the real resolver: the per-skill cap AND the phase

@@ -169,6 +169,61 @@ fn decomposition_carries_the_deck_outline_templates_and_copy_caps() {
     assert!(body.contains("slide title <= 14 CJK chars"));
 }
 
+/// A deck used to come back as six slides no matter what was asked, and the
+/// cause was here rather than in any cap: every OUTLINE MODE recipe listed
+/// exactly six steps, so a planner copying the shape copied the length too,
+/// and the only count guidance ("otherwise plan 5-8 slides") sat below them.
+/// The corpus must state a count RULE and must not re-converge the outlines
+/// onto one length.
+#[test]
+fn decomposition_derives_slide_count_from_the_material_not_the_outline_length() {
+    let body = &get_skill_by_name("decomposition")
+        .expect("decomposition registered")
+        .content;
+
+    assert!(body.contains("SLIDE COUNT"), "count rules must be stated");
+    assert!(
+        body.contains("HARD constraint"),
+        "an explicitly requested count must be taught as binding, not advisory"
+    );
+    for range in ["5-8", "8-12", "12-20", "3-6"] {
+        assert!(
+            body.contains(range),
+            "count must be sized per deck kind; missing the {range} band"
+        );
+    }
+
+    // Structural anti-anchor: the running orders must not all be the same
+    // length again. Each outline line is `- <Kind>: a - b - c.`, so the step
+    // count is the number of ` - ` separators plus one.
+    let step_counts: Vec<usize> = body
+        .lines()
+        .map(str::trim)
+        .filter(|line| {
+            line.starts_with("- ")
+                && line.ends_with('.')
+                && line.contains("cover -")
+                && line.contains(':')
+        })
+        .map(|line| line.matches(" - ").count() + 1)
+        .collect();
+    assert!(
+        step_counts.len() >= 4,
+        "expected the per-purpose outlines to be parseable, found {step_counts:?}"
+    );
+    assert!(
+        step_counts.iter().any(|&n| n != step_counts[0]),
+        "every outline is {} steps long again — that uniform length IS the \
+         page-count anchor this guard exists to prevent: {step_counts:?}",
+        step_counts[0]
+    );
+    assert!(
+        step_counts.iter().any(|&n| n > 6),
+        "no outline runs past six steps, so copying one still caps the deck at \
+         the old default: {step_counts:?}"
+    );
+}
+
 #[test]
 fn every_deck_prompt_resolves_both_deck_skills_untruncated() {
     // The generation-phase total is what actually decides this; these prompts

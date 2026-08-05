@@ -286,3 +286,36 @@ fn glm_missing_outer_brace_repairs_on_eval_failure() {
     assert_eq!(lines.len(), 1);
     assert!(lines[0].contains(r#""name":"Profile Button""#));
 }
+
+/// gemini-3.6-flash measured shape (2026-08-05): three `justify.content:`
+/// keys in an otherwise valid slide script. A bare dotted key is a
+/// SyntaxError, so the whole board used to be lost to a retry.
+#[test]
+fn dotted_property_keys_repair_on_eval_failure() {
+    let broken = r##"const slide = I(null, {type:"frame", name:"01 Cover", width:1920, height:1080, layout:"vertical", justify.content:"space_between", align.items:"start"});
+I(slide, {type:"text", content:"Q3 Review", font.size:104});"##;
+
+    let program = run_script_to_program(broken).expect("runner retries with dotted-key repair");
+
+    let lines: Vec<&str> = program.lines().collect();
+    assert_eq!(lines.len(), 2, "both inserts survive: {program}");
+    assert!(
+        lines[0].contains(r#""justifyContent":"space_between""#),
+        "{program}"
+    );
+    assert!(lines[0].contains(r#""alignItems":"start""#), "{program}");
+    assert!(lines[1].contains(r#""fontSize":104"#), "{program}");
+}
+
+/// The repair must compose with the ladder below it — a script can be both
+/// mis-keyed AND missing its closing brace, which is exactly what a model
+/// that got the property names wrong tends to also get wrong.
+#[test]
+fn dotted_keys_and_a_missing_brace_repair_together() {
+    let broken = r##"const card = I(null, {type:"frame", name:"KPI", corner.radius:24, stroke:{thickness:1, fill:[{type:"solid", color:"#EAD8C8"}]});"##;
+
+    let program = run_script_to_program(broken).expect("both repairs apply");
+
+    assert_eq!(program.lines().count(), 1, "{program}");
+    assert!(program.contains(r#""cornerRadius":24"#), "{program}");
+}

@@ -190,12 +190,14 @@ async fn planning_loop(
                     "planning parse failure"
                 );
             }
-            Err(true) => {
-                // abort 在流中发生 → 立即返回
-                return Err(OrchestratorError::Aborted);
-            }
-            Err(false) => {
-                tracing::warn!(attempt, "planning stream error");
+            // abort 在流中发生 → 立即返回
+            Err(error) if error.aborted => return Err(OrchestratorError::Aborted),
+            Err(error) => {
+                // 带上原因:此前只记 attempt,用户贴来的日志里
+                // "planning stream error" 无从区分 429 限流 / 网络中断 /
+                // provider 报错,只能靠猜。
+                let reason = error.message.trim().chars().take(200).collect::<String>();
+                tracing::warn!(attempt, error = %reason, "planning stream error");
             }
         }
         if abort.is_set() {
@@ -211,16 +213,17 @@ async fn planning_loop(
 }
 
 /// 消费一次 LLM 调用的流 —— 拼接所有 `Text` chunk,丢弃 `Thinking`。
-/// `Err(true)` 表示中止,`Err(false)` 表示真实错误。
+/// 错误原样透出(`aborted` 区分中止 / 真实错误),调用方据此决定是
+/// 立即返回还是重试,并把 `message` 写进日志。
 async fn collect_text(
     mut stream: futures::stream::BoxStream<'static, Result<LlmChunk, crate::types::LlmError>>,
-) -> Result<String, bool> {
+) -> Result<String, crate::types::LlmError> {
     let mut text = String::new();
     while let Some(item) = stream.next().await {
         match item {
             Ok(LlmChunk::Text(t)) => text.push_str(&t),
             Ok(LlmChunk::Thinking(_)) => {}
-            Err(e) => return Err(e.aborted),
+            Err(e) => return Err(e),
         }
     }
     Ok(text)
