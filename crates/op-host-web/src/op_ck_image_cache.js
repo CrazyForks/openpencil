@@ -69,12 +69,122 @@ const deleteImage = (image) => {
   if (image && image.delete) image.delete();
 };
 
+// SVG has no magic bytes — sniff the markup (first 4 KiB decode as text and
+// contain an `<svg` tag). Mirrors the native seam's sniff in
+// `op-editor-ui/.../svg_raster.rs`.
+const sniffsAsSvg = (bytes) => {
+  try {
+    const head = new TextDecoder().decode(
+      bytes.subarray(0, Math.min(bytes.byteLength, 4096)),
+    );
+    const trimmed = head.replace(/^﻿/, '').trimStart();
+    return trimmed.startsWith('<') && trimmed.includes('<svg');
+  } catch (_error) {
+    return false;
+  }
+};
+
+const SVG_RASTER_MAX_EDGE = 2048;
+const SVG_RASTER_SCALE = 2;
+const SVG_FAILURE_CAP = 1024;
+
 export function createWebImageCaches(CK) {
   const fullImageCache = new Map();
   let fullImageCacheBytes = 0;
   const thumbnailCache = new Map();
   let thumbnailCacheBytes = 0;
   const thumbnailFailures = new Set();
+  // SVG rasterizations in flight / permanently failed. Pending keys report
+  // decode success to the Rust side so the id is not negative-cached; paint
+  // keeps re-requesting until the browser's async decode lands the raster
+  // in `fullImageCache`.
+  const svgPending = new Set();
+  const svgFailures = new Set();
+
+  const rememberSvgFailure = (key) => {
+    if (svgFailures.size >= SVG_FAILURE_CAP) {
+      svgFailures.delete(svgFailures.values().next().value);
+    }
+    svgFailures.add(key);
+  };
+
+  const installRasterizedSvg = (key, img) => {
+    const sourceW = img.naturalWidth || img.width;
+    const sourceH = img.naturalHeight || img.height;
+    if (!(sourceW > 0) || !(sourceH > 0)) return false;
+    const scale = Math.min(
+      SVG_RASTER_SCALE,
+      SVG_RASTER_MAX_EDGE / Math.max(sourceW, sourceH),
+    );
+    if (!(scale > 0)) return false;
+    const width = Math.max(1, Math.round(sourceW * scale));
+    const height = Math.max(1, Math.round(sourceH * scale));
+    const surface = document.createElement('canvas');
+    surface.width = width;
+    surface.height = height;
+    const context = surface.getContext('2d');
+    if (!context) return false;
+    context.drawImage(img, 0, 0, width, height);
+    const pixels = context.getImageData(0, 0, width, height);
+    if (!CK.MakeImage) return false;
+    const image = CK.MakeImage(
+      {
+        width,
+        height,
+        colorType: CK.ColorType.RGBA_8888,
+        alphaType: CK.AlphaType.Unpremul,
+        colorSpace: CK.ColorSpace.SRGB,
+      },
+      pixels.data,
+      4 * width,
+    );
+    if (!image) return false;
+    const bytes = decodedRasterBytes(image);
+    if (!(bytes > 0)) {
+      deleteImage(image);
+      return false;
+    }
+    fullImageCache.set(key, {
+      image,
+      bytes,
+      coversEdgePx: Number.MAX_SAFE_INTEGER,
+    });
+    fullImageCacheBytes += bytes;
+    evictFullImages();
+    return fullImageCache.has(key);
+  };
+
+  // The browser is the SVG decoder CanvasKit lacks: load the markup into an
+  // `<img>` (async), draw it onto a 2d canvas, and install the pixels as an
+  // ordinary CanvasKit image. resvg does this on native; carrying it into
+  // the wasm bundle would bust the 6 MiB ceiling for a codec the platform
+  // already ships.
+  const startSvgRaster = (key, encoded) => {
+    if (svgPending.has(key)) return;
+    svgPending.add(key);
+    let url = null;
+    const settle = (installed) => {
+      if (url) URL.revokeObjectURL(url);
+      svgPending.delete(key);
+      if (!installed) rememberSvgFailure(key);
+    };
+    try {
+      const blob = new Blob([copyBytes(encoded)], { type: 'image/svg+xml' });
+      url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        try {
+          settle(installRasterizedSvg(key, img));
+        } catch (_error) {
+          settle(false);
+        }
+      };
+      img.onerror = () => settle(false);
+      img.src = url;
+    } catch (_error) {
+      settle(false);
+    }
+  };
 
   const evictFullImages = () => {
     while (
@@ -145,7 +255,19 @@ export function createWebImageCaches(CK) {
     let image = null;
     try {
       image = CK.MakeImageFromEncoded(copyBytes(encoded));
-      if (!image) return false;
+      if (!image) {
+        // CanvasKit has no SVG codec — hand the markup to the browser's own
+        // decoder. Reporting `true` while the async raster is in flight
+        // keeps the id off the Rust side's permanent-failure cache; paint
+        // re-requests each frame until the raster lands (or the failure is
+        // remembered here and this returns false for good).
+        if (svgFailures.has(key)) return false;
+        if (sniffsAsSvg(encoded)) {
+          startSvgRaster(key, encoded);
+          return true;
+        }
+        return false;
+      }
       const bytes = decodedRasterBytes(image);
       if (!(bytes > 0)) {
         deleteImage(image);

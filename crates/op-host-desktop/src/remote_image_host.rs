@@ -169,6 +169,9 @@ fn fetch_remote_image_blocking(url: &str) -> Result<Vec<u8>, AssetFetchError> {
 
 /// Magic-byte sniff for the codecs skia decodes (PNG / JPEG / GIF /
 /// WebP / BMP) — used when the server omits an `image/*` content type.
+/// SVG markup is also accepted: it has no magic bytes, and the painter's
+/// byte-cache seam rasterizes it to PNG before skia ever sees it, so
+/// rejecting it here is what kept every remote `.svg` a placeholder.
 fn looks_like_image(bytes: &[u8]) -> bool {
     bytes.starts_with(b"\x89PNG\r\n\x1a\n")
         || bytes.starts_with(&[0xFF, 0xD8, 0xFF])
@@ -176,6 +179,16 @@ fn looks_like_image(bytes: &[u8]) -> bool {
         || bytes.starts_with(b"GIF89a")
         || (bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP")
         || bytes.starts_with(b"BM")
+        || looks_like_svg(bytes)
+}
+
+fn looks_like_svg(bytes: &[u8]) -> bool {
+    let head = &bytes[..bytes.len().min(4096)];
+    let Ok(text) = std::str::from_utf8(head) else {
+        return false;
+    };
+    let trimmed = text.trim_start_matches('\u{feff}').trim_start();
+    trimmed.starts_with('<') && trimmed.contains("<svg")
 }
 
 #[cfg(test)]

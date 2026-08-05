@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 mod decode_registry;
 mod picture_glyph;
+mod svg_raster;
 #[cfg(test)]
 mod test_support;
 
@@ -181,8 +182,11 @@ pub fn store_remote_image_bytes(id: u64, bytes: Vec<u8>) {
         mark_remote_image_failed(id);
         return;
     }
+    // A remote `.svg` decodes in neither skia nor CanvasKit — rasterize at
+    // the seam so the cache only ever holds bitmap codecs.
+    let bytes = svg_raster::ensure_raster_bytes(Arc::from(bytes.into_boxed_slice()));
     if let Ok(mut cache) = data_url_cache().lock() {
-        cache.insert(id, Arc::from(bytes.into_boxed_slice()));
+        cache.insert(id, bytes);
     }
     if let Ok(mut reg) = remote_images().lock() {
         reg.requested.remove(&id);
@@ -259,7 +263,9 @@ pub(crate) fn image_source_bytes(src: &str, image_src_id: u64) -> Option<Arc<[u8
         note_remote_image_miss(id, src);
         return None;
     }
-    let decoded = decode_data_url_bytes(src)?;
+    // An SVG data URI decodes in neither skia nor CanvasKit — rasterize at
+    // the seam so the cache only ever holds bitmap codecs.
+    let decoded = svg_raster::ensure_raster_bytes(decode_data_url_bytes(src)?);
     if let Ok(mut cache) = data_url_cache().lock() {
         cache.insert(id, decoded.clone());
     }
@@ -272,7 +278,15 @@ fn decode_data_url_bytes(src: &str) -> Option<Arc<[u8]>> {
     let meta = &after_scheme[..comma];
     let payload = &after_scheme[comma + 1..];
     if !meta.contains(";base64") {
-        return None;
+        // The only textual `data:` payload worth carrying is SVG markup —
+        // CSS commonly embeds icons as `data:image/svg+xml,%3Csvg...`
+        // percent-encoded rather than base64. Anything else stays undecoded
+        // as before.
+        if !meta.contains("image/svg") {
+            return None;
+        }
+        let decoded = percent_decode(payload)?;
+        return Some(Arc::from(decoded.into_boxed_slice()));
     }
 
     use base64::engine::general_purpose::STANDARD as B64;
@@ -287,6 +301,26 @@ fn decode_data_url_bytes(src: &str) -> Option<Arc<[u8]>> {
         B64.decode(payload.as_bytes()).ok()?
     };
     Some(Arc::from(decoded.into_boxed_slice()))
+}
+
+/// Decode `%XX` escapes; every other byte passes through verbatim (a data
+/// URI does not use `+` for space).
+fn percent_decode(payload: &str) -> Option<Vec<u8>> {
+    let bytes = payload.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] == b'%' {
+            let hex = bytes.get(at + 1..at + 3)?;
+            let hex = std::str::from_utf8(hex).ok()?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            at += 3;
+        } else {
+            out.push(bytes[at]);
+            at += 1;
+        }
+    }
+    Some(out)
 }
 
 /// Paint a raster image inside `world_rect`. The source bytes and decoded

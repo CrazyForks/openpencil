@@ -247,6 +247,32 @@ fn data_url_cache_reuses_decoded_bytes() {
     assert_eq!(data_url_cache_len_for_tests(), 1);
 }
 
+/// A captured page's `data:image/svg+xml` fallback rasterizes to PNG at the
+/// cache seam — skia and CanvasKit decode neither, so caching the raw SVG
+/// bytes would paint the placeholder forever.
+#[test]
+fn an_svg_data_url_is_rasterized_into_png_bytes() {
+    let _guard = lock_statics();
+    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="#0000ff"/></svg>"##;
+    use base64::engine::general_purpose::STANDARD as B64;
+    use base64::Engine as _;
+    let src = format!("data:image/svg+xml;base64,{}", B64.encode(svg));
+
+    let bytes = image_source_bytes(&src, 11).expect("decode");
+    assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"), "cached as PNG");
+}
+
+/// CSS embeds icons as percent-encoded (non-base64) svg data URIs; those
+/// must decode and rasterize the same way.
+#[test]
+fn a_percent_encoded_svg_data_url_also_rasterizes() {
+    let _guard = lock_statics();
+    let src = "data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%224%22%20height=%224%22%3E%3Crect%20width=%224%22%20height=%224%22%20fill=%22%23ff00ff%22/%3E%3C/svg%3E";
+
+    let bytes = image_source_bytes(src, 12).expect("decode");
+    assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"), "cached as PNG");
+}
+
 #[test]
 fn undecoded_image_is_queued_without_drawing_encoded_bytes() {
     let _guard = lock_statics();

@@ -43,6 +43,17 @@ base64 = "0.22"
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 
+# Rasterize SVG image sources into PNG at the byte-cache seam — skia
+# decodes PNG/JPEG/GIF/WebP, not SVG, so every captured-page `<svg>`
+# fallback and remote `.svg` painted as a placeholder. NATIVE ONLY:
+# measured +0.9 MiB gzip on the wasm bundle (over the 6 MiB ceiling),
+# and the browser host doesn't need it — its CanvasKit bridge falls
+# back to the browser's own SVG decoder at decode time. Minimal feature
+# set on purpose: no `text` (needs fontdb + system fonts) and no
+# `raster-images` (not worth carrying the `image` crate).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+resvg = { version = "0.48", default-features = false }
+
 [dev-dependencies]
 # Enable jian-scene's find-visit instrumentation so the canvas-viewport
 # paint tests can assert scene-traversal visit counts.
