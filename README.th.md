@@ -40,8 +40,6 @@
   <sub>The trend above is rendered with <a href="https://github.com/InnerAura/hyperweave"><b>HyperWeave</b></a> — an experimental SVG artifact layer for agents. &nbsp;<a href="https://github.com/InnerAura/hyperweave"><b>Explore&nbsp;→</b></a></sub>
 </p>
 
-> **หมายเหตุ:** มีโปรเจกต์โอเพนซอร์สอีกโปรเจกต์หนึ่งที่ใช้ชื่อเดียวกัน — [OpenPencil](https://github.com/open-pencil/open-pencil) ซึ่งเน้นการออกแบบภาพที่เข้ากันได้กับ Figma พร้อมการทำงานร่วมกันแบบเรียลไทม์ โปรเจกต์นี้เน้นเวิร์กโฟลว์ AI-native สำหรับการแปลงดีไซน์เป็นโค้ด
-
 ## ทำไมต้อง OpenPencil
 
 <table>
