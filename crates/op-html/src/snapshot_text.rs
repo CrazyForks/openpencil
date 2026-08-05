@@ -99,11 +99,29 @@ impl SnapshotCtx<'_> {
             Some("normal") => Some(FontStyleKind::Normal),
             _ => None,
         };
+        let lines = line_count(object);
+        let nowrap = is_nowrap(&styles);
+        // The capture measures glyph boxes (a `Range`'s rects), so the page's
+        // own half-leading is already baked into the captured `y` — a
+        // vertically-centred footer (`line-height: 40px` on 14px text) hands
+        // this importer the ~15px glyph box, not the 40px line box. Painting
+        // that line-height again applies the half-leading a second time and
+        // pushed such runs a dozen pixels below the captured box (while a
+        // neighbouring run with a normal line-height stayed put — the footer
+        // misalignment). On a run the browser kept to one line the
+        // line-height is pure leading, so it is clamped to the captured box;
+        // a wrapped run keeps it, because there it is the stride between
+        // lines.
         let line_height = styles
             .get("line-height")
             .and_then(|value| parse_px(value))
             .filter(|_| font_size > 0.0)
             .map(|height| height / font_size);
+        let line_height = if is_single_line(lines, nowrap) {
+            clamp_single_line_leading(line_height, font_size, rect.h)
+        } else {
+            line_height
+        };
         let letter_spacing = styles
             .get("letter-spacing")
             .filter(|value| value.as_str() != "normal")
@@ -111,17 +129,29 @@ impl SnapshotCtx<'_> {
         let text_align = styles
             .get("text-align")
             .and_then(|value| parse_text_align(value));
-        let fill = styles
-            .get("color")
-            .and_then(|value| parse_css_color(value))
-            .map(|color| vec![solid_fill(color)]);
-        let sizing = text_box(rect, line_count(object), is_nowrap(&styles));
+        // Transparent glyphs under a `background-clip: text` ancestor take
+        // the colour that ancestor's background moved onto the context (the
+        // gradient-text idiom — see `map_element`). Transparent text WITHOUT
+        // such an ancestor stays transparent: that is what the page shows.
+        let fill = match styles.get("color") {
+            Some(value) if is_transparent_color(value) => self
+                .text_fill_override
+                .clone()
+                .or_else(|| parse_css_color(value))
+                .map(|color| vec![solid_fill(color)]),
+            Some(value) => parse_css_color(value).map(|color| vec![solid_fill(color)]),
+            None => self
+                .text_fill_override
+                .clone()
+                .map(|color| vec![solid_fill(color)]),
+        };
+        let sizing = text_box(rect, lines, nowrap);
         Some(PenNode::Text(TextNode {
             base: self.base(id, Some("Text".into()), rect, Some(parent_rect)),
             limits: sizing.limits,
             width: sizing.width,
             height: sizing.height,
-            content: styled_content(object, text),
+            content: styled_content(object, text, self.text_fill_override.as_deref()),
             font_family: styles.get("font-family").cloned(),
             font_size: Some(font_size),
             font_weight,
@@ -154,7 +184,11 @@ impl SnapshotCtx<'_> {
 /// instead of each inline child stacking at the block origin (the overlap this
 /// fixes). A payload with no `segments` (an older capture) or one that reduces
 /// to a single unstyled run falls back to plain text.
-fn styled_content(object: &Map<String, Value>, plain: String) -> TextContent {
+fn styled_content(
+    object: &Map<String, Value>,
+    plain: String,
+    fill_override: Option<&str>,
+) -> TextContent {
     let Some(items) = object.get("segments").and_then(Value::as_array) else {
         return TextContent::Plain(plain);
     };
@@ -184,7 +218,14 @@ fn styled_content(object: &Map<String, Value>, plain: String) -> TextContent {
                 Some("normal") => Some(SegmentFontStyle::Normal),
                 _ => None,
             },
-            fill: style("color").and_then(parse_css_color),
+            // Transparent segments under a `background-clip: text` ancestor
+            // take the moved background colour, like the node-level fill.
+            fill: match style("color") {
+                Some(value) if is_transparent_color(value) => fill_override
+                    .map(str::to_string)
+                    .or_else(|| parse_css_color(value)),
+                other => other.and_then(parse_css_color),
+            },
             underline: decoration.contains("underline").then_some(true),
             strikethrough: decoration.contains("line-through").then_some(true),
             href: segment
@@ -230,6 +271,32 @@ fn line_count(object: &Map<String, Value>) -> u64 {
         .and_then(Value::as_u64)
         .filter(|lines| *lines > 0)
         .unwrap_or(1)
+}
+
+/// The two spellings a captured fully-transparent glyph colour arrives in
+/// (Chrome computes `transparent` as `rgba(0, 0, 0, 0)`; console captures on
+/// other engines may keep the keyword).
+fn is_transparent_color(value: &str) -> bool {
+    value == "rgba(0, 0, 0, 0)" || value.eq_ignore_ascii_case("transparent")
+}
+
+/// Whether `text_box` treats the run as single-line (the hug branch).
+fn is_single_line(lines: u64, nowrap: bool) -> bool {
+    lines <= 1 || nowrap
+}
+
+/// Cap a single-line run's line-height at the captured glyph box so paint
+/// does not re-apply half-leading the page already positioned (see the
+/// comment at the call site). A missing or already-tight line-height passes
+/// through.
+fn clamp_single_line_leading(line_height: Option<f64>, font_size: f64, rect_h: f64) -> Option<f64> {
+    line_height.map(|leading| {
+        if font_size > 0.0 && rect_h > 0.0 {
+            leading.min(rect_h / font_size)
+        } else {
+            leading
+        }
+    })
 }
 
 /// Runs the browser never wrapped, so the importer must not wrap them either.
@@ -307,5 +374,27 @@ mod tests {
     fn missing_line_count_reads_as_one_line() {
         let object = serde_json::json!({ "text": "x" });
         assert_eq!(line_count(object.as_object().unwrap()), 1);
+    }
+
+    /// The vertically-centred footer case: `line-height: 40px` on 14px text
+    /// whose captured glyph box is 15.5px tall. Painting the authored
+    /// leading again would push the run ~12px below the captured box.
+    #[test]
+    fn a_single_line_run_clamps_its_leading_to_the_captured_box() {
+        let clamped = clamp_single_line_leading(Some(40.0 / 14.0), 14.0, 15.5);
+        assert!((clamped.unwrap() - 15.5 / 14.0).abs() < 1e-9);
+        // An already-tight leading passes through untouched.
+        let tight = clamp_single_line_leading(Some(1.05), 14.0, 15.5);
+        assert_eq!(tight, Some(1.05));
+        assert_eq!(clamp_single_line_leading(None, 14.0, 15.5), None);
+        // Degenerate geometry never divides by zero.
+        assert_eq!(clamp_single_line_leading(Some(2.0), 0.0, 15.5), Some(2.0));
+    }
+
+    #[test]
+    fn only_the_hug_branch_counts_as_single_line() {
+        assert!(is_single_line(1, false));
+        assert!(is_single_line(3, true), "nowrap hugs whatever rects say");
+        assert!(!is_single_line(2, false));
     }
 }

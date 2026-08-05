@@ -132,24 +132,118 @@ fn single_trivial_segment_reduces_to_plain_text() {
     assert_eq!(text.content, TextContent::Plain("just text".to_string()));
 }
 
+/// The gradient-text idiom (`background-clip: text` + transparent glyphs):
+/// the box's gradient must NOT paint as a bar over invisible text — it moves
+/// off the box and colours the glyphs (first stop) instead.
+#[test]
+fn background_clip_text_moves_the_gradient_onto_the_glyphs() {
+    let json = r#"{
+      "version": 1,
+      "root": {
+        "kind": "element", "tag": "section",
+        "rect": { "x": 0, "y": 0, "w": 800, "h": 200 },
+        "children": [
+          { "kind": "element", "tag": "h1",
+            "rect": { "x": 100, "y": 40, "w": 600, "h": 90 },
+            "styles": {
+              "background-image": "linear-gradient(135deg, rgb(15, 23, 42), rgb(100, 116, 139))",
+              "background-clip": "text"
+            },
+            "children": [
+              { "kind": "text",
+                "rect": { "x": 100, "y": 45, "w": 600, "h": 80 },
+                "text": "可编辑的产品界面。",
+                "lines": 1,
+                "styles": { "font-size": "72px", "color": "rgba(0, 0, 0, 0)" } }
+            ] }
+        ]
+      }
+    }"#;
+    let result = import_snapshot(json, &HtmlImportOptions::default());
+    let PenNode::Frame(root) = &result.nodes[0] else {
+        panic!()
+    };
+    let PenNode::Frame(heading) = &root.children.as_ref().unwrap()[0] else {
+        panic!("heading frame")
+    };
+    assert!(
+        heading.container.fill.is_none(),
+        "the clipped background must not paint as a bar: {:?}",
+        heading.container.fill
+    );
+    let PenNode::Text(text) = &heading.children.as_ref().unwrap()[0] else {
+        panic!("text child")
+    };
+    let fill = text.fill.as_ref().expect("glyphs take the moved colour");
+    let jian_ops_schema::style::PenFill::Solid(solid) = &fill[0] else {
+        panic!("solid glyph colour")
+    };
+    assert!(
+        !solid.color.starts_with("#000000"),
+        "glyphs must not stay transparent black, got {}",
+        solid.color
+    );
+}
+
+/// The Google-footer regression: a one-line run inside a `line-height: 40px`
+/// container imports with its leading clamped to the captured glyph box, so
+/// paint does not push it ~12px below neighbours that carry a normal
+/// line-height.
+#[test]
+fn a_single_line_run_with_oversized_leading_imports_clamped() {
+    let json = r#"{
+      "version": 1,
+      "root": {
+        "kind": "element", "tag": "div",
+        "rect": { "x": 0, "y": 0, "w": 400, "h": 40 },
+        "children": [
+          { "kind": "text",
+            "rect": { "x": 14, "y": 12, "w": 116, "h": 15.5 },
+            "text": "广州市 中国广东省",
+            "lines": 1,
+            "styles": { "font-size": "14px", "line-height": "40px" } }
+        ]
+      }
+    }"#;
+    let result = import_snapshot(json, &HtmlImportOptions::default());
+    let PenNode::Frame(root) = &result.nodes[0] else {
+        panic!()
+    };
+    let PenNode::Text(text) = &root.children.as_ref().unwrap()[0] else {
+        panic!("text run")
+    };
+    let leading = text.line_height.expect("line height kept");
+    assert!(
+        (leading - 15.5 / 14.0).abs() < 1e-9,
+        "leading clamped to the glyph box, got {leading}"
+    );
+}
+
 /// Source-level guards for the inline-fold contract (see
 /// `folded_inline_block_is_one_styled_text_node_without_overlap`). The
 /// extractor needs a live DOM, so the invariants are pinned where they are
 /// written.
 #[test]
 fn snapshot_extractor_pins_its_inline_fold_contract() {
-    // A block that lays its children out as one inline flow folds to a single
-    // text node instead of a node per inline child.
+    // Consecutive inline-flow children of a block-like parent fold into one
+    // text node per run instead of a node per inline child — and only under
+    // block-like displays, where inline children genuinely flow as text
+    // (a flex / grid parent lays them out as items).
     assert!(
-        SNAPSHOT_EXTRACTOR_JS.contains("isInlineTextBlock(element, computed)"),
-        "inline blocks must be detected and folded"
+        SNAPSHOT_EXTRACTOR_JS.contains("blockLikeDisplay(computed)"),
+        "run folding must be gated on a block-like parent display"
     );
-    // The folded node is positioned at the inline content's own box (a range
-    // over the element's contents), so padding is excluded and every line box
-    // is counted — never one union box per child stacked at the block origin.
     assert!(
-        SNAPSHOT_EXTRACTOR_JS.contains("range.selectNodeContents(element)"),
-        "the folded box must come from the inline content, not per-child rects"
+        SNAPSHOT_EXTRACTOR_JS.contains("buildInlineRun(element, run, computed)"),
+        "consecutive inline children must fold as runs"
+    );
+    // The folded node is positioned at the run's own box (a range spanning
+    // exactly the run's siblings), so every line box is counted — never one
+    // union box per child stacked at the block origin.
+    assert!(
+        SNAPSHOT_EXTRACTOR_JS.contains("range.setStartBefore(nodes[0])")
+            && SNAPSHOT_EXTRACTOR_JS.contains("range.setEndAfter(nodes[nodes.length - 1])"),
+        "the folded box must come from the run's own range, not per-child rects"
     );
     // Per-run styling (link colour + href, code's monospace family) rides on
     // `segments`, so folding does not flatten the paragraph to one style.

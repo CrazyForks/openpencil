@@ -198,6 +198,12 @@ struct SnapshotCtx<'a> {
     /// The page's own backdrop colour, used for the root frame when the
     /// captured root has no background of its own.
     page_background: Option<String>,
+    /// Glyph colour inherited from a `background-clip: text` ancestor. The
+    /// gradient-text idiom paints the ancestor's background *through* the
+    /// glyphs and makes the glyph colour itself transparent; descendant text
+    /// whose own colour is transparent picks this up instead (see
+    /// `map_element`).
+    text_fill_override: Option<String>,
 }
 
 impl<'a> SnapshotCtx<'a> {
@@ -211,6 +217,7 @@ impl<'a> SnapshotCtx<'a> {
             output_truncated: false,
             tainted_images: 0,
             page_background: None,
+            text_fill_override: None,
         }
     }
 
@@ -284,6 +291,22 @@ impl<'a> SnapshotCtx<'a> {
         container.layout = Some(LayoutMode::None);
         container.width = Some(SizingBehavior::Number(rect.w));
         container.height = Some(SizingBehavior::Number(rect.h));
+        // The gradient-text idiom: `background-clip: text` paints this box's
+        // background *through* its glyphs, and the glyph colour itself is
+        // transparent. Painting the background as an ordinary fill produced a
+        // solid gradient bar over invisible text — so the fill moves off the
+        // box and becomes the descendants' glyph colour instead (the first
+        // gradient stop; per-glyph gradients are not paintable text fills).
+        let saved_text_fill = self.text_fill_override.clone();
+        if styles.get("background-clip").map(String::as_str) == Some("text") {
+            if let Some(color) = container
+                .fill
+                .take()
+                .and_then(|fills| fill_glyph_color(&fills))
+            {
+                self.text_fill_override = Some(color);
+            }
+        }
         if container.clip_content == Some(true)
             && !has_corner_radius(&container)
             && clip_is_inert(object, rect)
@@ -345,6 +368,7 @@ impl<'a> SnapshotCtx<'a> {
             })
             .unwrap_or_default();
         let children = snapshot_stack::to_front_to_back(ordered);
+        self.text_fill_override = saved_text_fill;
         Some(PenNode::Frame(FrameNode {
             base,
             container,
@@ -751,6 +775,18 @@ fn matrix_rotation(value: &str) -> Option<f64> {
         return None;
     }
     Some(values[1].atan2(values[0]).to_degrees())
+}
+
+/// The single glyph colour a `background-clip: text` fill collapses to: a
+/// solid keeps its colour, a gradient contributes its first stop (a per-glyph
+/// gradient is not a paintable text fill in the schema).
+fn fill_glyph_color(fills: &[PenFill]) -> Option<String> {
+    fills.iter().find_map(|fill| match fill {
+        PenFill::Solid(body) => Some(body.color.clone()),
+        PenFill::LinearGradient(body) => body.stops.first().map(|stop| stop.color.clone()),
+        PenFill::RadialGradient(body) => body.stops.first().map(|stop| stop.color.clone()),
+        _ => None,
+    })
 }
 
 fn solid_fill(color: String) -> PenFill {

@@ -36,7 +36,7 @@ fn snapshot_extractor_pins_its_geometry_contract() {
     // Material's `<path fill="none" d="M0 0h24v24H0z"/>` sizing rect doubled
     // every glyph.
     assert!(
-        SNAPSHOT_EXTRACTOR_JS.contains("box = unionBox(box, segmentBox)"),
+        SNAPSHOT_EXTRACTOR_JS.contains("unionBox(current.box, segmentBox)"),
         "vector box must be the union of contributing shapes"
     );
     assert!(
@@ -72,7 +72,7 @@ fn snapshot_extractor_pins_its_geometry_contract() {
     // Vector geometry rides alongside the image serialization; the node keeps
     // `kind: "image"` so an importer that predates it still reads a node.
     assert!(
-        SNAPSHOT_EXTRACTOR_JS.contains("result.vectorRect = vector.rect;"),
+        SNAPSHOT_EXTRACTOR_JS.contains("result.vectorRect = fragments[0].rect;"),
         "the artwork box must travel next to the element rect"
     );
     assert!(
@@ -341,6 +341,60 @@ fn path_data_on_an_image_node_wins_over_its_serialization() {
     assert_eq!(path.base.y, Some(8.0));
     assert!(matches!(path.width, Some(SizingBehavior::Number(w)) if w == 20.0));
     assert!(matches!(path.height, Some(SizingBehavior::Number(h)) if h == 16.0));
+    assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+}
+
+/// Multi-colour flat art arrives as a plain container holding one
+/// path-carrying image node per colour group (the extractor's expansion for
+/// SVGs `vectorizeSvg` used to bail on). Each child must land as a native
+/// path with its own fill and artwork box — the raster fallback these
+/// replaced was an undecodable SVG data URI.
+#[test]
+fn a_multi_colour_svg_wrapper_imports_as_one_path_per_colour() {
+    let json = r#"{
+      "version": 1,
+      "root": {
+        "kind": "element", "tag": "div",
+        "rect": { "x": 0, "y": 0, "w": 120, "h": 40 },
+        "children": [
+          { "kind": "element", "tag": "svg",
+            "rect": { "x": 10, "y": 4, "w": 96, "h": 32 },
+            "styles": {},
+            "children": [
+              { "kind": "image", "tag": "svg",
+                "rect": { "x": 10, "y": 4, "w": 44, "h": 32 },
+                "src": "data:image/png;base64,iVBORw0KGgo=",
+                "vectorRect": { "x": 10, "y": 4, "w": 44, "h": 32 },
+                "d": "M0 0h20v32H0z", "fill": "rgb(66, 133, 244)",
+                "styles": {} },
+              { "kind": "image", "tag": "svg",
+                "rect": { "x": 62, "y": 4, "w": 44, "h": 32 },
+                "src": "data:image/png;base64,iVBORw0KGgo=",
+                "vectorRect": { "x": 62, "y": 4, "w": 44, "h": 32 },
+                "d": "M24 0h20v32H24z", "fill": "rgb(234, 67, 53)",
+                "styles": {} }
+            ] }
+        ]
+      }
+    }"#;
+    let result = import_snapshot(json, &HtmlImportOptions::default());
+    let PenNode::Frame(root) = &result.nodes[0] else {
+        panic!()
+    };
+    let PenNode::Frame(svg) = &root.children.as_ref().unwrap()[0] else {
+        panic!("svg wrapper frame")
+    };
+    let children = svg.children.as_ref().unwrap();
+    assert_eq!(children.len(), 2);
+    let mut fills = Vec::new();
+    for (index, child) in children.iter().enumerate() {
+        let PenNode::Path(path) = child else {
+            panic!("path child {index}")
+        };
+        assert!(path.d.is_some(), "path {index} keeps its data");
+        fills.push(path.fill.clone().expect("path fill"));
+    }
+    assert_ne!(fills[0], fills[1], "each colour group keeps its own fill");
     assert!(result.warnings.is_empty(), "{:?}", result.warnings);
 }
 

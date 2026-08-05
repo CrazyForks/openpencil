@@ -49,6 +49,10 @@
     "border",
     "opacity",
     "overflow",
+    // The gradient-text idiom: `background-clip: text` paints the background
+    // THROUGH the glyphs instead of behind them. Without this key the
+    // importer painted the gradient as a solid bar over invisible text.
+    "background-clip",
     "transform",
     "object-fit",
     "object-position",
@@ -110,6 +114,7 @@
     "object-fit": "fill",
     "object-position": "50% 50%",
     "mix-blend-mode": "normal",
+    "background-clip": "border-box",
     position: "static",
     "z-index": "auto",
     "white-space": "normal",
@@ -126,10 +131,19 @@
     return Math.round(value * 100) / 100;
   }
 
+  // Depth of `position: fixed` ancestry for the node being built. A fixed
+  // box is positioned against the VIEWPORT: adding the scroll offset (right
+  // for everything else) drops a scrolled-down page's navbar into the middle
+  // of the document. Inside a fixed subtree, viewport coordinates ARE the
+  // resting page coordinates.
+  var fixedDepth = 0;
+
   function pageRect(rect) {
+    var scrollLeft = fixedDepth > 0 ? 0 : window.scrollX;
+    var scrollTop = fixedDepth > 0 ? 0 : window.scrollY;
     return {
-      x: round(rect.left + window.scrollX),
-      y: round(rect.top + window.scrollY),
+      x: round(rect.left + scrollLeft),
+      y: round(rect.top + scrollTop),
       w: round(rect.width),
       h: round(rect.height),
     };
@@ -160,6 +174,20 @@
       result[key] = value;
     });
     return result;
+  }
+
+  // Text styles with the colour that actually paints the glyphs.
+  // `-webkit-text-fill-color` wins over `color` when they differ — the
+  // gradient-text idiom sets it to `transparent` while `color` keeps its
+  // value, which otherwise imports as solid-colour glyphs over the gradient
+  // bar the background produced.
+  function textPaintStyles(computed, keys) {
+    var styles = copyStyles(computed, keys);
+    var fill = computed.getPropertyValue("-webkit-text-fill-color");
+    if (fill && fill !== computed.getPropertyValue("color")) {
+      styles.color = fill;
+    }
+    return styles;
   }
 
   var BORDER_SIDES = ["top", "right", "bottom", "left"];
@@ -222,34 +250,146 @@
     // pretty-printing indentation, which CSS discards and which otherwise
     // imports as a phantom space — " Hello world " in a box measured for
     // "Hello world", i.e. every indented `<p>` starts one space too far right.
+    //
+    // A WRAPPED bare text run cannot be captured as one box: the union rect a
+    // range reports anchors at the block's left edge and spans every line, and
+    // a node re-wrapped there paints over whatever else shares those lines —
+    // including a first line that actually started mid-line after an inline
+    // sibling. Wrapped runs split into one single-line node per line box
+    // instead (`buildTextLines`); a run the browser kept on one line stays a
+    // single node. Returns an ARRAY of text nodes.
     var text = (textNode.textContent || "").replace(/\s+/g, " ");
-    if (!text.trim()) return null;
+    if (!text.trim()) return [];
     if (!textNode.previousSibling) text = text.replace(/^ /, "");
     if (!textNode.nextSibling) text = text.replace(/ $/, "");
     var range = document.createRange();
     range.selectNodeContents(textNode);
     var rect = range.getBoundingClientRect();
-    // One client rect per line box: the closest reliable signal for whether
-    // the browser wrapped this run. The importer needs it to decide between a
-    // hugging single-line label (which must be allowed to grow when our font
-    // metrics are wider than the page's) and a run that has to keep wrapping
-    // at the captured width.
-    //
-    // Caveat: a line box is not the only thing that splits a range into
-    // several client rects — a bidi direction change inside one unwrapped run
-    // splits it too, so this can over-report. Over-reporting is the safe
-    // direction (the importer then keeps the captured width instead of
-    // hugging), which is why it is not corrected for here.
-    var lines = range.getClientRects().length;
+    // TRUE line count via vertical bands, not raw `rects.length` — a bidi
+    // direction change fragments the rects of a single line, and reporting
+    // that as "wrapped" cost the run its hug sizing and the importer's
+    // single-line line-height clamp.
+    var bands = lineBands(range.getClientRects());
     if (typeof range.detach === "function") range.detach();
-    if (rect.width < 0.5 || rect.height < 0.5 || !takeNode()) return null;
-    return {
-      kind: "text",
-      rect: pageRect(rect),
-      text: text,
-      lines: lines || 1,
-      styles: copyStyles(parentComputed, TEXT_STYLE_KEYS),
-    };
+    if (rect.width < 0.5 || rect.height < 0.5) return [];
+    if (bands > 1) {
+      var split = buildTextLines(textNode, parentComputed, bands);
+      if (split.length) return split;
+      // Splitting can fail (node budget, zero-progress guard); the union
+      // box is still better than losing the text.
+    }
+    if (!takeNode()) return [];
+    return [
+      {
+        kind: "text",
+        rect: pageRect(rect),
+        text: text,
+        lines: bands || 1,
+        styles: textPaintStyles(parentComputed, TEXT_STYLE_KEYS),
+      },
+    ];
+  }
+
+  // Count TRUE line boxes among a range's client rects. Nested inline boxes
+  // and bidi runs contribute one rect each WITHIN a line, so raw
+  // `rects.length` over-reports; rects arrive in content (= line) order and
+  // are merged into vertical bands.
+  //
+  // Same-band means MOSTLY overlapping, not merely touching: a display
+  // heading's tight leading (`line-height: 1.05` on 44px CJK) makes
+  // consecutive glyph boxes overlap by a few pixels, and "any overlap"
+  // merged real lines into one — the heading then imported as a single
+  // overflowing line. Fragments that genuinely share a line (nested spans,
+  // baseline-aligned size mixes, sub/sup) overlap by most of the smaller
+  // height; consecutive tight lines only graze.
+  function lineBands(rects) {
+    var count = 0;
+    var top = 0;
+    var bottom = 0;
+    for (var index = 0; index < rects.length; index += 1) {
+      var rect = rects[index];
+      if (rect.width < 0.5 || rect.height < 0.5) continue;
+      var overlap = Math.min(rect.bottom, bottom) - Math.max(rect.top, top);
+      var least = Math.min(rect.height, bottom - top);
+      if (count > 0 && overlap > 0.6 * least) {
+        if (rect.top < top) top = rect.top;
+        if (rect.bottom > bottom) bottom = rect.bottom;
+      } else {
+        count += 1;
+        top = rect.top;
+        bottom = rect.bottom;
+      }
+    }
+    return count;
+  }
+
+  // Largest `end` for which [start, end) still renders inside one line box,
+  // by binary search over character offsets.
+  function lineEndAfter(textNode, range, start, length) {
+    var low = start + 1;
+    var high = length;
+    var best = start + 1;
+    while (low <= high) {
+      var mid = (low + high) >> 1;
+      range.setStart(textNode, start);
+      range.setEnd(textNode, mid);
+      if (lineBands(range.getClientRects()) <= 1) {
+        best = mid;
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
+    // Never leave half a surrogate pair on a line — a lone half cannot
+    // survive the JSON round-trip into the importer.
+    if (best > start && best < length) {
+      var lead = textNode.textContent.charCodeAt(best - 1);
+      var trail = textNode.textContent.charCodeAt(best);
+      if (lead >= 0xd800 && lead <= 0xdbff && trail >= 0xdc00 && trail <= 0xdfff) {
+        best = best - 1 > start ? best - 1 : best + 1;
+      }
+    }
+    return best;
+  }
+
+  // One single-line text node per line box of a wrapped bare text run. Each
+  // line's rect comes from its own subrange, so a line that starts mid-line
+  // (after an atomic inline sibling) keeps its true x instead of smearing
+  // from the block's left edge.
+  function buildTextLines(textNode, parentComputed, lineCount) {
+    var content = textNode.textContent || "";
+    var styles = textPaintStyles(parentComputed, TEXT_STYLE_KEYS);
+    var range = document.createRange();
+    var out = [];
+    var start = 0;
+    var guard = lineCount + 8;
+    while (start < content.length && guard > 0) {
+      guard -= 1;
+      var end = lineEndAfter(textNode, range, start, content.length);
+      if (end <= start) break;
+      range.setStart(textNode, start);
+      range.setEnd(textNode, end);
+      var rect = range.getBoundingClientRect();
+      var text = content.slice(start, end).replace(/\s+/g, " ");
+      // Interior line edges are collapsed wrap points and always trim; the
+      // run's outer boundaries follow the same sibling rule as the
+      // single-line path.
+      if (start > 0 || !textNode.previousSibling) text = text.replace(/^ /, "");
+      if (end < content.length || !textNode.nextSibling) text = text.replace(/ $/, "");
+      start = end;
+      if (!text.trim() || rect.width < 0.5 || rect.height < 0.5) continue;
+      if (!takeNode()) return [];
+      out.push({
+        kind: "text",
+        rect: pageRect(rect),
+        text: text,
+        lines: 1,
+        styles: styles,
+      });
+    }
+    if (typeof range.detach === "function") range.detach();
+    // All-or-nothing: a partial split would silently drop the tail text.
+    return start >= content.length ? out : [];
   }
 
   function scaledCanvas(width, height) {
@@ -435,12 +575,14 @@
   // page-space bounding box, because the renderer fits path data to the node
   // box by its bounds: taking the box from the shapes' own bounds keeps the
   // artwork's aspect and position exact instead of stretching it to the
-  // element rect. Anything that needs more than one flat colour, carries a
-  // per-element transform, or references external paint (`<use>`, gradients,
-  // masks, nested images) is left to the image path.
+  // element rect. Anything that carries a per-element transform or
+  // references external paint (`<use>`, gradients, masks, nested images) is
+  // left to the image path.
   //
-  // Returns `{ d, fill, fillRule?, rect }` — a fragment `buildImage` merges
-  // into the image node, never a node of its own.
+  // Returns an array of `{ d, fill, fillRule?, rect }` fragments, one per
+  // consecutive same-fill shape group — data `buildImage` merges into the
+  // image node (single group) or expands into per-colour path children,
+  // never a node of its own.
   function vectorizeSvg(svg) {
     if (typeof svg.getScreenCTM !== "function") return null;
     var rootMatrix = svg.getScreenCTM();
@@ -459,16 +601,13 @@
       return null;
     }
     var nodes = svg.querySelectorAll("*");
-    var data = [];
-    var fill = null;
-    var fillRule = "";
-    // Bounds of the shapes that actually contribute path data — NOT
-    // `svg.getBBox()`, which measures every shape in the tree including the
-    // ones skipped below. Material's icon set opens each glyph with
-    // `<path fill="none" d="M0 0h24v24H0z"/>`: a full-viewBox sizing rect that
-    // paints nothing but doubles the root bbox, so sizing from it scaled and
-    // shifted every glyph by exactly that factor.
-    var box = null;
+    // Shapes grouped by CONSECUTIVE fill + fill-rule. A single-colour icon
+    // still merges into one path exactly as before; multi-colour flat art (a
+    // brand logo) becomes one path per colour group. Only consecutive shapes
+    // merge because the groups paint in document order — merging same-fill
+    // shapes across an intervening colour would hoist them over it.
+    var groups = [];
+    var current = null;
     for (var index = 0; index < nodes.length; index += 1) {
       var node = nodes[index];
       var tag = tagOf(node);
@@ -491,38 +630,86 @@
       var shapeFill = style.fill;
       if (!shapeFill || shapeFill === "none") continue;
       if (shapeFill.indexOf("url(") === 0) return null;
-      if (fill === null) fill = shapeFill;
-      else if (fill !== shapeFill) return null;
       var segment = shapeToPathData(node, tag);
       if (!segment) return null;
+      // Per-shape bounds — NOT `svg.getBBox()`, which measures every shape
+      // in the tree including the ones skipped above. Material's icon set
+      // opens each glyph with `<path fill="none" d="M0 0h24v24H0z"/>`: a
+      // full-viewBox sizing rect that paints nothing but doubles the root
+      // bbox, so sizing from it scaled and shifted every glyph by exactly
+      // that factor.
       var segmentBox = shapeBox(node);
       if (!segmentBox) return null;
-      box = unionBox(box, segmentBox);
-      // The fill rule of the shapes that paint, read once. Mixed rules cannot
-      // survive the merge into a single path.
       var shapeRule = style.getPropertyValue("fill-rule") || "nonzero";
-      if (!fillRule) fillRule = shapeRule;
-      else if (fillRule !== shapeRule) return null;
-      data.push(segment);
+      if (!current || current.fill !== shapeFill || current.rule !== shapeRule) {
+        current = { fill: shapeFill, rule: shapeRule, data: [], box: null };
+        groups.push(current);
+      }
+      current.data.push(segment);
+      current.box = unionBox(current.box, segmentBox);
     }
-    if (!data.length || !fill || !box) return null;
-    if (!(box.width > 0) || !(box.height > 0)) return null;
-    // User units → page pixels through the root CTM, so viewBox scaling and
-    // `preserveAspectRatio` are already accounted for. The CTM is known
-    // axis-aligned by the guard above, so the off-diagonal terms are zero.
-    var vector = {
-      rect: pageRect({
-        left: rootMatrix.a * box.x + rootMatrix.e,
-        top: rootMatrix.d * box.y + rootMatrix.f,
-        width: rootMatrix.a * box.width,
-        height: rootMatrix.d * box.height,
-      }),
-      d: data.join(" "),
-      fill: fill,
-    };
-    if (!(vector.rect.w > 0) || !(vector.rect.h > 0)) return null;
-    if (fillRule === "evenodd") vector.fillRule = "evenodd";
-    return vector;
+    if (!groups.length) return null;
+    var fragments = [];
+    for (var at = 0; at < groups.length; at += 1) {
+      var group = groups[at];
+      if (!group.box) return null;
+      if (!(group.box.width > 0) || !(group.box.height > 0)) return null;
+      // User units → page pixels through the root CTM, so viewBox scaling
+      // and `preserveAspectRatio` are already accounted for. The CTM is
+      // known axis-aligned by the guard above, so the off-diagonal terms
+      // are zero.
+      var fragment = {
+        rect: pageRect({
+          left: rootMatrix.a * group.box.x + rootMatrix.e,
+          top: rootMatrix.d * group.box.y + rootMatrix.f,
+          width: rootMatrix.a * group.box.width,
+          height: rootMatrix.d * group.box.height,
+        }),
+        d: group.data.join(" "),
+        fill: group.fill,
+      };
+      if (!(fragment.rect.w > 0) || !(fragment.rect.h > 0)) return null;
+      if (group.rule === "evenodd") fragment.fillRule = "evenodd";
+      fragments.push(fragment);
+    }
+    return fragments;
+  }
+
+  // Paint properties inlined onto every shape of a serialized `<svg>` clone.
+  var SVG_PAINT_KEYS = [
+    "fill",
+    "stroke",
+    "stroke-width",
+    "stroke-linecap",
+    "stroke-linejoin",
+    "stroke-dasharray",
+    "fill-rule",
+    "opacity",
+    "fill-opacity",
+    "stroke-opacity",
+  ];
+
+  // Inline each element's COMPUTED paint into the clone as presentation
+  // attributes. A standalone data URI loses every stylesheet the page used —
+  // a `.card svg { stroke: #fff }` rule outranks the markup's own
+  // `stroke="currentColor"`, so without this the serialized icon fell back
+  // to the inherited text colour (a theme accent) instead of the colour the
+  // page actually painted with.
+  function inlineComputedPaint(source, clone) {
+    var sourceNodes = source.querySelectorAll("*");
+    var cloneNodes = clone.querySelectorAll("*");
+    var limit = Math.min(sourceNodes.length, cloneNodes.length);
+    for (var index = 0; index < limit; index += 1) {
+      var computed = window.getComputedStyle(sourceNodes[index]);
+      for (var at = 0; at < SVG_PAINT_KEYS.length; at += 1) {
+        var key = SVG_PAINT_KEYS[at];
+        var value = computed.getPropertyValue(key);
+        if (!value) continue;
+        // Computed url() refs serialize with quotes; the attribute grammar
+        // wants them bare.
+        cloneNodes[index].setAttribute(key, value.replace(/url\("([^"]*)"\)/g, "url($1)"));
+      }
+    }
   }
 
   function encodeSvg(svg, computed, rect) {
@@ -538,6 +725,7 @@
       // invisible.
       var color = computed.getPropertyValue("color");
       if (color) clone.style.color = color;
+      inlineComputedPaint(svg, clone);
       // Serialize at the used box size so the rasterizer scales the viewBox
       // exactly the way the page did; CSS-sized SVGs carry no useful
       // width/height attributes.
@@ -588,6 +776,39 @@
   function buildImage(element, computed, rect) {
     if (!takeNode()) return null;
     var tag = tagOf(element);
+    var fragments = tag === "svg" ? vectorizeSvg(element) : null;
+    if (fragments && fragments.length > 1) {
+      // Multi-colour flat art (a brand logo): one path node per colour
+      // group, wrapped in a plain container at the element's box and painted
+      // in document order. This replaces the raster fallback entirely — an
+      // SVG data URI is undecodable to the skia importer anyway, so the
+      // native path paint is the only rendering these ever get. Each child
+      // still carries a placeholder `src` so an importer that predates `d`
+      // degrades to its usual unknown-image box instead of crashing.
+      var children = [];
+      for (var at = 0; at < fragments.length; at += 1) {
+        if (!takeNode()) break;
+        var piece = {
+          kind: "image",
+          tag: "svg",
+          rect: fragments[at].rect,
+          src: GRAY_PLACEHOLDER,
+          styles: {},
+          d: fragments[at].d,
+          fill: fragments[at].fill,
+          vectorRect: fragments[at].rect,
+        };
+        if (fragments[at].fillRule) piece.fillRule = fragments[at].fillRule;
+        children.push(piece);
+      }
+      return {
+        kind: "element",
+        tag: "svg",
+        rect: pageRect(rect),
+        styles: elementStyles(computed),
+        children: children,
+      };
+    }
     var captured;
     if (tag === "img") captured = rasterizeImage(element);
     else if (tag === "svg") captured = encodeSvg(element, computed, rect);
@@ -601,22 +822,20 @@
       styles: elementStyles(computed),
     };
     if (captured.tainted) result.tainted = true;
-    // Vector geometry rides ALONGSIDE the image serialization rather than
-    // replacing it, and the node keeps `kind: "image"`. An importer that
-    // predates the vector fields reads exactly the node it always read (it
-    // dispatches on `kind`, and an unknown one is dropped with a warning —
-    // the icon would vanish rather than degrade); one that understands them
-    // prefers `d` and ignores `src`. `vectorRect` is the artwork's own bounds,
-    // which is what the path node has to be sized to; `rect` stays the
-    // element's used box so the image fallback keeps landing where it did.
-    if (tag === "svg") {
-      var vector = vectorizeSvg(element);
-      if (vector) {
-        result.d = vector.d;
-        result.fill = vector.fill;
-        result.vectorRect = vector.rect;
-        if (vector.fillRule) result.fillRule = vector.fillRule;
-      }
+    // Single-colour vector geometry rides ALONGSIDE the image serialization
+    // rather than replacing it, and the node keeps `kind: "image"`. An
+    // importer that predates the vector fields reads exactly the node it
+    // always read (it dispatches on `kind`, and an unknown one is dropped
+    // with a warning — the icon would vanish rather than degrade); one that
+    // understands them prefers `d` and ignores `src`. `vectorRect` is the
+    // artwork's own bounds, which is what the path node has to be sized to;
+    // `rect` stays the element's used box so the image fallback keeps
+    // landing where it did.
+    if (fragments && fragments.length === 1) {
+      result.d = fragments[0].d;
+      result.fill = fragments[0].fill;
+      result.vectorRect = fragments[0].rect;
+      if (fragments[0].fillRule) result.fillRule = fragments[0].fillRule;
     }
     return result;
   }
@@ -640,39 +859,81 @@
     var tag = tagOf(node);
     if (SKIP_TAGS[tag]) return true;
     if (MEDIA_TAGS[tag] || node.shadowRoot || !INLINE_FLOW_TAGS[tag]) return false;
-    if (window.getComputedStyle(node).display !== "inline") return false;
+    var computed = window.getComputedStyle(node);
+    // An undisplayed inline element renders nothing at all, so it neither
+    // joins nor breaks the flow around it — splitting a run on one would
+    // leave the second half starting mid-line for no visible reason. Its
+    // text is excluded by the segment walker.
+    if (computed.display === "none") return true;
+    if (computed.display !== "inline") return isFoldableTextChip(node, computed);
     return Array.prototype.every.call(node.childNodes, isInlineFlow);
   }
 
-  // Does this element lay its children out as ONE run of flowing inline text
-  // mixing bare text with inline elements? Those are the blocks the per-child
-  // capture smeared — each wrapped child's rect was the union of its line
-  // boxes, so consecutive children stacked at the block's left edge.
-  function isInlineTextBlock(element, computed) {
-    var display = computed.display;
+  // All of the range's fragment rects sit in one line box. A range reports
+  // one client rect per inline box fragment, so several rects on a single
+  // line are normal (each nested span contributes its own) and "one line"
+  // cannot be `rects.length === 1` — the band walk decides, with the same
+  // mostly-overlapping criterion that keeps tight-leading lines apart.
+  function contentsOnOneLine(element) {
+    var range = document.createRange();
+    range.selectNodeContents(element);
+    var bands = lineBands(range.getClientRects());
+    if (typeof range.detach === "function") range.detach();
+    return bands <= 1;
+  }
+
+  // An atomic inline (`display: inline-block`) still reads as part of its
+  // parent's text flow when it is nothing but undecorated text on one line —
+  // the idiom behind search-result date chips ("2026年5月8日 — ") and nowrap
+  // ellipsis spans, which otherwise block the fold and smear the paragraph
+  // around them. Anything with its own visible box (a background, a border)
+  // or with internally wrapped text genuinely is a box, and stays one.
+  function isFoldableTextChip(element, computed) {
+    if (computed.display !== "inline-block") return false;
     if (
-      display !== "block" &&
-      display !== "inline-block" &&
-      display !== "list-item" &&
-      display.indexOf("table-cell") === -1
+      computed.backgroundColor !== "rgba(0, 0, 0, 0)" ||
+      computed.backgroundImage !== "none"
     ) {
       return false;
     }
-    var sawInlineElement = false;
-    var sawText = false;
-    var kids = element.childNodes;
-    for (var index = 0; index < kids.length; index += 1) {
-      var kid = kids[index];
-      if (!isInlineFlow(kid)) return false;
-      if (kid.nodeType === Node.ELEMENT_NODE && !SKIP_TAGS[tagOf(kid)]) {
-        sawInlineElement = true;
-      } else if (kid.nodeType === Node.TEXT_NODE && kid.textContent.trim()) {
-        sawText = true;
+    for (var index = 0; index < BORDER_SIDES.length; index += 1) {
+      var side = BORDER_SIDES[index];
+      var width = computed.getPropertyValue("border-" + side + "-width");
+      var style = computed.getPropertyValue("border-" + side + "-style");
+      if (parseFloat(width) > 0 && style !== "none" && style !== "hidden") {
+        return false;
       }
     }
-    // Fold only mixed content — a pure-text block already captures as one
-    // node with the right box, so leave that untouched.
-    return sawInlineElement && (sawText || element.childNodes.length > 1);
+    if (!Array.prototype.every.call(element.childNodes, isInlineFlow)) {
+      return false;
+    }
+    return contentsOnOneLine(element);
+  }
+
+  // Does this element lay inline children out as wrapping text lines, the way
+  // a block does? Only under these displays may consecutive inline children
+  // fold into one flowing run; a flex / grid parent turns each child into its
+  // own *item* (side by side, with gaps), which a folded run cannot express.
+  function blockLikeDisplay(computed) {
+    var display = computed.display;
+    return (
+      display === "block" ||
+      display === "inline-block" ||
+      display === "list-item" ||
+      // A block formatting context lays inline children out exactly like a
+      // block. Chrome computes the `-webkit-line-clamp` truncation idiom
+      // (`display: -webkit-box` + vertical orient — every search-result
+      // snippet) as `flow-root`, which is how those paragraphs escaped the
+      // fold and smeared.
+      display === "flow-root" ||
+      display.indexOf("table-cell") !== -1 ||
+      // Engines that still compute the clamp idiom as `-webkit-box`
+      // (console-pasted captures on Safari). Only the *vertical* orient is
+      // block-like; its horizontal cousin is old flexbox — children side by
+      // side as items — which a folded run cannot express.
+      (display === "-webkit-box" &&
+        computed.getPropertyValue("-webkit-box-orient") === "vertical")
+    );
   }
 
   // The `href` of the nearest enclosing `<a>` up to (and including) `root`.
@@ -687,28 +948,53 @@
     return null;
   }
 
-  // Walk the inline text of `element` in document order into styled runs,
-  // collapsing whitespace across inline boundaries as CSS does: `\s+` → one
-  // space, a straddling boundary space → one, block-edge space dropped.
-  function inlineSegments(element) {
-    var walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null);
+  // Whether a text node's owner (walked up to the run's `stop` parent) is
+  // invisible plumbing rather than rendered text: script / style sources and
+  // anything inside a `display: none` subtree. The folding TreeWalker visits
+  // those text nodes; the browser's text flow does not.
+  function segmentTextHidden(owner, stop) {
+    for (var element = owner; element; element = element.parentElement) {
+      if (SKIP_TAGS[tagOf(element)]) return true;
+      if (window.getComputedStyle(element).display === "none") return true;
+      if (element === stop) break;
+    }
+    return false;
+  }
+
+  // Walk the inline text of `nodes` (consecutive siblings under `parent`) in
+  // document order into styled runs, collapsing whitespace across inline
+  // boundaries as CSS does: `\s+` -> one space, a straddling boundary space
+  // -> one, run-edge space dropped.
+  function inlineSegments(parent, nodes) {
     var segments = [];
     var spaceOpen = true;
-    var node;
-    while ((node = walker.nextNode())) {
-      var text = (node.textContent || "").replace(/\s+/g, " ");
+    function addText(textNode) {
+      var owner = textNode.parentElement || parent;
+      if (owner !== parent && segmentTextHidden(owner, parent)) return;
+      var text = (textNode.textContent || "").replace(/\s+/g, " ");
       if (spaceOpen && text.charAt(0) === " ") text = text.slice(1);
-      if (!text) continue;
+      if (!text) return;
       spaceOpen = text.charAt(text.length - 1) === " ";
-      var parent = node.parentElement || element;
-      var href = nearestHref(parent, element);
-      var styles = copyStyles(window.getComputedStyle(parent), SEGMENT_STYLE_KEYS);
-      var key = JSON.stringify(styles) + " " + (href || "");
+      var href = nearestHref(owner, parent);
+      var styles = textPaintStyles(window.getComputedStyle(owner), SEGMENT_STYLE_KEYS);
+      var key = JSON.stringify(styles) + " " + (href || "");
       var previous = segments[segments.length - 1];
       if (previous && previous.key === key) {
         previous.text += text;
       } else {
         segments.push({ text: text, styles: styles, href: href, key: key });
+      }
+    }
+    for (var index = 0; index < nodes.length; index += 1) {
+      var node = nodes[index];
+      if (node.nodeType === Node.TEXT_NODE) {
+        addText(node);
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        var walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, null);
+        var textNode;
+        while ((textNode = walker.nextNode())) {
+          addText(textNode);
+        }
       }
     }
     if (segments.length) {
@@ -719,20 +1005,27 @@
     return segments;
   }
 
-  // One folded text node for a whole inline formatting context. Positioned at
-  // the inline content's own box (a range over the element's contents excludes
-  // padding and spans every line) and wrapped there once — never one node per
-  // inline child stacked at the block origin. Inline box decorations (a
-  // `<code>` pill background, a badge border) are the one thing it cannot
-  // carry and are dropped.
-  function buildInlineText(element, blockComputed) {
+  // One folded text node for one inline formatting run. `nodes` is either
+  // every child of a fully-inline block or a maximal run of consecutive
+  // inline-flow siblings between block-level children; either way the run
+  // starts and ends at a line-box boundary (block siblings force breaks), so
+  // the range's box is an honest wrap box: position the run there once and
+  // wrap it there — never one node per inline child stacked at the block
+  // origin. Inline box decorations (a `<code>` pill background, a badge
+  // border) are the one thing it cannot carry and are dropped.
+  function buildInlineText(parent, nodes, blockComputed) {
     var range = document.createRange();
-    range.selectNodeContents(element);
+    range.setStartBefore(nodes[0]);
+    range.setEndAfter(nodes[nodes.length - 1]);
     var rect = range.getBoundingClientRect();
-    var lines = range.getClientRects().length;
+    // TRUE line count (vertical bands): raw `getClientRects().length` counts
+    // one rect per inline fragment, which classified one-line footers with
+    // several styled spans as wrapped — costing them both the hug sizing and
+    // the importer's single-line line-height clamp.
+    var lines = lineBands(range.getClientRects());
     if (typeof range.detach === "function") range.detach();
     if (rect.width < 0.5 || rect.height < 0.5 || !takeNode()) return null;
-    var segments = inlineSegments(element);
+    var segments = inlineSegments(parent, nodes);
     var text = "";
     for (var index = 0; index < segments.length; index += 1) {
       text += segments[index].text;
@@ -748,52 +1041,114 @@
       rect: pageRect(rect),
       text: text,
       lines: lines || 1,
-      styles: copyStyles(blockComputed, TEXT_STYLE_KEYS),
+      styles: textPaintStyles(blockComputed, TEXT_STYLE_KEYS),
       segments: emitted,
     };
+  }
+
+  // Emit one run of consecutive inline-flow siblings: mixed content (bare
+  // text plus inline elements) folds into a single flowing text node, and
+  // everything else keeps the per-child capture — a lone bare text keeps the
+  // plain `buildText` shape, and a lone element keeps its own box, which is
+  // what preserves a single `<code>` pill's background.
+  function buildInlineRun(parent, nodes, parentComputed) {
+    var sawElement = false;
+    var sawText = false;
+    for (var index = 0; index < nodes.length; index += 1) {
+      var node = nodes[index];
+      if (node.nodeType === Node.ELEMENT_NODE && !SKIP_TAGS[tagOf(node)]) {
+        sawElement = true;
+      } else if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
+        sawText = true;
+      }
+    }
+    if (sawElement && (sawText || nodes.length > 1)) {
+      var folded = buildInlineText(parent, nodes, parentComputed);
+      return folded ? [folded] : [];
+    }
+    var out = [];
+    for (var at = 0; at < nodes.length; at += 1) {
+      var child = nodes[at];
+      if (child.nodeType === Node.TEXT_NODE) {
+        var texts = buildText(child, parentComputed);
+        for (var t = 0; t < texts.length; t += 1) out.push(texts[t]);
+      } else if (child.nodeType === Node.ELEMENT_NODE) {
+        var mapped = buildElement(child);
+        if (mapped) out.push(mapped);
+      }
+    }
+    return out;
   }
 
   function buildElement(element) {
     var tag = tagOf(element);
     if (SKIP_TAGS[tag]) return null;
+    // Capture chrome injected by the OpenPencil extension (the element-picker
+    // overlay, its highlight box and labels) marks itself with this
+    // attribute. It is never page content, however it ends up still mounted
+    // at capture time.
+    if (element.hasAttribute && element.hasAttribute("data-openpencil-ui")) {
+      return null;
+    }
     var computed = window.getComputedStyle(element);
     var rect = element.getBoundingClientRect();
     if (!visibleElement(element, computed, rect)) return null;
+    if (computed.position === "fixed") {
+      fixedDepth += 1;
+      try {
+        return buildElementBody(element, tag, computed, rect);
+      } finally {
+        fixedDepth -= 1;
+      }
+    }
+    return buildElementBody(element, tag, computed, rect);
+  }
+
+  function buildElementBody(element, tag, computed, rect) {
     if (MEDIA_TAGS[tag]) {
       return buildImage(element, computed, rect);
     }
     if (!takeNode()) return null;
-    // A block that lays its children out as one inline text flow collapses to
-    // a single positioned text node with styled runs — see `buildInlineText`.
-    if (isInlineTextBlock(element, computed)) {
-      var folded = buildInlineText(element, computed);
-      return {
-        kind: "element",
-        tag: tag,
-        rect: pageRect(rect),
-        styles: elementStyles(computed),
-        children: folded ? [folded] : [],
-      };
-    }
+    // Consecutive inline-flow children of a block-like parent fold into one
+    // flowing text node per run (see `buildInlineText`); block-level children
+    // break runs apart, so a paragraph interrupted by a list or a figure
+    // still folds the text around it. Non-block parents (flex / grid rows)
+    // keep the per-child capture: their children are items, not a text flow.
     var children = [];
+    var foldRuns = blockLikeDisplay(computed);
+    var run = [];
+    var flushRun = function () {
+      if (!run.length) return;
+      var emitted = buildInlineRun(element, run, computed);
+      for (var at = 0; at < emitted.length; at += 1) children.push(emitted[at]);
+      run = [];
+    };
     var collect = function (child) {
       if (truncated) return;
-      var mapped = null;
-      if (child.nodeType === Node.TEXT_NODE) {
-        mapped = buildText(child, computed);
-      } else if (child.nodeType === Node.ELEMENT_NODE) {
-        mapped = buildElement(child);
+      if (foldRuns && isInlineFlow(child)) {
+        run.push(child);
+        return;
       }
-      if (mapped) children.push(mapped);
+      flushRun();
+      if (child.nodeType === Node.TEXT_NODE) {
+        var texts = buildText(child, computed);
+        for (var t = 0; t < texts.length; t += 1) children.push(texts[t]);
+      } else if (child.nodeType === Node.ELEMENT_NODE) {
+        var mapped = buildElement(child);
+        if (mapped) children.push(mapped);
+      }
     };
     // An open shadow root holds everything a web component actually renders.
     // Walking only `childNodes` captured such an element as an empty box —
     // GitHub's `<relative-time>` timestamps, and every design system built on
-    // custom elements, vanished that way.
+    // custom elements, vanished that way. Shadow and light children are
+    // separate subtrees, so a run never spans the boundary.
     if (element.shadowRoot) {
       Array.prototype.forEach.call(element.shadowRoot.childNodes, collect);
+      flushRun();
     }
     Array.prototype.forEach.call(element.childNodes, collect);
+    flushRun();
     return {
       kind: "element",
       tag: tag,
