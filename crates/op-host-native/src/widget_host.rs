@@ -52,6 +52,8 @@ mod agent_settings_image_gen_tests;
 #[cfg(test)]
 mod agent_settings_tests;
 mod ai_chat_geometry;
+#[cfg(test)]
+mod ai_chat_minimized_tests;
 mod arc_drag;
 mod auth_flow;
 mod blur_inputs;
@@ -206,6 +208,8 @@ mod release_feedback;
 mod scene_state;
 #[cfg(test)]
 mod scene_template_host_tests;
+#[cfg(test)]
+mod scene_template_ime_tests;
 mod scene_template_press;
 mod screen_switcher;
 #[cfg(all(test, not(target_os = "windows")))]

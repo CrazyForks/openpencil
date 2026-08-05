@@ -335,7 +335,7 @@ fn right_rail_host_routing_tracks_design_selection_and_code_fallback() {
         &mut host,
         r#"{"version":"1.0.0","children":[{"type":"rectangle","id":"n-rail","name":"Rail probe","x":0,"y":0,"width":100,"height":50}]}"#,
     );
-    host.editor_state_mut().chat.collapsed = true;
+    host.editor_state_mut().chat.minimize();
     host.editor_state_mut().editor_ui.property_tab = op_editor_core::PropertyTab::Design;
     host.editor_state_mut().clear_selection();
 

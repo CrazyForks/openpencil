@@ -133,8 +133,17 @@ pub struct ChatState {
     /// that moves the panel origin. `None` falls back to the snapped
     /// corner anchor.
     pub panel_position: Option<(f32, f32)>,
-    /// Collapsed state — when true the panel paints only its header.
+    /// Legacy collapsed flag. The header-only middle state it used to
+    /// name is retired — the panel now has exactly three forms
+    /// (minimized bar / normal / maximized). Kept as a compatibility
+    /// *read*: [`ChatState::is_minimized`] treats `collapsed == true` as
+    /// minimized, so state built before the split (and older tests) still
+    /// resolves to the compact bar. Nothing writes it any more.
     pub collapsed: bool,
+    /// Minimized state — when true the panel paints as a compact input
+    /// bar pinned to the anchored corner's bottom edge, and any click on
+    /// it expands back to the normal panel.
+    pub minimized: bool,
     /// Maximized state — when true the host lays the panel out across
     /// the canvas region with a small inset, mirroring the TS app's
     /// expanded panel.
@@ -234,6 +243,7 @@ impl Default for ChatState {
             panel_height: DEFAULT_CHAT_PANEL_HEIGHT,
             panel_position: None,
             collapsed: false,
+            minimized: false,
             maximized: false,
             transcript_scroll: Default::default(),
             transcript_pinned: true,

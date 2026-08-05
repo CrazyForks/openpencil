@@ -42,7 +42,7 @@ fn seed_grid(host: &mut WidgetHostNative, zoom: f32) {
         .expect("fixture JSON parses")
         .value;
     let mut state = op_editor_core::EditorState::from_document(doc);
-    state.chat.collapsed = true;
+    state.chat.minimize();
     state.viewport.zoom = zoom;
     *host.editor_state_mut() = state;
     host.mark_paint_dirty_for_test();

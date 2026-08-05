@@ -224,7 +224,7 @@ fn collapsed_chat_never_exposes_stale_model_picker_bounds() {
     use super::{AIChatHit, AIChatPlaceholder};
 
     let mut state = open_panel_with_models(10);
-    state.chat.collapsed = true;
+    state.chat.minimize();
     let panel = AIChatPlaceholder::from_editor(&state);
     let chat = Rect::xywh(100.0, 100.0, 150.0, 32.0);
 

@@ -21,66 +21,13 @@ impl<'a> Widget for AIChatPlaceholder<'a> {
     }
 
     fn paint(&self, cx: &mut PaintCx<'_>, rect: Rect) {
-        // Collapsed TS-style pill.
-        if self.state.collapsed {
-            cx.backend
-                .fill_round_rect(rect, COLLAPSED_RADIUS, self.theme.card);
-            if self.header_hover == Some(op_editor_core::ChatHeaderButton::ToggleCollapse)
-                || self.header_pressed == Some(op_editor_core::ChatHeaderButton::ToggleCollapse)
-            {
-                cx.backend.fill_round_rect(
-                    rect,
-                    COLLAPSED_RADIUS,
-                    chat_neutral_feedback_color(
-                        &self.theme,
-                        self.header_pressed
-                            == Some(op_editor_core::ChatHeaderButton::ToggleCollapse),
-                    ),
-                );
-            }
-            cx.backend
-                .stroke_round_rect(rect, COLLAPSED_RADIUS, self.theme.border, 1.0);
-            let center_y = rect.origin.y + rect.size.y / 2.0;
-            // Bubble at the left.
-            draw_icon(
-                cx.backend,
-                Icon::MessageSquare,
-                Point2D::new(
-                    rect.origin.x + COLLAPSED_X_PAD,
-                    center_y - COLLAPSED_MESSAGE_ICON / 2.0,
-                ),
-                COLLAPSED_MESSAGE_ICON,
-                self.theme.muted_foreground,
-                1.4,
-            );
-            // Title label — ellipsized to the space between the bubble icon
-            // and the chevron so a long chat title can't overflow the pill.
-            let title_x = rect.origin.x + COLLAPSED_X_PAD + COLLAPSED_MESSAGE_ICON + COLLAPSED_GAP;
-            let chevron_x = rect.origin.x + rect.size.x - COLLAPSED_X_PAD - COLLAPSED_CHEVRON_ICON;
-            let max_title_w = (chevron_x - COLLAPSED_GAP - title_x).max(0.0);
-            let title_text = crate::util::ellipsize_to_width(&self.state.title, max_title_w, |s| {
-                cx.backend.measure_text(s, 12.0)
-            });
-            let title = TextLayout::single_run(
-                &title_text,
-                "system-ui",
-                12.0,
-                (self.theme.muted_foreground).to_jian(),
-                Point2D::new(0.0, 0.0),
-            );
-            cx.backend
-                .draw_text(&title, Point2D::new(title_x, center_y + 4.0));
-            // Chevron-up at the right (click to expand).
-            draw_icon(
-                cx.backend,
-                Icon::ChevronUp,
-                Point2D::new(
-                    rect.origin.x + rect.size.x - COLLAPSED_X_PAD - COLLAPSED_CHEVRON_ICON,
-                    center_y - COLLAPSED_CHEVRON_ICON / 2.0,
-                ),
-                COLLAPSED_CHEVRON_ICON,
-                self.theme.muted_foreground,
-                1.4,
+        // Minimized: the compact input bar replaces the whole panel.
+        if self.state.is_minimized() {
+            crate::widgets::ai_chat_panel_minimized::paint_minimized_bar(
+                cx,
+                &self.theme,
+                self,
+                rect,
             );
             return;
         }

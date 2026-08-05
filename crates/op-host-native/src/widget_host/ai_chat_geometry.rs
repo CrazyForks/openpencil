@@ -4,14 +4,14 @@ use super::helpers::{AICHAT_INSET_BOTTOM, AICHAT_INSET_LEFT};
 use super::WidgetHostNative;
 use op_editor_core::ChatAnchor;
 use op_editor_ui::widgets::{
-    AI_CHAT_COLLAPSED_HEIGHT, AI_CHAT_COLLAPSED_WIDTH, AI_CHAT_MIN_HEIGHT, AI_CHAT_MIN_WIDTH,
+    AI_CHAT_MINIMIZED_HEIGHT, AI_CHAT_MINIMIZED_WIDTH, AI_CHAT_MIN_HEIGHT, AI_CHAT_MIN_WIDTH,
 };
 use op_editor_ui::{Point2D, Rect};
 
 impl WidgetHostNative {
     pub(in crate::widget_host) fn ai_chat_size(&self) -> (f32, f32) {
-        if self.editor_state.chat.collapsed {
-            (AI_CHAT_COLLAPSED_WIDTH, AI_CHAT_COLLAPSED_HEIGHT)
+        if self.editor_state.chat.is_minimized() {
+            (AI_CHAT_MINIMIZED_WIDTH, AI_CHAT_MINIMIZED_HEIGHT)
         } else {
             (
                 self.editor_state.chat.panel_width.max(AI_CHAT_MIN_WIDTH),
@@ -26,8 +26,17 @@ impl WidgetHostNative {
         viewport_h: f32,
     ) -> Option<Rect> {
         let (cx0, cy0, cw, ch) = self.canvas_region(viewport_w, viewport_h);
+        if self.editor_state.chat.is_minimized() {
+            return op_editor_ui::widgets::host_canvas_geometry::minimized_chat_bar_rect(
+                self.editor_state.chat.anchor,
+                cx0,
+                cy0,
+                cw,
+                ch,
+            );
+        }
         let (panel_w, panel_h) = self.ai_chat_size();
-        if self.editor_state.chat.maximized && !self.editor_state.chat.collapsed {
+        if self.editor_state.chat.maximized {
             let inset = 12.0;
             if cw <= inset * 2.0 + 16.0 || ch <= inset * 2.0 + 16.0 {
                 return None;

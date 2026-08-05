@@ -115,13 +115,20 @@ pub fn apply_chat_hit(state: &mut EditorState, hit: AIChatHit, now_ms: u64) -> C
         // path bypass.
         AIChatHit::DragHandle | AIChatHit::Resize(_) => ChatClickStep::Unhandled,
         AIChatHit::ToggleCollapse => {
-            state.chat.toggle_collapsed();
+            let expanding = state.chat.is_minimized();
+            state.chat.toggle_minimized();
+            // Expanding from the bar hands the user straight to the
+            // textarea — the bar reads as an input, so a click on it is
+            // an intent to type.
+            if expanding {
+                state.chat.focus_input_at_end(now_ms);
+            }
             state.editor_ui.close_chat_model_picker();
             ChatClickStep::Dirty
         }
         AIChatHit::ToggleMaximize => {
             state.chat.maximized = !state.chat.maximized;
-            state.chat.collapsed = false;
+            state.chat.expand();
             state.editor_ui.close_chat_model_picker();
             ChatClickStep::Dirty
         }

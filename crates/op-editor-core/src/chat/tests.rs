@@ -41,18 +41,62 @@ fn begin_send_auto_titles_new_chat_from_first_prompt() {
 }
 
 #[test]
-fn begin_send_expands_collapsed_panel_for_streaming_turn() {
-    let mut chat = ChatState {
-        collapsed: true,
-        ..Default::default()
-    };
+fn begin_send_expands_minimized_panel_for_streaming_turn() {
+    let mut chat = ChatState::default();
+    chat.minimize();
     chat.set_input_text("design a pricing page");
 
     assert!(chat.begin_send());
 
     assert!(
-        !chat.collapsed,
+        !chat.is_minimized(),
         "streaming output should reopen the chat panel like the TS isStreaming effect"
+    );
+}
+
+#[test]
+fn legacy_collapsed_state_resolves_to_the_minimized_bar() {
+    // The header-only middle state is retired: state carrying the old
+    // flag must land on the compact bar, not on a form that no longer
+    // paints.
+    let chat = ChatState {
+        collapsed: true,
+        ..Default::default()
+    };
+    assert!(chat.is_minimized());
+}
+
+#[test]
+fn toggling_walks_between_exactly_two_forms_and_clears_the_legacy_flag() {
+    let mut chat = ChatState {
+        collapsed: true,
+        ..Default::default()
+    };
+
+    // Legacy-collapsed → expanded, and the legacy flag is gone for good.
+    chat.toggle_minimized();
+    assert!(!chat.is_minimized());
+    assert!(!chat.collapsed);
+    assert!(!chat.minimized);
+
+    // Expanded → minimized bar → expanded again.
+    chat.toggle_minimized();
+    assert!(chat.minimized && !chat.collapsed);
+    chat.toggle_minimized();
+    assert!(!chat.is_minimized());
+}
+
+#[test]
+fn a_streaming_turn_refuses_to_minimize() {
+    let mut chat = ChatState::default();
+    chat.set_input_text("design a pricing page");
+    assert!(chat.begin_send());
+
+    chat.toggle_minimized();
+
+    assert!(
+        !chat.is_minimized(),
+        "a reply arriving must not be hidden behind the bar"
     );
 }
 

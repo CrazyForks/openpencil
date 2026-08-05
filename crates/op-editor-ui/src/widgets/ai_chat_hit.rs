@@ -20,8 +20,8 @@ pub enum AIChatHit {
     DragHandle,
     /// Press landed on one of the invisible TS-style resize handles.
     Resize(ChatResizeEdge),
-    /// Click on the chevron at the top-left of the header — host
-    /// flips the `ChatState::collapsed` flag.
+    /// Click on the chevron at the top-left of the header, or anywhere
+    /// on the minimized bar — host flips `ChatState::minimized`.
     ToggleCollapse,
     /// Click on the maximize / restore affordance in the header.
     ToggleMaximize,

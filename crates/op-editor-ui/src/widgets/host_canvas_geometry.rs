@@ -26,6 +26,42 @@ pub const TOOLBAR_INSET_X: f32 = 12.0;
 pub const TOOLBAR_INSET_Y: f32 = 12.0;
 pub const STATUS_INSET: f32 = 16.0;
 
+/// Placement of the minimized AI chat bar inside the canvas region
+/// `(cx0, cy0, cw, ch)`.
+///
+/// The bar always hugs the canvas's bottom edge — a minimized panel is
+/// a dock, not a floating window, so it ignores both a stored
+/// `panel_position` and the top half of the anchor. The anchor still
+/// picks the side, so a user who parked the panel on the right keeps it
+/// there. Returns `None` when the canvas cannot hold the narrowest bar,
+/// matching the expanded panel's "too small to place" contract.
+pub fn minimized_chat_bar_rect(
+    anchor: op_editor_core::ChatAnchor,
+    cx0: f32,
+    cy0: f32,
+    cw: f32,
+    ch: f32,
+) -> Option<Rect> {
+    use crate::widgets::{
+        AI_CHAT_MINIMIZED_HEIGHT, AI_CHAT_MINIMIZED_MIN_WIDTH, AI_CHAT_MINIMIZED_WIDTH,
+    };
+    use op_editor_core::ChatAnchor;
+
+    let available_w = cw - AICHAT_INSET_LEFT - AICHAT_INSET_BOTTOM;
+    let bar_w = AI_CHAT_MINIMIZED_WIDTH.min(available_w);
+    if bar_w < AI_CHAT_MINIMIZED_MIN_WIDTH || ch <= AI_CHAT_MINIMIZED_HEIGHT + 16.0 {
+        return None;
+    }
+    let x = match anchor {
+        ChatAnchor::TopLeft | ChatAnchor::BottomLeft => cx0 + AICHAT_INSET_LEFT,
+        ChatAnchor::TopRight | ChatAnchor::BottomRight => cx0 + cw - bar_w - AICHAT_INSET_BOTTOM,
+    };
+    Some(Rect {
+        origin: Point2D::new(x, cy0 + ch - AI_CHAT_MINIMIZED_HEIGHT - AICHAT_INSET_BOTTOM),
+        size: Point2D::new(bar_w, AI_CHAT_MINIMIZED_HEIGHT),
+    })
+}
+
 /// Top-left of the canvas region in viewport-logical px. Collapses to
 /// `x = 0` when the sidebar is closed — the whole point of the
 /// invariant.

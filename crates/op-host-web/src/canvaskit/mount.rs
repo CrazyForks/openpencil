@@ -42,6 +42,12 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
 
     let backend = init_backend(&canvas_id, dpr, logical_w, logical_h).await?;
     let mut host = crate::widget_host::WidgetHost::new();
+    // The editor opens on its canvas, not on a chat panel: the AI panel
+    // starts as its compact input bar and expands on click. Applied here
+    // rather than in `WidgetHost::new` because that constructor is also
+    // every widget test's fixture — this is the mount-time policy, not
+    // the host's resting state.
+    host.editor_state_mut().chat.minimize();
     // Embed-host flag from the page URL (`?embed=vscode` in the VS Code
     // plugin iframe): parsed before the first paint so embedded chrome
     // never flashes in.

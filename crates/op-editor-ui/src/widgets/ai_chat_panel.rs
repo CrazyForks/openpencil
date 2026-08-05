@@ -25,15 +25,8 @@ pub const AI_CHAT_HEIGHT: f32 = op_editor_core::chat::DEFAULT_CHAT_PANEL_HEIGHT;
 pub const AI_CHAT_MIN_WIDTH: f32 = 280.0;
 pub const AI_CHAT_MIN_HEIGHT: f32 = 250.0;
 pub const AI_CHAT_MAX_RATIO: f32 = 0.8;
-pub const AI_CHAT_COLLAPSED_WIDTH: f32 = 150.0;
-pub const AI_CHAT_COLLAPSED_HEIGHT: f32 = 32.0;
 pub(crate) const PAD: f32 = 16.0;
 pub(crate) const HEADER_HEIGHT: f32 = 36.0;
-const COLLAPSED_RADIUS: f32 = 8.0;
-const COLLAPSED_X_PAD: f32 = 12.0;
-const COLLAPSED_GAP: f32 = 6.0;
-const COLLAPSED_MESSAGE_ICON: f32 = 13.0;
-const COLLAPSED_CHEVRON_ICON: f32 = 12.0;
 pub(crate) const RESIZE_GUTTER: f32 = 4.0;
 pub(crate) const RESIZE_CORNER: f32 = 12.0;
 pub(crate) const INPUT_AREA_HEIGHT: f32 = 56.0;
@@ -399,7 +392,7 @@ impl<'a> AIChatPlaceholder<'a> {
     }
 
     pub fn model_picker_bounds(&self, rect: Rect) -> Option<Rect> {
-        if self.state.collapsed || !self.model_picker.open {
+        if self.state.is_minimized() || !self.model_picker.open {
             return None;
         }
         let input_rect = self.input_rect(rect);
@@ -549,6 +542,10 @@ mod tests;
 #[cfg(test)]
 #[path = "ai_chat_panel/tests_paint.rs"]
 mod tests_paint;
+
+#[cfg(test)]
+#[path = "ai_chat_panel/tests_minimized_paint.rs"]
+mod tests_minimized_paint;
 
 #[cfg(test)]
 #[path = "ai_chat_panel/tests_transcript.rs"]

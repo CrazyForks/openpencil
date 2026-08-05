@@ -121,7 +121,7 @@ fn property_panel_gap_press_commits_size_draft() {
         .set_single_selection(NodeId::new("n1"));
     // Collapse the chat so its floating panel can't shadow the
     // property-rail gap this test presses.
-    host.editor_state_mut().chat.collapsed = true;
+    host.editor_state_mut().chat.minimize();
     host.editor_state_mut().ui.property_focus = Some(PropertyFocus::SizeW);
     host.editor_state_mut().ui.property_input.set_text("321");
 

@@ -20,6 +20,12 @@ impl DesktopApp {
         // (The brand-logo catalog is registered once in `main` before any render
         // path — GUI / `--render-shots` / MCP — so it is already loaded here.)
         let mut host = WidgetHostNative::new();
+        // The app opens on its canvas, not on a chat panel: the AI panel
+        // starts as its compact input bar and expands on click. Applied
+        // here rather than in `WidgetHostNative::new` because that
+        // constructor is also every widget test's fixture — this is the
+        // app-launch policy, not the host's resting state.
+        host.editor_state_mut().chat.minimize();
         let fit_blank_frame = initial_file.is_none();
         // Best-effort prefs restore onto the host's `EditorState`.
         op_host_services::settings_io::load(host.editor_state_mut());

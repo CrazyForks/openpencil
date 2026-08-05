@@ -37,6 +37,16 @@ fn one_headless_mode_or_repeated_same_flag_is_not_a_conflict() {
 }
 
 #[test]
+fn launching_the_app_starts_the_chat_panel_minimized() {
+    let app = DesktopApp::new(None);
+
+    assert!(
+        app.host.editor_state().chat.is_minimized(),
+        "the app opens on its canvas, with the AI panel as a compact bar"
+    );
+}
+
+#[test]
 fn cursor_only_redraw_without_visible_state_change_skips_present() {
     let mut app = DesktopApp::new(None);
     app.redraw_pending = true;
@@ -60,10 +70,21 @@ fn consumed_press_dirties_existing_cursor_redraw_without_second_request() {
 fn cursor_redraw_still_paints_when_layer_hover_changes() {
     let mut app = DesktopApp::new(None);
     app.redraw_pending = true;
-    app.pending_cursor_move = Some((
-        20.0,
-        op_editor_ui::widgets::TOP_BAR_HEIGHT + 8.0 + 28.0 + 16.0,
-    ));
+    // Measured from where the tree actually starts, not from the top
+    // bar: a page with top-level frames — which the starter document is
+    // — heads the rail with the slides tab row, and a hardcoded offset
+    // would land above the first layer row and hover nothing.
+    let rail = op_editor_ui::widgets::host_canvas_geometry::layer_panel_rect(
+        app.host.editor_state(),
+        app.viewport_height,
+    );
+    let rows_top = op_editor_ui::widgets::slides_panel_flow::layers_content_rect(
+        app.host.editor_state(),
+        rail,
+    )
+    .origin
+    .y;
+    app.pending_cursor_move = Some((20.0, rows_top + 8.0 + 28.0 + 16.0));
 
     assert!(app.prepare_redraw());
 }
@@ -90,7 +111,7 @@ fn panel_resize_drag_continues_inside_left_layer_panel() {
 #[test]
 fn hidden_model_picker_is_healed_over_the_layer_panel() {
     let mut app = DesktopApp::new(None);
-    app.host.editor_state_mut().chat.collapsed = true;
+    app.host.editor_state_mut().chat.minimize();
     app.host.editor_state_mut().editor_ui.chat_model_picker.open = true;
     app.pending_cursor_move = Some((20.0, op_editor_ui::widgets::TOP_BAR_HEIGHT + 20.0));
 
@@ -131,6 +152,9 @@ fn selected_count_chip_clear_click_clears_canvas_selection() {
         op_editor_core::NodeId::new("n2"),
     ];
     app.host.editor_state_mut().chat.panel_position = Some((100.0, 100.0));
+    // The app launches minimized; the selection chip lives in the
+    // expanded panel.
+    app.host.editor_state_mut().chat.expand();
     let chat = &app.host.editor_state().chat;
     let chat_rect = op_editor_ui::Rect::xywh(100.0, 100.0, chat.panel_width, chat.panel_height);
     let panel = op_editor_ui::widgets::AIChatPlaceholder::from_editor(app.host.editor_state());

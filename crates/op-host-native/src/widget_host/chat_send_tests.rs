@@ -60,7 +60,7 @@ fn chat_collapse_click_stays_expanded_while_streaming_like_ts() {
     ));
 
     assert!(
-        !host.editor_state().chat.collapsed,
+        !host.editor_state().chat.is_minimized(),
         "TS immediately reopens a minimized chat while a response is streaming"
     );
 }

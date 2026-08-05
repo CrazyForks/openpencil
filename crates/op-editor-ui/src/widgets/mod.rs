@@ -271,6 +271,7 @@ pub mod ai_chat_panel_controls;
 mod ai_chat_panel_footer;
 pub(crate) mod ai_chat_panel_header;
 mod ai_chat_panel_hit;
+mod ai_chat_panel_minimized;
 pub mod ai_chat_panel_paint;
 pub(crate) mod ai_chat_tool_verbs;
 pub mod ai_chat_transcript;
@@ -387,8 +388,11 @@ pub use icons::{draw_icon, draw_icon_catalog_entry, draw_icon_data, Icon, IconPa
 
 pub use ai_chat_hit::{AIChatHit, ChatCursorProbe, ChatResizeEdge};
 pub use ai_chat_panel::{
-    AIChatPlaceholder, AI_CHAT_COLLAPSED_HEIGHT, AI_CHAT_COLLAPSED_WIDTH, AI_CHAT_HEIGHT,
-    AI_CHAT_MAX_RATIO, AI_CHAT_MIN_HEIGHT, AI_CHAT_MIN_WIDTH, AI_CHAT_WIDTH,
+    AIChatPlaceholder, AI_CHAT_HEIGHT, AI_CHAT_MAX_RATIO, AI_CHAT_MIN_HEIGHT, AI_CHAT_MIN_WIDTH,
+    AI_CHAT_WIDTH,
+};
+pub use ai_chat_panel_minimized::{
+    AI_CHAT_MINIMIZED_HEIGHT, AI_CHAT_MINIMIZED_MIN_WIDTH, AI_CHAT_MINIMIZED_WIDTH,
 };
 pub use ai_chat_transcript_design::{parse_design_json_nodes, DesignParseError};
 pub use align_toolbar::{AlignToolbar, AlignToolbarHit, ALIGN_TOOLBAR_HEIGHT, ALIGN_TOOLBAR_WIDTH};

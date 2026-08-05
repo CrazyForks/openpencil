@@ -20,7 +20,7 @@ impl<'a> AIChatPlaceholder<'a> {
     /// containment check so every painted part of the overlay stays
     /// interactive and wins over controls painted underneath it.
     fn open_model_picker_hit(&self, rect: Rect, point: Point2D) -> Option<AIChatHit> {
-        if self.state.collapsed || !self.model_picker.open {
+        if self.state.is_minimized() || !self.model_picker.open {
             return None;
         }
         let picker = self.model_picker_bounds(rect)?;
@@ -72,12 +72,11 @@ impl<'a> AIChatPlaceholder<'a> {
         if !(rect).contains(point) {
             return None;
         }
-        // When collapsed: anywhere on the pill expands it. Drag
-        // is only available in expanded mode (by-design — the
-        // pill is too small to reliably distinguish drag intent
-        // from click intent, so we treat any pill click as the
-        // single intended action: re-open).
-        if self.state.collapsed {
+        // When minimized: anywhere on the compact bar expands it. The bar
+        // carries no interactive sub-controls and cannot be dragged — a
+        // single unambiguous target beats splitting a 64 px-tall strip
+        // between drag intent, model switching and expand intent.
+        if self.state.is_minimized() {
             return Some(AIChatHit::ToggleCollapse);
         }
         let can_use_model = !self.state.available_models.is_empty();
@@ -352,7 +351,7 @@ impl<'a> AIChatPlaceholder<'a> {
     }
 
     pub fn resize_edge_at(&self, rect: Rect, point: Point2D) -> Option<ChatResizeEdge> {
-        if self.state.collapsed || self.state.maximized {
+        if self.state.is_minimized() || self.state.maximized {
             return None;
         }
         let left = rect.origin.x;
@@ -526,7 +525,7 @@ impl<'a> AIChatPlaceholder<'a> {
         rect: Rect,
         point: Point2D,
     ) -> Option<op_editor_core::ChatFooterButton> {
-        if self.state.collapsed || self.model_picker.open {
+        if self.state.is_minimized() || self.model_picker.open {
             return None;
         }
         let input_rect = self.input_rect(rect);
@@ -580,7 +579,7 @@ impl<'a> AIChatPlaceholder<'a> {
     pub fn example_hover_at(&self, rect: Rect, point: Point2D) -> Option<usize> {
         // Examples are hoverable/clickable regardless of model connection (#43);
         // gate only on messages-empty / not-streaming / not-collapsed.
-        if !self.state.messages.is_empty() || self.is_streaming() || self.state.collapsed {
+        if !self.state.messages.is_empty() || self.is_streaming() || self.state.is_minimized() {
             return None;
         }
         example_card_rects(rect)
@@ -592,7 +591,7 @@ impl<'a> AIChatPlaceholder<'a> {
     /// store in `EditorUiState.chat_tab_hover`). Returns `None` when the
     /// panel is collapsed or the cursor is not in the tab row zone.
     pub fn tab_hover_at(&self, rect: Rect, point: Point2D) -> Option<usize> {
-        if self.state.collapsed {
+        if self.state.is_minimized() {
             return None;
         }
         let tab_count = self.tabs_snapshot.len();
@@ -610,7 +609,7 @@ impl<'a> AIChatPlaceholder<'a> {
     /// outside the picker rect. Used by the host to update
     /// `EditorUiState::parallel_agents_picker_hover`.
     pub fn parallel_agents_picker_hover_at(&self, rect: Rect, point: Point2D) -> Option<u32> {
-        if !self.parallel_agents_picker_open || self.state.collapsed {
+        if !self.parallel_agents_picker_open || self.state.is_minimized() {
             return None;
         }
         let input_rect = self.input_rect(rect);

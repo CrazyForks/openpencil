@@ -135,6 +135,9 @@ mod tests {
             state.chat.input.text().is_empty(),
             "the chat input is left clean for the user's next message"
         );
-        assert!(!state.chat.collapsed, "the panel opens to show the turn");
+        assert!(
+            !state.chat.is_minimized(),
+            "the panel opens to show the turn"
+        );
     }
 }

@@ -15,7 +15,7 @@ fn toolbar_panel_actions_open_variables_and_design_panels() {
         r#"{"version":"1.0.0","children":[{"type":"rectangle","id":"n1","name":"n1","x":0,"y":0,"width":100,"height":50}]}"#,
     );
     host.editor_state_mut().editor_ui.property_tab = op_editor_core::PropertyTab::Design;
-    host.editor_state_mut().chat.collapsed = true;
+    host.editor_state_mut().chat.minimize();
     let viewport_w = 1200.0;
     let viewport_h = 800.0;
 

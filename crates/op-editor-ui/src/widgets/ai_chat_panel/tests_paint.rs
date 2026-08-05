@@ -28,36 +28,6 @@ pub(in super::super) fn color_close(actual: crate::Color, expected: crate::Color
 }
 
 #[test]
-fn paint_collapsed_bar_matches_ts_minimized_bar_style() {
-    let mut s = EditorState::new();
-    s.chat.collapsed = true;
-    let panel = AIChatPlaceholder::from_editor(&s);
-    let rect = Rect::xywh(0.0, 0.0, AI_CHAT_COLLAPSED_WIDTH, AI_CHAT_COLLAPSED_HEIGHT);
-    let mut backend = PanelPaintBackend::default();
-    let mut cx = PaintCx {
-        backend: &mut backend,
-    };
-
-    panel.paint(&mut cx, rect);
-
-    // TS: `h-8 bg-card rounded-lg gap-1.5 px-3`, with 13px
-    // MessageSquare, 12px chevron, and muted 12px title text.
-    assert_close(AI_CHAT_COLLAPSED_HEIGHT, 32.0);
-    assert_eq!(backend.round_rects[0].0, rect);
-    assert_close(backend.round_rects[0].1, 8.0);
-    assert_eq!(backend.round_rects[0].2, panel.theme.card);
-    assert_eq!(backend.texts[0].0, "New Chat");
-    assert_close(backend.texts[0].1, 12.0);
-    assert_eq!(backend.texts[0].2, (panel.theme.muted_foreground).to_jian());
-    assert_close(backend.texts[0].3.x, 12.0 + 13.0 + 6.0);
-    assert_eq!(backend.svg_strokes.len(), 2);
-    assert_close(backend.svg_strokes[0].0.x, 12.0);
-    assert_close(backend.svg_strokes[0].1, 13.0);
-    assert_close(backend.svg_strokes[1].0.x, rect.size.x - 12.0 - 12.0);
-    assert_close(backend.svg_strokes[1].1, 12.0);
-}
-
-#[test]
 fn paint_header_uses_auto_generated_chat_title() {
     let mut s = EditorState::new();
     s.chat.title = "现代移动端登录页面".into();
@@ -83,30 +53,6 @@ fn paint_header_uses_auto_generated_chat_title() {
             .any(|(text, size, _, _)| text.starts_with("现代移动端")
                 && (*size - tab_font).abs() < 1e-4),
         "expanded header tab row should render the current chat title at TAB_FONT_SIZE={tab_font}"
-    );
-}
-
-#[test]
-fn paint_collapsed_bar_hover_adds_visible_feedback_across_pill() {
-    let mut s = EditorState::new();
-    s.chat.collapsed = true;
-    s.editor_ui.chat_header_hover = Some(op_editor_core::ChatHeaderButton::ToggleCollapse);
-    let panel = AIChatPlaceholder::from_editor(&s);
-    let rect = Rect::xywh(0.0, 0.0, AI_CHAT_COLLAPSED_WIDTH, AI_CHAT_COLLAPSED_HEIGHT);
-    let mut backend = PanelPaintBackend::default();
-    let mut cx = PaintCx {
-        backend: &mut backend,
-    };
-
-    panel.paint(&mut cx, rect);
-
-    assert!(
-        backend.round_rects.iter().any(|(r, radius, color)| {
-            rect_close(*r, rect)
-                && *radius >= 8.0
-                && color_close(*color, chat_neutral_hover_color(&panel.theme))
-        }),
-        "collapsed New Chat hover should paint a visible wash across the full pill"
     );
 }
 

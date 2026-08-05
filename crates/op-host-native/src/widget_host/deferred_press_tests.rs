@@ -202,7 +202,7 @@ fn right_press_on_model_picker_does_not_open_covered_layer_context_menu() {
 }
 
 #[test]
-fn collapsing_chat_closes_model_picker() {
+fn minimizing_chat_closes_model_picker() {
     let mut host = WidgetHostNative::new();
     seed_two_chat_models(&mut host);
     host.editor_state_mut().editor_ui.chat_model_picker.open = true;
@@ -214,7 +214,7 @@ fn collapsing_chat_closes_model_picker() {
 
     assert!(host.apply_press(chat.origin.x + 25.0, chat.origin.y + 18.0, 1200.0, 800.0,));
 
-    assert!(host.editor_state().chat.collapsed);
+    assert!(host.editor_state().chat.is_minimized());
     assert!(!host.editor_state().editor_ui.chat_model_picker.open);
     assert!(host
         .editor_state()
@@ -285,8 +285,12 @@ fn image_provider_option_press_defers_selection_until_release() {
 
     let panel = AgentSettingsPanel::for_editor(host.editor_state());
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = rect.origin.x + 200.0 + 24.0;
-    let content_y = rect.origin.y + 24.0;
+    let content_x = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .x;
+    let content_y = op_editor_ui::widgets::agent_settings_panel::secondary_tab_body(rect)
+        .origin
+        .y;
     let gen_top = content_y + 36.0 + 24.0 + 28.0;
     let row_y = gen_top + 36.0 + 8.0;
     let provider_y = row_y + 32.0 + 8.0 + 36.0;

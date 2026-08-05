@@ -84,7 +84,7 @@ impl ChatState {
                 .unwrap_or_else(|| entry.provider.name().to_string())
         });
         self.auto_title_from_prompt(&trimmed);
-        self.collapsed = false;
+        self.expand();
         // A turn still in flight is interrupted by this new send — its
         // assistant bubble will never reach `Done`. Clear every
         // `streaming` flag so a stale bubble doesn't animate forever;
@@ -127,11 +127,38 @@ impl ChatState {
         self.pending_send.is_some() || self.messages.iter().any(|msg| msg.streaming)
     }
 
-    pub fn toggle_collapsed(&mut self) {
-        if self.has_streaming_turn() {
-            self.collapsed = false;
+    /// Whether the panel is showing its compact input bar. Reads the
+    /// legacy [`collapsed`] flag too so pre-split state resolves to the
+    /// bar instead of a panel form that no longer exists.
+    ///
+    /// [`collapsed`]: ChatState::collapsed
+    pub fn is_minimized(&self) -> bool {
+        self.minimized || self.collapsed
+    }
+
+    /// Drop the panel to its compact input bar. Entering a document
+    /// (app launch, open / recent / drop, template, web load) starts
+    /// here; the legacy `collapsed` flag is cleared so the panel has one
+    /// unambiguous non-expanded form.
+    pub fn minimize(&mut self) {
+        self.minimized = true;
+        self.collapsed = false;
+    }
+
+    /// Raise the panel back to its normal form.
+    pub fn expand(&mut self) {
+        self.minimized = false;
+        self.collapsed = false;
+    }
+
+    /// Flip between the compact bar and the normal panel. A streaming
+    /// turn always expands — hiding a reply as it arrives reads as the
+    /// turn having been lost.
+    pub fn toggle_minimized(&mut self) {
+        if self.has_streaming_turn() || self.is_minimized() {
+            self.expand();
         } else {
-            self.collapsed = !self.collapsed;
+            self.minimize();
         }
     }
 

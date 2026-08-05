@@ -15,7 +15,7 @@ fn seed_red_rect(host: &mut WidgetHostNative) {
         .expect("fixture JSON parses")
         .value;
     let mut state = op_editor_core::EditorState::from_document(doc);
-    state.chat.collapsed = true;
+    state.chat.minimize();
     *host.editor_state_mut() = state;
     host.mark_paint_dirty_for_test();
 }
@@ -260,7 +260,7 @@ fn progressive_restore_converges_to_direct_paint_quality() {
         .expect("fixture JSON parses")
         .value;
     let mut state = op_editor_core::EditorState::from_document(doc);
-    state.chat.collapsed = true;
+    state.chat.minimize();
     *host.editor_state_mut() = state;
     host.mark_paint_dirty_for_test();
     let mut backend = NativeBackend::with_dpi(1.0);

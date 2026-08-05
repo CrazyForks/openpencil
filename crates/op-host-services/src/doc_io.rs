@@ -245,6 +245,14 @@ pub fn preserve_app_preferences(previous: &EditorState, next: &mut EditorState) 
     // #20: theme presets are app-level too (`theme-presets.json`).
     next.theme_presets = previous.theme_presets.clone();
     next.theme_presets_dirty = previous.theme_presets_dirty;
+    // Entering a document (Open / recent / drop / template / New)
+    // starts the AI panel as its compact input bar, so the first thing
+    // the user sees is the document rather than a chat panel over it. A
+    // turn still streaming in the previous document keeps the panel
+    // open — hiding a reply mid-flight reads as having lost it.
+    if !previous.chat.has_streaming_turn() {
+        next.chat.minimize();
+    }
     next.editor_ui.agent_settings = previous.editor_ui.agent_settings.clone();
     next.editor_ui.chat_selected_agent = previous.editor_ui.chat_selected_agent;
     next.chat.discovered_models = previous.chat.discovered_models.clone();
@@ -403,6 +411,35 @@ mod tests {
         assert_eq!(&*next.editor_ui.system_font_families, &["PingFang SC"]);
         assert_eq!(&*next.editor_ui.bundled_font_families, &["Inter"]);
         assert_eq!(&*next.editor_ui.imported_font_families, &["Brand Sans"]);
+    }
+
+    #[test]
+    fn entering_a_document_starts_the_chat_panel_minimized() {
+        let previous = EditorState::new();
+        let mut next = EditorState::new();
+        assert!(!next.chat.is_minimized());
+
+        preserve_app_preferences(&previous, &mut next);
+
+        assert!(
+            next.chat.is_minimized(),
+            "Open / New / template entry starts on the compact bar"
+        );
+    }
+
+    #[test]
+    fn a_streaming_turn_keeps_the_chat_panel_open_across_a_document_swap() {
+        let mut previous = EditorState::new();
+        previous.chat.set_input_text("design a pricing page");
+        assert!(previous.chat.begin_send());
+        let mut next = EditorState::new();
+
+        preserve_app_preferences(&previous, &mut next);
+
+        assert!(
+            !next.chat.is_minimized(),
+            "an in-flight conversation must not be hidden behind the bar"
+        );
     }
 
     #[test]
