@@ -108,6 +108,18 @@ impl TemplateScene {
         }
     }
 
+    /// Whether the generate row can produce a document of this scene.
+    ///
+    /// Only slides today, and the reason is upstream of the panel: the
+    /// pipeline picks a canvas from the request text
+    /// (`op_orchestrator::detect_design_type`), and "PPT" is the only scene
+    /// with a design type behind it. A card request classifies as a 400 px
+    /// Component, so offering generation for the other scenes would hand
+    /// back a widget where the card promised a poster.
+    pub const fn supports_generation(self) -> bool {
+        matches!(self, Self::Slides)
+    }
+
     /// Label shown when the catalogue key is not yet translated.
     ///
     /// Chip-sized nouns, not descriptions: the filter row is a single
@@ -155,6 +167,16 @@ pub struct SceneTemplateDefinition {
     pub frames: u16,
     pub frame_width: u32,
     pub frame_height: u32,
+    /// The style-guide the template's own palette and typography embody, as
+    /// an id in `op_ai_skills::style_guide::style_guide_registry`.
+    ///
+    /// `None` is a real answer, not a gap: a template only carries a guide
+    /// when generating from it would actually reproduce it, so this doubles
+    /// as the gate on the card's "generate from this" action. Nothing here
+    /// validates the name against the registry — op-editor-core does not
+    /// depend on the skills corpus — so the cross-check lives beside the
+    /// panel that reads both (`asset_center_style_cards`).
+    pub style_guide: Option<String>,
 }
 
 impl SceneTemplateDefinition {
@@ -162,6 +184,19 @@ impl SceneTemplateDefinition {
     pub fn document(&self) -> &'static str {
         scene_template_document(&self.id)
             .expect("catalogue load verified every template has a document")
+    }
+
+    /// The guide to pin when generating from this template, or `None` when
+    /// the card must not offer generation at all.
+    ///
+    /// Both halves have to hold: a guide to pin, and a scene the pipeline
+    /// can build. Reading them through one accessor is what keeps paint and
+    /// hit-testing from disagreeing about whether the button is there.
+    pub fn generate_style_guide(&self) -> Option<&str> {
+        if !self.scene.supports_generation() {
+            return None;
+        }
+        self.style_guide.as_deref()
     }
 
     pub fn title_for_locale(&'static self, locale: Locale) -> &'static str {
@@ -276,6 +311,7 @@ struct TemplateBuilder {
     frames: Option<u16>,
     frame_width: Option<u32>,
     frame_height: Option<u32>,
+    style_guide: Option<String>,
 }
 
 impl TemplateBuilder {
@@ -330,6 +366,13 @@ impl TemplateBuilder {
                 "`frames` must be greater than zero",
             ));
         }
+        // An empty `style_guide = ""` is the one shape that would read as
+        // "has a guide" while naming none, which is exactly the state that
+        // paints a generate button with nothing to pin.
+        let style_guide = match self.style_guide {
+            Some(name) => Some(non_empty(name, "style_guide", line)?),
+            None => None,
+        };
         Ok(SceneTemplateDefinition {
             id,
             scene: required(self.scene, "scene", line)?,
@@ -357,6 +400,7 @@ impl TemplateBuilder {
             frames,
             frame_width: required(self.frame_width, "frame_width", line)?,
             frame_height: required(self.frame_height, "frame_height", line)?,
+            style_guide,
         })
     }
 }
@@ -462,6 +506,12 @@ pub(crate) fn parse_scene_template_catalogue(
             "frame_height" => set_once(
                 &mut builder.frame_height,
                 parse_integer(raw_value, field, line_number)?,
+                field,
+                line_number,
+            )?,
+            "style_guide" => set_once(
+                &mut builder.style_guide,
+                parse_text(raw_value, line_number)?,
                 field,
                 line_number,
             )?,

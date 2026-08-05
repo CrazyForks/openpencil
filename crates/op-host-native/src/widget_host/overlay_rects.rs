@@ -221,13 +221,22 @@ impl WidgetHostNative {
         overlay_geometry::prompt_center_panel_rect(&self.editor_state, viewport_w, viewport_h)
     }
 
-    /// Scene Template Center rect — `None` when closed.
+    /// Asset Center gallery rect — `None` when closed.
     pub(in crate::widget_host) fn scene_template_panel_rect(
         &self,
         viewport_w: f32,
         viewport_h: f32,
     ) -> Option<Rect> {
         overlay_geometry::scene_template_panel_rect(&self.editor_state, viewport_w, viewport_h)
+    }
+
+    /// The gallery's dimming layer — `None` when closed.
+    pub(in crate::widget_host) fn scene_template_scrim_rect(
+        &self,
+        viewport_w: f32,
+        viewport_h: f32,
+    ) -> Option<Rect> {
+        overlay_geometry::scene_template_scrim_rect(&self.editor_state, viewport_w, viewport_h)
     }
 
     /// Floating Icon-picker panel rect — `None` when closed.

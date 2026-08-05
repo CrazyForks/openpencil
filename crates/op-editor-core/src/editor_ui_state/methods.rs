@@ -4,7 +4,10 @@
 //!
 //! Split out of the `editor_ui_state` spine (800-line file ceiling).
 
-use super::{EditorUiState, FontPickerPurpose, MissingFontSurface, RecentFile, RECENT_FILE_CAP};
+use super::{
+    EditorUiState, FontPickerPurpose, MissingFontSurface, RecentFile, SceneTemplateFocus,
+    RECENT_FILE_CAP,
+};
 
 impl EditorUiState {
     /// A fresh UI state — sidebar open, dark theme, no menus open.
@@ -121,6 +124,60 @@ impl EditorUiState {
         ) {
             self.pressed_button = None;
         }
+        true
+    }
+
+    /// Aim the generate row at a template: pin its style guide, narrow the
+    /// grid to its scene, and put the caret in the topic field.
+    ///
+    /// Three writes, one gesture, because the user asked one question — "make
+    /// me something like this" — and answering it in three places they then
+    /// have to find would be the same work done by hand. The pin is the part
+    /// that actually reaches the pipeline (`resolve_pinned_style_guide`
+    /// short-circuits the whole style menu to it); the filter and the focus
+    /// are so the panel now looks like what it is about to do.
+    ///
+    /// Returns whether anything moved.
+    pub fn use_scene_template_as_generate_basis(
+        &mut self,
+        template: &crate::scene_template_catalog::SceneTemplateDefinition,
+    ) -> bool {
+        let Some(guide) = template.generate_style_guide() else {
+            return false;
+        };
+        let mut changed = self.pinned_style_guide.as_deref() != Some(guide);
+        self.pinned_style_guide = Some(guide.to_string());
+
+        let center = &mut self.scene_template_center;
+        let filter = crate::editor_ui_state::SceneFilter::Scene(template.scene);
+        if center.filter != filter {
+            center.filter = filter;
+            // The grid reorders under the pointer, so a retained scroll or
+            // hover index would name a different card than the one just
+            // pressed — same reason the filter chips reset both.
+            center.scroll.offset = 0.0;
+            center.hover = None;
+            changed = true;
+        }
+        changed |= center.focus != SceneTemplateFocus::Generate;
+        center.focus = SceneTemplateFocus::Generate;
+        changed |= center.generate_basis.as_deref() != Some(template.id.as_str());
+        center.generate_basis = Some(template.id.clone());
+        changed
+    }
+
+    /// Drop the generate row's basis chip and the pin it set.
+    ///
+    /// Both, because the chip is the only visible trace of the pin while the
+    /// Templates tab is showing: clearing the label and leaving the guide
+    /// pinned would keep steering every later generation with nothing on
+    /// screen saying so.
+    pub fn clear_scene_template_generate_basis(&mut self) -> bool {
+        let center = &mut self.scene_template_center;
+        if center.generate_basis.take().is_none() {
+            return false;
+        }
+        self.pinned_style_guide = None;
         true
     }
 

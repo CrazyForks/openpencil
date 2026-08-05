@@ -9,13 +9,7 @@ use crate::widgets::press_flow::press_scene_template_center;
 use op_editor_core::scene_template_catalog::TemplateScene;
 use op_editor_core::EditorState;
 
-const PANEL: Rect = Rect {
-    origin: Point2D { x: 40.0, y: 60.0 },
-    size: Point2D {
-        x: SCENE_TEMPLATE_PANEL_W,
-        y: SCENE_TEMPLATE_PANEL_H,
-    },
-};
+use super::test_rects::MEDIUM as PANEL;
 
 /// A host that can run the whole chain, which is what the row needs.
 fn capable_state() -> EditorState {
@@ -83,23 +77,25 @@ fn the_row_sits_inside_the_panel_and_above_the_grid() {
     let input = panel.generate_input_rect(PANEL).expect("visible");
     let button = panel.generate_button_rect(PANEL).expect("visible");
     let cards = panel.cards_viewport(PANEL);
+    let content = SceneTemplatePanel::content_rect(PANEL);
 
-    assert!(input.origin.x >= PANEL.origin.x + PAD - 0.01);
+    assert!(input.origin.x >= content.origin.x - 0.01);
     assert!(
         button.origin.x >= input.origin.x + input.size.x,
         "the button overlaps the field"
     );
     assert!(
-        button.origin.x + button.size.x <= PANEL.origin.x + PANEL.size.x - PAD + 0.01,
-        "the button runs past the panel edge"
+        button.origin.x + button.size.x <= content.origin.x + content.size.x + 0.01,
+        "the button runs past the content column"
     );
     assert_eq!(input.origin.y, button.origin.y);
     assert!(
         input.origin.y + input.size.y < cards.origin.y,
         "the row overlaps the card grid"
     );
+    let (_, _, card_h) = panel.grid_metrics(PANEL);
     assert!(
-        cards.size.y > CARD_H,
+        cards.size.y > card_h,
         "the grid must still show a full card row"
     );
 }

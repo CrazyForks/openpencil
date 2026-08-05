@@ -8,6 +8,15 @@
 #
 # Parsed by `scene_template_catalog.rs` with the same small TOML subset the
 # Prompt Center uses: quoted strings, string arrays, plain integers.
+#
+# `style_guide` is optional and names an entry in the style-guide registry
+# (`op-ai-skills/skills/style-guides/<name>.md`). Its presence is what puts the
+# "generate from this" action on a card, so it is only set where generating
+# from the template would actually reproduce it: the five deck templates. The
+# card / tutorial / carousel / comparison templates are left without one
+# because the generation pipeline has no design type for them yet — "卡片"
+# classifies as a 400px Component (`op_orchestrator::detect_design_type`), so a
+# button here would promise a knowledge card and deliver a widget.
 
 [[template]]
 id = "screenshot-tutorial"
@@ -44,6 +53,7 @@ tags = ["PPT", "演示", "汇报", "幻灯片", "slides", "deck", "presentation"
 frames = 6
 frame_width = 1920
 frame_height = 1080
+style_guide = "corporate-blue-light"
 
 [[template]]
 id = "knowledge-card-vertical"
@@ -92,6 +102,7 @@ tags = ["路演", "融资", "创业", "深色", "PPT", "pitch", "deck", "startup
 frames = 6
 frame_width = 1920
 frame_height = 1080
+style_guide = "midnight-minimal-dark"
 
 [[template]]
 id = "lecture-deck-light"
@@ -104,6 +115,7 @@ tags = ["课件", "教学", "讲课", "教育", "PPT", "lecture", "teaching", "c
 frames = 6
 frame_width = 1920
 frame_height = 1080
+style_guide = "education-friendly-light"
 
 [[template]]
 id = "minimal-keynote"
@@ -116,6 +128,7 @@ tags = ["极简", "留白", "发布会", "演讲", "keynote", "minimal", "PPT", 
 frames = 8
 frame_width = 1920
 frame_height = 1080
+style_guide = "portfolio-minimal-light"
 
 [[template]]
 id = "gradient-tech"
@@ -128,3 +141,5 @@ tags = ["渐变", "科技", "玻璃", "深色", "开发者", "gradient", "tech",
 frames = 6
 frame_width = 1920
 frame_height = 1080
+style_guide = "cyber-gradient-dark"
+

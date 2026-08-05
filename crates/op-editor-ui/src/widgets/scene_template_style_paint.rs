@@ -7,18 +7,18 @@
 //! distinguishable at a glance.
 
 use super::asset_center_style_cards::StyleGuideCard;
-use super::scene_template_panel::{SceneTemplatePanel, STYLE_CARD_H, STYLE_SWATCH_H};
+use super::scene_template_panel::{SceneTemplatePanel, STYLE_SWATCH_H};
 use crate::widgets::button::paint_button_feedback_wash;
 use crate::widgets::prompt_center_panel::estimated_text_width;
 use crate::widgets::scene_template_panel_paint::truncate_to_width;
 use crate::widgets::PaintCx;
 use crate::{Point2D, Rect};
 
-const CARD_RADIUS: f32 = 9.0;
-const NAME_SIZE: f32 = 12.5;
-const SUMMARY_SIZE: f32 = 10.5;
-const PIN_SIZE: f32 = 10.0;
-const INSET: f32 = 10.0;
+const CARD_RADIUS: f32 = 12.0;
+const NAME_SIZE: f32 = 13.5;
+const SUMMARY_SIZE: f32 = 11.0;
+const PIN_SIZE: f32 = 11.0;
+const INSET: f32 = 14.0;
 
 impl SceneTemplatePanel<'_> {
     pub(super) fn paint_style_cards(&self, cx: &mut PaintCx<'_>, panel: Rect) {
@@ -93,7 +93,7 @@ impl SceneTemplatePanel<'_> {
         self.paint_text(
             cx,
             &truncate_to_width(card.name, (text_w - pin_w).max(0.0), NAME_SIZE),
-            Point2D::new(text_x, rect.origin.y + 24.0),
+            Point2D::new(text_x, rect.origin.y + 28.0),
             NAME_SIZE,
             self.theme.foreground,
         );
@@ -103,7 +103,7 @@ impl SceneTemplatePanel<'_> {
                 pin_label,
                 Point2D::new(
                     rect.origin.x + rect.size.x - INSET - pin_w + 8.0,
-                    rect.origin.y + 23.0,
+                    rect.origin.y + 27.0,
                 ),
                 PIN_SIZE,
                 self.theme.primary,
@@ -115,7 +115,7 @@ impl SceneTemplatePanel<'_> {
         self.paint_text(
             cx,
             &truncate_to_width(&card.summary, text_w, SUMMARY_SIZE),
-            Point2D::new(text_x, rect.origin.y + STYLE_CARD_H - 12.0),
+            Point2D::new(text_x, rect.origin.y + rect.size.y - 16.0),
             SUMMARY_SIZE,
             self.theme.muted_foreground,
         );
@@ -126,8 +126,8 @@ impl SceneTemplatePanel<'_> {
     pub(super) fn swatch_band_rect(card: Rect) -> Rect {
         Rect::xywh(
             card.origin.x + INSET,
-            card.origin.y + 34.0,
-            card.size.x - INSET * 2.0,
+            card.origin.y + 40.0,
+            (card.size.x - INSET * 2.0).max(0.0),
             STYLE_SWATCH_H,
         )
     }

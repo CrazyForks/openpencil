@@ -3,10 +3,7 @@ use crate::widgets::SCENE_TEMPLATE_CLOSE_HOVER;
 use op_editor_core::scene_template_catalog::TemplateScene;
 use op_editor_core::{EditorState, SceneFilter};
 
-const PANEL: Rect = Rect {
-    origin: Point2D { x: 100.0, y: 80.0 },
-    size: Point2D { x: 720.0, y: 520.0 },
-};
+use crate::widgets::scene_template_panel::test_rects::MEDIUM as PANEL;
 
 fn open_state() -> EditorState {
     let mut state = EditorState::default();
@@ -21,17 +18,28 @@ fn point_in(rect: Rect) -> Point2D {
     )
 }
 
+/// The gallery dims the editor behind it, so the band outside the panel is
+/// scrim, not chrome. A press there dismisses instead of reaching whatever is
+/// dimmed underneath — and it must still be reported as consumed, or the host
+/// would run the same press down the rest of its ladder.
 #[test]
-fn a_press_outside_the_panel_falls_through() {
+fn a_press_on_the_scrim_dismisses_the_gallery() {
     let mut state = open_state();
     let outside = Point2D::new(PANEL.origin.x - 10.0, PANEL.origin.y - 10.0);
     assert_eq!(
         press_scene_template_center(&mut state, PANEL, outside, 0),
-        None
+        Some(true)
     );
-    assert!(
-        state.editor_ui.scene_template_center.open,
-        "falling through must not close the panel; the host decides that"
+    assert!(!state.editor_ui.scene_template_center.open);
+}
+
+#[test]
+fn a_press_falls_through_when_the_gallery_is_closed() {
+    let mut state = EditorState::default();
+    let anywhere = Point2D::new(PANEL.origin.x + 10.0, PANEL.origin.y + 10.0);
+    assert_eq!(
+        press_scene_template_center(&mut state, PANEL, anywhere, 0),
+        None
     );
 }
 
@@ -133,9 +141,11 @@ fn scrolling_is_swallowed_and_clamped_even_when_the_grid_does_not_move() {
     let outside = Point2D::new(PANEL.origin.x - 5.0, PANEL.origin.y);
     assert_eq!(
         scroll_scene_template_center(&mut state, PANEL, outside, 50.0),
-        None,
-        "outside the panel the canvas keeps the wheel"
+        Some(false),
+        "the scrim eats the wheel: panning a canvas nobody can see is motion \
+         the user did not ask for and cannot follow"
     );
+    assert_eq!(state.editor_ui.scene_template_center.scroll.offset, 0.0);
 }
 
 #[test]
@@ -152,7 +162,11 @@ fn hover_reports_being_over_the_panel_so_hosts_can_gate_canvas_hover() {
 
     let outside = Point2D::new(PANEL.origin.x - 20.0, PANEL.origin.y);
     let (over, changed) = hover_scene_template_center(&mut state, PANEL, outside);
-    assert!(!over);
+    assert!(
+        over,
+        "the scrim owns the point too: a layer row lit up under a dimmed \
+         overlay advertises a click that only dismisses"
+    );
     assert!(changed, "leaving the panel clears the hover");
     assert_eq!(state.editor_ui.scene_template_center.hover, None);
 }

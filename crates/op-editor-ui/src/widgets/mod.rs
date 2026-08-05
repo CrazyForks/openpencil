@@ -49,8 +49,8 @@ pub mod prompt_center_panel;
 pub(crate) mod prompt_center_previews;
 pub mod scene_template_panel;
 pub use scene_template_panel::{
-    SceneTemplateHit, SceneTemplatePanel, SCENE_TEMPLATE_CLOSE_HOVER, SCENE_TEMPLATE_PANEL_H,
-    SCENE_TEMPLATE_PANEL_W,
+    SceneTemplateHit, SceneTemplatePanel, SCENE_TEMPLATE_CLOSE_HOVER, SCENE_TEMPLATE_CONTENT_MAX_W,
+    SCENE_TEMPLATE_GALLERY_INSET, SCENE_TEMPLATE_SCRIM,
 };
 pub mod asset_center_style_cards;
 #[cfg(test)]
@@ -132,6 +132,7 @@ mod property_panel_wash_tests;
 pub mod property_panel_widget;
 #[cfg(test)]
 mod property_panel_widget_tests;
+mod scene_template_card_actions;
 mod scene_template_panel_paint;
 pub(crate) mod scene_template_previews;
 mod scene_template_style_paint;

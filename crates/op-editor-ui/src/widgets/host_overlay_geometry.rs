@@ -24,8 +24,8 @@ use crate::widgets::{
     ExportQuickMenu, ImportMenu, LayoutCx, LocalePicker, ShapePicker, Toolbar, TopBar, Widget,
     COMPONENT_BROWSER_PANEL_H, COMPONENT_BROWSER_PANEL_W, DESIGN_MD_PANEL_H, DESIGN_MD_PANEL_W,
     ICON_PICKER_PANEL_H, ICON_PICKER_PANEL_W, IMPORT_MENU_WIDTH, LOCALE_PICKER_WIDTH,
-    PROMPT_CENTER_PANEL_H, PROMPT_CENTER_PANEL_W, SCENE_TEMPLATE_PANEL_H, SCENE_TEMPLATE_PANEL_W,
-    SHAPE_PICKER_WIDTH, TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
+    PROMPT_CENTER_PANEL_H, PROMPT_CENTER_PANEL_W, SCENE_TEMPLATE_GALLERY_INSET, SHAPE_PICKER_WIDTH,
+    TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
 };
 use crate::{Point2D, Rect};
 
@@ -68,8 +68,8 @@ pub fn zoom_to_fit(state: &mut EditorState, scene: &LayoutScene, viewport_w: f32
     }
 }
 
-/// Zoom + pan so ONE node fills the canvas region — the deck
-/// filmstrip's click-to-navigate. Returns whether the camera moved.
+/// Zoom + pan so ONE node fills the canvas region — the slides rail's
+/// click-to-navigate. Returns whether the camera moved.
 ///
 /// Same `fit_to_with_max_zoom` the StatusBar's search action uses, so a
 /// slide is framed by exactly the math a whole page is; only the content
@@ -270,8 +270,24 @@ pub fn prompt_center_panel_rect(
     })
 }
 
-/// Scene Template Center rect — centred in the canvas region, same as the
-/// Prompt Center so the two panels occupy identical space.
+/// Asset Center rect — inset by [`SCENE_TEMPLATE_GALLERY_INSET`] from the
+/// WHOLE viewport horizontally, and from the top bar's underside down.
+///
+/// Unlike the Prompt Center it has no intrinsic size. It is a gallery: the
+/// bigger the window, the bigger the previews, because everything inside
+/// derives from this rect rather than from a pair of width/height constants.
+///
+/// Horizontally it spans the viewport rather than the canvas region — the
+/// same span as its scrim. Centring inside the canvas region put the gallery
+/// visibly right of centre whenever the left rail was open, because the rail's
+/// width came off one side only. It overlaps both rails, which is what a
+/// full-window gallery is meant to do; the scrim already swallows every press
+/// that reaches them.
+///
+/// The inset shrinks on a small viewport instead of pushing the rect negative
+/// — an eighth of the shorter axis, capped at the nominal margin — so a
+/// narrow window still yields a usable (if tight) gallery rather than an empty
+/// or inverted rect.
 pub fn scene_template_panel_rect(
     state: &EditorState,
     viewport_w: f32,
@@ -280,19 +296,39 @@ pub fn scene_template_panel_rect(
     if !state.editor_ui.scene_template_center.open {
         return None;
     }
-    let canvas = canvas_rect(state, viewport_w, viewport_h);
-    let viewport_w = viewport_w.max(0.0);
-    let viewport_h = viewport_h.max(0.0);
-    let panel_w = SCENE_TEMPLATE_PANEL_W.min(viewport_w);
-    let panel_h = SCENE_TEMPLATE_PANEL_H.min(viewport_h);
-    let x = canvas.origin.x + (canvas.size.x - panel_w) / 2.0;
-    let y = canvas.origin.y + (canvas.size.y - panel_h) / 2.0;
+    let available_w = viewport_w.max(0.0);
+    let available_h = (viewport_h - TOP_BAR_HEIGHT).max(0.0);
+    let inset = SCENE_TEMPLATE_GALLERY_INSET
+        .min(available_w / 8.0)
+        .min(available_h / 8.0)
+        .max(0.0);
     Some(Rect {
-        origin: Point2D::new(
-            x.clamp(0.0, (viewport_w - panel_w).max(0.0)),
-            y.clamp(0.0, (viewport_h - panel_h).max(0.0)),
+        origin: Point2D::new(inset, TOP_BAR_HEIGHT + inset),
+        size: Point2D::new(
+            (available_w - inset * 2.0).max(0.0),
+            (available_h - inset * 2.0).max(0.0),
         ),
-        size: Point2D::new(panel_w, panel_h),
+    })
+}
+
+/// The dimming layer painted under the Asset Center gallery — the whole
+/// viewport, chrome included.
+///
+/// It covers more than the panel's own canvas region on purpose: dimming only
+/// the canvas would leave the top bar and rails at full brightness around a
+/// darkened middle, which reads as a popup on a lit page rather than as an
+/// editor that stepped back. A press anywhere on it dismisses the gallery.
+pub fn scene_template_scrim_rect(
+    state: &EditorState,
+    viewport_w: f32,
+    viewport_h: f32,
+) -> Option<Rect> {
+    if !state.editor_ui.scene_template_center.open {
+        return None;
+    }
+    Some(Rect {
+        origin: Point2D::new(0.0, 0.0),
+        size: Point2D::new(viewport_w.max(0.0), viewport_h.max(0.0)),
     })
 }
 
@@ -314,3 +350,7 @@ pub fn icon_picker_panel_rect(
         viewport_h,
     ))
 }
+
+#[cfg(test)]
+#[path = "host_overlay_geometry_tests.rs"]
+mod host_overlay_geometry_tests;

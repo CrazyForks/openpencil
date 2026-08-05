@@ -493,6 +493,37 @@ impl EditorState {
         parent_id: &NodeId,
         allocator: &mut dyn IdAllocator,
     ) -> Result<Option<Vec<String>>, IdAllocError> {
+        self.insert_subtree_roots(nodes, parent_id, allocator, true)
+    }
+
+    /// Insert a forest at the page root WITHOUT the empty-root-frame swap.
+    ///
+    /// The swap exists for generation: a model that emits one frame into a
+    /// fresh document means it to *be* the document, so the blank starter
+    /// steps aside. Bringing a template into a document the user is already
+    /// working in means the opposite — a single-board template landing next
+    /// to an unused frame must add a board, not consume one — and the swap
+    /// fires on any empty root frame anywhere on the page, not just a
+    /// pristine starter. Same validation, allocation, and atomicity as
+    /// [`Self::insert_subtree_returning_root_ids`]; only that step differs.
+    pub fn insert_subtree_preserving_roots(
+        &mut self,
+        nodes: Vec<PenNode>,
+        parent_id: &NodeId,
+    ) -> Option<Vec<String>> {
+        let mut allocator = SequentialIdAllocator::for_document(&self.doc, 1).ok()?;
+        self.insert_subtree_roots(nodes, parent_id, &mut allocator, false)
+            .ok()
+            .flatten()
+    }
+
+    fn insert_subtree_roots(
+        &mut self,
+        nodes: Vec<PenNode>,
+        parent_id: &NodeId,
+        allocator: &mut dyn IdAllocator,
+        replace_empty_root: bool,
+    ) -> Result<Option<Vec<String>>, IdAllocError> {
         if nodes.is_empty() {
             return Ok(None);
         }
@@ -505,11 +536,15 @@ impl EditorState {
         }
         let mut taken: HashSet<NodeId> = self.collect_node_ids();
         let mut nodes = nodes;
-        let replacement = crate::command_root_replace::prepare_root_frame_replacement(
-            self.active_children(),
-            &mut nodes,
-            parent_id,
-        );
+        let replacement = replace_empty_root
+            .then(|| {
+                crate::command_root_replace::prepare_root_frame_replacement(
+                    self.active_children(),
+                    &mut nodes,
+                    parent_id,
+                )
+            })
+            .flatten();
         // remap_subtree_ids_mapping mutates every node id IN PLACE (DFS order).
         // Reading root ids from the mapping by index is incorrect: for a
         // forest where root0 has children, mapping[0..root_count] would yield

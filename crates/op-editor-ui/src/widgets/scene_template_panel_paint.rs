@@ -4,11 +4,16 @@ use op_editor_core::scene_template_catalog::SceneTemplateDefinition;
 
 use op_editor_core::SceneTemplateFocus;
 
+use super::scene_template_card_actions::{
+    card_action_rects, card_add_hover_token, card_generate_hover_token, ACTION_LABEL_SIZE,
+    ACTION_RADIUS, BASIS_CHIP_DISMISS_W, BASIS_CHIP_H, BASIS_CHIP_LABEL_SIZE, BASIS_CHIP_PAD_X,
+    SCENE_TEMPLATE_BASIS_CHIP_HOVER,
+};
 use super::scene_template_panel::{
-    filter_hover_token, tab_hover_token, SceneTemplatePanel, CARD_H, CARD_PREVIEW_ASPECT,
-    CARD_PREVIEW_INSET, CHIP_H, CHIP_LABEL_SIZE, CLOSE_BTN, GENERATE_HINT_SIZE,
-    GENERATE_INPUT_PAD_X, GENERATE_TEXT_SIZE, HEADER_H, PAD, SCENE_TEMPLATE_CLOSE_HOVER,
-    SCENE_TEMPLATE_GENERATE_HOVER, SEARCH_PAD_X, SEARCH_TEXT_SIZE,
+    filter_hover_token, preview_height, tab_hover_token, SceneTemplatePanel, CARD_PREVIEW_INSET,
+    CHIP_H, CHIP_LABEL_SIZE, CLOSE_BTN, GENERATE_HINT_SIZE, GENERATE_INPUT_PAD_X,
+    GENERATE_TEXT_SIZE, HEADER_H, SCENE_TEMPLATE_CLOSE_HOVER, SCENE_TEMPLATE_GENERATE_HOVER,
+    SEARCH_PAD_X, SEARCH_TEXT_SIZE, TITLE_SIZE,
 };
 use crate::widgets::button::paint_button_feedback_wash;
 use crate::widgets::canvas_viewport_image::{
@@ -20,17 +25,21 @@ use crate::widgets::scene_template_previews::scene_template_preview;
 use crate::widgets::{draw_icon, Icon, PaintCx};
 use crate::{Color, ImageDrawMode, Point2D, Rect, TextLayout};
 
-const CARD_RADIUS: f32 = 9.0;
-const TITLE_SIZE: f32 = 12.5;
-const SUMMARY_SIZE: f32 = 11.0;
-const META_SIZE: f32 = 10.5;
+const CARD_RADIUS: f32 = 12.0;
+const CARD_TITLE_SIZE: f32 = 14.0;
+const SUMMARY_SIZE: f32 = 11.5;
+const META_SIZE: f32 = 11.0;
+/// Corner radius of the gallery frame itself. Larger than a dropdown's
+/// because the shape is read at canvas scale, not at menu scale.
+const PANEL_RADIUS: f32 = 16.0;
 
 impl SceneTemplatePanel<'_> {
-    /// Paint the complete non-modal panel.
+    /// Paint the complete gallery.
     pub fn paint(&self, cx: &mut PaintCx<'_>, panel: Rect) {
-        cx.backend.fill_round_rect(panel, 12.0, self.theme.popover);
         cx.backend
-            .stroke_round_rect(panel, 12.0, self.theme.border, 1.0);
+            .fill_round_rect(panel, PANEL_RADIUS, self.theme.popover);
+        cx.backend
+            .stroke_round_rect(panel, PANEL_RADIUS, self.theme.border, 1.0);
         self.paint_header(cx, panel);
         self.paint_tab_chips(cx, panel);
         self.paint_search(cx, panel);
@@ -70,7 +79,7 @@ impl SceneTemplatePanel<'_> {
                 label,
                 Point2D::new(
                     rect.origin.x + ((rect.size.x - label_w) / 2.0).max(5.0),
-                    rect.origin.y + 16.0,
+                    jian_widgets::centered_text_baseline_y(rect, CHIP_LABEL_SIZE),
                 ),
                 CHIP_LABEL_SIZE,
                 foreground,
@@ -79,11 +88,18 @@ impl SceneTemplatePanel<'_> {
     }
 
     fn paint_header(&self, cx: &mut PaintCx<'_>, panel: Rect) {
+        let content = Self::content_rect(panel);
         self.paint_text(
             cx,
             self.t("assetCenter.title", "资产中心"),
-            Point2D::new(panel.origin.x + PAD, panel.origin.y + 29.0),
-            15.0,
+            Point2D::new(
+                content.origin.x,
+                jian_widgets::centered_text_baseline_y(
+                    Rect::xywh(content.origin.x, panel.origin.y, content.size.x, HEADER_H),
+                    TITLE_SIZE,
+                ),
+            ),
+            TITLE_SIZE,
             self.theme.foreground,
         );
 
@@ -95,7 +111,7 @@ impl SceneTemplatePanel<'_> {
             pressed: self.is_pressed(SCENE_TEMPLATE_CLOSE_HOVER),
             active: false,
             enabled: true,
-            icon_size: CLOSE_BTN - 11.0,
+            icon_size: CLOSE_BTN - 14.0,
             stroke_width: 1.5,
         }
         .paint(
@@ -112,13 +128,13 @@ impl SceneTemplatePanel<'_> {
 
     fn paint_search(&self, cx: &mut PaintCx<'_>, panel: Rect) {
         let rect = Self::search_rect(panel);
-        cx.backend.fill_round_rect(rect, 7.0, self.theme.muted);
+        cx.backend.fill_round_rect(rect, 9.0, self.theme.muted);
         cx.backend
-            .stroke_round_rect(rect, 7.0, self.theme.border, 1.0);
+            .stroke_round_rect(rect, 9.0, self.theme.border, 1.0);
         draw_icon(
             cx.backend,
             Icon::Search,
-            Point2D::new(rect.origin.x + 9.0, rect.origin.y + 7.0),
+            Point2D::new(rect.origin.x + 10.0, rect.origin.y + 11.0),
             16.0,
             self.theme.muted_foreground,
             1.4,
@@ -130,7 +146,7 @@ impl SceneTemplatePanel<'_> {
             rect,
             SEARCH_TEXT_SIZE,
             SEARCH_PAD_X,
-            rect.origin.y + 19.0,
+            jian_widgets::centered_text_baseline_y(rect, SEARCH_TEXT_SIZE),
             self.now_ms(),
             match self.tab() {
                 op_editor_core::AssetCenterTab::Templates => {
@@ -156,13 +172,15 @@ impl SceneTemplatePanel<'_> {
             .generate_button_rect(panel)
             .expect("the button rect exists whenever the input does");
 
-        cx.backend.fill_round_rect(input, 7.0, self.theme.muted);
+        self.paint_basis_chip(cx, panel);
+
+        cx.backend.fill_round_rect(input, 9.0, self.theme.muted);
         cx.backend
-            .stroke_round_rect(input, 7.0, self.theme.border, 1.0);
+            .stroke_round_rect(input, 9.0, self.theme.border, 1.0);
         draw_icon(
             cx.backend,
             Icon::Sparkles,
-            Point2D::new(input.origin.x + 9.0, input.origin.y + 8.0),
+            Point2D::new(input.origin.x + 10.0, input.origin.y + 11.0),
             16.0,
             self.theme.muted_foreground,
             1.4,
@@ -174,7 +192,7 @@ impl SceneTemplatePanel<'_> {
             input,
             GENERATE_TEXT_SIZE,
             GENERATE_INPUT_PAD_X,
-            input.origin.y + 21.0,
+            jian_widgets::centered_text_baseline_y(input, GENERATE_TEXT_SIZE),
             self.now_ms(),
             self.t(
                 "sceneTemplate.generate.placeholder",
@@ -183,7 +201,7 @@ impl SceneTemplatePanel<'_> {
             self.field_focused(SceneTemplateFocus::Generate),
         );
 
-        cx.backend.fill_round_rect(button, 7.0, self.theme.primary);
+        cx.backend.fill_round_rect(button, 9.0, self.theme.primary);
         paint_button_feedback_wash(
             cx.backend,
             &self.theme,
@@ -199,7 +217,7 @@ impl SceneTemplatePanel<'_> {
             label,
             Point2D::new(
                 button.origin.x + ((button.size.x - label_w) / 2.0).max(6.0),
-                button.origin.y + 21.0,
+                jian_widgets::centered_text_baseline_y(button, GENERATE_TEXT_SIZE),
             ),
             GENERATE_TEXT_SIZE,
             self.theme.primary_foreground,
@@ -220,7 +238,7 @@ impl SceneTemplatePanel<'_> {
                     "新建一个文档，按主题生成；已钉住的风格会被直接采用。",
                 ),
             },
-            Point2D::new(input.origin.x + 2.0, input.origin.y + input.size.y + 17.0),
+            Point2D::new(input.origin.x + 2.0, input.origin.y + input.size.y + 18.0),
             GENERATE_HINT_SIZE,
             self.theme.muted_foreground,
         );
@@ -250,7 +268,7 @@ impl SceneTemplatePanel<'_> {
                 label,
                 Point2D::new(
                     rect.origin.x + ((rect.size.x - label_w) / 2.0).max(5.0),
-                    rect.origin.y + 16.0,
+                    jian_widgets::centered_text_baseline_y(rect, CHIP_LABEL_SIZE),
                 ),
                 CHIP_LABEL_SIZE,
                 foreground,
@@ -314,16 +332,20 @@ impl SceneTemplatePanel<'_> {
         let text_w = rect.size.x - (CARD_PREVIEW_INSET + 4.0) * 2.0;
         self.paint_text(
             cx,
-            &truncate_to_width(template.title_for_locale(self.locale), text_w, TITLE_SIZE),
-            Point2D::new(text_x, preview.origin.y + preview.size.y + 22.0),
-            TITLE_SIZE,
+            &truncate_to_width(
+                template.title_for_locale(self.locale),
+                text_w,
+                CARD_TITLE_SIZE,
+            ),
+            Point2D::new(text_x, preview.origin.y + preview.size.y + 26.0),
+            CARD_TITLE_SIZE,
             self.theme.foreground,
         );
 
         // Two summary lines, wrapped on the same width estimate the rest of
         // the panel uses.
         let summary = template.summary_for_locale(self.locale);
-        let mut y = preview.origin.y + preview.size.y + 40.0;
+        let mut y = preview.origin.y + preview.size.y + 46.0;
         for line in wrap_to_width(summary, text_w, SUMMARY_SIZE, 2) {
             self.paint_text(
                 cx,
@@ -332,15 +354,146 @@ impl SceneTemplatePanel<'_> {
                 SUMMARY_SIZE,
                 self.theme.muted_foreground,
             );
-            y += 15.0;
+            y += 17.0;
         }
 
         self.paint_text(
             cx,
             &self.metadata(template),
-            Point2D::new(text_x, rect.origin.y + rect.size.y - 12.0),
+            Point2D::new(text_x, rect.origin.y + rect.size.y - 14.0),
             META_SIZE,
             self.theme.muted_foreground,
+        );
+
+        // Last, so the strip sits over the picture rather than under it.
+        if self.card_actions_visible(index) {
+            self.paint_card_actions(cx, rect, template, index);
+        }
+    }
+
+    /// The hover strip: what this card can do, spelled out.
+    ///
+    /// Only on hover, because the answer is the same for every card and a
+    /// grid that repeated it forty times would be reading its own manual.
+    /// The primary is filled and the secondary is a bordered surface, which
+    /// is the same weight relationship the panel's other button pairs use —
+    /// pressing the card does what the filled one says.
+    fn paint_card_actions(
+        &self,
+        cx: &mut PaintCx<'_>,
+        card: Rect,
+        template: &'static SceneTemplateDefinition,
+        index: usize,
+    ) {
+        let (add, generate) = card_action_rects(card, self.card_offers_generate(template));
+        self.paint_card_action(
+            cx,
+            add,
+            self.t("sceneTemplate.card.addToCanvas", "加入画布"),
+            true,
+            card_add_hover_token(index),
+        );
+        if let Some(rect) = generate {
+            self.paint_card_action(
+                cx,
+                rect,
+                self.t("sceneTemplate.card.generateFrom", "以此生成"),
+                false,
+                card_generate_hover_token(index),
+            );
+        }
+    }
+
+    fn paint_card_action(
+        &self,
+        cx: &mut PaintCx<'_>,
+        rect: Rect,
+        label: &str,
+        primary: bool,
+        token: usize,
+    ) {
+        let (fill, foreground) = if primary {
+            (self.theme.primary, self.theme.primary_foreground)
+        } else {
+            (self.theme.card, self.theme.foreground)
+        };
+        cx.backend.fill_round_rect(rect, ACTION_RADIUS, fill);
+        if !primary {
+            cx.backend
+                .stroke_round_rect(rect, ACTION_RADIUS, self.theme.border, 1.0);
+        }
+        paint_button_feedback_wash(
+            cx.backend,
+            &self.theme,
+            rect,
+            ACTION_RADIUS,
+            self.state.editor_ui.scene_template_center.hover == Some(token),
+            self.is_pressed(token),
+        );
+        let label = truncate_to_width(label, (rect.size.x - 12.0).max(0.0), ACTION_LABEL_SIZE);
+        let label_w = estimated_text_width(&label, ACTION_LABEL_SIZE);
+        self.paint_text(
+            cx,
+            &label,
+            Point2D::new(
+                rect.origin.x + ((rect.size.x - label_w) / 2.0).max(4.0),
+                jian_widgets::centered_text_baseline_y(rect, ACTION_LABEL_SIZE),
+            ),
+            ACTION_LABEL_SIZE,
+            foreground,
+        );
+    }
+
+    /// "基于：极简 Keynote ×" — the standing answer to "in what style?".
+    ///
+    /// It reads as a chip rather than as a line of help text because it is
+    /// removable, and the × has to look like the thing that removes it: the
+    /// pin behind this chip steers every generation until it is cleared.
+    fn paint_basis_chip(&self, cx: &mut PaintCx<'_>, panel: Rect) {
+        let (Some(chip), Some(label)) = (self.basis_chip_rect(panel), self.basis_chip_label())
+        else {
+            return;
+        };
+        let radius = BASIS_CHIP_H / 2.0;
+        cx.backend.fill_round_rect(chip, radius, self.theme.muted);
+        cx.backend
+            .stroke_round_rect(chip, radius, self.theme.border, 1.0);
+
+        let text_w = (chip.size.x - BASIS_CHIP_PAD_X - BASIS_CHIP_DISMISS_W).max(0.0);
+        self.paint_text(
+            cx,
+            &truncate_to_width(&label, text_w, BASIS_CHIP_LABEL_SIZE),
+            Point2D::new(
+                chip.origin.x + BASIS_CHIP_PAD_X,
+                jian_widgets::centered_text_baseline_y(chip, BASIS_CHIP_LABEL_SIZE),
+            ),
+            BASIS_CHIP_LABEL_SIZE,
+            self.theme.foreground,
+        );
+
+        let Some(dismiss) = self.basis_chip_dismiss_rect(panel) else {
+            return;
+        };
+        paint_button_feedback_wash(
+            cx.backend,
+            &self.theme,
+            dismiss,
+            radius,
+            self.state.editor_ui.scene_template_center.hover
+                == Some(SCENE_TEMPLATE_BASIS_CHIP_HOVER),
+            self.is_pressed(SCENE_TEMPLATE_BASIS_CHIP_HOVER),
+        );
+        const GLYPH: f32 = 11.0;
+        draw_icon(
+            cx.backend,
+            Icon::Close,
+            Point2D::new(
+                dismiss.origin.x + (dismiss.size.x - GLYPH) / 2.0,
+                dismiss.origin.y + (dismiss.size.y - GLYPH) / 2.0,
+            ),
+            GLYPH,
+            self.theme.muted_foreground,
+            1.5,
         );
     }
 
@@ -351,7 +504,7 @@ impl SceneTemplatePanel<'_> {
         template: &'static SceneTemplateDefinition,
     ) {
         let Some((image_id, encoded)) = scene_template_preview(&template.id) else {
-            cx.backend.fill_round_rect(preview, 7.0, self.theme.muted);
+            cx.backend.fill_round_rect(preview, 9.0, self.theme.muted);
             return;
         };
         // Same decode handshake the Prompt Center uses: register the bytes,
@@ -366,24 +519,27 @@ impl SceneTemplatePanel<'_> {
             note_pending_decode(image_id, max_edge_px);
         }
         if !sharp && !cx.backend.image_resident(image_id) {
-            cx.backend.fill_round_rect(preview, 7.0, self.theme.muted);
+            cx.backend.fill_round_rect(preview, 9.0, self.theme.muted);
             return;
         }
         cx.backend.save();
-        cx.backend.clip_round_rect(preview, 7.0);
+        cx.backend.clip_round_rect(preview, 9.0);
         cx.backend
             .draw_image_with_mode(preview, image_id, encoded, ImageDrawMode::Fill);
         cx.backend.restore();
     }
 
-    fn card_preview_rect(card: Rect) -> Rect {
-        let width = card.size.x - CARD_PREVIEW_INSET * 2.0;
-        let height = (width / CARD_PREVIEW_ASPECT).min(CARD_H * 0.62);
+    /// The preview's rect inside its card.
+    ///
+    /// No clamp: the card height is derived from exactly this height (see
+    /// `template_card_height`), so the preview always gets its full aspect and
+    /// the text block below it always gets the rest.
+    pub(super) fn card_preview_rect(card: Rect) -> Rect {
         Rect::xywh(
             card.origin.x + CARD_PREVIEW_INSET,
             card.origin.y + CARD_PREVIEW_INSET,
-            width,
-            height,
+            (card.size.x - CARD_PREVIEW_INSET * 2.0).max(0.0),
+            preview_height(card.size.x),
         )
     }
 

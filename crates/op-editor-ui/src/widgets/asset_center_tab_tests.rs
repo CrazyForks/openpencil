@@ -1,19 +1,10 @@
 //! Asset Center tab row + Styles tab geometry, hit-testing, and pinning.
 
-use super::scene_template_panel::{
-    SceneTemplatePanel, SCENE_TEMPLATE_PANEL_H, SCENE_TEMPLATE_PANEL_W, STYLE_CARD_H,
-};
+use super::scene_template_panel::test_rects::MEDIUM as PANEL;
+use super::scene_template_panel::{SceneTemplatePanel, STYLE_CARD_H};
 use super::SceneTemplateHit;
 use crate::{Point2D, Rect};
 use op_editor_core::{AssetCenterTab, EditorState};
-
-const PANEL: Rect = Rect {
-    origin: Point2D { x: 40.0, y: 60.0 },
-    size: Point2D {
-        x: SCENE_TEMPLATE_PANEL_W,
-        y: SCENE_TEMPLATE_PANEL_H,
-    },
-};
 
 fn open_state() -> EditorState {
     let mut state = EditorState::default();
@@ -192,15 +183,28 @@ fn the_scene_filter_row_belongs_to_the_templates_tab_only() {
     );
 }
 
+/// Style cards share the template grid's column count — a card is a card, and
+/// two tabs disagreeing about how wide one is would jump the eye on a switch.
+/// Their height does not follow, because they hold no picture to scale.
 #[test]
-fn style_cards_are_laid_out_two_per_row_inside_the_viewport() {
+fn style_cards_share_the_grid_columns_and_keep_their_own_height() {
     let state = styles_state();
     let panel = SceneTemplatePanel::for_editor(&state).expect("open");
     let viewport = panel.cards_viewport(PANEL);
+    let (columns, card_w, _) = panel.grid_metrics(PANEL);
     let rects = panel.card_rects(PANEL);
     assert!(
         rects.len() > 20,
         "the shipped style corpus is not this small"
+    );
+
+    let templates_state = open_state();
+    let templates = SceneTemplatePanel::for_editor(&templates_state).expect("open");
+    let (template_columns, template_card_w, _) = templates.grid_metrics(PANEL);
+    assert_eq!(
+        (columns, card_w),
+        (template_columns, template_card_w),
+        "the two tabs must lay cards out on the same column grid"
     );
 
     let (_, first) = rects[0];
@@ -209,8 +213,8 @@ fn style_cards_are_laid_out_two_per_row_inside_the_viewport() {
     assert!(second.origin.x > first.origin.x);
     assert_eq!(first.size.y, STYLE_CARD_H);
     assert!(
-        rects[2].1.origin.y > first.origin.y,
-        "third wraps to the next row"
+        rects[columns].1.origin.y > first.origin.y,
+        "the card past the last column wraps to the next row"
     );
 
     for (_, rect) in &rects {

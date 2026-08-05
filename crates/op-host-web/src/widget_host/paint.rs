@@ -575,11 +575,17 @@ impl WidgetHost {
             panel.paint(&mut cx, panel_rect);
         }
 
-        // Prompt Center shares the Component Browser's floating-panel band.
+        // Asset Center gallery — a dimming scrim across the whole viewport,
+        // then the panel over it (native `paint_floating_panels.rs`). The
+        // scrim is also the surface that takes a dismiss press, so paint and
+        // hit-test must agree that it covers everything.
         if let (Some(panel), Some(panel_rect)) = (
             SceneTemplatePanel::for_editor_at(&self.editor_state, self.now_ms),
             self.scene_template_panel_rect(viewport_width, viewport_height),
         ) {
+            if let Some(scrim) = self.scene_template_scrim_rect(viewport_width, viewport_height) {
+                backend.fill_rect(scrim, op_editor_ui::widgets::SCENE_TEMPLATE_SCRIM);
+            }
             let mut cx = PaintCx {
                 backend: &mut *backend,
             };

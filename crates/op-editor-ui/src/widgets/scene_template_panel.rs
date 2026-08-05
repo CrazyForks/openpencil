@@ -9,6 +9,12 @@
 //! ends up in the chat input; a template opens as a document. That is why the
 //! only card action here is "open", and why the panel carries no save form.
 //!
+//! The panel is a gallery, not a dialog: it fills the canvas region inset by
+//! [`SCENE_TEMPLATE_GALLERY_INSET`], over a scrim that dims the editor behind
+//! it. Nothing here has a fixed size — the column count, the card width, and
+//! the card height all fall out of how much room the panel got, so the same
+//! layout serves a laptop and a 32" display without a second code path.
+//!
 //! The panel is tabbed: Templates is the original card grid, Styles lists the
 //! style-guide catalogue. The tab is an enum threaded through every geometry
 //! helper rather than a pair of hard-coded layouts, because the tab row is
@@ -24,15 +30,40 @@ use op_editor_core::{
 
 use super::asset_center_style_cards::{filtered_style_guide_cards, StyleGuideCard};
 use super::prompt_center_panel::estimated_text_width;
+use super::scene_template_card_actions::{
+    basis_chip_reserved_width, SCENE_TEMPLATE_BASIS_CHIP_HOVER,
+};
 use crate::theme::Theme;
 use crate::widgets::editor_state_ext::theme_for;
-use crate::{Point2D, Rect};
+use crate::{Color, Point2D, Rect};
 
-/// Scene Template Center width in logical pixels.
-pub const SCENE_TEMPLATE_PANEL_W: f32 = 720.0;
-/// Scene Template Center height in logical pixels. The tab row is additive:
-/// it must not eat a row out of the grid it sits above.
-pub const SCENE_TEMPLATE_PANEL_H: f32 = 554.0;
+/// Margin between the canvas region and the gallery on every side.
+///
+/// The Asset Center is a full-canvas gallery, not a dialog: it has no
+/// intrinsic size, only this inset. The margin exists so the rounded frame
+/// and its scrim still read as a layer above the editor rather than as a new
+/// window that replaced it.
+pub const SCENE_TEMPLATE_GALLERY_INSET: f32 = 24.0;
+
+/// Widest the centred content column ever gets, whatever the panel does.
+///
+/// The backdrop goes edge to edge; the rows inside do not. A search field or
+/// a grid row stretched across a 32" display reads as a spreadsheet, and a
+/// four-card row is already as much as the eye scans at once.
+pub const SCENE_TEMPLATE_CONTENT_MAX_W: f32 = 1680.0;
+
+/// Dimming laid over the editor behind the gallery.
+///
+/// Slightly heavier than the modal scrims (0.45) because the gallery is the
+/// only overlay whose own surface is opaque edge to edge — a lighter wash
+/// would show only in the thin margin, where it reads as a drop shadow rather
+/// than as the editor stepping back.
+pub const SCENE_TEMPLATE_SCRIM: Color = Color {
+    r: 0.0,
+    g: 0.0,
+    b: 0.0,
+    a: 0.5,
+};
 
 /// Hover token for the close button.
 pub const SCENE_TEMPLATE_CLOSE_HOVER: usize = usize::MAX;
@@ -46,39 +77,75 @@ const FILTER_HOVER_BASE: usize = usize::MAX - 32;
 /// collide as either row grows.
 const TAB_HOVER_BASE: usize = usize::MAX - 96;
 
-pub(super) const PAD: f32 = 16.0;
-pub(super) const HEADER_H: f32 = 46.0;
-pub(super) const TAB_ROW_H: f32 = 34.0;
-pub(super) const SEARCH_ROW_H: f32 = 42.0;
-pub(super) const FILTER_ROW_H: f32 = 40.0;
-pub(super) const CLOSE_BTN: f32 = 26.0;
-const SEARCH_H: f32 = 30.0;
-pub(super) const SEARCH_TEXT_SIZE: f32 = 12.0;
+pub(super) const PAD: f32 = 24.0;
+pub(super) const HEADER_H: f32 = 72.0;
+pub(super) const TITLE_SIZE: f32 = 24.0;
+pub(super) const TAB_ROW_H: f32 = 44.0;
+pub(super) const SEARCH_ROW_H: f32 = 52.0;
+pub(super) const FILTER_ROW_H: f32 = 44.0;
+pub(super) const CLOSE_BTN: f32 = 32.0;
+const SEARCH_H: f32 = 38.0;
+pub(super) const SEARCH_TEXT_SIZE: f32 = 13.0;
 /// Left inset of the search text, clearing the magnifier glyph. Shared by
 /// paint and the caret hit-test so a click lands where the glyph is drawn.
-pub(super) const SEARCH_PAD_X: f32 = 32.0;
-pub(super) const CHIP_H: f32 = 24.0;
-const CHIP_GAP: f32 = 6.0;
-const CARD_COLS: usize = 2;
-const CARD_GAP: f32 = 12.0;
-pub(super) const GENERATE_ROW_H: f32 = 64.0;
-pub(super) const GENERATE_INPUT_H: f32 = 32.0;
-pub(super) const GENERATE_BUTTON_W: f32 = 92.0;
-pub(super) const GENERATE_GAP: f32 = 8.0;
-pub(super) const GENERATE_TEXT_SIZE: f32 = 12.0;
-pub(super) const GENERATE_HINT_SIZE: f32 = 10.5;
+pub(super) const SEARCH_PAD_X: f32 = 34.0;
+pub(super) const CHIP_H: f32 = 28.0;
+const CHIP_GAP: f32 = 8.0;
+const CARD_GAP: f32 = 20.0;
+pub(super) const GENERATE_ROW_H: f32 = 72.0;
+pub(super) const GENERATE_INPUT_H: f32 = 38.0;
+pub(super) const GENERATE_BUTTON_W: f32 = 108.0;
+pub(super) const GENERATE_GAP: f32 = 10.0;
+pub(super) const GENERATE_TEXT_SIZE: f32 = 13.0;
+pub(super) const GENERATE_HINT_SIZE: f32 = 11.0;
 /// Left inset of the topic text, clearing the sparkle glyph. Shared by paint
 /// and the caret hit-test, for the same reason [`SEARCH_PAD_X`] is.
-pub(super) const GENERATE_INPUT_PAD_X: f32 = 31.0;
-pub(super) const CARD_H: f32 = 262.0;
-pub(super) const CARD_PREVIEW_INSET: f32 = 8.0;
+pub(super) const GENERATE_INPUT_PAD_X: f32 = 34.0;
+pub(super) const CARD_PREVIEW_INSET: f32 = 10.0;
 pub(super) const CARD_PREVIEW_ASPECT: f32 = 16.0 / 10.0;
+/// Title, two summary lines, and the metadata row under a template preview.
+/// Fixed while the preview above it flows, so a wider column buys picture
+/// rather than whitespace.
+pub(super) const CARD_TEXT_H: f32 = 100.0;
 /// Style cards carry no preview image yet (M2 bakes one), so they are a
 /// name, a colour band, and a line of tags — a third the height of a
 /// template card.
-pub(super) const STYLE_CARD_H: f32 = 92.0;
-pub(super) const STYLE_CARD_COLS: usize = 2;
-pub(super) const STYLE_SWATCH_H: f32 = 16.0;
+pub(super) const STYLE_CARD_H: f32 = 108.0;
+pub(super) const STYLE_SWATCH_H: f32 = 20.0;
+
+/// Column count for a card viewport of `width`.
+///
+/// Wide layouts buy more cards per row rather than ever-wider cards: past
+/// roughly 440 px a 16:10 preview stops gaining legibility and the row starts
+/// reading as a banner strip.
+pub(super) fn grid_columns(width: f32) -> usize {
+    if width >= 1400.0 {
+        4
+    } else if width >= 1000.0 {
+        3
+    } else {
+        2
+    }
+}
+
+/// Card width for `columns` cards sharing a viewport of `viewport_w`.
+pub(super) fn card_width(viewport_w: f32, columns: usize) -> f32 {
+    ((viewport_w - CARD_GAP * (columns - 1) as f32) / columns as f32).max(1.0)
+}
+
+/// Preview height for a template card of `card_w`, at the card aspect.
+pub(super) fn preview_height(card_w: f32) -> f32 {
+    (card_w - CARD_PREVIEW_INSET * 2.0).max(0.0) / CARD_PREVIEW_ASPECT
+}
+
+/// Template-card height derived from its width.
+///
+/// Derived rather than a constant: the panel is now the size of the canvas,
+/// so a fixed height written for a 720 px dialog would clamp every preview to
+/// a letterbox no matter how much room the row has.
+pub(super) fn template_card_height(card_w: f32) -> f32 {
+    CARD_PREVIEW_INSET + preview_height(card_w) + CARD_TEXT_H
+}
 
 /// A hover token for the filter chip at `index`.
 pub(super) fn filter_hover_token(index: usize) -> usize {
@@ -102,8 +169,19 @@ pub enum SceneTemplateHit {
     SelectFilter(SceneFilter),
     /// Switch which asset family the panel is showing.
     SelectTab(AssetCenterTab),
-    /// Open this template as a new document.
-    SelectTemplate(String),
+    /// Bring this template's boards into the editor.
+    ///
+    /// What that means is the host's call, and it turns on what is already
+    /// open: an untouched starter is replaced (so the template simply *is*
+    /// the document), anything else gets the boards appended beside its
+    /// existing content. The widget deliberately does not decide — it cannot
+    /// see unsaved-work prompts or the recent-files list.
+    AddTemplateToCanvas(String),
+    /// Aim the generate row at this template: pin its style guide, narrow
+    /// the grid to its scene, and focus the topic field. Touches no document.
+    GenerateFromTemplate(String),
+    /// Dismiss the generate row's basis chip, unpinning the style it set.
+    ClearGenerateBasis,
     /// Pin this style guide, or unpin it when it is already the pinned one.
     ToggleStyleGuide(String),
     /// Inside the panel but not on a control — swallows the press so it
@@ -204,9 +282,29 @@ impl<'a> SceneTemplatePanel<'a> {
         }
     }
 
-    pub fn close_rect(panel: Rect) -> Rect {
+    /// The centred content column every row inside the gallery measures from.
+    ///
+    /// The panel fills the canvas, but its contents do not: everything from
+    /// the title to the card grid lives in a column capped at
+    /// [`SCENE_TEMPLATE_CONTENT_MAX_W`] and centred in the panel. Only the
+    /// backdrop and the header rule run edge to edge.
+    ///
+    /// Every rect below derives its x from here, so widening the cap moves
+    /// paint and hit-testing together by construction.
+    pub fn content_rect(panel: Rect) -> Rect {
+        let width = (panel.size.x - PAD * 2.0).clamp(0.0, SCENE_TEMPLATE_CONTENT_MAX_W);
         Rect::xywh(
-            panel.origin.x + panel.size.x - PAD - CLOSE_BTN,
+            panel.origin.x + ((panel.size.x - width) / 2.0).max(0.0),
+            panel.origin.y,
+            width,
+            panel.size.y,
+        )
+    }
+
+    pub fn close_rect(panel: Rect) -> Rect {
+        let content = Self::content_rect(panel);
+        Rect::xywh(
+            content.origin.x + content.size.x - CLOSE_BTN,
             panel.origin.y + (HEADER_H - CLOSE_BTN) / 2.0,
             CLOSE_BTN,
             CLOSE_BTN,
@@ -214,10 +312,11 @@ impl<'a> SceneTemplatePanel<'a> {
     }
 
     pub fn search_rect(panel: Rect) -> Rect {
+        let content = Self::content_rect(panel);
         Rect::xywh(
-            panel.origin.x + PAD,
+            content.origin.x,
             panel.origin.y + HEADER_H + TAB_ROW_H + (SEARCH_ROW_H - SEARCH_H) / 2.0,
-            panel.size.x - PAD * 2.0,
+            content.size.x,
             SEARCH_H,
         )
     }
@@ -234,7 +333,7 @@ impl<'a> SceneTemplatePanel<'a> {
 
     pub(super) fn tab_chip_rects(&self, panel: Rect) -> Vec<(Rect, AssetCenterTab)> {
         let top = panel.origin.y + HEADER_H + (TAB_ROW_H - CHIP_H) / 2.0;
-        let mut x = panel.origin.x + PAD;
+        let mut x = Self::content_rect(panel).origin.x;
         AssetCenterTab::ALL
             .into_iter()
             .map(|tab| {
@@ -263,7 +362,7 @@ impl<'a> SceneTemplatePanel<'a> {
         }
         let top =
             panel.origin.y + HEADER_H + TAB_ROW_H + SEARCH_ROW_H + (FILTER_ROW_H - CHIP_H) / 2.0;
-        let mut x = panel.origin.x + PAD;
+        let mut x = Self::content_rect(panel).origin.x;
         self.filters()
             .into_iter()
             .map(|filter| {
@@ -313,14 +412,21 @@ impl<'a> SceneTemplatePanel<'a> {
     }
 
     /// Topic field rect, or `None` when the row does not paint.
+    ///
+    /// The basis chip, when there is one, eats into the field from the left
+    /// rather than sitting above it: the chip is a modifier on the topic
+    /// about to be typed, and a row reads as one sentence only while the two
+    /// stay on one line.
     pub fn generate_input_rect(&self, panel: Rect) -> Option<Rect> {
         if !self.generate_row_visible() {
             return None;
         }
+        let content = Self::content_rect(panel);
+        let reserved = basis_chip_reserved_width(self.basis_chip_rect(panel), GENERATE_GAP);
         Some(Rect::xywh(
-            panel.origin.x + PAD,
-            self.generate_row_top(panel) + 4.0,
-            (panel.size.x - PAD * 2.0 - GENERATE_BUTTON_W - GENERATE_GAP).max(0.0),
+            content.origin.x + reserved,
+            self.generate_row_top(panel) + 6.0,
+            (content.size.x - reserved - GENERATE_BUTTON_W - GENERATE_GAP).max(0.0),
             GENERATE_INPUT_H,
         ))
     }
@@ -341,26 +447,37 @@ impl<'a> SceneTemplatePanel<'a> {
     }
 
     pub fn cards_viewport(&self, panel: Rect) -> Rect {
+        let content = Self::content_rect(panel);
         let top = self.cards_top(panel);
         Rect::xywh(
-            panel.origin.x + PAD,
+            content.origin.x,
             top,
-            panel.size.x - PAD * 2.0,
+            content.size.x,
             (panel.origin.y + panel.size.y - PAD - top).max(0.0),
         )
     }
 
-    /// Column count and row height of the grid the active tab paints. One
-    /// walker serves both tabs; only these two numbers differ.
-    fn grid_metrics(&self) -> (usize, f32) {
-        match self.tab() {
-            AssetCenterTab::Templates => (CARD_COLS, CARD_H),
-            AssetCenterTab::Styles => (STYLE_CARD_COLS, STYLE_CARD_H),
-        }
+    /// Column count, card width, and row height of the grid the active tab
+    /// paints. One walker serves both tabs; only these three numbers differ.
+    ///
+    /// All three flow from the panel: the columns from how much room the card
+    /// viewport has, and — for templates — the height from the width, so the
+    /// preview keeps its aspect at every breakpoint. Style cards keep a fixed
+    /// height because they have no picture to scale, but they share the column
+    /// count so the two tabs do not disagree about how wide a card is.
+    pub(super) fn grid_metrics(&self, panel: Rect) -> (usize, f32, f32) {
+        let viewport_w = self.cards_viewport(panel).size.x;
+        let columns = grid_columns(viewport_w);
+        let card_w = card_width(viewport_w, columns);
+        let card_h = match self.tab() {
+            AssetCenterTab::Templates => template_card_height(card_w),
+            AssetCenterTab::Styles => STYLE_CARD_H,
+        };
+        (columns, card_w, card_h)
     }
 
-    pub(super) fn content_height_for_count(&self, count: usize) -> f32 {
-        let (columns, card_h) = self.grid_metrics();
+    pub(super) fn content_height_for_count(&self, panel: Rect, count: usize) -> f32 {
+        let (columns, _, card_h) = self.grid_metrics(panel);
         let rows = count.div_ceil(columns);
         if rows == 0 {
             0.0
@@ -384,13 +501,12 @@ impl<'a> SceneTemplatePanel<'a> {
 
     pub(super) fn max_scroll_for_count(&self, panel: Rect, count: usize) -> f32 {
         let viewport = self.cards_viewport(panel);
-        (self.content_height_for_count(count) - viewport.size.y).max(0.0)
+        (self.content_height_for_count(panel, count) - viewport.size.y).max(0.0)
     }
 
     pub(super) fn card_rects_for_count(&self, panel: Rect, count: usize) -> Vec<(usize, Rect)> {
         let viewport = self.cards_viewport(panel);
-        let (columns, card_h) = self.grid_metrics();
-        let card_w = (viewport.size.x - CARD_GAP * (columns - 1) as f32) / columns as f32;
+        let (columns, card_w, card_h) = self.grid_metrics(panel);
         let scroll = self
             .state
             .editor_ui
@@ -436,6 +552,12 @@ impl<'a> SceneTemplatePanel<'a> {
             }
         }
         if self
+            .basis_chip_dismiss_rect(panel)
+            .is_some_and(|rect| rect.contains(point))
+        {
+            return Some(SCENE_TEMPLATE_BASIS_CHIP_HOVER);
+        }
+        if self
             .generate_button_rect(panel)
             .is_some_and(|rect| rect.contains(point))
         {
@@ -448,10 +570,11 @@ impl<'a> SceneTemplatePanel<'a> {
         if !viewport.contains(point) {
             return None;
         }
-        self.card_rects(panel)
+        let (index, card) = self
+            .card_rects(panel)
             .into_iter()
-            .find(|(_, rect)| rect.contains(point))
-            .map(|(index, _)| index)
+            .find(|(_, rect)| rect.contains(point))?;
+        Some(self.card_hover_token(index, card, point))
     }
 
     /// Hit-test panel chrome and cards. Outside presses return `None` so the
@@ -484,6 +607,14 @@ impl<'a> SceneTemplatePanel<'a> {
                 return Some(SceneTemplateHit::SelectFilter(filter));
             }
         }
+        // Above the topic field: the chip sits in the same row and its
+        // dismiss target must not read as a click into the text.
+        if self
+            .basis_chip_dismiss_rect(panel)
+            .is_some_and(|rect| rect.contains(point))
+        {
+            return Some(SceneTemplateHit::ClearGenerateBasis);
+        }
         if let Some(input) = self.generate_input_rect(panel) {
             if input.contains(point) {
                 let caret = self.caret_at(
@@ -509,7 +640,7 @@ impl<'a> SceneTemplatePanel<'a> {
                     let cards = self.filtered();
                     for (index, rect) in self.card_rects_for_count(panel, cards.len()) {
                         if rect.contains(point) {
-                            return Some(SceneTemplateHit::SelectTemplate(cards[index].id.clone()));
+                            return Some(self.template_card_hit(cards[index], index, rect, point));
                         }
                     }
                 }
@@ -567,13 +698,50 @@ impl<'a> SceneTemplatePanel<'a> {
 }
 
 /// Chip label size, shared by the rect math here and the paint pass.
-pub(super) const CHIP_LABEL_SIZE: f32 = 11.0;
+pub(super) const CHIP_LABEL_SIZE: f32 = 12.0;
 
 fn chip_width(label: &str) -> f32 {
-    // Reuses the Prompt Center's estimate on purpose: the two chip rows sit
-    // in identically sized panels, and a second width model would drift them
-    // apart for the same label.
-    estimated_text_width(label, CHIP_LABEL_SIZE) + 20.0
+    // Reuses the Prompt Center's estimate on purpose: the tab row and the
+    // filter row use the same chip shape, and a second width model would
+    // drift them apart for the same label.
+    estimated_text_width(label, CHIP_LABEL_SIZE) + 26.0
+}
+
+/// Gallery rects the hosts would hand the widget, for tests.
+///
+/// The panel has no intrinsic size any more, so a test cannot name one; it
+/// names the canvas region it is standing in instead. The three widths
+/// straddle both [`grid_columns`] breakpoints, which is the whole reason more
+/// than one exists.
+#[cfg(test)]
+pub(super) mod test_rects {
+    use crate::{Point2D, Rect};
+
+    /// A 1440x900 canvas region at (40, 60), inset — the laptop case, and the
+    /// default fixture. Three columns.
+    pub(in crate::widgets) const MEDIUM: Rect = Rect {
+        origin: Point2D { x: 64.0, y: 84.0 },
+        size: Point2D {
+            x: 1392.0,
+            y: 852.0,
+        },
+    };
+
+    /// A 900x700 canvas region at the origin, inset. Two columns.
+    pub(in crate::widgets) const NARROW: Rect = Rect {
+        origin: Point2D { x: 24.0, y: 24.0 },
+        size: Point2D { x: 852.0, y: 652.0 },
+    };
+
+    /// A 2200x1200 canvas region at the origin, inset — wide enough that the
+    /// content column hits its cap. Four columns.
+    pub(in crate::widgets) const WIDE: Rect = Rect {
+        origin: Point2D { x: 24.0, y: 24.0 },
+        size: Point2D {
+            x: 2152.0,
+            y: 1152.0,
+        },
+    };
 }
 
 #[cfg(test)]

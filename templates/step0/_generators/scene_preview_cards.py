@@ -9,7 +9,8 @@ tall or ultra-wide source would be cropped to an unrecognisable strip.
 This bakes each source onto the card aspect with the whole design still
 visible (contain, not cover), padded with the document's own background
 colour so the card reads as a framed thumbnail rather than a letterboxed
-photo. Output matches the prompt-center convention: 640x400 JPEG.
+photo. Output is a 16:10 JPEG at 2x the largest size the gallery paints; see
+CARD_W/CARD_H below for how that size is derived.
 
 Usage:
     python3 scene_preview_cards.py            # write into the UI crate
@@ -28,11 +29,19 @@ REPO = pathlib.Path(__file__).resolve().parents[3]
 SRC = REPO / "templates" / "step0" / "previews"
 DST = REPO / "crates" / "op-editor-ui" / "assets" / "scene_template_previews"
 
-CARD_W, CARD_H = 640, 400
+# 2x the widest preview the gallery can paint, and no more — every byte here
+# is embedded in the wasm bundle, which has a hard ceiling.
+#
+# The Asset Center is a full-canvas gallery now, so the card width is derived
+# rather than fixed. Its maximum falls out of the column breakpoints: a
+# two-column grid tops out just under 1000px of viewport, giving a ~490px card
+# and a ~470px preview, so 940 device px is the worst case on a 2x display.
+# The old 640px bake was sized for a 720px dialog and went visibly soft.
+CARD_W, CARD_H = 1024, 640
 JPEG_QUALITY = 82
 # Keep a small margin so the design never bleeds into the card's rounded
-# corners — the panel clips to a 7px radius.
-INSET = 12
+# corners — the panel clips to a 9px radius.
+INSET = 20
 
 # (card id, source preview). The overview render is preferred wherever a
 # template has several frames: what makes a multi-page template legible at

@@ -2,13 +2,7 @@ use super::*;
 use op_editor_core::scene_template_catalog::TemplateScene;
 use op_editor_core::EditorState;
 
-const PANEL: Rect = Rect {
-    origin: Point2D { x: 40.0, y: 60.0 },
-    size: Point2D {
-        x: SCENE_TEMPLATE_PANEL_W,
-        y: SCENE_TEMPLATE_PANEL_H,
-    },
-};
+use super::test_rects::{MEDIUM as PANEL, NARROW, WIDE};
 
 fn open_state() -> EditorState {
     let mut state = EditorState::default();
@@ -79,24 +73,24 @@ fn the_filter_row_fits_the_panel_in_every_locale() {
 }
 
 #[test]
-fn cards_are_laid_out_two_per_row_inside_the_viewport() {
+fn cards_fill_their_row_and_wrap_inside_the_viewport() {
     let state = open_state();
     let panel = SceneTemplatePanel::for_editor(&state).expect("open");
     let viewport = panel.cards_viewport(PANEL);
+    let (columns, _, _) = panel.grid_metrics(PANEL);
     let rects = panel.card_rects(PANEL);
     assert!(
-        rects.len() >= 4,
-        "the catalogue ships at least four templates"
+        rects.len() > columns,
+        "the catalogue ships more than one row of templates"
     );
 
     let (_, first) = rects[0];
     let (_, second) = rects[1];
     assert_eq!(first.origin.y, second.origin.y, "first two share a row");
     assert!(second.origin.x > first.origin.x);
-    let (_, third) = rects[2];
     assert!(
-        third.origin.y > first.origin.y,
-        "third wraps to the next row"
+        rects[columns].1.origin.y > first.origin.y,
+        "the card past the last column wraps to the next row"
     );
 
     for (_, rect) in &rects {
@@ -106,6 +100,64 @@ fn cards_are_laid_out_two_per_row_inside_the_viewport() {
             "card {rect:?} runs past the viewport"
         );
     }
+}
+
+/// The gallery has no fixed column count: a wider window buys more cards per
+/// row, and a narrow one falls back rather than shrinking cards to slivers.
+#[test]
+fn the_column_count_follows_the_panel_width() {
+    let state = open_state();
+    let panel = SceneTemplatePanel::for_editor(&state).expect("open");
+    let columns_at = |rect| panel.grid_metrics(rect).0;
+    assert_eq!(columns_at(NARROW), 2);
+    assert_eq!(columns_at(PANEL), 3);
+    assert_eq!(columns_at(WIDE), 4);
+}
+
+/// The whole point of going full-screen: previews get bigger, not just more
+/// numerous. A card must also be exactly as tall as its own preview plus the
+/// fixed text block, or the derived height and the painted preview disagree.
+#[test]
+fn card_height_is_derived_from_the_preview_it_holds() {
+    let state = open_state();
+    let panel = SceneTemplatePanel::for_editor(&state).expect("open");
+    for rect in [NARROW, PANEL, WIDE] {
+        let (_, card_w, card_h) = panel.grid_metrics(rect);
+        assert!(
+            card_w - CARD_PREVIEW_INSET * 2.0 > 320.0,
+            "a {card_w}px card leaves a preview no bigger than the old dialog's"
+        );
+        assert!(
+            (card_h - (CARD_PREVIEW_INSET + preview_height(card_w) + CARD_TEXT_H)).abs() < 0.01,
+            "card height must leave the text block exactly {CARD_TEXT_H}px"
+        );
+    }
+}
+
+/// Everything inside the gallery reads off one centred column, so a 32"
+/// display gets a bigger gallery rather than a search field a metre wide.
+#[test]
+fn the_content_column_is_capped_and_centred() {
+    let state = open_state();
+    let panel = SceneTemplatePanel::for_editor(&state).expect("open");
+    let content = SceneTemplatePanel::content_rect(WIDE);
+    assert_eq!(content.size.x, SCENE_TEMPLATE_CONTENT_MAX_W);
+    let left = content.origin.x - WIDE.origin.x;
+    let right = (WIDE.origin.x + WIDE.size.x) - (content.origin.x + content.size.x);
+    assert!((left - right).abs() < 0.5, "margins {left} vs {right}");
+
+    // Every row hangs off the same column, so none of them can drift out of
+    // alignment with the grid as the cap changes.
+    assert_eq!(
+        SceneTemplatePanel::search_rect(WIDE).origin.x,
+        content.origin.x
+    );
+    assert_eq!(panel.cards_viewport(WIDE).origin.x, content.origin.x);
+    assert_eq!(panel.tab_chip_rects(WIDE)[0].0.origin.x, content.origin.x);
+    assert_eq!(
+        panel.filter_chip_rects(WIDE)[0].0.origin.x,
+        content.origin.x
+    );
 }
 
 #[test]
@@ -120,7 +172,7 @@ fn a_press_on_a_card_resolves_to_that_template() {
     );
     assert_eq!(
         hit,
-        Some(SceneTemplateHit::SelectTemplate(
+        Some(SceneTemplateHit::AddTemplateToCanvas(
             templates[index].id.clone()
         ))
     );
@@ -178,6 +230,8 @@ fn the_close_button_sits_inside_the_header_and_hit_tests_first() {
     );
 }
 
+/// The widget answers only for its own rect. What happens to a press on the
+/// scrim beside it is the press flow's call, not this layer's.
 #[test]
 fn presses_outside_the_panel_are_not_claimed() {
     let state = open_state();

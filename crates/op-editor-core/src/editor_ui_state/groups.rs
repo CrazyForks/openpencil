@@ -437,6 +437,15 @@ pub struct SceneTemplateCenterState {
     /// `pending_open` is: replacing the document and launching a chat
     /// turn are host capabilities, not widget ones.
     pub pending_generate: Option<String>,
+    /// The template the generate row is currently working from, as a
+    /// catalogue id.
+    ///
+    /// Purely a label and an undo handle for the pin: the style guide the
+    /// basis selected lives in `pinned_style_guide`, which is what the
+    /// pipeline reads. Keeping the id here as well is what lets the chip say
+    /// *which template* the user chose rather than which guide it resolved
+    /// to, and what lets dismissing the chip undo the pin it set.
+    pub generate_basis: Option<String>,
 }
 
 impl Default for SceneTemplateCenterState {
@@ -452,6 +461,7 @@ impl Default for SceneTemplateCenterState {
             hover: None,
             pending_open: None,
             pending_generate: None,
+            generate_basis: None,
         }
     }
 }
