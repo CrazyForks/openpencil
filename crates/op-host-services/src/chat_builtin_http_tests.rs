@@ -34,6 +34,58 @@ fn read_http_request(stream: &mut TcpStream) -> String {
     String::from_utf8_lossy(&buf).to_string()
 }
 
+fn http_request_body(request: &str) -> Value {
+    let body_start = request
+        .find("\r\n\r\n")
+        .map(|index| index + 4)
+        .expect("request body separator");
+    serde_json::from_str(&request[body_start..]).expect("request body JSON")
+}
+
+fn capture_classic_openai_body(model: &str, thinking: ThinkingMode) -> Value {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind request capture server");
+    let addr = listener.local_addr().expect("request capture address");
+    let (request_tx, request_rx) = std_mpsc::channel();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept request");
+        let request = read_http_request(&mut stream);
+        request_tx.send(request).expect("capture request");
+        let body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n",
+            "data: [DONE]\n\n"
+        );
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream
+            .write_all(response.as_bytes())
+            .expect("write SSE response");
+    });
+
+    let mut config = builtin_config(BuiltinAgentKind::OpenAiCompat, format!("http://{addr}/v1"));
+    config.model = model.to_string();
+    let mut provider =
+        ConfiguredBuiltinProvider::from_builtin_agent(&config).expect("ready capture provider");
+    provider.max_retries = 0;
+    provider.min_gap = Duration::ZERO;
+    let deltas: Vec<_> = provider
+        .send(ChatRequest {
+            user_message: "continue the design".into(),
+            thinking,
+            ..Default::default()
+        })
+        .collect();
+    assert!(
+        deltas
+            .iter()
+            .any(|delta| matches!(delta, ChatDelta::TextDelta(text) if text == "ok")),
+        "capture response should complete: {deltas:?}"
+    );
+    server.join().expect("request capture server exits");
+    http_request_body(&request_rx.recv().expect("captured request"))
+}
+
 fn builtin_config(kind: BuiltinAgentKind, base_url: impl Into<String>) -> BuiltinAgentConfig {
     BuiltinAgentConfig {
         id: "builtin-test".into(),
@@ -450,6 +502,35 @@ fn parse_openai_sse_data_extracts_text_delta() {
     assert_eq!(
         parse_openai_sse_data(data),
         Some(ChatDelta::TextDelta("hello".into()))
+    );
+}
+
+#[test]
+fn classic_openai_mixed_reasoning_and_content_delta_preserves_content() {
+    let data =
+        r#"{"choices":[{"delta":{"reasoning_content":"plan","content":"batch_design(...)"}}]}"#;
+    assert_eq!(
+        parse_openai_sse_data(data),
+        Some(ChatDelta::TextDelta("batch_design(...)".into()))
+    );
+}
+
+#[test]
+fn classic_openai_reasoning_only_delta_stays_visible_as_thinking() {
+    let data = r#"{"choices":[{"delta":{"reasoning_content":"plan"}}]}"#;
+    assert_eq!(
+        parse_openai_sse_data(data),
+        Some(ChatDelta::Thinking("plan".into()))
+    );
+}
+
+#[test]
+fn classic_kimi_k3_request_uses_only_low_reasoning_effort() {
+    let body = capture_classic_openai_body("kimi-k3", ThinkingMode::Disabled);
+    assert_eq!(body["reasoning_effort"], "low");
+    assert!(
+        body.get("thinking").is_none(),
+        "K3 rejects `thinking` and cannot receive both controls: {body}"
     );
 }
 

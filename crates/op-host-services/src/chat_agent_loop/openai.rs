@@ -228,14 +228,15 @@ pub(super) async fn run_openai_agent_loop_inner(
         // tool calls and then simply stops — measured with deepseek-v4-pro,
         // whose thinking defaults to `effort=high` (2026-07-31).
         //
-        // Shares `accepts_thinking_body_field` with the single-shot body in
-        // `chat_builtin_http`; this loop previously carried its own copy of
-        // the family list and that is exactly how DeepSeek fell through.
-        if cfg.disable_thinking && op_orchestrator::accepts_thinking_body_field(&cfg.model) {
-            if let Some(obj) = body.as_object_mut() {
-                obj.insert("thinking".into(), json!({ "type": "disabled" }));
-            }
-        }
+        // The same helper builds the single-shot body. It maps Kimi K3 to
+        // top-level `reasoning_effort:"low"`, while K2.5/K2.6, GLM,
+        // DeepSeek, and MiniMax keep `thinking:{type:"disabled"}`. The two
+        // mutually-exclusive fields can therefore never drift by path.
+        crate::chat_builtin_http::apply_reasoning_wire_control(
+            &mut body,
+            &cfg.model,
+            cfg.disable_thinking,
+        );
         // Through the shared throttle/backoff: this tool-loop path used
         // to post raw, so a provider rate limit killed the design run with
         // no retries and a raw JSON error (measured: glm-5.2, 429

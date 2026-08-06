@@ -131,8 +131,8 @@ pub use intent::classify_intent;
 pub use loop_finalize::{apply_loop_finalize, apply_loop_finalize_counted};
 pub use mobile_reflow::repair_mobile_trailing_nav_reflow;
 pub use model_profile::{
-    accepts_thinking_body_field, is_acp_capability_marker, resolve_model_profile, ModelProfile,
-    ModelTier,
+    accepts_thinking_body_field, is_acp_capability_marker, reasoning_wire_control,
+    resolve_model_profile, ModelProfile, ModelTier, ReasoningWireControl,
 };
 pub use prompt::build_orchestrator_prompt;
 pub use repair_summary::{CheckCategory, RepairSummary};

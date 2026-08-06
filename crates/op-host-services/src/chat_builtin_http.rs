@@ -25,11 +25,11 @@ use crate::chat_runtime::{resolved_skill_preamble, shared_runtime, BlockingRecvI
 mod error;
 pub use error::BuiltinHttpError;
 
-pub use crate::chat_builtin_http_wire::{map_anthropic_stop_reason, map_openai_stop_reason};
 pub(crate) use crate::chat_builtin_http_wire::{
-    normalize_provider_base_url, parse_anthropic_sse_data, parse_openai_sse_data,
-    provider_endpoint, pump_sse_response,
+    apply_reasoning_wire_control, normalize_provider_base_url, parse_anthropic_sse_data,
+    parse_openai_sse_data, provider_endpoint, pump_sse_response,
 };
+pub use crate::chat_builtin_http_wire::{map_anthropic_stop_reason, map_openai_stop_reason};
 
 /// Design turns build one <=25-op section batch per model turn, plus repair
 /// turns after layoutIssues feedback. 28 sits in the requested 24-32 window:
@@ -540,15 +540,13 @@ async fn run_openai_chat(
     // 留空(glm-5.2 实测一个设计子任务 thinking≈3 万字符、content 0,整段 parse
     // 失败、重试也撞同一堵墙)。当调用方明确要求关思考(`disable_thinking`,如编排器
     // 的设计子任务),且该模型家族能在线级表达这条意图时,下发
-    // `thinking:{type:"disabled"}`。普通对话走 `Adaptive` 不进这里,保留推理。
+    // provider-specific wire control. K2.5/K2.6, GLM, DeepSeek, and MiniMax
+    // use `thinking:{type:"disabled"}`; Kimi K3 rejects that field and uses
+    // top-level `reasoning_effort:"low"`. Ordinary chat stays Adaptive.
     //
-    // 名单是 `op_orchestrator::accepts_thinking_body_field` 的单一来源 —— 曾经
-    // 散在三处、drift 过、也漏过 DeepSeek,详见那里的注释。
-    if disable_thinking && op_orchestrator::accepts_thinking_body_field(&provider.model) {
-        if let Some(obj) = body.as_object_mut() {
-            obj.insert("thinking".into(), json!({ "type": "disabled" }));
-        }
-    }
+    // The policy lives in `op_orchestrator::reasoning_wire_control`; the JSON
+    // mutation is shared with the agent loop so the two paths stay identical.
+    apply_reasoning_wire_control(&mut body, &provider.model, disable_thinking);
     let client = provider.dial_client(&url).await?;
     let resp = send_with_backoff(
         "openai-compatible",

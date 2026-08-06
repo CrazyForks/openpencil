@@ -11,6 +11,17 @@ pub enum ModelTier {
     Basic,
 }
 
+/// Provider-specific control used to minimize hidden reasoning on structured
+/// design turns. The transport layer maps this semantic policy to exactly one
+/// OpenAI-compatible request field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReasoningWireControl {
+    /// `thinking: { "type": "disabled" }`.
+    ThinkingDisabled,
+    /// `reasoning_effort: "low"` (Kimi K3; `thinking` is unsupported).
+    ReasoningEffortLow,
+}
+
 /// 一个模型的能力画像。
 #[derive(Debug, Clone)]
 pub struct ModelProfile {
@@ -276,11 +287,12 @@ pub fn resolve_model_profile(model_id: &str) -> ModelProfile {
     DEFAULT_PROFILE
 }
 
-/// 模型家族是否接受 `thinking:{"type":"disabled"}` 这个 body 字段。
+/// Resolve the provider-specific wire control for reducing hidden reasoning.
 ///
 /// 这是**协议能力**,不是 [`ModelProfile::thinking_disabled`](ModelProfile)
-/// 那条"该不该关思考"的策略:后者说意图,前者说这条意图能否在线级表达出来。
-/// 两者都为真时,传输层才真正下发该字段。
+/// 那条"该不该关思考"的策略:后者说意图,这里说这条意图应如何在线级表达。
+/// Kimi K3 使用 `reasoning_effort:"low"`;其余已验证家族使用
+/// `thinking:{"type":"disabled"}`。调用方明确要求降低推理时才真正下发。
 ///
 /// 单一来源。此前这份知识以 `is_minimax_model` / `is_glm_model` 两个谓词的形式
 /// 散在传输层(`chat_builtin_http`)、agent tool-loop(`chat_agent_loop::openai`)
@@ -305,13 +317,16 @@ pub fn resolve_model_profile(model_id: &str) -> ModelProfile {
 /// 不做无条件下发:内置 provider 允许用户把 base_url 指向任意 openai-compat 端点
 /// (含 OpenAI 官方),那里的未知 body 字段会 400。名单是这条风险的边界,新增一家
 /// 只改这里一处。
-pub fn accepts_thinking_body_field(model_id: &str) -> bool {
+pub fn reasoning_wire_control(model_id: &str) -> Option<ReasoningWireControl> {
     let normalized = match model_id.find('/') {
         Some(i) => &model_id[i + 1..],
         None => model_id,
     };
     let lower = normalized.to_ascii_lowercase();
-    lower.starts_with("minimax")
+    if lower.contains("kimi-k3") {
+        return Some(ReasoningWireControl::ReasoningEffortLow);
+    }
+    (lower.starts_with("minimax")
         || lower.starts_with("abab")
         || lower.contains("glm")
         || lower.starts_with("deepseek")
@@ -332,7 +347,22 @@ pub fn accepts_thinking_body_field(model_id: &str) -> bool {
         // 出处:platform.kimi.ai/docs/api/chat 的逐模型 thinking /
         // reasoning_effort 对照表 + docs/models 的在售模型列表。
         || lower.contains("kimi-k2.5")
-        || lower.contains("kimi-k2.6")
+        || lower.contains("kimi-k2.6"))
+    .then_some(ReasoningWireControl::ThinkingDisabled)
+}
+
+/// Whether a model accepts `thinking: { "type": "disabled" }`.
+///
+/// Kept as the narrow compatibility predicate for callers that specifically
+/// need that field. New request builders should match on
+/// [`reasoning_wire_control`] so Kimi K3 receives its mutually-exclusive
+/// `reasoning_effort` control instead of being mistaken for an unsupported
+/// model.
+pub fn accepts_thinking_body_field(model_id: &str) -> bool {
+    matches!(
+        reasoning_wire_control(model_id),
+        Some(ReasoningWireControl::ThinkingDisabled)
+    )
 }
 
 #[cfg(test)]
@@ -358,19 +388,34 @@ mod tests {
         assert!(!accepts_thinking_body_field(""));
     }
 
+    #[test]
+    fn kimi_k3_uses_low_reasoning_effort_instead_of_thinking() {
+        for model in ["kimi-k3", "moonshot/kimi-k3", "kimi-k3.1-preview"] {
+            let profile = resolve_model_profile(model);
+            assert_eq!(profile.tier, ModelTier::Full, "model={model}");
+            assert!(profile.thinking_disabled, "model={model}");
+            assert_eq!(
+                reasoning_wire_control(model),
+                Some(ReasoningWireControl::ReasoningEffortLow),
+                "model={model}"
+            );
+            assert!(!accepts_thinking_body_field(model), "model={model}");
+        }
+    }
+
     /// The capability table must cover every model whose profile asks for
     /// thinking off — otherwise the profile's intent is silently dropped at
     /// the wire, which is exactly how deepseek-v4-pro regressed.
     #[test]
-    fn every_reasoning_model_we_disable_thinking_for_can_express_it() {
-        for model in ["deepseek-v4-pro", "deepseek-v4-flash", "glm-5.2"] {
+    fn every_reasoning_model_we_reduce_can_express_it() {
+        for model in ["deepseek-v4-pro", "deepseek-v4-flash", "glm-5.2", "kimi-k3"] {
             assert!(
                 resolve_model_profile(model).thinking_disabled,
                 "{model} profile should ask for thinking off"
             );
             assert!(
-                accepts_thinking_body_field(model),
-                "{model} asks for thinking off but cannot express it on the wire"
+                reasoning_wire_control(model).is_some(),
+                "{model} asks for reduced reasoning but cannot express it on the wire"
             );
         }
     }
@@ -379,7 +424,7 @@ mod tests {
     /// off but which deliberately do NOT get the body field, each with the
     /// reason. Being on this list is a decision, not an oversight — that
     /// distinction is the whole point of the sweep below.
-    const THINKING_FIELD_WITHHELD: &[(&str, &str)] = &[
+    const REASONING_CONTROL_WITHHELD: &[(&str, &str)] = &[
         (
             "gpt-5.4",
             "OpenAI's official endpoint rejects unknown body fields",
@@ -387,11 +432,6 @@ mod tests {
         (
             "gemini-3-flash-preview",
             "Google's OpenAI-compat shim is not documented to accept it",
-        ),
-        (
-            "kimi-k3",
-            "K3 always reasons; control is top-level reasoning_effort, and \
-             sending both fields is a documented 400",
         ),
         ("qwen-plus", "no verified thinking-disable field"),
         ("qwen3-coder-plus", "no verified thinking-disable field"),
@@ -421,7 +461,7 @@ mod tests {
     /// listed above with a reason. Adding a preset with a new default model
     /// fails here until someone decides which.
     #[test]
-    fn every_shipped_preset_model_is_classified_for_the_thinking_field() {
+    fn every_shipped_preset_model_is_classified_for_reasoning_control() {
         for preset in op_editor_core::BUILTIN_AGENT_PRESETS {
             // The Custom preset's `model` is a form placeholder, not an id.
             if preset.key == op_editor_core::BuiltinAgentPresetKey::Custom {
@@ -431,16 +471,16 @@ mod tests {
             if !resolve_model_profile(model).thinking_disabled {
                 continue;
             }
-            let on_the_wire = accepts_thinking_body_field(model);
-            let withheld = THINKING_FIELD_WITHHELD
+            let on_the_wire = reasoning_wire_control(model).is_some();
+            let withheld = REASONING_CONTROL_WITHHELD
                 .iter()
                 .any(|(listed, _)| *listed == model);
             assert!(
                 on_the_wire != withheld,
                 "preset `{}` ships model `{model}`, whose profile asks for \
                  thinking off, but it is {} — add it to \
-                 `accepts_thinking_body_field` (with a source) or to \
-                 THINKING_FIELD_WITHHELD (with a reason)",
+                 `reasoning_wire_control` (with a source) or to \
+                 REASONING_CONTROL_WITHHELD (with a reason)",
                 preset.display_name,
                 if on_the_wire {
                     "both sent on the wire AND listed as withheld"

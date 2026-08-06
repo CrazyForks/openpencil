@@ -451,3 +451,7 @@ mod quality_tests;
 #[cfg(test)]
 #[path = "chat_agent_loop_retry_tests.rs"]
 mod retry_tests;
+
+#[cfg(test)]
+#[path = "chat_agent_loop_wire_tests.rs"]
+mod wire_tests;
