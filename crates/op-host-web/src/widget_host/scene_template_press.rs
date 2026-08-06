@@ -35,10 +35,28 @@ impl WidgetHost {
             return false;
         };
         let brought_in = self.drain_pending_scene_template(viewport_width, viewport_height);
+        self.discard_style_persistence_requests();
         if changed || brought_in {
             self.mark_dirty();
         }
         true
+    }
+
+    /// Drop the persist / delete requests the shared import flow raises.
+    ///
+    /// An imported style guide is live the moment it is parsed — the runtime
+    /// catalogue is memory, and memory is all this host has. The requests
+    /// exist for a host with a disk; here they are drained rather than left to
+    /// accumulate, because nothing else will ever take them. The consequence
+    /// is the documented M1 boundary: an imported style lasts the session and
+    /// is gone after a reload.
+    fn discard_style_persistence_requests(&mut self) {
+        let center = &mut self.editor_state.editor_ui.scene_template_center;
+        center.take_pending_style_persist();
+        center.take_pending_style_delete();
+        // No file dialog on this host, so the button never raises this — but
+        // draining keeps a stale flag from arming a picker that cannot open.
+        center.take_pending_style_import_file();
     }
 
     /// Bring a chosen template into the document. Returns whether it changed.

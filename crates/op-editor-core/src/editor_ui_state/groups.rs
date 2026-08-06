@@ -314,6 +314,8 @@ pub enum SceneTemplateFocus {
     Search,
     /// The generate row's topic field.
     Generate,
+    /// The style-import paste box, on hosts that have no file dialog.
+    Import,
 }
 
 /// Which asset family the Asset Center is showing.
@@ -396,6 +398,36 @@ pub struct SceneTemplateCenterState {
     /// *which template* the user chose rather than which guide it resolved
     /// to, and what lets dismissing the chip undo the pin it set.
     pub generate_basis: Option<String>,
+    /// The Styles tab's `DESIGN.md` import.
+    pub import: StyleImportState,
+}
+
+/// Importing a user's own `DESIGN.md` into the Styles tab.
+///
+/// Two shapes, because the hosts genuinely differ. A host with a file dialog
+/// raises `pending_file_pick` and never opens the box; a host without one
+/// (the browser) opens the box and takes a paste. Both end at the same place
+/// — [`op_ai_skills::style_guide::import_design_md`] — so only the way the
+/// text arrives forks, not what an imported style is.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StyleImportState {
+    /// Whether the paste box is showing.
+    pub open: bool,
+    /// The pasted document.
+    pub text: jian_core::text_input::TextInputState,
+    /// i18n key for the last failure, cleared on the next attempt.
+    ///
+    /// A key rather than a message: the reason is decided where the parse
+    /// happens, and the wording belongs to whatever locale the panel is
+    /// painting in when the user reads it.
+    pub error_key: Option<&'static str>,
+    /// Raised for a host that can open a file dialog.
+    pub pending_file_pick: bool,
+    /// Ids of guides imported into memory that a host with a disk should
+    /// write down. Empty on hosts that keep nothing.
+    pub pending_persist: Vec<String>,
+    /// Ids removed from memory whose files a host with a disk should delete.
+    pub pending_delete: Vec<String>,
 }
 
 impl Default for SceneTemplateCenterState {
@@ -412,6 +444,7 @@ impl Default for SceneTemplateCenterState {
             pending_open: None,
             pending_generate: None,
             generate_basis: None,
+            import: StyleImportState::default(),
         }
     }
 }
@@ -430,6 +463,9 @@ impl SceneTemplateCenterState {
     pub fn close(&mut self) {
         self.open = false;
         self.hover = None;
+        // The paste box is a layer inside this panel; leaving it armed would
+        // reopen the gallery with somebody's half-finished import on top.
+        self.close_style_import();
     }
 
     /// Switch tabs, dropping the scroll offset and hover token.
@@ -463,7 +499,65 @@ impl SceneTemplateCenterState {
         match self.focus {
             SceneTemplateFocus::Search => &mut self.search,
             SceneTemplateFocus::Generate => &mut self.generate,
+            SceneTemplateFocus::Import => &mut self.import.text,
         }
+    }
+
+    /// Ask the host to open a file dialog for a `DESIGN.md`.
+    pub fn request_style_import_file(&mut self) {
+        self.import.error_key = None;
+        self.import.pending_file_pick = true;
+    }
+
+    /// Drain the file-dialog request.
+    pub fn take_pending_style_import_file(&mut self) -> bool {
+        std::mem::take(&mut self.import.pending_file_pick)
+    }
+
+    /// Open the paste box, focused and empty.
+    pub fn open_style_import_paste(&mut self, now_ms: u64) {
+        self.import.open = true;
+        self.import.error_key = None;
+        self.import.text.set_text("");
+        self.import.text.touch(now_ms);
+        self.focus = SceneTemplateFocus::Import;
+    }
+
+    /// Close the paste box, handing the keyboard back to the search field.
+    ///
+    /// The draft is dropped: it is a pasted document, not something typed
+    /// over time, and keeping a stale one would make the next import start
+    /// with somebody else's guide already in the box.
+    pub fn close_style_import(&mut self) -> bool {
+        if !self.import.open {
+            return false;
+        }
+        self.import.open = false;
+        self.import.text.set_text("");
+        self.import.error_key = None;
+        self.focus = SceneTemplateFocus::Search;
+        true
+    }
+
+    /// Note that `id` now exists in memory and a host with a disk should
+    /// write it down.
+    pub fn queue_style_persist(&mut self, id: impl Into<String>) {
+        self.import.pending_persist.push(id.into());
+    }
+
+    /// Note that `id` is gone from memory and its file should follow.
+    pub fn queue_style_delete(&mut self, id: impl Into<String>) {
+        self.import.pending_delete.push(id.into());
+    }
+
+    /// Drain ids awaiting a write.
+    pub fn take_pending_style_persist(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.import.pending_persist)
+    }
+
+    /// Drain ids awaiting a delete.
+    pub fn take_pending_style_delete(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.import.pending_delete)
     }
 
     /// Request that the host generate a document for the typed topic.

@@ -30,9 +30,7 @@ use op_editor_core::{
 
 use super::asset_center_style_cards::{filtered_style_guide_cards, StyleGuideCard};
 use super::prompt_center_panel::estimated_text_width;
-use super::scene_template_card_actions::{
-    basis_chip_reserved_width, SCENE_TEMPLATE_BASIS_CHIP_HOVER,
-};
+use super::scene_template_card_actions::basis_chip_reserved_width;
 use crate::theme::Theme;
 use crate::widgets::editor_state_ext::theme_for;
 use crate::{Color, Point2D, Rect};
@@ -91,7 +89,7 @@ pub(super) const SEARCH_TEXT_SIZE: f32 = 13.0;
 pub(super) const SEARCH_PAD_X: f32 = 34.0;
 pub(super) const CHIP_H: f32 = 28.0;
 const CHIP_GAP: f32 = 8.0;
-const CARD_GAP: f32 = 20.0;
+pub(super) const CARD_GAP: f32 = 20.0;
 pub(super) const GENERATE_ROW_H: f32 = 72.0;
 pub(super) const GENERATE_INPUT_H: f32 = 38.0;
 pub(super) const GENERATE_BUTTON_W: f32 = 108.0;
@@ -184,6 +182,20 @@ pub enum SceneTemplateHit {
     ClearGenerateBasis,
     /// Pin this style guide, or unpin it when it is already the pinned one.
     ToggleStyleGuide(String),
+    /// Bring in a `DESIGN.md` — a file dialog where the host has one, the
+    /// paste box where it does not.
+    ImportStyleGuide,
+    /// Forget an imported style guide, by id. Only ever an import: the
+    /// shipped corpus is not the user's to delete.
+    DeleteStyleGuide(String),
+    /// Somewhere on the import paste box that is not one of its controls.
+    InsideStyleImport,
+    /// Put the caret in the import paste box.
+    FocusStyleImport(usize),
+    /// Read the pasted text as a style guide.
+    ConfirmStyleImport,
+    /// Dismiss the paste box, discarding the draft.
+    CancelStyleImport,
     /// Inside the panel but not on a control — swallows the press so it
     /// cannot fall through to the canvas underneath.
     Inside,
@@ -477,6 +489,12 @@ impl<'a> SceneTemplatePanel<'a> {
     }
 
     pub(super) fn content_height_for_count(&self, panel: Rect, count: usize) -> f32 {
+        // The Styles grid carries section headings, so its height is not a
+        // function of the card count alone — `count` is ignored in favour of
+        // the walker that knows where the headings fall.
+        if self.tab() == AssetCenterTab::Styles {
+            return self.style_layout(panel).content_height;
+        }
         let (columns, _, card_h) = self.grid_metrics(panel);
         let rows = count.div_ceil(columns);
         if rows == 0 {
@@ -505,6 +523,9 @@ impl<'a> SceneTemplatePanel<'a> {
     }
 
     pub(super) fn card_rects_for_count(&self, panel: Rect, count: usize) -> Vec<(usize, Rect)> {
+        if self.tab() == AssetCenterTab::Styles {
+            return self.style_layout(panel).cards;
+        }
         let viewport = self.cards_viewport(panel);
         let (columns, card_w, card_h) = self.grid_metrics(panel);
         let scroll = self
@@ -533,134 +554,8 @@ impl<'a> SceneTemplatePanel<'a> {
         self.card_rects_for_count(panel, self.visible_card_count())
     }
 
-    /// Resolve a pointer to a hover token shared with paint.
-    pub fn hover_at(&self, panel: Rect, point: Point2D) -> Option<usize> {
-        if !panel.contains(point) {
-            return None;
-        }
-        if Self::close_rect(panel).contains(point) {
-            return Some(SCENE_TEMPLATE_CLOSE_HOVER);
-        }
-        for (index, (rect, _)) in self.tab_chip_rects(panel).into_iter().enumerate() {
-            if rect.contains(point) {
-                return Some(tab_hover_token(index));
-            }
-        }
-        for (index, (rect, _)) in self.filter_chip_rects(panel).into_iter().enumerate() {
-            if rect.contains(point) {
-                return Some(filter_hover_token(index));
-            }
-        }
-        if self
-            .basis_chip_dismiss_rect(panel)
-            .is_some_and(|rect| rect.contains(point))
-        {
-            return Some(SCENE_TEMPLATE_BASIS_CHIP_HOVER);
-        }
-        if self
-            .generate_button_rect(panel)
-            .is_some_and(|rect| rect.contains(point))
-        {
-            return Some(SCENE_TEMPLATE_GENERATE_HOVER);
-        }
-        // A card scrolled out of the viewport must not hover: its rect is
-        // still computed (paint clips it), so the viewport check is what
-        // keeps a pointer below the panel from lighting up a hidden row.
-        let viewport = self.cards_viewport(panel);
-        if !viewport.contains(point) {
-            return None;
-        }
-        let (index, card) = self
-            .card_rects(panel)
-            .into_iter()
-            .find(|(_, rect)| rect.contains(point))?;
-        Some(self.card_hover_token(index, card, point))
-    }
-
-    /// Hit-test panel chrome and cards. Outside presses return `None` so the
-    /// caller can treat them as dismiss.
-    pub fn hit_test(&self, panel: Rect, point: Point2D) -> Option<SceneTemplateHit> {
-        if !panel.contains(point) {
-            return None;
-        }
-        if Self::close_rect(panel).contains(point) {
-            return Some(SceneTemplateHit::Close);
-        }
-        for (rect, tab) in self.tab_chip_rects(panel) {
-            if rect.contains(point) {
-                return Some(SceneTemplateHit::SelectTab(tab));
-            }
-        }
-        let search = Self::search_rect(panel);
-        if search.contains(point) {
-            let caret = self.caret_at(
-                &self.state.editor_ui.scene_template_center.search,
-                search,
-                SEARCH_PAD_X,
-                SEARCH_TEXT_SIZE,
-                point,
-            );
-            return Some(SceneTemplateHit::FocusSearch(caret));
-        }
-        for (rect, filter) in self.filter_chip_rects(panel) {
-            if rect.contains(point) {
-                return Some(SceneTemplateHit::SelectFilter(filter));
-            }
-        }
-        // Above the topic field: the chip sits in the same row and its
-        // dismiss target must not read as a click into the text.
-        if self
-            .basis_chip_dismiss_rect(panel)
-            .is_some_and(|rect| rect.contains(point))
-        {
-            return Some(SceneTemplateHit::ClearGenerateBasis);
-        }
-        if let Some(input) = self.generate_input_rect(panel) {
-            if input.contains(point) {
-                let caret = self.caret_at(
-                    &self.state.editor_ui.scene_template_center.generate,
-                    input,
-                    GENERATE_INPUT_PAD_X,
-                    GENERATE_TEXT_SIZE,
-                    point,
-                );
-                return Some(SceneTemplateHit::FocusGenerate(caret));
-            }
-        }
-        if self
-            .generate_button_rect(panel)
-            .is_some_and(|rect| rect.contains(point))
-        {
-            return Some(SceneTemplateHit::Generate);
-        }
-        let viewport = self.cards_viewport(panel);
-        if viewport.contains(point) {
-            match self.tab() {
-                AssetCenterTab::Templates => {
-                    let cards = self.filtered();
-                    for (index, rect) in self.card_rects_for_count(panel, cards.len()) {
-                        if rect.contains(point) {
-                            return Some(self.template_card_hit(cards[index], index, rect, point));
-                        }
-                    }
-                }
-                AssetCenterTab::Styles => {
-                    let cards = self.style_cards();
-                    for (index, rect) in self.card_rects_for_count(panel, cards.len()) {
-                        if rect.contains(point) {
-                            return Some(SceneTemplateHit::ToggleStyleGuide(
-                                cards[index].name.to_string(),
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-        Some(SceneTemplateHit::Inside)
-    }
-
     /// Caret index for a press inside a text field of this panel.
-    fn caret_at(
+    pub(super) fn caret_at(
         &self,
         input: &jian_core::text_input::TextInputState,
         rect: Rect,

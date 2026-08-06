@@ -31,6 +31,19 @@ impl WidgetHostNative {
     /// dropped since these inputs are single-line. Returns `true` if
     /// anything was inserted.
     pub fn apply_input_paste(&mut self, text: &str) -> bool {
+        // The Asset Center takes a paste as a unit: its style-import box
+        // receives a whole DESIGN.md, and the char-by-char route below drops
+        // control characters, which would flatten the markdown to one line.
+        if let Some(changed) = op_editor_core::host_keyboard_transitions::scene_template_paste(
+            &mut self.editor_state,
+            text,
+            self.now_ms,
+        ) {
+            if changed {
+                self.mark_dirty();
+            }
+            return true;
+        }
         // The join field takes a pasted invite code as a whole-field
         // replacement: char-by-char append silently concatenated a new code
         // onto a stale one, producing an invalid join target.

@@ -94,6 +94,7 @@ mod scene_template_generate;
 mod scene_template_open;
 mod settings_io;
 mod single_instance;
+mod style_import_host;
 mod sub_agent_session;
 mod sub_agent_spawn_error;
 mod tcc_selftest;
@@ -101,6 +102,7 @@ mod test_config_root;
 mod theme_preset_host;
 mod ui_prefs;
 mod update_check;
+mod user_style_store;
 mod window_resize;
 mod window_state;
 

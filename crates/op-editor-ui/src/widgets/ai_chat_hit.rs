@@ -6,6 +6,8 @@ pub enum AIChatHit {
     Inside,
     /// Click landed on the input area — host should focus chat.
     FocusInput,
+    /// Unpin the style guide named by the receipt row above the input.
+    ClearPinnedStyle,
     /// Press landed on selectable input text at a byte offset.
     SelectInputText(usize),
     /// Click landed on the send affordance.

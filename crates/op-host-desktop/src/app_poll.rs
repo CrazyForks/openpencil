@@ -209,6 +209,10 @@ impl DesktopApp {
         // happen here rather than waiting for the next pointer / key event:
         // nothing else is guaranteed to arrive, so a queued turn would sit
         // unsent until the user happened to touch the window again.
+        // The Styles tab's DESIGN.md import: a file dialog, and the disk half
+        // of adding or removing a guide the panel has already put in (or taken
+        // out of) the runtime catalogue.
+        should_paint |= crate::style_import_host::drain_pending_style_import(&mut self.host);
         if crate::scene_template_generate::drain_pending_scene_template_generate(
             &mut self.host,
             &mut self.current_path,

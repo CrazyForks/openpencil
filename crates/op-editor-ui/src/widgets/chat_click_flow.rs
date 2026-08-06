@@ -88,6 +88,14 @@ pub fn apply_chat_hit(state: &mut EditorState, hit: AIChatHit, now_ms: u64) -> C
         // Panel chrome that hit no control — blank press: blur every
         // input (the chat's own textarea included, DOM parity).
         AIChatHit::Inside => ChatClickStep::BlankPress,
+        // Same shared entry point the Asset Center card uses.
+        AIChatHit::ClearPinnedStyle => {
+            if state.editor_ui.clear_pinned_style_guide() {
+                ChatClickStep::Dirty
+            } else {
+                ChatClickStep::Clean
+            }
+        }
         AIChatHit::FocusInput => {
             state.chat.focus_input_at_end(now_ms);
             state.chat.transcript_selection = None;

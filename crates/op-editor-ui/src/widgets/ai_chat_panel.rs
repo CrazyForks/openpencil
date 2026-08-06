@@ -115,6 +115,9 @@ pub struct AIChatPlaceholder<'a> {
     pub(crate) examples: [ExampleCard; 4],
     /// Active UI locale.
     pub(crate) locale: op_editor_core::Locale,
+    /// What the next generation will style itself with, or `None` when there
+    /// is nothing true to report. See `ai_chat_style_receipt`.
+    pub(crate) style_receipt: Option<crate::widgets::ai_chat_style_receipt::StyleReceipt>,
     /// All open chat tabs (from `state.chat.tabs()`). Kept as an owned
     /// snapshot so the tab row can paint all titles in one pass without
     /// holding a borrow on `state.chat` that conflicts with `Deref`.
@@ -181,6 +184,7 @@ impl<'a> AIChatPlaceholder<'a> {
             label_no_models: translate(ui, "ai.noModelsConnected").to_string(),
             selected_count: state.selection_count(),
             selected_label: selection_chip_label_for_state(state),
+            style_receipt: crate::widgets::ai_chat_style_receipt::StyleReceipt::for_state(state),
             model_picker: &ui.chat_model_picker,
             model_picker_input: &ui.chat_model_picker_input,
             design_hover: ui.chat_design_block_hover,
@@ -235,6 +239,31 @@ impl<'a> AIChatPlaceholder<'a> {
         }
     }
 
+    /// Height of the pinned-style receipt row — `0` when nothing is pinned.
+    ///
+    /// It sits above the selection chip, at the very top of the input block:
+    /// it describes the whole next turn, where the selection chip describes
+    /// only what that turn will be pointed at.
+    pub(crate) fn style_receipt_row_h(&self) -> f32 {
+        if self.style_receipt.is_some() {
+            crate::widgets::ai_chat_style_receipt::STYLE_RECEIPT_ROW_HEIGHT
+        } else {
+            0.0
+        }
+    }
+
+    /// The receipt's label, already formatted for the active locale.
+    pub(crate) fn style_receipt_label(&self) -> Option<String> {
+        let receipt = self.style_receipt.as_ref()?;
+        Some(op_i18n::translate(self.locale, "ai.pinnedStyle").replace("{{name}}", &receipt.name))
+    }
+
+    pub(crate) fn style_receipt_clear_rect(&self, input_rect: Rect) -> Option<Rect> {
+        let receipt = self.style_receipt.as_ref()?;
+        let label = self.style_receipt_label()?;
+        crate::widgets::ai_chat_style_receipt::clear_rect(receipt, &label, input_rect)
+    }
+
     /// Height of the selected-count chip row — `0` when no canvas node is selected.
     pub(crate) fn selection_chip_row_h(&self) -> f32 {
         if self.selected_count == 0 {
@@ -263,7 +292,9 @@ impl<'a> AIChatPlaceholder<'a> {
         Some(Rect {
             origin: Point2D::new(
                 input_rect.origin.x,
-                input_rect.origin.y + (SELECTION_CHIP_ROW_HEIGHT - SELECTION_CHIP_HEIGHT) / 2.0,
+                input_rect.origin.y
+                    + self.style_receipt_row_h()
+                    + (SELECTION_CHIP_ROW_HEIGHT - SELECTION_CHIP_HEIGHT) / 2.0,
             ),
             size: Point2D::new(chip_w, SELECTION_CHIP_HEIGHT),
         })
@@ -301,7 +332,8 @@ impl<'a> AIChatPlaceholder<'a> {
     }
 
     pub(crate) fn input_height_for_width(&self, panel_w: f32) -> f32 {
-        self.selection_chip_row_h()
+        self.style_receipt_row_h()
+            + self.selection_chip_row_h()
             + self.input_area_height_for_width(panel_w)
             + INPUT_TOOLBAR_HEIGHT
             + self.attachment_row_h()
@@ -429,7 +461,7 @@ impl<'a> AIChatPlaceholder<'a> {
         Rect {
             origin: Point2D::new(
                 input_block.origin.x,
-                input_block.origin.y + self.selection_chip_row_h(),
+                input_block.origin.y + self.style_receipt_row_h() + self.selection_chip_row_h(),
             ),
             size: Point2D::new(input_block.size.x, self.input_area_height_for_rect(rect)),
         }

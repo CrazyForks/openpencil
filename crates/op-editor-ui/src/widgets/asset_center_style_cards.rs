@@ -2,13 +2,22 @@
 //!
 //! The registry stores whole markdown documents; a card needs a name, a few
 //! colours, and one line of prose. Deriving that here — once, from the
-//! canonical `op_ai_skills` registry rather than from a hand-copied table —
+//! canonical `op_ai_skills` registries rather than from a hand-copied table —
 //! is what keeps the tab honest: a guide added to the corpus shows up in the
 //! panel without anyone remembering to list it, and a guide whose palette
 //! section changes shows the new swatches.
+//!
+//! Two sources feed one list. The shipped corpus is baked into the binary; the
+//! user's imported `DESIGN.md` files arrive at runtime. They are merged here,
+//! imports first, because a list where your own material sits below fifty
+//! shipped entries is a list you scroll past your own work in. Ids keep them
+//! apart — a corpus guide is pinned by its bare name, an import by its
+//! `user:` id — so a file that names itself after a shipped guide cannot
+//! quietly take its place.
 
 use op_ai_skills::style_guide::{
-    extract_style_guide_values, style_guide_registry, ParsedStyleGuide, Platform,
+    extract_style_guide_values, style_guide_registry, user_style_guides, ParsedStyleGuide,
+    Platform, UserStyleGuide,
 };
 use op_util::hex_color;
 
@@ -20,10 +29,21 @@ pub const STYLE_SWATCH_COUNT: usize = 5;
 
 /// One style-guide card.
 pub struct StyleGuideCard {
-    /// The guide's `name` — also the value pinning writes to the document.
-    pub name: &'static str,
+    /// What pinning writes to the document: the guide's `name` for a corpus
+    /// entry, its `user:<slug>` id for an import.
+    pub id: String,
+    /// The name shown on the card.
+    pub name: String,
     /// Which platform the guide was written for.
     pub platform: Platform,
+    /// The guide's declared tags — the search vocabulary. Kept whole even
+    /// though [`Self::summary`] shows only the first few, so a guide is still
+    /// findable by a tag that did not fit on the card.
+    pub tags: Vec<String>,
+    /// Whether this came from a `DESIGN.md` the user imported — the one
+    /// difference the tab acts on: imports get a section of their own and a
+    /// delete button, because they are the only ones the user can remove.
+    pub is_user: bool,
     /// Palette band, left to right. Entries the guide does not declare are
     /// dropped rather than filled with a placeholder: an invented swatch
     /// would misrepresent the guide the user is about to commit to.
@@ -50,39 +70,85 @@ impl StyleGuideCard {
         .collect();
 
         Self {
-            name: guide.name.as_str(),
+            id: guide.name.clone(),
+            name: guide.name.clone(),
             platform: guide.platform,
+            tags: guide.tags.clone(),
+            is_user: false,
             swatches,
-            summary: summary_for(guide, &values.typography.display_font),
+            summary: summary_for(&guide.tags, &values.typography.display_font),
+        }
+    }
+
+    /// A card for an imported guide.
+    ///
+    /// The swatches come from the import's own hex scan rather than from
+    /// [`extract_style_guide_values`]: that extractor reads the corpus's
+    /// section grammar, and a community `DESIGN.md` writes its palette
+    /// however it likes, so running it here would leave most imports with an
+    /// empty band.
+    fn from_user_guide(user: &UserStyleGuide) -> Self {
+        Self {
+            id: user.id.clone(),
+            name: user.guide.name.clone(),
+            platform: user.guide.platform,
+            tags: user.guide.tags.clone(),
+            is_user: true,
+            swatches: user
+                .swatches
+                .iter()
+                .filter_map(|hex| parse_swatch(hex))
+                .take(STYLE_SWATCH_COUNT)
+                .collect(),
+            summary: user_summary(user),
         }
     }
 
     /// Whether this card is the pinned one.
     pub fn is_pinned(&self, pinned: Option<&str>) -> bool {
-        pinned == Some(self.name)
+        pinned == Some(self.id.as_str())
+    }
+
+    /// Whether the search query matches this card.
+    fn matches(&self, query: &str) -> bool {
+        query.is_empty()
+            || self.name.to_lowercase().contains(query)
+            || self
+                .tags
+                .iter()
+                .any(|tag| tag.to_lowercase().contains(query))
     }
 }
 
-/// The full catalogue as cards, in registry order.
+/// The full catalogue as cards — imports first, then the corpus in registry
+/// order.
 pub fn style_guide_cards() -> Vec<StyleGuideCard> {
-    style_guide_registry()
-        .iter()
-        .map(StyleGuideCard::from_guide)
-        .collect()
+    filtered_style_guide_cards("")
 }
 
 /// Cards surviving a search query, matched against name and tags.
 pub fn filtered_style_guide_cards(query: &str) -> Vec<StyleGuideCard> {
     let query = query.trim().to_lowercase();
-    style_guide_registry()
+    let mut cards: Vec<StyleGuideCard> = user_style_guides()
         .iter()
-        .filter(|guide| {
-            query.is_empty()
-                || guide.name.to_lowercase().contains(&query)
-                || guide.tags.iter().any(|tag| tag.contains(&query))
-        })
-        .map(StyleGuideCard::from_guide)
-        .collect()
+        .map(|user| StyleGuideCard::from_user_guide(user))
+        .collect();
+    cards.extend(
+        style_guide_registry()
+            .iter()
+            .map(StyleGuideCard::from_guide),
+    );
+    cards.retain(|card| card.matches(&query));
+    cards
+}
+
+/// How many of `cards` are imports.
+///
+/// The list is ordered imports-first, so this is also the index the corpus
+/// section starts at — which is what the grid needs to know where to put its
+/// section headings.
+pub fn user_card_count(cards: &[StyleGuideCard]) -> usize {
+    cards.iter().take_while(|card| card.is_user).count()
 }
 
 fn parse_swatch(raw: &str) -> Option<Color> {
@@ -94,9 +160,8 @@ fn parse_swatch(raw: &str) -> Option<Color> {
 /// with its display font when it names one. Tags are the vocabulary the
 /// prompt ranker already scores against, so a user picking by tag is
 /// picking the same way the automatic path does.
-fn summary_for(guide: &ParsedStyleGuide, display_font: &Option<String>) -> String {
-    let mut summary = guide
-        .tags
+fn summary_for(tags: &[String], display_font: &Option<String>) -> String {
+    let mut summary = tags
         .iter()
         .take(4)
         .map(String::as_str)
@@ -111,78 +176,62 @@ fn summary_for(guide: &ParsedStyleGuide, display_font: &Option<String>) -> Strin
     summary
 }
 
+/// An import's summary: its own tags when it declared any, else the first
+/// line of prose it wrote.
+///
+/// The fallback matters more than it looks. Most community `DESIGN.md` files
+/// carry no tags at all, and a card showing only a name is indistinguishable
+/// from the next one — the opening line is what the author chose to say first
+/// about the aesthetic, so it is the best one-line description available
+/// without inventing one.
+fn user_summary(user: &UserStyleGuide) -> String {
+    let tagged = summary_for(&user.guide.tags, &None);
+    if !tagged.is_empty() {
+        return tagged;
+    }
+    user.guide
+        .content
+        .lines()
+        .map(str::trim)
+        .find(|line| {
+            !line.is_empty()
+                && !line.starts_with('#')
+                && !line.starts_with("---")
+                && !line.starts_with("```")
+                && !line.contains(':')
+        })
+        .map(|line| line.chars().take(120).collect())
+        .unwrap_or_else(|| user.guide.platform.as_str().to_string())
+}
+
+/// Serialized access to the process-global imported-style registry.
+///
+/// Every Asset Center test reads that registry, and a few write it. Cargo runs
+/// them on parallel threads of one process, so without a lock a test that
+/// imports two guides changes what an unrelated test's grid contains. Any test
+/// touching the Styles tab takes this — including the read-only ones, which is
+/// the point: they are the ones that would otherwise fail mysteriously.
 #[cfg(test)]
-mod tests {
-    use super::*;
+pub(crate) mod style_test_support {
+    use std::sync::{Mutex, MutexGuard};
 
-    #[test]
-    fn every_registry_guide_becomes_a_card() {
-        let cards = style_guide_cards();
-        assert_eq!(cards.len(), style_guide_registry().len());
-        assert!(cards.len() > 20, "the shipped corpus is not this small");
+    pub(crate) fn exclusive_user_styles() -> MutexGuard<'static, ()> {
+        static LOCK: Mutex<()> = Mutex::new(());
+        let guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        op_ai_skills::style_guide::set_user_style_guides(Vec::new());
+        guard
     }
 
-    #[test]
-    fn cards_carry_a_name_swatches_and_a_summary() {
-        // Not a spot check on one guide: a card with an empty band or an
-        // empty summary paints as a blank tile, and the tab is only useful
-        // if every entry is recognizable.
-        for card in style_guide_cards() {
-            assert!(!card.name.is_empty());
-            assert!(
-                !card.swatches.is_empty(),
-                "{} has no parseable palette colours",
-                card.name
-            );
-            assert!(
-                card.swatches.len() <= STYLE_SWATCH_COUNT,
-                "{} overflows the band",
-                card.name
-            );
-            assert!(!card.summary.is_empty(), "{} has no summary", card.name);
-        }
-    }
-
-    #[test]
-    fn a_known_guide_reads_its_own_palette() {
-        let card = style_guide_cards()
-            .into_iter()
-            .find(|c| c.name == "nordic-frost-light")
-            .expect("the corpus ships this guide");
-        assert_eq!(card.platform, Platform::Webapp);
-        // The background swatch is the first entry, and a light guide's
-        // background must not come back near-black — that would mean the
-        // colour parse silently failed and painted a default.
-        let background = card.swatches[0];
-        assert!(
-            background.r > 0.8 && background.g > 0.8 && background.b > 0.8,
-            "expected a light background, got {background:?}"
-        );
-    }
-
-    #[test]
-    fn search_matches_names_and_tags() {
-        assert!(filtered_style_guide_cards("terminal")
-            .iter()
-            .any(|c| c.name == "developer-terminal-dark"));
-        // Tag-only match: "brutalist" is a tag, not a substring of the name.
-        assert!(!filtered_style_guide_cards("brutalist").is_empty());
-        assert_eq!(
-            filtered_style_guide_cards("").len(),
-            style_guide_registry().len(),
-            "an empty query filters nothing"
-        );
-        assert!(filtered_style_guide_cards("zzz-no-such-style").is_empty());
-    }
-
-    #[test]
-    fn pinning_matches_by_exact_name() {
-        let card = style_guide_cards()
-            .into_iter()
-            .find(|c| c.name == "zen-paper-light")
-            .expect("the corpus ships this guide");
-        assert!(card.is_pinned(Some("zen-paper-light")));
-        assert!(!card.is_pinned(Some("zen-paper")));
-        assert!(!card.is_pinned(None));
+    /// Import a minimal `DESIGN.md` named `name`, returning its id.
+    pub(crate) fn import_style(name: &str) -> String {
+        let raw = format!("---\nname: {name}\n---\n\n# {name}\n\nAccent #2563EB everywhere.\n");
+        op_ai_skills::style_guide::import_design_md(&raw, name)
+            .expect("the fixture is a valid DESIGN.md")
+            .id
+            .clone()
     }
 }
+
+#[cfg(test)]
+#[path = "asset_center_style_cards_tests.rs"]
+mod asset_center_style_cards_tests;

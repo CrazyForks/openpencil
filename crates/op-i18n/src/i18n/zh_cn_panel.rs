@@ -144,7 +144,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         }
         "sceneTemplate.item.minimalKeynote.title" => "极简 Keynote",
         "sceneTemplate.item.minimalKeynote.summary" => {
-            "纯白留白、超大字号、一页一个意思，八页里没有一张卡片，适合发布会与主题演讲。"
+            "纯白留白、超大字号、一页一句话居中，九页里没有一张卡片，目录只有细线和数字，适合发布会与主题演讲。"
         }
         "sceneTemplate.item.gradientTech.title" => "渐变科技风",
         "sceneTemplate.item.gradientTech.summary" => {
@@ -454,6 +454,19 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "assetCenter.style.pinned" => "已钉住",
         "assetCenter.style.searchPlaceholder" => "搜索风格或标签",
         "assetCenter.style.generateHint" => "新建一个文档，按主题生成；已钉住的风格会被直接采用。",
+        "ai.pinnedStyle" => "风格：{{name}}",
+        "assetCenter.style.import" => "导入风格",
+        "assetCenter.style.mine" => "我的风格",
+        "assetCenter.style.builtIn" => "内置风格",
+        "assetCenter.style.importTitle" => "导入 DESIGN.md",
+        "assetCenter.style.importHint" => "粘贴 DESIGN.md 全文，然后确认导入。",
+        "assetCenter.style.importSource" => "可以从 styles.refero.design 等 DESIGN.md 风格库复制内容。",
+        "assetCenter.style.importConfirm" => "导入",
+        "assetCenter.style.importCancel" => "取消",
+        "assetCenter.style.importPlaceholder" => "在此粘贴 DESIGN.md",
+        "assetCenter.style.importEmpty" => "这个文件是空的，或者内容太短，不像一份风格指南。",
+        "assetCenter.style.importNotText" => "这个文件不是 Markdown 文本。",
+        "assetCenter.style.importTooLarge" => "这个文件超过 512 KB。",
         "slidesPanel.tabSlides" => "幻灯片",
         "slidesPanel.tabCards" => "卡片",
         "slidesPanel.present" => "放映",
@@ -484,6 +497,14 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "settings.fonts.heroSubtitle" => "补齐文档需要但本机缺失的字体，并管理你导入的字体。",
         "settings.account.heroTitle" => "你的账户",
         "settings.account.heroSubtitle" => "登录后可在多设备间同步工作区与授权。",
+        "tooltip.topbar.file" => "文件",
+        "tooltip.topbar.import" => "导入",
+        "tooltip.topbar.language" => "语言",
+        "tooltip.topbar.collaboration" => "协作",
+        "tooltip.topbar.preview" => "预览",
+        "tooltip.topbar.exitPreview" => "退出预览",
+        "tooltip.topbar.account" => "账户",
+        "settings.agents.providerRollMore" => "等 {{count}} 家",
         _ => return super::zh_cn_collab::lookup(key),
     })
 }

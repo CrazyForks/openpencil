@@ -65,7 +65,7 @@ pub use git_panel::{
 pub use groups::{
     AssetCenterTab, CustomPrompt, DesignMdPanelState, PreviewState, PromptCenterFocus,
     PromptCenterState, PromptFilter, SceneFilter, SceneTemplateCenterState, SceneTemplateFocus,
-    SizeToggleState,
+    SizeToggleState, StyleImportState,
 };
 pub use pickers::{
     CanvasDropIndicator, CanvasOverlayLine, CanvasOverlayRect, CompositingPickerTarget,
@@ -375,6 +375,14 @@ pub struct EditorUiState {
     /// `theme.button_hover` wash on the sidebar / file-menu / figma /
     /// theme / locale / fullscreen / git / agent-chip buttons.
     pub topbar_button_hover: Option<crate::topbar_state::TopBarButton>,
+    /// When the cursor entered the TopBar's button row — the dwell clock
+    /// the hover tooltip waits out before it appears. Set on the
+    /// None → Some transition only, so sliding between buttons inside
+    /// one visit does not restart the wait (standard desktop
+    /// behaviour). Meaningless while `topbar_button_hover` is `None`,
+    /// which is why no clear path has to reset it: the next entry
+    /// re-stamps it.
+    pub topbar_hover_since_ms: Option<u64>,
     /// Which floating status-bar control the cursor is over — drives
     /// the `theme.button_hover` wash on the search / zoom-out / zoom-in
     /// controls.
@@ -554,6 +562,12 @@ pub struct EditorUiState {
     /// generate row entirely rather than paint a control whose press
     /// would go nowhere.
     pub scene_template_generate_supported: bool,
+    /// Whether this host can put a native file dialog in front of the user.
+    /// Desktop sets it and the Styles tab's import button opens a file
+    /// picker; hosts that leave it `false` (the browser) get the paste box
+    /// instead. Never a reason to hide the button — every host can import,
+    /// they just take the document by different means.
+    pub style_import_file_picker_supported: bool,
     /// Whether a host already ran font enumeration (so an empty list
     /// is "machine has none" rather than "not loaded yet").
     pub system_fonts_loaded: bool,

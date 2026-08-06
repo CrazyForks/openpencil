@@ -180,6 +180,11 @@ async fn planning_loop(
                             plan.style_guide_name = Some(forced);
                         }
                     }
+                    // A pinned guide outranks whatever the model chose — and
+                    // whatever it forgot to choose. Applied here rather than in
+                    // the backfill above because the backfill only ever has a
+                    // value on the Compact planning path.
+                    crate::style_guide_context::enforce_pinned_style_guide(&mut plan, request);
                     let norm = normalize(&mut plan, request);
                     return Ok((plan, norm));
                 }
@@ -208,6 +213,10 @@ async fn planning_loop(
 
     // 规划失败 → fallback plan(规划不可出错)
     let mut fallback = build_fallback_plan(request);
+    // The fallback is heuristic, not modelled, so it names no guide at all —
+    // without this a pin was lost precisely when planning had already failed
+    // twice and the design needed every bit of direction it could get.
+    crate::style_guide_context::enforce_pinned_style_guide(&mut fallback, request);
     let norm = normalize(&mut fallback, request);
     Ok((fallback, norm))
 }
@@ -232,6 +241,10 @@ async fn collect_text(
 #[cfg(test)]
 #[path = "run_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "run_tests_pinned_style.rs"]
+mod tests_pinned_style;
 
 // Task B2 (S3b-4) tests — append-to-document mode wiring.
 #[cfg(test)]

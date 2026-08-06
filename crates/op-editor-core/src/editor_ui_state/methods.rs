@@ -19,6 +19,30 @@ impl EditorUiState {
         self.pressed_button = None;
     }
 
+    /// Record which TopBar button the cursor rests on, keeping the
+    /// tooltip dwell clock in step. Returns whether anything changed —
+    /// hosts use that as their repaint signal.
+    ///
+    /// The clock starts only when the cursor ENTERS the button row
+    /// (`None` → `Some`). Sliding from one button to the next inside a
+    /// single visit keeps the original stamp, so the tooltip follows
+    /// the cursor immediately instead of making the user wait again at
+    /// every button.
+    pub fn set_topbar_button_hover(
+        &mut self,
+        next: Option<crate::topbar_state::TopBarButton>,
+        now_ms: u64,
+    ) -> bool {
+        if self.topbar_button_hover == next {
+            return false;
+        }
+        if self.topbar_button_hover.is_none() {
+            self.topbar_hover_since_ms = Some(now_ms);
+        }
+        self.topbar_button_hover = next;
+        true
+    }
+
     pub fn touch_recent_file(&mut self, path: String, modified_at: u64) {
         self.recent_files.retain(|recent| recent.path != path);
         self.recent_files
@@ -164,6 +188,22 @@ impl EditorUiState {
         changed |= center.generate_basis.as_deref() != Some(template.id.as_str());
         center.generate_basis = Some(template.id.clone());
         changed
+    }
+
+    /// Unpin the style guide, wherever the user pressed to do it.
+    ///
+    /// One entry point on purpose. The pin is reachable from two surfaces —
+    /// the Asset Center card and the chat panel's receipt row — and a second
+    /// implementation is how the two would drift into disagreeing about what
+    /// "unpinned" means. Returns whether anything changed.
+    pub fn clear_pinned_style_guide(&mut self) -> bool {
+        if self.pinned_style_guide.take().is_none() {
+            return false;
+        }
+        // The Asset Center's basis chip is a label for a pin that no longer
+        // exists; leaving it would name a style nothing is using.
+        self.scene_template_center.generate_basis = None;
+        true
     }
 
     /// Drop the generate row's basis chip and the pin it set.

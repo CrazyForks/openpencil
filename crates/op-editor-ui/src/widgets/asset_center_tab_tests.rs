@@ -1,10 +1,12 @@
 //! Asset Center tab row + Styles tab geometry, hit-testing, and pinning.
 
+use super::asset_center_style_cards::style_test_support::exclusive_user_styles;
 use super::scene_template_panel::test_rects::MEDIUM as PANEL;
 use super::scene_template_panel::{SceneTemplatePanel, STYLE_CARD_H};
 use super::SceneTemplateHit;
 use crate::{Point2D, Rect};
 use op_editor_core::{AssetCenterTab, EditorState};
+use std::sync::MutexGuard;
 
 fn open_state() -> EditorState {
     let mut state = EditorState::default();
@@ -12,10 +14,19 @@ fn open_state() -> EditorState {
     state
 }
 
-fn styles_state() -> EditorState {
+/// The Styles tab, with the process-global imported-style registry emptied
+/// and held for the duration of the test.
+///
+/// The guard is returned rather than dropped here on purpose: the Styles grid
+/// reads a registry shared by every test in the binary, and cargo runs them in
+/// parallel threads of one process. A test that imported two guides would
+/// otherwise change what an unrelated test's grid contains — which it did,
+/// before this existed.
+fn styles_state() -> (MutexGuard<'static, ()>, EditorState) {
+    let guard = exclusive_user_styles();
     let mut state = open_state();
     state.editor_ui.scene_template_center.tab = AssetCenterTab::Styles;
-    state
+    (guard, state)
 }
 
 fn press(state: &mut EditorState, point: Point2D) -> Option<bool> {
@@ -145,7 +156,7 @@ fn switching_tabs_swaps_the_grid_contents() {
     let template_panel = SceneTemplatePanel::for_editor(&templates).expect("open");
     let template_cards = template_panel.card_rects(PANEL).len();
 
-    let styles = styles_state();
+    let (_guard, styles) = styles_state();
     let style_panel = SceneTemplatePanel::for_editor(&styles).expect("open");
     let style_cards = style_panel.card_rects(PANEL).len();
 
@@ -165,7 +176,7 @@ fn the_scene_filter_row_belongs_to_the_templates_tab_only() {
         .filter_chip_rects(PANEL)
         .is_empty());
 
-    let styles = styles_state();
+    let (_guard, styles) = styles_state();
     let panel = SceneTemplatePanel::for_editor(&styles).expect("open");
     assert!(
         panel.filter_chip_rects(PANEL).is_empty(),
@@ -188,7 +199,7 @@ fn the_scene_filter_row_belongs_to_the_templates_tab_only() {
 /// Their height does not follow, because they hold no picture to scale.
 #[test]
 fn style_cards_share_the_grid_columns_and_keep_their_own_height() {
-    let state = styles_state();
+    let (_guard, state) = styles_state();
     let panel = SceneTemplatePanel::for_editor(&state).expect("open");
     let viewport = panel.cards_viewport(PANEL);
     let (columns, card_w, _) = panel.grid_metrics(PANEL);
@@ -228,7 +239,7 @@ fn style_cards_share_the_grid_columns_and_keep_their_own_height() {
 
 #[test]
 fn the_swatch_band_stays_inside_its_card() {
-    let state = styles_state();
+    let (_guard, state) = styles_state();
     let panel = SceneTemplatePanel::for_editor(&state).expect("open");
     let (_, card) = panel.card_rects(PANEL)[0];
     let band = SceneTemplatePanel::swatch_band_rect(card);
@@ -240,21 +251,19 @@ fn the_swatch_band_stays_inside_its_card() {
 
 #[test]
 fn a_press_on_a_style_card_resolves_to_that_guide() {
-    let state = styles_state();
+    let (_guard, state) = styles_state();
     let panel = SceneTemplatePanel::for_editor(&state).expect("open");
     let cards = panel.style_cards();
     let (index, rect) = panel.card_rects(PANEL).into_iter().next().expect("a card");
     assert_eq!(
         panel.hit_test(PANEL, centre(rect)),
-        Some(SceneTemplateHit::ToggleStyleGuide(
-            cards[index].name.to_string()
-        ))
+        Some(SceneTemplateHit::ToggleStyleGuide(cards[index].id.clone()))
     );
 }
 
 #[test]
 fn pressing_a_style_card_pins_it_and_pressing_it_again_unpins() {
-    let mut state = styles_state();
+    let (_guard, mut state) = styles_state();
     let name = {
         let panel = SceneTemplatePanel::for_editor(&state).expect("open");
         panel.style_cards()[0].name.to_string()
@@ -278,7 +287,7 @@ fn pressing_a_style_card_pins_it_and_pressing_it_again_unpins() {
 fn pinning_a_second_guide_replaces_the_first() {
     // At most one pin at a time: two pinned guides would leave the generation
     // path arbitrating between them, and the panel showing two selected cards.
-    let mut state = styles_state();
+    let (_guard, mut state) = styles_state();
     let (first_card, second_card, first_name, second_name) = {
         let panel = SceneTemplatePanel::for_editor(&state).expect("open");
         let rects = panel.card_rects(PANEL);
@@ -303,18 +312,18 @@ fn pinning_a_second_guide_replaces_the_first() {
     );
 
     let panel = SceneTemplatePanel::for_editor(&state).expect("open");
-    let pinned: Vec<&str> = panel
+    let pinned: Vec<String> = panel
         .style_cards()
         .iter()
         .filter(|card| card.is_pinned(panel.pinned_style_guide()))
-        .map(|card| card.name)
+        .map(|card| card.name.clone())
         .collect();
     assert_eq!(pinned, vec![second_name.as_str()]);
 }
 
 #[test]
 fn pressing_a_tab_chip_switches_tabs_and_drops_stale_scroll_and_hover() {
-    let mut state = styles_state();
+    let (_guard, mut state) = styles_state();
     state.editor_ui.scene_template_center.scroll.offset = 120.0;
     state.editor_ui.scene_template_center.hover = Some(7);
 
@@ -339,7 +348,7 @@ fn pressing_a_tab_chip_switches_tabs_and_drops_stale_scroll_and_hover() {
 
 #[test]
 fn re_pressing_the_active_tab_leaves_the_grid_where_it_was() {
-    let mut state = styles_state();
+    let (_guard, mut state) = styles_state();
     state.editor_ui.scene_template_center.scroll.offset = 90.0;
     let styles_chip = {
         let panel = SceneTemplatePanel::for_editor(&state).expect("open");
@@ -362,14 +371,17 @@ fn re_pressing_the_active_tab_leaves_the_grid_where_it_was() {
 fn the_generate_row_is_offered_on_the_styles_tab() {
     // Picking a style and typing a topic is the tab's whole point; without
     // the row the user has to close the panel to use what they just pinned.
-    let mut state = styles_state();
+    let (_guard, mut state) = styles_state();
     state.editor_ui.scene_template_generate_supported = true;
     let panel = SceneTemplatePanel::for_editor(&state).expect("open");
     assert!(panel.generate_row_visible());
     assert!(panel.generate_input_rect(PANEL).is_some());
 
-    // Still honest about host capability.
-    let mut unsupported = styles_state();
+    // Still honest about host capability. Built inline rather than through
+    // `styles_state` — the registry lock is already held by this test and is
+    // not reentrant.
+    let mut unsupported = open_state();
+    unsupported.editor_ui.scene_template_center.tab = AssetCenterTab::Styles;
     unsupported.editor_ui.scene_template_generate_supported = false;
     assert!(!SceneTemplatePanel::for_editor(&unsupported)
         .expect("open")
@@ -384,7 +396,7 @@ fn the_swatch_band_paints_the_guides_own_colours() {
     use crate::widgets::test_capture_backend::CaptureBackend;
     use crate::widgets::PaintCx;
 
-    let state = styles_state();
+    let (_guard, state) = styles_state();
     let panel = SceneTemplatePanel::for_editor(&state).expect("open");
     let first = panel.style_cards().remove(0);
     let (_, card) = panel.card_rects(PANEL)[0];
@@ -424,7 +436,7 @@ fn the_swatch_band_paints_the_guides_own_colours() {
 
 #[test]
 fn search_narrows_the_style_grid() {
-    let mut state = styles_state();
+    let (_guard, mut state) = styles_state();
     state
         .editor_ui
         .scene_template_center
@@ -443,4 +455,295 @@ fn search_narrows_the_style_grid() {
     let panel = SceneTemplatePanel::for_editor(&state).expect("open");
     assert!(panel.style_cards().is_empty());
     assert_eq!(panel.max_scroll(PANEL), 0.0, "an empty grid cannot scroll");
+}
+
+// ─── Importing a DESIGN.md ─────────────────────────────────────────────
+
+const SAMPLE_DESIGN_MD: &str =
+    "---\nname: Studio Ochre\n---\n\n# Studio Ochre\n\nWarm ochre, no shadows. Accent #C77D3A.\n";
+
+fn press_import_button(state: &mut EditorState) {
+    let point = centre(
+        SceneTemplatePanel::for_editor(state)
+            .expect("open")
+            .style_import_button_rect(PANEL)
+            .expect("the Styles tab offers an import button"),
+    );
+    press(state, point);
+}
+
+/// The button is a Styles-tab control. Painting it on the Templates tab would
+/// offer to import a style into a gallery of documents.
+#[test]
+fn the_import_button_belongs_to_the_styles_tab_only() {
+    let (_guard, state) = styles_state();
+    let panel = SceneTemplatePanel::for_editor(&state).expect("open");
+    let rect = panel.style_import_button_rect(PANEL).expect("styles");
+    // It shares the tab row with the chips and must not sit on top of one.
+    for (chip, _) in panel.tab_chip_rects(PANEL) {
+        assert!(
+            chip.origin.x + chip.size.x <= rect.origin.x,
+            "the import button overlaps a tab chip"
+        );
+    }
+    assert_eq!(
+        panel.hit_test(PANEL, centre(rect)),
+        Some(SceneTemplateHit::ImportStyleGuide)
+    );
+
+    let templates = open_state();
+    assert!(SceneTemplatePanel::for_editor(&templates)
+        .expect("open")
+        .style_import_button_rect(PANEL)
+        .is_none());
+}
+
+/// One button, two routes: the fork is how the document reaches the editor,
+/// and a host with a file dialog must never be shown a paste box.
+#[test]
+fn the_import_button_asks_the_host_for_a_file_when_it_has_a_dialog() {
+    let (_guard, mut state) = styles_state();
+    state.editor_ui.style_import_file_picker_supported = true;
+    press_import_button(&mut state);
+
+    assert!(!state.editor_ui.scene_template_center.import.open);
+    assert!(state
+        .editor_ui
+        .scene_template_center
+        .take_pending_style_import_file());
+    // Drained once, not forever.
+    assert!(!state
+        .editor_ui
+        .scene_template_center
+        .take_pending_style_import_file());
+}
+
+#[test]
+fn a_host_without_a_file_dialog_gets_the_paste_box() {
+    let (_guard, mut state) = styles_state();
+    press_import_button(&mut state);
+
+    assert!(state.editor_ui.scene_template_center.import.open);
+    assert_eq!(
+        state.editor_ui.scene_template_center.focus,
+        op_editor_core::SceneTemplateFocus::Import
+    );
+    assert!(!state
+        .editor_ui
+        .scene_template_center
+        .take_pending_style_import_file());
+}
+
+#[test]
+fn confirming_a_paste_registers_pins_and_queues_the_guide() {
+    let (_guard, mut state) = styles_state();
+    press_import_button(&mut state);
+    state
+        .editor_ui
+        .scene_template_center
+        .import
+        .text
+        .set_text(SAMPLE_DESIGN_MD);
+
+    let confirm = centre(
+        SceneTemplatePanel::for_editor(&state)
+            .expect("open")
+            .style_import_confirm_rect(PANEL),
+    );
+    press(&mut state, confirm);
+
+    assert!(!state.editor_ui.scene_template_center.import.open);
+    // Pinned on arrival: the user went and found this guide, and leaving it
+    // unpinned would make the next generation ignore it.
+    assert_eq!(
+        state.editor_ui.pinned_style_guide.as_deref(),
+        Some("user:studio-ochre")
+    );
+    assert_eq!(
+        state
+            .editor_ui
+            .scene_template_center
+            .take_pending_style_persist(),
+        vec!["user:studio-ochre".to_string()]
+    );
+
+    let panel = SceneTemplatePanel::for_editor(&state).expect("open");
+    let cards = panel.style_cards();
+    assert!(cards[0].is_user);
+    assert!(cards[0].is_pinned(panel.pinned_style_guide()));
+}
+
+/// A malformed file reports and keeps the box open with the text intact —
+/// half-swallowing it would look like the import worked.
+#[test]
+fn a_malformed_paste_reports_without_closing_the_box() {
+    let (_guard, mut state) = styles_state();
+    press_import_button(&mut state);
+    state
+        .editor_ui
+        .scene_template_center
+        .import
+        .text
+        .set_text("   ");
+
+    let confirm = centre(
+        SceneTemplatePanel::for_editor(&state)
+            .expect("open")
+            .style_import_confirm_rect(PANEL),
+    );
+    press(&mut state, confirm);
+
+    assert!(state.editor_ui.scene_template_center.import.open);
+    assert_eq!(
+        state.editor_ui.scene_template_center.import.error_key,
+        Some("assetCenter.style.importEmpty")
+    );
+    assert!(state.editor_ui.pinned_style_guide.is_none());
+    assert!(op_ai_skills::style_guide::user_style_guides().is_empty());
+}
+
+#[test]
+fn cancelling_discards_the_draft_and_hands_the_keyboard_back() {
+    let (_guard, mut state) = styles_state();
+    press_import_button(&mut state);
+    state
+        .editor_ui
+        .scene_template_center
+        .import
+        .text
+        .set_text(SAMPLE_DESIGN_MD);
+
+    let cancel = centre(
+        SceneTemplatePanel::for_editor(&state)
+            .expect("open")
+            .style_import_cancel_rect(PANEL),
+    );
+    press(&mut state, cancel);
+
+    assert!(!state.editor_ui.scene_template_center.import.open);
+    assert!(state
+        .editor_ui
+        .scene_template_center
+        .import
+        .text
+        .text()
+        .is_empty());
+    assert_eq!(
+        state.editor_ui.scene_template_center.focus,
+        op_editor_core::SceneTemplateFocus::Search
+    );
+    assert!(op_ai_skills::style_guide::user_style_guides().is_empty());
+}
+
+/// Escape takes the paste box back before it takes the gallery: it is the
+/// topmost layer, and closing the whole panel would throw away the paste.
+#[test]
+fn escape_dismisses_the_paste_box_before_the_gallery() {
+    let (_guard, mut state) = styles_state();
+    press_import_button(&mut state);
+
+    assert!(state.editor_ui.escape_scene_template_center());
+    assert!(!state.editor_ui.scene_template_center.import.open);
+    assert!(
+        state.editor_ui.scene_template_center.open,
+        "the gallery survives the first Escape"
+    );
+    assert!(state.editor_ui.escape_scene_template_center());
+    assert!(!state.editor_ui.scene_template_center.open);
+}
+
+#[test]
+fn the_delete_button_appears_on_hover_and_only_on_imports() {
+    let (_guard, mut state) = styles_state();
+    op_ai_skills::style_guide::import_design_md(SAMPLE_DESIGN_MD, "x").expect("imports");
+
+    let (import_rect, corpus_rect) = {
+        let panel = SceneTemplatePanel::for_editor(&state).expect("open");
+        let cards = panel.style_cards();
+        let layout = panel.style_layout_for(PANEL, &cards);
+        (layout.cards[0].1, layout.cards[1].1)
+    };
+
+    // Unhovered, the ✕ is not there and the press pins.
+    let delete_point = centre(SceneTemplatePanel::style_delete_rect(import_rect));
+    let panel = SceneTemplatePanel::for_editor(&state).expect("open");
+    assert_eq!(
+        panel.hit_test(PANEL, delete_point),
+        Some(SceneTemplateHit::ToggleStyleGuide(
+            "user:studio-ochre".to_string()
+        ))
+    );
+
+    // Hovering the card arms it.
+    state.editor_ui.scene_template_center.hover = Some(0);
+    let panel = SceneTemplatePanel::for_editor(&state).expect("open");
+    assert_eq!(
+        panel.hit_test(PANEL, delete_point),
+        Some(SceneTemplateHit::DeleteStyleGuide(
+            "user:studio-ochre".to_string()
+        ))
+    );
+    assert_eq!(
+        panel.hover_at(PANEL, delete_point),
+        Some(SceneTemplatePanel::style_delete_hover_token(0))
+    );
+
+    // A shipped guide has no delete target at all — pressing its corner pins
+    // it, because the corpus is not the user's to remove.
+    state.editor_ui.scene_template_center.hover = Some(1);
+    let panel = SceneTemplatePanel::for_editor(&state).expect("open");
+    let corpus_corner = centre(SceneTemplatePanel::style_delete_rect(corpus_rect));
+    assert!(matches!(
+        panel.hit_test(PANEL, corpus_corner),
+        Some(SceneTemplateHit::ToggleStyleGuide(id)) if !id.starts_with("user:")
+    ));
+}
+
+#[test]
+fn deleting_an_import_unpins_it_and_queues_the_file_removal() {
+    let (_guard, mut state) = styles_state();
+    op_ai_skills::style_guide::import_design_md(SAMPLE_DESIGN_MD, "x").expect("imports");
+    state.editor_ui.pinned_style_guide = Some("user:studio-ochre".to_string());
+    state.editor_ui.scene_template_center.hover = Some(0);
+
+    let delete_point = {
+        let panel = SceneTemplatePanel::for_editor(&state).expect("open");
+        let cards = panel.style_cards();
+        centre(SceneTemplatePanel::style_delete_rect(
+            panel.style_layout_for(PANEL, &cards).cards[0].1,
+        ))
+    };
+    press(&mut state, delete_point);
+
+    assert!(op_ai_skills::style_guide::user_style_guides().is_empty());
+    // A pin left pointing at a deleted guide would have the Asset Center
+    // claiming a style is in force that is no longer in the list.
+    assert!(state.editor_ui.pinned_style_guide.is_none());
+    assert_eq!(
+        state
+            .editor_ui
+            .scene_template_center
+            .take_pending_style_delete(),
+        vec!["user:studio-ochre".to_string()]
+    );
+    assert!(state.editor_ui.scene_template_center.hover.is_none());
+}
+
+/// Section headings are the whole reason the Styles grid has its own walker:
+/// they push the cards below them down, and a scroll limit that ignored them
+/// would clip the last row off.
+#[test]
+fn imports_get_their_own_section_and_lengthen_the_grid() {
+    let (_guard, mut state) = styles_state();
+    state.editor_ui.scene_template_generate_supported = true;
+    let flat_height = SceneTemplatePanel::for_editor(&state)
+        .expect("open")
+        .max_scroll(PANEL);
+
+    op_ai_skills::style_guide::import_design_md(SAMPLE_DESIGN_MD, "x").expect("imports");
+    let panel = SceneTemplatePanel::for_editor(&state).expect("open");
+    let layout = panel.style_layout_for(PANEL, &panel.style_cards());
+    assert_eq!(layout.headers.len(), 2);
+    assert!(layout.headers[0].is_user);
+    assert!(panel.max_scroll(PANEL) > flat_height);
 }

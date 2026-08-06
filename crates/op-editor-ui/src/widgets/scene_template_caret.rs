@@ -27,6 +27,12 @@ impl SceneTemplatePanel<'_> {
         // `field_focused` already resolves the one case where the stored
         // focus and the painted panel disagree — a topic field whose row the
         // scene filter has hidden hands focus back to search.
+        // The paste box is a layer over the panel, so while it is up it owns
+        // the keyboard whatever the fields below it think.
+        if self.style_import_open() {
+            let rect = self.style_import_text_rect(panel);
+            return crate::Rect::xywh(rect.origin.x + 10.0, rect.origin.y + 10.0, 1.0, 16.0);
+        }
         if self.field_focused(SceneTemplateFocus::Generate) {
             if let Some(input) = self.generate_input_rect(panel) {
                 return single_line_caret_rect(

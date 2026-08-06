@@ -108,6 +108,20 @@ impl WidgetHost {
     /// concatenated a new code onto a stale one. IME commits must NOT come
     /// through here — mid-composition text is an insertion, not a paste.
     pub fn apply_clipboard_text(&mut self, text: &str) -> bool {
+        // The Asset Center takes a paste as a unit for the same reason the
+        // join field does, plus one of its own: the style-import box receives
+        // a whole DESIGN.md, and a char-by-char route that drops control
+        // characters would flatten the markdown to a single line.
+        if let Some(changed) = op_editor_core::host_keyboard_transitions::scene_template_paste(
+            &mut self.editor_state,
+            text,
+            self.now_ms,
+        ) {
+            if changed {
+                self.mark_dirty();
+            }
+            return true;
+        }
         if self.editor_state.editor_ui.collab_join_input_active() {
             let changed = op_editor_ui::widgets::collab_ui::join_address_paste(
                 &mut self.editor_state.editor_ui,

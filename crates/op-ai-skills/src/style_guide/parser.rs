@@ -295,7 +295,23 @@ fn extract_radius(sections: &HashMap<String, String>) -> StyleRadius {
 
 /// Extract structured colour / typography / radius values from a
 /// style guide's markdown content.
+///
+/// Two dialects, tried in order. The corpus grammar
+/// (`## Color System` → `Page Background: #…`) is authoritative and runs
+/// first; the community token-table grammar
+/// ([`super::token_table`]) then fills any channel the first found nothing in
+/// at all. Per-channel rather than per-field, so a guide that speaks the
+/// corpus grammar reaches exactly the values it always did — see
+/// `the_token_dialect_never_changes_a_corpus_guides_values`.
 pub fn extract_style_guide_values(content: &str) -> StyleGuideValues {
+    let mut values = extract_corpus_values(content);
+    super::token_table::fill_gaps(&mut values, content);
+    values
+}
+
+/// The corpus grammar alone. Split out so the regression lock can compare it
+/// against the public entry point across the whole shipped registry.
+pub(super) fn extract_corpus_values(content: &str) -> StyleGuideValues {
     let sections = get_sections(content);
     StyleGuideValues {
         colors: extract_colors(&sections),

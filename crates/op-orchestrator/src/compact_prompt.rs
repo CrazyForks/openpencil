@@ -11,6 +11,7 @@ use crate::style_guide_context::infer_tags_from_prompt;
 use jian_ops_schema::DesignMdSpec;
 use op_ai_skills::style_guide::{
     extract_style_guide_values, select_style_guide, style_guide_registry, Platform, SelectOptions,
+    StyleGuideRef,
 };
 
 const DESIGN_MD_STYLE_GUIDE_NAME: &str = "design-md-custom";
@@ -60,10 +61,12 @@ pub fn build_compact_planning_prompt(
                     platform: Some(platform),
                 },
             )
+            .map(StyleGuideRef::Builtin)
         })
     };
-    let guide_bg =
-        selected_guide.and_then(|g| extract_style_guide_values(&g.content).colors.background);
+    let guide_bg = selected_guide
+        .as_ref()
+        .and_then(|g| extract_style_guide_values(&g.content).colors.background);
 
     // background_color 优先级。
     let design_md_bg = design_md.and_then(infer_design_md_background);
@@ -159,10 +162,10 @@ pub fn build_compact_planning_prompt(
             "Use styleGuideName=\"{DESIGN_MD_STYLE_GUIDE_NAME}\" and rootFrame background \
              {background_color} (from the user's design.md — overrides any catalog default)."
         )
-    } else if let Some(g) = selected_guide {
+    } else if let Some(g) = selected_guide.as_ref() {
         format!(
             "Use styleGuideName=\"{}\" and rootFrame background {background_color}.",
-            g.name
+            g.id()
         )
     } else {
         format!(
@@ -206,7 +209,12 @@ pub fn build_compact_planning_prompt(
     let selected_style_guide_name = if design_md.is_some() {
         DESIGN_MD_STYLE_GUIDE_NAME.to_string()
     } else {
-        selected_guide.map(|g| g.name.clone()).unwrap_or_default()
+        // The id, not the display name: it is what the sub-agent prompt later
+        // resolves back to markdown, and an import may share a corpus name.
+        selected_guide
+            .as_ref()
+            .map(|g| g.id().to_string())
+            .unwrap_or_default()
     };
 
     CompactPlanningPrompt {

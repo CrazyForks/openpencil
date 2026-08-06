@@ -56,23 +56,23 @@ pub(super) fn is_deck_board(plan: &OrchestratorPlan) -> bool {
 /// `doc.variables`); Rust does NOT seed style-guide vars, so refs wouldn't
 /// resolve — we emit the guide's concrete HEX values instead. Same effect:
 /// the sub-agent uses the selected palette rather than inventing one.
-/// Returns `None` when no guide name is set or it isn't in the registry.
-pub(super) fn build_style_guide_instruction(
+/// Returns `None` when no guide name is set, or it names neither a corpus
+/// guide nor an imported one.
+pub(crate) fn build_style_guide_instruction(
     style_guide_name: Option<&str>,
     tier: ModelTier,
 ) -> Option<String> {
     let name = style_guide_name?;
-    let opts = SelectOptions {
-        name: Some(name.to_string()),
-        ..Default::default()
-    };
-    let guide = select_style_guide(style_guide_registry(), &opts)?;
+    // Both halves of the catalogue: a pinned import reaches the sub-agent
+    // through exactly this call, and resolving only the corpus here would
+    // have made pinning one silently do nothing.
+    let guide = op_ai_skills::style_guide::find_style_guide(name)?;
     let v = extract_style_guide_values(&guide.content);
 
     let color_line = |label: &str, hex: &Option<String>| -> Option<String> {
         hex.as_ref().map(|h| format!("- {label}: {h}"))
     };
-    let colors: Vec<String> = [
+    let mut colors: Vec<String> = [
         color_line("Background", &v.colors.background),
         color_line("Surface", &v.colors.surface),
         color_line("Accent", &v.colors.accent),
@@ -84,6 +84,25 @@ pub(super) fn build_style_guide_instruction(
     .into_iter()
     .flatten()
     .collect();
+    // Floor under the summary tiers below, which send this list *instead of*
+    // the document. A guide whose fields none of the extractors could fill
+    // would otherwise produce "use these EXACT hex colors" followed by
+    // nothing — an instruction to obey an empty list, which is worse than
+    // sending no palette at all. Roles stay in the guide's own words because
+    // the structured pass has already failed and guessing which colour is the
+    // background is how the accent ends up behind the whole page.
+    if colors.is_empty() {
+        colors = op_ai_skills::style_guide::sample_palette(&guide.content, 6)
+            .into_iter()
+            .map(|sample| {
+                if sample.role.is_empty() {
+                    format!("- {}", sample.color)
+                } else {
+                    format!("- {} — {}", sample.color, sample.role)
+                }
+            })
+            .collect();
+    }
 
     // Full tier: the whole guide + an exact-hex palette appendix.
     if tier == ModelTier::Full {
@@ -106,6 +125,7 @@ pub(super) fn build_style_guide_instruction(
     if !tags.is_empty() {
         lines.push(format!("- Tags: {}", tags.join(", ")));
     }
+    let has_colors = !colors.is_empty();
     lines.extend(colors);
     if let Some(f) = &v.typography.display_font {
         lines.push(format!("- Heading font: {f}"));
@@ -119,9 +139,13 @@ pub(super) fn build_style_guide_instruction(
     if let Some(r) = v.radius.button {
         lines.push(format!("- Button radius: {r}"));
     }
-    lines.push(
-        "Use these EXACT hex colors in your fills — do not invent a conflicting palette.".into(),
-    );
+    // Only when there is something to obey.
+    if has_colors {
+        lines.push(
+            "Use these EXACT hex colors in your fills — do not invent a conflicting palette."
+                .into(),
+        );
+    }
     Some(lines.join("\n"))
 }
 

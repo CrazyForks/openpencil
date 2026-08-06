@@ -144,6 +144,7 @@ impl<'a> AIChatPlaceholder<'a> {
             let footer = self.footer_layout(rect, input_rect, {
                 let attach_h = self.attachment_row_h();
                 input_rect.origin.y
+                    + self.style_receipt_row_h()
                     + self.selection_chip_row_h()
                     + self.input_area_height_for_rect(rect)
                     + attach_h
@@ -169,8 +170,19 @@ impl<'a> AIChatPlaceholder<'a> {
             return Some(AIChatHit::ToggleParallelAgentsPicker);
         }
         if (input_rect).contains(point) {
+            let style_h = self.style_receipt_row_h();
+            // Topmost row of the input block, so it is tested first.
+            if style_h > 0.0 && point.y < input_rect.origin.y + style_h {
+                if self
+                    .style_receipt_clear_rect(input_rect)
+                    .is_some_and(|clear| clear.contains(point))
+                {
+                    return Some(AIChatHit::ClearPinnedStyle);
+                }
+                return Some(AIChatHit::FocusInput);
+            }
             let selection_h = self.selection_chip_row_h();
-            let text_top = input_rect.origin.y + selection_h;
+            let text_top = input_rect.origin.y + style_h + selection_h;
             let attach_top = text_top + input_area_h;
             let attach_h = self.attachment_row_h();
             let toolbar_top = attach_top + attach_h;
@@ -533,10 +545,11 @@ impl<'a> AIChatPlaceholder<'a> {
             return None;
         }
         let attach_h = self.attachment_row_h();
-        // The chip row sits at the top of the input block — hover math must
-        // reserve it like paint does, or every footer band shifts up by the
-        // row height whenever a selection is active.
+        // The chip rows sit at the top of the input block — hover math must
+        // reserve them like paint does, or every footer band shifts up by the
+        // row height whenever a style is pinned or a selection is active.
         let toolbar_top = input_rect.origin.y
+            + self.style_receipt_row_h()
             + self.selection_chip_row_h()
             + self.input_area_height_for_rect(rect)
             + attach_h;

@@ -31,6 +31,34 @@ pub fn text(state: &mut EditorState, c: char, now_ms: u64) -> Option<bool> {
     Some(true)
 }
 
+/// Insert clipboard text into the focused field.
+///
+/// The two single-line fields drop newlines the way the rest of the chrome's
+/// inputs do, but the import box must not: a `DESIGN.md` pasted into it is a
+/// markdown document, and flattening it to one line destroys the headings and
+/// list structure the parser and the model both read. That is the whole reason
+/// this exists rather than the host's char-by-char `apply_input_paste`.
+pub fn paste(state: &mut EditorState, text: &str, now_ms: u64) -> Option<bool> {
+    if !state.editor_ui.scene_template_center.open {
+        return None;
+    }
+    let center = &mut state.editor_ui.scene_template_center;
+    let keep_newlines = center.focus == SceneTemplateFocus::Import;
+    let cleaned: String = text
+        .chars()
+        .filter(|c| !c.is_control() || (keep_newlines && matches!(c, '\n' | '\t')))
+        .collect();
+    if cleaned.is_empty() {
+        return Some(false);
+    }
+    center.focused_input_mut().insert_str(&cleaned, now_ms);
+    if keep_newlines {
+        center.import.error_key = None;
+    }
+    reset_filter_feedback(center);
+    Some(true)
+}
+
 /// Delete the previous character in the focused field.
 pub fn backspace(state: &mut EditorState, now_ms: u64) -> Option<bool> {
     edit_if_open(state, |input| input.backspace(now_ms))
@@ -75,6 +103,7 @@ pub fn selected_text(state: &EditorState) -> Option<&str> {
     let input = match center.focus {
         SceneTemplateFocus::Search => &center.search,
         SceneTemplateFocus::Generate => &center.generate,
+        SceneTemplateFocus::Import => &center.import.text,
     };
     let (start, end) = input.highlight_range()?;
     input.text().get(start..end)

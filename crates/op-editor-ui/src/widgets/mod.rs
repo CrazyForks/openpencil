@@ -53,6 +53,7 @@ pub use scene_template_panel::{
     SCENE_TEMPLATE_GALLERY_INSET, SCENE_TEMPLATE_SCRIM,
 };
 pub mod asset_center_style_cards;
+mod asset_center_style_layout;
 #[cfg(test)]
 mod asset_center_tab_tests;
 #[cfg(test)]
@@ -134,11 +135,15 @@ pub mod property_panel_widget;
 mod property_panel_widget_tests;
 mod scene_template_card_actions;
 mod scene_template_caret;
+mod scene_template_hit;
 mod scene_template_panel_paint;
 pub(crate) mod scene_template_previews;
+mod scene_template_style_geometry;
+mod scene_template_style_import;
 mod scene_template_style_paint;
 pub mod text_input;
 pub(crate) mod text_input_backend;
+pub mod text_metrics;
 mod text_selection;
 pub mod toolbar;
 
@@ -256,6 +261,8 @@ mod agent_settings_panel_tests;
 pub mod agent_settings_press_entries;
 pub mod agent_settings_press_flow;
 pub mod agent_settings_press_focus;
+#[cfg(test)]
+mod agent_settings_row_layout_tests;
 mod agent_settings_rows;
 mod agent_settings_switch;
 #[cfg(test)]
@@ -273,6 +280,7 @@ pub(crate) mod ai_chat_panel_header;
 mod ai_chat_panel_hit;
 mod ai_chat_panel_minimized;
 pub mod ai_chat_panel_paint;
+pub(crate) mod ai_chat_style_receipt;
 pub(crate) mod ai_chat_tool_verbs;
 pub mod ai_chat_transcript;
 pub(crate) mod ai_chat_transcript_activity;
@@ -348,12 +356,16 @@ pub mod slides_panel;
 pub mod slides_panel_flow;
 pub mod slideshow_toolbar;
 pub mod status_bar;
+pub mod tooltip;
 pub mod top_bar;
 mod top_bar_geometry;
 mod top_bar_paint;
 #[cfg(test)]
 mod top_bar_tests;
 mod top_bar_title;
+pub mod top_bar_tooltip;
+#[cfg(test)]
+mod top_bar_tooltip_tests;
 mod top_bar_window_control;
 pub mod variables_panel;
 pub mod variables_panel_geometry_flow;
@@ -362,6 +374,10 @@ mod variables_preset_menu;
 // Test-support: shared RenderBackend stubs (never ships in non-test builds).
 #[cfg(test)]
 pub(crate) mod test_capture_backend;
+#[cfg(test)]
+pub(crate) mod test_family_gap_backend;
+#[cfg(test)]
+mod text_metrics_paint_tests;
 
 pub use prop_row::PropertyRow;
 pub use text_input::TextInputWidget;
@@ -419,7 +435,9 @@ pub use prompt_center_panel::{
     PROMPT_CENTER_PANEL_W,
 };
 pub use shape_picker::{ShapeChoice, ShapePicker, SHAPE_PICKER_WIDTH};
-pub use slides_panel::{SlidesPanel, SlidesPanelLayout, SlidesPanelTabs, SLIDES_TAB_ROW_HEIGHT};
+pub use slides_panel::{
+    SlidesPanel, SlidesPanelLayout, SlidesPanelTabs, SLIDES_TAB_ROW_HEIGHT, SLIDE_THUMB_RADIUS,
+};
 pub use status_bar::{StatusBar, STATUS_BAR_HEIGHT, STATUS_BAR_WIDTH};
 pub use top_bar::{TopBar, TopBarHit, TOP_BAR_HEIGHT};
 pub use top_bar_window_control::WindowControl;

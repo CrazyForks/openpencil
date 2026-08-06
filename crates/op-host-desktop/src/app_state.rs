@@ -68,6 +68,15 @@ impl DesktopApp {
         host.editor_state_mut()
             .editor_ui
             .scene_template_generate_supported = true;
+        // And for the Styles tab's import button: desktop has a file dialog,
+        // so it asks for a DESIGN.md rather than offering a paste box.
+        host.editor_state_mut()
+            .editor_ui
+            .style_import_file_picker_supported = true;
+        // Imported style guides live in ~/.openpencil/styles; the runtime
+        // catalogue they merge into is memory-only, so it has to be refilled
+        // from disk at every launch.
+        crate::user_style_store::load_user_style_guides_once();
         // Account gate + session restore. The bridge links the proprietary
         // auth library when a prebuilt exists for this target; stub builds
         // keep every account entry point hidden unless the dev fake-login

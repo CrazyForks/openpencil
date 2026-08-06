@@ -289,3 +289,174 @@ fn snippet_drops_color_type_radius_keeps_fonts() {
     assert!(!snip.contains("colors:"), "colors must be dropped:\n{snip}");
     assert!(!snip.contains("radius:"), "radius must be dropped:\n{snip}");
 }
+
+// ─── Imported guides ───────────────────────────────────────────────────
+//
+// The registry these reach is process-global, so they take a lock and start
+// from an empty imported set — see `op_ai_skills::style_guide::user_registry`.
+
+fn exclusive_import_registry() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let guard = LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    op_ai_skills::style_guide::set_user_style_guides(Vec::new());
+    guard
+}
+
+const IMPORTED_DESIGN_MD: &str = "---\nname: Studio Ochre\n---\n\n\
+     # Studio Ochre\n\nWarm ochre surfaces, generous leading, no shadows.\n";
+
+/// The whole point of the Asset Center's import path: pinning a `DESIGN.md`
+/// the user brought has to steer planning exactly the way a corpus pin does.
+#[test]
+fn a_pinned_import_shrinks_the_menu_to_itself() {
+    let _guard = exclusive_import_registry();
+    let imported = op_ai_skills::style_guide::import_design_md(IMPORTED_DESIGN_MD, "ochre.md")
+        .expect("imports");
+
+    let ctx = build_planning_style_guide_context(
+        FOOD_PROMPT,
+        Some("claude-opus"),
+        PlanningMode::Rich,
+        None,
+        Some(&imported.id),
+    );
+
+    assert_eq!(ctx.top_guide_names, vec![imported.id.clone()]);
+    assert_eq!(ctx.metadata_count, 1);
+    assert!(
+        ctx.available_style_guides
+            .contains(&format!("\"styleGuideName\": \"{}\"", imported.id)),
+        "the import must be named by id, not by display name:\n{}",
+        ctx.available_style_guides
+    );
+    // A corpus guide's snippet is font direction only; an import has no
+    // corpus-shaped sections to extract, so its prose is what carries it.
+    assert!(
+        ctx.available_style_guides.contains("Warm ochre surfaces"),
+        "an imported guide's own prose must reach the planner:\n{}",
+        ctx.available_style_guides
+    );
+}
+
+#[test]
+fn a_long_import_is_truncated_rather_than_dropped() {
+    let _guard = exclusive_import_registry();
+    let long = format!(
+        "---\nname: Verbose\n---\n\n# Verbose\n\n{}\nTAIL-MARKER\n",
+        "Every surface is described at length. ".repeat(300)
+    );
+    let imported = op_ai_skills::style_guide::import_design_md(&long, "v.md").expect("imports");
+
+    let ctx = build_planning_style_guide_context(
+        "a dashboard",
+        Some("claude-opus"),
+        PlanningMode::Rich,
+        None,
+        Some(&imported.id),
+    );
+    assert!(ctx.available_style_guides.contains("truncated"));
+    assert!(
+        !ctx.available_style_guides.contains("TAIL-MARKER"),
+        "the planning slot is capped, so the tail must be the part that goes"
+    );
+}
+
+/// A pin whose import was deleted behaves like any other stale pin.
+#[test]
+fn a_deleted_import_falls_back_to_the_ranking() {
+    let _guard = exclusive_import_registry();
+    let auto = build_planning_style_guide_context(
+        FOOD_PROMPT,
+        Some("claude-opus"),
+        PlanningMode::Rich,
+        None,
+        None,
+    );
+    let stale = build_planning_style_guide_context(
+        FOOD_PROMPT,
+        Some("claude-opus"),
+        PlanningMode::Rich,
+        None,
+        Some("user:deleted-yesterday"),
+    );
+    assert_eq!(stale.available_style_guides, auto.available_style_guides);
+}
+
+/// Planning names the guide; this is the call that hands the sub-agent the
+/// markdown to actually design against. It resolving only the corpus was the
+/// break this whole path exists to close.
+#[test]
+fn a_sub_agent_receives_an_imported_guides_markdown() {
+    let _guard = exclusive_import_registry();
+    let imported = op_ai_skills::style_guide::import_design_md(IMPORTED_DESIGN_MD, "ochre.md")
+        .expect("imports");
+
+    let instruction = crate::prompt::build_style_guide_instruction(
+        Some(&imported.id),
+        crate::model_profile::ModelTier::Full,
+    )
+    .expect("an imported guide resolves");
+    assert!(instruction.contains("Warm ochre surfaces"));
+
+    assert!(
+        crate::prompt::build_style_guide_instruction(
+            Some("user:never-imported"),
+            crate::model_profile::ModelTier::Full,
+        )
+        .is_none(),
+        "an unknown id must not resolve to some other guide"
+    );
+}
+
+/// The summary model tiers send a palette list *instead of* the document, so
+/// an unextractable guide used to produce "use these EXACT hex colors"
+/// followed by nothing — an instruction to obey an empty list.
+#[test]
+fn a_summary_tier_never_demands_obedience_to_an_empty_palette() {
+    let _guard = exclusive_import_registry();
+    // A shape none of the field extractors can classify: colours present,
+    // roles written in prose the corpus grammar does not know.
+    let imported = op_ai_skills::style_guide::import_design_md(
+        "# Odd One\n\nThe wash is #101014 and the spark is #6B62F2, used sparingly.\n",
+        "odd.md",
+    )
+    .expect("imports");
+
+    let summary = crate::prompt::build_style_guide_instruction(
+        Some(&imported.id),
+        crate::model_profile::ModelTier::Basic,
+    )
+    .expect("resolves");
+
+    assert!(
+        summary.contains("#101014") && summary.contains("#6B62F2"),
+        "the guide's own colours must reach a summary-tier prompt:\n{summary}"
+    );
+    let demands_obedience = summary.contains("EXACT hex colors");
+    assert!(
+        !demands_obedience || summary.contains('#'),
+        "an EXACT-colors instruction must be followed by colors:\n{summary}"
+    );
+}
+
+/// …and a guide with no colours anywhere must not carry the instruction at
+/// all, rather than carry it over nothing.
+#[test]
+fn a_colourless_guide_drops_the_exact_colors_instruction() {
+    let _guard = exclusive_import_registry();
+    let imported = op_ai_skills::style_guide::import_design_md(
+        "# Type Only\n\nGenerous leading, no ornament, one family throughout.\n",
+        "type.md",
+    )
+    .expect("imports");
+
+    let summary = crate::prompt::build_style_guide_instruction(
+        Some(&imported.id),
+        crate::model_profile::ModelTier::Basic,
+    )
+    .expect("resolves");
+    assert!(
+        !summary.contains("EXACT hex colors"),
+        "nothing to obey, so nothing should be demanded:\n{summary}"
+    );
+}

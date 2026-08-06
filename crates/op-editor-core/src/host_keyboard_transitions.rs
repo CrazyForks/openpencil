@@ -33,8 +33,8 @@ pub use crate::prompt_center_keyboard::{
 
 pub use crate::scene_template_keyboard::{
     backspace as scene_template_backspace, delete_forward as scene_template_delete_forward,
-    move_caret as scene_template_caret, select_all as scene_template_select_all,
-    text as scene_template_text,
+    move_caret as scene_template_caret, paste as scene_template_paste,
+    select_all as scene_template_select_all, text as scene_template_text,
 };
 
 // ─── Legacy draft mirrors ──────────────────────────────────────────────

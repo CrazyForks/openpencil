@@ -102,18 +102,100 @@ pub fn press_scene_template_center(
         // Pressing the pinned card again unpins, so the same gesture that
         // set the policy is the one that clears it, and at most one guide
         // is ever pinned.
-        SceneTemplateHit::ToggleStyleGuide(name) => {
-            let pinned = &mut state.editor_ui.pinned_style_guide;
-            *pinned = if pinned.as_deref() == Some(name.as_str()) {
-                None
+        SceneTemplateHit::ToggleStyleGuide(id) => {
+            if state.editor_ui.pinned_style_guide.as_deref() == Some(id.as_str()) {
+                // Same entry point the chat panel's ✕ uses, so the two
+                // surfaces cannot disagree about what unpinning does.
+                state.editor_ui.clear_pinned_style_guide()
             } else {
-                Some(name)
-            };
+                state.editor_ui.pinned_style_guide = Some(id);
+                true
+            }
+        }
+        SceneTemplateHit::ImportStyleGuide => {
+            let center = &mut state.editor_ui.scene_template_center;
+            // One button, two routes. A host with a file dialog asks for a
+            // file; a host without opens the paste box. Neither is a fallback
+            // for the other — they are how a document reaches each platform.
+            if state.editor_ui.style_import_file_picker_supported {
+                center.request_style_import_file();
+            } else {
+                center.open_style_import_paste(now_ms);
+            }
             true
         }
+        SceneTemplateHit::DeleteStyleGuide(id) => delete_user_style_guide(state, &id),
+        SceneTemplateHit::FocusStyleImport(offset) => {
+            let center = &mut state.editor_ui.scene_template_center;
+            let changed =
+                center.import.text.caret() != offset || center.focus != SceneTemplateFocus::Import;
+            center.focus = SceneTemplateFocus::Import;
+            center.import.text.set_caret(offset, now_ms);
+            changed
+        }
+        SceneTemplateHit::ConfirmStyleImport => confirm_style_import(state),
+        SceneTemplateHit::CancelStyleImport => {
+            state.editor_ui.scene_template_center.close_style_import()
+        }
+        SceneTemplateHit::InsideStyleImport => false,
         SceneTemplateHit::Inside => false,
     };
     Some(changed || pressed_changed)
+}
+
+/// Read the pasted text as a style guide.
+///
+/// The parse happens here rather than in either host so a malformed document
+/// is reported once, in one wording, on both platforms. On success the guide
+/// is live immediately — it is in memory, and memory is all the browser has —
+/// and the id is queued for whichever host can also write it down. A host
+/// without a disk drains nothing and loses the guide at reload, which is the
+/// documented M1 boundary rather than a silent failure.
+fn confirm_style_import(state: &mut EditorState) -> bool {
+    let raw = state
+        .editor_ui
+        .scene_template_center
+        .import
+        .text
+        .text()
+        .to_string();
+    match op_ai_skills::style_guide::import_design_md(&raw, "") {
+        Ok(imported) => {
+            let id = imported.id.clone();
+            let center = &mut state.editor_ui.scene_template_center;
+            center.queue_style_persist(id.clone());
+            center.close_style_import();
+            // Pin what was just imported. The user went and found a style
+            // guide; leaving it unpinned would make the next generation
+            // ignore the thing they just went to the trouble of adding.
+            state.editor_ui.pinned_style_guide = Some(id);
+            true
+        }
+        Err(error) => {
+            state.editor_ui.scene_template_center.import.error_key = Some(error.message_key());
+            true
+        }
+    }
+}
+
+/// Forget an imported style guide, and unpin it if it was the pinned one.
+///
+/// Leaving a pin pointing at a deleted guide would not break generation — the
+/// resolver treats an unknown pin as no pin — but it would leave the Asset
+/// Center claiming a style is in force that is not in the list any more.
+pub fn delete_user_style_guide(state: &mut EditorState, id: &str) -> bool {
+    if op_ai_skills::style_guide::remove_user_style_guide(id).is_none() {
+        return false;
+    }
+    let center = &mut state.editor_ui.scene_template_center;
+    center.queue_style_delete(id);
+    // The grid just got shorter; a retained hover token points at whatever
+    // card slid up into that slot.
+    center.hover = None;
+    if state.editor_ui.pinned_style_guide.as_deref() == Some(id) {
+        state.editor_ui.clear_pinned_style_guide();
+    }
+    true
 }
 
 /// Route a wheel/trackpad scroll to the card grid.

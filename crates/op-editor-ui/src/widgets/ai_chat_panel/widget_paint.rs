@@ -182,10 +182,24 @@ impl<'a> Widget for AIChatPlaceholder<'a> {
             );
         }
         let input_block_rect = self.input_rect(rect);
+        // Above everything else in the input block: it describes the whole
+        // next turn, not what that turn is aimed at.
+        if let (Some(receipt), Some(label)) =
+            (self.style_receipt.as_ref(), self.style_receipt_label())
+        {
+            crate::widgets::ai_chat_style_receipt::paint(
+                cx,
+                &self.theme,
+                receipt,
+                &label,
+                input_block_rect,
+            );
+        }
         paint_selection_chip(cx, &self.theme, self, input_block_rect);
+        let style_h = self.style_receipt_row_h();
         let selection_h = self.selection_chip_row_h();
         let input_rect = Rect {
-            origin: Point2D::new(rect.origin.x + PAD, sep_y + 1.0 + selection_h),
+            origin: Point2D::new(rect.origin.x + PAD, sep_y + 1.0 + style_h + selection_h),
             size: Point2D::new(
                 rect.size.x - PAD * 2.0,
                 self.input_area_height_for_rect(rect),

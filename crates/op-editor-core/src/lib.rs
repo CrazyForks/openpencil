@@ -330,8 +330,8 @@ pub use editor_ui_state::{
     MergeResolveState, MissingFontSurface, PaddingEditMode, PageRenameState, PencilCursorStyle,
     PreviewDeviceKind, PreviewState, PromptCenterFocus, PromptCenterState, PromptFilter,
     PropertyTab, RecentFile, SceneFilter, SceneTemplateCenterState, SceneTemplateFocus,
-    SizeToggleState, SlidesDrag, SlidesPanelState, SlidesPanelTarget, ThemeMode, UpdateStatus,
-    VariableRowFocus,
+    SizeToggleState, SlidesDrag, SlidesPanelState, SlidesPanelTarget, StyleImportState, ThemeMode,
+    UpdateStatus, VariableRowFocus,
 };
 pub use export_dialog_state::ExportDialogButton;
 pub use export_quick_menu_state::ExportQuickRow;

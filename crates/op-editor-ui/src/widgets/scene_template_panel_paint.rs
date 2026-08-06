@@ -49,6 +49,9 @@ impl SceneTemplatePanel<'_> {
             op_editor_core::AssetCenterTab::Templates => self.paint_cards(cx, panel),
             op_editor_core::AssetCenterTab::Styles => self.paint_style_cards(cx, panel),
         }
+        // Last, over everything: the paste box is the panel's topmost layer,
+        // matching the press ladder that gives it every click inside the panel.
+        self.paint_style_import(cx, panel);
     }
 
     /// The tab row. Chips rather than underlined labels: the filter row

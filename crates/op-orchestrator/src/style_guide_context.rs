@@ -6,10 +6,12 @@ use crate::design_md_policy::{
 };
 use crate::design_type::{contains_word, detect_design_type, DesignType};
 use crate::model_profile::{resolve_model_profile, ModelTier};
-use crate::types::PlanningMode;
+use crate::plan::OrchestratorPlan;
+use crate::types::{DesignRequest, PlanningMode};
 use jian_ops_schema::DesignMdSpec;
 use op_ai_skills::style_guide::{
-    extract_style_guide_values, style_guide_registry, ParsedStyleGuide, Platform,
+    extract_style_guide_values, find_style_guide, style_guide_registry, ParsedStyleGuide, Platform,
+    StyleGuideRef,
 };
 
 /// `lower` 含 `words` 任一(按 `contains_word`:ASCII 词边界 / CJK 子串)。
@@ -289,28 +291,75 @@ pub(crate) fn style_guide_prompt_score(
     score
 }
 
-/// Resolve a user-pinned style-guide name against the registry.
+/// Resolve a user-pinned style-guide id against both halves of the catalogue.
 ///
 /// This is the single short-circuit every planning path shares: a hit means
 /// the pin wins outright and no ranking runs, a miss means the pin is stale
-/// (a guide renamed or retired between releases) and the caller falls back to
-/// its own inference. A stale pin is logged rather than surfaced as an error —
-/// the user asked for an aesthetic, not for the request to fail — but it is
-/// logged, because a pin that silently stops applying is otherwise invisible.
-pub(crate) fn resolve_pinned_style_guide(
-    pinned: Option<&str>,
-) -> Option<&'static ParsedStyleGuide> {
+/// (a guide renamed or retired between releases, or a `user:` import deleted
+/// since it was pinned) and the caller falls back to its own inference. A
+/// stale pin is logged rather than surfaced as an error — the user asked for
+/// an aesthetic, not for the request to fail — but it is logged, because a pin
+/// that silently stops applying is otherwise invisible.
+pub(crate) fn resolve_pinned_style_guide(pinned: Option<&str>) -> Option<StyleGuideRef> {
     let name = pinned.map(str::trim).filter(|name| !name.is_empty())?;
-    match style_guide_registry().iter().find(|g| g.name == name) {
+    match find_style_guide(name) {
         Some(guide) => Some(guide),
         None => {
             tracing::warn!(
                 pinned = %name,
-                "pinned style guide is not in the registry — falling back to prompt ranking"
+                "pinned style guide is in neither the corpus nor the imported set — \
+                 falling back to prompt ranking"
             );
             None
         }
     }
+}
+
+/// Force a user's pinned style guide onto a finished plan.
+///
+/// Shrinking the planning menu to one entry only *asks* the model to echo the
+/// pinned name back; it is free not to, and measured on a Full-tier run it
+/// did not — the plan came back with no `styleGuideName` at all and the whole
+/// generation ran in an unrelated palette. The `forced_style_guide_name`
+/// backfill that was supposed to catch this is only populated on the Compact
+/// planning path (`prompt.rs`), so on Rich and Minimal it was a no-op, and the
+/// fallback plan built after two planning failures carried no guide either.
+///
+/// A pin is a setting, not a suggestion, so it is applied here rather than
+/// negotiated with the model — the same treatment `plan_repair::finalize_plan`
+/// already gives design.md.
+///
+/// Precedence is `design.md > pin > whatever the model chose`. design.md wins
+/// because it is a design system the user wrote down and the rest of the
+/// pipeline keys off its `design-md-custom` contract; a pin is a choice from a
+/// catalog, and there is no catalog in play once design.md is present.
+///
+/// A pin naming a guide in neither half of the catalogue (an import the user
+/// has since deleted) resolves to nothing and is left alone, so a stale pin
+/// still degrades to the model's own choice instead of forcing a dead name.
+///
+/// Returns whether the plan changed.
+pub(crate) fn enforce_pinned_style_guide(
+    plan: &mut OrchestratorPlan,
+    request: &DesignRequest,
+) -> bool {
+    if request.design_md.is_some() {
+        return false;
+    }
+    let Some(guide) = resolve_pinned_style_guide(request.pinned_style_guide.as_deref()) else {
+        return false;
+    };
+    let id = guide.id();
+    if plan.style_guide_name.as_deref() == Some(id) {
+        return false;
+    }
+    tracing::debug!(
+        pinned = %id,
+        replaced = ?plan.style_guide_name,
+        "forcing the pinned style guide onto the plan"
+    );
+    plan.style_guide_name = Some(id.to_string());
+    true
 }
 
 /// 对全 catalog 按加权分降序排名(不过滤)—— port of
@@ -360,6 +409,32 @@ pub(crate) fn format_guide_snippet(guide: &ParsedStyleGuide) -> String {
     }
 
     lines.join("\n")
+}
+
+/// Planning budget for a pinned import's prose, in characters.
+///
+/// An imported `DESIGN.md` is written for humans, not against the corpus's
+/// section grammar, so [`format_guide_snippet`]'s value extractor usually
+/// finds nothing in one and the planner would see a bare heading. Handing it
+/// the document instead is what makes a pinned import steer planning at all;
+/// the cap is what stops a long one from crowding out the rest of the prompt.
+/// Sub-agents get the full text later through
+/// `prompt_style_skills::build_style_guide_instruction`, so a truncation here
+/// costs planning nuance, not the design's actual style.
+const USER_GUIDE_PLANNING_CHARS: usize = 2000;
+
+/// A pinned import's snippet: its id, then as much of the document as the
+/// planning budget allows.
+fn format_user_guide_snippet(label: &str, guide: &ParsedStyleGuide) -> String {
+    let body = guide.content.trim();
+    let mut out = format!("### {label} [{}]\n", guide.platform.as_str());
+    if body.chars().count() > USER_GUIDE_PLANNING_CHARS {
+        out.extend(body.chars().take(USER_GUIDE_PLANNING_CHARS));
+        out.push_str("\n… (truncated; the full guide is given to the sub-agents)");
+    } else {
+        out.push_str(body);
+    }
+    out
 }
 
 /// `build_planning_style_guide_context` 的产物。`available_style_guides`
@@ -458,26 +533,32 @@ pub(crate) fn build_planning_style_guide_context(
     // be expressed by re-ordering it — the model would still be free to pick
     // something else. It is expressed by shrinking the menu to one entry.
     if let Some(guide) = resolve_pinned_style_guide(pinned) {
+        // The id, not the display name, is the exact string: an imported guide
+        // may legitimately name itself after a corpus one, and the directive
+        // has to name the guide the user actually pinned.
+        let label = guide.id().to_string();
+        let snippet = if guide.is_user() {
+            format_user_guide_snippet(&label, &guide)
+        } else {
+            format_guide_snippet(&guide)
+        };
         let lines: Vec<String> = vec![
             "The user pinned a style guide in the Asset Center. Use it — do NOT \
              pick a different one."
                 .to_string(),
-            format_guide_metadata_line(guide, mode),
+            format!("- {label} [{}]", guide.platform.as_str()),
             String::new(),
-            format_guide_snippet(guide),
+            snippet,
             String::new(),
             "Output directives:".to_string(),
-            format!(
-                "- Set \"styleGuideName\": \"{}\" (exact string).",
-                guide.name
-            ),
+            format!("- Set \"styleGuideName\": \"{label}\" (exact string)."),
         ];
         return PlanningStyleGuideContext {
             available_style_guides: lines.join("\n"),
             metadata_count: 1,
             snippet_count: 1,
-            top_guide_names: vec![guide.name.clone()],
-            snippet_guide_names: vec![guide.name.clone()],
+            top_guide_names: vec![label.clone()],
+            snippet_guide_names: vec![label],
         };
     }
 
