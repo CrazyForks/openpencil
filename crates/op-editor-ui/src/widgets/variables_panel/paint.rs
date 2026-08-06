@@ -3,6 +3,7 @@ use crate::widgets::button::paint_button_feedback_wash;
 use crate::widgets::property_panel_text_input::{
     paint_text_input_view, paint_text_input_view_value,
 };
+use crate::widgets::text_metrics;
 use crate::widgets::{draw_icon, Icon, PaintCx};
 use crate::{Color, Point2D, Rect};
 
@@ -216,8 +217,9 @@ fn paint_theme_header(panel: &VariablesPanel, cx: &mut PaintCx<'_>, rect: Rect) 
         preset_label_x,
         header::text_baseline(rect, preset_label_size),
     );
-    let preset_chevron_x =
-        preset_label_x + cx.backend.measure_text(preset_label, preset_label_size) + 7.0;
+    let preset_chevron_x = preset_label_x
+        + text_metrics::measure_chrome(cx.backend, preset_label, preset_label_size)
+        + 7.0;
     draw_icon(
         cx.backend,
         Icon::ChevronDown,
@@ -278,7 +280,7 @@ fn paint_variant_header(
                 panel.now_ms,
             );
         } else {
-            let variant_width = cx.backend.measure_text(variant, 13.0);
+            let variant_width = text_metrics::measure_chrome(cx.backend, variant, 13.0);
             // Hover/press wash hugs `value v` (+ small L/R padding) instead of
             // washing the whole value-column cell. The hit target stays the
             // wider `variant_header_rect` so the trigger is still easy to click,
@@ -348,19 +350,12 @@ fn paint_rows(
     let theme = panel.theme;
     if panel.rows.is_empty() {
         // Filtered-empty vs truly-empty (TS `noMatch` vs `noDefined`).
-        let empty = if panel.search.is_empty() {
+        let label = if panel.search.is_empty() {
             labels.empty
         } else {
             labels.no_match
         };
-        paint_text(
-            cx,
-            empty,
-            14.0,
-            theme.muted_foreground,
-            rect.origin.x + rect.size.x / 2.0 - 52.0,
-            rect.origin.y + rect.size.y / 2.0,
-        );
+        super::empty_state::paint_empty_state(cx, &theme, rect, label);
         return;
     }
 
@@ -576,8 +571,9 @@ fn paint_value_cell(
             if is_editing {
                 let input_state = panel.value_input_for_cell(cell.0, cell.1);
                 let value = input_state.map(|input| input.text()).unwrap_or("");
-                let draft_w =
-                    cx.backend.measure_text(value, INPUT_FONT_SIZE) + INPUT_PADDING_X * 2.0 + 8.0;
+                let draft_w = text_metrics::measure_chrome(cx.backend, value, INPUT_FONT_SIZE)
+                    + INPUT_PADDING_X * 2.0
+                    + 8.0;
                 let max_cell_w = (cell_rect.size.x - 12.0).max(VALUE_INPUT_MIN_WIDTH);
                 let input_w = draft_w
                     .clamp(VALUE_INPUT_MIN_WIDTH, VALUE_INPUT_MAX_WIDTH)
@@ -625,7 +621,7 @@ fn paint_footer(
     let icon_size = 16.0;
     let label_size = 14.0;
     let chevron_size = 12.0;
-    let label_w = cx.backend.measure_text(labels.add_variable, label_size);
+    let label_w = text_metrics::measure_chrome(cx.backend, labels.add_variable, label_size);
     let content_w = icon_size + 12.0 + label_w + FOOTER_CHEVRON_LABEL_GAP + chevron_size;
     // Left-align the `+ <label> v` content to the footer's left edge — it used
     // to be centered, which floated the button (and its hover pill) ~20px in

@@ -6,6 +6,7 @@ use jian_ops_schema::variable::{VariableKind, VariableScalar, VariableValue};
 use op_editor_core::editor_ui_state::VariableRowFocus;
 use op_editor_core::{ButtonPressTarget, EditorState, Locale, VariablesPanelButton};
 
+mod empty_state;
 mod geometry;
 mod header;
 mod hit;
