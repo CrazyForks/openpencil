@@ -177,7 +177,6 @@ pub fn layout(
 
 /// The widget for the current state, ready to paint.
 pub fn widget<'a>(
-    chips: &'a [BoardChip],
     active: Option<usize>,
     state: &EditorState,
     layers_label: &'a str,
@@ -187,7 +186,6 @@ pub fn widget<'a>(
     let panel = state.editor_ui.slides_panel;
     let dragging = panel.drag.is_some_and(|drag| drag_is_live(&drag));
     SlidesPanel {
-        chips,
         active,
         // A hover wash under the drop bar reads as a second answer to
         // "where does this land", so the carried row owns the list

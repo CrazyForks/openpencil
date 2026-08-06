@@ -1,31 +1,41 @@
 //! Slides panel — the left rail's page-navigator tab.
 //!
-//! One row per top-level board, in page order: a number, a real
-//! rendered thumbnail of the board, and its name. Clicking a row frames
-//! that board; dragging one reorders the deck; the footer starts the
-//! presentation. It is the deck's only navigator — what a slide IS,
-//! which one the camera is on and how a reorder commits all come from
+//! One row per top-level board, in page order, and a row is a CARD: a
+//! rounded surface one step off the rail, holding a real rendered
+//! thumbnail of the board with a round slide-number chip riding its
+//! top-left corner. Clicking a row frames that board; dragging one
+//! reorders the deck; the footer starts the presentation. It is the
+//! deck's only navigator — what a slide IS, which one the camera is on
+//! and how a reorder commits all come from
 //! [`crate::widgets::deck_boards`], so the rail can never disagree with
 //! the presentation about the order.
+//!
+//! **Rows carry no name.** The board's name is already on the board, as
+//! the frame label the canvas paints above it; repeating it under every
+//! thumbnail bought a second text baseline, a truncation rule and a
+//! taller row for information the user is looking straight at. The list
+//! is a sequence of pictures — the eye counts positions and recognises
+//! slides, which is what a navigator is for.
 //!
 //! **This widget paints a thumbnail PLACEHOLDER, never a thumbnail.**
 //! Rendering a board is platform work — a second skia surface per board
 //! — so the host paints its cached rasters into [`SlidesPanelLayout::thumb_rect`]
 //! after the widget has painted. A host without a local renderer (the
-//! browser) simply paints nothing there and the placeholder stands, which
-//! is why the placeholder carries the slide number rather than being a
-//! blank hole.
+//! browser) simply paints nothing there and the placeholder stands.
+//! Because the blit lands ON the plate, everything that has to sit above
+//! a thumbnail lives in [`SlidesPanel::paint_overlay`], which every host
+//! calls after its own blit — see that method for the contract.
 //!
 //! Every rect is derived WITHOUT measuring text — rows are a fixed
-//! height for a given board aspect — so the host's hit-test and the
-//! paint pass compute the same layout from the same four inputs (panel
-//! rect, row count, board aspect, scroll offset). Measurement only
-//! decides where a name is cut, never where a row is.
+//! height for a given rail width — so the host's hit-test and the paint
+//! pass compute the same layout from the same four inputs (panel rect,
+//! row count, board aspect, scroll offset).
 
+use jian_widgets::centered_text_baseline_y;
 use op_editor_core::{SlidesDrag, SlidesPanelTarget};
 
-use crate::widgets::deck_boards::BoardChip;
 use crate::widgets::icons::{draw_icon, Icon};
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout, Theme};
 
@@ -46,24 +56,55 @@ const TAB_PAD_X: f32 = 8.0;
 /// Gap between a tab's glyph and its label, when it keeps one.
 const TAB_ICON_GAP: f32 = 5.0;
 
+/// Margin between the rail's edge and a card.
 const ROW_PAD_X: f32 = 10.0;
-/// Gutter holding the slide number, left of the thumbnail.
-const INDEX_COL_W: f32 = 20.0;
-const INDEX_GAP: f32 = 6.0;
-/// Gap between the thumbnail and the name line under it.
-const NAME_GAP: f32 = 4.0;
-const NAME_H: f32 = 16.0;
-/// Vertical gap between rows.
+/// Padding inside a card, around the thumbnail plate.
+const CARD_PAD: f32 = 10.0;
+const CARD_RADIUS: f32 = 10.0;
+/// Ring width on the selected card.
+const CARD_STROKE: f32 = 2.0;
+/// Vertical gap between cards.
 const ROW_GAP: f32 = 8.0;
-const ROW_FONT: f32 = 11.5;
-const THUMB_RADIUS: f32 = 4.0;
+/// Corner radius of the thumbnail plate inside a card. Public because a
+/// host blitting a rendered board has to clip to the same corners the
+/// plate was drawn with, or the picture paints square over a round hole.
+pub const SLIDE_THUMB_RADIUS: f32 = 5.0;
+/// Diameter of the round slide-number chip.
+const CHIP_D: f32 = 22.0;
+/// Chip inset from the card's top-left corner.
+const CHIP_INSET: f32 = 8.0;
+const CHIP_FONT: f32 = 11.0;
+/// Opacity of the chip's disc. The chip floats over a rendered board
+/// whose colours belong to the DOCUMENT, not the editor, so it carries
+/// its own scrim instead of a theme surface — one disc that stays
+/// legible over a white cover slide and a black one, in either theme.
+const CHIP_SCRIM_ALPHA: f32 = 0.72;
+/// Opacity of the hairline around the disc. A dark scrim alone has no
+/// shape on a dark slide — the number reads but the chip does not — and
+/// a dark deck is exactly the case this panel was built for. The
+/// hairline draws the circle there; the scrim draws it on a light one.
+const CHIP_EDGE_ALPHA: f32 = 0.18;
+/// Rail width the box height is struck at — the shipped default for
+/// `layer_panel_width`. It is a REFERENCE, not a constraint: the rail
+/// resizes freely and the height below does not follow it.
+const REFERENCE_RAIL_W: f32 = 240.0;
 /// Fixed height of every row's thumbnail box.
 ///
-/// The one number that makes a mixed document listable: rows keep this
-/// height whether the page holds 16:9 decks, 3:4 cards or 9:19.5 phone
-/// screens, and each board is fitted into the box rather than the box
-/// being fitted to the board.
-pub const THUMB_BOX_H: f32 = 132.0;
+/// **The one number that keeps the list a list.** Rows hold this height
+/// whether the page carries 16:9 decks, 3:4 cards or 9:19.5 phone
+/// screens, and whether the rail is dragged to 180 px or 480 — each
+/// board is fitted INTO the box, never the box to the board. Deriving
+/// it from the rail's width instead (so a deck always filled its card)
+/// looked right at one width and absurd at another: a rail dragged wide
+/// gave 500 px slides and a list you could no longer read as a
+/// sequence.
+///
+/// The value is 16:9 at [`REFERENCE_RAIL_W`], so a deck — the common
+/// case — fills its card exactly at the width the rail actually opens
+/// at, and any other width only changes how much margin sits either
+/// side of the picture.
+pub const THUMB_BOX_H: f32 =
+    (REFERENCE_RAIL_W - (ROW_PAD_X + CARD_PAD) * 2.0) / DEFAULT_BOARD_ASPECT;
 /// Fallback board aspect (16:9) for a deck whose boards have no
 /// resolvable bounds yet — the scene may not have been built when the
 /// first frame paints.
@@ -108,14 +149,13 @@ impl SlidesPanelLayout {
     ///
     /// `aspects` is one width / height per board, in page order.
     ///
-    /// **Rows are a FIXED height and boards are letterboxed into them.**
-    /// Sizing the row to the board instead would make a mixed document
-    /// unusable: one 3:4 card among the 16:9 boards stretches every row
-    /// in the list to the tallest shape, and a page of phone screens
-    /// gives rows twice the height of the rail. A fixed box also keeps
-    /// the list readable as a sequence — the eye counts positions, not
-    /// shapes — and keeps the drag arithmetic a division instead of a
-    /// scan.
+    /// **Rows are a FIXED height and boards are fitted into them.** The
+    /// height is [`THUMB_BOX_H`] and nothing — not the rail's width,
+    /// not the shapes on the page — moves it; only the box's WIDTH
+    /// tracks the rail, so dragging the rail wider spreads margin
+    /// around the pictures rather than growing them. See [`THUMB_BOX_H`]
+    /// for why. It also keeps the drag arithmetic a division instead of
+    /// a scan.
     ///
     /// `tabs` is passed in rather than derived because the tab row's
     /// own geometry depends on the labels, and labels are i18n — which
@@ -126,7 +166,7 @@ impl SlidesPanelLayout {
     /// cannot show a slide is worse than no list: it is a strip that
     /// eats clicks and explains nothing.
     pub fn new(panel: Rect, tabs: SlidesPanelTabs, aspects: &[f32], offset: f32) -> Option<Self> {
-        let box_w = panel.size.x - ROW_PAD_X * 2.0 - INDEX_COL_W - INDEX_GAP;
+        let box_w = panel.size.x - (ROW_PAD_X + CARD_PAD) * 2.0;
         if box_w <= 0.0 {
             return None;
         }
@@ -168,10 +208,11 @@ impl SlidesPanelLayout {
         Some(layout)
     }
 
-    /// Height of one row: the thumbnail box plus the name line under it.
-    /// The same for every row, whatever shape the boards are.
+    /// Height of one row: the card, which is the thumbnail box plus its
+    /// padding. A constant — the same for every row, on every page, at
+    /// every rail width.
     pub fn row_height(&self) -> f32 {
-        THUMB_BOX_H + NAME_GAP + NAME_H
+        THUMB_BOX_H + CARD_PAD * 2.0
     }
 
     /// Row pitch — a row plus the gap that follows it.
@@ -206,24 +247,54 @@ impl SlidesPanelLayout {
         }
     }
 
-    /// The fixed-size box row `index` gives its thumbnail — the same
-    /// shape in every row, whatever the board inside it looks like.
-    pub fn thumb_box_rect(&self, index: usize) -> Rect {
+    /// The painted card of row `index` — the rounded surface the
+    /// thumbnail sits inside.
+    ///
+    /// Narrower than [`Self::row_rect`] on purpose: the card is the
+    /// visual row, the row rect is the CLICK target, and letting a
+    /// press in the margin beside a card still hit it is what stops the
+    /// list feeling fiddly at the rail's edges.
+    pub fn card_rect(&self, index: usize) -> Rect {
         let row = self.row_rect(index);
         Rect {
-            origin: Point2D::new(
-                row.origin.x + ROW_PAD_X + INDEX_COL_W + INDEX_GAP,
-                row.origin.y,
-            ),
+            origin: Point2D::new(row.origin.x + ROW_PAD_X, row.origin.y),
+            size: Point2D::new((row.size.x - ROW_PAD_X * 2.0).max(0.0), row.size.y),
+        }
+    }
+
+    /// The fixed-size box row `index` gives its thumbnail — the card
+    /// less its padding, the same shape in every row whatever the board
+    /// inside it looks like.
+    pub fn thumb_box_rect(&self, index: usize) -> Rect {
+        let card = self.card_rect(index);
+        Rect {
+            origin: Point2D::new(card.origin.x + CARD_PAD, card.origin.y + CARD_PAD),
             size: self.thumb_box,
         }
     }
 
+    /// The round slide-number chip on row `index`, riding the card's
+    /// top-left corner over the thumbnail.
+    pub fn chip_rect(&self, index: usize) -> Rect {
+        let card = self.card_rect(index);
+        Rect {
+            origin: Point2D::new(card.origin.x + CHIP_INSET, card.origin.y + CHIP_INSET),
+            size: Point2D::new(CHIP_D, CHIP_D),
+        }
+    }
+
     /// Where row `index`'s board actually paints: its own aspect scaled
-    /// to fit [`Self::thumb_box_rect`] and centred in it — letterboxed
-    /// above and below for a wide board, pillarboxed either side for a
-    /// tall one. This is the rect a host blits its rendered board into,
-    /// so the picture never stretches to a shape the board is not.
+    /// to fit [`Self::thumb_box_rect`] and centred in it. This is the
+    /// rect a host blits its rendered board into, so the picture never
+    /// stretches to a shape the board is not.
+    ///
+    /// **The box's height leads.** It is the fixed side, so a board
+    /// normally fills the row's full height and takes whatever width its
+    /// aspect asks for — a tall phone screen becomes a narrow strip
+    /// centred in a wide card, which is exactly the reading a navigator
+    /// wants. Width only takes over when the aspect would overrun the
+    /// box, which is what stops a 16:9 board spilling out of a rail
+    /// dragged to its minimum; it letterboxes there instead.
     pub fn thumb_rect(&self, index: usize) -> Rect {
         let boxed = self.thumb_box_rect(index);
         let size = self
@@ -336,15 +407,14 @@ pub fn drag_is_live(drag: &SlidesDrag) -> bool {
 
 /// The panel, ready to paint.
 pub struct SlidesPanel<'a> {
-    pub chips: &'a [BoardChip],
     /// The slide the camera is looking at, if any board resolves.
     pub active: Option<usize>,
     pub hover: Option<SlidesPanelTarget>,
     pub drag: Option<SlidesDrag>,
     /// Whether the host will paint a rendered board over the thumbnail
-    /// box. When it will not, the box carries the slide number at size
-    /// instead of staying empty — an empty plate reads as broken, a
-    /// numbered one reads as a slide without a preview.
+    /// plate. When it will not, the plate carries a faint slide glyph
+    /// instead of staying empty — a bare plate reads as broken, and the
+    /// chip already says which slide it is.
     pub thumbnails_supported: bool,
     pub layers_label: &'a str,
     pub slides_label: &'a str,
@@ -372,24 +442,61 @@ impl SlidesPanel<'_> {
 
         cx.backend.save();
         cx.backend.clip_rect(layout.list);
-        let dragging = self.drag.filter(drag_is_live);
-        for (index, rect) in layout.visible_rows() {
-            let ghosted = dragging.is_some_and(|drag| drag.from == index);
-            self.paint_row(cx, theme, layout, index, rect, ghosted);
-        }
-        if let Some(drag) = dragging {
-            let slot = layout.insertion_slot(drag.pointer_y);
-            cx.backend.fill_rect(
-                Rect {
-                    origin: Point2D::new(layout.list.origin.x + ROW_PAD_X, layout.drop_bar_y(slot)),
-                    size: Point2D::new((layout.list.size.x - ROW_PAD_X * 2.0).max(0.0), DROP_BAR_H),
-                },
-                theme.primary,
-            );
+        for (index, _) in layout.visible_rows() {
+            self.paint_row(cx, theme, layout, index);
         }
         cx.backend.restore();
 
         self.paint_footer(cx, theme, layout);
+    }
+
+    /// Everything that has to sit ON TOP of a thumbnail: the number
+    /// chips, the ghost of a carried row, and the drop bar.
+    ///
+    /// **Every host calls this exactly once per frame, after
+    /// [`Self::paint`] and after its own thumbnail blit** — that is the
+    /// whole reason it is a second method rather than the tail of
+    /// `paint`. The chip rides the card's top-left corner, which is
+    /// inside the picture, so anything drawn here during `paint` would
+    /// be buried by the blit that follows. Splitting it is what keeps
+    /// the two hosts identical: the browser, which never blits, gets the
+    /// same pixels from the same two calls back to back.
+    ///
+    /// Once per frame, not "at least once": the carried row's ghost is a
+    /// translucent wash, so a second pass would darken it rather than
+    /// leave it alone.
+    pub fn paint_overlay(&self, cx: &mut PaintCx<'_>, layout: &SlidesPanelLayout, theme: &Theme) {
+        cx.backend.save();
+        cx.backend.clip_rect(layout.list);
+        let dragging = self.drag.filter(drag_is_live);
+        for (index, _) in layout.visible_rows() {
+            let ghosted = dragging.is_some_and(|drag| drag.from == index);
+            if ghosted {
+                // Wash the card back towards the rail. Done here rather
+                // than by fading each piece as it paints, because the
+                // heaviest thing on a carried row is the host's blitted
+                // board — which the widget never draws and so cannot
+                // fade at the source.
+                cx.backend.fill_round_rect(
+                    layout.card_rect(index),
+                    CARD_RADIUS,
+                    fade(theme.card, 1.0 - GHOST_ALPHA),
+                );
+            }
+            self.paint_number_chip(cx, layout, index, ghosted);
+        }
+        if let Some(drag) = dragging {
+            let slot = layout.insertion_slot(drag.pointer_y);
+            cx.backend.fill_round_rect(
+                Rect {
+                    origin: Point2D::new(layout.list.origin.x + ROW_PAD_X, layout.drop_bar_y(slot)),
+                    size: Point2D::new((layout.list.size.x - ROW_PAD_X * 2.0).max(0.0), DROP_BAR_H),
+                },
+                DROP_BAR_H / 2.0,
+                theme.primary,
+            );
+        }
+        cx.backend.restore();
     }
 
     fn paint_footer(&self, cx: &mut PaintCx<'_>, theme: &Theme, layout: &SlidesPanelLayout) {
@@ -416,7 +523,8 @@ impl SlidesPanel<'_> {
             },
         );
         let icon_size = 13.0;
-        let label_w = cx.backend.measure_text(self.present_label, TAB_FONT);
+        let label_w =
+            text_metrics::measure_chrome_weighted(cx.backend, self.present_label, TAB_FONT, 600);
         let content_w = icon_size + 6.0 + label_w;
         let icon_x = button.origin.x + (button.size.x - content_w) / 2.0;
         draw_icon(
@@ -443,114 +551,117 @@ impl SlidesPanel<'_> {
         );
     }
 
+    /// One card: its surface, its selection ring, and the plate the
+    /// thumbnail lands on.
+    ///
+    /// Nothing here fades for a carried row — a ghost has to cover the
+    /// host's blitted board too, so it is applied once, on top, in
+    /// [`Self::paint_overlay`].
     fn paint_row(
         &self,
         cx: &mut PaintCx<'_>,
         theme: &Theme,
         layout: &SlidesPanelLayout,
         index: usize,
-        row: Rect,
-        ghosted: bool,
     ) {
         let active = self.active == Some(index);
-        let alpha = if ghosted { GHOST_ALPHA } else { 1.0 };
-        // The board's own fitted rect, not the box around it: the plate
-        // has to sit exactly where the host will blit, or a tall card
-        // would show a wide plate with its picture floating inside.
+        let hovered = self.hover == Some(SlidesPanelTarget::Slide(index));
+        let card = layout.card_rect(index);
+        // The card surface, a step off the rail so the list reads as a
+        // stack of slides rather than pictures loose on the panel.
+        // Selection lifts the same surface another step and rings it,
+        // which is why hover under a selected row changes nothing: the
+        // card is already as far forward as it goes.
+        let surface = match (active, hovered) {
+            (true, _) => theme.row_selected,
+            (false, true) => theme.accent,
+            (false, false) => theme.muted,
+        };
+        cx.backend.fill_round_rect(card, CARD_RADIUS, surface);
+        if active {
+            cx.backend
+                .stroke_round_rect(card, CARD_RADIUS, theme.primary, CARD_STROKE);
+        }
+        // Thumbnail plate — the board's own fitted rect, not the box
+        // around it, so it sits exactly where the host will blit. A tall
+        // board gets a narrow plate rather than a wide one with its
+        // picture floating inside. Recessed (the rail's own tone, darker
+        // than the card) so an unfilled plate reads as a well.
         let thumb = layout.thumb_rect(index);
-        if self.hover == Some(SlidesPanelTarget::Slide(index)) && !ghosted {
-            cx.backend.fill_round_rect(
-                Rect {
-                    origin: Point2D::new(row.origin.x + 4.0, row.origin.y - 3.0),
-                    size: Point2D::new((row.size.x - 8.0).max(0.0), row.size.y + 6.0),
-                },
-                6.0,
-                theme.button_hover,
+        cx.backend
+            .fill_round_rect(thumb, SLIDE_THUMB_RADIUS, theme.card);
+        if !self.thumbnails_supported {
+            // No renderer will cover this plate. The chip already names
+            // the slide, so this is a texture, not a second label.
+            let size = (thumb.size.y * 0.3).min(32.0);
+            draw_icon(
+                cx.backend,
+                Icon::PresentationScreen,
+                Point2D::new(
+                    thumb.origin.x + (thumb.size.x - size) / 2.0,
+                    thumb.origin.y + (thumb.size.y - size) / 2.0,
+                ),
+                size,
+                fade(theme.muted_foreground, 0.4),
+                1.5,
             );
         }
-        // Thumbnail placeholder. The host paints its rendered board over
-        // this rect; on a host without a renderer the placeholder is
-        // what the user sees, so it has to stand on its own.
-        cx.backend
-            .fill_round_rect(thumb, THUMB_RADIUS, fade(theme.muted, alpha));
-        cx.backend.stroke_round_rect(
-            thumb,
-            THUMB_RADIUS,
-            fade(if active { theme.primary } else { theme.border }, alpha),
-            if active { 2.0 } else { 1.0 },
-        );
+    }
 
+    /// The slide number, as a dark disc over the card's top-left corner.
+    fn paint_number_chip(
+        &self,
+        cx: &mut PaintCx<'_>,
+        layout: &SlidesPanelLayout,
+        index: usize,
+        ghosted: bool,
+    ) {
+        let alpha = if ghosted { GHOST_ALPHA } else { 1.0 };
+        let chip = layout.chip_rect(index);
+        cx.backend.fill_round_rect(
+            chip,
+            CHIP_D / 2.0,
+            fade(CHIP_DISC, CHIP_SCRIM_ALPHA * alpha),
+        );
+        cx.backend.stroke_round_rect(
+            chip,
+            CHIP_D / 2.0,
+            fade(CHIP_INK, CHIP_EDGE_ALPHA * alpha),
+            1.0,
+        );
         let number = format!("{}", index + 1);
-        let number_color = if active {
-            fade(theme.primary, alpha)
-        } else {
-            fade(theme.muted_foreground, alpha)
-        };
-        let number_w = cx.backend.measure_text(&number, ROW_FONT);
+        let width = text_metrics::measure_chrome_weighted(cx.backend, &number, CHIP_FONT, 600);
         cx.backend.draw_text(
             &TextLayout::single_run(
                 &number,
                 "system-ui",
-                ROW_FONT,
-                number_color.to_jian(),
+                CHIP_FONT,
+                fade(CHIP_INK, alpha).to_jian(),
                 Point2D::ZERO,
             )
             .with_font_weight(600),
             Point2D::new(
-                row.origin.x + ROW_PAD_X + (INDEX_COL_W - number_w).max(0.0),
-                row.origin.y + ROW_FONT + 2.0,
-            ),
-        );
-        if !self.thumbnails_supported {
-            // No renderer will cover this box, so fill it rather than
-            // leave a blank plate.
-            let size = (thumb.size.y * 0.34).min(34.0);
-            let width = cx.backend.measure_text(&number, size);
-            cx.backend.draw_text(
-                &TextLayout::single_run(
-                    &number,
-                    "system-ui",
-                    size,
-                    fade(theme.muted_foreground, alpha * 0.55).to_jian(),
-                    Point2D::ZERO,
-                )
-                .with_font_weight(600),
-                Point2D::new(
-                    thumb.origin.x + (thumb.size.x - width) / 2.0,
-                    thumb.origin.y + thumb.size.y / 2.0 + size / 2.0 - size * 0.15,
-                ),
-            );
-        }
-
-        let Some(chip) = self.chips.get(index) else {
-            return;
-        };
-        if chip.name.is_empty() {
-            return;
-        }
-        // Anchored to the row's fixed box, not to the letterboxed
-        // picture: the names have to sit on one baseline down the list,
-        // and a tall board's narrow plate must not indent its own label.
-        let boxed = layout.thumb_box_rect(index);
-        let name =
-            crate::widgets::file_menu::truncate_to_width(cx, &chip.name, ROW_FONT, boxed.size.x);
-        if name.is_empty() {
-            return;
-        }
-        let color = if active {
-            fade(theme.primary, alpha)
-        } else {
-            fade(theme.card_foreground, alpha)
-        };
-        cx.backend.draw_text(
-            &TextLayout::single_run(&name, "system-ui", ROW_FONT, color.to_jian(), Point2D::ZERO),
-            Point2D::new(
-                boxed.origin.x,
-                boxed.origin.y + boxed.size.y + NAME_GAP + ROW_FONT,
+                chip.origin.x + (chip.size.x - width) / 2.0,
+                centered_text_baseline_y(chip, CHIP_FONT),
             ),
         );
     }
 }
+
+/// The chip's disc and its label. Fixed rather than themed — see
+/// [`CHIP_SCRIM_ALPHA`].
+const CHIP_DISC: Color = Color {
+    r: 0.06,
+    g: 0.06,
+    b: 0.07,
+    a: 1.0,
+};
+const CHIP_INK: Color = Color {
+    r: 1.0,
+    g: 1.0,
+    b: 1.0,
+    a: 1.0,
+};
 
 /// The largest `aspect`-shaped rectangle that fits inside `boxed`.
 ///

@@ -10,10 +10,10 @@
 //! bundle has no such renderer, and the CanvasKit canvas the page paints
 //! into is not one it can allocate siblings from. The capability is
 //! therefore split exactly like `deck_html_export_supported`: the tab,
-//! the numbers, the names, the highlight, the click-to-navigate and the
-//! reorder all work here, and the thumbnail box paints as its
-//! placeholder — the slide number at size, so a row reads as a slide
-//! without a preview rather than as a broken plate. Routing the render
+//! the cards, the number chips, the highlight, the click-to-navigate and
+//! the reorder all work here, and the thumbnail plate paints as its
+//! placeholder — a faint slide glyph, so a row reads as a slide without
+//! a preview rather than as a broken plate. Routing the render
 //! to the `--serve-web` daemon (which already rasters boards for
 //! `export_nodes`) is the follow-up that closes the gap; it is a
 //! transport question, not a design one.
@@ -99,7 +99,6 @@ impl WidgetHost {
         let present_label =
             op_editor_ui::widgets::editor_state_ext::translate(ui, "slidesPanel.present");
         let widget = flow::widget(
-            &slides.chips,
             slides.active,
             &self.editor_state,
             layers_label,
@@ -108,6 +107,10 @@ impl WidgetHost {
         );
         let mut cx = PaintCx { backend };
         widget.paint(&mut cx, &slides.layout, &self.theme);
+        // No blit comes between the two here — the browser has no board
+        // renderer — but the pair stays adjacent so the call shape is
+        // the one native uses, with its blit in the gap.
+        widget.paint_overlay(&mut cx, &slides.layout, &self.theme);
     }
 
     /// Paint just the tab row, for the frames where the layer tree owns

@@ -14,7 +14,7 @@ use op_editor_core::LeftPanelTab;
 use op_editor_ui::widgets::host_canvas_geometry as canvas_geometry;
 use op_editor_ui::widgets::slides_panel_flow as flow;
 use op_editor_ui::widgets::{BoardChip, SlidesPanelLayout, SlidesPanelTabs};
-use op_editor_ui::{Point2D, Rect};
+use op_editor_ui::{Point2D, Rect, RenderBackend};
 
 use crate::backend::NativeFrameBackend;
 
@@ -103,7 +103,6 @@ impl WidgetHostNative {
         let present_label =
             op_editor_ui::widgets::editor_state_ext::translate(ui, "slidesPanel.present");
         let widget = flow::widget(
-            &slides.chips,
             slides.active,
             &self.editor_state,
             layers_label,
@@ -117,6 +116,15 @@ impl WidgetHostNative {
             widget.paint(&mut cx, &slides.layout, &self.theme);
         }
         self.blit_slide_thumbnails(frame, slides);
+        // After the blit, never before: the number chips and the carried
+        // row's ghost sit ON the picture, so painting them with the rest
+        // of the widget would bury them under the rasters below.
+        {
+            let mut cx = PaintCx {
+                backend: &mut *frame,
+            };
+            widget.paint_overlay(&mut cx, &slides.layout, &self.theme);
+        }
     }
 
     /// Paint just the tab row, for the frames where the layer tree owns
@@ -157,9 +165,16 @@ impl WidgetHostNative {
             // Clip to the band, draw at the full box: a half-scrolled row
             // shows the top of its board rather than a squashed copy, and
             // the last row's picture stops at the footer exactly where
-            // the widget's own placeholder does.
+            // the widget's own placeholder does. The extra round clip is
+            // the plate's own corners — the blit covers the placeholder
+            // exactly, so without it a square picture would paint over
+            // the rounded plate the widget just drew.
             let image = image.clone();
-            frame.draw_offscreen_layer_to(&image, clip, slides.layout.thumb_rect(*index));
+            let thumb = slides.layout.thumb_rect(*index);
+            frame.save();
+            frame.clip_round_rect(thumb, op_editor_ui::widgets::SLIDE_THUMB_RADIUS);
+            frame.draw_offscreen_layer_to(&image, clip, thumb);
+            frame.restore();
         }
 
         let revision = self.editor_state.document_revision();

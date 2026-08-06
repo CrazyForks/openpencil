@@ -153,10 +153,12 @@ fn a_mixed_page_lists_every_board_at_the_same_row_height() {
         heights.windows(2).all(|w| (w[0] - w[1]).abs() < 0.01),
         "a phone screen and a dashboard must not give different row heights: {heights:?}"
     );
-    // The phone is pillarboxed, the 16:9 board letterboxed — each keeps
-    // its own shape inside the shared box.
+    // The phone and the square card are pillarboxed; the 16:9 board the
+    // box is shaped for fills it. Each keeps its own shape inside the
+    // one shared box.
     let phone = slides.layout.thumb_rect(0);
     let board = slides.layout.thumb_rect(1);
+    let card = slides.layout.thumb_rect(2);
     assert!(
         phone.size.y > phone.size.x,
         "the phone screen stays portrait"
@@ -166,7 +168,13 @@ fn a_mixed_page_lists_every_board_at_the_same_row_height() {
         "the deck board stays landscape"
     );
     assert!(phone.size.x < slides.layout.thumb_box.x - 1.0);
-    assert!(board.size.y < slides.layout.thumb_box.y - 1.0);
+    assert!(card.size.x < slides.layout.thumb_box.x - 1.0);
+    assert!(
+        (board.size.y - slides.layout.thumb_box.y).abs() < 0.01,
+        "a deck board fills its plate: {:?} in {:?}",
+        board.size,
+        slides.layout.thumb_box
+    );
 }
 
 #[test]
