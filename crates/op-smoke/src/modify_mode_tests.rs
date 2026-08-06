@@ -71,7 +71,7 @@ fn state_with_roots(ids: &[&str]) -> EditorState {
         })
         .collect::<Vec<_>>();
     let source = serde_json::json!({
-        "version": "0.8.3",
+        "version": "1.0.0",
         "children": roots,
     })
     .to_string();
@@ -228,7 +228,7 @@ fn hash_is_stable_and_baseline_output_alias_is_rejected() {
         std::process::id(),
         std::thread::current().name().unwrap_or("test")
     ));
-    std::fs::write(&path, br#"{"version":"0.8.3","children":[]}"#).unwrap();
+    std::fs::write(&path, br#"{"version":"1.0.0","children":[]}"#).unwrap();
     let error = reject_input_overwrite(&path, &path).unwrap_err();
     assert!(error.contains("must not overwrite"));
     std::fs::remove_file(path).unwrap();

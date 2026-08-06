@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 
 const TARGET: &str = "x86_64-unknown-linux-gnu";
 const ARTIFACT: &str = "libop_auth.a";
-const VERSION: &str = "0.8.3";
+const VERSION: &str = "1.0.0";
 const SOURCE_REVISION: &str = "0123456789abcdef0123456789abcdef01234567";
 
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(1);

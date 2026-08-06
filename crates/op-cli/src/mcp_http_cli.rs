@@ -214,11 +214,11 @@ fn ping_result(port: u16) -> Option<Value> {
 }
 
 /// Extract the OpenPencil identity object from a raw `ping` reply, or
-/// `None` for a non-OpenPencil responder. Servers ≥ 0.8.3 nest the
+/// `None` for a non-OpenPencil responder. Current servers nest the
 /// identity under `result._meta` (a spec-compliant ping result is empty
 /// apart from `_meta` — strict clients reject top-level extras, issue
-/// #199); older servers reported it at the `result` top level, so fall
-/// back there to keep discovering a still-running pre-0.8.3 editor.
+/// #199); servers from before that fix reported it at the `result` top
+/// level, so fall back there to keep discovering a still-running editor.
 fn ping_reply_identity(body: &str) -> Option<Value> {
     let value = serde_json::from_str::<Value>(body).ok()?;
     let result = value.get("result")?;
@@ -340,15 +340,15 @@ mod tests {
 
     #[test]
     fn ping_identity_reads_meta_and_falls_back_to_legacy_top_level() {
-        // ≥ 0.8.3 servers nest the identity under `result._meta` (spec-empty
+        // Current servers nest the identity under `result._meta` (spec-empty
         // ping result, issue #199).
         let meta = ping_reply_identity(
             r#"{"jsonrpc":"2.0","id":0,"result":{"_meta":{"server":"openpencil-mcp","mode":"live","token":"t-1"}}}"#,
         )
         .expect("meta identity accepted");
         assert_eq!(meta.get("token").and_then(Value::as_str), Some("t-1"));
-        // A still-running pre-0.8.3 editor reports identity at the result top
-        // level — discovery must keep working against it.
+        // A still-running editor from before that fix reports identity at the
+        // result top level — discovery must keep working against it.
         let legacy = ping_reply_identity(
             r#"{"jsonrpc":"2.0","id":0,"result":{"server":"openpencil-mcp","mode":"headless","token":"t-2"}}"#,
         )
