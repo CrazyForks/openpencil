@@ -1,4 +1,5 @@
 use crate::widgets::agent_settings_panel::AgentSettingsPanel;
+use crate::widgets::text_metrics;
 use crate::widgets::{PaintCx, Widget};
 use crate::{Color, Point2D, Rect, RenderBackend, TextLayout};
 use op_editor_core::agent_settings::{AgentSettingsTab, McpCli};
@@ -98,12 +99,17 @@ fn row_switch_track(row: Rect) -> Rect {
     )
 }
 
-/// System-tab row `index`, below that tab's hero block.
+/// System-tab row `index`, below that tab's compact heading. Its rows
+/// differ in height (two of them carry a second line), so this walks the
+/// mixed ladder rather than assuming a uniform stride.
 fn system_row_rect(rect: Rect, index: usize) -> Rect {
+    use super::agent_settings_rows::RowLines;
+    const SYSTEM_ROWS: [RowLines; 4] = [RowLines::One, RowLines::Two, RowLines::Two, RowLines::One];
     let content = crate::widgets::agent_settings_panel::content_viewport(rect);
-    super::agent_settings_rows::row_rect(
+    super::agent_settings_rows::row_rect_in(
         content,
-        content.origin.y + super::agent_settings_rows::tab_hero_height(1),
+        content.origin.y + super::agent_settings_rows::tab_heading_height(true),
+        &SYSTEM_ROWS,
         index,
     )
 }
@@ -535,9 +541,14 @@ fn hovered_agent_add_buttons_paint_hover_wash() {
     let add_provider_label =
         op_i18n::translate(state.editor_ui.locale, "settings.agents.addProvider");
     let add_acp_label = op_i18n::translate(state.editor_ui.locale, "settings.agents.addAcp");
-    let add_provider =
-        add_provider_button_rect(rect, backend.measure_text(add_provider_label, 12.0));
-    let add_acp = add_acp_agent_button_rect(rect, backend.measure_text(add_acp_label, 12.0));
+    let add_provider = add_provider_button_rect(
+        rect,
+        text_metrics::measure_chrome(&mut backend, add_provider_label, 12.0),
+    );
+    let add_acp = add_acp_agent_button_rect(
+        rect,
+        text_metrics::measure_chrome(&mut backend, add_acp_label, 12.0),
+    );
     let mut cx = PaintCx {
         backend: &mut backend,
     };
@@ -583,7 +594,10 @@ fn pressed_agent_add_buttons_use_shared_button_feedback() {
         let rect = panel.rect(1200.0, 800.0);
         let mut backend = CaptureBackend::default();
         let label = op_i18n::translate(state.editor_ui.locale, label_key);
-        let target = rect_for_label(rect, backend.measure_text(label, 12.0));
+        let target = rect_for_label(
+            rect,
+            text_metrics::measure_chrome(&mut backend, label, 12.0),
+        );
         let expected = panel
             .theme
             .button_hover
@@ -619,7 +633,7 @@ fn builtin_add_provider_text_is_centered_in_hover_wash() {
     let y = content_y + crate::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT;
     let label = op_i18n::translate(state.editor_ui.locale, "settings.agents.addProvider");
     let mut backend = CaptureBackend::default();
-    let label_w = backend.measure_text(label, 12.0);
+    let label_w = text_metrics::measure_chrome(&mut backend, label, 12.0);
     let hover_rect = super::agent_settings_header_action::header_action_rect(content, y);
     let expected_x = super::agent_settings_header_action::header_action_text_x(hover_rect, label_w);
     let expected_y = hover_rect.origin.y + hover_rect.size.y / 2.0 + 4.0;
@@ -671,7 +685,10 @@ fn acp_add_agent_text_uses_balanced_vertical_padding_in_hover_wash() {
     let rect = panel.rect(1200.0, 800.0);
     let label = op_i18n::translate(state.editor_ui.locale, "settings.agents.addAcp");
     let mut backend = CaptureBackend::default();
-    let hover_rect = add_acp_agent_button_rect(rect, backend.measure_text(label, 12.0));
+    let hover_rect = add_acp_agent_button_rect(
+        rect,
+        text_metrics::measure_chrome(&mut backend, label, 12.0),
+    );
     let expected_baseline_y = hover_rect.origin.y + hover_rect.size.y / 2.0 + 4.0;
 
     {

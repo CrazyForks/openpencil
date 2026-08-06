@@ -15,15 +15,19 @@ use crate::widgets::agent_settings_panel::{
 use crate::widgets::agent_settings_panel_geometry::{
     connect_btn_rect_at, disconnect_btn_rect_at, status_pill_slot_rect_at,
 };
+use crate::widgets::agent_settings_rows::{
+    fit_text, measure_settings_text, paint_row_hairline, ROW_LABEL_BASELINE,
+    ROW_SECOND_LINE_BASELINE, SETTINGS_FONT_FAMILY,
+};
 use crate::widgets::brand_icons::{paint_brand_logo, paint_opencode_logo, BrandLogo};
 use crate::widgets::button::tokens_from_theme;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout};
 use jian_widgets::components::button::{Button, ButtonVariant};
-use jian_widgets::components::card::Card;
 use op_editor_core::agent_settings::{AgentProvider, AgentSettings};
 use op_editor_core::editor_ui_state::EditorUiState;
 
+/// One provider row.
 pub(super) fn paint_agent_card(
     cx: &mut PaintCx<'_>,
     theme: &Theme,
@@ -33,21 +37,18 @@ pub(super) fn paint_agent_card(
     card: Rect,
     index: usize,
 ) {
-    let card_hovered = settings.hover_provider == index;
-    // Every provider card looks the same: transparent by default + a single
-    // jian-standard `button_hover` wash on hover (no per-provider special fill),
-    // so hovering any card reads identically.
-    let fill = if card_hovered {
-        Some(theme.button_hover)
-    } else {
-        None
-    };
-    Card {
-        fill,
-        border: Some(theme.border),
-        radius: 10.0,
+    // The provider list is the fixed `AgentProvider::ALL`, so the row knows
+    // whether it is the last one without being told.
+    let last = index + 1 == AgentProvider::ALL.len();
+    // A hairline-separated list row, matching MCP and System — the modal
+    // had been speaking two visual languages, cards here and rows there.
+    // Hover still washes the whole row so the target reads the same.
+    if settings.hover_provider == index {
+        cx.backend.fill_round_rect(card, 8.0, theme.button_hover);
     }
-    .paint(cx.backend, card, &tokens_from_theme(theme));
+    if !last {
+        paint_row_hairline(cx, theme, card);
+    }
     let avatar = Rect {
         origin: Point2D::new(
             card.origin.x + 16.0,
@@ -103,13 +104,15 @@ pub(super) fn paint_agent_card(
     let text_x = card.origin.x + 16.0 + AVATAR_SIZE + 14.0;
     let name = TextLayout::single_run(
         provider.name(),
-        "system-ui",
+        SETTINGS_FONT_FAMILY,
         NAME_FONT,
         (theme.foreground).to_jian(),
         Point2D::new(0.0, 0.0),
     );
-    cx.backend
-        .draw_text(&name, Point2D::new(text_x, card.origin.y + 30.0));
+    cx.backend.draw_text(
+        &name,
+        Point2D::new(text_x, card.origin.y + ROW_LABEL_BASELINE),
+    );
     let connected = settings.provider_verified_connected_at(index);
     let conn = &settings.provider_connection[index];
     let sub_localized = t_settings(ui, provider.subtitle_key());
@@ -150,18 +153,18 @@ pub(super) fn paint_agent_card(
     // point then stays put as the row's state changes, and hovering a
     // connected row cannot slide Disconnect over the text.
     let sub_max_w = (disconnect_btn_rect_at(card).origin.x - 12.0 - text_x).max(0.0);
-    let sub_text = crate::util::ellipsize_to_width(&sub_text, sub_max_w, |s| {
-        cx.backend.measure_text(s, SUB_FONT)
-    });
+    let sub_text = fit_text(cx, &sub_text, sub_max_w, SUB_FONT);
     let sub = TextLayout::single_run(
         &sub_text,
-        "system-ui",
+        SETTINGS_FONT_FAMILY,
         SUB_FONT,
         (sub_color).to_jian(),
         Point2D::new(0.0, 0.0),
     );
-    cx.backend
-        .draw_text(&sub, Point2D::new(text_x, card.origin.y + 48.0));
+    cx.backend.draw_text(
+        &sub,
+        Point2D::new(text_x, card.origin.y + ROW_SECOND_LINE_BASELINE),
+    );
     let (pill_color, pill_label) = if probing {
         (
             theme.muted_foreground,
@@ -235,10 +238,8 @@ fn paint_status_pill(
 
     let slot = status_pill_slot_rect_at(card);
     let label_budget = (slot.size.x - PAD_LEFT - DOT - DOT_GAP - PAD_RIGHT).max(0.0);
-    let label = crate::util::ellipsize_to_width(label, label_budget, |s| {
-        cx.backend.measure_text(s, STATUS_PILL_FONT)
-    });
-    let label_w = cx.backend.measure_text(&label, STATUS_PILL_FONT);
+    let label = fit_text(cx, label, label_budget, STATUS_PILL_FONT);
+    let label_w = measure_settings_text(cx, &label, STATUS_PILL_FONT);
     let pill_w = (PAD_LEFT + DOT + DOT_GAP + label_w + PAD_RIGHT).min(slot.size.x);
     let pill = Rect {
         origin: Point2D::new(slot.origin.x + slot.size.x - pill_w, slot.origin.y),
@@ -260,7 +261,7 @@ fn paint_status_pill(
     cx.backend.fill_round_rect(dot, DOT / 2.0, color);
     let text = TextLayout::single_run(
         &label,
-        "system-ui",
+        SETTINGS_FONT_FAMILY,
         STATUS_PILL_FONT,
         (color).to_jian(),
         Point2D::new(0.0, 0.0),

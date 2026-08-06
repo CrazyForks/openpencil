@@ -8,8 +8,9 @@
 use crate::theme::Theme;
 use crate::widgets::agent_settings_i18n::t as t_settings;
 use crate::widgets::agent_settings_rows::{
-    paint_footnote, paint_row_hairline, paint_row_label, paint_row_status_line, paint_tab_hero,
-    row_control_rect, row_rect, tab_hero_height, ROW_HEIGHT,
+    fit_text, measure_settings_text, paint_footnote, paint_row_hairline, paint_row_label,
+    paint_row_label_above_status, paint_row_status_line, paint_tab_heading, row_control_rect,
+    row_rect_in, rows_block_height, tab_heading_height, RowLines, SETTINGS_FONT_FAMILY,
 };
 use crate::widgets::agent_settings_switch::{
     paint_settings_switch, SETTINGS_SWITCH_H, SETTINGS_SWITCH_W,
@@ -20,10 +21,15 @@ use crate::{Color, Point2D, Rect, TextLayout};
 use op_editor_core::agent_settings::AgentSettings;
 use op_editor_core::editor_ui_state::{EditorUiState, ThemeMode, UpdateStatus};
 
-const HERO_LINES: usize = 1;
+/// System is a settings inventory, not an introduction — it takes the
+/// compact heading rather than a 27 pt hero (see the tier table in
+/// `agent_settings_rows`).
+const HEADING_HAS_DESC: bool = true;
 const SEGMENT_W: f32 = 78.0;
 const SEGMENT_H: f32 = 30.0;
 const SEGMENT_ICON: f32 = 13.0;
+const SEGMENT_ICON_GAP: f32 = 6.0;
+const SEGMENT_PAD_X: f32 = 6.0;
 const CURSOR_SWATCH: f32 = 38.0;
 const CURSOR_SWATCH_GAP: f32 = 8.0;
 
@@ -71,8 +77,34 @@ fn visible_rows() -> &'static [SystemRow] {
     }
 }
 
+impl SystemRow {
+    /// How many lines the row carries — and therefore how tall its box
+    /// is. Auto-update rides a probe-status line and Experimental a
+    /// description; the other two are label-only.
+    fn lines(self) -> RowLines {
+        match self {
+            SystemRow::AutoUpdate | SystemRow::Experimental => RowLines::Two,
+            SystemRow::Appearance | SystemRow::PencilCursor => RowLines::One,
+        }
+    }
+}
+
+fn row_kinds() -> Vec<RowLines> {
+    visible_rows().iter().map(|row| row.lines()).collect()
+}
+
+/// Row boxes for this tab, paired with their line count. The traversal
+/// layout test walks this.
+#[cfg(test)]
+pub(super) fn row_boxes(content: Rect) -> Vec<(Rect, RowLines)> {
+    let kinds = row_kinds();
+    (0..kinds.len())
+        .map(|i| (row_rect_in(content, body_top(content), &kinds, i), kinds[i]))
+        .collect()
+}
+
 fn body_top(content: Rect) -> f32 {
-    content.origin.y + tab_hero_height(HERO_LINES)
+    content.origin.y + tab_heading_height(HEADING_HAS_DESC)
 }
 
 fn rect_for(content: Rect, row: SystemRow) -> Rect {
@@ -80,11 +112,11 @@ fn rect_for(content: Rect, row: SystemRow) -> Rect {
         .iter()
         .position(|candidate| *candidate == row)
         .unwrap_or(0);
-    row_rect(content, body_top(content), index)
+    row_rect_in(content, body_top(content), &row_kinds(), index)
 }
 
 pub(super) fn content_height() -> f32 {
-    tab_hero_height(HERO_LINES) + visible_rows().len() as f32 * ROW_HEIGHT + 32.0 + 24.0
+    tab_heading_height(HEADING_HAS_DESC) + rows_block_height(&row_kinds()) + 32.0 + 24.0
 }
 
 /// The two-segment Light / Dark control on the Appearance row.
@@ -157,18 +189,20 @@ pub(super) fn paint_system_tab(
     ui: &EditorUiState,
     content: Rect,
 ) {
-    paint_tab_hero(
+    paint_tab_heading(
         cx,
         theme,
         content,
+        Icon::Settings,
         t_settings(ui, "settings.system.heroTitle"),
-        &[t_settings(ui, "settings.system.heroSubtitle")],
+        Some(t_settings(ui, "settings.system.heroSubtitle")),
     );
 
     let rows = visible_rows();
+    let kinds = row_kinds();
     let last = rows.len() - 1;
     for (index, row) in rows.iter().enumerate() {
-        let rect = row_rect(content, body_top(content), index);
+        let rect = row_rect_in(content, body_top(content), &kinds, index);
         match row {
             SystemRow::Appearance => paint_appearance_row(cx, theme, ui, content, rect),
             SystemRow::AutoUpdate => {
@@ -203,7 +237,7 @@ pub(super) fn paint_system_tab(
             cx,
             theme,
             content,
-            body_top(content) + rows.len() as f32 * ROW_HEIGHT,
+            body_top(content) + rows_block_height(&kinds),
             &format!(
                 "{}: v{} — {}",
                 t_settings(ui, "settings.system.currentVersion"),
@@ -246,8 +280,17 @@ fn paint_appearance_row(
             ThemeMode::Light => (Icon::Sun, t_settings(ui, "settings.system.appearanceLight")),
             ThemeMode::Dark => (Icon::Moon, t_settings(ui, "settings.system.appearanceDark")),
         };
-        let label_w = cx.backend.measure_text(label, 12.0);
-        let group_w = SEGMENT_ICON + 6.0 + label_w;
+        // The segment is fixed-width and sits flush against the content
+        // column's right edge, so a long localisation ("Тёмное") centred
+        // on its untrimmed width hangs off the modal. Fit it first.
+        let label = fit_text(
+            cx,
+            label,
+            SEGMENT_W - SEGMENT_ICON - SEGMENT_ICON_GAP - SEGMENT_PAD_X * 2.0,
+            12.0,
+        );
+        let label_w = measure_settings_text(cx, &label, 12.0);
+        let group_w = SEGMENT_ICON + SEGMENT_ICON_GAP + label_w;
         let icon_x = seg.origin.x + (SEGMENT_W - group_w) / 2.0;
         draw_icon(
             cx.backend,
@@ -258,8 +301,8 @@ fn paint_appearance_row(
             1.6,
         );
         let layout = TextLayout::single_run(
-            label,
-            "system-ui",
+            &label,
+            SETTINGS_FONT_FAMILY,
             12.0,
             (color).to_jian(),
             Point2D::new(0.0, 0.0),
@@ -267,7 +310,7 @@ fn paint_appearance_row(
         cx.backend.draw_text(
             &layout,
             Point2D::new(
-                icon_x + SEGMENT_ICON + 6.0,
+                icon_x + SEGMENT_ICON + SEGMENT_ICON_GAP,
                 seg.origin.y + SEGMENT_H / 2.0 + 4.0,
             ),
         );
@@ -285,12 +328,11 @@ fn paint_auto_update_row(
     row: Rect,
     enabled: bool,
 ) {
-    paint_row_label(
+    paint_row_label_above_status(
         cx,
         theme,
         row,
         t_settings(ui, "agents.autoUpdate"),
-        None,
         SETTINGS_SWITCH_W + 16.0,
     );
     let (color, status_key, _) = status_view(theme, &ui.update_status);
@@ -300,9 +342,6 @@ fn paint_auto_update_row(
         }
         _ => t_settings(ui, status_key).to_string(),
     };
-    // `paint_row_label`'s description slot has no room for the dot and
-    // would drop the status colour, so the line goes through the shared
-    // status-line painter instead.
     paint_row_status_line(cx, row, &status_text, color);
     paint_settings_switch(
         cx,

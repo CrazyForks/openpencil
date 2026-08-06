@@ -1,4 +1,5 @@
 use crate::widgets::settings_form::ellipsize;
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Point2D, Rect};
 
@@ -27,7 +28,7 @@ pub(super) fn fit_header_copy(
     let title = ellipsize(cx, title, title_max_w, 15.0);
     let action_max_w = HEADER_ACTION_W - HEADER_ACTION_PAD_X * 2.0;
     let action = ellipsize(cx, action, action_max_w, 12.0);
-    let action_w = cx.backend.measure_text(&action, 12.0);
+    let action_w = text_metrics::measure_chrome(cx.backend, &action, 12.0);
     FittedHeaderCopy {
         title,
         action,

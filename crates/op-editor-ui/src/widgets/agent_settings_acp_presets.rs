@@ -11,6 +11,7 @@ use crate::theme::Theme;
 use crate::widgets::agent_settings_i18n::t as t_settings;
 use crate::widgets::button::paint_ghost_button_feedback;
 use crate::widgets::settings_form::{draw_text, ellipsize};
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Point2D, Rect, TextLayout};
 use op_editor_core::acp_agent_presets::{AcpAgentPreset, AcpPresetAvailability};
@@ -169,7 +170,7 @@ fn paint_row(
         ADD_BTN_W - 8.0,
         11.0,
     );
-    let label_w = cx.backend.measure_text(&label, 11.0);
+    let label_w = text_metrics::measure_chrome(cx.backend, &label, 11.0);
     draw_text(
         cx,
         &label,
@@ -196,7 +197,7 @@ fn paint_monogram(
     };
     cx.backend.fill_round_rect(badge, 7.0, theme.card);
     let monogram = super::agent_settings_acp::agent_monogram(display_name);
-    let monogram_w = cx.backend.measure_text(&monogram, 13.0);
+    let monogram_w = text_metrics::measure_chrome_weighted(cx.backend, &monogram, 13.0, 600);
     let color = if missing {
         theme.muted_foreground
     } else {

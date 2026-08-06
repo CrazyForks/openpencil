@@ -4,6 +4,7 @@ use crate::theme::Theme;
 use crate::widgets::agent_settings_caret::{paint_settings_input_view, settings_input_text};
 use crate::widgets::button::paint_button_feedback_wash;
 use crate::widgets::icons::{draw_icon, Icon};
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Point2D, Rect, TextLayout};
 use op_editor_core::agent_settings::{
@@ -232,7 +233,7 @@ pub(super) fn paint_profile_test_button(
     crate::widgets::button::paint_ghost_button_feedback(cx.backend, theme, btn, hovered, pressed);
     cx.backend.stroke_round_rect(btn, 6.0, theme.border, 1.0);
     let label = crate::widgets::agent_settings_i18n::t(ui, "settings.images.test");
-    let label_w = cx.backend.measure_text(label, 11.0);
+    let label_w = text_metrics::measure_chrome(cx.backend, label, 11.0);
     let layout = TextLayout::single_run(
         label,
         "system-ui",
@@ -385,11 +386,13 @@ pub(super) fn paint_provider_menu(
 }
 
 pub(super) fn ellipsize(cx: &mut PaintCx<'_>, value: &str, max_w: f32, size: f32) -> String {
-    if cx.backend.measure_text(value, size) <= max_w {
+    if text_metrics::measure_chrome(cx.backend, value, size) <= max_w {
         return value.to_string();
     }
     let mut out = value.to_string();
-    while !out.is_empty() && cx.backend.measure_text(&format!("{out}..."), size) > max_w {
+    while !out.is_empty()
+        && text_metrics::measure_chrome(cx.backend, &format!("{out}..."), size) > max_w
+    {
         out.pop();
     }
     format!("{out}...")

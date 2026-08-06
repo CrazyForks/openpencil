@@ -16,6 +16,7 @@ use crate::widgets::agent_settings_i18n::t as t_settings;
 use crate::widgets::button::{paint_ghost_button_feedback, tokens_from_theme};
 use crate::widgets::icons::{draw_icon, Icon};
 use crate::widgets::settings_form::{self, draw_text, ellipsize, paint_action};
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Point2D, Rect, TextLayout};
 use jian_widgets::components::button::{Button, ButtonVariant};
@@ -323,7 +324,7 @@ fn paint_compact_acp_card(
 
     let text_x = card.origin.x + 60.0;
     let name = ellipsize(cx, &agent.display_name, 190.0, 13.0);
-    let name_w = cx.backend.measure_text(&name, 13.0);
+    let name_w = text_metrics::measure_chrome(cx.backend, &name, 13.0);
     draw_text(
         cx,
         &name,
@@ -418,7 +419,7 @@ fn paint_avatar(cx: &mut PaintCx<'_>, theme: &Theme, agent: &AcpAgentConfig, car
     };
     cx.backend.fill_round_rect(avatar, 8.0, theme.card);
     let monogram = agent_monogram(&agent.display_name);
-    let monogram_w = cx.backend.measure_text(&monogram, 15.0);
+    let monogram_w = text_metrics::measure_chrome_weighted(cx.backend, &monogram, 15.0, 600);
     let layout = TextLayout::single_run(
         &monogram,
         "system-ui",
@@ -498,7 +499,7 @@ fn paint_connection_button(
     } else {
         "Configure"
     };
-    let lw = cx.backend.measure_text(label, 12.0);
+    let lw = text_metrics::measure_chrome(cx.backend, label, 12.0);
     draw_text(
         cx,
         label,
@@ -597,7 +598,7 @@ fn paint_connection_type_badge(
         AcpConnectionType::Local => Icon::Terminal,
         AcpConnectionType::Remote => Icon::Globe,
     };
-    let tw = cx.backend.measure_text(label, 11.0);
+    let tw = text_metrics::measure_chrome(cx.backend, label, 11.0);
     let group_w = 16.0 + 6.0 + tw;
     let group_x = r.origin.x + (r.size.x - group_w) / 2.0;
     draw_icon(

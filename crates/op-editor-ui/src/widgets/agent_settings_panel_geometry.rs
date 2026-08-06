@@ -133,16 +133,16 @@ pub(super) fn agents_body_top(content: Rect) -> f32 {
     content.origin.y + AGENTS_HERO_HEIGHT
 }
 
-/// Subtitle lines under the hero title on tabs that did not need their
-/// own bodies restructured (Images / Fonts / Account).
-pub(super) const SECONDARY_HERO_LINES: usize = 1;
+/// Images / Fonts / Account are settings inventories, so the panel gives
+/// them the compact heading rather than a hero — with one muted line.
+pub(super) const SECONDARY_HEADING_HAS_DESC: bool = true;
 
 /// Body rect handed to those tabs: the content viewport pushed down past
-/// a hero the panel paints for them. Keeping the shift here means their
-/// own geometry stays written against "the top of my body", so adding
-/// the hero needed no edits inside them.
+/// the heading the panel paints for them. Keeping the shift here means
+/// their own geometry stays written against "the top of my body", so
+/// adding the heading needed no edits inside them.
 pub(super) fn hero_body_rect(content: Rect) -> Rect {
-    let dy = crate::widgets::agent_settings_rows::tab_hero_height(SECONDARY_HERO_LINES);
+    let dy = crate::widgets::agent_settings_rows::tab_heading_height(SECONDARY_HEADING_HAS_DESC);
     Rect {
         origin: Point2D::new(content.origin.x, content.origin.y + dy),
         size: Point2D::new(content.size.x, (content.size.y - dy).max(0.0)),

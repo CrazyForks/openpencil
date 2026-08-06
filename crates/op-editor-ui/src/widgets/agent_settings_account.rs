@@ -9,6 +9,7 @@ use crate::theme::Theme;
 use crate::widgets::agent_settings_i18n::t as t_settings;
 use crate::widgets::button::tokens_from_theme;
 use crate::widgets::icons::{draw_icon, Icon};
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout};
 use jian_widgets::components::button::{Button, ButtonVariant};
@@ -158,7 +159,7 @@ fn paint_signed_in(
     let avatar_rect = avatar_rect(card);
     cx.backend.fill_oval(avatar_rect, theme.primary);
     let initial = ui.account.initial().to_string();
-    let initial_w = cx.backend.measure_text(&initial, 15.0);
+    let initial_w = text_metrics::measure_chrome(cx.backend, &initial, 15.0);
     let initial_label = TextLayout::single_run(
         &initial,
         "system-ui",

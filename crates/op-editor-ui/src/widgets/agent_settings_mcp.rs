@@ -12,9 +12,10 @@ use crate::theme::Theme;
 use crate::widgets::agent_settings_caret::paint_settings_input_view;
 use crate::widgets::agent_settings_i18n::t as t_settings;
 use crate::widgets::agent_settings_rows::{
-    paint_footnote, paint_row_hairline, paint_row_label, paint_row_status_line, paint_tab_hero,
-    row_control_rect, row_rect, tab_hero_height, FOOTNOTE_H, ROW_HEIGHT, SECTION_GAP,
-    SECTION_HEADER_H, SECTION_TITLE_FONT,
+    fit_text, measure_settings_text, paint_footnote, paint_row_hairline, paint_row_label,
+    paint_row_label_above_status, paint_row_status_line, paint_tab_hero, row_control_rect,
+    row_height, row_rect, tab_hero_height, RowLines, FOOTNOTE_H, ROW_HEIGHT, SECTION_GAP,
+    SECTION_HEADER_H, SECTION_TITLE_FONT, SETTINGS_FONT_FAMILY,
 };
 use crate::widgets::agent_settings_switch::{
     paint_settings_switch, SETTINGS_SWITCH_H, SETTINGS_SWITCH_W,
@@ -49,12 +50,19 @@ fn body_top(content: Rect) -> f32 {
     content.origin.y + tab_hero_height(HERO_LINES)
 }
 
+/// The server row carries a status line under its label, so it takes the
+/// two-line box; the CLI toggles below are label-only.
+const SERVER_ROW_LINES: RowLines = RowLines::Two;
+
 pub(super) fn server_row_rect(content: Rect) -> Rect {
-    row_rect(content, body_top(content), 0)
+    Rect {
+        origin: Point2D::new(content.origin.x, body_top(content)),
+        size: Point2D::new(content.size.x, row_height(SERVER_ROW_LINES)),
+    }
 }
 
 pub(super) fn integrations_top(content: Rect) -> f32 {
-    body_top(content) + ROW_HEIGHT + SECTION_GAP
+    body_top(content) + row_height(SERVER_ROW_LINES) + SECTION_GAP
 }
 
 pub(super) fn cli_row_rect(content: Rect, index: usize) -> Rect {
@@ -63,6 +71,17 @@ pub(super) fn cli_row_rect(content: Rect, index: usize) -> Rect {
 
 fn integrations_block_h() -> f32 {
     SECTION_HEADER_H + McpCli::ALL.len() as f32 * ROW_HEIGHT + FOOTNOTE_H
+}
+
+/// Row boxes for this tab, paired with their line count — walked by the
+/// traversal layout test.
+#[cfg(test)]
+pub(super) fn row_boxes(content: Rect) -> Vec<(Rect, RowLines)> {
+    let mut boxes = vec![(server_row_rect(content), SERVER_ROW_LINES)];
+    if CLI_INTEGRATIONS_AVAILABLE {
+        boxes.extend((0..McpCli::ALL.len()).map(|i| (cli_row_rect(content, i), RowLines::One)));
+    }
+    boxes
 }
 
 /// The endpoint JSON only exists once a server is listening (or the embed
@@ -75,7 +94,7 @@ fn has_client_config(settings: &AgentSettings) -> bool {
 /// whether a server is listening (`has_client_config`), but its position
 /// does not, so callers gate and place independently.
 pub(super) fn custom_config_top(content: Rect) -> f32 {
-    let mut y = body_top(content) + ROW_HEIGHT;
+    let mut y = body_top(content) + row_height(SERVER_ROW_LINES);
     if CLI_INTEGRATIONS_AVAILABLE {
         y += SECTION_GAP + integrations_block_h();
     }
@@ -83,7 +102,7 @@ pub(super) fn custom_config_top(content: Rect) -> f32 {
 }
 
 pub(super) fn content_height(settings: &AgentSettings) -> f32 {
-    let mut h = tab_hero_height(HERO_LINES) + ROW_HEIGHT;
+    let mut h = tab_hero_height(HERO_LINES) + row_height(SERVER_ROW_LINES);
     if CLI_INTEGRATIONS_AVAILABLE {
         h += SECTION_GAP + integrations_block_h();
     }
@@ -236,7 +255,7 @@ fn paint_section_header(
     );
     let layout = TextLayout::single_run(
         title,
-        "system-ui",
+        SETTINGS_FONT_FAMILY,
         SECTION_TITLE_FONT,
         (theme.foreground).to_jian(),
         Point2D::new(0.0, 0.0),
@@ -265,12 +284,11 @@ fn paint_server_row(
     } else {
         t_settings(ui, "settings.mcp.stopped")
     };
-    paint_row_label(
+    paint_row_label_above_status(
         cx,
         theme,
         row,
         t_settings(ui, "settings.mcp.server"),
-        None,
         SERVER_CONTROLS_W,
     );
     // The status line carries a leading dot, matching the auto-update row
@@ -291,12 +309,13 @@ fn paint_server_row(
 
     let btn = server_button_rect(content);
     let port_label_text = t_settings(ui, "settings.mcp.port");
-    let port_label_w = cx.backend.measure_text(port_label_text, 11.0);
+    let port_label_text = fit_text(cx, port_label_text, 80.0, 11.0);
+    let port_label_w = measure_settings_text(cx, &port_label_text, 11.0);
     let port_field = port_field_rect(content);
     let mid_y = row.origin.y + ROW_HEIGHT / 2.0;
     let port_label = TextLayout::single_run(
-        port_label_text,
-        "system-ui",
+        &port_label_text,
+        SETTINGS_FONT_FAMILY,
         11.0,
         (theme.muted_foreground).to_jian(),
         Point2D::new(0.0, 0.0),
@@ -324,10 +343,10 @@ fn paint_server_row(
     };
     cx.backend
         .stroke_round_rect(port_field, 6.0, border_color, border_w);
-    let port_w = cx.backend.measure_text(&port_str, 12.0);
+    let port_w = measure_settings_text(cx, &port_str, 12.0);
     let port_layout = TextLayout::single_run(
         &port_str,
-        "system-ui",
+        SETTINGS_FONT_FAMILY,
         12.0,
         (if port_editable {
             theme.foreground
@@ -385,10 +404,11 @@ fn paint_server_row(
     } else {
         t_settings(ui, "settings.mcp.start")
     };
-    let btn_label_w = cx.backend.measure_text(btn_label, 12.0);
+    let btn_label = fit_text(cx, btn_label, BTN_W - 8.0, 12.0);
+    let btn_label_w = measure_settings_text(cx, &btn_label, 12.0);
     let lay = TextLayout::single_run(
-        btn_label,
-        "system-ui",
+        &btn_label,
+        SETTINGS_FONT_FAMILY,
         12.0,
         (btn_fg).to_jian(),
         Point2D::new(0.0, 0.0),
@@ -441,8 +461,13 @@ fn paint_custom_config(
     } else {
         (Icon::Copy, theme.foreground)
     };
-    let copy_label = t_settings(ui, "settings.mcp.copyConfig");
-    let copy_label_w = cx.backend.measure_text(copy_label, 12.0);
+    let copy_label = fit_text(
+        cx,
+        t_settings(ui, "settings.mcp.copyConfig"),
+        COPY_BTN_W - COPY_BTN_ICON - 8.0 - 16.0,
+        12.0,
+    );
+    let copy_label_w = measure_settings_text(cx, &copy_label, 12.0);
     let group_w = COPY_BTN_ICON + 8.0 + copy_label_w;
     let icon_x = copy.origin.x + (COPY_BTN_W - group_w) / 2.0;
     draw_icon(
@@ -454,8 +479,8 @@ fn paint_custom_config(
         1.5,
     );
     let copy_layout = TextLayout::single_run(
-        copy_label,
-        "system-ui",
+        &copy_label,
+        SETTINGS_FONT_FAMILY,
         12.0,
         (theme.foreground).to_jian(),
         Point2D::new(0.0, 0.0),
@@ -469,14 +494,15 @@ fn paint_custom_config(
     );
 
     let body_y = top + SECTION_HEADER_H;
-    let desc = crate::util::ellipsize_to_width(
+    let desc = fit_text(
+        cx,
         t_settings(ui, "settings.mcp.customConfigDesc"),
         content.size.x,
-        |s| cx.backend.measure_text(s, 12.0),
+        12.0,
     );
     let desc_layout = TextLayout::single_run(
         &desc,
-        "system-ui",
+        SETTINGS_FONT_FAMILY,
         12.0,
         (theme.muted_foreground).to_jian(),
         Point2D::new(0.0, 0.0),
@@ -485,8 +511,10 @@ fn paint_custom_config(
         .draw_text(&desc_layout, Point2D::new(content.origin.x, body_y + 14.0));
 
     let config = settings.mcp_client_config_display_text();
+    // Drawn as a monospace run, so it must be fitted against monospace —
+    // the family-blind default would under-report it just like the hero.
     let config = crate::util::ellipsize_to_width(&config, content.size.x, |s| {
-        cx.backend.measure_text(s, 11.0)
+        cx.backend.measure_text_family(s, 11.0, "monospace")
     });
     let config_lay = TextLayout::single_run(
         &config,

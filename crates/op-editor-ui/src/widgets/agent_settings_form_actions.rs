@@ -3,6 +3,7 @@
 use crate::theme::Theme;
 use crate::widgets::agent_settings_i18n::t as t_settings;
 use crate::widgets::button::{paint_ghost_button_feedback, tokens_from_theme};
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout};
 use jian_widgets::components::button::{Button, ButtonVariant};
@@ -97,7 +98,7 @@ fn paint_text_button(
         (_, true) => theme.foreground,
         _ => theme.muted_foreground,
     };
-    let tw = cx.backend.measure_text(label, 11.0);
+    let tw = text_metrics::measure_chrome(cx.backend, label, 11.0);
     draw_text(
         cx,
         label,

@@ -2,6 +2,7 @@
 //! the "already configured" and "not installed" states.
 
 use super::*;
+use crate::widgets::text_metrics;
 use op_editor_core::acp_agent_presets::ACP_AGENT_PRESETS;
 use op_editor_core::agent_settings::AcpAgentConnectPhase;
 
@@ -224,7 +225,7 @@ fn every_quick_add_row_paints_inside_the_content_width_in_every_locale() {
              update the size sequence alongside the layout"
         );
         for ((text, point), size) in runs.iter().zip(sizes) {
-            let painted_w = backend.measure_text(text, size);
+            let painted_w = text_metrics::measure_chrome(&mut backend, text, size);
             assert!(
                 point.x >= content.origin.x - 0.01
                     && point.x + painted_w <= content.origin.x + content.size.x + 0.01,

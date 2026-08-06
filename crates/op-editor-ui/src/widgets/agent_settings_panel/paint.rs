@@ -5,6 +5,7 @@
 //! `agent_settings_panel.rs` to keep every file under the 800-line cap.
 
 use super::*;
+use crate::widgets::text_metrics;
 
 pub(super) fn agents_content_height(settings: &AgentSettings, mode: AgentSettingsPanelMode) -> f32 {
     let builtin = AGENTS_HERO_HEIGHT + agent_settings_builtin::content_height(settings);
@@ -115,7 +116,8 @@ fn paint_panel(
     paint_close(cx, theme, settings, _ui, panel);
 }
 
-/// Hero for the tabs the panel paints one on behalf of. `prefix` names
+/// Compact heading for the tabs the panel paints one on behalf of.
+/// `prefix` names
 /// the i18n family (`settings.images` → `settings.images.heroTitle` +
 /// `.heroSubtitle`), so the key pair can't drift from the tab it belongs
 /// to.
@@ -250,7 +252,7 @@ fn paint_section_header_inset(
     );
     cx.backend.draw_text(&layout, Point2D::new(x, y + 18.0));
     if !action.is_empty() {
-        let action_w = cx.backend.measure_text(action, 12.0);
+        let action_w = text_metrics::measure_chrome(cx.backend, action, 12.0);
         let act = TextLayout::single_run(
             action,
             "system-ui",

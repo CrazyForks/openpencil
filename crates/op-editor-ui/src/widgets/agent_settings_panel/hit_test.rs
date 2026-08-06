@@ -5,10 +5,10 @@
 
 use super::paint::agents_content_height;
 use super::*;
-use crate::widgets::agent_settings_panel_geometry::SECONDARY_HERO_LINES;
+use crate::widgets::agent_settings_panel_geometry::SECONDARY_HEADING_HAS_DESC;
 
 fn secondary_hero_height() -> f32 {
-    crate::widgets::agent_settings_rows::tab_hero_height(SECONDARY_HERO_LINES)
+    crate::widgets::agent_settings_rows::tab_heading_height(SECONDARY_HEADING_HAS_DESC)
 }
 
 impl AgentSettingsPanel<'_> {

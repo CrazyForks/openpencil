@@ -4,6 +4,7 @@
 //! 800-line cap.
 
 use super::*;
+use crate::widgets::text_metrics;
 
 fn acp_form_remote_half_point(content: Rect, section_y: f32) -> Point2D {
     let card_y = section_y + 28.0 + 28.0;
@@ -133,7 +134,7 @@ fn long_german_and_spanish_acp_subtitles_are_ellipsized_within_content_width() {
             .find(|(_, point)| (point.y - subtitle_baseline).abs() < 0.01)
             .cloned()
             .expect("ACP subtitle should be painted on its fixed-height row");
-        let painted_w = backend.measure_text(&subtitle, 12.0);
+        let painted_w = text_metrics::measure_chrome(&mut backend, &subtitle, 12.0);
         assert!(
             subtitle.ends_with("..."),
             "{locale:?} ACP subtitle should visibly signal truncation: {subtitle}"
@@ -183,14 +184,15 @@ fn localized_acp_header_and_empty_copy_stay_inside_content_width() {
             .cloned()
             .collect();
         for ((text, point), size) in rows.iter().zip([15.0, 12.0, 12.0, 13.0]) {
-            let painted_w = backend.measure_text(text, size);
+            let painted_w = text_metrics::measure_chrome(&mut backend, text, size);
             assert!(
                 point.x >= content.origin.x - 0.01
                     && point.x + painted_w <= content.origin.x + content.size.x + 0.01,
                 "{locale:?} text overflows ACP content: {text:?}"
             );
         }
-        let title_right = rows[0].1.x + backend.measure_text(&rows[0].0, 15.0);
+        let title_right =
+            rows[0].1.x + text_metrics::measure_chrome(&mut backend, &rows[0].0, 15.0);
         assert!(
             title_right + 12.0 <= rows[1].1.x + 0.01,
             "{locale:?} ACP section title overlaps its add action"

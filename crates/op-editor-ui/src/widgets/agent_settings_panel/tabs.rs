@@ -4,6 +4,7 @@
 //! localized label; the active pill is filled, hover washes the rest.
 
 use super::*;
+use crate::widgets::agent_settings_rows::{fit_text, measure_settings_text, SETTINGS_FONT_FAMILY};
 use jian_widgets::centered_text_baseline_y;
 
 const TAB_LABEL_FONT: f32 = 13.0;
@@ -51,11 +52,13 @@ pub(super) fn paint_tab_strip(
         // a short label ("MCP") and a long one stay optically balanced in
         // pills of identical width.
         let label_budget = pill.size.x - 20.0 - TAB_ICON_SIZE - TAB_ICON_GAP;
-        let label =
-            crate::util::ellipsize_to_width(tab_i18n_label(ui, *tab), label_budget.max(0.0), |s| {
-                cx.backend.measure_text(s, TAB_LABEL_FONT)
-            });
-        let label_w = cx.backend.measure_text(&label, TAB_LABEL_FONT);
+        let label = fit_text(
+            cx,
+            tab_i18n_label(ui, *tab),
+            label_budget.max(0.0),
+            TAB_LABEL_FONT,
+        );
+        let label_w = measure_settings_text(cx, &label, TAB_LABEL_FONT);
         let group_w = TAB_ICON_SIZE + TAB_ICON_GAP + label_w;
         let icon_x = pill.origin.x + (pill.size.x - group_w) / 2.0;
         draw_icon(
@@ -68,7 +71,7 @@ pub(super) fn paint_tab_strip(
         );
         let text = TextLayout::single_run(
             &label,
-            "system-ui",
+            SETTINGS_FONT_FAMILY,
             TAB_LABEL_FONT,
             (color).to_jian(),
             Point2D::new(0.0, 0.0),

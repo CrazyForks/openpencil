@@ -4,12 +4,23 @@
 //! 800-line cap.
 
 use super::*;
-use crate::widgets::agent_settings_rows::{tab_hero_height, ROW_HEIGHT};
+use crate::widgets::agent_settings_rows::{row_height, tab_heading_height, RowLines};
 
-/// Centre-y of System row `index`, below the tab's hero block.
+/// Row order and shape on the System tab: Appearance (one line),
+/// Auto-update (two), Experimental (two), Pencil cursor (one).
+const SYSTEM_ROWS: [RowLines; 4] = [RowLines::One, RowLines::Two, RowLines::Two, RowLines::One];
+
+/// Centre-y of System row `index`, below the tab's compact heading.
 fn system_row_mid_y(rect: Rect, index: usize) -> f32 {
     let content = crate::widgets::agent_settings_panel::content_viewport(rect);
-    content.origin.y + tab_hero_height(1) + index as f32 * ROW_HEIGHT + ROW_HEIGHT / 2.0
+    let top: f32 = content.origin.y
+        + tab_heading_height(true)
+        + SYSTEM_ROWS[..index]
+            .iter()
+            .copied()
+            .map(row_height)
+            .sum::<f32>();
+    top + row_height(SYSTEM_ROWS[index]) / 2.0
 }
 
 #[test]
@@ -39,8 +50,11 @@ fn system_tab_reserves_space_for_update_status() {
 
     assert_eq!(
         panel.content_total_height(),
-        tab_hero_height(1) + 4.0 * ROW_HEIGHT + 32.0 + 24.0,
-        "System tab = hero + Appearance/Auto-update/Experimental/Pencil-cursor rows \
+        tab_heading_height(true)
+            + SYSTEM_ROWS.iter().copied().map(row_height).sum::<f32>()
+            + 32.0
+            + 24.0,
+        "System tab = heading + Appearance/Auto-update/Experimental/Pencil-cursor rows \
          + version footnote + bottom pad"
     );
 }

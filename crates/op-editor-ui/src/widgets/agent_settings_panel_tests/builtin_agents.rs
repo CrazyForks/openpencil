@@ -4,6 +4,7 @@
 //! 800-line cap.
 
 use super::*;
+use crate::widgets::text_metrics;
 
 #[test]
 fn full_painted_add_provider_action_rect_is_clickable_from_its_left_edge() {
@@ -57,7 +58,7 @@ fn long_spanish_and_russian_builtin_subtitles_fit_the_shared_single_line_row() {
             .find(|(_, point)| (point.y - subtitle_baseline).abs() < 0.01)
             .cloned()
             .expect("built-in subtitle should be painted on its fixed-height row");
-        let painted_w = backend.measure_text(&subtitle, 12.0);
+        let painted_w = text_metrics::measure_chrome(&mut backend, &subtitle, 12.0);
         assert!(
             subtitle.ends_with("..."),
             "{locale:?} built-in subtitle should visibly signal truncation"

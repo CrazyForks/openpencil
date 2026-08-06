@@ -58,8 +58,14 @@ pub(super) const HEADER_HEIGHT: f32 = TAB_BAR_TOP + TAB_HEIGHT + 32.0;
 /// the scroll viewport (`content_rect` height) instead of hardcoding it.
 pub const CONTENT_VERTICAL_INSET: f32 = HEADER_HEIGHT + CONTENT_BOTTOM_PAD;
 pub(super) const SECTION_GAP: f32 = 28.0;
-pub(super) const CARD_HEIGHT: f32 = 66.0;
-pub(super) const CARD_GAP: f32 = 10.0;
+/// Provider rows carry a name over a status subtitle, so they take the
+/// modal's two-line row box — the same one the MCP server row and the
+/// System auto-update row use. Hairline-separated list rows sit flush
+/// against each other: the separator IS the gap.
+pub(super) const CARD_HEIGHT: f32 = crate::widgets::agent_settings_rows::row_height(
+    crate::widgets::agent_settings_rows::RowLines::Two,
+);
+pub(super) const CARD_GAP: f32 = 0.0;
 pub(super) const CONNECT_BTN_W: f32 = 84.0;
 pub(super) const CONNECT_BTN_H: f32 = 30.0;
 pub(super) const AVATAR_SIZE: f32 = 34.0;
@@ -78,7 +84,7 @@ pub(super) const STATUS_PILL_FONT: f32 = 12.0;
 /// first section header. Public so host tests can anchor to it; it must
 /// stay equal to `agent_settings_rows::tab_hero_height(2)`, which a unit
 /// test asserts.
-pub const AGENTS_HERO_HEIGHT: f32 = 112.0;
+pub const AGENTS_HERO_HEIGHT: f32 = 96.0;
 
 /// Scrollable body viewport inside `panel` — everything below the top
 /// tab strip, inset by the modal's content padding. Exported so hosts and
@@ -94,6 +100,23 @@ pub fn content_viewport(panel: Rect) -> Rect {
 /// body, so this is the rect they — and anything testing them — must use.
 pub fn secondary_tab_body(panel: Rect) -> Rect {
     hero_body_rect(content_rect(panel))
+}
+
+/// Agents tab: the external-provider row boxes, paired with their line
+/// count — walked by the traversal layout audit.
+#[cfg(test)]
+pub(super) fn provider_row_boxes(
+    panel: Rect,
+) -> Vec<(Rect, crate::widgets::agent_settings_rows::RowLines)> {
+    let settings = AgentSettings::default();
+    (0..AgentProvider::ALL.len())
+        .map(|i| {
+            (
+                agent_card_rect_in(panel, i, &settings),
+                crate::widgets::agent_settings_rows::RowLines::Two,
+            )
+        })
+        .collect()
 }
 
 /// MCP tab: the server Start/Stop button.

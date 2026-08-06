@@ -4,6 +4,7 @@
 //! 800-line cap; all rect maths lives on the spine.
 
 use super::*;
+use crate::widgets::text_metrics;
 
 pub(in crate::widgets) fn paint_images_tab(
     cx: &mut PaintCx<'_>,
@@ -25,7 +26,7 @@ pub(in crate::widgets) fn paint_images_tab(
         &title,
         Point2D::new(content.origin.x, content.origin.y + 20.0),
     );
-    let title_w = cx.backend.measure_text(title_str, 15.0);
+    let title_w = text_metrics::measure_chrome(cx.backend, title_str, 15.0);
     let ready = settings.images_search_ready;
     let dot_color = if ready {
         theme.status_success
@@ -137,7 +138,7 @@ pub(in crate::widgets) fn paint_images_tab(
         );
         cx.backend
             .draw_text(&link, Point2D::new(content.origin.x, y + 22.0));
-        let link_w = cx.backend.measure_text(link_text, 12.0);
+        let link_w = text_metrics::measure_chrome(cx.backend, link_text, 12.0);
         // Underline the link + arrow on hover (link affordance).
         if settings.hover_image_search_register_link {
             let underline = Rect::xywh(content.origin.x, y + 26.0, link_w + 20.0, 1.0);
@@ -166,7 +167,7 @@ pub(in crate::widgets) fn paint_images_tab(
         cx.backend
             .stroke_round_rect(test_btn, 6.0, theme.border, 1.0);
         let test_label = t_settings(ui, "settings.images.test");
-        let test_w = cx.backend.measure_text(test_label, 13.0);
+        let test_w = text_metrics::measure_chrome(cx.backend, test_label, 13.0);
         let test_lay = TextLayout::single_run(
             test_label,
             "system-ui",
@@ -212,10 +213,19 @@ pub(in crate::widgets) fn paint_images_tab(
     );
     cx.backend
         .stroke_round_rect(add_btn, 6.0, theme.border, 1.0);
-    let add_label = t_settings(ui, "settings.images.add");
-    let add_w = cx.backend.measure_text(add_label, 13.0);
+    // Fit the label to the fixed-width button before centring it. The
+    // button sits flush against the content column's right edge, so a long
+    // translation ("+ Ajouter") centred on its untrimmed width hangs off
+    // both sides — and the right-hand overhang leaves the modal.
+    let add_label = ellipsize(
+        cx,
+        t_settings(ui, "settings.images.add"),
+        ADD_BTN_W - 8.0,
+        13.0,
+    );
+    let add_w = text_metrics::measure_chrome(cx.backend, &add_label, 13.0);
     let add_lay = TextLayout::single_run(
-        add_label,
+        &add_label,
         "system-ui",
         13.0,
         (theme.foreground).to_jian(),
@@ -231,7 +241,7 @@ pub(in crate::widgets) fn paint_images_tab(
 
     if settings.image_gen_profiles.is_empty() {
         let hint = t_settings(ui, "settings.images.empty");
-        let hint_w = cx.backend.measure_text(hint, 13.0);
+        let hint_w = text_metrics::measure_chrome(cx.backend, hint, 13.0);
         let hint_lay = TextLayout::single_run(
             hint,
             "system-ui",
@@ -361,7 +371,7 @@ fn paint_profile_row(
     );
 
     let provider = profile.provider.label();
-    let provider_w = cx.backend.measure_text(provider, 10.0);
+    let provider_w = text_metrics::measure_chrome(cx.backend, provider, 10.0);
     let provider_lay = TextLayout::single_run(
         provider,
         "system-ui",
