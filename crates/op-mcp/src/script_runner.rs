@@ -90,7 +90,15 @@ fn truncate_duplicate_script(script: &str) -> Option<String> {
             && (trimmed.starts_with("const ")
                 || trimmed.starts_with("let ")
                 || trimmed.starts_with("var ")))
-        .then(|| &trimmed[..trimmed.len().min(60)])
+        .then(|| {
+            // Byte 60 may fall inside a multi-byte char (CJK node names
+            // are routine in generated scripts); back up to a boundary.
+            let mut end = trimmed.len().min(60);
+            while !trimmed.is_char_boundary(end) {
+                end -= 1;
+            }
+            &trimmed[..end]
+        })
     })?;
     let first = script.find(needle)?;
     let after = first + needle.len();

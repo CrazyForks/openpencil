@@ -319,3 +319,15 @@ fn dotted_keys_and_a_missing_brace_repair_together() {
     assert_eq!(program.lines().count(), 1, "{program}");
     assert!(program.contains(r#""cornerRadius":24"#), "{program}");
 }
+
+/// The duplicate-echo needle is a byte slice of the first declaration line;
+/// byte 60 landing inside a multi-byte char (CJK node names are routine)
+/// must clamp to a boundary instead of panicking. Regression: glm-5.2
+/// emitted exactly this shape and the whole generation process aborted.
+#[test]
+fn a_cjk_declaration_line_does_not_panic_the_duplicate_scan() {
+    let script = r##"const sec = I(null, {type:"frame", name:"折射规律（一）：三线共面", width:"fill_container", height:"fit_content", layout:"vertical", padding:[0,0,0,0], fill:[{type:"solid",color:"#FFFBF0"}]});"##;
+
+    let program = run_script_to_program(script).expect("a clean script still runs");
+    assert!(program.contains("折射规律"), "{program}");
+}
