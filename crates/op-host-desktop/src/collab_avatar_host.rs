@@ -28,13 +28,62 @@ pub(crate) struct CollabAvatarHost {
 
 #[cfg(test)]
 static AVATAR_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-/// Serialize desktop tests that rotate the process-global avatar generation.
 #[cfg(test)]
-pub(crate) fn lock_avatar_test_registry() -> std::sync::MutexGuard<'static, ()> {
-    AVATAR_TEST_LOCK
+static AVATAR_TEST_OWNER: std::sync::Mutex<Option<std::thread::ThreadId>> =
+    std::sync::Mutex::new(None);
+
+/// Guard over the process-global avatar registry, reentrant per thread.
+#[cfg(test)]
+pub(crate) struct AvatarTestGuard {
+    /// `None` when this thread already held the lock further up its stack.
+    inner: Option<std::sync::MutexGuard<'static, ()>>,
+}
+
+#[cfg(test)]
+impl Drop for AvatarTestGuard {
+    fn drop(&mut self) {
+        if self.inner.is_some() {
+            // Cleared before the mutex is released, so the next owner never
+            // sees this thread's id.
+            *AVATAR_TEST_OWNER
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = None;
+        }
+    }
+}
+
+/// Serialize everything that touches the process-global avatar registry.
+///
+/// Rotating the avatar generation **evicts the previous epoch's cached
+/// bytes** — verified directly: register an avatar, complete it, rotate, and
+/// `cached_collab_avatar_bytes` goes from `Some` to `None`. That is why this
+/// exists, and why it is taken by [`crate::collab_runtime`]'s
+/// `advance_generation` rather than only by the tests that call it: the
+/// rotation happens in *production* code, so no amount of discipline at test
+/// call sites can cover it. Guarding the writer covers every collab test
+/// there is and every one anybody writes later.
+///
+/// Reentrant per thread because several collab tests take this guard and then
+/// drive a runtime that rotates — a plain `Mutex` would deadlock them. A
+/// nested acquisition on the owning thread is a no-op guard; the outermost
+/// one still holds the mutex for the whole test.
+#[cfg(test)]
+pub(crate) fn lock_avatar_test_registry() -> AvatarTestGuard {
+    let current = std::thread::current().id();
+    if *AVATAR_TEST_OWNER
         .lock()
         .unwrap_or_else(|error| error.into_inner())
+        == Some(current)
+    {
+        return AvatarTestGuard { inner: None };
+    }
+    let inner = AVATAR_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    *AVATAR_TEST_OWNER
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = Some(current);
+    AvatarTestGuard { inner: Some(inner) }
 }
 
 impl CollabAvatarHost {

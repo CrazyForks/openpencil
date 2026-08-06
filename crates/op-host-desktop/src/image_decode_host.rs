@@ -19,6 +19,12 @@ use winit::event_loop::EventLoopProxy;
 const WORKER_COUNT: usize = 2;
 const MAX_QUEUED_DECODES: usize = 4;
 
+/// How many byte-less queue entries one pump will clear before leaving the
+/// rest for the next frame. The submission budget above no longer bounds this
+/// work, so it needs a bound of its own — a frame must stay a frame even if
+/// the whole queue turns out to be dead ids.
+const MAX_DISCARDS_PER_PUMP: usize = 32;
+
 struct DecodeJob {
     id: u64,
     bytes: Arc<[u8]>,
@@ -101,31 +107,56 @@ impl ImageDecodeHost {
     }
 
     /// Install completed rasters, then submit at most four queued ids.
+    ///
+    /// The budget counts jobs actually *submitted*, not queue entries looked
+    /// at. Entries whose bytes are gone — evicted from the bounded cache, or
+    /// queued by a paint that has since been superseded — are dropped without
+    /// spending a slot, because [`MAX_QUEUED_DECODES`] exists to bound
+    /// concurrent decode work, not to bound how much dead queue this is
+    /// willing to clear.
+    ///
+    /// Counting entries instead starved real decodes: the queue is FIFO, so a
+    /// run of byte-less ids at its head consumed the whole budget, the pump
+    /// reported no change, and a decodable image waited a further frame for
+    /// every four dead entries ahead of it.
     pub fn pump(&mut self, backend: &mut NativeBackend) -> bool {
         let mut changed = self.poll_results(backend);
-        let free = MAX_QUEUED_DECODES.saturating_sub(self.in_flight);
-        for pending in take_pending_decodes(free) {
-            let id = pending.id;
-            let Some(bytes) = cached_bytes_for(id)
-                .or_else(|| op_editor_ui::collab_avatar_runtime::cached_collab_avatar_bytes(id))
-            else {
-                mark_decode_done(id);
-                continue;
-            };
-            let Some(tx) = self.job_tx.as_ref() else {
-                mark_decode_done(id);
-                continue;
-            };
-            match tx.send(DecodeJob {
-                id,
-                bytes,
-                max_edge_px: pending.max_edge_px,
-            }) {
-                Ok(()) => {
-                    self.in_flight += 1;
-                    changed = true;
+        let mut budget = MAX_QUEUED_DECODES.saturating_sub(self.in_flight);
+        let mut discarded = 0_usize;
+        while budget > 0 && discarded < MAX_DISCARDS_PER_PUMP {
+            let batch = take_pending_decodes(budget);
+            if batch.is_empty() {
+                break;
+            }
+            for pending in batch {
+                let id = pending.id;
+                let Some(bytes) = cached_bytes_for(id).or_else(|| {
+                    op_editor_ui::collab_avatar_runtime::cached_collab_avatar_bytes(id)
+                }) else {
+                    mark_decode_done(id);
+                    discarded += 1;
+                    continue;
+                };
+                let Some(tx) = self.job_tx.as_ref() else {
+                    mark_decode_done(id);
+                    discarded += 1;
+                    continue;
+                };
+                match tx.send(DecodeJob {
+                    id,
+                    bytes,
+                    max_edge_px: pending.max_edge_px,
+                }) {
+                    Ok(()) => {
+                        self.in_flight += 1;
+                        budget -= 1;
+                        changed = true;
+                    }
+                    Err(_) => {
+                        mark_decode_done(id);
+                        discarded += 1;
+                    }
                 }
-                Err(_) => mark_decode_done(id),
             }
         }
         if let Some(stats) = self.stats.as_ref() {
@@ -242,15 +273,39 @@ mod tests {
             .to_vec()
     }
 
+    /// Start every decode test from an empty registry.
+    ///
+    /// The pending-decode registry is process-global and `pump` submits at
+    /// most [`MAX_QUEUED_DECODES`] per call, taking from the FRONT. Entries
+    /// another test left queued therefore crowd this test's own out of the
+    /// first pump's budget — and each of them is dropped as byte-less
+    /// (`mark_decode_done` + `continue`) without reporting a change, so
+    /// `pump` returns false and a test that queued exactly one decode sees
+    /// "nothing was submitted". Reproduced deterministically by queueing four
+    /// byte-less ids ahead of a valid one: the failure goes from intermittent
+    /// to 100%.
+    ///
+    /// The leftovers do not come from these tests — they come from any test
+    /// in this binary that paints chrome, because op-editor-ui's paint paths
+    /// queue decodes for the images they draw and hold no decode lock.
+    /// Serializing every painting test behind `DECODE_TEST_LOCK` would trade
+    /// this flake for a suite that runs single-file, so each decode test
+    /// instead starts from a known-empty registry. That is what the other
+    /// three tests here already did by hand; making it one function is what
+    /// stops the next one from forgetting.
+    fn reset_decode_registry() {
+        for stale in take_pending_decodes(usize::MAX) {
+            mark_decode_done(stale.id);
+        }
+    }
+
     #[test]
     fn worker_round_trip_decodes_and_installs_off_thread() {
         let _guard = DECODE_TEST_LOCK
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         let id = 0xDEC0_DE01;
-        for stale in take_pending_decodes(usize::MAX) {
-            mark_decode_done(stale.id);
-        }
+        reset_decode_registry();
         let png = encode_test_png();
         store_remote_image_bytes(id, png);
         assert!(cached_bytes_for(id).is_some());
@@ -277,6 +332,7 @@ mod tests {
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         let _avatar_guard = crate::collab_avatar_host::lock_avatar_test_registry();
+        reset_decode_registry();
         let key = "avatar-decode-participant";
         let url = "https://cdn.example/avatar-decode.png";
         op_editor_ui::collab_avatar_runtime::begin_collab_avatar_generation(0xDEC0);
@@ -319,9 +375,7 @@ mod tests {
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         let id = 0xDEC0_7A11;
-        for stale in take_pending_decodes(usize::MAX) {
-            mark_decode_done(stale.id);
-        }
+        reset_decode_registry();
         store_remote_image_bytes(id, encode_test_png());
         note_pending_decode(id, 256);
 
@@ -352,9 +406,7 @@ mod tests {
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         let id = 0xDEC0_BAD1;
-        for stale in take_pending_decodes(usize::MAX) {
-            mark_decode_done(stale.id);
-        }
+        reset_decode_registry();
         store_remote_image_bytes(id, b"not an encoded image".to_vec());
         note_pending_decode(id, 256);
 

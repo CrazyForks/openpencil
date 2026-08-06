@@ -709,6 +709,14 @@ impl DesktopCollabRuntime {
     }
 
     fn advance_generation(&mut self) {
+        // Rotating the epoch evicts every earlier participant's cached avatar
+        // bytes, and that cache is process-global. In a test binary it is
+        // shared with the decode tests, whose queued avatar id goes byte-less
+        // the instant this runs — so the rotation takes the same guard they
+        // do. Guarding here rather than at each collab test is the point:
+        // this is production code, so the test call sites cannot cover it.
+        #[cfg(test)]
+        let _avatar_guard = crate::collab_avatar_host::lock_avatar_test_registry();
         self.generation = self.generation.checked_add(1).unwrap_or(1);
         let _ =
             op_editor_ui::collab_avatar_runtime::begin_collab_avatar_generation(self.generation);
