@@ -39,7 +39,7 @@ pub(crate) fn text_input_to_payload(n: &TextInputNode) -> NodePayload {
         placeholder: n.placeholder.clone(),
         leading_icon: n.leading_icon.clone(),
         trailing_icon: n.trailing_icon.clone(),
-        ..Default::default()
+        ..widget_payload(n.corner_radius.as_ref())
     });
     p
 }
@@ -59,7 +59,7 @@ pub(crate) fn text_area_to_payload(n: &TextAreaNode) -> NodePayload {
         placeholder: n.placeholder.clone(),
         leading_icon: n.leading_icon.clone(),
         trailing_icon: n.trailing_icon.clone(),
-        ..Default::default()
+        ..widget_payload(n.corner_radius.as_ref())
     });
     p
 }
@@ -78,7 +78,7 @@ pub(crate) fn select_to_payload(n: &SelectNode) -> NodePayload {
         value_str: n.value.clone(),
         placeholder: n.placeholder.clone(),
         options: select_options(n.options.as_deref()),
-        ..Default::default()
+        ..widget_payload(n.corner_radius.as_ref())
     });
     p
 }
@@ -94,7 +94,7 @@ pub(crate) fn switch_to_payload(n: &SwitchNode) -> NodePayload {
     p.widget = Some(WidgetPayload {
         kind: "switch".into(),
         checked: Some(bool_or_expr(n.checked.as_ref())),
-        ..Default::default()
+        ..widget_payload(n.corner_radius.as_ref())
     });
     p
 }
@@ -111,7 +111,7 @@ pub(crate) fn checkbox_to_payload(n: &CheckboxNode) -> NodePayload {
         kind: "checkbox".into(),
         checked: Some(bool_or_expr(n.checked.as_ref())),
         label: n.label.clone(),
-        ..Default::default()
+        ..widget_payload(n.corner_radius.as_ref())
     });
     p
 }
@@ -130,7 +130,7 @@ pub(crate) fn slider_to_payload(n: &SliderNode) -> NodePayload {
         min: n.min.map(|v| v as f32),
         max: n.max.map(|v| v as f32),
         step: n.step.map(|v| v as f32),
-        ..Default::default()
+        ..widget_payload(n.corner_radius.as_ref())
     });
     p
 }
@@ -147,7 +147,7 @@ pub(crate) fn radio_group_to_payload(n: &RadioGroupNode) -> NodePayload {
         kind: "radio_group".into(),
         value_str: n.value.clone(),
         options: select_options(n.options.as_deref()),
-        ..Default::default()
+        ..widget_payload(n.corner_radius.as_ref())
     });
     p
 }
@@ -169,7 +169,7 @@ pub(crate) fn number_input_to_payload(n: &NumberInputNode) -> NodePayload {
         min: n.min.map(|v| v as f32),
         max: n.max.map(|v| v as f32),
         step: n.step.map(|v| v as f32),
-        ..Default::default()
+        ..widget_payload(n.corner_radius.as_ref())
     });
     p
 }
@@ -186,7 +186,8 @@ pub(crate) fn progress_to_payload(n: &ProgressNode) -> NodePayload {
         kind: "progress".into(),
         value_num: n.value.as_ref().map(number_or_expr),
         max: n.max.map(|v| v as f32),
-        ..Default::default()
+        indeterminate: n.indeterminate.unwrap_or(false),
+        ..widget_payload(n.corner_radius.as_ref())
     });
     p
 }
@@ -203,7 +204,7 @@ pub(crate) fn tabs_to_payload(n: &TabsNode, rects: &BTreeMap<String, [f32; 4]>) 
         kind: "tabs".into(),
         value_str: n.value.clone(),
         options: select_options(n.tabs.as_deref()),
-        ..Default::default()
+        ..widget_payload(n.corner_radius.as_ref())
     });
     p.children = n
         .children
@@ -213,6 +214,15 @@ pub(crate) fn tabs_to_payload(n: &TabsNode, rects: &BTreeMap<String, [f32; 4]>) 
         .map(|c| node_to_payload(c, rects))
         .collect();
     p
+}
+
+/// Seed fields shared by every first-class widget without losing the
+/// distinction between an absent radius and an explicitly-authored zero.
+fn widget_payload(corner_radius: Option<&jian_ops_schema::node::CornerRadius>) -> WidgetPayload {
+    WidgetPayload {
+        corner_radius_authored: corner_radius.is_some(),
+        ..Default::default()
+    }
 }
 
 /// `BoolOrExpression` → concrete bool. An unresolved `$expr` reference

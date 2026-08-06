@@ -301,6 +301,12 @@ pub struct WidgetPayload {
     /// visual doesn't quantize.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub step: Option<f32>,
+    /// Progress uses a deterministic unknown-progress segment.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub indeterminate: bool,
+    /// True when `cornerRadius` was authored, including explicit zero.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub corner_radius_authored: bool,
     /// `(value, label)` option rows for select / radio_group / tabs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<WidgetOption>,

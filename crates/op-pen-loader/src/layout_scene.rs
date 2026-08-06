@@ -305,10 +305,8 @@ pub(crate) fn node_payload_to_scene(
             .collect(),
         hidden: node.hidden,
         locked: node.locked,
-        // Composite-widget props pass through untouched (no `$ref`
-        // resolution needed — they're already concrete after the
-        // adapter harvested them from the schema). Drives the
-        // design-surface static visual painter.
+        // Widget props are already concrete after the adapter harvested them;
+        // no `$ref` resolution is needed here.
         widget: node.widget.as_ref().map(widget_payload_to_scene),
         children,
     }
@@ -329,6 +327,8 @@ fn widget_payload_to_scene(w: &crate::payload::WidgetPayload) -> SceneWidget {
         min: w.min,
         max: w.max,
         step: w.step,
+        indeterminate: w.indeterminate,
+        corner_radius_authored: w.corner_radius_authored,
         options: w
             .options
             .iter()

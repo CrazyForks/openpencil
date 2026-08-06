@@ -187,6 +187,23 @@ fn text_input_icons_reach_scene_widget() {
 }
 
 #[test]
+fn progress_semantics_reach_scene_widget() {
+    let state = state_from(
+        r##"{"version":"1.1","formatVersion":"1.1","id":"x",
+        "app":{"name":"x","version":"1","id":"x"},
+        "children":[{"type":"progress","id":"p","width":200,"height":8,
+          "value":75,"max":100,"indeterminate":true,"cornerRadius":0}]}"##,
+    );
+    let scene = editor_state_to_layout_scene(&state);
+    let progress = scene.active_page().unwrap().find("p").unwrap();
+    let widget = progress.widget.as_ref().expect("progress SceneWidget");
+
+    assert!(widget.indeterminate);
+    assert!(widget.corner_radius_authored);
+    assert_eq!(progress.corner_radius, 0.0);
+}
+
+#[test]
 fn pen_document_to_layout_scene_matches_editor_state_path() {
     let src = r##"{"version":"1.1","formatVersion":"1.1","id":"x",
         "app":{"name":"x","version":"1","id":"x"},
