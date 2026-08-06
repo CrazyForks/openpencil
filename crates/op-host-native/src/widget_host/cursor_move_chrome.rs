@@ -58,8 +58,8 @@ impl WidgetHostNative {
                 .then(|| self.topbar_hit_test(&top_bar, tb_rect, Point2D::new(x, y)))
                 .flatten()
                 .map(op_editor_ui::widgets::editor_state_ext::topbar_button_hover);
-            if new_hover != self.editor_state.editor_ui.topbar_button_hover {
-                self.editor_state.editor_ui.topbar_button_hover = new_hover;
+            let ui = &mut self.editor_state.editor_ui;
+            if ui.set_topbar_button_hover(new_hover, self.now_ms) {
                 self.mark_dirty();
                 if chat_surface_owns_point {
                     ctx.upper_hover_changed = true;

@@ -342,17 +342,24 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
             "mousemove",
             &mut listeners,
             move |evt| {
-                let Ok(mut b) = inner.try_borrow_mut() else {
-                    return;
-                };
-                b.host.set_modifier_shift(evt.shift_key());
-                b.host.set_modifier_alt(evt.alt_key());
-                b.host.set_clocks(now_ms_perf(), now_unix_secs());
-                let (x, y) =
-                    b.event_offset_to_logical(evt.offset_x() as f32, evt.offset_y() as f32);
-                if b.host.apply_cursor_move(x, y) {
-                    crate::repaint_coalescer::request();
+                {
+                    let Ok(mut b) = inner.try_borrow_mut() else {
+                        return;
+                    };
+                    b.host.set_modifier_shift(evt.shift_key());
+                    b.host.set_modifier_alt(evt.alt_key());
+                    b.host.set_clocks(now_ms_perf(), now_unix_secs());
+                    let (x, y) =
+                        b.event_offset_to_logical(evt.offset_x() as f32, evt.offset_y() as f32);
+                    if b.host.apply_cursor_move(x, y) {
+                        crate::repaint_coalescer::request();
+                    }
                 }
+                // Landing on a top-bar button owes a repaint once its
+                // tooltip's dwell expires, and no further DOM event is
+                // coming to carry it. Arm the rAF pump after the borrow
+                // is released so it can read the host it just updated.
+                crate::tooltip_pump::ensure(&inner);
             },
         )?;
     }

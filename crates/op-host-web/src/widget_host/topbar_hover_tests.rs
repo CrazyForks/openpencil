@@ -67,6 +67,36 @@ fn web_topbar_preview_button_toggles_preview_mode_like_native() {
     assert!(!host.editor_state.editor_ui.preview.mode);
 }
 
+/// The browser host has no deadline scheduler, so the dwell has to be
+/// observable for `tooltip_pump` to know it owes a rAF repaint. Without
+/// that the tooltip would appear only if the user moved the mouse again
+/// after waiting.
+#[test]
+fn web_topbar_hover_reports_a_pending_tooltip_until_it_is_due() {
+    const DWELL: u64 = op_editor_ui::widgets::top_bar_tooltip::TOOLTIP_DWELL_MS;
+    let mut host = WidgetHost::new();
+    host.last_viewport_w = 1440.0;
+    host.last_viewport_h = 900.0;
+    assert!(!host.top_bar_tooltip_pending());
+
+    host.set_now_ms(1_000);
+    // The sidebar toggle sits at the bar's left edge on web (no traffic gap).
+    host.apply_cursor_move(26.0, TOP_BAR_HEIGHT / 2.0);
+    assert_eq!(
+        host.editor_state.editor_ui.topbar_button_hover,
+        Some(op_editor_core::TopBarButton::ToggleSidebar)
+    );
+    assert_eq!(
+        host.editor_state.editor_ui.topbar_hover_since_ms,
+        Some(1_000)
+    );
+    assert!(host.top_bar_tooltip_pending());
+
+    // Once due there is nothing further to wake for, so the pump retires.
+    host.set_now_ms(1_000 + DWELL);
+    assert!(!host.top_bar_tooltip_pending());
+}
+
 #[derive(Default)]
 struct CaptureBackend {
     ovals: Vec<Rect>,

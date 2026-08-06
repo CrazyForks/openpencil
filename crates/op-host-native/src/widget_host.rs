@@ -239,6 +239,8 @@ mod theme_tests;
 mod toolbar_actions;
 mod toolbar_hover;
 #[cfg(test)]
+mod top_bar_tooltip_tests;
+#[cfg(test)]
 mod variables_panel_add_tests;
 mod variables_panel_commit;
 mod variables_panel_geometry;

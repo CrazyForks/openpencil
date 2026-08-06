@@ -144,6 +144,37 @@ fn variable_row_input_keeps_resume_time_redraws_active() {
     assert_eq!(app.host.next_animation_deadline_ms(), Some(740));
 }
 
+/// The runner refreshes its clock BEFORE deciding whether a timed wake
+/// needs a paint, which retires the tooltip's dwell deadline en route.
+/// Without a second signal that wake would be thrown away and the
+/// tooltip would never appear unless the user jiggled the mouse.
+#[test]
+fn a_due_top_bar_tooltip_keeps_the_wake_it_scheduled() {
+    let _guard = crate::agent_indicator_test_lock::LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    op_editor_core::agent_indicators::clear();
+    const DWELL: u64 = op_editor_ui::widgets::top_bar_tooltip::TOOLTIP_DWELL_MS;
+
+    let mut app = DesktopApp::new(None);
+    app.host.set_now_ms(1_000);
+    app.host
+        .editor_state_mut()
+        .editor_ui
+        .set_topbar_button_hover(Some(op_editor_core::TopBarButton::OpenAssetCenter), 1_000);
+
+    // While dwelling, the deadline is what arms the timer.
+    assert_eq!(app.host.next_animation_deadline_ms(), Some(1_000 + DWELL));
+
+    // The wake fires; the clock advances past the deadline first.
+    app.host.set_now_ms(1_000 + DWELL);
+    assert_eq!(app.host.next_animation_deadline_ms(), None);
+    assert!(
+        app.resume_time_needs_redraw(),
+        "the wake scheduled for the tooltip must still paint it"
+    );
+}
+
 #[test]
 fn selected_count_chip_clear_click_clears_canvas_selection() {
     let mut app = DesktopApp::new(None);

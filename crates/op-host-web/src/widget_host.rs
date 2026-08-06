@@ -416,6 +416,18 @@ impl WidgetHost {
         )
     }
 
+    /// Whether a top-bar tooltip is waiting out its dwell — i.e. a
+    /// repaint is owed at a future instant with no DOM event to carry
+    /// it. The mount's rAF pump (`tooltip_pump`) drives that repaint,
+    /// standing in for the deadline scheduler the browser host lacks.
+    pub fn top_bar_tooltip_pending(&self) -> bool {
+        op_editor_ui::widgets::top_bar_tooltip::next_deadline_ms(
+            &self.editor_state.editor_ui,
+            self.now_ms,
+        )
+        .is_some()
+    }
+
     pub fn layout_transition_active(&self) -> bool {
         self.layout_transition
             .as_ref()

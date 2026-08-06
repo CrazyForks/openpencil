@@ -327,6 +327,23 @@ impl WidgetHost {
                 panel.image_popover_input_geometry(property_rect, &mut *backend);
         }
 
+        // TopBar hover tooltip — hangs off a chrome button into whatever
+        // is under the bar, so it paints after the rails and canvas but
+        // below every dropdown and modal (native §8.65).
+        {
+            let mut cx = PaintCx {
+                backend: &mut *backend,
+            };
+            op_editor_ui::widgets::top_bar_tooltip::paint_top_bar_tooltip(
+                &mut cx,
+                &self.editor_state.editor_ui,
+                &top_bar,
+                top_bar_rect,
+                viewport_width,
+                self.now_ms,
+            );
+        }
+
         // ShapePicker — anchored to the right of the toolbar shape
         // slot; same z-priority as the locale picker (native §9).
         if ui.shape_picker.open {

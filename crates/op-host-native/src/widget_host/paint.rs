@@ -480,6 +480,9 @@ impl WidgetHostNative {
                 panel.image_popover_input_geometry(property_rect, &mut *frame);
         }
 
+        // 8.65. TopBar hover tooltip — over the rails, under every menu.
+        self.paint_top_bar_tooltip_overlay(frame, &top_bar, top_bar_rect, viewport_width);
+
         // 8.7. Floating Git panel — a popover hanging off the TopBar
         //      Git button (centred by `git_panel_rect`). Painted here —
         //      ABOVE the align toolbar / marquee / property overlays but

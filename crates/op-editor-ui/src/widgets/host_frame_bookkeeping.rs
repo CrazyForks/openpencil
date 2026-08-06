@@ -101,8 +101,9 @@ pub fn earliest(current: Option<u64>, deadline: u64) -> Option<u64> {
 
 /// The platform-independent part of the next animation wake-up: agent
 /// reveal + generation-scan indicators, the canvas layout transition,
-/// and the focused text input's caret blink. `None` = nothing animating
-/// from these sources.
+/// the focused text input's caret blink, and the top-bar hover
+/// tooltip's dwell timer. `None` = nothing animating from these
+/// sources.
 ///
 /// Hosts fold their own platform clauses on top through [`earliest`].
 pub fn base_animation_deadline_ms(
@@ -121,6 +122,14 @@ pub fn base_animation_deadline_ms(
     }
     if let Some(input) = state.active_text_input() {
         next = earliest(next, input.next_blink_flip_ms(now_ms));
+    }
+    // A dwelling top-bar tooltip becomes due without any further input,
+    // so its instant has to reach the scheduler or the tooltip would
+    // only ever appear on the user's next mouse jiggle.
+    if let Some(deadline) =
+        crate::widgets::top_bar_tooltip::next_deadline_ms(&state.editor_ui, now_ms)
+    {
+        next = earliest(next, deadline);
     }
     next
 }

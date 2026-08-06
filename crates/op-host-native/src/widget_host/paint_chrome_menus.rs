@@ -1,15 +1,39 @@
-//! TopBar dropdown paint arms — the File menu and the export quick menu.
+//! TopBar overlay paint arms — the File menu, the export quick menu, and
+//! the hover tooltip.
 //!
-//! Carved out of `paint.rs` at the 800-line ceiling. Both are anchored to a
-//! TopBar button and paint in the same overlay band, so they sit together;
-//! `paint.rs` keeps only the two call sites that fix their Z-order.
+//! Carved out of `paint.rs` at the 800-line ceiling. All three are anchored
+//! to a TopBar button and paint in the same overlay band, so they sit
+//! together; `paint.rs` keeps only the call sites that fix their Z-order.
 
 use super::WidgetHostNative;
 use crate::backend::NativeFrameBackend;
-use op_editor_ui::widgets::{ExportQuickMenu, PaintCx, Widget};
+use op_editor_ui::widgets::{ExportQuickMenu, PaintCx, TopBar, Widget};
 use op_editor_ui::{Point2D, Rect};
 
 impl WidgetHostNative {
+    /// Hover tooltip for whichever TopBar chrome button has been dwelt
+    /// on long enough. Paints nothing until the dwell elapses, and
+    /// nothing at all for a button whose own menu is already open.
+    pub(in crate::widget_host) fn paint_top_bar_tooltip_overlay(
+        &self,
+        frame: &mut NativeFrameBackend<'_>,
+        top_bar: &TopBar,
+        top_bar_rect: Rect,
+        viewport_width: f32,
+    ) {
+        let mut cx = PaintCx {
+            backend: &mut *frame,
+        };
+        op_editor_ui::widgets::top_bar_tooltip::paint_top_bar_tooltip(
+            &mut cx,
+            &self.editor_state.editor_ui,
+            top_bar,
+            top_bar_rect,
+            viewport_width,
+            self.now_ms,
+        );
+    }
+
     /// File-menu dropdown — anchored under the TopBar folder+chevron button.
     pub(in crate::widget_host) fn paint_file_menu_overlay(
         &self,

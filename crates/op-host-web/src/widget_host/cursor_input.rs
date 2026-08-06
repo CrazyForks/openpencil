@@ -579,8 +579,8 @@ impl WidgetHost {
                 .then(|| self.top_bar().hit_test(tb_rect, point))
                 .flatten()
                 .map(op_editor_ui::widgets::editor_state_ext::topbar_button_hover);
-            if new_hover != self.editor_state.editor_ui.topbar_button_hover {
-                self.editor_state.editor_ui.topbar_button_hover = new_hover;
+            let ui = &mut self.editor_state.editor_ui;
+            if ui.set_topbar_button_hover(new_hover, self.now_ms) {
                 self.mark_dirty();
                 if chat_surface_owns_point {
                     retained_hover_changed = true;

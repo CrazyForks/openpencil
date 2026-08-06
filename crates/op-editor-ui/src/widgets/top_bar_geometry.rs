@@ -333,6 +333,103 @@ impl TopBar {
     pub(super) fn title_layout_estimated(&self, top_bar_rect: Rect) -> TopBarTitleLayout {
         self.title_layout(top_bar_rect, estimated_text_width)
     }
+
+    /// On-screen rect of one chrome button, or `None` when this build /
+    /// embed doesn't paint it.
+    ///
+    /// The hover tooltip anchors off this. It routes through the same
+    /// helpers `hit_test` and `paint_chrome` use, so a button whose rect
+    /// moves takes its tooltip with it. `measure` supplies the text
+    /// metrics the two variable-width targets need (the centred title
+    /// group's Git button and the agent chip); pass the paint backend's
+    /// measurement so the tooltip centres on what the user actually sees.
+    pub fn button_rect_with_measure(
+        &self,
+        top_bar_rect: Rect,
+        button: op_editor_core::TopBarButton,
+        mut measure: impl FnMut(&str, f32) -> f32,
+    ) -> Option<Rect> {
+        use op_editor_core::TopBarButton as B;
+        let icon_y = top_bar_rect.origin.y + 8.0;
+        let right = top_bar_rect.origin.x + top_bar_rect.size.x;
+        let rect = match button {
+            B::ToggleSidebar => Rect {
+                origin: Point2D::new(top_bar_rect.origin.x + PAD + self.left_inset(), icon_y),
+                size: Point2D::new(ICON_BUTTON, ICON_BUTTON),
+            },
+            B::ToggleFileMenu => {
+                if !self.file_controls_visible() {
+                    return None;
+                }
+                self.file_menu_rect_for(top_bar_rect)
+            }
+            B::OpenImportMenu => {
+                if !self.file_controls_visible() {
+                    return None;
+                }
+                self.import_button_rect(top_bar_rect)
+            }
+            B::ToggleGitPanel => {
+                if !GIT_BUTTON_AVAILABLE || !self.file_controls_visible() {
+                    return None;
+                }
+                // The Git button collapses out of an exceptionally narrow
+                // title group; a zero-width rect means it isn't painted.
+                let git = self.git_button_rect_with_measure(top_bar_rect, &mut measure);
+                if git.size.x <= 0.0 {
+                    return None;
+                }
+                git
+            }
+            B::ToggleFullscreen => {
+                if !self.fullscreen_button_visible() {
+                    return None;
+                }
+                Rect {
+                    origin: Point2D::new(right - PAD - ICON_BUTTON, icon_y),
+                    size: Point2D::new(ICON_BUTTON, ICON_BUTTON),
+                }
+            }
+            B::TogglePreview => {
+                if !self.preview_button_visible() {
+                    return None;
+                }
+                self.preview_button_rect(top_bar_rect)
+            }
+            B::OpenExportMenu => self.export_button_rect(top_bar_rect),
+            B::OpenAssetCenter => self.asset_center_button_rect(top_bar_rect),
+            B::ToggleTheme => self.theme_button_rect(top_bar_rect),
+            B::ToggleLocale => self.globe_rect(top_bar_rect),
+            B::OpenAccount => {
+                if !self.account_button_visible {
+                    return None;
+                }
+                self.account_button_rect(top_bar_rect)
+            }
+            B::OpenCollaboration => {
+                if !self.collab.visible {
+                    return None;
+                }
+                self.collaboration_chip_rect_estimated(top_bar_rect)
+            }
+            B::OpenAgentSettings => {
+                let text_w = measure(&self.chip_text(), 11.0);
+                self.agent_chip_rect(top_bar_rect, text_w)
+            }
+        };
+        Some(rect)
+    }
+
+    /// [`Self::button_rect_with_measure`] against the backend-free width
+    /// estimator — for callers (tests, hit-test-time probes) with no
+    /// text backend to hand.
+    pub fn button_rect(
+        &self,
+        top_bar_rect: Rect,
+        button: op_editor_core::TopBarButton,
+    ) -> Option<Rect> {
+        self.button_rect_with_measure(top_bar_rect, button, estimated_text_width)
+    }
 }
 
 /// Backend-free width estimate, deliberately conservative: ASCII is

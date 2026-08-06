@@ -4,8 +4,9 @@ use crate::theme::Theme;
 use crate::widgets::icons::{draw_icon, Icon};
 use crate::widgets::property_panel_inputs::{INPUT_HEIGHT, PAD_X};
 use crate::widgets::property_panel_sections::EditContext;
-use crate::widgets::PaintCx;
-use crate::{Point2D, Rect, TextLayout};
+use crate::widgets::text_metrics;
+use crate::widgets::{tooltip, PaintCx};
+use crate::{Point2D, Rect};
 use op_editor_core::PropertyFocus;
 
 pub const CORNER_INPUT_HEIGHT: f32 = 28.0;
@@ -97,27 +98,21 @@ pub fn paint_toggle(cx: &mut PaintCx<'_>, theme: &Theme, rect: Rect, expanded: b
     );
 }
 
+/// Corner-editor tooltip: right-aligned on the anchor and sitting above
+/// it, which is this widget's own placement rule (the shared
+/// [`tooltip`] module's `Above` centres instead). Only the surface
+/// chrome is shared; the rect and the 15 px baseline stay local so
+/// single-sourcing the look cannot move these pixels.
 pub fn paint_tooltip(cx: &mut PaintCx<'_>, theme: &Theme, anchor: Rect, label: &str) {
-    let width = cx.backend.measure_text(label, 10.0) + 14.0;
+    let width = text_metrics::measure_chrome(cx.backend, label, tooltip::TOOLTIP_FONT_SIZE)
+        + tooltip::TOOLTIP_PAD_X * 2.0;
     let rect = Rect::xywh(
         anchor.origin.x + anchor.size.x - width,
         anchor.origin.y - 25.0,
         width,
-        22.0,
+        tooltip::TOOLTIP_HEIGHT,
     );
-    cx.backend.fill_round_rect(rect, 5.0, theme.popover);
-    cx.backend.stroke_round_rect(rect, 5.0, theme.border, 1.0);
-    let text = TextLayout::single_run(
-        label,
-        "system-ui",
-        10.0,
-        theme.popover_foreground.to_jian(),
-        Point2D::new(0.0, 0.0),
-    );
-    cx.backend.draw_text(
-        &text,
-        Point2D::new(rect.origin.x + 7.0, rect.origin.y + 15.0),
-    );
+    tooltip::paint_tooltip_frame(cx, theme, rect, label, None, rect.origin.y + 15.0);
 }
 
 pub fn paint_grid(

@@ -195,6 +195,22 @@ impl WidgetHostNative {
         self.now_ms < self.interaction_hot_until_ms
     }
 
+    /// Whether a top-bar hover tooltip is currently due to be on screen.
+    ///
+    /// The runner needs this SEPARATELY from
+    /// [`Self::next_animation_deadline_ms`]. That deadline goes to
+    /// `None` the instant the tooltip becomes due — which is precisely
+    /// the wake that has to repaint. A runner gating its redraw on the
+    /// deadline alone would wake up, find nothing pending, and go back
+    /// to sleep without ever drawing the tooltip.
+    pub fn top_bar_tooltip_showing(&self) -> bool {
+        op_editor_ui::widgets::top_bar_tooltip::visible_button(
+            &self.editor_state.editor_ui,
+            self.now_ms,
+        )
+        .is_some()
+    }
+
     /// Next millisecond at which the host should wake to repaint
     /// the caret blink phase. `None` = no animation pending.
     pub fn next_animation_deadline_ms(&self) -> Option<u64> {
