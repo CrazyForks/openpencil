@@ -148,21 +148,35 @@ pub fn guideline_topics() -> Vec<&'static str> {
     GUIDELINE_TOPICS.iter().map(|(name, _, _)| *name).collect()
 }
 
+const JIAN_COMPONENTS_PLACEHOLDER: &str = "{{jianComponents}}";
+
 /// Return the system prompt for the design agentic tool-loop.
 ///
-/// The prompt is embedded at compile time from
-/// `skills/phases/agent/design-agent.md` and returned verbatim — no
-/// frontmatter stripping, no template substitution. Callers (e.g. the
-/// `BuiltInProvider` `QueryLoop`) pass it directly as the system message
-/// for a design turn.
+/// The protocol template is embedded from
+/// `skills/phases/agent/design-agent.md`. Its native-widget placeholder is
+/// expanded from the same `jian-components` generation skill used by the
+/// single-shot pipeline, so builtin turns and spawned design sub-agents cannot
+/// drift onto a second interactive-control contract.
 ///
 /// Panics at startup if the embedded file is missing or not valid UTF-8
 /// (a build-time invariant: the file is checked in alongside this crate).
 pub fn design_agent_system_prompt() -> &'static str {
-    SKILLS
-        .get_file("phases/agent/design-agent.md")
-        .and_then(|f| f.contents_utf8())
-        .expect("skills/phases/agent/design-agent.md must be embedded in the op-ai-skills corpus")
+    static PROMPT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    PROMPT.get_or_init(|| {
+        let template = SKILLS
+            .get_file("phases/agent/design-agent.md")
+            .and_then(|f| f.contents_utf8())
+            .expect(
+                "skills/phases/agent/design-agent.md must be embedded in the op-ai-skills corpus",
+            );
+        assert!(
+            template.contains(JIAN_COMPONENTS_PLACEHOLDER),
+            "design-agent.md must mount the shared jian-components contract"
+        );
+        let widgets = get_skill_by_name("jian-components")
+            .expect("jian-components must be registered for the design-agent prompt");
+        template.replace(JIAN_COMPONENTS_PLACEHOLDER, widgets.content.trim())
+    })
 }
 
 /// Return the design-agent tool-loop system prompt with the prompt-matched
@@ -182,9 +196,12 @@ pub fn design_agent_system_prompt() -> &'static str {
 ///
 /// Output-protocol skills (schema / layout / text-rules / codegen-* / …)
 /// are deliberately NOT appended: the loop's protocol is the tool loop
-/// itself, and the model can still pull topic guides on demand via
-/// `get_guidelines`. Budget trimming is the resolver's (per-skill budgets +
-/// phase cap), so a keyword-rich prompt cannot balloon the system prompt.
+/// itself. The one shared protocol dependency, `jian-components`, is already
+/// mounted inside [`design_agent_system_prompt`] because native widget syntax
+/// must be identical across both generation paths. The model can still pull
+/// topic guides on demand via `get_guidelines`. Budget trimming is the
+/// resolver's (per-skill budgets + phase cap), so a keyword-rich prompt cannot
+/// balloon the system prompt.
 pub fn design_agent_system_prompt_with_skills(user_message: &str) -> String {
     let base = design_agent_system_prompt();
     let ctx = resolve::resolve_skills(
@@ -305,6 +322,65 @@ mod tests {
                 && prompt.contains("padding: [0,24]"),
             "mobile domain must teach Hug Height and the section-owned content rail"
         );
+    }
+
+    #[test]
+    fn builtin_design_loop_prompt_mounts_the_shared_first_class_widget_contract() {
+        let widgets = get_skill_by_name("jian-components")
+            .expect("jian-components must be registered")
+            .content
+            .trim();
+        let base = design_agent_system_prompt();
+        let builtin = design_agent_system_prompt_with_skills(
+            "Continue this mobile app with an interactive settings screen",
+        );
+
+        assert!(
+            base.contains(widgets),
+            "bare tool-loop prompt must mount the exact shared generation contract"
+        );
+        assert!(
+            builtin.contains(widgets),
+            "the prompt passed to builtin design turns must retain the shared contract"
+        );
+        assert!(!base.contains(JIAN_COMPONENTS_PLACEHOLDER));
+        assert_eq!(
+            builtin.matches("FIRST-CLASS OUTPUT").count(),
+            1,
+            "the builtin prompt must mount one authoritative widget contract"
+        );
+        for kind in [
+            "text_input",
+            "text_area",
+            "select",
+            "switch",
+            "checkbox",
+            "slider",
+            "radio_group",
+            "number_input",
+            "progress",
+            "tabs",
+        ] {
+            assert!(
+                builtin.contains(kind),
+                "builtin design loop must receive first-class widget `{kind}`"
+            );
+        }
+        for contract in [
+            "options: [{value,label}]",
+            "`checked`",
+            "`min`, `max`, `step`, and `value`",
+            "MUST explicitly carry `fill`, `stroke`, and",
+            "`cornerRadius`",
+            "`fill` is the active/accent paint",
+            "`stroke.fill` is the inactive track/border paint",
+            "LEGACY COMPATIBILITY ONLY",
+        ] {
+            assert!(
+                builtin.contains(contract),
+                "builtin design loop lost native-widget contract {contract:?}"
+            );
+        }
     }
 
     #[test]

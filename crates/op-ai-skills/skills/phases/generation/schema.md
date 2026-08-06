@@ -16,6 +16,18 @@ PenNode types (the ONLY format you output for designs):
 - text: Props: content, fontFamily, fontSize, fontWeight, fontStyle ('normal'|'italic'), fill, width, height, textAlign ('left'|'center'|'right'|'justify' — NEVER 'start'/'end'; those are container-axis values), textGrowth ('auto'|'fixed-width'|'fixed-width-height'), lineHeight (multiplier), letterSpacing (px), textAlignVertical ('top'|'middle'|'bottom')
 - path: SVG icon. Props: d (SVG path), width, height, fill, stroke, effects
 - image: Props: width, height, cornerRadius, effects, imageSearchQuery (2-3 English keywords UNIQUE per image — derive from the surrounding card/dish/title text; reusing one query across multiple images makes every card render the same photo. For food cards, use prepared-dish queries like "pasta plate", "salmon bowl", "pizza plate", "sushi platter"; avoid ingredient-only, outdoor/grass, raw-object, or novelty queries), imagePrompt (a fuller natural-language description of the SAME subject for AI image generation — e.g. "professional food photography of a pasta plate, warm natural light, shallow depth of field". ALWAYS emit it alongside imageSearchQuery: a configured image-gen model uses imagePrompt for a rich original image, otherwise imageSearchQuery drives the stock-search fallback — so every image element carries both)
+- text_input: First-class single-line control. Props: width, height, placeholder, value, leadingIcon, trailingIcon, fill, stroke, cornerRadius, effects
+- text_area: First-class multi-line control. Props: width, height, placeholder, value, maxVisibleLines, leadingIcon, trailingIcon, fill, stroke, cornerRadius, effects
+- select: First-class dropdown. Props: width, height, options: [{value,label}], value, placeholder, fill, stroke, cornerRadius, effects
+- switch: First-class toggle. Props: width, height, checked, fill, stroke, cornerRadius, effects
+- checkbox: First-class checkbox. Props: width, height, checked, label, fill, stroke, cornerRadius, effects
+- slider: First-class range control. Props: width, height, min, max, step, value, fill, stroke, cornerRadius, effects
+- radio_group: First-class single-choice control. Props: width, height, options: [{value,label}], value, fill, stroke, cornerRadius, effects
+- number_input: First-class numeric control. Props: width, height, placeholder, min, max, step, value, fill, stroke, cornerRadius, effects
+- progress: First-class display control. Props: width, height, max, value, indeterminate, fill, stroke, cornerRadius, effects
+- tabs: First-class tab container. Props: width, height, tabs: [{value,label}], value, children[] (one panel per tab), fill, stroke, cornerRadius, effects
+
+INTERACTIVE CONTROL CONTRACT: Emit the native types above directly; NEVER build a frame/rectangle/text lookalike or a new role-marked frame. Supply every semantic prop listed for the chosen control (`options`/`tabs` and `value`, `checked`, or `min`/`max`/`step`/`value`) rather than depending on defaults. Every control MUST explicitly carry design-system-derived `fill`, `stroke`, and `cornerRadius`: `fill` is the active/accent paint (or the field surface), while `stroke.fill` is the inactive track/border paint.
 
 PROPERTY NAMES are camelCase and are ALWAYS one unbroken identifier. Never split one at a word boundary: `justify.content` ✗ / `justify_content` ✗ / `"justify-content"` ✗ — write `justifyContent` ✓. Same for `alignItems`, `cornerRadius`, `fontSize`, `lineHeight`, `clipContent`, `imageSearchQuery`. A dotted key is a syntax error that throws away the entire script, not just that one property.
 All nodes share: id, type, name, role, x, y, rotation, opacity

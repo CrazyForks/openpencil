@@ -489,3 +489,84 @@ fn run_subtask_promotes_role_input_frame_to_text_input() {
     assert_eq!(ti.leading_icon.as_deref(), Some("mail"));
     assert_eq!(ti.placeholder.as_deref(), Some("Email address"));
 }
+
+/// First-class widgets emitted by classic script-gen must survive the
+/// orchestrator's role/post-pass/final insert path without losing either their
+/// authored surface style or the interaction data needed by Preview.
+#[test]
+fn run_subtask_preserves_first_class_widget_style_and_interaction_props() {
+    let llm_script = r##"I(null, {
+      "type":"frame","name":"Interactive Controls","width":1200,"height":320,
+      "layout":"vertical","children":[
+        {"type":"select","name":"Observatory","width":320,"height":48,
+         "fill":[{"type":"solid","color":"#2A1645"}],
+         "stroke":{"thickness":2,"fill":[{"type":"solid","color":"#A855F7"}]},
+         "cornerRadius":12,"value":"shanghai","options":[
+           {"value":"shanghai","label":"Shanghai Observatory"},
+           {"value":"beijing","label":"Beijing Observatory"}
+         ]},
+        {"type":"switch","name":"Night Vision","width":48,"height":28,
+         "fill":[{"type":"solid","color":"#9333EA"}],
+         "stroke":{"thickness":1,"fill":[{"type":"solid","color":"#C084FC"}]},
+         "cornerRadius":14,"checked":true},
+        {"type":"slider","name":"Magnitude","width":320,"height":24,
+         "fill":[{"type":"solid","color":"#7C3AED"}],
+         "stroke":{"thickness":1,"fill":[{"type":"solid","color":"#E9D5FF"}]},
+         "cornerRadius":8,"min":0,"max":6.5,"step":0.5,"value":5.5}
+      ]
+    });"##;
+    let llm = ScriptedLlm::new(vec![ScriptResponse::Text(llm_script.into())]);
+    let mut sink = VecDocSink::new();
+    let outcome = block_on(run_subtask(
+        &subtask(),
+        &plan(),
+        &req(),
+        &llm,
+        &mut sink,
+        &AbortFlag::new(),
+        false,
+        false,
+    ));
+
+    assert!(
+        outcome.error.is_none(),
+        "unexpected error: {:?}",
+        outcome.error
+    );
+    let Some(EditorCommand::InsertSubtree { nodes, .. }) = sink.applied.last() else {
+        panic!("expected InsertSubtree, got {:?}", sink.applied.last());
+    };
+    let PenNode::Frame(section) = &nodes[0] else {
+        panic!("outer section must remain a frame");
+    };
+    let children = section.children.as_ref().expect("section has controls");
+    assert_eq!(children.len(), 3);
+
+    let select = serde_json::to_value(&children[0]).expect("serialize select");
+    assert_eq!(select["type"], "select");
+    assert_eq!(select["fill"][0]["color"], "#2A1645");
+    assert_eq!(select["stroke"]["thickness"].as_f64(), Some(2.0));
+    assert_eq!(select["stroke"]["fill"][0]["color"], "#A855F7");
+    assert_eq!(select["cornerRadius"].as_f64(), Some(12.0));
+    assert_eq!(select["value"], "shanghai");
+    assert_eq!(select["options"].as_array().map(Vec::len), Some(2));
+
+    let switch = serde_json::to_value(&children[1]).expect("serialize switch");
+    assert_eq!(switch["type"], "switch");
+    assert_eq!(switch["fill"][0]["color"], "#9333EA");
+    assert_eq!(switch["stroke"]["thickness"].as_f64(), Some(1.0));
+    assert_eq!(switch["stroke"]["fill"][0]["color"], "#C084FC");
+    assert_eq!(switch["cornerRadius"].as_f64(), Some(14.0));
+    assert_eq!(switch["checked"], true);
+
+    let slider = serde_json::to_value(&children[2]).expect("serialize slider");
+    assert_eq!(slider["type"], "slider");
+    assert_eq!(slider["fill"][0]["color"], "#7C3AED");
+    assert_eq!(slider["stroke"]["thickness"].as_f64(), Some(1.0));
+    assert_eq!(slider["stroke"]["fill"][0]["color"], "#E9D5FF");
+    assert_eq!(slider["cornerRadius"].as_f64(), Some(8.0));
+    assert_eq!(slider["min"].as_f64(), Some(0.0));
+    assert_eq!(slider["max"].as_f64(), Some(6.5));
+    assert_eq!(slider["step"].as_f64(), Some(0.5));
+    assert_eq!(slider["value"].as_f64(), Some(5.5));
+}

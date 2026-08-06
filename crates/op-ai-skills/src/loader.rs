@@ -113,17 +113,31 @@ mod tests {
     }
 
     #[test]
-    fn generation_format_emits_text_input_widgets() {
-        // Phase 1: form fields must be generated as real `text_input`
-        // nodes (interactive in preview), not `role=input` mockup frames.
-        // The generation schema's node-type list must mention text_input.
-        let mentions = get_skills_by_phase(Phase::Generation)
-            .iter()
-            .any(|s| s.content.contains("text_input"));
-        assert!(
-            mentions,
-            "the generation format must list text_input as an emittable node"
-        );
+    fn generation_schema_lists_every_first_class_widget() {
+        let skill = get_skill_by_name("schema").expect("schema skill must be registered");
+        for kind in [
+            "text_input",
+            "text_area",
+            "select",
+            "switch",
+            "checkbox",
+            "slider",
+            "radio_group",
+            "number_input",
+            "progress",
+            "tabs",
+        ] {
+            assert!(
+                skill.content.contains(&format!("- {kind}:")),
+                "generation schema must list first-class widget `{kind}`"
+            );
+        }
+        assert!(skill
+            .content
+            .contains("Emit the native types above directly"));
+        assert!(skill.content.contains("design-system-derived `fill`"));
+        assert!(skill.content.contains("`stroke.fill`"));
+        assert!(skill.content.contains("`cornerRadius`"));
     }
 
     #[test]
@@ -253,7 +267,7 @@ mod tests {
     }
 
     #[test]
-    fn jian_components_skill_loads_as_always_base_and_teaches_role_vocab() {
+    fn jian_components_skill_teaches_native_widgets_with_legacy_role_compatibility() {
         let skill =
             get_skill_by_name("jian-components").expect("jian-components skill must be registered");
         // Frontmatter contract (Component 8a): Base category, always-considered.
@@ -261,18 +275,47 @@ mod tests {
         assert_eq!(skill.meta.priority, 5);
         assert!(matches!(skill.meta.trigger, SkillTrigger::Always));
         assert!(skill.meta.phase.contains(&Phase::Generation));
-        // Lockstep with jian's promote table: every role string the promote
-        // pass honours must be taught by the skill. Exported from jian so
-        // this test fails the moment the table grows or shrinks without a
-        // doc update, instead of trusting a hand-copied list that can drift.
+        for kind in [
+            "text_input",
+            "text_area",
+            "select",
+            "switch",
+            "checkbox",
+            "slider",
+            "radio_group",
+            "number_input",
+            "progress",
+            "tabs",
+        ] {
+            assert!(
+                skill.content.contains(kind),
+                "jian-components must teach native widget `{kind}`"
+            );
+        }
+        for required in [
+            "options: [{value,label}]",
+            "`checked`",
+            "`min`, `max`, `step`, and `value`",
+            "MUST explicitly carry `fill`, `stroke`, and",
+            "`cornerRadius`",
+            "`fill` is the active/accent paint",
+            "`stroke.fill` is the inactive track/border paint",
+        ] {
+            assert!(
+                skill.content.contains(required),
+                "jian-components lost required native-widget contract {required:?}"
+            );
+        }
+        assert!(skill.content.contains("LEGACY COMPATIBILITY ONLY"));
+        assert!(skill.content.contains("NEVER choose that representation"));
+
+        // Promotion remains accepted only as a compatibility dialect. Keep the
+        // documented aliases in lockstep with jian's legacy promote table.
         for role in jian_ops_schema::promote::promotable_roles() {
             assert!(
                 skill.content.contains(role),
-                "jian-components must teach role marker `{role}`"
+                "jian-components must document legacy role marker `{role}`"
             );
         }
-        // Must teach the child-structure promote_frame extracts.
-        assert!(skill.content.contains("placeholder"));
-        assert!(skill.content.contains("leading"));
     }
 }

@@ -23,9 +23,7 @@ use crate::timeouts::{
 };
 use crate::types::{AbortFlag, CallRequest, DesignRequest, PlanningMode, PlanningPrompt};
 use op_ai_skills::resolve_style::{resolve_style, ResolveOutcome};
-use op_ai_skills::style_guide::{
-    extract_style_guide_values, select_style_guide, style_guide_registry, SelectOptions,
-};
+use op_ai_skills::style_guide::extract_style_guide_values;
 use op_ai_skills::{
     budget::trim_by_budget_pinned,
     get_skills_by_phase,
@@ -58,7 +56,8 @@ pub use prompt_subagent::*;
 const NODE_FORMAT: &str = r#"
 Respond with THIS section's canonical PenNode objects in the FLAT _parent format:
 output ONE JSON object per line (NO enclosing [ ] array), each tagged by "type"
-(frame/group/rectangle/ellipse/line/polygon/path/text/text_input/image/icon_font)
+(frame/group/rectangle/ellipse/line/polygon/path/text/text_input/text_area/select/
+switch/checkbox/slider/radio_group/number_input/progress/tabs/image/icon_font)
 and carrying "_parent" — null for the section root, else the id of its parent
 node (which MUST appear on an earlier line).
 EVERY non-root node MUST set "_parent". Do NOT emit a flat list of siblings with
@@ -66,6 +65,13 @@ no _parent links, and do NOT rely on a "children" array — a flat list renders
 BROKEN: a horizontal row whose items are not _parent-linked to it collapses into
 a vertical stack. Express the WHOLE tree through _parent (row -> its cards -> each
 card's texts/icons).
+Interactive controls MUST be first-class nodes. Emit text_input/text_area with value;
+select/radio_group with options:[{value,label}] and value; switch/checkbox with checked;
+slider/number_input with min/max/step/value; progress with max/value; tabs with
+tabs:[{value,label}] and value. Never generate a frame/rectangle mockup with a role marker.
+Every interactive node MUST explicitly carry design-system fill, stroke, and cornerRadius.
+fill is the active/accent paint (or field surface).
+stroke.fill is the inactive track/border paint. Do not rely on renderer defaults.
 Example (a horizontal row of two cards inside a section):
 {"_parent":null,"id":"<prefix>-root","type":"frame","name":"Section","width":"fill_container","height":"fit_content","layout":"vertical","gap":16}
 {"_parent":"<prefix>-root","id":"<prefix>-row","type":"frame","name":"Row","width":"fill_container","height":"fit_content","layout":"horizontal","gap":16}
@@ -97,9 +103,18 @@ not call console.log or any helper; just call I(...).
 USE REAL JAVASCRIPT — const/let, arrays of data, and for...of / .forEach loops — to
 generate repeated structure (table rows, nav items, cards, list items) by looping over a
 data array. PREFER a loop over copy-pasting near-identical I(...) calls.
-Each node object starts with type ("frame"/"text"/"rectangle"/"ellipse"/"path"/"icon_font")
-and uses camelCase props (cornerRadius, fontSize, fontWeight, justifyContent, alignItems,
-clipContent). Do NOT set x/y on children inside layout frames.
+Each node object starts with type ("frame"/"text"/"rectangle"/"ellipse"/"path"/
+"icon_font"/"text_input"/"text_area"/"select"/"switch"/"checkbox"/"slider"/
+"radio_group"/"number_input"/"progress"/"tabs") and uses camelCase props
+(cornerRadius, fontSize, fontWeight, justifyContent, alignItems, clipContent). Do NOT set
+x/y on children inside layout frames.
+INTERACTIVE CONTROLS are native nodes: emit the first-class type directly with I(...),
+never a frame/rectangle mockup with a role marker. text_input/text_area require value;
+select/radio_group require options:[{value,label}] plus value; switch/checkbox require
+checked; slider/number_input require min/max/step/value; progress requires max/value;
+tabs requires tabs:[{value,label}] plus value. Every native control MUST explicitly carry
+the design system's fill, stroke, and cornerRadius. fill is the active/accent paint (or
+field surface); stroke.fill is the inactive track/border paint. Do not rely on defaults.
 Each script runs in a FRESH sandbox: variables from an EARLIER batch do not exist. To attach
 to a node an earlier batch created, pass its id STRING — I("n12", {...}) — never a `const` from
 that batch. Ids come back in the batch result.

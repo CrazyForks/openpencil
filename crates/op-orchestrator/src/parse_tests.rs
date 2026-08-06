@@ -95,6 +95,37 @@ fn parse_nodes_reads_jsonl_bare_objects() {
 }
 
 #[test]
+fn parse_nodes_accepts_every_first_class_widget_in_flat_jsonl() {
+    let text = r#"
+{"type":"frame","id":"root","layout":"vertical","_parent":null}
+{"type":"text_input","id":"input","value":"","placeholder":"Search","_parent":"root"}
+{"type":"text_area","id":"area","value":"","placeholder":"Notes","_parent":"root"}
+{"type":"select","id":"select","options":[{"value":"a","label":"A"}],"value":"a","_parent":"root"}
+{"type":"switch","id":"switch","checked":true,"_parent":"root"}
+{"type":"checkbox","id":"check","checked":false,"label":"Alerts","_parent":"root"}
+{"type":"slider","id":"slider","min":0,"max":10,"step":1,"value":4,"_parent":"root"}
+{"type":"radio_group","id":"radio","options":[{"value":"a","label":"A"}],"value":"a","_parent":"root"}
+{"type":"number_input","id":"number","min":0,"max":10,"step":1,"value":4,"_parent":"root"}
+{"type":"progress","id":"progress","max":100,"value":40,"_parent":"root"}
+{"type":"tabs","id":"tabs","tabs":[{"value":"a","label":"A"}],"value":"a","_parent":"root"}
+"#;
+
+    let nodes = parse_nodes(text).expect("all native widget kinds must survive JSONL filtering");
+    let children = nodes[0].children().expect("widget children");
+    assert_eq!(children.len(), 10);
+    assert!(matches!(&children[0], PenNode::TextInput(_)));
+    assert!(matches!(&children[1], PenNode::TextArea(_)));
+    assert!(matches!(&children[2], PenNode::Select(_)));
+    assert!(matches!(&children[3], PenNode::Switch(_)));
+    assert!(matches!(&children[4], PenNode::Checkbox(_)));
+    assert!(matches!(&children[5], PenNode::Slider(_)));
+    assert!(matches!(&children[6], PenNode::RadioGroup(_)));
+    assert!(matches!(&children[7], PenNode::NumberInput(_)));
+    assert!(matches!(&children[8], PenNode::Progress(_)));
+    assert!(matches!(&children[9], PenNode::Tabs(_)));
+}
+
+#[test]
 fn parse_nodes_bare_object_returns_top_level_not_nested_children() {
     // 单个裸对象(无数组包裹)带真实嵌套 children。合并深度判定下,
     // children:[...] 在 {} 内(深度>0)不被数组路径当节点数组,返回顶层

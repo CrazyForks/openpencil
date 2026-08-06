@@ -1,6 +1,6 @@
 ---
 name: jian-components
-description: Interactive widget family — emit role-marked frames the promotion pass collapses into real text_input / switch / select / checkbox / slider / text_area nodes
+description: Interactive widget family — emit first-class native controls with explicit state and design-system styling
 phase: [generation]
 trigger: null
 priority: 5
@@ -8,55 +8,42 @@ budget: 1200
 category: base
 ---
 
-INTERACTIVE WIDGETS (jian component family):
+INTERACTIVE WIDGETS (jian component family) — FIRST-CLASS OUTPUT:
 
-When a design has a form field, toggle, dropdown, slider, or multi-line
-text box, emit a `frame` and set its `role` to one of the markers below.
-A promotion pass collapses each marked frame into a real widget node — so
-the output `.op` carries a true `text_input` / `switch` / … node, not a
-mockup frame. ONLY these exact `role` strings are honoured; any other
-value stays a plain frame.
+Emit the native node directly through `I(parent, {...})` or canonical JSON.
+Do not assemble a visual imitation from frame/rectangle/text children, and do
+not author a role-marked frame expecting a later promotion pass. All controls
+except `tabs` are leaves; `tabs.children[i]` is the panel for `tabs[i]`.
 
-ROLE → WIDGET (the only honoured markers):
+REQUIRED SEMANTIC PROPS (never omit these in generated designs):
 
-- `role: "input"` or `role: "form-input"` → text_input (single-line field)
-- `role: "textarea"` or `role: "text-area"` → text_area (multi-line)
-- `role: "select"` or `role: "dropdown"` → select (option picker)
-- `role: "switch"` or `role: "toggle"` → switch (on/off)
-- `role: "checkbox"` → checkbox (label + box)
-- `role: "slider"` → slider (range)
-- `role: "radio-group"` (alias `"radio"`) → radio_group — options; each
-  visible text child of a marked legacy frame becomes one option.
-- `role: "number-input"` → number_input — placeholder / value / min /
-  max; muted text child = placeholder, plain text child = value.
-- `role: "progress"` (alias `"progress-bar"`) → progress — value / max /
-  indeterminate; display-only (not focusable).
+- `text_input`, `text_area`: `value` plus an intentional `placeholder`.
+- `select`, `radio_group`: `options: [{value,label}]` plus selected `value`.
+- `switch`, `checkbox`: explicit `checked`; checkbox may also carry `label`.
+- `slider`: numeric `min`, `max`, `step`, and `value`.
+- `number_input`: numeric `min`, `max`, `step`, and `value`.
+- `progress`: numeric `max` and `value` (`indeterminate` only when intended).
+- `tabs`: `tabs: [{value,label}]`, active `value`, and one child panel per tab.
 
-Tabs are NOT promoted from role markers — emit first-class `tabs` nodes
-directly (they're in the allowed node kinds).
+DESIGN-SYSTEM STYLE CONTRACT:
 
-(Alternatively `semantics: { role: "input" }` also promotes to text_input.)
+- Every native control MUST explicitly carry `fill`, `stroke`, and
+  `cornerRadius` values taken from the active design system; keep width/height
+  intentional too. Never rely on renderer defaults.
+- `fill` is the active/accent paint (or the field/control surface where
+  applicable). `stroke.fill` is the inactive track/border paint. Use palette
+  tokens consistently so switches, sliders, progress, selections, and fields
+  belong to the same product instead of falling back to generic white/grey.
+- `fill` is an array; `stroke` is `{thickness, fill:[...]}`.
 
-CHILD STRUCTURE the promotion reads (put these INSIDE the marked frame):
+Example native controls (the same objects work in JSONL):
 
-- Placeholder text: a `text` child whose fill is a MUTED grey
-  (e.g. `#9CA3AF`). The first muted text becomes the widget `placeholder`.
-- Value text: a `text` child with any non-muted fill becomes the `value`
-  (for checkbox it becomes the `label`).
-- Leading / trailing icons: `icon_font` children. The FIRST `icon_font` is
-  the leading icon (e.g. `mail`), a SECOND is the trailing icon (e.g. an
-  `eye` password reveal). They are carried onto the promoted text_input.
-- Style (fill / stroke / cornerRadius / effects) and width/height on the
-  frame are carried verbatim onto the widget. Other children are dropped —
-  widgets are leaves.
+`I(parent,{type:"select",value:"north",options:[{value:"north",label:"North"}],width:240,height:44,fill:[{type:"solid",color:"#211238"}],stroke:{thickness:1,fill:[{type:"solid",color:"#7C5A9E"}]},cornerRadius:12})`
 
-EXAMPLE (an email field that becomes a text_input):
+`I(parent,{type:"slider",min:0,max:100,step:5,value:40,width:280,height:44,fill:[{type:"solid",color:"#A855F7"}],stroke:{thickness:1,fill:[{type:"solid",color:"#4B3A5F"}]},cornerRadius:22})`
 
-{"type":"frame","id":"emailField","role":"input","width":320,"height":48,
- "cornerRadius":12,"fill":[{"type":"solid","color":"#F3F4F6"}],"children":[
-   {"type":"icon_font","id":"mailIcon","iconFontName":"mail","width":20,"height":20},
-   {"type":"text","id":"ph","content":"you@example.com","fill":[{"type":"solid","color":"#9CA3AF"}]}
- ]}
-
-A `role: "switch"` frame needs no children; a `role: "checkbox"` frame
-takes one non-muted `text` child as its label.
+LEGACY COMPATIBILITY ONLY: old documents may still contain frames whose roles
+are promoted: `input`/`form-input`, `textarea`/`text-area`, `select`/`dropdown`,
+`switch`/`toggle`, `checkbox`, `slider`, `radio-group`/`radio`, `number-input`,
+or `progress`/`progress-bar` (and `semantics.role: "input"`). Keep accepting
+those inputs, but NEVER choose that representation for new generation.
