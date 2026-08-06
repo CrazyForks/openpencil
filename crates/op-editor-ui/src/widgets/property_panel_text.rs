@@ -15,6 +15,7 @@ use crate::widgets::property_panel_inputs::{
 };
 use crate::widgets::property_panel_sections::EditContext;
 use crate::widgets::property_panel_typography::display_font_family;
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Point2D, Rect, TextLayout};
 use op_editor_core::PropertyFocus;
@@ -361,7 +362,7 @@ pub fn paint_text_section(
         caption_color,
         Point2D::new(0.0, 0.0),
     );
-    let ls_caption_w = cx.backend.measure_text(ls_label, 9.0);
+    let ls_caption_w = text_metrics::measure_chrome(cx.backend, ls_label, 9.0);
     cx.backend.draw_text(
         &ls_caption,
         Point2D::new(x + width - PAD_X - 2.0 - ls_caption_w, y + 10.0),

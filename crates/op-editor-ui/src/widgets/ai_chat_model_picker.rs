@@ -9,6 +9,7 @@ use crate::widgets::brand_icons::{paint_brand_logo, paint_opencode_logo, BrandLo
 use crate::widgets::button::paint_button_feedback_wash;
 use crate::widgets::icons::{draw_icon, Icon};
 use crate::widgets::property_panel_text_input::paint_text_input_view_value;
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout};
 use jian_core::text_input::TextInputState;
@@ -301,7 +302,7 @@ pub fn paint_model_picker(
             (theme.muted_foreground).to_jian(),
             Point2D::new(0.0, 0.0),
         );
-        let w = cx.backend.measure_text(empty, 12.0);
+        let w = text_metrics::measure_chrome(cx.backend, empty, 12.0);
         cx.backend.draw_text(
             &layout,
             Point2D::new(
@@ -531,7 +532,7 @@ fn paint_search_row(
 }
 
 fn paint_badge(cx: &mut PaintCx<'_>, theme: &Theme, text: &str, right_x: f32, y: f32) {
-    let w = cx.backend.measure_text(text, 9.0) + 8.0;
+    let w = text_metrics::measure_chrome(cx.backend, text, 9.0) + 8.0;
     let rect = Rect {
         origin: Point2D::new(right_x - w, y),
         size: Point2D::new(w, 16.0),

@@ -8,6 +8,7 @@
 
 use super::*;
 use crate::widgets::collab_ui::CollabOwnerConfirmModel;
+use crate::widgets::text_metrics;
 
 pub(super) const CONFIRM_OWNER_HEAD_HEIGHT: f32 = 72.0;
 pub(super) const CONFIRM_OWNER_ROW_HEIGHT: f32 = 32.0;
@@ -58,7 +59,7 @@ impl CollabPanel<'_> {
                 500,
             );
             let shown = crate::util::ellipsize_to_width(&row.value, width, |text| {
-                cx.backend.measure_text(text, 11.0)
+                text_metrics::measure_chrome(cx.backend, text, 11.0)
             });
             paint_text(
                 cx,
@@ -87,7 +88,7 @@ impl CollabPanel<'_> {
         );
         let quoted = format!("“{}”", claimed.value);
         let shown = crate::util::ellipsize_to_width(&quoted, width, |text| {
-            cx.backend.measure_text(text, 11.0)
+            text_metrics::measure_chrome(cx.backend, text, 11.0)
         });
         paint_text(
             cx,

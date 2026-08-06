@@ -12,6 +12,7 @@
 use crate::widgets::button::paint_button_feedback_wash;
 use crate::widgets::git_panel::{truncate, GitPanel, GitPanelHit, PAD};
 use crate::widgets::icons::{draw_icon, Icon};
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect};
 use jian_widgets::components::select::{Select, SelectHit, SelectState};
@@ -232,7 +233,7 @@ impl GitPanel<'_> {
                 self.t("git.picker.milestoneCount")
                     .replace("{{count}}", &c.milestone_count.to_string())
             };
-            let meta_w = cx.backend.measure_text(&meta, 10.0);
+            let meta_w = text_metrics::measure_chrome(cx.backend, &meta, 10.0);
             let meta_x = row.origin.x + row.size.x - 10.0 - meta_w;
             self.text(
                 cx,
@@ -307,7 +308,7 @@ impl GitPanel<'_> {
         let p = self.tracked_picker_panel(panel_rect);
         let mid = p.origin.x + p.size.x / 2.0;
         let heading = self.t("git.picker.empty.heading");
-        let hw = cx.backend.measure_text(heading, 13.0);
+        let hw = text_metrics::measure_chrome(cx.backend, heading, 13.0);
         self.text(
             cx,
             heading,
@@ -319,7 +320,7 @@ impl GitPanel<'_> {
         let body = self.t("git.picker.empty.body");
         let body_chars = ((p.size.x - TP_PAD * 2.0) / 6.0) as usize;
         let body = truncate(body, body_chars.max(8));
-        let bw = cx.backend.measure_text(&body, 11.0);
+        let bw = text_metrics::measure_chrome(cx.backend, &body, 11.0);
         self.text(
             cx,
             &body,

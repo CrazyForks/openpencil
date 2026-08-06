@@ -497,7 +497,8 @@ impl TopBar {
         // the visible chip so the first press always lands.
         let status_text = self.chip_status_text();
         // Prefer the host-measured text width so the hit area matches the
-        // painted chip exactly (paint uses skia `measure_text` @ 11 px).
+        // painted chip exactly. Paint and the host both measure through
+        // `text_metrics` at 11 px, in the family the chip is drawn in.
         // Without a measure backend (wasm) fall back to a ~7 px/char
         // estimate — close to the 11 px-font advance, never the old
         // 12 px/char + 16 px slop that ballooned the target into the gap.

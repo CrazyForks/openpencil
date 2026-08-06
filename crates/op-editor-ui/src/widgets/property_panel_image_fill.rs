@@ -13,6 +13,7 @@ use crate::widgets::property_panel_layout::{
     action_button_rects_with_fill_picker, VisibleSections,
 };
 use crate::widgets::property_panel_sections::EditContext;
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout};
 
@@ -617,7 +618,7 @@ fn paint_centered_label(
     rect: Rect,
     color: Color,
 ) {
-    let w = cx.backend.measure_text(label, 11.0);
+    let w = text_metrics::measure_chrome(cx.backend, label, 11.0);
     paint_label(
         cx,
         theme,

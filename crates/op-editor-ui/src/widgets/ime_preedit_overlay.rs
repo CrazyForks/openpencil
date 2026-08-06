@@ -13,6 +13,7 @@
 //! bubble rather than inline at the caret; inline rendering would
 //! need per-input paint surgery across ten input surfaces.
 
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout, Theme};
 
@@ -35,7 +36,7 @@ pub fn paint_ime_preedit(
     if text.is_empty() {
         return;
     }
-    let text_w = cx.backend.measure_text(text, FONT_SIZE);
+    let text_w = text_metrics::measure_chrome(cx.backend, text, FONT_SIZE);
     let w = text_w + PAD_X * 2.0;
     let h = FONT_SIZE + PAD_Y * 2.0;
     let (x, y) = match anchor {
@@ -81,11 +82,11 @@ pub fn paint_ime_preedit(
         _ => (0, text.len()),
     };
     let pre_w = if from > 0 {
-        cx.backend.measure_text(&text[..from], FONT_SIZE)
+        text_metrics::measure_chrome(cx.backend, &text[..from], FONT_SIZE)
     } else {
         0.0
     };
-    let seg_w = cx.backend.measure_text(&text[from..to], FONT_SIZE);
+    let seg_w = text_metrics::measure_chrome(cx.backend, &text[from..to], FONT_SIZE);
     if seg_w > 0.0 {
         let uy = y + h - 3.0;
         cx.backend.stroke_line(

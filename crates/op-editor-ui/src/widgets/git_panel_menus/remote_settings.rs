@@ -4,6 +4,7 @@
 //! every file under the 800-line cap.
 
 use super::*;
+use crate::widgets::text_metrics;
 
 impl GitPanel<'_> {
     // ── Remote-settings subview ──────────────────────────────────────
@@ -196,7 +197,7 @@ impl GitPanel<'_> {
                 _ => self.t("git.remote.storedAuth.none"),
             }
         };
-        let sw = cx.backend.measure_text(status, 11.0);
+        let sw = text_metrics::measure_chrome(cx.backend, status, 11.0);
         self.text(
             cx,
             status,

@@ -11,6 +11,7 @@ use crate::widgets::property_panel_action::{CodegenAction, PropertyPanelAction};
 use crate::widgets::property_panel_inputs::{
     paint_section_label, INPUT_HEIGHT, PAD_X, SECTION_HEADER_HEIGHT, TAB_HEIGHT,
 };
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout};
 use code_i18n::CodePanelStrings;
@@ -271,7 +272,7 @@ fn idle_generate_y(state: &CodegenState, body_y: f32) -> f32 {
 
 /// Draw `label` centered horizontally in `[x, x+w]` at baseline `py`.
 fn draw_centered_line(cx: &mut PaintCx<'_>, text: &str, color: Color, x: f32, w: f32, py: f32) {
-    let tw = cx.backend.measure_text(text, 13.0);
+    let tw = text_metrics::measure_chrome(cx.backend, text, 13.0);
     draw_line(cx, text, color, x + (w - tw) / 2.0, py);
 }
 
@@ -360,7 +361,7 @@ fn paint_idle_body(
     if let Some(err) = state.error.as_ref() {
         let detail = error::display_error_detail(strings, err);
         let detail = crate::util::ellipsize_to_width(&detail, w - PAD_X * 2.0, |text| {
-            cx.backend.measure_text(text, 13.0)
+            text_metrics::measure_chrome(cx.backend, text, 13.0)
         });
         draw_centered_line(
             cx,

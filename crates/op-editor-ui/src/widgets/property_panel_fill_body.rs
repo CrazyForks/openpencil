@@ -14,6 +14,7 @@ use crate::widgets::property_panel_inputs::{
     SECTION_HEADER_HEIGHT,
 };
 use crate::widgets::property_panel_sections::EditContext;
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout};
 use op_editor_core::PropertyFocus;
@@ -107,9 +108,11 @@ pub(crate) fn paint_fill_solid_body(
             .draw_text(&hex_layout, Point2D::new(hex_x, hex_rect.origin.y + 19.0));
         if variable_ref.is_none() {
             if let Some(pos) = edit.caret_at(hex_focus) {
-                let w = cx
-                    .backend
-                    .measure_text(&hex_text[..pos.min(hex_text.len())], 12.0);
+                let w = text_metrics::measure_chrome(
+                    cx.backend,
+                    &hex_text[..pos.min(hex_text.len())],
+                    12.0,
+                );
                 cx.backend.fill_rect(
                     Rect {
                         origin: Point2D::new(hex_x + w, hex_rect.origin.y + 6.0),
@@ -209,9 +212,11 @@ pub(crate) fn paint_fill_gradient_body(
             cx.backend
                 .draw_text(&value, Point2D::new(value_x, angle_rect.origin.y + 19.0));
             if let Some(pos) = edit.caret_at(angle_focus) {
-                let w = cx
-                    .backend
-                    .measure_text(&value_text[..pos.min(value_text.len())], 12.0);
+                let w = text_metrics::measure_chrome(
+                    cx.backend,
+                    &value_text[..pos.min(value_text.len())],
+                    12.0,
+                );
                 cx.backend.fill_rect(
                     Rect {
                         origin: Point2D::new(value_x + w, angle_rect.origin.y + 6.0),
@@ -332,9 +337,11 @@ pub(crate) fn paint_fill_gradient_body(
                 Point2D::new(hex_text_x, hex_rect.origin.y + 19.0),
             );
             if let Some(pos) = edit.caret_at(hex_focus) {
-                let w = cx
-                    .backend
-                    .measure_text(&hex_text[..pos.min(hex_text.len())], 12.0);
+                let w = text_metrics::measure_chrome(
+                    cx.backend,
+                    &hex_text[..pos.min(hex_text.len())],
+                    12.0,
+                );
                 cx.backend.fill_rect(
                     Rect {
                         origin: Point2D::new(hex_text_x + w, hex_rect.origin.y + 6.0),
@@ -394,9 +401,11 @@ pub(crate) fn paint_fill_gradient_body(
             cx.backend
                 .draw_text(&pct_layout, Point2D::new(pct_x, pct_rect.origin.y + 19.0));
             if let Some(pos) = edit.caret_at(offset_focus) {
-                let w = cx
-                    .backend
-                    .measure_text(&pct_text[..pos.min(pct_text.len())], 12.0);
+                let w = text_metrics::measure_chrome(
+                    cx.backend,
+                    &pct_text[..pos.min(pct_text.len())],
+                    12.0,
+                );
                 cx.backend.fill_rect(
                     Rect {
                         origin: Point2D::new(pct_x + w, pct_rect.origin.y + 6.0),

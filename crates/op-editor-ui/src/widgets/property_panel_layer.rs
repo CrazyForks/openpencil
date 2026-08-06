@@ -7,6 +7,7 @@ use crate::widgets::property_panel_inputs::{
 };
 use crate::widgets::property_panel_sections::{EditContext, PropertyLabels};
 use crate::widgets::property_panel_snapshot::{EllipseArcSummary, NodeSnapshot};
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Point2D, Rect, TextLayout};
 use op_editor_core::PropertyFocus;
@@ -155,8 +156,19 @@ fn paint_labeled_input(
 
     let baseline_y = rect.origin.y + 19.0;
     let prefix_x = rect.origin.x + 10.0;
+    // The prefix label yields to the value: it is fitted to whatever is left
+    // of the box after the value, its unit and the gaps between them. The
+    // value is what the user is reading and editing, so a long localized
+    // label ("Deckkraft") must ellipsize rather than push the digits under
+    // the clip set above — which shears them with no ellipsis at all.
+    let value_w = text_metrics::measure_chrome(cx.backend, value, 12.0);
+    let suffix_w = suffix.map_or(0.0, |unit| {
+        6.0 + text_metrics::measure_chrome(cx.backend, unit, 12.0)
+    });
+    let prefix_budget = (rect.size.x - 10.0 - 8.0 - value_w - suffix_w - 8.0).max(0.0);
+    let prefix = text_metrics::fit_chrome(cx.backend, prefix, prefix_budget, 12.0);
     let prefix_layout = TextLayout::single_run(
-        prefix,
+        &prefix,
         "system-ui",
         12.0,
         (theme.muted_foreground).to_jian(),
@@ -164,7 +176,7 @@ fn paint_labeled_input(
     );
     cx.backend
         .draw_text(&prefix_layout, Point2D::new(prefix_x, baseline_y));
-    let prefix_w = cx.backend.measure_text(prefix, 12.0);
+    let prefix_w = text_metrics::measure_chrome(cx.backend, &prefix, 12.0);
     let value_x = prefix_x + prefix_w + 8.0;
     if !edit.paint_input_view_at(
         cx,
@@ -201,9 +213,7 @@ fn paint_labeled_input(
         cx.backend
             .draw_text(&value_layout, Point2D::new(value_x, baseline_y));
         if let Some(pos) = edit.caret_at(focus) {
-            let w = cx
-                .backend
-                .measure_text(&value[..pos.min(value.len())], 12.0);
+            let w = text_metrics::measure_chrome(cx.backend, &value[..pos.min(value.len())], 12.0);
             cx.backend.fill_rect(
                 Rect {
                     origin: Point2D::new(value_x + w, rect.origin.y + 6.0),
@@ -214,7 +224,12 @@ fn paint_labeled_input(
         }
     }
     if let Some(unit) = suffix {
-        let value_w = cx.backend.measure_text(value, 12.0);
+        // The unit trails the value, but it is clamped inside the input's
+        // right padding: the input is clipped to `rect`, so a wide value
+        // would otherwise push the unit under the clip and shear it. Short
+        // values — every ordinary case — are unaffected.
+        let unit_w = text_metrics::measure_chrome(cx.backend, unit, 12.0);
+        let unit_x = (value_x + value_w + 6.0).min(rect.origin.x + rect.size.x - 8.0 - unit_w);
         let unit_layout = TextLayout::single_run(
             unit,
             "system-ui",
@@ -222,10 +237,8 @@ fn paint_labeled_input(
             (theme.muted_foreground).to_jian(),
             Point2D::new(0.0, 0.0),
         );
-        cx.backend.draw_text(
-            &unit_layout,
-            Point2D::new(value_x + value_w + 6.0, baseline_y),
-        );
+        cx.backend
+            .draw_text(&unit_layout, Point2D::new(unit_x, baseline_y));
     }
     cx.backend.restore();
 }

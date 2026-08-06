@@ -153,15 +153,25 @@ pub fn paint_fill_trigger(
     paint_trigger(cx, theme, fill_trigger_rect(x, y, width), &label);
 }
 
+const TRIGGER_FONT_SIZE: f32 = 11.0;
+
 fn paint_trigger(cx: &mut PaintCx<'_>, theme: &Theme, rect: Rect, label: &str) {
+    // jian's SelectTrigger clips its value instead of ellipsizing it — see
+    // `text_metrics::fit_select_trigger_label`.
+    let label = crate::widgets::text_metrics::fit_select_trigger_label(
+        cx.backend,
+        label,
+        rect,
+        TRIGGER_FONT_SIZE,
+    );
     jian_widgets::components::select_trigger::SelectTrigger {
         icon_paths: None,
-        label,
+        label: &label,
         placeholder: "",
         hovered: false,
         pressed: false,
         enabled: true,
-        font_size: 11.0,
+        font_size: TRIGGER_FONT_SIZE,
         bordered: true,
     }
     .paint(

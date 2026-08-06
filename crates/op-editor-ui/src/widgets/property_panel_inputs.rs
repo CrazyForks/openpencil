@@ -8,6 +8,7 @@
 
 use crate::theme::Theme;
 use crate::widgets::icons::{draw_icon, Icon};
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout};
 use jian_core::text_input::TextInputState;
@@ -191,7 +192,7 @@ pub fn paint_input_with_prefix_focused_state(
             rect.origin.y + rect.size.y / 2.0 + 4.0,
         ),
     );
-    let prefix_w = cx.backend.measure_text(prefix, 12.0);
+    let prefix_w = text_metrics::measure_chrome(cx.backend, prefix, 12.0);
     let value_x = rect.origin.x + 10.0 + prefix_w + 8.0;
     let baseline_y = rect.origin.y + rect.size.y / 2.0 + 4.0;
     if let (true, Some(input)) = (focused, input) {
@@ -234,9 +235,8 @@ pub fn paint_input_with_prefix_focused_state(
     cx.backend
         .draw_text(&value_layout, Point2D::new(value_x, baseline_y));
     if let Some(pos) = caret {
-        let value_w = cx
-            .backend
-            .measure_text(&value[..pos.min(value.len())], 12.0);
+        let value_w =
+            text_metrics::measure_chrome(cx.backend, &value[..pos.min(value.len())], 12.0);
         cx.backend.fill_rect(
             Rect {
                 origin: Point2D::new(value_x + value_w, rect.origin.y + 6.0),
@@ -333,9 +333,8 @@ pub fn paint_input_with_suffix_focused_state(
         cx.backend
             .draw_text(&value_layout, Point2D::new(value_x, baseline_y));
         if let Some(pos) = caret {
-            let value_w = cx
-                .backend
-                .measure_text(&value[..pos.min(value.len())], 12.0);
+            let value_w =
+                text_metrics::measure_chrome(cx.backend, &value[..pos.min(value.len())], 12.0);
             cx.backend.fill_rect(
                 Rect {
                     origin: Point2D::new(value_x + value_w, rect.origin.y + 6.0),
@@ -462,9 +461,8 @@ pub fn paint_input_with_icon_focused_state(
         cx.backend
             .draw_text(&value_layout, Point2D::new(value_x, baseline_y));
         if let Some(pos) = caret {
-            let caret_w = cx
-                .backend
-                .measure_text(&value[..pos.min(value.len())], 12.0);
+            let caret_w =
+                text_metrics::measure_chrome(cx.backend, &value[..pos.min(value.len())], 12.0);
             cx.backend.fill_rect(
                 Rect {
                     origin: Point2D::new(value_x + caret_w, rect.origin.y + 6.0),

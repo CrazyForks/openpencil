@@ -5,6 +5,7 @@ use crate::collab_avatar_runtime::{
 };
 use crate::widgets::canvas_viewport_image::note_pending_decode;
 use crate::widgets::collab_ui::CollabAvatarModel;
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, ImageDrawMode, Point2D, Rect, TextLayout};
 
@@ -42,7 +43,8 @@ pub(super) fn paint_collab_avatar(
         Point2D::ZERO,
     )
     .with_font_weight(600);
-    let initials_w = cx.backend.measure_text(&participant.initials, text_size);
+    let initials_w =
+        text_metrics::measure_chrome_weighted(cx.backend, &participant.initials, text_size, 600);
     cx.backend.draw_text(
         &initials,
         Point2D::new(

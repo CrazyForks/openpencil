@@ -6,6 +6,7 @@
 use crate::theme::Theme;
 use crate::widgets::editor_state_ext::theme_for;
 use crate::widgets::icons::{draw_icon, Icon};
+use crate::widgets::text_metrics;
 use crate::widgets::{LayoutBox, LayoutCx, PaintCx, Widget, WidgetId};
 use crate::{Point2D, Rect, TextLayout};
 use jian_widgets::components::button::{Button, ButtonVariant};
@@ -340,7 +341,7 @@ impl Widget for FigmaImportModal {
         }
 
         let headline = t(self.locale, self.source, "drop");
-        let head_w = cx.backend.measure_text(headline, 13.0);
+        let head_w = text_metrics::measure_chrome(cx.backend, headline, 13.0);
         let head_layout = TextLayout::single_run(
             headline,
             "system-ui",
@@ -357,7 +358,7 @@ impl Widget for FigmaImportModal {
         );
 
         let sub = t(self.locale, self.source, "browse");
-        let sub_w = cx.backend.measure_text(sub, 11.0);
+        let sub_w = text_metrics::measure_chrome(cx.backend, sub, 11.0);
         let sub_layout = TextLayout::single_run(
             sub,
             "system-ui",

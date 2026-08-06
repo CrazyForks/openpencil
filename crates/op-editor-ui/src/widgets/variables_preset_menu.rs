@@ -17,6 +17,7 @@
 use crate::theme::Theme;
 use crate::widgets::editor_state_ext::theme_for;
 use crate::widgets::icons::{draw_icon, Icon};
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout};
 use op_editor_core::editor_ui_state::Locale;
@@ -346,7 +347,8 @@ impl ThemePresetMenu {
         // Solid caret — same convention as the variables panel's
         // inline inputs (no blink).
         let clipped = boundary_at_or_before(&self.name_draft, self.caret_pos);
-        let caret_x = text_x + cx.backend.measure_text(&self.name_draft[..clipped], 13.0);
+        let caret_x =
+            text_x + text_metrics::measure_chrome(cx.backend, &self.name_draft[..clipped], 13.0);
         cx.backend.fill_rect(
             Rect {
                 origin: Point2D::new(caret_x, input.origin.y + (input.size.y - 16.0) / 2.0),

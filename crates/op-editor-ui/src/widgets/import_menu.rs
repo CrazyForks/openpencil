@@ -7,6 +7,7 @@
 
 use crate::theme::Theme;
 use crate::widgets::editor_state_ext::theme_for;
+use crate::widgets::text_metrics;
 use crate::widgets::{LayoutBox, LayoutCx, PaintCx, Widget, WidgetId};
 use crate::{Point2D, Rect, TextLayout};
 pub use jian_widgets::components::select::SelectHit;
@@ -151,7 +152,7 @@ impl ImportMenu {
         cx.backend.clip_rect(popup);
         for (index, choice) in ImportMenuChoice::ALL.iter().enumerate() {
             let shortcut = choice.shortcut_label();
-            let width = cx.backend.measure_text(shortcut, SHORTCUT_FONT_SIZE);
+            let width = text_metrics::measure_chrome(cx.backend, shortcut, SHORTCUT_FONT_SIZE);
             let layout = TextLayout::single_run(
                 shortcut,
                 "system-ui",

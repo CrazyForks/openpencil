@@ -13,6 +13,7 @@
 
 use crate::widgets::git_panel::{truncate, GitPanel, GitPanelHit, PAD};
 use crate::widgets::icons::{draw_icon, Icon};
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect};
 use jian_widgets::components::text_area::TextArea;
@@ -476,7 +477,7 @@ impl GitPanel<'_> {
             // text-muted-foreground`). +14 gives the `p-6`-style top
             // breathing room so it doesn't crowd the commit-box divider.
             let label = self.t("git.history.empty");
-            let tw = cx.backend.measure_text(label, 12.0);
+            let tw = text_metrics::measure_chrome(cx.backend, label, 12.0);
             self.text(
                 cx,
                 label,
@@ -535,7 +536,7 @@ impl GitPanel<'_> {
                     author_first_token(&commit.author),
                     commit.time_label,
                 );
-                let author_w = cx.backend.measure_text(&meta, 10.0);
+                let author_w = text_metrics::measure_chrome(cx.backend, &meta, 10.0);
                 let author_x = rect.origin.x + width - READY_PAD - author_w;
                 // Truncate the message to the space left of the meta.
                 let msg_w = (author_x - msg_x - 8.0).max(0.0);
@@ -637,7 +638,7 @@ impl GitPanel<'_> {
         let label = self.t("git.commit.submitButton");
         let icon_s = 11.0;
         let gap = 4.0;
-        let label_w = cx.backend.measure_text(label, 11.0);
+        let label_w = text_metrics::measure_chrome(cx.backend, label, 11.0);
         let content_w = icon_s + gap + label_w;
         let start_x = rect.origin.x + (rect.size.x - content_w).max(6.0) / 2.0;
         let color = alpha(t.primary_foreground, factor);

@@ -9,6 +9,7 @@
 
 use crate::widgets::git_panel::{GitPanel, EMPTY_STATE_WIDTH};
 use crate::widgets::icons::{draw_icon, Icon};
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect};
 
@@ -104,7 +105,7 @@ impl GitPanel<'_> {
         size: f32,
         color: Color,
     ) {
-        let w = cx.backend.measure_text(s, size);
+        let w = text_metrics::measure_chrome(cx.backend, s, size);
         self.text(cx, s, center_x - w / 2.0, baseline_y, size, color);
     }
 
@@ -305,7 +306,7 @@ impl GitPanel<'_> {
 
         let label = self.t("git.empty.requireSavedFile");
         // TS `px-3` (12) each side around a `text-xs` (12 px) label.
-        let pill_w = cx.backend.measure_text(label, 12.0) + 24.0;
+        let pill_w = text_metrics::measure_chrome(cx.backend, label, 12.0) + 24.0;
 
         // Anchor near the Init card, then clamp inside the panel so the
         // (often long) localized string never bleeds past the edge.

@@ -7,6 +7,7 @@ use crate::widgets::property_panel_inputs::{
     paint_section_divider, paint_section_label_with_add, INPUT_RADIUS, PAD_X, SECTION_GAP,
 };
 use crate::widgets::property_panel_sections::{EditContext, PropertyLabels};
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Point2D, Rect, TextLayout};
 use op_editor_core::PropertyFocus;
@@ -197,7 +198,7 @@ fn paint_effect_row(
     );
     let label = effect_label(labels, effect.kind);
     let max_label_w = (rects.slider.origin.x - (rects.row.origin.x + 27.0) - 4.0).max(1.0);
-    let measured = cx.backend.measure_text(label, 10.0).max(1.0);
+    let measured = text_metrics::measure_chrome(cx.backend, label, 10.0).max(1.0);
     let label_size = (10.0 * max_label_w / measured).clamp(8.0, 10.0);
     let label_layout = TextLayout::single_run(
         label,

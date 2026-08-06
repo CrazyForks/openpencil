@@ -7,6 +7,7 @@ use crate::widgets::property_panel_inputs::{
     SECTION_GAP, TAB_HEIGHT,
 };
 use crate::widgets::property_panel_sections::EditContext;
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout};
 use op_editor_core::PropertyFocus;
@@ -190,7 +191,7 @@ fn paint_background_input(
             .draw_text(&text, Point2D::new(value_x, rect.origin.y + 19.0));
         if let Some(pos) = edit.caret_at(focus) {
             let prefix = &value[..pos.min(value.len())];
-            let caret_x = value_x + cx.backend.measure_text(prefix, 12.0);
+            let caret_x = value_x + text_metrics::measure_chrome(cx.backend, prefix, 12.0);
             cx.backend.fill_rect(
                 Rect::xywh(caret_x, rect.origin.y + 6.0, 1.5, rect.size.y - 12.0),
                 theme.foreground,

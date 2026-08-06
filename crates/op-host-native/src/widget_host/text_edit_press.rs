@@ -94,12 +94,19 @@ impl WidgetHostNative {
     /// measured with the shared measure-only backend so `TopBar`'s
     /// agent-chip hit area matches the painted chip exactly instead of a
     /// char-count estimate that overran into the file-name gap.
+    ///
+    /// Family-aware, and it has to stay that way: `top_bar_paint` sizes the
+    /// painted chip through `op_editor_ui::widgets::text_metrics`, so a
+    /// family-blind number here would resolve the bundled Roboto and hand
+    /// back a hit rect narrower than the chip the user can see.
     pub(in crate::widget_host) fn topbar_chip_text_w(
         &self,
         top_bar: &op_editor_ui::widgets::TopBar,
     ) -> f32 {
         let chip_text = top_bar.chip_text();
-        self.with_measure_only(|backend| backend.measure_text(&chip_text, 11.0))
+        self.with_measure_only(|backend| {
+            op_editor_ui::widgets::text_metrics::measure_chrome(backend, &chip_text, 11.0)
+        })
     }
 
     /// Family-aware TopBar hit-test. The centered title group's horizontal

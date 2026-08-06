@@ -1,6 +1,7 @@
 use crate::layout_scene::{NodeKind, SceneNode};
 use crate::theme::Theme;
 use crate::widgets::canvas_overlay_transform::OverlayTransform;
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout};
 use op_editor_core::agent_indicators::AgentIndicators;
@@ -8,6 +9,9 @@ use op_editor_core::Viewport;
 use std::collections::HashSet;
 
 const LABEL_FONT_SIZE: f32 = 12.0;
+/// Weight the pill's label run paints at — measurement names it too, so the
+/// pill is sized against the medium face it actually shows.
+const LABEL_FONT_WEIGHT: u16 = 500;
 const LABEL_HEIGHT: f32 = 22.0;
 const LABEL_PAD_X: f32 = 8.0;
 const LABEL_GAP: f32 = 6.0;
@@ -204,7 +208,7 @@ fn paint_selection_label(
     let max_label_width = (input.canvas_rect.size.x - LABEL_MARGIN * 2.0).max(32.0);
     let max_text_width = (max_label_width - LABEL_PAD_X * 2.0).max(0.0);
     let text = truncate_label_to_width(cx, label, max_text_width);
-    let text_width = cx.backend.measure_text(&text, LABEL_FONT_SIZE);
+    let text_width = measure_label(cx, &text);
     let label_width = (text_width + LABEL_PAD_X * 2.0).min(max_label_width);
     let canvas_left = input.canvas_rect.origin.x + LABEL_MARGIN;
     let canvas_top = input.canvas_rect.origin.y + LABEL_MARGIN;
@@ -238,19 +242,26 @@ fn paint_selection_label(
         input.theme.primary.to_jian(),
         Point2D::ZERO,
     )
-    .with_font_weight(500);
+    .with_font_weight(LABEL_FONT_WEIGHT);
     cx.backend.draw_text(
         &layout,
         Point2D::new(pill.origin.x + LABEL_PAD_X, pill.origin.y + 15.0),
     );
 }
 
+/// Width of a selection-label run, measured in the family AND weight the
+/// pill paints it with — the pill is sized from this, so a family-blind
+/// number would build a pill too narrow to hold its own label.
+fn measure_label(cx: &mut PaintCx<'_>, text: &str) -> f32 {
+    text_metrics::measure_chrome_weighted(cx.backend, text, LABEL_FONT_SIZE, LABEL_FONT_WEIGHT)
+}
+
 fn truncate_label_to_width(cx: &mut PaintCx<'_>, label: &str, max_width: f32) -> String {
-    if cx.backend.measure_text(label, LABEL_FONT_SIZE) <= max_width {
+    if measure_label(cx, label) <= max_width {
         return label.to_string();
     }
     let ellipsis = "…";
-    let ellipsis_width = cx.backend.measure_text(ellipsis, LABEL_FONT_SIZE);
+    let ellipsis_width = measure_label(cx, ellipsis);
     if ellipsis_width >= max_width {
         return ellipsis.to_string();
     }
@@ -259,7 +270,7 @@ fn truncate_label_to_width(cx: &mut PaintCx<'_>, label: &str, max_width: f32) ->
         let mut probe = out.clone();
         probe.push(ch);
         probe.push_str(ellipsis);
-        if cx.backend.measure_text(&probe, LABEL_FONT_SIZE) > max_width {
+        if measure_label(cx, &probe) > max_width {
             break;
         }
         out.push(ch);

@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::widgets::collab_ui::{role_label, CollabAvatarModel};
+use crate::widgets::text_metrics;
 use crate::{Color, TextLayout};
 
 impl CollabPanel<'_> {
@@ -78,7 +79,7 @@ impl CollabPanel<'_> {
         let split = {
             let mut end = notice.len();
             for (index, _) in notice.char_indices().skip(1) {
-                if cx.backend.measure_text(&notice[..index], FONT) > max_width {
+                if text_metrics::measure_chrome(cx.backend, &notice[..index], FONT) > max_width {
                     end = notice
                         .char_indices()
                         .take_while(|(byte, _)| *byte < index)
@@ -104,7 +105,7 @@ impl CollabPanel<'_> {
             return;
         }
         let second = crate::util::ellipsize_to_width(rest, max_width, |text| {
-            cx.backend.measure_text(text, FONT)
+            text_metrics::measure_chrome(cx.backend, text, FONT)
         });
         paint_text(
             cx,
@@ -168,7 +169,7 @@ pub(super) fn paint_participant(
         if participant.is_self { 600 } else { 400 },
     );
     let role = role_label(ui, participant.role);
-    let role_w = cx.backend.measure_text(role, 10.0);
+    let role_w = text_metrics::measure_chrome(cx.backend, role, 10.0);
     paint_text(
         cx,
         role,
@@ -208,7 +209,7 @@ pub(super) fn paint_button(
     } else {
         theme.secondary_foreground
     };
-    let width = cx.backend.measure_text(label, 11.0);
+    let width = text_metrics::measure_chrome_weighted(cx.backend, label, 11.0, 500);
     // Centre against the button's own height. A hardcoded baseline was tuned
     // for the 32 px action row and left every 28 px button (admission
     // decisions, service-region options) painting its label low.

@@ -10,6 +10,7 @@ use crate::theme::Theme;
 use crate::widgets::icons::{draw_icon, Icon};
 use crate::widgets::property_panel_action::CodegenAction;
 use crate::widgets::property_panel_inputs::{INPUT_HEIGHT, PAD_X};
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Point2D, Rect, TextLayout};
 use op_editor_core::codegen::{CodegenHover, CodegenState};
@@ -132,7 +133,7 @@ pub(super) fn paint_error_body(
             .unwrap_or(strings.generation_failed()),
     );
     let lines = detail_lines(&detail, text_w, |text| {
-        cx.backend.measure_text(text, DETAIL_FONT_SIZE)
+        text_metrics::measure_chrome(cx.backend, text, DETAIL_FONT_SIZE)
     });
     for (index, line) in lines.iter().enumerate() {
         draw_text(
@@ -151,7 +152,7 @@ pub(super) fn paint_error_body(
         .map(|detail| format!("Details: {detail}"))
     {
         let diagnostic = crate::util::ellipsize_to_width(&diagnostic, text_w, |text| {
-            cx.backend.measure_text(text, DETAIL_FONT_SIZE)
+            text_metrics::measure_chrome(cx.backend, text, DETAIL_FONT_SIZE)
         });
         draw_text(
             cx,

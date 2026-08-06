@@ -20,8 +20,7 @@
 //! future use but are no longer wired to a footer chip as of #32.
 
 use super::ai_chat_panel::{
-    chat_neutral_feedback_color, footer_label_width, AIChatPlaceholder, FooterLayout,
-    INPUT_TOOLBAR_HEIGHT, PAD,
+    chat_neutral_feedback_color, AIChatPlaceholder, FooterLayout, INPUT_TOOLBAR_HEIGHT, PAD,
 };
 use crate::widgets::ai_chat_panel_controls::draw_label;
 use crate::widgets::icons::{draw_icon, Icon};
@@ -132,24 +131,24 @@ impl<'a> AIChatPlaceholder<'a> {
     }
 }
 
-pub(crate) fn fit_footer_label(label: &str, size: f32, max_w: f32) -> String {
-    if footer_label_width(label, size) <= max_w {
-        return label.to_string();
-    }
-    let ellipsis_w = footer_label_width("…", size);
-    let budget = (max_w - ellipsis_w).max(0.0);
-    let mut out = String::new();
-    let mut w = 0.0;
-    for ch in label.chars() {
-        let next = footer_label_width(&ch.to_string(), size);
-        if w + next > budget {
-            break;
-        }
-        out.push(ch);
-        w += next;
-    }
-    out.push('…');
-    out
+/// Ellipsize a footer chip label to `max_w`.
+///
+/// Measured through the backend in the family the run paints with, NOT
+/// through [`footer_label_width`]. That estimator hard-codes the bundled
+/// Roboto's 0.55-em ASCII advance, which is narrower than the `system-ui`
+/// face this label is drawn in — fitting against it returns a string the
+/// widget believes fits, and the chip's clip then shears the last glyph in
+/// half with no ellipsis to show for it. `footer_label_width` keeps its
+/// backend-free callers (chip geometry, computed before a painter exists).
+///
+/// [`footer_label_width`]: super::ai_chat_panel::footer_label_width
+pub(crate) fn fit_footer_label(
+    backend: &mut dyn crate::RenderBackend,
+    label: &str,
+    size: f32,
+    max_w: f32,
+) -> String {
+    crate::widgets::text_metrics::fit_chrome(backend, label, max_w, size)
 }
 
 pub(crate) fn footer_label_baseline(center_y: f32, size: f32) -> f32 {
@@ -364,7 +363,7 @@ pub(crate) fn paint_bottom_toolbar(
         .unwrap_or(widget.label_no_models.as_str());
     // Reserve space for the chevron-down on the right of the pill.
     let label_w = (footer.model.origin.x + footer.model.size.x - 18.0 - model_label_x).max(0.0);
-    let model_name_fit = fit_footer_label(model_name, 11.0, label_w);
+    let model_name_fit = fit_footer_label(cx.backend, model_name, 11.0, label_w);
     let model_label = TextLayout::single_run(
         &model_name_fit,
         "system-ui",

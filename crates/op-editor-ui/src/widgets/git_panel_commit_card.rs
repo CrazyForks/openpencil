@@ -15,6 +15,7 @@
 
 use crate::widgets::git_panel::{GitPanel, GitPanelHit};
 use crate::widgets::git_panel_ready::{MAX_COMMITS, MSG_X, READY_PAD, ROW_H};
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect};
 use jian_widgets::components::card::Card;
@@ -196,7 +197,7 @@ impl GitPanel<'_> {
                 for (k, p) in summary.patches.iter().take(MAX_PATCH_ROWS).enumerate() {
                     let py = card_top + 54.0 + k as f32 * PATCH_ROW_H;
                     self.text(cx, &p.op, body_x, py, 10.0, t.foreground);
-                    let opw = cx.backend.measure_text(&p.op, 10.0);
+                    let opw = text_metrics::measure_chrome(cx.backend, &p.op, 10.0);
                     self.text(
                         cx,
                         &p.node_id,
@@ -294,7 +295,7 @@ impl GitPanel<'_> {
         let mut cur = x;
         for (label, color) in &segments {
             self.text(cx, label, cur, y, 10.0, *color);
-            cur += cx.backend.measure_text(label, 10.0) + 10.0;
+            cur += text_metrics::measure_chrome(cx.backend, label, 10.0) + 10.0;
         }
     }
 

@@ -7,6 +7,7 @@
 
 use crate::theme::Theme;
 use crate::widgets::icons::{draw_icon, Icon};
+use crate::widgets::text_metrics;
 use crate::widgets::top_bar::*;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout};
@@ -386,7 +387,7 @@ impl TopBar {
         let show_dot = status_text.is_some();
         let chip_text: &str = status_text.as_deref().unwrap_or(self.label_agents_and_mcp);
         let icons_span = self.agent_icons_span();
-        let text_w = cx.backend.measure_text(chip_text, 11.0);
+        let text_w = text_metrics::measure_chrome(cx.backend, chip_text, 11.0);
         let chip_rect = self.agent_chip_rect(rect, text_w);
         // Hover wash behind the whole chip (TS `hover:bg-accent`).
         let _ = crate::widgets::button::paint_ghost_button_feedback(
@@ -561,7 +562,7 @@ fn paint_collaboration_chip(
             );
             cx.backend
                 .draw_text(&overflow_layout, Point2D::new(x, center_y + 3.0));
-            x += cx.backend.measure_text(&overflow, 9.0) + 4.0;
+            x += text_metrics::measure_chrome(cx.backend, &overflow, 9.0) + 4.0;
         }
         x += 6.0;
     }
@@ -571,8 +572,15 @@ fn paint_collaboration_chip(
     x += 10.0;
     cx.backend.save();
     cx.backend.clip_rect(rect);
+    // The pill's width comes from `estimated_text_width` (a 0.68-em ASCII
+    // guess made before a painter exists, so hit-test and paint agree on one
+    // rect). That guess is narrower than the `system-ui` face this label is
+    // drawn in, so the clip above would shear the last glyph. Fit the label
+    // to what the pill actually leaves for it and let it ellipsize instead.
+    let label_max_w = (rect.origin.x + rect.size.x - 9.0 - x).max(0.0);
+    let label_text = text_metrics::fit_chrome(cx.backend, &model.label, label_max_w, 11.0);
     let label = TextLayout::single_run(
-        &model.label,
+        &label_text,
         "system-ui",
         11.0,
         foreground.to_jian(),
@@ -623,7 +631,7 @@ pub(super) fn paint_account_button(
             };
             cx.backend.fill_oval(avatar_rect, theme.primary);
             let letter = account.initial().to_string();
-            let letter_w = cx.backend.measure_text(&letter, 11.0);
+            let letter_w = text_metrics::measure_chrome(cx.backend, &letter, 11.0);
             let label = TextLayout::single_run(
                 &letter,
                 "system-ui",

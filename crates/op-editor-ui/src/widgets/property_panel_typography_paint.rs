@@ -11,6 +11,7 @@ use crate::theme::Theme;
 use crate::widgets::button::paint_button_feedback_wash;
 use crate::widgets::icons::{draw_icon, Icon};
 use crate::widgets::property_panel_layout::VisibleSections;
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Point2D, Rect, TextLayout};
 use jian_widgets::components::select::SelectState;
@@ -202,7 +203,7 @@ fn paint_font_picker_layout(
                     (theme.muted_foreground).to_jian(),
                     Point2D::new(0.0, 0.0),
                 );
-                let w = cx.backend.measure_text(label_str, 11.0);
+                let w = text_metrics::measure_chrome(cx.backend, label_str, 11.0);
                 cx.backend.draw_text(
                     &label,
                     Point2D::new(

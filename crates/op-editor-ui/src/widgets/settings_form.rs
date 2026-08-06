@@ -9,6 +9,7 @@ use crate::theme::Theme;
 use crate::widgets::agent_settings_caret::paint_settings_input_view;
 use crate::widgets::button::paint_ghost_button_feedback;
 use crate::widgets::icons::{draw_icon, Icon};
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout};
 use op_editor_core::editor_ui_state::EditorUiState;
@@ -32,11 +33,13 @@ pub(crate) fn draw_text(cx: &mut PaintCx<'_>, text: &str, size: f32, color: Colo
 
 /// Trim `value` with a `...` suffix until it measures within `max_w`.
 pub(crate) fn ellipsize(cx: &mut PaintCx<'_>, value: &str, max_w: f32, size: f32) -> String {
-    if cx.backend.measure_text(value, size) <= max_w {
+    if text_metrics::measure_chrome(cx.backend, value, size) <= max_w {
         return value.to_string();
     }
     let mut out = value.to_string();
-    while !out.is_empty() && cx.backend.measure_text(&format!("{out}..."), size) > max_w {
+    while !out.is_empty()
+        && text_metrics::measure_chrome(cx.backend, &format!("{out}..."), size) > max_w
+    {
         out.pop();
     }
     format!("{out}...")
@@ -66,7 +69,7 @@ pub(crate) fn paint_empty(
     w: f32,
 ) -> f32 {
     let shown = ellipsize(cx, text, w, 13.0);
-    let text_w = cx.backend.measure_text(&shown, 13.0);
+    let text_w = text_metrics::measure_chrome(cx.backend, &shown, 13.0);
     draw_text(
         cx,
         &shown,

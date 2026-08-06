@@ -8,6 +8,7 @@
 
 use crate::theme::Theme;
 use crate::widgets::icons::{draw_icon, Icon};
+use crate::widgets::text_metrics;
 use crate::{Color, Point2D, Rect, RenderBackend, TextLayout};
 
 /// Paint the drop overlay across `canvas_rect` (the editor's canvas
@@ -67,7 +68,7 @@ pub fn paint_file_drop_overlay(
 
     // 4. Otherwise a centred card: download icon + label.
     let label_text = op_i18n::translate(locale, "dialog.dropToOpen");
-    let label_w = backend.measure_text(label_text, 14.0);
+    let label_w = text_metrics::measure_chrome(backend, label_text, 14.0);
     let card_w = (label_w + 56.0).max(220.0);
     let card_h = 104.0;
     let cx = canvas_rect.origin.x + canvas_rect.size.x / 2.0;

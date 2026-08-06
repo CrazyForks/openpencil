@@ -17,6 +17,7 @@ use crate::widgets::canvas_viewport_image::{
 };
 use crate::widgets::editor_state_ext::theme_for;
 use crate::widgets::icons::{draw_icon, Icon};
+use crate::widgets::text_metrics;
 use crate::widgets::{LayoutBox, LayoutCx, PaintCx, Widget, WidgetId};
 use crate::{Color, Point2D, Rect, RenderBackend, TextLayout};
 use op_editor_core::editor_ui_state::Locale;
@@ -380,7 +381,7 @@ fn paint_status_note(
     let font_size = 10.5;
     let icon_size = 13.0;
     let gap = 7.0;
-    let text_width = backend.measure_text(text, font_size);
+    let text_width = text_metrics::measure_chrome(backend, text, font_size);
     let group_width = icon_size + gap + text_width;
     let group_x = status.origin.x + (status.size.x - group_width) / 2.0;
     draw_icon(

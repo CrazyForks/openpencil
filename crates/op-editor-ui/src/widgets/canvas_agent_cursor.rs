@@ -17,6 +17,7 @@ use std::collections::HashMap;
 
 use super::canvas_agent_cursor_motion::{cursor_kinematics, parked_cursor_position, Waypoint};
 use crate::layout_scene::SceneNode;
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout};
 use op_editor_core::agent_indicators::{AgentIndicators, AgentTag};
@@ -727,7 +728,7 @@ fn paint_name_pill(cx: &mut PaintCx<'_>, sprite: &CursorSprite, name: &str) {
     // Clear the pencil body's down-right diagonal (~22px) with a little air.
     const OFFSET_X: f32 = 18.0;
     const OFFSET_Y: f32 = 24.0;
-    let name_w = cx.backend.measure_text(name, FONT);
+    let name_w = text_metrics::measure_chrome(cx.backend, name, FONT);
     let pill = Rect::xywh(
         sprite.pos.x + OFFSET_X,
         sprite.pos.y + OFFSET_Y,

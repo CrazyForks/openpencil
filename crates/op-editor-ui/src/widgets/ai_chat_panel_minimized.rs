@@ -12,6 +12,7 @@ use super::ai_chat_panel::{chat_neutral_feedback_color, footer_label_width, AICh
 use crate::theme::Theme;
 use crate::widgets::ai_chat_panel_footer::fit_footer_label;
 use crate::widgets::icons::{draw_icon, Icon};
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout};
 
@@ -170,7 +171,7 @@ pub(crate) fn paint_minimized_bar(
     };
     if layout.text.size.x > 0.0 {
         let fitted = crate::util::ellipsize_to_width(label, layout.text.size.x, |s| {
-            cx.backend.measure_text(s, MINIMIZED_TEXT_FONT)
+            text_metrics::measure_chrome(cx.backend, s, MINIMIZED_TEXT_FONT)
         });
         let text = TextLayout::single_run(
             &fitted,
@@ -189,7 +190,12 @@ pub(crate) fn paint_minimized_bar(
     }
 
     if layout.model.size.x > 0.0 {
-        let fitted = fit_footer_label(model_name, MINIMIZED_MODEL_FONT, layout.model.size.x);
+        let fitted = fit_footer_label(
+            cx.backend,
+            model_name,
+            MINIMIZED_MODEL_FONT,
+            layout.model.size.x,
+        );
         let text = TextLayout::single_run(
             &fitted,
             "system-ui",

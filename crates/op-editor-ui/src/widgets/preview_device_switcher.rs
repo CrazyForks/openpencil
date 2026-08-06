@@ -2,6 +2,7 @@
 
 use op_editor_core::PreviewDeviceKind;
 
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Point2D, Rect, TextLayout, Theme};
 
@@ -78,7 +79,7 @@ impl PreviewDeviceSwitcher<'_> {
             }
 
             let label_text = self.labels[index];
-            let text_width = cx.backend.measure_text(label_text, 12.0);
+            let text_width = text_metrics::measure_chrome(cx.backend, label_text, 12.0);
             let label = TextLayout::single_run(
                 label_text,
                 "system-ui",

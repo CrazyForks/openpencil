@@ -3,6 +3,7 @@ use super::{action_hovered, code_neutral_hover_color, paint_full_button, FullBut
 use crate::theme::Theme;
 use crate::widgets::icons::{draw_icon, Icon};
 use crate::widgets::property_panel_inputs::{INPUT_HEIGHT, PAD_X};
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout};
 use op_editor_core::codegen::{ChunkStatus, CodegenHover, CodegenState};
@@ -227,7 +228,7 @@ fn paint_step(cx: &mut PaintCx<'_>, theme: &Theme, step: StepPaint<'_>) {
         step.rect.origin.x + 30.0,
         center_y + 4.0,
     );
-    let status_w = cx.backend.measure_text(status_label, 10.0);
+    let status_w = text_metrics::measure_chrome(cx.backend, status_label, 10.0);
     draw_text(
         cx,
         status_label,

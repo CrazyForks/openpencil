@@ -12,6 +12,7 @@ use crate::widgets::collab_ui::{
 };
 use crate::widgets::editor_state_ext::theme_for;
 use crate::widgets::icons::{draw_icon, Icon};
+use crate::widgets::text_metrics;
 use crate::widgets::{LayoutBox, LayoutCx, PaintCx, Widget, WidgetId};
 use crate::{Point2D, Rect};
 use op_editor_core::{CollabPanelHover, CollabUiAction, EditorUiState};
@@ -478,7 +479,7 @@ impl Widget for CollabPanel<'_> {
                     let shown = crate::util::ellipsize_to_width(
                         invite.as_str(),
                         rect.size.x - PAD * 2.0 - 48.0,
-                        |text| cx.backend.measure_text(text, 11.0),
+                        |text| text_metrics::measure_chrome_weighted(cx.backend, text, 11.0, 500),
                     );
                     paint_text(
                         cx,
@@ -530,7 +531,7 @@ impl Widget for CollabPanel<'_> {
                     let shown = crate::util::ellipsize_to_width(
                         endpoint.as_str(),
                         rect.size.x - PAD * 2.0 - 30.0,
-                        |text| cx.backend.measure_text(text, 11.0),
+                        |text| text_metrics::measure_chrome(cx.backend, text, 11.0),
                     );
                     paint_text(
                         cx,

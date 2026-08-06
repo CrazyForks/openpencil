@@ -679,12 +679,16 @@ pub fn paint_size_section(
     y + SECTION_GAP
 }
 
+/// Checkbox + label. `w` is the half-column the pair occupies; the label is
+/// fitted to what is left of it after the 16px box and its gutter, because a
+/// long localized label ("Remplir la hauteur", "高さに合わせる") otherwise
+/// runs straight over the neighbouring column and off the rail's right edge.
 fn paint_check_row(
     cx: &mut PaintCx<'_>,
     theme: &Theme,
     x: f32,
     y: f32,
-    _w: f32,
+    w: f32,
     label: &str,
     checked: bool,
 ) {
@@ -701,8 +705,10 @@ fn paint_check_row(
         box_rect,
         &crate::widgets::button::tokens_from_theme(theme),
     );
+    let label =
+        crate::widgets::text_metrics::fit_chrome(cx.backend, label, (w - 22.0).max(0.0), 12.0);
     let lbl = TextLayout::single_run(
-        label,
+        &label,
         "system-ui",
         12.0,
         (theme.foreground).to_jian(),

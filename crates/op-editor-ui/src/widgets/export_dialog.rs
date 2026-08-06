@@ -11,6 +11,7 @@
 
 use crate::theme::Theme;
 use crate::widgets::editor_state_ext::doc_export_format;
+use crate::widgets::text_metrics;
 use crate::{Color, Point2D, Rect, RenderBackend, TextLayout};
 use op_editor_core::editor_ui_state::EditorUiState;
 
@@ -324,7 +325,7 @@ fn paint_centered_label(
     color: Color,
     rect: Rect,
 ) {
-    let w = backend.measure_text(text, size);
+    let w = text_metrics::measure_chrome(backend, text, size);
     let layout = TextLayout::single_run(
         text,
         FONT_FAMILY,

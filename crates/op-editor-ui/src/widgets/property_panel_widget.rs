@@ -21,6 +21,7 @@ use crate::widgets::property_panel_inputs::{
     INPUT_HEIGHT, INPUT_RADIUS, PAD_X, SECTION_GAP, SECTION_HEADER_HEIGHT,
 };
 use crate::widgets::property_panel_sections::EditContext;
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Point2D, Rect, TextLayout};
 use op_editor_core::PropertyFocus;
@@ -341,7 +342,7 @@ fn paint_list_count_row(
         (theme.foreground).to_jian(),
         Point2D::new(0.0, 0.0),
     );
-    let count_w = cx.backend.measure_text(&count_text, 12.0);
+    let count_w = text_metrics::measure_chrome(cx.backend, &count_text, 12.0);
     cx.backend.draw_text(
         &count_layout,
         Point2D::new(rect.origin.x + rect.size.x - 12.0 - count_w, baseline_y),

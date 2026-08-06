@@ -25,6 +25,7 @@ use crate::widgets::property_panel_inputs::{
 };
 use crate::widgets::property_panel_layout::fill_body_height_with_stops;
 use crate::widgets::property_panel_sections::{EditContext, PropertyLabels};
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout};
 use jian_ops_schema::node::path::PathFillRule;
@@ -325,7 +326,7 @@ fn paint_fill_rule_control(
             .to_jian(),
             Point2D::new(0.0, 0.0),
         );
-        let text_w = cx.backend.measure_text(label, 11.0);
+        let text_w = text_metrics::measure_chrome(cx.backend, label, 11.0);
         cx.backend.draw_text(
             &text,
             Point2D::new(
@@ -455,9 +456,17 @@ fn paint_one_fill(
         }
     }
     let dropdown_rect = head.dropdown;
+    // jian's SelectTrigger clips its value instead of ellipsizing it — see
+    // `text_metrics::fit_select_trigger_label`.
+    let fill_label = crate::widgets::text_metrics::fit_select_trigger_label(
+        cx.backend,
+        fill_type_label(locale, fill_type),
+        dropdown_rect,
+        12.0,
+    );
     jian_widgets::components::select_trigger::SelectTrigger {
         icon_paths: None,
-        label: fill_type_label(locale, fill_type),
+        label: &fill_label,
         placeholder: "",
         hovered: false,
         pressed: false,
@@ -517,9 +526,11 @@ fn paint_one_fill(
         cx.backend
             .draw_text(&pct, Point2D::new(pct_x, pct_rect.origin.y + 19.0));
         if let Some(pos) = edit.caret_at(opacity_focus) {
-            let w = cx
-                .backend
-                .measure_text(&pct_text[..pos.min(pct_text.len())], 12.0);
+            let w = text_metrics::measure_chrome(
+                cx.backend,
+                &pct_text[..pos.min(pct_text.len())],
+                12.0,
+            );
             cx.backend.fill_rect(
                 Rect {
                     origin: Point2D::new(pct_x + w, pct_rect.origin.y + 6.0),

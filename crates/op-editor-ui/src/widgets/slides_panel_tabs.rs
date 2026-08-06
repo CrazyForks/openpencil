@@ -15,6 +15,7 @@ use super::{
     TAB_RADIUS, TAB_ROW_HEIGHT,
 };
 use crate::widgets::icons::{draw_icon, Icon};
+use crate::widgets::text_metrics;
 use crate::widgets::top_bar_geometry::estimated_text_width;
 use crate::widgets::PaintCx;
 use crate::{Point2D, Rect, TextLayout, Theme};
@@ -206,7 +207,12 @@ impl SlidesPanelTabs {
             let icon_y = rect.origin.y + (rect.size.y - TAB_ICON_SIZE) / 2.0;
 
             if !self.compact {
-                let width = cx.backend.measure_text(label, TAB_FONT);
+                let width = text_metrics::measure_chrome_weighted(
+                    cx.backend,
+                    label,
+                    TAB_FONT,
+                    if selected { 600 } else { 400 },
+                );
                 cx.backend.draw_text(
                     &TextLayout::single_run(
                         label,
@@ -241,7 +247,7 @@ impl SlidesPanelTabs {
                 TAB_FONT,
                 (rect.size.x - TAB_PAD_X * 2.0 - TAB_ICON_SIZE - TAB_ICON_GAP).max(0.0),
             );
-            let label_w = cx.backend.measure_text(&label, TAB_FONT);
+            let label_w = text_metrics::measure_chrome_weighted(cx.backend, &label, TAB_FONT, 600);
             let content_w = TAB_ICON_SIZE + TAB_ICON_GAP + label_w;
             let icon_x = rect.origin.x + (rect.size.x - content_w) / 2.0;
             draw_icon(

@@ -16,6 +16,7 @@ use crate::widgets::property_panel_image_preview::paint_image_preview;
 use crate::widgets::property_panel_inputs::{
     paint_section_divider, paint_section_label, INPUT_HEIGHT, INPUT_RADIUS, PAD_X, SECTION_GAP,
 };
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Point2D, Rect, TextLayout};
 
@@ -275,7 +276,7 @@ fn paint_warning_row(
         (text).to_jian(),
         Point2D::new(0.0, 0.0),
     );
-    let w = cx.backend.measure_text("Relink", 9.0);
+    let w = text_metrics::measure_chrome(cx.backend, "Relink", 9.0);
     cx.backend.draw_text(
         &relink,
         Point2D::new(
@@ -289,7 +290,7 @@ fn paint_warning_row(
 fn paint_outline_button(cx: &mut PaintCx<'_>, theme: &Theme, rect: Rect, icon: Icon, label: &str) {
     cx.backend.fill_round_rect(rect, 6.0, theme.card);
     cx.backend.stroke_round_rect(rect, 6.0, theme.border, 1.0);
-    let label_w = cx.backend.measure_text(label, 11.0);
+    let label_w = text_metrics::measure_chrome(cx.backend, label, 11.0);
     let start_x = rect.origin.x + (rect.size.x - label_w - 17.0) / 2.0;
     draw_icon(
         cx.backend,

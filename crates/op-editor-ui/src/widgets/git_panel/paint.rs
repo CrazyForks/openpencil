@@ -5,6 +5,7 @@
 //! under the 800-line cap; geometry comes from `git_panel/geometry.rs`.
 
 use super::*;
+use crate::widgets::text_metrics;
 
 impl GitPanel<'_> {
     /// Paint the panel into `rect`.
@@ -402,7 +403,7 @@ impl GitPanel<'_> {
         // instead of overflowing the right edge. A long localized label
         // can still exceed the fixed button — clip the draw to the rect
         // so it never bleeds into a neighbour.
-        let label_w = cx.backend.measure_text(label, 12.0);
+        let label_w = text_metrics::measure_chrome(cx.backend, label, 12.0);
         let text_x = rect.origin.x + (rect.size.x - label_w).max(6.0) / 2.0;
         let baseline = rect.origin.y + rect.size.y / 2.0 + 4.0;
         cx.backend.save();

@@ -1,6 +1,7 @@
 //! Small paint helpers for whole-input text selection feedback.
 
 use crate::theme::Theme;
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect};
 
@@ -16,7 +17,7 @@ pub(super) fn paint_single_line_selection(
     if text.is_empty() {
         return;
     }
-    let width = cx.backend.measure_text(text, font_size).min(max_x - text_x);
+    let width = text_metrics::measure_chrome(cx.backend, text, font_size).min(max_x - text_x);
     if width <= 0.0 {
         return;
     }

@@ -7,6 +7,7 @@ use super::ai_chat_panel::{ExampleCard, HEADER_HEIGHT, PAD};
 use crate::theme::Theme;
 use crate::widgets::button::paint_button_feedback_wash;
 use crate::widgets::icons::{draw_icon, Icon};
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout};
 
@@ -44,11 +45,12 @@ pub(crate) fn example_card_rects(rect: Rect) -> [Rect; 4] {
 
 /// Ellipsize `text` so it fits within `max_w` at the given font size.
 fn ellipsize(cx: &mut PaintCx<'_>, text: &str, max_w: f32, size: f32) -> String {
-    if cx.backend.measure_text(text, size) <= max_w {
+    if text_metrics::measure_chrome(cx.backend, text, size) <= max_w {
         return text.to_string();
     }
     let mut s = text.to_string();
-    while !s.is_empty() && cx.backend.measure_text(&format!("{s}…"), size) > max_w {
+    while !s.is_empty() && text_metrics::measure_chrome(cx.backend, &format!("{s}…"), size) > max_w
+    {
         s.pop();
     }
     format!("{s}…")
@@ -124,16 +126,25 @@ pub(crate) fn paint_examples(
     let opacity = if disabled { 0.6 } else { 1.0 };
 
     // ── Centered hint header ─────────────────────────────────────────────────
+    // Fitted before centring: the card is user-resizable and some locales'
+    // hint runs half again as long as the English one, so an unfitted line
+    // is centred straight off both edges of a narrow panel.
     let hint_font = 12.0;
-    let hint = TextLayout::single_run(
+    let hint_label = text_metrics::fit_chrome(
+        cx.backend,
         hint_label,
+        (rect.size.x - PAD * 2.0).max(0.0),
+        hint_font,
+    );
+    let hint = TextLayout::single_run(
+        &hint_label,
         "system-ui",
         hint_font,
         (theme.muted_foreground).with_alpha(opacity).to_jian(),
         Point2D::new(0.0, 0.0),
     );
     let hint_y = rect.origin.y + HEADER_HEIGHT + HINT_OFFSET + hint_font * 0.35;
-    let hint_w = cx.backend.measure_text(hint_label, hint_font);
+    let hint_w = text_metrics::measure_chrome(cx.backend, &hint_label, hint_font);
     cx.backend.draw_text(
         &hint,
         Point2D::new(rect.origin.x + (rect.size.x - hint_w) / 2.0, hint_y),
@@ -214,34 +225,51 @@ pub(crate) fn paint_examples(
     let tip2_top = tip1_top + TIP_LINE_H;
     let tip2_y = tip2_top + tip_font * 0.35;
 
+    // Both tips are fitted to the card before they are centred. They are
+    // long fixed English sentences and the chat card is user-resizable, so
+    // an unfitted line runs off both edges of a narrow panel — and the
+    // paperclip that trails tip 2 goes with it.
+    let tip_max_w = (rect.size.x - PAD * 2.0).max(0.0);
+
     // Tip line 1: "Tip: Export design to code via Claude Code in terminal."
-    let tip1 = "Tip: Export design to code via Claude Code in terminal.";
+    let tip1 = text_metrics::fit_chrome(
+        cx.backend,
+        "Tip: Export design to code via Claude Code in terminal.",
+        tip_max_w,
+        tip_font,
+    );
     let tip1_layout = TextLayout::single_run(
-        tip1,
+        &tip1,
         "system-ui",
         tip_font,
         tip_color,
         Point2D::new(0.0, 0.0),
     );
-    let tip1_w = cx.backend.measure_text(tip1, tip_font);
+    let tip1_w = text_metrics::measure_chrome(cx.backend, &tip1, tip_font);
     cx.backend.draw_text(
         &tip1_layout,
         Point2D::new(rect.origin.x + (rect.size.x - tip1_w) / 2.0, tip1_y),
     );
 
     // Tip line 2: "Drop image / text file to chat or via 📎"
-    let tip2_text = "Drop image / text file to chat or via";
+    // The trailing paperclip is part of the line, so its width comes out of
+    // the budget the text is fitted to.
+    let clip_size = tip_font * 1.2;
+    let clip_gap = 4.0;
+    let tip2_text = text_metrics::fit_chrome(
+        cx.backend,
+        "Drop image / text file to chat or via",
+        (tip_max_w - clip_gap - clip_size).max(0.0),
+        tip_font,
+    );
     let tip2_layout = TextLayout::single_run(
-        tip2_text,
+        &tip2_text,
         "system-ui",
         tip_font,
         tip_color,
         Point2D::new(0.0, 0.0),
     );
-    let tip2_w = cx.backend.measure_text(tip2_text, tip_font);
-    // Inline paperclip icon width estimate: tip_font * 1.2.
-    let clip_size = tip_font * 1.2;
-    let clip_gap = 4.0;
+    let tip2_w = text_metrics::measure_chrome(cx.backend, &tip2_text, tip_font);
     let total_w = tip2_w + clip_gap + clip_size;
     let tip2_x = rect.origin.x + (rect.size.x - total_w) / 2.0;
     cx.backend

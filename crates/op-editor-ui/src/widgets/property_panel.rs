@@ -27,6 +27,7 @@
 
 use crate::theme::Theme;
 use crate::widgets::property_panel_sections as sections;
+use crate::widgets::text_metrics;
 use crate::widgets::WidgetId;
 use crate::{Point2D, Rect};
 use jian_widgets::components::select::SelectState;
@@ -403,7 +404,8 @@ pub(super) fn action_wash_rect(
         };
         if let Some(key) = key {
             let label = op_i18n::translate(locale, key);
-            let content_right = r.origin.x + RADIO_GUTTER + backend.measure_text(label, 10.0);
+            let content_right =
+                r.origin.x + RADIO_GUTTER + text_metrics::measure_chrome(backend, label, 10.0);
             let left = r.origin.x - ACTION_WASH_PAD_X;
             let right = (content_right + ACTION_WASH_PAD_X).min(r.origin.x + r.size.x);
             return Rect {
@@ -428,7 +430,7 @@ pub(super) fn action_wash_rect(
         // is clamped to the cell so a long localized label can't wash over the
         // adjacent column.
         let cell_right = r.origin.x + r.size.x;
-        let content_right = r.origin.x + 22.0 + backend.measure_text(label, 12.0);
+        let content_right = r.origin.x + 22.0 + text_metrics::measure_chrome(backend, label, 12.0);
         let left = r.origin.x - ACTION_WASH_PAD_X;
         let right = (content_right + ACTION_WASH_PAD_X).min(cell_right);
         return Rect {

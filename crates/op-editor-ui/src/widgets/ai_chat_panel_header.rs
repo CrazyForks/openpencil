@@ -26,6 +26,7 @@ use super::ai_chat_panel::{ChatTabInfo, HEADER_HEIGHT, PAD};
 use crate::theme::Theme;
 use crate::widgets::ai_chat_panel_controls::chat_neutral_feedback_color;
 use crate::widgets::icons::{draw_icon, Icon};
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout};
 
@@ -227,7 +228,7 @@ pub(crate) fn paint_header_tabs(
         };
         let title_max_w = (tr.body.size.x - TAB_PAD_X - right_inset).max(0.0);
         let title_text = crate::util::ellipsize_to_width(&tab.title, title_max_w, |s| {
-            cx.backend.measure_text(s, TAB_FONT_SIZE)
+            text_metrics::measure_chrome(cx.backend, s, TAB_FONT_SIZE)
         });
         let text_color = if is_active {
             theme.foreground
@@ -348,8 +349,8 @@ pub(crate) fn paint_new_chat_tooltip(cx: &mut PaintCx<'_>, theme: &Theme, rect: 
 
     let cmd_sym = "⌘";
     let t_sym = "T";
-    let cmd_text_w = cx.backend.measure_text(cmd_sym, chip_font);
-    let t_text_w = cx.backend.measure_text(t_sym, chip_font);
+    let cmd_text_w = text_metrics::measure_chrome(cx.backend, cmd_sym, chip_font);
+    let t_text_w = text_metrics::measure_chrome(cx.backend, t_sym, chip_font);
     let cmd_w = cmd_text_w + pad_x * 2.0;
     let t_w = t_text_w + pad_x * 2.0;
     let chips_total = cmd_w + gap + t_w;

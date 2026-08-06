@@ -18,6 +18,7 @@
 use op_editor_core::preview_slideshow::SlideshowToolbarButton;
 
 use crate::widgets::icons::{draw_icon, Icon};
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout, Theme};
 
@@ -158,7 +159,7 @@ impl SlideshowToolbar<'_> {
             );
         }
 
-        let text_width = cx.backend.measure_text(self.label, FONT_SIZE);
+        let text_width = text_metrics::measure_chrome(cx.backend, self.label, FONT_SIZE);
         let counter_x = pill.origin.x + BUTTON_W + (counter_width(self.label) - text_width) / 2.0;
         let label = TextLayout::single_run(
             self.label,

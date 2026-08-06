@@ -13,6 +13,7 @@ use crate::widgets::property_panel_inputs::{
 };
 use crate::widgets::property_panel_mode_popover as mode_popover;
 use crate::widgets::property_panel_sections::{EditContext, PropertyLabels};
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Point2D, Rect, TextLayout};
 use op_editor_core::{PaddingEditMode, PropertyFocus};
@@ -332,9 +333,11 @@ fn paint_stroke_hex_text(
         .draw_text(&hex_layout, Point2D::new(hex_x, hex_rect.origin.y + 19.0));
     if stroke_variable_ref.is_none() {
         if let Some(pos) = edit.caret_at(PropertyFocus::StrokeHex) {
-            let w = cx
-                .backend
-                .measure_text(&hex_text[..pos.min(hex_text.len())], 12.0);
+            let w = text_metrics::measure_chrome(
+                cx.backend,
+                &hex_text[..pos.min(hex_text.len())],
+                12.0,
+            );
             cx.backend.fill_rect(
                 Rect {
                     origin: Point2D::new(hex_x + w, hex_rect.origin.y + 6.0),

@@ -13,6 +13,7 @@
 
 use crate::theme::Theme;
 use crate::widgets::editor_state_ext::{theme_for, translate};
+use crate::widgets::text_metrics;
 use crate::widgets::{LayoutBox, LayoutCx, PaintCx, Widget, WidgetId};
 use crate::{Point2D, Rect, TextLayout};
 use jian_widgets::centered_text_baseline_y;
@@ -248,7 +249,7 @@ fn wrap_row_lines(cx: &mut PaintCx<'_>, text: &str, font_size: f32, max_width: f
     for ch in text.chars() {
         let mut candidate = current.clone();
         candidate.push(ch);
-        if cx.backend.measure_text(&candidate, font_size) <= max_width {
+        if text_metrics::measure_chrome(cx.backend, &candidate, font_size) <= max_width {
             if ch.is_whitespace() {
                 last_break = Some(candidate.len());
             }
@@ -290,7 +291,7 @@ fn finish_with_ellipsis(
 ) -> Vec<String> {
     while !current.is_empty() {
         let candidate = format!("{}…", current.trim_end());
-        if cx.backend.measure_text(&candidate, font_size) <= max_width {
+        if text_metrics::measure_chrome(cx.backend, &candidate, font_size) <= max_width {
             lines.push(candidate);
             return lines;
         }

@@ -9,6 +9,7 @@
 use crate::theme::Theme;
 use crate::widgets::editor_state_ext::theme_for;
 use crate::widgets::icons::{draw_icon, Icon};
+use crate::widgets::text_metrics;
 use crate::widgets::{LayoutBox, LayoutCx, PaintCx, Widget, WidgetId};
 use crate::{Point2D, Rect, TextLayout};
 use op_editor_core::editor_ui_state::Locale;
@@ -107,7 +108,7 @@ impl Widget for ImportProgressOverlay {
 
         // Headline directly below the glyph.
         let headline = parsing_title(self.locale, self.source);
-        let head_w = cx.backend.measure_text(headline, 14.0);
+        let head_w = text_metrics::measure_chrome(cx.backend, headline, 14.0);
         let head_layout = TextLayout::single_run(
             headline,
             "system-ui",
@@ -151,7 +152,7 @@ impl Widget for ImportProgressOverlay {
 
         // Subtitle below the dots.
         let sub = parsing_subtitle(self.locale, self.source);
-        let sub_w = cx.backend.measure_text(sub, 11.0);
+        let sub_w = text_metrics::measure_chrome(cx.backend, sub, 11.0);
         let sub_layout = TextLayout::single_run(
             sub,
             "system-ui",

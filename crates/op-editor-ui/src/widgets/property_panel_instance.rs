@@ -13,6 +13,7 @@ use crate::widgets::property_panel_inputs::{
 };
 use crate::widgets::property_panel_sections::PropertyLabels;
 use crate::widgets::property_panel_visibility::ComponentButtonState;
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout};
 
@@ -313,23 +314,39 @@ fn paint_button(
             1.3,
         );
     }
-    let label = TextLayout::single_run(
+    // The clip below is the button's text column; fit the label to it so a
+    // long localized label ellipsizes inside the button instead of being
+    // sheared by that clip.
+    let text_clip = Rect {
+        origin: Point2D::new(rect.origin.x + 34.0, rect.origin.y),
+        size: Point2D::new((rect.size.x - 68.0).max(0.0), rect.size.y),
+    };
+    // The centred placement below carries a +12 leading-icon offset, so the
+    // label's budget is the clip less that offset at BOTH ends — otherwise a
+    // label fitted to the full clip is shifted right out of it.
+    const CENTRED_LABEL_OFFSET: f32 = 12.0;
+    let label_text = text_metrics::fit_chrome(
+        cx.backend,
         label_text,
+        (text_clip.size.x - CENTRED_LABEL_OFFSET * 2.0).max(0.0),
+        13.0,
+    );
+    let label = TextLayout::single_run(
+        &label_text,
         "system-ui",
         13.0,
         accent.to_jian(),
         Point2D::new(0.0, 0.0),
     );
     let text_x = if centered {
-        rect.origin.x + (rect.size.x - cx.backend.measure_text(label_text, 13.0)) / 2.0 + 12.0
+        rect.origin.x
+            + (rect.size.x - text_metrics::measure_chrome(cx.backend, &label_text, 13.0)) / 2.0
+            + 12.0
     } else {
         rect.origin.x + 36.0
     };
     cx.backend.save();
-    cx.backend.clip_rect(Rect {
-        origin: Point2D::new(rect.origin.x + 34.0, rect.origin.y),
-        size: Point2D::new((rect.size.x - 68.0).max(0.0), rect.size.y),
-    });
+    cx.backend.clip_rect(text_clip);
     cx.backend.draw_text(
         &label,
         Point2D::new(text_x, rect.origin.y + rect.size.y / 2.0 + 4.5),

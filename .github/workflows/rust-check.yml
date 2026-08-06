@@ -16,6 +16,7 @@ on:
       - 'tools/check-jian-boundaries.sh'
       - 'tools/check-web-server-headless.sh'
       - 'tools/check-widget-boundary.sh'
+      - 'tools/check-text-measure.sh'
       - '.github/workflows/rust-check.yml'
   push:
     branches: ['**']
@@ -30,6 +31,7 @@ on:
       - 'tools/check-jian-boundaries.sh'
       - 'tools/check-web-server-headless.sh'
       - 'tools/check-widget-boundary.sh'
+      - 'tools/check-text-measure.sh'
       - '.github/workflows/rust-check.yml'
 
 jobs:
@@ -114,6 +116,14 @@ jobs:
       - name: Verify Step 1b widget boundary (spec §1.4)
         if: runner.os == 'Linux'
         run: bash tools/check-widget-boundary.sh
+
+      # Family-blind text measurement is invisible to every other check:
+      # it compiles, it passes the test suite (test backends measure blind
+      # and family-aware identically), and it only shows as sheared or
+      # off-centre glyphs on a real machine.
+      - name: Verify chrome text is measured in its paint family
+        if: runner.os == 'Linux'
+        run: bash tools/check-text-measure.sh
 
       - name: Verify op-host-web-server headless boundary (no winit/glutin/GL)
         if: runner.os == 'Linux'

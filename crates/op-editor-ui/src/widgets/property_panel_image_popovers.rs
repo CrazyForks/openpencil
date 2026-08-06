@@ -11,6 +11,7 @@ use crate::widgets::property_panel_image_assets::{
 };
 use crate::widgets::property_panel_image_preview::paint_image_source;
 use crate::widgets::property_panel_layout::VisibleSections;
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, ImageAdjustments, ImageDrawMode, Point2D, Rect, TextLayout};
 use op_editor_core::image_panel_state::{ImageGeneratePhase, ImagePanelState, ImageSearchSource};
@@ -65,7 +66,7 @@ fn paint_centered_label(
         (color).to_jian(),
         Point2D::new(0.0, 0.0),
     );
-    let w = cx.backend.measure_text(text, size);
+    let w = text_metrics::measure_chrome(cx.backend, text, size);
     cx.backend
         .draw_text(&layout, Point2D::new(centre_x - w / 2.0, baseline));
 }
@@ -360,7 +361,7 @@ pub fn paint_generate_popover(
                     theme.muted_foreground
                 };
                 let generate_label = tr(locale, "common.generate");
-                let label_w = cx.backend.measure_text(generate_label, 11.0);
+                let label_w = text_metrics::measure_chrome(cx.backend, generate_label, 11.0);
                 let start_x = btn.origin.x + (btn.size.x - label_w - 18.0) / 2.0;
                 draw_icon(
                     cx.backend,
