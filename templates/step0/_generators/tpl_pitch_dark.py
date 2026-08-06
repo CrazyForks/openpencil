@@ -5,10 +5,23 @@
 色、大字号、少而重的信息。路演是「在别人只肯给你八分钟的房间里，把一件
 事讲到对方想追问」——所以每页只有一个视觉锚点，其余全部让位。
 
+这一版把「深色」从「一块死黑」做成有层次的深色：
+
+1. **底是对角微光渐变**，不是纯色。近黑的石墨蓝 → 略偏蓝的深靛 → 回到近
+   黑，135° 铺满整页。投影时这一点点方向感就是「专业深色」与「PPT 默认
+   黑底」的差别。
+2. **章节页有 ghost 大数字**。480px 的页码压在内容之下（`oplib.stack` 的
+   装饰层），用强调色 + 6% 图层透明度 —— 不是把颜色调灰，是把整层调淡，
+   所以换强调色时它自己跟着走。
+3. **强调色做成霓虹细条**。卡首那道线从强调色渐到全透明，像一条点亮的
+   边，而不是一根填色矩形。
+4. **字阶拉开**：封面 128 / 正文 30（4.3 倍），页标题 76 / 正文 28。展示字
+   统一收紧字距到 -2 ~ -3。
+
 排版遵循 skills/domains/slides.md 的硬契约：
   - 每帧固定 1920×1080，绝不 fit_content；内容距边缘 ≥100（这里 120）
-  - 正文 ≥24（取 26-30），标题 ≥40，关键数字 80-200（数据页取 140）
-  - 行高：标题 1.1-1.2，正文 1.4+
+  - 正文 ≥24（取 26-30），标题 ≥40，关键数字 80-200（数据页取 148）
+  - 行高：展示字 1.06-1.15，正文 1.4+
   - 最多 2 个字体族（Noto Sans SC 排中文，Inter 排数字），靠字重分层
   - 强调色只用于强调；正文一律中性色
 
@@ -20,7 +33,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from oplib import Ids, color_vars, frame, rect, solid, stroke, text, write_doc
+from oplib import (Ids, color_vars, frame, linear, radial, rect, solid, stack,
+                   stroke, text, write_doc)
 
 ids = Ids()
 
@@ -29,12 +43,21 @@ ids = Ids()
 # 铺几层灰面。
 VARS = color_vars({
     "c-bg":          "#0B1220",
+    # 页面渐变的中段与末段。跨度刻意小（亮度差不到 4%）：再大一点，页与页
+    # 之间就会看出「这页比那页亮」，一整套投下来像没校准的投影仪。
+    "c-bg-mid":      "#111C33",
+    "c-bg-end":      "#0A1424",
     "c-surface":     "#18263F",
     "c-ink":         "#F2F6FF",
     "c-muted":       "#93A4C4",
     "c-accent":      "#4D8DFF",
     "c-accent-soft": "#16233D",
     "c-border":      "#24314D",
+    # 光晕与霓虹细条的两端。带 alpha —— 它们是文字的**兄弟**不是祖先，
+    # lint 找底色只走祖先链，碰不到这两个值；而渐到全透明是唯一能让光晕在
+    # 渐变底上不露硬边的写法。
+    "c-glow":        "#4D8DFF29",
+    "c-glow-out":    "#4D8DFF00",
 })
 
 W, H = 1920, 1080
@@ -47,13 +70,49 @@ CJK = "Noto Sans SC"
 # 数字、单位符号走 Inter：等宽感更强，KPI 排出来才齐。
 NUM = "Inter"
 
+# 135° = 左上 → 右下（`.op` 的角度约定：0° 自下而上、90° 自左向右，见
+# op-host-native/src/backend/skia/gradient.rs）。
+PAGE_ANGLE = 135
 
-def slide(name, *, gap=56, justify="start", fill="$c-bg"):
+
+def page_fill():
+    return linear(PAGE_ANGLE, [(0.0, "$c-bg"), (0.55, "$c-bg-mid"),
+                               (1.0, "$c-bg-end")])
+
+
+def slide(name, *, gap=56, justify="start", decor=()):
     """一帧幻灯片。固定 1920×1080 —— 投影比例是硬约束，不是建议。"""
-    node = frame(ids, name, width=W, height=H, layout="vertical",
+    body = frame(ids, f"{name} · 正文", width="fill_container",
+                 height="fill_container", layout="vertical",
                  padding=[EDGE, EDGE], gap=gap, justifyContent=justify,
-                 alignItems="start", fill=solid(fill), clipContent=True)
-    node["children"] = []
+                 alignItems="start", fill=[])
+    body["children"] = []
+    shell = stack(ids, name, body, list(decor), width=W, height=H,
+                  fill=page_fill())
+    shell["content"] = body
+    return shell
+
+
+def glow(size, x, y):
+    """一团光晕。渐到全透明，所以压在渐变底上也不会露出圆形硬边。"""
+    node = rect(ids, "光晕", width=size, height=size, cornerRadius=size // 2,
+                fill=radial([(0.0, "$c-glow"), (1.0, "$c-glow-out")]))
+    node["x"], node["y"] = x, y
+    return node
+
+
+def ghost_number(label, x, y, *, size=480):
+    """章节页背景上的巨大页码。
+
+    做法是「满色 + 图层透明度」而不是「把颜色调到接近底色」：前者换强调色
+    时自己跟着走，后者要手算一遍；而且 lint 量的是文字的原色（它不看节点
+    opacity），满色写法不会在检测器里留下一条假的低对比记录。
+    """
+    node = text(ids, "ghost 页码", label, size, 700, "$c-accent", family=NUM,
+                width="fit_content", growth="auto", line_height=1.0,
+                spacing=-round(size * 0.05))
+    node["x"], node["y"] = x, y
+    node["opacity"] = 0.07
     return node
 
 
@@ -74,6 +133,12 @@ def row(name, children, *, gap=40, align="start", width="fill_container",
     return node
 
 
+def neon_rule(width=72, height=4):
+    """霓虹细条。强调色渐到透明，读起来像一段被点亮的边而不是一块填色。"""
+    return rect(ids, "霓虹线", width=width, height=height, cornerRadius=999,
+                fill=linear(90, [(0.0, "$c-accent"), (1.0, "$c-glow-out")]))
+
+
 def eyebrow(label):
     """小标签。整套 deck 唯一的胶囊，用来交代「这是什么场合」。"""
     node = frame(ids, "标签", width="fit_content", height="fit_content",
@@ -88,7 +153,7 @@ def eyebrow(label):
     return node
 
 
-def accent_bar(width=160, height=10):
+def accent_bar(width=160, height=8):
     return rect(ids, "强调条", width=width, height=height, cornerRadius=999,
                 fill=solid("$c-accent"))
 
@@ -108,9 +173,9 @@ def centered_body(name, child):
                justifyContent="center")
 
 
-def page_head(title, subtitle=None, *, size=64):
+def page_head(title, subtitle=None, *, size=76):
     kids = [text(ids, "页标题", title, size, 700, "$c-ink", family=CJK,
-                 line_height=1.15)]
+                 line_height=1.12, spacing=-2)]
     if subtitle:
         kids.append(text(ids, "页副标题", subtitle, 30, 400, "$c-muted",
                          family=CJK, line_height=1.45))
@@ -120,11 +185,11 @@ def page_head(title, subtitle=None, *, size=64):
 # ------------------------------------------------------------------ 01 封面
 def cover():
     lede = col("主张", [
-        text(ids, "主标题", "把三天的报价\n压进三分钟", 112, 700, "$c-ink",
-             family=CJK, line_height=1.12),
+        text(ids, "主标题", "把三天的报价\n压进三分钟", 128, 700, "$c-ink",
+             family=CJK, line_height=1.08, spacing=-3),
         accent_bar(),
         text(ids, "副标题", "我们在做的，是让每一家工厂当场就能报出价来。",
-             34, 400, "$c-muted", family=CJK, line_height=1.45),
+             30, 400, "$c-muted", family=CJK, line_height=1.45),
     ], gap=36)
 
     meta = row("落款", [
@@ -134,8 +199,9 @@ def cover():
              family=CJK, width="fit_content", growth="auto"),
     ], gap=32, align="center", justifyContent="space_between")
 
-    s = slide("01 封面", gap=48, justify="space_between")
-    s["children"] = [eyebrow("种子轮 · 融资路演"), lede, meta]
+    s = slide("01 封面", gap=48, justify="space_between",
+              decor=[glow(1500, 980, -420), glow(760, 1360, 620)])
+    s["content"]["children"] = [eyebrow("种子轮 · 融资路演"), lede, meta]
     return s
 
 
@@ -153,19 +219,20 @@ def problem():
         if rows:
             rows.append(divider())
         rows.append(row(f"痛点 {index}", [
-            text(ids, "痛点序号", f"0{index}", 64, 700, "$c-accent",
+            text(ids, "痛点序号", f"0{index}", 72, 700, "$c-accent",
                  family=NUM, width="fit_content", growth="auto",
-                 line_height=1.0),
+                 line_height=1.0, spacing=-2),
             col("痛点文案", [
-                text(ids, "痛点标题", title, 40, 600, "$c-ink", family=CJK,
+                text(ids, "痛点标题", title, 44, 600, "$c-ink", family=CJK,
                      line_height=1.2),
                 text(ids, "痛点说明", desc, 28, 400, "$c-muted", family=CJK,
                      line_height=1.5),
             ], gap=12),
-        ], gap=40, align="start"))
+        ], gap=48, align="start"))
 
-    s = slide("02 问题", gap=56)
-    s["children"] = [
+    s = slide("02 问题", gap=56, decor=[ghost_number("02", 1240, 470),
+                                      glow(900, -300, 520)])
+    s["content"]["children"] = [
         page_head("报价这一步，卡住了整条链路",
                   "三个问题，每一个都在直接吃掉订单。"),
         col("痛点列表", rows, gap=0, height="fill_container",
@@ -186,17 +253,17 @@ def solution():
     cards = []
     for title, desc in SELLING_POINTS:
         cards.append(col("卖点卡", [
-            rect(ids, "卡首强调条", width=56, height=6, cornerRadius=999,
-                 fill=solid("$c-accent")),
-            text(ids, "卖点标题", title, 38, 600, "$c-ink", family=CJK,
+            neon_rule(),
+            text(ids, "卖点标题", title, 40, 600, "$c-ink", family=CJK,
                  line_height=1.2),
             text(ids, "卖点说明", desc, 27, 400, "$c-muted", family=CJK,
                  line_height=1.55),
-        ], gap=22, height="fill_container", padding=[48, 40],
+        ], gap=24, height="fill_container", padding=[48, 40],
             cornerRadius=20, fill=solid("$c-surface")))
 
-    s = slide("03 方案", gap=56)
-    s["children"] = [
+    s = slide("03 方案", gap=56, decor=[ghost_number("03", 1330, 20),
+                                      glow(1000, -260, -280)])
+    s["content"]["children"] = [
         page_head("把报价变成一次点击",
                   "工艺库 + 实时成本模型，客户还在电话里，价就出来了。"),
         centered_body("卖点区", row("卖点网格", cards, gap=36,
@@ -214,10 +281,10 @@ METRICS = [
 
 # 大数字 lineHeight 1.0 时基线离行盒底部约 0.2em；单位字号小得多，`end`
 # 对齐会把它压到基线以下。这个补偿把单位的行盒底抬回大数字的基线附近，
-# 让「42」和「×」看起来站在同一条线上。jian 没有真正的 baseline 对齐
+# 让「42」和「倍」看起来站在同一条线上。jian 没有真正的 baseline 对齐
 # （AlignItems::from_css 把 "baseline" 折成 End），所以只能这样补。
-VALUE_SIZE = 140
-UNIT_SIZE = 44
+VALUE_SIZE = 148
+UNIT_SIZE = 46
 UNIT_BASELINE_LIFT = round((VALUE_SIZE - UNIT_SIZE) * 0.2)
 
 
@@ -236,10 +303,11 @@ def metric_card(value, unit, label, note):
              line_height=1.0),
     ]
     return col("数据卡", [
+        neon_rule(),
         row("数值", [
             text(ids, "数值文字", value, VALUE_SIZE, 700, "$c-accent",
                  family=NUM, width="fit_content", growth="auto",
-                 line_height=1.0),
+                 line_height=1.0, spacing=-4),
             unit_box,
         ], gap=10, align="end", width="fit_content"),
         text(ids, "指标名", label, 32, 600, "$c-ink", family=CJK,
@@ -247,12 +315,13 @@ def metric_card(value, unit, label, note):
         text(ids, "指标说明", note, 26, 400, "$c-muted", family=CJK,
              line_height=1.45),
     ], gap=20, height="fill_container", justifyContent="center",
-        padding=[56, 44], cornerRadius=24, fill=solid("$c-surface"))
+        padding=[52, 44], cornerRadius=24, fill=solid("$c-surface"))
 
 
 def metrics():
-    s = slide("04 数据", gap=56)
-    s["children"] = [
+    s = slide("04 数据", gap=56, decor=[ghost_number("04", 1330, 20),
+                                      glow(1100, 1200, -340)])
+    s["content"]["children"] = [
         page_head("半年里，它已经在跑",
                   "不是路演里的假设，是 46 家工厂每天在用的数。"),
         centered_body("数据区", row("数据网格",
@@ -299,7 +368,7 @@ def milestone_column(date, title, desc, reached):
              line_height=1.2, spacing=0.5),
     ], gap=0, padding=[0, TIMELINE_TEXT_INSET, 0, 0])
     body = col("节点文案", [
-        text(ids, "节点标题", title, 34, 600, "$c-ink", family=CJK,
+        text(ids, "节点标题", title, 36, 600, "$c-ink", family=CJK,
              line_height=1.25),
         text(ids, "节点说明", desc, 26, 400, "$c-muted", family=CJK,
              line_height=1.5),
@@ -309,8 +378,9 @@ def milestone_column(date, title, desc, reached):
 
 
 def roadmap():
-    s = slide("05 里程碑", gap=56)
-    s["children"] = [
+    s = slide("05 里程碑", gap=56, decor=[ghost_number("05", 1330, 20),
+                                       glow(880, -280, 560)])
+    s["content"]["children"] = [
         page_head("接下来十二个月",
                   "前两步已经走完，这轮钱花在后两步上。"),
         centered_body("时间轴区",
@@ -325,10 +395,10 @@ def roadmap():
 def closing():
     lede = col("结语", [
         accent_bar(),
-        text(ids, "结语标题", "如果你也觉得\n这事早该被解决", 88, 700,
-             "$c-ink", family=CJK, line_height=1.15),
+        text(ids, "结语标题", "如果你也觉得\n这事早该被解决", 100, 700,
+             "$c-ink", family=CJK, line_height=1.1, spacing=-3),
         text(ids, "结语副标题", "我们缺的不是订单，是把它做快的那笔钱。",
-             32, 400, "$c-muted", family=CJK, line_height=1.45),
+             30, 400, "$c-muted", family=CJK, line_height=1.45),
     ], gap=36)
 
     # 名字与两行联络方式分成两层，不是排版洁癖：三个平级文本一旦字号 32 /
@@ -362,8 +432,9 @@ def closing():
                justifyContent="space_between", padding=[48, 56],
                cornerRadius=24, fill=solid("$c-surface"))
 
-    s = slide("06 结尾", gap=56, justify="space_between")
-    s["children"] = [lede, card]
+    s = slide("06 结尾", gap=56, justify="space_between",
+              decor=[glow(1600, -520, -460), glow(820, 1300, 540)])
+    s["content"]["children"] = [lede, card]
     return s
 
 
@@ -379,18 +450,24 @@ BOARDS_PER_ROW = 3
 def build():
     boards = [cover(), problem(), solution(), metrics(), roadmap(), closing()]
     for index, board in enumerate(boards):
+        board.pop("content", None)
         board["x"] = (index % BOARDS_PER_ROW) * (W + BOARD_GAP_X)
         board["y"] = (index // BOARDS_PER_ROW) * (H + BOARD_GAP_Y)
     return boards
 
 
-# 对比度（WCAG 相对亮度比，投影场景自设门槛 4.5，远高于 op-design-lint 的 2.5）：
-#   c-ink   on c-bg      17.30    c-ink   on c-surface     13.98
-#   c-muted on c-bg       7.44    c-muted on c-surface      6.01
-#   c-accent on c-bg      5.86    c-accent on c-surface     4.73  ← 最低一对
-#   c-accent on c-accent-soft  4.90
-# 数据页的 140px 大数字用的是 c-accent on c-surface = 4.73:1。换强调色时
+# 对比度（WCAG 相对亮度比，投影场景自设门槛 4.5，远高于 op-design-lint 的
+# 2.5）。页面底是渐变，所以按**三个 stop 分别量、取最差**——lint 只读
+# stops[0]，靠它兜不住：
+#   c-ink   on 页面渐变    17.30 / 15.87 / 16.72
+#   c-muted on 页面渐变     7.44 /  6.82 /  7.19
+#   c-accent on 页面渐变    5.86 /  5.38 /  5.67
+#   c-ink   on c-surface   13.98    c-muted on c-surface      6.01
+#   c-accent on c-surface   4.73  ← 最低一对    c-accent on c-accent-soft 4.90
+# 数据页的 148px 大数字用的是 c-accent on c-surface = 4.73:1。换强调色时
 # 先拿这一对量一遍：深底上亮色越纯，比值掉得越快。
+# 光晕与 ghost 页码不参与：前者是纯装饰兄弟，后者是「满色 + 7% 图层透明
+# 度」，两者都不承担阅读。
 
 if __name__ == "__main__":
     write_doc(sys.argv[1], VARS, build(), "路演 deck · 深色 16:9")

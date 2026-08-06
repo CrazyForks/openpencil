@@ -60,7 +60,7 @@ CARDS = [
     ("pitch-deck-dark", [f"pitch-deck-dark-{i:02d}.png" for i in range(1, 7)]),
     ("lecture-deck-light",
      [f"lecture-deck-light-{i:02d}.png" for i in range(1, 7)]),
-    ("minimal-keynote", [f"minimal-keynote-{i:02d}.png" for i in range(1, 9)]),
+    ("minimal-keynote", [f"minimal-keynote-{i:02d}.png" for i in range(1, 10)]),
     ("gradient-tech", [f"gradient-tech-{i:02d}.png" for i in range(1, 7)]),
 ]
 

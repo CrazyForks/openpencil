@@ -197,7 +197,7 @@ fn one_undo_removes_the_whole_template() {
     let before = top_level_ids(&state);
 
     assert!(state.append_template_boards(boards_for("minimal-keynote")));
-    assert_eq!(state.active_children().len(), 9);
+    assert_eq!(state.active_children().len(), 10);
 
     assert!(state.undo());
     assert_eq!(top_level_ids(&state), before);

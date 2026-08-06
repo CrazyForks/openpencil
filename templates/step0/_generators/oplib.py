@@ -24,6 +24,45 @@ def stroke(color, thickness=2):
     return {"thickness": thickness, "fill": solid(color)}
 
 
+def linear(angle, stops):
+    """线性渐变填充。`stops` 是 (offset, color) 序列。
+
+    注意 op-design-lint 的对比度检测器只读 stops[0]，所以「文字压在渐变
+    上」这件事必须自己按每个 stop 都量一遍（各 deck 生成器文件末尾的对比度
+    表就是这么来的），别指望 lint 兜住。
+    """
+    return [{
+        "type": "linear_gradient",
+        "angle": angle,
+        "stops": [{"offset": offset, "color": color} for offset, color in stops],
+    }]
+
+
+def radial(stops, *, cx=0.5, cy=0.5, radius=0.5):
+    """径向渐变填充。cx/cy ∈ [0,1] 是节点框内的相对位置，radius 相对 max(w,h)。
+
+    半径给到 0.5、最外一档 stop 取所在页的底色，光晕就正好在节点边界收干净，
+    不会留下一圈可见的方边（TileMode::Clamp 会把边界外全刷成最后一个 stop）。
+    """
+    return [{
+        "type": "radial_gradient",
+        "cx": cx, "cy": cy, "radius": radius,
+        "stops": [{"offset": offset, "color": color} for offset, color in stops],
+    }]
+
+
+def mix(a, b, t):
+    """把 a 按 t 混向 b，返回不透明十六进制色。
+
+    装饰层可以直接用节点 opacity，但**底色变量**不行：lint 会把半透明当成
+    不透明来量对比度（`parse_hex_color` 丢 alpha），所以凡是文字要压上去的
+    那一层，颜色一律在这里先算成实色再写进变量。
+    """
+    ca = [int(a.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)]
+    cb = [int(b.lstrip("#")[i:i + 2], 16) for i in (0, 2, 4)]
+    return "#" + "".join(f"{round(x + (y - x) * t):02X}" for x, y in zip(ca, cb))
+
+
 def frame(ids, name, **props):
     node = {"type": "frame", "id": ids("f"), "name": name}
     node.update(props)
@@ -53,6 +92,34 @@ def group(ids, name, **props):
     node = {"type": "group", "id": ids("g"), "name": name}
     node.update(props)
     return node
+
+
+def stack(ids, name, content, decor, *, width, height, fill, **props):
+    """一帧的分层骨架：外壳 layout:none，内容层在上、装饰层在下。
+
+    背景装饰（大圆弧、光晕、ghost 数字、网格暗纹）不能直接挂在正文那个
+    flex 容器里 —— 它们会变成一个参与排版的兄弟，把内容挤走。所以外壳退成
+    layout:none，只放两个 fill_container 的层：正文层照常做 flex，装饰层做
+    绝对定位。
+
+    **装饰层必须是最后一个孩子**：jian 的兄弟顺序是「index 0 最上」
+    （`canvas_viewport_paint_mask.rs` 反着遍历 children），写反了大圆弧就会
+    盖住正文。
+
+    对比度上这层结构是中性的：lint 找底色只往上走祖先链，装饰兄弟不参与，
+    正文的底仍然是外壳这一层的 `fill`。所以装饰必须自己克制到不影响可读性
+    （本仓的做法：节点 opacity ≤0.5，且与底色同族）。
+    """
+    shell = frame(ids, name, width=width, height=height, layout="none",
+                  fill=fill, clipContent=True, **props)
+    if not decor:
+        shell["children"] = [content]
+        return shell
+    ornament = frame(ids, f"{name} · 装饰", width="fill_container",
+                     height="fill_container", layout="none", fill=[])
+    ornament["children"] = decor
+    shell["children"] = [content, ornament]
+    return shell
 
 
 def icon_font(ids, name, glyph, size, color, **props):
