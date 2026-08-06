@@ -457,6 +457,62 @@ fn execute_design_root_seed_preserves_authored_numeric_width() {
 }
 
 #[test]
+fn continuation_seed_inherits_every_mobile_screen_and_repairs_wrong_numeric_sizes() {
+    let mut state = EditorState::new();
+    state.active_children_mut().clear();
+    state.active_children_mut().push(
+        serde_json::from_value(serde_json::json!({
+            "type": "frame", "id": "home", "name": "Nocturne 今夜",
+            "width": 390, "height": 844,
+            "fill": [{ "type": "solid", "color": "#050508" }],
+            "children": [{ "type": "text", "id": "home-title", "content": "今夜天空" }]
+        }))
+        .expect("existing mobile screen"),
+    );
+    let mut guard = RootSeedGuard::from_prompt("mobile continuation");
+    let (result, mutated) = execute_design_tool_with_root_seed_guard(
+        &mut state,
+        "batch_design",
+        r#"{"operations":"a=I(null,{type:'frame',name:'星图',width:1512,height:982,fill:[{type:'solid',color:'#16002E'}]})\nb=I(null,{type:'frame',name:'观测计划'})\nc=I(null,{type:'frame',name:'我的',width:375,height:812})"}"#,
+        None,
+        Some(&mut guard),
+    );
+
+    assert!(!result.is_error, "batch failed: {}", result.content);
+    assert!(mutated);
+    let generated = &state.active_children()[1..];
+    assert_eq!(
+        generated.len(),
+        3,
+        "top-level roots: {:?}; result: {}",
+        state
+            .active_children()
+            .iter()
+            .map(|node| node.base().name.as_deref())
+            .collect::<Vec<_>>(),
+        result.content
+    );
+    for root in generated {
+        assert_eq!(
+            (root.width_px(), root.height_px()),
+            (Some(390.0), Some(844.0))
+        );
+        assert_eq!(op_editor_core::first_solid_fill_hex(root), Some("#050508"));
+        assert_eq!(
+            root.children()
+                .and_then(|children| children.first())
+                .and_then(|child| child.base().role.as_deref()),
+            Some("status-bar")
+        );
+    }
+    let value: serde_json::Value = serde_json::from_str(&result.content).unwrap();
+    assert!(value["layoutHint"]
+        .as_str()
+        .unwrap_or("")
+        .contains("390x844"));
+}
+
+#[test]
 fn execute_design_mobile_first_batch_injects_status_bar_chrome() {
     // Chrome parity with the orchestrator scaffold: even when the model
     // authored explicit root dimensions (so size seeding is skipped),

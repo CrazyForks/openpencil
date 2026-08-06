@@ -423,6 +423,7 @@ impl EditorCommand {
             C::BatchInsert { .. }
             | C::InsertSubtree { .. }
             | C::InsertAuthoredSubtree { .. }
+            | C::InsertAuthoredSubtreePreservingRoots { .. }
             | C::RefineDesign { .. }
             | C::Batch { .. }
             | C::ReplaceAllMatchingProperties { .. }

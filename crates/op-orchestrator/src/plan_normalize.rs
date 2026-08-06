@@ -7,15 +7,21 @@
 use crate::dashboard_columns::{
     infer_dashboard_section_height, infer_dashboard_section_width, is_dashboard_like_prompt,
 };
-use crate::plan::{OrchestratorPlan, Region, Subtask};
+use crate::plan::OrchestratorPlan;
 use crate::types::DesignRequest;
 
 #[path = "plan_home_intent.rs"]
 mod plan_home_intent;
-use plan_home_intent::plan_is_app_home_screen;
+
+#[path = "plan_normalize_nav.rs"]
+mod plan_normalize_nav;
+use plan_normalize_nav::{ensure_requested_bottom_nav_subtask, is_bottom_nav_subtask};
 
 #[path = "plan_normalize_dimensions.rs"]
 mod plan_normalize_dimensions;
+
+#[path = "plan_continuation_contract.rs"]
+mod plan_continuation_contract;
 
 // multiscreen-fanout-break fix (item A) — screen-grouping tests, split out
 // to keep this file's inline `mod tests` from crossing the 800-line cap.
@@ -78,86 +84,6 @@ fn strip_status_bar_fragments(text: &str) -> Option<String> {
     }
 }
 
-fn prompt_requests_bottom_nav(prompt: &str) -> bool {
-    let hay = prompt.to_lowercase();
-    if prompt_forbids_bottom_nav(prompt) {
-        return false;
-    }
-    hay.contains("bottom nav")
-        || hay.contains("bottom navigation")
-        || hay.contains("bottom tab")
-        || hay.contains("bottom-tab")
-        || hay.contains("tab bar")
-        || hay.contains("tabbar")
-        || hay.contains("底部导航")
-        || hay.contains("底栏")
-}
-
-fn prompt_forbids_bottom_nav(prompt: &str) -> bool {
-    let hay = prompt.to_lowercase();
-    hay.contains("no bottom nav")
-        || hay.contains("without bottom nav")
-        || hay.contains("without bottom navigation")
-        || hay.contains("不要底部导航")
-        || hay.contains("不需要底部导航")
-}
-
-fn is_bottom_nav_subtask(st: &Subtask) -> bool {
-    let hay = format!(
-        "{} {} {}",
-        st.id.to_lowercase(),
-        st.label.to_lowercase(),
-        st.elements.as_deref().unwrap_or_default().to_lowercase()
-    );
-    hay.contains("bottom nav")
-        || hay.contains("bottom-navigation")
-        || hay.contains("bottom navigation")
-        || hay.contains("bottom tab")
-        || hay.contains("bottom-tab")
-        || hay.contains("tab bar")
-        || hay.contains("tabbar")
-        || hay.contains("bottom-tab-bar")
-}
-
-fn ensure_requested_bottom_nav_subtask(plan: &mut OrchestratorPlan, req: &DesignRequest) {
-    if prompt_forbids_bottom_nav(&req.prompt) {
-        plan.subtasks.retain(|st| !is_bottom_nav_subtask(st));
-        return;
-    }
-    if plan.subtasks.iter().any(is_bottom_nav_subtask) {
-        return;
-    }
-    // Two ways in: the prompt asked for it, OR this is an app HOME/main
-    // screen — a multi-section mobile plan whose root/screen reads as a
-    // home/feed — where a bottom tab bar is anatomy, not an option (a
-    // glm "Food App Home" planned 4 content sections and simply skipped
-    // the navbar the teaching asked for; plan-level completeness is the
-    // deterministic backstop). Single-task flows (<3 sections) never
-    // qualify.
-    if !prompt_requests_bottom_nav(&req.prompt) && !plan_is_app_home_screen(plan) {
-        return;
-    }
-
-    plan.subtasks.push(Subtask {
-        id: "bottom-navigation".into(),
-        label: "Bottom Navigation".into(),
-        region: Region {
-            width: plan.root_frame.width,
-            height: 78.0,
-        },
-        id_prefix: String::new(),
-        parent_frame_id: None,
-        elements: Some(
-            "bottom tab bar with this app's own 3-5 top-level destinations as icon + label tabs (choose tabs that fit the product, not a fixed Home/Search/Orders set); role bottom-tab-bar; full-width surface matching the page; transparent tab item frames; active state via accent icon/label color, not filled pills"
-                .into(),
-        ),
-        screen: None,
-        generated_root_id: None,
-        existing_section_labels: None,
-        retry_feedback: None,
-    });
-}
-
 /// 就地规范化 `plan`:
 /// - 一次性判定 `is_mobile`(根 frame 宽度);
 /// - 移动端剔除 plan 自带的状态栏 subtask(状态栏改由 scaffold 注入);
@@ -167,8 +93,11 @@ fn ensure_requested_bottom_nav_subtask(plan: &mut OrchestratorPlan, req: &Design
 ///   LLM 值,超出则取推断值 —— 忠实 TS `normalizeOrchestratorPlan`
 ///   `orchestrator.ts:259-272`)。
 pub fn normalize(plan: &mut OrchestratorPlan, req: &DesignRequest) -> NormInfo {
-    let preserve_requested_root_height =
+    let requested_dimensions_applied =
         plan_normalize_dimensions::apply_requested_root_dimensions(plan, req);
+    let continuation_contract_applied = plan_continuation_contract::apply(plan, req);
+    let preserve_requested_root_height =
+        requested_dimensions_applied || continuation_contract_applied;
 
     // A deck's board is the projector: 16:9, fixed, and never resized to fit
     // its content. Without this, `adjust_root_height_to_content` grew a cover
@@ -247,7 +176,10 @@ pub fn normalize(plan: &mut OrchestratorPlan, req: &DesignRequest) -> NormInfo {
     for st in &mut plan.subtasks {
         st.id_prefix = st.id.clone();
 
-        if dashboard_like {
+        // Continuation regions describe complete sibling artboards, not
+        // dashboard sections inside one root. Their live-canvas contract is
+        // authoritative and must not be shrunk again by section heuristics.
+        if dashboard_like && !continuation_contract_applied {
             let inferred_width = infer_dashboard_section_width(st, root_width);
             let inferred_height = infer_dashboard_section_height(st);
 

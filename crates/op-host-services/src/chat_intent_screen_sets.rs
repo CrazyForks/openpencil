@@ -44,15 +44,58 @@ fn has_name_chars(part: &str) -> bool {
     letters.iter().any(|c| !c.is_ascii()) || letters.len() >= 3
 }
 
-fn is_named_list_with(targets: &str, separator: char) -> bool {
-    let parts: Vec<&str> = targets.split(separator).map(str::trim).collect();
-    parts.len() >= 2 && parts.iter().all(|part| has_name_chars(part))
+fn normalize_target_name(raw: &str) -> Option<String> {
+    let mut name = raw
+        .trim()
+        .trim_matches(|c: char| matches!(c, ',' | '，' | ':' | '：'))
+        .to_string();
+
+    // A shared CJK screen noun commonly carries the declared count after the
+    // final name: `星图、观测计划、我的3个界面`. The count describes the list; it is
+    // not part of the last screen's name.
+    if name.ends_with('个') {
+        name.pop();
+        name = name.trim_end().to_string();
+        while name
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_ascii_digit() || "零一二三四五六七八九十两几".contains(c))
+        {
+            name.pop();
+        }
+        name = name
+            .trim_end()
+            .trim_end_matches('这')
+            .trim_end()
+            .to_string();
+    }
+
+    if let Some(without_article) = name
+        .strip_prefix("the ")
+        .or_else(|| name.strip_prefix("The "))
+    {
+        name = without_article.trim().to_string();
+    }
+
+    has_name_chars(&name).then_some(name)
 }
 
-fn has_named_list(targets: &str) -> bool {
-    is_named_list_with(targets, '／')
-        || is_named_list_with(targets, '、')
-        || (!targets.contains("://") && !targets.contains("//") && is_named_list_with(targets, '/'))
+fn named_list_with(targets: &str, separator: char) -> Option<Vec<String>> {
+    let parts = targets
+        .split(separator)
+        .map(normalize_target_name)
+        .collect::<Option<Vec<_>>>()?;
+    (parts.len() >= 2).then_some(parts)
+}
+
+fn named_list_names(targets: &str) -> Option<Vec<String>> {
+    named_list_with(targets, '／')
+        .or_else(|| named_list_with(targets, '、'))
+        .or_else(|| {
+            (!targets.contains("://") && !targets.contains("//"))
+                .then(|| named_list_with(targets, '/'))
+                .flatten()
+        })
 }
 
 fn is_clause_end(tail: &str) -> bool {
@@ -132,7 +175,7 @@ fn targets_reference_existing_screen_en(targets: &str) -> bool {
         .any(|marker| contains_ascii_word(targets, marker))
 }
 
-fn requests_listed_whole_screens_en(prompt: &str) -> bool {
+fn listed_whole_screen_names_en(prompt: &str) -> Option<Vec<String>> {
     let lower = prompt.to_ascii_lowercase();
     for &verb in LIST_VERBS_EN {
         for (verb_pos, _) in lower.match_indices(verb) {
@@ -142,28 +185,36 @@ fn requests_listed_whole_screens_en(prompt: &str) -> bool {
                 continue;
             }
             let after_verb = &lower[verb_pos + verb.len()..];
+            let after_verb_original = &prompt[verb_pos + verb.len()..];
             for &noun in SCREEN_NOUNS_EN {
                 for (noun_pos, _) in after_verb.match_indices(noun) {
                     if !is_ascii_word_match(after_verb, noun_pos, noun) {
                         continue;
                     }
-                    let targets = after_verb[..noun_pos].trim();
-                    let tail = &after_verb[noun_pos + noun.len()..];
+                    let targets = after_verb_original[..noun_pos].trim();
+                    let tail = &after_verb_original[noun_pos + noun.len()..];
                     if !crosses_clause_boundary(targets)
                         && !targets_reference_existing_screen_en(targets)
-                        && has_named_list(targets)
                         && is_clause_end(tail)
                     {
-                        return true;
+                        if let Some(names) = named_list_names(targets) {
+                            return Some(names);
+                        }
                     }
                 }
             }
         }
     }
-    false
+    None
 }
 
-pub(super) fn requests_listed_whole_screens(prompt: &str) -> bool {
+/// Exact sibling-screen names promised by a listed continuation request.
+///
+/// This is the structured counterpart to the routing predicate below: the
+/// desktop host attaches these names to `DesignRequest`, allowing a planning
+/// fallback to create one real top-level screen per promise instead of a
+/// generic `Section 1` board.
+pub fn listed_whole_screen_names(prompt: &str) -> Vec<String> {
     for &verb in LIST_VERBS_CJK {
         for (verb_pos, _) in prompt.match_indices(verb) {
             let after_verb = &prompt[verb_pos + verb.len()..];
@@ -178,21 +229,38 @@ pub(super) fn requests_listed_whole_screens(prompt: &str) -> bool {
                     let tail = &after_verb[noun_pos + noun.len()..];
                     if !crosses_clause_boundary(targets)
                         && !targets_reference_existing_screen(targets)
-                        && has_named_list(targets)
                         && is_clause_end(tail)
                     {
-                        return true;
+                        if let Some(names) = named_list_names(targets) {
+                            return names;
+                        }
                     }
                 }
             }
         }
     }
-    requests_listed_whole_screens_en(prompt)
+    listed_whole_screen_names_en(prompt).unwrap_or_default()
+}
+
+pub(super) fn requests_listed_whole_screens(prompt: &str) -> bool {
+    !listed_whole_screen_names(prompt).is_empty()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::requests_listed_whole_screens;
+    use super::{listed_whole_screen_names, requests_listed_whole_screens};
+
+    #[test]
+    fn extracts_promised_screen_names_and_drops_the_declared_count() {
+        assert_eq!(
+            listed_whole_screen_names("继续生成 星图、观测计划、我的3个界面"),
+            ["星图", "观测计划", "我的"]
+        );
+        assert_eq!(
+            listed_whole_screen_names("Continue generating the explore/profile interface"),
+            ["explore", "profile"]
+        );
+    }
 
     #[test]
     fn recognizes_listed_follow_on_screens_with_shared_cjk_noun() {

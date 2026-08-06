@@ -89,6 +89,50 @@ fn subagent_prompt_carries_subtask_and_script_format() {
     );
 }
 
+#[test]
+fn generation_protocols_require_first_class_interactive_controls() {
+    for kind in [
+        "text_input",
+        "text_area",
+        "select",
+        "switch",
+        "checkbox",
+        "slider",
+        "radio_group",
+        "number_input",
+        "progress",
+        "tabs",
+    ] {
+        assert!(
+            SCRIPT_FORMAT.contains(kind),
+            "script protocol must list native widget `{kind}`"
+        );
+        assert!(
+            NODE_FORMAT.contains(kind),
+            "legacy JSONL protocol must list native widget `{kind}`"
+        );
+    }
+    for contract in [
+        "options:[{value,label}]",
+        "checked",
+        "min/max/step/value",
+        "fill, stroke, and cornerRadius",
+        "fill is the active/accent paint",
+        "stroke.fill is the inactive track/border paint",
+    ] {
+        assert!(
+            SCRIPT_FORMAT.contains(contract),
+            "script protocol lost interactive contract {contract:?}"
+        );
+        assert!(
+            NODE_FORMAT.contains(contract),
+            "legacy JSONL protocol lost interactive contract {contract:?}"
+        );
+    }
+    assert!(SCRIPT_FORMAT.contains("never a frame/rectangle mockup with a role marker"));
+    assert!(NODE_FORMAT.contains("Never generate a frame/rectangle mockup with a role marker"));
+}
+
 /// The reduced-complexity retry rung keeps script-gen; only its skill set is
 /// narrowed.
 #[test]
@@ -271,6 +315,7 @@ fn subagent_prompt_reduced_complexity_basic_is_shorter_than_full() {
         provider: None,
         design_md: None,
         concurrency: 1,
+        continuation_context: None,
         append_context: None,
         validation_enabled: true,
 
@@ -400,6 +445,7 @@ fn subagent_prompt_basic_tier_reduced_retry_drops_jsonl_format_skills() {
         provider: None,
         design_md: None,
         concurrency: 1,
+        continuation_context: None,
         append_context: None,
         validation_enabled: true,
         visual_ref_enabled: false,
@@ -451,6 +497,7 @@ fn subagent_prompt_basic_mobile_food_keeps_mobile_app_skill() {
         provider: None,
         design_md: None,
         concurrency: 1,
+        continuation_context: None,
         append_context: None,
         validation_enabled: true,
         visual_ref_enabled: false,

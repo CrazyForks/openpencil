@@ -453,6 +453,29 @@ fn root_frame_insert_replaces_the_first_empty_frame_and_inherits_position() {
 }
 
 #[test]
+fn root_frame_batch_replaces_only_preexisting_empty_starters() {
+    let mut state = state_with(vec![frame("f1", "Blank", 30.0, 40.0, 100.0, 100.0, vec![])]);
+    let program = "a=I(null, {type:'frame', name:'A'})\nb=I(null, {type:'frame', name:'B'})\nc=I(null, {type:'frame', name:'C'})";
+    let (envelope, cmd) = call_operations(&state, program);
+    assert!(envelope.get("errors").is_none(), "{envelope}");
+
+    assert!(state.apply(cmd.expect("three-screen batch")));
+    let roots = state.active_children();
+    assert_eq!(roots.len(), 3, "all authored screen shells must survive");
+    assert_eq!(
+        roots
+            .iter()
+            .filter_map(|root| root.base().name.as_deref())
+            .collect::<Vec<_>>(),
+        ["A", "B", "C"]
+    );
+    assert_eq!(
+        (roots[0].base().x, roots[0].base().y),
+        (Some(30.0), Some(40.0))
+    );
+}
+
+#[test]
 fn bound_move_records_the_binding_and_honors_the_index() {
     let mut state = sample();
     let program = r##"box=I("n10", {"type":"rectangle","name":"Box","width":10,"height":10})

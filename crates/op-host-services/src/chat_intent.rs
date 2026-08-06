@@ -57,6 +57,7 @@ use crate::design_session::{run_design_worker, DesignCmdReq, DesignDelta};
 
 #[path = "chat_intent_screen_sets.rs"]
 mod screen_sets;
+pub use screen_sets::listed_whole_screen_names;
 use screen_sets::requests_listed_whole_screens;
 
 /// Internal host-op name the modify worker sends over the chat tool

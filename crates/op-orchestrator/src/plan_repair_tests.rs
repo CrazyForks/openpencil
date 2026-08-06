@@ -243,6 +243,7 @@ fn req(prompt: &str) -> DesignRequest {
         provider: None,
         design_md: None,
         concurrency: 1,
+        continuation_context: None,
         append_context: None,
         validation_enabled: true,
 
@@ -271,6 +272,7 @@ fn req_with_design_md(prompt: &str) -> DesignRequest {
             generation_notes: None,
         }),
         concurrency: 1,
+        continuation_context: None,
         append_context: None,
         validation_enabled: true,
 

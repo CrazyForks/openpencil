@@ -639,6 +639,21 @@ pub struct AppendContext {
     pub is_mobile: bool,
 }
 
+/// Existing-canvas facts for a request that creates sibling screens.
+///
+/// Unlike [`AppendContext`], this does not target an existing parent. It
+/// carries the artboard contract and the exact screens the user promised so
+/// planning failure can still fan out into correctly-sized top-level roots.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContinuationContext {
+    pub screen_width: f64,
+    pub screen_height: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_color: Option<String>,
+    pub screen_names: Vec<String>,
+}
+
 /// 编排器输入 —— 一次设计请求。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -656,6 +671,9 @@ pub struct DesignRequest {
     /// Port of `AIDesignRequest.context.appendContext` in `ai-types.ts:51`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub append_context: Option<AppendContext>,
+    /// Sibling-screen continuation facts derived from the live canvas.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation_context: Option<ContinuationContext>,
     /// 是否启用后生成视觉校验循环(S3c)。
     /// 对应 TS `VALIDATION_ENABLED` flag(默认 `true`)。
     /// host 可将其设为 `false` 以跳过整个视觉校验阶段。
@@ -694,6 +712,7 @@ impl Default for DesignRequest {
             design_md: None,
             concurrency: 1,
             append_context: None,
+            continuation_context: None,
             validation_enabled: default_validation_enabled(),
             visual_ref_enabled: default_visual_ref_enabled(),
             pinned_style_guide: None,

@@ -75,9 +75,8 @@ use super::batch_program_exec_ops::{
 };
 use super::batch_program_parse::{parse_json_arg, parse_node_json, regex};
 use super::batch_program_resolve::{
-    count_forest, find_node_by_path, first_empty_frame, line_preview, lookup_id, parent_node_id,
-    resolve_page_index, resolve_parent_ref, resolve_path_expr, resolve_ref, strip_outer_quotes,
-    with_page_id,
+    count_forest, find_node_by_path, line_preview, lookup_id, parent_node_id, resolve_page_index,
+    resolve_parent_ref, resolve_path_expr, resolve_ref, strip_outer_quotes, with_page_id,
 };
 
 /// Every fallible step of the executor fails with [`ProgramError`].
@@ -111,6 +110,7 @@ pub(crate) fn run_batch_design_program(
         auto_seq: 0,
         current_line: 0,
         explicitly_sized_append_lines: explicitly_sized_append_lines(&lines),
+        replaceable_empty_root_ids: Vec::new(),
     };
     // Pin the sim's active page to the requested page so sim READS
     // (path lookups, node counts) see the same children every emitted
@@ -123,6 +123,24 @@ pub(crate) fn run_batch_design_program(
             });
         }
     }
+    // Only roots that were empty BEFORE this program began are starter
+    // placeholders. An empty root inserted by an earlier line is a real
+    // sibling screen, not a new placeholder for the next I(null, ...) line.
+    // Without this snapshot, a three-screen shell batch repeatedly replaced
+    // its own previous insert and silently kept only the final screen.
+    ctx.replaceable_empty_root_ids = ctx
+        .sim
+        .active_children()
+        .iter()
+        .filter(|node| {
+            matches!(node, PenNode::Frame(_))
+                && node
+                    .children()
+                    .map(|children| children.is_empty())
+                    .unwrap_or(true)
+        })
+        .map(|node| node.id_str().to_string())
+        .collect();
     // Live-doc node count BEFORE any line runs — the honest `nodeCount`
     // for a rolled-back transaction (nothing will have been applied).
     let baseline_count = count_forest(ctx.sim.active_children());
@@ -198,6 +216,9 @@ pub(crate) struct ProgramCtx {
     /// Append G() lines whose result binding receives explicit positive
     /// numeric width and height later in this same program.
     pub(crate) explicitly_sized_append_lines: BTreeSet<usize>,
+    /// Root placeholders that existed before this program started. Consumed
+    /// at most once so newly inserted empty screen shells remain siblings.
+    pub(crate) replaceable_empty_root_ids: Vec<String>,
 }
 
 impl ProgramCtx {
@@ -430,12 +451,29 @@ fn execute_insert(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<()>
     let mut node = parse_node_json(&args[comma + 1..], ctx.post_process)?;
     delete_superseded_draft(binding, parent.as_deref(), &node, ctx);
 
-    // TS auto-replace: a root-level frame insert replaces the first
-    // EMPTY root frame (inheriting its x/y) instead of siblinging it.
+    // TS auto-replace: a root-level frame insert replaces the first EMPTY
+    // starter root (inheriting its x/y) instead of siblinging it. Restrict the
+    // candidates to the pre-program snapshot: newly inserted empty frames are
+    // authored screen shells and must not replace one another.
     let mut pre_commands: Vec<(EditorCommand, &str)> = Vec::new();
     if parent.is_none() && matches!(node, PenNode::Frame(_)) {
-        if let Some(empty) = first_empty_frame(ctx.sim.active_children()) {
-            let (id, x, y) = (empty.id_str().to_string(), empty.base().x, empty.base().y);
+        let replaceable = ctx.replaceable_empty_root_ids.iter().find_map(|id| {
+            ctx.sim
+                .active_children()
+                .iter()
+                .find(|candidate| {
+                    candidate.id_str() == id
+                        && matches!(candidate, PenNode::Frame(_))
+                        && candidate
+                            .children()
+                            .map(|children| children.is_empty())
+                            .unwrap_or(true)
+                })
+                .map(|empty| (id.clone(), empty.base().x, empty.base().y))
+        });
+        if let Some((id, x, y)) = replaceable {
+            ctx.replaceable_empty_root_ids
+                .retain(|candidate| candidate != &id);
             if x.is_some() {
                 node.base_mut().x = x;
             }
@@ -470,7 +508,7 @@ fn execute_insert(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<()>
     // recorded — state from a line that never landed must not ship).
     let merge = super::batch_design::hoist_generation_state(&mut nodes);
     ctx.emit(
-        EditorCommand::InsertAuthoredSubtree {
+        EditorCommand::InsertAuthoredSubtreePreservingRoots {
             nodes,
             parent_id: parent_node_id(parent.as_deref()),
             page_id: ctx.page_id.clone(),

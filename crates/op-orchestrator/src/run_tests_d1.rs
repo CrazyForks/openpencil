@@ -93,6 +93,7 @@ fn req_validation_enabled() -> DesignRequest {
         provider: None,
         design_md: None,
         concurrency: 1,
+        continuation_context: None,
         append_context: None,
         validation_enabled: true,
 
@@ -108,6 +109,7 @@ fn req_validation_disabled() -> DesignRequest {
         provider: None,
         design_md: None,
         concurrency: 1,
+        continuation_context: None,
         append_context: None,
         validation_enabled: false,
 
@@ -329,6 +331,7 @@ fn dashboard_validation_enabled_emits_validation_done() {
             provider: None,
             design_md: None,
             concurrency: 1,
+            continuation_context: None,
             append_context: None,
             validation_enabled: true,
 
@@ -391,6 +394,7 @@ fn dashboard_validation_disabled_no_validation_events() {
             provider: None,
             design_md: None,
             concurrency: 1,
+            continuation_context: None,
             append_context: None,
             validation_enabled: false,
 
@@ -436,6 +440,7 @@ fn concurrent_validation_enabled_emits_validation_done() {
             provider: None,
             design_md: None,
             concurrency: 2,
+            continuation_context: None,
             append_context: None,
             validation_enabled: true,
 
@@ -498,6 +503,7 @@ fn concurrent_validation_disabled_no_validation_events() {
             provider: None,
             design_md: None,
             concurrency: 2,
+            continuation_context: None,
             append_context: None,
             validation_enabled: false,
 

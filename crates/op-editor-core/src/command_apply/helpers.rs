@@ -3,6 +3,7 @@
 //! active-page insert shims.
 
 use super::*;
+use jian_ops_schema::node::PenNode;
 
 /// Resolve an `align` action string into an [`AlignAction`].
 pub(super) fn parse_align_action(s: &str) -> Option<AlignAction> {
@@ -76,6 +77,35 @@ pub(super) fn command_page_index(state: &EditorState, page_id: Option<&str>) -> 
             .or_else(|| raw.parse::<usize>().ok().filter(|idx| *idx < pages.len())),
         _ => raw.parse::<usize>().ok().filter(|idx| *idx == 0),
     }
+}
+
+pub(super) fn apply_authored_subtree_on_page(
+    state: &mut EditorState,
+    nodes: Vec<PenNode>,
+    parent_id: &NodeId,
+    page_id: Option<&str>,
+    preserve_roots: bool,
+) -> bool {
+    let Some(target_page_index) = command_page_index(state, page_id) else {
+        return false;
+    };
+    let original_page_index = state.ui.active_page_index;
+    if page_id.is_some() {
+        state.ui.active_page_index = target_page_index;
+    }
+    let snap = state.snapshot_for_history();
+    let changed = if preserve_roots {
+        state.cmd_insert_authored_subtree_preserving_roots(nodes, parent_id)
+    } else {
+        state.cmd_insert_authored_subtree(nodes, parent_id)
+    };
+    if changed {
+        state.history_push_past(snap);
+    }
+    if page_id.is_some() && target_page_index != original_page_index {
+        state.ui.active_page_index = original_page_index;
+    }
+    changed
 }
 
 pub(crate) fn command_marks_document_dirty(cmd: &EditorCommand) -> bool {

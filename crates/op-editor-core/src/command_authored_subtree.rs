@@ -14,15 +14,36 @@ impl EditorState {
         nodes: Vec<PenNode>,
         parent_id: &NodeId,
     ) -> bool {
+        self.cmd_insert_authored_subtree_with_root_policy(nodes, parent_id, true)
+    }
+
+    pub(crate) fn cmd_insert_authored_subtree_preserving_roots(
+        &mut self,
+        nodes: Vec<PenNode>,
+        parent_id: &NodeId,
+    ) -> bool {
+        self.cmd_insert_authored_subtree_with_root_policy(nodes, parent_id, false)
+    }
+
+    fn cmd_insert_authored_subtree_with_root_policy(
+        &mut self,
+        nodes: Vec<PenNode>,
+        parent_id: &NodeId,
+        replace_empty_root: bool,
+    ) -> bool {
         if nodes.is_empty() {
             return false;
         }
         let mut nodes = nodes;
-        let replacement = crate::command_root_replace::prepare_root_frame_replacement(
-            self.active_children(),
-            &mut nodes,
-            parent_id,
-        );
+        let replacement = replace_empty_root
+            .then(|| {
+                crate::command_root_replace::prepare_root_frame_replacement(
+                    self.active_children(),
+                    &mut nodes,
+                    parent_id,
+                )
+            })
+            .flatten();
         if parent_id.is_real() {
             // Accept any container (matches `cmd_insert_subtree`), including an
             // empty one whose `children` is still `None` — the insert below

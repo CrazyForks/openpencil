@@ -78,6 +78,7 @@ pub fn build_seed_command(prompt: &str) -> Result<EditorCommand, SeedBuildError>
         // concurrency 1 ⇒ the planner's simplest single-screen shape; the
         // seed path never engages the concurrent / dashboard branches.
         concurrency: 1,
+        continuation_context: None,
         append_context: None,
         validation_enabled: false,
         visual_ref_enabled: false,
@@ -165,6 +166,7 @@ pub fn seed_system_prompt_suffix(prompt: &str) -> String {
         provider: None,
         design_md: None,
         concurrency: 1,
+        continuation_context: None,
         append_context: None,
         validation_enabled: false,
         visual_ref_enabled: false,

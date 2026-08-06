@@ -258,6 +258,18 @@ pub enum EditorCommand {
         /// or legacy page index.
         page_id: Option<String>,
     },
+    /// Insert already-id-authored subtrees without consuming an empty root
+    /// frame. Multi-operation design programs use this after handling the
+    /// pre-existing starter explicitly, so newly authored empty screen shells
+    /// remain siblings instead of replacing one another.
+    InsertAuthoredSubtreePreservingRoots {
+        nodes: Vec<PenNode>,
+        /// `NodeId::NONE` → active page root.
+        parent_id: NodeId,
+        /// `None` inserts on the active page; `Some` targets a page id
+        /// or legacy page index.
+        page_id: Option<String>,
+    },
     /// Run deterministic post-generation cleanup for a layered design
     /// root. Unlike most write commands, a valid root with no needed
     /// edits is still accepted so `design_refine` can be idempotent.

@@ -1,5 +1,5 @@
-use op_editor_core::EditorState;
-use op_orchestrator::{AppendContext, DesignRequest};
+use op_editor_core::{EditorState, PenNodeExt};
+use op_orchestrator::{AppendContext, ContinuationContext, DesignRequest};
 
 /// Resolve the selected chat model's capability id for the orchestrator.
 /// Built-in (API-key) agents expose their concrete model id. ACP entries
@@ -35,6 +35,8 @@ pub(crate) fn build_design_request(
     state: &EditorState,
     append_context: Option<AppendContext>,
 ) -> DesignRequest {
+    let continuation_context =
+        sibling_continuation_context(state, &prompt, append_context.as_ref());
     DesignRequest {
         prompt,
         model: selected_orchestrator_model(state),
@@ -45,6 +47,7 @@ pub(crate) fn build_design_request(
         // this from the agent tool executor (agent-tool-executor.ts:234);
         // the shell's design pipeline is that path's equivalent.
         append_context,
+        continuation_context,
         concurrency: state.chat.agent_team_size,
         validation_enabled: true,
         visual_ref_enabled: false,
@@ -52,6 +55,35 @@ pub(crate) fn build_design_request(
         // style guide the prompt would otherwise infer.
         pinned_style_guide: state.editor_ui.pinned_style_guide.clone(),
     }
+}
+
+/// Capture the existing screen's artboard contract for named sibling-screen
+/// continuations. A blank starter is deliberately ignored: new documents keep
+/// design-type inference instead of inheriting an arbitrary starter size.
+fn sibling_continuation_context(
+    state: &EditorState,
+    prompt: &str,
+    append_context: Option<&AppendContext>,
+) -> Option<ContinuationContext> {
+    if append_context.is_some() {
+        return None;
+    }
+    let screen_names = op_host_services::chat_intent::listed_whole_screen_names(prompt);
+    if screen_names.is_empty() {
+        return None;
+    }
+    let screen = state.active_children().iter().rev().find(|node| {
+        matches!(node, jian_ops_schema::node::PenNode::Frame(_))
+            && node.children().is_some_and(|children| !children.is_empty())
+            && node.width_px().is_some()
+            && node.height_px().is_some()
+    })?;
+    Some(ContinuationContext {
+        screen_width: screen.width_px()?,
+        screen_height: screen.height_px()?,
+        background_color: op_editor_core::first_solid_fill_hex(screen).map(str::to_string),
+        screen_names,
+    })
 }
 
 #[cfg(test)]
@@ -111,6 +143,46 @@ mod tests {
         let ctx = req.append_context.expect("append context attached");
         assert_eq!(ctx.target_parent_id, "content-root");
         assert_eq!(ctx.existing_section_labels, vec!["Hero".to_string()]);
+        assert!(req.continuation_context.is_none());
+    }
+
+    #[test]
+    fn named_mobile_continuation_inherits_screen_contract() {
+        let mut state = EditorState::new();
+        state.active_children_mut().clear();
+        state.active_children_mut().push(
+            serde_json::from_value(serde_json::json!({
+                "type": "frame",
+                "id": "home",
+                "name": "Nocturne 今夜",
+                "width": 390,
+                "height": 844,
+                "fill": [{ "type": "solid", "color": "#050508" }],
+                "children": [{ "type": "text", "id": "title", "content": "今夜天空" }]
+            }))
+            .expect("existing screen"),
+        );
+
+        let req = build_design_request("继续生成 星图、观测计划、我的3个界面".into(), &state, None);
+
+        let context = req.continuation_context.expect("continuation context");
+        assert_eq!(
+            (context.screen_width, context.screen_height),
+            (390.0, 844.0)
+        );
+        assert_eq!(context.background_color.as_deref(), Some("#050508"));
+        assert_eq!(context.screen_names, ["星图", "观测计划", "我的"]);
+    }
+
+    #[test]
+    fn blank_document_does_not_invent_a_continuation_contract() {
+        let state = EditorState::new();
+        let req = build_design_request(
+            "Continue generating the Explore/Profile screens".into(),
+            &state,
+            None,
+        );
+        assert!(req.continuation_context.is_none());
     }
 
     #[test]

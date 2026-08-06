@@ -83,6 +83,7 @@ fn req_append(live_target_id: &str) -> DesignRequest {
     DesignRequest {
         prompt: "add a pricing section".into(),
         concurrency: 1,
+        continuation_context: None,
         append_context: Some(AppendContext {
             target_parent_id: live_target_id.into(),
             target_width: 1200.0,
@@ -97,6 +98,7 @@ fn req_append_concurrent(live_target_id: &str) -> DesignRequest {
     DesignRequest {
         prompt: "add more screens".into(),
         concurrency: 4,
+        continuation_context: None,
         append_context: Some(AppendContext {
             target_parent_id: live_target_id.into(),
             target_width: 390.0,
@@ -344,6 +346,7 @@ fn non_append_mode_takes_normal_sequential_path() {
     let req = DesignRequest {
         prompt: "a landing page".into(),
         concurrency: 1,
+        continuation_context: None,
         append_context: None, // no append context
         ..Default::default()
     };
@@ -395,6 +398,7 @@ fn non_append_mode_resolves_scaffold_root_when_empty_frame_is_replaced() {
     let req = DesignRequest {
         prompt: "a mobile food app".into(),
         concurrency: 1,
+        continuation_context: None,
         append_context: None,
         validation_enabled: false,
         ..Default::default()
@@ -476,6 +480,7 @@ fn append_mode_wins_over_dashboard_branch() {
     let req = DesignRequest {
         prompt: "an analytics admin dashboard".into(),
         concurrency: 1,
+        continuation_context: None,
         append_context: Some(AppendContext {
             target_parent_id: live_id.clone(),
             target_width: 1440.0,
@@ -649,6 +654,7 @@ fn append_cleanup_leaves_preexisting_nav_surface_untouched() {
     let req = DesignRequest {
         prompt: "add a hero section".into(),
         concurrency: 1,
+        continuation_context: None,
         append_context: Some(AppendContext {
             target_parent_id: live_target_id.clone(),
             target_width: 390.0,
@@ -727,6 +733,7 @@ fn fresh_doc_cleanup_still_runs_over_scaffold_root() {
     let req = DesignRequest {
         prompt: "a landing page".into(),
         concurrency: 1,
+        continuation_context: None,
         append_context: None, // fresh doc — non-append path
         ..Default::default()
     };

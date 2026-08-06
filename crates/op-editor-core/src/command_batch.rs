@@ -78,6 +78,7 @@ fn batchable(cmd: &EditorCommand) -> bool {
         | C::BatchInsert { .. }
         | C::InsertSubtree { .. }
         | C::InsertAuthoredSubtree { .. }
+        | C::InsertAuthoredSubtreePreservingRoots { .. }
         | C::RefineDesign { .. }
         | C::SetVariableScalar { .. }
         | C::CreateVariable { .. }

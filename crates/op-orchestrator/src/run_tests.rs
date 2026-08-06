@@ -25,6 +25,7 @@ fn req() -> DesignRequest {
         provider: None,
         design_md: None,
         concurrency: 1,
+        continuation_context: None,
         append_context: None,
         validation_enabled: true,
 
@@ -42,6 +43,7 @@ fn req_standard() -> DesignRequest {
         provider: None,
         design_md: None,
         concurrency: 1,
+        continuation_context: None,
         append_context: None,
         validation_enabled: true,
 
@@ -62,6 +64,7 @@ fn req_basic() -> DesignRequest {
         provider: None,
         design_md: None,
         concurrency: 1,
+        continuation_context: None,
         append_context: None,
         validation_enabled: true,
 

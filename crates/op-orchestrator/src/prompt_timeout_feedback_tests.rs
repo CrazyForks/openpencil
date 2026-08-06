@@ -55,6 +55,7 @@ fn orchestrator_prompt_long_prompt_has_larger_timeout_than_short() {
         provider: None,
         design_md: None,
         concurrency: 1,
+        continuation_context: None,
         append_context: None,
         validation_enabled: true,
 
@@ -68,6 +69,7 @@ fn orchestrator_prompt_long_prompt_has_larger_timeout_than_short() {
         provider: None,
         design_md: None,
         concurrency: 1,
+        continuation_context: None,
         append_context: None,
         validation_enabled: true,
 
@@ -92,6 +94,7 @@ fn orchestrator_prompt_multiplier_applied() {
         provider: None,
         design_md: None,
         concurrency: 1,
+        continuation_context: None,
         append_context: None,
         validation_enabled: true,
 
@@ -136,6 +139,7 @@ fn subagent_prompt_long_prompt_has_larger_timeout() {
         provider: None,
         design_md: None,
         concurrency: 1,
+        continuation_context: None,
         append_context: None,
         validation_enabled: true,
 
@@ -148,6 +152,7 @@ fn subagent_prompt_long_prompt_has_larger_timeout() {
         provider: None,
         design_md: None,
         concurrency: 1,
+        continuation_context: None,
         append_context: None,
         validation_enabled: true,
 
@@ -185,6 +190,7 @@ fn subagent_prompt_basic_tier_clamps_soft_timeouts() {
         provider: None,
         design_md: None,
         concurrency: 1,
+        continuation_context: None,
         append_context: None,
         validation_enabled: true,
 
@@ -420,6 +426,7 @@ fn subtask_intent_includes_prompt_label_and_hints() {
         provider: None,
         design_md: None,
         concurrency: 1,
+        continuation_context: None,
         append_context: None,
         validation_enabled: true,
         visual_ref_enabled: false,

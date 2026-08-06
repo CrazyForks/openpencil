@@ -613,6 +613,7 @@ async fn main() -> std::process::ExitCode {
         model: Some(model),
         provider: None,
         design_md: sink.state.doc.design_md.clone(),
+        continuation_context: None,
         append_context: None,
         concurrency: std::env::var("OPENPENCIL_SMOKE_CONCURRENCY")
             .ok()

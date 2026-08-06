@@ -481,6 +481,7 @@ fn stream_new_design_route<W: Write>(
         model: model.clone(),
         provider: None,
         design_md: snapshot.doc.design_md.clone(),
+        continuation_context: None,
         append_context,
         concurrency: req
             .agent_team_size

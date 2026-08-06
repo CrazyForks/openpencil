@@ -111,6 +111,21 @@ fn append_context_serde_round_trip() {
     assert!(back.is_mobile);
 }
 
+#[test]
+fn continuation_context_serde_round_trip() {
+    let context = ContinuationContext {
+        screen_width: 390.0,
+        screen_height: 844.0,
+        background_color: Some("#050508".into()),
+        screen_names: vec!["星图".into(), "观测计划".into(), "我的".into()],
+    };
+    let json = serde_json::to_string(&context).expect("serialize");
+    assert!(json.contains("screenWidth"));
+    assert!(json.contains("backgroundColor"));
+    let back: ContinuationContext = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(back, context);
+}
+
 /// DesignRequest accepts append_context: None without breaking compilation.
 #[test]
 fn design_request_append_context_none_compiles() {
@@ -120,6 +135,7 @@ fn design_request_append_context_none_compiles() {
         provider: None,
         design_md: None,
         concurrency: 1,
+        continuation_context: None,
         append_context: None,
         validation_enabled: true,
         visual_ref_enabled: false,
@@ -143,6 +159,7 @@ fn design_request_append_context_some_compiles() {
         provider: None,
         design_md: None,
         concurrency: 1,
+        continuation_context: None,
         append_context: Some(ctx),
         validation_enabled: true,
         visual_ref_enabled: false,
@@ -160,6 +177,7 @@ fn design_request_append_context_omitted_from_json_when_none() {
         provider: None,
         design_md: None,
         concurrency: 1,
+        continuation_context: None,
         append_context: None,
         validation_enabled: true,
         visual_ref_enabled: false,
@@ -434,6 +452,7 @@ fn design_request_validation_enabled_serde_roundtrip() {
         provider: None,
         design_md: None,
         concurrency: 1,
+        continuation_context: None,
         append_context: None,
         validation_enabled: false,
         visual_ref_enabled: false,

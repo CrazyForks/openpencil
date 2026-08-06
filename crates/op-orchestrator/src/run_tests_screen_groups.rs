@@ -30,6 +30,7 @@ fn req() -> DesignRequest {
         provider: None,
         design_md: None,
         concurrency: 1,
+        continuation_context: None,
         append_context: None,
         validation_enabled: false,
 
@@ -263,6 +264,57 @@ fn find_root_by_name<'a>(roots: &'a [PenNode], name: &str) -> &'a PenNode {
                 .is_some_and(|n| n == name || n == format!("{name} (unfilled)"))
         })
         .unwrap_or_else(|| panic!("no root named {name} among {roots:?}"))
+}
+
+#[test]
+fn planning_failure_continuation_builds_three_inherited_sibling_screens() {
+    let llm = ScriptedLlm::new(vec![
+        ScriptResponse::Text("not a plan".into()),
+        ScriptResponse::Text("still not a plan".into()),
+        ScriptResponse::Text(node_json("星图")),
+        ScriptResponse::Text(node_json("观测计划")),
+        ScriptResponse::Text(node_json("我的")),
+    ]);
+    let mut sink = VecDocSink::new();
+    sink.state.active_children_mut().clear();
+    sink.state.active_children_mut().push(
+        serde_json::from_value(serde_json::json!({
+            "type": "frame", "id": "home", "name": "Nocturne 今夜",
+            "width": 390, "height": 844,
+            "fill": [{ "type": "solid", "color": "#050508" }],
+            "children": [{ "type": "text", "id": "title", "content": "今夜天空" }]
+        }))
+        .expect("existing home screen"),
+    );
+    let mut request = req();
+    request.prompt = "继续生成 星图、观测计划、我的3个界面".into();
+    request.continuation_context = Some(crate::types::ContinuationContext {
+        screen_width: 390.0,
+        screen_height: 844.0,
+        background_color: Some("#050508".into()),
+        screen_names: vec!["星图".into(), "观测计划".into(), "我的".into()],
+    });
+
+    futures::executor::block_on(Orchestrator::new().run(
+        request,
+        &mut sink,
+        &llm,
+        &mut |_| {},
+        &AbortFlag::new(),
+        &stub_providers(),
+    ))
+    .expect("fallback continuation run");
+
+    let generated = &sink.state.active_children()[1..];
+    assert_eq!(generated.len(), 3);
+    for name in ["星图", "观测计划", "我的"] {
+        let root = find_root_by_name(generated, name);
+        assert_eq!(
+            (root.width_px(), root.height_px()),
+            (Some(390.0), Some(844.0))
+        );
+        assert_eq!(op_editor_core::first_solid_fill_hex(root), Some("#050508"));
+    }
 }
 
 // Cluster test modules — this file keeps the shared fixtures.

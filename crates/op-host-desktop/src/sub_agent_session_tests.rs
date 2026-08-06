@@ -6,7 +6,7 @@
 //! against the process-global `agent_indicators` registry.
 
 use super::*;
-use op_editor_core::{agent_indicators, EditorState};
+use op_editor_core::{agent_indicators, EditorState, PenNodeExt};
 use op_host_services::design_agent_tools::execute_design_tool;
 
 /// A real styleguide name from the embedded corpus.
@@ -43,6 +43,30 @@ fn insert_frame(state: &mut EditorState) -> String {
         .map(|n| n.id_str().to_string())
         .find(|id| !before.contains(id))
         .expect("a new frame id appeared")
+}
+
+#[test]
+fn spawned_screen_agents_inherit_mobile_class_from_existing_canvas() {
+    let mut state = EditorState::new();
+    state.active_children_mut().clear();
+    state.active_children_mut().push(
+        serde_json::from_value(serde_json::json!({
+            "type": "frame", "id": "home", "name": "Home",
+            "width": 390, "height": 844,
+            "children": [{ "type": "text", "id": "title", "content": "Home" }]
+        }))
+        .expect("mobile screen"),
+    );
+    assert!(canvas_has_mobile_screen(&state));
+
+    state.active_children_mut()[0]
+        .children_mut()
+        .expect("children")
+        .clear();
+    assert!(
+        !canvas_has_mobile_screen(&state),
+        "a blank starter must not turn a fresh design into a continuation"
+    );
 }
 
 // ---------------------------------------------------------------------------

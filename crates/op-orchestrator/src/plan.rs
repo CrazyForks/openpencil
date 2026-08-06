@@ -186,6 +186,59 @@ pub fn build_fallback_plan(req: &DesignRequest) -> OrchestratorPlan {
     const WIDTH: f64 = 1200.0;
     const SECTION_HEIGHT: f64 = 360.0;
 
+    if let Some(context) = req
+        .continuation_context
+        .as_ref()
+        .filter(|context| !context.screen_names.is_empty())
+    {
+        let fill = context
+            .background_color
+            .clone()
+            .unwrap_or_else(|| "#FFFFFF".into());
+        let subtasks = context
+            .screen_names
+            .iter()
+            .enumerate()
+            .map(|(index, screen_name)| {
+                let id = format!("continuation-screen-{}", index + 1);
+                Subtask {
+                    id: id.clone(),
+                    label: screen_name.clone(),
+                    region: Region {
+                        width: context.screen_width,
+                        height: context.screen_height,
+                    },
+                    id_prefix: id,
+                    parent_frame_id: None,
+                    elements: Some(format!(
+                        "the complete {screen_name} screen, continuing the existing product; reuse its established design system and shared navigation"
+                    )),
+                    screen: Some(screen_name.clone()),
+                    generated_root_id: None,
+                    existing_section_labels: None,
+                    retry_feedback: None,
+                }
+            })
+            .collect();
+        return OrchestratorPlan {
+            root_frame: RootFrameSpec {
+                id: "continuation".into(),
+                name: "Continuation".into(),
+                width: context.screen_width,
+                height: context.screen_height,
+                layout: Some("vertical".into()),
+                gap: Some(0.0),
+                padding: Some(0.0),
+                fill: Some(vec![PlanFill {
+                    kind: "solid".into(),
+                    color: fill,
+                }]),
+            },
+            subtasks,
+            style_guide_name: None,
+        };
+    }
+
     let preset = detect_design_type(&req.prompt);
     if preset.type_ == DesignType::Slides {
         return build_fallback_deck_plan(req, preset);
@@ -507,6 +560,7 @@ mod tests {
             provider: None,
             design_md: None,
             concurrency: 1,
+            continuation_context: None,
             append_context: None,
             validation_enabled: true,
 
@@ -575,6 +629,39 @@ mod tests {
         assert_eq!(mobile.subtasks.len(), 2);
         assert_eq!(mobile.subtasks[0].label, "Top Summary");
         assert_eq!(mobile.subtasks[1].label, "Main Content");
+    }
+
+    #[test]
+    fn fallback_continuation_keeps_promised_screens_and_existing_artboard() {
+        let mut request = req("继续生成 星图、观测计划、我的3个界面");
+        request.continuation_context = Some(crate::types::ContinuationContext {
+            screen_width: 390.0,
+            screen_height: 844.0,
+            background_color: Some("#050508".into()),
+            screen_names: vec!["星图".into(), "观测计划".into(), "我的".into()],
+        });
+
+        let plan = build_fallback_plan(&request);
+
+        assert_eq!(
+            (plan.root_frame.width, plan.root_frame.height),
+            (390.0, 844.0)
+        );
+        assert_eq!(
+            plan.root_frame.first_solid_hex().as_deref(),
+            Some("#050508")
+        );
+        assert_eq!(
+            plan.subtasks
+                .iter()
+                .filter_map(|subtask| subtask.screen.as_deref())
+                .collect::<Vec<_>>(),
+            ["星图", "观测计划", "我的"]
+        );
+        assert!(plan
+            .subtasks
+            .iter()
+            .all(|subtask| subtask.label != "Section 1"));
     }
 
     // ── Task A1: Subtask.existing_section_labels ──────────────────────────────

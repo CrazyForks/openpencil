@@ -43,8 +43,7 @@ use op_host_native::WidgetHostNative;
 use op_mcp::spawn_agents_tool::SpawnSpec;
 use op_orchestrator::agent_identity::assign_agent_identities_seeded;
 
-use op_ai_skills::style_guide::{select_style_guide, style_guide_registry, SelectOptions};
-use op_editor_core::{agent_indicators, ChatMessage};
+use op_editor_core::{agent_indicators, ChatMessage, PenNodeExt};
 use op_host_services::design_agent_tools::root_seed_prompt_is_mobile;
 
 use crate::chat_session::{self, builtin_provider_with_design_tools, ChatSession};
@@ -160,14 +159,9 @@ pub(crate) fn build_sub_agent_prompt(spec: &SpawnSpec, context_brief: Option<&st
     }
 
     // Styleguide — resolve the parent-passed name to its markdown content.
-    if let Some(guide) = select_style_guide(
-        style_guide_registry(),
-        &SelectOptions {
-            name: Some(spec.styleguide_name.clone()),
-            tags: vec![],
-            platform: None,
-        },
-    ) {
+    // Both halves of the catalogue: the name may be a `user:` id for a guide
+    // the user imported from a DESIGN.md.
+    if let Some(guide) = op_ai_skills::style_guide::find_style_guide(&spec.styleguide_name) {
         prompt.push_str("\n\n## Style guide\n\n");
         prompt.push_str(&guide.content);
     }
@@ -217,6 +211,7 @@ pub(crate) fn launch_sub_agents(
     // sub sees the same screen inventory, palette, typefaces, and copyable
     // chrome node ids, so N agents converge on ONE product instead of N.
     let context_brief = op_host_services::design_context::design_context_brief(host.editor_state());
+    let existing_mobile_screen = canvas_has_mobile_screen(host.editor_state());
 
     for (spec, identity) in specs.into_iter().zip(identities) {
         // A fresh provider + tool channel per sub; skip if no ready
@@ -247,13 +242,23 @@ pub(crate) fn launch_sub_agents(
             session: Some(session),
             identity,
             indicator: None,
-            root_seed_mobile: root_seed_prompt_is_mobile(&spec.prompt),
+            root_seed_mobile: existing_mobile_screen || root_seed_prompt_is_mobile(&spec.prompt),
         });
     }
 
     let n = subs.len();
     host.editor_state_mut().chat.agents_running = (n, n);
     subs
+}
+
+fn canvas_has_mobile_screen(state: &op_editor_core::EditorState) -> bool {
+    state.active_children().iter().any(|node| {
+        matches!(node, jian_ops_schema::node::PenNode::Frame(_))
+            && node.children().is_some_and(|children| !children.is_empty())
+            && node
+                .width_px()
+                .is_some_and(|width| (320.0..=480.0).contains(&width))
+    })
 }
 
 /// Abort every sub-agent loop (MT.3 close-of-running-tab): end the active

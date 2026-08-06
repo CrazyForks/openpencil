@@ -41,6 +41,7 @@ fn request() -> DesignRequest {
         provider: None,
         design_md: None,
         concurrency: 1,
+        continuation_context: None,
         append_context: None,
         validation_enabled: false,
         visual_ref_enabled: false,

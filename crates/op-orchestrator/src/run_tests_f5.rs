@@ -186,6 +186,7 @@ fn append_does_not_mutate_preexisting_styled_node() {
         provider: None,
         design_md: None,
         concurrency: 1,
+        continuation_context: None,
         append_context: Some(AppendContext {
             target_parent_id: live_target_id.clone(),
             target_width: 390.0,

@@ -39,6 +39,7 @@ fn persisted_request_json() -> String {
         provider: None,
         design_md: None,
         concurrency: 2,
+        continuation_context: None,
         append_context: None,
         validation_enabled: false,
         visual_ref_enabled: false,

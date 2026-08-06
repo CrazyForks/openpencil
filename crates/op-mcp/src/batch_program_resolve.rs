@@ -174,14 +174,6 @@ pub(crate) fn with_page_id(cmd: EditorCommand, page_id: Option<String>) -> Edito
     }
 }
 
-/// TS `isEmptyFrame` over the page roots — the first root-level frame
-/// with no children.
-pub(crate) fn first_empty_frame(children: &[PenNode]) -> Option<&PenNode> {
-    children.iter().find(|node| {
-        matches!(node, PenNode::Frame(_)) && node.children().map(|c| c.is_empty()).unwrap_or(true)
-    })
-}
-
 /// Mirror of `command_apply::command_page_index`'s explicit-page arm:
 /// page id match first, then a legacy numeric index.
 pub(crate) fn resolve_page_index(state: &EditorState, raw: &str) -> Option<usize> {

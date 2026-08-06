@@ -488,3 +488,7 @@ mod tests;
 #[cfg(test)]
 #[path = "design_agent_tools_scan_tests.rs"]
 mod scan_tests;
+
+#[cfg(test)]
+#[path = "design_agent_tools_continuation_tests.rs"]
+mod continuation_tests;

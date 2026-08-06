@@ -11,6 +11,15 @@ pub enum RootSeedTarget {
     Desktop,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct RootSeedProfile {
+    target: RootSeedTarget,
+    width: f64,
+    height: f64,
+    background_color: Option<String>,
+    inherited: bool,
+}
+
 impl RootSeedTarget {
     fn from_mobile(mobile: bool) -> Self {
         if mobile {
@@ -119,20 +128,30 @@ pub(super) fn maybe_apply_root_seed_guard(
         .and_then(op_editor_core::agent_indicators::root_seed_hint_if_pending)
         .map(RootSeedTarget::from_mobile);
     let target = explicit_target.or(epoch_target)?;
-    let seed_hint = seed_root_frame_if_needed(state, ids_before, target);
+    let profile = resolve_root_seed_profile(state, ids_before, target);
+    let allow_existing_single_root = !profile.inherited;
+    let seed_hint =
+        seed_root_frame_if_needed(state, ids_before, &profile, allow_existing_single_root);
     // Mobile chrome parity with the orchestrator scaffold: the loop's first
     // batch gets the SAME pre-inserted status bar, so `mobile-app.md`'s
     // "status bar is already pre-inserted" contract holds on this path too.
     // Runs even when the model authored explicit root dimensions (the seed
     // above early-returns then, but the chrome must still land).
-    let chrome_hint = (target == RootSeedTarget::Mobile)
-        .then(|| inject_mobile_status_bar_if_missing(state, ids_before))
+    let chrome_hint = (profile.target == RootSeedTarget::Mobile)
+        .then(|| inject_mobile_status_bar_if_missing(state, ids_before, allow_existing_single_root))
         .flatten();
 
-    if let Some(guard) = root_seed_guard {
-        guard.mark_consumed();
-    } else if let Some(epoch) = indicator_epoch {
-        op_editor_core::agent_indicators::mark_root_seed_guard_consumed(epoch);
+    // A fresh-design guard is a one-shot default for the first root. A
+    // continuation contract is turn-scoped instead: DeepSeek commonly emits
+    // one sibling screen per batch, and a first batch may only modify the old
+    // screen. Keep the guard pending so every later top-level root inherits
+    // the same artboard and chrome contract.
+    if !profile.inherited {
+        if let Some(guard) = root_seed_guard {
+            guard.mark_consumed();
+        } else if let Some(epoch) = indicator_epoch {
+            op_editor_core::agent_indicators::mark_root_seed_guard_consumed(epoch);
+        }
     }
 
     match (seed_hint, chrome_hint) {
@@ -151,56 +170,78 @@ pub(super) fn maybe_apply_root_seed_guard(
 pub(super) fn inject_mobile_status_bar_if_missing(
     state: &mut EditorState,
     ids_before: &HashSet<String>,
+    allow_existing_single_root: bool,
 ) -> Option<String> {
-    let root = root_seed_candidate_mut(state, ids_before)?;
-    // OS chrome has exactly one canonical form. A model-built status bar
-    // (name matches, structure doesn't — no role, ad-hoc children) is
-    // REPLACED in place rather than kept: every hand-rolled variant we
-    // measured deviated visibly from the iOS reference (GLM-5.2 2026-07-11).
-    let noncanonical_index = root
-        .children()
-        .into_iter()
-        .flatten()
-        .position(|child| is_status_bar_node(child) && !is_canonical_status_bar(child));
-    if let Some(index) = noncanonical_index {
+    let candidate_indices =
+        root_seed_candidate_indices(state, ids_before, allow_existing_single_root);
+    let mut inserted = false;
+    let mut replaced = false;
+    for index in candidate_indices {
+        let Some(root) = state.active_children_mut().get_mut(index) else {
+            continue;
+        };
+        // OS chrome has exactly one canonical form. A model-built status bar
+        // (name matches, structure doesn't — no role, ad-hoc children) is
+        // REPLACED in place rather than kept: every hand-rolled variant we
+        // measured deviated visibly from the iOS reference (GLM-5.2 2026-07-11).
+        let noncanonical_index = root
+            .children()
+            .into_iter()
+            .flatten()
+            .position(|child| is_status_bar_node(child) && !is_canonical_status_bar(child));
+        if let Some(index) = noncanonical_index {
+            let root_id = root.id_str().to_string();
+            let fill_hex = op_editor_core::first_solid_fill_hex(root)
+                .unwrap_or("#ffffff")
+                .to_string();
+            let width = root.width_px().unwrap_or(390.0);
+            if let Ok(bar) =
+                op_orchestrator::scaffold::mobile_status_bar_node(&root_id, &fill_hex, width)
+            {
+                if let Some(children) = root.children_mut() {
+                    children[index] = bar;
+                    replaced = true;
+                }
+            }
+            continue;
+        }
+        if root
+            .children()
+            .into_iter()
+            .flatten()
+            .any(is_status_bar_node)
+        {
+            continue;
+        }
         let root_id = root.id_str().to_string();
         let fill_hex = op_editor_core::first_solid_fill_hex(root)
             .unwrap_or("#ffffff")
             .to_string();
         let width = root.width_px().unwrap_or(390.0);
-        if let Ok(bar) =
-            op_orchestrator::scaffold::mobile_status_bar_node(&root_id, &fill_hex, width)
-        {
-            if let Some(children) = root.children_mut() {
-                children[index] = bar;
-                return Some(
-                    "The status bar you built was replaced with the standard iOS status bar                      (62px, role=status-bar) - do NOT rebuild or restyle it."
-                        .to_string(),
-                );
-            }
+        let Ok(bar) = op_orchestrator::scaffold::mobile_status_bar_node(&root_id, &fill_hex, width)
+        else {
+            continue;
+        };
+        if let Some(children) = root.children_mut() {
+            children.insert(0, bar);
+            inserted = true;
         }
-        return None;
     }
-    if root
-        .children()
-        .into_iter()
-        .flatten()
-        .any(is_status_bar_node)
-    {
-        return None;
+    if replaced {
+        Some(
+            "The status bar you built was replaced with the standard iOS status bar \
+             (62px, role=status-bar) - do NOT rebuild or restyle it."
+                .to_string(),
+        )
+    } else if inserted {
+        Some(
+            "A standard iOS status bar (62px, role=status-bar) was pre-inserted as the root's \
+             first child - do NOT create another status bar; start your content below it."
+                .to_string(),
+        )
+    } else {
+        None
     }
-    let root_id = root.id_str().to_string();
-    let fill_hex = op_editor_core::first_solid_fill_hex(root)
-        .unwrap_or("#ffffff")
-        .to_string();
-    let width = root.width_px().unwrap_or(390.0);
-    let bar = op_orchestrator::scaffold::mobile_status_bar_node(&root_id, &fill_hex, width).ok()?;
-    root.children_mut()?.insert(0, bar);
-    Some(
-        "A standard iOS status bar (62px, role=status-bar) was pre-inserted as the root's \
-         first child - do NOT create another status bar; start your content below it."
-            .to_string(),
-    )
 }
 
 /// The injected/scaffold chrome shape: role tag + the Time/Levels pair.
@@ -264,51 +305,114 @@ pub(super) fn remove_nested_duplicate_status_bars(state: &mut EditorState) -> us
     removed
 }
 
-pub(super) fn seed_root_frame_if_needed(
+fn seed_root_frame_if_needed(
     state: &mut EditorState,
     ids_before: &HashSet<String>,
-    target: RootSeedTarget,
+    profile: &RootSeedProfile,
+    allow_existing_single_root: bool,
 ) -> Option<String> {
-    let root = root_seed_candidate_mut(state, ids_before)?;
-    let width_before = root.width_px();
-    let height_before = root.height_px();
-    if width_before.is_some() && height_before.is_some() {
+    let candidate_indices =
+        root_seed_candidate_indices(state, ids_before, allow_existing_single_root);
+    let mut changed = 0usize;
+    for index in candidate_indices {
+        let Some(root) = state.active_children_mut().get_mut(index) else {
+            continue;
+        };
+        let width_before = root.width_px();
+        let height_before = root.height_px();
+        if width_before.is_none() || (profile.inherited && width_before != Some(profile.width)) {
+            root.set_width_px(profile.width);
+            changed += 1;
+        }
+        if height_before.is_none() || (profile.inherited && height_before != Some(profile.height)) {
+            root.set_height_px(profile.height);
+            changed += 1;
+        }
+        if let Some(color) = profile.background_color.as_deref() {
+            if op_editor_core::first_solid_fill_hex(root) != Some(color)
+                && op_editor_core::fills::set_primary_fill_hex(root, color)
+            {
+                changed += 1;
+            }
+        }
+        default_root_layout_to_vertical(root);
+    }
+    if changed == 0 {
         return None;
     }
 
-    let (target_width, target_height) = target.dimensions();
-    if width_before.is_none() {
-        root.set_width_px(target_width);
-    }
-    if height_before.is_none() {
-        root.set_height_px(target_height);
-    }
-    default_root_layout_to_vertical(root);
-
-    let width = root.width_px().unwrap_or(target_width);
-    let height = root.height_px().unwrap_or(target_height);
     Some(format!(
         "root seeded to {}x{} - grow height if content exceeds.",
-        format_seed_dimension(width),
-        format_seed_dimension(height)
+        format_seed_dimension(profile.width),
+        format_seed_dimension(profile.height)
     ))
 }
 
-pub(super) fn root_seed_candidate_mut<'a>(
-    state: &'a mut EditorState,
+fn resolve_root_seed_profile(
+    state: &EditorState,
     ids_before: &HashSet<String>,
-) -> Option<&'a mut PenNode> {
-    let roots = state.active_children_mut();
-    let new_root_index = roots
-        .iter()
-        .position(|node| !ids_before.contains(node.id_str()) && matches!(node, PenNode::Frame(_)));
-    if let Some(index) = new_root_index {
-        return roots.get_mut(index);
+    target: RootSeedTarget,
+) -> RootSeedProfile {
+    let matching_existing_screen = state.active_children().iter().rev().find(|node| {
+        if !ids_before.contains(node.id_str())
+            || !matches!(node, PenNode::Frame(_))
+            || !node.children().is_some_and(|children| !children.is_empty())
+        {
+            return false;
+        }
+        let Some(width) = node.width_px() else {
+            return false;
+        };
+        let Some(height) = node.height_px() else {
+            return false;
+        };
+        let mobile_width = (320.0..=480.0).contains(&width);
+        width.is_finite()
+            && height.is_finite()
+            && width > 0.0
+            && height > 0.0
+            && mobile_width == (target == RootSeedTarget::Mobile)
+    });
+    if let Some(screen) = matching_existing_screen {
+        return RootSeedProfile {
+            target,
+            width: screen.width_px().expect("matched numeric width"),
+            height: screen.height_px().expect("matched numeric height"),
+            background_color: op_editor_core::first_solid_fill_hex(screen).map(str::to_string),
+            inherited: true,
+        };
     }
-    if roots.len() == 1 && matches!(roots[0], PenNode::Frame(_)) {
-        roots.get_mut(0)
+    let (width, height) = target.dimensions();
+    RootSeedProfile {
+        target,
+        width,
+        height,
+        background_color: None,
+        inherited: false,
+    }
+}
+
+fn root_seed_candidate_indices(
+    state: &EditorState,
+    ids_before: &HashSet<String>,
+    allow_existing_single_root: bool,
+) -> Vec<usize> {
+    let roots = state.active_children();
+    let new_root_indices = roots
+        .iter()
+        .enumerate()
+        .filter_map(|(index, node)| {
+            (!ids_before.contains(node.id_str()) && matches!(node, PenNode::Frame(_)))
+                .then_some(index)
+        })
+        .collect::<Vec<_>>();
+    if !new_root_indices.is_empty() {
+        return new_root_indices;
+    }
+    if allow_existing_single_root && roots.len() == 1 && matches!(roots[0], PenNode::Frame(_)) {
+        vec![0]
     } else {
-        None
+        Vec::new()
     }
 }
 
