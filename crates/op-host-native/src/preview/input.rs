@@ -24,10 +24,11 @@
 //! outright while `transition_active()` — see that method's doc
 //! (`crate::preview::transition`) for why discard, not queue.
 
-use super::PreviewSession;
+use super::{apply_widget_state, PreviewSession};
 
 use jian_core::gesture::pointer::{Modifiers, PointerPhase};
 use op_editor_ui::layout_scene::SceneNode;
+use op_editor_ui::widgets::canvas_viewport_paint::tabs_active_index;
 use op_editor_ui::{Point2D, Rect};
 
 impl PreviewSession {
@@ -219,12 +220,29 @@ impl PreviewSession {
         {
             return None;
         }
-        for child in node.children.iter().rev() {
+        for child in self.mapped_children(node).iter().rev() {
             if let Some(hit) = self.deepest_mapped_in(child, x, y) {
                 return Some(hit);
             }
         }
         self.runtime_rect(&node.id).map(|r| (b, r))
+    }
+
+    /// Match the design/preview painter's tabs rule when choosing a scene
+    /// mapping anchor. Runtime state overlays the authored active value first,
+    /// so switching tabs cannot leave an invisible panel hittable here.
+    fn mapped_children<'a>(&self, node: &'a SceneNode) -> &'a [SceneNode] {
+        let Some(authored) = node.widget.as_ref().filter(|widget| widget.kind == "tabs") else {
+            return &node.children;
+        };
+        let mut effective = authored.clone();
+        if let Some(state) = self.runtime.widget_states.get(&node.id) {
+            apply_widget_state(&mut effective, state);
+        }
+        node.children
+            .get(tabs_active_index(&effective))
+            .map(std::slice::from_ref)
+            .unwrap_or_default()
     }
 
     /// The runtime layout rect for the node with schema `id`, in the
@@ -346,6 +364,19 @@ impl PreviewSession {
     #[cfg(all(test, not(target_os = "windows")))]
     pub(crate) fn set_gesture_mapping_for_test(&mut self, scene: Rect, runtime: Rect) {
         self.gesture_mapping = Some((scene, runtime));
+    }
+
+    /// Test-only: ids the scene→runtime mapper can descend into for a
+    /// container after applying live widget state.
+    #[cfg(all(test, not(target_os = "windows")))]
+    pub(crate) fn mapped_child_ids_for_test(&self, id: &str) -> Vec<String> {
+        let Some(node) = self.scene.active_page().and_then(|page| page.find(id)) else {
+            return Vec::new();
+        };
+        self.mapped_children(node)
+            .iter()
+            .map(|child| child.id.clone())
+            .collect()
     }
 
     /// Test-only: focus a node by schema `id` directly (skips the

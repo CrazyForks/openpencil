@@ -81,3 +81,27 @@ pub(super) fn format_warning(w: &LoadWarning) -> Option<String> {
         LoadWarning::UnknownField { .. } => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::apply_widget_state;
+    use jian_core::widget_state::WidgetState;
+    use op_editor_ui::layout_scene::SceneWidget;
+
+    #[test]
+    fn tabs_runtime_state_overlays_the_scene_active_value() {
+        let mut widget = SceneWidget {
+            kind: "tabs".into(),
+            value_str: Some("overview".into()),
+            ..Default::default()
+        };
+        apply_widget_state(
+            &mut widget,
+            &WidgetState::Tabs {
+                active: Some("details".into()),
+                hover_index: None,
+            },
+        );
+        assert_eq!(widget.value_str.as_deref(), Some("details"));
+    }
+}

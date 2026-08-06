@@ -2,7 +2,9 @@
 //! composite static visuals emitted for widget scene nodes on the
 //! design surface (track + knob, box + check, bar, chevron, …).
 
-use crate::layout_scene::{NodeKind, SceneNode, SceneWidget, SceneWidgetOption};
+use crate::layout_scene::{
+    NodeKind, SceneNode, SceneStroke, SceneStrokeAlign, SceneWidget, SceneWidgetOption,
+};
 use crate::widgets::canvas_viewport_widget::{
     option_label, paint_widget_visual, text_field_display_text, widget_text_inset_left,
 };
@@ -15,9 +17,14 @@ use std::borrow::Cow;
 #[derive(Default)]
 struct WidgetRecorder {
     round_rects: Vec<(Rect, Color)>,
+    round_radii: Vec<f32>,
     stroke_round_rects: Vec<(Rect, Color)>,
+    stroke_round_radii: Vec<f32>,
+    stroke_round_widths: Vec<f32>,
     lines: Vec<(Point2D, Point2D, Color)>,
     texts: Vec<(String, Point2D)>,
+    text_colors: Vec<(String, jian_core::scene::Color)>,
+    clips: Vec<Rect>,
 }
 
 impl RenderBackend for WidgetRecorder {
@@ -28,9 +35,12 @@ impl RenderBackend for WidgetRecorder {
     fn draw_text(&mut self, layout: &TextLayout, origin: Point2D) {
         if let Some(run) = layout.runs().first() {
             self.texts.push((run.content.clone(), origin));
+            self.text_colors.push((run.content.clone(), run.color));
         }
     }
-    fn clip_rect(&mut self, _: Rect) {}
+    fn clip_rect(&mut self, rect: Rect) {
+        self.clips.push(rect);
+    }
     fn save(&mut self) {}
     fn restore(&mut self) {}
     fn translate(&mut self, _: Point2D) {}
@@ -38,11 +48,14 @@ impl RenderBackend for WidgetRecorder {
     fn stroke_line(&mut self, from: Point2D, to: Point2D, color: Color, _: f32) {
         self.lines.push((from, to, color));
     }
-    fn fill_round_rect(&mut self, rect: Rect, _: f32, color: Color) {
+    fn fill_round_rect(&mut self, rect: Rect, radius: f32, color: Color) {
         self.round_rects.push((rect, color));
+        self.round_radii.push(radius);
     }
-    fn stroke_round_rect(&mut self, rect: Rect, _: f32, color: Color, _: f32) {
+    fn stroke_round_rect(&mut self, rect: Rect, radius: f32, color: Color, width: f32) {
         self.stroke_round_rects.push((rect, color));
+        self.stroke_round_radii.push(radius);
+        self.stroke_round_widths.push(width);
     }
     fn stroke_svg_path(&mut self, _: &str, _: Point2D, _: f32, _: Color, _: f32) {}
     fn draw_image(&mut self, _: Rect, _: u64, _: &[u8]) {}
@@ -56,9 +69,9 @@ impl RenderBackend for WidgetRecorder {
     }
 }
 
-const ACCENT: Color = Color::rgb_u8(0x3b, 0x82, 0xf6);
-const TRACK_OFF: Color = Color::rgb_u8(0xd1, 0xd5, 0xdb);
 const WHITE: Color = Color::WHITE;
+const DARK_PURPLE: Color = Color::rgb_u8(0x18, 0x0b, 0x2a);
+const PURPLE_BORDER: Color = Color::rgb_u8(0x72, 0x4a, 0xa0);
 
 fn paint(node: &SceneNode, rect: Rect) -> WidgetRecorder {
     let mut backend = WidgetRecorder::default();
@@ -75,6 +88,20 @@ fn widget_node(kind: NodeKind, w: SceneWidget, rect: Rect) -> SceneNode {
     n.bounds = rect;
     n.widget = Some(w);
     n
+}
+
+fn authored_widget_node(kind: NodeKind, mut w: SceneWidget, rect: Rect, radius: f32) -> SceneNode {
+    w.corner_radius_authored = true;
+    let mut node = widget_node(kind, w, rect);
+    node.fill = Some(DARK_PURPLE);
+    node.stroke = Some(SceneStroke {
+        color: PURPLE_BORDER,
+        width: 2.0,
+        sides: None,
+        align: SceneStrokeAlign::Center,
+    });
+    node.corner_radius = radius;
+    node
 }
 
 #[test]
@@ -94,9 +121,9 @@ fn unknown_or_absent_widget_returns_false() {
 }
 
 #[test]
-fn switch_on_paints_accent_track_and_right_knob() {
+fn switch_on_paints_authored_track_and_right_knob() {
     let rect = Rect::xywh(0.0, 0.0, 40.0, 20.0);
-    let node = widget_node(
+    let node = authored_widget_node(
         NodeKind::Rect,
         SceneWidget {
             kind: "switch".into(),
@@ -104,12 +131,14 @@ fn switch_on_paints_accent_track_and_right_knob() {
             ..Default::default()
         },
         rect,
+        7.0,
     );
     let b = paint(&node, rect);
-    // Track (accent) + knob (white) = 2 filled round rects.
+    // Track + contrast-derived knob = 2 filled round rects.
     assert_eq!(b.round_rects.len(), 2, "track + knob");
-    assert_eq!(b.round_rects[0].1, ACCENT, "on-track is accent");
-    assert_eq!(b.round_rects[1].1, WHITE, "knob is white");
+    assert_eq!(b.round_rects[0].1, DARK_PURPLE, "authored on-track");
+    assert_eq!(b.round_rects[1].1, WHITE, "dark track gets white knob");
+    assert_eq!(b.round_radii[0], 7.0, "authored switch radius");
     // Knob slid to the right half.
     let knob = b.round_rects[1].0;
     assert!(
@@ -120,9 +149,9 @@ fn switch_on_paints_accent_track_and_right_knob() {
 }
 
 #[test]
-fn switch_off_paints_grey_track_and_left_knob() {
+fn switch_off_paints_authored_inactive_track_and_left_knob() {
     let rect = Rect::xywh(0.0, 0.0, 40.0, 20.0);
-    let node = widget_node(
+    let node = authored_widget_node(
         NodeKind::Rect,
         SceneWidget {
             kind: "switch".into(),
@@ -130,9 +159,13 @@ fn switch_off_paints_grey_track_and_left_knob() {
             ..Default::default()
         },
         rect,
+        7.0,
     );
     let b = paint(&node, rect);
-    assert_eq!(b.round_rects[0].1, TRACK_OFF, "off-track is grey");
+    assert_eq!(
+        b.round_rects[0].1, PURPLE_BORDER,
+        "authored stroke is the inactive track"
+    );
     let knob = b.round_rects[1].0;
     assert!(
         knob.origin.x < rect.size.x / 2.0,
@@ -141,9 +174,91 @@ fn switch_off_paints_grey_track_and_left_knob() {
 }
 
 #[test]
+fn zero_radius_legacy_widgets_keep_intrinsic_rounding() {
+    let switch_rect = Rect::xywh(0.0, 0.0, 40.0, 20.0);
+    let switch = widget_node(
+        NodeKind::Rect,
+        SceneWidget {
+            kind: "switch".into(),
+            ..Default::default()
+        },
+        switch_rect,
+    );
+    assert_eq!(paint(&switch, switch_rect).round_radii[0], 10.0);
+
+    let slider_rect = Rect::xywh(0.0, 0.0, 100.0, 16.0);
+    let slider = widget_node(
+        NodeKind::Rect,
+        SceneWidget {
+            kind: "slider".into(),
+            ..Default::default()
+        },
+        slider_rect,
+    );
+    assert_eq!(paint(&slider, slider_rect).round_radii[0], 2.0);
+
+    let progress_rect = Rect::xywh(0.0, 0.0, 100.0, 8.0);
+    let progress = widget_node(
+        NodeKind::Rect,
+        SceneWidget {
+            kind: "progress".into(),
+            ..Default::default()
+        },
+        progress_rect,
+    );
+    assert_eq!(paint(&progress, progress_rect).round_radii[0], 4.0);
+
+    let checkbox_rect = Rect::xywh(0.0, 0.0, 18.0, 18.0);
+    let checkbox = widget_node(
+        NodeKind::Rect,
+        SceneWidget {
+            kind: "checkbox".into(),
+            ..Default::default()
+        },
+        checkbox_rect,
+    );
+    assert_eq!(paint(&checkbox, checkbox_rect).stroke_round_radii[0], 2.0);
+}
+
+#[test]
+fn corner_radius_distinguishes_absent_explicit_zero_and_positive() {
+    let rect = Rect::xywh(0.0, 0.0, 40.0, 20.0);
+    let absent = widget_node(
+        NodeKind::Rect,
+        SceneWidget {
+            kind: "switch".into(),
+            ..Default::default()
+        },
+        rect,
+    );
+    let explicit_zero = authored_widget_node(
+        NodeKind::Rect,
+        SceneWidget {
+            kind: "switch".into(),
+            ..Default::default()
+        },
+        rect,
+        0.0,
+    );
+    let positive = authored_widget_node(
+        NodeKind::Rect,
+        SceneWidget {
+            kind: "switch".into(),
+            ..Default::default()
+        },
+        rect,
+        7.0,
+    );
+
+    assert_eq!(paint(&absent, rect).round_radii[0], 10.0);
+    assert_eq!(paint(&explicit_zero, rect).round_radii[0], 0.0);
+    assert_eq!(paint(&positive, rect).round_radii[0], 7.0);
+}
+
+#[test]
 fn checkbox_checked_paints_accent_box_and_check_polyline() {
     let rect = Rect::xywh(0.0, 0.0, 18.0, 18.0);
-    let node = widget_node(
+    let node = authored_widget_node(
         NodeKind::Rect,
         SceneWidget {
             kind: "checkbox".into(),
@@ -151,12 +266,20 @@ fn checkbox_checked_paints_accent_box_and_check_polyline() {
             ..Default::default()
         },
         rect,
+        5.0,
     );
     let b = paint(&node, rect);
     // Accent-filled box.
-    assert_eq!(b.round_rects[0].1, ACCENT, "checked box fills accent");
+    assert_eq!(
+        b.round_rects[0].1, DARK_PURPLE,
+        "checked box uses authored fill"
+    );
     // Two line segments form the white check (✓).
     assert_eq!(b.lines.len(), 2, "check polyline is 2 segments");
+    assert_eq!(
+        b.stroke_round_rects[0].1, PURPLE_BORDER,
+        "checked box retains authored outline"
+    );
     assert!(
         b.lines.iter().all(|(_, _, c)| *c == WHITE),
         "check is white"
@@ -164,9 +287,66 @@ fn checkbox_checked_paints_accent_box_and_check_polyline() {
 }
 
 #[test]
+fn checkbox_180x24_label_uses_in_bounds_control_geometry_and_label_role() {
+    let rect = Rect::xywh(10.0, 20.0, 180.0, 24.0);
+    let mut node = authored_widget_node(
+        NodeKind::Rect,
+        SceneWidget {
+            kind: "checkbox".into(),
+            checked: Some(true),
+            label: Some("Agree".into()),
+            ..Default::default()
+        },
+        rect,
+        4.0,
+    );
+    // Dark fill would produce white field foreground, while a light authored
+    // stroke produces black external-label foreground. This catches accidental
+    // reuse of the fill/surface contrast role for adjacent labels.
+    node.stroke.as_mut().unwrap().color = Color::rgb_u8(0xf4, 0xf4, 0xf5);
+
+    let b = paint(&node, rect);
+    let (label_color, origin) = b
+        .text_colors
+        .iter()
+        .find(|(text, _)| text == "Agree")
+        .map(|(_, color)| *color)
+        .zip(
+            b.texts
+                .iter()
+                .find(|(text, _)| text == "Agree")
+                .map(|(_, origin)| *origin),
+        )
+        .expect("checkbox label paint");
+    assert_eq!(label_color, jian_core::scene::Color::rgb(0x00, 0x00, 0x00));
+    assert_eq!(
+        b.round_rects[0].0,
+        Rect::xywh(10.0, 20.0, 24.0, 24.0),
+        "labelled checkbox paints a square box inside the whole control"
+    );
+    assert_eq!(
+        b.stroke_round_rects[0].0,
+        Rect::xywh(10.0, 20.0, 24.0, 24.0)
+    );
+    assert_eq!(origin.x, 42.0, "label starts box-right + 8px");
+    assert_eq!(
+        b.clips,
+        vec![Rect::xywh(42.0, 20.0, 148.0, 24.0)],
+        "label paint is clipped to the remaining authored control width"
+    );
+    assert!(
+        b.lines
+            .iter()
+            .flat_map(|(from, to, _)| [from, to])
+            .all(|point| rect.contains(*point)),
+        "check geometry stays within the full hit bounds"
+    );
+}
+
+#[test]
 fn checkbox_unchecked_paints_outlined_box_no_check() {
     let rect = Rect::xywh(0.0, 0.0, 18.0, 18.0);
-    let node = widget_node(
+    let node = authored_widget_node(
         NodeKind::Rect,
         SceneWidget {
             kind: "checkbox".into(),
@@ -174,19 +354,20 @@ fn checkbox_unchecked_paints_outlined_box_no_check() {
             ..Default::default()
         },
         rect,
+        5.0,
     );
     let b = paint(&node, rect);
     assert!(b.lines.is_empty(), "unchecked box has no check mark");
     assert_eq!(
-        b.stroke_round_rects[0].1, TRACK_OFF,
-        "unchecked box is outlined grey"
+        b.stroke_round_rects[0].1, PURPLE_BORDER,
+        "unchecked box uses authored stroke"
     );
 }
 
 #[test]
 fn slider_paints_track_filled_portion_and_knob() {
     let rect = Rect::xywh(0.0, 0.0, 100.0, 16.0);
-    let node = widget_node(
+    let node = authored_widget_node(
         NodeKind::Rect,
         SceneWidget {
             kind: "slider".into(),
@@ -196,12 +377,13 @@ fn slider_paints_track_filled_portion_and_knob() {
             ..Default::default()
         },
         rect,
+        10.0,
     );
     let b = paint(&node, rect);
-    // track (grey) + filled (accent) + knob (white) = 3 round rects.
+    // authored inactive track + active fill + contrast knob.
     assert_eq!(b.round_rects.len(), 3, "track + fill + knob");
-    assert_eq!(b.round_rects[0].1, TRACK_OFF, "track grey");
-    assert_eq!(b.round_rects[1].1, ACCENT, "filled accent");
+    assert_eq!(b.round_rects[0].1, PURPLE_BORDER, "authored track");
+    assert_eq!(b.round_rects[1].1, DARK_PURPLE, "authored fill");
     // 50% fill spans half the width.
     let fill = b.round_rects[1].0;
     assert!(
@@ -215,7 +397,7 @@ fn slider_paints_track_filled_portion_and_knob() {
 #[test]
 fn slider_with_zero_value_has_no_accent_fill() {
     let rect = Rect::xywh(0.0, 0.0, 100.0, 16.0);
-    let node = widget_node(
+    let node = authored_widget_node(
         NodeKind::Rect,
         SceneWidget {
             kind: "slider".into(),
@@ -225,19 +407,20 @@ fn slider_with_zero_value_has_no_accent_fill() {
             ..Default::default()
         },
         rect,
+        10.0,
     );
     let b = paint(&node, rect);
     // Only track + knob; no accent fill at 0%.
     assert!(
-        b.round_rects.iter().all(|(_, c)| *c != ACCENT),
-        "no accent fill at value=min"
+        b.round_rects.iter().all(|(_, c)| *c != DARK_PURPLE),
+        "no authored active fill at value=min"
     );
 }
 
 #[test]
 fn progress_paints_track_and_filled_portion() {
     let rect = Rect::xywh(0.0, 0.0, 200.0, 8.0);
-    let node = widget_node(
+    let node = authored_widget_node(
         NodeKind::Rect,
         SceneWidget {
             kind: "progress".into(),
@@ -246,11 +429,12 @@ fn progress_paints_track_and_filled_portion() {
             ..Default::default()
         },
         rect,
+        4.0,
     );
     let b = paint(&node, rect);
-    assert_eq!(b.round_rects[0].1, TRACK_OFF, "progress track grey");
+    assert_eq!(b.round_rects[0].1, PURPLE_BORDER, "authored progress track");
     let fill = &b.round_rects[1];
-    assert_eq!(fill.1, ACCENT, "progress fill accent");
+    assert_eq!(fill.1, DARK_PURPLE, "authored progress fill");
     assert!(
         (fill.0.size.x - 50.0).abs() < 0.5,
         "25/100 of 200px ~= 50px, got {}",
@@ -261,7 +445,7 @@ fn progress_paints_track_and_filled_portion() {
 #[test]
 fn select_paints_box_value_text_and_chevron() {
     let rect = Rect::xywh(0.0, 0.0, 160.0, 36.0);
-    let node = widget_node(
+    let node = authored_widget_node(
         NodeKind::Text,
         SceneWidget {
             kind: "select".into(),
@@ -279,6 +463,7 @@ fn select_paints_box_value_text_and_chevron() {
             ..Default::default()
         },
         rect,
+        11.0,
     );
     let b = paint(&node, rect);
     // Selected option label is painted.
@@ -289,8 +474,16 @@ fn select_paints_box_value_text_and_chevron() {
     );
     // Chevron = 2 line segments.
     assert_eq!(b.lines.len(), 2, "down chevron is 2 segments");
-    // Outlined box.
-    assert!(!b.stroke_round_rects.is_empty(), "select box outlined");
+    assert_eq!(b.round_rects[0].1, DARK_PURPLE, "authored select surface");
+    assert_eq!(
+        b.stroke_round_rects[0].1, PURPLE_BORDER,
+        "authored select border"
+    );
+    assert_eq!(b.round_radii[0], 11.0, "authored select radius");
+    assert_eq!(
+        b.stroke_round_radii[0], 11.0,
+        "fill and border share authored radius"
+    );
 }
 
 #[test]
@@ -310,6 +503,61 @@ fn select_empty_paints_placeholder() {
         b.texts.iter().any(|(t, _)| t == "Choose…"),
         "placeholder painted"
     );
+    assert!(
+        b.round_rects.is_empty(),
+        "unstyled select must not fabricate a white surface"
+    );
+    assert!(
+        b.stroke_round_rects.is_empty(),
+        "unstyled select must not fabricate a grey border"
+    );
+}
+
+#[test]
+fn select_placeholder_is_muted_but_value_uses_authored_contrast_foreground() {
+    let rect = Rect::xywh(0.0, 0.0, 160.0, 36.0);
+    let placeholder = authored_widget_node(
+        NodeKind::Text,
+        SceneWidget {
+            kind: "select".into(),
+            placeholder: Some("Choose…".into()),
+            ..Default::default()
+        },
+        rect,
+        8.0,
+    );
+    let value = authored_widget_node(
+        NodeKind::Text,
+        SceneWidget {
+            kind: "select".into(),
+            value_str: Some("night".into()),
+            options: vec![SceneWidgetOption {
+                value: "night".into(),
+                label: "Night mode".into(),
+            }],
+            ..Default::default()
+        },
+        rect,
+        8.0,
+    );
+
+    let placeholder_paint = paint(&placeholder, rect);
+    let value_paint = paint(&value, rect);
+    let placeholder_color = placeholder_paint
+        .text_colors
+        .iter()
+        .find(|(text, _)| text == "Choose…")
+        .map(|(_, color)| *color)
+        .expect("placeholder color");
+    let value_color = value_paint
+        .text_colors
+        .iter()
+        .find(|(text, _)| text == "Night mode")
+        .map(|(_, color)| *color)
+        .expect("value color");
+
+    assert_ne!(placeholder_color, value_color, "placeholder stays muted");
+    assert!(placeholder_color.a() < value_color.a());
 }
 
 #[test]
@@ -370,7 +618,7 @@ fn text_field_display_text_borrows_value_and_placeholder() {
 #[test]
 fn radio_group_paints_circle_and_dot_for_selected() {
     let rect = Rect::xywh(0.0, 0.0, 120.0, 56.0);
-    let node = widget_node(
+    let node = authored_widget_node(
         NodeKind::Rect,
         SceneWidget {
             kind: "radio_group".into(),
@@ -388,15 +636,16 @@ fn radio_group_paints_circle_and_dot_for_selected() {
             ..Default::default()
         },
         rect,
+        7.0,
     );
     let b = paint(&node, rect);
-    // Selected circle filled accent + inner white dot; unselected
-    // circle filled white. 2 options → 3 fills (2 circles + 1 dot).
-    assert_eq!(b.round_rects.len(), 3, "2 circles + 1 inner dot");
+    // Selected circle + contrast inner dot; unselected is border-only.
+    assert_eq!(b.round_rects.len(), 2, "selected circle + inner dot");
     assert!(
-        b.round_rects.iter().any(|(_, c)| *c == ACCENT),
-        "selected circle is accent"
+        b.round_rects.iter().any(|(_, c)| *c == DARK_PURPLE),
+        "selected circle uses authored fill"
     );
+    assert_eq!(b.stroke_round_widths[0], 2.0, "authored radio stroke width");
     // Both labels painted.
     assert!(b.texts.iter().any(|(t, _)| t == "Apple"));
     assert!(b.texts.iter().any(|(t, _)| t == "Banana"));
@@ -496,13 +745,13 @@ fn number_input_renders_numeric_value() {
 }
 
 #[test]
-fn tabs_paints_bar_labels_with_active_underline() {
+fn tabs_matches_segmented_preview_and_stale_value_falls_back_first() {
     let rect = Rect::xywh(0.0, 0.0, 240.0, 120.0);
-    let node = widget_node(
+    let node = authored_widget_node(
         NodeKind::Frame,
         SceneWidget {
             kind: "tabs".into(),
-            value_str: Some("one".into()),
+            value_str: Some("stale".into()),
             options: vec![
                 SceneWidgetOption {
                     value: "one".into(),
@@ -516,13 +765,36 @@ fn tabs_paints_bar_labels_with_active_underline() {
             ..Default::default()
         },
         rect,
+        0.0,
     );
     let b = paint(&node, rect);
     assert!(b.texts.iter().any(|(t, _)| t == "One"));
     assert!(b.texts.iter().any(|(t, _)| t == "Two"));
-    // Bottom border + active-tab accent underline.
+    // Authored inactive bar + active authored segment.
+    assert_eq!(b.round_rects.len(), 2);
+    assert_eq!(b.round_rects[0].1, PURPLE_BORDER);
     assert!(
-        b.lines.iter().any(|(_, _, c)| *c == ACCENT),
-        "active tab has an accent underline"
+        b.round_rects.iter().any(|(_, c)| *c == DARK_PURPLE),
+        "active tab uses authored fill"
     );
+    let active = b
+        .text_colors
+        .iter()
+        .find(|(text, _)| text == "One")
+        .map(|(_, color)| *color)
+        .expect("active tab color");
+    let inactive = b
+        .text_colors
+        .iter()
+        .find(|(text, _)| text == "Two")
+        .map(|(_, color)| *color)
+        .expect("inactive tab color");
+    assert_eq!(
+        (inactive.r(), inactive.g(), inactive.b()),
+        (active.r(), active.g(), active.b())
+    );
+    assert!(inactive.a() < active.a(), "inactive tab label is muted");
 }
+
+#[path = "canvas_viewport_widget_tests/contract_closure.rs"]
+mod contract_closure;

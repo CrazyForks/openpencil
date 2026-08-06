@@ -85,6 +85,29 @@ const MIN_VISIBLE_EFFECT_DEVICE_PX: f32 = 0.3;
 
 use super::canvas_overlay_transform::OverlayTransform;
 
+/// Resolve the active tab option by authored/live value. Missing or stale
+/// values deterministically fall back to the first tab/panel.
+pub fn tabs_active_index(widget: &crate::layout_scene::SceneWidget) -> usize {
+    widget
+        .value_str
+        .as_deref()
+        .and_then(|value| widget.options.iter().position(|tab| tab.value == value))
+        .unwrap_or(0)
+}
+
+/// Tabs are the only first-class widget whose children are alternative
+/// panels rather than ordinary descendants. `tabs[i]` maps to `children[i]`.
+fn widget_children_to_paint(node: &SceneNode) -> &[SceneNode] {
+    let Some(widget) = node.widget.as_ref().filter(|widget| widget.kind == "tabs") else {
+        return &node.children;
+    };
+    let active = tabs_active_index(widget);
+    node.children
+        .get(active)
+        .map(std::slice::from_ref)
+        .unwrap_or_default()
+}
+
 fn paint_node_inner<'a>(
     cx: &mut PaintCx<'_>,
     node: &'a SceneNode,
@@ -361,9 +384,8 @@ fn paint_node_inner<'a>(
             } else {
                 paint_fill_then_stroke(cx, node, world_rect, zoom, node.fill);
             }
-            // `tabs` degrades to a `frame` whose children are the tab
-            // panels; paint the minimal tab-bar visual over the frame
-            // fill, then the children render normally below.
+            // `tabs` degrades to a `frame`; retain its tab bar while only
+            // the authored/live active panel participates in paint + hits.
             paint_widget_visual(cx, node, world_rect, zoom);
             if let Some(accent) = options.generation_accent {
                 let visually_empty = super::canvas_generation_scan::is_placeholder_section(node)
@@ -400,7 +422,7 @@ fn paint_node_inner<'a>(
             let clipped = push_clip_content(cx, node, world_rect, zoom);
             paint_child_siblings(
                 cx,
-                &node.children,
+                widget_children_to_paint(node),
                 options,
                 transforms,
                 is_hovered,
@@ -696,3 +718,7 @@ mod layered_shape_tests;
 #[cfg(test)]
 #[path = "canvas_viewport_node_blend_tests.rs"]
 mod node_blend_tests;
+
+#[cfg(test)]
+#[path = "canvas_viewport_tabs_tests.rs"]
+mod tabs_tests;

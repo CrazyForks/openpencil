@@ -77,9 +77,13 @@ mod tests_app_mode;
 #[cfg(all(test, not(target_os = "windows")))]
 mod tests_bindings;
 #[cfg(all(test, not(target_os = "windows")))]
+mod tests_caret;
+#[cfg(all(test, not(target_os = "windows")))]
 mod tests_device_frame;
 #[cfg(all(test, not(target_os = "windows")))]
 mod tests_geometry_parity;
+#[cfg(all(test, not(target_os = "windows")))]
+mod tests_tabs;
 #[cfg(all(test, not(target_os = "windows")))]
 mod tests_transition;
 
@@ -94,6 +98,7 @@ pub(crate) use mode_transition::{lerp_color, ModeTransition, ModeTransitionKind}
 pub(crate) use present::PinnedPaint;
 
 use jian_core::action::services::Router;
+use jian_core::render::widget_style::{resolve_authored_widget_visual, with_visual_opacity};
 use jian_core::widget_state::WidgetState;
 use jian_core::Runtime;
 use jian_ops_schema::compat::{load_str_with, LoadOptions};
@@ -178,6 +183,22 @@ pub struct PreviewSession {
     /// idle input dispatch guard (`input.rs`) needs "now" but the
     /// dispatch methods don't take a clock param of their own.
     last_now_ms: u64,
+}
+
+fn widget_field_foreground(node: &SceneNode) -> Color {
+    let visual = resolve_authored_widget_visual(
+        node.fill.map(Color::to_jian),
+        node.stroke.map(|stroke| stroke.color.to_jian()),
+    );
+    // Scene fill/stroke already carry direct-paint opacity; the contrast-derived
+    // caret does not, so fold it exactly once through the shared widget policy.
+    let color = with_visual_opacity(visual.foreground, node.opacity);
+    Color::rgba_u8(
+        color.r(),
+        color.g(),
+        color.b(),
+        f32::from(color.a()) / 255.0,
+    )
 }
 
 impl PreviewSession {
@@ -619,14 +640,10 @@ impl PreviewSession {
         let advance = backend.measure_text_weighted(&text[..caret_byte], fs_world, 400);
         let caret_x = text_x + advance;
 
-        // Near-black caret (matches the field's value text colour) at a
-        // crisp ≥1px width regardless of zoom.
-        let color = Color {
-            r: 0.067,
-            g: 0.067,
-            b: 0.067,
-            a: 1.0,
-        };
+        // Match the field's value foreground. The shared resolver derives a
+        // readable caret from the authored surface/stroke, so a dark input no
+        // longer receives the old hard-coded near-black caret.
+        let color = widget_field_foreground(node);
         backend.stroke_line(
             Point2D::new(caret_x, top_y),
             Point2D::new(caret_x, top_y + fs_world),
