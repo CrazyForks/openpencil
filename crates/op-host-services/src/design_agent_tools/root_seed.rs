@@ -356,7 +356,7 @@ fn resolve_root_seed_profile(
     let matching_existing_screen = state.active_children().iter().rev().find(|node| {
         if !ids_before.contains(node.id_str())
             || !matches!(node, PenNode::Frame(_))
-            || !node.children().is_some_and(|children| !children.is_empty())
+            || node.children().is_none_or(|children| children.is_empty())
         {
             return false;
         }
