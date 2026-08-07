@@ -74,14 +74,22 @@ fn mock_stream(request: &str) -> MockStream {
     }
 }
 
+/// One SSE payload for the hub tests.
+fn tick(version: u64, collab_seq: u64) -> SseTick {
+    SseTick {
+        version,
+        collab_seq,
+    }
+}
+
 #[test]
 fn sse_hub_broadcasts_version_to_all_subscribers() {
     let hub = SseHub::default();
     let a = hub.subscribe();
     let b = hub.subscribe();
-    hub.broadcast(5);
-    assert_eq!(a.recv().unwrap(), 5);
-    assert_eq!(b.recv().unwrap(), 5);
+    hub.broadcast(tick(5, 0));
+    assert_eq!(a.recv().unwrap(), tick(5, 0));
+    assert_eq!(b.recv().unwrap(), tick(5, 0));
 }
 
 #[test]
@@ -90,32 +98,46 @@ fn sse_hub_prunes_disconnected_subscribers() {
     let live = hub.subscribe();
     drop(hub.subscribe()); // a disconnected client (receiver dropped)
     assert_eq!(hub.subscriber_count(), 2);
-    hub.broadcast(1); // prunes the dropped one
+    hub.broadcast(tick(1, 0)); // prunes the dropped one
     assert_eq!(hub.subscriber_count(), 1);
-    assert_eq!(live.recv().unwrap(), 1);
+    assert_eq!(live.recv().unwrap(), tick(1, 0));
 }
 
 #[test]
 fn write_sse_event_emits_data_frame() {
     let mut stream = mock_stream("");
-    write_sse_event(&mut stream, 42).expect("write");
+    write_sse_event(&mut stream, tick(42, 7)).expect("write");
     assert_eq!(
         String::from_utf8_lossy(&stream.output),
-        "data: {\"version\":42}\n\n"
+        "data: {\"version\":42,\"collabSeq\":7}\n\n"
     );
+}
+
+#[test]
+fn sse_payload_stays_a_superset_of_the_original_version_frame() {
+    let mut stream = mock_stream("");
+    write_sse_event(&mut stream, tick(3, 0)).expect("write");
+    let out = String::from_utf8_lossy(&stream.output).into_owned();
+    // A client written against the original `{"version":N}` frame parses this
+    // one unchanged: `version` keeps its spelling and stays the first field.
+    assert!(out.starts_with("data: {\"version\":3,"), "{out}");
+    let payload: serde_json::Value =
+        serde_json::from_str(out.trim_start_matches("data: ").trim()).expect("valid JSON");
+    assert_eq!(payload["version"], 3);
+    assert_eq!(payload["collabSeq"], 0);
 }
 
 #[test]
 fn serve_sse_emits_initial_then_each_version_until_hub_drops() {
     let (tx, rx) = mpsc::channel();
-    tx.send(9).expect("send"); // one bump, then the sender drops → Disconnected
+    tx.send(tick(9, 0)).expect("send"); // one bump, then the sender drops → Disconnected
     drop(tx);
     let mut stream = mock_stream("");
-    serve_sse(&mut stream, rx, 7, Some("*")).expect("serve_sse");
+    serve_sse(&mut stream, rx, tick(7, 0), Some("*")).expect("serve_sse");
     let out = String::from_utf8_lossy(&stream.output);
     assert!(out.contains("text/event-stream"), "{out}");
-    assert!(out.contains(r#"data: {"version":7}"#), "{out}"); // initial sync
-    assert!(out.contains(r#"data: {"version":9}"#), "{out}"); // broadcast bump
+    assert!(out.contains(r#"data: {"version":7,"#), "{out}"); // initial sync
+    assert!(out.contains(r#"data: {"version":9,"#), "{out}"); // broadcast bump
 }
 
 #[test]
@@ -131,7 +153,7 @@ fn serve_one_post_document_broadcasts_new_version_to_sse() {
     let mut stream = mock_stream(&request);
     serve_one(&mut stream, &state, &hub).expect("serve_one");
     // The whole-doc sync bumped the version to 1 and broadcast it.
-    assert_eq!(sub.recv().unwrap(), 1);
+    assert_eq!(sub.recv().unwrap().version, 1);
 }
 
 #[test]

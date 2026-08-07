@@ -68,6 +68,37 @@ struct PreparedInstall {
     variables: VariableUiState,
 }
 
+/// A document that has cleared every structural check an install performs.
+///
+/// Validation walks the whole node forest, so a server holding one shared
+/// editor behind a mutex must not pay for it under the lock. Splitting the
+/// fallible half out lets a caller validate off-lock and then install
+/// infallibly, which is what makes an in-generation ingest atomic with
+/// respect to a concurrently running collaboration session.
+#[derive(Debug, Clone)]
+pub struct PreparedDocument {
+    doc: PenDocument,
+}
+
+impl PreparedDocument {
+    /// Run every structural check an install would run.
+    pub fn prepare(doc: PenDocument) -> Result<Self, DocumentInstallError> {
+        validate_install_document(&doc)?;
+        Ok(Self { doc })
+    }
+
+    /// The validated document, for a caller that needs to compare before
+    /// deciding to install.
+    pub fn document(&self) -> &PenDocument {
+        &self.doc
+    }
+
+    /// Give the validated document back, abandoning the install.
+    pub fn into_document(self) -> PenDocument {
+        self.doc
+    }
+}
+
 impl EditorState {
     /// Atomically install a collaboration document after neutral validation.
     ///
@@ -81,7 +112,27 @@ impl EditorState {
         doc: PenDocument,
         origin: EditOrigin,
     ) -> Result<DocumentInstallReport, DocumentInstallError> {
-        validate_install_document(&doc)?;
+        Ok(self.install_prepared_document(PreparedDocument::prepare(doc)?, origin))
+    }
+
+    /// Install an already-validated document.
+    ///
+    /// Infallible by construction — [`PreparedDocument::prepare`] has already
+    /// done the only fallible work — so this half can run under a lock without
+    /// an error path that would leave a half-applied document behind.
+    ///
+    /// Every origin except `Snapshot` keeps the current
+    /// [`document_generation`](EditorState::document_generation). That is what
+    /// makes this usable as the in-generation content swap inside an open
+    /// [`begin_local_edit`](EditorState::begin_local_edit) capture: a bumped
+    /// generation would make the matching `end_local_edit` fail, and the
+    /// collaboration runtime reads that failure as a lost session.
+    pub fn install_prepared_document(
+        &mut self,
+        prepared: PreparedDocument,
+        origin: EditOrigin,
+    ) -> DocumentInstallReport {
+        let doc = prepared.doc;
         let prepared = self.prepare_document_install(&doc);
         let local_snapshot = (origin == EditOrigin::Local).then(|| self.snapshot_for_history());
 
@@ -114,11 +165,11 @@ impl EditorState {
 
         jian_ops_schema::image_thumbs::activate_for_document(&self.doc);
         crate::state::drop_document_after_replace(old_doc);
-        Ok(DocumentInstallReport {
+        DocumentInstallReport {
             origin,
             retained_selection: self.selection.len(),
             active_page_changed: prepared.active_page_changed,
-        })
+        }
     }
 
     fn prepare_document_install(&self, doc: &PenDocument) -> PreparedInstall {

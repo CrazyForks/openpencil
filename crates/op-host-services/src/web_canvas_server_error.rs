@@ -55,6 +55,10 @@ pub enum WebCanvasError {
     /// SSE stream). Never becomes an HTTP response — the socket is already
     /// unusable; the accept loop just logs it.
     Transport(String),
+    /// A live collaboration session refuses this write. Not a client fault and
+    /// not a daemon fault — the document is healthy and the request was
+    /// well-formed; it simply cannot be sequenced right now.
+    Collab(crate::web_canvas_server::DaemonMutationRefusal),
 }
 
 impl WebCanvasError {
@@ -73,6 +77,19 @@ impl WebCanvasError {
             | WebCanvasError::Export(_)
             | WebCanvasError::Io(_) => "400 Bad Request",
             WebCanvasError::Config(_) | WebCanvasError::Transport(_) => "500 Internal Server Error",
+            WebCanvasError::Collab(refusal) => refusal.http_status(),
+        }
+    }
+
+    /// Stable machine-readable code, when the failure has one.
+    ///
+    /// Only collaboration refusals carry a code today: a client has to tell
+    /// "the session is read-only for you" from "the session is busy" to decide
+    /// whether retrying is worth it.
+    pub fn error_code(&self) -> Option<&'static str> {
+        match self {
+            WebCanvasError::Collab(refusal) => Some(refusal.code()),
+            _ => None,
         }
     }
 }
@@ -86,6 +103,7 @@ impl fmt::Display for WebCanvasError {
             | WebCanvasError::Io(m)
             | WebCanvasError::Config(m)
             | WebCanvasError::Transport(m) => f.write_str(m),
+            WebCanvasError::Collab(refusal) => write!(f, "{refusal}"),
         }
     }
 }

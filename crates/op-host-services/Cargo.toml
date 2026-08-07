@@ -47,6 +47,10 @@ anthropic-agent-sdk = { path = "../../vendor/anthropic-agent-sdk" }
 # default-features=false drops winit/glutin/GL). Pulled solely for the export
 # endpoint's NativeBackend + NativeFrameBackend.
 op-host-native = { path = "../op-host-native", default-features = false }
+# Collaboration runtime — the daemon runs the same owner/guest actors the
+# desktop GUI runs, so a browser client gets real sessions instead of a
+# permanently `Unavailable` panel.
+op-collab-host = { path = "../op-collab-host" }
 
 # --- external (crates.io / forks) ---
 github-copilot-sdk = "0.1"

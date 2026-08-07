@@ -39,8 +39,10 @@ pub mod collab_notice_ui;
 pub mod collab_owner_confirm_ui;
 pub mod collab_panel_hover;
 pub mod collab_public_ui;
+pub mod collab_routes;
 mod collab_ui_debug;
 pub mod collab_ui_state;
+pub mod collab_wire;
 pub mod color_picker;
 pub mod color_picker_edit;
 mod color_picker_snapshot;
@@ -316,7 +318,7 @@ pub use components::{Component, ComponentLibrary, ComponentOption};
 pub use compositing::{fill_blend_mode_at, node_blend_mode, node_mask_type};
 pub use design_md::{extract_design_md_from_document, generate_design_md, parse_design_md};
 pub use design_md_button_state::DesignMdButton;
-pub use document_install::{DocumentInstallError, DocumentInstallReport};
+pub use document_install::{DocumentInstallError, DocumentInstallReport, PreparedDocument};
 pub use edit_transaction::{
     CompletedLocalEdit, EditOrigin, LocalEditCapture, LocalEditError, LocalEditOutcome,
 };

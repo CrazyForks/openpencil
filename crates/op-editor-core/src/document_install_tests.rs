@@ -236,3 +236,112 @@ fn explicit_pages_reject_root_content_and_empty_page_ids() {
         Err(DocumentInstallError::EmptyPageId { page_index: 0 })
     );
 }
+
+// ---------------------------------------------------------------------------
+// In-generation ingest — the seam a daemon uses to push a whole document into
+// an open collaboration edit capture.
+// ---------------------------------------------------------------------------
+
+fn doc_with_rect(id: &str, width: f64) -> PenDocument {
+    serde_json::from_value(serde_json::json!({
+        "version": "1.0",
+        "children": [{
+            "type": "rectangle",
+            "id": id,
+            "name": "Rect",
+            "x": 0,
+            "y": 0,
+            "width": width,
+            "height": 10
+        }]
+    }))
+    .expect("valid test document")
+}
+
+#[test]
+fn preparing_a_document_runs_validation_before_any_state_is_touched() {
+    let mut invalid = doc_with_rect("dupe", 10.0);
+    invalid.children.push(invalid.children[0].clone());
+    assert_eq!(
+        crate::PreparedDocument::prepare(invalid).err(),
+        Some(DocumentInstallError::DuplicateId { id: "dupe".into() })
+    );
+    assert!(crate::PreparedDocument::prepare(doc_with_rect("ok", 10.0)).is_ok());
+}
+
+#[test]
+fn an_in_generation_install_keeps_the_generation_so_the_capture_can_close() {
+    let mut state = EditorState::starter();
+    let generation = state.document_generation();
+
+    let capture = state.begin_local_edit();
+    let prepared = crate::PreparedDocument::prepare(doc_with_rect("n1", 10.0)).expect("valid");
+    state.install_prepared_document(prepared, EditOrigin::Local);
+
+    assert_eq!(
+        state.document_generation(),
+        generation,
+        "a bumped generation would make end_local_edit fail and the runtime \
+         would read that as a lost session"
+    );
+    let outcome = state.end_local_edit(capture).expect("capture closes");
+    assert!(matches!(
+        outcome,
+        crate::edit_transaction::LocalEditOutcome::Changed(_)
+    ));
+}
+
+#[test]
+fn pushing_an_identical_document_produces_no_change_so_no_transaction_is_sent() {
+    let mut state = EditorState::starter();
+    let prepared = crate::PreparedDocument::prepare(doc_with_rect("n1", 10.0)).expect("valid");
+    state.install_prepared_document(prepared, EditOrigin::Local);
+    let revision = state.document_revision();
+
+    // The daemon re-pushes what the browser already has — the common case for a
+    // periodic whole-document sync.
+    let capture = state.begin_local_edit();
+    let same = crate::PreparedDocument::prepare(doc_with_rect("n1", 10.0)).expect("valid");
+    state.install_prepared_document(same, EditOrigin::Local);
+    let outcome = state.end_local_edit(capture).expect("capture closes");
+
+    assert!(
+        matches!(outcome, crate::edit_transaction::LocalEditOutcome::NoChange),
+        "an unchanged push must diff to nothing, or every idle sync would \
+         broadcast a transaction to every peer"
+    );
+    assert_eq!(
+        state.document_revision(),
+        revision,
+        "a no-change push must not move the revision either"
+    );
+}
+
+#[test]
+fn a_changed_push_inside_a_capture_diffs_to_exactly_the_new_document() {
+    let mut state = EditorState::starter();
+    state.install_prepared_document(
+        crate::PreparedDocument::prepare(doc_with_rect("n1", 10.0)).expect("valid"),
+        EditOrigin::Local,
+    );
+
+    let capture = state.begin_local_edit();
+    state.install_prepared_document(
+        crate::PreparedDocument::prepare(doc_with_rect("n1", 25.0)).expect("valid"),
+        EditOrigin::Local,
+    );
+    let outcome = state.end_local_edit(capture).expect("capture closes");
+
+    match outcome {
+        crate::edit_transaction::LocalEditOutcome::Changed(completed) => {
+            assert_eq!(state.doc, doc_with_rect("n1", 25.0));
+            // Accepting the edit is the caller's job; rolling it back must
+            // restore the pre-push document exactly.
+            state.rollback_local_edit(completed).expect("rolls back");
+            assert_eq!(state.doc, doc_with_rect("n1", 10.0));
+        }
+        crate::edit_transaction::LocalEditOutcome::NoChange => {
+            panic!("a widened rect must diff as a change")
+        }
+    }
+}

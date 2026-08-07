@@ -12,6 +12,9 @@ pub(super) fn is_sensitive_browser_post(request: &crate::mcp_serve::HttpRequest)
             || request
                 .path
                 .starts_with(op_editor_core::auth_routes::API_PREFIX)
+            || request
+                .path
+                .starts_with(op_editor_core::collab_routes::API_PREFIX)
             || request.path.starts_with("/api/figma/"))
 }
 

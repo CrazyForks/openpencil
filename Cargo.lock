@@ -4142,6 +4142,7 @@ dependencies = [
  "op-ai",
  "op-ai-skills",
  "op-auth-bridge",
+ "op-collab-host",
  "op-config-store",
  "op-design-lint",
  "op-editor-core",

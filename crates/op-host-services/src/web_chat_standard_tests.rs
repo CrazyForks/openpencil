@@ -305,7 +305,7 @@ fn design_doc_sink_applies_and_bumps_version() {
     }));
 
     assert_eq!(state.lock().unwrap().version, 1);
-    assert_eq!(sub.recv().unwrap(), 1);
+    assert_eq!(sub.recv().unwrap().version, 1);
     assert_eq!(sink.state().active_children().len(), 1);
 }
 

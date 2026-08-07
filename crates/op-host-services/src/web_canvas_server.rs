@@ -45,19 +45,35 @@ const MAX_CONNS: usize = 64;
 /// detected (the heartbeat write fails once the socket is gone).
 const SSE_HEARTBEAT: Duration = Duration::from_secs(15);
 
+/// One SSE payload: the two sequence numbers a client polls on.
+///
+/// `version` changes only when document *content* changes, so it is what makes
+/// a client refetch the document. `collab_seq` changes whenever the
+/// collaboration projection changes — a peer joining, a cursor moving — and
+/// must never by itself cause a document fetch.
+///
+/// Carried as one struct so a bump and its broadcast stay a single atomic
+/// event. The serialized form stays a superset of the original `{"version":N}`
+/// payload, so a client that only reads `version` is unaffected.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SseTick {
+    pub version: u64,
+    pub collab_seq: u64,
+}
+
 /// Broadcast hub for SSE subscribers. Each `GET /api/mcp/events` connection
-/// registers a channel; a document mutation broadcasts the new version to all
+/// registers a channel; a document mutation broadcasts the new tick to all
 /// of them, and each SSE connection thread writes it to its socket. Senders to
 /// disconnected clients are pruned on the next broadcast.
 #[derive(Default)]
 pub struct SseHub {
-    subscribers: Mutex<Vec<mpsc::Sender<u64>>>,
+    subscribers: Mutex<Vec<mpsc::Sender<SseTick>>>,
 }
 
 impl SseHub {
     /// Register a subscriber; the SSE connection thread blocks on the returned
-    /// receiver for version bumps.
-    pub(crate) fn subscribe(&self) -> Receiver<u64> {
+    /// receiver for ticks.
+    pub(crate) fn subscribe(&self) -> Receiver<SseTick> {
         let (tx, rx) = mpsc::channel();
         self.subscribers
             .lock()
@@ -66,13 +82,13 @@ impl SseHub {
         rx
     }
 
-    /// Broadcast a version bump to all live subscribers, pruning any whose
-    /// receiver was dropped (client disconnected).
-    pub(crate) fn broadcast(&self, version: u64) {
+    /// Broadcast a tick to all live subscribers, pruning any whose receiver was
+    /// dropped (client disconnected).
+    pub(crate) fn broadcast(&self, tick: SseTick) {
         self.subscribers
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .retain(|tx| tx.send(version).is_ok());
+            .retain(|tx| tx.send(tick).is_ok());
     }
 
     #[cfg(test)]
@@ -129,6 +145,9 @@ pub struct WebCanvasState {
     /// In-flight browser device-login flow driven through the auth proxy
     /// endpoints (`/api/auth/login/*`); `None` when no login is running.
     pub(crate) auth_login_handle: Option<u64>,
+    /// Collaboration runtime + its projection sequence. Idle until a browser
+    /// posts a start/join action.
+    pub(crate) collab: collab_state::WebCollabState,
 }
 
 impl WebCanvasState {
@@ -179,6 +198,7 @@ impl WebCanvasState {
             allow_origins: Vec::new(),
             reset_consumed: false,
             auth_login_handle: None,
+            collab: collab_state::WebCollabState::default(),
         }
     }
 
@@ -217,6 +237,14 @@ impl WebCanvasState {
         if self.reset_consumed {
             return Ok(ResetOutcome { skipped: true });
         }
+        // A reset swaps the whole document and starts a new generation, which
+        // the M1 protocol cannot sequence — the peers would silently diverge.
+        // `ReplaceDocument` is refused for every source once a session exists.
+        self.gate_daemon_mutation(
+            op_editor_core::CollabGateAction::ReplaceDocument,
+            op_editor_core::CollabEditSource::ExternalSync,
+        )
+        .map_err(WebCanvasError::Collab)?;
         self.reset_document()?;
         self.reset_consumed = true;
         Ok(ResetOutcome { skipped: false })
@@ -267,7 +295,36 @@ impl WebCanvasState {
         for w in &loaded.warnings {
             eprintln!("openpencil-desktop --serve-web: schema warning: {w:?}");
         }
-        let version = self.replace_document(loaded.value);
+        // Structural validation happens here, before any state changes, so the
+        // in-session install below is infallible and cannot leave a half-applied
+        // document inside an open edit capture.
+        let prepared = op_editor_core::PreparedDocument::prepare(loaded.value)
+            .map_err(|e| WebCanvasError::Document(e.to_string()))?;
+        // The gateway. Returns Ok untouched when there is no session, so a
+        // standalone daemon behaves exactly as it did before collaboration.
+        self.gate_daemon_mutation(
+            op_editor_core::CollabGateAction::Document(
+                op_editor_core::CollabDocumentMutation::NodePropertyBatch,
+            ),
+            op_editor_core::CollabEditSource::User,
+        )
+        .map_err(WebCanvasError::Collab)?;
+        let version = if self.collab_session_is_active() {
+            // Inside the session's local-edit capture: the session core diffs
+            // the document and emits precise node operations, so pushing an
+            // unchanged document produces no transaction at all.
+            if !self.ingest_document_in_session(prepared) {
+                return Err(WebCanvasError::Collab(
+                    collab_state::DaemonMutationRefusal::Collab(
+                        op_editor_core::CollabGateReason::PendingEdit,
+                    ),
+                ));
+            }
+            self.version = self.version.saturating_add(1);
+            self.version
+        } else {
+            self.replace_document(prepared.into_document())
+        };
         op_pen_loader::apply_editor_meta(&mut self.editor, editor_meta);
         Ok(PushOutcome {
             applied: true,
@@ -275,9 +332,40 @@ impl WebCanvasState {
         })
     }
 
+    /// The pair of sequence numbers a client polls on.
+    pub(crate) const fn sse_tick(&self) -> SseTick {
+        SseTick {
+            version: self.version,
+            collab_seq: self.collab.seq(),
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn document_version_for_test(&self) -> u64 {
         self.version
+    }
+}
+
+/// Render an error, adding the machine-readable code when it has one.
+///
+/// A collaboration refusal is not a malformed request, so a client needs the
+/// code to decide between retrying, refetching, and telling the user to leave
+/// the session.
+fn collab_aware_error_reply(error: &WebCanvasError) -> WebReply {
+    match error.error_code() {
+        Some(code) => WebReply {
+            status: error.http_status(),
+            body: serde_json::json!({
+                "ok": false,
+                "error": code,
+                "message": error.to_string(),
+            })
+            .to_string(),
+        },
+        None => WebReply {
+            status: error.http_status(),
+            body: crate::mcp_serve::rest_error_body(&error.to_string()),
+        },
     }
 }
 
@@ -404,14 +492,19 @@ pub fn handle_web_canvas_request(
                 })
                 .to_string(),
             },
-            Err(error) => WebReply {
-                status: error.http_status(),
-                body: crate::mcp_serve::rest_error_body(&error.to_string()),
-            },
+            Err(error) => collab_aware_error_reply(&error),
         },
         ("GET", "/api/mcp/version") => WebReply {
+            // `collabSeq` rides along so the existing 400 ms version poll also
+            // notices collaboration changes without a second request. Adding a
+            // field is backward compatible: a client that reads only `version`
+            // is unaffected.
             status: "200 OK",
-            body: format!(r#"{{"version":{}}}"#, state.version),
+            body: format!(
+                r#"{{"version":{},"collabSeq":{}}}"#,
+                state.version,
+                state.collab.seq()
+            ),
         },
         ("GET", "/api/mcp/indicators") => WebReply {
             // Agent-indicator relay: design runs execute inside this
@@ -431,6 +524,7 @@ pub fn handle_web_canvas_request(
                 status: "200 OK",
                 body: crate::mcp_serve::document_sync_ok(state.version),
             },
+            Err(e) if e.error_code().is_some() => collab_aware_error_reply(&e),
             Err(e) => WebReply {
                 status: e.http_status(),
                 body: crate::mcp_serve::rest_error_body(&format!("sync reset failed: {e}")),
@@ -522,6 +616,11 @@ pub fn handle_web_canvas_request(
         ("GET", op_editor_core::auth_routes::LOGIN_STATUS) => crate::web_auth::login_status(state),
         ("POST", op_editor_core::auth_routes::LOGIN_CANCEL) => crate::web_auth::login_cancel(state),
         ("POST", op_editor_core::auth_routes::LOGOUT) => crate::web_auth::logout(state),
+        // Collaboration: the runtime lives in this daemon, the panel in the
+        // browser. See `web_canvas_server/collab_routes.rs`.
+        ("GET", op_editor_core::collab_routes::STATE) => collab_routes::state(state),
+        ("POST", op_editor_core::collab_routes::ACTION) => collab_routes::action(body, state),
+        ("POST", op_editor_core::collab_routes::PRESENCE) => collab_routes::presence(body, state),
         _ => WebReply {
             status: "404 Not Found",
             body: r#"{"ok":false,"error":"Not found. Use /api/mcp/document, /api/mcp/sync-reset, /api/mcp/server, /api/file/save, /api/export/raster, /api/export/pdf, or /mcp."}"#
@@ -530,6 +629,9 @@ pub fn handle_web_canvas_request(
     }
 }
 
+mod collab_driver;
+mod collab_routes;
+pub(crate) mod collab_state;
 mod connect_routes;
 mod connection;
 mod doc_routes;
@@ -538,6 +640,7 @@ mod origin_guard;
 mod run_loop;
 mod serve_options;
 
+pub use collab_state::DaemonMutationRefusal;
 pub use connect_routes::*;
 use connection::*;
 use doc_routes::*;

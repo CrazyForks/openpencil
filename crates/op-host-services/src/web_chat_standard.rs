@@ -182,17 +182,29 @@ pub fn stream_standard_turn<W: Write>(
         op_orchestrator::Intent::Design
     ) && clear_fresh_starter_frame_for_design(&mut snapshot)
     {
-        let version = {
+        let tick = {
             let mut guard = state.lock().unwrap_or_else(|p| p.into_inner());
-            if let Some(version) = clear_live_starter_frame_for_design(&mut guard) {
+            // Through the gateway like every other daemon write: during a live
+            // session this housekeeping edit would be an unsequenced AI write.
+            // Skipping it only means the starter frame stays, which is strictly
+            // better than forking the shared document.
+            let gated = guard
+                .gate_daemon_mutation(
+                    op_editor_core::CollabGateAction::Document(
+                        op_editor_core::CollabDocumentMutation::NodeDelete,
+                    ),
+                    op_editor_core::CollabEditSource::Ai,
+                )
+                .is_ok();
+            if gated && clear_live_starter_frame_for_design(&mut guard).is_some() {
                 snapshot = guard.editor.clone();
-                Some(version)
+                Some(guard.sse_tick())
             } else {
                 None
             }
         };
-        if let Some(version) = version {
-            hub.broadcast(version);
+        if let Some(tick) = tick {
+            hub.broadcast(tick);
         }
     }
     inject_transient_builtin(&mut snapshot, req.transient_builtin.as_ref());
@@ -251,7 +263,7 @@ fn apply_request_snapshot(
     state: &Mutex<WebCanvasState>,
     hub: &SseHub,
 ) -> Result<EditorState, WebChatStandardError> {
-    let mut broadcast_version = None;
+    let mut broadcast_tick = None;
     let mut snapshot = {
         let mut guard = state.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(agent) = req.transient_builtin.as_ref() {
@@ -269,8 +281,18 @@ fn apply_request_snapshot(
             let loaded = op_pen_loader::load_canonical(doc_json)
                 .map_err(|e| WebChatStandardError::Document(e.to_string()))?;
             if guard.editor.doc != loaded.value {
-                let version = guard.replace_document(loaded.value);
-                broadcast_version = Some(version);
+                // A whole-document swap during a live session is exactly what
+                // the collaboration protocol cannot sequence, so the gateway
+                // refuses it here rather than letting the AI route silently
+                // replace what peers are editing.
+                guard
+                    .gate_daemon_mutation(
+                        op_editor_core::CollabGateAction::ReplaceDocument,
+                        op_editor_core::CollabEditSource::Ai,
+                    )
+                    .map_err(WebChatStandardError::CollabRefused)?;
+                guard.replace_document(loaded.value);
+                broadcast_tick = Some(guard.sse_tick());
             }
         }
         if let Some(meta) = req.editor_meta.clone() {
@@ -300,8 +322,8 @@ fn apply_request_snapshot(
         }
         guard.editor.clone()
     };
-    if let Some(version) = broadcast_version {
-        hub.broadcast(version);
+    if let Some(tick) = broadcast_tick {
+        hub.broadcast(tick);
     }
     inject_transient_builtin(&mut snapshot, req.transient_builtin.as_ref());
     Ok(snapshot)
@@ -422,23 +444,37 @@ fn stream_modify_route<W: Write>(
     let nodes = crate::chat_intent::parse_modify_nodes(&full_response);
     if !nodes.is_empty() {
         write_delta_event(out, &format!("\n{full_response}"))?;
-        let (applied, version) = {
+        let (applied, tick) = {
             let mut guard = state.lock().unwrap_or_else(|p| p.into_inner());
-            let (count, mutated) = crate::chat_canvas_tools::apply_design_modification(
-                &mut guard.editor,
-                &nodes,
-                &target_frame_ids,
-            );
-            let version = if mutated {
-                guard.version += 1;
-                Some(guard.version)
+            // `apply_design_modification` writes a batch straight into the
+            // editor, so the gate runs before it rather than per command.
+            if guard
+                .gate_daemon_mutation(
+                    op_editor_core::CollabGateAction::Document(
+                        op_editor_core::CollabDocumentMutation::NodePropertyBatch,
+                    ),
+                    op_editor_core::CollabEditSource::Ai,
+                )
+                .is_err()
+            {
+                (0, None)
             } else {
-                None
-            };
-            (count, version)
+                let (count, mutated) = crate::chat_canvas_tools::apply_design_modification(
+                    &mut guard.editor,
+                    &nodes,
+                    &target_frame_ids,
+                );
+                let tick = if mutated {
+                    guard.version += 1;
+                    Some(guard.sse_tick())
+                } else {
+                    None
+                };
+                (count, tick)
+            }
         };
-        if let Some(version) = version {
-            hub.broadcast(version);
+        if let Some(tick) = tick {
+            hub.broadcast(tick);
         }
         if applied > 0 {
             write_delta_event(out, "\n\n<!-- APPLIED -->")?;
@@ -600,25 +636,30 @@ impl DocSink for WebDesignDocSink<'_> {
     }
 
     fn apply(&mut self, cmd: EditorCommand) -> bool {
-        let (applied, version, snapshot) = {
+        let (applied, tick, snapshot) = {
             let mut guard = self.state.lock().unwrap_or_else(|p| p.into_inner());
-            let applied = guard.editor.apply(cmd);
-            let version = if applied {
+            // A refusal and a no-op both ack `false` to the generator, which is
+            // the existing contract; the difference is visible in the session
+            // notice the gate raises, not in this return value.
+            let applied = guard
+                .apply_gated(cmd, op_editor_core::CollabEditSource::Ai)
+                .unwrap_or(false);
+            let tick = if applied {
                 crate::design_session::fit_design_viewport_to_content(
                     &mut guard.editor,
                     1440.0,
                     900.0,
                 );
                 guard.version += 1;
-                Some(guard.version)
+                Some(guard.sse_tick())
             } else {
                 None
             };
-            (applied, version, guard.editor.clone())
+            (applied, tick, guard.editor.clone())
         };
         self.mirror = snapshot;
-        if let Some(version) = version {
-            self.hub.broadcast(version);
+        if let Some(tick) = tick {
+            self.hub.broadcast(tick);
         }
         applied
     }

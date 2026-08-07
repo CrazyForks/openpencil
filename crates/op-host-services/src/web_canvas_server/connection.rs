@@ -144,7 +144,7 @@ pub(super) fn serve_one<S: Read + Write>(
     // monotonic). The state lock is released before the long SSE wait.
     if req.method == "GET" && req.path == "/api/mcp/events" {
         let rx = hub.subscribe();
-        let current = state.lock().unwrap_or_else(|p| p.into_inner()).version;
+        let current = state.lock().unwrap_or_else(|p| p.into_inner()).sse_tick();
         return serve_sse(stream, rx, current, cors_origin).map(|()| false);
     }
     // AI proxy stream: the browser bundle POSTs a model request and we
@@ -325,7 +325,7 @@ pub(super) fn serve_one<S: Read + Write>(
             // N-1). `broadcast` only sends to unbounded channels (non-blocking),
             // so the lock is held briefly. Lock order is always state→hub.
             if guard.version != before {
-                hub.broadcast(guard.version);
+                hub.broadcast(guard.sse_tick());
             }
             reply
         };
@@ -407,6 +407,14 @@ pub(super) fn serve_one<S: Read + Write>(
         let mut guard = state.lock().unwrap_or_else(|p| p.into_inner());
         let before = guard.version;
         let mut applied_any = false;
+        // The gateway. Snapshotted before dispatch because the applier only
+        // borrows the editor, and `Copy` + the held state lock make the
+        // snapshot exact for the whole message. Desktop refuses MCP document
+        // mutations during a live session (`mcp_live.rs`); the daemon has to
+        // give the same answer or an MCP client would fork the shared document
+        // out from under the peers.
+        let policy = guard.collab_policy();
+        let mut refused: Option<op_editor_core::CollabGateReason> = None;
         // Mechanical passthrough only — this daemon (`--serve-web`/`op
         // start`) is a SEPARATE request loop from `mcp_live.rs`'s
         // `McpLiveServer` (desktop `--live-mcp`), not the same struct;
@@ -418,19 +426,35 @@ pub(super) fn serve_one<S: Read + Write>(
             &mut guard.editor,
             &req.body,
             |_tool_name, editor, cmd| {
+                if let Err(reason) =
+                    policy.check_command(cmd, op_editor_core::CollabEditSource::Mcp)
+                {
+                    refused = Some(reason);
+                    return false;
+                }
                 let ok = editor.apply(cmd.clone());
                 applied_any |= ok;
                 ok
             },
         )?
         .unwrap_or_default();
+        if let Some(reason) = refused {
+            // Same surfacing as the desktop live-MCP path: the tool acks
+            // "not applied" and the panel explains why, so a refusal is never
+            // a silent no-op.
+            guard.editor.editor_ui.collab.set_notice(
+                reason.notice_kind(),
+                crate::design_agent_tools::reveal_now_millis(),
+            );
+            guard.collab.bump_seq();
+        }
         if applied_any {
             guard.version += 1;
         }
         // Atomic bump+broadcast under the state lock (see the REST path) so SSE
         // version events stay monotonic across concurrent mutations.
-        if guard.version != before {
-            hub.broadcast(guard.version);
+        if guard.version != before || refused.is_some() {
+            hub.broadcast(guard.sse_tick());
         }
         response
     };
@@ -444,15 +468,15 @@ pub(super) fn serve_one<S: Read + Write>(
 }
 
 /// Stream Server-Sent Events to a subscribed client: write the SSE headers,
-/// emit the current version immediately (initial sync), then forward each
-/// version bump from `rx` as a `data: {"version":N}` event. A periodic
+/// emit the current tick immediately (initial sync), then forward each
+/// bump from `rx` as a `data: {"version":N,"collabSeq":M}` event. A periodic
 /// heartbeat comment keeps the connection alive AND detects a disconnected
 /// client (the write fails once the socket is gone). Returns when the client
 /// disconnects (write error) or the hub is dropped.
 pub(super) fn serve_sse<S: Write>(
     stream: &mut S,
-    rx: Receiver<u64>,
-    current_version: u64,
+    rx: Receiver<SseTick>,
+    current: SseTick,
     cors_origin: Option<&str>,
 ) -> Result<()> {
     let cors_line = cors_origin
@@ -468,18 +492,18 @@ pub(super) fn serve_sse<S: Write>(
     stream
         .write_all(headers.as_bytes())
         .map_err(|e| WebCanvasError::Transport(format!("sse headers: {e}")))?;
-    write_sse_event(stream, current_version)?;
+    write_sse_event(stream, current)?;
     loop {
         match rx.recv_timeout(SSE_HEARTBEAT) {
-            Ok(mut version) => {
-                // Coalesce any further queued bumps — only the latest version
-                // matters (the client re-fetches the whole document on it), so
-                // a burst of mutations collapses to a single event and the
+            Ok(mut tick) => {
+                // Coalesce any further queued bumps — only the latest tick
+                // matters (the client re-reads whatever the counters point at),
+                // so a burst of mutations collapses to a single event and the
                 // channel can't accumulate unboundedly behind a slow client.
                 while let Ok(next) = rx.try_recv() {
-                    version = next;
+                    tick = next;
                 }
-                write_sse_event(stream, version)?;
+                write_sse_event(stream, tick)?;
             }
             Err(RecvTimeoutError::Timeout) => {
                 // SSE comment heartbeat — no-op for the client, but a failed
@@ -496,9 +520,15 @@ pub(super) fn serve_sse<S: Write>(
     }
 }
 
-/// Format + write one SSE `data:` event carrying the document version.
-pub(super) fn write_sse_event<S: Write>(stream: &mut S, version: u64) -> Result<()> {
-    let event = format!("data: {{\"version\":{version}}}\n\n");
+/// Format + write one SSE `data:` event carrying both sequence numbers.
+///
+/// `version` stays the first field and keeps its exact spelling, so a client
+/// written against the original payload keeps parsing this one.
+pub(super) fn write_sse_event<S: Write>(stream: &mut S, tick: SseTick) -> Result<()> {
+    let event = format!(
+        "data: {{\"version\":{},\"collabSeq\":{}}}\n\n",
+        tick.version, tick.collab_seq
+    );
     stream
         .write_all(event.as_bytes())
         .map_err(|e| WebCanvasError::Transport(format!("sse write: {e}")))?;
