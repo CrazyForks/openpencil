@@ -3733,6 +3733,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "op-collab-host"
+version = "0.8.3"
+dependencies = [
+ "base64",
+ "ed25519-dalek",
+ "getrandom 0.3.4",
+ "if-addrs",
+ "jian-ops-schema",
+ "op-auth-bridge",
+ "op-collab",
+ "op-collab-relay-client",
+ "op-collab-relay-control-plane",
+ "op-collab-relay-protocol",
+ "op-collab-transport",
+ "op-config-store",
+ "op-editor-core",
+ "op-editor-host-core",
+ "op-editor-ui",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2",
+ "socket2 0.6.3",
+ "static_assertions",
+ "subtle",
+ "thiserror 1.0.69",
+ "tokio",
+ "zeroize",
+]
+
+[[package]]
 name = "op-collab-policy-file"
 version = "0.8.3"
 dependencies = [
@@ -4020,6 +4051,7 @@ dependencies = [
  "op-auth-bridge",
  "op-codegen",
  "op-collab",
+ "op-collab-host",
  "op-collab-relay-client",
  "op-collab-relay-control-plane",
  "op-collab-relay-protocol",
@@ -4073,6 +4105,7 @@ dependencies = [
  "khronos-egl",
  "libloading",
  "op-auth-bridge",
+ "op-collab-host",
  "op-editor-core",
  "op-editor-host-core",
  "op-editor-ui",

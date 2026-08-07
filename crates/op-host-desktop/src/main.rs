@@ -26,7 +26,6 @@ mod codegen_export;
 mod codegen_input;
 mod codegen_session;
 mod collab_avatar_host;
-mod collab_jwks;
 mod collab_runtime;
 mod commit_diff_host;
 mod commit_diff_semantic;
@@ -660,9 +659,13 @@ fn main() {
     let mcp_wake_proxy = event_loop.create_proxy();
     // Give the non-bundled binary a proper Dock name + icon.
     macos_app::apply();
+    // The collaboration runtime drives async relay/JWKS work from sync code;
+    // install the bridge before any session can start.
+    collab_runtime::install_blocking_executor();
     let mut app = DesktopApp::new(initial_file);
     app.image_decodes.set_wake_proxy(mcp_wake_proxy.clone());
-    app.collab_runtime.set_wake_proxy(mcp_wake_proxy.clone());
+    app.collab_runtime
+        .set_wake_notifier(collab_runtime::wake_notifier(mcp_wake_proxy.clone()));
     app.mcp_wake_proxy = Some(mcp_wake_proxy);
     // Start accepting forwarded opens from second launches, sharing the queue
     // the UI thread drains in `drain_forwarded_files`.

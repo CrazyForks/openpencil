@@ -77,6 +77,7 @@ mod chat_send_tests;
 mod click;
 #[cfg(test)]
 mod codegen_framework_tests;
+mod collab_host_impl;
 #[cfg(test)]
 mod collab_input_tests;
 #[cfg(test)]

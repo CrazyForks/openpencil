@@ -18,7 +18,10 @@ default = []
 mcp-debug-tools = ["op-mcp/debug-tools"]
 # Local-only collaboration development against an external private ABI-v2
 # archive. Release builds are rejected by op-auth-bridge's build script.
-dev-op-auth-abi-v2 = ["op-auth-bridge/dev-abi-v2"]
+dev-op-auth-abi-v2 = [
+  "op-auth-bridge/dev-abi-v2",
+  "op-collab-host/dev-op-auth-abi-v2",
+]
 
 # File-association metadata for `cargo-bundle` (`cargo bundle`). This
 # declares OpenPencil as the OS-level handler for `.op` / `.pen`
@@ -92,6 +95,9 @@ op-auth-bridge = { path = "../op-auth-bridge" }
 # host only consumes opaque tickets and verifies them against the pinned,
 # public JWKS endpoint.
 op-collab = { path = "../op-collab" }
+# The collaboration runtime itself (owner/guest actors, relay bootstrap,
+# ticket verifier). `src/collab_runtime.rs` is the desktop shim over it.
+op-collab-host = { path = "../op-collab-host" }
 op-collab-transport = { path = "../op-collab-transport", features = ["mdns"] }
 op-collab-relay-client = { path = "../op-collab-relay-client" }
 op-collab-relay-control-plane = { path = "../op-collab-relay-control-plane" }

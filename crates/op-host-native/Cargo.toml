@@ -36,6 +36,7 @@ gl-host = [
   "dep:jian-host-desktop",
   "dep:accesskit",
   "dep:op-orchestrator",
+  "dep:op-collab-host",
 ]
 
 # The basic_window demo needs the GL host stack (SharedSkiaContext + winit);
@@ -75,6 +76,11 @@ op-editor-host-core = { path = "../op-editor-host-core", default-features = fals
 # one exists for the target, else compiles an inert stub (login hidden).
 op-auth-bridge = { path = "../op-auth-bridge" }
 op-i18n = { path = "../op-i18n" }
+# Collaboration runtime — this crate only supplies the `CollabHost` impl for
+# `WidgetHostNative` (the orphan rule requires it to live in one of the two
+# defining crates). Optional + behind `gl-host` so the raster-only build used
+# by `op-host-services` pulls none of the collaboration transport stack.
+op-collab-host = { path = "../op-collab-host", optional = true }
 
 # Native-only deps cfg-gated outside wasm32. This is critical (resolves codex round 2 B1 BLOCK):
 # without cfg-gate, cargo would fetch + run skia-safe's build.rs (which fails on wasm32),

@@ -31,6 +31,7 @@ collab_scan_roots=(
     crates/op-editor-core/src
     crates/op-editor-host-core/src
     crates/op-editor-ui/src
+    crates/op-collab-host/src
     crates/op-host-native/src
     crates/op-host-desktop/src
     crates/op-host-services/src/profile_avatar_fetch.rs
@@ -423,7 +424,7 @@ require_literal crates/op-collab-transport/src/tcp.rs \
 require_literal crates/op-collab-transport/src/chunk_tests.rs \
     "completed_transfer_holds_the_declared_reservation_until_drop" \
     "completed transfer aggregate-reservation regression test"
-require_literal crates/op-host-desktop/src/collab_runtime/relay_bootstrap_tests.rs \
+require_literal crates/op-collab-host/src/runtime/relay_bootstrap_tests.rs \
     "payload_rejects_exact_cross_region_key_reuse" \
     "cross-region exact key-reuse regression test"
 # Cross-account collaboration replaced the subject-equality check with an
@@ -439,7 +440,7 @@ require_literal crates/op-collab-transport/src/admission.rs \
 require_literal crates/op-collab-transport/src/admission_tests.rs \
     "any_issued_account_admits_a_foreign_subject_but_keeps_every_other_check" \
     "cross-account admission keeps issuer, expiry, and key binding"
-require_literal crates/op-host-desktop/src/collab_runtime/network/owner.rs \
+require_literal crates/op-collab-host/src/runtime/network/owner.rs \
     "PeerIdentityPolicy::AnyIssuedAccount" \
     "owner admits any issued account behind its approval gate"
 # The guest half of that asymmetry. A guest has no approval prompt of its own,
@@ -532,16 +533,16 @@ require_literal crates/op-collab-transport/src/config.rs \
     "transport invalid-limit regression test"
 
 for command_type in OwnerNetworkCommand GuestNetworkCommand PeerNetworkCommand; do
-    require_literal crates/op-host-desktop/src/collab_runtime/types.rs \
+    require_literal crates/op-collab-host/src/runtime/types.rs \
         "assert_not_impl_any!($command_type: Clone);" \
         "renewal verification command must remain non-Clone"
 done
-require_literal crates/op-host-desktop/src/collab_runtime/types.rs \
+require_literal crates/op-collab-host/src/runtime/types.rs \
     "verification_commands_move_the_original_ticket_allocation" \
     "renewal command ownership regression test"
 credential_vec_copies=$(grep -RInF \
     '.expose().as_bytes().to_vec()' \
-    crates/op-host-desktop/src/collab_runtime 2>/dev/null || true)
+    crates/op-collab-host/src/runtime 2>/dev/null || true)
 if [[ -n "$credential_vec_copies" ]]; then
     record_failure "desktop renewal commands must move OpaqueTicket instead of copying into Vec:
 $credential_vec_copies"
