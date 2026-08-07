@@ -216,6 +216,9 @@ new_repo() {
         'edition = "2024"' > "$repo/Cargo.toml"
     printf '%s\n' 'version = 4' > "$repo/Cargo.lock"
     printf '%s\n' '{"name":"fixture-packages"}' > "$repo/packages/package.json"
+    mkdir -p "$repo/packages/op-chrome-extension"
+    printf '{"manifest_version":3,"name":"fixture-extension","version":"%s"}\n' "$version" \
+        > "$repo/packages/op-chrome-extension/manifest.json"
 
     cat > "$repo/crates/op-cli/assets/skill-bundle.json" <<'JSON'
 {"one":"__OPENPENCIL_VERSION__","two":"__OPENPENCIL_VERSION__","three":"__OPENPENCIL_VERSION__","four":"__OPENPENCIL_VERSION__","five":"__OPENPENCIL_VERSION__"}

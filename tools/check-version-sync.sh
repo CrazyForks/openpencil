@@ -346,6 +346,11 @@ validate_package_versions() {
 
 validate_chrome_extension_manifest_version() {
     manifest=packages/op-chrome-extension/manifest.json
+    if [[ ! -f "$manifest" ]]; then
+        report_missing "$manifest" \
+            'Chrome extension manifest is missing; it must exist and carry the Cargo workspace version'
+        return
+    fi
     manifest_version=$(jq -r '.version' "$manifest")
     if [[ "$manifest_version" != "$current_version" ]]; then
         report_missing "$manifest" \
