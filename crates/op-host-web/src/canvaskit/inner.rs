@@ -258,10 +258,19 @@ pub(super) fn start_bootstrap_reset(
     let on_reset: std::rc::Rc<dyn Fn(u16, String)> = {
         let complete = complete.clone();
         let base = base.clone();
-        std::rc::Rc::new(move |_status: u16, body: String| {
+        std::rc::Rc::new(move |status: u16, body: String| {
             // The daemon answers `{"ok":true,...}` for both a fresh reset and a
             // peer-skipped one (`"skipped":true`) — either is completion.
             if body.contains("\"ok\":true") {
+                complete();
+                return;
+            }
+            // A live collaboration session owns this document, so the daemon
+            // refuses to reset it (409 `collab-active`). That is a deliberate
+            // answer, not a failure: resetting is exactly the wrong thing to do
+            // to a document peers are editing. Retrying would only ask again
+            // and warn about a daemon that is working correctly.
+            if status == 409 {
                 complete();
                 return;
             }

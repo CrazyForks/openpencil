@@ -307,6 +307,10 @@ fn poll_version<C: RepaintContext + 'static>(
     let fetch_busy = fetch_busy.clone();
     let last_selection_key = last_selection_key.clone();
     let on_version: Rc<dyn Fn(String)> = Rc::new(move |body: String| {
+        // The daemon answers both counters here. Hand the collaboration one to
+        // its own loop rather than opening a second probe; a `collabSeq` bump
+        // must never reach the document fetch below.
+        crate::collab_sync::note_version_probe(&body);
         let Some(version) = WebSyncClient::parse_version_probe(&body) else {
             return; // daemon down / non-JSON error body — retry next tick
         };
@@ -405,6 +409,10 @@ fn apply_document_response<C: RepaintContext + 'static>(
         })
         .unwrap_or(false);
     if applied {
+        // Every id in this document came from the daemon, so it is the set an
+        // active session will accept a push against. Recording it here is what
+        // lets the push gate tell an edited node from an invented one.
+        crate::collab_sync::note_daemon_document(inner_ref.host().editor_state());
         // Baseline = OUR serialization of the just-applied document, so the
         // push tick compares apples to apples (serde normalization differs
         // from the daemon's wire bytes).
@@ -529,6 +537,12 @@ fn push_document_if_changed<C: RepaintContext + 'static>(
         // from the scalar baseline, not mistaken for a content change.
         reasons.editor_meta
     };
+    // An active collaboration session cannot sequence a node id this browser
+    // minted from its local counter. Hold the push rather than fork the shared
+    // document; the next pull replaces the local node with the daemon's copy.
+    if crate::collab_sync::push_blocked_by_session(inner.borrow().host().editor_state()) {
+        return;
+    }
     if !should_push {
         // Bytes already match the daemon baseline (e.g. a generation-only
         // replace — same content, new generation): no push to send, but the

@@ -50,6 +50,9 @@ mod tooltip_pump;
 mod live_sync_glue;
 #[cfg(feature = "canvaskit")]
 mod web_auth_sync;
+// Daemon collaboration relay (action drain + projection pull + presence).
+#[cfg(feature = "canvaskit")]
+mod collab_sync;
 // Shared daemon base-URL resolution (page origin when served by the daemon,
 // localhost fallback for the dev smoke page).
 #[cfg(feature = "canvaskit")]

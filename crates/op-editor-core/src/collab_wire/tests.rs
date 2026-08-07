@@ -218,3 +218,20 @@ fn local_presence_wire_defaults_its_reserved_client_id() {
     let json = serde_json::to_string(&decoded).expect("encodes");
     assert!(!json.contains("clientId"), "{json}");
 }
+
+#[test]
+fn the_version_probe_yields_the_collaboration_sequence_separately() {
+    assert_eq!(
+        super::parse_collab_seq_probe(r#"{"version":7,"collabSeq":42}"#),
+        Some(42)
+    );
+}
+
+#[test]
+fn a_daemon_without_the_collaboration_field_reads_as_absent() {
+    // An older daemon answers only `{"version":N}`; collaboration then simply
+    // stays idle instead of the client mis-reading the document version as a
+    // projection sequence.
+    assert_eq!(super::parse_collab_seq_probe(r#"{"version":7}"#), None);
+    assert_eq!(super::parse_collab_seq_probe("not json"), None);
+}

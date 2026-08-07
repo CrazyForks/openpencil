@@ -252,6 +252,18 @@ impl CollabStateWire {
     }
 }
 
+/// Read the collaboration sequence out of a `GET /api/mcp/version` body.
+///
+/// The daemon answers `{"version":N,"collabSeq":M}` on that one probe, so a
+/// client polls once and routes each number to the loop that cares: `version`
+/// drives the document fetch, `collabSeq` drives this projection. A body
+/// without the field — an older daemon — reads as `None`, which simply leaves
+/// collaboration idle.
+pub fn parse_collab_seq_probe(body: &str) -> Option<u64> {
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    value.get("collabSeq")?.as_u64()
+}
+
 #[cfg(test)]
 #[path = "collab_wire/tests.rs"]
 mod tests;

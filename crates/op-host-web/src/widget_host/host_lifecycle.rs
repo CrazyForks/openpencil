@@ -207,3 +207,31 @@ impl WidgetHost {
         }
     }
 }
+
+impl WidgetHost {
+    /// The last known cursor position in document coordinates, for the
+    /// collaboration presence relay.
+    ///
+    /// `None` before the pointer has ever entered the canvas or while it sits
+    /// over the chrome — peers should see no cursor rather than one parked at
+    /// the origin.
+    pub(crate) fn last_cursor_doc_point(&self, width: f32, height: f32) -> Option<(f64, f64)> {
+        use op_editor_ui::widgets::host_canvas_geometry as canvas_geometry;
+
+        if !canvas_geometry::over_canvas(
+            &self.editor_state,
+            self.last_cursor_x,
+            self.last_cursor_y,
+            width,
+            height,
+        ) {
+            return None;
+        }
+        let point = canvas_geometry::canvas_doc_point_unclamped(
+            &self.editor_state,
+            self.last_cursor_x,
+            self.last_cursor_y,
+        );
+        Some((f64::from(point.x), f64::from(point.y)))
+    }
+}
