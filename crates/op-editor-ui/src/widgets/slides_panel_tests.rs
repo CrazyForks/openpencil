@@ -24,11 +24,16 @@ fn layout(count: usize, offset: f32) -> SlidesPanelLayout {
 }
 
 fn layout_of(aspects: &[f32], offset: f32) -> SlidesPanelLayout {
+    layout_with(aspects, offset, SlidesActionState::default())
+}
+
+fn layout_with(aspects: &[f32], offset: f32, actions: SlidesActionState) -> SlidesPanelLayout {
     SlidesPanelLayout::new(
         PANEL,
         SlidesPanelTabs::new(PANEL, LeftPanelTab::Slides, EN.0, EN.1),
         aspects,
         offset,
+        actions,
     )
     .expect("a 240x700 rail fits the slides list")
 }
@@ -208,6 +213,7 @@ fn the_row_height_is_the_same_at_every_rail_width() {
             SlidesPanelTabs::new(rail(width), LeftPanelTab::Slides, EN.0, EN.1),
             &[DEFAULT_BOARD_ASPECT, 9.0 / 19.5],
             0.0,
+            SlidesActionState::default(),
         )
         .unwrap_or_else(|| panic!("a {width} px rail fits a row"))
     };
@@ -338,14 +344,14 @@ fn scrolling_moves_the_stack_and_clamps_to_the_content() {
 #[test]
 fn the_footer_holds_the_present_button_under_the_list() {
     let l = layout(3, 0.0);
-    assert!(l.footer.origin.y >= l.list.origin.y + l.list.size.y);
+    assert!(l.actions.bar.origin.y >= l.list.origin.y + l.list.size.y);
     assert_eq!(
-        l.footer.origin.y + l.footer.size.y,
+        l.actions.bar.origin.y + l.actions.bar.size.y,
         PANEL.origin.y + PANEL.size.y
     );
     let centre = Point2D::new(
-        l.present.origin.x + l.present.size.x / 2.0,
-        l.present.origin.y + l.present.size.y / 2.0,
+        l.actions.present.origin.x + l.actions.present.size.x / 2.0,
+        l.actions.present.origin.y + l.actions.present.size.y / 2.0,
     );
     assert_eq!(l.hit(centre), Some(SlidesPanelTarget::Present));
 }
@@ -385,7 +391,8 @@ fn a_rail_too_short_for_a_row_lays_nothing_out() {
         squeezed,
         SlidesPanelTabs::new(squeezed, LeftPanelTab::Slides, EN.0, EN.1),
         &[DEFAULT_BOARD_ASPECT; 3],
-        0.0
+        0.0,
+        SlidesActionState::default(),
     )
     .is_none());
     let narrow = Rect {
@@ -396,7 +403,8 @@ fn a_rail_too_short_for_a_row_lays_nothing_out() {
         narrow,
         SlidesPanelTabs::new(narrow, LeftPanelTab::Slides, EN.0, EN.1),
         &[DEFAULT_BOARD_ASPECT; 3],
-        0.0
+        0.0,
+        SlidesActionState::default(),
     )
     .is_none());
 }
@@ -433,7 +441,12 @@ fn panel_of(active: Option<usize>, hover: Option<SlidesPanelTarget>) -> SlidesPa
         thumbnails_supported: true,
         layers_label: "Layers",
         slides_label: "Slides",
-        present_label: "Present",
+        actions: SlidesActionLabels {
+            present: "Present",
+            export: "Export PDF",
+            export_all: "Export all slides",
+            export_selected: "Export selected slides (0)",
+        },
     }
 }
 
@@ -478,8 +491,8 @@ fn the_placeholder_paints_exactly_where_the_host_blits() {
             .round_fills
             .iter()
             .any(
-                |(rect, _, _)| (rect.origin.x - l.present.origin.x).abs() < 0.01
-                    && (rect.origin.y - l.present.origin.y).abs() < 0.01
+                |(rect, _, _)| (rect.origin.x - l.actions.present.origin.x).abs() < 0.01
+                    && (rect.origin.y - l.actions.present.origin.y).abs() < 0.01
             ),
         "the present button paints where it hit-tests"
     );
@@ -514,7 +527,7 @@ fn a_row_paints_its_number_and_nothing_else() {
     let row_texts: Vec<&String> = backend
         .texts
         .iter()
-        .filter(|(_, origin)| origin.y > l.list.origin.y && origin.y < l.footer.origin.y)
+        .filter(|(_, origin)| origin.y > l.list.origin.y && origin.y < l.actions.bar.origin.y)
         .map(|(text, _)| text)
         .collect();
     assert_eq!(

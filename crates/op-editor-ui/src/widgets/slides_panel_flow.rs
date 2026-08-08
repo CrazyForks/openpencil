@@ -14,12 +14,15 @@
 //! still navigate.
 
 use op_editor_core::scene_template_catalog::TemplateScene;
-use op_editor_core::{EditorState, LeftPanelTab, SlidesDrag, SlidesPanelTarget};
+use op_editor_core::{EditorState, LeftPanelTab, NodeId, SlidesDrag, SlidesPanelTarget};
 
 use crate::layout_scene::LayoutScene;
 use crate::widgets::deck_boards::{board_chips, reorder_target_index, BoardChip};
 use crate::widgets::slides_panel::{
     drag_is_live, SlidesPanel, SlidesPanelLayout, SlidesPanelTabs, DEFAULT_BOARD_ASPECT,
+};
+use crate::widgets::slides_panel_actions::{
+    selected_slides_export_supported, SlidesActionLabels, SlidesActionState,
 };
 use crate::{Point2D, Rect};
 
@@ -51,6 +54,16 @@ pub enum SlidesRelease {
     Reorder { from: usize, to: usize },
     /// Start presenting.
     Present,
+    /// Show or hide the export dropdown. The flow has already written
+    /// the new state; the host only has to repaint.
+    ToggleExportMenu,
+    /// Export every slide on the page as a slide-per-page PDF. The flow
+    /// has already queued the file action.
+    ExportAllSlides,
+    /// Export only the selected slides. **Reachable only when
+    /// [`selected_slides_export_supported`] is true**, which no host
+    /// enables today — see that function for what has to land first.
+    ExportSelectedSlides,
 }
 
 /// What the navigator tab is called for this document.
@@ -153,6 +166,30 @@ pub fn board_aspects(chips: &[BoardChip], scene: &LayoutScene) -> Vec<f32> {
         .collect()
 }
 
+/// How many of the LISTED slides the current selection covers.
+///
+/// Counted over `chips` — the very boards the rows are painted from —
+/// rather than over `export_batch::selected_frame_count`, which answers
+/// a related but different question (top-level *frames*, for the File
+/// menu's batch export). Deriving it from the list is what makes the
+/// `(N)` on the menu row incapable of disagreeing with the rows the user
+/// can see selected.
+pub fn selected_slide_count(state: &EditorState, chips: &[BoardChip]) -> usize {
+    chips
+        .iter()
+        .filter(|chip| state.selection.contains(&NodeId::new(chip.id.clone())))
+        .count()
+}
+
+/// Everything the action bar needs that is not geometry.
+pub fn action_state(state: &EditorState, chips: &[BoardChip]) -> SlidesActionState {
+    SlidesActionState {
+        export_menu_open: state.editor_ui.slides_panel.export_menu_open,
+        selected_slides: selected_slide_count(state, chips),
+        selected_export_supported: selected_slides_export_supported(),
+    }
+}
+
 /// Build the panel's layout for the current document, or `None` when
 /// the slides tab is not showing. The single entry point both hosts'
 /// paint and hit-test go through, so neither can lay the rows out its
@@ -172,7 +209,50 @@ pub fn layout(
         SlidesPanelTabs::new(panel, state.editor_ui.slides_panel.tab, layers, slides),
         &board_aspects(chips, scene),
         state.editor_ui.slides_panel.scroll.offset,
+        action_state(state, chips),
     )
+}
+
+/// The action bar's four labels, owned.
+///
+/// Owned rather than `&'static str` because one of them carries a count
+/// and has to be formatted. Resolved here so both hosts get the same
+/// four strings from one place — the labels decide nothing about
+/// geometry (the bar splits its width evenly and the menu takes the
+/// rail's), so this is presentation only.
+pub struct SlidesActionText {
+    pub present: &'static str,
+    pub export: &'static str,
+    pub export_all: &'static str,
+    pub export_selected: String,
+}
+
+impl SlidesActionText {
+    /// Borrow the four labels in the shape the widget paints from.
+    pub fn labels(&self) -> SlidesActionLabels<'_> {
+        SlidesActionLabels {
+            present: self.present,
+            export: self.export,
+            export_all: self.export_all,
+            export_selected: &self.export_selected,
+        }
+    }
+}
+
+/// Resolve the action bar's labels for this document. `selected` is the
+/// count [`selected_slide_count`] returned, substituted into the second
+/// menu row so the row always states what it would act on — including
+/// `(0)`, where it also paints disabled.
+pub fn action_labels(state: &EditorState, selected: usize) -> SlidesActionText {
+    let ui = &state.editor_ui;
+    let translate = crate::widgets::editor_state_ext::translate;
+    SlidesActionText {
+        present: translate(ui, "slidesPanel.present"),
+        export: translate(ui, "slidesPanel.exportPdf"),
+        export_all: translate(ui, "slidesPanel.exportAllSlides"),
+        export_selected: translate(ui, "slidesPanel.exportSelectedSlides")
+            .replace("{{count}}", &selected.to_string()),
+    }
 }
 
 /// The widget for the current state, ready to paint.
@@ -181,7 +261,7 @@ pub fn widget<'a>(
     state: &EditorState,
     layers_label: &'a str,
     slides_label: &'a str,
-    present_label: &'a str,
+    actions: SlidesActionLabels<'a>,
 ) -> SlidesPanel<'a> {
     let panel = state.editor_ui.slides_panel;
     let dragging = panel.drag.is_some_and(|drag| drag_is_live(&drag));
@@ -196,13 +276,36 @@ pub fn widget<'a>(
         thumbnails_supported: state.editor_ui.slide_thumbnails_supported,
         layers_label,
         slides_label,
-        present_label,
+        actions,
     }
 }
 
 /// Route a press at `point`. Records what was pressed and arms the
 /// drag; nothing moves until the release.
+///
+/// **An open export dropdown is answered first, before the panel's own
+/// bounds are even consulted.** It is the topmost surface in the rail
+/// and it dismisses like every other dropdown in the app: a press that
+/// is neither on one of its rows nor on its chrome closes it and is
+/// swallowed, so the click that dismisses a menu never also does
+/// something underneath it. That is the same contract
+/// `press_flow::press_export_quick_menu` gives the TopBar's dropdown.
 pub fn press(state: &mut EditorState, layout: &SlidesPanelLayout, point: Point2D) -> SlidesPress {
+    if state.editor_ui.slides_panel.export_menu_open
+        && !layout.actions.over_menu(point)
+        && layout.actions.button_at(point) != Some(SlidesPanelTarget::ExportMenu)
+    {
+        // A dismiss: neither a row, nor the menu's own chrome, nor the
+        // button the menu hangs off — that one is excluded because its
+        // release TOGGLES, and closing here as well would reopen the
+        // menu on the very click meant to shut it.
+        state.editor_ui.slides_panel.close_export_menu();
+        let panel = &mut state.editor_ui.slides_panel;
+        panel.pressed = None;
+        panel.hover = None;
+        panel.drag = None;
+        return SlidesPress::Claimed(None);
+    }
     if !layout.contains_point(point) {
         return SlidesPress::Missed;
     }
@@ -283,7 +386,54 @@ pub fn release(state: &mut EditorState, layout: &SlidesPanelLayout) -> SlidesRel
         SlidesPanelTarget::SlidesTab => SlidesRelease::SelectTab(LeftPanelTab::Slides),
         SlidesPanelTarget::Slide(index) => SlidesRelease::Activate(index),
         SlidesPanelTarget::Present => SlidesRelease::Present,
+        SlidesPanelTarget::ExportMenu => {
+            let ui = &mut state.editor_ui.slides_panel;
+            ui.export_menu_open = !ui.export_menu_open;
+            SlidesRelease::ToggleExportMenu
+        }
+        SlidesPanelTarget::ExportAllSlides => {
+            state.editor_ui.slides_panel.close_export_menu();
+            queue_deck_pdf_export(state);
+            SlidesRelease::ExportAllSlides
+        }
+        SlidesPanelTarget::ExportSelectedSlides => {
+            state.editor_ui.slides_panel.close_export_menu();
+            queue_selected_slides_pdf_export(state);
+            SlidesRelease::ExportSelectedSlides
+        }
     }
+}
+
+/// Queue the slide-per-page PDF export for the whole deck.
+///
+/// The SAME action the TopBar's export dropdown raises for its PDF row
+/// (`press_flow::apply_export_quick_row`): set the format, then commit
+/// straight to the save picker rather than opening the format/scale
+/// dialog, because picking "Export PDF" already IS that choice. Routing
+/// through the shared file action is what stops the rail's bar and the
+/// TopBar from writing two different PDFs.
+fn queue_deck_pdf_export(state: &mut EditorState) {
+    use op_editor_core::editor_ui_state::{ExportFormat, FileAction};
+    state.editor_ui.export_format = ExportFormat::Pdf;
+    state.editor_ui.pending_file_action = Some(FileAction::ExportImageConfirm);
+}
+
+/// Queue the slide-per-page PDF for the SELECTED boards only.
+///
+/// Its own file action rather than the one above plus a flag: the scope
+/// belongs to this request, not to the document, so there is nothing for a
+/// later export to forget to clear. Which boards those are is resolved
+/// host-side at export time from
+/// `preview_slideshow::selected_page_boards` — the same rule
+/// [`selected_slide_count`] labels the row with, so the file holds exactly
+/// the pages the `(N)` promised.
+///
+/// `export_format` is set too, so the save picker still offers `.pdf` and a
+/// later re-open of the export dialog shows the format this actually wrote.
+fn queue_selected_slides_pdf_export(state: &mut EditorState) {
+    use op_editor_core::editor_ui_state::{ExportFormat, FileAction};
+    state.editor_ui.export_format = ExportFormat::Pdf;
+    state.editor_ui.pending_file_action = Some(FileAction::ExportDeckPdfSelection);
 }
 
 /// Close a press that landed on the tab row while the LAYERS tab owned
@@ -302,6 +452,8 @@ pub fn tab_release(state: &mut EditorState) -> SlidesRelease {
     match pressed {
         SlidesPanelTarget::LayersTab => SlidesRelease::SelectTab(LeftPanelTab::Layers),
         SlidesPanelTarget::SlidesTab => SlidesRelease::SelectTab(LeftPanelTab::Slides),
+        // Nothing else on the panel exists while the Layers tab owns the
+        // rail — the action bar is the slides tab's, and so is its menu.
         _ => SlidesRelease::Cancelled,
     }
 }

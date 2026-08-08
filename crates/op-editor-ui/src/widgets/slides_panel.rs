@@ -4,7 +4,8 @@
 //! rounded surface one step off the rail, holding a real rendered
 //! thumbnail of the board with a round slide-number chip riding its
 //! top-left corner. Clicking a row frames that board; dragging one
-//! reorders the deck; the footer starts the presentation. It is the
+//! reorders the deck; the bar pinned to the rail's bottom edge presents
+//! the deck and exports it. It is the
 //! deck's only navigator — what a slide IS, which one the camera is on
 //! and how a reorder commits all come from
 //! [`crate::widgets::deck_boards`], so the rail can never disagree with
@@ -35,6 +36,9 @@ use jian_widgets::centered_text_baseline_y;
 use op_editor_core::{SlidesDrag, SlidesPanelTarget};
 
 use crate::widgets::icons::{draw_icon, Icon};
+use crate::widgets::slides_panel_actions::{
+    SlidesActionLabels, SlidesActionLayout, SlidesActionState, ACTION_BAR_HEIGHT,
+};
 use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout, Theme};
@@ -43,8 +47,12 @@ use crate::{Color, Point2D, Rect, TextLayout, Theme};
 pub const SLIDES_TAB_ROW_HEIGHT: f32 = 36.0;
 /// Short alias used inside this module's geometry.
 const TAB_ROW_HEIGHT: f32 = SLIDES_TAB_ROW_HEIGHT;
-/// Height of the footer holding the present button.
-pub const FOOTER_HEIGHT: f32 = 48.0;
+/// Height of the bar pinned to the rail's bottom edge.
+///
+/// Kept as the module's own name because the list band is laid out at
+/// `panel − tab row − this`, which is the whole reason the last
+/// thumbnail is never covered by the bar.
+pub const FOOTER_HEIGHT: f32 = ACTION_BAR_HEIGHT;
 const TAB_INSET_X: f32 = 8.0;
 const TAB_INSET_Y: f32 = 5.0;
 const TAB_RADIUS: f32 = 6.0;
@@ -56,8 +64,9 @@ const TAB_PAD_X: f32 = 8.0;
 /// Gap between a tab's glyph and its label, when it keeps one.
 const TAB_ICON_GAP: f32 = 5.0;
 
-/// Margin between the rail's edge and a card.
-const ROW_PAD_X: f32 = 10.0;
+/// Margin between the rail's edge and a card. Shared with the action
+/// bar so the buttons line up with the cards above them.
+pub(super) const ROW_PAD_X: f32 = 10.0;
 /// Padding inside a card, around the thumbnail plate.
 const CARD_PAD: f32 = 10.0;
 const CARD_RADIUS: f32 = 10.0;
@@ -112,7 +121,6 @@ pub const DEFAULT_BOARD_ASPECT: f32 = 16.0 / 9.0;
 /// How far a press has to travel before it stops being a click. Matches
 /// the canvas node-drag threshold so the two gestures feel the same.
 pub const DRAG_THRESHOLD_PX: f32 = 3.0;
-const FOOTER_BUTTON_H: f32 = 30.0;
 const DROP_BAR_H: f32 = 2.0;
 const GHOST_ALPHA: f32 = 0.35;
 
@@ -121,7 +129,7 @@ mod tabs;
 
 pub use tabs::{text_tabs_fit, SlidesPanelTabs};
 
-/// Where the slides tab's rows, list viewport and footer sit.
+/// Where the slides tab's rows, list viewport and action bar sit.
 ///
 /// Built once per event / per paint and shared by both, which is what
 /// keeps a row's painted rect and its click target identical.
@@ -131,9 +139,8 @@ pub struct SlidesPanelLayout {
     pub tabs: SlidesPanelTabs,
     /// The clipped, scrolling band the rows live in.
     pub list: Rect,
-    pub footer: Rect,
-    /// The present button inside the footer.
-    pub present: Rect,
+    /// The bar pinned to the rail's bottom edge, and everything on it.
+    pub actions: SlidesActionLayout,
     /// How far the row stack is scrolled up.
     pub offset: f32,
     pub count: usize,
@@ -165,7 +172,19 @@ impl SlidesPanelLayout {
     /// `None` when the rail is too small to show a row — a list that
     /// cannot show a slide is worse than no list: it is a strip that
     /// eats clicks and explains nothing.
-    pub fn new(panel: Rect, tabs: SlidesPanelTabs, aspects: &[f32], offset: f32) -> Option<Self> {
+    ///
+    /// **The list band is the panel less the tab row AND less the action
+    /// bar.** That subtraction is the only thing keeping the last
+    /// thumbnail clear of a bar that does not scroll; every rect that
+    /// scrolls is derived from `list`, so there is nowhere else the two
+    /// could disagree.
+    pub fn new(
+        panel: Rect,
+        tabs: SlidesPanelTabs,
+        aspects: &[f32],
+        offset: f32,
+        actions: SlidesActionState,
+    ) -> Option<Self> {
         let box_w = panel.size.x - (ROW_PAD_X + CARD_PAD) * 2.0;
         if box_w <= 0.0 {
             return None;
@@ -182,23 +201,11 @@ impl SlidesPanelLayout {
             origin: Point2D::new(panel.origin.x, list_top),
             size: Point2D::new(panel.size.x, list_h),
         };
-        let footer = Rect {
-            origin: Point2D::new(panel.origin.x, list_top + list_h),
-            size: Point2D::new(panel.size.x, FOOTER_HEIGHT),
-        };
-        let present = Rect {
-            origin: Point2D::new(
-                footer.origin.x + ROW_PAD_X,
-                footer.origin.y + (FOOTER_HEIGHT - FOOTER_BUTTON_H) / 2.0,
-            ),
-            size: Point2D::new((footer.size.x - ROW_PAD_X * 2.0).max(0.0), FOOTER_BUTTON_H),
-        };
         let mut layout = Self {
             panel,
             tabs,
             list,
-            footer,
-            present,
+            actions: SlidesActionLayout::new(panel, list_top, actions),
             offset: 0.0,
             count,
             thumb_box,
@@ -354,12 +361,21 @@ impl SlidesPanelLayout {
     }
 
     /// What `point` lands on anywhere in the panel.
+    ///
+    /// Reverse paint order, like every other hit-test in the app: the
+    /// open export dropdown is drawn last and over the thumbnails, so it
+    /// answers first — and it answers for its CHROME too, by returning
+    /// `None` without falling through. A press on the menu's padding
+    /// must not reach the slide row it happens to be covering.
     pub fn hit(&self, point: Point2D) -> Option<SlidesPanelTarget> {
+        if self.actions.over_menu(point) {
+            return self.actions.menu_row_at(point);
+        }
         if let Some(tab) = self.tabs.hit(point) {
             return Some(tab);
         }
-        if contains(self.present, point) {
-            return Some(SlidesPanelTarget::Present);
+        if let Some(button) = self.actions.button_at(point) {
+            return Some(button);
         }
         self.row_at(point).map(SlidesPanelTarget::Slide)
     }
@@ -418,7 +434,8 @@ pub struct SlidesPanel<'a> {
     pub thumbnails_supported: bool,
     pub layers_label: &'a str,
     pub slides_label: &'a str,
-    pub present_label: &'a str,
+    /// Labels for the bottom action bar and its dropdown.
+    pub actions: SlidesActionLabels<'a>,
 }
 
 impl SlidesPanel<'_> {
@@ -447,7 +464,13 @@ impl SlidesPanel<'_> {
         }
         cx.backend.restore();
 
-        self.paint_footer(cx, theme, layout);
+        crate::widgets::slides_panel_actions::paint_bar(
+            cx,
+            theme,
+            &layout.actions,
+            self.actions,
+            self.hover,
+        );
     }
 
     /// Everything that has to sit ON TOP of a thumbnail: the number
@@ -497,57 +520,18 @@ impl SlidesPanel<'_> {
             );
         }
         cx.backend.restore();
-    }
 
-    fn paint_footer(&self, cx: &mut PaintCx<'_>, theme: &Theme, layout: &SlidesPanelLayout) {
-        cx.backend.fill_rect(layout.footer, theme.card);
-        cx.backend.fill_rect(
-            Rect {
-                origin: layout.footer.origin,
-                size: Point2D::new(layout.footer.size.x, 1.0),
-            },
-            theme.border,
-        );
-        let hovered = self.hover == Some(SlidesPanelTarget::Present);
-        let button = layout.present;
-        cx.backend.fill_round_rect(
-            button,
-            6.0,
-            if hovered {
-                theme.primary
-            } else {
-                Color {
-                    a: 0.86,
-                    ..theme.primary
-                }
-            },
-        );
-        let icon_size = 13.0;
-        let label_w =
-            text_metrics::measure_chrome_weighted(cx.backend, self.present_label, TAB_FONT, 600);
-        let content_w = icon_size + 6.0 + label_w;
-        let icon_x = button.origin.x + (button.size.x - content_w) / 2.0;
-        draw_icon(
-            cx.backend,
-            Icon::Play,
-            Point2D::new(icon_x, button.origin.y + (button.size.y - icon_size) / 2.0),
-            icon_size,
-            theme.primary_foreground,
-            1.6,
-        );
-        cx.backend.draw_text(
-            &TextLayout::single_run(
-                self.present_label,
-                "system-ui",
-                TAB_FONT,
-                theme.primary_foreground.to_jian(),
-                Point2D::ZERO,
-            )
-            .with_font_weight(600),
-            Point2D::new(
-                icon_x + icon_size + 6.0,
-                button.origin.y + button.size.y / 2.0 + TAB_FONT / 2.0 - 1.5,
-            ),
+        // Outside the list clip, and last of everything: the dropdown
+        // hangs off a control on the rail's bottom edge, so it opens
+        // upward and covers the thumbnails it grew into. Painting it
+        // inside the clip above would let the list band crop the very
+        // rows it is meant to overlay.
+        crate::widgets::slides_panel_actions::paint_menu(
+            cx,
+            theme,
+            &layout.actions,
+            self.actions,
+            self.hover,
         );
     }
 

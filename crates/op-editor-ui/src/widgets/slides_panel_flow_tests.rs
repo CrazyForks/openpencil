@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::widgets::slides_panel::DRAG_THRESHOLD_PX;
+use crate::widgets::slides_panel_actions::ACTION_BAR_HEIGHT;
 use op_editor_core::scene_template_catalog::TemplateScene;
 
 const THREE_BOARDS: &str = r#"{"version":"1.0.0","children":[
@@ -281,8 +282,8 @@ fn the_footer_button_asks_to_present() {
     let mut deck = deck_state(THREE_BOARDS);
     let (_, layout) = laid_out(&deck);
     let point = Point2D::new(
-        layout.present.origin.x + layout.present.size.x / 2.0,
-        layout.present.origin.y + layout.present.size.y / 2.0,
+        layout.actions.present.origin.x + layout.actions.present.size.x / 2.0,
+        layout.actions.present.origin.y + layout.actions.present.size.y / 2.0,
     );
     assert_eq!(
         press(&mut deck, &layout, point),
@@ -299,6 +300,7 @@ fn the_wheel_scrolls_the_list_only_over_the_rail() {
         SlidesPanelTabs::new(PANEL, LeftPanelTab::Slides, "Layers", "Slides"),
         &[DEFAULT_BOARD_ASPECT; 20],
         0.0,
+        crate::widgets::SlidesActionState::default(),
     )
     .expect("layout");
     let over = Point2D::new(120.0, 300.0);
@@ -358,4 +360,352 @@ fn the_scenario_label_is_the_one_the_row_is_measured_against() {
         slides,
         crate::widgets::editor_state_ext::translate(&cards.editor_ui, "slidesPanel.tabCards")
     );
+}
+
+// ─── The bottom action bar and its export dropdown ─────────────────────
+
+/// Select boards by id, the way a marquee or a shift-click on the canvas
+/// would leave the selection.
+fn select_boards(state: &mut EditorState, ids: &[&str]) {
+    state.selection.set = ids.iter().map(|id| NodeId::new(id.to_string())).collect();
+    state.selection.anchor = state.selection.set.last().cloned().unwrap_or(NodeId::NONE);
+}
+
+fn press_release(
+    state: &mut EditorState,
+    layout: &SlidesPanelLayout,
+    point: Point2D,
+) -> SlidesRelease {
+    assert!(
+        matches!(press(state, layout, point), SlidesPress::Claimed(_)),
+        "the panel claims a press at {point:?}"
+    );
+    cursor_move(state, layout, point);
+    release(state, layout)
+}
+
+fn button_centre(rect: Rect) -> Point2D {
+    Point2D::new(
+        rect.origin.x + rect.size.x / 2.0,
+        rect.origin.y + rect.size.y / 2.0,
+    )
+}
+
+/// A deck of `count` 16:9 boards, with the scene that resolves them —
+/// enough rows to fill the rail top to bottom, which the three-board
+/// fixture is deliberately too short for.
+fn long_deck(count: usize) -> (String, LayoutScene) {
+    use crate::layout_scene::{NodeKind, SceneNode, ScenePage};
+    let mut json = String::from(r#"{"version":"1.0.0","children":["#);
+    let mut children = Vec::new();
+    for index in 0..count {
+        let id = format!("slide-{}", index + 1);
+        let x = index as f32 * 2100.0;
+        if index > 0 {
+            json.push(',');
+        }
+        json.push_str(&format!(
+            r#"{{"type":"frame","id":"{id}","name":"Slide {}","x":{x},"y":0,"width":1920,"height":1080}}"#,
+            index + 1
+        ));
+        let mut node = SceneNode::leaf(&id, NodeKind::Frame);
+        node.bounds = Rect::xywh(x, 0.0, 1920.0, 1080.0);
+        children.push(node);
+    }
+    json.push_str("]}");
+    (
+        json,
+        LayoutScene {
+            pages: vec![ScenePage {
+                id: "page-1".into(),
+                name: "Page 1".into(),
+                children,
+            }],
+            active_page_index: 0,
+        },
+    )
+}
+
+/// **The action bar belongs to the slides tab alone.** Its rects live
+/// only inside `SlidesPanelLayout`, which the Layers tab never builds —
+/// so there is nowhere for a stray bar to be painted or hit-tested from
+/// while the tree owns the rail.
+#[test]
+fn the_layers_tab_gets_no_action_bar() {
+    let mut deck = deck_state(THREE_BOARDS);
+    deck.editor_ui.slides_panel.tab = LeftPanelTab::Layers;
+    let chips = slides(&deck);
+    assert!(
+        layout(&deck, &chips, &scene(), PANEL).is_none(),
+        "no slides layout under the Layers tab means no bar and no menu"
+    );
+    // The tab row is still there — the rail keeps working, it just has
+    // no Present / Export on it.
+    assert!(tab_row(&deck, PANEL).is_some());
+    // And the rail below the tab row is the tree's in full: nothing has
+    // been reserved at the bottom for a bar that is not being painted.
+    let content = layers_content_rect(&deck, PANEL);
+    assert_eq!(
+        content.origin.y + content.size.y,
+        PANEL.origin.y + PANEL.size.y
+    );
+
+    deck.editor_ui.slides_panel.tab = LeftPanelTab::Slides;
+    let (_, slides_layout) = laid_out(&deck);
+    assert_eq!(slides_layout.actions.bar.size.y, ACTION_BAR_HEIGHT);
+}
+
+/// Clicking the export button opens the dropdown; clicking it again
+/// closes it, rather than re-toggling it open on the dismiss.
+#[test]
+fn the_export_button_toggles_its_dropdown() {
+    let mut deck = deck_state(THREE_BOARDS);
+    let (_, l) = laid_out(&deck);
+    let button = button_centre(l.actions.export);
+
+    assert_eq!(
+        press_release(&mut deck, &l, button),
+        SlidesRelease::ToggleExportMenu
+    );
+    assert!(deck.editor_ui.slides_panel.export_menu_open);
+
+    // Re-lay out: the menu's rects only exist once it is open.
+    let (_, open) = laid_out(&deck);
+    assert!(open.actions.menu.is_some());
+    assert_eq!(
+        press_release(&mut deck, &open, button),
+        SlidesRelease::ToggleExportMenu
+    );
+    assert!(
+        !deck.editor_ui.slides_panel.export_menu_open,
+        "a second click on the anchor closes rather than reopening"
+    );
+}
+
+/// A press that is neither a row nor the menu's chrome dismisses it, and
+/// is swallowed — the click that closes a menu never also does something
+/// underneath it.
+#[test]
+fn a_press_outside_the_open_menu_dismisses_it_and_is_swallowed() {
+    let mut deck = deck_state(THREE_BOARDS);
+    deck.editor_ui.slides_panel.export_menu_open = true;
+    let (_, l) = laid_out(&deck);
+    let menu = l.actions.menu.expect("open");
+
+    // A slide row well above the menu.
+    let outside = Point2D::new(120.0, menu.origin.y - 40.0);
+    assert!(
+        !l.actions.over_menu(outside),
+        "the fixture point is genuinely off the menu"
+    );
+    assert_eq!(press(&mut deck, &l, outside), SlidesPress::Claimed(None));
+    assert!(!deck.editor_ui.slides_panel.export_menu_open);
+    assert_eq!(
+        release(&mut deck, &l),
+        SlidesRelease::Idle,
+        "the dismiss armed nothing, so its release activates nothing"
+    );
+}
+
+/// The menu covers the thumbnails it grew into, so a press on its
+/// PADDING must stop there rather than reaching the row underneath.
+#[test]
+fn the_menus_chrome_swallows_presses_meant_for_the_rows_it_covers() {
+    // A deck long enough that its rows reach the bottom of the rail —
+    // three boards end well above the menu, so the covering the test is
+    // about would never happen.
+    let (source, scene) = long_deck(8);
+    let mut deck = deck_state(&source);
+    deck.editor_ui.slides_panel.export_menu_open = true;
+    let chips = slides(&deck);
+    let l = layout(&deck, &chips, &scene, PANEL).expect("the rail has room");
+    let menu = l.actions.menu.expect("open");
+    let padding = Point2D::new(menu.origin.x + 4.0, menu.origin.y + 2.0);
+
+    // There really is a slide row under that point — otherwise the test
+    // would pass for the wrong reason.
+    let plain = deck_state(&source);
+    let plain_layout = layout(&plain, &slides(&plain), &scene, PANEL).expect("layout");
+    assert_eq!(plain_layout.actions.menu, None, "the control has no menu");
+    assert!(
+        plain_layout.row_at(padding).is_some(),
+        "the fixture point sits over a slide row when no menu covers it"
+    );
+
+    assert_eq!(press(&mut deck, &l, padding), SlidesPress::Claimed(None));
+    assert!(
+        deck.editor_ui.slides_panel.export_menu_open,
+        "chrome keeps the menu open"
+    );
+    assert_eq!(release(&mut deck, &l), SlidesRelease::Idle);
+}
+
+/// "Export all slides" queues the very file action the TopBar's PDF row
+/// queues, so the two surfaces cannot write two different PDFs.
+#[test]
+fn exporting_all_slides_queues_the_deck_pdf_file_action() {
+    use op_editor_core::editor_ui_state::{ExportFormat, FileAction};
+
+    let mut deck = deck_state(THREE_BOARDS);
+    deck.editor_ui.slides_panel.export_menu_open = true;
+    let (_, l) = laid_out(&deck);
+    let row = button_centre(l.actions.menu_row_rect(0).expect("the all-slides row"));
+
+    assert_eq!(
+        press_release(&mut deck, &l, row),
+        SlidesRelease::ExportAllSlides
+    );
+    assert_eq!(deck.editor_ui.export_format, ExportFormat::Pdf);
+    assert_eq!(
+        deck.editor_ui.pending_file_action,
+        Some(FileAction::ExportImageConfirm),
+        "the same action `apply_export_quick_row` raises for its PDF row"
+    );
+    assert!(
+        !deck.editor_ui.slides_panel.export_menu_open,
+        "picking a row closes the menu"
+    );
+}
+
+/// The `(N)` on the second row is the number of LISTED slides the
+/// selection covers — counted over the very chips the rows are painted
+/// from, so it cannot disagree with what the user sees selected.
+#[test]
+fn the_selected_count_follows_the_selection() {
+    let mut deck = deck_state(THREE_BOARDS);
+    let chips = slides(&deck);
+    assert_eq!(selected_slide_count(&deck, &chips), 0);
+
+    select_boards(&mut deck, &["slide-2"]);
+    assert_eq!(selected_slide_count(&deck, &chips), 1);
+
+    select_boards(&mut deck, &["slide-1", "slide-3"]);
+    assert_eq!(selected_slide_count(&deck, &chips), 2);
+
+    // A node that is not one of the listed boards does not count, even
+    // though it is selected.
+    select_boards(&mut deck, &["slide-1", "some-child-node"]);
+    assert_eq!(selected_slide_count(&deck, &chips), 1);
+
+    select_boards(&mut deck, &[]);
+    assert_eq!(selected_slide_count(&deck, &chips), 0);
+}
+
+/// The count reaches the label, with `{{count}}` substituted, at every
+/// value including zero.
+#[test]
+fn the_selected_row_label_carries_the_count() {
+    let deck = deck_state(THREE_BOARDS);
+    for selected in [0usize, 1, 5] {
+        let text = action_labels(&deck, selected);
+        assert!(
+            text.export_selected.contains(&selected.to_string()),
+            "label {:?} does not state the count {selected}",
+            text.export_selected
+        );
+        assert!(
+            !text.export_selected.contains("{{count}}"),
+            "the placeholder survived into {:?}",
+            text.export_selected
+        );
+    }
+    // And the other three are real catalogue strings, not the raw keys.
+    let text = action_labels(&deck, 0);
+    for label in [text.present, text.export, text.export_all] {
+        assert!(!label.starts_with("slidesPanel."), "untranslated: {label}");
+        assert!(!label.is_empty());
+    }
+}
+
+/// With nothing selected the second row cannot be activated at all —
+/// the count says `(0)` and the row is not a target.
+#[test]
+fn nothing_selected_makes_the_selected_row_unclickable() {
+    let mut deck = deck_state(THREE_BOARDS);
+    deck.editor_ui.slides_panel.export_menu_open = true;
+    let (chips, l) = laid_out(&deck);
+    assert_eq!(selected_slide_count(&deck, &chips), 0);
+    assert!(!l.actions.selected_enabled);
+
+    let row = button_centre(l.actions.menu_row_rect(1).expect("the selected row"));
+    assert_eq!(l.hit(row), None, "a disabled row answers nothing");
+    // Pressing it is swallowed by the menu's surface and activates
+    // nothing — it does not fall through to a slide row either.
+    assert_eq!(press(&mut deck, &l, row), SlidesPress::Claimed(None));
+    assert_eq!(release(&mut deck, &l), SlidesRelease::Idle);
+    assert!(deck.editor_ui.slides_panel.export_menu_open);
+}
+
+/// Selecting slides lights the row and picking it queues the SELECTION
+/// export — a different file action from its sibling, because the two
+/// write different files.
+#[test]
+fn exporting_selected_slides_queues_the_selection_file_action() {
+    use op_editor_core::editor_ui_state::{ExportFormat, FileAction};
+
+    let mut deck = deck_state(THREE_BOARDS);
+    select_boards(&mut deck, &["slide-1", "slide-3"]);
+    deck.editor_ui.slides_panel.export_menu_open = true;
+    let (chips, l) = laid_out(&deck);
+
+    assert_eq!(selected_slide_count(&deck, &chips), 2);
+    assert_eq!(l.actions.selected_slides, 2, "the count is live");
+    assert!(l.actions.selected_enabled, "and the row is live with it");
+
+    let row = button_centre(l.actions.menu_row_rect(1).expect("the selected row"));
+    assert_eq!(
+        press_release(&mut deck, &l, row),
+        SlidesRelease::ExportSelectedSlides
+    );
+    assert_eq!(deck.editor_ui.export_format, ExportFormat::Pdf);
+    assert_eq!(
+        deck.editor_ui.pending_file_action,
+        Some(FileAction::ExportDeckPdfSelection),
+        "the selection export is its own action, not the whole-deck one"
+    );
+    assert!(!deck.editor_ui.slides_panel.export_menu_open);
+}
+
+/// The boards the host will actually write are the ones the `(N)` counted
+/// — one rule, asked twice. A drift here is the failure the whole design
+/// is arranged to prevent: a file whose page count contradicts the label
+/// the user clicked.
+#[test]
+fn the_exported_boards_are_exactly_the_ones_the_count_promised() {
+    let mut deck = deck_state(THREE_BOARDS);
+    for selection in [
+        vec![],
+        vec!["slide-2"],
+        vec!["slide-1", "slide-3"],
+        vec!["slide-1", "slide-2", "slide-3"],
+        // A selected node that is not a board must not reach the export.
+        vec!["slide-2", "some-inner-text"],
+    ] {
+        select_boards(&mut deck, &selection);
+        let chips = slides(&deck);
+        let boards = op_editor_core::preview_slideshow::selected_page_boards(&deck);
+        assert_eq!(
+            boards.len(),
+            selected_slide_count(&deck, &chips),
+            "selection {selection:?}: exporter takes {boards:?} but the row promised {}",
+            selected_slide_count(&deck, &chips)
+        );
+    }
+    // And they come out in page order, not selection order.
+    select_boards(&mut deck, &["slide-3", "slide-1"]);
+    assert_eq!(
+        op_editor_core::preview_slideshow::selected_page_boards(&deck),
+        vec!["slide-1".to_string(), "slide-3".to_string()],
+        "pages follow the deck's order, never the order the user clicked"
+    );
+}
+
+/// Leaving the slides tab takes the open menu with it — a menu painted
+/// into a rail that is no longer being drawn must not come back open.
+#[test]
+fn switching_tabs_closes_the_export_menu() {
+    let mut deck = deck_state(THREE_BOARDS);
+    deck.editor_ui.slides_panel.export_menu_open = true;
+    assert!(select_tab(&mut deck, LeftPanelTab::Layers));
+    assert!(!deck.editor_ui.slides_panel.export_menu_open);
 }

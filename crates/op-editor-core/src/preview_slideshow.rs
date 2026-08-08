@@ -152,6 +152,31 @@ pub fn active_page_boards(state: &EditorState) -> Vec<String> {
         .collect()
 }
 
+/// The boards of the active page that the current selection covers, in the
+/// same document child order [`active_page_boards`] returns.
+///
+/// **The single rule for "which slides are selected."** The slides rail
+/// counts these to label its `Export selected slides (N)` row, and the deck
+/// PDF exporter takes exactly these when that row is picked, so the number
+/// the user was shown and the pages that come out of the file are answers to
+/// one question rather than two.
+///
+/// Derived from [`active_page_boards`] rather than from the selection set
+/// directly: a selection may hold a text node inside a slide, or a node on
+/// another page, and neither of those is a slide. Filtering the board list
+/// means anything that is not a board simply does not appear, with no second
+/// definition of what a board is.
+pub fn selected_page_boards(state: &EditorState) -> Vec<String> {
+    active_page_boards(state)
+        .into_iter()
+        .filter(|id| {
+            state
+                .selection
+                .contains(&crate::node_id::NodeId::new(id.clone()))
+        })
+        .collect()
+}
+
 /// The slideshow this document's preview should run, or `None` for the
 /// ordinary interactive preview.
 ///

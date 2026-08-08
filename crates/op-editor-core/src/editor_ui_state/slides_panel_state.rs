@@ -53,8 +53,16 @@ pub enum SlidesPanelTarget {
     SlidesTab,
     /// A slide row, by index in page order.
     Slide(usize),
-    /// The footer's present button.
+    /// The action bar's present button.
     Present,
+    /// The action bar's `Export PDF ⌄` button — toggles the menu below.
+    ExportMenu,
+    /// Export-menu row: every slide on the page.
+    ExportAllSlides,
+    /// Export-menu row: only the slides the selection covers. Only ever
+    /// produced while that row is ENABLED, so a disabled row can neither
+    /// be hovered nor activated.
+    ExportSelectedSlides,
 }
 
 /// Left-rail tab selection + the slides tab's transient pointer state.
@@ -69,6 +77,8 @@ pub struct SlidesPanelState {
     pub pressed: Option<SlidesPanelTarget>,
     /// The reorder gesture in flight, once the pointer has moved.
     pub drag: Option<SlidesDrag>,
+    /// Whether the action bar's export dropdown is showing.
+    pub export_menu_open: bool,
     /// Vertical scroll of the slide list.
     pub scroll: ScrollState,
 }
@@ -80,13 +90,36 @@ impl SlidesPanelState {
     ///
     /// Called whenever the panel stops being reachable (the sidebar
     /// closes, a presentation starts), so a gesture cannot survive the
-    /// surface it belongs to.
+    /// surface it belongs to. The export dropdown goes with it for the
+    /// same reason: it is painted INTO the panel, so a rail that stops
+    /// being drawn would otherwise strand an open menu that reappears —
+    /// still open — the next time the tab is shown.
     pub fn clear_pointer(&mut self) -> bool {
         let live = self.hover.is_some() || self.pressed.is_some() || self.drag.is_some();
         self.hover = None;
         self.pressed = None;
         self.drag = None;
-        live
+        self.close_export_menu() || live
+    }
+
+    /// Close the export dropdown. Returns whether it was open, which is
+    /// what makes this usable as an Escape-ladder rung: exactly one
+    /// layer is dismissed per press.
+    pub fn close_export_menu(&mut self) -> bool {
+        let was_open = self.export_menu_open;
+        self.export_menu_open = false;
+        // A hover left on a menu row belongs to a menu that no longer
+        // exists; it would light the row up again the moment the menu
+        // reopened, before the cursor had moved.
+        if was_open
+            && matches!(
+                self.hover,
+                Some(SlidesPanelTarget::ExportAllSlides | SlidesPanelTarget::ExportSelectedSlides)
+            )
+        {
+            self.hover = None;
+        }
+        was_open
     }
 }
 
@@ -110,6 +143,7 @@ mod tests {
                 press_y: 10.0,
                 pointer_y: 40.0,
             }),
+            export_menu_open: false,
             scroll: ScrollState { offset: 24.0 },
         };
         assert!(state.clear_pointer());
@@ -120,5 +154,43 @@ mod tests {
         assert_eq!(state.drag, None);
         // Idle again — nothing to repaint for.
         assert!(!state.clear_pointer());
+    }
+
+    #[test]
+    fn clearing_pointer_state_closes_the_export_menu() {
+        let mut state = SlidesPanelState {
+            tab: LeftPanelTab::Slides,
+            export_menu_open: true,
+            ..SlidesPanelState::default()
+        };
+        // Live even though no hover / press / drag is in flight: the open
+        // menu is itself something the next paint has to stop drawing.
+        assert!(state.clear_pointer());
+        assert!(!state.export_menu_open);
+    }
+
+    #[test]
+    fn closing_the_export_menu_drops_a_hover_on_one_of_its_rows() {
+        let mut state = SlidesPanelState {
+            export_menu_open: true,
+            hover: Some(SlidesPanelTarget::ExportSelectedSlides),
+            ..SlidesPanelState::default()
+        };
+        assert!(state.close_export_menu());
+        assert_eq!(state.hover, None);
+        // Already closed — nothing left to dismiss, so the Escape ladder
+        // moves on to the next rung.
+        assert!(!state.close_export_menu());
+    }
+
+    #[test]
+    fn closing_the_export_menu_keeps_a_hover_outside_it() {
+        let mut state = SlidesPanelState {
+            export_menu_open: true,
+            hover: Some(SlidesPanelTarget::Present),
+            ..SlidesPanelState::default()
+        };
+        assert!(state.close_export_menu());
+        assert_eq!(state.hover, Some(SlidesPanelTarget::Present));
     }
 }
