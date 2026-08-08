@@ -48,7 +48,52 @@ pub fn quality_summary_from_repairs(summary: &op_orchestrator::RepairSummary) ->
             .into_iter()
             .map(|(check, count)| (check.key().to_string(), count))
             .collect(),
+        records: summary
+            .records()
+            .iter()
+            .map(op_orchestrator::RepairRecord::line)
+            .collect(),
+        notes: summary.notes().to_vec(),
     }
+}
+
+/// How many repair lines a caller shows inline before summarizing the rest.
+/// A routine run applies dozens; the ceiling keeps one turn from burying the
+/// transcript while the log keeps the complete list.
+pub const MAX_INLINE_REPAIR_RECORDS: usize = 30;
+
+/// The itemized repair lines, capped at [`MAX_INLINE_REPAIR_RECORDS`].
+///
+/// Returns the lines only — no header, no "and N more" notice: the callers
+/// that have a locale (the desktop progress panel) localize those around
+/// this list, and the ones that do not (the diagnostic transcript lines)
+/// render them with their own English framing. Empty when the summary
+/// carries no records, so a caller can skip the whole block.
+pub fn quality_repair_detail_lines(quality: &QualitySummary) -> Vec<String> {
+    quality
+        .records
+        .iter()
+        .take(MAX_INLINE_REPAIR_RECORDS)
+        .cloned()
+        .collect()
+}
+
+/// The non-edit statements about the run, rendered ahead of the repair list.
+///
+/// Uncapped on purpose: notes are decisions, not edits — the orchestrator
+/// de-duplicates them, so a run carries 0 or 1 today and would carry a
+/// handful at worst. Truncating a "a whole tier of passes did not run" line
+/// would hide exactly the fact it exists to surface.
+pub fn quality_note_lines(quality: &QualitySummary) -> Vec<String> {
+    quality.notes.clone()
+}
+
+/// How many records the cap left out — `0` when everything is shown.
+pub fn quality_repair_overflow(quality: &QualitySummary) -> usize {
+    quality
+        .records
+        .len()
+        .saturating_sub(MAX_INLINE_REPAIR_RECORDS)
 }
 
 /// Render the credential, or `None` when nothing was checked.
@@ -88,6 +133,39 @@ pub fn quality_credential_line(
             .map(|(check, count)| format!("{check} {count}"))
             .collect();
         line.push_str(&format!("\n  ▸ repairs: {}", breakdown.join(", ")));
+    }
+    Some(line)
+}
+
+/// [`quality_credential_line`] plus one `▸` sub-line per applied repair.
+///
+/// For the callers whose ONLY channel to the user is this text: the agentic
+/// loop's transcript stream and the web host's thinking stream. Both render
+/// `▸` sub-lines as the owning step's expandable detail
+/// (`split_design_progress`), so the itemized list lands under the credential
+/// instead of beside it. Hosts that can attach detail to a structured
+/// progress row (the desktop panel) use the plain line and pass
+/// [`quality_repair_detail_lines`] to that row instead, so nothing is shown
+/// twice.
+pub fn quality_credential_line_with_records(
+    quality: &QualitySummary,
+    remaining: Option<usize>,
+) -> Option<String> {
+    let mut line = quality_credential_line(quality, remaining)?;
+    // Notes lead: a tier that was deliberately SKIPPED reframes every number
+    // above it ("layout 0" means "not checked", not "nothing wrong"), so it
+    // must not sit below a list the reader may never scroll through.
+    for note in quality_note_lines(quality) {
+        line.push_str(&format!("\n  ▸ {note}"));
+    }
+    for record in quality_repair_detail_lines(quality) {
+        line.push_str(&format!("\n  ▸ {record}"));
+    }
+    let overflow = quality_repair_overflow(quality);
+    if overflow > 0 {
+        line.push_str(&format!(
+            "\n  ▸ … and {overflow} more repair(s) — full list in the log"
+        ));
     }
     Some(line)
 }

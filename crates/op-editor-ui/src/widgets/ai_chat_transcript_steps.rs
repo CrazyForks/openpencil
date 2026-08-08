@@ -31,6 +31,11 @@ pub(crate) fn activity_step(activity: &ChatActivity) -> ParsedStep {
     ParsedStep {
         title: activity.title.clone(),
         status: Some(status),
+        // One entry, newlines intact. A row's detail may be an itemized list
+        // — the quality passes write one line per applied repair — and the
+        // layout step splits it: `wrap_units` breaks on `\n` before wrapping,
+        // so each line becomes its own expandable row. Do not "helpfully"
+        // pre-split here; that would duplicate the split, not enable it.
         details: activity.detail.iter().cloned().collect(),
     }
 }

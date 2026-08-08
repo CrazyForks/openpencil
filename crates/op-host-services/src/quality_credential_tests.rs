@@ -1,4 +1,7 @@
-use super::{quality_credential_line, quality_summary_from_repairs};
+use super::{
+    quality_credential_line, quality_credential_line_with_records, quality_note_lines,
+    quality_summary_from_repairs, MAX_INLINE_REPAIR_RECORDS,
+};
 use op_ai::chat_provider::QualitySummary;
 use op_orchestrator::{CheckCategory, RepairSummary};
 
@@ -6,6 +9,8 @@ fn summary(checks: &[&str], repairs: &[(&str, usize)]) -> QualitySummary {
     QualitySummary {
         checks: checks.iter().map(|c| c.to_string()).collect(),
         repairs: repairs.iter().map(|(c, n)| (c.to_string(), *n)).collect(),
+        records: Vec::new(),
+        notes: Vec::new(),
     }
 }
 
@@ -94,4 +99,167 @@ fn repair_summary_converts_preserving_checked_and_repaired_split() {
         "checked-but-clean categories are listed as checked, not as repairs"
     );
     assert_eq!(wire.total_repairs(), 3);
+}
+
+#[test]
+fn the_itemized_variant_lists_each_repair_under_the_credential() {
+    // For the callers whose only channel is this text (the agentic loop, the
+    // web thinking stream): the `▸` sub-lines are what the transcript turns
+    // into the credential step's expandable detail.
+    let quality = QualitySummary {
+        checks: vec!["layout".into()],
+        repairs: vec![("layout".into(), 2)],
+        records: vec![
+            "layout · table-gap · Pricing Row [n42] · gap 0 → 16".into(),
+            "layout · container-geometry · Hero [n7] · padding [32,32] → [16,16]".into(),
+        ],
+        notes: Vec::new(),
+    };
+
+    let line = quality_credential_line_with_records(&quality, Some(0)).expect("credential");
+
+    assert!(line.contains("2 auto-repair(s) applied"));
+    assert!(
+        line.contains("\n  ▸ layout · table-gap · Pricing Row [n42] · gap 0 → 16"),
+        "each record is its own sub-line: {line}"
+    );
+    assert!(
+        !line.contains("more repair(s)"),
+        "nothing was withheld, so no remainder notice: {line}"
+    );
+}
+
+#[test]
+fn the_itemized_variant_caps_the_list_and_says_how_many_it_withheld() {
+    let records: Vec<String> = (0..MAX_INLINE_REPAIR_RECORDS + 11)
+        .map(|i| format!("layout · container-geometry · Card {i} [n{i}] · gap 24 → 16"))
+        .collect();
+    let total = records.len();
+    let quality = QualitySummary {
+        checks: vec!["layout".into()],
+        repairs: vec![("layout".into(), total)],
+        records,
+        notes: Vec::new(),
+    };
+
+    let line = quality_credential_line_with_records(&quality, None).expect("credential");
+
+    assert_eq!(
+        line.matches("· Card ").count(),
+        MAX_INLINE_REPAIR_RECORDS,
+        "the inline list stops at the cap"
+    );
+    assert!(
+        line.contains("… and 11 more repair(s) — full list in the log"),
+        "the withheld count must be stated, never silently dropped: {line}"
+    );
+    assert!(
+        line.contains(&format!("{total} auto-repair(s) applied")),
+        "the headline still counts every repair: {line}"
+    );
+}
+
+#[test]
+fn record_lines_ride_the_wire_conversion_alongside_the_counts() {
+    let mut repairs = RepairSummary::default();
+    repairs.record_all(
+        CheckCategory::Layout,
+        vec![op_orchestrator::RepairRecord {
+            pass: "table-gap".into(),
+            category: CheckCategory::Layout,
+            node_id: "n42".into(),
+            node_name: Some("Pricing Row".into()),
+            detail: "gap 0 → 16".into(),
+        }],
+    );
+
+    let wire = quality_summary_from_repairs(&repairs);
+
+    assert_eq!(wire.repairs, vec![("layout".to_string(), 1)]);
+    assert_eq!(
+        wire.records,
+        vec!["layout · table-gap · Pricing Row [n42] · gap 0 → 16".to_string()],
+        "the count and the line it stands for must cross the wire together"
+    );
+}
+
+const SKIP_NOTE: &str = "intent-tier passes skipped (template provenance: slide-deck via \
+                         namespaced-variables) — authored spacing, surfaces and palette kept \
+                         as designed; contract-tier checks still ran";
+
+#[test]
+fn a_skipped_tier_is_stated_before_the_repairs_that_did_run() {
+    // Order is the point. "layout 1" under a skipped intent tier means "one
+    // contract-tier fix", not "the layout was reviewed and needed one fix" —
+    // a reader who stops after the first detail line must already know that.
+    let quality = QualitySummary {
+        checks: vec!["layout".into()],
+        repairs: vec![("layout".into(), 1)],
+        records: vec!["layout · table-gap · Pricing Row [n42] · gap 0 → 16".into()],
+        notes: vec![SKIP_NOTE.to_string()],
+    };
+
+    let line = quality_credential_line_with_records(&quality, Some(0)).expect("credential");
+
+    let note_at = line
+        .find("intent-tier passes skipped")
+        .expect("note rendered");
+    let record_at = line.find("table-gap").expect("record rendered");
+    assert!(
+        note_at < record_at,
+        "the skipped-tier note must precede the repair list: {line}"
+    );
+}
+
+#[test]
+fn a_note_survives_a_run_that_repaired_nothing() {
+    // The case the tiering exists to produce: an authored template needs no
+    // repairs, so the record list is empty. Gating the note on repairs would
+    // hide the decision exactly where it is the ONLY thing worth reporting.
+    let quality = QualitySummary {
+        checks: vec!["layout".into(), "structure".into()],
+        repairs: Vec::new(),
+        records: Vec::new(),
+        notes: vec![SKIP_NOTE.to_string()],
+    };
+
+    let line = quality_credential_line_with_records(&quality, Some(0)).expect("credential");
+
+    assert!(line.contains("nothing needed fixing"));
+    assert!(
+        line.contains("\n  ▸ intent-tier passes skipped"),
+        "the note must still be reported: {line}"
+    );
+}
+
+#[test]
+fn a_note_is_never_counted_as_a_repair() {
+    let quality = QualitySummary {
+        checks: vec!["layout".into()],
+        repairs: Vec::new(),
+        records: Vec::new(),
+        notes: vec![SKIP_NOTE.to_string()],
+    };
+
+    assert_eq!(
+        quality.total_repairs(),
+        0,
+        "a statement about the run is not an edit to the document"
+    );
+    assert_eq!(quality_note_lines(&quality).len(), 1);
+}
+
+#[test]
+fn notes_ride_the_wire_conversion_beside_the_records() {
+    let mut repairs = RepairSummary::default();
+    repairs.record(CheckCategory::Layout, 0);
+    repairs.note(SKIP_NOTE);
+
+    let wire = quality_summary_from_repairs(&repairs);
+
+    assert_eq!(wire.notes, vec![SKIP_NOTE.to_string()]);
+    assert!(
+        wire.records.is_empty(),
+        "notes must not leak into the itemized repair list"
+    );
 }

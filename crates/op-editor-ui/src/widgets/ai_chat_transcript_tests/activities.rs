@@ -288,3 +288,120 @@ render: captured frame
         "collapsed TS accordions hide details until opened"
     );
 }
+
+#[test]
+fn an_itemized_activity_detail_expands_into_one_row_per_line() {
+    // The quality passes report their repairs as one line each on the
+    // "Polishing the layout" row. A single-string detail that rendered as one
+    // unwrappable blob is exactly the "I cannot see what the check changed"
+    // complaint this exists to answer.
+    let detail = [
+        "3 auto-repair(s) applied",
+        "layout · table-gap · Pricing Row [n42] · gap 0 → 16",
+        "palette · light-mobile-nav-surface · Tab Bar [n7] · fill #F8FAFC → #FFFFFF",
+        "hierarchy · text-hierarchy · Title [n3] · fontWeight 800 → 400",
+    ]
+    .join("\n");
+    let mut message = ChatMessage::assistant_streaming();
+    message.activities = vec![op_editor_core::ChatActivity {
+        id: "__polish".into(),
+        title: "Polishing the layout".into(),
+        detail: Some(detail),
+        status: op_editor_core::ChatActivityStatus::Done,
+        content_offset: None,
+    }];
+
+    let items = build_transcript(
+        std::slice::from_ref(&message),
+        body(),
+        op_editor_core::Locale::EnUs,
+    );
+
+    let step = &items[0].steps[0];
+    assert_eq!(step.label, "Polishing the layout");
+    // Rows are word-wrapped to the bubble width, so a long record may occupy
+    // more than one row — what must not happen is lines being merged or
+    // dropped.
+    assert!(
+        step.details.len() >= 4,
+        "each reported repair must reach the row list: {:?}",
+        step.details
+    );
+    // Each reported repair must OWN a row: a row that merely CONTAINS the
+    // text could be one blob the layout wrapped at an arbitrary column, which
+    // is the unreadable rendering this test exists to reject.
+    for record in [
+        "3 auto-repair(s) applied",
+        "layout · table-gap · Pricing Row",
+        "palette · light-mobile-nav-surface",
+        "hierarchy · text-hierarchy · Title",
+    ] {
+        assert!(
+            step.details.iter().any(|row| row.starts_with(record)),
+            "`{record}` must begin its own row: {:?}",
+            step.details
+        );
+    }
+    assert!(
+        step.details.iter().all(|row| !row.contains('\n')),
+        "no row may carry a raw newline: {:?}",
+        step.details
+    );
+}
+
+#[test]
+fn a_long_repair_list_renders_every_line_it_was_given_plus_the_overflow_notice() {
+    // The host caps the list at 30 and appends a localized "and N more"
+    // notice; the transcript's job is to render exactly what it was handed —
+    // silently dropping rows here would hide repairs the host chose to show.
+    let mut lines = vec!["45 auto-repair(s) applied".to_string()];
+    lines.extend(
+        (0..30).map(|i| format!("layout · container-geometry · Card {i} [n{i}] · gap 24 → 16")),
+    );
+    lines.push("… and 15 more (see log)".to_string());
+    let mut message = ChatMessage::assistant_streaming();
+    message.activities = vec![op_editor_core::ChatActivity {
+        id: "__polish".into(),
+        title: "Polishing the layout".into(),
+        detail: Some(lines.join("\n")),
+        status: op_editor_core::ChatActivityStatus::Done,
+        content_offset: None,
+    }];
+    message.action_step_expanded_overrides = vec![Some(true)];
+
+    let items = build_transcript(
+        std::slice::from_ref(&message),
+        body(),
+        op_editor_core::Locale::EnUs,
+    );
+
+    let step = &items[0].steps[0];
+    assert!(
+        step.details.len() >= 32,
+        "head line + 30 records + overflow notice must all reach the rows: {}",
+        step.details.len()
+    );
+    assert!(
+        step.details
+            .last()
+            .is_some_and(|row| row.starts_with("… and 15 more")),
+        "the truncation notice must own the closing row: {:?}",
+        step.details.last()
+    );
+    assert_eq!(
+        step.details
+            .iter()
+            .filter(|row| row.starts_with("layout · container-geometry"))
+            .count(),
+        30,
+        "every one of the 30 shown records must begin its own row"
+    );
+    assert!(
+        step.expanded,
+        "an explicit expand override must survive the itemized list"
+    );
+    assert!(
+        step.rect.size.y > 32.0 * LINE_H,
+        "an expanded 32-row list must reserve height for its rows"
+    );
+}

@@ -113,7 +113,7 @@ fn counting_sink_counts_only_accepted_applies() {
             page_id: None,
         }));
     }
-    counter.checkpoint(&mut summary, CheckCategory::Structure);
+    counter.checkpoint(&mut summary, CheckCategory::Structure, "test-structure");
 
     assert_eq!(
         summary.repairs_for(CheckCategory::Structure),
@@ -135,7 +135,7 @@ fn checkpoints_attribute_only_the_edits_since_the_previous_one() {
             page_id: None,
         });
     }
-    counter.checkpoint(&mut summary, CheckCategory::Structure);
+    counter.checkpoint(&mut summary, CheckCategory::Structure, "test-structure");
     // `InsertSubtree` remaps ids, so target the root by the id it actually
     // landed under rather than the fixture's authored one.
     let root_id = base.state.active_children()[0].id_str().to_string();
@@ -147,7 +147,7 @@ fn checkpoints_attribute_only_the_edits_since_the_previous_one() {
             page_id: None,
         });
     }
-    counter.checkpoint(&mut summary, CheckCategory::Layout);
+    counter.checkpoint(&mut summary, CheckCategory::Layout, "test-layout");
 
     assert_eq!(summary.repairs_for(CheckCategory::Structure), 1);
     assert_eq!(

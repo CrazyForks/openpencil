@@ -348,6 +348,18 @@ fn execute_tool_requests(
                                 serde_json::json!({ "check": check.key(), "count": count })
                             })
                             .collect::<Vec<_>>(),
+                        // The itemized half — one rendered line per applied
+                        // edit, so the loop's credential can list WHAT was
+                        // repaired, not only how much.
+                        "records": quality
+                            .records()
+                            .iter()
+                            .map(op_orchestrator::RepairRecord::line)
+                            .collect::<Vec<_>>(),
+                        // Non-edit statements — today, a deliberately skipped
+                        // pass tier. Carried separately from `records` so the
+                        // loop never reports a decision as a repair.
+                        "notes": quality.notes(),
                     },
                 })
                 .to_string(),

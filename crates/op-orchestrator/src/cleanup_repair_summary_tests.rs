@@ -254,3 +254,168 @@ fn the_tally_never_exceeds_the_edits_the_sink_actually_took() {
         sink.applied.len()
     );
 }
+
+#[test]
+fn the_counts_are_the_itemized_records_grouped_and_nothing_else() {
+    // The one invariant that keeps the credential honest end to end: the
+    // number the user is shown and the list they expand are the SAME data.
+    // Maintaining them separately is how a "41 repairs" headline ends up over
+    // 39 lines with nobody able to say which two are missing.
+    let (_sink, summary) = run_with_summary(json!({
+        "type": "frame",
+        "id": "root",
+        "name": "Mobile Root",
+        "width": 390,
+        "height": 844,
+        "children": [
+            { "type": "text", "id": "title", "role": "heading",
+              "content": "Popular Restaurants", "width": 320, "height": 40,
+              "fontSize": 30, "fontWeight": 800 },
+            { "type": "text", "id": "subtitle", "role": "body-text",
+              "content": "Fresh Brooklyn favorites, delivered fast.",
+              "width": 320, "height": 22, "fontSize": 16, "fontWeight": 800 },
+            { "type": "text", "id": "placeholder", "name": "Placeholder",
+              "content": "Search restaurants or dishes", "width": 280,
+              "height": 24, "fontSize": 17, "fontWeight": 800 },
+            { "type": "text", "id": "metadata", "role": "caption",
+              "content": "20-30 min", "width": 100, "height": 18,
+              "fontSize": 14, "fontWeight": 800 }
+        ]
+    }));
+
+    assert_eq!(
+        summary.total_repairs(),
+        summary.records().len(),
+        "the headline total is the record list's length, not a second tally"
+    );
+    for category in CheckCategory::ALL {
+        assert_eq!(
+            summary.repairs_for(category),
+            summary
+                .records()
+                .iter()
+                .filter(|record| record.category == category)
+                .count(),
+            "the per-category count for {category:?} must be its records grouped"
+        );
+    }
+    let repaired_total: usize = summary.repaired().iter().map(|(_, count)| count).sum();
+    assert_eq!(
+        repaired_total,
+        summary.records().len(),
+        "the breakdown must account for every record, with none double-counted"
+    );
+}
+
+#[test]
+fn every_record_names_the_pass_the_node_and_the_change() {
+    // "41 auto-repair(s) applied" with no way to see WHAT moved was the whole
+    // complaint. Each record must carry an attributed pass, a real target,
+    // and a field-level description — an empty one is a repair nobody can
+    // audit.
+    let (_sink, summary) = run_with_summary(json!({
+        "type": "frame",
+        "id": "root",
+        "name": "Mobile Root",
+        "width": 390,
+        "height": 844,
+        "children": [
+            { "type": "text", "id": "title", "role": "heading",
+              "content": "Popular Restaurants", "width": 320, "height": 40,
+              "fontSize": 30, "fontWeight": 800 },
+            { "type": "text", "id": "subtitle", "role": "body-text",
+              "content": "Fresh Brooklyn favorites, delivered fast.",
+              "width": 320, "height": 22, "fontSize": 16, "fontWeight": 800 },
+            { "type": "text", "id": "placeholder", "name": "Placeholder",
+              "content": "Search restaurants or dishes", "width": 280,
+              "height": 24, "fontSize": 17, "fontWeight": 800 },
+            { "type": "text", "id": "metadata", "role": "caption",
+              "content": "20-30 min", "width": 100, "height": 18,
+              "fontSize": 14, "fontWeight": 800 }
+        ]
+    }));
+
+    assert!(
+        !summary.records().is_empty(),
+        "precondition: this fixture must provoke repairs"
+    );
+    for record in summary.records() {
+        assert!(!record.pass.is_empty(), "unattributed record: {record:?}");
+        assert_ne!(
+            record.pass, "unattributed",
+            "a real cleanup run must never fall back to the count-only shim: {record:?}"
+        );
+        assert!(!record.detail.is_empty(), "undescribed record: {record:?}");
+        assert!(
+            record.line().contains(&record.detail),
+            "the rendered line must carry the change it describes: {record:?}"
+        );
+    }
+    let hierarchy: Vec<String> = summary
+        .records()
+        .iter()
+        .filter(|record| record.category == CheckCategory::Hierarchy)
+        .map(|record| record.detail.clone())
+        .collect();
+    assert!(
+        hierarchy
+            .iter()
+            .any(|detail| detail == "fontWeight 800 → 400"),
+        "the hierarchy demotion must be itemized with before → after: {hierarchy:?}"
+    );
+}
+
+#[test]
+fn the_double_inset_stripper_reports_which_section_lost_which_padding() {
+    // The incident this whole itemized-record line exists for: a run reported
+    // "41 auto-repair(s) applied — layout 36" and the user could see their
+    // section rhythm had been flattened but not by what. 36 of those came from
+    // `strip_wrapper_double_inset`. Pinned here as the worked example — the
+    // record must name the SECTION and the padding it lost, because "padding
+    // dropped on Hero Section" is the sentence that makes the repair
+    // disputable instead of mysterious.
+    let (_sink, summary) = run_with_summary(json!({
+        "type": "frame",
+        "id": "root",
+        "name": "Home Screen",
+        "width": 390,
+        "height": 844,
+        "layout": "vertical",
+        "gap": 20,
+        "padding": [24, 20, 24, 20],
+        "children": [{
+            "type": "frame",
+            "id": "hero",
+            "name": "Hero Section",
+            "layout": "vertical",
+            "gap": 8,
+            "padding": [24, 20, 24, 20],
+            "children": [
+                { "type": "text", "id": "t1", "role": "heading", "content": "Good morning",
+                  "width": 300, "height": 32, "fontSize": 24, "fontWeight": 700 },
+                { "type": "text", "id": "t2", "role": "body-text", "content": "Three tasks today",
+                  "width": 300, "height": 20, "fontSize": 15, "fontWeight": 400 }
+            ]
+        }]
+    }));
+
+    let padding_records: Vec<String> = summary
+        .records()
+        .iter()
+        .filter(|record| record.detail.contains("padding"))
+        .map(|record| record.line())
+        .collect();
+    assert!(
+        padding_records
+            .iter()
+            .any(|line| line.contains("Hero Section")
+                && line.contains("padding [24,20,24,20] → (unset)")),
+        "the stripped section and the inset it lost must both be named: {padding_records:?}"
+    );
+    assert!(
+        padding_records
+            .iter()
+            .any(|line| line.starts_with("layout · spacing+footer-sink")),
+        "the repair must be attributed to the pass group that made it: {padding_records:?}"
+    );
+}

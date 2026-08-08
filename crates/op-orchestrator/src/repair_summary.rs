@@ -12,13 +12,20 @@
 //! meaning — see `op_host_services::quality_credential`.
 //!
 //! **How the count is taken.** [`RepairCounter::wrap`] returns a
-//! [`CountingSink`] that delegates every method to the real sink and bumps a
-//! shared atomic on each accepted apply. The cleanup driver shadows its own
-//! `sink` binding with that wrapper once, at the top, then calls
+//! [`CountingSink`] that delegates every method to the real sink and records
+//! each accepted apply. The cleanup driver shadows its own `sink` binding
+//! with that wrapper once, at the top, then calls
 //! [`RepairCounter::checkpoint`] between contiguous groups of passes to
-//! attribute the edits since the previous checkpoint to a [`CheckCategory`].
-//! Pass bodies are untouched — this is deliberately a measurement layer, not
-//! a refactor of ~40 repair passes.
+//! attribute the edits since the previous checkpoint to a [`CheckCategory`]
+//! and a pass-group name. Pass bodies are untouched — this is deliberately a
+//! measurement layer, not a refactor of ~40 repair passes.
+//!
+//! **One list, not two accounts.** Every accepted apply produces exactly one
+//! [`RepairRecord`] (`crate::repair_record::describe_command` reads the
+//! target node BEFORE the edit so the record carries `before → after`), and
+//! the per-category counts this summary reports are that list grouped by
+//! category. There is no separately-maintained tally that could drift from
+//! the itemized detail the user is shown.
 //!
 //! **Honesty rules baked in.** A category is recorded as *checked* by the
 //! checkpoint itself, whether or not it repaired anything, because reaching
@@ -34,13 +41,13 @@
 //! (`repair_overbold_text_hierarchy` for hierarchy, the geometry loop for
 //! overflow, and so on).
 
-use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, Mutex};
 
 use jian_ops_schema::node::PenNode;
 use op_editor_core::{EditorCommand, EditorState, NodeId};
 
+use crate::repair_record::{describe_command, PendingRepair, RepairRecord};
 use crate::types::DocSink;
 
 /// A family of quality checks, as named to the user. Declaration order is
@@ -95,68 +102,124 @@ impl CheckCategory {
     }
 }
 
-/// What the quality passes checked and how much they repaired, per category.
+/// What the quality passes checked and every edit they applied.
+///
+/// The itemized [`records`](Self::records) list is the single source: the
+/// per-category counts every accessor below reports are derived from it by
+/// grouping, so the number in the credential and the lines under it can
+/// never disagree.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RepairSummary {
-    /// Category -> repairs applied. A key present with value 0 means the
-    /// category was checked and found nothing to fix.
-    counts: BTreeMap<CheckCategory, usize>,
+    /// Categories whose passes reached a checkpoint — including those that
+    /// found nothing to fix, which is what lets the credential say "checked"
+    /// truthfully about a clean family.
+    checked: BTreeSet<CheckCategory>,
+    /// Every applied edit, in the order the passes applied it.
+    records: Vec<RepairRecord>,
+    /// Statements about the run that are NOT edits — today, the one line
+    /// saying a whole tier of passes was deliberately not run (see
+    /// `crate::repair_tier`). Kept apart from `records` on purpose: a record
+    /// means "one accepted apply", and a note that counted as one would make
+    /// the credential claim a repair that never happened.
+    notes: Vec<String>,
 }
 
 impl RepairSummary {
-    /// Record that `category`'s passes ran and applied `repairs` edits.
-    /// Calling with `repairs == 0` still marks the category as checked.
+    /// Mark `category` as checked and file `records` under it.
+    pub fn record_all(&mut self, category: CheckCategory, records: Vec<RepairRecord>) {
+        self.checked.insert(category);
+        self.records.extend(records);
+    }
+
+    /// Count-only ingestion for callers that have a number but no itemized
+    /// detail — a wire round-trip from an older host, or a test building a
+    /// summary by hand. Synthesizes placeholder records so counts stay
+    /// derived from the one list; the placeholders say plainly that no
+    /// detail was reported rather than pretending to describe an edit.
     pub fn record(&mut self, category: CheckCategory, repairs: usize) {
-        *self.counts.entry(category).or_insert(0) += repairs;
+        let records = (0..repairs)
+            .map(|_| RepairRecord {
+                pass: "unattributed".to_string(),
+                category,
+                node_id: String::new(),
+                node_name: None,
+                detail: "no detail reported".to_string(),
+            })
+            .collect();
+        self.record_all(category, records);
+    }
+
+    /// Add a statement about the run that is not an edit. Repeats are dropped
+    /// so a driver that reaches the same gate on several roots still reports
+    /// the decision once.
+    pub fn note(&mut self, note: impl Into<String>) {
+        let note = note.into();
+        if !self.notes.contains(&note) {
+            self.notes.push(note);
+        }
+    }
+
+    /// Statements about the run that are not edits, in the order recorded.
+    pub fn notes(&self) -> &[String] {
+        &self.notes
     }
 
     /// Fold another summary in — used when one run drives cleanup over
     /// several root batches (the orchestrator's append path).
     pub fn merge(&mut self, other: &RepairSummary) {
-        for (category, count) in &other.counts {
-            self.record(*category, *count);
+        self.checked.extend(other.checked.iter().copied());
+        self.records.extend(other.records.iter().cloned());
+        for note in &other.notes {
+            self.note(note.clone());
         }
     }
 
     /// True when no category was ever checked: render NO credential rather
     /// than claiming a clean bill of health nobody verified.
     pub fn is_empty(&self) -> bool {
-        self.counts.is_empty()
+        self.checked.is_empty()
     }
 
     /// Categories whose passes actually ran, in display order.
     pub fn checked(&self) -> Vec<CheckCategory> {
-        self.counts.keys().copied().collect()
+        self.checked.iter().copied().collect()
+    }
+
+    /// Every applied edit, in application order.
+    pub fn records(&self) -> &[RepairRecord] {
+        &self.records
     }
 
     /// Repairs applied under `category` (0 when checked-and-clean or absent).
     pub fn repairs_for(&self, category: CheckCategory) -> usize {
-        self.counts.get(&category).copied().unwrap_or(0)
+        self.records
+            .iter()
+            .filter(|record| record.category == category)
+            .count()
     }
 
     /// Categories that repaired something, paired with their counts, in
     /// display order. Clean categories are omitted.
     pub fn repaired(&self) -> Vec<(CheckCategory, usize)> {
-        self.counts
-            .iter()
-            .filter(|(_, count)| **count > 0)
-            .map(|(category, count)| (*category, *count))
-            .collect()
+        let mut counts: BTreeMap<CheckCategory, usize> = BTreeMap::new();
+        for record in &self.records {
+            *counts.entry(record.category).or_insert(0) += 1;
+        }
+        counts.into_iter().collect()
     }
 
     /// Total edits applied across every category.
     pub fn total_repairs(&self) -> usize {
-        self.counts.values().sum()
+        self.records.len()
     }
 }
 
-/// Shared edit counter behind a [`CountingSink`]. Held by the cleanup driver
-/// alongside — never inside — the wrapped sink, so a checkpoint can read the
-/// tally while the sink is still mutably borrowed.
+/// Shared edit buffer behind a [`CountingSink`]. Held by the cleanup driver
+/// alongside — never inside — the wrapped sink, so a checkpoint can drain the
+/// buffer while the sink is still mutably borrowed.
 #[derive(Debug)]
 pub struct RepairCounter {
-    applied: Arc<AtomicUsize>,
-    checkpointed: usize,
+    pending: Arc<Mutex<Vec<PendingRepair>>>,
 }
 
 impl Default for RepairCounter {
@@ -168,8 +231,7 @@ impl Default for RepairCounter {
 impl RepairCounter {
     pub fn new() -> Self {
         Self {
-            applied: Arc::new(AtomicUsize::new(0)),
-            checkpointed: 0,
+            pending: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -177,27 +239,63 @@ impl RepairCounter {
     pub fn wrap<'a>(&self, inner: &'a mut dyn DocSink) -> CountingSink<'a> {
         CountingSink {
             inner,
-            applied: self.applied.clone(),
+            pending: self.pending.clone(),
         }
     }
 
-    /// Attribute every edit since the previous checkpoint to `category`, and
-    /// mark `category` as checked even when the delta is 0.
-    pub fn checkpoint(&mut self, summary: &mut RepairSummary, category: CheckCategory) {
-        let total = self.applied.load(Ordering::SeqCst);
-        let delta = total.saturating_sub(self.checkpointed);
-        self.checkpointed = total;
-        summary.record(category, delta);
+    /// Attribute every edit since the previous checkpoint to `category` and
+    /// the pass group named by `pass`, and mark `category` as checked even
+    /// when nothing was applied.
+    ///
+    /// `pass` names the group of passes that ran since the last checkpoint —
+    /// exact for a single-pass group, a family name for a multi-pass one.
+    /// Each attributed record is also logged at INFO so a user who pastes
+    /// their log can be told which pass touched which node.
+    pub fn checkpoint(&mut self, summary: &mut RepairSummary, category: CheckCategory, pass: &str) {
+        let drained: Vec<PendingRepair> = match self.pending.lock() {
+            Ok(mut pending) => std::mem::take(&mut *pending),
+            // A poisoned buffer means a pass panicked mid-apply; the tally is
+            // then unknowable, so record a checked-but-empty category rather
+            // than a number nobody can stand behind.
+            Err(_) => Vec::new(),
+        };
+        let records: Vec<RepairRecord> = drained
+            .into_iter()
+            .map(|repair| repair.attribute(category, pass))
+            .collect();
+        for record in &records {
+            tracing::info!(
+                pass = %record.pass,
+                category = %record.category.key(),
+                node = %record.node_id,
+                node_name = %record.node_name.as_deref().unwrap_or(""),
+                detail = %record.detail,
+                "quality repair applied"
+            );
+        }
+        summary.record_all(category, records);
     }
 }
 
-/// [`DocSink`] decorator that counts accepted applies. Every method
+/// [`DocSink`] decorator that records accepted applies. Every method
 /// delegates verbatim — including `insert_subtree_returning_root_ids`, which
 /// MUST forward rather than fall through to the trait default, or an
 /// immediate-apply sink's real remapped ids would be swallowed.
+///
+/// The description is computed BEFORE delegating, against the pre-edit
+/// document — that is the only moment the `before` half of `before → after`
+/// still exists — and is kept only when the sink accepts the command.
 pub struct CountingSink<'a> {
     inner: &'a mut dyn DocSink,
-    applied: Arc<AtomicUsize>,
+    pending: Arc<Mutex<Vec<PendingRepair>>>,
+}
+
+impl CountingSink<'_> {
+    fn push(&self, repair: PendingRepair) {
+        if let Ok(mut pending) = self.pending.lock() {
+            pending.push(repair);
+        }
+    }
 }
 
 impl DocSink for CountingSink<'_> {
@@ -206,9 +304,10 @@ impl DocSink for CountingSink<'_> {
     }
 
     fn apply(&mut self, cmd: EditorCommand) -> bool {
+        let described = describe_command(self.inner.state(), &cmd);
         let accepted = self.inner.apply(cmd);
         if accepted {
-            self.applied.fetch_add(1, Ordering::SeqCst);
+            self.push(described);
         }
         accepted
     }
@@ -218,11 +317,23 @@ impl DocSink for CountingSink<'_> {
         nodes: Vec<PenNode>,
         parent_id: &NodeId,
     ) -> Option<Vec<String>> {
+        let described = describe_command(
+            self.inner.state(),
+            &EditorCommand::InsertSubtree {
+                nodes: Vec::new(),
+                parent_id: parent_id.clone(),
+                page_id: None,
+            },
+        );
+        let count = nodes.len();
         let out = self
             .inner
             .insert_subtree_returning_root_ids(nodes, parent_id);
         if out.is_some() {
-            self.applied.fetch_add(1, Ordering::SeqCst);
+            self.push(PendingRepair {
+                detail: format!("inserted {count} subtree(s)"),
+                ..described
+            });
         }
         out
     }

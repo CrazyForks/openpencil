@@ -457,17 +457,35 @@ fn apply_progress(msg: &mut ChatMessage, progress: &[Progress], locale: Locale) 
             // treatment as the two reports above. `remaining` is `None`:
             // the promise-delivery check has not run yet at this point, and
             // an assumed "no issues left" would be a claim, not a fact.
-            Progress::QualityChecked { checks, repairs } => {
-                match op_host_services::quality_credential::quality_credential_line(
-                    &op_ai::chat_provider::QualitySummary {
-                        checks: checks.clone(),
-                        repairs: repairs.clone(),
-                    },
-                    None,
-                ) {
-                    Some(line) => append_narration(msg, line.trim_start()),
-                    None => false,
+            Progress::QualityChecked {
+                checks,
+                repairs,
+                records,
+                notes,
+            } => {
+                let quality = op_ai::chat_provider::QualitySummary {
+                    checks: checks.clone(),
+                    repairs: repairs.clone(),
+                    records: records.clone(),
+                    notes: notes.clone(),
+                };
+                let mut event_changed =
+                    match op_host_services::quality_credential::quality_credential_line(
+                        &quality, None,
+                    ) {
+                        Some(line) => append_narration(msg, line.trim_start()),
+                        None => false,
+                    };
+                // The itemized half rides the "Polishing the layout" row's
+                // detail rather than the narration: the row is expandable, so
+                // 41 repairs are one click away instead of 41 lines of prose.
+                // `_with_records` is deliberately NOT used above — that would
+                // print the same list twice.
+                if let Some(detail) = repair_detail_text(&quality, locale) {
+                    event_changed |=
+                        update_activity(msg, "__polish", ChatActivityStatus::Done, Some(detail));
                 }
+                event_changed
             }
         };
     }
@@ -548,6 +566,44 @@ fn planned_narration(locale: Locale, count: usize) -> String {
     op_i18n::translate(locale, key).replace("{{count}}", &count.to_string())
 }
 
+/// Build the expandable detail block for the "Polishing the layout" row:
+/// a localized "N auto-repair(s) applied" head line, then one line per
+/// repair (capped), then a localized notice for whatever the cap left out.
+///
+/// Newline-separated because [`op_editor_core::ChatActivity::detail`] is one
+/// string that the transcript splits per line into the row's expandable
+/// details. `None` when the passes reported no itemized repairs at all — an
+/// empty block would add a chevron that reveals nothing.
+fn repair_detail_text(
+    quality: &op_ai::chat_provider::QualitySummary,
+    locale: Locale,
+) -> Option<String> {
+    let lines = op_host_services::quality_credential::quality_repair_detail_lines(quality);
+    let notes = op_host_services::quality_credential::quality_note_lines(quality);
+    if lines.is_empty() && notes.is_empty() {
+        return None;
+    }
+    // Notes first: a run whose intent tier was skipped for authored template
+    // input reads "layout 0" as "not checked", not "nothing wrong", and a
+    // reader who never expands past the first line must still get that.
+    let mut out = notes;
+    if !lines.is_empty() {
+        out.push(
+            op_i18n::translate(locale, "ai.designProgress.detail.repairsApplied")
+                .replace("{{count}}", &quality.records.len().to_string()),
+        );
+        out.extend(lines);
+        let overflow = op_host_services::quality_credential::quality_repair_overflow(quality);
+        if overflow > 0 {
+            out.push(
+                op_i18n::translate(locale, "ai.designProgress.detail.repairsMore")
+                    .replace("{{count}}", &overflow.to_string()),
+            );
+        }
+    }
+    Some(out.join("\n"))
+}
+
 fn append_narration(msg: &mut ChatMessage, text: &str) -> bool {
     if text.is_empty() || msg.content.contains(text) {
         return false;
@@ -589,6 +645,10 @@ fn count_u32(count: usize) -> u32 {
 #[cfg(test)]
 #[path = "design_session_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "design_session_quality_tests.rs"]
+mod quality_tests;
 
 #[cfg(test)]
 #[path = "design_session_worker_tests.rs"]
