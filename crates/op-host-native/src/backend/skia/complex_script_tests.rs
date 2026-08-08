@@ -8,9 +8,15 @@
 //! assert against system typefaces, and a bare Linux CI box has no Arabic
 //! face to resolve.
 
+// Everything below is macOS-gated (see the module note), so the shared
+// imports and constant must carry the same gate or non-mac builds flag
+// them as unused under -D warnings.
+#[cfg(target_os = "macos")]
 use super::*;
+#[cfg(target_os = "macos")]
 use op_editor_ui::TextLayout;
 
+#[cfg(target_os = "macos")]
 const SIZE: f32 = 40.0;
 
 /// Raw unshaped width — skia's default per-codepoint advances with no
