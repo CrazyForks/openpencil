@@ -76,6 +76,12 @@ base64 = "0.22"
 getrandom = "0.3"
 hmac = "0.12"
 sha2 = "0.10"
+
+# Unix signal handling for the online daemon's controlled shutdown. Already in
+# the dependency graph transitively; named here so the SIGTERM handler can use
+# it directly. Unix-only — the online daemon is a container deployment.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 zip = "2"
 memmap2 = "0.9"
 glam = { version = "0.29", default-features = false, features = ["std"] }

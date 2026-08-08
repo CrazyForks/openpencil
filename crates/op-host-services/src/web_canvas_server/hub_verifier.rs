@@ -165,13 +165,14 @@ mod tests {
         });
         assert!(both.scopes.can_write());
 
-        // A token that names no mcp scope at all predates scoping and keeps
-        // full authority; see `McpScopes::from_scope_list`.
+        // A token that names no mcp scope may do nothing — fail-closed. See
+        // `McpScopes::from_scope_list`: op-hub must issue explicit scopes.
         let unscoped = identity_from_token(HubToken {
             scopes: vec!["billing:read".into()],
             ..token()
         });
-        assert!(unscoped.scopes.can_write());
+        assert!(!unscoped.scopes.can_write());
+        assert!(!unscoped.scopes.can_read());
     }
 
     #[test]

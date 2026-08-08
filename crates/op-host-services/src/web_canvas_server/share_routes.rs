@@ -16,7 +16,7 @@
 
 use op_editor_core::share_routes;
 
-use super::tenant::{TenantLease, TenantRegistry};
+use super::tenant::{AclChange, TenantLease, TenantRegistry};
 use super::tenant_auth::ResolvedIdentity;
 use super::WebReply;
 
@@ -107,25 +107,38 @@ fn mutate(
         Ok(account) => account,
         Err(error) => return error_reply(error),
     };
-    let changed = if granting {
-        lease.tenant().grant(&account)
+    let change = if granting {
+        AclChange::Grant(account)
     } else {
-        lease.tenant().revoke(&account)
+        AclChange::Revoke(account)
     };
-    if changed {
-        // Persisted immediately rather than at eviction: a share the user was
-        // told had succeeded must survive a restart, and the document it
-        // applies to may not be written for another half hour.
-        registry.persist_acl(lease.owner_id(), lease.tenant());
-    }
-    WebReply {
-        status: "200 OK",
-        body: serde_json::json!({
-            "ok": true,
-            "changed": changed,
-            "sharedWith": lease.tenant().shared_with().into_iter().collect::<Vec<_>>(),
-        })
-        .to_string(),
+    // The edit and its write are one serialised operation. Persisted
+    // immediately rather than at eviction: a share the user was told had
+    // succeeded must survive a restart, and the document it applies to may not
+    // be written for another half hour.
+    match registry.update_acl(lease.owner_id(), lease.tenant(), change) {
+        Ok(update) => WebReply {
+            status: "200 OK",
+            body: serde_json::json!({
+                "ok": true,
+                "changed": update.changed,
+                "sharedWith": update.shared_with.into_iter().collect::<Vec<_>>(),
+            })
+            .to_string(),
+        },
+        // The change has been rolled back, so memory and disk agree and a
+        // retry starts from a known state. Reporting 200 here — as the
+        // previous code did — told the user a share had succeeded that would
+        // vanish on the next restart.
+        Err(error) => WebReply {
+            status: "500 Internal Server Error",
+            body: serde_json::json!({
+                "ok": false,
+                "error": "share-not-persisted",
+                "message": error.to_string(),
+            })
+            .to_string(),
+        },
     }
 }
 

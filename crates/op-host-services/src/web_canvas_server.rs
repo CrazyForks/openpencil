@@ -19,7 +19,6 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -59,45 +58,6 @@ const SSE_HEARTBEAT: Duration = Duration::from_secs(15);
 pub struct SseTick {
     pub version: u64,
     pub collab_seq: u64,
-}
-
-/// Broadcast hub for SSE subscribers. Each `GET /api/mcp/events` connection
-/// registers a channel; a document mutation broadcasts the new tick to all
-/// of them, and each SSE connection thread writes it to its socket. Senders to
-/// disconnected clients are pruned on the next broadcast.
-#[derive(Default)]
-pub struct SseHub {
-    subscribers: Mutex<Vec<mpsc::Sender<SseTick>>>,
-}
-
-impl SseHub {
-    /// Register a subscriber; the SSE connection thread blocks on the returned
-    /// receiver for ticks.
-    pub(crate) fn subscribe(&self) -> Receiver<SseTick> {
-        let (tx, rx) = mpsc::channel();
-        self.subscribers
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .push(tx);
-        rx
-    }
-
-    /// Broadcast a tick to all live subscribers, pruning any whose receiver was
-    /// dropped (client disconnected).
-    pub(crate) fn broadcast(&self, tick: SseTick) {
-        self.subscribers
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .retain(|tx| tx.send(tick).is_ok());
-    }
-
-    #[cfg(test)]
-    pub(crate) fn subscriber_count(&self) -> usize {
-        self.subscribers
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .len()
-    }
 }
 
 /// RAII decrement for the connection counter — `Drop` runs on normal exit AND
@@ -347,15 +307,34 @@ impl WebCanvasState {
             // Inside the session's local-edit capture: the session core diffs
             // the document and emits precise node operations, so pushing an
             // unchanged document produces no transaction at all.
-            if !self.ingest_document_in_session(prepared) {
-                return Err(WebCanvasError::Collab(
-                    collab_state::DaemonMutationRefusal::Collab(
-                        op_editor_core::CollabGateReason::PendingEdit,
-                    ),
-                ));
+            match self.ingest_document_in_session(prepared) {
+                // Sequenced: publish it.
+                collab_state::IngestOutcome::Committed => {
+                    self.version = self.version.saturating_add(1);
+                    self.version
+                }
+                // Accepted, but identical. Answering 200 is right — the
+                // client's document IS the daemon's — but bumping the version
+                // would make every peer refetch a document that did not
+                // change.
+                collab_state::IngestOutcome::NoChange => self.version,
+                // The session did not take it. Reporting success here (which
+                // is what the old `bool` did for `Failed`) left the browser
+                // believing a write landed that had been discarded, with no
+                // signal to resync.
+                collab_state::IngestOutcome::Rejected => {
+                    return Err(WebCanvasError::Collab(
+                        collab_state::DaemonMutationRefusal::Collab(
+                            op_editor_core::CollabGateReason::PendingEdit,
+                        ),
+                    ));
+                }
+                collab_state::IngestOutcome::Failed => {
+                    return Err(WebCanvasError::IngestRejected(
+                        collab_state::IngestOutcome::Failed,
+                    ));
+                }
             }
-            self.version = self.version.saturating_add(1);
-            self.version
         } else {
             self.replace_document(prepared.into_document())
         };
@@ -637,7 +616,26 @@ pub fn handle_web_canvas_request(
         {
             online_policy::refusal_reply(online_policy::OnlineRouteRefusal::LocalFileAccess)
         }
-        ("POST", "/api/file/save") => save_current_file(body, state),
+        // A save reply REPLACES `state.editor` (it installs the document it
+        // just wrote, plus its metadata), so it is a whole-document swap and
+        // has to clear the same gate `open-recent` does. Swapping the document
+        // out from under a live session would leave the peers editing a
+        // document this daemon no longer has.
+        ("POST", "/api/file/save") => match state.gate_daemon_mutation(
+            op_editor_core::CollabGateAction::ReplaceDocument,
+            op_editor_core::CollabEditSource::ExternalSync,
+        ) {
+            Ok(()) => save_current_file(body, state),
+            Err(refusal) => WebReply {
+                status: refusal.http_status(),
+                body: serde_json::json!({
+                    "ok": false,
+                    "error": refusal.code(),
+                    "message": refusal.to_string(),
+                })
+                .to_string(),
+            },
+        },
         ("POST", "/api/file/open-recent") => open_recent_file(body, state),
         ("POST", "/api/export/pdf") => export_pdf_download(body, state),
         ("POST", "/api/export/raster") => export_raster_download(body, state),
@@ -726,6 +724,9 @@ fn is_device_login_route(path: &str) -> bool {
 }
 
 mod collab_driver;
+mod sse_hub;
+pub use sse_hub::SseHub;
+pub(crate) use sse_hub::SseSlot;
 mod collab_routes;
 pub(crate) mod collab_state;
 mod connect_routes;
@@ -743,8 +744,9 @@ mod share_routes;
 pub mod tenant;
 pub mod tenant_auth;
 pub mod tenant_store;
+mod tool_scopes;
 
-pub use collab_state::DaemonMutationRefusal;
+pub use collab_state::{DaemonMutationRefusal, IngestOutcome};
 pub use connect_routes::*;
 use connection::*;
 use doc_routes::*;

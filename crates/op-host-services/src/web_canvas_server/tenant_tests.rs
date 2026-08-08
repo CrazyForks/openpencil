@@ -71,9 +71,9 @@ fn every_tenant_owns_its_own_broadcast_hub() {
         collab_seq: 0,
     });
 
-    assert_eq!(a_sub.try_recv().expect("A hears its own bump").version, 5);
+    assert_eq!(a_sub.pending().expect("A hears its own bump").version, 5);
     assert!(
-        b_sub.try_recv().is_err(),
+        b_sub.pending().is_none(),
         "a tenant's version bump must not reach another tenant's subscribers"
     );
 }

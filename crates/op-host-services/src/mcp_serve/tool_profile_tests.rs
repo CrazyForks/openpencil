@@ -187,12 +187,14 @@ fn scopes_are_derived_from_the_hub_scope_list() {
     // Write without read is honoured as written rather than normalised.
     assert!(McpScopes::from_scope_list(&["mcp:write"]).can_write());
     assert!(!McpScopes::from_scope_list(&["mcp:write"]).allows(ToolAccess::Read));
-    // A list that names no mcp scope predates scoping — see the doc comment.
+    // Fail-closed: a token that names no mcp scope may do nothing. op-hub
+    // MUST issue explicit `mcp:read` / `mcp:write` on any token intended to
+    // drive the canvas — one without them is inert by design.
     assert_eq!(
         McpScopes::from_scope_list(&["billing:read"]),
-        McpScopes::FULL
+        McpScopes::NONE
     );
-    assert_eq!(McpScopes::from_scope_list::<&str>(&[]), McpScopes::FULL);
+    assert_eq!(McpScopes::from_scope_list::<&str>(&[]), McpScopes::NONE);
     // An unknown mcp scope does NOT grant anything.
     assert_eq!(
         McpScopes::from_scope_list(&["mcp:admin"]),

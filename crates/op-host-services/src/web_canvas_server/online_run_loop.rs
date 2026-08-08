@@ -123,6 +123,11 @@ pub fn run_online_web_canvas(options: ServeWebOptions) -> Result<()> {
     ));
     let conn_count = Arc::new(AtomicUsize::new(0));
     let shutdown = Arc::new(AtomicBool::new(false));
+    // A container stop is a SIGTERM, and without a handler it kills the
+    // process where it stands — losing every resident tenant that had not
+    // happened to be evicted. The handler only raises the flag the accept
+    // loop already observes, so the existing exit path (which flushes) runs.
+    install_shutdown_signals(&shutdown, local_addr);
     spawn_sweeper(&registry, &shutdown);
 
     for stream in listener.incoming() {
@@ -202,6 +207,66 @@ pub(super) fn check_persistence_configured(
         super::tenant_store::DATA_DIR_ENV,
         super::tenant_store::DATA_DIR_ENV,
     )))
+}
+
+/// Raised by the signal handler. A `static` because that is all a handler may
+/// safely touch: it runs on an arbitrary thread with almost nothing allowed,
+/// so it sets one atomic and returns, and the watcher thread below does the
+/// rest.
+static SIGNAL_RECEIVED: AtomicBool = AtomicBool::new(false);
+
+/// Route SIGTERM and SIGINT into the daemon's existing shutdown path.
+///
+/// Only installed by the online loop. The local and managed daemons keep the
+/// lifecycle they have always had — a token-authed shutdown request, or
+/// stdin EOF under a supervisor — and adding a handler there would change
+/// what Ctrl-C means for an interactive operator.
+fn install_shutdown_signals(shutdown: &Arc<AtomicBool>, local_addr: std::net::SocketAddr) {
+    #[cfg(unix)]
+    {
+        // SAFETY: `handle_shutdown_signal` is async-signal-safe — it performs
+        // exactly one relaxed atomic store and returns. It allocates nothing,
+        // takes no lock, and calls nothing re-entrant.
+        unsafe {
+            let handler = handle_shutdown_signal as *const () as libc::sighandler_t;
+            libc::signal(libc::SIGTERM, handler);
+            libc::signal(libc::SIGINT, handler);
+        }
+        let shutdown = Arc::clone(shutdown);
+        // The handler cannot wake a blocked `accept`, so a watcher does it:
+        // it raises the real flag and pokes the listener, exactly as the
+        // token-authed shutdown path does.
+        let spawned = thread::Builder::new()
+            .name("op-serve-web-online-signal".into())
+            .spawn(move || loop {
+                if SIGNAL_RECEIVED.load(Ordering::Acquire) {
+                    if !shutdown.swap(true, Ordering::AcqRel) {
+                        let _ = std::net::TcpStream::connect(local_addr);
+                    }
+                    return;
+                }
+                if shutdown.load(Ordering::Acquire) {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            });
+        if spawned.is_err() {
+            eprintln!(
+                "openpencil --serve-web --online: could not start the signal watcher; a \
+                 container stop will not flush tenants"
+            );
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (shutdown, local_addr);
+    }
+}
+
+/// The signal handler itself. See the safety note at its installation.
+#[cfg(unix)]
+extern "C" fn handle_shutdown_signal(_signal: libc::c_int) {
+    SIGNAL_RECEIVED.store(true, Ordering::Relaxed);
 }
 
 /// Whether the operator accepted a deployment that persists nothing.
@@ -452,6 +517,7 @@ pub(super) fn serve_one_online<S: Read + Write>(
             // The public tool profile, narrowed further by whatever scopes
             // this particular credential carries.
             mcp_profile: crate::mcp_serve::tool_profile::McpAccessProfile::online(identity.scopes),
+            rest_identity: Some((identity.via, identity.scopes)),
         },
     )
 }

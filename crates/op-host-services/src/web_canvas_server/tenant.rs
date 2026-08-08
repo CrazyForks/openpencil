@@ -34,7 +34,23 @@ use std::sync::{Arc, Mutex};
 use op_editor_core::EditorState;
 
 use super::tenant_auth::ResolvedIdentity;
-use super::tenant_store::TenantStore;
+use super::tenant_store::{TenantStore, TenantStoreError};
+
+/// One edit to a tenant's access list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AclChange {
+    Grant(String),
+    Revoke(String),
+}
+
+/// The result of an applied access-list change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AclUpdate {
+    /// Whether the list actually moved (a repeated grant does not).
+    pub changed: bool,
+    /// The list as it now stands, both in memory and on disk.
+    pub shared_with: BTreeSet<String>,
+}
 use super::{SseHub, WebCanvasState};
 
 /// Global connection ceiling for the online daemon.
@@ -224,6 +240,14 @@ impl Tenant {
             .remove(visitor)
     }
 
+    /// The access list, locked for a read-modify-write.
+    ///
+    /// `update_acl` holds this across both the edit and the disk write so two
+    /// concurrent grants cannot each write back a list missing the other's.
+    pub(super) fn shared_with_guard(&self) -> std::sync::MutexGuard<'_, BTreeSet<String>> {
+        self.shared_with.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
     /// A snapshot of the access list.
     pub fn shared_with(&self) -> BTreeSet<String> {
         self.shared_with
@@ -372,6 +396,19 @@ impl TenantRegistry {
     /// A tenant that is not resident is restored first: a visitor must be
     /// able to open a shared document whose owner is offline, and refusing
     /// until the owner next signs in would make sharing useless.
+    ///
+    /// ## Admission precedes materialisation
+    ///
+    /// Materialising first would let an unauthenticated-in-practice caller
+    /// spend the daemon's whole tenant budget: `?tenant=` names an arbitrary
+    /// account, and creating the tenant to discover the caller is not on its
+    /// list means every refused request still costs a resident tenant. So a
+    /// non-resident owner is admitted from the PERSISTED access list, which
+    /// reads one small file and materialises nothing.
+    ///
+    /// A resident owner is checked against the live list, which is
+    /// authoritative — a revoke that has not been written yet still takes
+    /// effect immediately.
     pub fn lease_for_shared(
         &self,
         owner_id: &str,
@@ -380,11 +417,31 @@ impl TenantRegistry {
         if owner_id == visitor.user_id {
             return self.lease_tenant(owner_id);
         }
+        if !self.admits_visitor(owner_id, &visitor.user_id) {
+            return Err(TenantError::NotShared);
+        }
         let lease = self.lease_tenant(owner_id)?;
+        // Re-checked against the live list now that the tenant is resident: a
+        // revoke may have landed between the two, and the in-memory list is
+        // the authority.
         if !lease.tenant().admits(&visitor.user_id) {
             return Err(TenantError::NotShared);
         }
         Ok(lease)
+    }
+
+    /// Whether `visitor` is on `owner_id`'s access list, WITHOUT materialising
+    /// the tenant.
+    ///
+    /// Resident tenants answer from memory; the rest answer from the persisted
+    /// list. A deployment with no store therefore admits nobody to a
+    /// non-resident tenant, which is the fail-closed direction — the share was
+    /// never durable in the first place.
+    fn admits_visitor(&self, owner_id: &str, visitor: &str) -> bool {
+        if let Some(tenant) = self.lock().get(owner_id) {
+            return tenant.admits(visitor);
+        }
+        self.store.load_acl(owner_id).contains(visitor)
     }
 
     /// Who has shared with `visitor`, across every resident tenant.
@@ -488,13 +545,49 @@ impl TenantRegistry {
         written
     }
 
-    /// Persist a tenant's access list, if persistence is on.
-    pub fn persist_acl(&self, user_id: &str, tenant: &Tenant) {
-        if !self.store.is_enabled() {
-            return;
+    /// Apply one access-list change and persist the result atomically.
+    ///
+    /// The edit and its write happen under the SAME lock, for two reasons.
+    /// Snapshot-then-write let two concurrent grants each read the list before
+    /// the other's insert and write back a version missing it — the second
+    /// write silently dropping the first grant. And a write that fails has to
+    /// be reported: the previous code logged it and answered 200, so a user
+    /// was told a share had succeeded that would vanish on the next restart.
+    ///
+    /// On a write failure the in-memory change is ROLLED BACK, so memory and
+    /// disk agree and the caller's retry starts from a known state. The
+    /// alternative — keep it in memory and mark it pending — would mean the
+    /// share works until the process restarts and then silently stops, which
+    /// is the harder failure to diagnose.
+    pub fn update_acl(
+        &self,
+        user_id: &str,
+        tenant: &Tenant,
+        change: AclChange,
+    ) -> Result<AclUpdate, TenantStoreError> {
+        let mut list = tenant.shared_with_guard();
+        let changed = match &change {
+            AclChange::Grant(account) => list.insert(account.clone()),
+            AclChange::Revoke(account) => list.remove(account.as_str()),
+        };
+        if !changed || !self.store.is_enabled() {
+            return Ok(AclUpdate {
+                changed,
+                shared_with: list.clone(),
+            });
         }
-        if let Err(error) = self.store.save_acl_for(user_id, &tenant.shared_with()) {
-            eprintln!("openpencil --serve-web --online: could not persist a share list ({error})");
+        match self.store.save_acl_for(user_id, &list) {
+            Ok(()) => Ok(AclUpdate {
+                changed,
+                shared_with: list.clone(),
+            }),
+            Err(error) => {
+                match &change {
+                    AclChange::Grant(account) => list.remove(account.as_str()),
+                    AclChange::Revoke(account) => list.insert(account.clone()),
+                };
+                Err(error)
+            }
         }
     }
 

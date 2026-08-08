@@ -4137,6 +4137,7 @@ dependencies = [
  "glam",
  "hmac",
  "jian-ops-schema",
+ "libc",
  "memmap2",
  "op-acp",
  "op-ai",

@@ -152,6 +152,69 @@ impl CollabHost for DaemonCollabHost<'_> {
     }
 }
 
+/// What a session did with a whole-document push.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IngestOutcome {
+    /// Installed and sequenced. The only outcome that publishes a version.
+    Committed,
+    /// Accepted, but the document was identical — no transaction, no version.
+    NoChange,
+    /// No capture could be opened (busy, or this peer is read-only).
+    Rejected,
+    /// The capture opened but the session would not commit it. The browser's
+    /// copy is now definitively behind and must be refetched.
+    Failed,
+}
+
+impl IngestOutcome {
+    /// Stable machine-readable code, for the outcomes that are errors.
+    pub const fn error_code(self) -> Option<&'static str> {
+        match self {
+            Self::Committed | Self::NoChange => None,
+            Self::Rejected => Some("collab-busy"),
+            // Shares the existing conflict code so the browser's established
+            // refetch path handles it without a new client branch.
+            Self::Failed => Some("version-conflict"),
+        }
+    }
+}
+
+/// RAII close for a session's local-edit capture.
+///
+/// `begin_local_edit` and `finish_local_edit` must pair on every path. Holding
+/// the pair in a guard means an early return — or a panic in the install —
+/// cannot leave the capture open and the session wedged.
+struct LocalEditCapture<'a> {
+    state: Option<&'a mut WebCanvasState>,
+}
+
+impl LocalEditCapture<'_> {
+    fn state_mut(&mut self) -> &mut WebCanvasState {
+        self.state.as_mut().expect("capture is open")
+    }
+
+    /// Close the capture, reporting whether the session committed it.
+    fn finish(mut self) -> bool {
+        let Some(state) = self.state.take() else {
+            return false;
+        };
+        let (runtime, mut host) = state.collab_runtime_and_host();
+        runtime.finish_local_edit(&mut host)
+    }
+}
+
+impl Drop for LocalEditCapture<'_> {
+    fn drop(&mut self) {
+        // Only reached when `finish` was not called — an unwind. Close the
+        // capture anyway; its result is unobservable on this path, but a
+        // session left mid-edit would refuse every later push.
+        if let Some(state) = self.state.take() {
+            let (runtime, mut host) = state.collab_runtime_and_host();
+            let _ = runtime.finish_local_edit(&mut host);
+        }
+    }
+}
+
 /// Why the daemon refused a mutation.
 ///
 /// The bool acks the older applier paths returned could not say *why* a write
@@ -270,22 +333,38 @@ impl WebCanvasState {
     /// transaction at all. [`EditorState::install_prepared_document`] keeps the
     /// document generation, which is what lets the matching finish succeed.
     ///
-    /// Returns `false` when no capture could be opened (busy or read-only); the
-    /// caller then reports a conflict rather than writing behind the session's
-    /// back.
-    pub(crate) fn ingest_document_in_session(&mut self, prepared: PreparedDocument) -> bool {
+    /// Reports what the session did with the push — see [`IngestOutcome`].
+    /// The previous `bool` could not distinguish "the session accepted this"
+    /// from "the session threw it away", so a rejected push was answered 200
+    /// with a version bump and the browser never learned to resync.
+    pub(crate) fn ingest_document_in_session(
+        &mut self,
+        prepared: PreparedDocument,
+    ) -> IngestOutcome {
+        let revision_before = self.editor.document_revision();
         let (runtime, mut host) = self.collab_runtime_and_host();
         if !runtime.begin_local_edit(&mut host) {
-            return false;
+            return IngestOutcome::Rejected;
         }
-        // From here the capture is open and MUST be closed on every path;
-        // `finish_local_edit` is the only close, so nothing fallible may run
-        // between the two calls.
-        host.editor_state_mut()
+        // The capture is now open and MUST be closed on every path. The guard
+        // is what makes that true even if the install below panics: an
+        // unclosed capture leaves the session permanently unable to accept
+        // another edit, which is worse than the failed push itself.
+        let mut capture = LocalEditCapture { state: Some(self) };
+        capture
+            .state_mut()
+            .editor
             .install_prepared_document(prepared, EditOrigin::Local);
-        let (runtime, mut host) = self.collab_runtime_and_host();
-        runtime.finish_local_edit(&mut host);
-        true
+        let committed = capture.finish();
+        if !committed {
+            return IngestOutcome::Failed;
+        }
+        if self.editor.document_revision() == revision_before {
+            // The session diffed the document and found nothing to send. The
+            // push succeeded; there is simply no new version to publish.
+            return IngestOutcome::NoChange;
+        }
+        IngestOutcome::Committed
     }
 }
 

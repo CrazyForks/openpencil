@@ -199,6 +199,30 @@ pub(super) fn cookie_write_origin_allowed(allow: &[String], origin: Option<&str>
 /// paints nothing.
 pub(super) const EMPTY_INDICATOR_RELAY: &str = r#"{"epoch":0,"active":false,"cursorAgent":null,"nodes":[],"frames":[],"previews":[],"reveals":[]}"#;
 
+/// REST paths an API token may reach without any scope.
+///
+/// Only the deployment health probe: a client has to be able to discover the
+/// daemon exists before it can be told its scopes are insufficient.
+const SCOPE_EXEMPT_READS: &[&str] = &["/api/mcp/server"];
+
+/// Which scope a REST request needs, if any.
+///
+/// Method-based: `GET`/`HEAD`/`OPTIONS` read, everything else writes. Deriving
+/// it from the method rather than a per-route table means a route added later
+/// is covered by default, and covered in the strict direction.
+pub(super) fn rest_scope_required(
+    method: &str,
+    path: &str,
+) -> Option<super::tool_scopes::RestScope> {
+    if SCOPE_EXEMPT_READS.contains(&path) {
+        return None;
+    }
+    match method {
+        "GET" | "HEAD" | "OPTIONS" => Some(super::tool_scopes::RestScope::Read),
+        _ => Some(super::tool_scopes::RestScope::Write),
+    }
+}
+
 /// A route the online deployment refuses outright.
 ///
 /// Typed rather than a bare status so the refusal reads the same in a REST

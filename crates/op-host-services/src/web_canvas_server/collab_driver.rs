@@ -154,7 +154,7 @@ mod tests {
         // The first pass may publish the initial availability projection.
         assert!(!tick(&state, &hub));
         let settled = state.lock().unwrap_or_else(|p| p.into_inner()).collab.seq();
-        while sub.try_recv().is_ok() {}
+        sub.pending();
 
         // Every pass after that is silent, which is what makes a 250 ms idle
         // cadence free: no bump, no broadcast, no browser refetch.
@@ -165,7 +165,7 @@ mod tests {
             state.lock().unwrap_or_else(|p| p.into_inner()).collab.seq(),
             settled
         );
-        assert!(sub.try_recv().is_err(), "an idle daemon must stay quiet");
+        assert!(sub.pending().is_none(), "an idle daemon must stay quiet");
     }
 
     #[test]
@@ -174,7 +174,7 @@ mod tests {
         let hub = SseHub::default();
         let sub = hub.subscribe();
         tick(&state, &hub);
-        while sub.try_recv().is_ok() {}
+        sub.pending();
 
         let (version_before, seq_before) = {
             let mut guard = state.lock().unwrap_or_else(|p| p.into_inner());
@@ -194,7 +194,7 @@ mod tests {
              every cursor move would make the browser refetch the document"
         );
         assert_eq!(guard.collab.seq(), seq_before + 1);
-        let tick_out = sub.try_recv().expect("the change was broadcast");
+        let tick_out = sub.pending().expect("the change was broadcast");
         assert_eq!(tick_out.version, version_before);
         assert_eq!(tick_out.collab_seq, seq_before + 1);
     }
@@ -205,7 +205,7 @@ mod tests {
         let hub = SseHub::default();
         let sub = hub.subscribe();
         tick(&state, &hub);
-        while sub.try_recv().is_ok() {}
+        sub.pending();
 
         // A REST push mutated the document and published its own version while
         // the driver was asleep.
@@ -225,7 +225,7 @@ mod tests {
             state.lock().unwrap_or_else(|p| p.into_inner()).version,
             version_before
         );
-        assert!(sub.try_recv().is_err(), "nothing new to announce");
+        assert!(sub.pending().is_none(), "nothing new to announce");
     }
 
     #[test]

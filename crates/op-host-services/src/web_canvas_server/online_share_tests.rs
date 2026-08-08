@@ -499,3 +499,165 @@ fn a_deployment_that_evicts_but_persists_nothing_refuses_to_start() {
     // Both is fine — the data directory simply wins.
     assert!(check_persistence_configured(true, true, 1800).is_ok());
 }
+
+// ---------------------------------------------------------------------------
+// H5: an unauthorised `?tenant=` must not cost a tenant slot.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn unauthorised_tenant_requests_never_materialise_a_tenant() {
+    // The exhaustion this closes: `?tenant=` names an arbitrary account, and
+    // creating the tenant to discover the caller is not on its list means
+    // every refused request still spends the daemon's tenant budget.
+    let registry = registry();
+    let verifier = verifier();
+    for index in 0..64 {
+        let owner: &'static str = Box::leak(format!("victim-{index}").into_boxed_str());
+        let response = serve(
+            &registry,
+            &verifier,
+            Request {
+                tenant: Some(owner),
+                ..Request::new("GET", "/api/mcp/document")
+            }
+            .with_bearer("tokB"),
+        );
+        assert_eq!(status_line(&response), "HTTP/1.1 403 Forbidden", "{owner}");
+    }
+    assert_eq!(
+        registry.tenant_count(),
+        0,
+        "a refused visitor must not leave a tenant behind"
+    );
+}
+
+#[test]
+fn an_authorised_visitor_still_materialises_an_offline_owners_tenant() {
+    // The other half: admission-before-materialisation must not break the
+    // case sharing exists for — opening a document whose owner is offline.
+    let temp = PersistentRegistry::new("offline-owner");
+    let verifier = verifier();
+    share(
+        &temp.registry,
+        "tokA",
+        op_editor_core::share_routes::GRANT,
+        "userB",
+    );
+    serve(
+        &temp.registry,
+        &verifier,
+        Request::json("POST", "/api/mcp/document", SYNC_BODY).with_bearer("tokA"),
+    );
+    assert_eq!(temp.registry.evict_idle(now_unix() + 3600), 1);
+    assert_eq!(temp.registry.tenant_count(), 0);
+
+    // The owner is gone from memory; the visitor is admitted from the
+    // persisted list and the tenant is restored for them.
+    let visited = serve(
+        &temp.registry,
+        &verifier,
+        as_tenant(
+            Request::new("GET", "/api/mcp/document").with_bearer("tokB"),
+            "userA",
+        ),
+    );
+    assert_eq!(status_line(&visited), "HTTP/1.1 200 OK", "{visited}");
+    assert!(visited.contains("Tenant Rect"), "{visited}");
+}
+
+#[test]
+fn a_non_resident_tenant_admits_nobody_when_nothing_was_persisted() {
+    // Fail-closed: with no store the share was never durable, so a visitor
+    // cannot be admitted to a tenant that is not in memory.
+    let registry = registry();
+    let response = serve(
+        &registry,
+        &verifier(),
+        as_tenant(
+            Request::new("GET", "/api/mcp/version").with_bearer("tokB"),
+            "userA",
+        ),
+    );
+    assert_eq!(
+        status_line(&response),
+        "HTTP/1.1 403 Forbidden",
+        "{response}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// H6: concurrent access-list edits.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn concurrent_grants_all_survive() {
+    // Snapshot-then-write let two grants each read the list before the
+    // other's insert and write back a version missing it, silently dropping
+    // one. The edit and its write now happen under one lock.
+    let temp = std::sync::Arc::new(PersistentRegistry::new("concurrent-grants"));
+    let identity = crate::web_canvas_server::tenant_auth::ResolvedIdentity {
+        user_id: "userA".into(),
+        username: "userA".into(),
+        display_name: "userA".into(),
+        via: crate::web_canvas_server::tenant_auth::IdentityVia::ApiToken,
+        scopes: crate::mcp_serve::tool_profile::McpScopes::FULL,
+    };
+    let lease = temp.registry.lease_for(&identity).expect("lease");
+    let tenant = std::sync::Arc::new(());
+    let _ = tenant;
+
+    std::thread::scope(|scope| {
+        for index in 0..16 {
+            let temp = std::sync::Arc::clone(&temp);
+            let lease = &lease;
+            scope.spawn(move || {
+                let change =
+                    crate::web_canvas_server::tenant::AclChange::Grant(format!("guest-{index}"));
+                temp.registry
+                    .update_acl(lease.owner_id(), lease.tenant(), change)
+                    .expect("persisted");
+            });
+        }
+    });
+
+    let shared = lease.tenant().shared_with();
+    assert_eq!(shared.len(), 16, "every grant must survive: {shared:?}");
+    // …and the persisted list agrees with memory.
+    assert_eq!(temp.registry.store().load_acl("userA"), shared);
+}
+
+#[test]
+fn a_share_that_cannot_be_persisted_is_reported_and_rolled_back() {
+    // Reporting 200 here told the user a share had succeeded that would
+    // vanish on the next restart.
+    let temp = PersistentRegistry::new("unpersistable-share");
+    std::fs::remove_dir_all(&temp.root).expect("clear root");
+    std::fs::write(&temp.root, b"not a directory").expect("block the root");
+
+    let response = share(
+        &temp.registry,
+        "tokA",
+        op_editor_core::share_routes::GRANT,
+        "userB",
+    );
+    assert_eq!(
+        status_line(&response),
+        "HTTP/1.1 500 Internal Server Error",
+        "{response}"
+    );
+    assert_eq!(body(&response)["error"], "share-not-persisted");
+
+    // Rolled back, so memory and disk agree and a retry starts from a known
+    // state — the visitor is NOT quietly admitted in the meantime.
+    let visitor = serve(
+        &temp.registry,
+        &verifier(),
+        as_tenant(
+            Request::new("GET", "/api/mcp/version").with_bearer("tokB"),
+            "userA",
+        ),
+    );
+    assert_eq!(status_line(&visitor), "HTTP/1.1 403 Forbidden", "{visitor}");
+
+    let _ = std::fs::remove_file(&temp.root);
+}

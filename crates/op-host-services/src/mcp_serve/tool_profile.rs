@@ -163,24 +163,31 @@ impl McpScopes {
 
     /// Derive from the scope list on a hub token.
     ///
-    /// A token that names NO `mcp:*` scope at all is treated as unrestricted.
-    /// That is the compatibility default for a token store that does not yet
-    /// issue scopes: the alternative would refuse every token ever minted
-    /// before scopes existed. Once a token names ANY `mcp:*` scope, the list
-    /// is authoritative and anything absent from it is denied — so an
-    /// explicitly read-only token is genuinely read-only.
+    /// **Fail-closed.** A token that names no `mcp:*` scope gets nothing: it
+    /// can neither read nor write. An earlier version treated an unscoped
+    /// token as unrestricted, for compatibility with a token store that did
+    /// not yet issue scopes — but that store still issues no tokens, so
+    /// tightening this costs nothing today and removes a default that would
+    /// have been very hard to tighten later.
+    ///
+    /// **op-hub must issue explicit `mcp:read` / `mcp:write` scopes** on every
+    /// token intended to drive the canvas; one without them is inert.
     pub fn from_scope_list<S: AsRef<str>>(scopes: &[S]) -> Self {
-        let mentions_mcp = scopes
-            .iter()
-            .any(|scope| scope.as_ref().trim().starts_with("mcp:"));
-        if !mentions_mcp {
-            return Self::FULL;
-        }
         let has = |wanted: &str| scopes.iter().any(|scope| scope.as_ref().trim() == wanted);
         Self {
             read: has(MCP_READ_SCOPE),
             write: has(MCP_WRITE_SCOPE),
         }
+    }
+
+    /// A credential that may do nothing.
+    pub const NONE: Self = Self {
+        read: false,
+        write: false,
+    };
+
+    pub const fn can_read(self) -> bool {
+        self.read
     }
 
     pub const fn allows(self, access: ToolAccess) -> bool {

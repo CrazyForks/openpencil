@@ -230,13 +230,22 @@ pub fn dir_name(user_id: &str) -> String {
 
 /// Write `bytes` to `path` via a same-directory temp file plus rename.
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), TenantStoreError> {
-    let temp = path.with_extension("tmp");
+    // Unique per writer: a fixed `.tmp` is shared by every concurrent write to
+    // the same tenant, so two of them interleave into one file and the rename
+    // publishes a mixture of both.
+    let temp = path.with_extension(format!("tmp.{}.{}", std::process::id(), next_temp_id()));
     std::fs::write(&temp, bytes).map_err(|error| TenantStoreError::Io(error.to_string()))?;
     std::fs::rename(&temp, path).map_err(|error| {
         // Leaving the temp behind would accumulate one file per failed write.
         let _ = std::fs::remove_file(&temp);
         TenantStoreError::Io(error.to_string())
     })
+}
+
+/// A per-process counter making temp file names unique.
+fn next_temp_id() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Move a file that would not parse out of the way, preserving it.

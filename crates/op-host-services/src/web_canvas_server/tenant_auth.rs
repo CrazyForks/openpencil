@@ -171,12 +171,14 @@ impl StaticVerifier {
         )
     }
 
-    /// Parse a `token=user[,token2=user2:read]` table.
+    /// Parse a `token=user[,token2=user2:read][,token3=user3:none]` table.
     ///
-    /// The optional `:read` suffix on the account mints a read-only
-    /// credential, so the scope path can be exercised without a hub. Any
-    /// other suffix is rejected rather than silently granting write — a typo
-    /// must not widen authority.
+    /// The optional suffix narrows the credential so the scope paths can be
+    /// exercised without a hub: `:read` mints a read-only token and `:none` a
+    /// scopeless one (what a hub token that names no `mcp:*` scope resolves
+    /// to). A bare `user` is full authority — the operator wrote this table by
+    /// hand, so that is their explicit intent. Any other suffix is rejected
+    /// rather than silently granting write: a typo must not widen authority.
     ///
     /// Malformed pairs are skipped rather than failing the whole table: the
     /// failure mode of a dropped entry is "that token does not authenticate",
@@ -189,6 +191,7 @@ impl StaticVerifier {
                 let token = token.trim();
                 let (user, scopes) = match account.trim().rsplit_once(':') {
                     Some((user, "read")) => (user.trim(), McpScopes::READ_ONLY),
+                    Some((user, "none")) => (user.trim(), McpScopes::NONE),
                     Some((_, _)) => return None,
                     None => (account.trim(), McpScopes::FULL),
                 };

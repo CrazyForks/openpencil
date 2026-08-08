@@ -216,3 +216,94 @@ fn the_local_daemon_still_lists_and_calls_the_whole_catalog() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// H7: scopes apply to REST, not just to /mcp.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_read_scope_token_cannot_replace_the_document_over_rest() {
+    // The bypass: the same token is refused `add_page` on /mcp but could
+    // replace the entire document here — strictly more damage.
+    let response = serve(
+        &registry(),
+        &scoped_verifier(),
+        Request::json("POST", "/api/mcp/document", SYNC_BODY).with_bearer("tokR"),
+    );
+    assert_eq!(
+        status_line(&response),
+        "HTTP/1.1 403 Forbidden",
+        "{response}"
+    );
+    assert_eq!(body(&response)["error"], "scope-insufficient");
+}
+
+#[test]
+fn a_read_scope_token_may_still_read_over_rest() {
+    let response = serve(
+        &registry(),
+        &scoped_verifier(),
+        Request::new("GET", "/api/mcp/document").with_bearer("tokR"),
+    );
+    assert_eq!(status_line(&response), "HTTP/1.1 200 OK", "{response}");
+}
+
+#[test]
+fn a_token_with_no_scopes_is_refused_every_rest_route_but_the_probe() {
+    // Fail-closed: op-hub issues no tokens yet, so an unscoped token is inert.
+    let verifier = StaticVerifier::parse("tokN=userN:none");
+    let registry = registry();
+    for (method, path) in [("GET", "/api/mcp/document"), ("GET", "/api/mcp/version")] {
+        let response = serve(
+            &registry,
+            &verifier,
+            Request::new(method, path).with_bearer("tokN"),
+        );
+        assert_eq!(
+            status_line(&response),
+            "HTTP/1.1 403 Forbidden",
+            "{method} {path}: {response}"
+        );
+    }
+    let push = serve(
+        &registry,
+        &verifier,
+        Request::json("POST", "/api/mcp/document", SYNC_BODY).with_bearer("tokN"),
+    );
+    assert_eq!(status_line(&push), "HTTP/1.1 403 Forbidden", "{push}");
+
+    // The health probe stays reachable so a client can discover the daemon.
+    let probe = serve(
+        &registry,
+        &verifier,
+        Request::new("GET", "/api/mcp/server").with_bearer("tokN"),
+    );
+    assert_eq!(status_line(&probe), "HTTP/1.1 200 OK", "{probe}");
+}
+
+#[test]
+fn a_full_scope_token_is_unaffected_over_rest() {
+    let registry = registry();
+    let response = serve(
+        &registry,
+        &scoped_verifier(),
+        Request::json("POST", "/api/mcp/document", SYNC_BODY).with_bearer("tokA"),
+    );
+    assert_eq!(status_line(&response), "HTTP/1.1 200 OK", "{response}");
+}
+
+#[test]
+fn a_browser_session_is_not_scope_limited_over_rest() {
+    // A session IS the account; scopes narrow a token below it, not the
+    // account below itself.
+    let registry = registry();
+    let verifier = StaticVerifier::parse("sessA=userA");
+    let response = serve(
+        &registry,
+        &verifier,
+        Request::json("POST", "/api/mcp/document", SYNC_BODY)
+            .with_session("sessA")
+            .with_origin(PUBLIC_ORIGIN),
+    );
+    assert_eq!(status_line(&response), "HTTP/1.1 200 OK", "{response}");
+}

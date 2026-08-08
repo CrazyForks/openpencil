@@ -228,7 +228,10 @@ fn ingest_refuses_rather_than_writing_when_no_capture_can_open() {
     )
     .expect("validates");
 
-    assert!(!state.ingest_document_in_session(prepared));
+    assert_eq!(
+        state.ingest_document_in_session(prepared),
+        crate::web_canvas_server::IngestOutcome::Rejected
+    );
     assert_eq!(state.editor.doc, before, "a refused ingest writes nothing");
 }
 
@@ -243,4 +246,76 @@ fn the_projection_sequence_is_independent_of_the_document_version() {
     state.collab.bump_seq();
     assert_eq!(state.sse_tick().version, 0);
     assert_eq!(state.sse_tick().collab_seq, 1);
+}
+
+// ---------------------------------------------------------------------------
+// H3: `/api/file/save` replaces the editor, so it needs the same gate
+// `open-recent` passes.
+// ---------------------------------------------------------------------------
+
+/// Drive the REST route table directly, which is where the gate lives.
+fn save_reply(state: &mut WebCanvasState) -> crate::web_canvas_server::WebReply {
+    crate::web_canvas_server::handle_web_canvas_request(
+        "POST",
+        "/api/file/save",
+        r#"{"document":{"version":"1.0.0","children":[]}}"#,
+        state,
+    )
+}
+
+#[test]
+fn saving_is_refused_for_an_owner_in_a_live_session() {
+    // A save reply REPLACES `state.editor`, so it is a whole-document swap:
+    // letting it through would leave the peers editing a document this daemon
+    // no longer has.
+    let mut state = daemon();
+    in_session(
+        &mut state,
+        CollabConnectionPhase::Active,
+        CollabUiRole::Owner,
+    );
+    let reply = save_reply(&mut state);
+    assert_eq!(reply.status, "409 Conflict", "{}", reply.body);
+    assert!(reply.body.contains("collab-active"), "{}", reply.body);
+}
+
+#[test]
+fn saving_is_refused_for_a_guest_in_a_live_session() {
+    let mut state = daemon();
+    in_session(
+        &mut state,
+        CollabConnectionPhase::Active,
+        CollabUiRole::Editor,
+    );
+    let reply = save_reply(&mut state);
+    assert_eq!(reply.status, "409 Conflict", "{}", reply.body);
+}
+
+#[test]
+fn saving_outside_a_session_is_not_gated() {
+    // The local daemon's normal path must be untouched: no session, no gate.
+    // (It then fails on having no backing path, which is a different answer
+    // from the collaboration refusal and is what this asserts.)
+    let mut state = daemon();
+    let reply = save_reply(&mut state);
+    assert_ne!(reply.status, "409 Conflict", "{}", reply.body);
+    assert!(!reply.body.contains("collab-active"), "{}", reply.body);
+}
+
+// ---------------------------------------------------------------------------
+// H4: a rejected ingest must not read as success.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_rejected_ingest_is_distinguishable_from_an_accepted_one() {
+    // The `bool` this replaces could not say whether the session took the
+    // document, so a discarded push was answered 200 with a version bump and
+    // the browser never learned to resync.
+    use crate::web_canvas_server::IngestOutcome;
+    assert_eq!(IngestOutcome::Committed.error_code(), None);
+    assert_eq!(IngestOutcome::NoChange.error_code(), None);
+    assert_eq!(IngestOutcome::Rejected.error_code(), Some("collab-busy"));
+    // Shares the browser's existing conflict code so its established refetch
+    // path handles it with no new client branch.
+    assert_eq!(IngestOutcome::Failed.error_code(), Some("version-conflict"));
 }

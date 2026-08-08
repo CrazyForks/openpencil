@@ -25,6 +25,14 @@ pub(super) struct ConnCtx<'a> {
     /// the local and managed daemons — the whole catalog, full authority,
     /// exactly as before capability profiles existed.
     pub(super) mcp_profile: crate::mcp_serve::tool_profile::McpAccessProfile,
+    /// How this connection's caller authenticated, and what it may do.
+    ///
+    /// `None` for the local and managed daemons, which have no per-request
+    /// identity and are unrestricted — the REST scope gate is skipped whole.
+    pub(super) rest_identity: Option<(
+        super::tenant_auth::IdentityVia,
+        crate::mcp_serve::tool_profile::McpScopes,
+    )>,
 }
 
 /// Handle one connection against the single-user document authority.
@@ -76,6 +84,7 @@ pub(super) fn serve_one_in_mode<S: Read + Write>(
             hub,
             mode,
             mcp_profile: crate::mcp_serve::tool_profile::McpAccessProfile::UNRESTRICTED,
+            rest_identity: None,
         },
     )
 }
@@ -246,9 +255,9 @@ pub(super) fn dispatch<S: Read + Write>(
     // version so no broadcast is missed (a duplicate is harmless — versions are
     // monotonic). The state lock is released before the long SSE wait.
     if req.method == "GET" && req.path == "/api/mcp/events" {
-        let rx = hub.subscribe();
+        let slot = hub.subscribe();
         let current = state.lock().unwrap_or_else(|p| p.into_inner()).sse_tick();
-        return serve_sse(stream, rx, current, cors_origin).map(|()| false);
+        return serve_sse(stream, &slot, current, cors_origin).map(|()| false);
     }
     // The AI / image routes, which parse under the lock and then run long
     // network on this connection thread. See `connection_ai_routes.rs`.
@@ -276,6 +285,27 @@ pub(super) fn dispatch<S: Read + Write>(
     // daemon doesn't implement yet, which it answers with 404 rather than
     // mis-routing them into the JSON-RPC dispatch below.
     if req.path.starts_with("/api/") {
+        // Scopes apply to REST exactly as they apply to `/mcp`. Without this
+        // a read-only token could replace the whole document here — strictly
+        // more damage than any tool call it is refused.
+        if let Some((via, scopes)) = ctx.rest_identity {
+            if let Some(refusal) =
+                super::tool_scopes::check_rest_scope(via, scopes, &req.method, &req.path)
+            {
+                crate::mcp_serve::write_mcp_http_response_with_origin(
+                    stream,
+                    refusal.http_status(),
+                    &serde_json::json!({
+                        "ok": false,
+                        "error": refusal.code(),
+                        "message": refusal.to_string(),
+                    })
+                    .to_string(),
+                    cors_origin,
+                )?;
+                return Ok(false);
+            }
+        }
         let reply = {
             let mut guard = state.lock().unwrap_or_else(|p| p.into_inner());
             let before = guard.version;
@@ -464,7 +494,7 @@ pub(super) fn dispatch<S: Read + Write>(
 /// disconnects (write error) or the hub is dropped.
 pub(super) fn serve_sse<S: Write>(
     stream: &mut S,
-    rx: Receiver<SseTick>,
+    slot: &SseSlot,
     current: SseTick,
     cors_origin: Option<&str>,
 ) -> Result<()> {
@@ -483,20 +513,15 @@ pub(super) fn serve_sse<S: Write>(
         .map_err(|e| WebCanvasError::Transport(format!("sse headers: {e}")))?;
     write_sse_event(stream, current)?;
     loop {
-        match rx.recv_timeout(SSE_HEARTBEAT) {
-            Ok(mut tick) => {
-                // Coalesce any further queued bumps — only the latest tick
-                // matters (the client re-reads whatever the counters point at),
-                // so a burst of mutations collapses to a single event and the
-                // channel can't accumulate unboundedly behind a slow client.
-                while let Ok(next) = rx.try_recv() {
-                    tick = next;
-                }
-                write_sse_event(stream, tick)?;
-            }
-            Err(RecvTimeoutError::Timeout) => {
+        // The slot holds only the newest tick, so coalescing is structural:
+        // a burst of mutations behind a slow client collapses to one event
+        // rather than queueing one entry per mutation.
+        match slot.take_latest(SSE_HEARTBEAT) {
+            Some(tick) => write_sse_event(stream, tick)?,
+            None => {
                 // SSE comment heartbeat — no-op for the client, but a failed
-                // write here is how we notice it disconnected.
+                // write here is how we notice it disconnected, which is also
+                // what ends this loop and drops the slot.
                 stream
                     .write_all(b": ping\n\n")
                     .map_err(|e| WebCanvasError::Transport(format!("sse heartbeat: {e}")))?;
@@ -504,7 +529,6 @@ pub(super) fn serve_sse<S: Write>(
                     .flush()
                     .map_err(|e| WebCanvasError::Transport(format!("sse flush: {e}")))?;
             }
-            Err(RecvTimeoutError::Disconnected) => return Ok(()),
         }
     }
 }

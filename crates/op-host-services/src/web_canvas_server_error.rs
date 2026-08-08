@@ -59,6 +59,11 @@ pub enum WebCanvasError {
     /// not a daemon fault — the document is healthy and the request was
     /// well-formed; it simply cannot be sequenced right now.
     Collab(crate::web_canvas_server::DaemonMutationRefusal),
+    /// A live session opened a capture for a whole-document push and then
+    /// declined to commit it. Distinct from `Collab`: the write was not
+    /// refused up front, it was discarded, so the browser's copy is now
+    /// definitively behind and must be refetched rather than retried.
+    IngestRejected(crate::web_canvas_server::IngestOutcome),
 }
 
 impl WebCanvasError {
@@ -78,6 +83,7 @@ impl WebCanvasError {
             | WebCanvasError::Io(_) => "400 Bad Request",
             WebCanvasError::Config(_) | WebCanvasError::Transport(_) => "500 Internal Server Error",
             WebCanvasError::Collab(refusal) => refusal.http_status(),
+            WebCanvasError::IngestRejected(_) => "409 Conflict",
         }
     }
 
@@ -89,6 +95,7 @@ impl WebCanvasError {
     pub fn error_code(&self) -> Option<&'static str> {
         match self {
             WebCanvasError::Collab(refusal) => Some(refusal.code()),
+            WebCanvasError::IngestRejected(outcome) => outcome.error_code(),
             _ => None,
         }
     }
@@ -104,6 +111,9 @@ impl fmt::Display for WebCanvasError {
             | WebCanvasError::Config(m)
             | WebCanvasError::Transport(m) => f.write_str(m),
             WebCanvasError::Collab(refusal) => write!(f, "{refusal}"),
+            WebCanvasError::IngestRejected(_) => {
+                f.write_str("the live session discarded this document push; refetch and reapply")
+            }
         }
     }
 }
