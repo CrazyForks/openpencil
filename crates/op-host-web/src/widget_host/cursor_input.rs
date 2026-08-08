@@ -24,72 +24,11 @@ impl WidgetHost {
         // below (layer context menu, layer drag, align toolbar) reads
         // current geometry, never a stale snapshot.
         self.refresh_layout_scene();
-        if self.apply_path_anchor_drag_move(x, y) {
-            return true;
-        }
-        // In-flight VariablesPanel edge resize — owns the cursor.
-        if self.variables_resize.is_some()
-            && self.apply_variables_panel_resize(x, y, self.last_viewport_w, self.last_viewport_h)
-        {
-            return true;
-        }
-        // Missing-fonts modal — owns the cursor while open. Hover the
-        // per-row choose-file buttons + the dismiss action.
-        if self.editor_state.editor_ui.missing_fonts_modal_open {
-            let changed = hover_flow::missing_fonts_modal_hover(
-                &mut self.editor_state,
-                self.last_viewport_w,
-                self.last_viewport_h,
-                Point2D::new(x, y),
-            );
-            if changed {
-                self.mark_dirty();
-            }
-            return changed;
-        }
-        // Post-import HTML diagnostics notice — tints its own buttons and
-        // owns the cursor only while it is under the card.
-        if self.editor_state.editor_ui.html_import_diagnostics_open
-            && self.update_html_import_diagnostics_hover(
-                x,
-                y,
-                self.last_viewport_w,
-                self.last_viewport_h,
-            )
-        {
-            return true;
-        }
-        // Sign-in modal — owns the cursor while open (native parity).
-        if self.editor_state.editor_ui.account_ui_available
-            && self.editor_state.editor_ui.login_modal_open
-        {
-            let changed = hover_flow::login_modal_hover(
-                &mut self.editor_state,
-                self.last_viewport_w,
-                self.last_viewport_h,
-                Point2D::new(x, y),
-            );
-            if changed {
-                self.mark_dirty();
-            }
-            return changed;
-        }
-        // Signed-in account dropdown — owns the cursor while open.
-        if self.editor_state.editor_ui.account_ui_available
-            && self.editor_state.editor_ui.account_menu_open
-        {
-            let changed = hover_flow::account_menu_hover(
-                &mut self.editor_state,
-                self.last_viewport_w,
-                Point2D::new(x, y),
-            );
-            if changed {
-                self.mark_dirty();
-            }
-            return changed;
-        }
-        if self.editor_state.editor_ui.agent_settings_open {
-            return self.update_agent_settings_hover(x, y);
+        // Pointer-capture drags + the modal surfaces, in `cursor_input_modals`.
+        // They run FIRST — a modal that does not claim the cursor lets the
+        // hover washes underneath it light up through its own scrim.
+        if let Some(consumed) = self.cursor_move_modal_tiers(x, y) {
+            return consumed;
         }
         let picker_open = self.editor_state.editor_ui.chat_model_picker.open;
         let point = Point2D::new(x, y);
@@ -593,11 +532,13 @@ impl WidgetHost {
         // hover results from that instance. Besides fingerprinting the
         // transcript once, this avoids rebuilding translated labels and tabs
         // for each sub-control.
+        let mut style_chip_hover = false;
         let (chat_probe, chat_tab_hover, chat_footer_hover, parallel_hover, example_hover) =
             if let Some(chat_rect) = self.ai_chat_rect(self.last_viewport_w, self.last_viewport_h) {
                 use op_editor_ui::widgets::AIChatPlaceholder;
                 let panel = AIChatPlaceholder::from_editor_at(&self.editor_state, self.now_ms)
                     .owned_by(self.chat_panel_owner);
+                style_chip_hover = panel.style_chip_hover_at(chat_rect, point);
                 (
                     Some(panel.cursor_probe(chat_rect, point)),
                     panel.tab_hover_at(chat_rect, point),
@@ -630,6 +571,9 @@ impl WidgetHost {
             } else {
                 (None, None, None, None)
             };
+        // Same gate: a clock started under a higher surface would time out into
+        // a card floating over it.
+        let style_chip_hover = style_chip_hover && !over_topmost && !align_owns_point;
         let design_hover = if !over_topmost && !align_owns_point {
             chat_probe
                 .as_ref()
@@ -641,6 +585,7 @@ impl WidgetHost {
         // the panel owns the move. A control transition must not prevent the
         // panel's blank body from blocking lower layers.
         let mut chat_hover_changed = false;
+        let now_ms = self.now_ms;
         {
             let ui = &mut self.editor_state.editor_ui;
             if chat_header_hover != ui.chat_header_hover {
@@ -663,6 +608,9 @@ impl WidgetHost {
                 ui.chat_example_hover = example_hover;
                 chat_hover_changed = true;
             }
+            // Pinned-style chip — a dwell clock rather than a wash, so it goes
+            // through the setter that owns the clock's start / stop rule.
+            chat_hover_changed |= ui.set_chat_style_chip_hover(style_chip_hover, now_ms);
         }
         if chat_hover_changed {
             self.mark_dirty();

@@ -68,6 +68,8 @@ mod chat_design_apply_tests;
 mod chat_design_hover;
 #[cfg(test)]
 mod chat_design_hover_tests;
+#[cfg(test)]
+mod chat_input_caret_tests;
 mod chat_model_picker_caret;
 #[cfg(test)]
 mod chat_model_picker_caret_tests;
@@ -84,6 +86,7 @@ mod collab_input_tests;
 mod color_picker_press;
 mod component_browser_press;
 mod cursor_input;
+mod cursor_input_modals;
 #[cfg(test)]
 mod deferred_press_tests;
 mod design_md_press;

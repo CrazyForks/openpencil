@@ -226,6 +226,18 @@ impl WidgetHostNative {
             self.dispatch_export_quick_menu_press(x, y, viewport_width);
             return Some(true);
         }
+        // The slides rail's export dropdown, on the same rung and for the
+        // same reason. The rail's own press tier sits far BELOW the TopBar,
+        // so without this rung a click on the top bar would leave the menu
+        // open behind it; here it is dismissed like any other dropdown.
+        // Routed through the rail's ordinary entry point rather than a
+        // second dispatcher — `slides_panel_flow::press` already answers
+        // rows, chrome and dismiss, and claims every press while open.
+        if self.editor_state.editor_ui.slides_panel.export_menu_open
+            && self.slides_panel_press(x, y, viewport_width, viewport_height)
+        {
+            return Some(true);
+        }
         if self.editor_state.editor_ui.export_dialog_open {
             self.close_image_popovers_for_higher_overlay();
             self.dispatch_export_dialog_press(x, y, viewport_width, viewport_height);

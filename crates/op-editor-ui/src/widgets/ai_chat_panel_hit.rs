@@ -144,8 +144,7 @@ impl<'a> AIChatPlaceholder<'a> {
             let footer = self.footer_layout(rect, input_rect, {
                 let attach_h = self.attachment_row_h();
                 input_rect.origin.y
-                    + self.style_receipt_row_h()
-                    + self.selection_chip_row_h()
+                    + self.chip_row_h()
                     + self.input_area_height_for_rect(rect)
                     + attach_h
             });
@@ -170,23 +169,21 @@ impl<'a> AIChatPlaceholder<'a> {
             return Some(AIChatHit::ToggleParallelAgentsPicker);
         }
         if (input_rect).contains(point) {
-            let style_h = self.style_receipt_row_h();
-            // Topmost row of the input block, so it is tested first.
-            if style_h > 0.0 && point.y < input_rect.origin.y + style_h {
+            // Topmost band of the input block, so it is tested first. Both
+            // chips share the row, so both ✕ targets are probed here — the
+            // rects come from the same `chip_row` paint draws from.
+            let chip_row_h = self.chip_row_h();
+            let text_top = input_rect.origin.y + chip_row_h;
+            let attach_top = text_top + input_area_h;
+            let attach_h = self.attachment_row_h();
+            let toolbar_top = attach_top + attach_h;
+            if chip_row_h > 0.0 && point.y < text_top {
                 if self
                     .style_receipt_clear_rect(input_rect)
                     .is_some_and(|clear| clear.contains(point))
                 {
                     return Some(AIChatHit::ClearPinnedStyle);
                 }
-                return Some(AIChatHit::FocusInput);
-            }
-            let selection_h = self.selection_chip_row_h();
-            let text_top = input_rect.origin.y + style_h + selection_h;
-            let attach_top = text_top + input_area_h;
-            let attach_h = self.attachment_row_h();
-            let toolbar_top = attach_top + attach_h;
-            if selection_h > 0.0 && point.y < text_top {
                 if self
                     .selection_chip_clear_rect(input_rect)
                     .is_some_and(|clear| clear.contains(point))
@@ -207,9 +204,7 @@ impl<'a> AIChatPlaceholder<'a> {
                     size: Point2D::new(input_rect.size.x, input_area_h),
                 };
                 let offset = crate::widgets::ai_chat_input_text::input_text_offset_at(
-                    &self.state.input,
-                    text_area,
-                    point,
+                    self.state, text_area, point,
                 )
                 .unwrap_or(self.state.input.text().len());
                 return Some(AIChatHit::SelectInputText(offset));
@@ -243,6 +238,17 @@ impl<'a> AIChatPlaceholder<'a> {
                 if (footer.prompt_center).contains(point) {
                     return Some(AIChatHit::OpenPromptCenter);
                 }
+                // Live even while streaming, unlike the ⚡ chip beside it: the
+                // mode is read when a turn LAUNCHES, so a click here sets what
+                // the next turn does — which is exactly what a user reaching
+                // for it during a long think means.
+                //
+                // The width guard is load-bearing: `Rect::contains` is
+                // inclusive on both edges, so a dropped (zero-width) slot
+                // still swallows the single column of pixels at its origin.
+                if footer.thinking.size.x > 0.0 && (footer.thinking).contains(point) {
+                    return Some(AIChatHit::CycleThinking);
+                }
                 if (footer.speed).contains(point) {
                     // The ⚡ chip is now the Parallel Agents chip (#32).
                     // While streaming the chip is inert (parity with old effort chip).
@@ -252,9 +258,11 @@ impl<'a> AIChatPlaceholder<'a> {
                         AIChatHit::ToggleParallelAgentsPicker
                     });
                 }
-                // agent_team is zero-width — contains() never fires; kept for
-                // schema compat.
-                if (footer.agent_team).contains(point) {
+                // agent_team is laid out zero-width — kept for schema compat.
+                // `Rect::contains` is inclusive on both edges, so that is NOT
+                // enough to make it inert: it still owns the pixel column at
+                // its origin. Same explicit width guard as the thinking slot.
+                if footer.agent_team.size.x > 0.0 && (footer.agent_team).contains(point) {
                     return Some(AIChatHit::CycleAgentTeam);
                 }
                 if (footer.attach).contains(point) {
@@ -545,12 +553,11 @@ impl<'a> AIChatPlaceholder<'a> {
             return None;
         }
         let attach_h = self.attachment_row_h();
-        // The chip rows sit at the top of the input block — hover math must
-        // reserve them like paint does, or every footer band shifts up by the
+        // The chip row sits at the top of the input block — hover math must
+        // reserve it like paint does, or every footer band shifts up by the
         // row height whenever a style is pinned or a selection is active.
         let toolbar_top = input_rect.origin.y
-            + self.style_receipt_row_h()
-            + self.selection_chip_row_h()
+            + self.chip_row_h()
             + self.input_area_height_for_rect(rect)
             + attach_h;
         if point.y < toolbar_top {
@@ -564,11 +571,19 @@ impl<'a> AIChatPlaceholder<'a> {
         if (footer.prompt_center).contains(point) {
             return Some(op_editor_core::ChatFooterButton::PromptCenter);
         }
+        // Same zero-width guard as the press path — see `hit_test`.
+        if footer.thinking.size.x > 0.0 && (footer.thinking).contains(point) {
+            return Some(op_editor_core::ChatFooterButton::ThinkingMode);
+        }
         if (footer.speed).contains(point) {
             return Some(op_editor_core::ChatFooterButton::SpeedChip);
         }
-        // agent_team zero-width — contains() never fires, kept for future use.
-        if (footer.agent_team).contains(point) {
+        // agent_team is zero-width, which does NOT make it inert on its own —
+        // see the press path. This is the branch the gap was reachable
+        // through: the model-pill check above is gated on having models, so
+        // with none connected the pill stopped shadowing the column and a
+        // hover was reported for a chip that is never painted.
+        if footer.agent_team.size.x > 0.0 && (footer.agent_team).contains(point) {
             return Some(op_editor_core::ChatFooterButton::AgentTeam);
         }
         if !streaming && (footer.attach).contains(point) {

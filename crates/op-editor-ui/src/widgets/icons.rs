@@ -92,6 +92,8 @@ pub enum Icon {
     Sparkles,
     /// Wand2 / WandSparkles — design JSON card indicator.
     Wand2,
+    /// Lucide `brain.svg` — chat-footer thinking-mode toggle.
+    Brain,
     /// X — close affordance.
     Close,
     /// Trash2 — proper delete affordance (line-art trash can).
@@ -317,6 +319,7 @@ impl Icon {
             Icon::GitFork => GIT_FORK,
             Icon::Sparkles => SPARKLES,
             Icon::Wand2 => WAND_SPARKLES,
+            Icon::Brain => BRAIN,
             Icon::Close => CLOSE,
             Icon::Trash => TRASH,
             Icon::Copy => COPY,
@@ -493,6 +496,7 @@ impl Icon {
             "git-fork" => Icon::GitFork,
             "sparkles" => Icon::Sparkles,
             "wand-2" | "wand-sparkles" | "wand" => Icon::Wand2,
+            "brain" => Icon::Brain,
             "diamond" => Icon::Diamond,
             "component" => Icon::Component,
             "circle" => Icon::Circle,

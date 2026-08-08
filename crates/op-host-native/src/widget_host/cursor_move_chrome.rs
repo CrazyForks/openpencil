@@ -84,21 +84,28 @@ impl WidgetHostNative {
         // of its hover results in one immutable scope. Besides keeping the
         // transcript fingerprint to one pass, this avoids cloning translated
         // labels and tab titles again for every chat sub-control.
-        let (chat_probe, chat_tab_hover, chat_footer_hover, parallel_hover, example_hover) =
-            if let Some(chat_rect) = self.ai_chat_rect(self.last_viewport_w, self.last_viewport_h) {
-                let point = Point2D::new(x, y);
-                let panel = AIChatPlaceholder::from_editor_at(&self.editor_state, self.now_ms)
-                    .owned_by(self.chat_panel_owner);
-                (
-                    Some(panel.cursor_probe(chat_rect, point)),
-                    panel.tab_hover_at(chat_rect, point),
-                    panel.footer_hover_at(chat_rect, point),
-                    panel.parallel_agents_picker_hover_at(chat_rect, point),
-                    panel.example_hover_at(chat_rect, point),
-                )
-            } else {
-                (None, None, None, None, None)
-            };
+        let (
+            chat_probe,
+            chat_tab_hover,
+            chat_footer_hover,
+            parallel_hover,
+            example_hover,
+            style_chip_hover,
+        ) = if let Some(chat_rect) = self.ai_chat_rect(self.last_viewport_w, self.last_viewport_h) {
+            let point = Point2D::new(x, y);
+            let panel = AIChatPlaceholder::from_editor_at(&self.editor_state, self.now_ms)
+                .owned_by(self.chat_panel_owner);
+            (
+                Some(panel.cursor_probe(chat_rect, point)),
+                panel.tab_hover_at(chat_rect, point),
+                panel.footer_hover_at(chat_rect, point),
+                panel.parallel_agents_picker_hover_at(chat_rect, point),
+                panel.example_hover_at(chat_rect, point),
+                panel.style_chip_hover_at(chat_rect, point),
+            )
+        } else {
+            (None, None, None, None, None, false)
+        };
         // `cursor_probe.hit` is the authoritative Chat ownership result: it is
         // Some for every painted body point and for the invisible resize
         // gutter. Aggregate all Chat-owned hover writes before returning so a
@@ -122,6 +129,12 @@ impl WidgetHostNative {
             self.editor_state.editor_ui.chat_footer_hover = chat_footer_hover;
             chat_hover_changed = true;
         }
+        // Pinned-style chip — a dwell clock rather than a wash, so it goes
+        // through the setter that owns the clock's start / stop rule.
+        chat_hover_changed |= self
+            .editor_state
+            .editor_ui
+            .set_chat_style_chip_hover(style_chip_hover, self.now_ms);
         // Parallel-agents picker row hover — drives the highlight wash inside the overlay.
         if parallel_hover != self.editor_state.editor_ui.parallel_agents_picker_hover {
             self.editor_state.editor_ui.parallel_agents_picker_hover = parallel_hover;

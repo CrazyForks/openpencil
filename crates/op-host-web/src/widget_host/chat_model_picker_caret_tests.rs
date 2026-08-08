@@ -47,8 +47,8 @@ fn chat_input_arrows_move_caret_for_insert_and_backspace() {
     host.editor_state.chat.focused = true;
     host.editor_state.chat.set_input_text("abcd");
 
-    assert!(host.apply_chat_input_caret(false));
-    assert!(host.apply_chat_input_caret(false));
+    assert!(host.apply_chat_input_caret(false, false));
+    assert!(host.apply_chat_input_caret(false, false));
     assert_eq!(host.editor_state.chat.input_caret(), 2);
 
     assert!(host.apply_text('X'));

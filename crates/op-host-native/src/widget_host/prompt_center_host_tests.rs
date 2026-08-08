@@ -25,7 +25,14 @@ fn prompt_center_padding_owns_cursor_and_clears_lower_hover() {
     let panel = host
         .prompt_center_panel_rect(VIEWPORT_W, VIEWPORT_H)
         .expect("prompt center rect");
-    let point = Point2D::new(panel.origin.x + 4.0, panel.origin.y + 4.0);
+    // Bottom-centre padding: inside the panel, below the card grid, and —
+    // unlike the panel's own top-left corner, which the gallery-sized panel
+    // now reaches across the left rail to cover — over the canvas region when
+    // the panel is closed, which is what makes the control below meaningful.
+    let point = Point2D::new(
+        panel.origin.x + panel.size.x / 2.0,
+        panel.origin.y + panel.size.y - 4.0,
+    );
 
     assert!(host.editor_state_mut().editor_ui.close_prompt_center());
     assert_eq!(

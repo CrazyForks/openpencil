@@ -23,18 +23,20 @@ use op_editor_core::EditorState;
 use op_util::hex_color;
 
 use crate::theme::Theme;
+use crate::widgets::ai_chat_chip_row::{
+    chip_clear_rect, draw_chip_clear, draw_chip_text, fill_chip, CHIP_CLEAR_W, CHIP_FONT,
+    CHIP_PAD_X,
+};
+use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
-use crate::{Color, Point2D, Rect, TextLayout};
+use crate::{Color, Point2D, Rect};
 
-/// Height of the receipt row inside the input block.
-pub(crate) const STYLE_RECEIPT_ROW_HEIGHT: f32 = 24.0;
-const CHIP_HEIGHT: f32 = 20.0;
-const PAD_X: f32 = 8.0;
-const FONT: f32 = 11.0;
-const CLEAR_W: f32 = 18.0;
 const SWATCH_W: f32 = 9.0;
 const SWATCH_H: f32 = 10.0;
 const SWATCH_GAP: f32 = 2.0;
+/// Trailing inset on a receipt that carries no ✕ — the band must not run
+/// into the chip's right edge just because nothing is clearable.
+const NO_CLEAR_INSET: f32 = 6.0;
 
 /// What the row shows.
 #[derive(Debug, Clone, PartialEq)]
@@ -93,84 +95,64 @@ fn parse(raw: &str) -> Option<Color> {
     Some(Color::rgba_u8(r, g, b, a as f32 / 255.0))
 }
 
-/// Width the chip needs for `label` plus its band and clear button.
-pub(crate) fn chip_width(label: &str, swatches: usize, clearable: bool) -> f32 {
-    let band = if swatches == 0 {
+/// Width of the colour band for `swatches` swatches, gutter included.
+fn band_width(swatches: usize) -> f32 {
+    if swatches == 0 {
         0.0
     } else {
         swatches as f32 * SWATCH_W + (swatches.saturating_sub(1)) as f32 * SWATCH_GAP + 8.0
-    };
-    let clear = if clearable { CLEAR_W } else { 6.0 };
-    PAD_X + crate::widgets::ai_chat_panel::footer_label_width(label, FONT) + band + clear
-}
-
-/// The chip's rect at the top of the input block.
-pub(crate) fn chip_rect(receipt: &StyleReceipt, label: &str, input_rect: Rect) -> Rect {
-    let width = chip_width(label, receipt.swatches.len(), receipt.clearable)
-        .min(input_rect.size.x)
-        .max(56.0);
-    Rect {
-        origin: Point2D::new(
-            input_rect.origin.x,
-            input_rect.origin.y + (STYLE_RECEIPT_ROW_HEIGHT - CHIP_HEIGHT) / 2.0,
-        ),
-        size: Point2D::new(width, CHIP_HEIGHT),
     }
 }
 
-/// The ✕ target, or `None` when this row has nothing to clear.
-pub(crate) fn clear_rect(receipt: &StyleReceipt, label: &str, input_rect: Rect) -> Option<Rect> {
-    if !receipt.clearable {
-        return None;
+/// Trailing column: the ✕ target, or a plain inset when nothing can be
+/// cleared here.
+fn trailing_width(clearable: bool) -> f32 {
+    if clearable {
+        CHIP_CLEAR_W
+    } else {
+        NO_CLEAR_INSET
     }
-    let chip = chip_rect(receipt, label, input_rect);
-    Some(Rect {
-        origin: Point2D::new(chip.origin.x + chip.size.x - CLEAR_W, chip.origin.y),
-        size: Point2D::new(CLEAR_W, chip.size.y),
-    })
 }
 
-/// Paint the row.
-pub(crate) fn paint(
+/// Width the chip needs for `label` plus its band and clear button.
+pub(crate) fn chip_width(label: &str, swatches: usize, clearable: bool) -> f32 {
+    CHIP_PAD_X
+        + crate::widgets::ai_chat_panel::footer_label_width(label, CHIP_FONT)
+        + band_width(swatches)
+        + trailing_width(clearable)
+}
+
+/// The ✕ target inside `chip`, or `None` when this receipt has nothing to
+/// clear (design.md is bound and unbound from its own panel).
+pub(crate) fn clear_rect(receipt: &StyleReceipt, chip: Rect) -> Option<Rect> {
+    receipt.clearable.then(|| chip_clear_rect(chip))
+}
+
+/// Paint the receipt into the chip the row allotted it.
+pub(crate) fn paint_style_chip(
     cx: &mut PaintCx<'_>,
     theme: &Theme,
     receipt: &StyleReceipt,
     label: &str,
-    input_rect: Rect,
+    chip: Rect,
 ) {
-    let chip = chip_rect(receipt, label, input_rect);
-    cx.backend.fill_round_rect(chip, 6.0, theme.muted);
+    fill_chip(cx, theme, chip);
 
-    let baseline_y = chip.origin.y + chip.size.y / 2.0 + FONT * 0.35;
-    let text = TextLayout::single_run(
-        label,
-        "system-ui",
-        FONT,
-        (theme.muted_foreground).to_jian(),
-        Point2D::new(0.0, 0.0),
-    );
-    cx.backend
-        .draw_text(&text, Point2D::new(chip.origin.x + PAD_X, baseline_y));
+    // The label gets whatever the band does not need, but the band never
+    // takes more than half the free width: a squeezed row must not turn the
+    // style's NAME — the thing the row exists to state — into an ellipsis.
+    let trailing = trailing_width(receipt.clearable);
+    let free = (chip.size.x - CHIP_PAD_X - trailing).max(0.0);
+    let band = band_width(receipt.swatches.len()).min(free * 0.5);
+    let fitted = text_metrics::fit_chrome(cx.backend, label, free - band, CHIP_FONT);
+    let label_x = chip.origin.x + CHIP_PAD_X;
+    draw_chip_text(cx, theme, &fitted, label_x, chip);
 
-    let label_end =
-        chip.origin.x + PAD_X + crate::widgets::ai_chat_panel::footer_label_width(label, FONT);
-    paint_band(cx, receipt, chip, label_end);
+    let label_end = label_x + text_metrics::measure_chrome(cx.backend, &fitted, CHIP_FONT);
+    paint_band(cx, receipt, chip, label_end, trailing);
 
     if receipt.clearable {
-        let clear = TextLayout::single_run(
-            "×",
-            "system-ui",
-            FONT,
-            (theme.muted_foreground).to_jian(),
-            Point2D::new(0.0, 0.0),
-        );
-        cx.backend.draw_text(
-            &clear,
-            Point2D::new(
-                chip.origin.x + chip.size.x - CLEAR_W / 2.0 - 3.0,
-                baseline_y,
-            ),
-        );
+        draw_chip_clear(cx, theme, chip);
     }
 }
 
@@ -178,12 +160,17 @@ pub(crate) fn paint(
 /// clear button. Swatches that would overrun are dropped rather than squeezed:
 /// a band is read as "these are the colours", and a half-drawn one reads as a
 /// different palette.
-fn paint_band(cx: &mut PaintCx<'_>, receipt: &StyleReceipt, chip: Rect, label_end: f32) {
+fn paint_band(
+    cx: &mut PaintCx<'_>,
+    receipt: &StyleReceipt,
+    chip: Rect,
+    label_end: f32,
+    trailing: f32,
+) {
     if receipt.swatches.is_empty() {
         return;
     }
-    let clear_w = if receipt.clearable { CLEAR_W } else { 6.0 };
-    let available = chip.origin.x + chip.size.x - clear_w - (label_end + 8.0);
+    let available = chip.origin.x + chip.size.x - trailing - (label_end + 8.0);
     let top = chip.origin.y + (chip.size.y - SWATCH_H) / 2.0;
     for (index, color) in receipt.swatches.iter().enumerate() {
         let x = label_end + 8.0 + index as f32 * (SWATCH_W + SWATCH_GAP);

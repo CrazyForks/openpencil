@@ -94,16 +94,17 @@ impl WidgetHost {
         slides: &SlidesFrame,
     ) {
         use op_editor_ui::widgets::PaintCx;
-        let ui = &self.editor_state.editor_ui;
         let (layers_label, slides_label) = flow::tab_labels(&self.editor_state);
-        let present_label =
-            op_editor_ui::widgets::editor_state_ext::translate(ui, "slidesPanel.present");
+        let actions = flow::action_labels(
+            &self.editor_state,
+            flow::selected_slide_count(&self.editor_state, &slides.chips),
+        );
         let widget = flow::widget(
             slides.active,
             &self.editor_state,
             layers_label,
             slides_label,
-            present_label,
+            actions.labels(),
         );
         let mut cx = PaintCx { backend };
         widget.paint(&mut cx, &slides.layout, &self.theme);
@@ -271,6 +272,16 @@ impl WidgetHost {
                 // host — the browser has no slideshow session of its
                 // own, so entering Preview is the whole of it.
                 self.editor_state.editor_ui.enter_preview();
+                self.mark_dirty();
+                true
+            }
+            // Same as native: the export rows queued their file action in
+            // the shared flow, and this host's own `pending_file_action`
+            // drain streams the document to the daemon's PDF route. The
+            // widget arm has only the repaint left.
+            flow::SlidesRelease::ToggleExportMenu
+            | flow::SlidesRelease::ExportAllSlides
+            | flow::SlidesRelease::ExportSelectedSlides => {
                 self.mark_dirty();
                 true
             }

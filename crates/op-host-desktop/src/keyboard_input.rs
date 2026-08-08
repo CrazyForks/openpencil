@@ -138,19 +138,12 @@ impl DesktopApp {
             {
                 consumed = true;
             }
+            // The bare-arrow priority chains live in `keyboard_input_arrows`.
             Key::Named(NamedKey::ArrowUp) if !self.zoom_modifier && !settings_focused => {
-                // The inline canvas text editor moves its caret by
-                // visual line first; then a focused numeric property
-                // input steps its value; otherwise the arrow nudges
-                // the selection.
-                consumed = self.host.apply_text_edit_vertical(false)
-                    || self.host.apply_property_step(nudge)
-                    || self.host.apply_nudge(0.0, -nudge);
+                consumed = self.arrow_vertical(false, nudge);
             }
             Key::Named(NamedKey::ArrowDown) if !self.zoom_modifier && !settings_focused => {
-                consumed = self.host.apply_text_edit_vertical(true)
-                    || self.host.apply_property_step(-nudge)
-                    || self.host.apply_nudge(0.0, nudge);
+                consumed = self.arrow_vertical(true, nudge);
             }
             Key::Named(NamedKey::ArrowLeft)
                 if !self.zoom_modifier && self.host.settings_focus_active() =>
@@ -172,22 +165,10 @@ impl DesktopApp {
                 consumed = self.host.apply_text_edit_line_edge(true);
             }
             Key::Named(NamedKey::ArrowLeft) if !self.zoom_modifier && !settings_focused => {
-                // Focused text inputs move their caret before the arrow
-                // falls through to selection nudging.
-                consumed = self.host.apply_chat_model_picker_caret(false)
-                    || self.host.apply_chat_input_caret(false)
-                    || self.host.apply_rename_caret(false)
-                    || self.host.apply_text_edit_caret(false)
-                    || self.host.apply_property_caret(false)
-                    || self.host.apply_nudge(-nudge, 0.0);
+                consumed = self.arrow_horizontal(false, nudge);
             }
             Key::Named(NamedKey::ArrowRight) if !self.zoom_modifier && !settings_focused => {
-                consumed = self.host.apply_chat_model_picker_caret(true)
-                    || self.host.apply_chat_input_caret(true)
-                    || self.host.apply_rename_caret(true)
-                    || self.host.apply_text_edit_caret(true)
-                    || self.host.apply_property_caret(true)
-                    || self.host.apply_nudge(nudge, 0.0);
+                consumed = self.arrow_horizontal(true, nudge);
             }
             // Cmd/Ctrl+Alt+U/S/I/X — path boolean ops (Paper.js
             // parity). Gated on `!settings_focused` so they

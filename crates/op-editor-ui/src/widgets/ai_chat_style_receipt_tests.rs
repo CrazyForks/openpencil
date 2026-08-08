@@ -44,7 +44,7 @@ fn no_pin_means_no_row() {
     assert_eq!(StyleReceipt::for_state(&state), None);
 
     let panel = AIChatPlaceholder::from_editor_at(&state, 0);
-    assert_eq!(panel.style_receipt_row_h(), 0.0);
+    assert_eq!(panel.chip_row_h(), 0.0);
 }
 
 /// The reported failure made visible: the name says which style is in force,
@@ -62,7 +62,7 @@ fn a_pinned_import_is_named_and_banded() {
     assert!(receipt.clearable);
 
     let panel = AIChatPlaceholder::from_editor_at(&state, 0);
-    assert!(panel.style_receipt_row_h() > 0.0);
+    assert!(panel.chip_row_h() > 0.0);
     let label = panel.style_receipt_label().expect("a row has a label");
     assert!(label.contains("Dimension"), "{label}");
     assert!(
@@ -80,7 +80,7 @@ fn a_stale_pin_shows_no_row_at_all() {
     let state = state_with_pin(Some("user:deleted-last-week"));
     assert_eq!(StyleReceipt::for_state(&state), None);
     assert_eq!(
-        AIChatPlaceholder::from_editor_at(&state, 0).style_receipt_row_h(),
+        AIChatPlaceholder::from_editor_at(&state, 0).chip_row_h(),
         0.0
     );
 }
@@ -127,7 +127,7 @@ fn design_md_is_reported_instead_of_the_pin_and_carries_no_clear() {
     // unbound from its own panel, and the pin it displaced is not what the
     // row is reporting.
     assert!(!receipt.clearable);
-    assert!(clear_rect(&receipt, "Style: design.md", PANEL).is_none());
+    assert!(clear_rect(&receipt, Rect::xywh(0.0, 0.0, 120.0, 22.0)).is_none());
 }
 
 // ─── Layout + hit-test ─────────────────────────────────────────────────
@@ -144,11 +144,10 @@ fn the_row_reserves_space_above_the_input_text() {
 
     // The input block grows rather than the text area shrinking into the row.
     assert!(pinned.input_height_for_rect(PANEL) > bare.input_height_for_rect(PANEL));
-    let chip = chip_rect(
-        &StyleReceipt::for_state(&pinned_state).expect("a row"),
-        &pinned.style_receipt_label().expect("a label"),
-        pinned.input_rect(PANEL),
-    );
+    let chip = pinned
+        .chip_row(pinned.input_rect(PANEL))
+        .style
+        .expect("a live pin shows its chip");
     assert!(
         chip.origin.y + chip.size.y <= pinned.input_text_rect(PANEL).origin.y,
         "the chip must sit above the text area, not over it"
@@ -194,8 +193,11 @@ fn a_very_long_name_is_clamped_to_the_input_block() {
         origin: Point2D::new(0.0, 0.0),
         size: Point2D::new(200.0, 100.0),
     };
-    let chip = chip_rect(&receipt, &receipt.name, input_rect);
+    let natural = chip_width(&receipt.name, receipt.swatches.len(), receipt.clearable);
+    let chip = crate::widgets::ai_chat_chip_row::chip_row_layout(Some(natural), None, input_rect)
+        .style
+        .expect("a chip");
     assert!(chip.size.x <= input_rect.size.x);
-    let clear = clear_rect(&receipt, &receipt.name, input_rect).expect("clearable");
+    let clear = clear_rect(&receipt, chip).expect("clearable");
     assert!(clear.origin.x + clear.size.x <= input_rect.origin.x + input_rect.size.x);
 }

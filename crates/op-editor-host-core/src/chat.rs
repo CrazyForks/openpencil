@@ -125,7 +125,34 @@ fn quality_summary_from_ack(result: &ChatToolResult) -> QualitySummary {
                 .collect()
         })
         .unwrap_or_default();
-    QualitySummary { checks, repairs }
+    // The itemized `"records"` array is optional: a host build that predates
+    // it simply reports counts, which is what the credential always showed.
+    let records = quality
+        .get("records")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|line| line.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    // Same optional treatment as `records`: a host build that predates notes
+    // simply reports none.
+    let notes = quality
+        .get("notes")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|line| line.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    QualitySummary {
+        checks,
+        repairs,
+        records,
+        notes,
+    }
 }
 
 /// Parse the `{"success":true,"blockers":[{"category":...,"detail":...}]}`

@@ -29,32 +29,46 @@ pub const STATUS_INSET: f32 = 16.0;
 /// Placement of the minimized AI chat bar inside the canvas region
 /// `(cx0, cy0, cw, ch)`.
 ///
-/// The bar always hugs the canvas's bottom edge — a minimized panel is
-/// a dock, not a floating window, so it ignores both a stored
-/// `panel_position` and the top half of the anchor. The anchor still
-/// picks the side, so a user who parked the panel on the right keeps it
-/// there. Returns `None` when the canvas cannot hold the narrowest bar,
-/// matching the expanded panel's "too small to place" contract.
+/// **Minimizing changes the panel's height, never its width.** `width` is
+/// the expanded panel's width, resolved by the host from the one source it
+/// uses for the expanded rect too, and `panel_position` is the position a
+/// drag left behind. Both are threaded through so the bar's left and right
+/// edges land exactly where the expanded panel's did — the bar used to
+/// carry a width constant of its own, which is why collapsing a resized
+/// panel visibly jumped its edges inward.
+///
+/// Vertically the bar still hugs the canvas floor: a minimized panel is a
+/// dock, not a floating window, so it drops the top half of the anchor and
+/// the y of a dragged position. Returns `None` when the canvas cannot hold
+/// the narrowest bar, matching the expanded panel's "too small to place"
+/// contract.
 pub fn minimized_chat_bar_rect(
     anchor: op_editor_core::ChatAnchor,
+    width: f32,
+    panel_position: Option<(f32, f32)>,
     cx0: f32,
     cy0: f32,
     cw: f32,
     ch: f32,
 ) -> Option<Rect> {
-    use crate::widgets::{
-        AI_CHAT_MINIMIZED_HEIGHT, AI_CHAT_MINIMIZED_MIN_WIDTH, AI_CHAT_MINIMIZED_WIDTH,
-    };
+    use crate::widgets::{AI_CHAT_MINIMIZED_HEIGHT, AI_CHAT_MINIMIZED_MIN_WIDTH};
     use op_editor_core::ChatAnchor;
 
     let available_w = cw - AICHAT_INSET_LEFT - AICHAT_INSET_BOTTOM;
-    let bar_w = AI_CHAT_MINIMIZED_WIDTH.min(available_w);
+    let bar_w = width.min(available_w);
     if bar_w < AI_CHAT_MINIMIZED_MIN_WIDTH || ch <= AI_CHAT_MINIMIZED_HEIGHT + 16.0 {
         return None;
     }
-    let x = match anchor {
-        ChatAnchor::TopLeft | ChatAnchor::BottomLeft => cx0 + AICHAT_INSET_LEFT,
-        ChatAnchor::TopRight | ChatAnchor::BottomRight => cx0 + cw - bar_w - AICHAT_INSET_BOTTOM,
+    let x = match panel_position {
+        // The expanded panel sits wherever the drag left it, so the bar does
+        // too — anything else slides sideways on collapse.
+        Some((x, _)) if bar_w >= width => x,
+        _ => match anchor {
+            ChatAnchor::TopLeft | ChatAnchor::BottomLeft => cx0 + AICHAT_INSET_LEFT,
+            ChatAnchor::TopRight | ChatAnchor::BottomRight => {
+                cx0 + cw - bar_w - AICHAT_INSET_BOTTOM
+            }
+        },
     };
     Some(Rect {
         origin: Point2D::new(x, cy0 + ch - AI_CHAT_MINIMIZED_HEIGHT - AICHAT_INSET_BOTTOM),

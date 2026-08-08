@@ -349,6 +349,14 @@ pub struct EditorUiState {
     /// Index of the tab-row tab the cursor is over — drives the × close glyph
     /// and hover wash on inactive tabs. `None` when not hovering any tab.
     pub chat_tab_hover: Option<usize>,
+    /// When the cursor came to rest on the pinned-style chip — the dwell clock
+    /// its detail card waits out.
+    ///
+    /// `None` means the cursor is not on the chip, which is why this doubles as
+    /// the hover flag: the card is a read-out of a hover, so "not hovering" and
+    /// "no clock running" are the same state and splitting them into two fields
+    /// would only create a way for them to disagree.
+    pub chat_style_chip_hover_since_ms: Option<u64>,
     /// Index into `AgentProvider::ALL` of the agent driving the chat.
     pub chat_selected_agent: usize,
     /// Whether the Parallel Agents picker dropdown is open.

@@ -88,6 +88,7 @@ impl Default for EditorUiState {
             chat_header_hover: None,
             chat_footer_hover: None,
             chat_tab_hover: None,
+            chat_style_chip_hover_since_ms: None,
             chat_selected_agent: 0,
             parallel_agents_picker_open: false,
             parallel_agents_picker_hover: None,

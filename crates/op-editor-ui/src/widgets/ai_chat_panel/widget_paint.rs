@@ -182,24 +182,12 @@ impl<'a> Widget for AIChatPlaceholder<'a> {
             );
         }
         let input_block_rect = self.input_rect(rect);
-        // Above everything else in the input block: it describes the whole
-        // next turn, not what that turn is aimed at.
-        if let (Some(receipt), Some(label)) =
-            (self.style_receipt.as_ref(), self.style_receipt_label())
-        {
-            crate::widgets::ai_chat_style_receipt::paint(
-                cx,
-                &self.theme,
-                receipt,
-                &label,
-                input_block_rect,
-            );
-        }
-        paint_selection_chip(cx, &self.theme, self, input_block_rect);
-        let style_h = self.style_receipt_row_h();
-        let selection_h = self.selection_chip_row_h();
+        // Above everything else in the input block: the chips describe the
+        // next turn and what it is aimed at, not the turn's content.
+        crate::widgets::ai_chat_chip_row::paint_chip_row(cx, &self.theme, self, input_block_rect);
+        let chip_row_h = self.chip_row_h();
         let input_rect = Rect {
-            origin: Point2D::new(rect.origin.x + PAD, sep_y + 1.0 + style_h + selection_h),
+            origin: Point2D::new(rect.origin.x + PAD, sep_y + 1.0 + chip_row_h),
             size: Point2D::new(
                 rect.size.x - PAD * 2.0,
                 self.input_area_height_for_rect(rect),
@@ -268,6 +256,48 @@ impl<'a> Widget for AIChatPlaceholder<'a> {
         // cannot be covered by message bubbles below the header.
         if new_chat_hovered {
             paint_new_chat_tooltip(cx, &self.theme, rect);
+        }
+
+        // Thinking-toggle tooltip — the button is a bare glyph with three
+        // states, so the tooltip is where "what does this do, and what is it
+        // set to right now" is actually answered. Painted last, above the
+        // input block it hangs over, and clamped to the panel so a narrow
+        // panel doesn't push the label off its own edge.
+        if self.footer_hover == Some(op_editor_core::ChatFooterButton::ThinkingMode)
+            && footer.thinking.size.x > 0.0
+        {
+            let label = op_i18n::translate(
+                self.locale,
+                crate::widgets::ai_chat_thinking_toggle::thinking_tooltip_key(
+                    self.state.thinking_mode,
+                ),
+            );
+            crate::widgets::tooltip::paint_tooltip(
+                cx,
+                &self.theme,
+                footer.thinking,
+                label,
+                None,
+                crate::widgets::tooltip::TooltipPlacement::Above,
+                Some((rect.origin.x + 4.0, rect.origin.x + rect.size.x - 4.0)),
+            );
+        }
+
+        // Pinned-style detail card — last of all, so it hangs over the input
+        // block, and anchored ABOVE its chip so the ✕ on that row stays both
+        // visible and clickable. Present only once the dwell has elapsed; the
+        // resolve that builds it is gated on the same clock.
+        if let Some(card) = self.style_card.as_ref() {
+            if let Some(chip) = self.chip_row(input_block_rect).style {
+                crate::widgets::ai_chat_style_card::paint_style_card(
+                    cx,
+                    &self.theme,
+                    card,
+                    chip,
+                    rect,
+                    self.locale,
+                );
+            }
         }
     }
 

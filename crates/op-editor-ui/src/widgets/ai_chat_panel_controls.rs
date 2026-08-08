@@ -1,25 +1,26 @@
-//! Controls + attachment rows for [`super::ai_chat_panel::
-//! AIChatPlaceholder`].
-//!
-//! Two fixed-height strips inside the chat input block:
-//!  - the **controls row** — a thinking-mode chip, an effort chip and
-//!    an attach button (always present);
-//!  - the **attachment row** — one chip per staged file (present only
-//!    when `pending_attachments` is non-empty), so every staged
-//!    attachment is visible and removable.
+//! The staged-attachment row for [`super::ai_chat_panel::
+//! AIChatPlaceholder`] — one chip per staged file, present only when
+//! `pending_attachments` is non-empty, so every staged attachment is
+//! visible and removable.
 //!
 //! Paint + hit-test share the layout helpers so a click always lands
 //! on the chip the user sees — no text measurement in the hot path.
+//!
+//! This module also carried a **controls row** (a thinking-mode chip, an
+//! effort chip, an attach button) until 2026-08. No paint path had called
+//! it since the footer was redesigned into a single toolbar row, so the
+//! chips were unreachable chrome that still looked wired. The thinking
+//! control now lives in the footer proper — see
+//! `ai_chat_thinking_toggle` — and the effort chip has no UI at all
+//! (`ChatState::effort_level` is still honoured by the providers and
+//! still cyclable through `AIChatHit::CycleEffort`).
 
 use super::ai_chat_hit::AIChatHit;
 use crate::theme::Theme;
 use crate::widgets::icons::{draw_icon, Icon};
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout};
-use op_editor_core::chat::{ChatState, EffortLevel, ThinkingMode};
-
-/// Height of the per-turn controls strip.
-pub const CONTROLS_ROW_HEIGHT: f32 = 30.0;
+use op_editor_core::chat::ChatState;
 
 /// Height of the staged-attachment strip — shown only when at least
 /// one attachment is staged.
@@ -27,44 +28,9 @@ pub const ATTACHMENT_ROW_HEIGHT: f32 = 28.0;
 
 const CHIP_H: f32 = 22.0;
 const GAP: f32 = 6.0;
-const THINKING_CHIP_W: f32 = 92.0;
-const EFFORT_CHIP_W: f32 = 78.0;
-const ATTACH_BTN_W: f32 = 26.0;
 /// Attachment-chip width — sized so the per-turn cap of four chips
 /// fits the ~348 px input strip (`4 * 80 + 3 * GAP = 338`).
 const ATTACH_CHIP_W: f32 = 80.0;
-
-/// Fixed-width rects for the controls row: thinking chip, effort
-/// chip, attach button.
-struct ControlsLayout {
-    thinking: Rect,
-    effort: Rect,
-    attach: Rect,
-}
-
-fn controls_layout(controls_rect: Rect) -> ControlsLayout {
-    let y = controls_rect.origin.y + (CONTROLS_ROW_HEIGHT - CHIP_H) / 2.0;
-    let mut x = controls_rect.origin.x;
-    let thinking = Rect {
-        origin: Point2D::new(x, y),
-        size: Point2D::new(THINKING_CHIP_W, CHIP_H),
-    };
-    x += THINKING_CHIP_W + GAP;
-    let effort = Rect {
-        origin: Point2D::new(x, y),
-        size: Point2D::new(EFFORT_CHIP_W, CHIP_H),
-    };
-    x += EFFORT_CHIP_W + GAP;
-    let attach = Rect {
-        origin: Point2D::new(x, y),
-        size: Point2D::new(ATTACH_BTN_W, CHIP_H),
-    };
-    ControlsLayout {
-        thinking,
-        effort,
-        attach,
-    }
-}
 
 /// Rects for each staged-attachment chip within the attachment row.
 /// A chip that would overflow the row is not laid out — but the row
@@ -87,21 +53,6 @@ pub(crate) fn attachment_chip_rects(row_rect: Rect, count: usize) -> Vec<Rect> {
     rects
 }
 
-/// Resolve a click inside the controls strip.
-pub fn controls_row_hit(controls_rect: Rect, point: Point2D) -> Option<AIChatHit> {
-    let layout = controls_layout(controls_rect);
-    if (layout.thinking).contains(point) {
-        return Some(AIChatHit::CycleThinking);
-    }
-    if (layout.effort).contains(point) {
-        return Some(AIChatHit::CycleEffort);
-    }
-    if (layout.attach).contains(point) {
-        return Some(AIChatHit::AddAttachment);
-    }
-    None
-}
-
 /// Resolve a click inside the attachment strip — a chip click removes
 /// that attachment.
 pub fn attachment_row_hit(
@@ -120,25 +71,6 @@ pub fn attachment_row_hit(
     None
 }
 
-/// Human label for the thinking-mode chip.
-fn thinking_label(mode: ThinkingMode) -> &'static str {
-    match mode {
-        ThinkingMode::Adaptive => "Adaptive",
-        ThinkingMode::Disabled => "Disabled",
-        ThinkingMode::Enabled => "Enabled",
-    }
-}
-
-/// Human label for the effort chip.
-fn effort_label(level: EffortLevel) -> &'static str {
-    match level {
-        EffortLevel::Low => "Low",
-        EffortLevel::Medium => "Medium",
-        EffortLevel::High => "High",
-        EffortLevel::Max => "Max",
-    }
-}
-
 /// Shorten an attachment file name so it fits the fixed chip width.
 fn truncate_name(name: &str) -> String {
     let mut chars: Vec<char> = name.chars().collect();
@@ -150,67 +82,6 @@ fn truncate_name(name: &str) -> String {
     } else {
         chars.into_iter().collect()
     }
-}
-
-fn paint_chip(cx: &mut PaintCx<'_>, theme: &Theme, rect: Rect, icon: Icon, label: &str) {
-    cx.backend.fill_round_rect(rect, 6.0, theme.muted);
-    cx.backend.stroke_round_rect(rect, 6.0, theme.border, 1.0);
-    let cy = rect.origin.y + rect.size.y / 2.0;
-    draw_icon(
-        cx.backend,
-        icon,
-        Point2D::new(rect.origin.x + 6.0, cy - 6.0),
-        12.0,
-        theme.muted_foreground,
-        1.4,
-    );
-    let text = TextLayout::single_run(
-        label,
-        "system-ui",
-        11.0,
-        (theme.foreground).to_jian(),
-        Point2D::new(0.0, 0.0),
-    );
-    cx.backend
-        .draw_text(&text, Point2D::new(rect.origin.x + 22.0, cy + 4.0));
-}
-
-/// Paint the controls strip — thinking / effort / attach.
-pub fn paint_controls_row(
-    cx: &mut PaintCx<'_>,
-    theme: &Theme,
-    controls_rect: Rect,
-    state: &ChatState,
-) {
-    let layout = controls_layout(controls_rect);
-    paint_chip(
-        cx,
-        theme,
-        layout.thinking,
-        Icon::Sparkles,
-        thinking_label(state.thinking_mode),
-    );
-    paint_chip(
-        cx,
-        theme,
-        layout.effort,
-        Icon::Zap,
-        effort_label(state.effort_level),
-    );
-    cx.backend.fill_round_rect(layout.attach, 6.0, theme.muted);
-    cx.backend
-        .stroke_round_rect(layout.attach, 6.0, theme.border, 1.0);
-    draw_icon(
-        cx.backend,
-        Icon::ImagePlus,
-        Point2D::new(
-            layout.attach.origin.x + 7.0,
-            layout.attach.origin.y + layout.attach.size.y / 2.0 - 6.0,
-        ),
-        12.0,
-        theme.muted_foreground,
-        1.4,
-    );
 }
 
 /// Paint the staged-attachment strip — one chip (name + trailing ✕)
@@ -291,36 +162,6 @@ mod tests {
             origin: Point2D::new(20.0, 100.0),
             size: Point2D::new(348.0, height),
         }
-    }
-
-    #[test]
-    fn hit_thinking_chip() {
-        let r = strip(CONTROLS_ROW_HEIGHT);
-        let p = Point2D::new(r.origin.x + 10.0, r.origin.y + CONTROLS_ROW_HEIGHT / 2.0);
-        assert_eq!(controls_row_hit(r, p), Some(AIChatHit::CycleThinking));
-    }
-
-    #[test]
-    fn hit_effort_chip() {
-        let r = strip(CONTROLS_ROW_HEIGHT);
-        let x = r.origin.x + THINKING_CHIP_W + GAP + 10.0;
-        let p = Point2D::new(x, r.origin.y + CONTROLS_ROW_HEIGHT / 2.0);
-        assert_eq!(controls_row_hit(r, p), Some(AIChatHit::CycleEffort));
-    }
-
-    #[test]
-    fn hit_attach_button() {
-        let r = strip(CONTROLS_ROW_HEIGHT);
-        let x = r.origin.x + THINKING_CHIP_W + GAP + EFFORT_CHIP_W + GAP + 8.0;
-        let p = Point2D::new(x, r.origin.y + CONTROLS_ROW_HEIGHT / 2.0);
-        assert_eq!(controls_row_hit(r, p), Some(AIChatHit::AddAttachment));
-    }
-
-    #[test]
-    fn controls_row_empty_gap_is_no_hit() {
-        let r = strip(CONTROLS_ROW_HEIGHT);
-        let p = Point2D::new(r.origin.x + 330.0, r.origin.y + CONTROLS_ROW_HEIGHT / 2.0);
-        assert_eq!(controls_row_hit(r, p), None);
     }
 
     #[test]

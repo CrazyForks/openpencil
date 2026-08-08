@@ -198,8 +198,8 @@ fn the_footer_button_enters_preview() {
     let button = {
         let slides = host.slides_panel_frame(VW, VH).expect("slides tab");
         Point2D::new(
-            slides.layout.present.origin.x + slides.layout.present.size.x / 2.0,
-            slides.layout.present.origin.y + slides.layout.present.size.y / 2.0,
+            slides.layout.actions.present.origin.x + slides.layout.actions.present.size.x / 2.0,
+            slides.layout.actions.present.origin.y + slides.layout.actions.present.size.y / 2.0,
         )
     };
     host.apply_press(button.x, button.y, VW, VH);

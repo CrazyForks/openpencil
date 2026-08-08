@@ -1,18 +1,23 @@
 //! AI chat floating-panel geometry for the web host.
 
 use super::{WidgetHost, AICHAT_INSET_BOTTOM, AICHAT_INSET_LEFT};
-use op_editor_ui::widgets::{
-    AI_CHAT_HEIGHT, AI_CHAT_MINIMIZED_HEIGHT, AI_CHAT_MINIMIZED_WIDTH, AI_CHAT_WIDTH,
-};
+use op_editor_ui::widgets::{AI_CHAT_HEIGHT, AI_CHAT_MINIMIZED_HEIGHT, AI_CHAT_WIDTH};
 use op_editor_ui::{Point2D, Rect};
 
 impl WidgetHost {
+    /// The panel's width in BOTH states — minimizing changes the height
+    /// only, so the bar and the panel read this one function.
+    pub(in crate::widget_host) fn ai_chat_panel_width(&self) -> f32 {
+        AI_CHAT_WIDTH
+    }
+
     pub(in crate::widget_host) fn ai_chat_size(&self) -> (f32, f32) {
-        if self.editor_state.chat.is_minimized() {
-            (AI_CHAT_MINIMIZED_WIDTH, AI_CHAT_MINIMIZED_HEIGHT)
+        let height = if self.editor_state.chat.is_minimized() {
+            AI_CHAT_MINIMIZED_HEIGHT
         } else {
-            (AI_CHAT_WIDTH, AI_CHAT_HEIGHT)
-        }
+            AI_CHAT_HEIGHT
+        };
+        (self.ai_chat_panel_width(), height)
     }
 
     pub(in crate::widget_host) fn ai_chat_rect(
@@ -28,6 +33,12 @@ impl WidgetHost {
         if self.editor_state.chat.is_minimized() {
             return op_editor_ui::widgets::host_canvas_geometry::minimized_chat_bar_rect(
                 self.editor_state.chat.anchor,
+                self.ai_chat_panel_width(),
+                // `None`, not `chat.panel_position`: the web host's EXPANDED
+                // rect is anchor-placed and reads no stored position, so
+                // honouring one here would put the bar somewhere the panel
+                // never was. Native reads it because native's panel does.
+                None,
                 cx0,
                 cy0,
                 cw,

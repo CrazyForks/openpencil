@@ -1,7 +1,8 @@
 //! Footer toolbar geometry and paint for the AI chat panel.
 //!
 //! Computes the bottom single-row toolbar rects:
-//!   model pill (LEFT) | library | ⚡ parallel-agents | attach | send (RIGHT)
+//!   model pill (LEFT) | library | 🧠 thinking | ⚡ parallel-agents | attach |
+//!   send (RIGHT)
 //!
 //! As of #38 the ⚡/📎/🎨 cluster moved from the LEFT (between model and gap) to
 //! the RIGHT. As of #42 the cluster sits snug against the single send/stop
@@ -49,6 +50,15 @@ const PARALLEL_AGENTS_PICKER_W: f32 = 130.0;
 pub(crate) const FOOTER_ICON_W: f32 = 24.0;
 /// Width of the Prompt Center library button.
 pub(crate) const FOOTER_PROMPT_W: f32 = 24.0;
+/// Width of the thinking-mode toggle — same bare-icon slot as attach, so
+/// the right cluster keeps one rhythm.
+pub(crate) const FOOTER_THINKING_W: f32 = 24.0;
+/// Narrowest the model pill may be squeezed to before the row drops the
+/// thinking toggle instead. A pill this size still shows a readable model
+/// name; below it the user cannot tell which model is selected, and an
+/// unreadable model chip is a worse trade than a hidden thinking toggle
+/// (which keeps its per-tab default either way).
+const FOOTER_MODEL_PILL_MIN_W: f32 = 72.0;
 
 /// Diameter of the circular send/stop buttons.
 pub(crate) const FOOTER_CIRCLE_D: f32 = 28.0;
@@ -104,8 +114,33 @@ impl<'a> AIChatPlaceholder<'a> {
         let speed_h = 22.0;
         let speed = Rect::xywh(speed_x, cy - speed_h / 2.0, FOOTER_SPEED_W, speed_h);
 
-        // Prompt Center — immediately left of the parallel-agents chip.
-        let prompt_x = speed_x - FOOTER_GAP - FOOTER_PROMPT_W;
+        // Thinking-mode toggle — immediately left of the parallel-agents
+        // chip: both answer "how does the next turn run", so they read as one
+        // pair. Dropped to a zero-width rect when keeping it would squeeze the
+        // model pill below its floor.
+        let thinking_room = speed_x
+            - FOOTER_GAP
+            - FOOTER_THINKING_W
+            - FOOTER_GAP
+            - FOOTER_PROMPT_W
+            - FOOTER_GAP
+            - model_x;
+        let thinking_fits = thinking_room >= FOOTER_MODEL_PILL_MIN_W;
+        let thinking_w = if thinking_fits {
+            FOOTER_THINKING_W
+        } else {
+            0.0
+        };
+        let thinking_x = speed_x - FOOTER_GAP - thinking_w;
+        let thinking = Rect::xywh(
+            thinking_x,
+            cy - FOOTER_THINKING_W / 2.0,
+            thinking_w,
+            FOOTER_THINKING_W,
+        );
+
+        // Prompt Center — immediately left of the thinking toggle.
+        let prompt_x = thinking_x - if thinking_fits { FOOTER_GAP } else { 0.0 } - FOOTER_PROMPT_W;
         let prompt_center = Rect::xywh(
             prompt_x,
             cy - FOOTER_PROMPT_W / 2.0,
@@ -116,12 +151,18 @@ impl<'a> AIChatPlaceholder<'a> {
         let model_w = FOOTER_MODEL_PILL_W.min((prompt_x - FOOTER_GAP - model_x).max(0.0));
         let model = Rect::xywh(model_x, cy - model_h / 2.0, model_w, model_h);
 
-        // Agent-team chip — zero-width logical rect for schema compat; contains() = false.
+        // Agent-team chip — zero-width logical rect kept for schema compat.
+        // Zero width does NOT make it unhittable: `Rect::contains` is
+        // inclusive on both edges, so this rect still owns the pixel column
+        // at `model_x + model_w`. The hit-test and hover paths guard on
+        // `size.x > 0.0` explicitly; do not drop those guards on the belief
+        // that the geometry alone is inert.
         let agent_team = Rect::xywh(model_x + model_w, cy - 11.0, 0.0, 22.0);
 
         FooterLayout {
             model,
             prompt_center,
+            thinking,
             speed,
             agent_team,
             attach,
@@ -282,7 +323,8 @@ pub(crate) fn paint_parallel_agents_picker(
 
 /// Paint the bottom-toolbar row of the AI chat panel (#27 / #32 layout).
 ///
-/// Draws: model pill | library | ⚡ parallel-agents | 📎 attach | ↑ send
+/// Draws: model pill | library | 🧠 thinking | ⚡ parallel-agents | 📎 attach |
+/// ↑ send
 ///
 /// The ⚡ chip shows "{N}x" in gold (N = `agent_team_size`) and opens the
 /// Parallel Agents picker on click.
@@ -412,6 +454,16 @@ pub(crate) fn paint_bottom_toolbar(
         14.0,
         widget.theme.muted_foreground,
         1.4,
+    );
+
+    // --- Thinking-mode toggle — 🧠, left of the ⚡ chip ---
+    crate::widgets::ai_chat_thinking_toggle::paint_thinking_toggle(
+        cx,
+        &widget.theme,
+        footer.thinking,
+        widget.state.thinking_mode,
+        widget.footer_hover == Some(ChatFooterButton::ThinkingMode),
+        widget.footer_pressed == Some(ChatFooterButton::ThinkingMode),
     );
 
     // --- Parallel-agents chip (#32) — ⚡ in gold + "{N}x" label, no background ---

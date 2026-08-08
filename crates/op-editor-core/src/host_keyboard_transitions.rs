@@ -541,14 +541,25 @@ pub fn rename_caret(state: &mut EditorState, forward: bool, now_ms: u64) -> bool
 
 /// Left / Right arrow on the focused chat input. Consumes the key even
 /// at text boundaries so it never falls through to canvas nudge.
-pub fn chat_input_caret(state: &mut EditorState, forward: bool, now_ms: u64) -> bool {
+///
+/// `extend` grows the selection from its existing anchor (Shift+arrow)
+/// instead of collapsing it.
+///
+/// While an IME composition is live the key is swallowed WITHOUT moving
+/// the caret: the platform owns caret motion inside a preedit, and
+/// splicing our own move under it would desync the composing region from
+/// what the input method believes it is editing.
+pub fn chat_input_caret(state: &mut EditorState, forward: bool, extend: bool, now_ms: u64) -> bool {
     if !state.chat.focused {
         return false;
     }
+    if state.chat.input.composition().is_some() {
+        return true;
+    }
     if forward {
-        state.chat.input.move_right(false, now_ms);
+        state.chat.input.move_right(extend, now_ms);
     } else {
-        state.chat.input.move_left(false, now_ms);
+        state.chat.input.move_left(extend, now_ms);
     }
     true
 }

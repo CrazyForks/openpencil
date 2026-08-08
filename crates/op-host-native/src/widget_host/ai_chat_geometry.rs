@@ -3,21 +3,24 @@
 use super::helpers::{AICHAT_INSET_BOTTOM, AICHAT_INSET_LEFT};
 use super::WidgetHostNative;
 use op_editor_core::ChatAnchor;
-use op_editor_ui::widgets::{
-    AI_CHAT_MINIMIZED_HEIGHT, AI_CHAT_MINIMIZED_WIDTH, AI_CHAT_MIN_HEIGHT, AI_CHAT_MIN_WIDTH,
-};
+use op_editor_ui::widgets::{AI_CHAT_MINIMIZED_HEIGHT, AI_CHAT_MIN_HEIGHT, AI_CHAT_MIN_WIDTH};
 use op_editor_ui::{Point2D, Rect};
 
 impl WidgetHostNative {
+    /// The panel's width in BOTH states — minimizing changes the height
+    /// only, so the bar and the panel must read this one function or their
+    /// edges drift apart as soon as the user resizes.
+    pub(in crate::widget_host) fn ai_chat_panel_width(&self) -> f32 {
+        self.editor_state.chat.panel_width.max(AI_CHAT_MIN_WIDTH)
+    }
+
     pub(in crate::widget_host) fn ai_chat_size(&self) -> (f32, f32) {
-        if self.editor_state.chat.is_minimized() {
-            (AI_CHAT_MINIMIZED_WIDTH, AI_CHAT_MINIMIZED_HEIGHT)
+        let height = if self.editor_state.chat.is_minimized() {
+            AI_CHAT_MINIMIZED_HEIGHT
         } else {
-            (
-                self.editor_state.chat.panel_width.max(AI_CHAT_MIN_WIDTH),
-                self.editor_state.chat.panel_height.max(AI_CHAT_MIN_HEIGHT),
-            )
-        }
+            self.editor_state.chat.panel_height.max(AI_CHAT_MIN_HEIGHT)
+        };
+        (self.ai_chat_panel_width(), height)
     }
 
     pub(in crate::widget_host) fn ai_chat_rect(
@@ -29,6 +32,8 @@ impl WidgetHostNative {
         if self.editor_state.chat.is_minimized() {
             return op_editor_ui::widgets::host_canvas_geometry::minimized_chat_bar_rect(
                 self.editor_state.chat.anchor,
+                self.ai_chat_panel_width(),
+                self.editor_state.chat.panel_position,
                 cx0,
                 cy0,
                 cw,

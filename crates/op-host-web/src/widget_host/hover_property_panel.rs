@@ -52,6 +52,7 @@ impl WidgetHost {
             changed |= ui.statusbar_hover.take().is_some();
             changed |= ui.chat_design_block_hover.take().is_some();
             changed |= ui.chat_footer_hover.take().is_some();
+            changed |= ui.clear_chat_style_chip_hover();
             changed |= ui.chat_example_hover.take().is_some();
             changed |= ui.chat_tab_hover.take().is_some();
             if let Some(menu) = ui.layer_context_menu.as_mut() {

@@ -1,6 +1,7 @@
 //! Selected-count chip layout, paint, and hit-test tests.
 
 use super::*;
+use crate::widgets::ai_chat_chip_row::{CHIP_FONT, CHIP_ROW_HEIGHT};
 use crate::widgets::ai_chat_hit::AIChatHit;
 
 #[derive(Default)]
@@ -84,7 +85,7 @@ fn selected_count_zero_has_no_chip_row() {
     let (state, rect) = panel_with_selection(0);
     let panel = AIChatPlaceholder::from_editor(&state);
 
-    assert_eq!(panel.selection_chip_row_h(), 0.0);
+    assert_eq!(panel.chip_row_h(), 0.0);
     assert_eq!(panel.input_height(), INPUT_BASE_HEIGHT);
 
     let backend = paint_panel(&panel, rect);
@@ -99,17 +100,14 @@ fn selected_count_three_paints_chip_text() {
     let (state, rect) = panel_with_selection(3);
     let panel = AIChatPlaceholder::from_editor(&state);
 
-    assert_eq!(panel.selection_chip_row_h(), SELECTION_CHIP_ROW_HEIGHT);
-    assert_eq!(
-        panel.input_height(),
-        INPUT_BASE_HEIGHT + SELECTION_CHIP_ROW_HEIGHT
-    );
+    assert_eq!(panel.chip_row_h(), CHIP_ROW_HEIGHT);
+    assert_eq!(panel.input_height(), INPUT_BASE_HEIGHT + CHIP_ROW_HEIGHT);
 
     let backend = paint_panel(&panel, rect);
     assert!(backend
         .texts
         .iter()
-        .any(|(text, size, _, _)| text.contains('3') && (*size - 11.0).abs() < 1e-4));
+        .any(|(text, size, _, _)| text.contains('3') && (*size - CHIP_FONT).abs() < 1e-4));
 }
 
 #[test]
@@ -121,7 +119,7 @@ fn single_selection_chip_paints_node_name_instead_of_count() {
     assert!(backend
         .texts
         .iter()
-        .any(|(text, size, _, _)| text == "Album Art" && (*size - 11.0).abs() < 1e-4));
+        .any(|(text, size, _, _)| text == "Album Art" && (*size - CHIP_FONT).abs() < 1e-4));
     assert!(!backend
         .texts
         .iter()

@@ -303,4 +303,24 @@ impl ChatState {
         self.input.backspace(now_ms);
         before != (self.input.text().to_owned(), self.input.selection())
     }
+
+    /// Whether the input viewport should ignore [`ChatState::input_scroll`]
+    /// and reveal the caret line instead. True until a wheel writes an
+    /// offset, and true again the moment the caret leaves where that wheel
+    /// left it.
+    ///
+    /// [`ChatState::input_scroll`]: crate::chat::ChatState::input_scroll
+    pub fn input_scroll_follows_caret(&self) -> bool {
+        self.input_scroll_caret != self.input.caret()
+    }
+
+    /// Record a wheel-driven input scroll offset, pinning it to the caret
+    /// position it was taken at. Returns whether anything moved.
+    pub fn set_input_scroll(&mut self, offset: f32) -> bool {
+        let caret = self.input.caret();
+        let changed = self.input_scroll != offset || self.input_scroll_caret != caret;
+        self.input_scroll = offset;
+        self.input_scroll_caret = caret;
+        changed
+    }
 }

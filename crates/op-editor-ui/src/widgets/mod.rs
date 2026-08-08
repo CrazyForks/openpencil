@@ -53,9 +53,13 @@ pub use scene_template_panel::{
     SCENE_TEMPLATE_GALLERY_INSET, SCENE_TEMPLATE_SCRIM,
 };
 pub mod asset_center_style_cards;
+#[cfg(test)]
+mod asset_center_style_import_tests;
 mod asset_center_style_layout;
 #[cfg(test)]
 mod asset_center_tab_tests;
+mod panel_control_metrics;
+mod panel_controls;
 #[cfg(test)]
 mod prompt_center_shared_flow_tests;
 pub mod property_panel;
@@ -134,6 +138,7 @@ pub mod property_panel_widget;
 #[cfg(test)]
 mod property_panel_widget_tests;
 mod scene_template_card_actions;
+mod scene_template_card_paint;
 mod scene_template_caret;
 mod scene_template_hit;
 mod scene_template_panel_paint;
@@ -242,6 +247,8 @@ mod agent_settings_compact_action_tests;
 #[cfg(test)]
 mod agent_settings_connect_tests;
 #[cfg(test)]
+mod agent_settings_density_tests;
+#[cfg(test)]
 mod agent_settings_embed_tests;
 pub mod agent_settings_fonts;
 #[cfg(test)]
@@ -254,6 +261,7 @@ mod agent_settings_images_parts;
 #[cfg(test)]
 mod agent_settings_images_profile_tests;
 pub mod agent_settings_mcp;
+mod agent_settings_metrics;
 pub mod agent_settings_panel;
 mod agent_settings_panel_card;
 mod agent_settings_panel_geometry;
@@ -269,6 +277,7 @@ mod agent_settings_switch;
 #[cfg(test)]
 mod agent_settings_switch_style_tests;
 pub mod agent_settings_system;
+pub(crate) mod ai_chat_chip_row;
 mod ai_chat_hit;
 pub(crate) mod ai_chat_input_text;
 pub mod ai_chat_model_picker;
@@ -281,7 +290,9 @@ pub(crate) mod ai_chat_panel_header;
 mod ai_chat_panel_hit;
 mod ai_chat_panel_minimized;
 pub mod ai_chat_panel_paint;
+pub mod ai_chat_style_card;
 pub(crate) mod ai_chat_style_receipt;
+pub(crate) mod ai_chat_thinking_toggle;
 pub(crate) mod ai_chat_tool_verbs;
 pub mod ai_chat_transcript;
 pub(crate) mod ai_chat_transcript_activity;
@@ -358,6 +369,7 @@ mod property_panel_color_variables_tests;
 pub(crate) mod settings_form;
 pub mod shape_picker;
 pub mod slides_panel;
+pub mod slides_panel_actions;
 pub mod slides_panel_flow;
 pub mod slideshow_toolbar;
 pub mod status_bar;
@@ -412,9 +424,7 @@ pub use ai_chat_panel::{
     AIChatPlaceholder, AI_CHAT_HEIGHT, AI_CHAT_MAX_RATIO, AI_CHAT_MIN_HEIGHT, AI_CHAT_MIN_WIDTH,
     AI_CHAT_WIDTH,
 };
-pub use ai_chat_panel_minimized::{
-    AI_CHAT_MINIMIZED_HEIGHT, AI_CHAT_MINIMIZED_MIN_WIDTH, AI_CHAT_MINIMIZED_WIDTH,
-};
+pub use ai_chat_panel_minimized::{AI_CHAT_MINIMIZED_HEIGHT, AI_CHAT_MINIMIZED_MIN_WIDTH};
 pub use ai_chat_transcript_design::{parse_design_json_nodes, DesignParseError};
 pub use align_toolbar::{AlignToolbar, AlignToolbarHit, ALIGN_TOOLBAR_HEIGHT, ALIGN_TOOLBAR_WIDTH};
 pub use collab_panel::{CollabPanel, CollabPanelHit, COLLAB_PANEL_WIDTH};
@@ -437,12 +447,15 @@ pub use import_menu::{ImportMenu, ImportMenuChoice, IMPORT_MENU_WIDTH};
 pub use locale_picker::{LocalePicker, LOCALE_PICKER_WIDTH};
 pub use missing_fonts_panel::{MissingFontsHit, MissingFontsPanel};
 pub use prompt_center_panel::{
-    PromptCenterCard, PromptCenterHit, PromptCenterPanel, PROMPT_CENTER_PANEL_H,
-    PROMPT_CENTER_PANEL_W,
+    PromptCenterCard, PromptCenterHit, PromptCenterPanel, PROMPT_CENTER_MIN_H, PROMPT_CENTER_MIN_W,
+    PROMPT_CENTER_VIEWPORT_H_RATIO, PROMPT_CENTER_VIEWPORT_W_RATIO,
 };
 pub use shape_picker::{ShapeChoice, ShapePicker, SHAPE_PICKER_WIDTH};
 pub use slides_panel::{
     SlidesPanel, SlidesPanelLayout, SlidesPanelTabs, SLIDES_TAB_ROW_HEIGHT, SLIDE_THUMB_RADIUS,
+};
+pub use slides_panel_actions::{
+    SlidesActionLabels, SlidesActionLayout, SlidesActionState, ACTION_BAR_HEIGHT,
 };
 pub use status_bar::{StatusBar, STATUS_BAR_HEIGHT, STATUS_BAR_WIDTH};
 pub use top_bar::{TopBar, TopBarHit, TOP_BAR_HEIGHT};

@@ -57,6 +57,16 @@ pub enum FileAction {
     SaveAs,
     ExportImage,
     ExportImageConfirm,
+    /// Slides rail ▸ Export PDF ▸ "Export selected slides" — host picks
+    /// one output file and writes a slide-per-page PDF holding ONLY the
+    /// boards `preview_slideshow::selected_page_boards` returns.
+    ///
+    /// Separate from `ExportImageConfirm` rather than a flag beside it
+    /// because the scope is a property of the ACTION, not of the
+    /// document: a flag would have to be cleared by every other export
+    /// entry point, and the one that forgot would silently ship a
+    /// one-slide PDF.
+    ExportDeckPdfSelection,
     /// File ▸ "Export all frames" — host picks one output directory and
     /// writes every planned frame into it (see
     /// `op_editor_core::export_batch` for the plan, and the host's

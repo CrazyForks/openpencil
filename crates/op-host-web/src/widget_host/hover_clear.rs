@@ -97,6 +97,7 @@ impl WidgetHost {
             changed |= ui.chat_tab_hover.take().is_some();
             changed |= ui.chat_design_block_hover.take().is_some();
             changed |= ui.chat_footer_hover.take().is_some();
+            changed |= ui.clear_chat_style_chip_hover();
             changed |= ui.chat_example_hover.take().is_some();
             changed |= ui.parallel_agents_picker_hover.take().is_some();
             changed |= ui.export_picker_hover.take().is_some();
@@ -150,6 +151,7 @@ impl WidgetHost {
             changed |= ui.chat_tab_hover.take().is_some();
             changed |= ui.chat_design_block_hover.take().is_some();
             changed |= ui.chat_footer_hover.take().is_some();
+            changed |= ui.clear_chat_style_chip_hover();
             changed |= ui.chat_example_hover.take().is_some();
             changed |= ui.parallel_agents_picker_hover.take().is_some();
             changed |= ui.canvas_hover_node.take().is_some();
@@ -193,6 +195,7 @@ impl WidgetHost {
             changed |= ui.chat_tab_hover.take().is_some();
             changed |= ui.chat_design_block_hover.take().is_some();
             changed |= ui.chat_footer_hover.take().is_some();
+            changed |= ui.clear_chat_style_chip_hover();
             changed |= ui.chat_example_hover.take().is_some();
             changed |= ui.parallel_agents_picker_hover.take().is_some();
             changed |= ui.export_picker_hover.take().is_some();

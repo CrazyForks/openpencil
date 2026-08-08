@@ -263,6 +263,14 @@ impl WidgetHost {
             self.dispatch_export_quick_menu_press(x, y, viewport_width);
             return Some(true);
         }
+        // The slides rail's export dropdown, same rung as native's twin:
+        // the rail's own press tier is far below the TopBar, so this is
+        // what makes a press anywhere else dismiss the menu.
+        if self.editor_state.editor_ui.slides_panel.export_menu_open
+            && self.slides_panel_press(x, y, viewport_width, viewport_height)
+        {
+            return Some(true);
+        }
         if self.editor_state.editor_ui.export_dialog_open {
             self.close_image_popovers_for_higher_overlay();
             self.dispatch_export_dialog_press(x, y, viewport_width, viewport_height);

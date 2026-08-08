@@ -127,12 +127,46 @@ impl WidgetHostNative {
 
     /// Left / Right arrow on the focused chat input. Consumes the key
     /// even at text boundaries so it never falls through to canvas nudge.
-    pub fn apply_chat_input_caret(&mut self, forward: bool) -> bool {
-        if shared::chat_input_caret(&mut self.editor_state, forward, self.now_ms) {
+    pub fn apply_chat_input_caret(&mut self, forward: bool, extend: bool) -> bool {
+        if shared::chat_input_caret(&mut self.editor_state, forward, extend, self.now_ms) {
             self.mark_dirty();
             return true;
         }
         false
+    }
+
+    /// Up / Down arrow on the focused chat input — one VISUAL line, so a
+    /// wrapped prompt navigates the way it reads. Consumes the key at the
+    /// first / last row too (collapsing to text start / end), which is what
+    /// keeps it off `apply_nudge` and the selected node.
+    pub fn apply_chat_input_vertical_caret(&mut self, down: bool, extend: bool) -> bool {
+        if !self.editor_state.chat.focused {
+            return false;
+        }
+        // A live preedit belongs to the input method; moving the caret under
+        // it would desync the composing region. Swallow, do nothing.
+        if self.editor_state.chat.input.composition().is_some() {
+            return true;
+        }
+        let Some(chat_rect) = self.ai_chat_rect(self.last_viewport_w, self.last_viewport_h) else {
+            return true;
+        };
+        let offset = op_editor_ui::widgets::AIChatPlaceholder::from_editor_at(
+            &self.editor_state,
+            self.now_ms,
+        )
+        .input_vertical_caret_offset(chat_rect, down);
+        if let Some(offset) = offset {
+            let now_ms = self.now_ms;
+            let chat = &mut self.editor_state.chat;
+            if extend {
+                chat.input.drag_to(offset, now_ms);
+            } else {
+                chat.input.set_caret(offset, now_ms);
+            }
+            self.mark_dirty();
+        }
+        true
     }
 
     /// Left / Right arrow in the Prompt Center's focused input.

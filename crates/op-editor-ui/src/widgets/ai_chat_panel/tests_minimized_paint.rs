@@ -6,14 +6,14 @@
 use super::tests::{seed_available_model, PanelPaintBackend};
 use super::tests_paint::{assert_close, color_close, rect_close};
 use super::*;
-use crate::widgets::{AI_CHAT_MINIMIZED_HEIGHT, AI_CHAT_MINIMIZED_WIDTH};
+use crate::widgets::{AI_CHAT_MINIMIZED_HEIGHT, AI_CHAT_WIDTH};
 
 #[test]
 fn paint_minimized_bar_reads_as_a_compact_input() {
     let mut s = EditorState::new();
     s.chat.minimize();
     let panel = AIChatPlaceholder::from_editor(&s);
-    let rect = Rect::xywh(0.0, 0.0, AI_CHAT_MINIMIZED_WIDTH, AI_CHAT_MINIMIZED_HEIGHT);
+    let rect = Rect::xywh(0.0, 0.0, AI_CHAT_WIDTH, AI_CHAT_MINIMIZED_HEIGHT);
     let mut backend = PanelPaintBackend::default();
     let mut cx = PaintCx {
         backend: &mut backend,
@@ -61,7 +61,7 @@ fn the_model_name_sits_a_step_below_the_placeholder() {
     s.chat.minimize();
     seed_available_model(&mut s);
     let panel = AIChatPlaceholder::from_editor(&s);
-    let rect = Rect::xywh(0.0, 0.0, AI_CHAT_MINIMIZED_WIDTH, AI_CHAT_MINIMIZED_HEIGHT);
+    let rect = Rect::xywh(0.0, 0.0, AI_CHAT_WIDTH, AI_CHAT_MINIMIZED_HEIGHT);
     let mut backend = PanelPaintBackend::default();
     let mut cx = PaintCx {
         backend: &mut backend,
@@ -92,7 +92,7 @@ fn paint_minimized_bar_prefers_the_unsent_draft_over_the_placeholder() {
     s.chat
         .set_input_text("a pricing page\nsecond line".to_string());
     let panel = AIChatPlaceholder::from_editor(&s);
-    let rect = Rect::xywh(0.0, 0.0, AI_CHAT_MINIMIZED_WIDTH, AI_CHAT_MINIMIZED_HEIGHT);
+    let rect = Rect::xywh(0.0, 0.0, AI_CHAT_WIDTH, AI_CHAT_MINIMIZED_HEIGHT);
     let mut backend = PanelPaintBackend::default();
     let mut cx = PaintCx {
         backend: &mut backend,
@@ -123,7 +123,7 @@ fn paint_minimized_bar_hover_adds_visible_feedback_across_the_bar() {
     s.chat.minimize();
     s.editor_ui.chat_header_hover = Some(op_editor_core::ChatHeaderButton::ToggleCollapse);
     let panel = AIChatPlaceholder::from_editor(&s);
-    let rect = Rect::xywh(0.0, 0.0, AI_CHAT_MINIMIZED_WIDTH, AI_CHAT_MINIMIZED_HEIGHT);
+    let rect = Rect::xywh(0.0, 0.0, AI_CHAT_WIDTH, AI_CHAT_MINIMIZED_HEIGHT);
     let mut backend = PanelPaintBackend::default();
     let mut cx = PaintCx {
         backend: &mut backend,

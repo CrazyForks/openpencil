@@ -101,9 +101,9 @@ pub fn earliest(current: Option<u64>, deadline: u64) -> Option<u64> {
 
 /// The platform-independent part of the next animation wake-up: agent
 /// reveal + generation-scan indicators, the canvas layout transition,
-/// the focused text input's caret blink, and the top-bar hover
-/// tooltip's dwell timer. `None` = nothing animating from these
-/// sources.
+/// the focused text input's caret blink, and the two hover dwells (the
+/// top-bar tooltip's and the chat's pinned-style card's). `None` =
+/// nothing animating from these sources.
 ///
 /// Hosts fold their own platform clauses on top through [`earliest`].
 pub fn base_animation_deadline_ms(
@@ -137,6 +137,14 @@ pub fn base_animation_deadline_ms(
     // which is what keeps native and web identical.
     if let Some(deadline) =
         crate::widgets::editor_toast_flow::next_deadline_ms(&state.editor_ui, now_ms)
+    {
+        next = earliest(next, deadline);
+    }
+    // Same reason for the chat's pinned-style card: its dwell expires without
+    // any further input, and a card that only appeared on the next mouse
+    // jiggle would read as the hover not working.
+    if let Some(deadline) =
+        crate::widgets::ai_chat_style_card::next_deadline_ms(&state.editor_ui, now_ms)
     {
         next = earliest(next, deadline);
     }

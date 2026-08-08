@@ -43,6 +43,35 @@ impl EditorUiState {
         true
     }
 
+    /// Record whether the cursor rests on the pinned-style chip, starting or
+    /// stopping its detail card's dwell clock. Returns whether anything
+    /// changed — hosts use that as their repaint signal.
+    ///
+    /// Unlike the top bar's row-wide clock this restarts on every entry,
+    /// because there is only one chip to enter: there is no neighbouring
+    /// target for an already-earned card to follow the cursor onto.
+    pub fn set_chat_style_chip_hover(&mut self, hovering: bool, now_ms: u64) -> bool {
+        match (self.chat_style_chip_hover_since_ms, hovering) {
+            (None, true) => {
+                self.chat_style_chip_hover_since_ms = Some(now_ms);
+                true
+            }
+            (Some(_), false) => {
+                self.chat_style_chip_hover_since_ms = None;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Drop the pinned-style chip's hover, so its card cannot outlive the
+    /// panel it hangs over. The clear paths call this when a surface painted
+    /// above the chat takes the cursor; they carry no clock, and none is
+    /// needed to stop one.
+    pub fn clear_chat_style_chip_hover(&mut self) -> bool {
+        self.chat_style_chip_hover_since_ms.take().is_some()
+    }
+
     pub fn touch_recent_file(&mut self, path: String, modified_at: u64) {
         self.recent_files.retain(|recent| recent.path != path);
         self.recent_files

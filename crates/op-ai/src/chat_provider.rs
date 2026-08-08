@@ -423,10 +423,28 @@ pub struct UnfilledScreensReport {
 /// subset that fixed something with how many document edits it applied.
 /// Empty `checks` means the passes never ran at all — the credential must
 /// then be omitted entirely, never rendered as a clean bill of health.
+///
+/// `records` is the itemized half: one already-rendered line per applied
+/// edit (`layout · table-gap · Pricing Row [n42] · gap 0 → 16`), in the
+/// order the passes applied them, so a user can see WHICH node a repair
+/// touched and what it changed instead of only how many there were. It is
+/// pre-rendered rather than structured because every consumer displays it
+/// verbatim, and because `repairs` must stay the authority on the counts.
+/// An older host that does not report it sends an empty vector — the
+/// credential then degrades to counts only, which is what it always was.
+///
+/// `notes` are statements about the run that are NOT edits — today, the line
+/// saying a whole tier of passes was deliberately skipped because the input
+/// was an authored template. Separate from `records` for the same reason the
+/// orchestrator keeps them apart: a note counted as a repair would make the
+/// credential claim work that never happened. Renderers put notes FIRST —
+/// what was deliberately not run outranks what was.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QualitySummary {
     pub checks: Vec<String>,
     pub repairs: Vec<(String, usize)>,
+    pub records: Vec<String>,
+    pub notes: Vec<String>,
 }
 
 impl QualitySummary {

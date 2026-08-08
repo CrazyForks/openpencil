@@ -322,3 +322,222 @@ fn header_collapse_chevron_area_resolves_toggle_collapse() {
         "collapse chevron must resolve ToggleCollapse"
     );
 }
+
+// ── Thinking-mode toggle ─────────────────────────────────────────────────────
+
+/// The footer as laid out for a default-size panel.
+fn default_footer(s: &EditorState) -> (AIChatPlaceholder<'_>, Rect, FooterLayout) {
+    let panel = AIChatPlaceholder::from_editor(s);
+    let rect = Rect::xywh(0.0, 0.0, AI_CHAT_WIDTH, AI_CHAT_HEIGHT);
+    let input = panel.input_rect(rect);
+    let toolbar_top = input.origin.y + INPUT_AREA_HEIGHT;
+    let footer = panel.footer_layout(rect, input, toolbar_top);
+    (panel, rect, footer)
+}
+
+#[test]
+fn thinking_toggle_sits_between_the_library_button_and_the_speed_chip() {
+    let s = EditorState::new();
+    let (_panel, _rect, footer) = default_footer(&s);
+
+    assert!(footer.thinking.size.x > 0.0, "toggle must be laid out");
+    assert!(
+        footer.prompt_center.origin.x + footer.prompt_center.size.x <= footer.thinking.origin.x,
+        "library button must end before the thinking toggle starts"
+    );
+    assert!(
+        footer.thinking.origin.x + footer.thinking.size.x <= footer.speed.origin.x,
+        "thinking toggle must end before the ⚡ chip starts"
+    );
+    // …and it must not have eaten the model pill's room.
+    assert!(
+        footer.model.origin.x + footer.model.size.x <= footer.prompt_center.origin.x,
+        "model pill must still end before the library button"
+    );
+    assert!(
+        footer.model.size.x >= 140.0,
+        "model pill keeps its width at the default panel size, got {}",
+        footer.model.size.x
+    );
+}
+
+#[test]
+fn thinking_toggle_is_dropped_before_the_model_pill_becomes_unreadable() {
+    // Degradation, not overlap: a panel too narrow for six controls drops
+    // the toggle rather than squeezing the model name into nothing. A
+    // zero-width rect can never be hit, so the row stays honest about what
+    // is there. The boundary sits below `AI_CHAT_MIN_WIDTH`, so a user
+    // dragging the panel to its narrowest still has the toggle.
+    let s = EditorState::new();
+    let panel = AIChatPlaceholder::from_editor(&s);
+    let footer_at = |w: f32| {
+        let rect = Rect::xywh(0.0, 0.0, w, AI_CHAT_HEIGHT);
+        let input = panel.input_rect(rect);
+        let toolbar_top = input.origin.y + INPUT_AREA_HEIGHT;
+        panel.footer_layout(rect, input, toolbar_top)
+    };
+
+    let smallest = footer_at(AI_CHAT_MIN_WIDTH);
+    assert!(
+        smallest.thinking.size.x > 0.0,
+        "the toggle must survive down to the minimum panel width"
+    );
+
+    let narrow = Rect::xywh(0.0, 0.0, 240.0, AI_CHAT_HEIGHT);
+    let dropped = footer_at(240.0);
+    assert_eq!(dropped.thinking.size.x, 0.0, "toggle must be dropped");
+    // `Rect::contains` is inclusive on both edges, so a zero-width rect is not
+    // self-evidently unhittable — assert against the hit-test, not the rect.
+    let probe = Point2D::new(
+        dropped.thinking.origin.x,
+        dropped.thinking.origin.y + dropped.thinking.size.y / 2.0,
+    );
+    assert_ne!(
+        panel.hit_test(narrow, probe),
+        Some(AIChatHit::CycleThinking),
+        "a dropped slot must not be clickable"
+    );
+    // The row closes the hole rather than leaving a 24 px gap in it…
+    assert!(
+        (dropped.prompt_center.origin.x + dropped.prompt_center.size.x - dropped.speed.origin.x)
+            .abs()
+            <= 4.01,
+        "library button must sit against the ⚡ chip once the toggle is gone"
+    );
+    // …and the width it gave up went back to the model pill.
+    assert!(
+        dropped.model.size.x >= 72.0,
+        "dropping the toggle must give the model pill its room back, got {}",
+        dropped.model.size.x
+    );
+}
+
+#[test]
+fn thinking_toggle_click_cycles_the_mode_through_the_hit() {
+    use crate::widgets::chat_click_flow::apply_chat_hit;
+    use op_editor_core::chat::ThinkingMode;
+
+    let mut s = EditorState::new();
+    let expected = [
+        ThinkingMode::Disabled,
+        ThinkingMode::Enabled,
+        ThinkingMode::Adaptive,
+    ];
+    assert_eq!(s.chat.thinking_mode, ThinkingMode::Adaptive);
+    for want in expected {
+        let (panel, rect, footer) = default_footer(&s);
+        let point = Point2D::new(
+            footer.thinking.origin.x + footer.thinking.size.x / 2.0,
+            footer.thinking.origin.y + footer.thinking.size.y / 2.0,
+        );
+        assert_eq!(
+            panel.hit_test(rect, point),
+            Some(AIChatHit::CycleThinking),
+            "the toggle's centre must resolve to CycleThinking"
+        );
+        apply_chat_hit(&mut s, AIChatHit::CycleThinking, 0);
+        assert_eq!(s.chat.thinking_mode, want);
+    }
+}
+
+#[test]
+fn thinking_toggle_reports_its_own_hover() {
+    let s = EditorState::new();
+    let (panel, rect, footer) = default_footer(&s);
+    let point = Point2D::new(
+        footer.thinking.origin.x + footer.thinking.size.x / 2.0,
+        footer.thinking.origin.y + footer.thinking.size.y / 2.0,
+    );
+    assert_eq!(
+        panel.footer_hover_at(rect, point),
+        Some(op_editor_core::ChatFooterButton::ThinkingMode)
+    );
+}
+
+#[test]
+fn thinking_toggle_stays_live_while_a_turn_streams() {
+    // Unlike the ⚡ chip beside it, the toggle is not inert during a turn:
+    // the mode is read at the NEXT launch, which is what a user clicking it
+    // mid-stream is asking for.
+    let mut s = EditorState::new();
+    seed_available_model(&mut s);
+    let mut streaming = op_editor_core::chat::ChatMessage::assistant("designing…");
+    streaming.streaming = true;
+    s.chat.messages.push(streaming);
+    let (panel, rect, footer) = default_footer(&s);
+    assert!(panel.is_streaming());
+    let point = Point2D::new(
+        footer.thinking.origin.x + footer.thinking.size.x / 2.0,
+        footer.thinking.origin.y + footer.thinking.size.y / 2.0,
+    );
+    assert_eq!(panel.hit_test(rect, point), Some(AIChatHit::CycleThinking));
+}
+
+#[test]
+fn hovering_the_thinking_toggle_names_the_mode_it_is_in() {
+    // The button is a bare glyph, so the tooltip is the only place the
+    // current mode is spelled out. Painted for every mode, not just the
+    // non-default ones.
+    use op_editor_core::chat::ThinkingMode;
+
+    for (mode, key) in [
+        (ThinkingMode::Adaptive, "ai.thinking.adaptive"),
+        (ThinkingMode::Disabled, "ai.thinking.disabled"),
+        (ThinkingMode::Enabled, "ai.thinking.enabled"),
+    ] {
+        let mut s = EditorState::new();
+        seed_available_model(&mut s);
+        s.editor_ui.locale = op_editor_core::Locale::EnUs;
+        s.chat.thinking_mode = mode;
+        s.editor_ui.chat_footer_hover = Some(op_editor_core::ChatFooterButton::ThinkingMode);
+        let panel = AIChatPlaceholder::from_editor(&s);
+        let rect = Rect::xywh(0.0, 0.0, AI_CHAT_WIDTH, AI_CHAT_HEIGHT);
+        let mut backend = PanelPaintBackend::default();
+        let mut cx = PaintCx {
+            backend: &mut backend,
+        };
+
+        panel.paint(&mut cx, rect);
+
+        let expected = op_i18n::translate(op_editor_core::Locale::EnUs, key);
+        assert!(
+            backend.texts.iter().any(|(text, ..)| text == expected),
+            "hovering in {mode:?} must paint `{expected}`"
+        );
+    }
+}
+
+#[test]
+fn the_zero_width_agent_team_slot_is_not_a_live_target() {
+    // `Rect::contains` is inclusive on BOTH edges, so a zero-width rect still
+    // owns the single pixel column at its origin — the retired ⚡-team chip is
+    // laid out as one of those for schema compat. In the press path the model
+    // pill (which ends on that same column) shadows it, but `footer_hover_at`
+    // gates the model pill on having models, so with nothing connected that
+    // column reported a hover for a control that is not painted at all.
+    let s = EditorState::new();
+    assert!(
+        s.chat.available_models.is_empty(),
+        "the reachable case is the one with no model connected"
+    );
+    let (panel, rect, footer) = default_footer(&s);
+    assert_eq!(
+        footer.agent_team.size.x, 0.0,
+        "the slot is still zero-width"
+    );
+
+    let column = Point2D::new(
+        footer.agent_team.origin.x,
+        footer.agent_team.origin.y + footer.agent_team.size.y / 2.0,
+    );
+    assert_ne!(
+        panel.footer_hover_at(rect, column),
+        Some(op_editor_core::ChatFooterButton::AgentTeam),
+        "a dropped slot must not report hover"
+    );
+    assert_ne!(
+        panel.hit_test(rect, column),
+        Some(AIChatHit::CycleAgentTeam),
+        "a dropped slot must not be clickable"
+    );
+}

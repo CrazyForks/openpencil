@@ -43,10 +43,16 @@ fn memo() -> &'static RwLock<Memo> {
 }
 
 /// Drop every memoized summary. Called by the imported-guide mutators.
+///
+/// The hover card's memo ([`super::card`]) is keyed off the same catalogue and
+/// is dropped in the same breath: the two describe one guide at two levels of
+/// detail, and a card surviving the summary that displaced it would show the
+/// deleted file's palette under the live file's name.
 pub(super) fn invalidate_summaries() {
     if let Ok(mut memo) = memo().write() {
         memo.clear();
     }
+    super::card::invalidate_cards();
 }
 
 /// Summarize the guide `id` names, or `None` when it names none.

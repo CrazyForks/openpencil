@@ -30,6 +30,8 @@ pub enum ChatFooterButton {
     ModelPicker,
     /// Speed/effort chip (⚡ + label) — cycles the effort level.
     SpeedChip,
+    /// Thinking-mode button (🧠) — cycles Adaptive → Disabled → Enabled.
+    ThinkingMode,
     /// Compact Agent Team size chip in the bottom toolbar.
     AgentTeam,
     /// Paperclip attachment button.

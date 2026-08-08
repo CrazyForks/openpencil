@@ -1,4 +1,5 @@
 use crate::theme::Theme;
+use crate::widgets::ai_chat_chip_row::ChipRowLayout;
 pub(crate) use crate::widgets::ai_chat_panel_controls::chat_neutral_feedback_color;
 // Re-exported for paint tests that verify hover tint colours.
 #[cfg(test)]
@@ -14,7 +15,7 @@ use crate::widgets::ai_chat_panel_paint::{
 use crate::widgets::editor_state_ext::{theme_for, translate};
 use crate::widgets::icons::{draw_icon, Icon};
 use crate::widgets::{LayoutBox, LayoutCx, PaintCx, Widget, WidgetId};
-use crate::{Point2D, Rect, TextLayout};
+use crate::{Point2D, Rect};
 use jian_core::text_input::TextInputState;
 use jian_widgets::components::select::SelectState;
 use op_editor_core::chat::ChatState;
@@ -31,11 +32,6 @@ pub(crate) const RESIZE_GUTTER: f32 = 4.0;
 pub(crate) const RESIZE_CORNER: f32 = 12.0;
 pub(crate) const INPUT_AREA_HEIGHT: f32 = 56.0;
 pub(crate) const INPUT_TOOLBAR_HEIGHT: f32 = 40.0;
-pub(crate) const SELECTION_CHIP_ROW_HEIGHT: f32 = 28.0;
-const SELECTION_CHIP_HEIGHT: f32 = 20.0;
-const SELECTION_CHIP_PAD_X: f32 = 10.0;
-const SELECTION_CHIP_CLEAR_W: f32 = 18.0;
-const SELECTION_CHIP_FONT: f32 = 11.0;
 #[cfg(test)]
 const INPUT_BASE_HEIGHT: f32 = INPUT_AREA_HEIGHT + INPUT_TOOLBAR_HEIGHT;
 
@@ -118,6 +114,10 @@ pub struct AIChatPlaceholder<'a> {
     /// What the next generation will style itself with, or `None` when there
     /// is nothing true to report. See `ai_chat_style_receipt`.
     pub(crate) style_receipt: Option<crate::widgets::ai_chat_style_receipt::StyleReceipt>,
+    /// The receipt's hover card, present only once its dwell has elapsed.
+    /// Resolving it is gated on that so an un-hovered panel does no work for
+    /// it at all — see `ai_chat_style_card`.
+    pub(crate) style_card: Option<crate::widgets::ai_chat_style_card::StyleCard>,
     /// All open chat tabs (from `state.chat.tabs()`). Kept as an owned
     /// snapshot so the tab row can paint all titles in one pass without
     /// holding a borrow on `state.chat` that conflicts with `Deref`.
@@ -185,6 +185,7 @@ impl<'a> AIChatPlaceholder<'a> {
             selected_count: state.selection_count(),
             selected_label: selection_chip_label_for_state(state),
             style_receipt: crate::widgets::ai_chat_style_receipt::StyleReceipt::for_state(state),
+            style_card: crate::widgets::ai_chat_style_card::StyleCard::for_state(state, now_ms),
             model_picker: &ui.chat_model_picker,
             model_picker_input: &ui.chat_model_picker_input,
             design_hover: ui.chat_design_block_hover,
@@ -239,17 +240,35 @@ impl<'a> AIChatPlaceholder<'a> {
         }
     }
 
-    /// Height of the pinned-style receipt row — `0` when nothing is pinned.
-    ///
-    /// It sits above the selection chip, at the very top of the input block:
-    /// it describes the whole next turn, where the selection chip describes
-    /// only what that turn will be pointed at.
-    pub(crate) fn style_receipt_row_h(&self) -> f32 {
-        if self.style_receipt.is_some() {
-            crate::widgets::ai_chat_style_receipt::STYLE_RECEIPT_ROW_HEIGHT
+    /// Height of the context-chip row — `0` when neither chip is live, so a
+    /// user with nothing pinned and nothing selected gets no empty band
+    /// above the input at all.
+    pub(crate) fn chip_row_h(&self) -> f32 {
+        if self.style_receipt.is_some() || self.selected_count > 0 {
+            crate::widgets::ai_chat_chip_row::CHIP_ROW_HEIGHT
         } else {
             0.0
         }
+    }
+
+    /// Where the live chips sit. The single rect source paint and hit-test
+    /// both read — see `ai_chat_chip_row`.
+    pub(crate) fn chip_row(&self, input_rect: Rect) -> ChipRowLayout {
+        let style_w = self
+            .style_receipt
+            .as_ref()
+            .zip(self.style_receipt_label())
+            .map(|(receipt, label)| {
+                crate::widgets::ai_chat_style_receipt::chip_width(
+                    &label,
+                    receipt.swatches.len(),
+                    receipt.clearable,
+                )
+            });
+        let selection_w = (self.selected_count > 0).then(|| {
+            crate::widgets::ai_chat_chip_row::label_chip_width(&self.selection_chip_label())
+        });
+        crate::widgets::ai_chat_chip_row::chip_row_layout(style_w, selection_w, input_rect)
     }
 
     /// The receipt's label, already formatted for the active locale.
@@ -258,22 +277,42 @@ impl<'a> AIChatPlaceholder<'a> {
         Some(op_i18n::translate(self.locale, "ai.pinnedStyle").replace("{{name}}", &receipt.name))
     }
 
+    /// Where the pinned-style chip sits, or `None` when no style is in force.
+    /// The same rect paint and hit-test read — see `ai_chat_chip_row`.
+    pub fn style_chip_rect(&self, rect: Rect) -> Option<Rect> {
+        self.chip_row(self.input_rect(rect)).style
+    }
+
+    /// Whether the chip's detail card is on screen at this panel's `now_ms`.
+    /// Hosts read this to keep a dwell wake alive past the instant it retires.
+    pub fn style_card_showing(&self) -> bool {
+        self.style_card.is_some()
+    }
+
+    /// Whether the cursor rests on the pinned-style chip — the hover the
+    /// detail card's dwell clock is started and stopped by.
+    ///
+    /// The whole chip counts, ✕ included: the card hangs above the row, so it
+    /// never covers the clear button it would be competing with, and a card
+    /// that blinked out as the cursor crossed onto the ✕ would read as a bug.
+    /// An open model picker suppresses it for the same reason the footer's
+    /// hover does — that dropdown is painted over this row.
+    pub fn style_chip_hover_at(&self, rect: Rect, point: Point2D) -> bool {
+        if self.state.is_minimized() || self.model_picker.open || self.style_receipt.is_none() {
+            return false;
+        }
+        self.chip_row(self.input_rect(rect))
+            .style
+            .is_some_and(|chip| chip.contains(point))
+    }
+
     pub(crate) fn style_receipt_clear_rect(&self, input_rect: Rect) -> Option<Rect> {
         let receipt = self.style_receipt.as_ref()?;
-        let label = self.style_receipt_label()?;
-        crate::widgets::ai_chat_style_receipt::clear_rect(receipt, &label, input_rect)
+        let chip = self.chip_row(input_rect).style?;
+        crate::widgets::ai_chat_style_receipt::clear_rect(receipt, chip)
     }
 
-    /// Height of the selected-count chip row — `0` when no canvas node is selected.
-    pub(crate) fn selection_chip_row_h(&self) -> f32 {
-        if self.selected_count == 0 {
-            0.0
-        } else {
-            SELECTION_CHIP_ROW_HEIGHT
-        }
-    }
-
-    fn selection_chip_label(&self) -> String {
+    pub(crate) fn selection_chip_label(&self) -> String {
         self.selected_label.clone().unwrap_or_else(|| {
             op_i18n::translate(self.locale, "common.selected")
                 .replace("{{count}}", &self.selected_count.to_string())
@@ -281,70 +320,53 @@ impl<'a> AIChatPlaceholder<'a> {
     }
 
     pub(crate) fn selection_chip_rect(&self, input_rect: Rect) -> Option<Rect> {
-        if self.selected_count == 0 {
-            return None;
-        }
-        let label = self.selection_chip_label();
-        let label_w = footer_label_width(&label, SELECTION_CHIP_FONT);
-        let chip_w = (SELECTION_CHIP_PAD_X + label_w + 6.0 + SELECTION_CHIP_CLEAR_W)
-            .min(input_rect.size.x)
-            .max(56.0);
-        Some(Rect {
-            origin: Point2D::new(
-                input_rect.origin.x,
-                input_rect.origin.y
-                    + self.style_receipt_row_h()
-                    + (SELECTION_CHIP_ROW_HEIGHT - SELECTION_CHIP_HEIGHT) / 2.0,
-            ),
-            size: Point2D::new(chip_w, SELECTION_CHIP_HEIGHT),
-        })
+        self.chip_row(input_rect).selection
     }
 
     pub(crate) fn selection_chip_clear_rect(&self, input_rect: Rect) -> Option<Rect> {
-        self.selection_chip_rect(input_rect).map(|chip| Rect {
-            origin: Point2D::new(
-                chip.origin.x + chip.size.x - SELECTION_CHIP_CLEAR_W,
-                chip.origin.y,
-            ),
-            size: Point2D::new(SELECTION_CHIP_CLEAR_W, chip.size.y),
-        })
+        self.selection_chip_rect(input_rect)
+            .map(crate::widgets::ai_chat_chip_row::chip_clear_rect)
     }
 
     /// Total input-block height, including the attachment row when
     /// attachments are staged.
     #[cfg(test)]
     pub(crate) fn input_height(&self) -> f32 {
-        self.input_height_for_width(self.state.panel_width)
+        self.input_height_for_width(self.state.panel_width, self.state.panel_height)
     }
 
-    pub(crate) fn input_area_height_for_input_width(&self, input_w: f32) -> f32 {
+    /// Text-area height for an input `input_w` wide inside a panel `panel_h`
+    /// tall. The panel height is what caps the growth — see
+    /// [`max_input_lines`].
+    ///
+    /// [`max_input_lines`]: crate::widgets::ai_chat_input_text::max_input_lines
+    pub(crate) fn input_area_height_for_input_width(&self, input_w: f32, panel_h: f32) -> f32 {
         let lines = crate::widgets::ai_chat_input_text::visible_input_line_count(
             self.state.input.text(),
             input_w,
+            panel_h,
         );
-        INPUT_AREA_HEIGHT
-            + (lines.saturating_sub(1) as f32) * crate::widgets::ai_chat_input_text::INPUT_LINE_H
+        crate::widgets::ai_chat_input_text::input_area_height(lines)
     }
 
-    pub(crate) fn input_area_height_for_width(&self, panel_w: f32) -> f32 {
+    pub(crate) fn input_area_height_for_width(&self, panel_w: f32, panel_h: f32) -> f32 {
         let input_w = (panel_w - PAD * 2.0).max(0.0);
-        self.input_area_height_for_input_width(input_w)
+        self.input_area_height_for_input_width(input_w, panel_h)
     }
 
-    pub(crate) fn input_height_for_width(&self, panel_w: f32) -> f32 {
-        self.style_receipt_row_h()
-            + self.selection_chip_row_h()
-            + self.input_area_height_for_width(panel_w)
+    pub(crate) fn input_height_for_width(&self, panel_w: f32, panel_h: f32) -> f32 {
+        self.chip_row_h()
+            + self.input_area_height_for_width(panel_w, panel_h)
             + INPUT_TOOLBAR_HEIGHT
             + self.attachment_row_h()
     }
 
     pub(crate) fn input_area_height_for_rect(&self, rect: Rect) -> f32 {
-        self.input_area_height_for_width(rect.size.x)
+        self.input_area_height_for_width(rect.size.x, rect.size.y)
     }
 
     pub(crate) fn input_height_for_rect(&self, rect: Rect) -> f32 {
-        self.input_height_for_width(rect.size.x)
+        self.input_height_for_width(rect.size.x, rect.size.y)
     }
 
     fn maximize_icon(&self) -> Icon {
@@ -391,7 +413,7 @@ impl<'a> AIChatPlaceholder<'a> {
             self.model_picker_input.text(),
         );
         let toolbar_top = input_rect.origin.y
-            + self.selection_chip_row_h()
+            + self.chip_row_h()
             + self.input_area_height_for_rect(rect)
             + self.attachment_row_h();
         let bottom = toolbar_top - 4.0;
@@ -461,7 +483,7 @@ impl<'a> AIChatPlaceholder<'a> {
         Rect {
             origin: Point2D::new(
                 input_block.origin.x,
-                input_block.origin.y + self.style_receipt_row_h() + self.selection_chip_row_h(),
+                input_block.origin.y + self.chip_row_h(),
             ),
             size: Point2D::new(input_block.size.x, self.input_area_height_for_rect(rect)),
         }
@@ -470,9 +492,37 @@ impl<'a> AIChatPlaceholder<'a> {
     pub fn input_caret_rect(&self, rect: Rect) -> Rect {
         let input_text = self.input_text_rect(rect);
         crate::widgets::ai_chat_input_text::input_caret_rect(
-            &self.state.input,
+            self.state,
             input_text,
             input_text.size.y,
+        )
+    }
+
+    /// Resolved `(current, max)` scroll offset of the draft input for the
+    /// panel laid out at `rect`. `max == 0.0` while the text still fits.
+    ///
+    /// `current` is what is on screen right now, which is not always the
+    /// stored offset — the caret overrides it after any caret motion — so a
+    /// wheel must apply its delta to this, not to `chat.input_scroll`.
+    pub fn input_scroll_state(&self, rect: Rect) -> (f32, f32) {
+        let input_text = self.input_text_rect(rect);
+        let view = crate::widgets::ai_chat_input_text::measured_input_text_view(
+            self.state,
+            input_text,
+            input_text.size.y,
+        );
+        (view.scroll, view.max_scroll)
+    }
+
+    /// Byte offset the caret moves to when it steps one visual line
+    /// up / down inside the draft input.
+    pub fn input_vertical_caret_offset(&self, rect: Rect, down: bool) -> Option<usize> {
+        let input_text = self.input_text_rect(rect);
+        crate::widgets::ai_chat_input_text::vertical_caret_offset(
+            self.state,
+            input_text,
+            input_text.size.y,
+            down,
         )
     }
 }
@@ -505,47 +555,16 @@ fn selection_chip_label_for_state(state: &EditorState) -> Option<String> {
     }
 }
 
-fn paint_selection_chip(
-    cx: &mut PaintCx<'_>,
-    theme: &Theme,
-    widget: &AIChatPlaceholder<'_>,
-    input_rect: Rect,
-) {
-    let Some(chip) = widget.selection_chip_rect(input_rect) else {
-        return;
-    };
-    let label = widget.selection_chip_label();
-    cx.backend.fill_round_rect(chip, 6.0, theme.muted);
-    let label_layout = TextLayout::single_run(
-        &label,
-        "system-ui",
-        SELECTION_CHIP_FONT,
-        (theme.muted_foreground).to_jian(),
-        Point2D::new(0.0, 0.0),
-    );
-    let baseline_y = chip.origin.y + chip.size.y / 2.0 + SELECTION_CHIP_FONT * 0.35;
-    cx.backend.draw_text(
-        &label_layout,
-        Point2D::new(chip.origin.x + SELECTION_CHIP_PAD_X, baseline_y),
-    );
-    let clear_layout = TextLayout::single_run(
-        "×",
-        "system-ui",
-        SELECTION_CHIP_FONT,
-        (theme.muted_foreground).to_jian(),
-        Point2D::new(0.0, 0.0),
-    );
-    let clear_x = chip.origin.x + chip.size.x - SELECTION_CHIP_CLEAR_W / 2.0 - 3.0;
-    cx.backend
-        .draw_text(&clear_layout, Point2D::new(clear_x, baseline_y));
-}
-
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct FooterLayout {
     /// Model picker pill — left anchor of the toolbar.
     pub(crate) model: Rect,
     /// Prompt-library button — opens the Prompt Center.
     pub(crate) prompt_center: Rect,
+    /// Thinking-mode toggle — 🧠 icon, cycles Adaptive/Disabled/Enabled.
+    /// Zero-width when the row is too narrow to hold it (see
+    /// `footer_layout`); `contains()` is then always false.
+    pub(crate) thinking: Rect,
     /// Speed/effort chip — ⚡ icon + effort label in gold, no bg.
     /// Retained next to the model pill; clicking cycles effort level.
     pub(crate) speed: Rect,

@@ -70,6 +70,7 @@ pub fn chat_button_press_target(hit: &AIChatHit) -> Option<ButtonPressTarget> {
         // The ⚡ chip is now the Parallel Agents chip — pressed state uses SpeedChip.
         AIChatHit::ToggleParallelAgentsPicker => ChatFooterButton::SpeedChip,
         AIChatHit::CycleAgentTeam => ChatFooterButton::AgentTeam,
+        AIChatHit::CycleThinking => ChatFooterButton::ThinkingMode,
         AIChatHit::AddAttachment => ChatFooterButton::AddAttachment,
         AIChatHit::Send => ChatFooterButton::Send,
         AIChatHit::Stop => ChatFooterButton::Stop,

@@ -16,11 +16,13 @@ use crate::widgets::text_metrics;
 use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout};
 
-/// Bar width at rest. Wide enough to read as an input rather than a
-/// pill; hosts clamp it down on a narrow canvas.
-pub const AI_CHAT_MINIMIZED_WIDTH: f32 = 400.0;
 /// Bar height at rest. Sized so the bar reads as a thin input strip,
 /// not a slab: the submit circle plus its breathing room sets the floor.
+///
+/// There is deliberately no matching `_WIDTH`: minimizing changes the
+/// panel's height only, and the width comes from the host's expanded-panel
+/// width so the two states' edges line up. A second width constant here is
+/// exactly what made the bar jump narrower than the panel it replaced.
 pub const AI_CHAT_MINIMIZED_HEIGHT: f32 = 48.0;
 /// Narrowest the bar may be squeezed to before a host hides it.
 pub const AI_CHAT_MINIMIZED_MIN_WIDTH: f32 = 240.0;
@@ -248,7 +250,12 @@ mod tests {
     use super::*;
 
     fn bar() -> Rect {
-        Rect::xywh(0.0, 0.0, AI_CHAT_MINIMIZED_WIDTH, AI_CHAT_MINIMIZED_HEIGHT)
+        Rect::xywh(
+            0.0,
+            0.0,
+            crate::widgets::AI_CHAT_WIDTH,
+            AI_CHAT_MINIMIZED_HEIGHT,
+        )
     }
 
     #[test]

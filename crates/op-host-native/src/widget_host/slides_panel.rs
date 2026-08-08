@@ -98,16 +98,17 @@ impl WidgetHostNative {
         slides: &SlidesFrame,
     ) {
         use op_editor_ui::widgets::PaintCx;
-        let ui = &self.editor_state.editor_ui;
         let (layers_label, slides_label) = flow::tab_labels(&self.editor_state);
-        let present_label =
-            op_editor_ui::widgets::editor_state_ext::translate(ui, "slidesPanel.present");
+        let actions = flow::action_labels(
+            &self.editor_state,
+            flow::selected_slide_count(&self.editor_state, &slides.chips),
+        );
         let widget = flow::widget(
             slides.active,
             &self.editor_state,
             layers_label,
             slides_label,
-            present_label,
+            actions.labels(),
         );
         {
             let mut cx = PaintCx {
@@ -331,10 +332,21 @@ impl WidgetHostNative {
             }
             flow::SlidesRelease::Present => {
                 // The same path the TopBar's Play button takes, so the
-                // footer and the top bar cannot start two different
+                // action bar and the top bar cannot start two different
                 // kinds of presentation.
                 let (_x, _y, cw, ch) = self.canvas_region(viewport_w, viewport_h);
                 self.enter_preview((cw, ch));
+                self.mark_dirty();
+                true
+            }
+            // The export rows queued their file action in the shared
+            // flow; the desktop host's own pump drains
+            // `pending_file_action` on the next frame, which is where the
+            // save picker and `export_deck_pdf` live. Nothing platform-
+            // specific is left to do but repaint.
+            flow::SlidesRelease::ToggleExportMenu
+            | flow::SlidesRelease::ExportAllSlides
+            | flow::SlidesRelease::ExportSelectedSlides => {
                 self.mark_dirty();
                 true
             }

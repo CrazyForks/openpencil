@@ -91,6 +91,14 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
         // shell supports user font import — flip the flag the shared picker
         // reads to paint the Imported group + "Import font…" row (#Phase 4).
         b.host.editor_state_mut().editor_ui.font_import_supported = true;
+        // Same for the Styles tab's DESIGN.md import: a hidden `<input
+        // type=file>` is a file dialog for this purpose, so the box paints its
+        // "choose file" button alongside the paste area rather than offering
+        // the paste route alone.
+        b.host
+            .editor_state_mut()
+            .editor_ui
+            .style_import_file_picker_supported = true;
         // First frame paints synchronously so the shell is visible immediately
         // (no one-frame blank). Subsequent input-driven repaints coalesce
         // through the rAF installed below.
@@ -318,6 +326,7 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
                 crate::iconify_web::drain_iconify_request(&inner);
                 crate::codegen_web::drain_codegen_flags(&inner);
                 crate::web_design_md::drain_design_md_action(&inner);
+                crate::web_style_import::drain_pending_style_import(&inner);
                 crate::dom_io::drain_pending_file_action(&inner);
                 crate::dom_io::drain_pending_attachment_pick(&inner);
                 crate::dom_io::drain_pending_kit_io(&inner);
@@ -560,12 +569,14 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
                 "ArrowUp" if !is_mod && image_popover_open => consumed = true,
                 "ArrowDown" if !is_mod && image_popover_open => consumed = true,
                 "ArrowUp" if !is_mod => {
-                    consumed =
-                        b.host.apply_text_edit_vertical(false) || b.host.apply_nudge(0.0, -nudge)
+                    consumed = b.host.apply_text_edit_vertical(false)
+                        || b.host.apply_chat_input_vertical_caret(false, shift)
+                        || b.host.apply_nudge(0.0, -nudge)
                 }
                 "ArrowDown" if !is_mod => {
-                    consumed =
-                        b.host.apply_text_edit_vertical(true) || b.host.apply_nudge(0.0, nudge)
+                    consumed = b.host.apply_text_edit_vertical(true)
+                        || b.host.apply_chat_input_vertical_caret(true, shift)
+                        || b.host.apply_nudge(0.0, nudge)
                 }
                 "ArrowLeft" if is_mod && image_popover_open => {
                     consumed = b.host.apply_image_panel_edge(false, shift)
@@ -586,7 +597,7 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
                         || b.host.apply_image_panel_caret(false, shift)
                         || b.host.apply_settings_caret(false)
                         || b.host.apply_chat_model_picker_caret(false)
-                        || b.host.apply_chat_input_caret(false)
+                        || b.host.apply_chat_input_caret(false, shift)
                         || b.host.apply_rename_caret(false)
                         || b.host.apply_text_edit_caret(false)
                         || b.host.apply_property_caret(false)
@@ -597,7 +608,7 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
                         || b.host.apply_image_panel_caret(true, shift)
                         || b.host.apply_settings_caret(true)
                         || b.host.apply_chat_model_picker_caret(true)
-                        || b.host.apply_chat_input_caret(true)
+                        || b.host.apply_chat_input_caret(true, shift)
                         || b.host.apply_rename_caret(true)
                         || b.host.apply_text_edit_caret(true)
                         || b.host.apply_property_caret(true)

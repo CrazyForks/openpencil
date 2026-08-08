@@ -143,6 +143,40 @@ pub fn scroll_prompt_center(
     Some(changed)
 }
 
+/// Scroll the chat panel's *draft input* when the wheel lands over the
+/// text area of a prompt too long to fit.
+///
+/// Swallows the event whenever the pointer is over the input, overflow or
+/// not, so a wheel aimed at a one-line box can never zoom the canvas
+/// underneath it. `chat_rect` is the panel rect the host laid out.
+pub fn scroll_chat_input(
+    state: &mut EditorState,
+    chat_rect: Option<Rect>,
+    now_ms: u64,
+    point: Point2D,
+    delta_y: f32,
+) -> Option<bool> {
+    use crate::widgets::AIChatPlaceholder;
+    let chat_rect = chat_rect?;
+    if state.chat.is_minimized() {
+        return None;
+    }
+    let (input_rect, current, max) = {
+        let panel = AIChatPlaceholder::from_editor_at(state, now_ms);
+        let input_rect = panel.input_text_rect(chat_rect);
+        let (current, max) = panel.input_scroll_state(chat_rect);
+        (input_rect, current, max)
+    };
+    if !input_rect.contains(point) {
+        return None;
+    }
+    if max <= 0.0 {
+        return Some(false);
+    }
+    let next = (current - delta_y).clamp(0.0, max);
+    Some(state.chat.set_input_scroll(next))
+}
+
 /// Scroll the right-rail PropertyPanel body once the hosts' own
 /// popover-priority preamble has declined the event: the Code tab's
 /// horizontal framework strip, the Code preview box, then the panel's

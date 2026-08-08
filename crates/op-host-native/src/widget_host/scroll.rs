@@ -75,6 +75,34 @@ impl WidgetHostNative {
         true
     }
 
+    /// Scroll the chat panel's draft input when the wheel lands over a
+    /// prompt too long for the box. Runs ahead of the transcript handler
+    /// (which bails on an empty message list) so a long first prompt is
+    /// scrollable before any turn has been sent.
+    fn try_scroll_chat_input(
+        &mut self,
+        x: f32,
+        y: f32,
+        delta: f32,
+        viewport_width: f32,
+        viewport_height: f32,
+    ) -> bool {
+        let chat_rect = self.ai_chat_rect(viewport_width, viewport_height);
+        let Some(dirty) = scroll_flow::scroll_chat_input(
+            &mut self.editor_state,
+            chat_rect,
+            self.now_ms,
+            Point2D::new(x, y),
+            delta,
+        ) else {
+            return false;
+        };
+        if dirty {
+            self.mark_dirty();
+        }
+        true
+    }
+
     fn try_scroll_agent_preset_menu(
         &mut self,
         x: f32,
@@ -457,6 +485,9 @@ impl WidgetHostNative {
         // Chat transcript message list — a wheel over the body scrolls
         // the conversation; the pinned-to-bottom auto-follow resumes once
         // the user scrolls back to the bottom.
+        if self.try_scroll_chat_input(x, y, delta_y, viewport_width, viewport_height) {
+            return true;
+        }
         if self.try_scroll_chat_transcript(x, y, delta_y, viewport_width, viewport_height) {
             return true;
         }
@@ -648,6 +679,9 @@ impl WidgetHostNative {
                     return true;
                 }
             }
+        }
+        if self.try_scroll_chat_input(x, y, dy, viewport_width, viewport_height) {
+            return true;
         }
         if self.try_scroll_chat_transcript(x, y, dy, viewport_width, viewport_height) {
             return true;

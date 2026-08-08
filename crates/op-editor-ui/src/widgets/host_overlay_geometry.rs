@@ -24,7 +24,8 @@ use crate::widgets::{
     ExportQuickMenu, ImportMenu, LayoutCx, LocalePicker, ShapePicker, Toolbar, TopBar, Widget,
     COMPONENT_BROWSER_PANEL_H, COMPONENT_BROWSER_PANEL_W, DESIGN_MD_PANEL_H, DESIGN_MD_PANEL_W,
     ICON_PICKER_PANEL_H, ICON_PICKER_PANEL_W, IMPORT_MENU_WIDTH, LOCALE_PICKER_WIDTH,
-    PROMPT_CENTER_PANEL_H, PROMPT_CENTER_PANEL_W, SCENE_TEMPLATE_GALLERY_INSET, SHAPE_PICKER_WIDTH,
+    PROMPT_CENTER_MIN_H, PROMPT_CENTER_MIN_W, PROMPT_CENTER_VIEWPORT_H_RATIO,
+    PROMPT_CENTER_VIEWPORT_W_RATIO, SCENE_TEMPLATE_GALLERY_INSET, SHAPE_PICKER_WIDTH,
     TOOLBAR_WIDTH, TOP_BAR_HEIGHT,
 };
 use crate::{Point2D, Rect};
@@ -244,8 +245,23 @@ pub fn component_browser_panel_rect(
     ))
 }
 
-/// Prompt Center rect — centred within the live canvas region, rather
-/// than the whole viewport, so open side rails do not visually displace it.
+/// Prompt Center rect — a fraction of the viewport, centred horizontally
+/// within the live canvas region so open side rails do not visually displace
+/// it, and vertically within the band below the top bar.
+///
+/// It has no intrinsic size. Like the Asset Center it is a gallery: the
+/// bigger the window, the bigger the previews, because everything inside it
+/// derives from this rect. It used to be a 720x520 box, which on a 1800 px
+/// window left a fifth of the screen showing under two rows of cards.
+///
+/// The ratios ([`PROMPT_CENTER_VIEWPORT_W_RATIO`] /
+/// [`PROMPT_CENTER_VIEWPORT_H_RATIO`]) supply the margin, and the floors
+/// ([`PROMPT_CENTER_MIN_W`] / [`PROMPT_CENTER_MIN_H`]) keep a small window
+/// usable — each floor is itself clamped to what the viewport has, so a
+/// window smaller than the floor yields a full-bleed panel rather than one
+/// hanging off the edge. Height is measured against the space below the top
+/// bar rather than the whole viewport, so the panel is centred in the room it
+/// actually has instead of being clamped up under the chrome.
 pub fn prompt_center_panel_rect(
     state: &EditorState,
     viewport_w: f32,
@@ -257,10 +273,13 @@ pub fn prompt_center_panel_rect(
     let canvas = canvas_rect(state, viewport_w, viewport_h);
     let viewport_w = viewport_w.max(0.0);
     let viewport_h = viewport_h.max(0.0);
-    let panel_w = PROMPT_CENTER_PANEL_W.min(viewport_w);
-    let panel_h = PROMPT_CENTER_PANEL_H.min(viewport_h);
+    let available_h = (viewport_h - TOP_BAR_HEIGHT).max(0.0);
+    let panel_w =
+        (viewport_w * PROMPT_CENTER_VIEWPORT_W_RATIO).max(PROMPT_CENTER_MIN_W.min(viewport_w));
+    let panel_h =
+        (available_h * PROMPT_CENTER_VIEWPORT_H_RATIO).max(PROMPT_CENTER_MIN_H.min(available_h));
     let x = canvas.origin.x + (canvas.size.x - panel_w) / 2.0;
-    let y = canvas.origin.y + (canvas.size.y - panel_h) / 2.0;
+    let y = viewport_h - available_h + (available_h - panel_h) / 2.0;
     Some(Rect {
         origin: Point2D::new(
             x.clamp(0.0, (viewport_w - panel_w).max(0.0)),

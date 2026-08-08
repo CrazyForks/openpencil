@@ -10,6 +10,7 @@
 //! [`find_style_guide`] rather than [`style_guide_registry`] whenever the name
 //! could have come from a user: pins, plans, and sub-agent specs all can.
 
+pub mod card;
 pub mod design_md_import;
 pub mod loader;
 pub mod mapping;
@@ -22,6 +23,7 @@ pub mod user_registry;
 #[cfg(test)]
 mod audit_tests;
 
+pub use card::{style_guide_card, StyleGuideCard, STYLE_CARD_SWATCH_CAP};
 pub use design_md_import::{
     parse_design_md, slugify, DesignMdImportError, ImportedDesignMd, MAX_DESIGN_MD_BYTES,
 };

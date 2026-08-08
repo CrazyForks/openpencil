@@ -216,6 +216,24 @@ pub struct ChatState {
     /// and launches a single-subtask retry worker. Mirrors the
     /// `pending_send` / `codegen.pending_regenerate` host-drain pattern.
     pub pending_subtask_retry: Option<(usize, String)>,
+    /// Wheel-driven scroll offset (px from the first wrapped line) of the
+    /// draft *input* text area — distinct from [`transcript_scroll`], which
+    /// moves the message list above it.
+    ///
+    /// It is only honoured while [`input_scroll_caret`] still matches the
+    /// live caret: any caret motion (typing, arrows, a click, an IME
+    /// commit) makes the stored offset stale, and the input snaps back to
+    /// the line the caret sits on. That is what keeps "scroll to read the
+    /// top of a long prompt" and "always see what I am typing" from
+    /// fighting each other without a flag every mutation site has to set.
+    ///
+    /// [`transcript_scroll`]: ChatState::transcript_scroll
+    /// [`input_scroll_caret`]: ChatState::input_scroll_caret
+    pub input_scroll: f32,
+    /// Caret byte offset captured when [`input_scroll`] was last written.
+    ///
+    /// [`input_scroll`]: ChatState::input_scroll
+    pub input_scroll_caret: usize,
 }
 
 /// Process-global allocator for [`ChatImage::id`]. A *global* counter
@@ -261,6 +279,8 @@ impl Default for ChatState {
             pending_attachments: Vec::new(),
             pending_attachment_pick: false,
             pending_subtask_retry: None,
+            input_scroll: 0.0,
+            input_scroll_caret: 0,
         }
     }
 }
