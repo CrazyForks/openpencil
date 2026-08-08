@@ -34,6 +34,7 @@ crates/
 ├── op-editor-core/       Canonical `.op` (PenDocument) editor state + EditorCommand + scene_vars (design-variable resolution)
 ├── op-editor-host-core/  Transport-free host state machines shared by all hosts
 ├── op-collab/            Open, transport-free collaboration protocol + canonical hash + exact document apply (wasm32-clean)
+├── op-collab-host/       Host-agnostic collaboration session runtime (`CollabRuntime` + `CollabHost`); desktop and the serve-web daemon both drive it
 ├── op-host-native/       Native host lib: WidgetHostNative + skia-safe GL backend (desktop + mobile)
 ├── op-host-web/          Browser bundle entry: wasm32-unknown-unknown cdylib, CanvasKit renderer
 ├── op-host-desktop/      Desktop binary `openpencil-desktop` (winit + skia-safe GL); also the `--serve-web` daemon
@@ -426,6 +427,7 @@ Pure state transitions — no widget types, wasm32-clean — live in **`op-edito
 | `request_snapshot.rs`              | `narrowed_snapshot` — see below                                                           |
 | `agent_reveals.rs`                 | Before/after node-id diff + staggered reveal bookkeeping for freshly inserted subtrees    |
 | `auth_routes.rs`                   | Device-login HTTP route paths shared by the web shell (client) and serve-web daemon (server) |
+| `collab_routes.rs` + `collab_wire.rs` | Collaboration is **not desktop-only**: the wasm bundle carries the UI but no transport, so the browser drives a daemon-hosted session over `/api/collab/{state,action,presence,avatar}` with versioned wire DTOs (client `op-host-web/src/collab_sync.rs`, server `op-host-services/src/web_canvas_server/collab_routes.rs`) |
 
 Widget-typed shared logic lives in **`op-editor-ui/src/widgets/`**:
 

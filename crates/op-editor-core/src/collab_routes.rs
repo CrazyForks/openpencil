@@ -27,13 +27,22 @@ pub const ACTION: &str = "/api/collab/action";
 /// `POST` — publish the local cursor / viewport for peer presence.
 pub const PRESENCE: &str = "/api/collab/presence";
 
+/// `POST` — proxy one roster participant's profile image.
+///
+/// The browser sends only the epoch-local `participantKey` it already has from
+/// [`STATE`] and receives bounded bytes plus an opaque revision. Verified
+/// roster avatar URLs stay inside the daemon, which owns the public-only HTTPS
+/// client — the same split as
+/// [`auth_routes::AVATAR`](crate::auth_routes::AVATAR).
+pub const AVATAR: &str = "/api/collab/avatar";
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn api_routes_share_the_gating_prefix() {
-        for route in [STATE, ACTION, PRESENCE] {
+        for route in [STATE, ACTION, PRESENCE, AVATAR] {
             assert!(
                 route.starts_with(API_PREFIX),
                 "{route} outside {API_PREFIX}"
@@ -44,7 +53,7 @@ mod tests {
     #[test]
     fn collaboration_routes_do_not_collide_with_the_auth_family() {
         assert_ne!(API_PREFIX, crate::auth_routes::API_PREFIX);
-        for route in [STATE, ACTION, PRESENCE] {
+        for route in [STATE, ACTION, PRESENCE, AVATAR] {
             assert!(!route.starts_with(crate::auth_routes::API_PREFIX));
         }
     }

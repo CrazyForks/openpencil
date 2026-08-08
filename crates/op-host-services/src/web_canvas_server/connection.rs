@@ -124,6 +124,19 @@ pub(super) fn serve_one<S: Read + Write>(
         )?;
         return Ok(false);
     }
+    // Collaboration participant avatar proxy: same shape as the account proxy
+    // above — bounded public HTTPS I/O on this connection thread, off the
+    // editor-state mutex, so a roster URL never reaches the browser.
+    if req.method == "POST" && req.path == op_editor_core::collab_routes::AVATAR {
+        let reply = crate::collab_avatar_proxy::avatar(&req.body);
+        crate::mcp_serve::write_mcp_http_response_with_origin(
+            stream,
+            reply.status,
+            &reply.body,
+            cors_origin,
+        )?;
+        return Ok(false);
+    }
     // Device-login begin: waits (per-connection thread, off the state
     // lock) for the pairing's verification URI so the popup can navigate
     // straight from this response — handled here rather than in the
