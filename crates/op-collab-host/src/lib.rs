@@ -22,8 +22,15 @@ mod runtime;
 pub use blocking::{install_blocking_executor, BlockingExecutor};
 pub use host::{CollabHost, CollabWakeNotifier, HeadlessCollabHost};
 pub use runtime::local_edit::LocalEditOutcome;
+
 pub use runtime::types::{CollabRuntimeFailure, CollabStatusEvent};
 pub use runtime::CollabRuntime;
+
+// Controlled session fixtures for downstream test suites. Compiled only for
+// this crate's own tests or when a downstream dev-dependency turns on
+// `test-support`, so a normal build's API surface is unchanged.
+#[cfg(any(test, feature = "test-support"))]
+pub use runtime::test_support;
 
 #[cfg(test)]
 pub(crate) use avatar_test_lock::lock as lock_avatar_test_registry;

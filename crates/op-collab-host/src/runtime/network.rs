@@ -309,7 +309,7 @@ pub(super) fn owner_command_channel_for_test() -> (SessionNetwork, Receiver<Owne
     owner_command_channel_with_capacity_for_test(GUI_COMMAND_CAPACITY)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub(super) fn owner_command_channel_with_capacity_for_test(
     capacity: usize,
 ) -> (SessionNetwork, Receiver<OwnerNetworkCommand>) {
@@ -317,7 +317,7 @@ pub(super) fn owner_command_channel_with_capacity_for_test(
     (network, receiver)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub(super) fn owner_channels_with_capacity_for_test(
     capacity: usize,
 ) -> (

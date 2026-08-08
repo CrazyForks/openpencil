@@ -48,7 +48,6 @@ pub(in crate::widget_host) fn request_mcp_server_update(request: McpServerReques
     // path) so the daemon-token gate below is checking the actual request
     // target rather than assuming same-origin — same convention as every
     // other daemon call site (`web_chat.rs`, `dom_io.rs`, …).
-    let base = crate::daemon_base::daemon_base();
     let url = crate::daemon_base::daemon_url("/api/mcp/server");
 
     let headers = Object::new();

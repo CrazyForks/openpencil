@@ -379,57 +379,110 @@ fn a_gated_push_still_owns_its_document_so_the_seed_is_released() {
     assert!(refused.is_err(), "a viewer's push must be refused");
 }
 
+/// Install an activated owner session over this daemon's editor.
+///
+/// The fixture comes from `op-collab-host`'s `test-support` feature, so the
+/// ingest below runs the real begin -> install -> finish path instead of a
+/// projected phase with no actor behind it.
+fn with_owner_session(
+    state: &mut WebCanvasState,
+    fixture: op_collab_host::test_support::OwnerFixture,
+) {
+    state.collab.runtime = fixture.runtime;
+    in_session(state, CollabConnectionPhase::Active, CollabUiRole::Owner);
+    // Kept alive: the actor's projection was built against it.
+    std::mem::forget(fixture.host);
+}
+
+/// Seed this daemon with the same document shape a push carries, so the
+/// session's diff sees a node-property change rather than an unsupported
+/// document-version change.
+fn seed_baseline(state: &mut WebCanvasState, name: &str, thumb_id: &str) {
+    use crate::web_canvas_server::{PendingDocumentPush, ServeMode};
+
+    let body = seeded_body(name, thumb_id);
+    let mut push = PendingDocumentPush::parse(&body, ServeMode::Local).expect("parses");
+    let prepared = push.prepared.take().expect("a document push");
+    state.editor.doc = prepared.into_document();
+}
+
 #[test]
-fn a_rejected_ingest_rolls_the_thumbnail_registry_back() {
-    // A projected Active phase with no session actor: `begin_local_edit`
-    // refuses, so the document is never installed and the registry must be
-    // exactly as it was.
+fn a_session_rejected_ingest_rolls_the_thumbnail_registry_back() {
+    // Drives the REAL rejection: the pushed document changes `version`, which
+    // `diff_supported` refuses, so the owner session rolls the document back
+    // and reports `Rejected`. The predecessor of this test projected Active
+    // with no actor, which made `begin_local_edit` refuse and returned
+    // `Rejected` from the early-out branch above the rollback entirely - it
+    // could never have caught a regression in the restore.
     use crate::web_canvas_server::{IngestOutcome, PendingDocumentPush, ServeMode};
 
-    // An id no other test uses, so this is immune to the process-global
+    // Ids no other test uses, so this is immune to the process-global
     // registry being cleared in parallel.
     const KEPT: u64 = 515_243_617;
+    const REFUSED: u64 = 515_243_618;
+
+    let _registry = crate::web_canvas_server::lock_image_thumb_registry();
+    let mut state = daemon();
+    // The starter document carries the crate's own version; the push below
+    // carries "1.0.0", and a version change is what the diff refuses.
+    with_owner_session(&mut state, op_collab_host::test_support::owner_session());
+
     jian_ops_schema::image_thumbs::store_thumb(KEPT, vec![4, 5, 6]);
 
-    let mut state = daemon();
-    in_session(
-        &mut state,
-        CollabConnectionPhase::Active,
-        CollabUiRole::Owner,
-    );
-
-    let body = seeded_body("refused", "999111");
+    let body = seeded_body("refused", &REFUSED.to_string());
     let mut push = PendingDocumentPush::parse(&body, ServeMode::Local).expect("parses");
     let prepared = push.prepared.take().expect("a document push");
 
     assert_eq!(
         state.ingest_document_in_session(prepared),
-        IngestOutcome::Rejected
+        IngestOutcome::Rejected,
+        "an unsupported diff must come back as a session rejection"
     );
     assert_eq!(
         jian_ops_schema::image_thumbs::thumb_for(KEPT).as_deref(),
         Some(&[4u8, 5, 6][..]),
-        "a refused ingest must leave the registry as it found it"
+        "a rejected ingest must leave the pre-push registry as it found it"
+    );
+    assert!(
+        jian_ops_schema::image_thumbs::thumb_for(REFUSED).is_none(),
+        "the rolled-back document's thumbnails must roll back with it"
     );
 }
 
 #[test]
-fn only_a_rolled_back_failure_restores_the_thumbnails() {
-    // The standalone fallback retires the session but KEEPS the edit (see
-    // `op-collab-host`'s `reliable_owner_delivery_failure_falls_back_to_
-    // standalone`), so restoring the pre-edit snapshot there would leave the
-    // thumbnails describing a document that no longer exists.
-    //
-    // The flag is what `ingest_document_in_session` branches on, and it is the
-    // runtime's own report of whether the rollback happened.
-    assert!(matches!(
-        op_collab_host::LocalEditOutcome::Failed {
-            document_rolled_back: false
-        },
-        op_collab_host::LocalEditOutcome::Failed {
-            document_rolled_back: false
-        }
-    ));
+fn a_standalone_fallback_failure_keeps_the_new_thumbnails() {
+    // The counterpart: a delivery failure retires the session but KEEPS the
+    // edit, so restoring the pre-push snapshot would leave the registry
+    // describing a document that no longer exists. The predecessor of this
+    // test only `matches!`-ed a constructed constant against itself.
+    use crate::web_canvas_server::{IngestOutcome, PendingDocumentPush, ServeMode};
+
+    const BASELINE: u64 = 515_243_619;
+    const KEPT: u64 = 515_243_620;
+
+    let _registry = crate::web_canvas_server::lock_image_thumb_registry();
+    let mut state = daemon();
+    seed_baseline(&mut state, "before", &BASELINE.to_string());
+    with_owner_session(
+        &mut state,
+        op_collab_host::test_support::owner_session_with_saturated_command_lane(),
+    );
+
+    // Same document shape, renamed node: a supported diff, so the session gets
+    // as far as broadcasting a commit - which is where the full lane bites.
+    let body = seeded_body("after", &KEPT.to_string());
+    let mut push = PendingDocumentPush::parse(&body, ServeMode::Local).expect("parses");
+    let prepared = push.prepared.take().expect("a document push");
+
+    assert_eq!(
+        state.ingest_document_in_session(prepared),
+        IngestOutcome::Failed,
+        "an undeliverable commit must come back as a failure"
+    );
+    assert!(
+        jian_ops_schema::image_thumbs::thumb_for(KEPT).is_some(),
+        "thumbnails must follow the kept document, not roll back without it"
+    );
 }
 
 /// A push body carrying one embedded thumbnail.

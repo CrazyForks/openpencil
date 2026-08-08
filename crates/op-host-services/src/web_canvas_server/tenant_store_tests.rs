@@ -269,6 +269,7 @@ fn restoring_a_tenant_never_publishes_its_thumbnails_globally() {
     // `EditorState::from_document` activates a document's thumbnails, and
     // activation REPLACES the process-global map wholesale — so restoring one
     // account would discard every other account's and rebind their ids.
+    let _registry = crate::web_canvas_server::lock_image_thumb_registry();
     let temp = TempStore::new("thumb-isolation");
     let dir = temp.store.tenant_dir("userA").expect("dir");
     std::fs::create_dir_all(&dir).expect("dir");
@@ -294,6 +295,7 @@ fn a_persisted_tenant_carries_no_thumbnail_data() {
     // The save side of the same problem: `capture_snapshot` reads a registry
     // with no tenant dimension, so an eviction would write whichever account
     // activated last into THIS account's file.
+    let _registry = crate::web_canvas_server::lock_image_thumb_registry();
     let temp = TempStore::new("thumb-capture");
     jian_ops_schema::image_thumbs::store_thumb(ISOLATION_THUMB_ID + 1, vec![1, 2, 3]);
 

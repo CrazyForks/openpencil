@@ -12,6 +12,10 @@ path = "src/lib.rs"
 
 [features]
 default = []
+# Controlled session fixtures for downstream test suites. NOT part of the
+# shipped API: enable it only as a dev-dependency (see op-host-services), never
+# as a normal dependency feature.
+test-support = []
 # Local-only collaboration development against an external private ABI-v2
 # archive. Mirrors the desktop feature of the same name so a dev build can
 # forward it through to op-auth-bridge.

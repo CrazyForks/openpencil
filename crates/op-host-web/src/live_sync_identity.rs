@@ -65,8 +65,13 @@ pub(crate) fn reset_for_new_identity<C: RepaintContext + 'static>(inner: &Rc<Ref
     crate::collab_sync::reset_for_new_identity();
     // Queued and in-flight credential uploads belong to the previous account;
     // letting them land would push its API keys into the new account's tenant.
-    // `reset` also re-tags the epoch, which is what makes an XHR already on the
-    // wire inert when it completes.
+    // `reset` drops the queue and the retry timer. It does NOT re-tag the
+    // epoch — an XHR already on the wire is made inert instead by the epoch
+    // each request captured when it was issued, which its completion callback
+    // re-checks against `identity_epoch::epoch()`. Re-tagging here would be
+    // the bug: `reset` runs on the switching path, so a global "current epoch"
+    // read at completion time would compare the new epoch against itself and
+    // let the stale upload through.
     crate::web_credential_sync::reset();
     // The id allocator lives on the host, so it is torn down here where the
     // borrow is already held. B1's namespace latch alone was not enough: the

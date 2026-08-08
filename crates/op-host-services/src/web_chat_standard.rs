@@ -354,8 +354,21 @@ fn apply_request_snapshot(
                 broadcast_tick = Some(guard.sse_tick());
             }
         }
-        if let Some(meta) = req.editor_meta.clone() {
-            op_pen_loader::apply_editor_meta(&mut guard.editor, meta);
+        // `apply_editor_meta` and the active-page switch below both write
+        // state that `EditorMeta::from_state` serialises into the tenant's
+        // persisted snapshot (`active_page_index`, `preserve_authored_
+        // geometry`). They are therefore document writes for admission
+        // purposes even when the document itself is unchanged, and a closed
+        // barrier must skip them — otherwise a turn arriving during shutdown
+        // moves the active page after the flush snapshotted it.
+        //
+        // Skipped, not refused: the metadata is incidental to the turn, so a
+        // plain chat reply still streams back rather than erroring.
+        let metadata_pass = admit_document_write(write_barrier).ok();
+        if metadata_pass.is_some() {
+            if let Some(meta) = req.editor_meta.clone() {
+                op_pen_loader::apply_editor_meta(&mut guard.editor, meta);
+            }
         }
         if let Some(size) = req.agent_team_size {
             guard.editor.chat.agent_team_size = size.clamp(1, 6);
@@ -368,15 +381,17 @@ fn apply_request_snapshot(
             .last()
             .cloned()
             .unwrap_or(NodeId::NONE);
-        if let Some(page_id) = req.active_page_id.as_deref() {
-            if let Some(index) = guard
-                .editor
-                .doc
-                .pages
-                .as_ref()
-                .and_then(|pages| pages.iter().position(|p| p.id == page_id))
-            {
-                let _ = guard.editor.set_active_page(index);
+        if metadata_pass.is_some() {
+            if let Some(page_id) = req.active_page_id.as_deref() {
+                if let Some(index) = guard
+                    .editor
+                    .doc
+                    .pages
+                    .as_ref()
+                    .and_then(|pages| pages.iter().position(|p| p.id == page_id))
+                {
+                    let _ = guard.editor.set_active_page(index);
+                }
             }
         }
         guard.editor.clone()

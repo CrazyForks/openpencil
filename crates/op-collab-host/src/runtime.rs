@@ -15,6 +15,12 @@ mod region_pref;
 pub(crate) mod relay;
 mod relay_bootstrap;
 mod support;
+// Fixtures for downstream test suites; see `test_support` for why this is not
+// a production surface. Lives inside `runtime` because standing up an
+// activated owner session needs this module's private actor + channel
+// internals.
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 pub(crate) mod types;
 
 use std::collections::{HashMap, VecDeque};
