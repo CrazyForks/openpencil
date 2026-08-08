@@ -1,6 +1,10 @@
-//! Root transform application and the decorative filled-stroke stripper.
+//! How the cleanup driver applies a pass: the whole-root transform round-trip,
+//! the repair-tier gate in front of the intent-tier passes, and the decorative
+//! filled-stroke stripper.
 
 use super::*;
+
+use crate::repair_tier::{RepairTierPolicy, TieredPass};
 
 /// Apply a whole-root transform (the serialize → mutate → deserialize round-trip
 /// the structural passes use) to the page-root and commit it via `ReplaceSubtree`.
@@ -41,6 +45,57 @@ pub(super) fn apply_root_transform(
         .get(idx)
         .map(|n| n.id_str().to_string())
         .unwrap_or_else(|| root_id.to_string())
+}
+
+/// The intent-tier variable-polarity fix, gated on the document's provenance.
+///
+/// This is also where the driver records the tier decision: it is the FIRST
+/// gated site in `run_cleanup_passes_with_summary_and_policy` and is reached on
+/// every path through it, so one call here puts exactly one line in the ledger
+/// (`RepairSummary::note` de-duplicates the repeat when several root batches
+/// share a summary).
+pub(super) fn intent_theme_variable_polarity(sink: &mut dyn DocSink, summary: &mut RepairSummary) {
+    let policy = RepairTierPolicy::for_document(sink.state());
+    crate::repair_tier::note_intent_tier_skip(summary, &policy);
+    if !policy.runs_pass(TieredPass::ThemeVariablePolarity) {
+        return;
+    }
+    crate::loop_finalize::fix_theme_variable_polarity(sink);
+}
+
+/// [`apply_root_transform`] for an intent-tier transform: a no-op (returning
+/// the root id unchanged, as a refused transform does) when the document is
+/// authored template input.
+///
+/// Taking the pass name rather than a bare `bool` is what keeps the gate and
+/// the classification table in `repair_tier` from drifting: a transform gated
+/// here has to be named in [`TieredPass`] first.
+pub(super) fn apply_intent_root_transform(
+    sink: &mut dyn DocSink,
+    root_id: &str,
+    pass: TieredPass,
+    transform: fn(&mut PenNode) -> bool,
+) -> String {
+    if !RepairTierPolicy::for_document(sink.state()).runs_pass(pass) {
+        return root_id.to_string();
+    }
+    apply_root_transform(sink, root_id, transform)
+}
+
+/// [`apply_intent_root_transform`] for the wrapper-double-inset stripper, the
+/// intent-tier pass the driver runs twice (before and after the mobile chrome /
+/// content-rail passes). Named here rather than spelled out at both call sites
+/// so the two cannot be gated differently.
+pub(super) fn strip_wrapper_double_inset_if_intent(
+    sink: &mut dyn DocSink,
+    root_id: &str,
+) -> String {
+    apply_intent_root_transform(
+        sink,
+        root_id,
+        TieredPass::WrapperDoubleInset,
+        crate::spacing_repair::strip_wrapper_double_inset,
+    )
 }
 
 /// Strip the REDUNDANT border off a filled, shadowed container. When a

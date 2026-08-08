@@ -610,7 +610,14 @@ impl Orchestrator {
                 .iter()
                 .flat_map(|o| o.inserted_root_ids.iter().map(String::as_str))
                 .collect();
-            finalize_design_with_summary(sink, &plan, &new_roots, &mut quality);
+            let target_roots: Vec<&str> = root_ids.iter().map(String::as_str).collect();
+            crate::repair_scope::finalize_appended_design(
+                sink,
+                &plan,
+                &new_roots,
+                &target_roots,
+                &mut quality,
+            );
         } else {
             // Every screen-group root (not just the first) goes in — this is
             // the co-op point with `wire_screen_navigation` (Track A of the
@@ -650,6 +657,12 @@ impl Orchestrator {
                     .into_iter()
                     .map(|(check, count)| (check.key().to_string(), count))
                     .collect(),
+                records: quality
+                    .records()
+                    .iter()
+                    .map(crate::RepairRecord::line)
+                    .collect(),
+                notes: quality.notes().to_vec(),
             });
         }
         sink.end_undo_batch();

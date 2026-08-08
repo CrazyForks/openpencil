@@ -485,13 +485,13 @@ fn run_cleanup_passes_with_summary_and_policy(
             .filter(|root_id| seen.insert(root_id.clone()))
             .collect()
     };
-    counter.checkpoint(summary, CheckCategory::Structure);
+    counter.checkpoint(summary, CheckCategory::Structure, "duplicate-root-dedupe");
 
     // Doc-global (not per-root): heal theme-polarity splits in the variable
     // table BEFORE the per-root passes, so every pass that resolves `$refs`
     // (surface discipline, geometry text fills) sees the repaired palette.
-    crate::loop_finalize::fix_theme_variable_polarity(sink);
-    counter.checkpoint(summary, CheckCategory::Palette);
+    intent_theme_variable_polarity(sink, summary);
+    counter.checkpoint(summary, CheckCategory::Palette, "theme-variable-polarity");
     for root_id in &effective_root_ids {
         debug_probe_child_height(sink, root_id, "cleanup-entry");
         // FIRST: whole-root structural restructures, shared by BOTH the
@@ -527,7 +527,7 @@ fn run_cleanup_passes_with_summary_and_policy(
         // Flat table cells → Table → Row → Cell.
         rid = apply_root_transform(sink, &rid, crate::table_repair::regroup_flat_table_rows);
         debug_probe_child_height(sink, &rid, "regroup_table");
-        counter.checkpoint(summary, CheckCategory::Structure);
+        counter.checkpoint(summary, CheckCategory::Structure, "app-shell+table-regroup");
         // Gap-less table rows → column gap (weak models omit it → columns touch,
         // "SPEND"+"STATUS" reads as "SPENDSTATUS").
         rid = apply_root_transform(sink, &rid, crate::table_repair::ensure_table_column_gap);
@@ -535,7 +535,7 @@ fn run_cleanup_passes_with_summary_and_policy(
         // Row gap on the table CONTAINER (rows already zebra'd / hairlined) →
         // flush rows, reference-grade rhythm comes from the rows themselves.
         rid = apply_root_transform(sink, &rid, crate::table_repair::flush_table_row_gap);
-        counter.checkpoint(summary, CheckCategory::Layout);
+        counter.checkpoint(summary, CheckCategory::Layout, "table-gap");
         // Card-level "-35%" tags meant for the image corner → adopt into the
         // image wrapper as an absolute 8,8 overlay.
         rid = apply_root_transform(sink, &rid, crate::chip_repair::adopt_corner_badges);
@@ -552,7 +552,7 @@ fn run_cleanup_passes_with_summary_and_policy(
         // finishes the wrapper's concentric geometry against resolved rects.
         rid = apply_root_transform(sink, &rid, crate::ring_repair::wrap_ring_fragments);
         debug_probe_child_height(sink, &rid, "table_flush");
-        counter.checkpoint(summary, CheckCategory::Structure);
+        counter.checkpoint(summary, CheckCategory::Structure, "chip+ring-extract");
         // Inter-section gap the planner would have set. Runs BEFORE the
         // wrapper-inset pass below, which keys off whether the parent column
         // gaps (`>= 12`): repairing the gap first lets that pass see the
@@ -572,11 +572,7 @@ fn run_cleanup_passes_with_summary_and_policy(
         // Transparent wrapper padding inside an already-padded/gapped column →
         // double inset: misaligned section edges + starved children (a padded
         // "Key Metrics" strip squeezed its KPI cards until label touched icon).
-        rid = apply_root_transform(
-            sink,
-            &rid,
-            crate::spacing_repair::strip_wrapper_double_inset,
-        );
+        rid = strip_wrapper_double_inset_if_intent(sink, &rid);
         debug_probe_child_height(sink, &rid, "double_inset");
         // Footer-sink floor: a vertical column that wants to PUSH content apart
         // (justifyContent space_*) or carries a flexible spacer, but hugs its
@@ -599,7 +595,7 @@ fn run_cleanup_passes_with_summary_and_policy(
             crate::app_shell::sink_structured_sidebar_footers,
         );
         debug_probe_child_height(sink, &rid, "sink_footer");
-        counter.checkpoint(summary, CheckCategory::Layout);
+        counter.checkpoint(summary, CheckCategory::Layout, "spacing+footer-sink");
         // The tree-shape `fit_content` parent ↔ `fill_container` child demoter
         // (`fix_circular_fill_height`) is RETIRED: the layout engine now resolves
         // a fill-height child of a hugging parent to its content size (vertical
@@ -613,16 +609,16 @@ fn run_cleanup_passes_with_summary_and_policy(
 
         remove_duplicate_status_bars(sink, rid);
         remove_duplicate_bottom_nav_sections(sink, rid);
-        counter.checkpoint(summary, CheckCategory::Structure);
+        counter.checkpoint(summary, CheckCategory::Structure, "chrome-dedupe");
         distribute_bottom_nav_tabs(sink, rid);
         collapse_nested_horizontal_padding(sink, rid);
         expand_absolute_container_to_children(sink, rid);
         pad_clipping_horizontal_row_for_stroke(sink, rid);
         equalize_horizontal_card_heights(sink, rid);
         collapse_fill_container_content_sections(sink, rid);
-        counter.checkpoint(summary, CheckCategory::Layout);
+        counter.checkpoint(summary, CheckCategory::Layout, "container-geometry");
         repair_light_mobile_nav_surfaces(sink, rid);
-        counter.checkpoint(summary, CheckCategory::Palette);
+        counter.checkpoint(summary, CheckCategory::Palette, "light-mobile-nav-surface");
         cleanup_mobile_chrome::repair_mobile_structural_chrome(sink, rid);
         // Normalize the late-nav construction shell before geometry validation
         // can grow the root around the stale numeric wrapper and erase the
@@ -643,16 +639,15 @@ fn run_cleanup_passes_with_summary_and_policy(
         // section holding the wrapper plus any sibling (a tab-bar spacer, a
         // second module) stayed double-inset — measured on `0727-1-gm`, where
         // the wrapped card came out 279px wide against 327px siblings.
-        let rid_owned =
-            apply_root_transform(sink, rid, crate::spacing_repair::strip_wrapper_double_inset);
+        let rid_owned = strip_wrapper_double_inset_if_intent(sink, rid);
         let rid = rid_owned.as_str();
         crate::mobile_reflow::repair_mobile_trailing_nav_reflow_for_root_in_sink(sink, rid);
         cleanup_mobile_dense::repair_dense_mobile_rows(sink, rid);
         cleanup_desktop_dashboard::repair_sparse_desktop_dashboard_rows(sink, plan, rid);
-        counter.checkpoint(summary, CheckCategory::Layout);
+        counter.checkpoint(summary, CheckCategory::Layout, "mobile-chrome+content-rail");
         repair_overbold_text_hierarchy(sink, rid);
         strip_decorative_filled_strokes(sink, rid);
-        counter.checkpoint(summary, CheckCategory::Hierarchy);
+        counter.checkpoint(summary, CheckCategory::Hierarchy, "text-hierarchy+strokes");
         crate::radial_repair::repair_radial_stacks(sink, rid);
         crate::stub_repair::remove_empty_decorated_stubs(sink, rid);
         // A section's header row whose second child is the ENTIRE content
@@ -663,12 +658,12 @@ fn run_cleanup_passes_with_summary_and_policy(
         // header's own sibling. Runs before geometry validation so it sees
         // the corrected tree, not the pre-repair one.
         crate::section_shell_fill_repair::repair_section_shell_fill_ownership(sink, rid);
-        counter.checkpoint(summary, CheckCategory::Structure);
+        counter.checkpoint(summary, CheckCategory::Structure, "radial+stub+shell");
         // No-nav mobile screens share one deterministic closing contract:
         // 24-32px of bottom room. The repair reads the same resolved geometry
         // as the diagnostic and grows only root padding, never business nodes.
         crate::geometry_validation::repair_mobile_bottom_breathing(sink, rid);
-        counter.checkpoint(summary, CheckCategory::Layout);
+        counter.checkpoint(summary, CheckCategory::Layout, "mobile-bottom-breathing");
         // Geometry-driven validation LOOP: run the REAL jian layout, detect +
         // fix what the resolved rects prove wrong (table columns overflowing
         // their row, fill containers collapsed to 0 height by a hugging ancestor
@@ -703,7 +698,7 @@ fn run_cleanup_passes_with_summary_and_policy(
             crate::geometry_validation::geometry_validate_and_fix(sink, rid);
         }
         debug_probe_child_height(sink, rid, "geometry");
-        counter.checkpoint(summary, CheckCategory::Overflow);
+        counter.checkpoint(summary, CheckCategory::Overflow, "geometry-validation");
         // Geometry validation can change a repaired radial wrapper from its
         // authored numeric width to `fill_container`. Re-run the centering pass
         // against the final resolved bounds so absolute arc/label coordinates
@@ -711,7 +706,7 @@ fn run_cleanup_passes_with_summary_and_policy(
         crate::radial_repair::repair_radial_stacks(sink, rid);
         adjust_root_height_to_content(sink, rid, preserve_root_height);
         debug_probe_child_height(sink, rid, "adjust_root_height");
-        counter.checkpoint(summary, CheckCategory::Layout);
+        counter.checkpoint(summary, CheckCategory::Layout, "radial+root-height");
     }
 
     crate::avatar_repair::repair_avatar_slots_for_all_roots(sink);
@@ -723,9 +718,9 @@ fn run_cleanup_passes_with_summary_and_policy(
     // appended after the nav is repaired by moving the nav back to the end;
     // where that section belongs is intent — the geometry echo handles it.
     anchor_bottom_nav_last_for_all_roots(sink);
-    counter.checkpoint(summary, CheckCategory::Structure);
+    counter.checkpoint(summary, CheckCategory::Structure, "avatar+nav-anchor");
     crate::mobile_reflow::repair_mobile_trailing_nav_reflow_in_sink(sink);
-    counter.checkpoint(summary, CheckCategory::Layout);
+    counter.checkpoint(summary, CheckCategory::Layout, "mobile-trailing-nav-reflow");
 
     // Multi-screen root position deconfliction: screen-shaped top-level
     // roots that overlap because one or more never got a canvas position
@@ -768,7 +763,7 @@ fn run_cleanup_passes_with_summary_and_policy(
     // and semantic interactions are settled. Whole-doc (scans `sink.state()`,
     // not `root_ids`) so it also links pre-existing screens from earlier turns.
     crate::wire_screen_navigation::wire_screen_navigation(sink);
-    counter.checkpoint(summary, CheckCategory::Structure);
+    counter.checkpoint(summary, CheckCategory::Structure, "shared-chrome+nav");
 }
 
 #[cfg(test)]
@@ -778,6 +773,10 @@ mod tests;
 #[cfg(test)]
 #[path = "cleanup_repair_summary_tests.rs"]
 mod tests_repair_summary;
+
+#[cfg(test)]
+#[path = "cleanup_repair_tier_tests.rs"]
+mod tests_repair_tier;
 
 #[cfg(test)]
 #[path = "cleanup_abandoned_duplicate_roots_tests.rs"]

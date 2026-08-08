@@ -217,7 +217,11 @@ pub(crate) async fn run_subtask_with_reveal_at(
     crate::role_infer::resolve_forest_roles(&mut nodes, canvas_width, theme);
     // Cross-node contrast post-pass (I3) runs AFTER role resolution (it keys off
     // the roles I1/I2 set) and before the fallback sizing normalize.
-    crate::role_post_pass::post_pass_forest(&mut nodes, canvas_width);
+    // Repair-tier policy for this document (see `crate::repair_tier`): the
+    // intent-tier passes below defer to authored template input. Read off the
+    // sink's state so this path and the agentic loop reach the same answer.
+    let tier = crate::repair_tier::RepairTierPolicy::for_document(sink.state());
+    crate::role_post_pass::post_pass_forest_with_tier(&mut nodes, canvas_width, &tier);
     // Promote explicitly-marked role frames to first-class widget nodes.
     // Must run AFTER post_pass_forest (which keys on `role` to set defaults)
     // and BEFORE variable binding (which resolves hex refs — widgets produced
@@ -243,18 +247,22 @@ pub(crate) async fn run_subtask_with_reveal_at(
             .unwrap_or(st.doc.children.as_slice());
         crate::tree_heuristics::dominant_design_accent(roots)
     };
-    crate::tree_heuristics::apply_tree_heuristics(
-        &mut nodes,
-        page_bg.as_deref(),
-        theme == crate::role_defaults::Theme::Light,
-        prior_accent.as_deref(),
-    );
-    crate::variable_binding::bind_generated_color_variables(&mut nodes, sink.state());
+    if tier.runs_pass(crate::repair_tier::TieredPass::TreeHeuristics) {
+        crate::tree_heuristics::apply_tree_heuristics(
+            &mut nodes,
+            page_bg.as_deref(),
+            theme == crate::role_defaults::Theme::Light,
+            prior_accent.as_deref(),
+        );
+    }
+    if tier.runs_pass(crate::repair_tier::TieredPass::VariableBinding) {
+        crate::variable_binding::bind_generated_color_variables(&mut nodes, sink.state());
+    }
     // Surface-color discipline runs AFTER binding: glm emits raw hex, and binding
     // is what turns it into the `$color-danger-bg` / `$color-bg-deep` refs this
     // pass matches (recolor misused state-bg surfaces → neutral, strip the
     // page-bg token off inner wrappers). Pre-binding it only saw hex and missed.
-    crate::role_post_pass::enforce_surface_color_discipline(&mut nodes);
+    crate::role_post_pass::enforce_surface_color_discipline_with_tier(&mut nodes, &tier);
     normalize_section_roots_for_parent_layout(&mut nodes);
     let self_check = crate::orchestration_self_check::check_generated_nodes(&nodes, canvas_width);
     if self_check.has_fatal() {
