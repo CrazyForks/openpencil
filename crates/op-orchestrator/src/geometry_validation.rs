@@ -55,6 +55,8 @@ use geometry_interaction_backfill::push_interaction_backfill_diagnostics;
 pub(crate) use geometry_interaction_backfill::{
     screen_has_back_control_shape, wire_interaction_backfill,
 };
+#[path = "geometry_buried_overlay.rs"]
+mod geometry_buried_overlay;
 #[path = "geometry_card_rail_fixes.rs"]
 mod geometry_card_rail_fixes;
 #[path = "geometry_diagnostics_collect.rs"]
@@ -69,6 +71,8 @@ mod geometry_row_fixes;
 mod geometry_scale_ops;
 #[path = "geometry_spill_diagnostics.rs"]
 mod geometry_spill_diagnostics;
+#[path = "geometry_starved_row.rs"]
+mod geometry_starved_row;
 #[path = "geometry_value_readers.rs"]
 mod geometry_value_readers;
 
@@ -256,6 +260,11 @@ pub fn geometry_validate_and_fix(sink: &mut dyn DocSink, root_id: &str) -> usize
             collect_grow_to_fit_fixes(&v, &rects, &mut cmds);
             collect_row_gap_fixes(&v, &rects, &mut cmds);
             collect_card_row_height_fixes(&v, &rects, &mut cmds, false);
+            // BEFORE the inside-out overfull repair: a rigid row starved by
+            // its own flex siblings must be widened at the ROW, not squeezed
+            // through its columns (which have nothing to give).
+            geometry_starved_row::collect_starved_rigid_row_fixes(&v, &rects, &mut cmds);
+            geometry_buried_overlay::collect_buried_overlay_fixes(&v, &rects, &mut cmds);
             collect_row_overfull_fixes(&v, &rects, &mut cmds, false);
             collect_rail_width_collapse_fixes(&v, &rects, &mut cmds);
             collect_card_overflow_clips(&v, &rects, &mut cmds);

@@ -22,6 +22,11 @@
 //! defect. Detect-only — which text should move is an intent judgment for
 //! the model in the loop, not a fixer here.
 //!
+//! The rule has exactly one carve-out, and it is about INK rather than
+//! intent: a block set at watermark opacity contributes no ink to obscure
+//! with, so the premise "neither is readable" never holds for it. See
+//! [`WATERMARK_MAX_OPACITY`].
+//!
 //! Measured root cause (0724-1-gm-2.op, "今日词卡" stacked word-card
 //! preview): the front card's Chinese meaning resolves to y 708–728 and
 //! the back card's example sentence resolves to y 705–722 (68% of the
@@ -67,9 +72,33 @@ pub(crate) struct TextCollision {
     pub(crate) overlap_area_ratio: f64,
 }
 
+/// At or below this alpha a text block is a WATERMARK: ink so faint it
+/// cannot obscure anything, and cannot itself be obscured in any way a
+/// reader would notice.
+///
+/// This is the one exception to the module's "two text blocks on the same
+/// pixels is never intent" premise, and it is a fact about rendering rather
+/// than a taste call — the premise assumes both blocks contribute ink.
+///
+/// Measured on the shipped `lecture-deck-light` / `pitch-deck-dark` scene
+/// templates (human-authored and audited): each slide sets a giant page
+/// numeral — `fontSize` 460–480 at `opacity` 0.06–0.07 — behind the title
+/// block, the standard editorial deck watermark. Every one of those decks'
+/// 8 reported collisions was a title crossing that numeral, and none of them
+/// is a defect. A genuinely translucent-but-readable label sits far above
+/// this line (0.4+), so the gate cannot swallow a real collision.
+const WATERMARK_MAX_OPACITY: f64 = 0.15;
+
+fn is_watermark(v: &Value) -> bool {
+    v.get("opacity")
+        .and_then(Value::as_f64)
+        .is_some_and(|opacity| opacity <= WATERMARK_MAX_OPACITY)
+}
+
 fn is_visible_nonempty_text(v: &Value) -> bool {
     v.get("type").and_then(Value::as_str) == Some("text")
         && v.get("visible").and_then(Value::as_bool) != Some(false)
+        && !is_watermark(v)
         && v.get("content")
             .and_then(Value::as_str)
             .is_some_and(|c| !c.trim().is_empty())

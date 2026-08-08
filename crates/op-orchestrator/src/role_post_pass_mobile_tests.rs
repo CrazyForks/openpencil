@@ -5,6 +5,14 @@
 use super::*;
 use serde_json::json;
 
+/// The walk with every tier enabled. These tests exercise the normalizers
+/// themselves, not the repair-tier gate in front of one of them (see
+/// `crate::repair_tier`), so they call the shape the pass had before the gate
+/// existed and stay readable as normalizer tests.
+fn post_pass_value(node: &mut Value, parent_fill: Option<Value>, canvas_width: f64) {
+    super::post_pass_value(node, parent_fill, canvas_width, true);
+}
+
 // ── fixInputSiblingConsistency ───────────────────────────────────────────
 
 #[test]

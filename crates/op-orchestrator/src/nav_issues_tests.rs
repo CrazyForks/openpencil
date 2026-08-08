@@ -114,3 +114,63 @@ fn unmatched_tab_label_is_not_echoed() {
     // echo stays silent rather than guessing a wrong destination.
     assert!(scan_nav_issues(&state).is_empty());
 }
+
+/// `0808-k3-2.op`'s shape: a four-tab bar over a two-screen document. 今夜 and
+/// 星图 have screens; 地点 and 我的 do not.
+const CJK_FOUR_TABS_TWO_SCREENS: &str = r##"{ "version": "1.0", "children": [
+    { "type": "frame", "id": "s1", "name": "Nocturne 今夜", "screen": "/",
+      "width": 375, "height": 812, "layout": "vertical",
+      "children": [
+        { "type": "frame", "id": "nav1", "name": "Bottom Nav", "role": "bottom-tab-bar",
+          "layout": "horizontal", "width": "fill_container",
+          "children": [
+            { "type": "frame", "id": "a-tonight", "layout": "vertical",
+              "children": [ { "type": "text", "id": "a1", "content": "今夜" } ] },
+            { "type": "frame", "id": "a-starmap", "layout": "vertical",
+              "children": [ { "type": "text", "id": "a2", "content": "星图" } ] },
+            { "type": "frame", "id": "a-places", "layout": "vertical",
+              "children": [ { "type": "text", "id": "a3", "content": "地点" } ] },
+            { "type": "frame", "id": "a-mine", "layout": "vertical",
+              "children": [ { "type": "text", "id": "a4", "content": "我的" } ] }
+          ] }
+      ] },
+    { "type": "frame", "id": "s2", "name": "星图", "screen": "/screen-1",
+      "width": 375, "height": 812, "layout": "vertical" }
+] }"##;
+
+#[test]
+fn tabs_naming_no_screen_are_echoed_once_for_the_document() {
+    // "wrong worse than dead": these two tabs must NOT be bound to an
+    // existing route, but the model is the only one who can decide whether
+    // the missing screens should exist — so it is told.
+    let state = state_from_json(CJK_FOUR_TABS_TWO_SCREENS);
+    let issues = scan_nav_issues(&state);
+
+    let orphan: Vec<&String> = issues
+        .iter()
+        .filter(|line| line.contains("name no screen"))
+        .collect();
+    assert_eq!(
+        orphan.len(),
+        1,
+        "one line for the whole document: {issues:?}"
+    );
+    assert!(orphan[0].contains("地点"), "{orphan:?}");
+    assert!(orphan[0].contains("我的"), "{orphan:?}");
+    assert!(
+        !orphan[0].contains("星图") && !orphan[0].contains("今夜"),
+        "tabs that DO have a screen are not orphans: {orphan:?}"
+    );
+    // …and the tabs that do have screens still get their bind suggestion.
+    assert!(issues.iter().any(|l| l.contains("a-starmap")), "{issues:?}");
+}
+
+#[test]
+fn a_fully_covered_tab_bar_reports_no_orphans() {
+    let state = state_from_json(TWO_SCREENS_UNBOUND_PROFILE_TAB);
+    let issues = scan_nav_issues(&state);
+    assert!(
+        issues.iter().all(|line| !line.contains("name no screen")),
+        "{issues:?}"
+    );
+}

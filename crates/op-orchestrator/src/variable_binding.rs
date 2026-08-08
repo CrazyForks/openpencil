@@ -4,8 +4,16 @@
 //! output can still carry literal hex values. This pass persists refs in
 //! the generated subtree before `InsertSubtree`, so the property panel and
 //! saved `.op` file both see the authored `$variable` token.
-
-use std::collections::HashMap;
+//!
+//! Binding is **slot-aware**: a colour is matched only against variables whose
+//! family can legitimately fill the slot it was found in. Matching on colour
+//! distance alone silently rewrites a design's semantics — measured on
+//! `0808-gm-1.op`, where a 36px headline's near-white literal happened to equal
+//! `$color-border`'s active-theme value and every card and section title in the
+//! document came back bound to the BORDER token. Nothing looked wrong (the two
+//! resolve to the same hex today), but the design was one theme flip — or one
+//! palette repair — away from headlines rendered in hairline grey. See
+//! [`slot_accepts`].
 
 use jian_ops_schema::node::text::TextContent;
 use jian_ops_schema::node::PenNode;
@@ -16,13 +24,87 @@ use op_editor_core::{EditorState, PenNodeExt};
 type ColorKey = (u8, u8, u8, u8);
 const NEAR_COLOR_MAX_DISTANCE: f64 = 18.0;
 
+/// Where in a node a colour was found — i.e. what the colour is FOR.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ColorSlot {
+    /// Glyph colour: a text node's fill, a styled span, an icon glyph.
+    Text,
+    /// A painted surface: a container / control's own fill.
+    Surface,
+    /// A hairline or outline.
+    Stroke,
+    /// Neither — shadow colours and anything else with no slot semantics.
+    Any,
+}
+
+/// What a design variable is FOR, read from its name. The naming convention is
+/// the only semantic signal a variable carries; its value is just a colour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ColorFamily {
+    Text,
+    Border,
+    Surface,
+    /// Accent / destructive / success / chart-N … — a meaning-bearing colour
+    /// that is legitimately used as text, fill OR stroke, so it is never
+    /// blocked by slot.
+    Semantic,
+}
+
+fn family_of(name: &str) -> ColorFamily {
+    let name = name.to_ascii_lowercase();
+    // Text wins over the surface words on purpose: `color-danger-text` is a
+    // text token that happens to name a state, not a state background.
+    if name.contains("text") || name.contains("foreground") {
+        return ColorFamily::Text;
+    }
+    if name.contains("border") || name.contains("outline") || name.contains("divider") {
+        return ColorFamily::Border;
+    }
+    if [
+        "surface",
+        "bg",
+        "background",
+        "card",
+        "panel",
+        "chip",
+        "scrim",
+    ]
+    .iter()
+    .any(|word| name.contains(word))
+    {
+        return ColorFamily::Surface;
+    }
+    ColorFamily::Semantic
+}
+
+/// May a variable of `family` bind into `slot`?
+///
+/// Deliberately a DENYLIST of category errors rather than a same-family
+/// allowlist: an accent, a destructive red or a chart colour is legitimately
+/// a glyph colour, a fill and a stroke, and requiring same-family would strip
+/// theming from every accent-coloured element in a design. Only the pairs that
+/// are structurally impossible are refused, and a refusal leaves the literal
+/// hex in place — an unthemed but CORRECT colour beats a themed wrong one.
+fn slot_accepts(slot: ColorSlot, family: ColorFamily) -> bool {
+    match (slot, family) {
+        // A glyph is never a hairline or a page surface.
+        (ColorSlot::Text, ColorFamily::Border | ColorFamily::Surface) => false,
+        // A surface / border is never a glyph colour. (`role_post_pass`'s
+        // surface-discipline pass repairs this downstream by rewriting the
+        // fill to `$color-surface-2`; refusing the bind here is the same
+        // judgement made at the source, and keeps the authored colour.)
+        (ColorSlot::Surface | ColorSlot::Stroke, ColorFamily::Text) => false,
+        _ => true,
+    }
+}
+
 struct ColorRefs {
-    exact: HashMap<ColorKey, String>,
     candidates: Vec<ColorCandidate>,
 }
 
 struct ColorCandidate {
     key: ColorKey,
+    family: ColorFamily,
     reference: String,
 }
 
@@ -37,10 +119,9 @@ pub(crate) fn bind_generated_color_variables(nodes: &mut [PenNode], state: &Edit
 }
 
 fn color_refs(state: &EditorState) -> ColorRefs {
-    let mut exact = HashMap::new();
     let mut candidates = Vec::new();
     let Some(variables) = state.doc.variables.as_ref() else {
-        return ColorRefs { exact, candidates };
+        return ColorRefs { candidates };
     };
     for (name, def) in variables {
         if !matches!(def.kind, VariableKind::Color) {
@@ -52,26 +133,38 @@ fn color_refs(state: &EditorState) -> ColorRefs {
         let Some(key) = color_key(&hex) else {
             continue;
         };
-        let reference = format!("${name}");
-        exact.entry(key).or_insert_with(|| reference.clone());
-        candidates.push(ColorCandidate { key, reference });
+        candidates.push(ColorCandidate {
+            key,
+            family: family_of(name),
+            reference: format!("${name}"),
+        });
     }
-    ColorRefs { exact, candidates }
+    ColorRefs { candidates }
+}
+
+/// Which slot a node's own `fill` occupies. Text and icon glyphs paint
+/// foreground; every other node's fill paints a surface.
+fn fill_slot(node: &PenNode) -> ColorSlot {
+    match node {
+        PenNode::Text(_) | PenNode::IconFont(_) => ColorSlot::Text,
+        _ => ColorSlot::Surface,
+    }
 }
 
 fn bind_node(node: &mut PenNode, refs: &ColorRefs) {
+    let slot = fill_slot(node);
     if let Some(fills) = node_fills_mut(node) {
-        bind_fills(fills, refs);
+        bind_fills(fills, refs, slot);
     }
     if let Some(stroke) = node_stroke_mut(node).and_then(Option::as_mut) {
         if let Some(fills) = stroke.fill.as_mut() {
-            bind_fills(fills, refs);
+            bind_fills(fills, refs, ColorSlot::Stroke);
         }
     }
     if let Some(effects) = node_effects_mut(node) {
         for effect in effects {
             if let PenEffect::Shadow(body) = effect {
-                bind_color_string(&mut body.color, refs);
+                bind_color_string(&mut body.color, refs, ColorSlot::Any);
             }
         }
     }
@@ -79,7 +172,7 @@ fn bind_node(node: &mut PenNode, refs: &ColorRefs) {
         if let TextContent::Styled(segments) = &mut text.content {
             for segment in segments {
                 if let Some(fill) = segment.fill.as_mut() {
-                    bind_color_string(fill, refs);
+                    bind_color_string(fill, refs, ColorSlot::Text);
                 }
             }
         }
@@ -91,23 +184,23 @@ fn bind_node(node: &mut PenNode, refs: &ColorRefs) {
     }
 }
 
-fn bind_fills(fills: &mut [PenFill], refs: &ColorRefs) {
+fn bind_fills(fills: &mut [PenFill], refs: &ColorRefs, slot: ColorSlot) {
     for fill in fills {
         match fill {
-            PenFill::Solid(body) => bind_color_string(&mut body.color, refs),
+            PenFill::Solid(body) => bind_color_string(&mut body.color, refs, slot),
             PenFill::LinearGradient(body) => {
                 for stop in &mut body.stops {
-                    bind_color_string(&mut stop.color, refs);
+                    bind_color_string(&mut stop.color, refs, slot);
                 }
             }
             PenFill::RadialGradient(body) => {
                 for stop in &mut body.stops {
-                    bind_color_string(&mut stop.color, refs);
+                    bind_color_string(&mut stop.color, refs, slot);
                 }
             }
             PenFill::MeshGradient(body) => {
                 for stop in &mut body.stops {
-                    bind_color_string(&mut stop.color, refs);
+                    bind_color_string(&mut stop.color, refs, slot);
                 }
             }
             PenFill::Shader(body) => {
@@ -117,7 +210,7 @@ fn bind_fills(fills: &mut [PenFill], refs: &ColorRefs) {
                 if let Some(uniforms) = &mut body.uniforms {
                     for value in uniforms.values_mut() {
                         if let jian_ops_schema::style::ShaderUniformValue::Color(c) = value {
-                            bind_color_string(c, refs);
+                            bind_color_string(c, refs, slot);
                         }
                     }
                 }
@@ -127,21 +220,27 @@ fn bind_fills(fills: &mut [PenFill], refs: &ColorRefs) {
     }
 }
 
-fn bind_color_string(color: &mut String, refs: &ColorRefs) {
+fn bind_color_string(color: &mut String, refs: &ColorRefs, slot: ColorSlot) {
     if color.trim_start().starts_with('$') {
         return;
     }
     let Some(key) = color_key(color) else {
         return;
     };
-    if let Some(reference) = refs.exact.get(&key).or_else(|| nearest_ref(key, refs)) {
+    if let Some(reference) = nearest_ref(key, refs, slot) {
         *color = reference.clone();
     }
 }
 
-fn nearest_ref(key: ColorKey, refs: &ColorRefs) -> Option<&String> {
+/// Closest slot-compatible variable within [`NEAR_COLOR_MAX_DISTANCE`].
+///
+/// An exact match scores distance 0 and therefore always wins, and ties keep
+/// the first candidate in variable-name order — the same resolution the
+/// previous exact-map-then-nearest lookup produced.
+fn nearest_ref(key: ColorKey, refs: &ColorRefs, slot: ColorSlot) -> Option<&String> {
     refs.candidates
         .iter()
+        .filter(|candidate| slot_accepts(slot, candidate.family))
         .map(|candidate| (color_distance(key, candidate.key), &candidate.reference))
         .filter(|(distance, _)| *distance <= NEAR_COLOR_MAX_DISTANCE)
         .min_by(|(a, _), (b, _)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
@@ -238,3 +337,7 @@ fn node_effects_mut(node: &mut PenNode) -> Option<&mut Vec<PenEffect>> {
         PenNode::IconFont(_) | PenNode::Ref(_) => None,
     }
 }
+
+#[cfg(test)]
+#[path = "variable_binding_tests.rs"]
+mod tests;

@@ -57,7 +57,12 @@ use surface_structure::*;
 
 // ── walk ──────────────────────────────────────────────────────────────────
 
-fn post_pass_value(node: &mut Value, parent_fill: Option<Value>, canvas_width: f64) {
+fn post_pass_value(
+    node: &mut Value,
+    parent_fill: Option<Value>,
+    canvas_width: f64,
+    run_intent: bool,
+) {
     if node.get("type").and_then(Value::as_str) != Some("frame") {
         return;
     }
@@ -90,7 +95,12 @@ fn post_pass_value(node: &mut Value, parent_fill: Option<Value>, canvas_width: f
     // Strip unwanted white-card fills from structural wrappers (layout.md:24)
     // before the contrast fixes, so they evaluate the corrected transparent
     // section against the page bg instead of a bogus white surface.
-    fix_structural_wrapper_transparency(node);
+    // …unless the document is authored template input, whose near-white card
+    // surfaces are the design rather than a stray white-card fill
+    // (`crate::repair_tier`, `TieredPass::StructuralWrapperTransparency`).
+    if run_intent {
+        fix_structural_wrapper_transparency(node);
+    }
     // I3 contrast fixes (TS order 9-12).
     fix_button_foreground_contrast(node);
     fix_section_alternation(node);
@@ -106,17 +116,38 @@ fn post_pass_value(node: &mut Value, parent_fill: Option<Value>, canvas_width: f
     let this_fill = Some(node.get("fill").cloned().unwrap_or(Value::Null));
     if let Some(children) = node.get_mut("children").and_then(Value::as_array_mut) {
         for child in children.iter_mut() {
-            post_pass_value(child, this_fill.clone(), canvas_width);
+            post_pass_value(child, this_fill.clone(), canvas_width, run_intent);
         }
     }
 }
 
 pub fn post_pass_forest(nodes: &mut [PenNode], canvas_width: f64) {
+    post_pass_forest_with_tier(
+        nodes,
+        canvas_width,
+        &crate::repair_tier::RepairTierPolicy::all(),
+    );
+}
+
+/// [`post_pass_forest`] under a repair-tier policy.
+///
+/// The walk is overwhelmingly contract-tier (overflow, text heights, contrast),
+/// so it is not gated as a whole — only the one intent-tier fix inside it
+/// (`fix_structural_wrapper_transparency`) answers to `policy`. Production
+/// callers use this form; `post_pass_forest` is the full-tier shorthand for
+/// tests and any caller with no document in hand.
+pub fn post_pass_forest_with_tier(
+    nodes: &mut [PenNode],
+    canvas_width: f64,
+    policy: &crate::repair_tier::RepairTierPolicy,
+) {
+    let run_intent =
+        policy.runs_pass(crate::repair_tier::TieredPass::StructuralWrapperTransparency);
     for node in nodes.iter_mut() {
         let Ok(mut v) = serde_json::to_value(&*node) else {
             continue;
         };
-        post_pass_value(&mut v, None, canvas_width);
+        post_pass_value(&mut v, None, canvas_width, run_intent);
         if let Ok(new_node) = serde_json::from_value::<PenNode>(v) {
             *node = new_node;
         }
@@ -130,11 +161,28 @@ pub fn post_pass_forest(nodes: &mut [PenNode], canvas_width: f64) {
 /// site inside `post_pass_forest`) only ever saw hex, so it never matched and
 /// the pink search input / cool-grey panels survived.
 pub fn enforce_surface_color_discipline(nodes: &mut [PenNode]) {
+    enforce_surface_color_discipline_with_tier(nodes, &crate::repair_tier::RepairTierPolicy::all());
+}
+
+/// [`enforce_surface_color_discipline`] under a repair-tier policy.
+///
+/// `fix_surface_color_discipline` is intent-tier: a deliberate tonal band is
+/// indistinguishable from a surface that redundantly repeats its parent's
+/// token. The radius normalizers alongside it are contract-tier and keep
+/// running either way — a count badge that is not round is a defect at any
+/// provenance.
+pub fn enforce_surface_color_discipline_with_tier(
+    nodes: &mut [PenNode],
+    policy: &crate::repair_tier::RepairTierPolicy,
+) {
+    let run_discipline = policy.runs_pass(crate::repair_tier::TieredPass::SurfaceColorDiscipline);
     for node in nodes.iter_mut() {
         let Ok(mut v) = serde_json::to_value(&*node) else {
             continue;
         };
-        fix_surface_color_discipline(&mut v, true);
+        if run_discipline {
+            fix_surface_color_discipline(&mut v, true);
+        }
         round_missing_semantic_micro_surfaces(&mut v, false);
         round_count_badges(&mut v);
         round_missing_compact_pill_radius(&mut v);

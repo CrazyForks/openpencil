@@ -215,9 +215,27 @@ pub(crate) fn fix_theme_variable_polarity(sink: &mut dyn crate::types::DocSink) 
                 continue;
             }
             let lname = name.to_lowercase();
-            let surface_like = ["surface", "card", "panel", "chip", "bg", "background"]
-                .iter()
-                .any(|t| lname.contains(t));
+            // `border` / `outline` / `divider` sit with the SURFACE family, not
+            // on their own: a hairline lives a step off the page tone, far from
+            // the text tone, so the surface thresholds below classify it
+            // correctly with no extra tuning. They were missing from this list,
+            // which left a dark design's `$color-border` resolving to its
+            // stock-light slot (measured: 0808-gm-1.op kept `#E2E8F0` on a
+            // `#0A0A0A` page — a near-WHITE hairline, which the widget renderer
+            // then used as the tab bar's background).
+            let surface_like = [
+                "surface",
+                "card",
+                "panel",
+                "chip",
+                "bg",
+                "background",
+                "border",
+                "outline",
+                "divider",
+            ]
+            .iter()
+            .any(|t| lname.contains(t));
             let text_like = lname.contains("text") || lname.contains("foreground");
             if surface_like == text_like {
                 // neither family, or ambiguously both — leave alone
@@ -468,7 +486,11 @@ pub fn apply_loop_finalize_counted(state: &mut EditorState) -> RepairSummary {
         crate::cleanup::repair_mobile_structural_chrome_for_all_roots(sink);
         crate::avatar_repair::repair_avatar_slots_for_all_roots(sink);
         crate::cleanup::anchor_bottom_nav_last_for_all_roots(sink);
-        counter.checkpoint(&mut summary, CheckCategory::Structure);
+        counter.checkpoint(
+            &mut summary,
+            CheckCategory::Structure,
+            "loop-finalize:chrome-dedupe+avatar+nav-anchor",
+        );
         crate::mobile_content_rail::repair_mobile_content_rails_for_all_roots(sink);
         crate::cleanup::distribute_bottom_nav_tabs_for_all_roots(sink);
         crate::cleanup::collapse_nested_horizontal_padding_for_all_roots(sink);
@@ -477,7 +499,11 @@ pub fn apply_loop_finalize_counted(state: &mut EditorState) -> RepairSummary {
         crate::cleanup::equalize_horizontal_card_heights_for_all_roots(sink);
         crate::cleanup::collapse_fill_container_content_sections_for_all_roots(sink);
         crate::geometry_validation::repair_mobile_bottom_breathing_for_all_roots(sink);
-        counter.checkpoint(&mut summary, CheckCategory::Layout);
+        counter.checkpoint(
+            &mut summary,
+            CheckCategory::Layout,
+            "loop-finalize:container-geometry",
+        );
     }
     if state.active_children().is_empty() {
         return summary;
@@ -487,6 +513,11 @@ pub fn apply_loop_finalize_counted(state: &mut EditorState) -> RepairSummary {
     let (has_wrapper, page_bg, canvas_width, theme) =
         locate_section_context(state.active_children());
     let light_theme = theme == Theme::Light;
+
+    // Resolved BEFORE the forest is mutably borrowed below. The loop path has
+    // no plan to carry provenance on, which is exactly why the policy is read
+    // off the document (see `crate::repair_tier`).
+    let tier = crate::repair_tier::RepairTierPolicy::for_document(state);
 
     {
         // `bind_generated_color_variables` reads the live state while the forest
@@ -508,16 +539,24 @@ pub fn apply_loop_finalize_counted(state: &mut EditorState) -> RepairSummary {
         let prior_accent = crate::tree_heuristics::dominant_design_accent(forest);
 
         crate::role_infer::resolve_forest_roles(forest, canvas_width, theme);
-        crate::role_post_pass::post_pass_forest(forest, canvas_width);
+        crate::role_post_pass::post_pass_forest_with_tier(forest, canvas_width, &tier);
         jian_ops_schema::promote::promote_forest(forest);
-        crate::tree_heuristics::apply_tree_heuristics(
-            forest,
-            page_bg.as_deref(),
-            light_theme,
-            prior_accent.as_deref(),
-        );
-        crate::variable_binding::bind_generated_color_variables(forest, &snapshot);
-        crate::role_post_pass::enforce_surface_color_discipline(forest);
+        // The remaining three are intent-tier in full (`crate::repair_tier`):
+        // fill/decoration heuristics, hex→token rebinding, and surface-colour
+        // discipline all overrule what an author chose, so a document with
+        // template provenance keeps its own palette and surfaces.
+        if tier.runs_pass(crate::repair_tier::TieredPass::TreeHeuristics) {
+            crate::tree_heuristics::apply_tree_heuristics(
+                forest,
+                page_bg.as_deref(),
+                light_theme,
+                prior_accent.as_deref(),
+            );
+        }
+        if tier.runs_pass(crate::repair_tier::TieredPass::VariableBinding) {
+            crate::variable_binding::bind_generated_color_variables(forest, &snapshot);
+        }
+        crate::role_post_pass::enforce_surface_color_discipline_with_tier(forest, &tier);
     }
 
     // Hoist node-level `state` into the document root, mirroring the
@@ -610,3 +649,11 @@ fn synthesize_plan(forest: &[PenNode], canvas_width: f64) -> crate::plan::Orches
 #[cfg(test)]
 #[path = "loop_finalize_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "loop_finalize_polarity_tests.rs"]
+mod polarity_tests;
+
+#[cfg(test)]
+#[path = "loop_finalize_tier_tests.rs"]
+mod tier_tests;

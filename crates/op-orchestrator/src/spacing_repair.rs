@@ -16,10 +16,48 @@
 //!   horizontally ≥16 — a landing page whose root column is unpadded keeps
 //!   its self-padding `[0,24]` sections untouched;
 //! - vertical padding stripped only when the parent column gaps ≥12 — flush
-//!   stacks (gap 0) may legitimately breathe through wrapper padding.
+//!   stacks (gap 0) may legitimately breathe through wrapper padding — AND
+//!   only when that gap can stand in for the padding (see
+//!   [`gap_absorbs_vertical_padding`]) — AND never off the top-level sections of a
+//!   scrolling page, whose vertical padding IS the page's rhythm (see
+//!   `sections_own_the_rhythm` in [`strip_in_value`]).
 
 use jian_ops_schema::node::PenNode;
 use serde_json::{json, Value};
+
+use crate::design_type::{classify_root_form_value, DesignForm};
+
+/// How far past the parent's gap a wrapper's vertical padding may reach and
+/// still count as a DUPLICATE of that gap.
+///
+/// Deliberately NOT 1.0. This pass's original job — collapsing a weak model's
+/// doubled wrapper insets on a phone screen — routinely sees a wrapper padded
+/// slightly deeper than the column gaps it duplicates, and a strict `<= gap`
+/// would disarm it there. The scrolling-page guard below (`sections_own_the_rhythm`)
+/// is what protects a web page's own 24px sections; this constant only has to
+/// refuse insets that DWARF the gap, which is a separate and much safer call.
+const GAP_DUPLICATE_FACTOR: f64 = 1.5;
+
+/// Can the parent column's `gap` stand in for a wrapper's vertical padding?
+///
+/// The vertical half of this pass removes double-spacing: padding that repeats
+/// separation the column's gap ALREADY provides. That reading holds only while
+/// the two are of the same order. Padding that dwarfs the gap is not repeating
+/// it, it is carrying rhythm the gap cannot express, and zeroing it deletes
+/// authored spacing instead of de-duplicating it.
+///
+/// Measured on `0808-gm-1.op`: a marketing page root gapped 20 with eight
+/// sections each carrying 24–80px of their own vertical inset came back with
+/// ALL EIGHT at `[0, H, 0, H]`, collapsing the page's section rhythm into a
+/// flat 20px stack — the user's "web 顶部和底部应该有空间" report.
+///
+/// BOTH sides must be absorbable: a pair that only half-fits the gap is
+/// rhythm, and flattening one edge of it would skew the wrapper rather than
+/// de-duplicate it.
+fn gap_absorbs_vertical_padding(top: f64, bottom: f64, gap: f64) -> bool {
+    let absorbable = gap * GAP_DUPLICATE_FACTOR;
+    top <= absorbable && bottom <= absorbable
+}
 
 /// Strip redundant wrapper padding under padded/gapped columns. Returns
 /// `true` iff any padding changed. Same `Value` round-trip as the
@@ -28,7 +66,11 @@ pub(crate) fn strip_wrapper_double_inset(root: &mut PenNode) -> bool {
     let Ok(mut v) = serde_json::to_value(&*root) else {
         return false;
     };
-    if !strip_in_value(&mut v, false) {
+    // The artboard is the only design-type signal a pass gets on the agentic
+    // loop path (no plan exists there), so classify it once at the root and
+    // thread it down rather than re-deriving it per level.
+    let form = classify_root_form_value(&v);
+    if !strip_in_value(&mut v, false, form, 0) {
         return false;
     }
     match serde_json::from_value::<PenNode>(v) {
@@ -49,13 +91,21 @@ pub(crate) fn strip_wrapper_double_inset(root: &mut PenNode) -> bool {
 /// misalignment this pass exists to remove, one level deeper. It does NOT
 /// cross a painting surface: a card's own padding is its inner inset, not a
 /// rail gutter, so `is_painting_surface` resets the chain.
-fn strip_in_value(v: &mut Value, gutter_above: bool) -> bool {
+fn strip_in_value(v: &mut Value, gutter_above: bool, form: DesignForm, depth: usize) -> bool {
     let mut changed = false;
     let is_column = v.get("layout").and_then(Value::as_str) == Some("vertical");
     let (pt, pr, pb, pl) = padding_sides(v);
     let parent_pads_h = (pr >= 16.0 && pl >= 16.0) || gutter_above;
-    let parent_gaps = num(v, "gap") >= 12.0;
+    let gap = num(v, "gap");
+    let parent_gaps = gap >= 12.0;
     let _ = (pt, pb);
+    // A SCROLLING PAGE whose root column establishes no inset of its own has
+    // delegated the whole frame to its sections: their vertical padding IS the
+    // page's section rhythm, and the root gap is a separator between sections,
+    // not a substitute for them. A dashboard's main column — which pads itself
+    // (`parent_pads_h`) — keeps the original reading, and so does every level
+    // below the root, where an interior strip really can duplicate the column.
+    let sections_own_the_rhythm = form.is_scrolling_page() && depth == 0 && !parent_pads_h;
     if is_column && (parent_pads_h || parent_gaps) {
         if let Some(kids) = v.get_mut("children").and_then(Value::as_array_mut) {
             for child in kids.iter_mut() {
@@ -71,7 +121,12 @@ fn strip_in_value(v: &mut Value, gutter_above: bool) -> bool {
                     l = 0.0;
                     touched = true;
                 }
-                if parent_gaps && transparent_v && (t > 0.0 || b > 0.0) {
+                if parent_gaps
+                    && transparent_v
+                    && gap_absorbs_vertical_padding(t, b, gap)
+                    && !sections_own_the_rhythm
+                    && (t > 0.0 || b > 0.0)
+                {
                     t = 0.0;
                     b = 0.0;
                     touched = true;
@@ -92,7 +147,7 @@ fn strip_in_value(v: &mut Value, gutter_above: bool) -> bool {
     if let Some(kids) = v.get_mut("children").and_then(Value::as_array_mut) {
         for c in kids.iter_mut() {
             let inherits = parent_pads_h && !is_painting_surface(c);
-            changed |= strip_in_value(c, inherits);
+            changed |= strip_in_value(c, inherits, form, depth + 1);
         }
     }
     changed

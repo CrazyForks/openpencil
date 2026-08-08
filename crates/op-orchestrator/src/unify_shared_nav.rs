@@ -719,3 +719,7 @@ mod tests;
 #[cfg(test)]
 #[path = "unify_shared_nav_active_tab_tests.rs"]
 mod active_tab_tests;
+
+#[cfg(test)]
+#[path = "unify_shared_nav_cjk_tests.rs"]
+mod cjk_tests;

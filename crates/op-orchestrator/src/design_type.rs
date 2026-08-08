@@ -13,6 +13,10 @@ pub enum DesignType {
     Component,
     /// Presentation deck — 16:9 slides rather than a scrolling page.
     Slides,
+    /// Social card series — a fixed portrait board (小红书 / 公众号 图文),
+    /// delivered as a set of independent images rather than one scrolling
+    /// page or one component.
+    Card,
 }
 
 /// 一个设计类型的尺寸 preset(TS `DesignTypePreset`)。
@@ -59,6 +63,17 @@ const SLIDES: DesignTypePreset = DesignTypePreset {
     height: 1080.0,
     root_height: 1080.0,
     default_sections: &["Title", "Body"],
+};
+/// The card system's primary spec (`card-system-0808.md` §5): XHS 竖版 3:4.
+/// The other three specs (1:1, 公众号封面对, 9:16) are per-request overrides,
+/// not separate presets — `requested_root_dimensions` already honours an
+/// explicit size, so the preset only has to carry the default.
+const CARD: DesignTypePreset = DesignTypePreset {
+    type_: DesignType::Card,
+    width: 1080.0,
+    height: 1440.0,
+    root_height: 1440.0,
+    default_sections: &["Cover", "Body"],
 };
 const LANDING: DesignTypePreset = DesignTypePreset {
     type_: DesignType::LandingPage,
@@ -138,6 +153,46 @@ const SLIDES_WORDS: &[&str] = &[
     "路演",
 ];
 const MOBILE_WORDS: &[&str] = &["mobile", "手机", "phone", "移动端", "ios", "android"];
+/// Words that mean "social card series" on their own — a platform name or a
+/// delivery format, neither of which describes anything else we generate.
+const CARD_PLATFORM_WORDS: &[&str] = &[
+    "小红书",
+    "小紅書",
+    "xiaohongshu",
+    "xhs",
+    "rednote",
+    "公众号",
+    "公眾號",
+    "图文",
+    "圖文",
+    "轮播",
+    "輪播",
+    "carousel",
+];
+/// `卡片` / `card` is ALSO the component rung's trigger word, so on its own it
+/// stays ambiguous. Paired with a series word it is unambiguously a set.
+const CARD_NOUNS: &[&str] = &["卡片", "卡", "card", "cards"];
+const CARD_SERIES_WORDS: &[&str] = &["系列", "一套", "多张", "多張", "组图", "組圖", "series"];
+/// A card noun inside a COMPONENT request is still a component — "卡片组件"
+/// asks for one card, not a set of them. Mirrors how the deck rung uses
+/// `COMPONENT_DISQUALIFIER` in the opposite direction.
+const CARD_DISQUALIFIER: &[&str] = &["组件", "組件", "component"];
+
+/// Is this a social-card-series request? See the word tables above for why
+/// the platform words stand alone while the card nouns need a series word.
+pub(crate) fn is_card_series_prompt(lower: &str) -> bool {
+    is_card_series(lower)
+}
+
+fn is_card_series(lower: &str) -> bool {
+    if contains_any(lower, CARD_DISQUALIFIER) {
+        return false;
+    }
+    if contains_any(lower, CARD_PLATFORM_WORDS) {
+        return true;
+    }
+    contains_any(lower, CARD_NOUNS) && contains_any(lower, CARD_SERIES_WORDS)
+}
 /// 数据型工作区 / dashboard 触发词 —— 命中 → DesktopScreen。
 const DASHBOARD_WORDS: &[&str] = &[
     "dashboard",
@@ -186,32 +241,188 @@ fn contains_any(haystack: &str, needles: &[&str]) -> bool {
 /// 按 prompt 的意图分类 → preset。首个命中胜出。
 pub fn detect_design_type(prompt: &str) -> DesignTypePreset {
     let lower = prompt.to_lowercase();
-    // ① 单组件:触发词命中 且 disqualifier 不命中。
+    // ① 社交卡片系列。必须排在单组件之前:`卡片` 本身就是 COMPONENT 的触发
+    //    词,「做一套小红书卡片」会被它截胡成 400px 宽的单组件(card-system
+    //    -0808.md §8.2 P0-1 实测)。同构于 deck 词进 COMPONENT_DISQUALIFIER
+    //    的既有先例 —— 内容形态决定画幅,名词只是名词。
+    if is_card_series(&lower) {
+        return CARD;
+    }
+    // ② 单组件:触发词命中 且 disqualifier 不命中。
     let trigger = contains_any(&lower, COMPONENT_TRIGGER_LATIN)
         || contains_any(&lower, COMPONENT_TRIGGER_CJK);
     if trigger && !contains_any(&lower, COMPONENT_DISQUALIFIER) {
         return COMPONENT;
     }
-    // ② 演示文稿。放在移动端之前:"手机端演示" 说的是内容形态是 deck,
+    // ③ 演示文稿。放在移动端之前:"手机端演示" 说的是内容形态是 deck,
     //    而 deck 的画幅是投影比例,不是手机屏。
     if contains_any(&lower, SLIDES_WORDS) {
         return SLIDES;
     }
-    // ③ 移动端。
+    // ④ 移动端。
     if contains_any(&lower, MOBILE_WORDS) {
         return MOBILE;
     }
-    // ④ 数据型工作区 / dashboard。
+    // ⑤ 数据型工作区 / dashboard。
     if contains_any(&lower, DASHBOARD_WORDS) {
         return DESKTOP;
     }
-    // ⑤ 默认:多区块落地页。
+    // ⑥ 默认:多区块落地页。
     LANDING
+}
+
+// ── Tree-side form classification ────────────────────────────────────────────
+
+/// What kind of SURFACE an assembled root frame is, judged from the artboard
+/// itself rather than from the prompt.
+///
+/// [`detect_design_type`] above answers "what did the user ask for", and only
+/// the prompt / plan layer can call it — repair passes run on an assembled
+/// tree, and on the agentic-loop path there is no plan at all. They need the
+/// same distinction derived from what is actually on the canvas.
+///
+/// **This is that single judge.** A repair pass must not re-derive the form
+/// from a width comparison of its own: the workspace already carries six
+/// separate `480.0` literals (`mobile_reflow`, `mobile_content_rail`,
+/// `geometry_bottom_gap`, `cleanup_mobile_dense`, `cleanup_root_and_nav`,
+/// `role_defaults`), which is exactly the drift this exists to stop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DesignForm {
+    /// A phone-sized viewport. Chrome contracts (status bar, bottom nav),
+    /// edge-to-edge content and tight rhythm apply here.
+    MobileScreen,
+    /// A scrolling page wide enough for a desktop browser — marketing site,
+    /// landing page, desktop app screen. Sections own a vertical rhythm the
+    /// root's gap cannot express, and content sits inside gutters.
+    Page,
+    /// A fixed 16:9 projector board. Neither a viewport nor a scroll surface.
+    Deck,
+    /// Not enough evidence to classify — an unsized root, a `fill_container`
+    /// width, or a width between the phone and desktop bands. Passes MUST
+    /// treat this as "no type information", never as a default form.
+    Unknown,
+}
+
+impl DesignForm {
+    /// A surface the reader scrolls through, where the root's direct children
+    /// are page sections rather than viewport chrome.
+    pub fn is_scrolling_page(self) -> bool {
+        matches!(self, DesignForm::Page)
+    }
+}
+
+/// Narrowest artboard that reads as a desktop browser page. Between this and
+/// [`crate::plan_normalize::MOBILE_MAX_WIDTH`] sits the tablet band, which is
+/// deliberately [`DesignForm::Unknown`] — neither set of contracts is safe to
+/// assume there.
+const PAGE_MIN_WIDTH: f64 = 1024.0;
+/// Narrowest artboard that can be a projector board (the 1920 preset, minus
+/// room for a model that rounds down).
+const DECK_MIN_WIDTH: f64 = 1600.0;
+/// 16:9 is 0.5625. The band accepts a board a model sized slightly off while
+/// still excluding any page tall enough to scroll.
+const DECK_ASPECT_RANGE: std::ops::RangeInclusive<f64> = 0.50..=0.65;
+
+/// Classify a root frame from its artboard size. `width` / `height` are the
+/// authored numeric values; a non-numeric (`fill_container`, `fit_content`) or
+/// absent size is passed as `None` and yields [`DesignForm::Unknown`].
+pub fn classify_root_form(width: Option<f64>, height: Option<f64>) -> DesignForm {
+    let Some(width) = width.filter(|w| *w > 0.0) else {
+        return DesignForm::Unknown;
+    };
+    if width <= crate::plan_normalize::MOBILE_MAX_WIDTH {
+        return DesignForm::MobileScreen;
+    }
+    if width >= DECK_MIN_WIDTH {
+        if let Some(height) = height.filter(|h| *h > 0.0) {
+            if DECK_ASPECT_RANGE.contains(&(height / width)) {
+                return DesignForm::Deck;
+            }
+        }
+    }
+    if width >= PAGE_MIN_WIDTH {
+        return DesignForm::Page;
+    }
+    DesignForm::Unknown
+}
+
+/// [`classify_root_form`] over a root node's JSON. Sizes that are strings
+/// (`"fill_container"`) read as unknown, matching the numeric contract above.
+pub fn classify_root_form_value(root: &serde_json::Value) -> DesignForm {
+    let number = |key: &str| root.get(key).and_then(serde_json::Value::as_f64);
+    classify_root_form(number("width"), number("height"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn root_form_reads_the_artboard_not_the_prompt() {
+        // 0808-gm-1.op's page: 1200 x 2977 marketing site.
+        assert_eq!(
+            classify_root_form(Some(1200.0), Some(2977.0)),
+            DesignForm::Page
+        );
+        assert_eq!(
+            classify_root_form(Some(1200.0), Some(800.0)),
+            DesignForm::Page
+        );
+        assert_eq!(
+            classify_root_form(Some(375.0), Some(812.0)),
+            DesignForm::MobileScreen
+        );
+        assert_eq!(
+            classify_root_form(Some(1920.0), Some(1080.0)),
+            DesignForm::Deck
+        );
+        // A deck-wide artboard that is NOT 16:9 is a wide page, not a board.
+        assert_eq!(
+            classify_root_form(Some(1920.0), Some(6000.0)),
+            DesignForm::Page
+        );
+    }
+
+    #[test]
+    fn a_card_board_is_not_mistaken_for_a_phone_screen() {
+        // The repair layer keys off DesignForm, and the one outcome that
+        // would actively damage a card is being read as a 375-wide phone
+        // screen (status-bar injection, bottom-nav chrome, mobile reflow).
+        // 1080 is far above the phone band, so it reads as a Page — which
+        // only ever ADDS protection (`spacing_repair`'s section-rhythm gate)
+        // and never applies phone chrome.
+        for (w, h) in [
+            (1080.0, 1440.0), // XHS 竖版 3:4 — the primary spec
+            (1080.0, 1080.0), // XHS 方版 1:1
+            (1080.0, 1920.0), // 通用 9:16
+        ] {
+            let form = classify_root_form(Some(w), Some(h));
+            assert_ne!(form, DesignForm::MobileScreen, "{w}x{h}");
+            assert_eq!(form, DesignForm::Page, "{w}x{h}");
+        }
+    }
+
+    #[test]
+    fn an_unsized_or_tablet_root_is_unknown_never_a_default() {
+        assert_eq!(classify_root_form(None, None), DesignForm::Unknown);
+        assert_eq!(classify_root_form(Some(0.0), None), DesignForm::Unknown);
+        // Tablet band: neither phone chrome nor desktop gutters are safe.
+        assert_eq!(classify_root_form(Some(768.0), None), DesignForm::Unknown);
+        assert!(!DesignForm::Unknown.is_scrolling_page());
+    }
+
+    #[test]
+    fn root_form_from_json_ignores_keyword_sizes() {
+        use serde_json::json;
+        assert_eq!(
+            classify_root_form_value(&json!({"width": 1200, "height": 2977})),
+            DesignForm::Page
+        );
+        assert_eq!(
+            classify_root_form_value(&json!({"width": "fill_container"})),
+            DesignForm::Unknown
+        );
+    }
 
     #[test]
     fn deck_requests_get_the_projector_artboard() {
@@ -295,6 +506,63 @@ mod tests {
         assert_eq!(
             detect_design_type("a mobile login screen").type_,
             DesignType::MobileScreen
+        );
+    }
+
+    #[test]
+    fn a_social_card_series_gets_the_portrait_board() {
+        // `卡片` is ALSO the component trigger, so before the card rung existed
+        // "做一套小红书卡片" resolved to a 400px-wide component
+        // (`card-system-0808.md` §8.2 P0-1). Platform words stand alone.
+        for prompt in [
+            "帮我做一套小红书卡片：如何早起",
+            "小红书图文 5 张",
+            "做一组公众号图文",
+            "an xhs carousel about morning routines",
+            "make a card series about note taking",
+            "做一套卡片系列讲复利",
+        ] {
+            let preset = detect_design_type(prompt);
+            assert_eq!(preset.type_, DesignType::Card, "{prompt}");
+            assert_eq!((preset.width, preset.height), (1080.0, 1440.0), "{prompt}");
+            assert_eq!(preset.root_height, 1440.0, "{prompt}");
+        }
+    }
+
+    #[test]
+    fn a_single_card_request_is_still_a_component() {
+        // The card rung runs FIRST, so it has to hand these back untouched.
+        assert_eq!(
+            detect_design_type("卡片组件").type_,
+            DesignType::Component,
+            "a component request that happens to name a card"
+        );
+        assert_eq!(
+            detect_design_type("a card component for the design system").type_,
+            DesignType::Component
+        );
+        assert_eq!(
+            detect_design_type("a profile card").type_,
+            DesignType::Component
+        );
+        assert_eq!(
+            detect_design_type("一个统计徽章").type_,
+            DesignType::Component
+        );
+    }
+
+    #[test]
+    fn a_deck_or_screen_still_beats_a_bare_card_noun() {
+        // "PPT 封面卡片" has a card NOUN but no series word and no platform
+        // word — the deck reading must survive the new first rung.
+        assert_eq!(detect_design_type("PPT 封面卡片").type_, DesignType::Slides);
+        assert_eq!(
+            detect_design_type("the title card for my pitch deck").type_,
+            DesignType::Slides
+        );
+        assert_eq!(
+            detect_design_type("a card on the home screen").type_,
+            DesignType::LandingPage
         );
     }
 

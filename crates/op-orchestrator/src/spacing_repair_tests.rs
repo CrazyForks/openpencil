@@ -71,6 +71,126 @@ fn gapped_but_unpadded_column_strips_only_vertical() {
 }
 
 #[test]
+fn landing_page_sections_keep_their_own_vertical_rhythm() {
+    // 0808-gm-1.op: a marketing page root (no padding, gap 20) whose eight
+    // sections each carry an 80px vertical inset of their own. A 20px gap
+    // cannot stand in for an inset four times its size — this is section
+    // rhythm, not a duplicate of the gap, and zeroing it collapsed the whole
+    // page into a 20px stack.
+    let section = |id: &str| {
+        json!({"type":"frame","id":id,"layout":"vertical","padding":[80, 80],
+               "children":[card(&format!("{id}-c"))]})
+    };
+    let mut root = node(json!({
+        "type":"frame","id":"page","layout":"vertical","gap":20,
+        "children":[section("hero"), section("features"), section("cta")]
+    }));
+    assert!(!strip_wrapper_double_inset(&mut root));
+    let v = serde_json::to_value(&root).unwrap();
+    for child in v["children"].as_array().unwrap() {
+        assert_eq!(
+            child["padding"],
+            json!([80.0, 80.0]),
+            "section rhythm survives verbatim: {child}"
+        );
+    }
+}
+
+#[test]
+fn a_web_page_keeps_section_padding_a_phone_screen_loses_it() {
+    // Same tree, two artboards — the one design-type test the repair layer
+    // owes: an APP screen's rules must not reshape a WEB page. The 24px
+    // section inset sits INSIDE the gap-20 column's duplicate window
+    // (`gap_absorbs_vertical_padding` says "duplicate" for both cases), so only
+    // the artboard can tell them apart. This isolates the form signal.
+    let tree = |width: f64, height: f64| {
+        json!({
+            "type":"frame","id":"page","layout":"vertical","gap":20,
+            "width": width, "height": height,
+            "children":[
+                {"type":"frame","id":"s1","layout":"vertical","padding":[24, 24],
+                 "children":[card("s1-c")]},
+                {"type":"frame","id":"s2","layout":"vertical","padding":[24, 24],
+                 "children":[card("s2-c")]}
+            ]
+        })
+    };
+
+    // 1200 x 2977 — 0808-gm-1.op's marketing page. Sections own the rhythm.
+    let mut web = node(tree(1200.0, 2977.0));
+    assert!(
+        !strip_wrapper_double_inset(&mut web),
+        "a web page's section rhythm is not a duplicate of the page gap"
+    );
+    let web = serde_json::to_value(&web).unwrap();
+    assert_eq!(web["children"][0]["padding"], json!([24.0, 24.0]));
+
+    // 375 x 812 — a phone screen. The original de-duplication still applies.
+    let mut phone = node(tree(375.0, 812.0));
+    assert!(strip_wrapper_double_inset(&mut phone));
+    let phone = serde_json::to_value(&phone).unwrap();
+    assert_eq!(
+        phone["children"][0]["padding"],
+        json!([0.0, 24.0, 0.0, 24.0]),
+        "phone chrome keeps the tight stack the pass was built for"
+    );
+}
+
+#[test]
+fn section_padding_deeper_than_the_gap_survives_on_every_artboard() {
+    // The magnitude rule and the artboard rule are independent guards, and
+    // this pins the magnitude one on the form the artboard rule does NOT
+    // cover: a 375-wide phone screen whose sections are inset far deeper than
+    // the column's gap. 48 dwarfs 20 — no gap that size is being duplicated.
+    let mut phone = node(json!({
+        "type":"frame","id":"screen","layout":"vertical","gap":20,
+        "width": 375.0, "height": 812.0,
+        "children":[
+            {"type":"frame","id":"s1","layout":"vertical","padding":[48, 16],
+             "children":[card("s1-c")]}
+        ]
+    }));
+    assert!(!strip_wrapper_double_inset(&mut phone));
+    let phone = serde_json::to_value(&phone).unwrap();
+    assert_eq!(phone["children"][0]["padding"], json!([48.0, 16.0]));
+}
+
+#[test]
+fn a_padded_desktop_main_column_still_de_duplicates() {
+    // The shape the pass was BUILT for, now carrying a desktop width: the
+    // column pads itself, so it owns the frame and an interior strip's inset
+    // really is a duplicate. Width alone must not grant immunity.
+    let mut root = node(json!({
+        "type":"frame","id":"main","layout":"vertical","gap":20,"padding":[32, 40],
+        "width": 1200.0, "height": 900.0,
+        "children":[
+            {"type":"frame","id":"metrics","layout":"horizontal","gap":16,"padding":[24, 32],
+             "children":[card("c1"), card("c2")]}
+        ]
+    }));
+    assert!(strip_wrapper_double_inset(&mut root));
+    let v = serde_json::to_value(&root).unwrap();
+    assert!(v["children"][0].get("padding").is_none());
+}
+
+#[test]
+fn vertical_padding_of_the_gap_s_own_order_still_strips() {
+    // The narrowing must not disarm the pass: a wrapper padded 16 inside a
+    // gap-24 column is still double-spacing (the gap already supplies more
+    // separation than the padding does), so it goes.
+    let mut root = node(json!({
+        "type":"frame","id":"col","layout":"vertical","gap":24,
+        "children":[
+            {"type":"frame","id":"wrap","layout":"vertical","padding":[16, 0],
+             "children":[card("c1")]}
+        ]
+    }));
+    assert!(strip_wrapper_double_inset(&mut root));
+    let v = serde_json::to_value(&root).unwrap();
+    assert!(v["children"][0].get("padding").is_none());
+}
+
+#[test]
 fn painted_wrappers_are_not_touched() {
     // A filled panel / stroked card is a SURFACE — its padding is design.
     let mut root = node(json!({

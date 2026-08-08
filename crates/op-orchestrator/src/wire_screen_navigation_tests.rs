@@ -75,6 +75,23 @@ fn labels_match_exact_and_prefix() {
 /// token fallback must recover this WITHOUT opening the door to a bare
 /// substring match.
 #[test]
+fn labels_match_handles_cjk_labels() {
+    // `normalize_label` filtered on `is_ascii_alphanumeric`, so every CJK
+    // label and screen name normalized to "" and NOTHING matched — the whole
+    // tab-navigation layer silently no-opped on Chinese apps. Measured on
+    // `0808-k3-2.op`: screen routes were written (that path never reads
+    // labels) while not one of the eight tabs got an `onTap` action.
+    assert!(labels_match("星图", "星图"));
+    assert!(labels_match("今夜", "Nocturne 今夜"));
+    assert!(labels_match("Nocturne 今夜", "今夜"));
+    assert!(!labels_match("星图", "地点"));
+    // Mixed scripts still tokenize on the usual separators.
+    assert!(labels_match("设置", "Wander — 设置"));
+    // …and a CJK label still never matches an unrelated ASCII one.
+    assert!(!labels_match("星图", "Profile"));
+}
+
+#[test]
 fn labels_match_token_fallback_for_brand_prefixed_names() {
     // The exact failure this was built from: brand-prefixed screen name,
     // bare tab label, either argument order.

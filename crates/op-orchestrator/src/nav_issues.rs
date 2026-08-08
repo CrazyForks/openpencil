@@ -64,6 +64,14 @@ fn marked_screens(nodes: &[PenNode]) -> Vec<MarkedScreen<'_>> {
 /// when fewer than two top-level frames are screen-marked — mirrors
 /// `wire_screen_navigation`'s own multi-screen gate: a single marked screen
 /// has no navigation target to check against yet.
+///
+/// Plus ONE closing line for the opposite gap: tabs whose label names no
+/// screen in the document at all. Those stay deliberately inert — binding a
+/// tab to a route that does not exist is worse than a dead tap — but the
+/// model is the only one who can decide whether the missing screens should
+/// exist, so it is told rather than repaired. Reported once for the whole
+/// document: a tab bar is shared chrome, so per-screen lines would be the
+/// same sentence N times and would crowd out the actionable ones.
 pub fn scan_nav_issues(state: &EditorState) -> Vec<String> {
     let screens = marked_screens(state.active_children());
     if screens.len() < 2 {
@@ -78,6 +86,7 @@ pub fn scan_nav_issues(state: &EditorState) -> Vec<String> {
         .collect();
 
     let mut issues = Vec::new();
+    let mut orphan_labels: Vec<String> = Vec::new();
     for screen in &screens {
         let mut navs = Vec::new();
         collect_nav_parts(screen.node, &mut navs);
@@ -96,6 +105,9 @@ pub fn scan_nav_issues(state: &EditorState) -> Vec<String> {
                     .iter()
                     .find(|(screen_name, _)| labels_match(label, screen_name))
                 else {
+                    if !orphan_labels.iter().any(|seen| seen == label) {
+                        orphan_labels.push(label.to_string());
+                    }
                     continue;
                 };
                 let item_id = item.id_str();
@@ -110,6 +122,18 @@ pub fn scan_nav_issues(state: &EditorState) -> Vec<String> {
     }
     issues.sort();
     issues.truncate(8);
+    if !orphan_labels.is_empty() {
+        issues.push(format!(
+            "nav tabs {} name no screen in this document - they stay unbound on purpose \
+             (binding a tab to a route that does not exist is worse than a dead tap). \
+             Generate those screens if they are meant to be reachable, or leave the tabs inert",
+            orphan_labels
+                .iter()
+                .map(|label| format!("\"{label}\""))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
     issues
 }
 

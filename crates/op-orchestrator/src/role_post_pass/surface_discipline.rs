@@ -67,11 +67,31 @@ pub(super) fn has_any_stroke(node: &Value) -> bool {
     node.get("stroke").map(|s| !s.is_null()).unwrap_or(false)
 }
 
+/// Entry point. Captures the root's own ground once so the page-bg strip below
+/// can prove the redundancy it claims, then walks the subtree.
 pub(super) fn fix_surface_color_discipline(node: &mut Value, is_root: bool) {
+    // Entering mid-tree leaves the page's ground unknown; an unprovable
+    // redundancy is not repaired (see `walk_surface_color_discipline`).
+    let page_bg = if is_root {
+        get_first_solid_color(node)
+    } else {
+        None
+    };
+    walk_surface_color_discipline(node, is_root, page_bg.as_deref());
+}
+
+fn walk_surface_color_discipline(node: &mut Value, is_root: bool, page_bg: Option<&str>) {
     if let Some(color) = get_first_solid_color(node) {
         if STATE_BG_REFS.contains(&color.as_str()) && !is_status_element(node) {
             node["fill"] = solid_fill("$color-surface-2");
-        } else if !is_root && color == PAGE_BG_REF {
+        } else if !is_root && color == PAGE_BG_REF && page_bg == Some(PAGE_BG_REF) {
+            // REDUNDANCY repair, not a taste call: the strip is only sound
+            // where the root paints this very token, so the inner band is
+            // provably invisible. A root grounded in anything else — a literal
+            // hex, a gradient, no fill at all — makes `$color-bg-deep` a
+            // DISTINCT surface, and emptying it deletes an authored band
+            // (measured: 0808-gm-1.op's `#0A0A0A` page, whose two
+            // `$color-bg-deep` (#0F172A) sections lost their darker ground).
             node["fill"] = json!([]);
         } else if color.starts_with("$color-text-") && is_container_kind(node) {
             // A CONTAINER filled with a TEXT token is a slot-category error —
@@ -97,7 +117,7 @@ pub(super) fn fix_surface_color_discipline(node: &mut Value, is_root: bool) {
     }
     if let Some(children) = node.get_mut("children").and_then(Value::as_array_mut) {
         for child in children.iter_mut() {
-            fix_surface_color_discipline(child, false);
+            walk_surface_color_discipline(child, false, page_bg);
         }
     }
 }
