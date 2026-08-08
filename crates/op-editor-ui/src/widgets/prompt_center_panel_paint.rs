@@ -5,9 +5,9 @@ use op_editor_core::PromptCenterFocus;
 
 use super::{
     delete_hover_token, estimated_text_width, filter_hover_token, save_category_hover_token,
-    PromptCenterCard, PromptCenterPanel, CARD_H, CHIP_H, CLOSE_BTN, HEADER_H, PAD,
+    PromptCenterCard, PromptCenterPanel, CHIP_H, CHIP_LABEL_SIZE, CLOSE_BTN, HEADER_H,
     PROMPT_CENTER_CANCEL_HOVER, PROMPT_CENTER_CLOSE_HOVER, PROMPT_CENTER_OPEN_SAVE_HOVER,
-    PROMPT_CENTER_SAVE_HOVER,
+    PROMPT_CENTER_SAVE_HOVER, SEARCH_PAD_X, SEARCH_TEXT_SIZE, TITLE_SIZE,
 };
 use crate::widgets::button::paint_button_feedback_wash;
 use crate::widgets::canvas_viewport_image::{
@@ -18,12 +18,21 @@ use crate::widgets::property_panel_text_input::paint_text_input_view;
 use crate::widgets::{draw_icon, Icon, PaintCx};
 use crate::{Color, ImageDrawMode, Point2D, Rect, TextLayout};
 
+/// Corner radius of the gallery frame itself, matching the Asset Center's.
+/// Larger than a dropdown's because the shape is read at canvas scale, not
+/// at menu scale.
+const PANEL_RADIUS: f32 = 16.0;
+const CARD_RADIUS: f32 = 12.0;
+const CARD_TITLE_SIZE: f32 = 14.0;
+const META_SIZE: f32 = 11.0;
+
 impl PromptCenterPanel<'_> {
     /// Paint the complete non-modal panel.
     pub fn paint(&self, cx: &mut PaintCx<'_>, panel: Rect) {
-        cx.backend.fill_round_rect(panel, 12.0, self.theme.popover);
         cx.backend
-            .stroke_round_rect(panel, 12.0, self.theme.border, 1.0);
+            .fill_round_rect(panel, PANEL_RADIUS, self.theme.popover);
+        cx.backend
+            .stroke_round_rect(panel, PANEL_RADIUS, self.theme.border, 1.0);
         self.paint_header(cx, panel);
         self.paint_search(cx, panel);
         self.paint_filter_chips(cx, panel);
@@ -34,11 +43,18 @@ impl PromptCenterPanel<'_> {
     }
 
     fn paint_header(&self, cx: &mut PaintCx<'_>, panel: Rect) {
+        let content = Self::content_rect(panel);
         self.paint_text(
             cx,
             self.t("promptCenter.title"),
-            Point2D::new(panel.origin.x + PAD, panel.origin.y + 29.0),
-            15.0,
+            Point2D::new(
+                content.origin.x,
+                jian_widgets::centered_text_baseline_y(
+                    Rect::xywh(content.origin.x, panel.origin.y, content.size.x, HEADER_H),
+                    TITLE_SIZE,
+                ),
+            ),
+            TITLE_SIZE,
             self.theme.foreground,
         );
 
@@ -52,21 +68,31 @@ impl PromptCenterPanel<'_> {
                 self.state.editor_ui.prompt_center.hover == Some(PROMPT_CENTER_OPEN_SAVE_HOVER),
                 self.is_pressed(PROMPT_CENTER_OPEN_SAVE_HOVER),
             );
+            let glyph = 15.0;
             draw_icon(
                 cx.backend,
                 Icon::Save,
-                Point2D::new(rect.origin.x + 8.0, rect.origin.y + 6.0),
-                14.0,
+                Point2D::new(
+                    rect.origin.x + 9.0,
+                    rect.origin.y + (rect.size.y - glyph) / 2.0,
+                ),
+                glyph,
                 self.theme.muted_foreground,
                 1.4,
             );
-            let label =
-                truncate_to_width(self.t("promptCenter.saveCurrent"), rect.size.x - 34.0, 11.0);
+            let label = truncate_to_width(
+                self.t("promptCenter.saveCurrent"),
+                rect.size.x - 38.0,
+                CHIP_LABEL_SIZE,
+            );
             self.paint_text(
                 cx,
                 &label,
-                Point2D::new(rect.origin.x + 28.0, rect.origin.y + 17.0),
-                11.0,
+                Point2D::new(
+                    rect.origin.x + 30.0,
+                    jian_widgets::centered_text_baseline_y(rect, CHIP_LABEL_SIZE),
+                ),
+                CHIP_LABEL_SIZE,
                 self.theme.foreground,
             );
         }
@@ -78,7 +104,7 @@ impl PromptCenterPanel<'_> {
             pressed: self.is_pressed(PROMPT_CENTER_CLOSE_HOVER),
             active: false,
             enabled: true,
-            icon_size: CLOSE_BTN - 11.0,
+            icon_size: CLOSE_BTN - 14.0,
             stroke_width: 1.5,
         }
         .paint(
@@ -95,13 +121,13 @@ impl PromptCenterPanel<'_> {
 
     fn paint_search(&self, cx: &mut PaintCx<'_>, panel: Rect) {
         let rect = Self::search_rect(panel);
-        cx.backend.fill_round_rect(rect, 7.0, self.theme.muted);
+        cx.backend.fill_round_rect(rect, 9.0, self.theme.muted);
         cx.backend
-            .stroke_round_rect(rect, 7.0, self.theme.border, 1.0);
+            .stroke_round_rect(rect, 9.0, self.theme.border, 1.0);
         draw_icon(
             cx.backend,
             Icon::Search,
-            Point2D::new(rect.origin.x + 9.0, rect.origin.y + 7.0),
+            Point2D::new(rect.origin.x + 10.0, rect.origin.y + 11.0),
             16.0,
             self.theme.muted_foreground,
             1.4,
@@ -111,9 +137,9 @@ impl PromptCenterPanel<'_> {
             &self.theme,
             &self.state.editor_ui.prompt_center.search,
             rect,
-            12.0,
-            32.0,
-            rect.origin.y + 19.0,
+            SEARCH_TEXT_SIZE,
+            SEARCH_PAD_X,
+            jian_widgets::centered_text_baseline_y(rect, SEARCH_TEXT_SIZE),
             self.now_ms,
             self.t("promptCenter.searchPlaceholder"),
             self.state.editor_ui.prompt_center.focus == PromptCenterFocus::Search,
@@ -137,16 +163,20 @@ impl PromptCenterPanel<'_> {
                 self.state.editor_ui.prompt_center.hover == Some(filter_hover_token(index)),
                 self.is_pressed(filter_hover_token(index)),
             );
-            let label = truncate_to_width(self.filter_label(filter), rect.size.x - 14.0, 11.0);
-            let label_w = estimated_text_width(&label, 11.0);
+            let label = truncate_to_width(
+                self.filter_label(filter),
+                rect.size.x - 14.0,
+                CHIP_LABEL_SIZE,
+            );
+            let label_w = estimated_text_width(&label, CHIP_LABEL_SIZE);
             self.paint_text(
                 cx,
                 &label,
                 Point2D::new(
                     rect.origin.x + ((rect.size.x - label_w) / 2.0).max(5.0),
-                    rect.origin.y + 16.0,
+                    jian_widgets::centered_text_baseline_y(rect, CHIP_LABEL_SIZE),
                 ),
-                11.0,
+                CHIP_LABEL_SIZE,
                 foreground,
             );
         }
@@ -180,9 +210,9 @@ impl PromptCenterPanel<'_> {
             &self.theme,
             &self.state.editor_ui.prompt_center.save_title,
             title,
-            12.0,
+            SEARCH_TEXT_SIZE,
             10.0,
-            title.origin.y + 18.0,
+            jian_widgets::centered_text_baseline_y(title, SEARCH_TEXT_SIZE),
             self.now_ms,
             self.t("promptCenter.saveTitlePlaceholder"),
             self.state.editor_ui.prompt_center.focus == PromptCenterFocus::SaveTitle,
@@ -223,16 +253,17 @@ impl PromptCenterPanel<'_> {
                 self.state.editor_ui.prompt_center.hover == Some(save_category_hover_token(index)),
                 self.is_pressed(save_category_hover_token(index)),
             );
-            let label = truncate_to_width(self.category_label(category), rect.size.x - 14.0, 10.5);
-            let label_w = estimated_text_width(&label, 10.5);
+            let label =
+                truncate_to_width(self.category_label(category), rect.size.x - 14.0, META_SIZE);
+            let label_w = estimated_text_width(&label, META_SIZE);
             self.paint_text(
                 cx,
                 &label,
                 Point2D::new(
                     rect.origin.x + ((rect.size.x - label_w) / 2.0).max(5.0),
-                    rect.origin.y + 16.0,
+                    jian_widgets::centered_text_baseline_y(rect, META_SIZE),
                 ),
-                10.5,
+                META_SIZE,
                 if active {
                     self.theme.foreground
                 } else {
@@ -260,16 +291,16 @@ impl PromptCenterPanel<'_> {
         if enabled {
             paint_button_feedback_wash(cx.backend, &self.theme, rect, 6.0, hovered, pressed);
         }
-        let text = truncate_to_width(label, rect.size.x - 12.0, 11.0);
-        let width = estimated_text_width(&text, 11.0);
+        let text = truncate_to_width(label, rect.size.x - 12.0, CHIP_LABEL_SIZE);
+        let width = estimated_text_width(&text, CHIP_LABEL_SIZE);
         self.paint_text(
             cx,
             &text,
             Point2D::new(
                 rect.origin.x + ((rect.size.x - width) / 2.0).max(5.0),
-                rect.origin.y + 18.0,
+                jian_widgets::centered_text_baseline_y(rect, CHIP_LABEL_SIZE),
             ),
-            11.0,
+            CHIP_LABEL_SIZE,
             if enabled {
                 self.theme.primary_foreground
             } else {
@@ -296,7 +327,7 @@ impl PromptCenterPanel<'_> {
         cx.backend.save();
         cx.backend.clip_rect(viewport);
         for (index, rect) in self.card_rects_for_count(panel, cards.len()) {
-            if rect.origin.y + CARD_H <= viewport.origin.y || rect.origin.y >= bottom {
+            if rect.origin.y + rect.size.y <= viewport.origin.y || rect.origin.y >= bottom {
                 continue;
             }
             self.paint_card(cx, index, rect, &cards[index]);
@@ -311,9 +342,10 @@ impl PromptCenterPanel<'_> {
         rect: Rect,
         card: &PromptCenterCard<'_>,
     ) {
-        cx.backend.fill_round_rect(rect, 9.0, self.theme.card);
         cx.backend
-            .stroke_round_rect(rect, 9.0, self.theme.border, 1.0);
+            .fill_round_rect(rect, CARD_RADIUS, self.theme.card);
+        cx.backend
+            .stroke_round_rect(rect, CARD_RADIUS, self.theme.border, 1.0);
 
         let preview = Self::card_preview_rect(rect);
         self.paint_card_preview(cx, preview, card);
@@ -321,21 +353,25 @@ impl PromptCenterPanel<'_> {
             cx.backend,
             &self.theme,
             rect,
-            9.0,
+            CARD_RADIUS,
             self.state.editor_ui.prompt_center.hover == Some(index),
             self.is_pressed(index),
         );
 
         let title_right_pad = 14.0;
-        let title = truncate_to_width(&card.title, rect.size.x - 14.0 - title_right_pad, 12.5);
+        let title = truncate_to_width(
+            &card.title,
+            rect.size.x - 14.0 - title_right_pad,
+            CARD_TITLE_SIZE,
+        );
         self.paint_text(
             cx,
             &title,
             Point2D::new(
-                rect.origin.x + 12.0,
-                preview.origin.y + preview.size.y + 22.0,
+                rect.origin.x + 14.0,
+                preview.origin.y + preview.size.y + 24.0,
             ),
-            12.5,
+            CARD_TITLE_SIZE,
             self.theme.foreground,
         );
 
@@ -350,9 +386,9 @@ impl PromptCenterPanel<'_> {
         if !metadata.is_empty() {
             self.paint_text(
                 cx,
-                &truncate_to_width(&metadata, rect.size.x - 24.0, 10.0),
-                Point2D::new(rect.origin.x + 12.0, rect.origin.y + rect.size.y - 12.0),
-                10.0,
+                &truncate_to_width(&metadata, rect.size.x - 28.0, META_SIZE),
+                Point2D::new(rect.origin.x + 14.0, rect.origin.y + rect.size.y - 14.0),
+                META_SIZE,
                 self.theme.muted_foreground.with_alpha(0.85),
             );
         }

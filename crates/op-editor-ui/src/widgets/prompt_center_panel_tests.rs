@@ -1,7 +1,8 @@
 use op_editor_core::prompt_center_catalog::PromptCategory;
 use op_editor_core::{CustomPrompt, EditorState, Locale, PromptFilter};
 
-use super::{PromptCenterHit, PromptCenterPanel, PROMPT_CENTER_PANEL_H, PROMPT_CENTER_PANEL_W};
+use super::test_rects;
+use super::{PromptCenterHit, PromptCenterPanel};
 use crate::widgets::canvas_viewport_image::{
     lock_decode_registry_for_tests, mark_decode_done, take_pending_decodes,
 };
@@ -17,7 +18,7 @@ fn open_state(locale: Locale) -> EditorState {
 }
 
 fn panel_rect() -> Rect {
-    Rect::xywh(30.0, 40.0, PROMPT_CENTER_PANEL_W, PROMPT_CENTER_PANEL_H)
+    test_rects::medium()
 }
 
 fn filtered_ids(state: &EditorState) -> Vec<String> {
@@ -54,20 +55,25 @@ fn travel_search_matches_both_chinese_and_english() {
 #[test]
 fn category_filter_only_returns_that_category() {
     let mut state = open_state(Locale::EnUs);
-    let expected = [
+    // Slices rather than fixed-size arrays: the categories do not all hold
+    // the same number of prompts, and the tuple list has to stay one type.
+    let expected: [(PromptCategory, Option<&[&str]>); 5] = [
         (PromptCategory::Starter, None),
-        (PromptCategory::WebPage, Some(["web-orbit", "web-atelier"])),
+        (
+            PromptCategory::WebPage,
+            Some(&["web-orbit", "web-atelier", "web-kilnform", "web-reefwright"]),
+        ),
         (
             PromptCategory::Dashboard,
-            Some(["dashboard-pulse", "dashboard-sentinel"]),
+            Some(&["dashboard-pulse", "dashboard-sentinel"]),
         ),
         (
             PromptCategory::Component,
-            Some(["component-data-grid", "component-form-lab"]),
+            Some(&["component-data-grid", "component-form-lab"]),
         ),
         (
             PromptCategory::Modify,
-            Some(["modify-polish-current", "modify-complete-states"]),
+            Some(&["modify-polish-current", "modify-complete-states"]),
         ),
     ];
 
@@ -111,17 +117,30 @@ fn unmatched_query_produces_empty_result() {
         .is_empty());
 }
 
+/// Cards on the first row, in x order — the row is the grid's column count.
+fn first_row_columns(state: &EditorState, rect: Rect) -> usize {
+    let panel = PromptCenterPanel::for_editor(state).expect("open panel");
+    let rects = panel.card_rects(rect);
+    let top = rects[0].1.origin.y;
+    rects
+        .iter()
+        .take_while(|(_, card)| card.origin.y == top)
+        .count()
+}
+
 #[test]
-fn grid_places_cards_in_two_columns() {
+fn grid_lays_cards_out_in_rows_and_columns() {
     let state = open_state(Locale::EnUs);
     let panel = PromptCenterPanel::for_editor(&state).expect("open panel");
-    let rects = panel.card_rects(panel_rect());
-    assert!(rects.len() >= 3);
+    let rect = panel_rect();
+    let rects = panel.card_rects(rect);
+    let columns = first_row_columns(&state, rect);
+    assert!(rects.len() > columns, "need more than one row to test rows");
+
     assert_eq!(rects[0].1.origin.y, rects[1].1.origin.y);
     assert!(rects[1].1.origin.x > rects[0].1.origin.x);
-    assert_eq!(rects[0].1.origin.x, rects[2].1.origin.x);
-    assert!(rects[2].1.origin.y > rects[0].1.origin.y);
-    assert_eq!(rects[0].1.size.y, 262.0);
+    assert_eq!(rects[0].1.origin.x, rects[columns].1.origin.x);
+    assert!(rects[columns].1.origin.y > rects[0].1.origin.y);
 
     let preview = PromptCenterPanel::card_preview_rect(rects[0].1);
     assert!(rects[0].1.contains(preview.origin));
@@ -130,6 +149,91 @@ fn grid_places_cards_in_two_columns() {
         "preview must remain 16:10"
     );
     assert!(preview.origin.y + preview.size.y < rects[0].1.origin.y + rects[0].1.size.y);
+}
+
+/// The whole point of the resize: a wider panel buys more cards per row, and
+/// the card height tracks the width so the preview keeps its aspect.
+///
+/// This is what a fixed `CARD_COLS = 2` / `CARD_H = 262` pair cannot do — put
+/// either back and the first assertion fails on the very first pair.
+#[test]
+fn grid_columns_and_card_height_follow_panel_width() {
+    let state = open_state(Locale::EnUs);
+    let mut seen: Vec<(usize, f32, f32)> = Vec::new();
+    for rect in [
+        test_rects::narrow(),
+        test_rects::medium(),
+        test_rects::wide(),
+    ] {
+        let panel = PromptCenterPanel::for_editor(&state).expect("open panel");
+        let card = panel.card_rects(rect)[0].1;
+        seen.push((first_row_columns(&state, rect), card.size.x, card.size.y));
+    }
+    assert_eq!(
+        seen.iter().map(|entry| entry.0).collect::<Vec<_>>(),
+        vec![2, 3, 4],
+        "column count must step up with the viewport"
+    );
+    for entry in &seen {
+        let expected_h = 10.0 + (entry.1 - 20.0) / (16.0 / 10.0) + 54.0;
+        assert!(
+            (entry.2 - expected_h).abs() < 0.01,
+            "card height must derive from its width, got {entry:?}"
+        );
+    }
+}
+
+/// A wider panel must not sprout an ever-wider content column: past the cap
+/// the extra width becomes margin, exactly as in the Asset Center.
+#[test]
+fn content_column_stops_widening_at_the_shared_cap() {
+    let wide = test_rects::wide();
+    let content = PromptCenterPanel::content_rect(wide);
+    assert!(
+        content.size.x < wide.size.x,
+        "the cap must leave margin on a 2400 px viewport"
+    );
+    assert_eq!(
+        content.size.x,
+        crate::widgets::SCENE_TEMPLATE_CONTENT_MAX_W,
+        "the Prompt Center shares the Asset Center content cap"
+    );
+    let centre = wide.origin.x + wide.size.x / 2.0;
+    assert!(
+        (content.origin.x + content.size.x / 2.0 - centre).abs() < 0.01,
+        "the content column must stay centred in the panel"
+    );
+}
+
+/// Chrome rows have to move with the shell — a search field or a close button
+/// still pinned to a 720 px-wide box would sit in the panel's top-left corner.
+#[test]
+fn chrome_rows_span_the_content_column() {
+    let state = open_state(Locale::EnUs);
+    let panel = PromptCenterPanel::for_editor(&state).expect("open panel");
+    let rect = test_rects::wide();
+    let content = PromptCenterPanel::content_rect(rect);
+
+    let search = PromptCenterPanel::search_rect(rect);
+    assert_eq!(search.origin.x, content.origin.x);
+    assert_eq!(search.size.x, content.size.x);
+
+    let close = PromptCenterPanel::close_rect(rect);
+    assert_eq!(
+        close.origin.x + close.size.x,
+        content.origin.x + content.size.x
+    );
+
+    let chips = panel.filter_chip_rects(rect);
+    assert_eq!(chips[0].0.origin.x, content.origin.x);
+    assert!(
+        chips.last().expect("filters").0.origin.x > content.origin.x,
+        "the filter row must run along the content column"
+    );
+    assert!(
+        panel.cards_viewport(rect).origin.y > chips[0].0.origin.y + chips[0].0.size.y,
+        "cards start below the filter row"
+    );
 }
 
 #[test]
@@ -290,7 +394,7 @@ fn read_only_custom_card_does_not_expose_delete() {
 fn clipped_custom_delete_does_not_steal_hover_from_panel_chrome() {
     let mut state = open_state(Locale::EnUs);
     state.editor_ui.prompt_center.install_custom_prompts(
-        (0..4)
+        (0..12)
             .map(|index| CustomPrompt {
                 id: format!("custom-{index}"),
                 title: format!("Reusable {index}"),
@@ -302,7 +406,9 @@ fn clipped_custom_delete_does_not_steal_hover_from_panel_chrome() {
         true,
     );
     state.editor_ui.prompt_center.filter = PromptFilter::Custom;
-    let rect = panel_rect();
+    // The narrow fixture: the grid has to overflow its viewport for a card to
+    // be scrollable up under the chrome at all.
+    let rect = test_rects::narrow();
     let panel = PromptCenterPanel::for_editor(&state).expect("open panel");
     let delete = PromptCenterPanel::delete_rect(panel.card_rects(rect)[0].1);
     let search = PromptCenterPanel::search_rect(rect);

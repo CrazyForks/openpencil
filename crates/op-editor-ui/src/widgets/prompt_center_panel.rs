@@ -3,20 +3,60 @@
 //! Hosts provide the panel rect and route the returned hit through their
 //! shared press flow. The widget itself only reads [`EditorState`], so it
 //! remains usable by both native and wasm hosts.
+//!
+//! Like the Asset Center next door, this is a gallery rather than a dialog.
+//! It used to be a 720x520 box, which on a 1800 px window showed less than
+//! two rows of cards inside a frame occupying a fifth of the screen. The
+//! panel now takes a fraction of the viewport ([`PROMPT_CENTER_VIEWPORT_W_RATIO`]
+//! / [`PROMPT_CENTER_VIEWPORT_H_RATIO`]) and everything inside it — the
+//! column count, the card width, the card height — falls out of the rect it
+//! was given, so one layout serves a laptop and a 32" display.
+//!
+//! The chrome metrics (padding, header, rows, chips, card gap and preview
+//! aspect) are *imported* from [`super::scene_template_panel`] rather than
+//! re-declared, because the two panels are meant to read as one surface
+//! family and a second copy of each number is how they would drift apart.
 
 use std::borrow::Cow;
 
 use op_editor_core::prompt_center_catalog::{prompt_catalogue, PromptCategory};
 use op_editor_core::{ButtonPressTarget, EditorState, Locale, PromptFilter};
 
+use super::scene_template_panel::{
+    card_width, grid_columns, preview_height, CARD_GAP, CARD_PREVIEW_ASPECT, CARD_PREVIEW_INSET,
+    CHIP_H, CHIP_LABEL_SIZE, CLOSE_BTN, FILTER_ROW_H, HEADER_H, PAD, SCENE_TEMPLATE_CONTENT_MAX_W,
+    SEARCH_PAD_X, SEARCH_ROW_H, SEARCH_TEXT_SIZE, TITLE_SIZE,
+};
 use crate::theme::Theme;
 use crate::widgets::editor_state_ext::theme_for;
 use crate::{Point2D, Rect};
 
-/// Prompt Center width in logical pixels.
-pub const PROMPT_CENTER_PANEL_W: f32 = 720.0;
-/// Prompt Center height in logical pixels.
-pub const PROMPT_CENTER_PANEL_H: f32 = 520.0;
+/// Fraction of the viewport width the Prompt Center spans.
+///
+/// A fraction rather than a constant width: the panel is a picture gallery,
+/// and the only honest answer to "how big should it be" is "as big as the
+/// window can spare". The 12% left over is the margin that keeps it reading
+/// as a layer above the editor rather than as a window that replaced it.
+pub const PROMPT_CENTER_VIEWPORT_W_RATIO: f32 = 0.88;
+
+/// Fraction of the space *below the top bar* the Prompt Center spans.
+///
+/// Measured against that band rather than the whole viewport so the panel is
+/// centred in the room it actually has; centring it in the full height would
+/// push its top edge under the top bar on short windows.
+pub const PROMPT_CENTER_VIEWPORT_H_RATIO: f32 = 0.88;
+
+/// Floor for the panel width on a small window.
+///
+/// Below this the two-column grid stops being a grid, so the panel gives up
+/// the margin before it gives up the second column. Both floors are clamped
+/// to the viewport by the caller, so a window smaller than the floor yields a
+/// full-bleed panel rather than one hanging off the edge.
+pub const PROMPT_CENTER_MIN_W: f32 = 480.0;
+
+/// Floor for the panel height on a short window — header, search row, filter
+/// row, and one card row.
+pub const PROMPT_CENTER_MIN_H: f32 = 380.0;
 
 /// Reserved hover token for the close button.
 pub const PROMPT_CENTER_CLOSE_HOVER: usize = usize::MAX;
@@ -31,21 +71,23 @@ const FILTER_HOVER_BASE: usize = usize::MAX - 32;
 const SAVE_CATEGORY_HOVER_BASE: usize = usize::MAX - 64;
 const DELETE_HOVER_BASE: usize = usize::MAX / 2;
 
-const PAD: f32 = 16.0;
-const HEADER_H: f32 = 46.0;
-const SEARCH_ROW_H: f32 = 42.0;
-const FILTER_ROW_H: f32 = 40.0;
 const SAVE_FORM_H: f32 = 76.0;
-const CLOSE_BTN: f32 = 26.0;
-const HEADER_ACTION_H: f32 = 26.0;
-const SEARCH_H: f32 = 30.0;
-const CHIP_H: f32 = 24.0;
-const CHIP_GAP: f32 = 6.0;
-const CARD_COLS: usize = 2;
-const CARD_GAP: f32 = 12.0;
-const CARD_H: f32 = 262.0;
-const CARD_PREVIEW_INSET: f32 = 8.0;
-const CARD_PREVIEW_ASPECT: f32 = 16.0 / 10.0;
+/// Left inset of the save-form title text. Shared by paint and the caret
+/// hit-test so a click lands where the glyph is drawn.
+const SAVE_TITLE_PAD_X: f32 = 10.0;
+const HEADER_ACTION_H: f32 = 30.0;
+/// Height of the search field inside [`SEARCH_ROW_H`]. Mirrors the Asset
+/// Center's own (private) field height so the two search rows are the same
+/// control at the same size.
+const SEARCH_H: f32 = 38.0;
+const CHIP_GAP: f32 = 8.0;
+/// Title, metadata line, and the breathing room around them under a card
+/// preview. Fixed while the preview above it flows, so a wider column buys
+/// picture rather than whitespace — the same split the Asset Center makes.
+const CARD_TEXT_H: f32 = 54.0;
+/// Floor the preview leaves for the footer when a caller hands
+/// [`PromptCenterPanel::card_preview_rect`] a card shorter than
+/// [`card_height`] would have made it.
 const CARD_FOOTER_MIN_H: f32 = 44.0;
 const DELETE_BTN: f32 = 24.0;
 
@@ -59,6 +101,15 @@ const FILTERS: [PromptFilter; 8] = [
     PromptFilter::Category(PromptCategory::Modify),
     PromptFilter::Custom,
 ];
+
+/// Card height derived from its width.
+///
+/// Derived rather than a constant for the same reason the Asset Center's is:
+/// a height written for a 720 px dialog letterboxes every preview once the
+/// panel is the size of the window.
+fn card_height(card_w: f32) -> f32 {
+    CARD_PREVIEW_INSET + preview_height(card_w) + CARD_TEXT_H
+}
 
 /// One filtered card ready for geometry, paint, and an unambiguous click.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -223,8 +274,8 @@ impl<'a> PromptCenterPanel<'a> {
                 input,
                 Self::search_rect(panel),
                 point,
-                12.0,
-                32.0,
+                SEARCH_TEXT_SIZE,
+                SEARCH_PAD_X,
             )
             .unwrap_or(input.text().len());
             return Some(PromptCenterHit::FocusSearch(offset));
@@ -241,8 +292,8 @@ impl<'a> PromptCenterPanel<'a> {
                     input,
                     Self::save_title_rect(panel),
                     point,
-                    12.0,
-                    10.0,
+                    SEARCH_TEXT_SIZE,
+                    SAVE_TITLE_PAD_X,
                 )
                 .unwrap_or(input.text().len());
                 return Some(PromptCenterHit::FocusSaveTitle(offset));
@@ -292,19 +343,34 @@ impl<'a> PromptCenterPanel<'a> {
 
     /// Maximum vertical grid scroll for the current filter and query.
     pub fn max_scroll(&self, panel: Rect) -> f32 {
-        let count = self.filtered().len();
-        let rows = count.div_ceil(CARD_COLS);
-        let content_h = if rows == 0 {
-            0.0
-        } else {
-            rows as f32 * CARD_H + (rows - 1) as f32 * CARD_GAP
-        };
-        (content_h - self.cards_viewport(panel).size.y).max(0.0)
+        self.max_scroll_for_count(panel, self.filtered().len())
+    }
+
+    /// The centred content column every row inside the panel measures from.
+    ///
+    /// The panel grows with the window; its contents do not grow without
+    /// limit. Everything from the title to the card grid lives in a column
+    /// capped at [`SCENE_TEMPLATE_CONTENT_MAX_W`] — the Asset Center's cap,
+    /// shared so the two galleries line up when both have been opened — while
+    /// only the backdrop, the header rule, and the save form's band run edge
+    /// to edge.
+    ///
+    /// Every rect below derives its x from here, so paint and hit-testing
+    /// move together by construction.
+    pub fn content_rect(panel: Rect) -> Rect {
+        let width = (panel.size.x - PAD * 2.0).clamp(0.0, SCENE_TEMPLATE_CONTENT_MAX_W);
+        Rect::xywh(
+            panel.origin.x + ((panel.size.x - width) / 2.0).max(0.0),
+            panel.origin.y,
+            width,
+            panel.size.y,
+        )
     }
 
     pub fn close_rect(panel: Rect) -> Rect {
+        let content = Self::content_rect(panel);
         Rect::xywh(
-            panel.origin.x + panel.size.x - PAD - CLOSE_BTN,
+            content.origin.x + content.size.x - CLOSE_BTN,
             panel.origin.y + (HEADER_H - CLOSE_BTN) / 2.0,
             CLOSE_BTN,
             CLOSE_BTN,
@@ -312,26 +378,29 @@ impl<'a> PromptCenterPanel<'a> {
     }
 
     pub fn search_rect(panel: Rect) -> Rect {
+        let content = Self::content_rect(panel);
         Rect::xywh(
-            panel.origin.x + PAD,
+            content.origin.x,
             panel.origin.y + HEADER_H + (SEARCH_ROW_H - SEARCH_H) / 2.0,
-            panel.size.x - PAD * 2.0,
+            content.size.x,
             SEARCH_H,
         )
     }
 
     pub fn save_title_rect(panel: Rect) -> Rect {
+        let content = Self::content_rect(panel);
         Rect::xywh(
-            panel.origin.x + PAD,
+            content.origin.x,
             Self::save_form_top(panel) + 8.0,
-            260.0,
+            (content.size.x * 0.4).clamp(180.0, 320.0),
             28.0,
         )
     }
 
     pub fn save_button_rect(panel: Rect) -> Rect {
+        let content = Self::content_rect(panel);
         Rect::xywh(
-            panel.origin.x + panel.size.x - PAD - 58.0,
+            content.origin.x + content.size.x - 58.0,
             Self::save_form_top(panel) + 8.0,
             58.0,
             28.0,
@@ -380,16 +449,16 @@ impl<'a> PromptCenterPanel<'a> {
                 crate::widgets::text_input::single_line_caret_rect(
                     &prompt_center.search,
                     Self::search_rect(panel),
-                    12.0,
-                    32.0,
+                    SEARCH_TEXT_SIZE,
+                    SEARCH_PAD_X,
                 )
             }
             op_editor_core::PromptCenterFocus::SaveTitle => {
                 crate::widgets::text_input::single_line_caret_rect(
                     &prompt_center.save_title,
                     Self::save_title_rect(panel),
-                    12.0,
-                    10.0,
+                    SEARCH_TEXT_SIZE,
+                    SAVE_TITLE_PAD_X,
                 )
             }
         }
@@ -397,10 +466,11 @@ impl<'a> PromptCenterPanel<'a> {
 
     pub fn filter_chip_rects(&self, panel: Rect) -> Vec<(Rect, PromptFilter)> {
         let labels = FILTERS.map(|filter| self.filter_label(filter));
+        let content = Self::content_rect(panel);
         chip_rects(
-            panel.origin.x + PAD,
-            panel.origin.y + HEADER_H + SEARCH_ROW_H + 8.0,
-            panel.size.x - PAD * 2.0,
+            content.origin.x,
+            panel.origin.y + HEADER_H + SEARCH_ROW_H + (FILTER_ROW_H - CHIP_H) / 2.0,
+            content.size.x,
             &labels,
         )
         .into_iter()
@@ -410,10 +480,11 @@ impl<'a> PromptCenterPanel<'a> {
 
     pub fn save_category_rects(&self, panel: Rect) -> Vec<(Rect, PromptCategory)> {
         let labels = PromptCategory::ALL.map(|category| self.category_label(category));
+        let content = Self::content_rect(panel);
         chip_rects(
-            panel.origin.x + PAD,
-            Self::save_form_top(panel) + 43.0,
-            panel.size.x - PAD * 2.0,
+            content.origin.x,
+            Self::save_form_top(panel) + 42.0,
+            content.size.x,
             &labels,
         )
         .into_iter()
@@ -422,13 +493,28 @@ impl<'a> PromptCenterPanel<'a> {
     }
 
     pub fn cards_viewport(&self, panel: Rect) -> Rect {
+        let content = Self::content_rect(panel);
         let top = self.cards_top(panel);
         Rect::xywh(
-            panel.origin.x + PAD,
+            content.origin.x,
             top,
-            panel.size.x - PAD * 2.0,
+            content.size.x,
             (panel.origin.y + panel.size.y - PAD - top).max(0.0),
         )
+    }
+
+    /// Column count, card width, and row height of the grid.
+    ///
+    /// All three flow from the panel: the columns from how much room the card
+    /// viewport has (through the Asset Center's [`grid_columns`] breakpoints,
+    /// shared so the two galleries never disagree about how wide a 16:10 card
+    /// should be), and the height from the width so the preview keeps its
+    /// aspect at every breakpoint.
+    pub(super) fn grid_metrics(&self, panel: Rect) -> (usize, f32, f32) {
+        let viewport_w = self.cards_viewport(panel).size.x;
+        let columns = grid_columns(viewport_w);
+        let card_w = card_width(viewport_w, columns);
+        (columns, card_w, card_height(card_w))
     }
 
     pub(super) fn save_current_rect(&self, panel: Rect) -> Option<Rect> {
@@ -522,7 +608,7 @@ impl<'a> PromptCenterPanel<'a> {
 
     fn card_rects_for_count(&self, panel: Rect, count: usize) -> Vec<(usize, Rect)> {
         let viewport = self.cards_viewport(panel);
-        let card_w = (viewport.size.x - CARD_GAP) / CARD_COLS as f32;
+        let (columns, card_w, card_h) = self.grid_metrics(panel);
         let scroll = self
             .state
             .editor_ui
@@ -532,15 +618,15 @@ impl<'a> PromptCenterPanel<'a> {
             .clamp(0.0, self.max_scroll_for_count(panel, count));
         (0..count)
             .map(|index| {
-                let row = index / CARD_COLS;
-                let column = index % CARD_COLS;
+                let row = index / columns;
+                let column = index % columns;
                 (
                     index,
                     Rect::xywh(
                         viewport.origin.x + column as f32 * (card_w + CARD_GAP),
-                        viewport.origin.y + row as f32 * (CARD_H + CARD_GAP) - scroll,
+                        viewport.origin.y + row as f32 * (card_h + CARD_GAP) - scroll,
                         card_w,
-                        CARD_H,
+                        card_h,
                     ),
                 )
             })
@@ -548,11 +634,12 @@ impl<'a> PromptCenterPanel<'a> {
     }
 
     fn max_scroll_for_count(&self, panel: Rect, count: usize) -> f32 {
-        let rows = count.div_ceil(CARD_COLS);
+        let (columns, _, card_h) = self.grid_metrics(panel);
+        let rows = count.div_ceil(columns);
         let content_h = if rows == 0 {
             0.0
         } else {
-            rows as f32 * CARD_H + (rows - 1) as f32 * CARD_GAP
+            rows as f32 * card_h + (rows - 1) as f32 * CARD_GAP
         };
         (content_h - self.cards_viewport(panel).size.y).max(0.0)
     }
@@ -565,10 +652,13 @@ fn custom_matches(title: &str, body: &str, query: &str) -> bool {
         || body.to_lowercase().contains(&query)
 }
 
+/// Chip row layout. Widths come from the label, and the whole row scales down
+/// only when it would otherwise run past `available_w` — which the gallery
+/// sizing makes rare, but a 15-locale chrome can still hit on a narrow window.
 fn chip_rects(x: f32, y: f32, available_w: f32, labels: &[&str]) -> Vec<Rect> {
     let natural: Vec<f32> = labels
         .iter()
-        .map(|label| (estimated_text_width(label, 11.0) + 20.0).max(48.0))
+        .map(|label| (estimated_text_width(label, CHIP_LABEL_SIZE) + 26.0).max(48.0))
         .collect();
     let gaps = CHIP_GAP * labels.len().saturating_sub(1) as f32;
     let natural_total = natural.iter().sum::<f32>();
@@ -604,6 +694,44 @@ pub(super) fn save_category_hover_token(index: usize) -> usize {
 
 pub(super) fn delete_hover_token(index: usize) -> usize {
     DELETE_HOVER_BASE + index
+}
+
+/// Panel rects the hosts would hand the widget, for tests.
+///
+/// The panel has no intrinsic size any more, so a test cannot name one; it
+/// names the viewport it is standing in instead, and asks the host geometry
+/// what that viewport yields — a fixture that cannot drift away from what
+/// ships. The three widths straddle both [`grid_columns`] breakpoints, which
+/// is the whole reason more than one exists.
+#[cfg(test)]
+pub(super) mod test_rects {
+    use op_editor_core::EditorState;
+
+    use crate::widgets::host_overlay_geometry::prompt_center_panel_rect;
+    use crate::Rect;
+
+    /// The 1200x800 laptop viewport — the default fixture. Three columns.
+    pub(in crate::widgets) fn medium() -> Rect {
+        for_viewport(1200.0, 800.0)
+    }
+
+    /// An 820x620 viewport, small enough that the grid falls back to two
+    /// columns.
+    pub(in crate::widgets) fn narrow() -> Rect {
+        for_viewport(820.0, 620.0)
+    }
+
+    /// A 2400x1300 viewport — four columns, and wide enough that the content
+    /// column hits its cap while the shell keeps growing.
+    pub(in crate::widgets) fn wide() -> Rect {
+        for_viewport(2400.0, 1300.0)
+    }
+
+    pub(in crate::widgets) fn for_viewport(viewport_w: f32, viewport_h: f32) -> Rect {
+        let mut state = EditorState::new();
+        state.editor_ui.open_prompt_center(1);
+        prompt_center_panel_rect(&state, viewport_w, viewport_h).expect("the panel is open")
+    }
 }
 
 #[path = "prompt_center_panel_paint.rs"]

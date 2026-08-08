@@ -1,6 +1,7 @@
 use op_editor_core::EditorState;
 
 use super::{cursor_hover_flow, host_overlay_geometry, scroll_flow, PromptCenterPanel};
+use crate::widgets::TOP_BAR_HEIGHT;
 use crate::{Point2D, Rect};
 
 fn open_state() -> EditorState {
@@ -98,7 +99,11 @@ fn small_viewport_keeps_the_entire_panel_and_close_action_visible() {
     assert!(rect.origin.y >= 0.0);
     assert!(rect.origin.x + rect.size.x <= viewport_w);
     assert!(rect.origin.y + rect.size.y <= viewport_h);
-    assert_eq!(rect.size, Point2D::new(viewport_w, viewport_h));
+    // The panel scales with the window rather than filling it, but on a
+    // window this short the height floor is what it gets — clamped to the
+    // space below the top bar so nothing hangs off the bottom edge.
+    assert!(rect.size.x < viewport_w && rect.size.x > viewport_w / 2.0);
+    assert!(rect.size.y <= viewport_h - TOP_BAR_HEIGHT);
 
     let close = PromptCenterPanel::close_rect(rect);
     let close_center = Point2D::new(
