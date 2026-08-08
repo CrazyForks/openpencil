@@ -345,9 +345,15 @@ fn configure_tcp_common(stream: &TcpStream, config: TransportConfig) -> Result<(
     stream.set_nodelay(true)?;
     let socket = SockRef::from(stream);
     socket.set_keepalive(true)?;
+    // Linux TCP_KEEPIDLE/TCP_KEEPINTVL have whole-second granularity and
+    // reject zero, so a sub-second heartbeat (test configs use 50ms) must
+    // not truncate to 0 or setsockopt fails with EINVAL. Application-level
+    // heartbeats still run at the configured cadence; only the kernel
+    // keepalive probes are clamped.
+    let keepalive_cadence = config.timeouts.heartbeat.max(Duration::from_secs(1));
     let keepalive = TcpKeepalive::new()
-        .with_time(config.timeouts.heartbeat)
-        .with_interval(config.timeouts.heartbeat);
+        .with_time(keepalive_cadence)
+        .with_interval(keepalive_cadence);
     socket.set_tcp_keepalive(&keepalive)?;
     Ok(())
 }

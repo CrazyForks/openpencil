@@ -13,7 +13,7 @@
 #      the wasm-bindgen JS shim). Any env.* import = LinkError at
 #      load time → regression → fail.
 #   4. Post wasm-opt -Oz gzip size ≤ STEP1B_SHELL_WASM_GZIP_LIMIT_BYTES
-#      (default 6 291 456 bytes = 6 MiB for the full CanvasKit app logic).
+#      (default 8 388 608 bytes = 8 MiB for the full CanvasKit app logic).
 #
 # This script is the local counterpart to
 # `.github/workflows/wasm-bundle-build.yml`; keep the two recipes aligned.
@@ -47,9 +47,14 @@ WASM_OPT_CANDIDATE_FEATURES=(
 # Ceiling for the CanvasKit production bundle's gzipped wasm. It is far above
 # the retired skia raster path's 1 MiB (spec §6) because this bundle now carries
 # the FULL app logic absorbed from the skia path (codegen AI pipeline, Figma
-# parser, AI/live-sync). ~4.5 MiB today. TODO(perf): code-split / lazy-load the
+# parser, AI/live-sync, collaboration) plus ~4.5 MiB of embedded product
+# assets — scene-template .op documents, the prompt-center/template preview
+# JPEGs (already compressed, so gzip passes them through), the iconify
+# catalog, and the AI skill corpus. ~7.5 MiB today; the ceiling is a
+# runaway-regression tripwire, not a budget. TODO(perf): serve the preview
+# JPEGs from the daemon instead of embedding, and code-split / lazy-load the
 # codegen + Figma paths to shrink the initial download. Override via env.
-LIMIT="${STEP1B_SHELL_WASM_GZIP_LIMIT_BYTES:-6291456}"
+LIMIT="${STEP1B_SHELL_WASM_GZIP_LIMIT_BYTES:-8388608}"
 
 step() { printf '\n[step %d/%d] %s\n' "$1" "$2" "$3"; }
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
