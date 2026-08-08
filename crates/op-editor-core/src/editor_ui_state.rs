@@ -547,6 +547,10 @@ pub struct EditorUiState {
     /// Hovered overlay control — cursor-move updates it, paint tints from it.
     pub html_import_diagnostics_hover:
         Option<crate::html_import_diagnostics::HtmlImportDiagnosticsHover>,
+    /// The editor's single transient-notice slot. `None` means nothing is
+    /// being announced; a newer notice replaces an older one rather than
+    /// queueing behind it. See [`crate::editor_toast`].
+    pub editor_toast: Option<crate::editor_toast::EditorToastState>,
     /// Whether this host can render real board thumbnails for the left
     /// rail's slides tab — it needs a local offscreen scene renderer.
     /// Native sets it; hosts that leave it `false` still get the tab,

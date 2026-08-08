@@ -669,6 +669,24 @@ impl WidgetHost {
             panel.paint(&mut cx, panel_rect);
         }
 
+        // Transient notice banner — painted above every panel and the
+        // diagnostics notice, but under the missing-font modal, so its press
+        // tier sits in exactly the same place (hit-test is reverse paint
+        // order). The rect is cached because the width is measured in the font
+        // it paints with, which only this pass can do.
+        self.toast_rect = {
+            let mut cx = PaintCx {
+                backend: &mut *backend,
+            };
+            op_editor_ui::widgets::editor_toast_flow::paint(
+                &mut cx,
+                &self.editor_state,
+                viewport_width,
+                viewport_height,
+                self.now_ms,
+            )
+        };
+
         // Missing-font prompt — absolute top-most modal after every other
         // overlay, matching its first-tier press routing.
         if let Some(panel) =

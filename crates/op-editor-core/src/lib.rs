@@ -69,6 +69,7 @@ pub mod design_md_button_state;
 pub mod document_install;
 pub mod drag_mutators;
 pub mod edit_transaction;
+pub mod editor_toast;
 pub mod editor_ui_state;
 pub mod export_batch;
 pub mod export_dialog_state;

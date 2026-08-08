@@ -19,17 +19,39 @@ use crate::repaint_ctx::RepaintContext;
 /// caller must NOT accept the remote this tick: overwriting without a backup
 /// is the data loss this exists to prevent, and the latch simply stays up for
 /// one more tick, which converges a few hundred milliseconds later.
-pub(super) fn preserve_local_document<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) -> bool {
+///
+/// `now_ms` is passed in rather than read from `performance.now()` here: the
+/// clock is the only DOM dependency on this path, and lifting it to the caller
+/// is what lets the preserve → notice → toast chain be driven in a test.
+pub(super) fn preserve_local_document<C: RepaintContext + 'static>(
+    inner: &Rc<RefCell<C>>,
+    now_ms: u64,
+) -> bool {
     let Ok(mut context) = inner.try_borrow_mut() else {
         return false;
     };
-    let now_ms = crate::collab_sync::now_ms();
     let state = context.host_mut().editor_state_mut();
     crate::live_sync_recovery::stash(state.doc.clone(), now_ms);
     state
         .editor_ui
         .collab
         .set_notice(op_editor_core::CollabNoticeKind::LocalEditPreserved, now_ms);
+    // The collab notice above is only ever READ by the collaboration panel,
+    // which is gated on an authenticated session — structurally unreachable in
+    // an online tenant, where this path fires most. So online also raises the
+    // editor's own toast, which needs no panel to be seen. Desktop and LAN
+    // sessions deliberately do not: they have the panel, and two copies of the
+    // same sentence on screen is worse than one.
+    if server_is_authoritative() {
+        state.editor_ui.show_toast(
+            op_editor_core::CollabNoticeKind::LocalEditPreserved.i18n_key(),
+            Vec::new(),
+            // Warn, not Info: the document on screen was replaced under the
+            // user. The sentence names undo as the way back.
+            op_editor_core::editor_toast::EditorToastLevel::Warn,
+            now_ms,
+        );
+    }
     context.host_mut().mark_editor_state_dirty();
     true
 }
@@ -87,6 +109,13 @@ thread_local! {
     static SERVER_AUTHORITATIVE: std::cell::Cell<bool> = const {
         std::cell::Cell::new(false)
     };
+}
+
+/// Force the deployment flag, for tests that must drive the online branch of
+/// [`preserve_local_document`] without a daemon to probe.
+#[cfg(test)]
+pub(super) fn set_server_authoritative_for_test(authoritative: bool) {
+    SERVER_AUTHORITATIVE.with(|flag| flag.set(authoritative));
 }
 
 /// Record what `GET /api/mcp/server` said about the deployment.

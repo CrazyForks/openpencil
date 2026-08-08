@@ -135,7 +135,7 @@ mod skip_without_backup_tests {
     fn the_accept_is_skipped_when_the_document_cannot_be_stashed() {
         let glue = include_str!("live_sync_glue.rs");
         let guarded = glue
-            .find("if !live_sync_conflict::preserve_local_document(inner)")
+            .find("if !live_sync_conflict::preserve_local_document(inner,")
             .expect("the accept must be guarded on a successful stash");
         let resolve = glue
             .find("resolve_accept_remote")

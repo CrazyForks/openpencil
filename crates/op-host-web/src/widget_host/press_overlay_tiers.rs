@@ -37,6 +37,20 @@ impl WidgetHost {
                 return Some(true);
             }
         }
+        // Transient notice banner — painted just under the missing-font modal
+        // and above the diagnostics notice, so it hit-tests between the two
+        // (hit-test is reverse paint order). Non-modal: only presses on the
+        // banner itself are consumed, and the shared flow re-checks that the
+        // toast has not expired since the cached rect was painted.
+        if op_editor_ui::widgets::editor_toast_flow::press(
+            &mut self.editor_state,
+            self.toast_rect,
+            Point2D::new(x, y),
+            self.now_ms,
+        ) {
+            self.mark_dirty();
+            return Some(true);
+        }
         // Post-import HTML diagnostics — a non-modal notice painted just
         // under the missing-font modal, so it hit-tests right after it. Only
         // presses inside its own card are consumed (native parity).

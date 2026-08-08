@@ -73,6 +73,7 @@ impl WidgetHostNative {
             last_gesture_was_zoom: false,
             shift_held: false,
             alt_held: false,
+            toast_rect: None,
             last_viewport_w: 0.0,
             last_viewport_h: 0.0,
             preview: None,

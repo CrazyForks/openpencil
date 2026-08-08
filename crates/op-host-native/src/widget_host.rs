@@ -163,6 +163,7 @@ mod paint;
 mod paint_chrome_menus;
 mod paint_floating_panels;
 mod paint_pan_cache;
+mod paint_topmost_overlays;
 #[cfg(test)]
 mod pan_cache_scroll_tests;
 #[cfg(test)]
@@ -483,6 +484,12 @@ pub struct WidgetHostNative {
     /// Opaque process-local hash of the last mirrored avatar source. This keeps
     /// repeated session polls idempotent without retaining another signed URL.
     pub(in crate::widget_host) auth_account_avatar_revision: Option<u64>,
+    /// Rect the toast banner painted last frame, or `None` when nothing
+    /// painted. Cached because the banner's width is measured in the font it
+    /// paints with, which only the paint pass can do — the press arm re-checks
+    /// the toast is still live before trusting it (see
+    /// `op_editor_ui::widgets::editor_toast_flow::press`).
+    pub(in crate::widget_host) toast_rect: Option<op_editor_ui::Rect>,
     pub(in crate::widget_host) last_viewport_w: f32,
     pub(in crate::widget_host) last_viewport_h: f32,
     /// Live canvas Preview (Play) session — `Some` while

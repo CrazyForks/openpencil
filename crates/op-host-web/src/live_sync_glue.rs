@@ -314,7 +314,7 @@ fn maybe_auto_resolve_conflict_in_session<C: RepaintContext + 'static>(
     // belt-and-braces copy plus the notice that tells the user any of it
     // happened. It must run BEFORE the resolve, while the local document is
     // still the one on screen.
-    if !live_sync_conflict::preserve_local_document(inner) {
+    if !live_sync_conflict::preserve_local_document(inner, crate::collab_sync::now_ms()) {
         // No backup taken, so nothing is accepted. Better to converge one tick
         // later than to overwrite unpushed work with no way back.
         return;
@@ -750,3 +750,8 @@ pub(crate) use live_sync_identity::{auth_is_invalid, note_auth_invalid, reset_fo
 use live_sync_conflict::{auto_resolve_is_safe, probe_serve_mode, server_is_authoritative};
 #[cfg(test)]
 pub(crate) use live_sync_identity::clear_auth_invalid;
+// Lives here rather than beside `lib.rs`'s modules because the two paths it
+// drives are private submodules of this spine.
+#[cfg(test)]
+#[path = "live_sync_toast_tests.rs"]
+mod live_sync_toast_tests;

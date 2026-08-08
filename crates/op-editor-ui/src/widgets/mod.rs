@@ -310,6 +310,10 @@ pub mod design_md_markdown;
 pub mod design_md_panel;
 #[cfg(test)]
 mod design_md_panel_tests;
+pub mod editor_toast;
+pub mod editor_toast_flow;
+#[cfg(test)]
+mod editor_toast_tests;
 pub mod export_dialog;
 pub mod export_menu_rows;
 pub mod export_quick_menu;
@@ -420,6 +424,7 @@ pub use component_browser_panel::{
 };
 pub use deck_boards::BoardChip;
 pub use design_md_panel::{DesignMdHit, DesignMdPanel, DESIGN_MD_PANEL_H, DESIGN_MD_PANEL_W};
+pub use editor_toast::{EditorToast, EditorToastHit};
 pub use export_dialog::{ExportDialog, ExportDialogHit, ExportFormat};
 pub use export_quick_menu::{ExportQuickMenu, ExportQuickMenuHit};
 pub use git_panel::{GitPanel, GitPanelHit, GIT_PANEL_INSET, GIT_PANEL_WIDTH};

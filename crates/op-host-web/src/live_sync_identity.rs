@@ -59,6 +59,10 @@ pub(crate) fn reset_for_new_identity<C: RepaintContext + 'static>(inner: &Rc<Ref
         // previous account survives on screen.
         state.replace_document(op_editor_core::EditorState::starter().doc);
         state.editor_ui.collab = op_editor_core::CollabUiState::default();
+        // A toast describes something that happened to the PREVIOUS account's
+        // document. Leaving it up would show one user a sentence about another
+        // user's data, and name an undo that no longer has anything to undo.
+        state.editor_ui.dismiss_toast();
         context.host_mut().mark_editor_state_dirty();
         let _ = context.repaint();
     }

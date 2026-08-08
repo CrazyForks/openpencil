@@ -352,6 +352,12 @@ pub struct WidgetHost {
     /// browser `performance.now()` is navigation-relative, while
     /// recent-file timestamps are Unix seconds.
     pub(in crate::widget_host) wall_now_secs: u64,
+    /// Rect the toast banner painted last frame, or `None` when nothing
+    /// painted. Cached because the banner's width is measured in the font it
+    /// paints with, which only the paint pass can do — the press arm re-checks
+    /// the toast is still live before trusting it (see
+    /// `op_editor_ui::widgets::editor_toast_flow::press`).
+    pub(in crate::widget_host) toast_rect: Option<op_editor_ui::Rect>,
     /// Most recent viewport size seen via `apply_press` etc. — cached
     /// so `apply_cursor_move(x, y)` can rebuild the canvas region
     /// when its signature can't carry viewport dims (mirrors native).

@@ -148,6 +148,7 @@ impl Default for EditorUiState {
             html_import_diagnostics_expanded: false,
             html_import_diagnostics_scroll: jian_core::scroll::ScrollState::default(),
             html_import_diagnostics_hover: None,
+            editor_toast: None,
             system_fonts_loaded: false,
             missing_fonts_prompt: None,
             missing_fonts_modal_open: false,

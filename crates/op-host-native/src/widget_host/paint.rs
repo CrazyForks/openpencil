@@ -752,49 +752,9 @@ impl WidgetHostNative {
             );
         }
 
-        // Post-import HTML diagnostics notice — painted above every panel
-        // but under the missing-font modal, mirroring its press tier.
-        if let Some(panel) =
-            op_editor_ui::widgets::HtmlImportDiagnosticsPanel::for_editor(&self.editor_state)
-        {
-            let panel_rect = panel.rect(viewport_width, viewport_height);
-            let mut cx = PaintCx {
-                backend: &mut *frame,
-            };
-            panel.paint(&mut cx, panel_rect);
-        }
-
-        // Missing-font prompt — absolute top-most modal after every other
-        // overlay, matching its first-tier press routing.
-        if let Some(panel) =
-            op_editor_ui::widgets::MissingFontsPanel::for_editor(&self.editor_state)
-        {
-            frame.fill_rect(
-                Rect {
-                    origin: Point2D::new(0.0, 0.0),
-                    size: Point2D::new(viewport_width, viewport_height),
-                },
-                op_editor_ui::Color {
-                    r: 0.0,
-                    g: 0.0,
-                    b: 0.0,
-                    a: 0.5,
-                },
-            );
-            let panel_rect = panel.rect(viewport_width, viewport_height);
-            let mut cx = PaintCx {
-                backend: &mut *frame,
-            };
-            panel.paint(&mut cx, panel_rect);
-            panel.paint_picker(
-                &mut cx,
-                panel_rect,
-                Rect {
-                    origin: Point2D::new(0.0, 0.0),
-                    size: Point2D::new(viewport_width, viewport_height),
-                },
-                self.now_ms,
-            );
-        }
+        // Top-most overlay band — the diagnostics notice, the toast banner and
+        // the missing-font modal, in that z-order. Split into a sibling at the
+        // 800-line cap; pure code motion.
+        self.paint_topmost_overlays(frame, viewport_width, viewport_height);
     }
 }

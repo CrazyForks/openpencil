@@ -131,5 +131,14 @@ pub fn base_animation_deadline_ms(
     {
         next = earliest(next, deadline);
     }
+    // A toast expires at a wall instant with no input event behind it, so its
+    // expiry has to reach the scheduler or the banner would sit there until
+    // the user's next mouse move. Folded in here rather than in either host,
+    // which is what keeps native and web identical.
+    if let Some(deadline) =
+        crate::widgets::editor_toast_flow::next_deadline_ms(&state.editor_ui, now_ms)
+    {
+        next = earliest(next, deadline);
+    }
     next
 }
