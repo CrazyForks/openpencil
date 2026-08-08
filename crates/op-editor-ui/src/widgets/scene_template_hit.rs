@@ -16,7 +16,9 @@ use super::scene_template_panel::{
     SCENE_TEMPLATE_GENERATE_HOVER, SEARCH_PAD_X, SEARCH_TEXT_SIZE,
 };
 use super::scene_template_style_geometry::SCENE_TEMPLATE_IMPORT_HOVER;
-use super::scene_template_style_import::{STYLE_IMPORT_CANCEL_HOVER, STYLE_IMPORT_CONFIRM_HOVER};
+use super::scene_template_style_import::{
+    STYLE_IMPORT_CANCEL_HOVER, STYLE_IMPORT_CONFIRM_HOVER, STYLE_IMPORT_PICK_HOVER,
+};
 use crate::{Point2D, Rect};
 
 impl SceneTemplatePanel<'_> {
@@ -33,6 +35,12 @@ impl SceneTemplatePanel<'_> {
             if self.style_import_cancel_rect(panel).contains(point) {
                 return Some(STYLE_IMPORT_CANCEL_HOVER);
             }
+            if self
+                .style_import_pick_rect(panel)
+                .is_some_and(|rect| rect.contains(point))
+            {
+                return Some(STYLE_IMPORT_PICK_HOVER);
+            }
             return None;
         }
         if Self::close_rect(panel).contains(point) {
@@ -44,10 +52,8 @@ impl SceneTemplatePanel<'_> {
         {
             return Some(SCENE_TEMPLATE_IMPORT_HOVER);
         }
-        for (index, (rect, _)) in self.tab_chip_rects(panel).into_iter().enumerate() {
-            if rect.contains(point) {
-                return Some(tab_hover_token(index));
-            }
+        if let Some((index, _)) = self.tab_at(panel, point) {
+            return Some(tab_hover_token(index));
         }
         for (index, (rect, _)) in self.filter_chip_rects(panel).into_iter().enumerate() {
             if rect.contains(point) {
@@ -109,10 +115,8 @@ impl SceneTemplatePanel<'_> {
         {
             return Some(SceneTemplateHit::ImportStyleGuide);
         }
-        for (rect, tab) in self.tab_chip_rects(panel) {
-            if rect.contains(point) {
-                return Some(SceneTemplateHit::SelectTab(tab));
-            }
+        if let Some((_, tab)) = self.tab_at(panel, point) {
+            return Some(SceneTemplateHit::SelectTab(tab));
         }
         let search = Self::search_rect(panel);
         if search.contains(point) {

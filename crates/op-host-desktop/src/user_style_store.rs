@@ -5,6 +5,12 @@
 //! half only a desktop can do: scan that directory at boot, write a file when
 //! the user imports one, delete it when they remove it.
 //!
+//! Deliberately **only the disk half**. Deciding what an imported guide is —
+//! parsing, allocating its id, registering it — belongs to the shared import
+//! flow both hosts and both routes (paste and file) go through. This module
+//! once carried a second copy of that decision for the file route, which meant
+//! picking a file and pasting the same file could disagree.
+//!
 //! One `.md` per guide, stored **verbatim**. Not a database, not a re-emitted
 //! normalization of what was parsed: the file the user picked is the artifact,
 //! and keeping it byte-for-byte means it stays readable by every other tool
@@ -17,8 +23,8 @@
 use std::path::PathBuf;
 
 use op_ai_skills::style_guide::{
-    load_user_style_guide, parse_design_md, set_user_style_guides, slugify, DesignMdImportError,
-    ParsedStyleGuide, UserStyleGuide, USER_STYLE_ID_PREFIX,
+    parse_design_md, set_user_style_guides, slugify, ParsedStyleGuide, UserStyleGuide,
+    USER_STYLE_ID_PREFIX,
 };
 
 /// Directory under `~/.openpencil` holding imported style guides.
@@ -132,85 +138,6 @@ pub(crate) fn delete_user_style_guide(id: &str) -> std::io::Result<()> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error),
     }
-}
-
-/// Read a `DESIGN.md` the user picked, register it, and write it into the
-/// styles directory. Returns its id.
-pub(crate) fn import_style_guide_file(path: &std::path::Path) -> Result<String, ImportFileError> {
-    let raw = std::fs::read_to_string(path).map_err(|_| ImportFileError::Unreadable)?;
-    let fallback = path
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .unwrap_or_default();
-    let parsed = parse_design_md(&raw, fallback).map_err(ImportFileError::Malformed)?;
-    let id = allocate_disk_id(&slugify(&parsed.name));
-    let path = styles_dir()
-        .map_err(|_| ImportFileError::Unreadable)?
-        .join(format!(
-            "{}.md",
-            id.trim_start_matches(USER_STYLE_ID_PREFIX)
-        ));
-    std::fs::write(&path, parsed.content.as_bytes()).map_err(|_| ImportFileError::Unreadable)?;
-    load_user_style_guide(UserStyleGuide {
-        id: id.clone(),
-        guide: ParsedStyleGuide {
-            name: parsed.name,
-            tags: parsed.tags,
-            platform: parsed.platform,
-            content: parsed.content,
-        },
-        swatches: parsed.swatches,
-    });
-    Ok(id)
-}
-
-/// Why a picked file could not become a style guide.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ImportFileError {
-    /// The file could not be read, or the styles directory could not be
-    /// written to.
-    Unreadable,
-    /// It was read but is not a style guide.
-    Malformed(DesignMdImportError),
-}
-
-impl ImportFileError {
-    /// i18n key for the message shown to the user.
-    pub(crate) fn message_key(self) -> &'static str {
-        match self {
-            ImportFileError::Unreadable => "assetCenter.style.importNotText",
-            ImportFileError::Malformed(error) => error.message_key(),
-        }
-    }
-}
-
-/// `user:<slug>`, numbered past any id already taken **or already on disk**.
-///
-/// The disk check is what the in-memory allocator cannot do on its own: a
-/// guide deleted from the catalogue this session but whose file a failed
-/// delete left behind would otherwise be silently overwritten by the next
-/// import of the same name.
-fn allocate_disk_id(slug: &str) -> String {
-    let dir = styles_dir().ok();
-    let free = |candidate: &str| {
-        let taken_in_memory = op_ai_skills::style_guide::user_style_guides()
-            .iter()
-            .any(|guide| guide.id == format!("{USER_STYLE_ID_PREFIX}{candidate}"));
-        let taken_on_disk = dir
-            .as_ref()
-            .is_some_and(|dir| dir.join(format!("{candidate}.md")).exists());
-        !taken_in_memory && !taken_on_disk
-    };
-    if free(slug) {
-        return format!("{USER_STYLE_ID_PREFIX}{slug}");
-    }
-    for suffix in 2..1000 {
-        let candidate = format!("{slug}-{suffix}");
-        if free(&candidate) {
-            return format!("{USER_STYLE_ID_PREFIX}{candidate}");
-        }
-    }
-    format!("{USER_STYLE_ID_PREFIX}{slug}-{}", std::process::id())
 }
 
 #[cfg(test)]

@@ -43,7 +43,10 @@ impl SceneTemplatePanel<'_> {
         if self.tab() != AssetCenterTab::Styles {
             return None;
         }
-        let content = Self::content_rect(panel);
+        // The control column, not the full content width: on a wide display
+        // the grid runs to the panel edge, and an action pinned out there
+        // would sit a screen's width from the tab row it belongs to.
+        let content = Self::control_rect(panel);
         let width = estimated_text_width(self.style_import_label(), CHIP_LABEL_SIZE) + 34.0;
         Some(Rect::xywh(
             content.origin.x + content.size.x - width,

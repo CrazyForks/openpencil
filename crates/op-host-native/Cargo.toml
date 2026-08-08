@@ -216,6 +216,10 @@ workspace = true
 # - khronos-egl: Linux EGL pbuffer GPU smoke (gpu_smoke.rs / gpu_chrome_stub_composition.rs)
 [dev-dependencies]
 sysinfo = "0.30"
+# The chat's pinned-style tests import a DESIGN.md into the same runtime
+# registry the widget layer resolves pins against. Already in the build graph
+# through op-editor-ui; named here only so the tests can reach it.
+op-ai-skills = { path = "../op-ai-skills" }
 # `no-env-filter` is required for integration tests — the default filter
 # only captures logs from the test crate itself, but our `#[tracing::instrument]`
 # spans live inside `op_host_native::*`. (Per upstream README §136.)

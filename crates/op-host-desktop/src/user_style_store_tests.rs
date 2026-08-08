@@ -31,14 +31,22 @@ fn write_style(stem: &str, body: &str) -> PathBuf {
 
 /// The file is the artifact. Re-emitting a normalized form would leave the
 /// user with a document their other tools no longer recognize.
+///
+/// Walks the whole desktop file route as it now runs: the host reads bytes,
+/// the shared flow registers them, this module writes them down.
 #[test]
 fn an_imported_file_is_stored_verbatim_and_reloads_with_the_same_id() {
     let _guard = exclusive();
     let source = write_style("source-file", OCHRE);
-    let id = import_style_guide_file(&source).expect("imports");
+    let raw = std::fs::read_to_string(&source).expect("read");
+    let id = op_ai_skills::style_guide::import_design_md(&raw, "source-file")
+        .expect("imports")
+        .id
+        .clone();
     assert_eq!(id, "user:studio-ochre");
+    let stored = persist_user_style_guide(&id).expect("persists");
 
-    let stored = styles_dir().expect("dir").join("studio-ochre.md");
+    assert_eq!(stored.file_name().unwrap(), "studio-ochre.md");
     assert_eq!(std::fs::read_to_string(&stored).expect("stored"), OCHRE);
 
     // A fresh session sees the same guide under the same id, which is what
@@ -120,29 +128,21 @@ fn a_broken_file_is_skipped_and_the_rest_of_the_scan_survives() {
 fn a_second_import_of_the_same_name_is_numbered_not_overwritten() {
     let _guard = exclusive();
     let source = write_style("source-file", OCHRE);
-    let first = import_style_guide_file(&source).expect("imports");
-    let second = import_style_guide_file(&source).expect("imports");
+    let raw = std::fs::read_to_string(&source).expect("read");
+    let first = op_ai_skills::style_guide::import_design_md(&raw, "source-file")
+        .expect("imports")
+        .id
+        .clone();
+    let second = op_ai_skills::style_guide::import_design_md(&raw, "source-file")
+        .expect("imports")
+        .id
+        .clone();
     assert_eq!(first, "user:studio-ochre");
     assert_eq!(second, "user:studio-ochre-2");
+    persist_user_style_guide(&first).expect("persists");
+    persist_user_style_guide(&second).expect("persists");
 
     let dir = styles_dir().expect("dir");
     assert!(dir.join("studio-ochre.md").exists());
     assert!(dir.join("studio-ochre-2.md").exists());
-}
-
-#[test]
-fn a_malformed_pick_reports_and_stores_nothing() {
-    let _guard = exclusive();
-    let source = write_style("source-file", "   ");
-    assert_eq!(
-        import_style_guide_file(&source),
-        Err(ImportFileError::Malformed(DesignMdImportError::Empty))
-    );
-    assert!(op_ai_skills::style_guide::user_style_guides().is_empty());
-
-    let missing = styles_dir().expect("dir").join("no-such-file.md");
-    assert_eq!(
-        import_style_guide_file(&missing),
-        Err(ImportFileError::Unreadable)
-    );
 }

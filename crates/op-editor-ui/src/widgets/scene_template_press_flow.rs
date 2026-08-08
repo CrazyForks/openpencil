@@ -113,15 +113,24 @@ pub fn press_scene_template_center(
             }
         }
         SceneTemplateHit::ImportStyleGuide => {
-            let center = &mut state.editor_ui.scene_template_center;
-            // One button, two routes. A host with a file dialog asks for a
-            // file; a host without opens the paste box. Neither is a fallback
-            // for the other — they are how a document reaches each platform.
-            if state.editor_ui.style_import_file_picker_supported {
-                center.request_style_import_file();
-            } else {
-                center.open_style_import_paste(now_ms);
-            }
+            // The box, always — both routes live inside it. This used to fork
+            // on the host capability and go straight to the file dialog where
+            // there was one, which gave each platform exactly one of the two
+            // ways in and no way to reach the other.
+            state
+                .editor_ui
+                .scene_template_center
+                .open_style_import_paste(now_ms);
+            true
+        }
+        SceneTemplateHit::PickStyleImportFile => {
+            // The box stays up behind the dialog: a cancelled pick returns the
+            // user to what they were doing, and a failed one has somewhere to
+            // report itself.
+            state
+                .editor_ui
+                .scene_template_center
+                .request_style_import_file();
             true
         }
         SceneTemplateHit::DeleteStyleGuide(id) => delete_user_style_guide(state, &id),
@@ -144,13 +153,6 @@ pub fn press_scene_template_center(
 }
 
 /// Read the pasted text as a style guide.
-///
-/// The parse happens here rather than in either host so a malformed document
-/// is reported once, in one wording, on both platforms. On success the guide
-/// is live immediately — it is in memory, and memory is all the browser has —
-/// and the id is queued for whichever host can also write it down. A host
-/// without a disk drains nothing and loses the guide at reload, which is the
-/// documented M1 boundary rather than a silent failure.
 fn confirm_style_import(state: &mut EditorState) -> bool {
     let raw = state
         .editor_ui
@@ -159,7 +161,31 @@ fn confirm_style_import(state: &mut EditorState) -> bool {
         .text
         .text()
         .to_string();
-    match op_ai_skills::style_guide::import_design_md(&raw, "") {
+    import_style_guide_text(state, &raw, "")
+}
+
+/// Turn a `DESIGN.md` into a style guide, however the text arrived.
+///
+/// **The one pipeline.** The paste box calls it with what was typed; a host
+/// calls it with what it read off disk, passing the file stem as
+/// `fallback_name` so an unnamed guide is still called something. Routing both
+/// through here is what makes "pasted" and "picked" produce the same style —
+/// the alternative, a host that parses and registers on its own, is how the
+/// two ends drift into disagreeing about ids, pinning, and what counts as a
+/// malformed document.
+///
+/// The parse happens here rather than in either host so a malformed document
+/// is reported once, in one wording, on both platforms. On success the guide
+/// is live immediately — it is in memory, and memory is all the browser has —
+/// and the id is queued for whichever host can also write it down. A host
+/// without a disk drains nothing and loses the guide at reload, which is the
+/// documented M1 boundary rather than a silent failure.
+///
+/// A failure leaves the box open carrying the reason. It never closes on an
+/// error: the user would be left looking at an unchanged gallery with no
+/// account of what happened to the file they picked.
+pub fn import_style_guide_text(state: &mut EditorState, raw: &str, fallback_name: &str) -> bool {
+    match op_ai_skills::style_guide::import_design_md(raw, fallback_name) {
         Ok(imported) => {
             let id = imported.id.clone();
             let center = &mut state.editor_ui.scene_template_center;
@@ -176,6 +202,18 @@ fn confirm_style_import(state: &mut EditorState) -> bool {
             true
         }
     }
+}
+
+/// Report a file that could not be read as text at all.
+///
+/// Separate from [`import_style_guide_text`] because it is the one failure the
+/// parser never sees: the bytes did not survive the host's read, so there is
+/// nothing to hand it. Reusing the parser's own "not markdown text" wording
+/// keeps the user's account of an unusable file to a single sentence.
+pub fn fail_style_import_unreadable(state: &mut EditorState) -> bool {
+    state.editor_ui.scene_template_center.import.error_key =
+        Some(op_ai_skills::style_guide::DesignMdImportError::NotText.message_key());
+    true
 }
 
 /// Forget an imported style guide, and unpin it if it was the pinned one.

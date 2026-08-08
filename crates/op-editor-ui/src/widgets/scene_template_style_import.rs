@@ -1,9 +1,17 @@
-//! The `DESIGN.md` paste box.
+//! The `DESIGN.md` import box.
 //!
-//! Hosts differ in how a document reaches the editor. One with a native file
-//! dialog asks for a file and never opens this; one without — the browser —
-//! opens this and takes a paste. The fork is in how the text arrives, not in
-//! what an imported style is, so both ends meet at the same parser.
+//! Two ways in, one destination. A user who already has the guide on screen
+//! pastes it; a user who has it on disk picks the file. Both hand the same
+//! text to the same parser, so neither is a fallback for the other and
+//! neither can produce a style the other could not.
+//!
+//! The box is what the import button opens on *every* host, including one
+//! with a native file dialog. It used to fork — a host with a dialog went
+//! straight to it and never showed this — which meant each platform offered
+//! exactly one of the two routes, and a user who knew the other existed had
+//! no way to reach it. The "choose file" button paints only where a host can
+//! actually open a dialog, so the box never advertises a control that would
+//! do nothing.
 //!
 //! It is a layer *inside* the Asset Center rather than a modal of its own:
 //! the user is mid-task in the Styles tab, and replacing the gallery with a
@@ -28,6 +36,8 @@ use crate::{Point2D, Rect};
 pub(super) const STYLE_IMPORT_CONFIRM_HOVER: usize = usize::MAX - 160;
 /// Hover token for its cancel button.
 pub(super) const STYLE_IMPORT_CANCEL_HOVER: usize = usize::MAX - 161;
+/// Hover token for its "choose file" button.
+pub(super) const STYLE_IMPORT_PICK_HOVER: usize = usize::MAX - 162;
 
 const BOX_RADIUS: f32 = 14.0;
 const BOX_MAX_W: f32 = 660.0;
@@ -40,6 +50,12 @@ const TEXT_LINE_H: f32 = 16.0;
 const BUTTON_H: f32 = 32.0;
 const BUTTON_W: f32 = 92.0;
 const BUTTON_GAP: f32 = 10.0;
+/// Wider than the confirm / cancel pair: its label is a phrase rather than a
+/// verb, and every locale spells it longer than "Import".
+const PICK_BUTTON_W: f32 = 148.0;
+/// Below this the button is too small to read as one; a box that narrow drops
+/// it rather than painting a stub, and the paste route still works.
+const PICK_BUTTON_MIN_W: f32 = 56.0;
 const SCRIM: crate::Color = crate::Color {
     r: 0.0,
     g: 0.0,
@@ -100,6 +116,33 @@ impl SceneTemplatePanel<'_> {
         )
     }
 
+    /// The "choose file" button, bottom-left — `None` on a host with no file
+    /// dialog.
+    ///
+    /// Gated on the host capability rather than painted-and-disabled: a
+    /// control that is visible but inert is a worse answer to "can I import a
+    /// file here" than no control at all.
+    pub fn style_import_pick_rect(&self, panel: Rect) -> Option<Rect> {
+        if !self.state.editor_ui.style_import_file_picker_supported {
+            return None;
+        }
+        let box_rect = self.style_import_rect(panel);
+        let left = box_rect.origin.x + BOX_PAD;
+        // It shares the row with cancel + confirm, and those two own their end
+        // of it: the confirm button is where a user's hand already is. So this
+        // one takes what is left rather than growing into them.
+        let width = PICK_BUTTON_W.min(self.style_import_cancel_rect(panel).origin.x - left - 12.0);
+        if width < PICK_BUTTON_MIN_W {
+            return None;
+        }
+        Some(Rect::xywh(
+            left,
+            box_rect.origin.y + box_rect.size.y - BOX_PAD - BUTTON_H,
+            width,
+            BUTTON_H,
+        ))
+    }
+
     /// Route a press while the paste box is up.
     ///
     /// `None` means the box is closed and the press belongs to the gallery.
@@ -115,6 +158,12 @@ impl SceneTemplatePanel<'_> {
         }
         if self.style_import_cancel_rect(panel).contains(point) {
             return Some(SceneTemplateHit::CancelStyleImport);
+        }
+        if self
+            .style_import_pick_rect(panel)
+            .is_some_and(|rect| rect.contains(point))
+        {
+            return Some(SceneTemplateHit::PickStyleImportFile);
         }
         let text = self.style_import_text_rect(panel);
         if text.contains(point) {
@@ -184,12 +233,23 @@ impl SceneTemplatePanel<'_> {
             TITLE_SIZE,
             self.theme.foreground,
         );
-        self.paint_text(
-            cx,
+        // Two hints, because the box genuinely offers two different things
+        // depending on the host. Naming a file route on a host that has none
+        // would send the user looking for a button that is not painted.
+        let hint = if self.style_import_pick_rect(panel).is_some() {
+            self.t(
+                "assetCenter.style.importHintFile",
+                "选择 DESIGN.md 文件,或在下方粘贴全文",
+            )
+        } else {
             self.t(
                 "assetCenter.style.importHint",
                 "粘贴 DESIGN.md 全文,然后确认导入",
-            ),
+            )
+        };
+        self.paint_text(
+            cx,
+            &truncate_to_width(hint, inner_w, HINT_SIZE),
             Point2D::new(left, box_rect.origin.y + BOX_PAD + 40.0),
             HINT_SIZE,
             self.theme.muted_foreground,
@@ -197,46 +257,53 @@ impl SceneTemplatePanel<'_> {
 
         self.paint_style_import_text(cx, panel);
 
-        // The source line sits between the text area and the buttons: it
-        // answers "where do I get one of these" for a user who opened the box
-        // with nothing to paste. Deliberately prose, not a link — this is a
-        // canvas surface with no link affordance, and a fake one would be a
-        // control that does nothing when pressed.
-        self.paint_text(
-            cx,
-            &truncate_to_width(
-                self.t(
-                    "assetCenter.style.importSource",
-                    "可以从 styles.refero.design 等 DESIGN.md 风格库复制内容",
-                ),
-                inner_w,
-                HINT_SIZE,
-            ),
-            Point2D::new(
-                left,
-                box_rect.origin.y + box_rect.size.y - BOX_PAD - BUTTON_H - 14.0,
-            ),
-            HINT_SIZE,
-            self.theme.muted_foreground,
-        );
-
-        if let Some(key) = self.state.editor_ui.scene_template_center.import.error_key {
-            self.paint_text(
+        // One line between the text area and the buttons, and a failure owns
+        // it. The source hint answers "where do I get one of these" for a user
+        // who opened the box with nothing to paste — deliberately prose, not a
+        // link, because this is a canvas surface with no link affordance and a
+        // fake one would be a control that does nothing when pressed. An error
+        // is about the document they just handed over, so it displaces the
+        // hint rather than sharing the button row: the row now starts with the
+        // "choose file" button on the left, which is exactly where the message
+        // used to be painted.
+        let status_y = box_rect.origin.y + box_rect.size.y - BOX_PAD - BUTTON_H - 14.0;
+        match self.state.editor_ui.scene_template_center.import.error_key {
+            Some(key) => self.paint_text(
                 cx,
-                &truncate_to_width(
-                    op_i18n::translate(self.locale, key),
-                    (inner_w - BUTTON_W * 2.0 - BUTTON_GAP - 12.0).max(0.0),
-                    HINT_SIZE,
-                ),
-                Point2D::new(
-                    left,
-                    box_rect.origin.y + box_rect.size.y - BOX_PAD - BUTTON_H / 2.0 + 4.0,
-                ),
+                &truncate_to_width(op_i18n::translate(self.locale, key), inner_w, HINT_SIZE),
+                Point2D::new(left, status_y),
                 HINT_SIZE,
                 self.theme.destructive,
-            );
+            ),
+            None => self.paint_text(
+                cx,
+                &truncate_to_width(
+                    self.t(
+                        "assetCenter.style.importSource",
+                        "可以从 styles.refero.design 等 DESIGN.md 风格库复制内容",
+                    ),
+                    inner_w,
+                    HINT_SIZE,
+                ),
+                Point2D::new(left, status_y),
+                HINT_SIZE,
+                self.theme.muted_foreground,
+            ),
         }
 
+        if let Some(rect) = self.style_import_pick_rect(panel) {
+            self.paint_style_import_action(
+                cx,
+                rect,
+                &truncate_to_width(
+                    self.t("assetCenter.style.importPickFile", "选择文件…"),
+                    (rect.size.x - 12.0).max(0.0),
+                    HINT_SIZE + 1.0,
+                ),
+                STYLE_IMPORT_PICK_HOVER,
+                false,
+            );
+        }
         self.paint_style_import_action(
             cx,
             self.style_import_cancel_rect(panel),

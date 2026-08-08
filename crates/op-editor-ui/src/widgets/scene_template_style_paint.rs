@@ -9,6 +9,7 @@
 use super::asset_center_style_cards::StyleGuideCard;
 use super::asset_center_style_layout::STYLE_SECTION_HEADER_H;
 use super::icons::{draw_icon, Icon};
+use super::panel_control_metrics::{control_fill, CHIP_RADIUS};
 use super::scene_template_panel::{SceneTemplatePanel, STYLE_SWATCH_H};
 use super::scene_template_style_geometry::{SCENE_TEMPLATE_IMPORT_HOVER, STYLE_DELETE_BTN};
 use crate::widgets::button::paint_button_feedback_wash;
@@ -85,18 +86,18 @@ impl SceneTemplatePanel<'_> {
         let Some(rect) = self.style_import_button_rect(panel) else {
             return;
         };
-        cx.backend
-            .fill_round_rect(rect, rect.size.y / 2.0, self.theme.secondary);
-        cx.backend
-            .stroke_round_rect(rect, rect.size.y / 2.0, self.theme.border, 1.0);
-        paint_button_feedback_wash(
-            cx.backend,
-            &self.theme,
+        // A chip, painted the way every other chip in the panel is: the same
+        // surface, the same hairline, the same pointer ladder.
+        let hovered =
+            self.state.editor_ui.scene_template_center.hover == Some(SCENE_TEMPLATE_IMPORT_HOVER);
+        let pressed = self.is_pressed(SCENE_TEMPLATE_IMPORT_HOVER);
+        cx.backend.fill_round_rect(
             rect,
-            rect.size.y / 2.0,
-            self.state.editor_ui.scene_template_center.hover == Some(SCENE_TEMPLATE_IMPORT_HOVER),
-            self.is_pressed(SCENE_TEMPLATE_IMPORT_HOVER),
+            CHIP_RADIUS,
+            control_fill(self.theme.secondary, hovered, pressed),
         );
+        cx.backend
+            .stroke_round_rect(rect, CHIP_RADIUS, self.theme.border, 1.0);
         let label = self.style_import_label();
         let label_w = estimated_text_width(label, IMPORT_LABEL_SIZE);
         let glyph = 12.0;

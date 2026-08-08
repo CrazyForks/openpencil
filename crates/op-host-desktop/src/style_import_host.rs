@@ -11,22 +11,32 @@
 //! cooperates. A write that fails costs the guide at next launch and says so;
 //! it does not make the button appear broken now.
 
+use op_editor_ui::widgets::press_flow;
 use op_host_native::widget_host::WidgetHostNative;
 
-use crate::user_style_store;
+use crate::{frame, user_style_store, DesktopApp};
 
 /// Drain every pending style-import request. Returns whether anything changed
 /// on screen.
-pub(crate) fn drain_pending_style_import(host: &mut WidgetHostNative) -> bool {
-    let mut changed = drain_pending_file_pick(host);
-    changed |= drain_pending_persist(host);
-    changed |= drain_pending_delete(host);
+pub(crate) fn drain_pending_style_import(app: &mut DesktopApp) -> bool {
+    let mut changed = drain_pending_file_pick(app);
+    changed |= drain_pending_persist(&mut app.host);
+    changed |= drain_pending_delete(&mut app.host);
     changed
 }
 
 /// Ask for a `.md` and import it.
-fn drain_pending_file_pick(host: &mut WidgetHostNative) -> bool {
-    if !host
+///
+/// The host's whole job here is *reading bytes*. Everything that decides what
+/// an imported style guide is — parsing, id allocation, registering it,
+/// pinning it, closing the box — belongs to the shared flow the paste route
+/// already goes through, so the two routes cannot drift into producing
+/// different styles from the same document. That was not true before: this
+/// arm used to run its own parse-and-write path, and the paste box ran
+/// another.
+fn drain_pending_file_pick(app: &mut DesktopApp) -> bool {
+    if !app
+        .host
         .editor_state_mut()
         .editor_ui
         .scene_template_center
@@ -34,7 +44,21 @@ fn drain_pending_file_pick(host: &mut WidgetHostNative) -> bool {
     {
         return false;
     }
-    let locale = host.editor_state().editor_ui.locale;
+    // The press that raised the request has not been painted yet — this drain
+    // runs at the top of the redraw, before the frame. `rfd::FileDialog` then
+    // blocks the loop, so without a synchronous frame here the button the user
+    // just clicked stays un-pressed underneath the dialog for its whole life.
+    if let (Some(ctx), Some(backend)) = (app.ctx.as_mut(), app.backend.as_mut()) {
+        frame::paint(
+            ctx,
+            backend,
+            &mut app.host,
+            app.viewport_width,
+            app.viewport_height,
+            app.dpi,
+        );
+    }
+    let locale = app.host.editor_state().editor_ui.locale;
     let picked = rfd::FileDialog::new()
         .set_title(op_i18n::translate(locale, "assetCenter.style.importTitle"))
         .add_filter("Markdown", &["md", "markdown"])
@@ -42,37 +66,24 @@ fn drain_pending_file_pick(host: &mut WidgetHostNative) -> bool {
     let Some(path) = picked else {
         return true;
     };
-    match user_style_store::import_style_guide_file(&path) {
-        Ok(id) => {
-            // Pin what was just imported, matching the paste path: the user
-            // went and found this guide, and leaving it unpinned would make
-            // the next generation ignore it.
-            host.editor_state_mut().editor_ui.pinned_style_guide = Some(id);
-            host.editor_state_mut()
-                .editor_ui
-                .scene_template_center
-                .import
-                .error_key = None;
+    let state = app.host.editor_state_mut();
+    match std::fs::read_to_string(&path) {
+        Ok(raw) => {
+            let fallback = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or_default();
+            press_flow::import_style_guide_text(state, &raw, fallback);
         }
         Err(error) => {
-            eprintln!("[styles] {}: import failed", path.display());
-            host.editor_state_mut()
-                .editor_ui
-                .scene_template_center
-                .import
-                .error_key = Some(error.message_key());
-            crate::message_dialog::alert(
-                op_i18n::translate(locale, "assetCenter.style.importTitle"),
-                &format!(
-                    "{}\n\n{}",
-                    path.display(),
-                    op_i18n::translate(locale, error.message_key())
-                ),
-                rfd::MessageLevel::Warning,
-            );
+            // Not readable as UTF-8 text, or not readable at all. Both are the
+            // same thing to a user holding a file that is not a `DESIGN.md`,
+            // and the box says so where they are looking.
+            eprintln!("[styles] {}: could not be read: {error}", path.display());
+            press_flow::fail_style_import_unreadable(state);
         }
     }
-    host.mark_editor_state_dirty();
+    app.host.mark_editor_state_dirty();
     true
 }
 

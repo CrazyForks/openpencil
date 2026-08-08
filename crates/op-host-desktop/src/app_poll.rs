@@ -212,7 +212,7 @@ impl DesktopApp {
         // The Styles tab's DESIGN.md import: a file dialog, and the disk half
         // of adding or removing a guide the panel has already put in (or taken
         // out of) the runtime catalogue.
-        should_paint |= crate::style_import_host::drain_pending_style_import(&mut self.host);
+        should_paint |= crate::style_import_host::drain_pending_style_import(self);
         if crate::scene_template_generate::drain_pending_scene_template_generate(
             &mut self.host,
             &mut self.current_path,
