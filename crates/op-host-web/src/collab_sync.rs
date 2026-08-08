@@ -75,7 +75,16 @@ thread_local! {
     ///
     /// The browser mints ids from a local sequential counter, which is exactly
     /// what an active session cannot accept — see [`push_blocked_by_session`].
-    static DAEMON_NODE_IDS: RefCell<Option<HashSet<op_editor_core::NodeId>>> =
+    pub(super) static DAEMON_NODE_IDS: RefCell<Option<HashSet<op_editor_core::NodeId>>> =
+        const { RefCell::new(None) };
+
+    /// The namespace this peer is currently minting ids under, when the
+    /// owner-assigned allocator is enabled.
+    ///
+    /// Set by `sync_id_allocation` at the moment the allocator is installed
+    /// and cleared the moment it is taken away, so it is exactly "the ids
+    /// this peer is entitled to invent" — see `push_blocked_by_session`.
+    pub(super) static SESSION_NAMESPACE: RefCell<Option<op_editor_core::PeerNamespace>> =
         const { RefCell::new(None) };
 }
 
@@ -95,42 +104,11 @@ pub(crate) fn note_daemon_document(state: &op_editor_core::EditorState) {
     DAEMON_NODE_IDS.with(|ids| *ids.borrow_mut() = Some(document_node_ids(state)));
 }
 
-/// Whether a live session forbids pushing the current local document.
-///
-/// The browser has no owner-assigned id namespace: it mints `n<counter>` from a
-/// local sequential allocator, and two peers creating a node in the same moment
-/// would mint the same id. The collaboration protocol replays those ids
-/// verbatim, so a colliding pair silently forks the document — the failure this
-/// refuses to produce.
-///
-/// The check is deliberately whole-document rather than per-gesture: draw,
-/// duplicate, paste, group and import all mint through the same counter, and
-/// gating the single push covers every one of them without a guard at each
-/// call site. Any id the daemon has not seen blocks the push; edits to existing
-/// nodes (move, restyle, delete) carry no new ids and go through untouched.
-///
-/// The local node stays on screen until the next pull replaces it with the
-/// daemon's document, so the divergence is bounded and self-healing.
-pub(crate) fn push_blocked_by_session(state: &op_editor_core::EditorState) -> bool {
-    if state.editor_ui.collab.phase != CollabConnectionPhase::Active {
-        return false;
-    }
-    DAEMON_NODE_IDS.with(|known| {
-        let known = known.borrow();
-        let Some(known) = known.as_ref() else {
-            // No daemon document seen yet in this session; refuse rather than
-            // guess, since the pull that would settle it is one tick away.
-            return true;
-        };
-        document_node_ids(state)
-            .iter()
-            .any(|id| !known.contains(id))
-    })
-}
-
 /// Node ids in a document, through `op-editor-core`'s own walker so pages and
 /// nodes share the one collision domain the allocator uses.
-fn document_node_ids(state: &op_editor_core::EditorState) -> HashSet<op_editor_core::NodeId> {
+pub(super) fn document_node_ids(
+    state: &op_editor_core::EditorState,
+) -> HashSet<op_editor_core::NodeId> {
     op_editor_core::collect_document_ids(&state.doc)
 }
 
@@ -363,15 +341,21 @@ fn sync_id_allocation(host: &mut crate::widget_host::WidgetHost, wire: &CollabSt
         Some(namespace) if !host.collaboration_ids_enabled() => {
             match op_editor_core::PeerNamespace::parse(namespace) {
                 Ok(namespace) => {
+                    let enabled = namespace.clone();
                     if let Err(error) = host.enable_collaboration_ids(namespace) {
                         // The document already carries ids this namespace
                         // cannot resume above. Staying on the standalone
                         // counter keeps the canvas usable; the push gate is
                         // what keeps those ids off the wire.
                         let _ = error;
+                    } else {
+                        set_session_namespace(Some(enabled));
                     }
                 }
-                Err(_) => host.disable_collaboration_ids(),
+                Err(_) => {
+                    host.disable_collaboration_ids();
+                    set_session_namespace(None);
+                }
             }
         }
         Some(_) => {}
@@ -379,8 +363,26 @@ fn sync_id_allocation(host: &mut crate::widget_host::WidgetHost, wire: &CollabSt
             if host.collaboration_ids_enabled() {
                 host.disable_collaboration_ids();
             }
+            set_session_namespace(None);
         }
     }
+}
+
+/// Forget everything scoped to the previous account.
+///
+/// The daemon snapshot and the minting namespace both belong to the session
+/// the old account was in; carrying them into a new account's tab would let
+/// its push gate answer from another account's document.
+pub(crate) fn reset_for_new_identity() {
+    DAEMON_NODE_IDS.with(|ids| *ids.borrow_mut() = None);
+    SESSION_NAMESPACE.with(|slot| *slot.borrow_mut() = None);
+    APPLIED_SEQ.set(None);
+    SESSION_LIVE.set(false);
+}
+
+/// Record (or clear) the namespace this peer mints under.
+fn set_session_namespace(namespace: Option<op_editor_core::PeerNamespace>) {
+    SESSION_NAMESPACE.with(|slot| *slot.borrow_mut() = namespace);
 }
 
 fn maybe_push_presence<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, base: &str) {
@@ -428,7 +430,7 @@ fn now_ms() -> u64 {
 mod tests {
     use super::*;
 
-    fn doc_with(ids: &[&str]) -> op_editor_core::EditorState {
+    pub(super) fn doc_with(ids: &[&str]) -> op_editor_core::EditorState {
         let children: Vec<serde_json::Value> = ids
             .iter()
             .map(|id| {
@@ -447,8 +449,13 @@ mod tests {
         state
     }
 
-    fn reset_latches() {
+    pub(super) fn reset_latches() {
         DAEMON_NODE_IDS.with(|ids| *ids.borrow_mut() = None);
+        SESSION_NAMESPACE.with(|slot| *slot.borrow_mut() = None);
+    }
+
+    pub(super) fn namespace(value: &str) -> op_editor_core::PeerNamespace {
+        op_editor_core::PeerNamespace::parse(value.to_string()).expect("valid namespace")
     }
 
     #[test]
@@ -464,29 +471,6 @@ mod tests {
             !push_blocked_by_session(&state),
             "a shell with no session must sync exactly as it did before"
         );
-    }
-
-    #[test]
-    fn an_active_session_blocks_a_push_that_invents_a_node_id() {
-        reset_latches();
-        let mut state = doc_with(&["n100"]);
-        note_daemon_document(&state);
-        state
-            .editor_ui
-            .collab
-            .set_phase(CollabConnectionPhase::Active);
-
-        // Editing what the daemon already knows is fine.
-        assert!(!push_blocked_by_session(&state));
-
-        // Minting a new local id is not: the browser has no owner-assigned
-        // namespace, so this id could collide with a peer's.
-        let mut grown = doc_with(&["n100", "n101"]);
-        grown
-            .editor_ui
-            .collab
-            .set_phase(CollabConnectionPhase::Active);
-        assert!(push_blocked_by_session(&grown));
     }
 
     #[test]
@@ -690,3 +674,7 @@ fn note_stream_failure() {
         ));
     }
 }
+
+#[path = "collab_sync_push_gate.rs"]
+mod push_gate;
+pub(crate) use push_gate::push_blocked_by_session;

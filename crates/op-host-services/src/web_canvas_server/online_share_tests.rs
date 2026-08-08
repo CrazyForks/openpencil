@@ -407,3 +407,95 @@ fn a_tenant_that_cannot_be_written_stays_resident_rather_than_losing_its_documen
 
     let _ = std::fs::remove_file(&temp.root);
 }
+
+// ---------------------------------------------------------------------------
+// The persistence lifecycle: sweep cadence, shutdown flush, fail-closed start.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_sweep_interval_tracks_the_idle_deadline_within_bounds() {
+    use crate::web_canvas_server::online_run_loop::sweep_interval_secs;
+    // A quarter of the deadline bounds how long past its timer a tenant can
+    // linger — but the production default's quarter (450 s) exceeds the
+    // ceiling, so it clamps.
+    assert_eq!(sweep_interval_secs(1800), 300);
+    assert_eq!(sweep_interval_secs(400), 100);
+    // …with a ceiling, so a very long deadline still sweeps regularly…
+    assert_eq!(sweep_interval_secs(86_400), 300);
+    // …and a floor, so a short test deadline does not spin the thread.
+    for tiny in [0, 1, 2, 3] {
+        assert_eq!(sweep_interval_secs(tiny), 1, "{tiny}");
+    }
+}
+
+#[test]
+fn an_idle_account_is_reclaimed_without_any_new_connection() {
+    // The regression: eviction used to run only when a connection arrived, so
+    // the one state it exists for — an idle daemon — was the state it never
+    // ran in, and nothing was ever written to disk.
+    let temp = PersistentRegistry::new("no-traffic");
+    serve(
+        &temp.registry,
+        &verifier(),
+        Request::json("POST", "/api/mcp/document", SYNC_BODY).with_bearer("tokA"),
+    );
+    assert_eq!(temp.registry.tenant_count(), 1);
+
+    // No further requests — exactly what the sweeper thread calls.
+    assert_eq!(temp.registry.evict_idle(now_unix() + 3600), 1);
+    assert_eq!(temp.registry.tenant_count(), 0);
+    assert!(temp.registry.store().has_document("userA"));
+}
+
+#[test]
+fn a_controlled_shutdown_flushes_every_resident_account() {
+    // Without this, every account active at the moment of a deploy loses
+    // whatever had not happened to be evicted.
+    let temp = PersistentRegistry::new("flush");
+    let verifier = verifier();
+    for token in ["tokA", "tokB"] {
+        serve(
+            &temp.registry,
+            &verifier,
+            Request::json("POST", "/api/mcp/document", SYNC_BODY).with_bearer(token),
+        );
+    }
+    assert_eq!(temp.registry.tenant_count(), 2);
+    assert!(!temp.registry.store().has_document("userA"));
+
+    assert_eq!(temp.registry.flush_all(), 2);
+    assert!(temp.registry.store().has_document("userA"));
+    assert!(temp.registry.store().has_document("userB"));
+    // Flushing does not evict: requests still draining must keep working.
+    assert_eq!(temp.registry.tenant_count(), 2);
+}
+
+#[test]
+fn flushing_a_deployment_that_persists_nothing_is_a_no_op() {
+    let registry = registry();
+    serve(
+        &registry,
+        &verifier(),
+        Request::json("POST", "/api/mcp/document", SYNC_BODY).with_bearer("tokA"),
+    );
+    assert_eq!(registry.flush_all(), 0);
+}
+
+#[test]
+fn a_deployment_that_evicts_but_persists_nothing_refuses_to_start() {
+    use crate::web_canvas_server::online_run_loop::check_persistence_configured;
+
+    // The dangerous default: eviction on, data directory unset. Starting here
+    // means every idle account's document is destroyed on its first timer.
+    let refused = check_persistence_configured(false, false, 1800).unwrap_err();
+    let message = refused.to_string();
+    assert!(message.contains("OPENPENCIL_ONLINE_DATA_DIR"), "{message}");
+    assert!(message.contains("OPENPENCIL_ONLINE_EPHEMERAL"), "{message}");
+
+    // Configured persistence is the normal deployment.
+    assert!(check_persistence_configured(true, false, 1800).is_ok());
+    // An explicit opt-in is the demo, and says so.
+    assert!(check_persistence_configured(false, true, 1800).is_ok());
+    // Both is fine — the data directory simply wins.
+    assert!(check_persistence_configured(true, true, 1800).is_ok());
+}

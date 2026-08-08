@@ -39,13 +39,11 @@ use super::tenant::{now_unix, TenantLimits, TenantRegistry};
 use super::tenant_auth::{IdentityVerifier, PresentedCredentials, StaticVerifier};
 use super::*;
 
-/// How often the accept loop sweeps for idle tenants.
-///
-/// Eviction is cheap (a map scan under one lock) and the deadline it enforces
-/// is measured in minutes, so a sweep tied to connection arrivals would be
-/// both too eager under load and never under idle. This is the floor between
-/// sweeps, checked as connections arrive.
-const EVICT_SWEEP_INTERVAL_SECS: u64 = 60;
+/// Longest gap between idle sweeps, however long the idle deadline is.
+const MAX_SWEEP_INTERVAL_SECS: u64 = 300;
+
+/// Opt-in to running with no persistence at all. Demo use only.
+pub const EPHEMERAL_ENV: &str = "OPENPENCIL_ONLINE_EPHEMERAL";
 
 /// Run the multi-account web-canvas daemon.
 ///
@@ -63,6 +61,23 @@ pub fn run_online_web_canvas(options: ServeWebOptions) -> Result<()> {
         );
     }
     let limits = TenantLimits::from_env();
+    let store = super::tenant_store::TenantStore::from_env();
+    // Eviction without persistence silently destroys documents: a tenant goes
+    // idle, is reclaimed to free memory, and the account's work is simply
+    // gone. That is defensible for a demo and indefensible for a deployment,
+    // and the two are indistinguishable from inside the process — so the
+    // operator has to say which one this is.
+    check_persistence_configured(
+        store.is_enabled(),
+        ephemeral_opt_in(),
+        limits.idle_evict_secs,
+    )?;
+    if !store.is_enabled() {
+        eprintln!(
+            "openpencil --serve-web --online: {EPHEMERAL_ENV} is set — evicted accounts lose \
+             their documents. Never use this for a deployment."
+        );
+    }
     let allow_origins = online_policy::allowed_origins_from_env();
     if allow_origins.is_empty() {
         // Not fatal: a same-origin deployment behind a reverse proxy needs no
@@ -100,10 +115,15 @@ pub fn run_online_web_canvas(options: ServeWebOptions) -> Result<()> {
         ),
     }
 
-    let registry = Arc::new(TenantRegistry::new(bound, limits, allow_origins));
+    let registry = Arc::new(TenantRegistry::with_store(
+        bound,
+        limits,
+        allow_origins,
+        store,
+    ));
     let conn_count = Arc::new(AtomicUsize::new(0));
     let shutdown = Arc::new(AtomicBool::new(false));
-    let mut last_sweep = now_unix();
+    spawn_sweeper(&registry, &shutdown);
 
     for stream in listener.incoming() {
         if shutdown.load(Ordering::Acquire) {
@@ -116,11 +136,6 @@ pub fn run_online_web_canvas(options: ServeWebOptions) -> Result<()> {
                 continue;
             }
         };
-        let now = now_unix();
-        if now.saturating_sub(last_sweep) >= EVICT_SWEEP_INTERVAL_SECS {
-            last_sweep = now;
-            registry.evict_idle(now);
-        }
         if conn_count.load(Ordering::Acquire) >= limits.max_conns {
             let _ = s.set_write_timeout(Some(IO_TIMEOUT));
             let _ = crate::mcp_serve::write_mcp_http_response(
@@ -154,8 +169,99 @@ pub fn run_online_web_canvas(options: ServeWebOptions) -> Result<()> {
             conn_count.fetch_sub(1, Ordering::AcqRel);
         }
     }
-    eprintln!("openpencil --serve-web --online: shutdown requested; exiting");
+    // The sweeper observes the same flag and retires on its next wake.
+    shutdown.store(true, Ordering::Release);
+    let flushed = registry.flush_all();
+    eprintln!(
+        "openpencil --serve-web --online: shutdown requested; flushed {flushed} account(s); \
+         exiting"
+    );
     Ok(())
+}
+
+/// Refuse to start a deployment that evicts accounts but keeps nothing.
+///
+/// Pure so the decision is testable without a socket or the environment. The
+/// two states this separates — "a demo that intentionally forgets" and "a
+/// deployment whose data directory was left unset" — look identical from
+/// inside the process, and only one of them is acceptable. So the operator
+/// has to say which, rather than the daemon guessing and silently destroying
+/// documents on the first idle timer.
+pub(super) fn check_persistence_configured(
+    store_enabled: bool,
+    ephemeral: bool,
+    idle_evict_secs: u64,
+) -> Result<()> {
+    if store_enabled || ephemeral {
+        return Ok(());
+    }
+    Err(WebCanvasError::Config(format!(
+        "--online evicts idle accounts after {idle_evict_secs}s but no {} is configured, so \
+         their documents would be discarded. Set {} to persist them, or set {EPHEMERAL_ENV}=1 \
+         to accept that this deployment keeps nothing.",
+        super::tenant_store::DATA_DIR_ENV,
+        super::tenant_store::DATA_DIR_ENV,
+    )))
+}
+
+/// Whether the operator accepted a deployment that persists nothing.
+fn ephemeral_opt_in() -> bool {
+    std::env::var(EPHEMERAL_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
+}
+
+/// Run the idle sweep on its own clock.
+///
+/// Eviction used to piggyback on connection arrivals, which meant the one
+/// state it exists for — a daemon nobody is talking to — was exactly the state
+/// it never ran in: idle accounts stayed resident indefinitely and were never
+/// written to disk. This thread observes `shutdown` on every wake, so it
+/// retires within one interval of the daemon being asked to stop.
+fn spawn_sweeper(registry: &Arc<TenantRegistry>, shutdown: &Arc<AtomicBool>) {
+    let registry = Arc::clone(registry);
+    let shutdown = Arc::clone(shutdown);
+    let interval = sweep_interval_secs(registry.limits().idle_evict_secs);
+    let spawned = thread::Builder::new()
+        .name("op-serve-web-online-sweeper".into())
+        .spawn(move || {
+            while !shutdown.load(Ordering::Acquire) {
+                std::thread::sleep(std::time::Duration::from_secs(interval));
+                if shutdown.load(Ordering::Acquire) {
+                    return;
+                }
+                let evicted = registry.evict_idle(now_unix());
+                if evicted > 0 {
+                    eprintln!(
+                        "openpencil --serve-web --online: reclaimed {evicted} idle account(s)"
+                    );
+                }
+            }
+        });
+    if spawned.is_err() {
+        eprintln!(
+            "openpencil --serve-web --online: could not start the idle sweeper; accounts will \
+             stay resident until a connection triggers a sweep"
+        );
+    }
+}
+
+/// How often to sweep, given the idle deadline.
+///
+/// A quarter of the deadline bounds how long past its timer a tenant can
+/// linger, and the ceiling keeps a very long deadline from meaning the daemon
+/// effectively never sweeps. The floor keeps a short test deadline from
+/// spinning the thread.
+pub(super) const fn sweep_interval_secs(idle_evict_secs: u64) -> u64 {
+    let quarter = idle_evict_secs / 4;
+    if quarter < 1 {
+        1
+    } else if quarter > MAX_SWEEP_INTERVAL_SECS {
+        MAX_SWEEP_INTERVAL_SECS
+    } else {
+        quarter
+    }
 }
 
 /// Pick the identity verifier this deployment runs.

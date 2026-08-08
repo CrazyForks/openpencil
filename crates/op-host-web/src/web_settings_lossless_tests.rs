@@ -238,7 +238,7 @@ fn acp_scrub_preserves_unknown_general_fields_and_leaves_snapshot_read_only() {
     assert!(!load.loaded);
     assert!(load.unsupported_version);
     assert_eq!(writes.len(), 1);
-    assert_eq!(writes[0].0, STORAGE_KEY);
+    assert_eq!(writes[0].0, super::settings_storage_key());
     assert!(writes[0].1.contains("future_setting"));
     assert!(writes[0].1.contains("future-secret"));
     assert!(!writes[0].1.contains("acp_agents"));
@@ -266,7 +266,7 @@ fn acp_scrub_preserves_unknown_credential_fields_and_disables_future_writes() {
     assert!(!load.loaded);
     assert!(load.unsupported_version);
     assert_eq!(writes.len(), 1);
-    assert_eq!(writes[0].0, CREDENTIAL_STORAGE_KEY);
+    assert_eq!(writes[0].0, super::credential_storage_key());
     assert!(writes[0].1.contains("future_credentials"));
     assert!(writes[0].1.contains("future-credential-secret"));
     assert!(!writes[0].1.contains("acp_agents"));

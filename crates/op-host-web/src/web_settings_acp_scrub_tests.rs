@@ -41,7 +41,7 @@ fn legacy_acp_in_separate_credentials_is_removed_without_losing_builtin_keys() {
     );
     assert!(state.editor_ui.agent_settings.acp_agents.is_empty());
     assert_eq!(writes.len(), 1);
-    assert_eq!(writes[0].0, CREDENTIAL_STORAGE_KEY);
+    assert_eq!(writes[0].0, super::credential_storage_key());
     assert!(writes[0].1.contains("sk-must-survive-acp-removal"));
     assert!(!writes[0].1.contains("acp_agents"));
     assert!(!writes[0].1.contains("acp-command-secret"));
@@ -91,7 +91,7 @@ fn separate_acp_scrub_does_not_touch_future_general_settings() {
     assert!(load.unsupported_version);
     assert!(load.initial_settings_fingerprint(&state).is_none());
     assert_eq!(writes.len(), 1);
-    assert_eq!(writes[0].0, CREDENTIAL_STORAGE_KEY);
+    assert_eq!(writes[0].0, super::credential_storage_key());
     assert!(writes[0].1.contains("sk-must-survive-acp-removal"));
     assert!(!writes[0].1.contains("acp_agents"));
     assert!(!writes[0].1.contains("acp-command-secret"));
@@ -143,8 +143,8 @@ fn acp_is_scrubbed_from_general_and_separate_snapshots_in_one_ordered_migration(
     assert!(load.loaded);
     assert!(!load.write_pending);
     assert_eq!(writes.len(), 2);
-    assert_eq!(writes[0].0, CREDENTIAL_STORAGE_KEY);
-    assert_eq!(writes[1].0, STORAGE_KEY);
+    assert_eq!(writes[0].0, super::credential_storage_key());
+    assert_eq!(writes[1].0, super::settings_storage_key());
     for (_, json) in &writes {
         assert!(!json.contains("acp_agents"));
         assert!(!json.contains("general-acp-secret"));
@@ -181,7 +181,7 @@ fn legacy_acp_configuration_is_removed_without_loading_or_migrating_it() {
     assert!(!load.loaded);
     assert!(!load.write_pending);
     assert_eq!(writes.len(), 1);
-    assert_eq!(writes[0].0, STORAGE_KEY);
+    assert_eq!(writes[0].0, super::settings_storage_key());
     assert!(!writes[0].1.contains("acp_agents"));
     assert!(!writes[0].1.contains("connected"));
     assert!(!writes[0].1.contains("legacy-command-secret"));
@@ -214,7 +214,7 @@ fn failed_supported_acp_only_scrub_retries_without_authoritative_empty_credentia
     assert!(!load.unsupported_version);
     assert!(load.write_pending);
     assert_eq!(initial_writes.len(), 1);
-    assert_eq!(initial_writes[0].0, STORAGE_KEY);
+    assert_eq!(initial_writes[0].0, super::settings_storage_key());
 
     let mut baseline = load.initial_fingerprint(&state);
     let mut retry_writes = Vec::new();
@@ -226,7 +226,7 @@ fn failed_supported_acp_only_scrub_retries_without_authoritative_empty_credentia
     assert!(saved.is_none());
     assert!(!credential_migration_pending(&baseline));
     assert_eq!(retry_writes.len(), 1);
-    assert_eq!(retry_writes[0].0, STORAGE_KEY);
+    assert_eq!(retry_writes[0].0, super::settings_storage_key());
     assert!(!retry_writes[0].1.contains("acp_agents"));
     assert!(!retry_writes[0].1.contains("connected"));
     assert!(!retry_writes[0].1.contains("supported-acp-secret"));
@@ -247,7 +247,7 @@ fn failed_supported_acp_only_scrub_retries_without_authoritative_empty_credentia
         .is_some()
     );
     assert_eq!(user_writes.len(), 1);
-    assert_eq!(user_writes[0].0, CREDENTIAL_STORAGE_KEY);
+    assert_eq!(user_writes[0].0, super::credential_storage_key());
     assert!(user_writes[0].1.contains("sk-user-edit"));
 }
 
@@ -274,7 +274,7 @@ fn failed_read_only_credential_scrub_retries_without_enabling_user_writes() {
     assert!(load.unsupported_version);
     assert!(load.write_pending);
     assert_eq!(initial_writes.len(), 1);
-    assert_eq!(initial_writes[0].0, CREDENTIAL_STORAGE_KEY);
+    assert_eq!(initial_writes[0].0, super::credential_storage_key());
 
     let mut baseline = load.initial_fingerprint(&state);
     let mut retry_writes = Vec::new();
@@ -286,7 +286,7 @@ fn failed_read_only_credential_scrub_retries_without_enabling_user_writes() {
     assert!(saved.is_none());
     assert!(!credential_migration_pending(&baseline));
     assert_eq!(retry_writes.len(), 1);
-    assert_eq!(retry_writes[0].0, CREDENTIAL_STORAGE_KEY);
+    assert_eq!(retry_writes[0].0, super::credential_storage_key());
     assert!(!retry_writes[0].1.contains("acp_agents"));
     assert!(!retry_writes[0].1.contains("acp-secret"));
     assert!(retry_writes[0].1.contains("future-secret-must-survive"));
@@ -329,7 +329,7 @@ fn failed_read_only_general_scrub_retries_without_creating_credential_snapshot()
     assert!(load.unsupported_version);
     assert!(load.write_pending);
     assert_eq!(initial_writes.len(), 1);
-    assert_eq!(initial_writes[0].0, STORAGE_KEY);
+    assert_eq!(initial_writes[0].0, super::settings_storage_key());
 
     let mut baseline = load.initial_fingerprint(&state);
     let mut retry_writes = Vec::new();
@@ -341,7 +341,7 @@ fn failed_read_only_general_scrub_retries_without_creating_credential_snapshot()
     assert!(saved.is_none());
     assert!(!credential_migration_pending(&baseline));
     assert_eq!(retry_writes.len(), 1);
-    assert_eq!(retry_writes[0].0, STORAGE_KEY);
+    assert_eq!(retry_writes[0].0, super::settings_storage_key());
     assert!(!retry_writes[0].1.contains("acp_agents"));
     assert!(!retry_writes[0].1.contains("connected"));
     assert!(!retry_writes[0].1.contains("general-acp-secret"));
@@ -380,21 +380,21 @@ fn partial_read_only_scrub_retry_clears_only_the_successful_write() {
 
     assert!(load.write_pending);
     assert_eq!(initial_writes.len(), 1);
-    assert_eq!(initial_writes[0].0, CREDENTIAL_STORAGE_KEY);
+    assert_eq!(initial_writes[0].0, super::credential_storage_key());
 
     let mut baseline = load.initial_fingerprint(&state);
     let mut first_retry = Vec::new();
     assert!(
         save_credentials_if_changed_with(&state, &mut baseline, |key, json| {
             first_retry.push((key.to_string(), json.to_string()));
-            key == CREDENTIAL_STORAGE_KEY
+            *key == super::credential_storage_key()
         })
         .is_none()
     );
     assert!(credential_migration_pending(&baseline));
     assert_eq!(first_retry.len(), 2);
-    assert_eq!(first_retry[0].0, CREDENTIAL_STORAGE_KEY);
-    assert_eq!(first_retry[1].0, STORAGE_KEY);
+    assert_eq!(first_retry[0].0, super::credential_storage_key());
+    assert_eq!(first_retry[1].0, super::settings_storage_key());
     assert!(first_retry[0].1.contains("future-credential-secret"));
     assert!(!first_retry[0].1.contains("credential-acp-secret"));
 
@@ -408,7 +408,7 @@ fn partial_read_only_scrub_retry_clears_only_the_successful_write() {
     );
     assert!(!credential_migration_pending(&baseline));
     assert_eq!(second_retry.len(), 1);
-    assert_eq!(second_retry[0].0, STORAGE_KEY);
+    assert_eq!(second_retry[0].0, super::settings_storage_key());
     assert!(second_retry[0].1.contains("future-general-secret"));
     assert!(!second_retry[0].1.contains("general-acp-secret"));
 }

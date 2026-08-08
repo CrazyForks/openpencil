@@ -35,8 +35,8 @@ impl CredentialLoad {
 }
 
 pub(crate) fn load_into(state: &mut EditorState) -> CredentialLoad {
-    let settings_raw = storage_get(STORAGE_KEY);
-    let credential_raw = storage_get(CREDENTIAL_STORAGE_KEY);
+    let settings_raw = storage_get(&super::settings_storage_key());
+    let credential_raw = storage_get(&super::credential_storage_key());
     let load = load_into_with(
         state,
         settings_raw.as_deref(),
@@ -68,7 +68,7 @@ where
             let sanitized = stored.sanitized_settings_json;
             let settings_saved = sanitized
                 .as_deref()
-                .is_none_or(|json| persist(STORAGE_KEY, json));
+                .is_none_or(|json| persist(&super::settings_storage_key(), json));
             CredentialLoad {
                 loaded: true,
                 write_pending: !settings_saved,
@@ -85,11 +85,11 @@ where
             let credential = stored.sanitized_credential_json.or(canonical_credential);
             let credential_saved = credential
                 .as_deref()
-                .is_some_and(|json| persist(CREDENTIAL_STORAGE_KEY, json));
+                .is_some_and(|json| persist(&super::credential_storage_key(), json));
             let settings_saved = credential_saved
                 && sanitized
                     .as_deref()
-                    .is_none_or(|json| persist(STORAGE_KEY, json));
+                    .is_none_or(|json| persist(&super::settings_storage_key(), json));
             let write_pending = !credential_saved || !settings_saved;
             CredentialLoad {
                 loaded: true,
@@ -106,7 +106,7 @@ where
                 let sanitized = stored.sanitized_settings_json;
                 let settings_saved = sanitized
                     .as_deref()
-                    .is_none_or(|json| persist(STORAGE_KEY, json));
+                    .is_none_or(|json| persist(&super::settings_storage_key(), json));
                 return CredentialLoad {
                     loaded: false,
                     write_pending: !settings_saved,
@@ -121,11 +121,11 @@ where
             let credential = credentials_json(state);
             let credential_saved = credential
                 .as_deref()
-                .is_some_and(|json| persist(CREDENTIAL_STORAGE_KEY, json));
+                .is_some_and(|json| persist(&super::credential_storage_key(), json));
             let settings_saved = credential_saved
                 && sanitized
                     .as_deref()
-                    .is_none_or(|json| persist(STORAGE_KEY, json));
+                    .is_none_or(|json| persist(&super::settings_storage_key(), json));
             let write_pending = !credential_saved || !settings_saved;
             CredentialLoad {
                 // Both legacy credentials and a healed invalid separate
@@ -146,12 +146,12 @@ where
             let credential = stored.sanitized_credential_json;
             let credential_saved = credential
                 .as_deref()
-                .is_none_or(|json| persist(CREDENTIAL_STORAGE_KEY, json));
+                .is_none_or(|json| persist(&super::credential_storage_key(), json));
             let sanitized = stored.sanitized_settings_json;
             let settings_saved = credential_saved
                 && sanitized
                     .as_deref()
-                    .is_none_or(|json| persist(STORAGE_KEY, json));
+                    .is_none_or(|json| persist(&super::settings_storage_key(), json));
             CredentialLoad {
                 loaded: false,
                 write_pending: !credential_saved || !settings_saved,
@@ -166,7 +166,7 @@ where
             let sanitized = stored.sanitized_settings_json;
             let settings_saved = sanitized
                 .as_deref()
-                .is_none_or(|json| persist(STORAGE_KEY, json));
+                .is_none_or(|json| persist(&super::settings_storage_key(), json));
             CredentialLoad {
                 loaded: false,
                 write_pending: !settings_saved,
@@ -306,7 +306,9 @@ fn clear_local_credentials(state: &mut EditorState) {
 }
 
 pub(crate) fn save_if_changed(state: &EditorState, before: &mut Fingerprint) -> bool {
-    let saved = save_if_changed_with(state, before, |json| storage_set_checked(STORAGE_KEY, json));
+    let saved = save_if_changed_with(state, before, |json| {
+        storage_set_checked(&super::settings_storage_key(), json)
+    });
     if saved {
         clear_storage_failure();
     } else if fingerprint(state) != *before {
@@ -376,7 +378,7 @@ where
         return None;
     }
     let json = credentials_json(state)?;
-    if !persist(CREDENTIAL_STORAGE_KEY, &json) {
+    if !persist(&super::credential_storage_key(), &json) {
         return None;
     }
     *before = next;
@@ -388,13 +390,13 @@ where
     F: FnMut(&str, &str) -> bool,
 {
     if let Some(json) = before.pending_credential_json.clone() {
-        if !persist(CREDENTIAL_STORAGE_KEY, &json) {
+        if !persist(&super::credential_storage_key(), &json) {
             return false;
         }
         before.pending_credential_json = None;
     }
     if let Some(json) = before.pending_settings_json.clone() {
-        if !persist(STORAGE_KEY, &json) {
+        if !persist(&super::settings_storage_key(), &json) {
             return false;
         }
         before.pending_settings_json = None;

@@ -459,6 +459,35 @@ impl TenantRegistry {
         }
     }
 
+    /// Write every resident tenant to disk.
+    ///
+    /// Called on controlled shutdown. Eviction is the only other writer, and
+    /// a daemon that is asked to stop has by definition not waited out anyone's
+    /// idle timer — so without this, every account that was active at the
+    /// moment of a deploy loses whatever it had not had evicted.
+    ///
+    /// Returns how many were written. Tenants are NOT removed: the process is
+    /// going away regardless, and removing them would only race the requests
+    /// still draining.
+    pub fn flush_all(&self) -> usize {
+        if !self.store.is_enabled() {
+            return 0;
+        }
+        let tenants = self.lock();
+        let mut written = 0;
+        for (id, tenant) in tenants.iter() {
+            let guard = tenant.state.lock().unwrap_or_else(|p| p.into_inner());
+            match self.store.save(id, &guard.editor, &tenant.shared_with()) {
+                Ok(()) => written += 1,
+                Err(error) => eprintln!(
+                    "openpencil --serve-web --online: could not flush a tenant on shutdown \
+                     ({error})"
+                ),
+            }
+        }
+        written
+    }
+
     /// Persist a tenant's access list, if persistence is on.
     pub fn persist_acl(&self, user_id: &str, tenant: &Tenant) {
         if !self.store.is_enabled() {

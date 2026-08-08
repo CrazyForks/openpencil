@@ -4184,6 +4184,7 @@ dependencies = [
  "op-figma",
  "op-html",
  "op-pen-loader",
+ "op-util",
  "serde",
  "serde_json",
  "ttf-parser",

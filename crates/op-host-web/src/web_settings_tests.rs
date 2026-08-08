@@ -82,7 +82,7 @@ fn legacy_mcp_flags_drop_gemini_without_shifting_google_antigravity() {
     );
     let rewritten = writes
         .iter()
-        .find_map(|(key, json)| (key == STORAGE_KEY).then_some(json))
+        .find_map(|(key, json)| (*key == super::settings_storage_key()).then_some(json))
         .expect("legacy positional settings should be rewritten");
     let value: serde_json::Value = serde_json::from_str(rewritten).expect("rewritten settings");
     assert_eq!(
@@ -380,7 +380,7 @@ fn future_credential_snapshot_remains_read_only_after_a_provider_edit() {
     );
     let mut writes = 0;
     let saved = save_credentials_if_changed_with(&state, &mut baseline, |key, _| {
-        if key == CREDENTIAL_STORAGE_KEY {
+        if *key == super::credential_storage_key() {
             writes += 1;
         }
         true
@@ -487,7 +487,7 @@ fn corrupt_separate_snapshot_queues_its_persisted_empty_replacement_for_server_s
     assert!(!load.write_pending);
     let credential_write = writes
         .iter()
-        .find(|(key, _)| key == CREDENTIAL_STORAGE_KEY)
+        .find(|(key, _)| *key == super::credential_storage_key())
         .expect("the corrupt credential snapshot is replaced");
     let value: serde_json::Value =
         serde_json::from_str(&credential_write.1).expect("replacement is valid JSON");
@@ -680,7 +680,7 @@ fn failed_legacy_credential_write_stays_loaded_and_retries_before_sanitizing() {
     assert!(load.loaded);
     assert!(load.write_pending);
     assert_eq!(first_writes.len(), 1);
-    assert_eq!(first_writes[0].0, CREDENTIAL_STORAGE_KEY);
+    assert_eq!(first_writes[0].0, super::credential_storage_key());
     assert!(first_writes[0].1.contains("sk-retry-migration"));
 
     let mut baseline = load.initial_fingerprint(&state);
@@ -695,8 +695,8 @@ fn failed_legacy_credential_write_stays_loaded_and_retries_before_sanitizing() {
     // sync. Retrying local persistence must not emit a second sync payload.
     assert!(saved.is_none());
     assert_eq!(retry_writes.len(), 2);
-    assert_eq!(retry_writes[0].0, CREDENTIAL_STORAGE_KEY);
-    assert_eq!(retry_writes[1].0, STORAGE_KEY);
+    assert_eq!(retry_writes[0].0, super::credential_storage_key());
+    assert_eq!(retry_writes[1].0, super::settings_storage_key());
     assert!(!retry_writes[1].1.contains("sk-retry-migration"));
     assert_eq!(baseline, credential_fingerprint(&state));
 }

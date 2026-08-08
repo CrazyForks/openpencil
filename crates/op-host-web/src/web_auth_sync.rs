@@ -175,6 +175,13 @@ fn fetch_status<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, base: &str)
             let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&body) else {
                 return;
             };
+            // Identity first: everything below paints for an account, so the
+            // account has to be settled before any of it runs.
+            if crate::identity_epoch::observe_subject(
+                crate::identity_epoch::subject_from_status(&body).as_deref(),
+            ) {
+                crate::live_sync_glue::reset_for_new_identity(&inner);
+            }
             sync_account_avatar(&inner, parsed["avatar_revision"].as_str());
             let mut b = inner.borrow_mut();
             let ui = &mut b.host_mut().editor_state_mut().editor_ui;

@@ -30,6 +30,31 @@ const CREDENTIAL_PAYLOAD_VERSION: u32 = 2;
 const STORAGE_KEY: &str = "openpencil-rust-web-settings";
 const CREDENTIAL_STORAGE_KEY: &str = "openpencil-rust-web-credentials";
 
+/// Per-account storage keys.
+///
+/// The base keys above are same-origin and carry no account dimension, so two
+/// accounts using one browser shared one settings blob — and one account's
+/// provider API keys were readable by the next. Every read and write goes
+/// through these instead, partitioned by the signed-in subject
+/// (`identity_epoch::current_subject`, `"anon"` before sign-in).
+///
+/// The old unpartitioned keys are deliberately NOT migrated. They may hold a
+/// different account's credentials than the one now signed in, and there is no
+/// way to tell whose they were — so adopting them is exactly the leak this
+/// closes. They are left in place (untouched, unread) rather than deleted, so
+/// a user who downgrades does not lose their settings.
+pub(crate) fn settings_storage_key() -> String {
+    partitioned(STORAGE_KEY)
+}
+
+pub(crate) fn credential_storage_key() -> String {
+    partitioned(CREDENTIAL_STORAGE_KEY)
+}
+
+fn partitioned(base: &str) -> String {
+    format!("{base}::{}", crate::identity_epoch::current_subject())
+}
+
 #[path = "web_settings_legacy.rs"]
 mod legacy;
 #[path = "web_settings_storage.rs"]

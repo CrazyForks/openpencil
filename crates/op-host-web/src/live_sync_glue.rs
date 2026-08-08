@@ -120,83 +120,7 @@ fn serialize_sync_document(doc: &op_editor_core::PenDocument) -> SyncDocumentJso
 /// once in `mount_ck` and handed to both this module's ticks and the
 /// postMessage bridge, so both sides observe and mutate the exact same
 /// `SyncGate` instance (a v1 defect — the bridge couldn't reach a local
-/// `WebSyncClient` — is fixed by sharing this one struct).
-pub(crate) struct SyncController {
-    pub gate: SyncGate,
-    pub client: WebSyncClient,
-    pub push_busy: bool,
-    /// A document identity already measured above the periodic push limit.
-    /// WASM linear memory does not shrink after a giant temporary JSON string,
-    /// so do not rebuild the same oversized snapshot every two seconds.
-    oversize_identity: Option<(u64, u64, u64)>,
-}
-
-impl SyncController {
-    pub(crate) fn new() -> Self {
-        Self {
-            gate: SyncGate::default(),
-            client: WebSyncClient::new(),
-            push_busy: false,
-            oversize_identity: None,
-        }
-    }
-}
-
-pub(crate) type SharedSync = Rc<RefCell<SyncController>>;
-
-thread_local! {
-    /// The mounted editor's sync controller, exposed weakly so File → Save can
-    /// consume the daemon's returned version without creating an ownership
-    /// cycle or threading sync state through every DOM file-action callback.
-    static ACTIVE_SYNC: RefCell<Option<Weak<RefCell<SyncController>>>> = const { RefCell::new(None) };
-}
-
-/// Commit a successful daemon Save as a sync acknowledgement.
-///
-/// The daemon has already installed exactly the saved snapshot. Recording its
-/// version prevents the next probe from downloading and replacing the same
-/// potentially huge document, while the snapshot pair reopens the pull gate.
-/// A later local edit still differs from this pair and remains eligible for a
-/// normal push (or another explicit Save for oversized documents).
-pub(crate) fn acknowledge_daemon_save(
-    version: u64,
-    generation: u64,
-    revision: u64,
-    active_page_index: usize,
-    preserve_authored_geometry: bool,
-) {
-    ACTIVE_SYNC.with(|slot| {
-        let Some(sync) = slot.borrow().as_ref().and_then(Weak::upgrade) else {
-            return;
-        };
-        let mut sync = sync.borrow_mut();
-        sync.client.mark_applied(version);
-        sync.client
-            .note_applied_snapshot_without_hash(active_page_index, preserve_authored_geometry);
-        sync.gate.note_synced(generation, revision);
-    });
-}
-
-/// The document-identity pair every gating decision is keyed on. Read fresh
-/// from the live editor state at each decision point — never cached — so an
-/// edit that lands between a tick firing and its async response landing is
-/// always observed.
-fn current_pair<C: RepaintContext>(b: &C) -> (u64, u64) {
-    let s = b.host().editor_state();
-    (s.document_generation(), s.document_revision())
-}
-
-fn current_oversize_identity<C: RepaintContext>(b: &C) -> (u64, u64, u64) {
-    let host = b.host();
-    let state = host.editor_state();
-    (
-        host.document_epoch(),
-        state.document_generation(),
-        state.document_revision(),
-    )
-}
-
-/// Content changes advance the gate's `(generation, revision)` pair, while
+//// Content changes advance the gate's `(generation, revision)` pair, while
 /// active-page switches intentionally do not. Treat an editor-metadata delta
 /// as an additional push reason without weakening the conflict latch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -310,7 +234,15 @@ fn poll_version<C: RepaintContext + 'static>(
     let base_owned = base.to_string();
     let fetch_busy = fetch_busy.clone();
     let last_selection_key = last_selection_key.clone();
-    let on_version: Rc<dyn Fn(String)> = Rc::new(move |body: String| {
+    let on_version: Rc<dyn Fn(u16, String)> = Rc::new(move |status: u16, body: String| {
+        // A refused credential is the signal that this tab no longer speaks
+        // for the account whose document it is showing. Treating it as "no
+        // version" — which is what an untyped body read does — is what let the
+        // previous account's document sit on screen indefinitely.
+        if matches!(status, 401 | 403) {
+            note_auth_invalid();
+            return;
+        }
         // The daemon answers both counters here. Hand the collaboration one to
         // its own loop rather than opening a second probe; a `collabSeq` bump
         // must never reach the document fetch below.
@@ -340,7 +272,7 @@ fn poll_version<C: RepaintContext + 'static>(
             fetch_busy.set(false);
         }
     });
-    let _ = live_sync::get(&format!("{base}/api/mcp/version"), on_version);
+    let _ = live_sync::get_with_status(&format!("{base}/api/mcp/version"), on_version);
 }
 
 /// Auto-resolve a latched push conflict, but only inside a live session.
@@ -583,6 +515,13 @@ fn push_document_if_changed<C: RepaintContext + 'static>(
         // from the scalar baseline, not mistaken for a content change.
         reasons.editor_meta
     };
+    // The daemon refused this tab's credential. Whatever is on screen belongs
+    // to whoever was signed in before, so pushing it now would write one
+    // account's work into whichever tenant the new credential resolves to.
+    // Held until the identity reset rebuilds the tab.
+    if auth_is_invalid() {
+        return;
+    }
     // An active collaboration session cannot sequence a node id this browser
     // minted from its local counter. Hold the push rather than fork the shared
     // document; the next pull replaces the local node with the daemon's copy.
@@ -770,6 +709,34 @@ mod tests {
     }
 }
 
+thread_local! {
+    /// Raised when the daemon answered a sync request 401/403.
+    ///
+    /// A tab whose credential stopped being accepted must stop pushing: the
+    /// document on screen belongs to whoever WAS signed in, and pushing it
+    /// after a switch would write one account's work into another's tenant.
+    /// Cleared by [`clear_auth_invalid`], which the identity reset calls once
+    /// the tab has been rebuilt for the new account.
+    pub(super) static AUTH_INVALID: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+
+    /// The mounted editor's sync controller, exposed weakly so File → Save can
+    /// consume the daemon's returned version without creating an ownership
+    /// cycle or threading sync state through every DOM file-action callback.
+    pub(super) static ACTIVE_SYNC: RefCell<Option<Weak<RefCell<SyncController>>>> = const { RefCell::new(None) };
+}
+
+#[path = "live_sync_controller.rs"]
+mod live_sync_controller;
+pub(crate) use live_sync_controller::{acknowledge_daemon_save, SharedSync, SyncController};
+// Spine-local: the two identity pairs every gating decision here is keyed on.
+use live_sync_controller::{current_oversize_identity, current_pair};
+
 #[path = "live_sync_conflict.rs"]
 mod live_sync_conflict;
+#[path = "live_sync_identity.rs"]
+mod live_sync_identity;
+pub(crate) use live_sync_identity::{auth_is_invalid, note_auth_invalid, reset_for_new_identity};
+// Only the latch's own test lifts it; the reset clears it internally.
 use live_sync_conflict::{auto_resolve_is_safe, probe_serve_mode, server_is_authoritative};
+#[cfg(test)]
+pub(crate) use live_sync_identity::clear_auth_invalid;
