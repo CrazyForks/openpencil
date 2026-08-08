@@ -39,6 +39,17 @@ pub use save_payload::{
 pub use save_payload::{save_request_body, serialize_document};
 pub use save_queue::LatestSaveQueue;
 
+/// Name the browser download for the current export gets.
+///
+/// Delegates to the shared derivation the desktop save dialog
+/// pre-fills, so the same document and selection produce the same
+/// `<document>-<node>.<ext>` on both hosts. The daemon's response
+/// still carries a `fileName`, but that is a generic fallback for
+/// clients without an editor state — this host has one.
+pub fn export_download_file_name(state: &EditorState) -> String {
+    op_editor_core::export_name::default_export_file_name(state)
+}
+
 pub fn export_svg_document(state: &EditorState) -> Result<String, DocumentExportError> {
     let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
     if state.selection_count() == 1 && state.selection.anchor.is_real() {
@@ -53,14 +64,26 @@ pub fn export_svg_document(state: &EditorState) -> Result<String, DocumentExport
 
 #[derive(Debug)]
 pub struct PdfDownload {
+    /// The daemon's generic name. Read only by the deck-selection
+    /// download, which narrows the export to a board list this host
+    /// has no name for; the export dialog's PDF overrides it with
+    /// [`export_download_file_name`].
     pub file_name: String,
     pub mime: String,
     pub bytes: Vec<u8>,
 }
 
+/// A raster export the daemon rendered.
+///
+/// Deliberately carries no file name: the daemon's `fileName` is the
+/// generic fallback for clients that post a document without holding
+/// an editor state, and this host holds one — every raster download
+/// is named by [`export_download_file_name`] from the live document
+/// and selection. Parsing the field only to discard it would leave two
+/// candidate names for one file, which is how the desktop and browser
+/// names drifted apart in the first place.
 #[derive(Debug)]
 pub struct RasterDownload {
-    pub file_name: String,
     pub mime: String,
     pub bytes: Vec<u8>,
 }
@@ -81,13 +104,28 @@ fn document_value_with_editor_meta(
     Ok(document)
 }
 
-pub fn export_pdf_request_body(state: &EditorState) -> Result<String, DocumentExportError> {
+/// Body for the daemon's PDF route.
+///
+/// `boards` narrows a deck export to those board ids; `None` means the
+/// whole active page, which is what every entry point but the slides
+/// rail's "Export selected slides" row asks for. It is sent explicitly
+/// rather than re-derived daemon-side because the daemon rebuilds its
+/// `EditorState` from the posted document and that round trip does not
+/// carry the browser's selection — so the selection has to travel as
+/// data or it does not travel at all.
+pub fn export_pdf_request_body(
+    state: &EditorState,
+    boards: Option<&[String]>,
+) -> Result<String, DocumentExportError> {
     let document = document_value_with_editor_meta(state)?;
-    serde_json::to_string(&serde_json::json!({
+    let mut body = serde_json::json!({
         "document": document,
         "activePageIndex": state.ui.active_page_index,
-    }))
-    .map_err(|e| DocumentExportError::SerializeRequest(e.to_string()))
+    });
+    if let Some(boards) = boards {
+        body["boards"] = serde_json::json!(boards);
+    }
+    serde_json::to_string(&body).map_err(|e| DocumentExportError::SerializeRequest(e.to_string()))
 }
 
 pub fn parse_pdf_download_response(response: &str) -> Result<PdfDownload, DocumentExportError> {
@@ -161,12 +199,8 @@ pub fn parse_raster_download_response(
             .unwrap_or("Raster export failed");
         return Err(DocumentExportError::Daemon(message.to_string()));
     }
-    let file_name = parsed
-        .get("fileName")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or("openpencil-export.png")
-        .to_string();
+    // `fileName` is present in the response and intentionally not read
+    // here — see [`RasterDownload`].
     let mime = parsed
         .get("mime")
         .and_then(|v| v.as_str())
@@ -180,11 +214,7 @@ pub fn parse_raster_download_response(
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data)
         .map_err(|e| DocumentExportError::RasterDecode(e.to_string()))?;
-    Ok(RasterDownload {
-        file_name,
-        mime,
-        bytes,
-    })
+    Ok(RasterDownload { mime, bytes })
 }
 
 pub fn apply_open_recent_response(
@@ -401,372 +431,5 @@ pub fn attachment_file_name(name: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use op_editor_core::PenNodeExt;
-
-    #[test]
-    fn metadata_free_open_uses_first_nonempty_page_and_legacy_layout_mode() {
-        let previous = EditorState::new();
-        let source = r#"{
-          "version":"1.0.0",
-          "children":[],
-          "pages":[
-            {"id":"empty","name":"Empty","children":[]},
-            {"id":"content","name":"Content","children":[
-              {"type":"rectangle","id":"visible","x":0,"y":0,"width":10,"height":10}
-            ]}
-          ]
-        }"#;
-
-        let ingested = ingest_op_source(source, &previous).expect("legacy document loads");
-
-        assert_eq!(ingested.state.ui.active_page_index, 1);
-        assert!(!ingested.state.editor_ui.preserve_authored_geometry);
-    }
-
-    #[test]
-    fn figma_worker_canonical_source_installs_all_pages_eagerly() {
-        let source = r#"{"version":"1.0","pages":[{"id":"p1","name":"One","children":[{"type":"rectangle","id":"a"}]},{"id":"p2","name":"Two","children":[{"type":"rectangle","id":"b"}]}],"children":[]}"#;
-        let ingested = ingest_figma_temp_source(source, r#"["worker warning"]"#)
-            .expect("worker canonical source loads");
-        let pages = ingested.state.doc.pages.as_ref().expect("pages");
-        assert_eq!(pages.len(), 2);
-        assert_eq!(pages[0].children.len(), 1);
-        assert_eq!(pages[1].children.len(), 1);
-        assert!(ingested.state.editor_ui.preserve_authored_geometry);
-        assert_eq!(ingested.warnings, ["worker warning"]);
-    }
-
-    #[test]
-    fn app_preferences_preserve_runtime_font_availability() {
-        let mut previous = EditorState::new();
-        previous.editor_ui.font_import_supported = true;
-        previous.editor_ui.system_fonts_loaded = true;
-        previous.editor_ui.system_font_families = std::sync::Arc::new(vec!["PingFang SC".into()]);
-        previous.editor_ui.bundled_font_families = std::sync::Arc::new(vec!["Inter".into()]);
-        previous.editor_ui.imported_font_families = std::sync::Arc::new(vec!["Brand Sans".into()]);
-        let mut next = EditorState::new();
-
-        preserve_app_preferences(&previous, &mut next);
-
-        assert!(next.editor_ui.font_import_supported);
-        assert!(next.editor_ui.system_fonts_loaded);
-        assert_eq!(&*next.editor_ui.system_font_families, &["PingFang SC"]);
-        assert_eq!(&*next.editor_ui.bundled_font_families, &["Inter"]);
-        assert_eq!(&*next.editor_ui.imported_font_families, &["Brand Sans"]);
-    }
-
-    #[test]
-    fn attachment_media_type_matches_desktop_image_extensions() {
-        assert_eq!(attachment_media_type_for_name("a.png"), "image/png");
-        assert_eq!(attachment_media_type_for_name("a.JPG"), "image/jpeg");
-        assert_eq!(attachment_media_type_for_name("a.jpeg"), "image/jpeg");
-        assert_eq!(attachment_media_type_for_name("a.gif"), "image/gif");
-        assert_eq!(attachment_media_type_for_name("a.webp"), "image/webp");
-        assert_eq!(attachment_media_type_for_name("a.svg"), "image/svg+xml");
-        assert_eq!(
-            attachment_media_type_for_name("notes.txt"),
-            "application/octet-stream"
-        );
-    }
-
-    #[test]
-    fn attachment_file_name_strips_path_separators() {
-        assert_eq!(attachment_file_name("../a.png"), ".._a.png");
-        assert_eq!(attachment_file_name("folder\\a.png"), "folder_a.png");
-        assert_eq!(attachment_file_name(""), "attachment");
-    }
-
-    #[test]
-    fn export_kit_document_builds_download_name_and_json() {
-        let src = r#"{"version":"1.0.0","name":"My Kit!","children":[{"type":"frame","id":"button","name":"Primary Button","reusable":true,"x":0,"y":0,"width":120,"height":40,"children":[]}]}"#;
-        let doc = op_pen_loader::load_canonical(src)
-            .expect("canonical doc")
-            .value;
-        let state = EditorState::from_document(doc);
-
-        let export = export_kit_document(&state)
-            .expect("export encodes")
-            .expect("document has reusable components");
-
-        assert_eq!(export.file_name, "My Kit.op");
-        let parsed: jian_ops_schema::PenDocument =
-            serde_json::from_str(&export.json).expect("kit json");
-        assert_eq!(parsed.name.as_deref(), Some("My Kit!"));
-        assert_eq!(parsed.children.len(), 1);
-        assert_eq!(parsed.children[0].base().id, "button");
-    }
-
-    #[test]
-    fn save_request_body_embeds_document_and_active_page_index() {
-        let src = r#"{"version":"1.0.0","children":[],"pages":[{"id":"p1","name":"One","children":[]},{"id":"p2","name":"Two","children":[{"type":"rectangle","id":"save-node","name":"Save Node","x":0,"y":0,"width":80,"height":40}]}]}"#;
-        let doc = op_pen_loader::load_canonical(src)
-            .expect("canonical doc")
-            .value;
-        let mut state = EditorState::from_document(doc);
-        assert!(state.set_active_page(1));
-
-        let body = save_request_body(&state).expect("request body");
-        let parsed: serde_json::Value = serde_json::from_str(&body).expect("json body");
-
-        assert_eq!(
-            parsed["document"]["pages"][1]["children"][0]["id"],
-            "save-node"
-        );
-        assert_eq!(parsed["activePageIndex"], 1);
-    }
-
-    #[test]
-    fn parse_save_response_accepts_daemon_success() {
-        let saved = parse_save_response(r#"{"ok":true,"version":3,"fileName":"design.op"}"#)
-            .expect("save response");
-
-        assert_eq!(saved.file_name, "design.op");
-        assert_eq!(saved.version, Some(3));
-    }
-
-    #[test]
-    fn parse_save_response_surfaces_daemon_error() {
-        let err = parse_save_response(r#"{"ok":false,"error":"No file path"}"#)
-            .expect_err("daemon error should fail");
-
-        assert_eq!(err.to_string(), "No file path");
-    }
-
-    #[test]
-    fn export_pdf_request_body_embeds_current_document() {
-        let src = r#"{"version":"1.0.0","children":[],"pages":[{"id":"p1","name":"One","children":[]},{"id":"p2","name":"Two","children":[{"type":"rectangle","id":"pdf-node","name":"PDF Node","x":0,"y":0,"width":80,"height":40}]}]}"#;
-        let doc = op_pen_loader::load_canonical(src)
-            .expect("canonical doc")
-            .value;
-        let mut state = EditorState::from_document(doc);
-        assert!(state.set_active_page(1));
-        state.editor_ui.preserve_authored_geometry = true;
-
-        let body = export_pdf_request_body(&state).expect("request body");
-        let parsed: serde_json::Value = serde_json::from_str(&body).expect("json body");
-
-        assert_eq!(
-            parsed["document"]["pages"][1]["children"][0]["id"],
-            "pdf-node"
-        );
-        assert_eq!(
-            parsed["document"]["pages"][1]["children"][0]["name"],
-            "PDF Node"
-        );
-        assert_eq!(parsed["activePageIndex"], 1);
-        assert_eq!(parsed["document"]["editorMeta"]["activePageIndex"], 1);
-        assert_eq!(
-            parsed["document"]["editorMeta"]["preserveAuthoredGeometry"],
-            true
-        );
-    }
-
-    #[test]
-    fn parse_pdf_download_response_decodes_daemon_payload() {
-        let response = serde_json::json!({
-            "ok": true,
-            "fileName": "openpencil-export.pdf",
-            "mime": "application/pdf",
-            "dataBase64": base64::engine::general_purpose::STANDARD.encode(b"%PDF-test%%EOF"),
-        })
-        .to_string();
-
-        let download = parse_pdf_download_response(&response).expect("pdf response");
-
-        assert_eq!(download.file_name, "openpencil-export.pdf");
-        assert_eq!(download.mime, "application/pdf");
-        assert_eq!(download.bytes, b"%PDF-test%%EOF");
-    }
-
-    #[test]
-    fn parse_pdf_download_response_surfaces_daemon_error() {
-        let err = parse_pdf_download_response(r#"{"ok":false,"error":"nothing to export"}"#)
-            .expect_err("daemon error should fail");
-
-        assert_eq!(err.to_string(), "nothing to export");
-    }
-
-    #[test]
-    fn export_raster_request_body_embeds_format_scale_document_and_single_selection() {
-        let src = r#"{"version":"1.0.0","children":[{"type":"rectangle","id":"raster-node","name":"Raster Node","x":0,"y":0,"width":80,"height":40}]}"#;
-        let doc = op_pen_loader::load_canonical(src)
-            .expect("canonical doc")
-            .value;
-        let mut state = EditorState::from_document(doc);
-        state.editor_ui.export_format = ExportFormat::Webp;
-        state.editor_ui.export_scale = 3.0;
-        state.editor_ui.preserve_authored_geometry = true;
-        state.set_single_selection(op_editor_core::NodeId::new("raster-node"));
-
-        let body = export_raster_request_body(&state).expect("request body");
-        let parsed: serde_json::Value = serde_json::from_str(&body).expect("json body");
-
-        assert_eq!(parsed["format"], "webp");
-        assert_eq!(parsed["scale"], 3.0);
-        assert_eq!(parsed["selectedNodeId"], "raster-node");
-        assert_eq!(parsed["activePageIndex"], 0);
-        assert_eq!(parsed["document"]["children"][0]["id"], "raster-node");
-        assert_eq!(
-            parsed["document"]["editorMeta"]["preserveAuthoredGeometry"],
-            true
-        );
-    }
-
-    #[test]
-    fn parse_raster_download_response_decodes_daemon_payload() {
-        let response = serde_json::json!({
-            "ok": true,
-            "fileName": "openpencil-export.png",
-            "mime": "image/png",
-            "dataBase64": base64::engine::general_purpose::STANDARD.encode(b"\x89PNG\r\n\x1a\n"),
-        })
-        .to_string();
-
-        let download = parse_raster_download_response(&response).expect("raster response");
-
-        assert_eq!(download.file_name, "openpencil-export.png");
-        assert_eq!(download.mime, "image/png");
-        assert_eq!(download.bytes, b"\x89PNG\r\n\x1a\n");
-    }
-
-    #[test]
-    fn parse_raster_download_response_surfaces_daemon_error() {
-        let err = parse_raster_download_response(r#"{"ok":false,"error":"nothing to export"}"#)
-            .expect_err("daemon error should fail");
-
-        assert_eq!(err.to_string(), "nothing to export");
-    }
-
-    #[test]
-    fn import_kit_source_extracts_components_with_supplied_id() {
-        let src = r#"{"version":"1.0.0","name":"Imported System","children":[{"type":"frame","id":"card","name":"Profile Card","reusable":true,"x":0,"y":0,"width":240,"height":120,"children":[]}]}"#;
-
-        let kit = import_kit_source(src, "web-kit-1".to_string())
-            .expect("import parses")
-            .expect("source has reusable components");
-
-        assert_eq!(kit.id, "web-kit-1");
-        assert_eq!(kit.name, "Imported System");
-        assert_eq!(kit.components.len(), 1);
-        assert_eq!(kit.components[0].id, "card");
-    }
-
-    #[test]
-    fn drop_kind_recognizes_html_and_zip() {
-        assert!(matches!(drop_kind("page.html"), DropKind::Html));
-        assert!(matches!(drop_kind("PAGE.HTM"), DropKind::Html));
-        assert!(matches!(drop_kind("site.CSS"), DropKind::HtmlResource));
-        assert!(matches!(drop_kind("ui.WOFF2"), DropKind::HtmlResource));
-        assert!(matches!(drop_kind("brand.otf"), DropKind::HtmlResource));
-        assert!(matches!(drop_kind("app.mjs"), DropKind::HtmlResource));
-        assert!(matches!(
-            drop_kind("manifest.webmanifest"),
-            DropKind::HtmlResource
-        ));
-        assert!(matches!(drop_kind("favicon.ico"), DropKind::Image));
-        assert!(matches!(drop_kind("photo.avif"), DropKind::Image));
-        assert!(matches!(drop_kind("saved-page.ZIP"), DropKind::Zip));
-        assert!(matches!(drop_kind("a.svg"), DropKind::Svg));
-    }
-
-    #[test]
-    fn drop_batch_plan_groups_html_with_explicit_resources() {
-        assert_eq!(
-            drop_batch_plan(&[
-                DropKind::Html,
-                DropKind::HtmlResource,
-                DropKind::Image,
-                DropKind::Svg,
-            ]),
-            DropBatchPlan::HtmlProject
-        );
-        assert_eq!(
-            drop_batch_plan(&[DropKind::Html, DropKind::Html]),
-            DropBatchPlan::HtmlProject
-        );
-    }
-
-    #[test]
-    fn drop_batch_plan_rejects_html_document_figma_and_unknown_mixes() {
-        for conflict in [DropKind::Document, DropKind::Figma, DropKind::Unsupported] {
-            assert_eq!(
-                drop_batch_plan(&[DropKind::Html, conflict]),
-                DropBatchPlan::InvalidHtmlMix
-            );
-        }
-    }
-
-    #[test]
-    fn drop_batch_plan_rejects_zip_mixes_and_keeps_other_drops_individual() {
-        assert_eq!(drop_batch_plan(&[DropKind::Zip]), DropBatchPlan::HtmlZip);
-        assert_eq!(
-            drop_batch_plan(&[DropKind::Zip, DropKind::Html]),
-            DropBatchPlan::InvalidZipMix
-        );
-        assert_eq!(
-            drop_batch_plan(&[DropKind::Image, DropKind::Svg]),
-            DropBatchPlan::Individual
-        );
-        assert_eq!(
-            drop_batch_plan(&[DropKind::HtmlResource]),
-            DropBatchPlan::Individual
-        );
-    }
-
-    #[test]
-    fn ingest_html_project_resolves_relative_stylesheets_and_images() {
-        let files = vec![
-            op_html::HtmlProjectFile {
-                relative_path: "pages/index.html".into(),
-                bytes: br#"<link rel="stylesheet" href="../assets/site.css">
-                    <div class="hero"></div>"#
-                    .to_vec(),
-            },
-            op_html::HtmlProjectFile {
-                relative_path: "assets/site.css".into(),
-                bytes: br#".hero { width: 40px; height: 30px;
-                    background-image: url('./hero icon.png?v=1'); }"#
-                    .to_vec(),
-            },
-            op_html::HtmlProjectFile {
-                relative_path: "assets/hero icon.png".into(),
-                bytes: vec![0x89, 0x50, 0x4e, 0x47, 1, 2, 3],
-            },
-        ];
-
-        let ingested = ingest_html_project(&files).expect("saved-page project imports");
-        let json = serde_json::to_string(&ingested.state.doc).expect("document serializes");
-
-        assert!(json.contains("data:image/png;base64,"));
-        assert!(!ingested
-            .warnings
-            .iter()
-            .any(|warning| warning.contains("external stylesheet skipped")));
-    }
-
-    #[test]
-    fn ingest_html_project_prefers_index_and_rejects_missing_html() {
-        let files = vec![
-            op_html::HtmlProjectFile {
-                relative_path: "other.html".into(),
-                bytes: b"<h1>Other</h1>".to_vec(),
-            },
-            op_html::HtmlProjectFile {
-                relative_path: "INDEX.HTML".into(),
-                bytes: b"<h1>Index chosen</h1>".to_vec(),
-            },
-        ];
-        let ingested = ingest_html_project(&files).expect("index candidate imports");
-        let json = serde_json::to_string(&ingested.state.doc).expect("document serializes");
-        assert!(json.contains("Index chosen"));
-        assert!(!json.contains("Other"));
-
-        assert!(ingest_html_project(&[op_html::HtmlProjectFile {
-            relative_path: "style.css".into(),
-            bytes: b"body {}".to_vec(),
-        }])
-        .is_err());
-    }
-}
+#[path = "file_actions_tests.rs"]
+mod tests;

@@ -28,10 +28,6 @@ pub struct FrameExportTarget {
     pub file_name: String,
 }
 
-/// Characters no mainstream filesystem accepts in a name (the Windows
-/// set is the strict superset, so honoring it keeps exports portable).
-const ILLEGAL_NAME_CHARS: [char; 9] = ['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
-
 /// Cap on the name portion of an export file name, in characters.
 /// Long AI-authored frame names would otherwise blow past per-path
 /// limits once the directory prefix is added.
@@ -126,25 +122,14 @@ fn strip_matching_ordinal(name: &str, index: usize) -> String {
     stripped.to_string()
 }
 
-/// Strip the characters a path cannot carry. Illegal characters and
-/// control codes become `-`, runs of `-` collapse, and leading /
-/// trailing separators, whitespace and dots are trimmed (a trailing
-/// dot is itself illegal on Windows). Returns an empty string when
-/// nothing printable survives — the caller substitutes a fallback.
+/// Strip the characters a path cannot carry, under this planner's
+/// per-name cap. The character rules themselves live in
+/// [`crate::export_name::sanitize_name_component`] so batch and
+/// single-shot exports cannot disagree on what a legal name is.
+/// Returns an empty string when nothing printable survives — the
+/// caller substitutes a fallback.
 pub fn sanitize_frame_name(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    for ch in name.chars() {
-        let replace = ILLEGAL_NAME_CHARS.contains(&ch) || ch.is_control();
-        if replace {
-            if !out.ends_with('-') {
-                out.push('-');
-            }
-        } else {
-            out.push(ch);
-        }
-    }
-    let trimmed = out.trim_matches(|c: char| c == '-' || c == '.' || c.is_whitespace());
-    trimmed.chars().take(MAX_NAME_CHARS).collect::<String>()
+    crate::export_name::sanitize_name_component(name, MAX_NAME_CHARS)
 }
 
 /// Return `<stem>.<ext>`, appending `-2`, `-3`, … to the stem until the

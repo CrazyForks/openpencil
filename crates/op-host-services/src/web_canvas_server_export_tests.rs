@@ -108,6 +108,65 @@ fn post_export_pdf_gives_a_deck_one_page_per_board() {
     assert_eq!(s.version, 0, "export must not mutate sync version");
 }
 
+/// The slides rail's "Export selected slides" row posts a `boards` list.
+/// The browser's SELECTION cannot survive the document round-trip, so this
+/// field is the only record of it that reaches the daemon — dropping it
+/// would silently ship the whole deck.
+#[test]
+fn post_export_pdf_honours_a_boards_filter() {
+    use base64::Engine as _;
+
+    let mut s = fresh_state();
+    let export_body = r##"{"boards":["s1","s3"],"document":{"version":"1.0.0","editorMeta":{"scenario":"slides"},"children":[
+        {"id":"s1","type":"frame","name":"Cover","x":0,"y":0,"width":320,"height":180,"fill":[{"type":"solid","color":"#204080"}]},
+        {"id":"s2","type":"frame","name":"Agenda","x":400,"y":0,"width":640,"height":360,"fill":[{"type":"solid","color":"#204080"}]},
+        {"id":"s3","type":"frame","name":"End","x":1200,"y":0,"width":200,"height":100,"fill":[{"type":"solid","color":"#204080"}]}
+    ]}}"##;
+
+    let r = handle_web_canvas_request("POST", "/api/export/pdf", export_body, &mut s);
+
+    assert!(r.status.starts_with("200"), "{}", r.body);
+    let parsed: serde_json::Value = serde_json::from_str(&r.body).expect("json body");
+    let pdf = base64::engine::general_purpose::STANDARD
+        .decode(parsed["dataBase64"].as_str().expect("dataBase64 string"))
+        .expect("base64 pdf");
+    let text = String::from_utf8_lossy(&pdf);
+    assert!(
+        text.contains("/MediaBox [0 0 320 180]") && text.contains("/MediaBox [0 0 200 100]"),
+        "the two named boards must be the pages"
+    );
+    assert!(
+        !text.contains("/MediaBox [0 0 640 360]"),
+        "the unnamed board must NOT be a page"
+    );
+    assert_eq!(s.version, 0, "export must not mutate sync version");
+}
+
+/// An empty `boards` array means "the caller narrowed this to nothing",
+/// which must fail rather than collapse onto the missing-field reading and
+/// ship every slide.
+#[test]
+fn post_export_pdf_with_an_empty_boards_filter_exports_nothing() {
+    let mut s = fresh_state();
+    let export_body = r##"{"boards":[],"document":{"version":"1.0.0","editorMeta":{"scenario":"slides"},"children":[
+        {"id":"s1","type":"frame","name":"Cover","x":0,"y":0,"width":320,"height":180,"fill":[{"type":"solid","color":"#204080"}]}
+    ]}}"##;
+
+    let r = handle_web_canvas_request("POST", "/api/export/pdf", export_body, &mut s);
+
+    assert!(
+        !r.status.starts_with("200"),
+        "expected a failure, got {} {}",
+        r.status,
+        r.body
+    );
+    assert!(
+        r.body.contains("nothing to export"),
+        "expected the exporter's own reason, got {}",
+        r.body
+    );
+}
+
 #[test]
 fn post_export_raster_returns_base64_png_without_replacing_daemon_document() {
     use base64::Engine as _;

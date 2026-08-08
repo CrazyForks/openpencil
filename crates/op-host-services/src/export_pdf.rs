@@ -203,14 +203,45 @@ pub fn export_deck_pdf(
     target: &StdPath,
 ) -> Result<(), ExportError> {
     let boards = op_editor_core::preview_slideshow::active_page_boards(state);
+    export_deck_pdf_boards(state, target, &boards)
+}
+
+/// The same slide-per-page deck PDF, restricted to `boards`.
+///
+/// **`boards` is a filter, never an order.** The pages come out in the order
+/// the ids arrive, and every caller sources them from
+/// `op_editor_core::preview_slideshow` — `active_page_boards` for the whole
+/// deck, `selected_page_boards` for a selection — both of which are already
+/// in document child order. Passing an arbitrary order here would let an
+/// exported file disagree with what Preview presents, which is the one
+/// property [`export_deck_pdf`] exists to hold.
+///
+/// An id that no longer resolves on the active page is skipped rather than
+/// failing the export: a stale selection is a normal state, not a fault. When
+/// nothing at all resolves the result is [`ExportError::NothingToExport`],
+/// the same answer an empty deck gives — so "I selected only hidden boards"
+/// and "this page has no boards" report identically, which is what they are.
+pub fn export_deck_pdf_boards(
+    state: &op_editor_core::EditorState,
+    target: &StdPath,
+    boards: &[String],
+) -> Result<(), ExportError> {
     let scene = op_pen_loader::editor_state_to_active_page_layout_scene(state);
     // Without a resolvable active page no board can be looked up at all —
     // that is "nothing to export", not a separate failure mode.
     let Some(page) = scene.active_page() else {
         return Err(ExportError::NothingToExport);
     };
-    let slides: Vec<&SceneNode> = boards
+    // Walk the DECK's order and keep what was asked for, rather than
+    // walking the request and looking each id up. Both produce the same
+    // set; only this one produces the same ORDER whatever order the ids
+    // arrived in, which is what makes `boards` a filter that no caller can
+    // accidentally turn into a page shuffle.
+    let wanted: std::collections::HashSet<&str> = boards.iter().map(String::as_str).collect();
+    let deck = op_editor_core::preview_slideshow::active_page_boards(state);
+    let slides: Vec<&SceneNode> = deck
         .iter()
+        .filter(|id| wanted.contains(id.as_str()))
         .filter_map(|id| page.find(id))
         // Hidden boards are skipped for the same reason the slideshow
         // never presents them. A degenerate board is dropped too: skia
@@ -546,5 +577,108 @@ mod tests {
             "authored child order wins over canvas position"
         );
         let _ = std::fs::remove_file(&tmp);
+    }
+
+    /// Selecting boards by id narrows the file to exactly those pages, in
+    /// deck order. The MediaBox list is the assertion because each board is
+    /// a different size, so it names WHICH boards came out, not just how
+    /// many.
+    #[test]
+    fn deck_pdf_boards_writes_only_the_named_boards_in_deck_order() {
+        let state = deck_state(&format!(
+            "{},{},{}",
+            board_json("s1", 0.0, 0.0, 320.0, 180.0, ""),
+            board_json("s2", 400.0, 0.0, 640.0, 360.0, ""),
+            board_json("s3", 1200.0, 0.0, 200.0, 100.0, "")
+        ));
+        let tmp = temp_pdf("subset");
+
+        // Asked for out of order on purpose: the id list is a FILTER, and
+        // callers source it from `selected_page_boards`, which is already
+        // in deck order. Pages must not follow the argument order.
+        export_deck_pdf_boards(&state, &tmp, &["s3".to_string(), "s1".to_string()])
+            .expect("subset PDF");
+
+        let bytes = std::fs::read(&tmp).unwrap();
+        assert_eq!(count_pages(&bytes), 2, "only the two named boards");
+        assert_eq!(
+            media_boxes(&bytes),
+            vec![(320.0, 180.0), (200.0, 100.0)],
+            "s1 then s3 — deck order, not the order they were asked for"
+        );
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    /// A whole-deck export is the same call with every board, so the two
+    /// entry points cannot drift into writing different files.
+    #[test]
+    fn deck_pdf_boards_with_every_board_matches_the_whole_deck_export() {
+        let children = format!(
+            "{},{}",
+            board_json("s1", 0.0, 0.0, 320.0, 180.0, ""),
+            board_json("s2", 400.0, 0.0, 640.0, 360.0, "")
+        );
+        let whole = temp_pdf("whole");
+        let listed = temp_pdf("listed");
+
+        export_deck_pdf(&deck_state(&children), &whole).expect("deck PDF");
+        export_deck_pdf_boards(
+            &deck_state(&children),
+            &listed,
+            &["s1".to_string(), "s2".to_string()],
+        )
+        .expect("listed PDF");
+
+        assert_eq!(
+            media_boxes(&std::fs::read(&whole).unwrap()),
+            media_boxes(&std::fs::read(&listed).unwrap())
+        );
+        let _ = std::fs::remove_file(&whole);
+        let _ = std::fs::remove_file(&listed);
+    }
+
+    /// A hidden board is skipped whether it was named or not — the same
+    /// rule the whole-deck export follows, and the same one the slideshow
+    /// follows when presenting.
+    #[test]
+    fn deck_pdf_boards_still_skips_a_hidden_board_that_was_named() {
+        let state = deck_state(&format!(
+            "{},{}",
+            board_json("s1", 0.0, 0.0, 320.0, 180.0, ""),
+            board_json("s2", 400.0, 0.0, 640.0, 360.0, r#","visible":false"#)
+        ));
+        let tmp = temp_pdf("subset-hidden");
+
+        export_deck_pdf_boards(&state, &tmp, &["s1".to_string(), "s2".to_string()])
+            .expect("subset PDF");
+
+        assert_eq!(
+            media_boxes(&std::fs::read(&tmp).unwrap()),
+            vec![(320.0, 180.0)],
+            "the hidden board is not a page, even named explicitly"
+        );
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    /// An empty list, and a list of ids that no longer resolve, both mean
+    /// "nothing to export" — a stale selection is a normal state, not a
+    /// crash, and it must never silently fall back to the whole deck.
+    #[test]
+    fn deck_pdf_boards_reports_nothing_to_export_rather_than_widening() {
+        let state = deck_state(&format!(
+            "{},{}",
+            board_json("s1", 0.0, 0.0, 320.0, 180.0, ""),
+            board_json("s2", 400.0, 0.0, 640.0, 360.0, "")
+        ));
+        for (tag, boards) in [
+            ("subset-empty", Vec::<String>::new()),
+            ("subset-stale", vec!["deleted-board".to_string()]),
+        ] {
+            let tmp = temp_pdf(tag);
+            let res = export_deck_pdf_boards(&state, &tmp, &boards);
+            assert!(res.is_err(), "{tag}: expected Err, got {res:?}");
+            assert_eq!(res.unwrap_err().to_string(), "nothing to export");
+            assert!(!tmp.exists(), "{tag}: no file should be written");
+        }
     }
 }

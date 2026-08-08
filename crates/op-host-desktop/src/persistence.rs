@@ -293,6 +293,32 @@ pub fn open_path(
 /// core already classified. The only consumer renders it through `Display`
 /// (stderr line + the native error dialog's detail body), which is
 /// transparent, so the text the user sees is unchanged.
+/// The shared "where do I write this export" picker. Both export actions
+/// go through it so they cannot drift apart on title, filter or locale.
+fn pick_export_path(
+    host: &WidgetHostNative,
+    filter_label: &str,
+    filter_exts: &[&str],
+    default_name: &str,
+) -> Option<std::path::PathBuf> {
+    rfd::FileDialog::new()
+        .set_title(op_i18n::translate(
+            host.editor_state().editor_ui.locale,
+            "dialog.pickerExportTitle",
+        ))
+        .add_filter(filter_label, filter_exts)
+        .set_file_name(default_name)
+        .save_file()
+}
+
+/// Name the export save dialog opens pre-filled with:
+/// `<document>-<node>.<ext>`, from the shared derivation the browser
+/// download also uses, so the same document and selection produce the
+/// same file name on either host.
+pub(crate) fn export_dialog_default_name(state: &EditorState) -> String {
+    op_editor_core::export_name::default_export_file_name(state)
+}
+
 fn export_editor_state_to_path(
     state: &EditorState,
     path: &std::path::Path,
@@ -394,19 +420,33 @@ pub fn run_action(
                 Fmt::Svg => ("SVG", &["svg"]),
                 Fmt::Pdf => ("PDF", &["pdf"]),
             };
-            let default_name = format!("openpencil-export.{}", fmt.extension());
-            if let Some(path) = rfd::FileDialog::new()
-                .set_title(op_i18n::translate(
-                    host.editor_state().editor_ui.locale,
-                    "dialog.pickerExportTitle",
-                ))
-                .add_filter(filter_label, filter_exts)
-                .set_file_name(&default_name)
-                .save_file()
-            {
+            let default_name = export_dialog_default_name(host.editor_state());
+            if let Some(path) = pick_export_path(host, filter_label, filter_exts, &default_name) {
                 let result = export_editor_state_to_path(host.editor_state(), &path);
                 if let Err(e) = result {
                     eprintln!("[export-image] {e}");
+                    show_error_dialog(host, ErrorKind::Export, Some(&path), &e.to_string());
+                }
+            }
+            ActionOutcome::Noop
+        }
+        FileAction::ExportDeckPdfSelection => {
+            // The same picker and the same exporter as the PDF branch
+            // above, with the board list narrowed to the selection. It
+            // does NOT go through `export_editor_state_to_path`: that
+            // function's job is "render this document in
+            // `export_format`", and the scope here belongs to the action
+            // rather than to the format.
+            let boards =
+                op_editor_core::preview_slideshow::selected_page_boards(host.editor_state());
+            if let Some(path) = pick_export_path(host, "PDF", &["pdf"], "openpencil-slides.pdf") {
+                let result = op_host_services::export_pdf::export_deck_pdf_boards(
+                    host.editor_state(),
+                    &path,
+                    &boards,
+                );
+                if let Err(e) = result {
+                    eprintln!("[export-deck-pdf-selection] {e}");
                     show_error_dialog(host, ErrorKind::Export, Some(&path), &e.to_string());
                 }
             }

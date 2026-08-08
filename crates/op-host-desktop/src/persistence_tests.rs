@@ -550,3 +550,28 @@ fn opening_document_fits_and_centers_fit_content_root() {
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(sidecar_path(&path));
 }
+
+/// The export save dialog opens on `<document>-<node>.<ext>`, not a
+/// fixed product name. The web download derives its name from the same
+/// shared function (`file_actions::export_download_file_name`), so this
+/// assertion and its web twin pin one behavior in two hosts.
+#[test]
+fn export_dialog_default_name_joins_document_and_selected_node() {
+    let doc = jian_ops_schema::load_str(
+        r#"{"version":"1.0.0","children":[
+            {"type":"frame","id":"f1","name":"星图","width":100,"height":100},
+            {"type":"frame","id":"f2","name":"侧栏","width":100,"height":100}
+        ]}"#,
+    )
+    .expect("fixture JSON parses")
+    .value;
+    let mut state = EditorState::from_document(doc);
+    state.editor_ui.file_name_display = Some("0808-k3-2.op".to_string());
+
+    // No selection — the document alone names the file.
+    assert_eq!(export_dialog_default_name(&state), "0808-k3-2.png");
+
+    state.selection.set = vec![op_editor_core::NodeId::new("f1")];
+    state.selection.anchor = op_editor_core::NodeId::new("f1");
+    assert_eq!(export_dialog_default_name(&state), "0808-k3-2-星图.png");
+}

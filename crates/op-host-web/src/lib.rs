@@ -117,6 +117,10 @@ mod web_image_panel;
 mod web_model_catalog;
 #[cfg(feature = "canvaskit")]
 mod web_settings;
+// The Styles tab's DESIGN.md file pick — the browser half of the import the
+// paste box shares (desktop `style_import_host` counterpart).
+#[cfg(feature = "canvaskit")]
+mod web_style_import;
 // The daemon ACP route intentionally remains unavailable in production.
 // Compile the dormant browser bridge in CanvasKit tests so its request
 // generation contract cannot silently drift from the shared core state.

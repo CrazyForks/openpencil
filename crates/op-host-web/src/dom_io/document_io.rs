@@ -58,6 +58,17 @@ pub(crate) fn drain_pending_file_action<C: RepaintContext + 'static>(inner: &Inn
             let _ = b.repaint();
         }
         FileAction::ExportImageConfirm => export_image(inner),
+        FileAction::ExportDeckPdfSelection => {
+            // Unlike the batch / slideshow / pptx rows below, this one IS
+            // reachable in a browser: the slides rail paints its export
+            // menu on every host, and the daemon already writes the
+            // whole-deck PDF the sibling row asks for. Only the board
+            // list differs.
+            let b = inner.borrow();
+            let state = b.host().editor_state();
+            let boards = op_editor_core::preview_slideshow::selected_page_boards(state);
+            request_pdf_download(state, Some(&boards));
+        }
         FileAction::ExportAllFrames => {
             // Web leaves `batch_frame_export_supported` at `false`, so
             // the File menu never paints the row that raises this — a
@@ -369,6 +380,48 @@ fn download_saved_document<C: RepaintContext + 'static>(
     let _ = b.repaint();
 }
 
+/// Ask the local web-canvas daemon for a PDF and hand the bytes to the
+/// browser as a download.
+///
+/// `boards` narrows a deck to those board ids — `None` is the whole
+/// active page. Both PDF entry points (the export dialog and the slides
+/// rail's "Export selected slides" row) come through here, so the route,
+/// the response handling and the error prefix cannot drift apart.
+pub(super) fn request_pdf_download(state: &op_editor_core::EditorState, boards: Option<&[String]>) {
+    let body = match file_actions::export_pdf_request_body(state, boards) {
+        Ok(body) => body,
+        Err(e) => {
+            console_error(&format!("[export-pdf] {e}"));
+            return;
+        }
+    };
+    // The export dialog's PDF is this document, so it is named after
+    // it. A narrowed deck export is a different artifact — it keeps
+    // the daemon's slide-deck name rather than claiming to be the
+    // whole document.
+    let download_name = boards
+        .is_none()
+        .then(|| file_actions::export_download_file_name(state));
+    let base = crate::daemon_base::daemon_base();
+    let on_response: Rc<dyn Fn(String)> =
+        Rc::new(
+            move |response| match file_actions::parse_pdf_download_response(&response) {
+                Ok(pdf) => {
+                    let name = download_name.as_deref().unwrap_or(&pdf.file_name);
+                    if let Err(e) =
+                        crate::web_clipboard::download_bytes(name, &pdf.mime, &pdf.bytes)
+                    {
+                        web_sys::console::error_1(&e);
+                    }
+                }
+                Err(e) => console_error(&format!("[export-pdf] {e}")),
+            },
+        );
+    if !crate::live_sync::post_json(&format!("{base}/api/export/pdf"), &body, Some(on_response)) {
+        console_error("[export-pdf] request could not start");
+    }
+}
+
 /// Export dialog → Export: SVG downloads vector markup from the
 /// shared serializer; PDF asks the local web-canvas daemon to emit
 /// the same Skia vector PDF as desktop; raster formats ask that same
@@ -376,11 +429,14 @@ fn download_saved_document<C: RepaintContext + 'static>(
 pub(super) fn export_image<C: RepaintContext + 'static>(inner: &InnerRc<C>) {
     let b = inner.borrow();
     let fmt = b.host().editor_state().editor_ui.export_format;
+    // `<document>-<node>.<ext>`, derived exactly as the desktop save
+    // dialog derives its pre-filled name.
+    let file_name = file_actions::export_download_file_name(b.host().editor_state());
     if fmt == ExportFormat::Svg {
         match file_actions::export_svg_document(b.host().editor_state()) {
             Ok(svg) => {
                 if let Err(e) = crate::web_clipboard::download_bytes(
-                    "openpencil-export.svg",
+                    &file_name,
                     "image/svg+xml",
                     svg.as_bytes(),
                 ) {
@@ -392,33 +448,7 @@ pub(super) fn export_image<C: RepaintContext + 'static>(inner: &InnerRc<C>) {
         return;
     }
     if fmt == ExportFormat::Pdf {
-        let body = match file_actions::export_pdf_request_body(b.host().editor_state()) {
-            Ok(body) => body,
-            Err(e) => {
-                console_error(&format!("[export-pdf] {e}"));
-                return;
-            }
-        };
-        let base = crate::daemon_base::daemon_base();
-        let on_response: Rc<dyn Fn(String)> =
-            Rc::new(
-                move |response| match file_actions::parse_pdf_download_response(&response) {
-                    Ok(pdf) => {
-                        if let Err(e) = crate::web_clipboard::download_bytes(
-                            &pdf.file_name,
-                            &pdf.mime,
-                            &pdf.bytes,
-                        ) {
-                            web_sys::console::error_1(&e);
-                        }
-                    }
-                    Err(e) => console_error(&format!("[export-pdf] {e}")),
-                },
-            );
-        if !crate::live_sync::post_json(&format!("{base}/api/export/pdf"), &body, Some(on_response))
-        {
-            console_error("[export-pdf] request could not start");
-        }
+        request_pdf_download(b.host().editor_state(), None);
         return;
     }
     let body = match file_actions::export_raster_request_body(b.host().editor_state()) {
@@ -434,7 +464,7 @@ pub(super) fn export_image<C: RepaintContext + 'static>(inner: &InnerRc<C>) {
             move |response| match file_actions::parse_raster_download_response(&response) {
                 Ok(raster) => {
                     if let Err(e) = crate::web_clipboard::download_bytes(
-                        &raster.file_name,
+                        &file_name,
                         &raster.mime,
                         &raster.bytes,
                     ) {

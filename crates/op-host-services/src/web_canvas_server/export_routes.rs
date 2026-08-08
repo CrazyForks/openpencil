@@ -114,6 +114,26 @@ pub(super) fn selected_node_id_from_export_body(
         })
 }
 
+/// The `boards` filter a PDF request may carry, or `None` when it asks for
+/// the whole active page.
+///
+/// An empty array is deliberately NOT `None`: it means "the caller narrowed
+/// this to nothing", which the exporter answers with `NothingToExport` — a
+/// missing field, which means "no narrowing at all", must not collapse onto
+/// the same reading and silently ship the entire deck.
+fn boards_from_export_body(body: &str) -> Option<Vec<String>> {
+    let parsed: serde_json::Value = serde_json::from_str(body).ok()?;
+    let boards = parsed.get("boards")?.as_array()?;
+    Some(
+        boards
+            .iter()
+            .filter_map(|id| id.as_str())
+            .filter(|id| !id.trim().is_empty())
+            .map(|id| id.to_string())
+            .collect(),
+    )
+}
+
 pub(super) fn export_pdf_download(body: &str, state: &WebCanvasState) -> WebReply {
     match build_pdf_download(body, &state.editor) {
         Ok(bytes) => WebReply {
@@ -135,13 +155,21 @@ pub(super) fn export_pdf_download(body: &str, state: &WebCanvasState) -> WebRepl
 
 pub(super) fn build_pdf_download(body: &str, fallback: &EditorState) -> Result<Vec<u8>> {
     let editor = export_editor_from_body(body, fallback)?;
+    let boards = boards_from_export_body(body);
     let tmp = tmp_export_path("pdf");
-    // The scenario tag survives the round-trip through `editorMeta`, so a
-    // deck posted from the browser must get the same slide-per-page file
-    // the desktop writes rather than one sheet holding every board.
-    if editor.editor_ui.scenario
+    // An explicit board list means the caller narrowed the export itself —
+    // the slides rail's "Export selected slides" row. It wins over the
+    // scenario branch below because the browser's SELECTION cannot survive
+    // the document round-trip, so the ids are the only record of it that
+    // reached this process.
+    if let Some(boards) = boards {
+        crate::export_pdf::export_deck_pdf_boards(&editor, &tmp, &boards)?;
+    } else if editor.editor_ui.scenario
         == Some(op_editor_core::scene_template_catalog::TemplateScene::Slides)
     {
+        // The scenario tag survives the round-trip through `editorMeta`, so a
+        // deck posted from the browser must get the same slide-per-page file
+        // the desktop writes rather than one sheet holding every board.
         crate::export_pdf::export_deck_pdf(&editor, &tmp)?;
     } else {
         let scene = op_pen_loader::editor_state_to_layout_scene(&editor);
