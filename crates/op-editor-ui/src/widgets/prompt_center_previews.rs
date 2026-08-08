@@ -197,7 +197,7 @@ mod tests {
                 preview.route
             );
         }
-        assert_eq!(routes.len(), 57);
+        assert_eq!(routes.len(), 59);
     }
 
     #[test]
