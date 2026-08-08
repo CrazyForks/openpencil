@@ -240,7 +240,7 @@ fn legacy_dark_help_card_missing_stroke_fill_uses_divider_color() {
     let help_card = &r.payload.pages[0].children[0];
     let stroke = help_card.stroke.as_ref().expect("help card stroke");
 
-    assert_eq!(stroke.color, [0.16470589, 0.16862746, 0.1882353, 1.0]);
+    assert_eq!(stroke.color, Some([0.16470589, 0.16862746, 0.1882353, 1.0]));
 }
 
 #[test]

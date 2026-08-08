@@ -25,19 +25,22 @@ use jian_scene::layout_scene::NodeKind;
 use jian_scene::layout_scene::{
     stable_image_source_id, DropShadow, Effect, LayoutScene, SceneFillLayer, SceneFillType,
     SceneGradient, SceneGradientStop, SceneImageFit, SceneNode, ScenePage, SceneShader,
-    SceneShaderUniform, SceneStroke, SceneStrokeAlign, SceneTextAlign, SceneTextRun,
-    SceneTextVerticalAlign, SceneWidget, SceneWidgetOption,
+    SceneShaderUniform, SceneTextAlign, SceneTextRun, SceneTextVerticalAlign, SceneWidget,
+    SceneWidgetOption,
 };
 use op_editor_core::render_backend::{Color, ImageBlendMode};
 use op_editor_core::scene_vars::VariableTable;
 
 use crate::payload::{
-    DocPayload, GradientPayload, GradientStopPayload, NodePayload, ShaderPayload, StrokePayload,
+    DocPayload, GradientPayload, GradientStopPayload, NodePayload, ShaderPayload,
 };
 
 // Keep the legacy test module's historical local name; implementation lives in `editor_scene`.
 #[cfg(test)]
 use crate::editor_scene::editor_state_to_layout_scene;
+
+mod stroke;
+use stroke::{is_status_bar_shell_stroke, is_unpainted_widget_stroke, scene_stroke};
 
 /// Build a [`LayoutScene`] from a bare [`PenDocument`], theme, and active page index.
 ///
@@ -241,7 +244,17 @@ pub(crate) fn node_payload_to_scene(
             .shader
             .as_ref()
             .map(|s| payload_shader_to_scene(s, paint_opacity)),
-        stroke: if is_status_bar_shell_stroke(node) {
+        stroke: if is_unpainted_widget_stroke(node, &node_id, var_table) {
+            // A first-class widget's stroke is its *inactive track / border*
+            // role paint, not a literal outline. When the author declared a
+            // stroke with no resolvable colour, handing the painter a
+            // fabricated opaque black turned every such control into a black
+            // track / border; dropping it lets
+            // `resolve_authored_widget_visual` fall back to its role defaults
+            // (derived-from-fill or the legacy #D1D5DB track, and a
+            // borderless select) exactly as an unstroked control does.
+            None
+        } else if is_status_bar_shell_stroke(node) {
             // The scene path (editor canvas + render-shots) bypasses the
             // adapter's `legacy_payload_repair`, so an iPhone status-bar
             // shell ("Time"/"Levels") authored with a no-fill stroke would
@@ -642,46 +655,6 @@ fn anchor_to_scene(a: &crate::payload::AnchorPayload) -> jian_scene::layout_scen
             _ => ScenePointType::Corner,
         },
     }
-}
-
-/// Resolve a payload stroke into a scene stroke. The `$ref` stroke
-/// resolution parallels the fill path.
-fn scene_stroke(
-    s: &StrokePayload,
-    node_id: &op_editor_core::NodeId,
-    var_table: &VariableTable,
-) -> SceneStroke {
-    SceneStroke {
-        color: var_table
-            .stroke_color_for(node_id)
-            .unwrap_or_else(|| array_to_color(s.color)),
-        width: s.width,
-        sides: s.sides,
-        align: match s.align {
-            a if a < 0 => SceneStrokeAlign::Inside,
-            a if a > 0 => SceneStrokeAlign::Outside,
-            _ => SceneStrokeAlign::Center,
-        },
-    }
-}
-
-/// An iPhone status-bar layout shell ("Time" / "Levels") authored with a
-/// stroke but no fill — Pencil paints nothing, so the no-fill stroke (which
-/// resolves to opaque black) must not draw a phantom box. Mirrors
-/// `legacy_payload_repair::is_legacy_status_bar_shell` on the resolved
-/// `NodePayload` the scene path carries (no canonical `PenNode` here). Width
-/// is intentionally unconstrained — the shells are `fill_container`, so a
-/// wider status bar computes a larger width than a fixed-width sample.
-fn is_status_bar_shell_stroke(node: &NodePayload) -> bool {
-    // A thin status-bar row: the authored 22 px computes to ~22-23 here
-    // (stroke / rounding), so match a small range rather than an exact 22.
-    // The no-fill + stroke + non-empty-children gates already exclude the
-    // inner "Time" text glyph node (which is filled, strokeless, leaf).
-    node.stroke.is_some()
-        && node.fill.is_none()
-        && matches!(node.name.as_str(), "Time" | "Levels")
-        && !node.children.is_empty()
-        && (18.0..=28.0).contains(&node.h)
 }
 
 /// `[r, g, b, a]` payload colour → shell-core `Color`. Lossless;

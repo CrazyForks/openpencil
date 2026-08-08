@@ -744,57 +744,9 @@ fn number_input_renders_numeric_value() {
     );
 }
 
-#[test]
-fn tabs_matches_segmented_preview_and_stale_value_falls_back_first() {
-    let rect = Rect::xywh(0.0, 0.0, 240.0, 120.0);
-    let node = authored_widget_node(
-        NodeKind::Frame,
-        SceneWidget {
-            kind: "tabs".into(),
-            value_str: Some("stale".into()),
-            options: vec![
-                SceneWidgetOption {
-                    value: "one".into(),
-                    label: "One".into(),
-                },
-                SceneWidgetOption {
-                    value: "two".into(),
-                    label: "Two".into(),
-                },
-            ],
-            ..Default::default()
-        },
-        rect,
-        0.0,
-    );
-    let b = paint(&node, rect);
-    assert!(b.texts.iter().any(|(t, _)| t == "One"));
-    assert!(b.texts.iter().any(|(t, _)| t == "Two"));
-    // Authored inactive bar + active authored segment.
-    assert_eq!(b.round_rects.len(), 2);
-    assert_eq!(b.round_rects[0].1, PURPLE_BORDER);
-    assert!(
-        b.round_rects.iter().any(|(_, c)| *c == DARK_PURPLE),
-        "active tab uses authored fill"
-    );
-    let active = b
-        .text_colors
-        .iter()
-        .find(|(text, _)| text == "One")
-        .map(|(_, color)| *color)
-        .expect("active tab color");
-    let inactive = b
-        .text_colors
-        .iter()
-        .find(|(text, _)| text == "Two")
-        .map(|(_, color)| *color)
-        .expect("inactive tab color");
-    assert_eq!(
-        (inactive.r(), inactive.g(), inactive.b()),
-        (active.r(), active.g(), active.b())
-    );
-    assert!(inactive.a() < active.a(), "inactive tab label is muted");
-}
-
 #[path = "canvas_viewport_widget_tests/contract_closure.rs"]
 mod contract_closure;
+#[path = "canvas_viewport_widget_tests/stroke_roles.rs"]
+mod stroke_roles;
+#[path = "canvas_viewport_widget_tests/tabs.rs"]
+mod tabs;

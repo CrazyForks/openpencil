@@ -87,25 +87,22 @@ use super::canvas_overlay_transform::OverlayTransform;
 
 /// Resolve the active tab option by authored/live value. Missing or stale
 /// values deterministically fall back to the first tab/panel.
+///
+/// Thin forwarder to [`SceneWidget::active_tab_index`] — the canonical rule
+/// lives in jian-scene so the canvas hit-test shares it verbatim.
 pub fn tabs_active_index(widget: &crate::layout_scene::SceneWidget) -> usize {
-    widget
-        .value_str
-        .as_deref()
-        .and_then(|value| widget.options.iter().position(|tab| tab.value == value))
-        .unwrap_or(0)
+    widget.active_tab_index()
 }
 
 /// Tabs are the only first-class widget whose children are alternative
 /// panels rather than ordinary descendants. `tabs[i]` maps to `children[i]`.
+///
+/// Single-sourced with the canvas hit-test
+/// ([`LayoutScene::node_path_at_doc_point`](jian_scene::layout_scene::LayoutScene::node_path_at_doc_point)):
+/// both walk [`SceneNode::visible_children`]. A second copy of this rule is
+/// what let a click land on a panel the painter never drew.
 fn widget_children_to_paint(node: &SceneNode) -> &[SceneNode] {
-    let Some(widget) = node.widget.as_ref().filter(|widget| widget.kind == "tabs") else {
-        return &node.children;
-    };
-    let active = tabs_active_index(widget);
-    node.children
-        .get(active)
-        .map(std::slice::from_ref)
-        .unwrap_or_default()
+    node.visible_children()
 }
 
 fn paint_node_inner<'a>(

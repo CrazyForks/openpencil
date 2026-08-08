@@ -19,12 +19,12 @@ pub(crate) fn repair_payload_for_legacy_node(node: &PenNode, payload: &mut NodeP
         payload.stroke = None;
     } else if is_legacy_dark_help_card_missing_stroke_fill(payload) {
         if let Some(stroke) = payload.stroke.as_mut() {
-            stroke.color = [
+            stroke.color = Some([
                 0x2A as f32 / 255.0,
                 0x2B as f32 / 255.0,
                 0x30 as f32 / 255.0,
                 1.0,
-            ];
+            ]);
         }
     }
 }
@@ -99,7 +99,10 @@ fn is_legacy_dark_help_card_missing_stroke_fill(payload: &NodePayload) -> bool {
     let Some(stroke) = payload.stroke.as_ref() else {
         return false;
     };
-    if !is_black(stroke.color) {
+    // An unresolvable stroke paint now stays `None` instead of being
+    // fabricated as opaque black, so both spellings of "this card's stroke
+    // has no usable fill" have to match here.
+    if !stroke.color.is_none_or(is_black) {
         return false;
     }
     payload.fill.is_some_and(|fill| luminance(fill) < 0.2)

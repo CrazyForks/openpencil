@@ -493,7 +493,10 @@ fn paint_tabs(
     let bar_radius = authored_radius_or(node, w, 6.0 * zoom, zoom);
     cx.backend
         .fill_round_rect(bar, bar_radius, ui_color(visual.inactive));
-    if let Some(stroke) = node.stroke {
+    // `width > 0.0` gate, same as select / text_field: Skia reads a 0-width
+    // stroke as a hairline, not as a no-op, so an authored `thickness: 0`
+    // would still outline the bar.
+    if let Some(stroke) = node.stroke.filter(|stroke| stroke.width > 0.0) {
         cx.backend.stroke_round_rect(
             bar,
             bar_radius,

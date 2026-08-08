@@ -146,7 +146,7 @@ pub(super) fn line_to_payload(n: &LineNode) -> NodePayload {
     p.stroke = stroke_to_payload(n.stroke.as_ref());
     if p.stroke.is_none() {
         p.stroke = Some(StrokePayload {
-            color: [0.0, 0.0, 0.0, 1.0],
+            color: Some([0.0, 0.0, 0.0, 1.0]),
             width: 1.0,
             sides: None,
             align: 0,

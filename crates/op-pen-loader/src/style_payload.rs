@@ -466,7 +466,12 @@ pub(crate) fn stroke_to_payload(s: Option<&PenStroke>) -> Option<StrokePayload> 
             (sides.iter().copied().fold(0.0_f32, f32::max), Some(sides))
         }
     };
-    let color = first_solid_color(s.fill.as_deref()).unwrap_or([0.0, 0.0, 0.0, 1.0]);
+    // No fabricated fallback here: an unresolvable stroke paint stays `None`
+    // so downstream consumers can tell "the author wrote no paint" apart from
+    // "the author wrote black". Fabricating opaque black at this seam painted
+    // black switch tracks / select borders for every control whose author
+    // omitted `stroke.fill`.
+    let color = first_solid_color(s.fill.as_deref());
     let align = match s.align {
         Some(StrokeAlign::Inside) => -1,
         Some(StrokeAlign::Outside) => 1,
