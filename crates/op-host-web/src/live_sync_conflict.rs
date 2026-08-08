@@ -148,12 +148,8 @@ pub(super) fn probe_serve_mode(base: &str) {
 #[cfg(test)]
 mod auto_resolve_tests {
     use super::*;
-    use std::cell::RefCell;
-    use std::rc::Rc;
 
     use op_editor_core::CollabConnectionPhase;
-
-    use crate::repaint_ctx::RepaintContext;
 
     #[test]
     fn a_conflict_inside_an_active_session_resolves_itself() {
@@ -203,12 +199,8 @@ mod auto_resolve_tests {
 #[cfg(test)]
 mod server_authority_tests {
     use super::{auto_resolve_is_safe, parse_server_authoritative};
-    use std::cell::RefCell;
-    use std::rc::Rc;
 
     use op_editor_core::CollabConnectionPhase;
-
-    use crate::repaint_ctx::RepaintContext;
 
     #[test]
     fn an_online_daemon_is_authoritative() {

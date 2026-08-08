@@ -120,7 +120,7 @@ fn serialize_sync_document(doc: &op_editor_core::PenDocument) -> SyncDocumentJso
 /// once in `mount_ck` and handed to both this module's ticks and the
 /// postMessage bridge, so both sides observe and mutate the exact same
 /// `SyncGate` instance (a v1 defect — the bridge couldn't reach a local
-//// Content changes advance the gate's `(generation, revision)` pair, while
+/// Content changes advance the gate's `(generation, revision)` pair, while
 /// active-page switches intentionally do not. Treat an editor-metadata delta
 /// as an additional push reason without weakening the conflict latch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
