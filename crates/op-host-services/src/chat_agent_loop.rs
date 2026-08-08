@@ -306,7 +306,8 @@ async fn report_quality_credential(
     quality: &QualitySummary,
     remaining: usize,
 ) {
-    if let Some(line) = crate::quality_credential::quality_credential_line(quality, Some(remaining))
+    if let Some(line) =
+        crate::quality_credential::quality_credential_line_with_records(quality, Some(remaining))
     {
         let _ = tx.send(ChatDelta::TextDelta(line)).await;
     }

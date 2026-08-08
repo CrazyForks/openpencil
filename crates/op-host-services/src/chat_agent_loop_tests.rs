@@ -121,6 +121,8 @@ impl ScriptedExecutor {
                     .iter()
                     .map(|(c, n)| ((*c).to_string(), *n))
                     .collect(),
+                records: Vec::new(),
+                notes: Vec::new(),
             });
         self
     }

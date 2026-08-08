@@ -423,6 +423,16 @@ pub enum Progress {
         /// `(check family, document edits applied)` for families that
         /// repaired something.
         repairs: Vec<(String, usize)>,
+        /// One already-rendered line per applied edit, in application order
+        /// (`crate::repair_record::RepairRecord::line`). The itemized half of
+        /// the same tally `repairs` counts — see `RepairSummary`, where both
+        /// are derived from one list so they cannot disagree.
+        records: Vec<String>,
+        /// Statements about the run that are not edits — today, the
+        /// deliberate skip of a whole pass tier for authored template input
+        /// (`crate::repair_tier`). Never counted as repairs; rendered ahead
+        /// of them, because "this was not run" outranks "this was".
+        notes: Vec<String>,
     },
     // ── S3c: Vision-validation progress variants ─────────────────────────────
     /// 视觉校验阶段开始(pre-validation 将在此之后立即运行)。

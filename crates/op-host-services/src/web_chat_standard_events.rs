@@ -110,11 +110,21 @@ pub(super) fn progress_label(p: &Progress) -> String {
         // The classic path's quality credential. `remaining` is `None` on
         // purpose: the promise-delivery check runs later in the pipeline, so
         // claiming anything about leftover work here would be a guess.
-        Progress::QualityChecked { checks, repairs } => {
-            crate::quality_credential::quality_credential_line(
+        Progress::QualityChecked {
+            checks,
+            repairs,
+            records,
+            notes,
+        } => {
+            // `_with_records`: this label is the web host's ONLY channel to
+            // the user, and it lands in the thinking stream where `▸`
+            // sub-lines become the credential step's expandable detail.
+            crate::quality_credential::quality_credential_line_with_records(
                 &op_ai::chat_provider::QualitySummary {
                     checks: checks.clone(),
                     repairs: repairs.clone(),
+                    records: records.clone(),
+                    notes: notes.clone(),
                 },
                 None,
             )
