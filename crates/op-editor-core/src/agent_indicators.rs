@@ -103,8 +103,7 @@ pub struct AgentIndicators {
     needs_final_frame: bool,
     last_reveal_snapshot_ms: Option<u64>,
     /// Optional per-turn root seed profile for the design-agent loop.
-    /// `Some(true)` means mobile artboard, `Some(false)` means desktop.
-    root_seed_mobile: Option<bool>,
+    root_seed: Option<RootSeedHint>,
     /// True after the first successful `batch_design` of this epoch has
     /// consumed the root seed guard.
     root_seed_consumed: bool,
@@ -123,7 +122,7 @@ impl AgentIndicators {
         self.finishing = false;
         self.needs_final_frame = false;
         self.last_reveal_snapshot_ms = None;
-        self.root_seed_mobile = None;
+        self.root_seed = None;
         self.root_seed_consumed = false;
     }
 }
@@ -282,16 +281,31 @@ pub fn begin() -> u64 {
     r.epoch
 }
 
+/// The per-turn root seed profile a design run attaches to its epoch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RootSeedHint {
+    /// Mobile artboard when true, desktop when false.
+    pub mobile: bool,
+    /// True only when the REQUEST asked to continue an existing screen set —
+    /// the one case in which a new root may inherit a live screen's artboard.
+    pub continuation: bool,
+}
+
 /// Begin a new run with a design-loop root seed profile attached.
 ///
 /// The profile is consumed by the first successful `batch_design` executor
-/// call for this epoch. Non-design runs should keep using [`begin`].
-pub fn begin_with_root_seed_hint(mobile: bool) -> u64 {
+/// call for this epoch — except on a continuation turn, which keeps it
+/// pending so later sibling screens inherit the same contract. Non-design
+/// runs should keep using [`begin`].
+pub fn begin_with_root_seed_hint(mobile: bool, continuation: bool) -> u64 {
     let mut r = REGISTRY.lock().unwrap();
     r.epoch += 1;
     r.clear_maps();
     r.run_active = true;
-    r.root_seed_mobile = Some(mobile);
+    r.root_seed = Some(RootSeedHint {
+        mobile,
+        continuation,
+    });
     r.epoch
 }
 
@@ -309,10 +323,10 @@ pub fn is_frame_generating(frame_id: &str) -> bool {
 
 /// Return the root seed profile for `epoch` if its first batch has not
 /// consumed the guard yet.
-pub fn root_seed_hint_if_pending(epoch: u64) -> Option<bool> {
+pub fn root_seed_hint_if_pending(epoch: u64) -> Option<RootSeedHint> {
     let r = REGISTRY.lock().unwrap();
     if r.epoch == epoch && r.run_active && !r.root_seed_consumed {
-        r.root_seed_mobile
+        r.root_seed
     } else {
         None
     }

@@ -397,6 +397,7 @@ fn pump_with_finished_subs_decrements_then_clears_agents_running() {
             },
             indicator: None,
             root_seed_mobile: false,
+            root_seed_continuation: false,
         },
         SubAgentSession {
             session: None,
@@ -406,6 +407,7 @@ fn pump_with_finished_subs_decrements_then_clears_agents_running() {
             },
             indicator: None,
             root_seed_mobile: false,
+            root_seed_continuation: false,
         },
     ];
     let mut active = 0usize;
@@ -462,6 +464,7 @@ fn pumped_sub_agent_message_carries_its_identity() {
         },
         indicator: None,
         root_seed_mobile: false,
+        root_seed_continuation: false,
     }];
     let mut active = 0;
 
@@ -515,6 +518,7 @@ fn sequential_sub_agents_keep_distinct_identity_messages() {
             },
             indicator: None,
             root_seed_mobile: false,
+            root_seed_continuation: false,
         },
         SubAgentSession {
             session: Some(session("second")),
@@ -524,6 +528,7 @@ fn sequential_sub_agents_keep_distinct_identity_messages() {
             },
             indicator: None,
             root_seed_mobile: false,
+            root_seed_continuation: false,
         },
     ];
     let mut active = 0;

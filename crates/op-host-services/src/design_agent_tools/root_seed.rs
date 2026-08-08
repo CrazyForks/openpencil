@@ -40,6 +40,7 @@ impl RootSeedTarget {
 #[derive(Debug, Clone)]
 pub struct RootSeedGuard {
     target: RootSeedTarget,
+    continuation: bool,
     consumed: bool,
 }
 
@@ -47,6 +48,7 @@ impl RootSeedGuard {
     pub fn from_prompt(prompt: &str) -> Self {
         Self {
             target: root_seed_target_for_prompt(prompt),
+            continuation: root_seed_prompt_is_continuation(prompt),
             consumed: false,
         }
     }
@@ -54,12 +56,13 @@ impl RootSeedGuard {
     pub fn disabled() -> Self {
         Self {
             target: RootSeedTarget::Desktop,
+            continuation: false,
             consumed: true,
         }
     }
 
-    fn pending_target(&self) -> Option<RootSeedTarget> {
-        (!self.consumed).then_some(self.target)
+    fn pending_profile(&self) -> Option<(RootSeedTarget, bool)> {
+        (!self.consumed).then_some((self.target, self.continuation))
     }
 
     fn mark_consumed(&mut self) {
@@ -69,6 +72,22 @@ impl RootSeedGuard {
 
 pub fn root_seed_target_for_prompt(prompt: &str) -> RootSeedTarget {
     RootSeedTarget::from_mobile(root_seed_prompt_is_mobile(prompt))
+}
+
+/// Whether the REQUEST asks to continue an existing screen set.
+///
+/// This is the same signal the orchestrator's `ContinuationContext` is built
+/// from (`chat_design_request::sibling_continuation_context`), so both paths
+/// agree on what counts as a continuation: a prompt that promises named
+/// sibling screens.
+///
+/// Without this gate, "the canvas happens to hold a frame of the same class"
+/// was enough to inherit — and because a continuation deliberately keeps the
+/// guard pending, EVERY later top-level frame of that turn was then stamped
+/// with the first screen's size and background, including the values the model
+/// wrote itself.
+pub fn root_seed_prompt_is_continuation(prompt: &str) -> bool {
+    !crate::chat_intent::listed_whole_screen_names(prompt).is_empty()
 }
 
 pub fn root_seed_prompt_is_mobile(prompt: &str) -> bool {
@@ -100,7 +119,7 @@ pub(super) fn should_track_root_seed_candidate(
         return false;
     }
     root_seed_guard
-        .and_then(RootSeedGuard::pending_target)
+        .and_then(RootSeedGuard::pending_profile)
         .is_some()
         || indicator_epoch
             .and_then(op_editor_core::agent_indicators::root_seed_hint_if_pending)
@@ -121,14 +140,14 @@ pub(super) fn maybe_apply_root_seed_guard(
     indicator_epoch: Option<u64>,
     root_seed_guard: Option<&mut RootSeedGuard>,
 ) -> Option<String> {
-    let explicit_target = root_seed_guard
+    let explicit_profile = root_seed_guard
         .as_ref()
-        .and_then(|guard| guard.pending_target());
-    let epoch_target = indicator_epoch
+        .and_then(|guard| guard.pending_profile());
+    let epoch_profile = indicator_epoch
         .and_then(op_editor_core::agent_indicators::root_seed_hint_if_pending)
-        .map(RootSeedTarget::from_mobile);
-    let target = explicit_target.or(epoch_target)?;
-    let profile = resolve_root_seed_profile(state, ids_before, target);
+        .map(|hint| (RootSeedTarget::from_mobile(hint.mobile), hint.continuation));
+    let (target, continuation) = explicit_profile.or(epoch_profile)?;
+    let profile = resolve_root_seed_profile(state, ids_before, target, continuation);
     let allow_existing_single_root = !profile.inherited;
     let seed_hint =
         seed_root_frame_if_needed(state, ids_before, &profile, allow_existing_single_root);
@@ -328,8 +347,13 @@ fn seed_root_frame_if_needed(
             root.set_height_px(profile.height);
             changed += 1;
         }
+        // The artboard is a contract — sibling screens of one product that do
+        // not share a frame size are a continuation bug, so a wrong numeric
+        // width/height above is corrected. The background is not: it is
+        // authored design intent, so an inherited colour only SEEDS a root the
+        // model left unfilled and never overwrites one it chose.
         if let Some(color) = profile.background_color.as_deref() {
-            if op_editor_core::first_solid_fill_hex(root) != Some(color)
+            if op_editor_core::first_solid_fill_hex(root).is_none()
                 && op_editor_core::fills::set_primary_fill_hex(root, color)
             {
                 changed += 1;
@@ -352,28 +376,34 @@ fn resolve_root_seed_profile(
     state: &EditorState,
     ids_before: &HashSet<String>,
     target: RootSeedTarget,
+    continuation: bool,
 ) -> RootSeedProfile {
-    let matching_existing_screen = state.active_children().iter().rev().find(|node| {
-        if !ids_before.contains(node.id_str())
-            || !matches!(node, PenNode::Frame(_))
-            || node.children().is_none_or(|children| children.is_empty())
-        {
-            return false;
-        }
-        let Some(width) = node.width_px() else {
-            return false;
-        };
-        let Some(height) = node.height_px() else {
-            return false;
-        };
-        let mobile_width = (320.0..=480.0).contains(&width);
-        width.is_finite()
-            && height.is_finite()
-            && width > 0.0
-            && height > 0.0
-            && mobile_width == (target == RootSeedTarget::Mobile)
+    // Inheriting is a CONTINUATION contract, not a canvas fact. Without the
+    // gate, any turn on a non-empty canvas kept the guard pending forever and
+    // rewrote every root it produced to the first screen's dimensions.
+    let matching_existing_screen = continuation.then(|| {
+        state.active_children().iter().rev().find(|node| {
+            if !ids_before.contains(node.id_str())
+                || !matches!(node, PenNode::Frame(_))
+                || node.children().is_none_or(|children| children.is_empty())
+            {
+                return false;
+            }
+            let Some(width) = node.width_px() else {
+                return false;
+            };
+            let Some(height) = node.height_px() else {
+                return false;
+            };
+            let mobile_width = (320.0..=480.0).contains(&width);
+            width.is_finite()
+                && height.is_finite()
+                && width > 0.0
+                && height > 0.0
+                && mobile_width == (target == RootSeedTarget::Mobile)
+        })
     });
-    if let Some(screen) = matching_existing_screen {
+    if let Some(screen) = matching_existing_screen.flatten() {
         return RootSeedProfile {
             target,
             width: screen.width_px().expect("matched numeric width"),

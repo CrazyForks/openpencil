@@ -44,7 +44,9 @@ use op_mcp::spawn_agents_tool::SpawnSpec;
 use op_orchestrator::agent_identity::assign_agent_identities_seeded;
 
 use op_editor_core::{agent_indicators, ChatMessage, PenNodeExt};
-use op_host_services::design_agent_tools::root_seed_prompt_is_mobile;
+use op_host_services::design_agent_tools::{
+    root_seed_prompt_is_continuation, root_seed_prompt_is_mobile,
+};
 
 use crate::chat_session::{self, builtin_provider_with_design_tools, ChatSession};
 use crate::design_loop_indicator::{
@@ -76,6 +78,9 @@ pub(crate) struct SubAgentSession {
     pub indicator: Option<DesignLoopIndicator>,
     /// Precomputed from the sub prompt and attached when the lazy epoch begins.
     pub root_seed_mobile: bool,
+    /// Whether this sub's own prompt asks to continue an existing screen set —
+    /// the only case in which its roots may inherit a live screen's artboard.
+    pub root_seed_continuation: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -243,6 +248,7 @@ pub(crate) fn launch_sub_agents(
             identity,
             indicator: None,
             root_seed_mobile: existing_mobile_screen || root_seed_prompt_is_mobile(&spec.prompt),
+            root_seed_continuation: root_seed_prompt_is_continuation(&spec.prompt),
         });
     }
 
@@ -326,7 +332,10 @@ pub(crate) fn pump_sub_agents(
         // The initial-frame snapshot is taken NOW (after prior subs
         // finished), so only THIS sub's new frames get badged.
         if subs[*active].indicator.is_none() {
-            let epoch = agent_indicators::begin_with_root_seed_hint(subs[*active].root_seed_mobile);
+            let epoch = agent_indicators::begin_with_root_seed_hint(
+                subs[*active].root_seed_mobile,
+                subs[*active].root_seed_continuation,
+            );
             let initial_frame_ids = collect_top_level_frame_ids(host.editor_state());
             let identity = subs[*active].identity.clone();
             agent_indicators::confirm_cursor_agent(epoch, &identity.color, &identity.name);

@@ -18,7 +18,9 @@ use op_host_services::chat_builtin_http::{
 };
 use op_host_services::chat_canvas_tools::{chat_tool_channel, ChatToolRequest};
 use op_host_services::chat_system_prompt::chat_history_from_transcript;
-use op_host_services::design_agent_tools::{design_tool_defs, root_seed_prompt_is_mobile};
+use op_host_services::design_agent_tools::{
+    design_tool_defs, root_seed_prompt_is_continuation, root_seed_prompt_is_mobile,
+};
 
 use op_editor_core::scene_template_catalog::TemplateScene;
 
@@ -299,6 +301,9 @@ pub(super) fn launch_design_loop_turn(
     // `&mut` borrow below.
     let thinking = design_turn_thinking_mode(host);
     let root_seed_mobile = root_seed_mobile_for_turn(host.editor_state(), &user_text);
+    // Only a request that promises sibling screens may make later roots
+    // inherit the live screen's artboard; see `root_seed_prompt_is_continuation`.
+    let root_seed_continuation = root_seed_prompt_is_continuation(&user_text);
     let agent_team_size = host.editor_state().chat.agent_team_size;
     let chat = &mut host.editor_state_mut().chat;
     let effort = chat.effort_level;
@@ -340,7 +345,10 @@ pub(super) fn launch_design_loop_turn(
     };
     // The host starts the indicator epoch before the worker can apply its first
     // design batch; the indicator pump adopts this epoch for badges/teardown.
-    op_editor_core::agent_indicators::begin_with_root_seed_hint(root_seed_mobile);
+    op_editor_core::agent_indicators::begin_with_root_seed_hint(
+        root_seed_mobile,
+        root_seed_continuation,
+    );
     *current_chat =
         Some(ChatSession::start_with_tools(provider, req, Some(tool_rx)).into_design_loop());
     // Signal one agent running so the chat header shows "1/1 designing…"
@@ -381,6 +389,72 @@ mod tests {
             resolve_design_thinking(Some("claude-sonnet-4-6"), ThinkingMode::Enabled),
             ThinkingMode::Enabled
         );
+    }
+
+    #[test]
+    fn clicking_the_footer_toggle_changes_what_a_design_turn_asks_for() {
+        // The whole chain in one test, because every link of it was present
+        // and the feature still did not exist: the chip that set
+        // `thinking_mode` was painted by nothing, so no click could reach the
+        // policy below. Black-box on purpose — the test finds the control the
+        // way a user does (a press somewhere in the panel), not by importing
+        // its rect.
+        use op_editor_core::EditorState;
+        use op_editor_ui::widgets::chat_click_flow::apply_chat_hit;
+        use op_editor_ui::widgets::{AIChatHit, AIChatPlaceholder, AI_CHAT_HEIGHT, AI_CHAT_WIDTH};
+        use op_editor_ui::{Point2D, Rect};
+
+        let mut state = EditorState::new();
+        let rect = Rect::xywh(0.0, 0.0, AI_CHAT_WIDTH, AI_CHAT_HEIGHT);
+        let toggle_point = {
+            let panel = AIChatPlaceholder::from_editor(&state);
+            let input = panel.input_rect(rect);
+            let mut found = None;
+            let mut y = input.origin.y;
+            while y < input.origin.y + input.size.y && found.is_none() {
+                let mut x = input.origin.x;
+                while x < input.origin.x + input.size.x {
+                    let point = Point2D::new(x, y);
+                    if panel.hit_test(rect, point) == Some(AIChatHit::CycleThinking) {
+                        found = Some(point);
+                        break;
+                    }
+                    x += 1.0;
+                }
+                y += 1.0;
+            }
+            found.expect("the chat footer must expose a thinking-mode control")
+        };
+
+        // A model the profile does not force off follows the user's choice.
+        const FREE: Option<&str> = Some("claude-opus-4");
+        assert_eq!(
+            resolve_design_thinking(FREE, state.chat.thinking_mode),
+            ThinkingMode::Adaptive
+        );
+        for want in [
+            ThinkingMode::Disabled,
+            ThinkingMode::Enabled,
+            ThinkingMode::Adaptive,
+        ] {
+            let hit = AIChatPlaceholder::from_editor(&state)
+                .hit_test(rect, toggle_point)
+                .expect("the toggle stays where it was found");
+            apply_chat_hit(&mut state, hit, 0);
+            assert_eq!(state.chat.thinking_mode, want);
+            assert_eq!(
+                resolve_design_thinking(FREE, state.chat.thinking_mode),
+                want,
+                "a design turn must ask for what the footer now shows"
+            );
+            // …and a `thinking_disabled` model stays forced off through every
+            // one of those states. That override is deliberate, not a bug the
+            // toggle is expected to defeat.
+            assert_eq!(
+                resolve_design_thinking(Some("glm-5.2"), state.chat.thinking_mode),
+                ThinkingMode::Disabled
+            );
+        }
     }
 
     #[test]

@@ -44,6 +44,14 @@ fn has_name_chars(part: &str) -> bool {
     letters.iter().any(|c| !c.is_ascii()) || letters.len() >= 3
 }
 
+/// A segment that shed a declared count (`My 2个`) proved it belongs to a
+/// counted list, so the generic 3-letter floor is not needed to tell it apart
+/// from `16/9` or `UI/UX`. Two letters keep short real names (`My`, `Me`) while
+/// still rejecting a bare count (`2个`) or a stray initial.
+fn has_counted_name_chars(part: &str) -> bool {
+    part.chars().filter(|c| c.is_alphabetic()).count() >= 2
+}
+
 fn normalize_target_name(raw: &str) -> Option<String> {
     let mut name = raw
         .trim()
@@ -53,6 +61,7 @@ fn normalize_target_name(raw: &str) -> Option<String> {
     // A shared CJK screen noun commonly carries the declared count after the
     // final name: `星图、观测计划、我的3个界面`. The count describes the list; it is
     // not part of the last screen's name.
+    let mut shed_declared_count = false;
     if name.ends_with('个') {
         name.pop();
         name = name.trim_end().to_string();
@@ -68,6 +77,7 @@ fn normalize_target_name(raw: &str) -> Option<String> {
             .trim_end_matches('这')
             .trim_end()
             .to_string();
+        shed_declared_count = true;
     }
 
     if let Some(without_article) = name
@@ -77,7 +87,14 @@ fn normalize_target_name(raw: &str) -> Option<String> {
         name = without_article.trim().to_string();
     }
 
-    has_name_chars(&name).then_some(name)
+    // The list is all-or-nothing on purpose (`16/9` must not half-parse), so a
+    // short trailing name would otherwise kill an otherwise well-formed
+    // request: `Home、My 2个页面` collapsed to no names at all because `My` is
+    // two letters. Falling back to the RAW segment was rejected — it would
+    // ship `My 2个` as a screen name into the continuation contract, which is
+    // worse than not matching.
+    (has_name_chars(&name) || (shed_declared_count && has_counted_name_chars(&name)))
+        .then_some(name)
 }
 
 fn named_list_with(targets: &str, separator: char) -> Option<Vec<String>> {
@@ -192,9 +209,16 @@ fn listed_whole_screen_names_en(prompt: &str) -> Option<Vec<String>> {
                         continue;
                     }
                     let targets = after_verb_original[..noun_pos].trim();
+                    // The "current / these / …" guard compares against a
+                    // lowercase marker table, so it must read the LOWERCASED
+                    // slice (`the Current explore/profile interfaces` is the
+                    // same request as the all-lowercase one). Name extraction
+                    // keeps the original casing. `to_ascii_lowercase` is
+                    // byte-length preserving, so both slices share indices.
+                    let targets_lower = after_verb[..noun_pos].trim();
                     let tail = &after_verb_original[noun_pos + noun.len()..];
                     if !crosses_clause_boundary(targets)
-                        && !targets_reference_existing_screen_en(targets)
+                        && !targets_reference_existing_screen_en(targets_lower)
                         && is_clause_end(tail)
                     {
                         if let Some(names) = named_list_names(targets) {
@@ -260,6 +284,53 @@ mod tests {
             listed_whole_screen_names("Continue generating the explore/profile interface"),
             ["explore", "profile"]
         );
+    }
+
+    /// A declared count must not disqualify the name it follows. The list is
+    /// all-or-nothing, so a short trailing latin name used to take the whole
+    /// request down with it.
+    #[test]
+    fn keeps_short_latin_names_that_carried_the_declared_count() {
+        assert_eq!(
+            listed_whole_screen_names("继续生成 Home、My 2个页面"),
+            ["Home", "My"]
+        );
+        assert_eq!(
+            listed_whole_screen_names("继续生成 Home、Me 两个页面"),
+            ["Home", "Me"]
+        );
+        assert_eq!(
+            listed_whole_screen_names("继续生成 探索、Me 两个界面"),
+            ["探索", "Me"]
+        );
+        // The relaxation is scoped to the counted segment: an uncounted
+        // two-letter pair stays out, so `UI/UX` is still not a screen list.
+        assert!(listed_whole_screen_names("继续完成 UI/UX界面").is_empty());
+        // A bare count is not a name.
+        assert!(listed_whole_screen_names("继续生成 Home、2个页面").is_empty());
+    }
+
+    /// The English existing-screen guard reads a lowercase marker table, so it
+    /// has to be fed the lowercased slice. Reading the original-cased one let
+    /// `Current` through AND leaked `Current explore` as a screen name.
+    #[test]
+    fn english_existing_screen_guard_is_case_insensitive() {
+        for prompt in [
+            "Continue generating the Current explore/profile interfaces",
+            "Continue generating THE CURRENT explore/profile interfaces",
+            "Continue generating These explore/profile interfaces",
+            "Continue generating Those explore/profile interfaces",
+            "Continue generating the Same explore/profile interfaces",
+        ] {
+            assert!(
+                !requests_listed_whole_screens(prompt),
+                "expected an in-place request: {prompt}"
+            );
+            assert!(
+                listed_whole_screen_names(prompt).is_empty(),
+                "an in-place request must promise no screen names: {prompt}"
+            );
+        }
     }
 
     #[test]

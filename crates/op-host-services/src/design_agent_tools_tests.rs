@@ -469,7 +469,9 @@ fn continuation_seed_inherits_every_mobile_screen_and_repairs_wrong_numeric_size
         }))
         .expect("existing mobile screen"),
     );
-    let mut guard = RootSeedGuard::from_prompt("mobile continuation");
+    // The artboard is inherited because the REQUEST promises sibling screens,
+    // not because the canvas happens to hold a frame.
+    let mut guard = RootSeedGuard::from_prompt("手机上继续生成 星图、观测计划、我的3个界面");
     let (result, mutated) = execute_design_tool_with_root_seed_guard(
         &mut state,
         "batch_design",
@@ -497,12 +499,23 @@ fn continuation_seed_inherits_every_mobile_screen_and_repairs_wrong_numeric_size
             (root.width_px(), root.height_px()),
             (Some(390.0), Some(844.0))
         );
-        assert_eq!(op_editor_core::first_solid_fill_hex(root), Some("#050508"));
         assert_eq!(
             root.children()
                 .and_then(|children| children.first())
                 .and_then(|child| child.base().role.as_deref()),
             Some("status-bar")
+        );
+        // The artboard is a contract; the background is authored intent. Only
+        // the roots the model left unfilled inherit the live screen's colour.
+        let expected_fill = match root.base().name.as_deref() {
+            Some("星图") => "#16002E",
+            _ => "#050508",
+        };
+        assert_eq!(
+            op_editor_core::first_solid_fill_hex(root),
+            Some(expected_fill),
+            "{:?}",
+            root.base().name
         );
     }
     let value: serde_json::Value = serde_json::from_str(&result.content).unwrap();

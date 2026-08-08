@@ -393,6 +393,7 @@ fn stop_chat_aborts_sub_agents_and_clears_the_running_counter() {
             },
             indicator: None,
             root_seed_mobile: true,
+            root_seed_continuation: false,
         });
     app.active_sub_agent = 0;
     app.host.editor_state_mut().chat.agents_running = (1, 1);
@@ -438,6 +439,7 @@ fn new_chat_aborts_the_old_running_tab_without_dirtying_the_fresh_tab() {
             },
             indicator: None,
             root_seed_mobile: true,
+            root_seed_continuation: false,
         });
     app.active_sub_agent = 0;
     app.chat_running_tab = Some(0);
