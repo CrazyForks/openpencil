@@ -15,12 +15,13 @@ use crate::repaint_ctx::RepaintContext;
 /// Keep the about-to-be-overwritten local document, and raise the notice that
 /// tells the user it is recoverable.
 ///
-/// Best effort on the borrow: if the shell is mid-render the accept still has
-/// to proceed (the alternative is the latch that never lifts), and the next
-/// conflict will stash again.
-pub(super) fn preserve_local_document<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) {
+/// Returns whether the local document was preserved. A `false` means the
+/// caller must NOT accept the remote this tick: overwriting without a backup
+/// is the data loss this exists to prevent, and the latch simply stays up for
+/// one more tick, which converges a few hundred milliseconds later.
+pub(super) fn preserve_local_document<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) -> bool {
     let Ok(mut context) = inner.try_borrow_mut() else {
-        return;
+        return false;
     };
     let now_ms = crate::collab_sync::now_ms();
     let state = context.host_mut().editor_state_mut();
@@ -30,6 +31,7 @@ pub(super) fn preserve_local_document<C: RepaintContext + 'static>(inner: &Rc<Re
         .collab
         .set_notice(op_editor_core::CollabNoticeKind::LocalEditPreserved, now_ms);
     context.host_mut().mark_editor_state_dirty();
+    true
 }
 
 /// The safety decision behind [`maybe_auto_resolve_conflict_in_session`],

@@ -60,6 +60,21 @@ fn drain_connections(conn_count: &Arc<AtomicUsize>) -> bool {
     conn_count.load(Ordering::Acquire) == 0
 }
 
+/// Wait for in-flight document writes to finish, up to the bound.
+///
+/// Separate from the connection drain: an SSE stream holds a connection for
+/// minutes and is safe to flush past, while a write in progress is not.
+fn drain_write_barrier(barrier: &Arc<super::tenant::WriteBarrier>) -> bool {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(SHUTDOWN_DRAIN_SECS);
+    while std::time::Instant::now() < deadline {
+        if barrier.active() == 0 {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    barrier.active() == 0
+}
+
 /// Longest gap between idle sweeps, however long the idle deadline is.
 const MAX_SWEEP_INTERVAL_SECS: u64 = 300;
 
@@ -148,6 +163,7 @@ pub fn run_online_web_canvas(options: ServeWebOptions) -> Result<()> {
         store,
     ));
     let conn_count = Arc::new(AtomicUsize::new(0));
+    let write_barrier = Arc::new(super::tenant::WriteBarrier::default());
     let shutdown = Arc::new(AtomicBool::new(false));
     // A container stop is a SIGTERM, and without a handler it kills the
     // process where it stands — losing every resident tenant that had not
@@ -180,6 +196,7 @@ pub fn run_online_web_canvas(options: ServeWebOptions) -> Result<()> {
         let registry = Arc::clone(&registry);
         let verifier = Arc::clone(&verifier);
         let conns = Arc::clone(&conn_count);
+        let write_barrier = Arc::clone(&write_barrier);
         let shutdown_flag = Arc::clone(&shutdown);
         let spawned = thread::Builder::new()
             .name("op-serve-web-online-conn".into())
@@ -187,7 +204,12 @@ pub fn run_online_web_canvas(options: ServeWebOptions) -> Result<()> {
                 let _conn_guard = ConnGuard(conns);
                 let _ = s.set_read_timeout(Some(IO_TIMEOUT));
                 let _ = s.set_write_timeout(Some(IO_TIMEOUT));
-                match serve_one_online(&mut s, registry.as_ref(), verifier.as_ref()) {
+                match serve_one_online(
+                    &mut s,
+                    registry.as_ref(),
+                    verifier.as_ref(),
+                    write_barrier.as_ref(),
+                ) {
                     Ok(true) => {
                         shutdown_flag.store(true, Ordering::Release);
                         let _ = std::net::TcpStream::connect(("127.0.0.1", bound));
@@ -207,19 +229,35 @@ pub fn run_online_web_canvas(options: ServeWebOptions) -> Result<()> {
     // the client's work lost — it acked 200 and then vanished. Bounded, because
     // an SSE stream can hold a connection open indefinitely and a deploy
     // cannot wait for it.
+    // Stop admitting writes FIRST: a worker past the drain check but not yet
+    // holding a pass would otherwise commit after the flush snapshotted the
+    // document, having already answered 200.
+    write_barrier.close();
+    let writes_settled = drain_write_barrier(&write_barrier);
+    if !writes_settled {
+        eprintln!(
+            "openpencil --serve-web --online: {} write(s) still in flight after {}s; \
+             flushing anyway — those clients were acked but may not be persisted",
+            write_barrier.active(),
+            SHUTDOWN_DRAIN_SECS
+        );
+    }
     let drained = drain_connections(&conn_count);
+    let flush_started = std::time::Instant::now();
     let flushed = registry.flush_all();
     if !drained {
         eprintln!(
-            "openpencil --serve-web --online: {} connection(s) still active after {}s; \
-             flushing anyway",
+            "openpencil --serve-web --online: {} connection(s) still active after {}s",
             conn_count.load(Ordering::Acquire),
             SHUTDOWN_DRAIN_SECS
         );
     }
+    // The duration is logged because a slow volume is what makes
+    // `stop_grace_period` too short, and there is no other way to size it.
     eprintln!(
-        "openpencil --serve-web --online: shutdown requested; flushed {flushed} account(s); \
-         exiting"
+        "openpencil --serve-web --online: shutdown requested; flushed {flushed} account(s) in \
+         {} ms; exiting",
+        flush_started.elapsed().as_millis()
     );
     Ok(())
 }
@@ -438,6 +476,7 @@ pub(super) fn serve_one_online<S: Read + Write>(
     stream: &mut S,
     registry: &TenantRegistry,
     verifier: &dyn IdentityVerifier,
+    write_barrier: &super::tenant::WriteBarrier,
 ) -> Result<bool> {
     let req = crate::mcp_serve::read_http_request(stream)?;
     let allow_origins = registry.allow_origins();
@@ -583,6 +622,7 @@ pub(super) fn serve_one_online<S: Read + Write>(
             // this particular credential carries.
             mcp_profile: crate::mcp_serve::tool_profile::McpAccessProfile::online(identity.scopes),
             rest_identity: Some(identity.clone()),
+            write_barrier: Some(write_barrier),
         },
     )
 }

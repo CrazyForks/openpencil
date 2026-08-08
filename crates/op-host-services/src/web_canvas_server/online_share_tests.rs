@@ -772,3 +772,21 @@ fn a_disabled_store_passes_the_probe_trivially() {
         .check_writable()
         .expect("no store, no probe");
 }
+
+#[test]
+fn the_status_projection_carries_a_stable_subject_distinct_from_the_handle() {
+    // The shell partitions its storage by this, so it must be the same key the
+    // tenant registry uses — not a renameable display handle.
+    let response = serve(
+        &registry(),
+        &verifier(),
+        Request::new("GET", op_editor_core::auth_routes::STATUS).with_bearer("tokA"),
+    );
+    let payload = body(&response);
+    assert_eq!(payload["subject"], "userA");
+    assert!(payload["username"].is_string());
+}
+
+#[cfg(test)]
+#[path = "online_shutdown_tests.rs"]
+mod shutdown;

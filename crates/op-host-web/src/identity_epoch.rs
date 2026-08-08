@@ -127,8 +127,11 @@ pub fn subject_from_status(body: &str) -> Option<String> {
     if !parsed["signed_in"].as_bool().unwrap_or(false) {
         return None;
     }
-    parsed["username"]
+    // `subject` is the stable account key; `username` is a display handle and
+    // is only used when talking to a daemon that predates the field.
+    parsed["subject"]
         .as_str()
+        .or_else(|| parsed["username"].as_str())
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
@@ -346,5 +349,60 @@ mod observation_tests {
         let outcome = observe_subject(None);
         assert_eq!(outcome, IdentityObservation::Unchanged);
         assert!(!outcome.requires_storage_reload());
+    }
+}
+
+#[cfg(test)]
+mod subject_stability_tests {
+    use super::*;
+
+    #[test]
+    fn the_stable_subject_wins_over_the_display_handle() {
+        // The partition key must be the account id, not the username: a hub
+        // may let a user rename, and a rename would silently move the tab to a
+        // fresh partition — or collide with whoever later takes the old handle.
+        assert_eq!(
+            subject_from_status(r#"{"signed_in":true,"subject":"user-uuid-1","username":"alice"}"#)
+                .as_deref(),
+            Some("user-uuid-1")
+        );
+    }
+
+    #[test]
+    fn a_rename_does_not_move_the_partition() {
+        reset_for_test();
+        observe_subject(
+            subject_from_status(r#"{"signed_in":true,"subject":"u1","username":"alice"}"#)
+                .as_deref(),
+        );
+        let before = current_subject();
+        let outcome = observe_subject(
+            subject_from_status(r#"{"signed_in":true,"subject":"u1","username":"renamed"}"#)
+                .as_deref(),
+        );
+        assert_eq!(outcome, IdentityObservation::Unchanged);
+        assert_eq!(current_subject(), before);
+    }
+
+    #[test]
+    fn an_older_daemon_without_a_subject_falls_back_to_the_username() {
+        assert_eq!(
+            subject_from_status(r#"{"signed_in":true,"username":"alice"}"#).as_deref(),
+            Some("alice")
+        );
+    }
+
+    #[test]
+    fn two_accounts_that_share_a_display_handle_stay_separate() {
+        reset_for_test();
+        observe_subject(
+            subject_from_status(r#"{"signed_in":true,"subject":"u1","username":"same"}"#)
+                .as_deref(),
+        );
+        let outcome = observe_subject(
+            subject_from_status(r#"{"signed_in":true,"subject":"u2","username":"same"}"#)
+                .as_deref(),
+        );
+        assert_eq!(outcome, IdentityObservation::Changed);
     }
 }

@@ -133,7 +133,9 @@ fn serve(registry: &TenantRegistry, verifier: &StaticVerifier, request: Request)
         input: std::io::Cursor::new(request.wire().into_bytes()),
         output: Vec::new(),
     };
-    serve_one_online(&mut stream, registry, verifier).expect("serve_one_online");
+    // An open barrier: the shutdown path is exercised by its own tests.
+    let barrier = crate::web_canvas_server::tenant::WriteBarrier::default();
+    serve_one_online(&mut stream, registry, verifier, &barrier).expect("serve_one_online");
     String::from_utf8_lossy(&stream.output).into_owned()
 }
 

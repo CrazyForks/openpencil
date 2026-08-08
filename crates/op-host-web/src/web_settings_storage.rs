@@ -163,6 +163,12 @@ where
             }
         }
         StoredCredentialSource::None => {
+            // No stored credentials for THIS partition. Clearing is the point:
+            // after an account switch the in-memory state still holds the
+            // previous account's API keys, and an empty partition must mean
+            // "no keys", not "keep whatever was there". At mount the state is
+            // fresh, so this is a no-op for the local daemon.
+            clear_local_credentials(state);
             let sanitized = stored.sanitized_settings_json;
             let settings_saved = sanitized
                 .as_deref()

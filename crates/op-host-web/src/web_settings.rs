@@ -44,6 +44,11 @@ pub(crate) fn reload_for_active_partition<C: crate::repaint_ctx::RepaintContext>
         return;
     };
     let _ = storage::load_into(context.host_mut().editor_state_mut());
+    // AFTER the load, not before: the baselines must measure against the state
+    // this partition just produced. Rebuilding them from the previous
+    // account's state would make the very next comparison report the whole
+    // partition as a change and write it back under the wrong key.
+    context.reset_persistence_baselines();
     context.host_mut().mark_editor_state_dirty();
     let _ = context.repaint();
 }

@@ -278,10 +278,25 @@ impl WebCanvasState {
                 });
             }
         }
-        // Taken rather than moved: `PendingDocumentPush` owns a `Drop` that
-        // releases the thumbnail seed of a push that never installs, and
-        // taking `prepared` here is what tells it this one DID.
+        // The gateway runs BEFORE the document is taken out of `push`, so a
+        // refusal leaves `push` still owning it — and its `Drop` releases the
+        // pending thumbnail seed. Taking first meant a gated push orphaned its
+        // seed in the process-global side table.
+        //
+        // A metadata-only push carries no document and is not a document
+        // mutation, so it is not gated; it is handled below.
         let mut push = push;
+        if push.prepared.is_some() {
+            self.gate_daemon_mutation(
+                op_editor_core::CollabGateAction::Document(
+                    op_editor_core::CollabDocumentMutation::NodePropertyBatch,
+                ),
+                op_editor_core::CollabEditSource::User,
+            )
+            .map_err(WebCanvasError::Collab)?;
+        }
+        // Taken rather than moved: taking `prepared` is what tells the `Drop`
+        // this push reached the install.
         let editor_meta = push.take_editor_meta();
         let Some(prepared) = push.prepared.take() else {
             // Active-page changes do not mutate canonical document content.
@@ -294,15 +309,6 @@ impl WebCanvasState {
                 current_version: self.version,
             });
         };
-        // The gateway. Returns Ok untouched when there is no session, so a
-        // standalone daemon behaves exactly as it did before collaboration.
-        self.gate_daemon_mutation(
-            op_editor_core::CollabGateAction::Document(
-                op_editor_core::CollabDocumentMutation::NodePropertyBatch,
-            ),
-            op_editor_core::CollabEditSource::User,
-        )
-        .map_err(WebCanvasError::Collab)?;
         let version = if self.collab_session_is_active() {
             // Inside the session's local-edit capture: the session core diffs
             // the document and emits precise node operations, so pushing an

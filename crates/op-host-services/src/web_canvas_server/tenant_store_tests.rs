@@ -315,15 +315,50 @@ fn a_persisted_tenant_carries_no_thumbnail_data() {
 }
 
 #[test]
-fn a_push_that_never_installs_releases_its_thumbnail_seed() {
-    // `load_canonical` registers the seed in a process-global side table keyed
-    // by the document; only an activation consumes it. A push that is parsed
-    // and then dropped — stale baseVersion, collaboration refusal, client gone
-    // — used to leave it there, where a later document reusing the key could
-    // activate someone else's thumbnails.
+fn a_parsed_push_really_registers_its_thumbnail_seed() {
+    // Grounded in the true key semantics: `DocumentSeedKey` is the version
+    // String's (ptr, len, capacity), so the seed can only be observed through
+    // the SAME document allocation the parse produced. Asserting on a cloned
+    // document — as an earlier version of this test did — is vacuous: a clone
+    // has a different pointer and always misses.
     use crate::web_canvas_server::{PendingDocumentPush, ServeMode};
 
-    let body = serde_json::json!({
+    let body = seeded_push_body();
+    let mut push = PendingDocumentPush::parse(&body, ServeMode::Local).expect("parses");
+    let prepared = push.prepared.take().expect("a document push");
+
+    // Consuming the seed through the real document proves it was registered:
+    // `discard_for_document` returns true only when a pending seed exists for
+    // exactly this allocation.
+    assert!(
+        jian_ops_schema::image_thumbs::discard_for_document(prepared.document()),
+        "the parse must register a pending seed under this document"
+    );
+    // …and it is gone, so a second release is a no-op — which is what makes
+    // the `Drop`, the gate path and the runtime-reject path idempotent.
+    assert!(!jian_ops_schema::image_thumbs::discard_for_document(
+        prepared.document()
+    ));
+}
+
+#[test]
+fn an_online_push_never_registers_a_seed_at_all() {
+    // Online policy discards at parse time, so there is nothing for any later
+    // path to leak.
+    use crate::web_canvas_server::{PendingDocumentPush, ServeMode};
+
+    let body = seeded_push_body();
+    let mut push = PendingDocumentPush::parse(&body, ServeMode::Online).expect("parses");
+    let prepared = push.prepared.take().expect("a document push");
+    assert!(
+        !jian_ops_schema::image_thumbs::discard_for_document(prepared.document()),
+        "online must not register a seed the shared registry could activate"
+    );
+}
+
+/// A push body carrying an embedded thumbnail.
+fn seeded_push_body() -> String {
+    serde_json::json!({
         "document": {
             "version": "1.0.0",
             "children": [{
@@ -334,29 +369,5 @@ fn a_push_that_never_installs_releases_its_thumbnail_seed() {
         },
         "sourceClientId": "s",
     })
-    .to_string();
-
-    let push = PendingDocumentPush::parse(&body, ServeMode::Local).expect("parses");
-    let document_version = push
-        .prepared
-        .as_ref()
-        .expect("a document push")
-        .document()
-        .version
-        .clone();
-    // Dropped without installing — the failure paths this exists for.
-    drop(push);
-
-    // The seed is gone: a fresh document carrying the same key activates
-    // nothing rather than inheriting the abandoned push's thumbnails.
-    let mut probe = op_pen_loader::load_canonical(
-        &serde_json::json!({ "version": document_version, "children": [] }).to_string(),
-    )
-    .expect("probe document")
-    .value;
-    probe.version.clone_from(&document_version);
-    assert!(
-        !jian_ops_schema::image_thumbs::activate_for_document(&probe),
-        "an abandoned push must not leave an activatable seed behind"
-    );
+    .to_string()
 }

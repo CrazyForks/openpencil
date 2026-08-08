@@ -30,6 +30,9 @@ pub(super) struct ConnCtx<'a> {
     /// `None` for the local and managed daemons, which have no per-request
     /// identity and are unrestricted — the REST scope gate is skipped whole.
     pub(super) rest_identity: Option<super::tenant_auth::ResolvedIdentity>,
+    /// Admits document writes until shutdown closes it. `None` for the local
+    /// and managed daemons, whose lifecycle has no flush to protect.
+    pub(super) write_barrier: Option<&'a super::tenant::WriteBarrier>,
 }
 
 /// Handle one connection against the single-user document authority.
@@ -82,6 +85,7 @@ pub(super) fn serve_one_in_mode<S: Read + Write>(
             mode,
             mcp_profile: crate::mcp_serve::tool_profile::McpAccessProfile::UNRESTRICTED,
             rest_identity: None,
+            write_barrier: None,
         },
     )
 }
@@ -331,6 +335,24 @@ pub(super) fn dispatch<S: Read + Write>(
         // the lock, where it is not a race.
         let pending_push = (req.method == "POST" && req.path == "/api/mcp/document")
             .then(|| PendingDocumentPush::parse(&req.body, ctx.mode));
+        // A document write must hold a pass for its whole locked segment, so
+        // shutdown cannot snapshot the document between the pass being taken
+        // and the commit landing.
+        let write_pass = match (ctx.write_barrier, pending_push.is_some()) {
+            (Some(barrier), true) => match barrier.enter() {
+                Some(pass) => Some(pass),
+                None => {
+                    crate::mcp_serve::write_mcp_http_response_with_origin(
+                        stream,
+                        "503 Service Unavailable",
+                        r#"{"ok":false,"error":"shutting-down","message":"this daemon is stopping and cannot accept writes"}"#,
+                        cors_origin,
+                    )?;
+                    return Ok(false);
+                }
+            },
+            _ => None,
+        };
         let reply = {
             let mut guard = state.lock().unwrap_or_else(|p| p.into_inner());
             let before = guard.version;
@@ -363,6 +385,8 @@ pub(super) fn dispatch<S: Read + Write>(
             }
             reply
         };
+        // Released only after the commit is visible in the shared state.
+        drop(write_pass);
         crate::mcp_serve::write_mcp_http_response_with_origin(
             stream,
             reply.status,

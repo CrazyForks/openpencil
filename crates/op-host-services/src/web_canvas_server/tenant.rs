@@ -28,7 +28,7 @@
 //! still the exact `Arc` it decided to evict.
 
 use std::collections::{BTreeSet, HashMap};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use op_editor_core::EditorState;
@@ -320,6 +320,65 @@ impl Drop for TenantLease {
         // a tenant that just finished a 20-minute SSE stream has been active
         // the whole time.
         self.tenant.touch(now_unix());
+    }
+}
+
+/// Counts requests that are inside a document write, and refuses new ones
+/// once shutdown has begun.
+///
+/// Draining connections alone is not enough: a worker can be past the drain
+/// check and about to take the state lock when the flush snapshots the
+/// document. It then commits and answers 200 for work the flush never saw.
+/// The barrier closes that window — shutdown stops admitting writes and then
+/// waits for the ones already inside to finish.
+#[derive(Debug, Default)]
+pub struct WriteBarrier {
+    active: AtomicUsize,
+    closed: AtomicBool,
+}
+
+impl WriteBarrier {
+    /// Enter the write path, unless shutdown has closed it.
+    ///
+    /// `None` means the caller must refuse the request (503): the daemon is
+    /// stopping and cannot durably accept a write.
+    pub fn enter(&self) -> Option<WritePass<'_>> {
+        if self.closed.load(Ordering::Acquire) {
+            return None;
+        }
+        self.active.fetch_add(1, Ordering::AcqRel);
+        // Re-checked after the increment: a close landing between the two
+        // would otherwise admit a writer the drain has already stopped
+        // waiting for.
+        if self.closed.load(Ordering::Acquire) {
+            self.active.fetch_sub(1, Ordering::AcqRel);
+            return None;
+        }
+        Some(WritePass { barrier: self })
+    }
+
+    /// Stop admitting writes. Idempotent.
+    pub fn close(&self) {
+        self.closed.store(true, Ordering::Release);
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
+
+    pub fn active(&self) -> usize {
+        self.active.load(Ordering::Acquire)
+    }
+}
+
+/// Proof that a write is in flight. Decrements on drop.
+pub struct WritePass<'a> {
+    barrier: &'a WriteBarrier,
+}
+
+impl Drop for WritePass<'_> {
+    fn drop(&mut self) {
+        self.barrier.active.fetch_sub(1, Ordering::AcqRel);
     }
 }
 

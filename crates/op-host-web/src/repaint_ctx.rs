@@ -16,6 +16,16 @@ use wasm_bindgen::JsValue;
 pub(crate) trait RepaintContext {
     fn host(&self) -> &WidgetHost;
     fn host_mut(&mut self) -> &mut WidgetHost;
+    /// Forget the settings/credential change-detection baselines.
+    ///
+    /// Called when the tab switches accounts. The baselines were computed
+    /// against the PREVIOUS account's state, so keeping them means the first
+    /// comparison after the switch reports a spurious change and writes — or
+    /// uploads — the new account's partition against the old one's shape.
+    ///
+    /// Defaulted to a no-op: a backend with no persistence baselines (the
+    /// smoke harness) has nothing to forget.
+    fn reset_persistence_baselines(&mut self) {}
     /// Logical viewport size in CSS pixels. File-open/import flows fit the
     /// loaded content to this size after replacing the document.
     fn viewport_size(&self) -> (f32, f32);

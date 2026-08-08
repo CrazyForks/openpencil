@@ -344,3 +344,37 @@ fn a_rejected_ingest_answers_409_with_the_authoritative_version() {
         );
     }
 }
+
+#[test]
+fn a_gated_push_still_owns_its_document_so_the_seed_is_released() {
+    // The gate used to run AFTER `prepared.take()`, so a refusal left the
+    // push without the document — and its `Drop` had nothing to release. This
+    // pins the ordering by exercising it: a session that refuses the push must
+    // not leave a seed behind.
+    use crate::web_canvas_server::{PendingDocumentPush, ServeMode};
+
+    let mut state = daemon();
+    in_session(
+        &mut state,
+        CollabConnectionPhase::Active,
+        CollabUiRole::Viewer,
+    );
+
+    let body = serde_json::json!({
+        "document": {
+            "version": "1.0.0",
+            "children": [{
+                "id": "n1", "type": "rectangle", "name": "gated",
+                "x": 0, "y": 0, "width": 4, "height": 4,
+            }],
+            "imageThumbs": { "6161": "AQID" },
+        },
+        "sourceClientId": "s",
+    })
+    .to_string();
+
+    let push = PendingDocumentPush::parse(&body, ServeMode::Local).expect("parses");
+    // A viewer may not write, so the gate refuses before the document moves.
+    let refused = state.apply_prepared_document_push(push, None);
+    assert!(refused.is_err(), "a viewer's push must be refused");
+}

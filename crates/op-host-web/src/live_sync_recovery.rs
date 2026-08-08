@@ -125,3 +125,21 @@ mod call_site_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod skip_without_backup_tests {
+    /// A failed stash must abort the accept for this tick, not proceed
+    /// unprotected: overwriting unpushed work with no way back is the exact
+    /// loss this path exists to prevent, and the latch simply retries.
+    #[test]
+    fn the_accept_is_skipped_when_the_document_cannot_be_stashed() {
+        let glue = include_str!("live_sync_glue.rs");
+        let guarded = glue
+            .find("if !live_sync_conflict::preserve_local_document(inner)")
+            .expect("the accept must be guarded on a successful stash");
+        let resolve = glue
+            .find("resolve_accept_remote")
+            .expect("the accept exists");
+        assert!(guarded < resolve, "the guard must precede the accept");
+    }
+}

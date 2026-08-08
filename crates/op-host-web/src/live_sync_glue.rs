@@ -314,7 +314,11 @@ fn maybe_auto_resolve_conflict_in_session<C: RepaintContext + 'static>(
     // belt-and-braces copy plus the notice that tells the user any of it
     // happened. It must run BEFORE the resolve, while the local document is
     // still the one on screen.
-    live_sync_conflict::preserve_local_document(inner);
+    if !live_sync_conflict::preserve_local_document(inner) {
+        // No backup taken, so nothing is accepted. Better to converge one tick
+        // later than to overwrite unpushed work with no way back.
+        return;
+    }
     // Re-opens the pull for THIS pair only; the resolving pull's apply calls
     // `note_synced`, which is what finally clears the baseline and reopens the
     // push side too.

@@ -177,6 +177,17 @@ impl crate::repaint_ctx::RepaintContext for CkInner {
     fn host_mut(&mut self) -> &mut crate::widget_host::WidgetHost {
         &mut self.host
     }
+
+    fn reset_persistence_baselines(&mut self) {
+        // Recomputed from the account's own freshly loaded state on the next
+        // comparison, rather than carried over from the previous account's.
+        self.settings_fingerprint = None;
+        // Rebuilt from the state the account's own partition just loaded, so
+        // the next comparison measures against THIS account rather than
+        // reporting the whole partition as a change.
+        self.credential_fingerprint =
+            crate::web_settings::credential_fingerprint(self.host.editor_state());
+    }
     fn viewport_size(&self) -> (f32, f32) {
         self.backend.logical_size()
     }

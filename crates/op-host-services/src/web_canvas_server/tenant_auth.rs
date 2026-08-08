@@ -155,7 +155,14 @@ impl ResolvedIdentity {
             // The account UI is meaningful: this deployment has accounts.
             "available": true,
             "signed_in": true,
-            // `username` is what `identity_epoch` keys the tab's partition on.
+            // The STABLE account key — the same value the tenant registry
+            // keys on. The shell partitions its storage by this, not by
+            // `username`: a username is a display handle a hub may let a user
+            // change, and a rename would silently move the tab to a new
+            // partition (losing its settings) or, worse, collide with another
+            // account that later takes the old handle.
+            "subject": self.user_id,
+            // Display only.
             "username": self.username,
             "display_name": self.display_name,
             // Not projected: the hub owns the address, and the shell only uses

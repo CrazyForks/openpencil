@@ -343,6 +343,10 @@ impl WebCanvasState {
     ) -> IngestOutcome {
         let (runtime, mut host) = self.collab_runtime_and_host();
         if !runtime.begin_local_edit(&mut host) {
+            // The document is about to be dropped without ever activating, so
+            // release its pending thumbnail seed — otherwise it lingers in the
+            // process-global side table until bounded eviction pushes it out.
+            jian_ops_schema::image_thumbs::discard_for_document(prepared.document());
             return IngestOutcome::Rejected;
         }
         // The capture is now open and MUST be closed on every path. The guard
