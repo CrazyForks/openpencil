@@ -1,3 +1,6 @@
+// The crate under test only exists on Unix; see its lib.rs for why.
+#![cfg(unix)]
+
 use std::{env, path::PathBuf};
 
 use ed25519_dalek::{Signature, VerifyingKey};

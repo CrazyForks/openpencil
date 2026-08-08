@@ -1,14 +1,28 @@
-// The signer only deploys on unix (permission-checked unix socket); other
-// hosts get a stub main so workspace-wide checks still build the target.
-#![cfg_attr(not(unix), allow(dead_code))]
-
-use std::{env, path::PathBuf, process::ExitCode};
+use std::process::ExitCode;
 
 #[cfg(unix)]
-use op_collab_relay_locator_hsm::{secure_file, server, KeyStore, SignerConfig};
-use op_collab_relay_locator_hsm::{SignerError, SignerResult};
+use std::{env, path::PathBuf};
+
+#[cfg(unix)]
+use op_collab_relay_locator_hsm::{
+    secure_file, server, KeyStore, SignerConfig, SignerError, SignerResult,
+};
+#[cfg(unix)]
 use tracing_subscriber::EnvFilter;
 
+// The signer's security model is POSIX-only; see the crate-level documentation
+// in lib.rs for why there is no Windows implementation rather than a Windows
+// build with the ownership and peer-credential checks compiled out.
+#[cfg(not(unix))]
+fn main() -> ExitCode {
+    eprintln!(
+        "locator HSM signer failed: {}",
+        op_collab_relay_locator_hsm::UNSUPPORTED_PLATFORM
+    );
+    ExitCode::FAILURE
+}
+
+#[cfg(unix)]
 enum Command {
     Serve,
     Check,
@@ -17,6 +31,7 @@ enum Command {
     Initialize { so_pin_file: PathBuf },
 }
 
+#[cfg(unix)]
 struct Arguments {
     command: Command,
     config: PathBuf,
@@ -32,13 +47,6 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
-}
-
-#[cfg(not(unix))]
-fn main() -> ExitCode {
-    init_tracing();
-    eprintln!("locator HSM signer requires a unix host");
-    ExitCode::FAILURE
 }
 
 #[cfg(unix)]
@@ -79,6 +87,7 @@ fn run() -> SignerResult<()> {
     }
 }
 
+#[cfg(unix)]
 fn parse_arguments() -> SignerResult<Arguments> {
     let mut arguments = env::args().skip(1);
     let command = match arguments.next().as_deref() {
@@ -118,6 +127,7 @@ fn parse_arguments() -> SignerResult<Arguments> {
     Ok(Arguments { command, config })
 }
 
+#[cfg(unix)]
 fn usage() -> SignerError {
     SignerError::Config(
         "usage: op-collab-relay-locator-hsm <serve|check|public> --config PATH; \
@@ -126,6 +136,7 @@ fn usage() -> SignerError {
     )
 }
 
+#[cfg(unix)]
 fn init_tracing() {
     let filter = env::var("OPENPENCIL_LOCATOR_HSM_LOG")
         .ok()

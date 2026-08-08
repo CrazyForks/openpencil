@@ -8,7 +8,12 @@ repository.workspace = true
 description = "PKCS#11-backed OPLS signer for OpenPencil relay locators"
 publish = false
 
-[dependencies]
+# Every dependency is Unix-gated because the crate itself is: on other platforms
+# the library compiles to nothing and the binary is a stub that exits with an
+# unsupported-platform error. Keeping the dependencies out of the non-Unix graph
+# means a Windows `cargo build --workspace` neither resolves nor builds the
+# PKCS#11 and crypto stack for code that cannot run there.
+[target.'cfg(unix)'.dependencies]
 base64 = "0.22"
 cryptoki = "0.12"
 ed25519-dalek = { version = "2.2", default-features = false, features = ["std"] }
@@ -21,5 +26,5 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 zeroize = "1"
 
-[dev-dependencies]
+[target.'cfg(unix)'.dev-dependencies]
 tempfile = "3"
