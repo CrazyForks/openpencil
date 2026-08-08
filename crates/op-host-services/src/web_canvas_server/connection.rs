@@ -1,9 +1,42 @@
 //! One-connection handling: route dispatch across static assets, SSE, REST
 //! and JSON-RPC (`serve_one`), plus the SSE writer it hands long-lived
 //! subscribers to. Split out of `web_canvas_server.rs` to keep the spine
-//! under the 800-line cap.
+//! under the 800-line cap; the `/api/ai/*` branch lives in the sibling
+//! `connection_ai_routes.rs` for the same reason.
 
 use super::*;
+
+/// Everything one request is served against.
+///
+/// The single-user daemon has exactly one `Mutex<WebCanvasState>` and one
+/// [`SseHub`], so this used to be two arguments. The online daemon has one of
+/// each per account and resolves them from the connection's verified identity
+/// before dispatch, so the pair travels together with the deployment mode that
+/// decides which routes exist at all.
+///
+/// `Local` and `Managed` build exactly the ctx the two arguments used to mean,
+/// and every mode predicate answers `true` for them — the non-online dispatch
+/// below is unchanged.
+pub(super) struct ConnCtx<'a> {
+    pub(super) state: &'a Mutex<WebCanvasState>,
+    pub(super) hub: &'a SseHub,
+    pub(super) mode: ServeMode,
+}
+
+/// Handle one connection against the single-user document authority.
+///
+/// The `Local`-mode entry point in the two-argument shape the connection
+/// tests were written against, so those tests keep proving that the
+/// parameterisation below did not change local behaviour. Production callers
+/// name their mode via [`serve_one_in_mode`].
+#[cfg(test)]
+pub(super) fn serve_one<S: Read + Write>(
+    stream: &mut S,
+    state: &Mutex<WebCanvasState>,
+    hub: &SseHub,
+) -> Result<bool> {
+    serve_one_in_mode(stream, state, hub, ServeMode::Local)
+}
 
 /// Handle one connection. Routes: static host page + wasm bundle (`GET /`,
 /// `GET /pkg/*` via `crate::web_static`); SSE live-update stream (`GET
@@ -24,12 +57,28 @@ use super::*;
 /// Returns `Ok(true)` when the client requested a token-authed graceful
 /// shutdown (same `openpencil/shutdown` contract as `--mcp-http`) — the
 /// caller then stops the accept loop so `op stop` never signals a pid.
-pub(super) fn serve_one<S: Read + Write>(
+pub(super) fn serve_one_in_mode<S: Read + Write>(
     stream: &mut S,
     state: &Mutex<WebCanvasState>,
     hub: &SseHub,
+    mode: ServeMode,
 ) -> Result<bool> {
     let req = crate::mcp_serve::read_http_request(stream)?;
+    dispatch(stream, &req, &ConnCtx { state, hub, mode })
+}
+
+/// Route one already-parsed request against `ctx`.
+///
+/// Split from the read so the online accept loop can resolve the identity —
+/// and therefore the tenant this ctx points at — from the request headers
+/// before anything is dispatched.
+pub(super) fn dispatch<S: Read + Write>(
+    stream: &mut S,
+    req: &crate::mcp_serve::HttpRequest,
+    ctx: &ConnCtx<'_>,
+) -> Result<bool> {
+    let state = ctx.state;
+    let hub = ctx.hub;
     let (auth, allow_origins) = {
         let guard = state.lock().unwrap_or_else(|p| p.into_inner());
         let auth = RequestAuth {
@@ -53,7 +102,7 @@ pub(super) fn serve_one<S: Read + Write>(
         )?;
         return Ok(false);
     }
-    if is_sensitive_browser_post(&req) && !credential_request_origin_allowed(&req) {
+    if is_sensitive_browser_post(req) && !credential_request_origin_allowed(req) {
         crate::mcp_serve::write_mcp_http_response_with_origin(
             stream,
             "403 Forbidden",
@@ -65,7 +114,7 @@ pub(super) fn serve_one<S: Read + Write>(
     // Sensitive JSON routes refuse CORS "simple request" content types
     // (text/plain, form-encoded, or none): a drive-by page can fire those
     // without a preflight, and unmanaged daemons have no token gate.
-    if is_sensitive_browser_post(&req) && !content_type_is_json(req.content_type.as_deref()) {
+    if is_sensitive_browser_post(req) && !content_type_is_json(req.content_type.as_deref()) {
         crate::mcp_serve::write_mcp_http_response_with_origin(
             stream,
             "415 Unsupported Media Type",
@@ -88,8 +137,13 @@ pub(super) fn serve_one<S: Read + Write>(
         }
     }
     // Sign-in popup interstitial — same auth-exempt static surface as the
-    // bundle routes above (it renders a spinner and nothing else).
-    if req.method == "GET" && req.path == op_editor_core::auth_routes::LOADING_PAGE {
+    // bundle routes above (it renders a spinner and nothing else). It only
+    // exists to host the daemon's device-login proxy, so a deployment with no
+    // proxy has no interstitial either.
+    if req.method == "GET"
+        && req.path == op_editor_core::auth_routes::LOADING_PAGE
+        && ctx.mode.allows_device_login_proxy()
+    {
         let reply = crate::web_static::StaticReply {
             status: "200 OK",
             content_type: "text/html; charset=utf-8",
@@ -103,6 +157,10 @@ pub(super) fn serve_one<S: Read + Write>(
     // alias) — the static GET routes above and the `OPTIONS` preflight
     // already returned. Unmanaged mode's `allows` always returns true, so
     // this is a no-op there.
+    //
+    // Online mode has already resolved a verified identity for this
+    // connection (that is how `ctx` found its tenant at all), so the
+    // per-instance managed token is not part of its contract.
     if !auth.allows(&req.method, &req.path, req.token.as_deref()) {
         crate::mcp_serve::write_mcp_http_response_with_origin(
             stream,
@@ -113,8 +171,12 @@ pub(super) fn serve_one<S: Read + Write>(
         return Ok(false);
     }
     // Current-account avatar proxy: performs bounded public HTTPS I/O on this
-    // connection thread, never while holding the editor-state mutex.
-    if req.method == "POST" && req.path == op_editor_core::auth_routes::AVATAR {
+    // connection thread, never while holding the editor-state mutex. Part of
+    // the device-login proxy, so it is off wherever that is.
+    if req.method == "POST"
+        && req.path == op_editor_core::auth_routes::AVATAR
+        && ctx.mode.allows_device_login_proxy()
+    {
         let reply = crate::web_auth::avatar();
         crate::mcp_serve::write_mcp_http_response_with_origin(
             stream,
@@ -126,8 +188,14 @@ pub(super) fn serve_one<S: Read + Write>(
     }
     // Collaboration participant avatar proxy: same shape as the account proxy
     // above — bounded public HTTPS I/O on this connection thread, off the
-    // editor-state mutex, so a roster URL never reaches the browser.
-    if req.method == "POST" && req.path == op_editor_core::collab_routes::AVATAR {
+    // editor-state mutex, so a roster URL never reaches the browser. It reads
+    // a process-global registry that only a live relay session populates, so
+    // it is gated with relay collaboration itself rather than left to answer
+    // one account out of another account's roster.
+    if req.method == "POST"
+        && req.path == op_editor_core::collab_routes::AVATAR
+        && ctx.mode.allows_relay_collaboration()
+    {
         let reply = crate::collab_avatar_proxy::avatar(&req.body);
         crate::mcp_serve::write_mcp_http_response_with_origin(
             stream,
@@ -141,7 +209,10 @@ pub(super) fn serve_one<S: Read + Write>(
     // lock) for the pairing's verification URI so the popup can navigate
     // straight from this response — handled here rather than in the
     // whole-body REST tier, which runs under the state mutex.
-    if req.method == "POST" && req.path == op_editor_core::auth_routes::LOGIN_BEGIN {
+    if req.method == "POST"
+        && req.path == op_editor_core::auth_routes::LOGIN_BEGIN
+        && ctx.mode.allows_device_login_proxy()
+    {
         let reply = crate::web_auth::login_begin_and_wait(state);
         crate::mcp_serve::write_mcp_http_response_with_origin(
             stream,
@@ -160,139 +231,10 @@ pub(super) fn serve_one<S: Read + Write>(
         let current = state.lock().unwrap_or_else(|p| p.into_inner()).sse_tick();
         return serve_sse(stream, rx, current, cors_origin).map(|()| false);
     }
-    // AI proxy stream: the browser bundle POSTs a model request and we
-    // stream the provider's `ChatDelta`s back as SSE. Streaming route
-    // (long-lived socket write), so handled here rather than in the
-    // whole-body REST handler. Parse the body + build the provider
-    // under the state lock, then DROP the lock before the long stream
-    // — `proxy_provider` returns an owned `Box<dyn ChatProvider>`, so
-    // nothing borrows the editor across the stream.
-    if req.method == "POST" && req.path == "/api/ai/stream" {
-        let Some(ai_req) = crate::ai_proxy::parse_ai_stream_body(&req.body) else {
-            return crate::ai_proxy::write_sse_error(stream, "invalid request body", cors_origin)
-                .map_err(|e| WebCanvasError::Transport(format!("ai stream error: {e}")))
-                .map(|()| false);
-        };
-        let provider = {
-            let guard = state.lock().unwrap_or_else(|p| p.into_inner());
-            crate::ai_proxy::proxy_provider_for_request(
-                &guard.editor,
-                &ai_req,
-                guard.credential_persistence,
-            )
-        };
-        let provider = match provider {
-            Ok(Some(provider)) => provider,
-            Ok(None) => {
-                return crate::ai_proxy::write_sse_error(
-                    stream,
-                    "no model configured",
-                    cors_origin,
-                )
-                .map_err(|e| WebCanvasError::Transport(format!("ai stream error: {e}")))
-                .map(|()| false);
-            }
-            Err(error) => {
-                return crate::ai_proxy::write_sse_error(stream, &error.to_string(), cors_origin)
-                    .map_err(|e| WebCanvasError::Transport(format!("ai stream error: {e}")))
-                    .map(|()| false);
-            }
-        };
-        return crate::ai_proxy::stream_ai_response(stream, ai_req, provider.as_ref(), cors_origin)
-            .map_err(|e| WebCanvasError::Transport(format!("ai stream: {e}")))
-            .map(|()| false);
-    }
-    // Standard web chat/design turn: same external-CLI routing shape as
-    // desktop standard mode (classify → chat / modify / new design), but
-    // applied against this web-canvas daemon's document authority.
-    if req.method == "POST" && req.path == "/api/ai/standard" {
-        let Some(standard_req) = crate::web_chat_standard::parse_standard_turn_body(&req.body)
-        else {
-            return crate::ai_proxy::write_sse_error(stream, "invalid request body", cors_origin)
-                .map_err(|e| WebCanvasError::Transport(format!("ai standard error: {e}")))
-                .map(|()| false);
-        };
-        return crate::web_chat_standard::stream_standard_turn(
-            stream,
-            standard_req,
-            state,
-            hub,
-            cors_origin,
-        )
-        .map_err(|e| WebCanvasError::Transport(format!("ai standard: {e}")))
-        .map(|()| false);
-    }
-    // Image panel Search popover (desktop `image_panel_host` parity). Long
-    // blocking network (8 s timeout × ladder), so it runs on this
-    // connection's own thread AFTER the brief parse-under-lock — the REST
-    // handler below holds the state lock for its whole body and must not
-    // host provider dials. Living under `/api/ai/` keeps it inside the
-    // sensitive-POST origin gate and the managed-mode token gate.
-    if req.method == "POST" && req.path == "/api/ai/image/search" {
-        let parsed = {
-            let guard = state.lock().unwrap_or_else(|p| p.into_inner());
-            crate::web_image_search::parse_search_request(&req.body, &guard.editor)
-        };
-        let (status, body) = match parsed {
-            Ok((query, credentials)) => {
-                // One slot per running job — each holds this connection
-                // thread for minutes of provider network, so unbounded
-                // concurrency would exhaust the daemon's threads.
-                match crate::web_image_search::ImageJobSlot::acquire() {
-                    Some(_slot) => {
-                        let outcome = crate::web_image_search::run_search_blocking(
-                            &query,
-                            credentials.as_ref(),
-                        );
-                        (
-                            "200 OK",
-                            crate::web_image_search::search_outcome_to_json(&outcome),
-                        )
-                    }
-                    None => (
-                        "429 Too Many Requests",
-                        r#"{"ok":false,"error":"too many concurrent image requests"}"#.to_string(),
-                    ),
-                }
-            }
-            Err(error) => (
-                "400 Bad Request",
-                serde_json::json!({ "ok": false, "error": error.to_string() }).to_string(),
-            ),
-        };
-        crate::mcp_serve::write_mcp_http_response_with_origin(stream, status, &body, cors_origin)?;
-        return Ok(false);
-    }
-    // Image panel Generate popover (desktop `image_generate_host` parity).
-    // Same threading rules as the search route; Replicate polling can run
-    // for minutes.
-    if req.method == "POST" && req.path == "/api/ai/image/generate" {
-        let parsed = {
-            let guard = state.lock().unwrap_or_else(|p| p.into_inner());
-            crate::web_image_generate::parse_generate_request(&req.body, &guard.editor)
-        };
-        let (status, body) = match parsed {
-            // Shares the search route's in-flight ceiling (see above).
-            Ok(request) => match crate::web_image_search::ImageJobSlot::acquire() {
-                Some(_slot) => match crate::web_image_generate::run_generate_blocking(&request) {
-                    Ok(url) => ("200 OK", crate::web_image_generate::generate_ok_json(&url)),
-                    Err(message) => (
-                        "502 Bad Gateway",
-                        crate::web_image_generate::generate_error_json(&message),
-                    ),
-                },
-                None => (
-                    "429 Too Many Requests",
-                    r#"{"ok":false,"error":"too many concurrent image requests"}"#.to_string(),
-                ),
-            },
-            Err(message) => (
-                "400 Bad Request",
-                crate::web_image_generate::generate_error_json(&message),
-            ),
-        };
-        crate::mcp_serve::write_mcp_http_response_with_origin(stream, status, &body, cors_origin)?;
-        return Ok(false);
+    // The AI / image routes, which parse under the lock and then run long
+    // network on this connection thread. See `connection_ai_routes.rs`.
+    if let Some(done) = connection_ai_routes::serve_ai_route(stream, req, ctx, cors_origin)? {
+        return Ok(done);
     }
     // Offline `.fig` -> `.op` convert for the VS Code plugin: it can't parse
     // fig-kiwi itself, so it POSTs the raw bytes here and boots the returned
@@ -353,8 +295,13 @@ pub(super) fn serve_one<S: Read + Write>(
     // JSON-RPC tool dispatch is served ONLY as a POST to `/` or `/mcp`. An
     // unknown path is 404; a known path with the wrong method (e.g. `GET /mcp`)
     // is 405 — never silently dispatched as a tool call.
-    let is_jsonrpc_path = req.path == "/" || req.path == "/mcp";
-    if !is_jsonrpc_path {
+    //
+    // The public deployment keeps exactly one spelling: `/` is the site root
+    // there, and making a site root a JSON-RPC endpoint is a trap, so the
+    // alias answers 405 alongside every other wrong-method request to it.
+    let is_jsonrpc_path =
+        req.path == "/mcp" || (req.path == "/" && ctx.mode.allows_root_jsonrpc_alias());
+    if !is_jsonrpc_path && req.path != "/" {
         crate::mcp_serve::write_mcp_http_response_with_origin(
             stream,
             "404 Not Found",
@@ -363,7 +310,7 @@ pub(super) fn serve_one<S: Read + Write>(
         )?;
         return Ok(false);
     }
-    if req.method != "POST" {
+    if !is_jsonrpc_path || req.method != "POST" {
         crate::mcp_serve::write_mcp_http_response_with_origin(
             stream,
             "405 Method Not Allowed",
@@ -376,17 +323,26 @@ pub(super) fn serve_one<S: Read + Write>(
     // `--mcp-http` server — only the exact per-instance token passed by the
     // spawning CLI (via OPENPENCIL_MCP_TOKEN) authenticates; a stale file, a
     // recycled pid, or a random client cannot shut the daemon down.
-    if let Some(id) = crate::mcp_serve::shutdown_request_id(
-        &req.body,
-        &crate::mcp_serve::headless_token_from_env().unwrap_or_default(),
-    ) {
-        crate::mcp_serve::write_mcp_http_response_with_origin(
-            stream,
-            "200 OK",
-            &crate::mcp_serve::shutdown_ok_response(&id),
-            cors_origin,
-        )?;
-        return Ok(true);
+    //
+    // Online keeps this branch ONLY because the token comes from the
+    // operator's process environment and never from an account credential —
+    // it is the operations channel, not a client-reachable route. The
+    // env-token check below is what makes that true: with no
+    // `OPENPENCIL_MCP_TOKEN` set there is no token that satisfies it.
+    let operator_token = crate::mcp_serve::headless_token_from_env();
+    if ctx.mode.allows_generic_shutdown() || operator_token.is_some() {
+        if let Some(id) = crate::mcp_serve::shutdown_request_id(
+            &req.body,
+            operator_token.as_deref().unwrap_or_default(),
+        ) {
+            crate::mcp_serve::write_mcp_http_response_with_origin(
+                stream,
+                "200 OK",
+                &crate::mcp_serve::shutdown_ok_response(&id),
+                cors_origin,
+            )?;
+            return Ok(true);
+        }
     }
     // `debug_screenshot` for `--serve-web`: the browser shell mirrors this
     // daemon's document, so the daemon can satisfy the live screenshot tool from

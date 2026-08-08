@@ -299,6 +299,8 @@ fn the_collab_routes_are_gated_as_sensitive_browser_posts() {
             origin: None,
             host: None,
             token: None,
+            authorization: None,
+            cookie: None,
         };
         assert!(
             super::super::is_sensitive_browser_post(&request),

@@ -324,6 +324,13 @@ pub struct HttpRequest {
     /// require `application/json` so cross-origin "simple requests" (which
     /// skip the CORS preflight) cannot reach them.
     pub content_type: Option<String>,
+    /// `Authorization` header value, verbatim (scheme included), when
+    /// present. The multi-account online daemon reads a `Bearer <token>`
+    /// out of it; every other mode ignores it.
+    pub authorization: Option<String>,
+    /// `Cookie` header value, verbatim, when present. The online daemon
+    /// extracts its session cookie from it; every other mode ignores it.
+    pub cookie: Option<String>,
 }
 
 /// Parse a capped HTTP header and then read exactly its declared body length.
@@ -432,6 +439,8 @@ pub fn read_http_request<S: std::io::Read>(stream: &mut S) -> Result<HttpRequest
     let origin = header_value("origin");
     let token = header_value("x-openpencil-token");
     let content_type = header_value("content-type");
+    let authorization = header_value("authorization");
+    let cookie = header_value("cookie");
     if content_length > MAX_BODY {
         return Err(McpServeError::Protocol(format!(
             "request body exceeds {} MiB",
@@ -464,6 +473,8 @@ pub fn read_http_request<S: std::io::Read>(stream: &mut S) -> Result<HttpRequest
         origin,
         token,
         content_type,
+        authorization,
+        cookie,
     })
 }
 
@@ -506,7 +517,7 @@ pub(crate) fn write_mcp_http_response_with_origin<S: std::io::Write>(
         "HTTP/1.1 {status}\r\n\
          {cors_line}\
          Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n\
-         Access-Control-Allow-Headers: Content-Type, mcp-session-id, X-OpenPencil-Token\r\n\
+         Access-Control-Allow-Headers: Content-Type, mcp-session-id, X-OpenPencil-Token, Authorization\r\n\
          Access-Control-Expose-Headers: mcp-session-id\r\n\
          mcp-session-id: openpencil\r\n\
          Cache-Control: no-store\r\n\

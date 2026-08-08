@@ -148,6 +148,12 @@ pub struct WebCanvasState {
     /// Collaboration runtime + its projection sequence. Idle until a browser
     /// posts a start/join action.
     pub(crate) collab: collab_state::WebCollabState,
+    /// How this daemon is deployed. `Local` for every existing invocation;
+    /// `Online` is the only value that refuses anything, and it is what the
+    /// REST tier consults for the routes that would otherwise share one
+    /// process's filesystem, settings file and device session between
+    /// mutually untrusting accounts. See `online_policy.rs`.
+    pub(crate) mode: ServeMode,
 }
 
 impl WebCanvasState {
@@ -199,7 +205,25 @@ impl WebCanvasState {
             reset_consumed: false,
             auth_login_handle: None,
             collab: collab_state::WebCollabState::default(),
+            mode: ServeMode::Local,
         }
+    }
+
+    /// One online account's document authority.
+    ///
+    /// Separate from the loader-backed constructors on purpose: a tenant is
+    /// never backed by a local path (the online mode serves no local files),
+    /// and its browser-supplied credentials never reach the process settings
+    /// file, so it always carries the browser-only persistence policy.
+    pub(crate) fn new_for_tenant(editor: EditorState, port: u16) -> Self {
+        let mut state = Self::new_with_path_and_policy(
+            editor,
+            port,
+            None,
+            WebCredentialPersistence::BrowserOnly,
+        );
+        state.mode = ServeMode::Online;
+        state
     }
 
     /// Replace the whole document (an already-loaded `POST /api/mcp/document`
@@ -292,6 +316,16 @@ impl WebCanvasState {
         // is a client fault → 400, like the TS validation 400s.
         let loaded = op_pen_loader::load_canonical(request.document_json)
             .map_err(|e| WebCanvasError::Document(e.to_string()))?;
+        if !self.mode.allows_image_thumb_registry() {
+            // The thumbnail registry is a process-global map that a document
+            // activation replaces WHOLESALE, so in a shared process this
+            // push would drop every other account's thumbnails and rebind
+            // their ids to these bytes. Dropping the pending seed here makes
+            // the activation downstream a strict no-op, and image nodes
+            // paint their placeholder. See
+            // `ServeMode::allows_image_thumb_registry` for the real fix.
+            jian_ops_schema::image_thumbs::discard_for_document(&loaded.value);
+        }
         for w in &loaded.warnings {
             eprintln!("openpencil-desktop --serve-web: schema warning: {w:?}");
         }
@@ -404,6 +438,13 @@ where
     // `String` the caller would have to re-render.
     F: FnOnce(&EditorState) -> std::result::Result<(), crate::settings_io::SettingsIoError>,
 {
+    // There is ONE settings file per process. In a shared deployment a
+    // settings write would overwrite every other account's providers and
+    // credentials with this account's, so nothing is persisted: the change
+    // still lands in this tenant's in-memory editor and dies with it.
+    if !state.mode.allows_settings_persistence() {
+        return reply;
+    }
     if method == "POST" && path == "/api/settings/credentials" && reply.status == "200 OK" {
         if save_credentials(&state.editor).is_err() {
             if let Some(settings) = credential_settings_before {
@@ -512,13 +553,36 @@ pub fn handle_web_canvas_request(
             // from lives HERE — the browser polls this and mirrors it
             // into its own registry (agent_indicators::apply_remote) so
             // agent borders / badges / reveal animations show on web.
+            //
+            // That registry has no tenant dimension, so a shared deployment
+            // relays the empty projection instead of showing one account the
+            // shape of another account's design run.
             status: "200 OK",
-            body: op_editor_core::agent_indicators::relay_json(),
+            body: if state.mode.allows_agent_indicator_relay() {
+                op_editor_core::agent_indicators::relay_json()
+            } else {
+                online_policy::EMPTY_INDICATOR_RELAY.to_string()
+            },
+        },
+        // The wasm shell posts a sync-reset on every mount. Locally that
+        // means "the browser just booted, drop the transient document";
+        // online it would wipe the document the returning account left
+        // behind, so the route answers with the already-reset shape — the
+        // same body a second local reset produces — and touches nothing.
+        ("POST", "/api/mcp/sync-reset") if state.mode.sync_reset_is_noop() => WebReply {
+            status: "200 OK",
+            body: format!(
+                r#"{{"ok":true,"skipped":true,"version":{}}}"#,
+                state.version
+            ),
         },
         ("POST", "/api/mcp/sync-reset") => match state.reset_document_guarded() {
             Ok(outcome) if outcome.skipped => WebReply {
                 status: "200 OK",
-                body: format!(r#"{{"ok":true,"skipped":true,"version":{}}}"#, state.version),
+                body: format!(
+                    r#"{{"ok":true,"skipped":true,"version":{}}}"#,
+                    state.version
+                ),
             },
             Ok(_) => WebReply {
                 status: "200 OK",
@@ -559,6 +623,14 @@ pub fn handle_web_canvas_request(
             }
         }
         ("POST", "/api/mcp/selection") => apply_selection_sync(body, state),
+        // Both file routes touch the daemon host's filesystem, which in a
+        // shared process means every account reading and writing through the
+        // service account's paths. Refused before the handler, not inside it.
+        ("POST", "/api/file/save" | "/api/file/open-recent")
+            if !state.mode.allows_local_file_routes() =>
+        {
+            online_policy::refusal_reply(online_policy::OnlineRouteRefusal::LocalFileAccess)
+        }
         ("POST", "/api/file/save") => save_current_file(body, state),
         ("POST", "/api/file/open-recent") => open_recent_file(body, state),
         ("POST", "/api/export/pdf") => export_pdf_download(body, state),
@@ -612,6 +684,14 @@ pub fn handle_web_canvas_request(
         // drives the flow through the daemon's op-auth-bridge runtime.
         // (`POST /api/auth/login/begin` is a streaming-tier route — it
         // waits for the verification URI off the state lock.)
+        //
+        // The bridge holds ONE device session per process, so online the
+        // routes fall through to the 404 arm: an account signs in to the
+        // hub, not to this daemon, and proxying the service account's
+        // session would sign every visitor in as it.
+        (_, path) if !state.mode.allows_device_login_proxy() && is_device_login_route(path) => {
+            not_found_reply()
+        }
         ("GET", op_editor_core::auth_routes::STATUS) => crate::web_auth::status(state),
         ("GET", op_editor_core::auth_routes::LOGIN_STATUS) => crate::web_auth::login_status(state),
         ("POST", op_editor_core::auth_routes::LOGIN_CANCEL) => crate::web_auth::login_cancel(state),
@@ -621,12 +701,22 @@ pub fn handle_web_canvas_request(
         ("GET", op_editor_core::collab_routes::STATE) => collab_routes::state(state),
         ("POST", op_editor_core::collab_routes::ACTION) => collab_routes::action(body, state),
         ("POST", op_editor_core::collab_routes::PRESENCE) => collab_routes::presence(body, state),
-        _ => WebReply {
-            status: "404 Not Found",
-            body: r#"{"ok":false,"error":"Not found. Use /api/mcp/document, /api/mcp/sync-reset, /api/mcp/server, /api/file/save, /api/export/raster, /api/export/pdf, or /mcp."}"#
-                .to_string(),
-        },
+        _ => not_found_reply(),
     }
+}
+
+/// The daemon's canonical unknown-route reply.
+fn not_found_reply() -> WebReply {
+    WebReply {
+        status: "404 Not Found",
+        body: r#"{"ok":false,"error":"Not found. Use /api/mcp/document, /api/mcp/sync-reset, /api/mcp/server, /api/file/save, /api/export/raster, /api/export/pdf, or /mcp."}"#
+            .to_string(),
+    }
+}
+
+/// Whether `path` belongs to the daemon-hosted device-login proxy.
+fn is_device_login_route(path: &str) -> bool {
+    path.starts_with(op_editor_core::auth_routes::API_PREFIX)
 }
 
 mod collab_driver;
@@ -634,20 +724,31 @@ mod collab_routes;
 pub(crate) mod collab_state;
 mod connect_routes;
 mod connection;
+mod connection_ai_routes;
 mod doc_routes;
 mod export_routes;
+pub mod online_policy;
+mod online_run_loop;
 mod origin_guard;
 mod run_loop;
 mod serve_options;
+pub mod tenant;
+pub mod tenant_auth;
 
 pub use collab_state::DaemonMutationRefusal;
 pub use connect_routes::*;
 use connection::*;
 use doc_routes::*;
 use export_routes::*;
+pub use online_policy::{OnlineRouteRefusal, ServeMode};
+pub use online_run_loop::*;
 use origin_guard::*;
 pub use run_loop::*;
 pub use serve_options::*;
+pub use tenant::{TenantError, TenantLimits, TenantRegistry};
+pub use tenant_auth::{
+    IdentityVerifier, OnlineAuthError, PresentedCredentials, ResolvedIdentity, StaticVerifier,
+};
 
 #[cfg(test)]
 #[path = "web_canvas_server_tests.rs"]

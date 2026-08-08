@@ -23,12 +23,20 @@ use super::*;
 /// address. Non-managed mode is untouched: no token, no handshake output, no
 /// stdin thread.
 pub fn run_web_canvas(options: ServeWebOptions) -> Result<()> {
+    // The public multi-account daemon is a different accept loop: it resolves
+    // a tenant per connection instead of sharing one document. Everything
+    // below this line is the single-document daemon, unchanged.
+    if options.online {
+        return online_run_loop::run_online_web_canvas(options);
+    }
+    let mode = options.mode();
     let ServeWebOptions {
         port,
         path,
         host,
         managed,
         allow_origins,
+        online: _,
     } = options;
     let current_path = path.clone();
     let credential_persistence = crate::web_credential_policy::from_env();
@@ -122,10 +130,13 @@ pub fn run_web_canvas(options: ServeWebOptions) -> Result<()> {
     // Stash the managed token + allow-origins on the shared state. `serve_one`
     // reads them via `RequestAuth` gate (token) and `cors_origin_for` (CORS
     // allowlist) to enforce auth and CORS policies on all incoming requests.
-    if managed_token.is_some() || !allow_origins.is_empty() {
+    {
         let mut guard = state.lock().unwrap_or_else(|p| p.into_inner());
-        guard.managed_token = managed_token;
-        guard.allow_origins = allow_origins;
+        guard.mode = mode;
+        if managed_token.is_some() || !allow_origins.is_empty() {
+            guard.managed_token = managed_token;
+            guard.allow_origins = allow_origins;
+        }
     }
     // The collaboration pump. It observes `shutdown` itself, so it retires
     // within one tick of the daemon being asked to stop.
@@ -161,7 +172,7 @@ pub fn run_web_canvas(options: ServeWebOptions) -> Result<()> {
                 let _conn_guard = ConnGuard(conns);
                 let _ = s.set_read_timeout(Some(IO_TIMEOUT));
                 let _ = s.set_write_timeout(Some(IO_TIMEOUT));
-                match serve_one(&mut s, &state, &hub) {
+                match serve_one_in_mode(&mut s, &state, &hub, mode) {
                     Ok(true) => {
                         shutdown_flag.store(true, Ordering::Release);
                         // Wake the (possibly blocked) accept loop. Loopback

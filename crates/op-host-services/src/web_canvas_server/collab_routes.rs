@@ -61,11 +61,17 @@ pub(crate) fn action(body: &str, state: &mut WebCanvasState) -> WebReply {
             return error_reply("400 Bad Request", "malformed-action", &error.to_string())
         }
     };
-    // Hook point for the public multi-account deployment: it must refuse
-    // `wire.reaches_caller_named_network()` here, because those actions resolve
-    // a caller-named socket address or enumerate the host's LAN. The local and
-    // managed daemons allow them — that is desktop parity, and the operator is
-    // the only client.
+    // The public multi-account deployment refuses the actions that resolve a
+    // caller-named socket address or enumerate the host's LAN — on a public
+    // origin those are an SSRF and an internal-network probe. The local and
+    // managed daemons allow them: that is desktop parity, and the operator is
+    // the only client. Checked on the wire type, before validation, so a
+    // refused action never reaches the address parser.
+    if wire.reaches_caller_named_network() && !state.mode.allows_caller_named_collab_network() {
+        return super::online_policy::refusal_reply(
+            super::online_policy::OnlineRouteRefusal::CallerNamedNetwork,
+        );
+    }
     let command = match wire.into_command() {
         Ok(command) => command,
         Err(error) => return action_error_reply(error),

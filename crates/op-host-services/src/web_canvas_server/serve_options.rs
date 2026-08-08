@@ -19,6 +19,27 @@ pub struct ServeWebOptions {
     /// `serve_one` via `cors_origin_for` to gate which `Origin` headers are
     /// echoed back in `Access-Control-Allow-Origin` responses.
     pub allow_origins: Vec<String>,
+    /// `--online`: public multi-account deployment. Every request carries a
+    /// verified identity and is served against that account's own tenant, and
+    /// the routes that would share one process's filesystem / settings file /
+    /// device session between accounts are refused. See `online_policy.rs`.
+    ///
+    /// Mutually exclusive with `--managed`: managed mode's whole contract is
+    /// one supervising operator holding one per-instance token.
+    pub online: bool,
+}
+
+impl ServeWebOptions {
+    /// The deployment mode these options describe.
+    pub const fn mode(&self) -> ServeMode {
+        if self.online {
+            ServeMode::Online
+        } else if self.managed {
+            ServeMode::Managed
+        } else {
+            ServeMode::Local
+        }
+    }
 }
 
 /// Parse the argv tail after `--serve-web` itself. Pure, so the flag shape is
@@ -46,6 +67,7 @@ pub fn parse_serve_web_args<I: Iterator<Item = String>>(mut args: I) -> Result<S
     };
     let mut path: Option<PathBuf> = None;
     let mut host = "127.0.0.1".to_string();
+    let mut online = false;
     while let Some(arg) = args.next() {
         if arg == "--host" {
             host = args.next().ok_or_else(|| {
@@ -53,6 +75,8 @@ pub fn parse_serve_web_args<I: Iterator<Item = String>>(mut args: I) -> Result<S
             })?;
         } else if let Some(value) = arg.strip_prefix("--host=") {
             host = value.to_string();
+        } else if arg == "--online" {
+            online = true;
         } else if path.is_none() {
             // The document path is optional — without it the daemon starts
             // from the same starter document the web shell paints locally.
@@ -70,6 +94,7 @@ pub fn parse_serve_web_args<I: Iterator<Item = String>>(mut args: I) -> Result<S
         host,
         managed: false,
         allow_origins: Vec::new(),
+        online,
     })
 }
 
@@ -87,10 +112,12 @@ pub(super) fn parse_serve_web_args_managed<I: Iterator<Item = String>>(
     let mut path: Option<PathBuf> = None;
     let mut host = "127.0.0.1".to_string();
     let mut allow_origins: Vec<String> = Vec::new();
+    let mut online = false;
     let mut next_flag = Some(first_flag);
     while let Some(arg) = next_flag.take().or_else(|| args.next()) {
         match arg.as_str() {
             "--managed" => managed = true,
+            "--online" => online = true,
             "--port" => {
                 let value = args
                     .next()
@@ -123,12 +150,22 @@ pub(super) fn parse_serve_web_args_managed<I: Iterator<Item = String>>(
     if host.is_empty() {
         return Err(WebCanvasError::Config("--host must not be empty".into()));
     }
+    // Managed mode means one supervising operator holding one per-instance
+    // token over one document; online means many verified accounts over many.
+    // A daemon cannot be both, and silently picking one would hand whichever
+    // contract lost its callers the wrong isolation.
+    if managed && online {
+        return Err(WebCanvasError::Config(
+            "--managed and --online are mutually exclusive".into(),
+        ));
+    }
     Ok(ServeWebOptions {
         port,
         path,
         host,
         managed,
         allow_origins,
+        online,
     })
 }
 
