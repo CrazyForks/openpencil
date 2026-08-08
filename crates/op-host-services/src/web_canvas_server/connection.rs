@@ -87,7 +87,13 @@ pub(super) fn dispatch<S: Read + Write>(
         };
         (auth, guard.allow_origins.clone())
     };
-    let cors_origin: Option<String> = if auth.managed {
+    // Online never emits `*`: its requests carry credentials, and a wildcard
+    // plus credentials is what lets any page on the internet read another
+    // account's document. Managed mode keeps its own allowlist echo, and the
+    // local daemon keeps the permissive value it has always used.
+    let cors_origin: Option<String> = if ctx.mode.is_online() {
+        online_policy::online_cors_origin(&allow_origins, req.origin.as_deref())
+    } else if auth.managed {
         cors_origin_for(&allow_origins, req.origin.as_deref())
     } else {
         Some("*".to_string())

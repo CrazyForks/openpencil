@@ -30,12 +30,17 @@ impl Write for MockStream {
 }
 
 /// One request, as the wire sees it.
+/// The public origin this test deployment answers for.
+const PUBLIC_ORIGIN: &str = "https://canvas.example";
+
 struct Request {
     method: &'static str,
     path: &'static str,
     body: String,
     token: Option<&'static str>,
     content_type: Option<&'static str>,
+    cookie: Option<&'static str>,
+    origin: Option<&'static str>,
 }
 
 impl Request {
@@ -46,6 +51,8 @@ impl Request {
             body: String::new(),
             token: None,
             content_type: None,
+            cookie: None,
+            origin: None,
         }
     }
 
@@ -62,6 +69,17 @@ impl Request {
         self
     }
 
+    /// Present the deployment's session cookie, as a browser would.
+    fn with_session(mut self, session: &'static str) -> Self {
+        self.cookie = Some(session);
+        self
+    }
+
+    fn with_origin(mut self, origin: &'static str) -> Self {
+        self.origin = Some(origin);
+        self
+    }
+
     fn wire(&self) -> String {
         let auth = self
             .token
@@ -71,8 +89,17 @@ impl Request {
             .content_type
             .map(|t| format!("Content-Type: {t}\r\n"))
             .unwrap_or_default();
+        let cookie = self
+            .cookie
+            .map(|c| format!("Cookie: op_hub_session={c}\r\n"))
+            .unwrap_or_default();
+        let origin = self
+            .origin
+            .map(|o| format!("Origin: {o}\r\n"))
+            .unwrap_or_default();
         format!(
-            "{} {} HTTP/1.1\r\nHost: canvas.example\r\n{auth}{content_type}Content-Length: {}\r\n\r\n{}",
+            "{} {} HTTP/1.1\r\nHost: canvas.example\r\n{auth}{cookie}{origin}{content_type}\
+             Content-Length: {}\r\n\r\n{}",
             self.method,
             self.path,
             self.body.len(),
@@ -86,7 +113,11 @@ fn verifier() -> StaticVerifier {
 }
 
 fn registry() -> TenantRegistry {
-    TenantRegistry::new(3102, TenantLimits::default())
+    TenantRegistry::new(
+        3102,
+        TenantLimits::default(),
+        vec![PUBLIC_ORIGIN.to_string()],
+    )
 }
 
 /// Drive one request through the online loop and return the raw response.
@@ -544,6 +575,7 @@ fn an_evicted_account_comes_back_to_a_fresh_starter_document() {
             idle_evict_secs: 1,
             ..TenantLimits::default()
         },
+        vec![PUBLIC_ORIGIN.to_string()],
     );
     let verifier = verifier();
     serve(
@@ -565,4 +597,149 @@ fn an_evicted_account_comes_back_to_a_fresh_starter_document() {
     // of eviction, not an accident. M4 loads it back from disk instead.
     assert_eq!(body(&after)["version"], 0, "{after}");
     assert!(!after.contains("Tenant Rect"), "{after}");
+}
+
+// ---------------------------------------------------------------------------
+// Origin hardening: the CSRF boundary for cookie-authenticated writes.
+// ---------------------------------------------------------------------------
+
+/// The static verifier treats the same table as both cookies and tokens, so
+/// `sessA` presented as a cookie resolves to `userA`.
+fn cookie_verifier() -> StaticVerifier {
+    StaticVerifier::parse("tokA=userA,sessA=userA,tokB=userB")
+}
+
+#[test]
+fn a_cookie_authenticated_write_from_this_deployment_origin_is_allowed() {
+    let response = serve(
+        &registry(),
+        &cookie_verifier(),
+        Request::json("POST", "/api/mcp/document", SYNC_BODY)
+            .with_session("sessA")
+            .with_origin(PUBLIC_ORIGIN),
+    );
+    assert_eq!(status_line(&response), "HTTP/1.1 200 OK", "{response}");
+}
+
+#[test]
+fn a_cookie_authenticated_write_from_another_origin_is_refused() {
+    // The browser attaches the session cookie to a cross-site POST all by
+    // itself, so without this check any page on the internet could drive a
+    // signed-in user's canvas.
+    for hostile in ["https://evil.example", "http://canvas.example", "null"] {
+        let response = serve(
+            &registry(),
+            &cookie_verifier(),
+            Request::json("POST", "/api/mcp/document", SYNC_BODY)
+                .with_session("sessA")
+                .with_origin(hostile),
+        );
+        assert_eq!(
+            status_line(&response),
+            "HTTP/1.1 403 Forbidden",
+            "{hostile}: {response}"
+        );
+        assert_eq!(
+            body(&response)["error"],
+            "cross-origin-write-forbidden",
+            "{hostile}"
+        );
+    }
+}
+
+#[test]
+fn a_cookie_authenticated_write_with_no_origin_at_all_is_refused() {
+    let response = serve(
+        &registry(),
+        &cookie_verifier(),
+        Request::json("POST", "/api/mcp/document", SYNC_BODY).with_session("sessA"),
+    );
+    assert_eq!(
+        status_line(&response),
+        "HTTP/1.1 403 Forbidden",
+        "{response}"
+    );
+}
+
+#[test]
+fn a_cookie_authenticated_read_is_not_subject_to_the_write_gate() {
+    // A GET changes nothing, and the browser's own CORS rules already stop a
+    // hostile page from reading the response.
+    let response = serve(
+        &registry(),
+        &cookie_verifier(),
+        Request::new("GET", "/api/mcp/document")
+            .with_session("sessA")
+            .with_origin("https://evil.example"),
+    );
+    assert_eq!(status_line(&response), "HTTP/1.1 200 OK", "{response}");
+}
+
+#[test]
+fn a_bearer_authenticated_write_is_exempt_from_the_origin_gate() {
+    // A token is only ever attached by code that already holds it, so there
+    // is no confused deputy to protect against — and an MCP client has no
+    // Origin to send.
+    let response = serve(
+        &registry(),
+        &cookie_verifier(),
+        Request::json("POST", "/api/mcp/document", SYNC_BODY)
+            .with_bearer("tokA")
+            .with_origin("https://evil.example"),
+    );
+    assert_eq!(status_line(&response), "HTTP/1.1 200 OK", "{response}");
+}
+
+#[test]
+fn a_deployment_with_no_configured_origin_refuses_every_cookie_write() {
+    let registry = TenantRegistry::new(3102, TenantLimits::default(), Vec::new());
+    let response = serve(
+        &registry,
+        &cookie_verifier(),
+        Request::json("POST", "/api/mcp/document", SYNC_BODY)
+            .with_session("sessA")
+            .with_origin(PUBLIC_ORIGIN),
+    );
+    assert_eq!(
+        status_line(&response),
+        "HTTP/1.1 403 Forbidden",
+        "{response}"
+    );
+}
+
+#[test]
+fn the_allowed_origin_is_echoed_and_a_wildcard_is_never_sent() {
+    let allowed = serve(
+        &registry(),
+        &verifier(),
+        Request::new("GET", "/api/mcp/version")
+            .with_bearer("tokA")
+            .with_origin(PUBLIC_ORIGIN),
+    );
+    assert!(
+        allowed.contains(&format!("Access-Control-Allow-Origin: {PUBLIC_ORIGIN}")),
+        "{allowed}"
+    );
+    // Credentialed requests plus `*` is exactly the combination that lets any
+    // page read another account's document.
+    assert!(
+        !allowed.contains("Access-Control-Allow-Origin: *"),
+        "{allowed}"
+    );
+}
+
+#[test]
+fn a_disallowed_origin_gets_no_cors_header_at_all() {
+    let response = serve(
+        &registry(),
+        &verifier(),
+        Request::new("GET", "/api/mcp/version")
+            .with_bearer("tokA")
+            .with_origin("https://evil.example"),
+    );
+    assert_eq!(status_line(&response), "HTTP/1.1 200 OK", "{response}");
+    assert!(
+        !response.contains("Access-Control-Allow-Origin"),
+        "omitting the header is what makes the browser withhold the body: {response}"
+    );
 }

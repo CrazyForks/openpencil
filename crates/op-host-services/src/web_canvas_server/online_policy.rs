@@ -129,6 +129,49 @@ impl ServeMode {
     }
 }
 
+/// Read the public origins this deployment answers for.
+///
+/// Shares `OPENPENCIL_WEB_ALLOWED_ORIGINS` with the existing sensitive-POST
+/// guard so an operator configures the deployment's origin exactly once.
+/// Entries that are not a bare `scheme://host[:port]` are dropped rather than
+/// failing start-up: a typo must narrow the allowlist, never widen it.
+pub fn allowed_origins_from_env() -> Vec<String> {
+    std::env::var(super::origin_guard::WEB_ALLOWED_ORIGINS_ENV)
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(|value| super::origin_guard::parse_http_origin(value.trim()))
+        .map(|origin| origin.origin().ascii_serialization())
+        .collect()
+}
+
+/// The `Access-Control-Allow-Origin` an online deployment may emit.
+///
+/// Never `*`: online requests carry credentials (a session cookie or a bearer
+/// token), and a wildcard plus credentials is exactly the combination that
+/// lets any page on the internet read another account's document. An origin
+/// that is not on the list gets no header at all, which is what makes the
+/// browser refuse to hand the response to the calling script.
+pub(super) fn online_cors_origin(allow: &[String], origin: Option<&str>) -> Option<String> {
+    let origin = origin?;
+    let normalized = super::origin_guard::parse_http_origin(origin)?
+        .origin()
+        .ascii_serialization();
+    allow.contains(&normalized).then_some(origin.to_string())
+}
+
+/// Whether a cookie-authenticated write may proceed from this `Origin`.
+///
+/// The session cookie rides along automatically on any cross-site request the
+/// browser makes, so on a public origin the cookie alone proves nothing about
+/// who initiated the request — this is the CSRF boundary. A bearer token is
+/// exempt: it is only ever attached by code that already holds it.
+///
+/// Fails closed on a missing `Origin` too. Every browser sends one on a
+/// non-GET, and a non-browser client that does not should be using a token.
+pub(super) fn cookie_write_origin_allowed(allow: &[String], origin: Option<&str>) -> bool {
+    online_cors_origin(allow, origin).is_some()
+}
+
 /// The agent-indicator payload an online daemon relays instead of the
 /// process-global registry.
 ///

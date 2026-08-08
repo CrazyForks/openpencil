@@ -162,9 +162,13 @@ pub struct Tenant {
 }
 
 impl Tenant {
-    fn new(port: u16, now_unix: u64) -> Self {
+    fn new(port: u16, allow_origins: &[String], now_unix: u64) -> Self {
+        let mut state = WebCanvasState::new_for_tenant(EditorState::starter(), port);
+        // Every tenant answers for the same public origin; the allowlist is a
+        // deployment property, not an account one.
+        state.allow_origins = allow_origins.to_vec();
         Self {
-            state: Mutex::new(WebCanvasState::new_for_tenant(EditorState::starter(), port)),
+            state: Mutex::new(state),
             hub: SseHub::default(),
             leases: AtomicUsize::new(0),
             last_active_unix: AtomicU64::new(now_unix),
@@ -235,15 +239,23 @@ pub struct TenantRegistry {
     limits: TenantLimits,
     /// Reported by `GET /api/mcp/server`; the same bound port for everyone.
     port: u16,
+    /// Public origins this deployment answers for, stamped onto every tenant.
+    allow_origins: Vec<String>,
 }
 
 impl TenantRegistry {
-    pub fn new(port: u16, limits: TenantLimits) -> Self {
+    pub fn new(port: u16, limits: TenantLimits, allow_origins: Vec<String>) -> Self {
         Self {
             tenants: Mutex::new(HashMap::new()),
             limits,
             port,
+            allow_origins,
         }
+    }
+
+    /// The deployment's public origin allowlist.
+    pub fn allow_origins(&self) -> &[String] {
+        &self.allow_origins
     }
 
     pub const fn limits(&self) -> TenantLimits {
@@ -274,7 +286,7 @@ impl TenantRegistry {
                 if tenants.len() >= self.limits.max_tenants {
                     return Err(TenantError::TooManyTenants);
                 }
-                let created = Arc::new(Tenant::new(self.port, now));
+                let created = Arc::new(Tenant::new(self.port, &self.allow_origins, now));
                 tenants.insert(identity.user_id.clone(), Arc::clone(&created));
                 created
             }

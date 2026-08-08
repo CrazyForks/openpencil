@@ -63,18 +63,19 @@ pub fn run_online_web_canvas(options: ServeWebOptions) -> Result<()> {
         );
     }
     let limits = TenantLimits::from_env();
-    let verifier = StaticVerifier::from_env();
-    if verifier.is_empty() {
-        // Fail loud but keep serving: every request answers 503
-        // `verifier-unavailable`, which is a diagnosable state. Serving
-        // requests with NO verifier would be the unsafe alternative.
+    let allow_origins = online_policy::allowed_origins_from_env();
+    if allow_origins.is_empty() {
+        // Not fatal: a same-origin deployment behind a reverse proxy needs no
+        // CORS header at all. It IS fatal for cookie-authenticated writes,
+        // which have no other CSRF boundary — so say so rather than letting
+        // the first failed save be the discovery.
         eprintln!(
-            "openpencil --serve-web --online: no identity verifier configured (set {} for \
-             development); every authenticated route will answer 503",
-            super::tenant_auth::STATIC_IDENTITIES_ENV
+            "openpencil --serve-web --online: no public origin configured (set {}); \
+             cookie-authenticated writes will be refused",
+            super::origin_guard::WEB_ALLOWED_ORIGINS_ENV
         );
     }
-    let verifier: Arc<dyn IdentityVerifier> = Arc::new(verifier);
+    let verifier = resolve_verifier();
 
     let listener = TcpListener::bind((host.as_str(), port))
         .map_err(|e| WebCanvasError::Config(format!("bind {host}:{port}: {e}")))?;
@@ -99,7 +100,7 @@ pub fn run_online_web_canvas(options: ServeWebOptions) -> Result<()> {
         ),
     }
 
-    let registry = Arc::new(TenantRegistry::new(bound, limits));
+    let registry = Arc::new(TenantRegistry::new(bound, limits, allow_origins));
     let conn_count = Arc::new(AtomicUsize::new(0));
     let shutdown = Arc::new(AtomicBool::new(false));
     let mut last_sweep = now_unix();
@@ -157,6 +158,62 @@ pub fn run_online_web_canvas(options: ServeWebOptions) -> Result<()> {
     Ok(())
 }
 
+/// Pick the identity verifier this deployment runs.
+///
+/// The hub is the production answer. `StaticVerifier` stays reachable so the
+/// M1 development smoke still works with no hub in sight, and so a
+/// misconfigured hub URL does not silently downgrade to it — a hub that is
+/// configured but unbuildable is a hard failure, not a fallback.
+fn resolve_verifier() -> Arc<dyn IdentityVerifier> {
+    match super::hub_verifier::HubVerifier::from_env() {
+        Ok(Some(verifier)) => {
+            eprintln!(
+                "openpencil --serve-web --online: verifying identities against the hub at {}",
+                std::env::var(crate::hub_auth_client::HUB_BASE_URL_ENV).unwrap_or_default()
+            );
+            if crate::hub_auth_client::internal_auth_from_env().is_none() {
+                eprintln!(
+                    "openpencil --serve-web --online: no {} configured; API-token \
+                     introspection will be refused and only browser sessions will work",
+                    crate::hub_auth_client::HUB_INTERNAL_AUTH_FILE_ENV
+                );
+            }
+            return Arc::new(verifier);
+        }
+        Ok(None) => {}
+        Err(error) => {
+            // Configured but unusable. Serving with the development verifier
+            // here would mean a production deployment quietly accepting an
+            // env token table instead of real accounts.
+            eprintln!(
+                "openpencil --serve-web --online: {} is set but unusable ({error}); every \
+                 authenticated route will answer 503",
+                crate::hub_auth_client::HUB_BASE_URL_ENV
+            );
+            return Arc::new(StaticVerifier::parse(""));
+        }
+    }
+    let static_verifier = StaticVerifier::from_env();
+    if static_verifier.is_empty() {
+        // Fail loud but keep serving: every request answers 503
+        // `verifier-unavailable`, which is a diagnosable state. Serving
+        // requests with NO verifier would be the unsafe alternative.
+        eprintln!(
+            "openpencil --serve-web --online: no identity verifier configured (set {} for a \
+             hub deployment, or {} for development); every authenticated route will answer 503",
+            crate::hub_auth_client::HUB_BASE_URL_ENV,
+            super::tenant_auth::STATIC_IDENTITIES_ENV
+        );
+    } else {
+        eprintln!(
+            "openpencil --serve-web --online: using the DEVELOPMENT static identity table; \
+             set {} for a real deployment",
+            crate::hub_auth_client::HUB_BASE_URL_ENV
+        );
+    }
+    Arc::new(static_verifier)
+}
+
 /// Serve one online connection: anonymous prefix, then verify, then dispatch
 /// against the caller's own tenant.
 ///
@@ -168,7 +225,9 @@ pub(super) fn serve_one_online<S: Read + Write>(
     verifier: &dyn IdentityVerifier,
 ) -> Result<bool> {
     let req = crate::mcp_serve::read_http_request(stream)?;
-    if let Some(done) = serve_anonymous_prefix(stream, &req)? {
+    let allow_origins = registry.allow_origins();
+    let cors_origin = online_policy::online_cors_origin(allow_origins, req.origin.as_deref());
+    if let Some(done) = serve_anonymous_prefix(stream, &req, cors_origin.as_deref())? {
         return Ok(done);
     }
     // The tenant key comes from here and nowhere else. Note that the request
@@ -189,6 +248,27 @@ pub(super) fn serve_one_online<S: Read + Write>(
             return Ok(false);
         }
     };
+    // CSRF boundary. A session cookie rides along on any cross-site request
+    // the browser makes, so on a public origin the cookie alone does not
+    // establish that this deployment's own page initiated the write. A bearer
+    // token is exempt: it is only ever attached by code that already holds it.
+    if identity.via == super::tenant_auth::IdentityVia::SessionCookie
+        && !matches!(req.method.as_str(), "GET" | "HEAD" | "OPTIONS")
+        && !online_policy::cookie_write_origin_allowed(allow_origins, req.origin.as_deref())
+    {
+        crate::mcp_serve::write_mcp_http_response_with_origin(
+            stream,
+            "403 Forbidden",
+            &serde_json::json!({
+                "ok": false,
+                "error": "cross-origin-write-forbidden",
+                "message": "a cookie-authenticated write must come from this deployment's origin",
+            })
+            .to_string(),
+            cors_origin.as_deref(),
+        )?;
+        return Ok(false);
+    }
     let lease = match registry.lease_for(&identity) {
         Ok(lease) => lease,
         Err(error) => {
@@ -227,15 +307,8 @@ pub(super) fn serve_one_online<S: Read + Write>(
 fn serve_anonymous_prefix<S: Read + Write>(
     stream: &mut S,
     req: &crate::mcp_serve::HttpRequest,
+    cors_origin: Option<&str>,
 ) -> Result<Option<bool>> {
-    // Online sits behind a reverse proxy on one public origin, so the
-    // permissive value matches what the single-user daemon already emits for
-    // a non-managed bind. Cookie-authenticated writes get their strict
-    // Origin == public-origin check in M2, alongside the hub session client;
-    // until then the only credential this loop accepts in practice is a
-    // Bearer token, which a browser will not attach cross-origin without a
-    // preflight the caller must already hold the token to exploit.
-    let cors_origin = Some("*");
     if req.method == "OPTIONS" {
         crate::mcp_serve::write_mcp_http_response_with_origin(
             stream,

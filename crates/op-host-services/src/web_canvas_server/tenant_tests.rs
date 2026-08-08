@@ -15,7 +15,7 @@ fn identity(user_id: &str) -> ResolvedIdentity {
 }
 
 fn registry(limits: TenantLimits) -> TenantRegistry {
-    TenantRegistry::new(3100, limits)
+    TenantRegistry::new(3100, limits, Vec::new())
 }
 
 #[test]

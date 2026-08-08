@@ -3,7 +3,7 @@
 //! by the explicit `OPENPENCIL_WEB_ALLOWED_ORIGINS` allowlist. Split out of
 //! `web_canvas_server.rs` to keep the spine under the 800-line cap.
 
-pub(super) const WEB_ALLOWED_ORIGINS_ENV: &str = "OPENPENCIL_WEB_ALLOWED_ORIGINS";
+pub(crate) const WEB_ALLOWED_ORIGINS_ENV: &str = "OPENPENCIL_WEB_ALLOWED_ORIGINS";
 
 pub(super) fn is_sensitive_browser_post(request: &crate::mcp_serve::HttpRequest) -> bool {
     request.method == "POST"
@@ -81,7 +81,7 @@ pub(super) fn credential_request_origin_allowed_with_config(
         .any(|configured| same_url_origin(&origin, &configured))
 }
 
-pub(super) fn parse_http_origin(value: &str) -> Option<reqwest::Url> {
+pub(crate) fn parse_http_origin(value: &str) -> Option<reqwest::Url> {
     let origin = reqwest::Url::parse(value).ok()?;
     (matches!(origin.scheme(), "http" | "https")
         && origin.username().is_empty()
