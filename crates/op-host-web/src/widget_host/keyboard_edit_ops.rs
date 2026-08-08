@@ -124,7 +124,36 @@ impl WidgetHost {
         if self.input_active() {
             return false;
         }
-        let dup = shared::duplicate_selection(&mut self.editor_state, &mut self.next_node_id);
+        // `duplicate_selection` has no allocator twin, so a collaboration
+        // session drives `duplicate_selected_with_allocator` directly and
+        // pushes the undo snapshot by hand (native parity —
+        // `op-host-native/src/widget_host/keyboard_delete.rs`).
+        let result = if let Some(allocator) = self.collab_id_allocator.as_mut() {
+            if self.editor_state.selection.is_empty() {
+                Ok(None)
+            } else {
+                let snapshot = self.editor_state.snapshot_for_history();
+                let result = self
+                    .editor_state
+                    .duplicate_selected_with_allocator(allocator, 10.0);
+                if result.as_ref().is_ok_and(Option::is_some) {
+                    self.editor_state.history_push_past(snapshot);
+                }
+                result
+            }
+        } else {
+            Ok(
+                shared::duplicate_selection(&mut self.editor_state, &mut self.next_node_id)
+                    .then_some(self.editor_state.selection.anchor.clone()),
+            )
+        };
+        let dup = match result {
+            Ok(id) => id.is_some(),
+            Err(error) => {
+                self.show_collab_id_error(error);
+                return true;
+            }
+        };
         if dup {
             self.mark_dirty();
         }
@@ -384,10 +413,40 @@ impl WidgetHost {
         if self.input_active() {
             return false;
         }
-        let pasted = shared::paste_clipboard_at_default_offset(
-            &mut self.editor_state,
-            &mut self.next_node_id,
-        );
+        // Same shape as `apply_duplicate`: no allocator twin for the
+        // shared helper, so the collaboration path calls the allocator
+        // mutator and pushes history itself.
+        let result = if let Some(allocator) = self.collab_id_allocator.as_mut() {
+            if self.editor_state.clipboard.is_empty() {
+                Ok(Vec::new())
+            } else {
+                let snapshot = self.editor_state.snapshot_for_history();
+                let result = self
+                    .editor_state
+                    .paste_clipboard_with_allocator(allocator, 10.0);
+                if result.as_ref().is_ok_and(|ids| !ids.is_empty()) {
+                    self.editor_state.history_push_past(snapshot);
+                }
+                result
+            }
+        } else {
+            let pasted = shared::paste_clipboard_at_default_offset(
+                &mut self.editor_state,
+                &mut self.next_node_id,
+            );
+            Ok(if pasted {
+                vec![self.editor_state.selection.anchor.clone()]
+            } else {
+                Vec::new()
+            })
+        };
+        let pasted = match result {
+            Ok(ids) => !ids.is_empty(),
+            Err(error) => {
+                self.show_collab_id_error(error);
+                return true;
+            }
+        };
         if pasted {
             self.mark_dirty();
         }

@@ -9,7 +9,7 @@
 
 use op_editor_core::host_press_transitions as core_press;
 use op_editor_core::ui_draft::LayerContextTarget;
-use op_editor_core::{BooleanOp, EditorState, ExportQuickRow, Tool};
+use op_editor_core::{EditorState, ExportQuickRow, Tool};
 
 use crate::widgets::export_quick_menu::{ExportQuickMenu, ExportQuickMenuHit};
 use crate::widgets::layer_context_menu::LayerContextAction;
@@ -20,6 +20,9 @@ use crate::widgets::{
 };
 use crate::{Point2D, Rect};
 
+pub use super::layer_context_flow::{
+    apply_layer_context_action, apply_layer_context_action_with_allocator, LayerContextStep,
+};
 pub use super::prompt_center_press_flow::press_prompt_center;
 pub use super::scene_template_press_flow::{
     hover_scene_template_center, press_scene_template_center, scroll_scene_template_center,
@@ -615,133 +618,4 @@ pub fn press_open_layer_context_menu(
         MenuHit::Inside => OpenLayerMenuPress::Swallow,
         MenuHit::Outside => OpenLayerMenuPress::Outside,
     })
-}
-
-/// Residual host work after [`apply_layer_context_action`]. Both hosts
-/// mark dirty afterwards regardless of the variant.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum LayerContextStep {
-    /// Fully applied by the shared dispatch.
-    Done,
-    /// Host runs its `apply_group()`.
-    Group,
-    /// Host runs its `apply_boolean_op(op)`.
-    Boolean(BooleanOp),
-    /// Host re-fits the viewport on the active page.
-    Refit,
-}
-
-/// Layer / page context-menu row dispatch.
-pub fn apply_layer_context_action(
-    state: &mut EditorState,
-    next_node_id: &mut u64,
-    action: LayerContextAction,
-    target: LayerContextTarget,
-    now_ms: u64,
-) -> LayerContextStep {
-    use LayerContextAction as A;
-    use LayerContextTarget as T;
-    match (action, target) {
-        (A::Duplicate, T::Layer(id)) => {
-            // Act on the whole multi-selection when the right-clicked
-            // row is part of it; otherwise retarget to just this row.
-            if !state.is_selected(&id) {
-                state.set_single_selection(id);
-            }
-            state.commit_history();
-            let _ = state.duplicate_selected(next_node_id, 10.0);
-            LayerContextStep::Done
-        }
-        (A::Delete, T::Layer(id)) => {
-            // Keep the multi-selection so Delete removes every selected
-            // layer, not just the right-clicked one.
-            if !state.is_selected(&id) {
-                state.set_single_selection(id);
-            }
-            state.commit_history();
-            let _ = state.delete_selected();
-            LayerContextStep::Done
-        }
-        (A::GroupSelection, T::Layer(_)) => LayerContextStep::Group,
-        // TS boolean rows act on the current selection and push history
-        // explicitly (`layer-panel.tsx:389-407`); the host's
-        // `apply_boolean_op` does both.
-        (
-            A::BooleanUnion | A::BooleanSubtract | A::BooleanIntersect | A::BooleanExclude,
-            T::Layer(_),
-        ) => {
-            let op = match action {
-                A::BooleanSubtract => BooleanOp::Subtract,
-                A::BooleanIntersect => BooleanOp::Intersect,
-                A::BooleanExclude => BooleanOp::Exclude,
-                _ => BooleanOp::Union,
-            };
-            LayerContextStep::Boolean(op)
-        }
-        (A::ToggleLock, T::Layer(id)) => {
-            // TS toggleLock runs through mutateWithHistory
-            // (document-store-node-actions.ts:176-188).
-            core_press::with_doc_history(state, |s| s.toggle_node_locked(&id));
-            LayerContextStep::Done
-        }
-        (A::ToggleVisibility, T::Layer(id)) => {
-            // TS toggleVisibility runs through mutateWithHistory
-            // (document-store-node-actions.ts:162-174).
-            core_press::with_doc_history(state, |s| s.toggle_node_hidden(&id));
-            LayerContextStep::Done
-        }
-        (A::CreateComponent, T::Layer(id)) => {
-            let _ = state.create_component_from_node_name(&id);
-            LayerContextStep::Done
-        }
-        (A::DetachComponent | A::DetachInstance, T::Layer(id)) => {
-            // Reusable component sheds its flag; a Ref instance
-            // materializes into an independent subtree (#22).
-            let _ = state.detach_component(&id);
-            LayerContextStep::Done
-        }
-        // Page CRUD pushes history in TS (document-store-pages.ts:19-121)
-        // — snapshot-before-mutate, skipped when the guard rejects the op.
-        (A::DuplicatePage, T::Page(idx)) => {
-            if core_press::with_doc_history(state, |s| s.duplicate_page(idx).is_some()) {
-                LayerContextStep::Refit
-            } else {
-                LayerContextStep::Done
-            }
-        }
-        (A::MovePageUp, T::Page(idx)) => {
-            core_press::with_doc_history(state, |s| s.move_page_up(idx));
-            LayerContextStep::Done
-        }
-        (A::MovePageDown, T::Page(idx)) => {
-            core_press::with_doc_history(state, |s| s.move_page_down(idx));
-            LayerContextStep::Done
-        }
-        (A::DeletePage, T::Page(idx)) => {
-            let deleting_active = idx == state.ui.active_page_index;
-            if core_press::with_doc_history(state, |s| s.remove_page(idx)) && deleting_active {
-                LayerContextStep::Refit
-            } else {
-                LayerContextStep::Done
-            }
-        }
-        (A::RenamePage, T::Page(idx)) => {
-            if state.start_rename_page(idx) {
-                if let Some(rename) = state.ui.layer_rename.as_mut() {
-                    rename.input.touch(now_ms);
-                }
-            }
-            LayerContextStep::Done
-        }
-        (A::RenameLayer, T::Layer(id)) => {
-            if state.start_rename_layer(id) {
-                if let Some(rename) = state.ui.layer_rename.as_mut() {
-                    rename.input.touch(now_ms);
-                }
-            }
-            LayerContextStep::Done
-        }
-        // Mismatched action/target — no-op.
-        _ => LayerContextStep::Done,
-    }
 }

@@ -134,14 +134,35 @@ impl WidgetHost {
                 return false;
             }
             let pre_create = self.editor_state.snapshot_for_history();
-            let Some(node_id) = self.editor_state.create_node_for_tool(
-                drag.tool,
-                &mut self.next_node_id,
-                f64::from(min_x),
-                f64::from(min_y),
-                f64::from(w),
-                f64::from(h),
-            ) else {
+            let created = if let Some(allocator) = self.collab_id_allocator.as_mut() {
+                self.editor_state.create_node_for_tool_with_allocator(
+                    drag.tool,
+                    allocator,
+                    f64::from(min_x),
+                    f64::from(min_y),
+                    f64::from(w),
+                    f64::from(h),
+                )
+            } else {
+                Ok(self.editor_state.create_node_for_tool(
+                    drag.tool,
+                    &mut self.next_node_id,
+                    f64::from(min_x),
+                    f64::from(min_y),
+                    f64::from(w),
+                    f64::from(h),
+                ))
+            };
+            let Some(node_id) = (match created {
+                Ok(id) => id,
+                Err(error) => {
+                    // Drop the gesture so a pointer move per frame cannot
+                    // re-run the exhausted allocation and spam the notice.
+                    self.create_drag = None;
+                    self.show_collab_id_error(error);
+                    return true;
+                }
+            }) else {
                 self.create_drag = None;
                 return false;
             };

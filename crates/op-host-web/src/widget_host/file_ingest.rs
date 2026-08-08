@@ -91,16 +91,32 @@ impl WidgetHost {
         let snap = self.editor_state.snapshot_for_history();
         let mut taken = self.editor_state.collect_node_ids();
         let mut new_ids = Vec::with_capacity(nodes.len());
+        // Stage the clones and only commit them once every subtree has its
+        // ids: a mid-loop allocator failure must not leave half the paste
+        // on the page (native parity — `host_requests.rs`).
+        let mut clones = Vec::with_capacity(nodes.len());
         for node in &nodes {
-            let mut clone = op_editor_core::walkers::deep_clone_with_new_ids(
-                node,
-                &mut self.next_node_id,
-                &mut taken,
-            );
+            let result = if let Some(allocator) = self.collab_id_allocator.as_mut() {
+                op_editor_core::walkers::deep_clone_with_allocator(node, allocator, &mut taken)
+            } else {
+                Ok(op_editor_core::walkers::deep_clone_with_new_ids(
+                    node,
+                    &mut self.next_node_id,
+                    &mut taken,
+                ))
+            };
+            let mut clone = match result {
+                Ok(clone) => clone,
+                Err(error) => {
+                    self.show_collab_id_error(error);
+                    return true;
+                }
+            };
             op_editor_core::walkers::translate_subtree(&mut clone, dx, dy);
             new_ids.push(op_editor_core::NodeId::new(clone.base().id.clone()));
-            self.editor_state.active_children_mut().push(clone);
+            clones.push(clone);
         }
+        self.editor_state.active_children_mut().extend(clones);
         if let Some(anchor) = new_ids.first().cloned() {
             self.editor_state.set_single_selection(anchor);
             for id in new_ids.into_iter().skip(1) {
