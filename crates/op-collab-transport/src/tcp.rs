@@ -341,19 +341,38 @@ pub fn prepare_tcp_stream(stream: &TcpStream, config: TransportConfig) -> Result
     Ok(())
 }
 
+/// Smallest keepalive period the OS socket knobs can express.
+///
+/// `TCP_KEEPIDLE` / `TCP_KEEPINTVL` on Linux and `TCP_KEEPALIVE` on macOS are
+/// whole-second options, so socket2 hands them `Duration::as_secs()`. Anything
+/// under a second therefore reaches the kernel as `0`, and the two platforms
+/// disagree about what that means: Linux rejects it with `EINVAL`, which fails
+/// every connect and accept before a single protocol byte moves, while macOS
+/// accepts the call and silently keeps its 2-hour default instead of the
+/// requested period. Neither is the configured behaviour.
+const MIN_OS_KEEPALIVE_PERIOD: Duration = Duration::from_secs(1);
+
+/// Rounds a configured period up to the whole-second granularity the OS
+/// keepalive options accept, never below [`MIN_OS_KEEPALIVE_PERIOD`].
+///
+/// `TransportConfig::validate` accepts any non-zero `timeouts.heartbeat`, and
+/// the protocol's own heartbeat and idle deadlines keep that full `Duration`
+/// precision in `SecureConnection` and `ConnectionDriver`. The kernel keepalive
+/// is only a coarse backstop underneath them, so rounding up here costs nothing
+/// while keeping the config-to-socket mapping total on every platform.
+fn os_keepalive_period(period: Duration) -> Duration {
+    let whole_seconds = period
+        .as_secs()
+        .saturating_add(u64::from(period.subsec_nanos() > 0));
+    Duration::from_secs(whole_seconds.max(MIN_OS_KEEPALIVE_PERIOD.as_secs()))
+}
+
 fn configure_tcp_common(stream: &TcpStream, config: TransportConfig) -> Result<(), RuntimeError> {
     stream.set_nodelay(true)?;
     let socket = SockRef::from(stream);
     socket.set_keepalive(true)?;
-    // Linux TCP_KEEPIDLE/TCP_KEEPINTVL have whole-second granularity and
-    // reject zero, so a sub-second heartbeat (test configs use 50ms) must
-    // not truncate to 0 or setsockopt fails with EINVAL. Application-level
-    // heartbeats still run at the configured cadence; only the kernel
-    // keepalive probes are clamped.
-    let keepalive_cadence = config.timeouts.heartbeat.max(Duration::from_secs(1));
-    let keepalive = TcpKeepalive::new()
-        .with_time(keepalive_cadence)
-        .with_interval(keepalive_cadence);
+    let period = os_keepalive_period(config.timeouts.heartbeat);
+    let keepalive = TcpKeepalive::new().with_time(period).with_interval(period);
     socket.set_tcp_keepalive(&keepalive)?;
     Ok(())
 }
@@ -433,6 +452,10 @@ impl Write for DeadlineTcp<'_> {
         self.stream.flush()
     }
 }
+
+#[cfg(test)]
+#[path = "tcp_keepalive_tests.rs"]
+mod keepalive_tests;
 
 #[cfg(test)]
 mod tests {
