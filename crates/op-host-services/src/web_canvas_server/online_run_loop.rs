@@ -44,6 +44,14 @@ use super::*;
 /// enough that a deploy is not held up by a long-lived SSE stream.
 const SHUTDOWN_DRAIN_SECS: u64 = 10;
 
+/// How often the write drain reports the blocked-writer count.
+const WRITE_DRAIN_REPORT_SECS: u64 = 5;
+
+/// The ceiling on waiting for in-flight writes. Flushing over a live writer
+/// loses acked work, so this is deliberately far longer than the connection
+/// drain — and `stop_grace_period` must exceed it.
+const WRITE_DRAIN_HARD_CAP_SECS: u64 = 60;
+
 /// Wait for the active-connection count to reach zero, up to the bound.
 ///
 /// Returns whether it actually drained. SSE streams routinely outlive this,
@@ -60,19 +68,47 @@ fn drain_connections(conn_count: &Arc<AtomicUsize>) -> bool {
     conn_count.load(Ordering::Acquire) == 0
 }
 
-/// Wait for in-flight document writes to finish, up to the bound.
+/// Wait for in-flight document writes to finish.
 ///
 /// Separate from the connection drain: an SSE stream holds a connection for
-/// minutes and is safe to flush past, while a write in progress is not.
+/// minutes and is safe to flush past, while a write in progress is not —
+/// flushing over one loses work a client was already told had landed.
+///
+/// So this does NOT give up after the ordinary drain window. It keeps waiting
+/// to a hard ceiling, reporting the blocked-writer count every
+/// [`WRITE_DRAIN_REPORT_SECS`] so an operator can see why the stop is slow.
+/// Reaching the ceiling is an error, not a routine outcome: `stop_grace_period`
+/// must exceed [`WRITE_DRAIN_HARD_CAP_SECS`] or the container is killed
+/// mid-flush regardless of what this does.
 fn drain_write_barrier(barrier: &Arc<super::tenant::WriteBarrier>) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(SHUTDOWN_DRAIN_SECS);
-    while std::time::Instant::now() < deadline {
+    let started = std::time::Instant::now();
+    let mut next_report = std::time::Duration::from_secs(WRITE_DRAIN_REPORT_SECS);
+    loop {
         if barrier.active() == 0 {
             return true;
         }
+        let waited = started.elapsed();
+        if waited >= std::time::Duration::from_secs(WRITE_DRAIN_HARD_CAP_SECS) {
+            eprintln!(
+                "openpencil --serve-web --online: ERROR {} write(s) still in flight after {}s; \
+                 flushing anyway — those clients were acked and may not be persisted. Raise \
+                 stop_grace_period above {}s.",
+                barrier.active(),
+                WRITE_DRAIN_HARD_CAP_SECS,
+                WRITE_DRAIN_HARD_CAP_SECS
+            );
+            return false;
+        }
+        if waited >= next_report {
+            eprintln!(
+                "openpencil --serve-web --online: waiting on {} in-flight write(s) ({}s)",
+                barrier.active(),
+                waited.as_secs()
+            );
+            next_report += std::time::Duration::from_secs(WRITE_DRAIN_REPORT_SECS);
+        }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    barrier.active() == 0
 }
 
 /// Longest gap between idle sweeps, however long the idle deadline is.
@@ -233,15 +269,8 @@ pub fn run_online_web_canvas(options: ServeWebOptions) -> Result<()> {
     // holding a pass would otherwise commit after the flush snapshotted the
     // document, having already answered 200.
     write_barrier.close();
-    let writes_settled = drain_write_barrier(&write_barrier);
-    if !writes_settled {
-        eprintln!(
-            "openpencil --serve-web --online: {} write(s) still in flight after {}s; \
-             flushing anyway — those clients were acked but may not be persisted",
-            write_barrier.active(),
-            SHUTDOWN_DRAIN_SECS
-        );
-    }
+    // Reports and escalates internally; a `false` means the hard cap was hit.
+    let _writes_settled = drain_write_barrier(&write_barrier);
     let drained = drain_connections(&conn_count);
     let flush_started = std::time::Instant::now();
     let flushed = registry.flush_all();

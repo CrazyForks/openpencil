@@ -186,6 +186,25 @@ thread_local! {
 /// request, so it is safe to run ahead of the postMessage bridge init gate.
 pub(crate) fn reset() {
     SYNC_STATE.with(|state| *state.borrow_mut() = CredentialSyncState::default());
+    // Any callback already in flight was issued for the PREVIOUS account.
+    // Clearing the queue cannot recall it, so the epoch is what makes it inert
+    // when it lands — see `identity_is_current`.
+    ISSUED_EPOCH.with(|epoch| epoch.set(crate::identity_epoch::epoch()));
+}
+
+thread_local! {
+    /// The identity epoch the in-flight requests were issued under.
+    static ISSUED_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Whether a completing callback still belongs to the account that issued it.
+///
+/// An XHR cannot be un-issued: `reset` empties the queue, but a POST already
+/// on the wire will still complete and its callback would fold the previous
+/// account's result — a success, a retry schedule, an error banner — into the
+/// new account's state. Comparing epochs at completion is what discards it.
+fn identity_is_current() -> bool {
+    ISSUED_EPOCH.with(std::cell::Cell::get) == crate::identity_epoch::epoch()
 }
 
 /// Begin credential-policy discovery against the daemon. This issues a daemon
@@ -241,6 +260,9 @@ fn request_repaint() {
 fn fetch_policy() {
     let base = crate::daemon_base::daemon_base();
     let on_response: Rc<dyn Fn(u16, String)> = Rc::new(|status, body| {
+        if !identity_is_current() {
+            return; // issued for a previous account
+        }
         let policy = parse_policy_response(status, &body);
         if policy.is_none() {
             report_sync_failure(Some(status));
@@ -263,6 +285,11 @@ fn fetch_policy() {
 fn post_credentials(body: &str) {
     let base = crate::daemon_base::daemon_base();
     let on_response: Rc<dyn Fn(u16, String)> = Rc::new(|status, _| {
+        if !identity_is_current() {
+            // Issued for a previous account: its result must not become the
+            // new account's success, retry schedule or error banner.
+            return;
+        }
         if !(200..300).contains(&status) {
             report_sync_failure(Some(status));
         }
@@ -290,6 +317,11 @@ fn schedule_retry(delay_ms: i32, generation: u64) {
         use wasm_bindgen::JsCast;
 
         let callback = wasm_bindgen::closure::Closure::<dyn FnMut()>::once_into_js(move || {
+            if !identity_is_current() {
+                // A timer armed for a previous account: firing it would resend
+                // that account's credential payload into the new tenant.
+                return;
+            }
             let action = SYNC_STATE.with(|state| state.borrow_mut().retry_due(generation));
             dispatch(action);
         });

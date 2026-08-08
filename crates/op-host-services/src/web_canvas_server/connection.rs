@@ -338,20 +338,18 @@ pub(super) fn dispatch<S: Read + Write>(
         // A document write must hold a pass for its whole locked segment, so
         // shutdown cannot snapshot the document between the pass being taken
         // and the commit landing.
-        let write_pass = match (ctx.write_barrier, pending_push.is_some()) {
-            (Some(barrier), true) => match barrier.enter() {
-                Some(pass) => Some(pass),
-                None => {
-                    crate::mcp_serve::write_mcp_http_response_with_origin(
-                        stream,
-                        "503 Service Unavailable",
-                        r#"{"ok":false,"error":"shutting-down","message":"this daemon is stopping and cannot accept writes"}"#,
-                        cors_origin,
-                    )?;
-                    return Ok(false);
-                }
-            },
-            _ => None,
+        let write_pass = match admit_mutation(ctx, pending_push.is_some()) {
+            MutationAdmission::NotAWrite => None,
+            MutationAdmission::Admitted(pass) => pass,
+            MutationAdmission::ShuttingDown => {
+                crate::mcp_serve::write_mcp_http_response_with_origin(
+                    stream,
+                    "503 Service Unavailable",
+                    SHUTTING_DOWN_REST_BODY,
+                    cors_origin,
+                )?;
+                return Ok(false);
+            }
         };
         let reply = {
             let mut guard = state.lock().unwrap_or_else(|p| p.into_inner());
@@ -472,6 +470,36 @@ pub(super) fn dispatch<S: Read + Write>(
         )?;
         return Ok(false);
     }
+    // A `/mcp` call that will mutate the document is admitted through the same
+    // barrier the REST push uses. `tool_profile` already knows which tools
+    // write, so the decision is made BEFORE dispatch — the alternative is
+    // discovering it from an `EditorCommand` the tool has already produced,
+    // which is after the point where refusing is still honest.
+    let mcp_write = op_mcp::parse_tool_call(&req.body)
+        .is_some_and(|call| crate::mcp_serve::tool_profile::tool_writes(&call.tool));
+    let mcp_write_pass = match admit_mutation(ctx, mcp_write) {
+        MutationAdmission::NotAWrite => None,
+        MutationAdmission::Admitted(pass) => pass,
+        MutationAdmission::ShuttingDown => {
+            // A tools/call error envelope, not a transport failure: an MCP
+            // client must be able to read the refusal and keep its session.
+            let refusal = op_mcp::parse_tool_call(&req.body).map(|call| {
+                op_mcp::tool_response_to_json(&op_mcp::ToolResponse::Err {
+                    id: call.id.clone(),
+                    code: op_mcp::ToolErrorCode::ToolFailed,
+                    message: "shutting-down: this daemon is stopping and cannot accept writes"
+                        .to_string(),
+                })
+            });
+            crate::mcp_serve::write_mcp_http_response_with_origin(
+                stream,
+                "200 OK",
+                refusal.as_deref().unwrap_or(SHUTTING_DOWN_REST_BODY),
+                cors_origin,
+            )?;
+            return Ok(false);
+        }
+    };
     // JSON-RPC `/mcp` dispatch against the in-memory document. A mutating apply
     // bumps the sync version, broadcast to SSE subscribers so the browser shell
     // sees JSON-RPC-driven changes too.
@@ -531,6 +559,8 @@ pub(super) fn dispatch<S: Read + Write>(
         }
         response
     };
+    // Released only once the commit is visible in the shared state.
+    drop(mcp_write_pass);
     let status = if response.is_empty() {
         "202 Accepted"
     } else {
@@ -538,6 +568,39 @@ pub(super) fn dispatch<S: Read + Write>(
     };
     crate::mcp_serve::write_mcp_http_response_with_origin(stream, status, &response, cors_origin)?;
     Ok(false)
+}
+
+/// The body a REST write gets once shutdown has closed the barrier.
+const SHUTTING_DOWN_REST_BODY: &str = r#"{"ok":false,"error":"shutting-down","message":"this daemon is stopping and cannot accept writes"}"#;
+
+/// Whether a mutation may proceed, and the pass that proves it is in flight.
+pub(super) enum MutationAdmission<'a> {
+    /// Not a document mutation — nothing to admit.
+    NotAWrite,
+    /// Admitted. `None` when this deployment runs no barrier (local/managed).
+    Admitted(Option<super::tenant::WritePass<'a>>),
+    /// The daemon is stopping and will not durably accept this write.
+    ShuttingDown,
+}
+
+/// The single admission point for every document mutation.
+///
+/// Both the REST push and the `/mcp` write dispatch go through here, so a
+/// mutation route added later cannot quietly skip the barrier — which is
+/// exactly how `/mcp` came to be writing during shutdown while REST was
+/// refused.
+pub(super) fn admit_mutation<'a>(ctx: &ConnCtx<'a>, is_write: bool) -> MutationAdmission<'a> {
+    if !is_write {
+        return MutationAdmission::NotAWrite;
+    }
+    let Some(barrier) = ctx.write_barrier else {
+        // Local and managed daemons have no flush to protect.
+        return MutationAdmission::Admitted(None);
+    };
+    match barrier.enter() {
+        Some(pass) => MutationAdmission::Admitted(Some(pass)),
+        None => MutationAdmission::ShuttingDown,
+    }
 }
 
 /// Stream Server-Sent Events to a subscribed client: write the SSE headers,

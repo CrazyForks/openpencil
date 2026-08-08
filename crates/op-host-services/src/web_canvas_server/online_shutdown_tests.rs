@@ -81,3 +81,79 @@ fn a_write_during_shutdown_is_refused_rather_than_acked() {
     );
     assert_eq!(body(&response)["error"], "shutting-down");
 }
+
+#[test]
+fn an_mcp_write_tool_is_refused_once_the_barrier_closes() {
+    // `/mcp` used to apply straight to the editor with no barrier, so a write
+    // tool could commit after the flush snapshot — the exact window the REST
+    // path was already protected from.
+    use crate::web_canvas_server::tenant::WriteBarrier;
+    let registry = registry();
+    let verifier = verifier();
+    let barrier = WriteBarrier::default();
+    barrier.close();
+
+    let call = r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"add_page","arguments":{"name":"x"}}}"#;
+    let request = Request::json("POST", "/mcp", call).with_bearer("tokA");
+    let mut stream = MockStream {
+        input: std::io::Cursor::new(request.wire().into_bytes()),
+        output: Vec::new(),
+    };
+    serve_one_online(&mut stream, &registry, &verifier, &barrier).expect("serve");
+    let response = String::from_utf8_lossy(&stream.output).into_owned();
+    // A tools/call error envelope, not a transport failure: the client keeps
+    // its session and can read why.
+    assert_eq!(status_line(&response), "HTTP/1.1 200 OK", "{response}");
+    let payload = body(&response);
+    assert_eq!(payload["result"]["isError"], true, "{response}");
+    assert!(
+        payload["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("shutting-down"),
+        "{response}"
+    );
+}
+
+#[test]
+fn an_mcp_read_tool_still_works_while_shutting_down() {
+    // Only writes are refused: a read cannot be lost by the flush.
+    use crate::web_canvas_server::tenant::WriteBarrier;
+    let barrier = WriteBarrier::default();
+    barrier.close();
+
+    let call = r#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"get_document_info","arguments":{}}}"#;
+    let request = Request::json("POST", "/mcp", call).with_bearer("tokA");
+    let mut stream = MockStream {
+        input: std::io::Cursor::new(request.wire().into_bytes()),
+        output: Vec::new(),
+    };
+    serve_one_online(&mut stream, &registry(), &verifier(), &barrier).expect("serve");
+    let response = String::from_utf8_lossy(&stream.output).into_owned();
+    assert_ne!(body(&response)["result"]["isError"], true, "{response}");
+}
+
+#[test]
+fn the_write_classification_matches_the_tool_catalog() {
+    // The barrier decision is made before dispatch, from this metadata.
+    use crate::mcp_serve::tool_profile::tool_writes;
+    for write in [
+        "add_page",
+        "insert_node",
+        "delete_node",
+        "undo",
+        "batch_design",
+    ] {
+        assert!(tool_writes(write), "{write}");
+    }
+    for read in [
+        "get_node",
+        "list_pages",
+        "get_document_info",
+        "snapshot_layout",
+    ] {
+        assert!(!tool_writes(read), "{read}");
+    }
+    // Unclassified tools are admitted through the barrier rather than past it.
+    assert!(tool_writes("add_some_dynamic_kit_component"));
+}

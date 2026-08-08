@@ -63,6 +63,11 @@ pub(crate) fn reset_for_new_identity<C: RepaintContext + 'static>(inner: &Rc<Ref
         let _ = context.repaint();
     }
     crate::collab_sync::reset_for_new_identity();
+    // Queued and in-flight credential uploads belong to the previous account;
+    // letting them land would push its API keys into the new account's tenant.
+    // `reset` also re-tags the epoch, which is what makes an XHR already on the
+    // wire inert when it completes.
+    crate::web_credential_sync::reset();
     // The id allocator lives on the host, so it is torn down here where the
     // borrow is already held. B1's namespace latch alone was not enough: the
     // allocator itself would keep minting in the previous account's namespace.

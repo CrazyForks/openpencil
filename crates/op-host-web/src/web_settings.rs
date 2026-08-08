@@ -30,6 +30,42 @@ const CREDENTIAL_PAYLOAD_VERSION: u32 = 2;
 const STORAGE_KEY: &str = "openpencil-rust-web-settings";
 const CREDENTIAL_STORAGE_KEY: &str = "openpencil-rust-web-credentials";
 
+/// Restore every setting the partition snapshot owns to its default.
+///
+/// `apply_payload` only writes fields the stored blob actually carries, so an
+/// EMPTY partition left the previous account's values in place: B inherited
+/// A's locale, recent files, MCP port and provider profiles. Resetting first
+/// makes "absent from the blob" mean "default" rather than "keep whatever was
+/// there".
+///
+/// The field set is exactly what `apply_payload` writes, so the two cannot
+/// drift into a field that is saved per-account but never reset.
+///
+/// `theme_mode` is included: it is stored IN the per-account blob, so it is
+/// account-scoped by the same definition as everything else here. (A device
+/// preference that ought to survive an account switch would have to move out
+/// of the settings payload first — a product decision, not one this reset can
+/// make unilaterally.)
+pub(super) fn reset_account_scoped_settings(state: &mut EditorState) {
+    let defaults = op_editor_core::AgentSettings::default();
+    let eui = &mut state.editor_ui;
+    eui.theme_mode = op_editor_core::EditorUiState::default().theme_mode;
+    eui.locale = op_editor_core::EditorUiState::default().locale;
+    eui.recent_files.clear();
+    eui.agent_settings.mcp_server.port = defaults.mcp_server.port;
+    eui.agent_settings.mcp_cli_enabled = defaults.mcp_cli_enabled;
+    eui.agent_settings.images_advanced_open = defaults.images_advanced_open;
+    eui.agent_settings.openverse_client_id = defaults.openverse_client_id;
+    eui.agent_settings.openverse_client_secret = defaults.openverse_client_secret;
+    eui.agent_settings.auto_update_enabled = defaults.auto_update_enabled;
+    eui.agent_settings.experimental_features_enabled = defaults.experimental_features_enabled;
+    eui.agent_settings.builtin_agents = defaults.builtin_agents;
+    eui.agent_settings.next_builtin_agent_id = defaults.next_builtin_agent_id;
+    eui.agent_settings.image_gen_profiles = defaults.image_gen_profiles;
+    eui.agent_settings.next_image_gen_profile_id = defaults.next_image_gen_profile_id;
+    eui.agent_settings.active_image_gen_profile_id = defaults.active_image_gen_profile_id;
+}
+
 /// Re-read account-scoped storage after the tab's partition changed.
 ///
 /// The shell loads settings and credentials at mount, before any
@@ -43,12 +79,15 @@ pub(crate) fn reload_for_active_partition<C: crate::repaint_ctx::RepaintContext>
     let Ok(mut context) = inner.try_borrow_mut() else {
         return;
     };
-    let _ = storage::load_into(context.host_mut().editor_state_mut());
+    // Defaults first, then the target partition on top: without this an empty
+    // partition silently inherits the previous account's settings.
+    reset_account_scoped_settings(context.host_mut().editor_state_mut());
+    let load = storage::load_into(context.host_mut().editor_state_mut());
     // AFTER the load, not before: the baselines must measure against the state
     // this partition just produced. Rebuilding them from the previous
     // account's state would make the very next comparison report the whole
     // partition as a change and write it back under the wrong key.
-    context.reset_persistence_baselines();
+    context.reset_persistence_baselines(&load);
     context.host_mut().mark_editor_state_dirty();
     let _ = context.repaint();
 }
@@ -92,6 +131,7 @@ use storage::{
 };
 pub(crate) use storage::{
     credential_migration_pending, load_into, save_credentials_if_changed, save_if_changed,
+    CredentialLoad,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,6 +144,15 @@ pub(crate) struct Fingerprint {
     auto_update_enabled: bool,
     experimental_features_enabled: bool,
     recent_files: Vec<RecentFile>,
+}
+
+impl CredentialFingerprint {
+    /// The fail-closed flag, for tests that assert an unsupported snapshot
+    /// keeps writes disabled.
+    #[cfg(test)]
+    pub(crate) fn write_disabled_for_test(&self) -> bool {
+        self.write_disabled
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

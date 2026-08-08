@@ -738,31 +738,5 @@ fn pending_legacy_migration_blocks_an_ordinary_settings_write() {
     assert_ne!(settings_baseline, fingerprint(&state));
 }
 
-#[test]
-fn an_empty_partition_clears_the_previous_accounts_credentials() {
-    // The account-switch leak: after switching, the in-memory state still held
-    // account A's API keys, and an empty partition for B meant "keep whatever
-    // was there" instead of "no keys".
-    let mut state = EditorState::new();
-    let mut writes = Vec::new();
-    // A signs in and stores a key.
-    let credential_json = r#"{"version":2,"builtin_agents":[{"id":"a1","preset":"custom",
-        "display_name":"A's model","kind":"openai-compat","api_key":"sk-account-a",
-        "model":"m","base_url":"https://api.example.com/v1","enabled":true}],
-        "image_gen_profiles":[],"active_image_gen_profile_id":null,"openverse_oauth":null}"#;
-    super::storage::load_into_with(&mut state, None, Some(credential_json), |k, v| {
-        writes.push((k.to_string(), v.to_string()));
-        true
-    });
-    assert!(
-        !state.editor_ui.agent_settings.builtin_agents.is_empty(),
-        "A's credential must load in the first place"
-    );
-
-    // B signs in: their partition is empty.
-    super::storage::load_into_with(&mut state, None, None, |_, _| true);
-    assert!(
-        state.editor_ui.agent_settings.builtin_agents.is_empty(),
-        "B must not inherit A's API keys from an empty partition"
-    );
-}
+#[path = "web_settings_partition_tests.rs"]
+mod partition_tests;

@@ -349,6 +349,13 @@ impl WebCanvasState {
             jian_ops_schema::image_thumbs::discard_for_document(prepared.document());
             return IngestOutcome::Rejected;
         }
+        // Captured before the install activates the incoming document's
+        // thumbnails. If the session then REJECTS the edit, rolling the
+        // document back does not roll these back: the previous document's
+        // pending seed was consumed by its own activation, so re-activating it
+        // is a no-op and the refused document's thumbnails keep resolving live
+        // ids. Restoring the snapshot on the rejection path is what undoes it.
+        let thumbnails_before = jian_ops_schema::image_thumbs::capture_snapshot();
         // The capture is now open and MUST be closed on every path. The guard
         // is what makes that true even if the install below panics: an
         // unclosed capture leaves the session permanently unable to accept
@@ -365,8 +372,16 @@ impl WebCanvasState {
         match capture.finish() {
             op_collab_host::LocalEditOutcome::Committed => IngestOutcome::Committed,
             op_collab_host::LocalEditOutcome::NoChange => IngestOutcome::NoChange,
-            op_collab_host::LocalEditOutcome::Rejected => IngestOutcome::Rejected,
-            op_collab_host::LocalEditOutcome::Failed => IngestOutcome::Failed,
+            // The document was rolled back, so the thumbnails must roll back
+            // with it — otherwise the refused document's images stay active.
+            op_collab_host::LocalEditOutcome::Rejected => {
+                jian_ops_schema::image_thumbs::restore_snapshot(thumbnails_before);
+                IngestOutcome::Rejected
+            }
+            op_collab_host::LocalEditOutcome::Failed => {
+                jian_ops_schema::image_thumbs::restore_snapshot(thumbnails_before);
+                IngestOutcome::Failed
+            }
         }
     }
 }

@@ -178,15 +178,13 @@ impl crate::repaint_ctx::RepaintContext for CkInner {
         &mut self.host
     }
 
-    fn reset_persistence_baselines(&mut self) {
-        // Recomputed from the account's own freshly loaded state on the next
-        // comparison, rather than carried over from the previous account's.
-        self.settings_fingerprint = None;
-        // Rebuilt from the state the account's own partition just loaded, so
-        // the next comparison measures against THIS account rather than
-        // reporting the whole partition as a change.
-        self.credential_fingerprint =
-            crate::web_settings::credential_fingerprint(self.host.editor_state());
+    fn reset_persistence_baselines(&mut self, load: &crate::web_settings::CredentialLoad) {
+        // Through the SAME constructors mount uses. A bare recompute set
+        // `settings_fingerprint` to `None` — which the save gate reads as
+        // "never save" — and dropped the credential write-pending retry and
+        // the fail-closed `write_disabled` an unsupported snapshot sets.
+        self.settings_fingerprint = load.initial_settings_fingerprint(self.host.editor_state());
+        self.credential_fingerprint = load.initial_fingerprint(self.host.editor_state());
     }
     fn viewport_size(&self) -> (f32, f32) {
         self.backend.logical_size()

@@ -262,6 +262,16 @@ impl Default for McpAccessProfile {
     }
 }
 
+/// Whether calling `name` will mutate the document.
+///
+/// Used by the connection tier to decide, BEFORE dispatch, whether a `/mcp`
+/// call needs a shutdown write pass. Unclassified names default to `Write`
+/// (see [`access_of`]), which is the safe direction here too: an unknown tool
+/// is admitted through the barrier rather than slipping past it.
+pub fn tool_writes(name: &str) -> bool {
+    matches!(access_of(name), ToolAccess::Write)
+}
+
 /// The classification for `name`, if it is in the static catalog.
 pub fn profile_for(name: &str) -> Option<&'static ToolProfile> {
     TOOL_PROFILES.iter().find(|profile| profile.name == name)
