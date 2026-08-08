@@ -250,8 +250,26 @@ impl WebCanvasState {
         body: &str,
         base_version_override: Option<u64>,
     ) -> Result<PushOutcome> {
-        let request = crate::mcp_serve::parse_document_sync_request(body)?;
-        let base_version = base_version_override.or(request.base_version);
+        let push = PendingDocumentPush::parse(body, self.mode)?;
+        self.apply_prepared_document_push(push, base_version_override)
+    }
+
+    /// Apply an already-parsed push. Runs entirely under the state lock.
+    ///
+    /// Everything fallible and expensive — JSON parse, schema load, structural
+    /// validation — happened in [`PendingDocumentPush::parse`] before the lock
+    /// was taken. What remains is the part that genuinely needs exclusivity:
+    /// re-checking `baseVersion` against the live counter, and installing.
+    ///
+    /// The `baseVersion` check MUST be here rather than at parse time: the
+    /// version can move between parse and install, and checking it outside the
+    /// lock would be a race that silently clobbers a concurrent write.
+    pub(crate) fn apply_prepared_document_push(
+        &mut self,
+        push: PendingDocumentPush,
+        base_version_override: Option<u64>,
+    ) -> Result<PushOutcome> {
+        let base_version = base_version_override.or(push.base_version);
         if let Some(expected) = base_version {
             if expected != self.version {
                 return Ok(PushOutcome {
@@ -260,8 +278,8 @@ impl WebCanvasState {
                 });
             }
         }
-        let editor_meta = request.resolved_editor_meta(request.embedded_editor_meta.clone());
-        if request.metadata_only {
+        let editor_meta = push.editor_meta;
+        let Some(prepared) = push.prepared else {
             // Active-page changes do not mutate canonical document content.
             // Apply the scalar pair without replacing the identical document,
             // bumping its generation, or publishing a version that another
@@ -271,29 +289,7 @@ impl WebCanvasState {
                 applied: true,
                 current_version: self.version,
             });
-        }
-        // Load via the same proven path as desktop file-open. A load failure
-        // is a client fault → 400, like the TS validation 400s.
-        let loaded = op_pen_loader::load_canonical(request.document_json)
-            .map_err(|e| WebCanvasError::Document(e.to_string()))?;
-        if !self.mode.allows_image_thumb_registry() {
-            // The thumbnail registry is a process-global map that a document
-            // activation replaces WHOLESALE, so in a shared process this
-            // push would drop every other account's thumbnails and rebind
-            // their ids to these bytes. Dropping the pending seed here makes
-            // the activation downstream a strict no-op, and image nodes
-            // paint their placeholder. See
-            // `ServeMode::allows_image_thumb_registry` for the real fix.
-            jian_ops_schema::image_thumbs::discard_for_document(&loaded.value);
-        }
-        for w in &loaded.warnings {
-            eprintln!("openpencil-desktop --serve-web: schema warning: {w:?}");
-        }
-        // Structural validation happens here, before any state changes, so the
-        // in-session install below is infallible and cannot leave a half-applied
-        // document inside an open edit capture.
-        let prepared = op_editor_core::PreparedDocument::prepare(loaded.value)
-            .map_err(|e| WebCanvasError::Document(e.to_string()))?;
+        };
         // The gateway. Returns Ok untouched when there is no session, so a
         // standalone daemon behaves exactly as it did before collaboration.
         self.gate_daemon_mutation(
@@ -709,6 +705,34 @@ pub fn handle_web_canvas_request(
     }
 }
 
+/// Render the reply for an already-parsed document push.
+///
+/// Shares its verdict shape with the in-handler route below, so the two paths
+/// cannot answer the same outcome differently.
+pub(crate) fn document_push_reply(
+    parsed: Result<PendingDocumentPush>,
+    state: &mut WebCanvasState,
+) -> WebReply {
+    match parsed.and_then(|push| state.apply_prepared_document_push(push, None)) {
+        Ok(outcome) if outcome.applied => WebReply {
+            status: "200 OK",
+            body: crate::mcp_serve::document_sync_ok(outcome.current_version),
+        },
+        Ok(outcome) => WebReply {
+            // Stale baseVersion: reject without writing, plus the current
+            // version so the caller can decide whether to refetch and retry.
+            status: "409 Conflict",
+            body: serde_json::json!({
+                "ok": false,
+                "error": "version-conflict",
+                "version": outcome.current_version,
+            })
+            .to_string(),
+        },
+        Err(error) => collab_aware_error_reply(&error),
+    }
+}
+
 /// The daemon's canonical unknown-route reply.
 fn not_found_reply() -> WebReply {
     WebReply {
@@ -724,6 +748,8 @@ fn is_device_login_route(path: &str) -> bool {
 }
 
 mod collab_driver;
+mod document_push;
+pub(crate) use document_push::PendingDocumentPush;
 mod sse_hub;
 pub use sse_hub::SseHub;
 pub(crate) use sse_hub::SseSlot;

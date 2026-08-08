@@ -306,6 +306,14 @@ pub(super) fn dispatch<S: Read + Write>(
                 return Ok(false);
             }
         }
+        // Parse the whole-document push BEFORE taking the state lock. A push
+        // can carry megabytes of embedded images, and parsing it under the
+        // lock stalled every other request to this tenant — including the
+        // version probe that tells the browser anything changed. Nothing here
+        // reads live state; `baseVersion` is deliberately re-checked inside
+        // the lock, where it is not a race.
+        let pending_push = (req.method == "POST" && req.path == "/api/mcp/document")
+            .then(|| PendingDocumentPush::parse(&req.body, ctx.mode));
         let reply = {
             let mut guard = state.lock().unwrap_or_else(|p| p.into_inner());
             let before = guard.version;
@@ -313,7 +321,12 @@ pub(super) fn dispatch<S: Read + Write>(
             let credential_settings_before = (req.method == "POST"
                 && req.path == "/api/settings/credentials")
                 .then(|| guard.editor.editor_ui.agent_settings.clone());
-            let reply = handle_web_canvas_request(&req.method, &req.path, &req.body, &mut guard);
+            let reply = match pending_push {
+                // The pre-parsed push installs directly; the generic handler
+                // never sees this route's body twice.
+                Some(parsed) => document_push_reply(parsed, &mut guard),
+                None => handle_web_canvas_request(&req.method, &req.path, &req.body, &mut guard),
+            };
             let reply = persist_api_settings(
                 &req.method,
                 &req.path,

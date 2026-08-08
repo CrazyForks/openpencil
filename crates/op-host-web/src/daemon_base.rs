@@ -138,17 +138,46 @@ pub fn tenant_param() -> Option<String> {
 
 /// Append the tab's tenant parameter to `url`, if it has one.
 ///
+/// Idempotent: a URL that already carries the parameter is returned unchanged.
+/// That is what lets both layers apply it safely — [`daemon_url`] stamps it at
+/// construction, and the `live_sync` XHR helpers stamp it again on the way
+/// out, so a caller that builds its own request cannot silently address the
+/// wrong tenant.
+///
 /// Pure so the query-joining rule is testable without a DOM; the browser
 /// wrapper is [`with_tenant_param`].
 pub fn append_tenant_param(url: &str, tenant: Option<&str>) -> String {
     let Some(tenant) = tenant.filter(|value| !value.is_empty()) else {
         return url.to_string();
     };
+    let parameter = op_editor_core::share_routes::TENANT_QUERY;
+    if url_carries_parameter(url, parameter) {
+        return url.to_string();
+    }
     let separator = if url.contains('?') { '&' } else { '?' };
-    format!(
-        "{url}{separator}{}={tenant}",
-        op_editor_core::share_routes::TENANT_QUERY
-    )
+    format!("{url}{separator}{parameter}={tenant}")
+}
+
+/// Whether `url`'s query already names `parameter`.
+fn url_carries_parameter(url: &str, parameter: &str) -> bool {
+    let Some((_, query)) = url.split_once('?') else {
+        return false;
+    };
+    query
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .any(|(name, _)| name == parameter)
+}
+
+/// The single way to build a daemon URL.
+///
+/// `path` is an absolute daemon path (`/api/mcp/document`). Every request this
+/// shell makes must go through here: a shared page addresses another account's
+/// tenant with a query parameter, and a URL built by hand silently addresses
+/// the caller's own — which is not an error the user would ever see, just the
+/// wrong document.
+pub fn daemon_url(path: &str) -> String {
+    with_tenant_param(&format!("{}{path}", daemon_base()))
 }
 
 /// Browser wrapper over [`append_tenant_param`].
@@ -186,6 +215,85 @@ mod tenant_param_tests {
                 append_tenant_param("http://x/api/mcp/document", tenant),
                 "http://x/api/mcp/document"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod daemon_url_tests {
+    use super::append_tenant_param;
+
+    /// Every daemon path this shell requests, so the regression is asserted
+    /// against the real route list rather than a sample.
+    const DAEMON_PATHS: &[&str] = &[
+        "/api/mcp/document",
+        "/api/mcp/version",
+        "/api/mcp/events",
+        "/api/mcp/selection",
+        "/api/mcp/server",
+        "/api/mcp/sync-reset",
+        "/api/mcp/indicators",
+        "/api/ai/stream",
+        "/api/ai/standard",
+        "/api/ai/models",
+        "/api/ai/image/search",
+        "/api/ai/image/generate",
+        "/api/collab/state",
+        "/api/collab/action",
+        "/api/collab/presence",
+        "/api/share/grant",
+        "/api/share/revoke",
+        "/api/share/list",
+        "/api/settings/credentials",
+        "/api/settings/credential-policy",
+        "/api/export/pdf",
+        "/api/export/raster",
+        "/api/file/save",
+        "/api/file/open-recent",
+    ];
+
+    #[test]
+    fn every_daemon_path_carries_the_tenant_on_a_shared_page() {
+        // The bug this pins: a URL built by hand addresses the caller's own
+        // tenant, which is not an error anyone sees — just the wrong document.
+        for path in DAEMON_PATHS {
+            let url = append_tenant_param(&format!("http://host{path}"), Some("userA"));
+            assert!(
+                url.ends_with("?tenant=userA"),
+                "{path} lost the tenant: {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn stamping_twice_does_not_duplicate_the_parameter() {
+        // Both layers stamp — the builder at construction and the XHR helpers
+        // on the way out — so idempotence is what makes belt-and-braces safe.
+        let once = append_tenant_param("http://host/api/mcp/document", Some("userA"));
+        let twice = append_tenant_param(&once, Some("userA"));
+        assert_eq!(once, twice);
+        assert_eq!(twice.matches("tenant=").count(), 1, "{twice}");
+    }
+
+    #[test]
+    fn an_existing_unrelated_query_is_preserved() {
+        let url = append_tenant_param("http://host/api/export/raster?scale=2", Some("userA"));
+        assert_eq!(url, "http://host/api/export/raster?scale=2&tenant=userA");
+    }
+
+    #[test]
+    fn a_url_already_naming_another_tenant_is_left_alone() {
+        // The explicit value wins: re-stamping would silently redirect a
+        // request that was deliberately addressed elsewhere.
+        let url = append_tenant_param("http://host/api/mcp/document?tenant=userB", Some("userA"));
+        assert_eq!(url, "http://host/api/mcp/document?tenant=userB");
+    }
+
+    #[test]
+    fn a_tab_with_no_tenant_builds_plain_urls() {
+        for path in DAEMON_PATHS {
+            let url = append_tenant_param(&format!("http://host{path}"), None);
+            assert_eq!(url, format!("http://host{path}"), "{path}");
         }
     }
 }

@@ -107,6 +107,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.gate.redoUnavailable" => "การทำซ้ำยังไม่พร้อมใช้ในการทำงานร่วมกัน",
         "collab.gate.ownerOnlySave" => "เฉพาะเจ้าของเท่านั้นที่บันทึกไฟล์ต้นฉบับร่วมได้",
         "collab.gate.leaveSessionFirst" => "ออกจากเซสชันก่อนเปิดหรือแทนที่เอกสารอื่น",
+        "collab.status.localEditPreserved" => {
+            "ใช้เวอร์ชันระยะไกลแล้ว ใช้ “เลิกทำ” เพื่อกู้คืนการเปลี่ยนแปลงในเครื่องของคุณ"
+        }
         "collab.a11y.participant" => "{{name}}, {{role}}",
         "collab.a11y.remoteCursor" => "เคอร์เซอร์ของ {{name}}",
         _ => return None,

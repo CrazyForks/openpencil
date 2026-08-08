@@ -135,6 +135,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.gate.leaveSessionFirst" => {
             "Покиньте сеанс перед открытием или заменой другого документа."
         }
+        "collab.status.localEditPreserved" => {
+            "Удалённая версия применена. Используйте «Отменить», чтобы восстановить локальные изменения."
+        }
         "collab.a11y.participant" => "{{name}}, {{role}}",
         "collab.a11y.remoteCursor" => "Курсор пользователя {{name}}",
         _ => return None,

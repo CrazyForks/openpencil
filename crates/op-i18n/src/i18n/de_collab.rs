@@ -105,6 +105,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.gate.redoUnavailable" => "Wiederholen ist in der Zusammenarbeit noch nicht verfügbar.",
         "collab.gate.ownerOnlySave" => "Nur der Eigentümer kann die gemeinsame Quelldatei speichern.",
         "collab.gate.leaveSessionFirst" => "Verlassen Sie die Sitzung, bevor Sie ein anderes Dokument öffnen oder ersetzen.",
+        "collab.status.localEditPreserved" => {
+            "Die entfernte Version wurde übernommen. Mit „Rückgängig“ stellst du deine lokalen Änderungen wieder her."
+        }
         "collab.a11y.participant" => "{{name}}, {{role}}",
         "collab.a11y.remoteCursor" => "Cursor von {{name}}",
         _ => return None,

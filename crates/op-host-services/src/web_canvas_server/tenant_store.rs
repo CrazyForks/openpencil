@@ -130,10 +130,11 @@ impl TenantStore {
             return Err(TenantStoreError::Disabled);
         };
         std::fs::create_dir_all(&dir).map_err(|error| TenantStoreError::Io(error.to_string()))?;
-        // The document goes through the same streaming, atomic writer desktop
-        // Save uses, so a large document with embedded images is not built in
-        // memory twice and a crash cannot truncate the live file.
-        crate::doc_io::save_to_path(state, &dir.join(DOCUMENT_FILE))
+        // The same streaming, atomic writer desktop Save uses — but WITHOUT
+        // capturing the process-global thumbnail registry, which has no tenant
+        // dimension and would otherwise persist whichever account activated
+        // last into this account's file.
+        crate::doc_io::save_to_path_without_thumbnails(state, &dir.join(DOCUMENT_FILE))
             .map_err(|error| TenantStoreError::Io(error.to_string()))?;
         self.save_acl(&dir, shared_with)
     }
@@ -171,7 +172,13 @@ impl TenantStore {
         if !path.is_file() {
             return Err(TenantStoreError::NotStored);
         }
-        match crate::doc_io::load_editor_state(&path, op_editor_core::Locale::EnUs) {
+        // Restored without publishing thumbnails: activation replaces the
+        // process-global registry wholesale, so one account's restore would
+        // discard every other account's.
+        match crate::doc_io::load_editor_state_without_thumbnails(
+            &path,
+            op_editor_core::Locale::EnUs,
+        ) {
             Ok(state) => Ok(state),
             Err(error) => {
                 let detail = error.to_string();

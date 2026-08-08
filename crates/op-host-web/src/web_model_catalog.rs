@@ -16,8 +16,7 @@ const DAEMON_BUILTIN_PREFIX: &str = "daemon-builtin:";
 
 /// Fetch the daemon catalog once and populate the browser model picker.
 pub(crate) fn fetch_models<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) {
-    let base = crate::daemon_base::daemon_base();
-    let url = format!("{base}/api/ai/models");
+    let url = crate::daemon_base::daemon_url("/api/ai/models");
     let Ok(xhr) = web_sys::XmlHttpRequest::new() else {
         return;
     };

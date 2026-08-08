@@ -74,7 +74,7 @@ fn drain_search<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) {
         return;
     };
     SEARCH_SPAWNED.with(|slot| slot.set(epoch));
-    let url = format!("{}/api/ai/image/search", crate::daemon_base::daemon_base());
+    let url = crate::daemon_base::daemon_url("/api/ai/image/search");
     let inner_cb = inner.clone();
     let started = post_json_with_timeout(
         &url,
@@ -375,6 +375,9 @@ fn post_json_with_timeout(
     let Ok(xhr) = web_sys::XmlHttpRequest::new() else {
         return false;
     };
+    // Same reason as the AI transport: this helper builds its own XHR for a
+    // caller-chosen timeout and so bypasses the `live_sync` stamping.
+    let url = &crate::daemon_base::with_tenant_param(url);
     if xhr.open_with_async("POST", url, true).is_err() {
         return false;
     }

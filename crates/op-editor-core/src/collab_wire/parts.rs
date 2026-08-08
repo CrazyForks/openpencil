@@ -190,6 +190,7 @@ pub enum CollabNoticeKindWire {
         code: CollabRejectCodeWire,
     },
     EditConflictDiscarded,
+    LocalEditPreserved,
     UndoConflict,
     #[serde(rename_all = "camelCase")]
     UnsupportedEdit {
@@ -209,6 +210,7 @@ impl From<CollabNoticeKind> for CollabNoticeKindWire {
             CollabNoticeKind::EpochChanged => Self::EpochChanged,
             CollabNoticeKind::Reject(code) => Self::Reject { code: code.into() },
             CollabNoticeKind::EditConflictDiscarded => Self::EditConflictDiscarded,
+            CollabNoticeKind::LocalEditPreserved => Self::LocalEditPreserved,
             CollabNoticeKind::UndoConflict => Self::UndoConflict,
             CollabNoticeKind::UnsupportedEdit(feature) => Self::UnsupportedEdit {
                 i18n_key: feature.i18n_key().to_owned(),

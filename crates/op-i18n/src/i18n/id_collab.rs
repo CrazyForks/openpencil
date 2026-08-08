@@ -105,6 +105,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.gate.redoUnavailable" => "Ulangi belum tersedia dalam kolaborasi.",
         "collab.gate.ownerOnlySave" => "Hanya pemilik yang dapat menyimpan file sumber bersama.",
         "collab.gate.leaveSessionFirst" => "Tinggalkan sesi sebelum membuka atau mengganti dokumen lain.",
+        "collab.status.localEditPreserved" => {
+            "Versi jarak jauh telah diterapkan. Gunakan “Urungkan” untuk memulihkan perubahan lokal Anda."
+        }
         "collab.a11y.participant" => "{{name}}, {{role}}",
         "collab.a11y.remoteCursor" => "Kursor {{name}}",
         _ => return None,

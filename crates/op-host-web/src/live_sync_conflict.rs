@@ -5,7 +5,32 @@
 //! getting it wrong either silently discards a user's unpushed work or leaves
 //! a shared document permanently latched.
 
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use op_editor_core::CollabConnectionPhase;
+
+use crate::repaint_ctx::RepaintContext;
+
+/// Keep the about-to-be-overwritten local document, and raise the notice that
+/// tells the user it is recoverable.
+///
+/// Best effort on the borrow: if the shell is mid-render the accept still has
+/// to proceed (the alternative is the latch that never lifts), and the next
+/// conflict will stash again.
+fn preserve_local_document<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) {
+    let Ok(mut context) = inner.try_borrow_mut() else {
+        return;
+    };
+    let now_ms = crate::collab_sync::now_ms();
+    let state = context.host_mut().editor_state_mut();
+    crate::live_sync_recovery::stash(state.doc.clone(), now_ms);
+    state
+        .editor_ui
+        .collab
+        .set_notice(op_editor_core::CollabNoticeKind::LocalEditPreserved, now_ms);
+    context.host_mut().mark_editor_state_dirty();
+}
 
 /// The safety decision behind [`maybe_auto_resolve_conflict_in_session`],
 /// separated so it can be tested without a live shell.
@@ -92,7 +117,12 @@ pub(super) fn probe_serve_mode(base: &str) {
 #[cfg(test)]
 mod auto_resolve_tests {
     use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
     use op_editor_core::CollabConnectionPhase;
+
+    use crate::repaint_ctx::RepaintContext;
 
     #[test]
     fn a_conflict_inside_an_active_session_resolves_itself() {
@@ -142,7 +172,12 @@ mod auto_resolve_tests {
 #[cfg(test)]
 mod server_authority_tests {
     use super::{auto_resolve_is_safe, parse_server_authoritative};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
     use op_editor_core::CollabConnectionPhase;
+
+    use crate::repaint_ctx::RepaintContext;
 
     #[test]
     fn an_online_daemon_is_authoritative() {
@@ -235,5 +270,61 @@ mod auth_latch_tests {
         // Only the identity reset lifts it, once the tab has been rebuilt.
         clear_auth_invalid();
         assert!(!auth_is_invalid());
+    }
+}
+
+#[cfg(test)]
+mod preserve_tests {
+    use op_editor_core::CollabNoticeKind;
+
+    #[test]
+    fn the_preserved_notice_has_its_own_message() {
+        // Distinct from `EditConflictDiscarded`, which is a session rejecting
+        // one edit; this is a whole-document accept with nothing rejected, and
+        // the user needs to be told the overwritten copy still exists.
+        assert_eq!(
+            CollabNoticeKind::LocalEditPreserved.i18n_key(),
+            "collab.status.localEditPreserved"
+        );
+        assert_ne!(
+            CollabNoticeKind::LocalEditPreserved.i18n_key(),
+            CollabNoticeKind::EditConflictDiscarded.i18n_key()
+        );
+    }
+
+    // The 15-locale coverage of this key is asserted by `op-i18n`'s own
+    // catalog-integrity tests, which own the locale set.
+}
+
+#[cfg(test)]
+mod undo_recovery_tests {
+    use op_editor_core::web_sync::WebSyncClient;
+
+    #[test]
+    fn every_apply_after_the_first_is_undoable() {
+        // `apply_document_response` derives its `undoable` flag from
+        // `WebSyncClient::initialized`, and hands it to
+        // `replace_document_from_sync`, which picks
+        // `replace_document_with_undo` when it is set.
+        //
+        // So the conflict auto-accept — which is always a later apply, never
+        // the mount pull — restores through undo without a separate flag. This
+        // pins the property the recovery path depends on.
+        let mut client = WebSyncClient::new();
+        assert!(
+            !client.initialized(),
+            "the mount pull must NOT be an undo step: it is starter -> daemon, \
+             not a user edit being overwritten"
+        );
+
+        client.mark_applied(1);
+        assert!(client.initialized());
+
+        // Never reset by later applies, so a conflict accept at any version is
+        // still undoable.
+        for version in 2..10 {
+            client.mark_applied(version);
+            assert!(client.initialized(), "version {version}");
+        }
     }
 }

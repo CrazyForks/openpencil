@@ -29,6 +29,12 @@ pub enum CollabNoticeKind {
     /// `Reject(Conflict)` so the notice detail (node/fields) is only ever
     /// attached to the cancellation that produced the stash.
     EditConflictDiscarded,
+    /// A server-authoritative deployment replaced this tab's document with the
+    /// authoritative one, and the local copy that was overwritten has been
+    /// stashed so the user can put it back. Distinct from
+    /// `EditConflictDiscarded`, which is a session rejecting one edit: this is
+    /// a whole-document accept with nothing rejected.
+    LocalEditPreserved,
     UndoConflict,
     UnsupportedEdit(crate::collab_gate::CollabUnsupportedFeature),
 }
@@ -49,6 +55,7 @@ impl CollabNoticeKind {
             Self::Reject(CollabRejectUiCode::Authentication) => "collab.reject.authentication",
             Self::Reject(CollabRejectUiCode::Unknown) => "collab.reject.unknown",
             Self::EditConflictDiscarded => "collab.reject.conflict",
+            Self::LocalEditPreserved => "collab.status.localEditPreserved",
             Self::UndoConflict => "collab.status.undoConflict",
             Self::UnsupportedEdit(_) => "collab.status.unsupportedEdit",
         }

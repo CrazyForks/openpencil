@@ -107,6 +107,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.gate.redoUnavailable" => "協作尚不支援重做。",
         "collab.gate.ownerOnlySave" => "只有擁有者可以儲存共享來源檔案。",
         "collab.gate.leaveSessionFirst" => "請先離開協作工作階段，再取代或開啟其他文件。",
+        "collab.status.localEditPreserved" => "已套用遠端版本。使用「復原」即可還原你的本機變更。",
         "collab.a11y.participant" => "{{name}}，{{role}}",
         "collab.a11y.remoteCursor" => "{{name}} 的游標",
         _ => return None,

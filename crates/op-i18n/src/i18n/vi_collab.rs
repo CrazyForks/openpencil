@@ -117,6 +117,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.gate.redoUnavailable" => "Làm lại chưa khả dụng khi cộng tác.",
         "collab.gate.ownerOnlySave" => "Chỉ chủ sở hữu mới có thể lưu tệp nguồn dùng chung.",
         "collab.gate.leaveSessionFirst" => "Rời phiên trước khi mở hoặc thay thế tài liệu khác.",
+        "collab.status.localEditPreserved" => {
+            "Đã áp dụng phiên bản từ xa. Dùng “Hoàn tác” để khôi phục các thay đổi cục bộ của bạn."
+        }
         "collab.a11y.participant" => "{{name}}, {{role}}",
         "collab.a11y.remoteCursor" => "Con trỏ của {{name}}",
         _ => return None,

@@ -121,6 +121,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.gate.leaveSessionFirst" => {
             "別の文書を開くか置き換える前に共同編集を退出してください。"
         }
+        "collab.status.localEditPreserved" => {
+            "リモート版を適用しました。「元に戻す」でローカルの変更を復元できます。"
+        }
         "collab.a11y.participant" => "{{name}}、{{role}}",
         "collab.a11y.remoteCursor" => "{{name}} のカーソル",
         _ => return None,

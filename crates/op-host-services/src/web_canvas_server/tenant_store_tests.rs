@@ -255,3 +255,61 @@ fn saving_the_access_list_alone_does_not_require_a_document() {
     assert_eq!(temp.store.load_acl("userA"), acl);
     assert!(!temp.store.has_document("userA"));
 }
+
+// ---------------------------------------------------------------------------
+// The restore chain must not touch the process-global thumbnail registry.
+// ---------------------------------------------------------------------------
+
+/// A thumbnail id used by no other test, so these assertions are immune to
+/// the registry being cleared by whatever else runs in parallel.
+const ISOLATION_THUMB_ID: u64 = 918_273_645;
+
+#[test]
+fn restoring_a_tenant_never_publishes_its_thumbnails_globally() {
+    // `EditorState::from_document` activates a document's thumbnails, and
+    // activation REPLACES the process-global map wholesale — so restoring one
+    // account would discard every other account's and rebind their ids.
+    let temp = TempStore::new("thumb-isolation");
+    let dir = temp.store.tenant_dir("userA").expect("dir");
+    std::fs::create_dir_all(&dir).expect("dir");
+    let path = dir.join("current.op");
+
+    // Write a file that DOES carry a thumbnail, using the ordinary
+    // (thumbnail-capturing) desktop save path.
+    jian_ops_schema::image_thumbs::store_thumb(ISOLATION_THUMB_ID, vec![7, 7, 7]);
+    crate::doc_io::save_to_path(&named_document("thumbed.op"), &path).expect("save");
+
+    // Restoring it through the tenant store must not publish that thumbnail.
+    jian_ops_schema::image_thumbs::clear_registry();
+    let restored = temp.store.load_document("userA").expect("load");
+    assert_eq!(node_name(&restored).as_deref(), Some("thumbed.op"));
+    assert!(
+        jian_ops_schema::image_thumbs::thumb_for(ISOLATION_THUMB_ID).is_none(),
+        "a tenant restore must not publish its thumbnails into the shared registry"
+    );
+}
+
+#[test]
+fn a_persisted_tenant_carries_no_thumbnail_data() {
+    // The save side of the same problem: `capture_snapshot` reads a registry
+    // with no tenant dimension, so an eviction would write whichever account
+    // activated last into THIS account's file.
+    let temp = TempStore::new("thumb-capture");
+    jian_ops_schema::image_thumbs::store_thumb(ISOLATION_THUMB_ID + 1, vec![1, 2, 3]);
+
+    temp.store
+        .save("userA", &named_document("plain.op"), &BTreeSet::new())
+        .expect("save");
+
+    let written = std::fs::read_to_string(
+        temp.store
+            .tenant_dir("userA")
+            .expect("dir")
+            .join("current.op"),
+    )
+    .expect("read back");
+    assert!(
+        !written.contains("imageThumbs"),
+        "another tenant's image data must not ride along"
+    );
+}

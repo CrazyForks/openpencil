@@ -145,6 +145,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.gate.leaveSessionFirst" => {
             "Leave the collaboration session before replacing or opening another document."
         }
+        "collab.status.localEditPreserved" => {
+            "The remote version was applied. Use Undo to restore your local changes."
+        }
         "collab.a11y.participant" => "{{name}}, {{role}}",
         "collab.a11y.remoteCursor" => "{{name}}'s cursor",
         _ => return None,

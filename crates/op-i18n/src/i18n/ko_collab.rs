@@ -119,6 +119,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.gate.redoUnavailable" => "협업에서는 다시 실행을 아직 사용할 수 없습니다.",
         "collab.gate.ownerOnlySave" => "공유 원본 파일은 소유자만 저장할 수 있습니다.",
         "collab.gate.leaveSessionFirst" => "다른 문서를 열거나 바꾸기 전에 협업 세션을 나가세요.",
+        "collab.status.localEditPreserved" => {
+            "원격 버전을 적용했습니다. “실행 취소”로 로컬 변경 사항을 복원할 수 있습니다."
+        }
         "collab.a11y.participant" => "{{name}}, {{role}}",
         "collab.a11y.remoteCursor" => "{{name}}의 커서",
         _ => return None,

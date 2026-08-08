@@ -105,6 +105,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.gate.redoUnavailable" => "Rehacer aún no está disponible en colaboración.",
         "collab.gate.ownerOnlySave" => "Solo el propietario puede guardar el archivo fuente compartido.",
         "collab.gate.leaveSessionFirst" => "Sal de la sesión antes de abrir o reemplazar otro documento.",
+        "collab.status.localEditPreserved" => {
+            "Se aplicó la versión remota. Usa «Deshacer» para restaurar tus cambios locales."
+        }
         "collab.a11y.participant" => "{{name}}, {{role}}",
         "collab.a11y.remoteCursor" => "Cursor de {{name}}",
         _ => return None,

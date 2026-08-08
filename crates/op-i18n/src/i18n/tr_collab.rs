@@ -105,6 +105,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.gate.redoUnavailable" => "İşbirliğinde yineleme henüz kullanılamıyor.",
         "collab.gate.ownerOnlySave" => "Paylaşılan kaynak dosyayı yalnızca sahip kaydedebilir.",
         "collab.gate.leaveSessionFirst" => "Başka bir belgeyi açmadan veya değiştirmeden önce oturumdan ayrılın.",
+        "collab.status.localEditPreserved" => {
+            "Uzak sürüm uygulandı. Yerel değişikliklerinizi geri getirmek için “Geri Al” kullanın."
+        }
         "collab.a11y.participant" => "{{name}}, {{role}}",
         "collab.a11y.remoteCursor" => "{{name}} imleci",
         _ => return None,

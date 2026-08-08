@@ -48,6 +48,9 @@ mod tooltip_pump;
 // Daemon device-login relay (action drain + login-status poll + popup).
 #[cfg(feature = "canvaskit")]
 mod live_sync_glue;
+// The recovery stash behind an online auto-accept.
+#[cfg(feature = "canvaskit")]
+mod live_sync_recovery;
 #[cfg(feature = "canvaskit")]
 mod web_auth_sync;
 // Daemon collaboration relay (action drain + projection pull + presence).

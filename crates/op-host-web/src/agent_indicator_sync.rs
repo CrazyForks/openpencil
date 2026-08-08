@@ -24,7 +24,6 @@ const INDICATOR_POLL_INTERVAL_MS: i32 = 400;
 /// Wire the indicator relay onto the mounted shell. Called once from
 /// `mount()`; the interval runs for the page lifetime.
 pub(crate) fn start<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) {
-    let base = crate::daemon_base::daemon_base();
     // One request in flight at a time; ticks observing a pending fetch skip.
     let busy = Rc::new(Cell::new(false));
     let pump_running = Rc::new(Cell::new(false));
@@ -34,7 +33,7 @@ pub(crate) fn start<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) {
             return;
         }
         busy.set(true);
-        let url = format!("{base}/api/mcp/indicators");
+        let url = crate::daemon_base::daemon_url("/api/mcp/indicators");
         let busy_cb = busy.clone();
         let inner_cb = inner.clone();
         let pump_running_cb = pump_running.clone();

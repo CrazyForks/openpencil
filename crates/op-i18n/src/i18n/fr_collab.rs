@@ -105,6 +105,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.gate.redoUnavailable" => "Le rétablissement n’est pas encore disponible.",
         "collab.gate.ownerOnlySave" => "Seul le propriétaire peut enregistrer le fichier source partagé.",
         "collab.gate.leaveSessionFirst" => "Quittez la session avant d’ouvrir ou de remplacer un document.",
+        "collab.status.localEditPreserved" => {
+            "La version distante a été appliquée. Utilisez « Annuler » pour restaurer vos modifications locales."
+        }
         "collab.a11y.participant" => "{{name}}, {{role}}",
         "collab.a11y.remoteCursor" => "Curseur de {{name}}",
         _ => return None,

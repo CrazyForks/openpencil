@@ -196,6 +196,16 @@ fn drain_pending_action<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, bas
     let Some(action) = action else {
         return;
     };
+    // The panel's reapply control is the user-reachable way back to a document
+    // an online auto-accept overwrote. Handled here rather than on the wire: a
+    // server-authoritative deployment has no collaboration session, so the
+    // daemon has nothing to replay this into — the copy lives in this tab.
+    if matches!(action, op_editor_core::CollabUiAction::ReapplyDiscarded)
+        && crate::live_sync_recovery::has_stash()
+    {
+        restore_stashed_document(inner);
+        return;
+    }
     let Some(wire) = wire_action(&action) else {
         // No wire form: nothing the daemon could do with it. Dropping is
         // correct — re-queueing would spin forever.
@@ -374,6 +384,9 @@ fn sync_id_allocation(host: &mut crate::widget_host::WidgetHost, wire: &CollabSt
 /// the old account was in; carrying them into a new account's tab would let
 /// its push gate answer from another account's document.
 pub(crate) fn reset_for_new_identity() {
+    // The previous account's overwritten document must not be restorable in
+    // the new account's tab.
+    crate::live_sync_recovery::clear();
     DAEMON_NODE_IDS.with(|ids| *ids.borrow_mut() = None);
     SESSION_NAMESPACE.with(|slot| *slot.borrow_mut() = None);
     APPLIED_SEQ.set(None);
@@ -422,7 +435,29 @@ fn now_ms_f64() -> f64 {
         .unwrap_or(0.0)
 }
 
-fn now_ms() -> u64 {
+/// Put the stashed local document back on the canvas.
+///
+/// A normal local edit, so the next push carries it to the daemon and the
+/// user's work rejoins the shared document rather than sitting in a cache.
+fn restore_stashed_document<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) {
+    let Some(stashed) = crate::live_sync_recovery::take() else {
+        return;
+    };
+    let Ok(mut context) = inner.try_borrow_mut() else {
+        // Put it back rather than losing it to a transient borrow.
+        crate::live_sync_recovery::stash(stashed.document, stashed.stashed_at_ms);
+        return;
+    };
+    let state = context.host_mut().editor_state_mut();
+    state.replace_document(stashed.document);
+    // The offer is consumed; clearing it is what stops the panel from showing
+    // a reapply control that would now restore nothing.
+    state.editor_ui.collab.discarded_edit = None;
+    context.host_mut().mark_editor_state_dirty();
+    let _ = context.repaint();
+}
+
+pub(crate) fn now_ms() -> u64 {
     now_ms_f64().max(0.0) as u64
 }
 

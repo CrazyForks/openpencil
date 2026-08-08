@@ -254,7 +254,7 @@ pub(super) fn start_bootstrap_reset(
     complete: std::rc::Rc<dyn Fn()>,
     retries_left: u8,
 ) {
-    let url = format!("{base}/api/mcp/sync-reset");
+    let url = crate::daemon_base::daemon_url("/api/mcp/sync-reset");
     let on_reset: std::rc::Rc<dyn Fn(u16, String)> = {
         let complete = complete.clone();
         let base = base.clone();

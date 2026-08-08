@@ -109,6 +109,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.gate.redoUnavailable" => "सहयोग में फिर से करना अभी उपलब्ध नहीं है।",
         "collab.gate.ownerOnlySave" => "साझा स्रोत फ़ाइल केवल स्वामी सहेज सकता है।",
         "collab.gate.leaveSessionFirst" => "दूसरा दस्तावेज़ खोलने या बदलने से पहले सत्र छोड़ें।",
+        "collab.status.localEditPreserved" => {
+            "रिमोट संस्करण लागू कर दिया गया। अपने स्थानीय बदलाव वापस पाने के लिए “पूर्ववत करें” का उपयोग करें।"
+        }
         "collab.a11y.participant" => "{{name}}, {{role}}",
         "collab.a11y.remoteCursor" => "{{name}} का कर्सर",
         _ => return None,
