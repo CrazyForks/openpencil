@@ -17,7 +17,7 @@ use crate::chat_builtin_http::BuiltinHttpError;
 /// turns. The two supported wire shapes are deliberately centralized here so
 /// classic streaming and the tool-executing agent loop cannot drift or send
 /// mutually-exclusive fields together.
-pub(crate) fn apply_reasoning_wire_control(body: &mut Value, model: &str, reduce_reasoning: bool) {
+pub fn apply_reasoning_wire_control(body: &mut Value, model: &str, reduce_reasoning: bool) {
     if !reduce_reasoning {
         return;
     }

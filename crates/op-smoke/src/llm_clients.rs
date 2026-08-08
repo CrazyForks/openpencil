@@ -6,8 +6,8 @@
 //! - [`SmokeLlmClient`] — the default path, `agent`'s `QueryEngine` over an
 //!   `AnthropicProvider` / `OpenAiCompatProvider`.
 //! - [`DirectOpenAiClient`] — `OPENPENCIL_SMOKE_DIRECT=1`, a plain
-//!   non-streaming openai-compat POST that can send MiniMax's
-//!   `thinking:{type:disabled}` body field the QueryEngine cannot.
+//!   non-streaming openai-compat POST that can send the provider-specific
+//!   reasoning controls the QueryEngine cannot.
 
 use std::sync::Arc;
 
@@ -17,7 +17,35 @@ use agent::query::QueryEngine;
 use agent::stream::Event;
 use futures::channel::mpsc;
 use futures::StreamExt;
+use op_host_services::chat_builtin_http::apply_reasoning_wire_control;
 use op_orchestrator::{CallRequest, LlmChunk, LlmClient, LlmError};
+
+/// Whether this harness call asks the provider to reduce reasoning.
+///
+/// Mirrors the live design turn: `design_turn_thinking_mode` forces thinking
+/// off exactly for models whose profile declares `thinking_disabled`, and
+/// `chat_builtin_http` then hands that flag to
+/// [`apply_reasoning_wire_control`]. The two env overrides are harness-only
+/// arms on the same flag — they never pick a wire shape themselves, so a model
+/// that rejects the `thinking` field cannot be sent one by way of an override.
+///
+/// - `OPENPENCIL_SMOKE_DISABLE_THINKING=1` asks for reduction even when the
+///   profile does not (benchmarking a 方舟-hosted reasoning model clean).
+/// - `OPENPENCIL_SMOKE_KEEP_THINKING=1` wins over both: ab-v9 showed
+///   M3-nothink emits lazy minimal manifests, so the with-think arm has to be
+///   benchmarkable (`strip_reasoning` handles the `<think>` blocks).
+pub(crate) fn reduce_reasoning_for_smoke(model: &str) -> bool {
+    reduce_reasoning(
+        model,
+        std::env::var("OPENPENCIL_SMOKE_DISABLE_THINKING").is_ok(),
+        std::env::var("OPENPENCIL_SMOKE_KEEP_THINKING").is_ok(),
+    )
+}
+
+fn reduce_reasoning(model: &str, force_disable: bool, keep_thinking: bool) -> bool {
+    !keep_thinking
+        && (force_disable || op_orchestrator::resolve_model_profile(model).thinking_disabled)
+}
 
 /// `LlmClient` impl for the smoke runner — `AnthropicProvider` under a
 /// `QueryEngine`, with every call spawned onto the current tokio runtime.
@@ -136,11 +164,12 @@ impl LlmClient for SmokeLlmClient {
 /// Direct openai-compat `LlmClient` for the harness (OPENPENCIL_SMOKE_DIRECT=1).
 ///
 /// The default [`SmokeLlmClient`] goes through the vendored `agent` QueryEngine,
-/// which can't send MiniMax's `thinking:{type:disabled}` field — so M3 (a
-/// reasoning model) thinks itself out of budget. This client does a plain
-/// non-streaming POST and adds that field for MiniMax models, mirroring the
-/// production fix in `chat_builtin_http::run_openai_chat`, so M3-with-thinking-
-/// disabled can be validated end-to-end headless (no GUI, no submodule edit).
+/// which can't send the provider-specific reasoning controls — so a reasoning
+/// model thinks itself out of budget. This client does a plain non-streaming
+/// POST and applies the SAME control production applies (via
+/// [`apply_reasoning_wire_control`], shared with
+/// `chat_builtin_http::run_openai_chat`), so a thinking-reduced arm can be
+/// validated end-to-end headless (no GUI, no submodule edit).
 pub(crate) struct DirectOpenAiClient {
     pub(crate) base_url: String,
     pub(crate) api_key: String,
@@ -188,29 +217,17 @@ impl LlmClient for DirectOpenAiClient {
                     { "role": "user", "content": user },
                 ],
             });
-            // MiniMax reasoning models inject `<think>` into content by default;
-            // disable it at the wire level. `OPENPENCIL_SMOKE_DISABLE_THINKING=1`
-            // forces it for any model whose endpoint speaks the same schema
-            // (Volcengine 方舟 — glm/kimi/doubao — confirmed to honor it), so the
-            // latest 方舟-hosted reasoning models can be benchmarked clean too.
-            let force_disable = std::env::var("OPENPENCIL_SMOKE_DISABLE_THINKING").is_ok();
-            // `OPENPENCIL_SMOKE_KEEP_THINKING=1` keeps reasoning ON even for
-            // MiniMax — ab-v9 showed M3-nothink emits lazy minimal manifests
-            // (17% M3, ~10s answers); this lets the M3-with-think arm be
-            // benchmarked (strip_reasoning handles the <think> blocks).
-            let keep_thinking = std::env::var("OPENPENCIL_SMOKE_KEEP_THINKING").is_ok();
-            // Same capability table as production (`chat_builtin_http` +
-            // the agent loop). The harness used to keep its own copy, which
-            // had already drifted to `starts_with("glm")` against
-            // production's `contains` — so a 方舟-prefixed id benchmarked
-            // with thinking ON while production ran it OFF.
-            if !keep_thinking
-                && (force_disable || op_orchestrator::accepts_thinking_body_field(&model))
-            {
-                if let Some(obj) = body.as_object_mut() {
-                    obj.insert("thinking".into(), serde_json::json!({ "type": "disabled" }));
-                }
-            }
+            // Reasoning models burn their whole output budget on thinking and
+            // return truncated (or empty) JSON, so a design turn asks for it
+            // reduced. Both the DECISION and the wire shape are production's:
+            // `resolve_model_profile(...).thinking_disabled` is what
+            // `design_turn_thinking_mode` reads, and
+            // `apply_reasoning_wire_control` is the exact function
+            // `chat_builtin_http` calls — MiniMax / GLM / DeepSeek / K2.5-2.6
+            // get `thinking:{type:"disabled"}`, Kimi K3 gets the top-level
+            // `reasoning_effort:"low"` it demands instead (sending `thinking`
+            // to K3 is a 400).
+            apply_reasoning_wire_control(&mut body, &model, reduce_reasoning_for_smoke(&model));
             // Connect + overall deadlines so a hung provider endpoint surfaces
             // as an error instead of pinning the headless harness forever
             // (mirrors the desktop's builtin_http_client).
@@ -263,5 +280,82 @@ impl LlmClient for DirectOpenAiClient {
             }
         });
         Box::pin(rx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// What the harness would put on the wire for `model`.
+    fn harness_body(model: &str) -> serde_json::Value {
+        let mut body = json!({ "model": model });
+        apply_reasoning_wire_control(&mut body, model, reduce_reasoning(model, false, false));
+        body
+    }
+
+    /// What the live design turn puts on the wire for `model`:
+    /// `design_turn_thinking_mode` forces thinking off exactly when the profile
+    /// declares it, and `chat_builtin_http` hands that flag to the same helper.
+    fn production_body(model: &str) -> serde_json::Value {
+        let mut body = json!({ "model": model });
+        apply_reasoning_wire_control(
+            &mut body,
+            model,
+            op_orchestrator::resolve_model_profile(model).thinking_disabled,
+        );
+        body
+    }
+
+    /// The harness is a benchmark: a control it sends that production does not
+    /// (or a shape production would never send) makes every number it produces
+    /// unattributable. This drifted twice already — a private capability table,
+    /// then a private JSON shape.
+    #[test]
+    fn harness_sends_the_same_reasoning_control_as_a_live_design_turn() {
+        for model in [
+            "kimi-k3",
+            "moonshot/kimi-k3",
+            "kimi-k2.6",
+            "glm-5.2",
+            "ark/glm-5.1",
+            "MiniMax-M3",
+            "deepseek-v4-pro",
+            "gpt-5.6-sol",
+            "claude-opus-5",
+            "qwen3-coder-plus",
+        ] {
+            assert_eq!(
+                harness_body(model),
+                production_body(model),
+                "harness and production disagree for {model}"
+            );
+        }
+    }
+
+    /// Kimi K3 rejects `thinking` outright (`cannot specify both 'thinking'
+    /// and 'reasoning_effort'`), so the harness must not be able to send it —
+    /// not even through `OPENPENCIL_SMOKE_DISABLE_THINKING=1`, which used to
+    /// force that exact field for every model.
+    #[test]
+    fn forcing_reduction_never_sends_kimi_k3_the_field_it_rejects() {
+        let mut body = json!({ "model": "kimi-k3" });
+        apply_reasoning_wire_control(
+            &mut body,
+            "kimi-k3",
+            reduce_reasoning("kimi-k3", true, false),
+        );
+        assert_eq!(body["reasoning_effort"], json!("low"));
+        assert!(body.get("thinking").is_none(), "{body}");
+
+        // …and the opt-out still keeps reasoning fully on.
+        let mut body = json!({ "model": "kimi-k3" });
+        apply_reasoning_wire_control(
+            &mut body,
+            "kimi-k3",
+            reduce_reasoning("kimi-k3", true, true),
+        );
+        assert_eq!(body, json!({ "model": "kimi-k3" }));
     }
 }

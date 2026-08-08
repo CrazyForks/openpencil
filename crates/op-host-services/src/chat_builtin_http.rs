@@ -26,10 +26,16 @@ mod error;
 pub use error::BuiltinHttpError;
 
 pub(crate) use crate::chat_builtin_http_wire::{
-    apply_reasoning_wire_control, normalize_provider_base_url, parse_anthropic_sse_data,
-    parse_openai_sse_data, provider_endpoint, pump_sse_response,
+    normalize_provider_base_url, parse_anthropic_sse_data, parse_openai_sse_data,
+    provider_endpoint, pump_sse_response,
 };
-pub use crate::chat_builtin_http_wire::{map_anthropic_stop_reason, map_openai_stop_reason};
+// `apply_reasoning_wire_control` is public so the headless benchmark harness
+// (op-smoke) builds its request body through the SAME entry point the live
+// chat path uses. The harness used to keep its own copy of both the capability
+// table and the JSON shape, which drifted twice.
+pub use crate::chat_builtin_http_wire::{
+    apply_reasoning_wire_control, map_anthropic_stop_reason, map_openai_stop_reason,
+};
 
 /// Design turns build one <=25-op section batch per model turn, plus repair
 /// turns after layoutIssues feedback. 28 sits in the requested 24-32 window:
