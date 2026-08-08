@@ -70,6 +70,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "promptCenter.item.extremeCalm.title" => "極限 · 寧靜",
         "promptCenter.item.webOrbit.title" => "Orbit · AI 工作台官網",
         "promptCenter.item.webAtelier.title" => "Atelier · 家居品牌電商",
+        "promptCenter.item.webKilnform.title" => "Kilnform · 設計基建官網",
+        "promptCenter.item.webReefwright.title" => "Reefwright · AI 客服知識官網",
         "promptCenter.item.dashboardPulse.title" => "Pulse · 成長分析台",
         "promptCenter.item.dashboardSentinel.title" => "Sentinel · 物流維運中心",
         "promptCenter.item.componentDataGrid.title" => "Gridworks · 企業資料表",
@@ -101,6 +103,12 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.scene.carousel" => "輪播",
         "sceneTemplate.scene.slides" => "簡報",
         "sceneTemplate.scene.card" => "卡片",
+        "sceneTemplate.scene.web" => "網頁",
+        "sceneTemplate.generate.webPromptTemplate" => "為以下主題設計一個多區塊的網頁著陸頁：{{topic}}",
+        "sceneTemplate.item.saasLandingOrange.title" => "SaaS 著陸頁 · 橘色",
+        "sceneTemplate.item.saasLandingOrange.summary" => "淺底黑卡配橘色主色的產品行銷長頁：導覽列、Hero 與產品截圖、能力三卡、工作流程示範、客戶評價與訂閱頁尾，換掉文案就是一版官網。",
+        "sceneTemplate.item.productLandingLight.title" => "產品著陸頁 · 淺色",
+        "sceneTemplate.item.productLandingLight.summary" => "紙白報刊風的產品長頁：Hero 互動示範卡、能力分欄、資料看板、新舊方案對比與三檔定價，適合 SaaS 官網與產品發表。",
         "sceneTemplate.item.screenshotTutorial.title" => "三步截圖教學卡",
         "sceneTemplate.item.screenshotTutorial.summary" => {
             "封面、三個操作步驟和結尾行動呼籲，替換截圖與說明即可發布。"
@@ -140,6 +148,149 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.item.gradientTech.title" => "漸層科技風",
         "sceneTemplate.item.gradientTech.summary" => {
             "深色漸層底加毛玻璃卡，含架構、效能對比與客戶牆，適合開發者產品發表。"
+        }
+        "sceneTemplate.scene.infographic" => "資訊圖",
+        "sceneTemplate.item.punchQuoteCard.title" => "金句卡 · 大字報",
+        "sceneTemplate.item.punchQuoteCard.summary" => {
+            "3:4 墨底金句卡，兩行巨標題加一條亮黃標語，只講一句話，適合觀點與語錄。"
+        }
+        "sceneTemplate.item.journalChecklistCard.title" => "清單卡 · 知識庫風",
+        "sceneTemplate.item.journalChecklistCard.summary" => {
+            "4:5 淺灰底上一張白色清單卡，五條可勾的待辦、標籤與引用區塊，適合週計畫與打卡。"
+        }
+        "sceneTemplate.item.dataReportInfographic.title" => "數據結論長圖",
+        "sceneTemplate.item.dataReportInfographic.summary" => {
+            "直式資訊長圖：深色頁首、三個大數字、橫向比較條、組成占比和三條結論，換掉數字就能發。"
+        }
+        "sceneTemplate.item.stepsFlowInfographic.title" => "流程步驟長圖",
+        "sceneTemplate.item.stepsFlowInfographic.summary" => {
+            "直式資訊長圖：五張帶編號的步驟卡串成一條流程，附時長標籤與兩句提示，適合教學與攻略。"
+        }
+        "sceneTemplate.item.eventPosterDeck.title" => "活動企劃 deck · 公告海報",
+        "sceneTemplate.item.eventPosterDeck.summary" => "封面、亮點、議程、場地交通、票種和結尾，近白展牆底配紅藍色塊，零圓角零漸層，適合市集、社團活動與開幕招商。",
+        "sceneTemplate.item.pitfallListInfographic.title" => "避坑清單長圖",
+        "sceneTemplate.item.pitfallListInfographic.summary" => "直式資訊長圖：六條按頻率排序的避坑項，每條給「錯在哪」和「改成這樣」，末尾附四行自檢表，全篇無彩色。",
+        "sceneTemplate.item.spineCultureCard.title" => "直排書脊卡 · 鳴沙礦彩",
+        "sceneTemplate.item.spineCultureCard.summary" => {
+            "3:4 赭泥暗底上的直排大標，配剝落壁面與礦彩顆粒，適合文化、長文與個人 IP 封面。"
+        }
+        "sceneTemplate.item.metricSingleCard.title" => "數據單值卡 · 網格漢字",
+        "sceneTemplate.item.metricSingleCard.summary" => {
+            "1:1 純白底上一個巨大的數字，瑞士國際主義的嚴格網格加一枚信號紅方塊，適合結論與成績。"
+        }
+        "sceneTemplate.item.quoteFrameCard.title" => "引用書摘卡 · 絹本青綠",
+        "sceneTemplate.item.quoteFrameCard.summary" => {
+            "4:5 絹黃底上一句框起來的話，底部是石青石綠的雙色山形，適合書摘、訪談與引用。"
+        }
+        "sceneTemplate.item.dailySignCard.title" => "日籤卡 · 園林框景",
+        "sceneTemplate.item.dailySignCard.summary" => {
+            "3:4 粉牆底上一扇六角漏窗，窗內是日期與一句話，留白即裝飾，適合日籤與品牌短語。"
+        }
+        "sceneTemplate.item.priceTierCard.title" => "促銷價格卡 · 霓虹騎樓",
+        "sceneTemplate.item.priceTierCard.summary" => {
+            "1:1 墨藍夜色底上的三檔價目表，配霓虹燈管描邊與外散射，適合門市、活動與套餐報價。"
+        }
+        "sceneTemplate.item.noticeBoardCard.title" => "公告通知卡 · 鉛字報刊",
+        "sceneTemplate.item.noticeBoardCard.summary" => {
+            "4:5 新聞紙底上的報頭雙線與編號條款，含套印錯位與騎縫編號，適合通知、須知與規則說明。"
+        }
+        "sceneTemplate.item.milestoneTimelineInfographic.title" => "時間線大事記長圖",
+        "sceneTemplate.item.milestoneTimelineInfographic.summary" => "直式資訊長圖：一條貫穿全圖的時間軸，年份刻度配大事記卡，末尾收在下一步，適合復盤、品牌史與專案歷程。",
+        "sceneTemplate.item.conceptContrastInfographic.title" => "概念對比科普長圖",
+        "sceneTemplate.item.conceptContrastInfographic.summary" => "直式資訊長圖：先給結論，再給兩個概念各自的定義卡，然後逐維度拆成兩欄表，最後給選擇判準。",
+        "sceneTemplate.item.rankingBoardInfographic.title" => "榜單 TOP N 長圖",
+        "sceneTemplate.item.rankingBoardInfographic.summary" => {
+            "直式資訊長圖：墨底黑金的推薦榜，前三名大徽章、四到八名小描邊，每條給使用場景與頻次。"
+        }
+        "sceneTemplate.item.faqThreadInfographic.title" => "問答 FAQ 長圖",
+        "sceneTemplate.item.faqThreadInfographic.summary" => {
+            "直式資訊長圖：六組一問一答，Q 實心 A 描邊，不編號不排序，讀者只讀其中一條也成立。"
+        }
+        "sceneTemplate.item.dataStoryInfographic.title" => "數據故事長圖",
+        "sceneTemplate.item.dataStoryInfographic.summary" => "直式資訊長圖：四個數字串成一條因果線，每段用十格方塊陣表示比例，末尾收到一句能改做法的結論。",
+        "sceneTemplate.item.challengeTrackerInfographic.title" => "30 天打卡挑戰長圖",
+        "sceneTemplate.item.challengeTrackerInfographic.summary" => "直式資訊長圖：六欄五列的三十格打卡陣，只在第 7、15、30 天給里程碑，存進相簿每天劃掉一格。",
+        "sceneTemplate.item.ecosystemMapInfographic.title" => "產業地圖長圖",
+        "sceneTemplate.item.ecosystemMapInfographic.summary" => {
+            "直式資訊長圖：二乘二的四區生態位陣列，每格掛三個位點並標出空位，石板灰底上浮白卡。"
+        }
+        "sceneTemplate.item.doDontComparison.title" => "好壞示範雙欄",
+        "sceneTemplate.item.doDontComparison.summary" => "3:4 單卡：同一件事的兩種做法左右並排，不靠紅綠而靠材質與圖示區分對錯，色覺障礙讀者也讀得出來。",
+        "sceneTemplate.item.mythTruthComparison.title" => "誤區與真相長圖",
+        "sceneTemplate.item.mythTruthComparison.summary" => "直式長圖：五組「大家都這麼說 / 其實是這樣」交錯排開，誤區偏窄淺底、真相偏寬深底，一次只處理一組。",
+        "sceneTemplate.item.pricingTiersComparison.title" => "價格級距對比",
+        "sceneTemplate.item.pricingTiersComparison.summary" => "3:4 單卡：免費 / Pro / 團隊三檔並排，價格當錨點往下讀，右欄包含左欄，適合定價頁與方案說明。",
+        "sceneTemplate.item.scenarioGuideComparison.title" => "情境選擇指南長圖",
+        "sceneTemplate.item.scenarioGuideComparison.summary" => {
+            "直式長圖：不擺參數，直接給七種處境，每種後面掛一個判定標籤，讀者只要找到自己那一行。"
+        }
+        "sceneTemplate.item.specTableComparison.title" => "規格表對比長圖",
+        "sceneTemplate.item.specTableComparison.summary" => "直式長圖：兩個候選放進一張真表逐列比，贏的一格用深底反白頂起來，一眼掃下來就知道各自贏在哪。",
+        "sceneTemplate.item.threeWayComparison.title" => "三方案橫評長圖",
+        "sceneTemplate.item.threeWayComparison.summary" => "直式長圖：三個方案並排，中間一欄是推薦項，每欄第一列不是名字而是一句處境——讀者在找哪一欄是自己。",
+        "sceneTemplate.item.timeShiftComparison.title" => "時間對比 · 一年前與現在",
+        "sceneTemplate.item.timeShiftComparison.summary" => {
+            "3:4 單卡：一條置中的標籤脊柱，左邊一年前、右邊現在，同一項的兩個取值落在同一列上。"
+        }
+        "sceneTemplate.item.tradeoffScaleComparison.title" => "優缺點天平",
+        "sceneTemplate.item.tradeoffScaleComparison.summary" => "1:1 方卡：一根橫梁兩個托盤，左盤裝值得、右盤裝代價，每條前面留一個空方框——結論交給讀者自己秤。",
+        "sceneTemplate.item.versionDiffComparison.title" => "新舊版本變化",
+        "sceneTemplate.item.versionDiffComparison.summary" => {
+            "1:1 方卡：不分左右兩欄，每一列自己完成一次「舊 → 新」，順著往下滑即可讀完全部變更。"
+        }
+        "sceneTemplate.item.appOnboardingTriptych.title" => "App 新手引導三屏",
+        "sceneTemplate.item.appOnboardingTriptych.summary" => "3:4 單卡：三台並排的手機與空圖位，把自己的三張引導圖拖進去配上文案，一張就能拿去評審或發布。",
+        "sceneTemplate.item.diyBlueprintGuide.title" => "手作 DIY 圖解長圖",
+        "sceneTemplate.item.diyBlueprintGuide.summary" => "直式長圖：材料規格表與步驟各占一半篇幅——手作翻車多在準備而不在手上，所以先把材料寫清楚。",
+        "sceneTemplate.item.photoCompositionTutorial.title" => "手機攝影構圖教學",
+        "sceneTemplate.item.photoCompositionTutorial.summary" => {
+            "3:4 五幀：每幀一個深色取景框，螢光參考線壓在圖位之上——構圖必須畫在取景框上才說得清。"
+        }
+        "sceneTemplate.item.recipeFourStep.title" => "食譜四步卡",
+        "sceneTemplate.item.recipeFourStep.summary" => {
+            "4:5 單卡 2×2 四宮格：四步全放在一張卡上，截圖存相簿就能照著做，站在爐台前不用翻頁。"
+        }
+        "sceneTemplate.item.skincareRoutineCards.title" => "保養步驟卡",
+        "sceneTemplate.item.skincareRoutineCards.summary" => {
+            "4:5 六幀：每步固定給用量、停留時長與早晚場次三個數——保養翻車多在用量和間隔上。"
+        }
+        "sceneTemplate.item.softwareStepTutorial.title" => "軟體操作步驟卡",
+        "sceneTemplate.item.softwareStepTutorial.summary" => {
+            "4:5 單卡：教學檔唯一一張深色，介面截圖位配編號操作說明，適合工具與軟體的功能講解。"
+        }
+        "sceneTemplate.item.storageMakeoverSteps.title" => "居家收納改造步驟",
+        "sceneTemplate.item.storageMakeoverSteps.summary" => {
+            "3:4 六幀：每步除了動作與圖位，固定給一條完成判定和一個耗時預算——做到那個狀態才算做完。"
+        }
+        "sceneTemplate.item.weeklyReportLesson.title" => "職場週報小課長圖",
+        "sceneTemplate.item.weeklyReportLesson.summary" => {
+            "直式長圖：講完四段結構之後直接給一張帶底線空格的週報骨架，截圖就能照著往裡填。"
+        }
+        "sceneTemplate.item.workoutBreakdownGuide.title" => "健身動作分解長圖",
+        "sceneTemplate.item.workoutBreakdownGuide.summary" => "直式長圖：每個動作除圖位與要點外，還有一條固定格式的組數 / 次數 / 休息參數條，存圖照著數做。",
+        "sceneTemplate.item.bookreviewSilkCarousel.title" => "書影評拆解輪播",
+        "sceneTemplate.item.bookreviewSilkCarousel.summary" => "3:4 五板：鉤子、帶註解的原文、三個洞見、一句書摘、收束——把一部作品拆成能帶走的零件，不是複述劇情。",
+        "sceneTemplate.item.cityguideFilmCarousel.title" => "城市指南輪播",
+        "sceneTemplate.item.cityguideFilmCarousel.summary" => {
+            "3:4 七板：照片與動線交替——地點板給做夢的讀者，一日動線與吃住對照給做計畫的讀者。"
+        }
+        "sceneTemplate.item.datareportGridCarousel.title" => "數據報告輪播",
+        "sceneTemplate.item.datareportGridCarousel.summary" => "3:4 六板：數據頁之間強制夾入非數據頁，避免讀者滑到第三張圖表就跳過，適合季報與產業觀察。",
+        "sceneTemplate.item.opinionLongformCarousel.title" => "觀點長文輪播",
+        "sceneTemplate.item.opinionLongformCarousel.summary" => "3:4 六板：一套嚴格的視覺母版貫穿全程，頁碼與標題永遠在同一個位置——輪播滑走就回不去，一致性是剛需。",
+        "sceneTemplate.item.qaChalkboardCarousel.title" => "問答體輪播",
+        "sceneTemplate.item.qaChalkboardCarousel.summary" => "3:4 六板：一問一板，每板左上角一個手寫問號編號——問題本身就是往下滑的理由，不需要留懸念。",
+        "sceneTemplate.item.storyNightCarousel.title" => "故事敘事輪播",
+        "sceneTemplate.item.storyNightCarousel.summary" => "3:4 七板：以時間為骨架的個人經歷復盤，第五板那條時間軸是全套的承重牆，前四板都是它的一個刻度。",
+        "sceneTemplate.item.toolkitNotebookCarousel.title" => "乾貨合集輪播",
+        "sceneTemplate.item.toolkitNotebookCarousel.summary" => "3:4 六板：六個工具逐板展開，最後一板連頁碼一起列成目錄——合集檔的讀者目的只有一個，收藏。",
+        "sceneTemplate.item.tutorialJournalCarousel.title" => "教學輪播",
+        "sceneTemplate.item.tutorialJournalCarousel.summary" => {
+            "3:4 六板：一板一步，手指就是進度條，滑一次等於做完一步，適合手作、軟體與生活教學。"
+        }
+        "sceneTemplate.item.yearreviewMineralCarousel.title" => "年度總結復盤輪播",
+        "sceneTemplate.item.yearreviewMineralCarousel.summary" => {
+            "3:4 八板：數字頁冷、感受頁熱，兩種溫度交替推進，適合年終總結與個人年度復盤。"
         }
         "fileMenu.newFromTemplate" => "從範本新增",
         "fileMenu.exportSlideshowHtml" => "匯出放映 HTML...",
@@ -456,6 +607,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "assetCenter.style.importSource" => "可以從 styles.refero.design 等 DESIGN.md 風格庫複製內容。",
         "assetCenter.style.importConfirm" => "匯入",
         "assetCenter.style.importCancel" => "取消",
+        "assetCenter.style.importPickFile" => "選擇檔案…",
+        "assetCenter.style.importHintFile" => "選擇 DESIGN.md 檔案，或在下方貼上全文。",
         "assetCenter.style.importPlaceholder" => "在此貼上 DESIGN.md",
         "assetCenter.style.importEmpty" => "這個檔案是空的，或者內容太短，不像一份風格指南。",
         "assetCenter.style.importNotText" => "這個檔案不是 Markdown 文字。",
@@ -463,6 +616,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "slidesPanel.tabSlides" => "投影片",
         "slidesPanel.tabCards" => "卡片",
         "slidesPanel.present" => "放映",
+        "slidesPanel.exportPdf" => "匯出 PDF",
+        "slidesPanel.exportAllSlides" => "匯出全部投影片",
+        "slidesPanel.exportSelectedSlides" => "匯出所選投影片（{{count}}）",
         "settings.agents.heroTitle" => "連接你的 AI 服務商",
         "settings.agents.heroSubtitle" => {
             "OpenPencil 直接驅動本機 CLI Agent 與 API 服務商，連接任一個即可開始產生設計。"
@@ -498,6 +654,14 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "tooltip.topbar.exitPreview" => "結束預覽",
         "tooltip.topbar.account" => "帳戶",
         "settings.agents.providerRollMore" => "等 {{count}} 家",
+        "ai.thinking.adaptive" => "思考：自動",
+        "ai.thinking.disabled" => "思考：關閉",
+        "ai.thinking.enabled" => "思考：開啟",
+        "ai.designProgress.detail.repairsApplied" => "已套用 {{count}} 處自動修復",
+        "ai.designProgress.detail.repairsMore" => "…還有 {{count}} 條(見記錄)",
+        "ai.styleCard.builtin" => "內建風格",
+        "ai.styleCard.imported" => "匯入的 DESIGN.md",
+        "ai.styleCard.documentDesignMd" => "文件 design.md",
         _ => return super::zh_tw_collab::lookup(key),
     })
 }

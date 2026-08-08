@@ -72,6 +72,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "promptCenter.item.extremeCalm.title" => "極限 · 静けさ",
         "promptCenter.item.webOrbit.title" => "Orbit · AI ワークベンチのランディングページ",
         "promptCenter.item.webAtelier.title" => "Atelier · 家具ブランドの EC サイト",
+        "promptCenter.item.webKilnform.title" => "Kilnform · デザイン基盤サイト",
+        "promptCenter.item.webReefwright.title" => "Reefwright · AI サポートナレッジサイト",
         "promptCenter.item.dashboardPulse.title" => "Pulse · グロース分析ダッシュボード",
         "promptCenter.item.dashboardSentinel.title" => "Sentinel · 物流オペレーション",
         "promptCenter.item.componentDataGrid.title" => {
@@ -105,6 +107,12 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.scene.carousel" => "カルーセル",
         "sceneTemplate.scene.slides" => "スライド",
         "sceneTemplate.scene.card" => "カード",
+        "sceneTemplate.scene.web" => "Web ページ",
+        "sceneTemplate.generate.webPromptTemplate" => "次のテーマで、複数セクションからなる Web ランディングページを設計してください：{{topic}}",
+        "sceneTemplate.item.saasLandingOrange.title" => "SaaS ランディングページ · オレンジ",
+        "sceneTemplate.item.saasLandingOrange.summary" => "明るい地に黒いパネルを敷き、オレンジを主役にしたマーケティングページ。ナビ、製品スクリーンショット付きヒーロー、機能カード 3 枚、ワークフロー紹介、お客様の声、購読フッターまで。文言を差し替えればそのままサイトになります。",
+        "sceneTemplate.item.productLandingLight.title" => "プロダクトページ · ライト",
+        "sceneTemplate.item.productLandingLight.summary" => "紙のように白い新聞風のプロダクトページ。操作できるヒーローデモ、機能の段組み、分析ボード、旧方式との比較、3 段階の料金表。SaaS サイトや製品発表に。",
         "sceneTemplate.item.screenshotTutorial.title" => {
             "3ステップのスクリーンショットチュートリアルカード"
         }
@@ -135,6 +143,115 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.item.minimalKeynote.summary" => "余白と特大の文字で、1 枚に 1 文を中央揃え。9 枚を通してカードは一つも使わず、目次は罫線と数字だけ。発表会や基調講演向け。",
         "sceneTemplate.item.gradientTech.title" => "グラデーション テック",
         "sceneTemplate.item.gradientTech.summary" => "ダークなグラデーション地にすりガラスのカード。構成図・性能比較・導入企業の枠まで入った開発者向け発表テンプレート。",
+        "sceneTemplate.scene.infographic" => "インフォグラフィック",
+        "sceneTemplate.item.punchQuoteCard.title" => "パンチライン カード",
+        "sceneTemplate.item.punchQuoteCard.summary" => "3:4 の黒地カード。特大の2行と黄色いハイライト帯だけで、伝えたい一言を届ける。意見や名言の投稿向け。",
+        "sceneTemplate.item.journalChecklistCard.title" => {
+            "チェックリスト カード · ナレッジベース風"
+        }
+        "sceneTemplate.item.journalChecklistCard.summary" => "淡いグレー地に白いリストカードを一枚。チェックできる5項目、タグ、引用ブロック付き。週の予定や記録に。",
+        "sceneTemplate.item.dataReportInfographic.title" => "データ報告インフォグラフィック",
+        "sceneTemplate.item.dataReportInfographic.summary" => "縦長のスクロール画像。濃色の見出し帯、3つの大きな数字、横棒の比較、構成比、3行の結論まで。数字を差し替えるだけ。",
+        "sceneTemplate.item.stepsFlowInfographic.title" => "手順フロー インフォグラフィック",
+        "sceneTemplate.item.stepsFlowInfographic.summary" => "縦長のスクロール画像。番号付きの5ステップを1本の流れにまとめ、所要時間ラベルと2つのヒントを添えた。チュートリアル向け。",
+        "sceneTemplate.item.eventPosterDeck.title" => "イベント企画 deck · 告知ポスター",
+        "sceneTemplate.item.eventPosterDeck.summary" => "表紙・見どころ・スケジュール・アクセス・チケット・締めの6枚。白い展示壁のような地に赤と青の色面、角丸なしグラデーションなし。マルシェやサークル企画、開店案内に。",
+        "sceneTemplate.item.pitfallListInfographic.title" => {
+            "落とし穴チェックリスト インフォグラフィック"
+        }
+        "sceneTemplate.item.pitfallListInfographic.summary" => "縦長のスクロール画像。やりがちな失敗を頻度順に6つ、それぞれ「何がまずいか」と「こう直す」を添え、最後に4行の公開前チェック。色は白黒グレーのみ。",
+        "sceneTemplate.item.spineCultureCard.title" => "縦組み背表紙カード · 鉱物顔料",
+        "sceneTemplate.item.spineCultureCard.summary" => "赭土の暗い地に縦組みの大見出し、剥落した壁面と顔料の粒。3:4。文化・長文・個人ブランドの表紙に。",
+        "sceneTemplate.item.metricSingleCard.title" => "単一指標カード · グリッド漢字",
+        "sceneTemplate.item.metricSingleCard.summary" => "純白に大きな数字ひとつ。厳格なスイス・グリッドと赤い信号の四角がひとつだけ。1:1。結論と実績に。",
+        "sceneTemplate.item.quoteFrameCard.title" => "引用カード · 絹本青緑",
+        "sceneTemplate.item.quoteFrameCard.summary" => "古びた絹の黄色地に、枠で囲んだ一文。裾には石青と石緑の山。4:5。書き抜き・インタビュー・引用に。",
+        "sceneTemplate.item.dailySignCard.title" => "日めくりカード · 庭園の窓",
+        "sceneTemplate.item.dailySignCard.summary" => "白漆喰の壁に六角の窓をひとつ、その中に日付と一行。余白が装飾。3:4。日めくりとブランドの一言に。",
+        "sceneTemplate.item.priceTierCard.title" => "料金カード · アーケードのネオン",
+        "sceneTemplate.item.priceTierCard.summary" => "藍色の夜を地に三段の料金表。ネオン管の輪郭と滲む光。1:1。店舗・イベント・セット料金に。",
+        "sceneTemplate.item.noticeBoardCard.title" => "お知らせカード · 活版印刷",
+        "sceneTemplate.item.noticeBoardCard.summary" => "新聞紙の地に見出し罫の二本線と番号付きの条項。刷りズレと通し番号つき。4:5。告知・注意書き・規則に。",
+        "sceneTemplate.item.milestoneTimelineInfographic.title" => "年表インフォグラフィック",
+        "sceneTemplate.item.milestoneTimelineInfographic.summary" => "縦長のスクロール画像。全体を貫く一本の軸に年号の目盛りと出来事カードを並べ、最後は次の一手で締める。振り返り・沿革・プロジェクト史に。",
+        "sceneTemplate.item.conceptContrastInfographic.title" => "概念比較インフォグラフィック",
+        "sceneTemplate.item.conceptContrastInfographic.summary" => "縦長のスクロール画像。まず結論、次に二つの概念それぞれの定義カード、続いて観点ごとの二段組、最後に選び方。",
+        "sceneTemplate.item.rankingBoardInfographic.title" => {
+            "TOP N ランキング インフォグラフィック"
+        }
+        "sceneTemplate.item.rankingBoardInfographic.summary" => "縦長のスクロール画像。墨地に金のおすすめ表。上位三つは大きなバッジ、四位以下は線のバッジ。使いどころと頻度つき。",
+        "sceneTemplate.item.faqThreadInfographic.title" => "FAQ インフォグラフィック",
+        "sceneTemplate.item.faqThreadInfographic.summary" => "縦長のスクロール画像。六組の一問一答、Q は塗り A は線。番号も順序もなく、どれか一組だけ読んでも成立する。",
+        "sceneTemplate.item.dataStoryInfographic.title" => "データストーリー インフォグラフィック",
+        "sceneTemplate.item.dataStoryInfographic.summary" => "縦長のスクロール画像。四つの数字を因果の一本線につなぎ、各段は十マスの升目で割合を示し、最後は動かせる結論で締める。",
+        "sceneTemplate.item.challengeTrackerInfographic.title" => {
+            "30日チャレンジ インフォグラフィック"
+        }
+        "sceneTemplate.item.challengeTrackerInfographic.summary" => "縦長のスクロール画像。六列五行の三十マス。節目は 7・15・30 日目だけ。保存して一日一マス消していく。",
+        "sceneTemplate.item.ecosystemMapInfographic.title" => "業界マップ インフォグラフィック",
+        "sceneTemplate.item.ecosystemMapInfographic.summary" => "縦長のスクロール画像。一本の連なりを二×二の四区画に開き、各区画に三つの担い手と空きを記す。スレート地に白カード。",
+        "sceneTemplate.item.doDontComparison.title" => "良い例・悪い例の二段組",
+        "sceneTemplate.item.doDontComparison.summary" => "3:4 カード。同じことの二つのやり方を左右に並べ、赤と緑ではなく質感とアイコンで見分ける。色覚に配慮した対比。",
+        "sceneTemplate.item.mythTruthComparison.title" => "思い込みと実際",
+        "sceneTemplate.item.mythTruthComparison.summary" => "縦長画像。「よく言われること／実はこう」を五組、思い込みは細く淡く左に、実際は広く濃く右に。一度に一組ずつ読む。",
+        "sceneTemplate.item.pricingTiersComparison.title" => "料金プラン比較",
+        "sceneTemplate.item.pricingTiersComparison.summary" => "3:4 カード。無料・Pro・チームの三段を横並びに。価格を起点に読み進め、右の段は左の段を含む。料金ページ向け。",
+        "sceneTemplate.item.scenarioGuideComparison.title" => "シーン別の選び方",
+        "sceneTemplate.item.scenarioGuideComparison.summary" => "縦長画像。スペックは並べず、七つの状況にそれぞれ判定タグを付ける。読者は自分の行を見つけるだけでいい。",
+        "sceneTemplate.item.specTableComparison.title" => "スペック比較表",
+        "sceneTemplate.item.specTableComparison.summary" => "縦長画像。二つの候補を一つの表で一行ずつ比較し、勝った側のセルを濃い地で持ち上げる。どこで勝つか一目で分かる。",
+        "sceneTemplate.item.threeWayComparison.title" => "三案の横並び比較",
+        "sceneTemplate.item.threeWayComparison.summary" => "縦長画像。三つの案を横に並べ、中央がおすすめ。各列の一行目は名前ではなく状況——読者は自分の列を探している。",
+        "sceneTemplate.item.timeShiftComparison.title" => "一年前と今",
+        "sceneTemplate.item.timeShiftComparison.summary" => "3:4 カード。中央にラベルの背骨を通し、左が一年前、右が今。同じ項目の二つの値が同じ行に並ぶ。",
+        "sceneTemplate.item.tradeoffScaleComparison.title" => "メリットとデメリットの天秤",
+        "sceneTemplate.item.tradeoffScaleComparison.summary" => "1:1 カード。一本の梁に二つの皿、左に「価値」右に「代償」、各行の頭に空のチェックボックス。判断は読者に委ねる。",
+        "sceneTemplate.item.versionDiffComparison.title" => "バージョン差分",
+        "sceneTemplate.item.versionDiffComparison.summary" => "1:1 カード。左右に分けず、各行がそれ自体で「旧 → 新」を完結させる。上から下へ読むだけでいい。",
+        "sceneTemplate.item.appOnboardingTriptych.title" => "アプリ オンボーディング三面",
+        "sceneTemplate.item.appOnboardingTriptych.summary" => "3:4 カード。並んだ三台のスマホに空の画像枠。自分の三枚を入れて文言を添えれば、そのままレビューにも投稿にも使える。",
+        "sceneTemplate.item.diyBlueprintGuide.title" => "DIY 図解ガイド",
+        "sceneTemplate.item.diyBlueprintGuide.summary" => {
+            "縦長画像。材料と寸法の表が手順と同じだけの紙面を取る。DIY は手ではなく準備で失敗する。"
+        }
+        "sceneTemplate.item.photoCompositionTutorial.title" => "スマホ写真の構図レッスン",
+        "sceneTemplate.item.photoCompositionTutorial.summary" => "3:4 五枚。各ページは暗いファインダー枠に蛍光のガイド線。構図はフレームの上に描かないと説明できない。",
+        "sceneTemplate.item.recipeFourStep.title" => "四手順レシピカード",
+        "sceneTemplate.item.recipeFourStep.summary" => "4:5 カード、2×2。四手順を一枚に収める。スクショして見ながら作れる——コンロの前でページはめくれない。",
+        "sceneTemplate.item.skincareRoutineCards.title" => "スキンケア手順カード",
+        "sceneTemplate.item.skincareRoutineCards.summary" => "4:5 六枚。各手順に必ず三つの数字：量・待ち時間・朝夜。失敗は順番ではなく量と間隔で起きる。",
+        "sceneTemplate.item.softwareStepTutorial.title" => "ソフト操作手順カード",
+        "sceneTemplate.item.softwareStepTutorial.summary" => "4:5 カード。教程枠で唯一のダーク。画面キャプチャ枠と番号付きの操作説明。ツールや機能紹介に。",
+        "sceneTemplate.item.storageMakeoverSteps.title" => "収納リフォームの手順",
+        "sceneTemplate.item.storageMakeoverSteps.summary" => "3:4 六枚。動作と画像枠に加え、各手順に完了条件と所要時間を必ず添える。その状態になったら次へ進める。",
+        "sceneTemplate.item.weeklyReportLesson.title" => "週報の書き方レッスン",
+        "sceneTemplate.item.weeklyReportLesson.summary" => "縦長画像。四段構成を説明したあと、下線の空欄が入った週報の骨組みを渡す。スクショして埋めるだけ。",
+        "sceneTemplate.item.workoutBreakdownGuide.title" => "トレーニング動作分解",
+        "sceneTemplate.item.workoutBreakdownGuide.summary" => "縦長画像。各種目に画像枠とポイントのほか、セット数・回数・休憩の固定フォーマット帯を付ける。",
+        "sceneTemplate.item.bookreviewSilkCarousel.title" => "書評・映画評の分解カルーセル",
+        "sceneTemplate.item.bookreviewSilkCarousel.summary" => "3:4 五枚。フック、注釈付きの引用、三つの洞察、心に残る一文、締め。あらすじの再話ではなく、持ち帰れる部品に分解する。",
+        "sceneTemplate.item.cityguideFilmCarousel.title" => "シティガイド カルーセル",
+        "sceneTemplate.item.cityguideFilmCarousel.summary" => "3:4 七枚。場所と動線を交互に——場所の枚は夢を見る読者へ、一日の動線と食と宿の対照は計画する読者へ。",
+        "sceneTemplate.item.datareportGridCarousel.title" => "データレポート カルーセル",
+        "sceneTemplate.item.datareportGridCarousel.summary" => "3:4 六枚。データ面の前後に必ず非データ面を挟み、三枚目のグラフで離脱させない。四半期報告や業界観察に。",
+        "sceneTemplate.item.opinionLongformCarousel.title" => "論考カルーセル",
+        "sceneTemplate.item.opinionLongformCarousel.summary" => "3:4 六枚。厳密な視覚マスターを全編に通し、ページ番号と見出しは常に同じ位置。前の板は戻れないから一貫性は必須。",
+        "sceneTemplate.item.qaChalkboardCarousel.title" => "Q&A カルーセル",
+        "sceneTemplate.item.qaChalkboardCarousel.summary" => {
+            "3:4 六枚。一問一枚、各面の隅に手書きの疑問符番号。問いそのものが次へ進む理由になる。"
+        }
+        "sceneTemplate.item.storyNightCarousel.title" => "ストーリー カルーセル",
+        "sceneTemplate.item.storyNightCarousel.summary" => "3:4 七枚。時間を骨格にした個人の振り返り。五枚目の年表が全体の耐力壁で、前の四枚はその目盛りの拡大。",
+        "sceneTemplate.item.toolkitNotebookCarousel.title" => "ツール集カルーセル",
+        "sceneTemplate.item.toolkitNotebookCarousel.summary" => "3:4 六枚。六つのツールを一枚ずつ、最後の一枚にページ番号付きの目次。合集の読者の目的は保存だけ。",
+        "sceneTemplate.item.tutorialJournalCarousel.title" => "チュートリアル カルーセル",
+        "sceneTemplate.item.tutorialJournalCarousel.summary" => {
+            "3:4 六枚。一枚一手順、指が進捗バー。手作り・ソフト・暮らしの手順に。"
+        }
+        "sceneTemplate.item.yearreviewMineralCarousel.title" => "年間振り返り カルーセル",
+        "sceneTemplate.item.yearreviewMineralCarousel.summary" => {
+            "3:4 八枚。数字の面は冷たく、思いの面は温かく、交互に進む。年末のまとめや個人の総括に。"
+        }
         "fileMenu.newFromTemplate" => "テンプレートから新規作成",
         "fileMenu.exportSlideshowHtml" => "スライドショー HTML を書き出し...",
         "fileMenu.exportPptx" => "PowerPoint を書き出し...",
@@ -396,6 +513,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "assetCenter.style.importSource" => "styles.refero.design などの DESIGN.md ライブラリから内容をコピーできます。",
         "assetCenter.style.importConfirm" => "読み込む",
         "assetCenter.style.importCancel" => "キャンセル",
+        "assetCenter.style.importPickFile" => "ファイルを選択…",
+        "assetCenter.style.importHintFile" => "DESIGN.md ファイルを選ぶか、下に全文を貼り付けてください。",
         "assetCenter.style.importPlaceholder" => "ここに DESIGN.md を貼り付け",
         "assetCenter.style.importEmpty" => "このファイルは空か、スタイルガイドとしては短すぎます。",
         "assetCenter.style.importNotText" => "このファイルは Markdown テキストとして読めません。",
@@ -403,6 +522,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "slidesPanel.tabSlides" => "スライド",
         "slidesPanel.tabCards" => "カード",
         "slidesPanel.present" => "再生",
+        "slidesPanel.exportPdf" => "PDF を書き出し",
+        "slidesPanel.exportAllSlides" => "すべてのスライドを書き出し",
+        "slidesPanel.exportSelectedSlides" => "選択したスライドを書き出し（{{count}}）",
         "settings.agents.heroTitle" => "AI プロバイダーを接続",
         "settings.agents.heroSubtitle" => "OpenPencil はローカルの CLI エージェントと API プロバイダーを直接動かします。いずれかを接続するとデザイン生成を開始できます。",
         "settings.agents.statusConnected" => "接続済み",
@@ -434,6 +556,14 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "tooltip.topbar.exitPreview" => "プレビューを終了",
         "tooltip.topbar.account" => "アカウント",
         "settings.agents.providerRollMore" => "他 {{count}} 社",
+        "ai.thinking.adaptive" => "思考: 自動",
+        "ai.thinking.disabled" => "思考: オフ",
+        "ai.thinking.enabled" => "思考: オン",
+        "ai.designProgress.detail.repairsApplied" => "{{count}} 件の自動修正を適用",
+        "ai.designProgress.detail.repairsMore" => "…他 {{count}} 件(ログ参照)",
+        "ai.styleCard.builtin" => "組み込みスタイル",
+        "ai.styleCard.imported" => "インポートした DESIGN.md",
+        "ai.styleCard.documentDesignMd" => "ドキュメントの design.md",
         _ => return super::ja_collab::lookup(key),
     })
 }

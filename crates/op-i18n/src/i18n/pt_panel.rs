@@ -68,6 +68,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "promptCenter.item.extremeCalm.title" => "Extremo · Uma tela de calma",
         "promptCenter.item.webOrbit.title" => "Orbit · Página do espaço de trabalho com IA",
         "promptCenter.item.webAtelier.title" => "Atelier · Comércio de móveis",
+        "promptCenter.item.webKilnform.title" => "Kilnform · Site de infraestrutura de design",
+        "promptCenter.item.webReefwright.title" => "Reefwright · Site de conhecimento de suporte com IA",
         "promptCenter.item.dashboardPulse.title" => "Pulse · Painel de análise de crescimento",
         "promptCenter.item.dashboardSentinel.title" => "Sentinel · Operações logísticas",
         "promptCenter.item.componentDataGrid.title" => "Gridworks · Tabela de dados empresarial",
@@ -101,6 +103,12 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.scene.carousel" => "Carrossel",
         "sceneTemplate.scene.slides" => "Slides",
         "sceneTemplate.scene.card" => "Cartões",
+        "sceneTemplate.scene.web" => "Páginas web",
+        "sceneTemplate.generate.webPromptTemplate" => "Projete uma página de destino web com várias seções sobre o seguinte tema: {{topic}}",
+        "sceneTemplate.item.saasLandingOrange.title" => "Página SaaS · Laranja",
+        "sceneTemplate.item.saasLandingOrange.summary" => "Uma página de marketing clara construída sobre painéis quase pretos e um único laranja: navegação, hero com captura do produto, três cartões de recursos, um passeio pelo fluxo, depoimentos e um rodapé de assinatura. Troque os textos e já é um site.",
+        "sceneTemplate.item.productLandingLight.title" => "Página de produto · Clara",
+        "sceneTemplate.item.productLandingLight.summary" => "Uma página de produto branco papel, com ar editorial: demonstração interativa no hero, colunas de recursos, painel de análise, comparação antes/depois e três planos de preço. Para sites SaaS e lançamentos.",
         "sceneTemplate.item.screenshotTutorial.title" => "Tutorial com capturas · 3 passos",
         "sceneTemplate.item.screenshotTutorial.summary" => {
             "Capa, três passos e uma chamada para ação no final. Substitua as capturas de tela e os textos para publicar."
@@ -129,6 +137,117 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.item.minimalKeynote.summary" => "Espaço em branco, tipografia enorme e uma frase centralizada por página — nove páginas sem um único cartão e um índice só com fios e números. Para lançamentos e palestras.",
         "sceneTemplate.item.gradientTech.title" => "Tech gradiente",
         "sceneTemplate.item.gradientTech.summary" => "Fundo em gradiente escuro com cartões de vidro fosco: arquitetura, desempenho e mural de clientes. Para lançamentos de produto técnico.",
+        "sceneTemplate.scene.infographic" => "Infográficos",
+        "sceneTemplate.item.punchQuoteCard.title" => "Cartão de citação · Cartaz",
+        "sceneTemplate.item.punchQuoteCard.summary" => "Um cartão 3:4 em fundo quase preto: duas linhas enormes sobre uma faixa amarela. Uma frase, só isso, para opiniões e citações.",
+        "sceneTemplate.item.journalChecklistCard.title" => {
+            "Cartão de tarefas · Base de conhecimento"
+        }
+        "sceneTemplate.item.journalChecklistCard.summary" => "Um cartão branco sobre fundo cinza-claro: cinco tarefas para marcar, uma etiqueta e uma citação. Para planos da semana.",
+        "sceneTemplate.item.dataReportInfographic.title" => "Infográfico de resultados",
+        "sceneTemplate.item.dataReportInfographic.summary" => "Uma imagem vertical para rolar: cabeçalho escuro, três números grandes, uma comparação em barras, uma divisão e três conclusões. Troque os números e publique.",
+        "sceneTemplate.item.stepsFlowInfographic.title" => "Infográfico passo a passo",
+        "sceneTemplate.item.stepsFlowInfographic.summary" => "Uma imagem vertical para rolar: cinco cartões numerados encadeados num fluxo, cada um com a duração, mais duas dicas. Para tutoriais e guias.",
+        "sceneTemplate.item.eventPosterDeck.title" => "Deck de evento · Cartaz",
+        "sceneTemplate.item.eventPosterDeck.summary" => "Capa, destaques, programação, como chegar, ingressos e encerramento. Fundo branco de galeria com blocos vermelhos e azuis, sem cantos arredondados e sem gradientes — para feiras, eventos e inaugurações.",
+        "sceneTemplate.item.pitfallListInfographic.title" => "Infográfico de erros a evitar",
+        "sceneTemplate.item.pitfallListInfographic.summary" => "Uma imagem vertical para rolar: seis erros ordenados por frequência, cada um com o que dá errado e o que fazer no lugar, mais uma checagem de quatro pontos antes de publicar. Só preto, branco e cinza.",
+        "sceneTemplate.item.spineCultureCard.title" => {
+            "Cartão de título vertical · Pigmento mineral"
+        }
+        "sceneTemplate.item.spineCultureCard.summary" => "Um cartão 3:4 sobre fundo de argila ocre: título chinês na vertical, reboco descascado e grãos de pigmento. Para cultura, textos longos e capas de autor.",
+        "sceneTemplate.item.metricSingleCard.title" => "Cartão de valor único · Grelha Hanzi",
+        "sceneTemplate.item.metricSingleCard.summary" => "Um cartão 1:1: um número enorme sobre branco puro, uma grelha suíça rigorosa e um único quadrado vermelho de sinal. Para conclusões e resultados.",
+        "sceneTemplate.item.quoteFrameCard.title" => "Cartão de citação · Seda azul-verde",
+        "sceneTemplate.item.quoteFrameCard.summary" => "Um cartão 4:5 sobre seda amarelecida: uma frase emoldurada e, ao pé, uma montanha de azurita e malaquita. Para excertos, entrevistas e citações.",
+        "sceneTemplate.item.dailySignCard.title" => "Cartão diário · Janela de jardim",
+        "sceneTemplate.item.dailySignCard.summary" => "Um cartão 3:4 sobre parede caiada com uma janela hexagonal: dentro, a data e uma linha. O vazio é o ornamento. Para posts diários e frases de marca.",
+        "sceneTemplate.item.priceTierCard.title" => "Cartão de preços · Néon de arcada",
+        "sceneTemplate.item.priceTierCard.summary" => "Um cartão 1:1 sobre noite azul-tinta: tabela de três níveis, contornos de tubos de néon e o seu halo. Para lojas, eventos e pacotes.",
+        "sceneTemplate.item.noticeBoardCard.title" => "Cartão de aviso · Tipos de chumbo",
+        "sceneTemplate.item.noticeBoardCard.summary" => "Um cartão 4:5 sobre papel de jornal: filetes de cabeçalho com registo desalinhado, cláusulas numeradas e um selo de série. Para avisos e regulamentos.",
+        "sceneTemplate.item.milestoneTimelineInfographic.title" => "Infográfico de linha do tempo",
+        "sceneTemplate.item.milestoneTimelineInfographic.summary" => "Uma imagem vertical para rolar: um eixo que percorre toda a altura, marcas de ano ao lado dos cartões de marcos e um fecho com o próximo passo. Para retrospectivas, história de marca e trajetórias de projeto.",
+        "sceneTemplate.item.conceptContrastInfographic.title" => {
+            "Infográfico de contraste de conceitos"
+        }
+        "sceneTemplate.item.conceptContrastInfographic.summary" => "Uma imagem vertical para rolar: primeiro a conclusão, depois um cartão de definição por conceito, um detalhamento em duas colunas por critério e, por fim, como escolher.",
+        "sceneTemplate.item.rankingBoardInfographic.title" => "Infográfico de ranking Top N",
+        "sceneTemplate.item.rankingBoardInfographic.summary" => "Uma imagem vertical para rolar: um quadro dourado sobre tinta — medalhas grandes para os três primeiros e contornadas do quarto ao oitavo, cada uma com quando usar e com que frequência.",
+        "sceneTemplate.item.faqThreadInfographic.title" => "Infográfico de perguntas frequentes",
+        "sceneTemplate.item.faqThreadInfographic.summary" => "Uma imagem vertical para rolar: seis pares de pergunta e resposta, P sólido e R contornado. Sem numeração nem ordem: cada par se sustenta sozinho.",
+        "sceneTemplate.item.dataStoryInfographic.title" => "Infográfico de história de dados",
+        "sceneTemplate.item.dataStoryInfographic.summary" => "Uma imagem vertical para rolar: quatro números encadeados numa linha causal, cada trecho como uma grade de dez blocos, e uma conclusão acionável no fim.",
+        "sceneTemplate.item.challengeTrackerInfographic.title" => {
+            "Infográfico de desafio de 30 dias"
+        }
+        "sceneTemplate.item.challengeTrackerInfographic.summary" => "Uma imagem vertical para rolar: uma grade de trinta quadros, seis por cinco, com marcos só nos dias 7, 15 e 30. Salve e risque um por dia.",
+        "sceneTemplate.item.ecosystemMapInfographic.title" => "Infográfico de mapa de ecossistema",
+        "sceneTemplate.item.ecosystemMapInfographic.summary" => "Uma imagem vertical para rolar: quatro posições de uma mesma cadeia em dois por dois, três atores em cada e as lacunas apontadas. Cartões brancos sobre ardósia.",
+        "sceneTemplate.item.doDontComparison.title" => "Duas colunas: certo e errado",
+        "sceneTemplate.item.doDontComparison.summary" => "Um cartão 3:4: duas maneiras de fazer a mesma coisa lado a lado, distinguidas por material e ícone em vez de vermelho contra verde — legível também para daltônicos.",
+        "sceneTemplate.item.mythTruthComparison.title" => "Mitos e realidade",
+        "sceneTemplate.item.mythTruthComparison.summary" => "Uma imagem alta: cinco pares «costuma-se dizer / na verdade», o mito estreito e claro à esquerda, a realidade larga e escura à direita.",
+        "sceneTemplate.item.pricingTiersComparison.title" => "Comparação de planos",
+        "sceneTemplate.item.pricingTiersComparison.summary" => "Um cartão 3:4: Gratuito, Pro e Equipa lado a lado, o preço como âncora, cada coluna contendo a anterior. Para páginas de preços.",
+        "sceneTemplate.item.scenarioGuideComparison.title" => "Guia de escolha por situação",
+        "sceneTemplate.item.scenarioGuideComparison.summary" => "Uma imagem alta: sem especificações, sete situações, cada uma com o seu veredicto. O leitor só procura a sua linha.",
+        "sceneTemplate.item.specTableComparison.title" => "Tabela comparativa de especificações",
+        "sceneTemplate.item.specTableComparison.summary" => "Uma imagem alta: dois candidatos numa tabela real, linha a linha, com a célula vencedora realçada em fundo escuro.",
+        "sceneTemplate.item.threeWayComparison.title" => "Comparação de três opções",
+        "sceneTemplate.item.threeWayComparison.summary" => "Uma imagem alta: três opções lado a lado com a recomendação ao centro; cada coluna abre com uma situação, não com um nome.",
+        "sceneTemplate.item.timeShiftComparison.title" => "Há um ano e agora",
+        "sceneTemplate.item.timeShiftComparison.summary" => "Um cartão 3:4: uma espinha central de rótulos, há um ano à esquerda e agora à direita, ambos os valores na mesma linha.",
+        "sceneTemplate.item.tradeoffScaleComparison.title" => "Balança de prós e contras",
+        "sceneTemplate.item.tradeoffScaleComparison.summary" => "Um cartão 1:1: uma trave e dois pratos — o que vale à esquerda, o que custa à direita, uma caixa vazia antes de cada linha.",
+        "sceneTemplate.item.versionDiffComparison.title" => "Mudanças entre versões",
+        "sceneTemplate.item.versionDiffComparison.summary" => "Um cartão 1:1: sem colunas — cada linha completa o seu próprio «antes → depois»; basta rolar.",
+        "sceneTemplate.item.appOnboardingTriptych.title" => "Tríptico de onboarding de app",
+        "sceneTemplate.item.appOnboardingTriptych.summary" => "Um cartão 3:4: três telemóveis lado a lado com espaços de imagem vazios. Coloque os seus três ecrãs, junte o texto e está pronto.",
+        "sceneTemplate.item.diyBlueprintGuide.title" => "Guia DIY ilustrado",
+        "sceneTemplate.item.diyBlueprintGuide.summary" => "Uma imagem alta em que a tabela de materiais ocupa tanto como os passos — o DIY falha na preparação, não nas mãos.",
+        "sceneTemplate.item.photoCompositionTutorial.title" => {
+            "Composição fotográfica com telemóvel"
+        }
+        "sceneTemplate.item.photoCompositionTutorial.summary" => "3:4, cinco quadros: cada um com um visor escuro e linhas-guia fluorescentes sobre o espaço da foto.",
+        "sceneTemplate.item.recipeFourStep.title" => "Receita em quatro passos",
+        "sceneTemplate.item.recipeFourStep.summary" => "Um cartão 4:5 em 2×2: os quatro passos num só cartão. Captura de ecrã e cozinhe — ao fogão ninguém quer virar páginas.",
+        "sceneTemplate.item.skincareRoutineCards.title" => "Cartões de rotina de cuidados",
+        "sceneTemplate.item.skincareRoutineCards.summary" => "4:5, seis quadros: cada passo fixa três números — quantidade, tempo de espera e se é de manhã ou à noite.",
+        "sceneTemplate.item.softwareStepTutorial.title" => "Tutorial de software passo a passo",
+        "sceneTemplate.item.softwareStepTutorial.summary" => "Um cartão 4:5, o único escuro da série: espaços de captura com instruções numeradas, para ferramentas e funcionalidades.",
+        "sceneTemplate.item.storageMakeoverSteps.title" => "Passos de reorganização de arrumação",
+        "sceneTemplate.item.storageMakeoverSteps.summary" => "3:4, seis quadros: além do gesto e da imagem, cada passo fixa um critério de conclusão e um orçamento de tempo.",
+        "sceneTemplate.item.weeklyReportLesson.title" => "Lição de relatório semanal",
+        "sceneTemplate.item.weeklyReportLesson.summary" => "Uma imagem alta: depois da estrutura em quatro partes entrega um esqueleto com espaços sublinhados para preencher.",
+        "sceneTemplate.item.workoutBreakdownGuide.title" => "Guia de decomposição de exercícios",
+        "sceneTemplate.item.workoutBreakdownGuide.summary" => "Uma imagem alta: cada movimento traz uma barra fixa de séries / repetições / descanso junto à imagem e às dicas.",
+        "sceneTemplate.item.bookreviewSilkCarousel.title" => {
+            "Carrossel de análise de livro / filme"
+        }
+        "sceneTemplate.item.bookreviewSilkCarousel.summary" => "3:4, cinco painéis: gancho, excerto anotado, três ideias, uma frase citável, fecho. Desmonta a obra em peças para levar, em vez de recontar o enredo.",
+        "sceneTemplate.item.cityguideFilmCarousel.title" => "Carrossel de guia de cidade",
+        "sceneTemplate.item.cityguideFilmCarousel.summary" => "3:4, sete painéis: lugares e percursos alternam — os lugares para quem sonha, o roteiro do dia e a tabela de comer e dormir para quem planeia.",
+        "sceneTemplate.item.datareportGridCarousel.title" => "Carrossel de relatório de dados",
+        "sceneTemplate.item.datareportGridCarousel.summary" => "3:4, seis painéis: cada painel de dados é seguido de um sem dados, para ninguém desistir no terceiro gráfico.",
+        "sceneTemplate.item.opinionLongformCarousel.title" => "Carrossel de opinião longa",
+        "sceneTemplate.item.opinionLongformCarousel.summary" => "3:4, seis painéis: uma matriz visual rígida do início ao fim, número e título sempre no mesmo lugar.",
+        "sceneTemplate.item.qaChalkboardCarousel.title" => "Carrossel de perguntas e respostas",
+        "sceneTemplate.item.qaChalkboardCarousel.summary" => "3:4, seis painéis: uma pergunta por painel, com um número-interrogação desenhado à mão no canto.",
+        "sceneTemplate.item.storyNightCarousel.title" => "Carrossel de narrativa",
+        "sceneTemplate.item.storyNightCarousel.summary" => "3:4, sete painéis: um balanço pessoal assente no tempo — a linha temporal do quinto painel é a parede-mestra.",
+        "sceneTemplate.item.toolkitNotebookCarousel.title" => {
+            "Carrossel de coletânea de ferramentas"
+        }
+        "sceneTemplate.item.toolkitNotebookCarousel.summary" => "3:4, seis painéis: seis ferramentas uma por painel, e o último lista-as com os números de página.",
+        "sceneTemplate.item.tutorialJournalCarousel.title" => "Carrossel de tutorial",
+        "sceneTemplate.item.tutorialJournalCarousel.summary" => {
+            "3:4, seis painéis: um passo por painel, o dedo é a barra de progresso."
+        }
+        "sceneTemplate.item.yearreviewMineralCarousel.title" => "Carrossel de retrospetiva anual",
+        "sceneTemplate.item.yearreviewMineralCarousel.summary" => {
+            "3:4, oito painéis: painéis de números frios e painéis de reflexão quentes, alternados."
+        }
         "fileMenu.newFromTemplate" => "Novo a partir de um modelo",
         "fileMenu.exportSlideshowHtml" => "Exportar apresentação HTML...",
         "fileMenu.exportPptx" => "Exportar para PowerPoint...",
@@ -558,6 +677,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "assetCenter.style.importSource" => "Você pode copiar um estilo de uma biblioteca DESIGN.md como styles.refero.design.",
         "assetCenter.style.importConfirm" => "Importar",
         "assetCenter.style.importCancel" => "Cancelar",
+        "assetCenter.style.importPickFile" => "Escolher arquivo…",
+        "assetCenter.style.importHintFile" => "Escolha um arquivo DESIGN.md ou cole o documento inteiro abaixo.",
         "assetCenter.style.importPlaceholder" => "Cole seu DESIGN.md aqui",
         "assetCenter.style.importEmpty" => "Esse arquivo está vazio ou é curto demais para ser um guia de estilo.",
         "assetCenter.style.importNotText" => "Esse arquivo não pode ser lido como texto Markdown.",
@@ -565,6 +686,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "slidesPanel.tabSlides" => "Slides",
         "slidesPanel.tabCards" => "Cartões",
         "slidesPanel.present" => "Apresentar",
+        "slidesPanel.exportPdf" => "Exportar PDF",
+        "slidesPanel.exportAllSlides" => "Exportar todos os slides",
+        "slidesPanel.exportSelectedSlides" => "Exportar slides selecionados ({{count}})",
         "settings.agents.heroTitle" => "Conecte seu provedor de IA",
         "settings.agents.heroSubtitle" => "O OpenPencil aciona seus agentes CLI locais e provedores de API — conecte um para começar a gerar designs.",
         "settings.agents.statusConnected" => "Conectado",
@@ -596,6 +720,14 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "tooltip.topbar.exitPreview" => "Sair da visualização",
         "tooltip.topbar.account" => "Conta",
         "settings.agents.providerRollMore" => "e mais {{count}}",
+        "ai.thinking.adaptive" => "Raciocínio: automático",
+        "ai.thinking.disabled" => "Raciocínio: desativado",
+        "ai.thinking.enabled" => "Raciocínio: ativado",
+        "ai.designProgress.detail.repairsApplied" => "{{count}} reparo(s) automático(s) aplicado(s)",
+        "ai.designProgress.detail.repairsMore" => "… e mais {{count}} (ver o registo)",
+        "ai.styleCard.builtin" => "Estilo integrado",
+        "ai.styleCard.imported" => "DESIGN.md importado",
+        "ai.styleCard.documentDesignMd" => "design.md do documento",
         _ => return super::pt_collab::lookup(key),
     })
 }

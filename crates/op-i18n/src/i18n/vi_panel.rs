@@ -76,6 +76,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "promptCenter.item.extremeCalm.title" => "Sự tĩnh lặng trong một màn hình",
         "promptCenter.item.webOrbit.title" => "Orbit · Trang đích bàn làm việc AI",
         "promptCenter.item.webAtelier.title" => "Atelier · Thương mại nội thất",
+        "promptCenter.item.webKilnform.title" => "Kilnform · Trang hạ tầng thiết kế",
+        "promptCenter.item.webReefwright.title" => "Reefwright · Trang tri thức hỗ trợ AI",
         "promptCenter.item.dashboardPulse.title" => "Pulse · Bảng phân tích tăng trưởng",
         "promptCenter.item.dashboardSentinel.title" => "Sentinel · Vận hành logistics",
         "promptCenter.item.componentDataGrid.title" => "Gridworks · Bảng dữ liệu doanh nghiệp",
@@ -99,6 +101,12 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.scene.carousel" => "Carousel",
         "sceneTemplate.scene.slides" => "Slide",
         "sceneTemplate.scene.card" => "Thẻ",
+        "sceneTemplate.scene.web" => "Trang web",
+        "sceneTemplate.generate.webPromptTemplate" => "Hãy thiết kế một trang đích web nhiều phần cho chủ đề sau: {{topic}}",
+        "sceneTemplate.item.saasLandingOrange.title" => "Trang đích SaaS · Cam",
+        "sceneTemplate.item.saasLandingOrange.summary" => "Trang tiếp thị nền sáng dựng trên các khối gần đen và một sắc cam duy nhất: thanh điều hướng, phần hero kèm ảnh sản phẩm, ba thẻ tính năng, phần giới thiệu quy trình, đánh giá khách hàng và chân trang đăng ký. Thay nội dung là thành một trang web.",
+        "sceneTemplate.item.productLandingLight.title" => "Trang đích sản phẩm · Sáng",
+        "sceneTemplate.item.productLandingLight.summary" => "Trang sản phẩm trắng giấy theo lối báo in: bản demo tương tác ở hero, các cột tính năng, bảng phân tích, so sánh cũ và mới cùng ba mức giá. Dành cho website SaaS và các buổi ra mắt sản phẩm.",
         "sceneTemplate.item.screenshotTutorial.title" => {
             "Thẻ hướng dẫn 3 bước bằng ảnh chụp màn hình"
         }
@@ -129,6 +137,115 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.item.minimalKeynote.summary" => "Nhiều khoảng trắng, chữ cực lớn, mỗi trang một câu căn giữa — chín trang không dùng một thẻ nào, mục lục chỉ có đường kẻ mảnh và con số. Dành cho ra mắt và diễn thuyết.",
         "sceneTemplate.item.gradientTech.title" => "Tech chuyển sắc",
         "sceneTemplate.item.gradientTech.summary" => "Nền chuyển sắc tối cùng thẻ kính mờ: kiến trúc, so sánh hiệu năng và tường khách hàng. Dành cho ra mắt sản phẩm cho lập trình viên.",
+        "sceneTemplate.scene.infographic" => "Đồ hoạ thông tin",
+        "sceneTemplate.item.punchQuoteCard.title" => "Thẻ trích dẫn · Áp phích",
+        "sceneTemplate.item.punchQuoteCard.summary" => "Thẻ 3:4 nền gần đen: hai dòng chữ cực lớn trên một dải vàng. Chỉ một câu, không gì khác — dành cho quan điểm và trích dẫn.",
+        "sceneTemplate.item.journalChecklistCard.title" => "Thẻ danh sách · Kiểu cơ sở tri thức",
+        "sceneTemplate.item.journalChecklistCard.summary" => "Một thẻ trắng trên nền xám nhạt: năm việc có thể tick, một nhãn và một khối trích dẫn. Dành cho kế hoạch tuần.",
+        "sceneTemplate.item.dataReportInfographic.title" => "Đồ hoạ dữ liệu",
+        "sceneTemplate.item.dataReportInfographic.summary" => "Ảnh dọc để cuộn: dải tiêu đề tối, ba con số lớn, biểu đồ cột so sánh, tỉ trọng và ba kết luận. Đổi số liệu là đăng được.",
+        "sceneTemplate.item.stepsFlowInfographic.title" => "Đồ hoạ các bước",
+        "sceneTemplate.item.stepsFlowInfographic.summary" => "Ảnh dọc để cuộn: năm thẻ bước được đánh số nối thành một luồng, mỗi bước kèm thời lượng, cùng hai lời khuyên. Dành cho hướng dẫn.",
+        "sceneTemplate.item.eventPosterDeck.title" => "Deck sự kiện · Áp phích",
+        "sceneTemplate.item.eventPosterDeck.summary" => "Bìa, điểm nhấn, lịch trình, đường đi, vé và trang kết. Nền trắng như tường triển lãm với các mảng đỏ và xanh, không bo góc và không chuyển sắc — hợp với chợ phiên, sự kiện câu lạc bộ và khai trương.",
+        "sceneTemplate.item.pitfallListInfographic.title" => "Đồ hoạ danh sách lỗi thường gặp",
+        "sceneTemplate.item.pitfallListInfographic.summary" => "Ảnh dọc để cuộn: sáu lỗi xếp theo mức phổ biến, mỗi lỗi kèm chỗ sai và cách sửa, cuối cùng là bốn dòng tự kiểm trước khi đăng. Chỉ đen, trắng và xám.",
+        "sceneTemplate.item.spineCultureCard.title" => "Thẻ tiêu đề dọc · Khoáng chất",
+        "sceneTemplate.item.spineCultureCard.summary" => "Nền đất son sẫm với tiêu đề chữ Hán dựng dọc, mảng vữa bong và hạt khoáng. 3:4. Hợp với văn hoá, bài dài và bìa cá nhân.",
+        "sceneTemplate.item.metricSingleCard.title" => "Thẻ một con số · Lưới chữ Hán",
+        "sceneTemplate.item.metricSingleCard.summary" => "Một con số khổng lồ trên nền trắng tinh, lưới Thuỵ Sĩ nghiêm ngặt và duy nhất một ô vuông đỏ báo hiệu. 1:1. Hợp với kết luận và thành tích.",
+        "sceneTemplate.item.quoteFrameCard.title" => "Thẻ trích dẫn · Lụa lam lục",
+        "sceneTemplate.item.quoteFrameCard.summary" => "Nền lụa ngả vàng với một câu đóng khung, chân trang là dãy núi lam đồng và lục khổng tước. 4:5. Hợp với trích đoạn, phỏng vấn.",
+        "sceneTemplate.item.dailySignCard.title" => "Thẻ mỗi ngày · Song cửa vườn",
+        "sceneTemplate.item.dailySignCard.summary" => "Tường vôi trắng khoét một song cửa lục giác, bên trong là ngày tháng và một dòng. Khoảng trống chính là trang trí. 3:4.",
+        "sceneTemplate.item.priceTierCard.title" => "Thẻ bảng giá · Đèn neon hiên phố",
+        "sceneTemplate.item.priceTierCard.summary" => "Nền đêm xanh mực với bảng giá ba mức, viền ống neon và quầng sáng toả. 1:1. Hợp với cửa hàng, sự kiện và gói dịch vụ.",
+        "sceneTemplate.item.noticeBoardCard.title" => "Thẻ thông báo · Chữ chì",
+        "sceneTemplate.item.noticeBoardCard.summary" => "Nền giấy báo với đôi kẻ măng-sét in lệch bản đỏ, các điều khoản đánh số và con dấu số hiệu. 4:5. Hợp với thông báo và nội quy.",
+        "sceneTemplate.item.milestoneTimelineInfographic.title" => "Đồ hoạ dòng thời gian",
+        "sceneTemplate.item.milestoneTimelineInfographic.summary" => "Ảnh dọc để cuộn: một trục chạy suốt chiều cao, mốc năm bên cạnh thẻ sự kiện, khép lại bằng bước kế tiếp. Hợp với tổng kết, lịch sử thương hiệu và hành trình dự án.",
+        "sceneTemplate.item.conceptContrastInfographic.title" => "Đồ hoạ đối chiếu khái niệm",
+        "sceneTemplate.item.conceptContrastInfographic.summary" => "Ảnh dọc để cuộn: kết luận trước, rồi thẻ định nghĩa cho từng khái niệm, bảng hai cột theo từng khía cạnh, cuối cùng là căn cứ để chọn.",
+        "sceneTemplate.item.rankingBoardInfographic.title" => "Đồ hoạ bảng xếp hạng TOP N",
+        "sceneTemplate.item.rankingBoardInfographic.summary" => "Ảnh dọc để cuộn: bảng gợi ý vàng trên nền mực — ba hạng đầu huy hiệu lớn, hạng tư đến tám huy hiệu viền, kèm dùng khi nào và thường xuyên ra sao.",
+        "sceneTemplate.item.faqThreadInfographic.title" => "Đồ hoạ hỏi đáp FAQ",
+        "sceneTemplate.item.faqThreadInfographic.summary" => "Ảnh dọc để cuộn: sáu cặp hỏi đáp, Hỏi tô đặc Đáp viền. Không đánh số, không thứ tự — đọc riêng một cặp vẫn đủ nghĩa.",
+        "sceneTemplate.item.dataStoryInfographic.title" => "Đồ hoạ câu chuyện dữ liệu",
+        "sceneTemplate.item.dataStoryInfographic.summary" => "Ảnh dọc để cuộn: bốn con số nối thành một mạch nhân quả, mỗi chặng thể hiện tỉ lệ bằng lưới mười ô, khép lại bằng kết luận dùng được ngay.",
+        "sceneTemplate.item.challengeTrackerInfographic.title" => "Đồ hoạ thử thách 30 ngày",
+        "sceneTemplate.item.challengeTrackerInfographic.summary" => "Ảnh dọc để cuộn: lưới ba mươi ô, sáu nhân năm, chỉ đặt cột mốc ở ngày 7, 15 và 30. Lưu lại và gạch mỗi ngày một ô.",
+        "sceneTemplate.item.ecosystemMapInfographic.title" => "Đồ hoạ bản đồ ngành",
+        "sceneTemplate.item.ecosystemMapInfographic.summary" => "Ảnh dọc để cuộn: bốn vị trí trên cùng một chuỗi xếp hai nhân hai, mỗi ô ba cái tên và chỉ rõ chỗ còn trống. Thẻ trắng nổi trên nền đá phiến.",
+        "sceneTemplate.item.doDontComparison.title" => "Hai cột nên / không nên",
+        "sceneTemplate.item.doDontComparison.summary" => "Thẻ 3:4: hai cách làm cùng một việc đặt cạnh nhau, phân biệt bằng chất liệu và biểu tượng thay vì đỏ – xanh, người mù màu cũng đọc được.",
+        "sceneTemplate.item.mythTruthComparison.title" => "Lầm tưởng và sự thật",
+        "sceneTemplate.item.mythTruthComparison.summary" => "Ảnh dọc: năm cặp “ai cũng nói thế / thực ra là”, lầm tưởng hẹp và nhạt bên trái, sự thật rộng và đậm bên phải.",
+        "sceneTemplate.item.pricingTiersComparison.title" => "So sánh các gói giá",
+        "sceneTemplate.item.pricingTiersComparison.summary" => "Thẻ 3:4: Miễn phí, Pro và Nhóm đặt cạnh nhau, giá là mốc neo, cột sau bao hàm cột trước. Hợp với trang bảng giá.",
+        "sceneTemplate.item.scenarioGuideComparison.title" => "Hướng dẫn chọn theo tình huống",
+        "sceneTemplate.item.scenarioGuideComparison.summary" => "Ảnh dọc: không bày thông số, chỉ bảy tình huống, mỗi cái kèm một nhãn kết luận. Người đọc chỉ cần tìm dòng của mình.",
+        "sceneTemplate.item.specTableComparison.title" => "Bảng so sánh thông số",
+        "sceneTemplate.item.specTableComparison.summary" => "Ảnh dọc: hai ứng viên trong cùng một bảng, so từng dòng, ô thắng được nâng lên bằng nền đậm.",
+        "sceneTemplate.item.threeWayComparison.title" => "So sánh ba phương án",
+        "sceneTemplate.item.threeWayComparison.summary" => "Ảnh dọc: ba phương án đặt cạnh nhau, cột giữa là đề xuất; mỗi cột mở đầu bằng một tình huống chứ không phải một cái tên.",
+        "sceneTemplate.item.timeShiftComparison.title" => "Một năm trước và bây giờ",
+        "sceneTemplate.item.timeShiftComparison.summary" => "Thẻ 3:4: một trục nhãn ở giữa, bên trái là một năm trước, bên phải là bây giờ, hai giá trị của cùng một mục nằm trên cùng dòng.",
+        "sceneTemplate.item.tradeoffScaleComparison.title" => "Cân đo được mất",
+        "sceneTemplate.item.tradeoffScaleComparison.summary" => "Thẻ 1:1: một đòn cân hai đĩa — bên trái là cái được, bên phải là cái mất, mỗi dòng có một ô trống để tích.",
+        "sceneTemplate.item.versionDiffComparison.title" => "Thay đổi giữa các phiên bản",
+        "sceneTemplate.item.versionDiffComparison.summary" => {
+            "Thẻ 1:1: không chia cột — mỗi dòng tự hoàn thành một lượt “cũ → mới”."
+        }
+        "sceneTemplate.item.appOnboardingTriptych.title" => "Bộ ba màn onboarding app",
+        "sceneTemplate.item.appOnboardingTriptych.summary" => "Thẻ 3:4: ba chiếc điện thoại đặt cạnh nhau với ô ảnh trống. Thả ba màn onboarding của bạn vào, thêm chữ là dùng được ngay.",
+        "sceneTemplate.item.diyBlueprintGuide.title" => "Hướng dẫn DIY có hình",
+        "sceneTemplate.item.diyBlueprintGuide.summary" => "Ảnh dọc, bảng vật liệu và quy cách chiếm chỗ ngang với phần các bước — làm thủ công hỏng ở khâu chuẩn bị chứ không phải ở tay.",
+        "sceneTemplate.item.photoCompositionTutorial.title" => "Bố cục ảnh chụp bằng điện thoại",
+        "sceneTemplate.item.photoCompositionTutorial.summary" => {
+            "3:4, năm khung: mỗi khung là một khung ngắm tối với đường dẫn phát sáng đè lên ô ảnh."
+        }
+        "sceneTemplate.item.recipeFourStep.title" => "Thẻ công thức bốn bước",
+        "sceneTemplate.item.recipeFourStep.summary" => "Thẻ 4:5 dạng 2×2: cả bốn bước trên một thẻ. Chụp màn hình rồi nấu theo — đứng bếp mà lật trang là phiền.",
+        "sceneTemplate.item.skincareRoutineCards.title" => "Thẻ các bước chăm sóc da",
+        "sceneTemplate.item.skincareRoutineCards.summary" => {
+            "4:5, sáu khung: mỗi bước cố định ba con số — lượng dùng, thời gian chờ, sáng hay tối."
+        }
+        "sceneTemplate.item.softwareStepTutorial.title" => "Thẻ các bước thao tác phần mềm",
+        "sceneTemplate.item.softwareStepTutorial.summary" => "Thẻ 4:5, bản tối duy nhất trong nhóm hướng dẫn: ô ảnh chụp màn hình kèm chỉ dẫn đánh số.",
+        "sceneTemplate.item.storageMakeoverSteps.title" => "Các bước cải tạo lưu trữ",
+        "sceneTemplate.item.storageMakeoverSteps.summary" => "3:4, sáu khung: ngoài thao tác và ô ảnh, mỗi bước còn cố định một tiêu chí hoàn thành và một khoản thời gian.",
+        "sceneTemplate.item.weeklyReportLesson.title" => "Bài học viết báo cáo tuần",
+        "sceneTemplate.item.weeklyReportLesson.summary" => "Ảnh dọc: giảng xong cấu trúc bốn đoạn là đưa luôn khung báo cáo có chỗ trống gạch chân để điền.",
+        "sceneTemplate.item.workoutBreakdownGuide.title" => "Hướng dẫn phân tách động tác tập",
+        "sceneTemplate.item.workoutBreakdownGuide.summary" => {
+            "Ảnh dọc: mỗi động tác kèm một thanh cố định gồm số hiệp, số lần và thời gian nghỉ."
+        }
+        "sceneTemplate.item.bookreviewSilkCarousel.title" => "Carousel mổ xẻ sách / phim",
+        "sceneTemplate.item.bookreviewSilkCarousel.summary" => "3:4, năm bảng: câu móc, đoạn trích có chú giải, ba nhận định, một câu đáng trích, khép lại. Tách tác phẩm thành những mảnh mang về được chứ không kể lại cốt truyện.",
+        "sceneTemplate.item.cityguideFilmCarousel.title" => "Carousel cẩm nang thành phố",
+        "sceneTemplate.item.cityguideFilmCarousel.summary" => "3:4, bảy bảng: địa điểm và lộ trình xen kẽ — bảng địa điểm cho người đang mơ, lộ trình một ngày và bảng ăn ở cho người đang lên kế hoạch.",
+        "sceneTemplate.item.datareportGridCarousel.title" => "Carousel báo cáo dữ liệu",
+        "sceneTemplate.item.datareportGridCarousel.summary" => "3:4, sáu bảng: sau mỗi bảng dữ liệu là một bảng không dữ liệu, để không ai lướt qua ngay ở biểu đồ thứ ba.",
+        "sceneTemplate.item.opinionLongformCarousel.title" => "Carousel bài quan điểm dài",
+        "sceneTemplate.item.opinionLongformCarousel.summary" => "3:4, sáu bảng: một bản mẫu thị giác nghiêm ngặt xuyên suốt, số trang và tiêu đề luôn ở một chỗ.",
+        "sceneTemplate.item.qaChalkboardCarousel.title" => "Carousel hỏi đáp",
+        "sceneTemplate.item.qaChalkboardCarousel.summary" => {
+            "3:4, sáu bảng: mỗi bảng một câu hỏi, góc bảng có số thứ tự hình dấu hỏi viết tay."
+        }
+        "sceneTemplate.item.storyNightCarousel.title" => "Carousel kể chuyện",
+        "sceneTemplate.item.storyNightCarousel.summary" => "3:4, bảy bảng: một lần nhìn lại trải nghiệm cá nhân dựng trên trục thời gian — dòng thời gian ở bảng năm là bức tường chịu lực.",
+        "sceneTemplate.item.toolkitNotebookCarousel.title" => "Carousel tuyển tập công cụ",
+        "sceneTemplate.item.toolkitNotebookCarousel.summary" => {
+            "3:4, sáu bảng: sáu công cụ mỗi bảng một cái, bảng cuối liệt kê kèm số trang."
+        }
+        "sceneTemplate.item.tutorialJournalCarousel.title" => "Carousel hướng dẫn",
+        "sceneTemplate.item.tutorialJournalCarousel.summary" => {
+            "3:4, sáu bảng: mỗi bảng một bước, ngón tay chính là thanh tiến trình."
+        }
+        "sceneTemplate.item.yearreviewMineralCarousel.title" => "Carousel tổng kết năm",
+        "sceneTemplate.item.yearreviewMineralCarousel.summary" => {
+            "3:4, tám bảng: bảng con số lạnh, bảng cảm nhận ấm, xen kẽ nhau."
+        }
         "fileMenu.newFromTemplate" => "Tạo mới từ mẫu",
         "collab.ownerConfirm.title" => "Xác nhận bạn đang tham gia phiên của ai",
         "collab.ownerConfirm.hint" => "Chưa có nội dung nào của phiên này được tải.",
@@ -556,6 +673,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "assetCenter.style.importSource" => "Bạn có thể sao chép phong cách từ thư viện DESIGN.md như styles.refero.design.",
         "assetCenter.style.importConfirm" => "Nhập",
         "assetCenter.style.importCancel" => "Hủy",
+        "assetCenter.style.importPickFile" => "Chọn tệp…",
+        "assetCenter.style.importHintFile" => "Chọn tệp DESIGN.md, hoặc dán toàn bộ tài liệu bên dưới.",
         "assetCenter.style.importPlaceholder" => "Dán DESIGN.md của bạn vào đây",
         "assetCenter.style.importEmpty" => "Tệp này rỗng, hoặc quá ngắn để là một hướng dẫn phong cách.",
         "assetCenter.style.importNotText" => "Tệp này không đọc được dưới dạng văn bản Markdown.",
@@ -563,6 +682,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "slidesPanel.tabSlides" => "Trang chiếu",
         "slidesPanel.tabCards" => "Thẻ",
         "slidesPanel.present" => "Trình chiếu",
+        "slidesPanel.exportPdf" => "Xuất PDF",
+        "slidesPanel.exportAllSlides" => "Xuất tất cả trang chiếu",
+        "slidesPanel.exportSelectedSlides" => "Xuất trang chiếu đã chọn ({{count}})",
         "settings.agents.heroTitle" => "Kết nối nhà cung cấp AI của bạn",
         "settings.agents.heroSubtitle" => "OpenPencil vận hành các agent CLI cục bộ và nhà cung cấp API của bạn — kết nối một cái để bắt đầu tạo thiết kế.",
         "settings.agents.statusConnected" => "Đã kết nối",
@@ -594,6 +716,14 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "tooltip.topbar.exitPreview" => "Thoát xem trước",
         "tooltip.topbar.account" => "Tài khoản",
         "settings.agents.providerRollMore" => "và {{count}} nhà cung cấp khác",
+        "ai.thinking.adaptive" => "Suy nghĩ: tự động",
+        "ai.thinking.disabled" => "Suy nghĩ: tắt",
+        "ai.thinking.enabled" => "Suy nghĩ: bật",
+        "ai.designProgress.detail.repairsApplied" => "Đã áp dụng {{count}} sửa lỗi tự động",
+        "ai.designProgress.detail.repairsMore" => "… và {{count}} mục nữa (xem nhật ký)",
+        "ai.styleCard.builtin" => "Kiểu tích hợp",
+        "ai.styleCard.imported" => "DESIGN.md đã nhập",
+        "ai.styleCard.documentDesignMd" => "design.md của tài liệu",
         _ => return super::vi_collab::lookup(key),
     })
 }

@@ -72,6 +72,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "promptCenter.item.extremeCalm.title" => "ความสงบในหนึ่งหน้าจอ",
         "promptCenter.item.webOrbit.title" => "Orbit · หน้าแลนดิ้งเวิร์กเบนช์ AI",
         "promptCenter.item.webAtelier.title" => "Atelier · อีคอมเมิร์ซเฟอร์นิเจอร์",
+        "promptCenter.item.webKilnform.title" => "Kilnform · เว็บไซต์โครงสร้างพื้นฐานงานออกแบบ",
+        "promptCenter.item.webReefwright.title" => "Reefwright · เว็บไซต์ฐานความรู้ซัพพอร์ต AI",
         "promptCenter.item.dashboardPulse.title" => "Pulse · แดชบอร์ดวิเคราะห์การเติบโต",
         "promptCenter.item.dashboardSentinel.title" => "Sentinel · ปฏิบัติการโลจิสติกส์",
         "promptCenter.item.componentDataGrid.title" => "Gridworks · ตารางข้อมูลองค์กร",
@@ -95,6 +97,12 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.scene.carousel" => "คารูเซล",
         "sceneTemplate.scene.slides" => "สไลด์",
         "sceneTemplate.scene.card" => "การ์ด",
+        "sceneTemplate.scene.web" => "หน้าเว็บ",
+        "sceneTemplate.generate.webPromptTemplate" => "ออกแบบหน้าแลนดิงเพจแบบหลายส่วนสำหรับหัวข้อต่อไปนี้: {{topic}}",
+        "sceneTemplate.item.saasLandingOrange.title" => "แลนดิงเพจ SaaS · โทนส้ม",
+        "sceneTemplate.item.saasLandingOrange.summary" => "หน้าการตลาดพื้นสว่างวางแผงสีเกือบดำ ตัดด้วยสีส้มเป็นสีหลัก มีแถบนำทาง ส่วนฮีโร่พร้อมภาพผลิตภัณฑ์ การ์ดความสามารถสามใบ ตัวอย่างขั้นตอนการทำงาน เสียงจากลูกค้า และส่วนท้ายรับสมัครสมาชิก เปลี่ยนข้อความก็ใช้เป็นเว็บได้ทันที",
+        "sceneTemplate.item.productLandingLight.title" => "แลนดิงเพจผลิตภัณฑ์ · โทนสว่าง",
+        "sceneTemplate.item.productLandingLight.summary" => "หน้าผลิตภัณฑ์สีขาวกระดาษสไตล์หนังสือพิมพ์ มีเดโมโต้ตอบในส่วนฮีโร่ คอลัมน์ความสามารถ กระดานวิเคราะห์ข้อมูล การเปรียบเทียบแบบเดิมกับแบบใหม่ และแพ็กเกจราคาสามระดับ เหมาะกับเว็บ SaaS และการเปิดตัวผลิตภัณฑ์",
         "sceneTemplate.item.screenshotTutorial.title" => {
             "การ์ดสอนใช้งานด้วยภาพหน้าจอ 3 ขั้นตอน"
         }
@@ -125,6 +133,141 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.item.minimalKeynote.summary" => "พื้นที่ว่างเยอะ ตัวอักษรใหญ่มาก หน้าละหนึ่งประโยคกึ่งกลาง — เก้าหน้าโดยไม่มีการ์ดสักใบ สารบัญมีแค่เส้นบางกับตัวเลข เหมาะกับงานเปิดตัวและปาฐกถา",
         "sceneTemplate.item.gradientTech.title" => "เทคไล่เฉดสี",
         "sceneTemplate.item.gradientTech.summary" => "พื้นไล่เฉดสีเข้มกับการ์ดกระจกฝ้า มีทั้งสถาปัตยกรรม ผลทดสอบ และกำแพงลูกค้า เหมาะกับการเปิดตัวผลิตภัณฑ์สายนักพัฒนา",
+        "sceneTemplate.scene.infographic" => "อินโฟกราฟิก",
+        "sceneTemplate.item.punchQuoteCard.title" => "การ์ดวรรคทอง · โปสเตอร์",
+        "sceneTemplate.item.punchQuoteCard.summary" => "การ์ด 3:4 พื้นดำ ตัวอักษรใหญ่สองบรรทัดกับแถบไฮไลต์สีเหลือง พูดแค่ประโยคเดียว เหมาะกับความคิดเห็นและคำคม",
+        "sceneTemplate.item.journalChecklistCard.title" => "การ์ดเช็กลิสต์ · สไตล์ฐานความรู้",
+        "sceneTemplate.item.journalChecklistCard.summary" => {
+            "การ์ดสีขาวบนพื้นเทาอ่อน มีห้าข้อให้ติ๊ก แท็ก และบล็อกคำพูด เหมาะกับแผนรายสัปดาห์"
+        }
+        "sceneTemplate.item.dataReportInfographic.title" => "อินโฟกราฟิกสรุปข้อมูล",
+        "sceneTemplate.item.dataReportInfographic.summary" => "ภาพยาวแนวตั้ง หัวเรื่องพื้นเข้ม ตัวเลขใหญ่สามตัว แท่งเปรียบเทียบ สัดส่วน และข้อสรุปสามข้อ เปลี่ยนตัวเลขแล้วโพสต์ได้เลย",
+        "sceneTemplate.item.stepsFlowInfographic.title" => "อินโฟกราฟิกขั้นตอน",
+        "sceneTemplate.item.stepsFlowInfographic.summary" => "ภาพยาวแนวตั้ง ห้าขั้นตอนมีเลขกำกับร้อยเป็นสายเดียว พร้อมป้ายเวลาและเคล็ดลับอีกสองข้อ เหมาะกับบทเรียนและไกด์",
+        "sceneTemplate.item.eventPosterDeck.title" => "เด็คงานอีเวนต์ · โปสเตอร์ประกาศ",
+        "sceneTemplate.item.eventPosterDeck.summary" => "ปก ไฮไลต์ กำหนดการ การเดินทาง บัตร และหน้าปิดท้าย พื้นขาวแบบผนังแกลเลอรีกับบล็อกสีแดงและน้ำเงิน ไม่มีมุมมนไม่มีไล่เฉด เหมาะกับตลาดนัด งานชมรม และงานเปิดร้าน",
+        "sceneTemplate.item.pitfallListInfographic.title" => "อินโฟกราฟิกเช็กลิสต์ข้อผิดพลาด",
+        "sceneTemplate.item.pitfallListInfographic.summary" => "ภาพยาวแนวตั้ง หกข้อผิดพลาดเรียงตามความถี่ แต่ละข้อบอกว่าพลาดตรงไหนและควรแก้อย่างไร ปิดท้ายด้วยเช็กลิสต์สี่บรรทัดก่อนโพสต์ ใช้เพียงขาวดำและเทา",
+        "sceneTemplate.item.spineCultureCard.title" => "การ์ดพาดหัวแนวตั้ง · สีแร่ธาตุ",
+        "sceneTemplate.item.spineCultureCard.summary" => "พื้นดินเหลืองแดงเข้ม พาดหัวจีนแนวตั้ง ผนังปูนกะเทาะและเม็ดสีแร่ 3:4 เหมาะกับงานวัฒนธรรม บทความยาว และปกส่วนตัว",
+        "sceneTemplate.item.metricSingleCard.title" => "การ์ดตัวเลขเดียว · กริดอักษรจีน",
+        "sceneTemplate.item.metricSingleCard.summary" => "ตัวเลขใหญ่ตัวเดียวบนพื้นขาวสะอาด กริดสวิสอันเคร่งครัดกับสี่เหลี่ยมแดงสัญญาณเพียงอันเดียว 1:1 เหมาะกับข้อสรุปและผลงาน",
+        "sceneTemplate.item.quoteFrameCard.title" => "การ์ดคำอ้างอิง · ผ้าไหมเขียวคราม",
+        "sceneTemplate.item.quoteFrameCard.summary" => "พื้นไหมเหลืองเก่า หนึ่งประโยคในกรอบ ด้านล่างเป็นภูเขาสีครามและเขียวมาลาไคต์ 4:5 เหมาะกับข้อความคัด บทสัมภาษณ์ และคำอ้างอิง",
+        "sceneTemplate.item.dailySignCard.title" => "การ์ดประจำวัน · ช่องลมสวนจีน",
+        "sceneTemplate.item.dailySignCard.summary" => "ผนังปูนขาวเจาะช่องลมหกเหลี่ยม ภายในมีวันที่และหนึ่งบรรทัด พื้นที่ว่างคือการตกแต่ง 3:4 เหมาะกับโพสต์ประจำวัน",
+        "sceneTemplate.item.priceTierCard.title" => "การ์ดราคา · นีออนใต้ถุนตึก",
+        "sceneTemplate.item.priceTierCard.summary" => "พื้นราตรีสีน้ำเงินหมึก ตารางราคาสามระดับ เส้นขอบหลอดนีออนและแสงฟุ้ง 1:1 เหมาะกับร้านค้า งานอีเวนต์ และแพ็กเกจ",
+        "sceneTemplate.item.noticeBoardCard.title" => "การ์ดประกาศ · ตัวพิมพ์ตะกั่ว",
+        "sceneTemplate.item.noticeBoardCard.summary" => "พื้นกระดาษหนังสือพิมพ์ เส้นคู่หัวเรื่องกับการพิมพ์สีเหลื่อม ข้อความมีเลขกำกับและตราลำดับ 4:5 เหมาะกับประกาศและระเบียบ",
+        "sceneTemplate.item.milestoneTimelineInfographic.title" => "อินโฟกราฟิกไทม์ไลน์",
+        "sceneTemplate.item.milestoneTimelineInfographic.summary" => "ภาพยาวแนวตั้ง แกนเดียวพาดตลอดความสูง มีหมุดปีคู่กับการ์ดเหตุการณ์ ปิดท้ายด้วยก้าวต่อไป เหมาะกับการทบทวน ประวัติแบรนด์ และเส้นทางโครงการ",
+        "sceneTemplate.item.conceptContrastInfographic.title" => "อินโฟกราฟิกเปรียบเทียบแนวคิด",
+        "sceneTemplate.item.conceptContrastInfographic.summary" => "ภาพยาวแนวตั้ง ให้ข้อสรุปก่อน ตามด้วยการ์ดนิยามของแต่ละแนวคิด แล้วแยกเป็นสองคอลัมน์ตามแง่มุม ปิดท้ายด้วยเกณฑ์เลือก",
+        "sceneTemplate.item.rankingBoardInfographic.title" => "อินโฟกราฟิกจัดอันดับ TOP N",
+        "sceneTemplate.item.rankingBoardInfographic.summary" => "ภาพยาวแนวตั้ง กระดานแนะนำสีทองบนพื้นหมึก สามอันดับแรกใช้เหรียญใหญ่ อันดับสี่ถึงแปดใช้เหรียญเส้น พร้อมบอกว่าใช้ตอนไหนและบ่อยแค่ไหน",
+        "sceneTemplate.item.faqThreadInfographic.title" => "อินโฟกราฟิกคำถามที่พบบ่อย",
+        "sceneTemplate.item.faqThreadInfographic.summary" => {
+            "ภาพยาวแนวตั้ง หกคู่ถาม-ตอบ ถามเป็นทึบ ตอบเป็นเส้น ไม่มีเลขไม่มีลำดับ อ่านคู่เดียวก็เข้าใจ"
+        }
+        "sceneTemplate.item.dataStoryInfographic.title" => "อินโฟกราฟิกเรื่องเล่าจากข้อมูล",
+        "sceneTemplate.item.dataStoryInfographic.summary" => "ภาพยาวแนวตั้ง สี่ตัวเลขร้อยเป็นเส้นเหตุผลเดียว แต่ละช่วงแสดงสัดส่วนด้วยตารางสิบช่อง ปิดท้ายด้วยข้อสรุปที่นำไปใช้ได้",
+        "sceneTemplate.item.challengeTrackerInfographic.title" => "อินโฟกราฟิกชาเลนจ์ 30 วัน",
+        "sceneTemplate.item.challengeTrackerInfographic.summary" => "ภาพยาวแนวตั้ง ตารางสามสิบช่อง หกคูณห้า มีหมุดหมายเฉพาะวันที่ 7, 15 และ 30 บันทึกเก็บไว้แล้วขีดวันละช่อง",
+        "sceneTemplate.item.ecosystemMapInfographic.title" => "อินโฟกราฟิกแผนที่อุตสาหกรรม",
+        "sceneTemplate.item.ecosystemMapInfographic.summary" => "ภาพยาวแนวตั้ง สี่ตำแหน่งบนสายเดียวกันจัดเป็นสองคูณสอง แต่ละช่องมีสามราย พร้อมชี้ช่องว่าง การ์ดขาวลอยบนพื้นหินชนวน",
+        "sceneTemplate.item.doDontComparison.title" => "สองคอลัมน์ ควรทำ ไม่ควรทำ",
+        "sceneTemplate.item.doDontComparison.summary" => "การ์ด 3:4 วางสองวิธีของเรื่องเดียวกันเคียงกัน แยกด้วยพื้นผิวและไอคอนแทนแดง-เขียว คนตาบอดสีก็อ่านได้",
+        "sceneTemplate.item.mythTruthComparison.title" => "ความเข้าใจผิดกับความจริง",
+        "sceneTemplate.item.mythTruthComparison.summary" => {
+            "ภาพยาว ห้าคู่ “ใครๆ ก็พูดกัน / ที่จริงคือ” ฝั่งผิดแคบสีอ่อนอยู่ซ้าย ฝั่งจริงกว้างสีเข้มอยู่ขวา"
+        }
+        "sceneTemplate.item.pricingTiersComparison.title" => "เปรียบเทียบแพ็กเกจราคา",
+        "sceneTemplate.item.pricingTiersComparison.summary" => {
+            "การ์ด 3:4 ฟรี / Pro / ทีม เรียงกัน ใช้ราคาเป็นหมุด คอลัมน์ขวาครอบคลุมคอลัมน์ซ้าย"
+        }
+        "sceneTemplate.item.scenarioGuideComparison.title" => "คู่มือเลือกตามสถานการณ์",
+        "sceneTemplate.item.scenarioGuideComparison.summary" => {
+            "ภาพยาว ไม่เรียงสเปก แต่ให้เจ็ดสถานการณ์ แต่ละอันมีป้ายคำตอบ ผู้อ่านแค่หาแถวของตัวเอง"
+        }
+        "sceneTemplate.item.specTableComparison.title" => "ตารางเปรียบสเปก",
+        "sceneTemplate.item.specTableComparison.summary" => {
+            "ภาพยาว สองตัวเลือกในตารางเดียวทีละแถว ช่องที่ชนะจะถูกยกด้วยพื้นสีเข้ม"
+        }
+        "sceneTemplate.item.threeWayComparison.title" => "เปรียบสามทางเลือก",
+        "sceneTemplate.item.threeWayComparison.summary" => {
+            "ภาพยาว สามทางเลือกเรียงกัน ตรงกลางคือตัวที่แนะนำ แต่ละคอลัมน์ขึ้นต้นด้วยสถานการณ์ไม่ใช่ชื่อ"
+        }
+        "sceneTemplate.item.timeShiftComparison.title" => "หนึ่งปีก่อนกับตอนนี้",
+        "sceneTemplate.item.timeShiftComparison.summary" => "การ์ด 3:4 มีแกนป้ายอยู่กลาง ซ้ายคือหนึ่งปีก่อน ขวาคือตอนนี้ สองค่าของหัวข้อเดียวกันอยู่แถวเดียวกัน",
+        "sceneTemplate.item.tradeoffScaleComparison.title" => "ตราชั่งข้อดีข้อเสีย",
+        "sceneTemplate.item.tradeoffScaleComparison.summary" => {
+            "การ์ด 1:1 คานหนึ่งสองจาน ซ้ายใส่สิ่งที่ได้ ขวาใส่สิ่งที่เสีย ทุกบรรทัดมีช่องว่างให้ติ๊ก"
+        }
+        "sceneTemplate.item.versionDiffComparison.title" => "สิ่งที่เปลี่ยนในเวอร์ชันใหม่",
+        "sceneTemplate.item.versionDiffComparison.summary" => {
+            "การ์ด 1:1 ไม่แบ่งซ้ายขวา แต่ละบรรทัดจบ “เดิม → ใหม่” ในตัวเอง"
+        }
+        "sceneTemplate.item.appOnboardingTriptych.title" => "ไตรภาคหน้าแนะนำแอป",
+        "sceneTemplate.item.appOnboardingTriptych.summary" => "การ์ด 3:4 มือถือสามเครื่องเรียงกันพร้อมช่องใส่ภาพว่าง ลากภาพแนะนำสามหน้าของคุณลงไปแล้วใส่ข้อความ ใช้เสนอหรือโพสต์ได้เลย",
+        "sceneTemplate.item.diyBlueprintGuide.title" => "คู่มือ DIY ภาพประกอบ",
+        "sceneTemplate.item.diyBlueprintGuide.summary" => "ภาพยาว ตารางวัสดุและสเปกกินพื้นที่พอ ๆ กับขั้นตอน เพราะงาน DIY มักพลาดที่การเตรียม ไม่ใช่ที่มือ",
+        "sceneTemplate.item.photoCompositionTutorial.title" => "สอนจัดองค์ประกอบภาพด้วยมือถือ",
+        "sceneTemplate.item.photoCompositionTutorial.summary" => {
+            "3:4 ห้าเฟรม แต่ละเฟรมเป็นช่องมองภาพสีเข้มกับเส้นไกด์เรืองแสงทับบนช่องใส่ภาพ"
+        }
+        "sceneTemplate.item.recipeFourStep.title" => "การ์ดสูตรอาหารสี่ขั้น",
+        "sceneTemplate.item.recipeFourStep.summary" => {
+            "การ์ด 4:5 แบบ 2×2 สี่ขั้นตอนอยู่ในใบเดียว แคปเก็บไว้แล้วทำตามได้เลย ยืนหน้าเตาไม่ต้องเลื่อนหน้า"
+        }
+        "sceneTemplate.item.skincareRoutineCards.title" => "การ์ดขั้นตอนดูแลผิว",
+        "sceneTemplate.item.skincareRoutineCards.summary" => "4:5 หกเฟรม ทุกขั้นกำหนดสามตัวเลข ปริมาณ เวลารอ และเช้าหรือเย็น ความผิดพลาดอยู่ที่ปริมาณไม่ใช่ลำดับ",
+        "sceneTemplate.item.softwareStepTutorial.title" => "การ์ดขั้นตอนใช้ซอฟต์แวร์",
+        "sceneTemplate.item.softwareStepTutorial.summary" => {
+            "การ์ด 4:5 ใบเดียวที่เป็นโทนเข้มในหมวดสอน มีช่องใส่ภาพหน้าจอกับคำอธิบายมีเลขกำกับ"
+        }
+        "sceneTemplate.item.storageMakeoverSteps.title" => "ขั้นตอนจัดบ้านใหม่",
+        "sceneTemplate.item.storageMakeoverSteps.summary" => {
+            "3:4 หกเฟรม นอกจากการกระทำและช่องภาพ ทุกขั้นยังกำหนดเกณฑ์ว่าทำเสร็จและเวลาที่ใช้"
+        }
+        "sceneTemplate.item.weeklyReportLesson.title" => "บทเรียนเขียนรายงานประจำสัปดาห์",
+        "sceneTemplate.item.weeklyReportLesson.summary" => {
+            "ภาพยาว อธิบายโครงสี่ท่อนแล้วให้โครงร่างรายงานที่มีเส้นให้เติม แคปแล้วกรอกได้เลย"
+        }
+        "sceneTemplate.item.workoutBreakdownGuide.title" => "คู่มือแยกส่วนท่าออกกำลังกาย",
+        "sceneTemplate.item.workoutBreakdownGuide.summary" => {
+            "ภาพยาว ทุกท่ามีแถบเซ็ต จำนวนครั้ง และเวลาพักในรูปแบบตายตัวควบคู่กับช่องภาพ"
+        }
+        "sceneTemplate.item.bookreviewSilkCarousel.title" => "คาร์รูเซลแกะบทวิจารณ์หนังสือ/หนัง",
+        "sceneTemplate.item.bookreviewSilkCarousel.summary" => "3:4 ห้าแผ่น ฮุก ข้อความต้นฉบับพร้อมคำอธิบาย สามข้อค้นพบ หนึ่งประโยคที่ควรจำ และบทปิด แกะงานออกเป็นชิ้นที่หยิบกลับไปได้ ไม่ใช่เล่าเรื่องซ้ำ",
+        "sceneTemplate.item.cityguideFilmCarousel.title" => "คาร์รูเซลไกด์เที่ยวเมือง",
+        "sceneTemplate.item.cityguideFilmCarousel.summary" => "3:4 เจ็ดแผ่น สลับภาพสถานที่กับเส้นทาง แผ่นสถานที่ให้คนที่ฝัน เส้นทางหนึ่งวันกับตารางกินนอนให้คนที่วางแผน",
+        "sceneTemplate.item.datareportGridCarousel.title" => "คาร์รูเซลรายงานข้อมูล",
+        "sceneTemplate.item.datareportGridCarousel.summary" => {
+            "3:4 หกแผ่น หลังแผ่นข้อมูลต้องคั่นด้วยแผ่นที่ไม่ใช่ข้อมูล กันไม่ให้คนปัดผ่านตั้งแต่กราฟที่สาม"
+        }
+        "sceneTemplate.item.opinionLongformCarousel.title" => "คาร์รูเซลบทความความเห็นยาว",
+        "sceneTemplate.item.opinionLongformCarousel.summary" => {
+            "3:4 หกแผ่น ใช้แม่แบบภาพที่เข้มงวดตลอดชุด เลขหน้าและหัวเรื่องอยู่ที่เดิมเสมอ"
+        }
+        "sceneTemplate.item.qaChalkboardCarousel.title" => "คาร์รูเซลถามตอบ",
+        "sceneTemplate.item.qaChalkboardCarousel.summary" => {
+            "3:4 หกแผ่น หนึ่งคำถามต่อหนึ่งแผ่น มุมแผ่นมีเลขเครื่องหมายคำถามเขียนมือ"
+        }
+        "sceneTemplate.item.storyNightCarousel.title" => "คาร์รูเซลเล่าเรื่อง",
+        "sceneTemplate.item.storyNightCarousel.summary" => "3:4 เจ็ดแผ่น ทบทวนประสบการณ์ส่วนตัวบนโครงของเวลา ไทม์ไลน์บนแผ่นที่ห้าคือผนังรับน้ำหนักของทั้งชุด",
+        "sceneTemplate.item.toolkitNotebookCarousel.title" => "คาร์รูเซลรวมของดี",
+        "sceneTemplate.item.toolkitNotebookCarousel.summary" => {
+            "3:4 หกแผ่น หกเครื่องมือแผ่นละหนึ่ง แผ่นสุดท้ายรวมเป็นสารบัญพร้อมเลขหน้า"
+        }
+        "sceneTemplate.item.tutorialJournalCarousel.title" => "คาร์รูเซลสอนทำ",
+        "sceneTemplate.item.tutorialJournalCarousel.summary" => {
+            "3:4 หกแผ่น หนึ่งแผ่นหนึ่งขั้น นิ้วมือคือแถบความคืบหน้า"
+        }
+        "sceneTemplate.item.yearreviewMineralCarousel.title" => "คาร์รูเซลสรุปประจำปี",
+        "sceneTemplate.item.yearreviewMineralCarousel.summary" => {
+            "3:4 แปดแผ่น แผ่นตัวเลขโทนเย็น แผ่นความรู้สึกโทนอุ่น สลับกันไป"
+        }
         "fileMenu.newFromTemplate" => "สร้างใหม่จากเทมเพลต",
         "collab.ownerConfirm.title" => "ยืนยันว่าคุณกำลังเข้าร่วมกับใคร",
         "collab.ownerConfirm.hint" => "ยังไม่มีเนื้อหาใดจากเซสชันนี้ถูกโหลด",
@@ -526,6 +669,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "assetCenter.style.importSource" => "คุณคัดลอกสไตล์จากคลัง DESIGN.md เช่น styles.refero.design ได้",
         "assetCenter.style.importConfirm" => "นำเข้า",
         "assetCenter.style.importCancel" => "ยกเลิก",
+        "assetCenter.style.importPickFile" => "เลือกไฟล์…",
+        "assetCenter.style.importHintFile" => "เลือกไฟล์ DESIGN.md หรือวางเอกสารทั้งหมดด้านล่าง",
         "assetCenter.style.importPlaceholder" => "วาง DESIGN.md ที่นี่",
         "assetCenter.style.importEmpty" => "ไฟล์นี้ว่างเปล่า หรือสั้นเกินกว่าจะเป็นไกด์สไตล์",
         "assetCenter.style.importNotText" => "ไฟล์นี้อ่านเป็นข้อความ Markdown ไม่ได้",
@@ -533,6 +678,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "slidesPanel.tabSlides" => "สไลด์",
         "slidesPanel.tabCards" => "การ์ด",
         "slidesPanel.present" => "นำเสนอ",
+        "slidesPanel.exportPdf" => "ส่งออก PDF",
+        "slidesPanel.exportAllSlides" => "ส่งออกสไลด์ทั้งหมด",
+        "slidesPanel.exportSelectedSlides" => "ส่งออกสไลด์ที่เลือก ({{count}})",
         "settings.agents.heroTitle" => "เชื่อมต่อผู้ให้บริการ AI ของคุณ",
         "settings.agents.heroSubtitle" => "OpenPencil ขับเคลื่อน CLI agent ในเครื่องและผู้ให้บริการ API ของคุณ เชื่อมต่อสักรายเพื่อเริ่มสร้างงานออกแบบ",
         "settings.agents.statusConnected" => "เชื่อมต่อแล้ว",
@@ -564,6 +712,14 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "tooltip.topbar.exitPreview" => "ออกจากตัวอย่าง",
         "tooltip.topbar.account" => "บัญชี",
         "settings.agents.providerRollMore" => "และอีก {{count}} ราย",
+        "ai.thinking.adaptive" => "การคิด: อัตโนมัติ",
+        "ai.thinking.disabled" => "การคิด: ปิด",
+        "ai.thinking.enabled" => "การคิด: เปิด",
+        "ai.designProgress.detail.repairsApplied" => "ใช้การซ่อมอัตโนมัติ {{count}} รายการ",
+        "ai.designProgress.detail.repairsMore" => "… และอีก {{count}} รายการ (ดูบันทึก)",
+        "ai.styleCard.builtin" => "สไตล์ในตัว",
+        "ai.styleCard.imported" => "DESIGN.md ที่นำเข้า",
+        "ai.styleCard.documentDesignMd" => "design.md ของเอกสาร",
         _ => return super::th_collab::lookup(key),
     })
 }

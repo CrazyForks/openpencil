@@ -79,6 +79,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "promptCenter.item.extremeCalm.title" => "极限 · 宁静",
         "promptCenter.item.webOrbit.title" => "Orbit · AI 工作台官网",
         "promptCenter.item.webAtelier.title" => "Atelier · 家居品牌电商",
+        "promptCenter.item.webKilnform.title" => "Kilnform · 设计基建官网",
+        "promptCenter.item.webReefwright.title" => "Reefwright · AI 客服知识官网",
         "promptCenter.item.dashboardPulse.title" => "Pulse · 增长分析台",
         "promptCenter.item.dashboardSentinel.title" => "Sentinel · 物流运维中心",
         "promptCenter.item.componentDataGrid.title" => "Gridworks · 企业数据表",
@@ -110,6 +112,12 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.scene.carousel" => "轮播",
         "sceneTemplate.scene.slides" => "PPT",
         "sceneTemplate.scene.card" => "卡片",
+        "sceneTemplate.scene.web" => "网页",
+        "sceneTemplate.generate.webPromptTemplate" => "为以下主题设计一个多区块的网页落地页：{{topic}}",
+        "sceneTemplate.item.saasLandingOrange.title" => "SaaS 落地页 · 橙色",
+        "sceneTemplate.item.saasLandingOrange.summary" => "浅底黑卡配橙色主色的产品营销长页：导航、Hero 与产品截图、能力三卡、工作流演示、客户评价和订阅页脚，换掉文案就是一版官网。",
+        "sceneTemplate.item.productLandingLight.title" => "产品落地页 · 浅色",
+        "sceneTemplate.item.productLandingLight.summary" => "纸白报刊风的产品长页：Hero 交互演示卡、能力分栏、数据看板、新旧方案对比和三档定价，适合 SaaS 官网与产品发布。",
         "sceneTemplate.item.screenshotTutorial.title" => "三步截图教程卡",
         "sceneTemplate.item.screenshotTutorial.summary" => {
             "封面、三个操作步骤和结尾行动号召，替换截图与说明即可发布。"
@@ -149,6 +157,149 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.item.gradientTech.title" => "渐变科技风",
         "sceneTemplate.item.gradientTech.summary" => {
             "深色渐变底加玻璃拟态卡，含架构、性能对比与客户墙，适合开发者产品发布。"
+        }
+        "sceneTemplate.scene.infographic" => "信息图",
+        "sceneTemplate.item.punchQuoteCard.title" => "金句卡 · 大字报",
+        "sceneTemplate.item.punchQuoteCard.summary" => {
+            "3:4 墨底金句卡，两行巨标题加一条亮黄标语，只讲一句话，适合观点与语录。"
+        }
+        "sceneTemplate.item.journalChecklistCard.title" => "清单卡 · 知识库风",
+        "sceneTemplate.item.journalChecklistCard.summary" => {
+            "4:5 浅灰底上一张白色清单卡，五条可勾的待办、标签与引用块，适合周计划与打卡。"
+        }
+        "sceneTemplate.item.dataReportInfographic.title" => "数据结论长图",
+        "sceneTemplate.item.dataReportInfographic.summary" => {
+            "竖版信息长图：深色页头、三个大数、横向对比条、构成占比和三条结论，换掉数字就能发。"
+        }
+        "sceneTemplate.item.stepsFlowInfographic.title" => "流程步骤长图",
+        "sceneTemplate.item.stepsFlowInfographic.summary" => {
+            "竖版信息长图：五个带序号的步骤卡串成一条流程，配时长标签与两句提示，适合教程与攻略。"
+        }
+        "sceneTemplate.item.eventPosterDeck.title" => "活动策划 deck · 公告海报",
+        "sceneTemplate.item.eventPosterDeck.summary" => "封面、亮点、日程、场地交通、票种和结尾，近白展墙底配红蓝色块，零圆角零渐变，适合市集、社团活动与开业招商。",
+        "sceneTemplate.item.pitfallListInfographic.title" => "避坑清单长图",
+        "sceneTemplate.item.pitfallListInfographic.summary" => "竖版信息长图：六条按频率排序的避坑项，每条给「错在哪」和「改成这样」，末尾附四行自检表，全篇无彩色。",
+        "sceneTemplate.item.spineCultureCard.title" => "竖排书脊卡 · 鸣沙矿彩",
+        "sceneTemplate.item.spineCultureCard.summary" => {
+            "3:4 赭泥暗底上的竖排大标，配剥落壁面与矿彩颗粒，适合文化、长文与个人 IP 封面。"
+        }
+        "sceneTemplate.item.metricSingleCard.title" => "数据单值卡 · 网格汉字",
+        "sceneTemplate.item.metricSingleCard.summary" => {
+            "1:1 纯白底上一个巨大的数，瑞士国际主义的严格网格加一枚信号红方块，适合结论与成绩。"
+        }
+        "sceneTemplate.item.quoteFrameCard.title" => "引用书摘卡 · 绢本青绿",
+        "sceneTemplate.item.quoteFrameCard.summary" => {
+            "4:5 绢黄底上一句框起来的话，底部是石青石绿的双色山形，适合书摘、访谈与引用。"
+        }
+        "sceneTemplate.item.dailySignCard.title" => "日签卡 · 园林框景",
+        "sceneTemplate.item.dailySignCard.summary" => {
+            "3:4 粉墙底上一扇六角漏窗，窗内是日期与一句话，留白即装饰，适合日签与品牌短语。"
+        }
+        "sceneTemplate.item.priceTierCard.title" => "促销价格卡 · 霓虹骑楼",
+        "sceneTemplate.item.priceTierCard.summary" => {
+            "1:1 墨蓝夜色底上的三档价目表，配霓虹灯管描边与外散射，适合门店、活动与套餐报价。"
+        }
+        "sceneTemplate.item.noticeBoardCard.title" => "公告通知卡 · 铅字报刊",
+        "sceneTemplate.item.noticeBoardCard.summary" => {
+            "4:5 新闻纸底上的报头双线与编号条款，含套印错位与骑缝编号，适合通知、须知与规则说明。"
+        }
+        "sceneTemplate.item.milestoneTimelineInfographic.title" => "时间线大事记长图",
+        "sceneTemplate.item.milestoneTimelineInfographic.summary" => "竖版信息长图：一条贯穿全图的时间轴，年份刻度配大事记卡，末尾收在下一步，适合复盘、品牌史与项目历程。",
+        "sceneTemplate.item.conceptContrastInfographic.title" => "概念对比科普长图",
+        "sceneTemplate.item.conceptContrastInfographic.summary" => "竖版信息长图：先给结论，再给两个概念各自的定义卡，然后逐维度拆成两栏表，最后给选择判据。",
+        "sceneTemplate.item.rankingBoardInfographic.title" => "榜单 TOP N 长图",
+        "sceneTemplate.item.rankingBoardInfographic.summary" => {
+            "竖版信息长图：墨底黑金的推荐榜，前三名大徽章、四到八名小描边，每条给使用场景与频次。"
+        }
+        "sceneTemplate.item.faqThreadInfographic.title" => "问答 FAQ 长图",
+        "sceneTemplate.item.faqThreadInfographic.summary" => {
+            "竖版信息长图：六组一问一答，Q 实心 A 描边，不编号不排序，读者只读其中一条也成立。"
+        }
+        "sceneTemplate.item.dataStoryInfographic.title" => "数据故事长图",
+        "sceneTemplate.item.dataStoryInfographic.summary" => "竖版信息长图：四个数字串成一条因果线，每段用十格方块阵表示比例，末尾收到一句能改做法的结论。",
+        "sceneTemplate.item.challengeTrackerInfographic.title" => "30 天打卡挑战长图",
+        "sceneTemplate.item.challengeTrackerInfographic.summary" => "竖版信息长图：六列五行的三十格打卡阵，只在第 7、15、30 天给里程碑，存进相册每天划掉一格。",
+        "sceneTemplate.item.ecosystemMapInfographic.title" => "行业地图长图",
+        "sceneTemplate.item.ecosystemMapInfographic.summary" => {
+            "竖版信息长图：二乘二的四区生态位阵列，每格挂三个位点并标出空位，石板灰底上浮白卡。"
+        }
+        "sceneTemplate.item.doDontComparison.title" => "好坏示范双栏",
+        "sceneTemplate.item.doDontComparison.summary" => "3:4 单卡：同一件事的两种做法左右并排，不靠红绿而靠材质与图标区分对错，色觉障碍读者也读得出来。",
+        "sceneTemplate.item.mythTruthComparison.title" => "误区与真相长图",
+        "sceneTemplate.item.mythTruthComparison.summary" => "竖版长图：五组「大家都这么说 / 其实是这样」交错排开，误区偏窄浅底、真相偏宽深底，一次只处理一组。",
+        "sceneTemplate.item.pricingTiersComparison.title" => "价格档位对比",
+        "sceneTemplate.item.pricingTiersComparison.summary" => "3:4 单卡：免费 / Pro / 团队三档并排，价格当锚点往下读，右列包含左列，适合定价页与套餐说明。",
+        "sceneTemplate.item.scenarioGuideComparison.title" => "场景选择指南长图",
+        "sceneTemplate.item.scenarioGuideComparison.summary" => {
+            "竖版长图：不摆参数，直接给七种处境，每种后面挂一个判定标签，读者只要找到自己那一行。"
+        }
+        "sceneTemplate.item.specTableComparison.title" => "参数表对比长图",
+        "sceneTemplate.item.specTableComparison.summary" => "竖版长图：两个候选放进一张真表逐行比，赢的一格用深底反白顶起来，一眼扫下来就知道各自赢在哪。",
+        "sceneTemplate.item.threeWayComparison.title" => "三方案横评长图",
+        "sceneTemplate.item.threeWayComparison.summary" => "竖版长图：三个方案并排，中间一列是推荐项，每列第一行不是名字而是一句处境——读者在找哪一列是自己。",
+        "sceneTemplate.item.timeShiftComparison.title" => "时间对比 · 一年前与现在",
+        "sceneTemplate.item.timeShiftComparison.summary" => {
+            "3:4 单卡：一条居中的标签脊柱，左边一年前、右边现在，同一项的两个取值落在同一行上。"
+        }
+        "sceneTemplate.item.tradeoffScaleComparison.title" => "优缺点天平",
+        "sceneTemplate.item.tradeoffScaleComparison.summary" => "1:1 方卡：一根横梁两个托盘，左盘装值得、右盘装代价，每条前面留一个空方框——结论交给读者自己称。",
+        "sceneTemplate.item.versionDiffComparison.title" => "新旧版本变化",
+        "sceneTemplate.item.versionDiffComparison.summary" => {
+            "1:1 方卡：不分左右两栏，每一行自己完成一次「旧 → 新」，顺着往下滑即可读完全部改动。"
+        }
+        "sceneTemplate.item.appOnboardingTriptych.title" => "App 新手引导三屏",
+        "sceneTemplate.item.appOnboardingTriptych.summary" => "3:4 单卡：三台并排的手机与空图位，把自己的三张引导图拖进去配上文案，一张就能拿去评审或发布。",
+        "sceneTemplate.item.diyBlueprintGuide.title" => "手工 DIY 图解长图",
+        "sceneTemplate.item.diyBlueprintGuide.summary" => "竖版长图：材料规格表与步骤各占一半篇幅——手工翻车多在准备而不在手上，所以先把材料写清楚。",
+        "sceneTemplate.item.photoCompositionTutorial.title" => "手机摄影构图教学",
+        "sceneTemplate.item.photoCompositionTutorial.summary" => {
+            "3:4 五帧：每帧一个深色取景框，荧光参考线压在图位之上——构图必须画在取景框上才说得清。"
+        }
+        "sceneTemplate.item.recipeFourStep.title" => "菜谱四步卡",
+        "sceneTemplate.item.recipeFourStep.summary" => {
+            "4:5 单卡 2×2 四宫格：四步全放在一张卡上，截图存相册就能照着做，站在灶台前不用翻页。"
+        }
+        "sceneTemplate.item.skincareRoutineCards.title" => "护肤步骤卡",
+        "sceneTemplate.item.skincareRoutineCards.summary" => {
+            "4:5 六帧：每步固定给用量、停留时长与早晚场次三个数——护肤翻车多在用量和间隔上。"
+        }
+        "sceneTemplate.item.softwareStepTutorial.title" => "软件操作步骤卡",
+        "sceneTemplate.item.softwareStepTutorial.summary" => {
+            "4:5 单卡：教程档唯一一张深色，界面截图位配编号操作说明，适合工具与软件的功能讲解。"
+        }
+        "sceneTemplate.item.storageMakeoverSteps.title" => "家居收纳改造步骤",
+        "sceneTemplate.item.storageMakeoverSteps.summary" => {
+            "3:4 六帧：每步除了动作与图位，固定给一条完成判定和一个耗时预算——做到那个状态才算做完。"
+        }
+        "sceneTemplate.item.weeklyReportLesson.title" => "职场周报小课长图",
+        "sceneTemplate.item.weeklyReportLesson.summary" => {
+            "竖版长图：讲完四段结构之后直接给一张带下划线空格的周报骨架，截图就能照着往里填。"
+        }
+        "sceneTemplate.item.workoutBreakdownGuide.title" => "健身动作分解长图",
+        "sceneTemplate.item.workoutBreakdownGuide.summary" => "竖版长图：每个动作除图位与要点外，还有一条固定格式的组数 / 次数 / 休息参数条，存图照着数做。",
+        "sceneTemplate.item.bookreviewSilkCarousel.title" => "书影评拆解轮播",
+        "sceneTemplate.item.bookreviewSilkCarousel.summary" => "3:4 五板：钩子、带注解的原文、三个洞见、一句书摘、收束——把一部作品拆成能拿走的零件，不是复述剧情。",
+        "sceneTemplate.item.cityguideFilmCarousel.title" => "城市指南轮播",
+        "sceneTemplate.item.cityguideFilmCarousel.summary" => {
+            "3:4 七板：照片与动线交替——地点板给做梦的读者，一日动线与吃住对照给做计划的读者。"
+        }
+        "sceneTemplate.item.datareportGridCarousel.title" => "数据报告轮播",
+        "sceneTemplate.item.datareportGridCarousel.summary" => "3:4 六板：数据页之间强制夹入非数据页，避免读者划到第三张图表就跳过，适合季报与行业观察。",
+        "sceneTemplate.item.opinionLongformCarousel.title" => "观点长文轮播",
+        "sceneTemplate.item.opinionLongformCarousel.summary" => "3:4 六板：一套严格的视觉母版贯穿全程，页码与标题永远在同一个位置——轮播划走就回不去，一致性是刚需。",
+        "sceneTemplate.item.qaChalkboardCarousel.title" => "问答体轮播",
+        "sceneTemplate.item.qaChalkboardCarousel.summary" => "3:4 六板：一问一板，每板左上角一个手写问号编号——问题本身就是往下划的理由，不需要留悬念。",
+        "sceneTemplate.item.storyNightCarousel.title" => "故事叙事轮播",
+        "sceneTemplate.item.storyNightCarousel.summary" => "3:4 七板：以时间为骨架的个人经历复盘，第五板那条时间轴是全套的承重墙，前四板都是它的一个刻度。",
+        "sceneTemplate.item.toolkitNotebookCarousel.title" => "干货合集轮播",
+        "sceneTemplate.item.toolkitNotebookCarousel.summary" => "3:4 六板：六个工具逐板展开，最后一板连页码一起列成目录——合集档的读者目的只有一个，收藏。",
+        "sceneTemplate.item.tutorialJournalCarousel.title" => "教程轮播",
+        "sceneTemplate.item.tutorialJournalCarousel.summary" => {
+            "3:4 六板：一板一步，手指就是进度条，划一次等于做完一步，适合手作、软件与生活教程。"
+        }
+        "sceneTemplate.item.yearreviewMineralCarousel.title" => "年度总结复盘轮播",
+        "sceneTemplate.item.yearreviewMineralCarousel.summary" => {
+            "3:4 八板：数字页冷、感受页热，两种温度交替推进，适合年终总结与个人年度复盘。"
         }
         "fileMenu.newFromTemplate" => "从模板新建",
         "fileMenu.exportSlideshowHtml" => "导出放映 HTML...",
@@ -463,6 +614,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "assetCenter.style.importSource" => "可以从 styles.refero.design 等 DESIGN.md 风格库复制内容。",
         "assetCenter.style.importConfirm" => "导入",
         "assetCenter.style.importCancel" => "取消",
+        "assetCenter.style.importPickFile" => "选择文件…",
+        "assetCenter.style.importHintFile" => "选择 DESIGN.md 文件，或在下方粘贴全文。",
         "assetCenter.style.importPlaceholder" => "在此粘贴 DESIGN.md",
         "assetCenter.style.importEmpty" => "这个文件是空的，或者内容太短，不像一份风格指南。",
         "assetCenter.style.importNotText" => "这个文件不是 Markdown 文本。",
@@ -470,6 +623,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "slidesPanel.tabSlides" => "幻灯片",
         "slidesPanel.tabCards" => "卡片",
         "slidesPanel.present" => "放映",
+        "slidesPanel.exportPdf" => "导出 PDF",
+        "slidesPanel.exportAllSlides" => "导出全部幻灯片",
+        "slidesPanel.exportSelectedSlides" => "导出所选幻灯片（{{count}}）",
         "settings.agents.heroTitle" => "连接你的 AI 服务商",
         "settings.agents.heroSubtitle" => {
             "OpenPencil 直接驱动本地 CLI Agent 与 API 服务商，连接任意一个即可开始生成设计。"
@@ -505,6 +661,14 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "tooltip.topbar.exitPreview" => "退出预览",
         "tooltip.topbar.account" => "账户",
         "settings.agents.providerRollMore" => "等 {{count}} 家",
+        "ai.thinking.adaptive" => "思考：自动",
+        "ai.thinking.disabled" => "思考：关闭",
+        "ai.thinking.enabled" => "思考：开启",
+        "ai.designProgress.detail.repairsApplied" => "已应用 {{count}} 处自动修复",
+        "ai.designProgress.detail.repairsMore" => "…还有 {{count}} 条(见日志)",
+        "ai.styleCard.builtin" => "内置风格",
+        "ai.styleCard.imported" => "导入的 DESIGN.md",
+        "ai.styleCard.documentDesignMd" => "文档 design.md",
         _ => return super::zh_cn_collab::lookup(key),
     })
 }

@@ -70,6 +70,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "promptCenter.item.extremeCalm.title" => "एक स्क्रीन में शांति",
         "promptCenter.item.webOrbit.title" => "Orbit · एआई वर्कबेंच लैंडिंग पेज",
         "promptCenter.item.webAtelier.title" => "Atelier · फ़र्नीचर ई-कॉमर्स",
+        "promptCenter.item.webKilnform.title" => "Kilnform · डिज़ाइन इन्फ़्रास्ट्रक्चर साइट",
+        "promptCenter.item.webReefwright.title" => "Reefwright · AI सपोर्ट नॉलेज साइट",
         "promptCenter.item.dashboardPulse.title" => "Pulse · विकास विश्लेषण डैशबोर्ड",
         "promptCenter.item.dashboardSentinel.title" => "Sentinel · लॉजिस्टिक्स संचालन",
         "promptCenter.item.componentDataGrid.title" => "Gridworks · एंटरप्राइज़ डेटा तालिका",
@@ -93,6 +95,12 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.scene.carousel" => "कैरोसेल",
         "sceneTemplate.scene.slides" => "स्लाइड",
         "sceneTemplate.scene.card" => "कार्ड",
+        "sceneTemplate.scene.web" => "वेब पेज",
+        "sceneTemplate.generate.webPromptTemplate" => "निम्न विषय पर कई सेक्शन वाला वेब लैंडिंग पेज डिज़ाइन करें: {{topic}}",
+        "sceneTemplate.item.saasLandingOrange.title" => "SaaS लैंडिंग पेज · नारंगी",
+        "sceneTemplate.item.saasLandingOrange.summary" => "हल्की पृष्ठभूमि पर लगभग-काले पैनल और एक नारंगी रंग वाला मार्केटिंग पेज: नेविगेशन, प्रोडक्ट स्क्रीनशॉट के साथ हीरो, तीन क्षमता कार्ड, वर्कफ़्लो प्रदर्शन, ग्राहक प्रशंसा और सब्सक्राइब फ़ुटर। टेक्स्ट बदलिए और साइट तैयार।",
+        "sceneTemplate.item.productLandingLight.title" => "प्रोडक्ट लैंडिंग पेज · हल्का",
+        "sceneTemplate.item.productLandingLight.summary" => "काग़ज़-सफ़ेद अख़बारी अंदाज़ का प्रोडक्ट पेज: इंटरैक्टिव हीरो डेमो, क्षमता कॉलम, एनालिटिक्स बोर्ड, पहले-बाद की तुलना और तीन मूल्य स्तर। SaaS साइट और प्रोडक्ट लॉन्च के लिए।",
         "sceneTemplate.item.screenshotTutorial.title" => "तीन चरणों वाला स्क्रीनशॉट ट्यूटोरियल कार्ड",
         "sceneTemplate.item.screenshotTutorial.summary" => {
             "कवर, तीन चरण और अंत में कार्रवाई का आह्वान; स्क्रीनशॉट और टेक्स्ट बदलकर प्रकाशित करें।"
@@ -121,6 +129,127 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.item.minimalKeynote.summary" => "खुली जगह, बहुत बड़ा टाइप, हर पेज पर बीच में एक वाक्य — नौ पेज और एक भी कार्ड नहीं, सूची में सिर्फ़ रेखाएँ और अंक। लॉन्च और कीनोट के लिए।",
         "sceneTemplate.item.gradientTech.title" => "ग्रेडिएंट टेक",
         "sceneTemplate.item.gradientTech.summary" => "गहरे ग्रेडिएंट पर फ़्रॉस्टेड-ग्लास कार्ड: आर्किटेक्चर, परफ़ॉर्मेंस तुलना और ग्राहक दीवार। डेवलपर प्रोडक्ट लॉन्च के लिए।",
+        "sceneTemplate.scene.infographic" => "इन्फ़ोग्राफ़िक",
+        "sceneTemplate.item.punchQuoteCard.title" => "कोट कार्ड · पोस्टर",
+        "sceneTemplate.item.punchQuoteCard.summary" => "लगभग काले तल पर 3:4 कार्ड: दो बहुत बड़ी पंक्तियाँ और एक पीली पट्टी। बस एक वाक्य — विचार और उद्धरण के लिए।",
+        "sceneTemplate.item.journalChecklistCard.title" => "चेकलिस्ट कार्ड · नॉलेज बेस",
+        "sceneTemplate.item.journalChecklistCard.summary" => "हल्के धूसर तल पर एक सफ़ेद चेकलिस्ट कार्ड: टिक करने लायक पाँच काम, एक टैग और एक उद्धरण खंड। साप्ताहिक योजना के लिए।",
+        "sceneTemplate.item.dataReportInfographic.title" => "डेटा निष्कर्ष इन्फ़ोग्राफ़िक",
+        "sceneTemplate.item.dataReportInfographic.summary" => "लंबी स्क्रॉल छवि: गहरा शीर्ष, तीन बड़े आँकड़े, बार तुलना, हिस्सेदारी और तीन निष्कर्ष। आँकड़े बदलिए और पोस्ट कीजिए।",
+        "sceneTemplate.item.stepsFlowInfographic.title" => "चरण-दर-चरण इन्फ़ोग्राफ़िक",
+        "sceneTemplate.item.stepsFlowInfographic.summary" => "लंबी स्क्रॉल छवि: क्रमांकित पाँच चरण एक प्रवाह में, हर एक पर लगने वाला समय, साथ में दो सुझाव। ट्यूटोरियल और गाइड के लिए।",
+        "sceneTemplate.item.eventPosterDeck.title" => "इवेंट deck · पोस्टर",
+        "sceneTemplate.item.eventPosterDeck.summary" => "कवर, ख़ास बातें, कार्यक्रम, पहुँचने का रास्ता, टिकट और समापन। गैलरी जैसा सफ़ेद तल, लाल और नीले रंग-खंड, न गोल कोने न ग्रेडिएंट — मेले, क्लब आयोजन और उद्घाटन के लिए।",
+        "sceneTemplate.item.pitfallListInfographic.title" => "आम गलतियों की इन्फ़ोग्राफ़िक",
+        "sceneTemplate.item.pitfallListInfographic.summary" => "लंबी स्क्रॉल छवि: छह गलतियाँ आवृत्ति के क्रम में, हर एक के साथ «क्या गलत है» और «इसके बजाय क्या करें», अंत में चार पंक्तियों की जाँच सूची। केवल काला, सफ़ेद और धूसर।",
+        "sceneTemplate.item.spineCultureCard.title" => "ऊर्ध्व शीर्षक कार्ड · खनिज रंगद्रव्य",
+        "sceneTemplate.item.spineCultureCard.summary" => "गेरुई मिट्टी के गहरे तल पर ऊर्ध्व चीनी शीर्षक, उखड़ता प्लास्टर और रंगद्रव्य के कण। 3:4। संस्कृति, लंबे लेख और निजी ब्रांड आवरण के लिए।",
+        "sceneTemplate.item.metricSingleCard.title" => "एकल आँकड़ा कार्ड · ग्रिड हांज़ी",
+        "sceneTemplate.item.metricSingleCard.summary" => "शुद्ध सफ़ेद पर एक विशाल संख्या, कठोर स्विस ग्रिड और सिर्फ़ एक लाल संकेत वर्ग। 1:1। निष्कर्ष और उपलब्धियों के लिए।",
+        "sceneTemplate.item.quoteFrameCard.title" => "उद्धरण कार्ड · रेशम नील-हरित",
+        "sceneTemplate.item.quoteFrameCard.summary" => "पीले पड़े रेशम पर फ़्रेम में बँधा एक वाक्य, नीचे अज़ुराइट और मैलाकाइट के पर्वत। 4:5। अंश, साक्षात्कार और उद्धरण के लिए।",
+        "sceneTemplate.item.dailySignCard.title" => "दैनिक कार्ड · उद्यान की खिड़की",
+        "sceneTemplate.item.dailySignCard.summary" => "चूने की दीवार पर एक षट्कोणीय जाली-खिड़की, भीतर तारीख़ और एक पंक्ति। खालीपन ही अलंकरण है। 3:4। दैनिक पोस्ट के लिए।",
+        "sceneTemplate.item.priceTierCard.title" => "मूल्य कार्ड · आर्केड नियॉन",
+        "sceneTemplate.item.priceTierCard.summary" => "स्याही-नीली रात पर तीन स्तरों की मूल्य सूची, नियॉन ट्यूब की रूपरेखा और उसका प्रकाश। 1:1। दुकान, आयोजन और पैकेज के लिए।",
+        "sceneTemplate.item.noticeBoardCard.title" => "सूचना कार्ड · सीसा टाइप",
+        "sceneTemplate.item.noticeBoardCard.summary" => "अख़बारी काग़ज़ पर शीर्ष की दोहरी रेखाएँ, विचलित लाल प्लेट, क्रमांकित खंड और क्रम-मुहर। 4:5। सूचना और नियमों के लिए।",
+        "sceneTemplate.item.milestoneTimelineInfographic.title" => "समयरेखा इन्फ़ोग्राफ़िक",
+        "sceneTemplate.item.milestoneTimelineInfographic.summary" => "लंबी स्क्रॉल छवि: पूरी ऊँचाई में एक अक्ष, वर्षों के निशान के साथ पड़ाव कार्ड, और अंत में अगला क़दम। समीक्षा, ब्रांड इतिहास और परियोजना यात्रा के लिए।",
+        "sceneTemplate.item.conceptContrastInfographic.title" => "अवधारणा तुलना इन्फ़ोग्राफ़िक",
+        "sceneTemplate.item.conceptContrastInfographic.summary" => "लंबी स्क्रॉल छवि: पहले निष्कर्ष, फिर दोनों अवधारणाओं के परिभाषा कार्ड, फिर हर पहलू पर दो-स्तंभ तुलना, और अंत में चुनने का आधार।",
+        "sceneTemplate.item.rankingBoardInfographic.title" => "टॉप N सूची इन्फ़ोग्राफ़िक",
+        "sceneTemplate.item.rankingBoardInfographic.summary" => "लंबी स्क्रॉल छवि: स्याही पर सुनहरी सिफ़ारिश सूची — पहले तीन को बड़े बैज, चौथे से आठवें को रेखा-बैज, हर एक के साथ कब और कितनी बार।",
+        "sceneTemplate.item.faqThreadInfographic.title" => "सामान्य प्रश्न इन्फ़ोग्राफ़िक",
+        "sceneTemplate.item.faqThreadInfographic.summary" => "लंबी स्क्रॉल छवि: छह प्रश्न-उत्तर जोड़े, प्र भरा और उ रेखांकित। न क्रमांक न क्रम — कोई भी एक जोड़ा अकेले पढ़ा जा सकता है।",
+        "sceneTemplate.item.dataStoryInfographic.title" => "डेटा कथा इन्फ़ोग्राफ़िक",
+        "sceneTemplate.item.dataStoryInfographic.summary" => "लंबी स्क्रॉल छवि: चार आँकड़े एक कारण-श्रृंखला में पिरोए, हर चरण दस खानों की पट्टी में, और अंत में अमल में लाने लायक़ निष्कर्ष।",
+        "sceneTemplate.item.challengeTrackerInfographic.title" => "30 दिन चुनौती इन्फ़ोग्राफ़िक",
+        "sceneTemplate.item.challengeTrackerInfographic.summary" => "लंबी स्क्रॉल छवि: छह गुणा पाँच के तीस खाने, पड़ाव सिर्फ़ 7, 15 और 30वें दिन। सहेजिए और रोज़ एक खाना काटिए।",
+        "sceneTemplate.item.ecosystemMapInfographic.title" => "उद्योग मानचित्र इन्फ़ोग्राफ़िक",
+        "sceneTemplate.item.ecosystemMapInfographic.summary" => "लंबी स्क्रॉल छवि: एक ही शृंखला के चार स्थान दो गुणा दो में, हर खाने में तीन नाम और ख़ाली जगहें चिह्नित। स्लेट पर सफ़ेद कार्ड।",
+        "sceneTemplate.item.doDontComparison.title" => "सही और गलत दो स्तंभ",
+        "sceneTemplate.item.doDontComparison.summary" => "3:4 कार्ड: एक ही काम के दो तरीके आमने-सामने, लाल-हरे की जगह बनावट और आइकन से भेद — वर्णांध पाठक भी पढ़ सकें।",
+        "sceneTemplate.item.mythTruthComparison.title" => "भ्रम और सच",
+        "sceneTemplate.item.mythTruthComparison.summary" => "लंबी छवि: «लोग कहते हैं / दरअसल» के पाँच जोड़े, भ्रम बाएँ संकरा और हल्का, सच दाएँ चौड़ा और गहरा।",
+        "sceneTemplate.item.pricingTiersComparison.title" => "मूल्य स्तर तुलना",
+        "sceneTemplate.item.pricingTiersComparison.summary" => "3:4 कार्ड: फ़्री, प्रो और टीम तीन स्तर साथ-साथ, कीमत ही लंगर है, हर स्तंभ पिछले को समेटता है।",
+        "sceneTemplate.item.scenarioGuideComparison.title" => "परिस्थिति अनुसार चयन गाइड",
+        "sceneTemplate.item.scenarioGuideComparison.summary" => "लंबी छवि: स्पेक नहीं, सात परिस्थितियाँ और हर एक पर एक फ़ैसला। पाठक को बस अपनी पंक्ति ढूँढनी है।",
+        "sceneTemplate.item.specTableComparison.title" => "स्पेक तुलना तालिका",
+        "sceneTemplate.item.specTableComparison.summary" => {
+            "लंबी छवि: दो विकल्प एक ही तालिका में पंक्ति-दर-पंक्ति, जीतने वाला खाना गहरे तल पर उभरा।"
+        }
+        "sceneTemplate.item.threeWayComparison.title" => "तीन विकल्पों की तुलना",
+        "sceneTemplate.item.threeWayComparison.summary" => "लंबी छवि: तीन विकल्प साथ-साथ, बीच वाला सुझाव; हर स्तंभ नाम से नहीं, एक परिस्थिति से शुरू होता है।",
+        "sceneTemplate.item.timeShiftComparison.title" => "एक साल पहले और अब",
+        "sceneTemplate.item.timeShiftComparison.summary" => "3:4 कार्ड: बीच में लेबलों की रीढ़, बाएँ एक साल पहले और दाएँ अब, दोनों मान एक ही पंक्ति में।",
+        "sceneTemplate.item.tradeoffScaleComparison.title" => "नफ़ा-नुक़सान का तराजू",
+        "sceneTemplate.item.tradeoffScaleComparison.summary" => {
+            "1:1 कार्ड: एक डंडी और दो पलड़े — बाएँ मूल्य, दाएँ कीमत, हर पंक्ति से पहले एक खाली डिब्बा।"
+        }
+        "sceneTemplate.item.versionDiffComparison.title" => "संस्करण में बदलाव",
+        "sceneTemplate.item.versionDiffComparison.summary" => {
+            "1:1 कार्ड: स्तंभ नहीं — हर पंक्ति खुद ही «पुराना → नया» पूरा करती है।"
+        }
+        "sceneTemplate.item.appOnboardingTriptych.title" => "ऐप ऑनबोर्डिंग त्रिपटल",
+        "sceneTemplate.item.appOnboardingTriptych.summary" => "3:4 कार्ड: तीन फ़ोन कतार में, खाली चित्र-स्थान सहित। अपनी तीन स्क्रीन डालिए, टेक्स्ट जोड़िए — समीक्षा या पोस्ट के लिए तैयार।",
+        "sceneTemplate.item.diyBlueprintGuide.title" => "DIY सचित्र गाइड",
+        "sceneTemplate.item.diyBlueprintGuide.summary" => "लंबी छवि जिसमें सामग्री-तालिका को चरणों जितनी ही जगह मिलती है — DIY हाथों में नहीं, तैयारी में बिगड़ता है।",
+        "sceneTemplate.item.photoCompositionTutorial.title" => "मोबाइल फ़ोटो कम्पोज़िशन",
+        "sceneTemplate.item.photoCompositionTutorial.summary" => {
+            "3:4, पाँच फ़्रेम: हर फ़्रेम एक गहरा व्यूफ़ाइंडर और फ़ोटो-स्थान पर चमकीली गाइड लाइनें।"
+        }
+        "sceneTemplate.item.recipeFourStep.title" => "चार चरण की रेसिपी कार्ड",
+        "sceneTemplate.item.recipeFourStep.summary" => "4:5 कार्ड 2×2: चारों चरण एक ही कार्ड पर। स्क्रीनशॉट लीजिए और बनाइए — चूल्हे के सामने पन्ने पलटना बोझ है।",
+        "sceneTemplate.item.skincareRoutineCards.title" => "स्किनकेयर स्टेप कार्ड",
+        "sceneTemplate.item.skincareRoutineCards.summary" => "4:5, छह फ़्रेम: हर चरण में तीन संख्याएँ — मात्रा, प्रतीक्षा और सुबह या रात। चूक क्रम में नहीं, मात्रा में होती है।",
+        "sceneTemplate.item.softwareStepTutorial.title" => "सॉफ़्टवेयर स्टेप ट्यूटोरियल",
+        "sceneTemplate.item.softwareStepTutorial.summary" => {
+            "4:5 कार्ड, शृंखला का एकमात्र गहरा: स्क्रीनशॉट स्थान और क्रमांकित निर्देश।"
+        }
+        "sceneTemplate.item.storageMakeoverSteps.title" => "घर व्यवस्थित करने के चरण",
+        "sceneTemplate.item.storageMakeoverSteps.summary" => {
+            "3:4, छह फ़्रेम: क्रिया और चित्र के अलावा हर चरण एक पूर्णता-मानक और समय-बजट तय करता है।"
+        }
+        "sceneTemplate.item.weeklyReportLesson.title" => "साप्ताहिक रिपोर्ट पाठ",
+        "sceneTemplate.item.weeklyReportLesson.summary" => {
+            "लंबी छवि: चार-भाग की संरचना समझाने के बाद रेखांकित रिक्त स्थानों वाला ढाँचा देती है।"
+        }
+        "sceneTemplate.item.workoutBreakdownGuide.title" => "व्यायाम विश्लेषण गाइड",
+        "sceneTemplate.item.workoutBreakdownGuide.summary" => {
+            "लंबी छवि: हर मूवमेंट के साथ सेट / दोहराव / विश्राम की एक निश्चित पट्टी।"
+        }
+        "sceneTemplate.item.bookreviewSilkCarousel.title" => "पुस्तक/फ़िल्म समीक्षा कैरोसेल",
+        "sceneTemplate.item.bookreviewSilkCarousel.summary" => "3:4, पाँच पट: हुक, टिप्पणी सहित उद्धरण, तीन अंतर्दृष्टि, एक याद रहने वाली पंक्ति, समापन। कथा दोहराने के बजाय कृति को ले जाने लायक़ टुकड़ों में बाँटता है।",
+        "sceneTemplate.item.cityguideFilmCarousel.title" => "शहर गाइड कैरोसेल",
+        "sceneTemplate.item.cityguideFilmCarousel.summary" => "3:4, सात पट: स्थान और मार्ग बारी-बारी — स्थान वाले पट सपने देखने वालों के लिए, दिनभर का मार्ग और खाने-ठहरने की तालिका योजना बनाने वालों के लिए।",
+        "sceneTemplate.item.datareportGridCarousel.title" => "डेटा रिपोर्ट कैरोसेल",
+        "sceneTemplate.item.datareportGridCarousel.summary" => {
+            "3:4, छह पट: हर डेटा पट के बाद एक ग़ैर-डेटा पट, ताकि तीसरे चार्ट पर कोई आगे न खिसक जाए।"
+        }
+        "sceneTemplate.item.opinionLongformCarousel.title" => "दीर्घ विचार कैरोसेल",
+        "sceneTemplate.item.opinionLongformCarousel.summary" => {
+            "3:4, छह पट: पूरे सेट में एक कठोर विज़ुअल मास्टर, पृष्ठ संख्या और शीर्षक हमेशा एक ही जगह।"
+        }
+        "sceneTemplate.item.qaChalkboardCarousel.title" => "प्रश्नोत्तर कैरोसेल",
+        "sceneTemplate.item.qaChalkboardCarousel.summary" => {
+            "3:4, छह पट: एक पट एक प्रश्न, हर कोने में हाथ से लिखा प्रश्नचिह्न क्रमांक।"
+        }
+        "sceneTemplate.item.storyNightCarousel.title" => "कथा कैरोसेल",
+        "sceneTemplate.item.storyNightCarousel.summary" => "3:4, सात पट: समय के ढाँचे पर बना निजी अनुभव का पुनरावलोकन — पाँचवें पट की समयरेखा पूरे सेट की भार वहन करती है।",
+        "sceneTemplate.item.toolkitNotebookCarousel.title" => "संसाधन संग्रह कैरोसेल",
+        "sceneTemplate.item.toolkitNotebookCarousel.summary" => {
+            "3:4, छह पट: छह उपकरण एक-एक पट पर, आख़िरी पट पर पृष्ठ संख्या सहित सूची।"
+        }
+        "sceneTemplate.item.tutorialJournalCarousel.title" => "ट्यूटोरियल कैरोसेल",
+        "sceneTemplate.item.tutorialJournalCarousel.summary" => {
+            "3:4, छह पट: एक पट एक चरण, उँगली ही प्रगति पट्टी है।"
+        }
+        "sceneTemplate.item.yearreviewMineralCarousel.title" => "वार्षिक समीक्षा कैरोसेल",
+        "sceneTemplate.item.yearreviewMineralCarousel.summary" => {
+            "3:4, आठ पट: आँकड़ों वाले पट ठंडे, अनुभव वाले पट गर्म, बारी-बारी।"
+        }
         "fileMenu.newFromTemplate" => "टेम्पलेट से नया बनाएँ",
         "collab.ownerConfirm.title" => "पुष्टि करें कि आप किससे जुड़ रहे हैं",
         "collab.ownerConfirm.hint" => "इस सत्र से अभी तक कुछ भी लोड नहीं हुआ है।",
@@ -556,6 +685,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "assetCenter.style.importSource" => "आप styles.refero.design जैसी DESIGN.md लाइब्रेरी से शैली कॉपी कर सकते हैं।",
         "assetCenter.style.importConfirm" => "आयात करें",
         "assetCenter.style.importCancel" => "रद्द करें",
+        "assetCenter.style.importPickFile" => "फ़ाइल चुनें…",
+        "assetCenter.style.importHintFile" => "DESIGN.md फ़ाइल चुनें, या पूरा दस्तावेज़ नीचे चिपकाएँ।",
         "assetCenter.style.importPlaceholder" => "अपना DESIGN.md यहाँ चिपकाएँ",
         "assetCenter.style.importEmpty" => "यह फ़ाइल खाली है, या शैली मार्गदर्शिका के लिए बहुत छोटी है।",
         "assetCenter.style.importNotText" => "यह फ़ाइल Markdown पाठ के रूप में नहीं पढ़ी जा सकती।",
@@ -563,6 +694,9 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "slidesPanel.tabSlides" => "स्लाइड",
         "slidesPanel.tabCards" => "कार्ड",
         "slidesPanel.present" => "प्रस्तुत करें",
+        "slidesPanel.exportPdf" => "PDF निर्यात करें",
+        "slidesPanel.exportAllSlides" => "सभी स्लाइड निर्यात करें",
+        "slidesPanel.exportSelectedSlides" => "चयनित स्लाइड निर्यात करें ({{count}})",
         "settings.agents.heroTitle" => "अपना AI प्रदाता कनेक्ट करें",
         "settings.agents.heroSubtitle" => "OpenPencil आपके स्थानीय CLI एजेंट और API प्रदाताओं को चलाता है — डिज़ाइन बनाना शुरू करने के लिए किसी एक को कनेक्ट करें।",
         "settings.agents.statusConnected" => "कनेक्टेड",
@@ -594,6 +728,14 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "tooltip.topbar.exitPreview" => "पूर्वावलोकन बंद करें",
         "tooltip.topbar.account" => "खाता",
         "settings.agents.providerRollMore" => "और {{count}} अन्य",
+        "ai.thinking.adaptive" => "सोच: स्वतः",
+        "ai.thinking.disabled" => "सोच: बंद",
+        "ai.thinking.enabled" => "सोच: चालू",
+        "ai.designProgress.detail.repairsApplied" => "{{count}} स्वतः सुधार लागू",
+        "ai.designProgress.detail.repairsMore" => "… और {{count}} अधिक (लॉग देखें)",
+        "ai.styleCard.builtin" => "अंतर्निहित शैली",
+        "ai.styleCard.imported" => "आयातित DESIGN.md",
+        "ai.styleCard.documentDesignMd" => "दस्तावेज़ design.md",
         _ => return super::hi_collab::lookup(key),
     })
 }
