@@ -506,7 +506,17 @@ impl SceneTemplatePanel<'_> {
         preview: Rect,
         template: &'static SceneTemplateDefinition,
     ) {
-        let Some((image_id, encoded)) = scene_template_preview(&template.id) else {
+        let Some(asset) = scene_template_preview(&template.id) else {
+            cx.backend.fill_round_rect(preview, 9.0, self.theme.muted);
+            return;
+        };
+        let image_id = asset.image_id;
+        let Some(encoded) = asset.bytes else {
+            // Web only: not in the bundle and not fetched yet. Ask the host and
+            // paint the plain block meanwhile — the card's title and metadata
+            // are already readable, so a slow or failed fetch costs the picture
+            // and nothing else.
+            op_editor_core::web_assets::request(asset.route);
             cx.backend.fill_round_rect(preview, 9.0, self.theme.muted);
             return;
         };

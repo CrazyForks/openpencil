@@ -13,7 +13,7 @@
 #      the wasm-bindgen JS shim). Any env.* import = LinkError at
 #      load time → regression → fail.
 #   4. Post wasm-opt -Oz gzip size ≤ STEP1B_SHELL_WASM_GZIP_LIMIT_BYTES
-#      (default 8 388 608 bytes = 8 MiB for the full CanvasKit app logic).
+#      (default 6 291 456 bytes = 6 MiB for the full CanvasKit app logic).
 #
 # This script is the local counterpart to
 # `.github/workflows/wasm-bundle-build.yml`; keep the two recipes aligned.
@@ -45,22 +45,27 @@ WASM_OPT_CANDIDATE_FEATURES=(
 )
 
 # Ceiling for the CanvasKit production bundle's gzipped wasm. It is far above
-# the retired skia raster path's 1 MiB (spec §6) because this bundle now carries
-# the FULL app logic absorbed from the skia path (codegen AI pipeline, Figma
-# parser, AI/live-sync, collaboration) plus ~4.5 MiB of embedded product
-# assets — scene-template .op documents, the prompt-center/template preview
-# JPEGs (already compressed, so gzip passes them through), the iconify
-# catalog, and the AI skill corpus. ~7.5 MiB today; the ceiling is a
-# runaway-regression tripwire, not a budget. TODO(perf): serve the preview
-# JPEGs from the daemon instead of embedding, and code-split / lazy-load the
-# codegen + Figma paths to shrink the initial download. Override via env.
-LIMIT="${STEP1B_SHELL_WASM_GZIP_LIMIT_BYTES:-8388608}"
+# the retired skia raster path's 1 MiB (spec §6) because this bundle carries the
+# FULL app logic absorbed from the skia path (codegen AI pipeline, Figma parser,
+# AI/live-sync, collaboration) plus the remaining embedded product assets —
+# scene-template .op documents, the iconify core catalog, and the AI skill
+# corpus.
+#
+# Re-baselined from 8 MiB to 6 MiB once the ~2.4 MiB of preview JPEGs moved out
+# of the binary and behind the runtime `/pkg/assets/` fetch (step 4 above;
+# `op_editor_core::web_assets`). The bundle measures ~5.35 MiB today, so the
+# ceiling is still a runaway-regression tripwire rather than a budget — but a
+# tripwire 3 MiB above the real number catches nothing, which is why it moves
+# down with the bundle. TODO(perf): the template documents and icon catalog can
+# follow the previews out; code-splitting the codegen + Figma paths is the
+# larger remaining win. Override via env.
+LIMIT="${STEP1B_SHELL_WASM_GZIP_LIMIT_BYTES:-6291456}"
 
 step() { printf '\n[step %d/%d] %s\n' "$1" "$2" "$3"; }
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || { printf 'missing prerequisite: %s\n' "$1" >&2; exit 2; }; }
 
-step 1 5 "Verify prerequisites"
+step 1 6 "Verify prerequisites"
 need cargo
 need wasm-bindgen
 need wasm-opt
@@ -74,14 +79,24 @@ need gzip
 # CanvasKit on the GPU and bundles the full app logic absorbed from the retired
 # skia raster path — daemon-backed AI chat (`web_chat`), live-sync, browser file
 # IO, clipboard/Figma paste, icon search, system fonts, and the codegen pipeline.
-step 2 5 "Build shell-web wasm32-unknown-unknown with --features canvaskit"
+step 2 6 "Build shell-web wasm32-unknown-unknown with --features canvaskit"
 cargo build -p op-host-web \
   --target wasm32-unknown-unknown --no-default-features --features canvaskit --release >/dev/null
 
-step 3 5 "wasm-bindgen --target web → ${PKG_DIR}/"
+step 3 6 "wasm-bindgen --target web → ${PKG_DIR}/"
 wasm-bindgen --target web --out-dir "${PKG_DIR}" "${TARGET_WASM}" >/dev/null
 
-step 4 5 "Verify 0 env.* imports (spec §7.1 import guard)"
+step 4 6 "Stage runtime product assets into ${PKG_DIR}/assets/"
+# The wasm bundle no longer embeds the preview JPEGs, template documents and
+# icon catalog (see `op_editor_core::web_assets`): the browser fetches each on
+# demand from `/pkg/assets/…`, which the daemon already serves out of the
+# resolved bundle directory. Staging them here is what makes that route
+# resolve — a bundle shipped without this step degrades every preview to its
+# placeholder. Keep in sync with `.github/workflows/wasm-bundle-build.yml` and
+# `Dockerfile.web-rust`.
+bash tools/stage-web-assets.sh "${PKG_DIR}/assets"
+
+step 5 6 "Verify 0 env.* imports (spec §7.1 import guard)"
 env_count="$(node -e '
 const fs = require("fs");
 const buf = fs.readFileSync(process.argv[1]);
@@ -96,7 +111,7 @@ if [ "${env_count}" != "0" ]; then
 fi
 printf '  ✓ 0 env.* imports\n'
 
-step 5 5 "Verify gzip size ≤ ${LIMIT} bytes (spec §6 ceiling)"
+step 6 6 "Verify gzip size ≤ ${LIMIT} bytes (spec §6 ceiling)"
 # Keep only the candidate feature flags this wasm-opt understands (see the
 # WASM_OPT_CANDIDATE_FEATURES note) so an older binaryen doesn't hard-fail on
 # `--enable-bulk-memory-opt`. `--enable-bulk-memory` alone still covers

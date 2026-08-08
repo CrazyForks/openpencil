@@ -694,3 +694,99 @@ fn a_closed_write_barrier_makes_the_design_doc_sink_ack_false() {
         "the generator's mirror must not advertise a node that was never applied"
     );
 }
+
+/// A two-page daemon document, so switching the active page is possible.
+fn multi_page_state() -> WebCanvasState {
+    let doc_json = serde_json::json!({
+        "version": "1.0.0",
+        "children": [],
+        "pages": [
+            {"id": "p1", "name": "One", "children": []},
+            {"id": "p2", "name": "Two", "children": []},
+        ],
+    })
+    .to_string();
+    let loaded = op_pen_loader::load_canonical(&doc_json).expect("fixture document loads");
+    WebCanvasState::new(EditorState::from_document(loaded.value), 3100)
+}
+
+/// A turn that asks for a different active page and carries no document.
+fn active_page_body(page_id: &str) -> String {
+    serde_json::json!({
+        "model": "default",
+        "user": "hello",
+        "activePageId": page_id,
+    })
+    .to_string()
+}
+
+#[test]
+fn a_closed_write_barrier_leaves_the_active_page_where_the_flush_found_it() {
+    // `active_page_index` is serialised into the tenant's persisted snapshot by
+    // `EditorMeta::from_state`, so moving it after the flush has snapshotted
+    // the document loses the move — or worse, persists a page the flushed
+    // document does not describe.
+    //
+    // This covers the SECOND admission guard specifically. The `editorMeta`
+    // test above passes even if this one's guard is deleted, because the two
+    // fields arrive on different request fields.
+    use crate::web_canvas_server::WriteBarrier;
+
+    let barrier = WriteBarrier::default();
+    barrier.close();
+    let state = Mutex::new(multi_page_state());
+    assert_eq!(
+        state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .editor
+            .ui
+            .active_page_index,
+        0,
+        "the fixture starts on the first page"
+    );
+
+    let req = parse_standard_turn_body(&active_page_body("p2")).expect("request parses");
+    let snapshot = apply_request_snapshot(&req, &state, &SseHub::default(), Some(&barrier))
+        .expect("a page-switch turn still gets its reply");
+
+    assert_eq!(
+        snapshot.ui.active_page_index, 0,
+        "the turn snapshot must not advertise a page the flush will not persist"
+    );
+    assert_eq!(
+        state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .editor
+            .ui
+            .active_page_index,
+        0,
+        "a closed barrier must leave the persisted active page alone"
+    );
+}
+
+#[test]
+fn an_open_write_barrier_still_switches_the_active_page() {
+    // The counterpart, so the guard above is proven to be what stops it rather
+    // than the fixture simply being unable to switch pages at all.
+    use crate::web_canvas_server::WriteBarrier;
+
+    let barrier = WriteBarrier::default();
+    let state = Mutex::new(multi_page_state());
+
+    let req = parse_standard_turn_body(&active_page_body("p2")).expect("request parses");
+    apply_request_snapshot(&req, &state, &SseHub::default(), Some(&barrier))
+        .expect("an open barrier admits the switch");
+
+    assert_eq!(
+        state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .editor
+            .ui
+            .active_page_index,
+        1,
+        "an open barrier must apply the requested page switch"
+    );
+}

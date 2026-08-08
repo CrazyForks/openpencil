@@ -98,6 +98,9 @@ mod web_ai_transport;
 // against api.iconify.design (CORS-open, same as TS).
 #[cfg(feature = "canvaskit")]
 mod iconify_web;
+// Runtime fetch for the product assets the wasm bundle omits.
+#[cfg(feature = "canvaskit")]
+mod web_asset_fetch;
 // Web chat session — drains `chat.pending_send` / Stop / New Chat and streams
 // real standard-mode turns through the daemon's `/api/ai/standard` route.
 #[cfg(feature = "canvaskit")]

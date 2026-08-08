@@ -1,7 +1,8 @@
 name: op-web-sdk bundle build + size gate
 
 # Builds the op-web-sdk WASM package (canvaskit feature), asserts 0 env.*
-# imports and gzip size <= 8 MiB, then uploads pkg/ as the `op-web-sdk-bundle`
+# imports and gzip size <= 8 MiB (this viewer bundle's own tripwire — op-host-web
+# re-baselined to 6 MiB separately), then uploads pkg/ as the `op-web-sdk-bundle`
 # artifact.  This is the CI counterpart of the local
 # `crates/op-web-sdk/tools/build-wasm.sh` developer gate.
 #

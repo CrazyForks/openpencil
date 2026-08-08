@@ -381,7 +381,17 @@ impl PromptCenterPanel<'_> {
     }
 
     fn paint_card_preview(&self, cx: &mut PaintCx<'_>, preview: Rect, card: &PromptCenterCard<'_>) {
-        let Some((image_id, encoded)) = prompt_center_preview(card.id.as_ref()) else {
+        let Some(asset) = prompt_center_preview(card.id.as_ref()) else {
+            self.paint_preview_fallback(cx, preview, card);
+            return;
+        };
+        let image_id = asset.image_id;
+        let Some(encoded) = asset.bytes else {
+            // Web only: the JPEG is not in the bundle and has not been fetched
+            // yet. Ask the host for it and paint the same fallback an
+            // unknown-id card gets — the card is readable either way, and a
+            // failed fetch simply leaves it that way rather than blocking.
+            op_editor_core::web_assets::request(asset.route);
             self.paint_preview_fallback(cx, preview, card);
             return;
         };

@@ -23,7 +23,7 @@ name: WASM bundle build (#56 — real canvaskit deployable)
 #   2. wasm-bindgen --target web --out-dir crates/op-host-web/pkg <target.wasm>
 #   3. assert 0 env.* imports (LinkError guard)
 #   4. wasm-opt -Oz with the rustc-emitted WebAssembly feature flags, then
-#      gzip size <= ceiling (default 8388608 bytes = 8 MiB, overridable via
+#      gzip size <= ceiling (default 6291456 bytes = 6 MiB, overridable via
 #      STEP1B_SHELL_WASM_GZIP_LIMIT_BYTES)
 # The job calls the script directly rather than duplicating that logic — the
 # script already runs non-interactively (`set -euo pipefail`, exit 0/1/2) and
@@ -118,7 +118,7 @@ jobs:
       # cargo build (canvaskit) -> wasm-bindgen --target web -> 0-env-import
       # assert -> wasm-opt -Oz with rustc's WebAssembly feature flags -> gzip
       # size <= ceiling, and exits non-zero on any breach, which fails the job.
-      # The ceiling default (8 MiB gzip) lives in the script; override here only
+      # The ceiling default (6 MiB gzip) lives in the script; override here only
       # if a release intentionally re-baselines.
       - name: Build + size-gate the canvaskit bundle
         run: bash tools/check-wasm-bundle.sh
@@ -131,6 +131,11 @@ jobs:
       # `canvaskit/` subdir, all inside a single `web-bundle/` directory. This
       # mirrors the `<exe_dir>/web-bundle` + `web-bundle/canvaskit` resolution
       # order in `crates/op-host-services/src/web_static.rs`.
+      #
+      # `pkg/` also carries `assets/` — the preview JPEGs the wasm bundle no
+      # longer embeds and the browser fetches from `/pkg/assets/…` (staged by
+      # `tools/stage-web-assets.sh`, which the gate script above runs). The
+      # assertion below is what stops a bundle shipping without them.
       - name: Assemble deployable web-bundle/
         run: |
           set -euo pipefail
@@ -138,8 +143,11 @@ jobs:
           mkdir -p web-bundle
           cp -R crates/op-host-web/pkg/. web-bundle/
           cp -R crates/op-host-web/assets/canvaskit web-bundle/canvaskit
+          test -d web-bundle/assets/prompt_center_previews \
+            || { echo "::error::web-bundle is missing assets/prompt_center_previews"; exit 1; }
           echo "web-bundle contents:"
           find web-bundle -maxdepth 2 -type f | sort
+          echo "staged runtime assets: $(find web-bundle/assets -type f | wc -l) files"
 
       - name: Upload deployable web-bundle artifact
         uses: actions/upload-artifact@v4

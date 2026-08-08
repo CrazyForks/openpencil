@@ -6,14 +6,25 @@
 //! which passes whether or not the wiring behind it is correct.
 //!
 //! Standing up an activated owner session needs `crate::runtime`'s private
-//! actor and channel internals, so this module lives inside `runtime` and
-//! re-exports exactly two capabilities:
+//! actor and channel internals, so this module lives inside it and re-exports
+//! exactly two capabilities:
 //!
-//! 1. [`owner_session`] — an activated owner runtime, ready for
-//!    `begin_local_edit`.
+//! 1. [`owner_session`] — an activated owner runtime over a caller-supplied
+//!    baseline document, ready for `begin_local_edit`.
 //! 2. [`owner_session_with_saturated_command_lane`] — the same, with the
 //!    outbound command lane already full, so the next commit cannot be
 //!    delivered and the runtime falls back to standalone.
+//!
+//! ## The lane guard is not optional
+//!
+//! Both constructors return an [`OwnerLaneGuard`] alongside the runtime, and
+//! the caller MUST hold it for as long as it drives the runtime. The guard
+//! owns the channel's receiver, and a bounded `SyncSender` reports two
+//! different failures: `Full` when the lane is saturated, `Disconnected` once
+//! the receiver is gone (`network.rs`'s `NetworkCommandSendError`, which the
+//! runtime maps to `ResourceLimit` and `Transport` respectively). Drop the
+//! guard early and the "full lane" test silently becomes a "dead channel"
+//! test — a different code path with a different projected failure.
 //!
 //! ## Not a production surface
 //!
@@ -24,6 +35,7 @@
 use std::sync::mpsc::Receiver;
 
 use op_collab::{ConnectionKey, Epoch, Role, SessionId, VerifiedAuthMetadata};
+use op_editor_core::PenDocument;
 
 use super::actor::{set_owner_ui, EditorActor, OwnerActor};
 use super::network::owner_command_channel_with_capacity_for_test;
@@ -34,36 +46,48 @@ use crate::host::HeadlessCollabHost;
 /// Session id every fixture runs under.
 const FIXTURE_SESSION: &str = "collab-host-test-support";
 
-/// Enough room for one command, which the saturating constructor then uses.
+/// Room for exactly one command, which the saturating constructor then uses.
 const FIXTURE_COMMAND_CAPACITY: usize = 1;
 
-/// An activated owner session.
+/// Keeps the owner's outbound command lane connected.
 ///
-/// The caller normally moves `runtime` into whatever state machine it is
-/// testing; `host` is the editor the session was activated against and is kept
-/// alive because the actor's projection points at it.
-pub struct OwnerFixture {
-    /// The runtime, carrying an activated `OwnerActor` with one admitted peer.
-    pub runtime: CollabRuntime,
-    /// The headless editor the session was activated over.
-    pub host: HeadlessCollabHost,
-    /// The admitted peer, for callers that need to name it.
-    pub peer: ConnectionKey,
-    /// Held, not dropped: a dropped receiver makes every send fail outright,
-    /// which is a *different* failure from "the lane is full". Nothing drains
-    /// it, so the channel capacity is the whole budget.
+/// Hold it for the whole test — see the module docs for why dropping it early
+/// silently changes which failure the runtime reports.
+#[must_use = "dropping the guard disconnects the lane and changes the failure \
+              the runtime reports from Full to Disconnected"]
+pub struct OwnerLaneGuard {
     _commands: Receiver<OwnerNetworkCommand>,
 }
 
 /// Build an owner runtime with one admitted editor peer, ready for
 /// `begin_local_edit`.
 ///
-/// The session's diff runs between the document the caller's host held when
-/// the capture opened and the document it holds when the capture closes — not
-/// against this fixture's host — so a caller may install the runtime over its
-/// own editor state.
-pub fn owner_session() -> OwnerFixture {
+/// `baseline` is the document the session is activated over, and it must be
+/// the same document the caller's own editor holds. The owner core validates
+/// each commit against the document the capture opened on, so a session
+/// activated over a *different* document reports a candidate mismatch instead
+/// of the delivery outcome the caller is trying to observe.
+pub fn owner_session(baseline: PenDocument) -> (CollabRuntime, OwnerLaneGuard) {
+    build(baseline, false)
+}
+
+/// [`owner_session`] with the outbound command lane already full.
+///
+/// The next commit cannot be handed to the network worker, so the runtime
+/// retires the session and `finish_local_edit` reports
+/// `Failed { document_rolled_back: false }` — the standalone fallback, which
+/// deliberately KEEPS the edit because the user's work is still theirs even
+/// though the session is gone. The projected failure is `ResourceLimit`, which
+/// is how a caller can tell this apart from a dead channel.
+pub fn owner_session_with_saturated_command_lane(
+    baseline: PenDocument,
+) -> (CollabRuntime, OwnerLaneGuard) {
+    build(baseline, true)
+}
+
+fn build(baseline: PenDocument, saturate: bool) -> (CollabRuntime, OwnerLaneGuard) {
     let mut host = HeadlessCollabHost::new();
+    host.editor_state_mut().doc = baseline;
     let mut owner = OwnerActor::new(
         SessionId::from(FIXTURE_SESSION),
         Epoch(1),
@@ -87,31 +111,21 @@ pub fn owner_session() -> OwnerFixture {
     let mut runtime = CollabRuntime::new();
     runtime.network = Some(network);
     runtime.actor = Some(EditorActor::Owner(Box::new(owner)));
-    OwnerFixture {
-        runtime,
-        host,
-        peer,
-        _commands: commands,
+    if saturate {
+        runtime
+            .send_owner(OwnerNetworkCommand::Close {
+                connection: ConnectionKey::new(99).expect("non-zero connection"),
+            })
+            .expect("the first send fills the lane");
     }
-}
-
-/// [`owner_session`] with the outbound command lane already full.
-///
-/// The next commit cannot be handed to the network worker, so the runtime
-/// retires the session and `finish_local_edit` reports
-/// `Failed { document_rolled_back: false }` — the standalone fallback, which
-/// deliberately KEEPS the edit because the user's work is still theirs even
-/// though the session is gone. A caller that undoes side effects on failure
-/// must be able to reproduce this exact case.
-pub fn owner_session_with_saturated_command_lane() -> OwnerFixture {
-    let fixture = owner_session();
-    fixture
-        .runtime
-        .send_owner(OwnerNetworkCommand::Close {
-            connection: ConnectionKey::new(99).expect("non-zero connection"),
-        })
-        .expect("the first send fills the lane");
-    fixture
+    // `host` is dropped here on purpose: the actor owns its own session state,
+    // and this host existed only to seed the baseline and take the projection.
+    (
+        runtime,
+        OwnerLaneGuard {
+            _commands: commands,
+        },
+    )
 }
 
 fn fixture_auth(index: usize) -> VerifiedAuthMetadata {
@@ -123,5 +137,59 @@ fn fixture_auth(index: usize) -> VerifiedAuthMetadata {
         expires_at_unix_ms: 10_000,
         display_name: None,
         avatar_url: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::types::CollabRuntimeFailure;
+
+    /// The bug this module's guard exists to prevent: a caller that lets the
+    /// receiver drop gets `Disconnected` (projected as `Transport`) where it
+    /// meant to test `Full` (projected as `ResourceLimit`).
+    #[test]
+    fn a_saturated_lane_reports_resource_limit_while_the_guard_is_held() {
+        let (runtime, guard) =
+            owner_session_with_saturated_command_lane(op_editor_core::EditorState::new().doc);
+
+        let error = runtime
+            .send_owner(OwnerNetworkCommand::Close {
+                connection: ConnectionKey::new(98).expect("non-zero connection"),
+            })
+            .expect_err("the lane is already full");
+        assert_eq!(
+            error.failure,
+            CollabRuntimeFailure::ResourceLimit,
+            "a full lane is a resource limit, not a transport failure"
+        );
+        drop(guard);
+    }
+
+    #[test]
+    fn dropping_the_guard_turns_the_same_send_into_a_transport_failure() {
+        // Pins the distinction the guard protects, so a future refactor that
+        // silently drops the receiver fails here rather than in a downstream
+        // test that looks like it is passing.
+        let (runtime, guard) =
+            owner_session_with_saturated_command_lane(op_editor_core::EditorState::new().doc);
+        drop(guard);
+
+        let error = runtime
+            .send_owner(OwnerNetworkCommand::Close {
+                connection: ConnectionKey::new(98).expect("non-zero connection"),
+            })
+            .expect_err("the receiver is gone");
+        assert_eq!(error.failure, CollabRuntimeFailure::Transport);
+    }
+
+    #[test]
+    fn an_unsaturated_lane_accepts_one_command() {
+        let (runtime, _guard) = owner_session(op_editor_core::EditorState::new().doc);
+        assert!(runtime
+            .send_owner(OwnerNetworkCommand::Close {
+                connection: ConnectionKey::new(98).expect("non-zero connection"),
+            })
+            .is_ok());
     }
 }

@@ -386,12 +386,19 @@ fn a_gated_push_still_owns_its_document_so_the_seed_is_released() {
 /// projected phase with no actor behind it.
 fn with_owner_session(
     state: &mut WebCanvasState,
-    fixture: op_collab_host::test_support::OwnerFixture,
-) {
-    state.collab.runtime = fixture.runtime;
+    session: (
+        op_collab_host::CollabRuntime,
+        op_collab_host::test_support::OwnerLaneGuard,
+    ),
+) -> op_collab_host::test_support::OwnerLaneGuard {
+    let (runtime, guard) = session;
+    state.collab.runtime = runtime;
     in_session(state, CollabConnectionPhase::Active, CollabUiRole::Owner);
-    // Kept alive: the actor's projection was built against it.
-    std::mem::forget(fixture.host);
+    // Returned, not dropped: the guard owns the command lane's receiver, and
+    // letting it go turns a full lane into a disconnected one — a different
+    // failure with a different projection. The caller must hold it until the
+    // ingest under test has finished.
+    guard
 }
 
 /// Seed this daemon with the same document shape a push carries, so the
@@ -406,6 +413,12 @@ fn seed_baseline(state: &mut WebCanvasState, name: &str, thumb_id: &str) {
     state.editor.doc = prepared.into_document();
 }
 
+/// The node name the daemon's document currently carries.
+fn node_name(state: &WebCanvasState) -> String {
+    let node = serde_json::to_value(&state.editor.active_children()[0]).expect("node serialises");
+    node["name"].as_str().unwrap_or_default().to_string()
+}
+
 #[test]
 fn a_session_rejected_ingest_rolls_the_thumbnail_registry_back() {
     // Drives the REAL rejection: the pushed document changes `version`, which
@@ -418,18 +431,25 @@ fn a_session_rejected_ingest_rolls_the_thumbnail_registry_back() {
 
     // Ids no other test uses, so this is immune to the process-global
     // registry being cleared in parallel.
+    const BASELINE: u64 = 515_243_616;
     const KEPT: u64 = 515_243_617;
     const REFUSED: u64 = 515_243_618;
 
     let _registry = crate::web_canvas_server::lock_image_thumb_registry();
     let mut state = daemon();
-    // The starter document carries the crate's own version; the push below
-    // carries "1.0.0", and a version change is what the diff refuses.
-    with_owner_session(&mut state, op_collab_host::test_support::owner_session());
+    seed_baseline(&mut state, "before", &BASELINE.to_string());
+    // The session is activated over the SAME document the daemon holds, so the
+    // only thing the diff can object to is what this push actually changes.
+    let baseline_doc = state.editor.doc.clone();
+    let _lane = with_owner_session(
+        &mut state,
+        op_collab_host::test_support::owner_session(baseline_doc),
+    );
 
     jian_ops_schema::image_thumbs::store_thumb(KEPT, vec![4, 5, 6]);
 
-    let body = seeded_body("refused", &REFUSED.to_string());
+    // A document-version change is what `diff_supported` refuses outright.
+    let body = seeded_body("refused", &REFUSED.to_string()).replace("1.0.0", "9.9.9");
     let mut push = PendingDocumentPush::parse(&body, ServeMode::Local).expect("parses");
     let prepared = push.prepared.take().expect("a document push");
 
@@ -447,6 +467,11 @@ fn a_session_rejected_ingest_rolls_the_thumbnail_registry_back() {
         jian_ops_schema::image_thumbs::thumb_for(REFUSED).is_none(),
         "the rolled-back document's thumbnails must roll back with it"
     );
+    assert_eq!(
+        node_name(&state),
+        "before",
+        "a rejected ingest must leave the document as the session found it"
+    );
 }
 
 #[test]
@@ -463,9 +488,10 @@ fn a_standalone_fallback_failure_keeps_the_new_thumbnails() {
     let _registry = crate::web_canvas_server::lock_image_thumb_registry();
     let mut state = daemon();
     seed_baseline(&mut state, "before", &BASELINE.to_string());
-    with_owner_session(
+    let baseline_doc = state.editor.doc.clone();
+    let _lane = with_owner_session(
         &mut state,
-        op_collab_host::test_support::owner_session_with_saturated_command_lane(),
+        op_collab_host::test_support::owner_session_with_saturated_command_lane(baseline_doc),
     );
 
     // Same document shape, renamed node: a supported diff, so the session gets
@@ -478,6 +504,27 @@ fn a_standalone_fallback_failure_keeps_the_new_thumbnails() {
         state.ingest_document_in_session(prepared),
         IngestOutcome::Failed,
         "an undeliverable commit must come back as a failure"
+    );
+    // The distinction that makes this a REAL delivery failure: a full lane is
+    // `ResourceLimit`, a dropped receiver would be `Transport`. Asserting the
+    // projection is what proves the lane guard above is doing its job.
+    let failures: Vec<_> = state
+        .collab
+        .runtime
+        .drain_status_events()
+        .filter_map(|event| match event {
+            op_collab_host::CollabStatusEvent::Failed(failure) => Some(failure),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        failures.contains(&op_collab_host::CollabRuntimeFailure::ResourceLimit),
+        "the commit must have failed on a FULL lane, not a dead one: {failures:?}"
+    );
+    assert_eq!(
+        node_name(&state),
+        "after",
+        "the standalone fallback keeps the edit the push carried"
     );
     assert!(
         jian_ops_schema::image_thumbs::thumb_for(KEPT).is_some(),

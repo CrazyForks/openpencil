@@ -105,10 +105,12 @@ RUN if [ "$WEB_BUNDLE_SOURCE" = "build" ]; then \
     fi
 
 # Assemble the deployable web-bundle/ layout the daemon's `web_static.rs`
-# resolves: the wasm-bindgen `pkg/` output PLUS the vendored CanvasKit artifact
-# under a `canvaskit/` subdir. For the `copy` path the bundle already exists in
-# the build context (./web-bundle); just normalize it into /out/web-bundle so
-# the runtime stage has one stable source path either way.
+# resolves: the wasm-bindgen `pkg/` output (which now also carries the runtime
+# product assets under `assets/`, staged by `tools/stage-web-assets.sh` inside
+# the gate script) PLUS the vendored CanvasKit artifact under a `canvaskit/`
+# subdir. For the `copy` path the bundle already exists in the build context
+# (./web-bundle); just normalize it into /out/web-bundle so the runtime stage
+# has one stable source path either way.
 RUN mkdir -p /out/web-bundle && \
     if [ "$WEB_BUNDLE_SOURCE" = "build" ]; then \
       cp -R crates/op-host-web/pkg/. /out/web-bundle/ && \
@@ -116,7 +118,14 @@ RUN mkdir -p /out/web-bundle && \
     else \
       cp -R web-bundle/. /out/web-bundle/ ; \
     fi && \
-    echo "assembled web-bundle:" && find /out/web-bundle -maxdepth 2 -type f | sort
+    echo "assembled web-bundle:" && find /out/web-bundle -maxdepth 2 -type f | sort && \
+    # The browser fetches preview JPEGs from `/pkg/assets/…` at runtime (see
+    # `op_editor_core::web_assets`), so a bundle without them degrades every
+    # card to a placeholder. Catch it here rather than in production — the
+    # `copy` path is the likely offender, fed a pre-split artifact.
+    if [ ! -d /out/web-bundle/assets/prompt_center_previews ]; then \
+      echo "FAIL: web-bundle is missing assets/prompt_center_previews (stale artifact?)" >&2; exit 1; \
+    fi
 
 # ── Stage 2: runtime (slim) ───────────────────────────────────────────────────
 # Only the runtime shared libs the daemon dlopens at run time (GL / fontconfig /

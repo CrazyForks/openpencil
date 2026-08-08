@@ -18,7 +18,8 @@
 #   5. wasm-opt -Oz (with the rustc-emitted WebAssembly feature flags) then
 #      gzip size <= OP_WEB_SDK_WASM_GZIP_LIMIT_BYTES (default 8 388 608 = 8 MiB).
 #      The SDK is pure logic with no CanvasKit WASM included — the ceiling
-#      mirrors op-host-web's 6 MiB guard and can be tightened later.
+#      is its own tripwire, not op-host-web's — this bundle has never been
+#      measured against a tighter one, so it is left at 8 MiB until it is.
 #
 # This approach mirrors tools/check-wasm-bundle.sh (op-host-web gate) exactly:
 # cargo build → wasm-bindgen → wasm-opt, without wasm-pack.  This removes the
@@ -60,7 +61,11 @@ WASM_OPT_CANDIDATE_FEATURES=(
   --enable-nontrapping-float-to-int
 )
 
-# Gzip ceiling — same 8 MiB tripwire as op-host-web (see
+# Gzip ceiling. NOT the same number as op-host-web any more: that bundle was
+# re-baselined to 6 MiB once its preview JPEGs moved out behind the runtime
+# `/pkg/assets/` fetch (`tools/check-wasm-bundle.sh`). This viewer bundle has a
+# different feature set and has not been measured against a tighter ceiling, so
+# it keeps 8 MiB until it is. (see
 # tools/check-wasm-bundle.sh for the embedded-asset composition note).
 # Override via env when intentionally re-baselining.
 LIMIT="${OP_WEB_SDK_WASM_GZIP_LIMIT_BYTES:-8388608}"

@@ -70,6 +70,7 @@ pub mod document_install;
 pub mod drag_mutators;
 pub mod edit_transaction;
 pub mod editor_toast;
+// Runtime-fetched product assets for the browser bundle (native embeds them).
 pub mod editor_ui_state;
 pub mod export_batch;
 pub mod export_dialog_state;
@@ -143,6 +144,7 @@ pub mod svg_import;
 pub mod svg_path_bounds;
 mod svg_path_data;
 pub mod sync_gate;
+pub mod web_assets;
 
 /// Tight source-coordinate bounds for an SVG path-data string.
 pub fn svg_path_data_bounds(d: &str) -> Option<(f32, f32, f32, f32)> {

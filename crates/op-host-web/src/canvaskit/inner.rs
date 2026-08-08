@@ -30,6 +30,10 @@ pub(super) struct CkInner {
 impl CkInner {
     pub(super) fn repaint(&mut self) {
         self.backend.drain_pending_decodes(2);
+        // Assets the last paint asked for but the bundle does not carry
+        // (preview JPEGs, template documents, the icon catalog). Bounded per
+        // call; the installs wake a later frame through `repaint_coalescer`.
+        crate::web_asset_fetch::drain_pending();
         crate::web_chat::reconcile_models(self.host.editor_state_mut());
         // Detect a credential edit and enqueue the daemon sync BEFORE mirroring
         // the sync status below: a corrective edit clears the stale error in

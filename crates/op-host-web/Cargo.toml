@@ -150,6 +150,9 @@ features = [
   # Used only by the (opt-in) `live-sync` glue to poll the web-canvas daemon.
   "XmlHttpRequest",
   "XmlHttpRequestEventTarget",
+  # ArrayBuffer responses for the runtime-fetched product assets (preview
+  # JPEGs); `response_text` would mangle binary bodies.
+  "XmlHttpRequestResponseType",
 ]
 
 [features]
