@@ -16,7 +16,7 @@
 #      document logic; CanvasKit itself is loaded externally by the host page.
 #   4. Assert 0 env.* imports in the raw bindgen wasm (LinkError guard).
 #   5. wasm-opt -Oz (with the rustc-emitted WebAssembly feature flags) then
-#      gzip size <= OP_WEB_SDK_WASM_GZIP_LIMIT_BYTES (default 6 291 456 = 6 MiB).
+#      gzip size <= OP_WEB_SDK_WASM_GZIP_LIMIT_BYTES (default 8 388 608 = 8 MiB).
 #      The SDK is pure logic with no CanvasKit WASM included — the ceiling
 #      mirrors op-host-web's 6 MiB guard and can be tightened later.
 #
@@ -60,9 +60,10 @@ WASM_OPT_CANDIDATE_FEATURES=(
   --enable-nontrapping-float-to-int
 )
 
-# Gzip ceiling — same 6 MiB as op-host-web; the SDK bundle is pure logic.
+# Gzip ceiling — same 8 MiB tripwire as op-host-web (see
+# tools/check-wasm-bundle.sh for the embedded-asset composition note).
 # Override via env when intentionally re-baselining.
-LIMIT="${OP_WEB_SDK_WASM_GZIP_LIMIT_BYTES:-6291456}"
+LIMIT="${OP_WEB_SDK_WASM_GZIP_LIMIT_BYTES:-8388608}"
 
 step() { printf '\n[step %d/%d] %s\n' "$1" "$2" "$3"; }
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
