@@ -52,7 +52,8 @@ new_fixture() {
         "$fixture_root/crates/op-editor-host-core/src/collab" \
         "$fixture_root/crates/op-editor-ui/src" \
         "$fixture_root/crates/op-host-native/src" \
-        "$fixture_root/crates/op-host-desktop/src/collab_runtime" \
+        "$fixture_root/crates/op-host-desktop/src" \
+        "$fixture_root/crates/op-collab-host/src/runtime/network" \
         "$fixture_root/crates/op-host-services/src" \
         "$fixture_root/crates/op-i18n/src" \
         "$fixture_root/deploy/collab-relay" \
@@ -563,6 +564,29 @@ fn presence_payload_limit_applies_to_encode_and_decode() {}
 fn oversized_snapshot_kind_cannot_raise_the_owner_inbound_ceiling() {}
 EOF
 
+    cat > "$fixture_root/crates/op-collab-transport/src/admission.rs" <<'EOF'
+pub enum PeerIdentityPolicy {
+    ThisAccount,
+    AnyIssuedAccount,
+}
+#[cfg(test)]
+#[path = "admission_tests.rs"]
+mod admission_tests;
+EOF
+
+    cat > "$fixture_root/crates/op-collab-transport/src/admission_tests.rs" <<'EOF'
+#[test]
+fn any_issued_account_admits_a_foreign_subject_but_keeps_every_other_check() {}
+#[test]
+fn an_unpinned_join_without_confirmation_still_requires_this_account() {}
+#[test]
+fn an_unpinned_join_admits_a_foreign_account_only_behind_the_confirmation_gate() {}
+EOF
+
+    cat > "$fixture_root/crates/op-auth-bridge/src/collab_relay_token.rs" <<'EOF'
+pub struct VerifiedRelayTokenClaims;
+EOF
+
     cat > "$fixture_root/crates/op-collab-transport/src/config.rs" <<'EOF'
 pub const MAX_CONTROL_TRANSFER_BYTES: usize = 1024;
 pub const MAX_TICKET_BYTES: usize = 1024;
@@ -733,16 +757,20 @@ EOF
 pub const MAX_AVATAR_SOURCE_PIXELS: u64 = 1_048_576;
 EOF
 
-    cat > "$fixture_root/crates/op-host-desktop/src/collab_runtime/types.rs" <<'EOF'
+    cat > "$fixture_root/crates/op-collab-host/src/runtime/types.rs" <<'EOF'
 assert_not_impl_any!(OwnerNetworkCommand: Clone);
 assert_not_impl_any!(GuestNetworkCommand: Clone);
 assert_not_impl_any!(PeerNetworkCommand: Clone);
 fn verification_commands_move_the_original_ticket_allocation() {}
 EOF
 
-    cat > "$fixture_root/crates/op-host-desktop/src/collab_runtime/relay_bootstrap_tests.rs" <<'EOF'
+    cat > "$fixture_root/crates/op-collab-host/src/runtime/relay_bootstrap_tests.rs" <<'EOF'
 #[test]
 fn payload_rejects_exact_cross_region_key_reuse() {}
+EOF
+
+    cat > "$fixture_root/crates/op-collab-host/src/runtime/network/owner.rs" <<'EOF'
+fn admission_policy() { let _ = PeerIdentityPolicy::AnyIssuedAccount; }
 EOF
 
     ln -s "$script_dir/check-collab-security-boundaries.test.sh" \

@@ -137,7 +137,7 @@ expect_failure "requires the credential transport codec workflow test" \
 new_fixture desktop-renewal-vec-copy
 printf '%s\n' \
     'fn bad(ticket: Ticket) { let _ = ticket.expose().as_bytes().to_vec(); }' \
-    >> "$fixture_root/crates/op-host-desktop/src/collab_runtime/types.rs"
+    >> "$fixture_root/crates/op-collab-host/src/runtime/types.rs"
 expect_failure "rejects ordinary Vec copies in desktop renewal commands" \
     "desktop renewal commands must move OpaqueTicket"
 
@@ -247,7 +247,7 @@ expect_failure "rejects compact bearer tokens in the smoke crate" \
     "high-signal credential/private-key material detected"
 
 new_fixture desktop-sensitive-file
-: > "$fixture_root/crates/op-host-desktop/src/collab_runtime/runtime-ticket.token"
+: > "$fixture_root/crates/op-collab-host/src/runtime/runtime-ticket.token"
 expect_failure "rejects sensitive files in desktop collaboration integration" \
     "sensitive key/token-shaped files are forbidden"
 
