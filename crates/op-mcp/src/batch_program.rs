@@ -132,13 +132,7 @@ pub(crate) fn run_batch_design_program(
         .sim
         .active_children()
         .iter()
-        .filter(|node| {
-            matches!(node, PenNode::Frame(_))
-                && node
-                    .children()
-                    .map(|children| children.is_empty())
-                    .unwrap_or(true)
-        })
+        .filter(|node| is_replaceable_starter_root(node))
         .map(|node| node.id_str().to_string())
         .collect();
     // Live-doc node count BEFORE any line runs — the honest `nodeCount`
@@ -196,6 +190,36 @@ pub(crate) fn run_batch_design_program(
         1 => ToolOutcome::OkJsonWithCommand(json, commands.remove(0)),
         _ => ToolOutcome::OkJsonWithCommand(json, EditorCommand::Batch { commands }),
     }
+}
+
+/// The name the shipped blank starter frame carries
+/// (`op_editor_core::blank_starter`). Treated as "unnamed" below: it is the
+/// placeholder the auto-replace exists for, not an authored screen.
+const STARTER_FRAME_NAME: &str = "Frame";
+
+/// Whether an existing root may be consumed by a root-level `I(null, frame)`.
+///
+/// Emptiness alone is not enough. The pre-program snapshot stops a batch from
+/// eating its OWN earlier inserts, but the snapshot is retaken every program,
+/// so a shell inserted by batch N is a "pre-existing empty root" to batch N+1 —
+/// measured: batch 1 inserts A and B, batch 2 inserts C and A silently
+/// disappears. An authored NAME is what separates the two: a screen shell the
+/// model is about to fill is named, the placeholder it is replacing is not.
+/// This also matches the policy `op_editor_core::blank_starter` states for the
+/// document-level twin of this question — an empty frame the user drew and has
+/// not filled in yet must not be treated as disposable.
+fn is_replaceable_starter_root(node: &PenNode) -> bool {
+    matches!(node, PenNode::Frame(_))
+        && node
+            .children()
+            .map(|children| children.is_empty())
+            .unwrap_or(true)
+        && node
+            .base()
+            .name
+            .as_deref()
+            .map(str::trim)
+            .is_none_or(|name| name.is_empty() || name == STARTER_FRAME_NAME)
 }
 
 pub(crate) struct ProgramCtx {
@@ -462,12 +486,7 @@ fn execute_insert(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<()>
                 .active_children()
                 .iter()
                 .find(|candidate| {
-                    candidate.id_str() == id
-                        && matches!(candidate, PenNode::Frame(_))
-                        && candidate
-                            .children()
-                            .map(|children| children.is_empty())
-                            .unwrap_or(true)
+                    candidate.id_str() == id && is_replaceable_starter_root(candidate)
                 })
                 .map(|empty| (id.clone(), empty.base().x, empty.base().y))
         });

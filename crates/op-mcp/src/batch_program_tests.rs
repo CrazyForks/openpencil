@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use op_editor_core::{EditorCommand, NodeId, PenNodeExt};
+use op_editor_core::{EditorCommand, EditorState, NodeId, PenNodeExt};
 use serde_json::Value;
 
 use super::batch_design_snapshot;
@@ -13,7 +13,7 @@ use super::batch_program_test_support::{
     binding_id, call_operations, call_operations_best_effort, contains_merge_app_state,
     subtree_contains_text,
 };
-use super::test_fixtures::{frame, sample, state_with};
+use super::test_fixtures::{frame, sample, state_with, text};
 use super::{McpTool, ToolOutcome};
 
 #[test]
@@ -433,8 +433,9 @@ fn delete_of_unknown_id_is_a_silent_noop_like_ts_remove_node_from_tree() {
 fn root_frame_insert_replaces_the_first_empty_frame_and_inherits_position() {
     // TS auto-replace: `I(null, frame)` swaps in for an empty root
     // frame instead of creating a sibling. Lenient JSON keeps this
-    // program on the executor path.
-    let mut state = state_with(vec![frame("f1", "Blank", 30.0, 40.0, 100.0, 100.0, vec![])]);
+    // program on the executor path. The placeholder carries the shipped
+    // starter's name, which is what makes it replaceable.
+    let mut state = state_with(vec![frame("f1", "Frame", 30.0, 40.0, 100.0, 100.0, vec![])]);
     let program = "page=I(null, {type:'frame', name:'Page', width:320, height:240})";
     let (envelope, cmd) = call_operations(&state, program);
     assert!(envelope.get("errors").is_none(), "{envelope}");
@@ -454,7 +455,7 @@ fn root_frame_insert_replaces_the_first_empty_frame_and_inherits_position() {
 
 #[test]
 fn root_frame_batch_replaces_only_preexisting_empty_starters() {
-    let mut state = state_with(vec![frame("f1", "Blank", 30.0, 40.0, 100.0, 100.0, vec![])]);
+    let mut state = state_with(vec![frame("f1", "Frame", 30.0, 40.0, 100.0, 100.0, vec![])]);
     let program = "a=I(null, {type:'frame', name:'A'})\nb=I(null, {type:'frame', name:'B'})\nc=I(null, {type:'frame', name:'C'})";
     let (envelope, cmd) = call_operations(&state, program);
     assert!(envelope.get("errors").is_none(), "{envelope}");
@@ -473,6 +474,48 @@ fn root_frame_batch_replaces_only_preexisting_empty_starters() {
         (roots[0].base().x, roots[0].base().y),
         (Some(30.0), Some(40.0))
     );
+}
+
+/// The pre-program snapshot is retaken every `batch_design` call, so shells a
+/// previous batch inserted looked like fresh starter placeholders to the next
+/// one: batch 1 built A and B, batch 2 built C, and A was silently deleted.
+/// An authored name is what tells the two apart.
+#[test]
+fn a_later_batch_does_not_consume_the_previous_batchs_empty_screen_shells() {
+    let mut state = state_with(vec![frame(
+        "home",
+        "Home",
+        0.0,
+        0.0,
+        390.0,
+        844.0,
+        vec![text("home-title", "Title", 0.0, 0.0, 100.0, 20.0, "Home")],
+    )]);
+
+    let program = "a=I(null, {type:'frame', name:'A'})\nb=I(null, {type:'frame', name:'B'})";
+    let (envelope, cmd) = call_operations(&state, program);
+    assert!(envelope.get("errors").is_none(), "{envelope}");
+    assert!(state.apply(cmd.expect("first batch")));
+    assert_eq!(root_names(&state), ["Home", "A", "B"]);
+
+    // A and B are still empty — the model fills them in later batches.
+    let program = "c=I(null, {type:'frame', name:'C'})\nd=I(null, {type:'frame', name:'D'})";
+    let (envelope, cmd) = call_operations(&state, program);
+    assert!(envelope.get("errors").is_none(), "{envelope}");
+    assert!(state.apply(cmd.expect("second batch")));
+    assert_eq!(
+        root_names(&state),
+        ["Home", "A", "B", "C", "D"],
+        "an earlier batch's empty shells must survive the next batch"
+    );
+}
+
+fn root_names(state: &EditorState) -> Vec<&str> {
+    state
+        .active_children()
+        .iter()
+        .filter_map(|root| root.base().name.as_deref())
+        .collect()
 }
 
 #[test]
