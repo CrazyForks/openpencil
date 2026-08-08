@@ -1,4 +1,8 @@
 use super::*;
+// `ThinkingMode` is no longer named in the spine (the Codex reasoning
+// mapper moved to `chat_subprocess_quirks`), so the effort-table case
+// imports it directly rather than leaning on the glob.
+use op_ai::chat_provider::ThinkingMode;
 
 #[test]
 fn parse_line_text_delta() {

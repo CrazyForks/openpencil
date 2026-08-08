@@ -21,10 +21,7 @@
 //! 一条独立消费方,不受此影响。
 
 use crate::append::apply_append_context_to_plan;
-use crate::cleanup::{
-    descendant_count, finalize_design_with_summary, finalize_design_with_summary_and_policy,
-    CleanupPolicy,
-};
+use crate::cleanup::{descendant_count, finalize_design_with_summary_and_policy, CleanupPolicy};
 use crate::model_profile::resolve_model_profile;
 use crate::plan::{build_fallback_plan, OrchestratorPlan};
 use crate::plan_normalize::{normalize, NormInfo};
@@ -139,6 +136,11 @@ pub struct Orchestrator {
     agent_indicator_epoch: Option<u64>,
 }
 
+/// 规划流错误写进日志的最大字符数。要能装下一句 provider 错误 **加上**
+/// 传输层附带的子进程输出尾部(`op_util::cli_output::TAIL_MAX_CHARS`),
+/// 否则唯一的现场证据会被日志自己截掉。
+const STREAM_ERROR_LOG_CHARS: usize = 800;
+
 /// 规划阶段: 单档(Rich)规划 + fallback。
 ///
 /// Port of `callOrchestrator` planning stage in `orchestrator.ts:1323-1503`,
@@ -201,7 +203,16 @@ async fn planning_loop(
                 // 带上原因:此前只记 attempt,用户贴来的日志里
                 // "planning stream error" 无从区分 429 限流 / 网络中断 /
                 // provider 报错,只能靠猜。
-                let reason = error.message.trim().chars().take(200).collect::<String>();
+                //
+                // 上限从 200 提到 STREAM_ERROR_LOG_CHARS:CLI 传输层现在
+                // 会把子进程自己的输出尾部(已脱敏、已限长)接在错误后面,
+                // 200 字正好把这段新证据全部截掉。
+                let reason = error
+                    .message
+                    .trim()
+                    .chars()
+                    .take(STREAM_ERROR_LOG_CHARS)
+                    .collect::<String>();
                 tracing::warn!(attempt, error = %reason, "planning stream error");
             }
         }

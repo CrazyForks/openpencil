@@ -63,15 +63,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use op_ai::chat_provider::{
-    ChatDelta, ChatProvider, ChatRequest, CliName, EffortLevel, StopReason, ThinkingMode,
+    ChatDelta, ChatProvider, ChatRequest, CliName, EffortLevel, StopReason,
 };
 use op_process_io::LineStreamChild;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
 
 use crate::chat_runtime::{prompt_with_system_prompt, shared_runtime, BlockingRecvIter};
-use crate::chat_spawn::{build_command, exit_status_label, find_binary};
+use crate::chat_spawn::{build_command, find_binary};
 use crate::chat_subprocess_quirks as quirks;
+use crate::chat_subprocess_quirks::codex_reasoning_effort;
 use crate::chat_subprocess_safety as safety;
 
 pub use crate::chat_subprocess_parse::parse_line;
@@ -100,6 +101,24 @@ const CODEX_TURN_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 /// Cap on the retained Codex stderr tail used for error extraction.
 const STDERR_TAIL_CAP: usize = 64 * 1024;
+
+/// Line cap paired with [`STDERR_TAIL_CAP`]. Generous: the Codex error
+/// extractor scans the whole retained blob, and a stack trace is worth
+/// keeping in full when it fits inside the byte budget.
+const STDERR_TAIL_LINES: usize = 2048;
+
+/// Cap on the retained stdout tail — read only on the failure path, for
+/// CLIs that report their diagnosis on stdout. Smaller than the stderr
+/// budget: a healthy turn's stdout is the answer, not diagnostics.
+const STDOUT_TAIL_CAP: usize = 8 * 1024;
+
+/// Line cap paired with [`STDOUT_TAIL_CAP`].
+const STDOUT_TAIL_LINES: usize = 256;
+
+/// How long a reaped turn waits for the stderr drain to reach EOF
+/// before formatting its failure message. Normally one scheduler round;
+/// bounded so a wedged reader cannot hang a turn.
+const STDERR_DRAIN_GRACE: Duration = Duration::from_secs(2);
 
 /// `ChatProvider` impl that bridges to a CLI binary via stdio.
 /// Construct via [`SubprocessProvider::for_cli`] or
@@ -249,6 +268,14 @@ impl SubprocessProvider {
         }
     }
 
+    /// Point a known-CLI provider at a stand-in binary so the exit /
+    /// stderr / stdout handling can be exercised without the real CLI.
+    #[cfg(test)]
+    pub(crate) fn with_test_binary(mut self, binary: impl Into<String>) -> Self {
+        self.binary = binary.into();
+        self
+    }
+
     /// Argv for one turn: the configured base args plus the model
     /// selector and (Codex) the native reasoning-effort config when
     /// the request carries them, then the trailing prompt marker
@@ -272,24 +299,6 @@ impl SubprocessProvider {
         }
         args.extend(self.tail_args.iter().cloned());
         args
-    }
-}
-
-/// Map the per-turn thinking + effort knobs onto Codex's
-/// `model_reasoning_effort` config value. Mirrors TS
-/// `codex-client.ts::resolveCodexEffort`: disabled thinking forces
-/// `low`; `max` folds to Codex's top tier `high`; otherwise the
-/// effort token passes through. The defaulted pair (`Adaptive` +
-/// `Low`) emits no flag so an untouched panel keeps the CLI's own
-/// default — same convention as the in-band directive path.
-fn codex_reasoning_effort(thinking: ThinkingMode, effort: EffortLevel) -> Option<&'static str> {
-    if thinking == ThinkingMode::Disabled {
-        return Some("low");
-    }
-    match (thinking, effort) {
-        (ThinkingMode::Adaptive, EffortLevel::Low) => None,
-        (_, EffortLevel::Max) => Some("high"),
-        (_, e) => Some(e.as_str()),
     }
 }
 
@@ -487,29 +496,30 @@ impl ChatProvider for SubprocessProvider {
             };
 
             // Drain stderr on a sibling task so the CLI never
-            // deadlocks on a full stderr pipe (codex BLOCK 1). Codex
-            // keeps a bounded tail for the TS error extraction
-            // (`extractCodexCliError`); other CLIs discard it.
-            let stderr_tail: Arc<std::sync::Mutex<String>> = Arc::default();
-            if let Some(stderr) = child.take_stderr() {
-                let capture = (cli == Some(CliName::Codex) || safety::is_guarded_cli(cli))
-                    .then(|| Arc::clone(&stderr_tail));
+            // deadlocks on a full stderr pipe (codex BLOCK 1), and keep
+            // a BOUNDED tail of what it said. The tail used to be kept
+            // only for Codex (the TS `extractCodexCliError` port) and
+            // discarded for everyone else — which is how a failing
+            // Antigravity turn reached the user as a bare
+            // `CLI exited with status 1` while the child had printed a
+            // full explanation on stderr (measured 2026-08-07: piped
+            // `agy` writes its whole unauthenticated block to stderr
+            // and leaves stdout empty). Every CLI now keeps it.
+            let stderr_tail = Arc::new(std::sync::Mutex::new(op_util::cli_output::BoundedTail::new(
+                STDERR_TAIL_CAP,
+                STDERR_TAIL_LINES,
+            )));
+            let stderr_drain = child.take_stderr().map(|stderr| {
+                let capture = Arc::clone(&stderr_tail);
                 tokio::spawn(async move {
                     let mut lines = BufReader::new(stderr).lines();
                     while let Ok(Some(line)) = lines.next_line().await {
-                        if let Some(tail) = &capture {
-                            if let Ok(mut buf) = tail.lock() {
-                                buf.push_str(&line);
-                                buf.push('\n');
-                                if buf.len() > STDERR_TAIL_CAP {
-                                    let cut = buf.len() - STDERR_TAIL_CAP;
-                                    buf.drain(..cut);
-                                }
-                            }
+                        if let Ok(mut buf) = capture.lock() {
+                            buf.push_line(&line);
                         }
                     }
-                });
-            }
+                })
+            });
 
             match prompt_mode {
                 PromptMode::Stdin => {
@@ -563,6 +573,11 @@ impl ChatProvider for SubprocessProvider {
             let mut terminal_error = false;
             let mut emitted_text = false;
             let mut emitted_error = false;
+            // Bounded record of what the child put on stdout, so a CLI
+            // that reports its failure there instead of on stderr still
+            // has evidence to show when the exit status is all we get.
+            let mut stdout_tail =
+                op_util::cli_output::BoundedTail::new(STDOUT_TAIL_CAP, STDOUT_TAIL_LINES);
             loop {
                 // Race the line read against channel closure so the
                 // bridge notices an idle receiver-drop without
@@ -596,7 +611,18 @@ impl ChatProvider for SubprocessProvider {
                     }
                     result = lines.next_line() => match result {
                         Ok(Some(line)) => {
+                            stdout_tail.push_line(&line);
                             if let Some(message) = safety::friendly_stdout_error(cli, &line) {
+                                // Same rule as the exit path: a verdict
+                                // never travels without the child's own
+                                // words. stderr is best-effort here (the
+                                // child is still alive, its drain task
+                                // may be mid-flight); stdout at least
+                                // carries the line that just matched.
+                                let errs = stderr_tail.lock().map(|b| b.text()).unwrap_or_default();
+                                let message = crate::chat_subprocess_exit::with_classified_tail(
+                                    message, &errs, &stdout_tail.text(),
+                                );
                                 let _ = tx.send(ChatDelta::Error(message)).await;
                                 let _ = tx.send(ChatDelta::Done { stop_reason: StopReason::Aborted }).await;
                                 terminal_error = true;
@@ -696,6 +722,17 @@ impl ChatProvider for SubprocessProvider {
             } else {
                 child.wait().await.ok()
             };
+            // Let the stderr drain finish before anyone reads its tail.
+            // The child exiting ends BOTH pipes at once, so the drain
+            // task is routinely still mid-flight here — under load it
+            // may not have been polled at all, and the tail then reads
+            // back EMPTY, reporting a child that explained itself as
+            // `(no output captured)`. Reproduced 2026-08-07 under four
+            // concurrent test binaries. Bounded: the child is already
+            // reaped, so its pipe is at EOF and this returns at once.
+            if let Some(drain) = stderr_drain {
+                let _ = tokio::time::timeout(STDERR_DRAIN_GRACE, drain).await;
+            }
             if !emitted_done && !terminal_error {
                 let nonzero = status.as_ref().map(|s| !s.success()).unwrap_or(false);
                 if nonzero {
@@ -703,27 +740,17 @@ impl ChatProvider for SubprocessProvider {
                     // failure — don't stack a second message on it
                     // (TS surfaces exactly one error per turn).
                     if !emitted_error {
-                        let tail = stderr_tail
+                        let stderr_text = stderr_tail
                             .lock()
-                            .map(|buf| buf.clone())
+                            .map(|buf| buf.text())
                             .unwrap_or_default();
-                        let msg = if cli == Some(CliName::Codex) {
-                            quirks::extract_codex_cli_error(&tail).unwrap_or_else(|| {
-                                let code = status
-                                    .as_ref()
-                                    .map(exit_status_label)
-                                    .unwrap_or_else(|| "unknown".into());
-                                format!("Codex exited with code {code}.")
-                            })
-                        } else if let Some(message) = safety::friendly_stderr_error(cli, &tail) {
-                            message
-                        } else {
-                            let code = status
-                                .as_ref()
-                                .map(exit_status_label)
-                                .unwrap_or_else(|| "?".into());
-                            format!("CLI exited with status {code}")
-                        };
+                        let stdout_text = stdout_tail.text();
+                        let msg = crate::chat_subprocess_exit::exit_failure_message(
+                            cli,
+                            status.as_ref(),
+                            &stderr_text,
+                            &stdout_text,
+                        );
                         let _ = tx.send(ChatDelta::Error(msg)).await;
                     }
                     let _ = tx
@@ -767,3 +794,7 @@ impl ChatProvider for SubprocessProvider {
 #[cfg(test)]
 #[path = "chat_subprocess_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "chat_subprocess_exit_tests.rs"]
+mod exit_tests;

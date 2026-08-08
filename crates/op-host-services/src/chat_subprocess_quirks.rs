@@ -8,7 +8,7 @@
 //! It also keeps the TS `buildPrompt` GUIDELINES / TASK framing so
 //! the wire prompt matches the TS server byte-for-byte.
 
-use op_ai::chat_provider::{ChatDelta, StopReason};
+use op_ai::chat_provider::{ChatDelta, EffortLevel, StopReason, ThinkingMode};
 
 /// Allowlist-based env filter for the Codex CLI subprocess. Only
 /// passes through safe system vars and provider-specific prefixes —
@@ -299,6 +299,27 @@ fn is_codex_auth_error(msg: &str) -> bool {
     }
     false
 }
+
+/// Map the per-turn thinking + effort knobs onto Codex's
+/// `model_reasoning_effort` config value. Mirrors TS
+/// `codex-client.ts::resolveCodexEffort`: disabled thinking forces
+/// `low`; `max` folds to Codex's top tier `high`; otherwise the
+/// effort token passes through. The defaulted pair (`Adaptive` +
+/// `Low`) emits no flag so an untouched panel keeps the CLI's own
+/// default — same convention as the in-band directive path.
+pub fn codex_reasoning_effort(thinking: ThinkingMode, effort: EffortLevel) -> Option<&'static str> {
+    if thinking == ThinkingMode::Disabled {
+        return Some("low");
+    }
+    match (thinking, effort) {
+        (ThinkingMode::Adaptive, EffortLevel::Low) => None,
+        (_, EffortLevel::Max) => Some("high"),
+        (_, e) => Some(e.as_str()),
+    }
+}
+
+// Lives here rather than in `chat_subprocess.rs`: it is a Codex-specific
+// argv quirk, and the bridge spine sits at the 800-line cap.
 
 #[cfg(test)]
 mod tests {

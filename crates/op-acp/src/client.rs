@@ -3,8 +3,10 @@
 //! Port of `pen-acp/src/client.ts`.
 
 use std::process::Stdio;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use op_util::cli_output::BoundedTail;
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, BufReader};
 use tokio::process::{Child, Command};
@@ -23,6 +25,20 @@ use crate::types::{AcpAgentConfig, AcpAgentInfo, AcpError, ConnectionType};
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 /// A prompt turn can run a long while — generous ceiling.
 const PROMPT_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// Byte budget for the retained stderr tail of a local agent. Fixed:
+/// the drain task exists to keep the child's pipe from filling, so its
+/// buffer must never grow with the child's output.
+const STDERR_TAIL_CAP: usize = 16 * 1024;
+
+/// Line budget paired with [`STDERR_TAIL_CAP`].
+const STDERR_TAIL_LINES: usize = 256;
+
+/// How long a failed handshake waits for the stderr drain to reach EOF
+/// before quoting the agent. The child is killed first, so this is
+/// normally one scheduler round; bounded so a wedged reader cannot hang
+/// the connect path.
+const STDERR_DRAIN_GRACE: Duration = Duration::from_secs(2);
 
 /// One MCP server endpoint advertised to the agent in `session/new`
 /// (`mcpServers[]`). Serialized as `{ name, type: "http", url,
@@ -56,6 +72,10 @@ pub struct AcpConnection {
     child: Option<Child>,
     tasks: Vec<JoinHandle<()>>,
     agent_info: AcpAgentInfo,
+    /// The most recent lines a locally spawned agent wrote to stderr.
+    /// `None` for remote (WebSocket) agents and for connections built
+    /// over an arbitrary stream pair — neither has a stderr pipe.
+    stderr_tail: Option<Arc<Mutex<BoundedTail>>>,
 }
 
 impl AcpConnection {
@@ -109,7 +129,21 @@ impl AcpConnection {
             child,
             tasks: vec![writer, reader],
             agent_info: AcpAgentInfo::default(),
+            stderr_tail: None,
         }
+    }
+
+    /// The redacted, length-capped tail of a local agent's stderr, or
+    /// `None` when it printed nothing (or has no stderr pipe at all).
+    ///
+    /// An ACP agent that dies during the handshake reports the reason
+    /// on stderr — a missing API key, an unsupported flag, a broken
+    /// install. That text used to be read and dropped line by line, so
+    /// the connection failure surfaced as a bare timeout.
+    pub fn stderr_tail(&self) -> Option<String> {
+        let tail = self.stderr_tail.as_ref()?;
+        let text = tail.lock().ok()?.text();
+        op_util::cli_output::diagnostic_tail(&text)
     }
 
     /// Run the `initialize` handshake, recording the agent's identity.
@@ -253,17 +287,81 @@ async fn connect_local(config: &AcpAgentConfig) -> Result<AcpConnection, AcpErro
         .stdout
         .take()
         .ok_or_else(|| AcpError::Spawn("child has no stdout".into()))?;
-    // Drain stderr so the child never blocks on a full pipe.
-    if let Some(stderr) = child.stderr.take() {
+    // Drain stderr so the child never blocks on a full pipe — that is
+    // why this task exists and it must keep reading to EOF. What
+    // changed: the lines are now kept in a FIXED-CAPACITY tail instead
+    // of being dropped, so a handshake failure can quote the agent
+    // instead of guessing. The buffer never grows with the child's
+    // output, so the anti-blocking guarantee is untouched.
+    let stderr_tail = Arc::new(Mutex::new(BoundedTail::new(
+        STDERR_TAIL_CAP,
+        STDERR_TAIL_LINES,
+    )));
+    let stderr_drain = child.stderr.take().map(|stderr| {
+        let capture = Arc::clone(&stderr_tail);
         tokio::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(_)) = lines.next_line().await {}
-        });
-    }
+            while let Ok(Some(line)) = lines.next_line().await {
+                if let Ok(mut buf) = capture.lock() {
+                    buf.push_line(&line);
+                }
+            }
+        })
+    });
 
     let mut conn = AcpConnection::new(stdout, stdin, Some(child));
-    conn.initialize(&config.display_name).await?;
-    Ok(conn)
+    conn.stderr_tail = Some(stderr_tail);
+    match conn.initialize(&config.display_name).await {
+        Ok(()) => Ok(conn),
+        Err(error) => {
+            // An agent that starts up broken dies at once, and its
+            // stdout EOF is what fails the handshake — so the drain task
+            // is racing that same instant and may not have been polled.
+            // Measured 2026-08-07 under 16 concurrent connects: 5-8% of
+            // failures came back with an empty tail, the same shape as
+            // the CLI bridge's.
+            //
+            // `disconnect()` first, deliberately: this connection is
+            // already doomed, and killing the child closes its stderr so
+            // the drain hits EOF now instead of us waiting out the grace
+            // on a child that is still running (the handshake-timeout
+            // case). It aborts the reader/writer tasks, which is the
+            // existing shutdown semantics; the drain task is NOT among
+            // them, so joining it here does not fight `Drop`.
+            conn.disconnect();
+            if let Some(drain) = stderr_drain {
+                let _ = tokio::time::timeout(STDERR_DRAIN_GRACE, drain).await;
+            }
+            Err(with_agent_output(error, conn.stderr_tail()))
+        }
+    }
+}
+
+/// Fold a local agent's own last words into a handshake failure.
+///
+/// The variant is preserved wherever it carries a message (callers
+/// switch on it); `Closed` has no payload, so it becomes a `Transport`
+/// error that can carry one. Without any output the error is returned
+/// untouched rather than padded with an empty quote.
+fn with_agent_output(error: AcpError, tail: Option<String>) -> AcpError {
+    let Some(tail) = tail else {
+        return error;
+    };
+    match error {
+        AcpError::Config(message) => AcpError::Config(format!("{message}; agent said: {tail}")),
+        AcpError::Spawn(message) => AcpError::Spawn(format!("{message}; agent said: {tail}")),
+        AcpError::Transport(message) => {
+            AcpError::Transport(format!("{message}; agent said: {tail}"))
+        }
+        AcpError::Protocol(message) => AcpError::Protocol(format!("{message}; agent said: {tail}")),
+        AcpError::Rpc { code, message } => AcpError::Rpc {
+            code,
+            message: format!("{message}; agent said: {tail}"),
+        },
+        AcpError::Closed => {
+            AcpError::Transport(format!("ACP connection closed; agent said: {tail}"))
+        }
+    }
 }
 
 #[cfg(not(feature = "remote"))]
@@ -336,6 +434,8 @@ async fn connect_remote(config: &AcpAgentConfig) -> Result<AcpConnection, AcpErr
         child: None,
         tasks: vec![writer, reader],
         agent_info: AcpAgentInfo::default(),
+        // A WebSocket agent runs elsewhere — there is no stderr pipe.
+        stderr_tail: None,
     };
     conn.initialize(&config.display_name).await?;
     Ok(conn)
@@ -506,6 +606,130 @@ mod tests {
         assert!(
             started.elapsed() < Duration::from_secs(5),
             "must fail fast, not wait out the timeout"
+        );
+    }
+
+    /// A local agent stub on disk. Unix-only: it is a `/bin/sh` script.
+    #[cfg(unix)]
+    fn stub_agent(body: &str) -> (std::path::PathBuf, AcpAgentConfig) {
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "op-acp-stub-{}-{}",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("agent.sh");
+        std::fs::write(&path, body).expect("write stub");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        let config = AcpAgentConfig {
+            id: "stub".into(),
+            display_name: "Stub Agent".into(),
+            connection_type: ConnectionType::Local,
+            command: Some(path.to_string_lossy().into_owned()),
+            args: Vec::new(),
+            env: std::collections::BTreeMap::new(),
+            url: None,
+            enabled: true,
+        };
+        (dir, config)
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn failed_handshake_quotes_the_agents_stderr_with_secrets_removed() {
+        // An agent that dies during the handshake explains itself on
+        // stderr. That text used to be read and discarded line by line,
+        // so the user got a bare transport failure.
+        let (dir, config) = stub_agent(
+            "#!/bin/sh\n\
+             echo 'fatal: ANTHROPIC_API_KEY=sk-fake-000111222333 rejected by upstream' >&2\n\
+             echo 'see https://agent.example.test/setup?token=fake-token-999' >&2\n\
+             exit 1\n",
+        );
+        let error = match connect_acp_agent(&config).await {
+            Err(error) => error,
+            Ok(_) => panic!("stub never completes the handshake"),
+        };
+        let _ = std::fs::remove_dir_all(dir);
+        let text = error.to_string();
+        assert!(text.contains("rejected by upstream"), "{text}");
+        assert!(
+            text.contains("agent.example.test/setup?<redacted>"),
+            "{text}"
+        );
+        for secret in ["sk-fake-000111222333", "token=fake-token-999"] {
+            assert!(!text.contains(secret), "leaked {secret:?} in {text}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn stderr_capture_stays_bounded_under_a_flood() {
+        // The drain task exists to stop a full stderr pipe from
+        // blocking the child; retaining a tail must not turn it into an
+        // unbounded buffer. 200k lines in, a capped tail out.
+        let (dir, config) = stub_agent(
+            "#!/bin/sh\n\
+             awk 'BEGIN{for(i=0;i<200000;i++) print \"agent chatter line \" i > \"/dev/stderr\"}'\n\
+             exit 1\n",
+        );
+        let error = match connect_acp_agent(&config).await {
+            Err(error) => error,
+            Ok(_) => panic!("stub never completes the handshake"),
+        };
+        let _ = std::fs::remove_dir_all(dir);
+        let text = error.to_string();
+        assert!(
+            text.chars().count() <= 96 + op_util::cli_output::TAIL_MAX_CHARS,
+            "error message was {} chars: {text}",
+            text.chars().count()
+        );
+        assert!(text.contains("agent chatter line 199999"), "{text}");
+    }
+
+    /// The ACP twin of the CLI bridge's drain race. An agent binary that
+    /// exists but starts up broken (bad config, missing dependency,
+    /// immediate panic) dies with its explanation on stderr, and its
+    /// stdout EOF is what fails the handshake — so the read path and the
+    /// drain task wake on the same instant.
+    ///
+    /// The contention is CREATED here, not hoped for: run idle, the
+    /// drain wins every time and this case passes even with the fix
+    /// reverted. Measured before the fix: 5-8 of 96 connects came back
+    /// quoting nothing.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_broken_agents_stderr_survives_concurrent_connects() {
+        let (dir, config) =
+            stub_agent("#!/bin/sh\necho 'fatal: agent config rejected by upstream' >&2\nexit 1\n");
+        let mut lost = 0usize;
+        let mut total = 0usize;
+        for _round in 0..6 {
+            let mut pending = Vec::new();
+            for _ in 0..16 {
+                let config = config.clone();
+                pending.push(tokio::spawn(async move {
+                    match connect_acp_agent(&config).await {
+                        Err(error) => error.to_string(),
+                        Ok(_) => "unexpectedly connected".to_string(),
+                    }
+                }));
+            }
+            for handle in pending {
+                let text = handle.await.expect("probe task");
+                total += 1;
+                if !text.contains("agent config rejected by upstream") {
+                    lost += 1;
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(dir);
+        assert_eq!(
+            lost, 0,
+            "{lost} of {total} connect failures lost the agent's stderr"
         );
     }
 }

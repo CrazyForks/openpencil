@@ -294,6 +294,26 @@ pub fn append_isolated_env(env: &mut Vec<(String, String)>, turn: Option<&Isolat
     }
 }
 
+/// Build the private per-turn Antigravity HOME.
+///
+/// SIGNPOST, not a fix — where credentials come from on this path.
+/// Every turn gets a FRESH private `--gemini_dir` (see
+/// `IsolatedTurn::append_cli_args`), so no on-disk login from a
+/// previous turn or from the user's own `agy` session is ever visible
+/// to the child. The real HOME is kept (see `append_isolated_env`)
+/// precisely so the OS keyring stays reachable — which makes the
+/// keyring the ONLY credential source for a generation turn.
+///
+/// The consequence: if the keyring is unreachable (a GUI launch
+/// without a usable session, a denied keychain prompt, a Linux box with
+/// no dbus session), EVERY turn fails the same way — the child prints
+/// its interactive-login block and exits non-zero once its own auth
+/// wait elapses. Measured 2026-08-07: with a private `--gemini_dir` and
+/// piped stdio, that block lands entirely on stderr and stdout comes
+/// back empty, which is why the failure used to surface as a bare
+/// `CLI exited with status 1`. It no longer does — the child's own
+/// words now ride the error — so if this is ever suspected again, read
+/// the quoted tail rather than re-deriving it from here.
 fn prepare_antigravity_home(
     turn_dir: &Path,
     host_home: Option<&Path>,
@@ -556,9 +576,27 @@ pub fn is_guarded_cli(cli: Option<CliName>) -> bool {
     matches!(cli, Some(CliName::Antigravity | CliName::GrokBuild))
 }
 
+/// Whether the text is talking about *authentication* rather than
+/// *authorship*.
+///
+/// A bare `contains("auth")` also fires on `author` / `authored` /
+/// `authoring` / `authorship`, which appear in ordinary CLI chatter and
+/// stack traces. `authoriz…` / `authoris…` is the one `author`-prefixed
+/// family that really is authentication, so it is let back through;
+/// `oauth`, `unauthenticated`, and `unauthorized` all pass on the base
+/// rule. Deliberately not tightened further — guessing at wording we
+/// have never seen would cost more coverage than it buys, and a
+/// misclassification now carries the child's own words with it.
+fn mentions_auth(lower: &str) -> bool {
+    lower.match_indices("auth").any(|(at, _)| {
+        let rest = &lower[at + "auth".len()..];
+        !rest.starts_with("or") || rest.starts_with("oriz") || rest.starts_with("oris")
+    })
+}
+
 pub fn friendly_stderr_error(cli: Option<CliName>, stderr: &str) -> Option<String> {
     let lower = stderr.to_ascii_lowercase();
-    if lower.contains("auth") || lower.contains("login") || lower.contains("sign in") {
+    if mentions_auth(&lower) || lower.contains("login") || lower.contains("sign in") {
         return Some(match cli {
             Some(CliName::Antigravity) => {
                 "Antigravity is not authenticated. Run `agy` once in a terminal.".into()
@@ -579,16 +617,36 @@ pub fn friendly_stderr_error(cli: Option<CliName>, stderr: &str) -> Option<Strin
     None
 }
 
-pub fn friendly_stdout_error(cli: Option<CliName>, line: &str) -> Option<String> {
+/// Classify a failing turn against BOTH of the child's streams.
+///
+/// Which stream a CLI uses is not a stable contract: Antigravity prints
+/// its interactive-login block to stdout under a TTY but to stderr when
+/// stdout is a pipe (measured 2026-08-07 — piped stdout came back
+/// empty), so a classifier wired to one stream is silently dead half
+/// the time. stderr is tried first: a CLI that writes to both puts its
+/// answer on stdout and its diagnosis on stderr.
+pub fn friendly_cli_error(cli: Option<CliName>, stderr: &str, stdout: &str) -> Option<String> {
+    friendly_stderr_error(cli, stderr)
+        .or_else(|| friendly_stdout_error(cli, stdout))
+        .or_else(|| friendly_stderr_error(cli, stdout))
+}
+
+/// Antigravity's interactive-login block, recognised whether it arrives
+/// one live line at a time (the streaming call site) or as a whole
+/// retained tail (the exit-status call site).
+pub fn friendly_stdout_error(cli: Option<CliName>, text: &str) -> Option<String> {
     if cli != Some(CliName::Antigravity) {
         return None;
     }
-    let line = line.trim().to_ascii_lowercase();
-    (line.starts_with("authentication required")
-        || line.starts_with("waiting for authentication")
-        || line.starts_with("or, paste the authorization code")
-        || line.contains("accounts.google.com/o/oauth2/auth?"))
-    .then(|| "Antigravity is not authenticated. Run `agy` once in a terminal.".into())
+    text.lines()
+        .any(|line| {
+            let line = line.trim().to_ascii_lowercase();
+            line.starts_with("authentication required")
+                || line.starts_with("waiting for authentication")
+                || line.starts_with("or, paste the authorization code")
+                || line.contains("accounts.google.com/o/oauth2/auth?")
+        })
+        .then(|| "Antigravity is not authenticated. Run `agy` once in a terminal.".into())
 }
 
 #[cfg(unix)]
@@ -614,147 +672,5 @@ fn set_private_file(_path: &Path) -> io::Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn grok_prompt_file_is_private_and_removed_with_workspace() {
-        let source_dir = std::env::temp_dir().join(format!(
-            "openpencil-cli-source-{}-{}",
-            std::process::id(),
-            TURN_SEQ.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&source_dir).unwrap();
-        let source = source_dir.join("reference.png");
-        fs::write(&source, b"image").unwrap();
-        let original = format!("inspect [attached image: {}]", source.display());
-
-        let turn = IsolatedTurn::prepare(Some(CliName::GrokBuild), &original, &[source])
-            .unwrap()
-            .unwrap();
-        let cwd = turn.cwd().to_path_buf();
-        let prompt_path = turn.prompt_file().unwrap();
-        let config_dir = turn.claude_config_dir().unwrap().to_path_buf();
-        let settings_path = config_dir.join("settings.json");
-        assert!(prompt_path.starts_with(&cwd));
-        assert!(config_dir.starts_with(&cwd));
-        assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(&fs::read(&settings_path).unwrap())
-                .unwrap(),
-            serde_json::json!({"permissions": {"defaultMode": "dontAsk"}})
-        );
-        let mut env = vec![(
-            "CLAUDE_CONFIG_DIR".to_string(),
-            "/host/claude-config".to_string(),
-        )];
-        append_isolated_env(&mut env, Some(&turn));
-        assert_eq!(
-            env,
-            vec![(
-                "CLAUDE_CONFIG_DIR".to_string(),
-                config_dir.to_string_lossy().into_owned(),
-            )]
-        );
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(
-                fs::metadata(&config_dir).unwrap().permissions().mode() & 0o777,
-                0o700
-            );
-            assert_eq!(
-                fs::metadata(&settings_path).unwrap().permissions().mode() & 0o777,
-                0o600
-            );
-        }
-        assert!(turn.prompt().contains("OPENPENCIL AUTOMATION SAFETY"));
-        assert!(!turn.prompt().contains(&source_dir.to_string_lossy()[..]));
-        assert!(turn.prompt().contains("attachment-0-reference.png"));
-        drop(turn);
-        assert!(!cwd.exists());
-        assert!(!config_dir.exists());
-        let _ = fs::remove_dir_all(source_dir);
-    }
-
-    #[test]
-    fn grok_generation_prompt_is_unguarded_and_still_private() {
-        let turn = IsolatedTurn::prepare_generation(
-            Some(CliName::GrokBuild),
-            "return only I(...) JavaScript",
-            &[],
-        )
-        .unwrap()
-        .unwrap();
-        assert_eq!(turn.prompt(), "return only I(...) JavaScript");
-        assert_eq!(
-            fs::read_to_string(turn.prompt_file().unwrap()).unwrap(),
-            turn.prompt()
-        );
-        assert!(turn.claude_config_dir().is_some());
-    }
-
-    #[test]
-    fn non_agent_cli_does_not_get_an_isolated_turn() {
-        assert!(IsolatedTurn::prepare(Some(CliName::Codex), "hi", &[])
-            .unwrap()
-            .is_none());
-    }
-
-    #[test]
-    fn stderr_errors_explain_auth_and_permission_failures() {
-        assert!(
-            friendly_stderr_error(Some(CliName::GrokBuild), "login required")
-                .unwrap()
-                .contains("grok login")
-        );
-        assert!(
-            friendly_stderr_error(Some(CliName::Antigravity), "permission required")
-                .unwrap()
-                .contains("interactive permission")
-        );
-        assert!(friendly_stdout_error(
-            Some(CliName::Antigravity),
-            "Authentication required. Please visit the URL to log in:"
-        )
-        .unwrap()
-        .contains("agy"));
-        assert!(
-            friendly_stdout_error(Some(CliName::GrokBuild), "Authentication required").is_none()
-        );
-    }
-
-    #[test]
-    fn guarded_child_env_excludes_host_token_and_unrelated_secrets() {
-        let vars = vec![
-            ("HOME".to_string(), "/tmp/home".to_string()),
-            ("HTTPS_PROXY".to_string(), "http://proxy".to_string()),
-            ("OPENPENCIL_MCP_TOKEN".to_string(), "shutdown".to_string()),
-            ("DATABASE_URL".to_string(), "secret".to_string()),
-            ("XAI_API_KEY".to_string(), "xai".to_string()),
-            ("GOOGLE_API_KEY".to_string(), "google".to_string()),
-        ];
-
-        let grok = filtered_env(CliName::GrokBuild, vars.clone());
-        assert!(grok.iter().any(|(key, _)| key == "HOME"));
-        assert!(grok.iter().any(|(key, _)| key == "HTTPS_PROXY"));
-        assert!(grok.iter().any(|(key, _)| key == "XAI_API_KEY"));
-        assert!(!grok.iter().any(|(key, _)| key == "GOOGLE_API_KEY"));
-        assert!(!grok.iter().any(|(key, _)| key == "OPENPENCIL_MCP_TOKEN"));
-        assert!(!grok.iter().any(|(key, _)| key == "DATABASE_URL"));
-
-        let antigravity = filtered_env(CliName::Antigravity, vars);
-        assert!(antigravity.iter().any(|(key, _)| key == "GOOGLE_API_KEY"));
-        assert!(!antigravity.iter().any(|(key, _)| key == "XAI_API_KEY"));
-        assert!(!antigravity
-            .iter()
-            .any(|(key, _)| key == "OPENPENCIL_MCP_TOKEN"));
-    }
-
-    #[test]
-    fn antigravity_keeps_linux_keyring_session_but_grok_does_not() {
-        for key in ["DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR"] {
-            assert!(allowed_env(CliName::Antigravity, key), "{key}");
-            assert!(!allowed_env(CliName::GrokBuild, key), "{key}");
-        }
-    }
-}
+#[path = "chat_subprocess_safety_tests.rs"]
+mod tests;
