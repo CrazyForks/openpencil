@@ -83,10 +83,10 @@ fn property_conflict_stashes_discarded_edit_and_reapply_resubmits_it() {
     // Guest optimistically renames the shared node.
     assert!(runtime.begin_local_edit(&mut host));
     host.editor_state_mut().doc = document_named("Guest intent");
-    assert_ne!(
+    assert!(!matches!(
         runtime.finish_local_edit(&mut host),
-        crate::runtime::local_edit::LocalEditOutcome::Failed
-    );
+        crate::runtime::local_edit::LocalEditOutcome::Failed { .. }
+    ));
     let _submit = commands.recv_timeout(Duration::from_secs(1)).unwrap();
 
     // The owner concurrently renames the same field and wins seq 1.

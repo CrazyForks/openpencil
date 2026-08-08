@@ -47,7 +47,7 @@ fn transient_credential_is_applied_only_to_the_turn_snapshot() {
     let state = Mutex::new(WebCanvasState::new(EditorState::new(), 3100));
 
     let snapshot =
-        apply_request_snapshot(&req, &state, &SseHub::default()).expect("request snapshot");
+        apply_request_snapshot(&req, &state, &SseHub::default(), None).expect("request snapshot");
 
     assert_eq!(
         snapshot.editor_ui.agent_settings.builtin_agents[0].api_key,
@@ -80,7 +80,7 @@ fn transient_credential_model_must_match_the_requested_model() {
     let req = parse_standard_turn_body(&body.to_string()).expect("credential shape parses");
     let state = Mutex::new(WebCanvasState::new(EditorState::new(), 3100));
 
-    let error = apply_request_snapshot(&req, &state, &SseHub::default())
+    let error = apply_request_snapshot(&req, &state, &SseHub::default(), None)
         .expect_err("mismatched credential must be rejected")
         .to_string();
 
@@ -107,7 +107,7 @@ fn browser_only_demo_rejects_custom_or_loopback_transient_endpoints_without_muta
         ));
         let before = crate::settings_io::fingerprint(&state.lock().unwrap().editor);
 
-        let error = apply_request_snapshot(&req, &state, &SseHub::default())
+        let error = apply_request_snapshot(&req, &state, &SseHub::default(), None)
             .expect_err("public demo must reject custom endpoint")
             .to_string();
 
@@ -129,7 +129,7 @@ fn server_persistence_does_not_allow_a_reserved_transient_endpoint() {
         crate::web_credential_policy::WebCredentialPersistence::Server,
     ));
 
-    let error = apply_request_snapshot(&req, &state, &SseHub::default())
+    let error = apply_request_snapshot(&req, &state, &SseHub::default(), None)
         .expect_err("persistence must not authorize a reserved provider endpoint")
         .to_string();
     assert!(error.contains("endpoint"), "unexpected error: {error}");
@@ -275,7 +275,7 @@ fn request_snapshot_restores_editor_meta_before_design_response_updates() {
     let state = Mutex::new(WebCanvasState::new(EditorState::new(), 3100));
 
     let snapshot =
-        apply_request_snapshot(&req, &state, &SseHub::default()).expect("request snapshot");
+        apply_request_snapshot(&req, &state, &SseHub::default(), None).expect("request snapshot");
 
     assert_eq!(snapshot.ui.active_page_index, 1);
     assert!(snapshot.editor_ui.preserve_authored_geometry);
@@ -290,7 +290,7 @@ fn design_doc_sink_applies_and_bumps_version() {
     let hub = SseHub::default();
     let sub = hub.subscribe();
     let mirror = state.lock().unwrap().editor.clone();
-    let mut sink = WebDesignDocSink::new(&state, &hub, mirror);
+    let mut sink = WebDesignDocSink::new(&state, &hub, None, mirror);
 
     assert!(sink.apply(EditorCommand::InsertNode {
         kind: "rect".into(),
@@ -402,4 +402,71 @@ fn web_progress_label_subtask_retry_format() {
         }),
         "  ▸ retry #2: zero nodes generated"
     );
+}
+
+#[test]
+fn a_closed_write_barrier_leaves_the_document_untouched() {
+    // `/api/ai/standard` used to be dispatched before the write admission, so
+    // its document commits ran during shutdown — after the flush had already
+    // snapshotted the document.
+    use crate::web_canvas_server::WriteBarrier;
+
+    let barrier = WriteBarrier::default();
+    barrier.close();
+
+    let state = Mutex::new(WebCanvasState::new(EditorState::new(), 3100));
+    let before = state
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .document_version_for_test();
+
+    let req = parse_standard_turn_body(&standard_body_with_document()).expect("request parses");
+    let error = apply_request_snapshot(&req, &state, &SseHub::default(), Some(&barrier))
+        .expect_err("a closed barrier must refuse the commit");
+    assert!(
+        matches!(error, WebChatStandardError::ShuttingDown),
+        "{error:?}"
+    );
+    assert_eq!(
+        state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .document_version_for_test(),
+        before,
+        "the refused turn must not have changed the document"
+    );
+}
+
+#[test]
+fn an_open_write_barrier_applies_the_turn_normally() {
+    use crate::web_canvas_server::WriteBarrier;
+    let barrier = WriteBarrier::default();
+    let state = Mutex::new(WebCanvasState::new(EditorState::new(), 3100));
+    let req = parse_standard_turn_body(&standard_body_with_document()).expect("request parses");
+    apply_request_snapshot(&req, &state, &SseHub::default(), Some(&barrier))
+        .expect("an open barrier admits the commit");
+    assert!(
+        state
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .document_version_for_test()
+            > 0,
+        "the turn must have applied"
+    );
+}
+
+/// A standard-turn body that carries a document, so `apply_request_snapshot`
+/// reaches its `replace_document` commit.
+fn standard_body_with_document() -> String {
+    serde_json::json!({
+        "message": "hello",
+        "document": {
+            "version": "1.0.0",
+            "children": [{
+                "id": "n1", "type": "rectangle", "name": "from-turn",
+                "x": 0, "y": 0, "width": 4, "height": 4,
+            }],
+        },
+    })
+    .to_string()
 }

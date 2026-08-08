@@ -158,16 +158,49 @@ fn parse_chat_attachments(value: Option<&Value>) -> Vec<ChatAttachment> {
         .collect()
 }
 
+/// Everything an AI turn needs to commit to the canvas: the document
+/// authority, the stream that announces a change, and the shutdown admission
+/// that decides whether a commit may happen at all.
+///
+/// Bundled because the three always travel together — and separating them is
+/// how `/api/ai/standard` came to have commit points with no admission.
+#[derive(Clone, Copy)]
+pub(crate) struct CanvasWriteTarget<'a> {
+    pub(crate) state: &'a Mutex<WebCanvasState>,
+    pub(crate) hub: &'a SseHub,
+    pub(crate) write_barrier: Option<&'a crate::web_canvas_server::WriteBarrier>,
+}
+
+/// Admission for one document commit on the AI path.
+///
+/// The conversation itself never holds the shutdown barrier — a model turn can
+/// run for minutes and would block every stop. The pass is taken only for the
+/// instant a commit touches the document, and refused once shutdown has closed
+/// the barrier: the reply still streams back, but the document is left alone
+/// and the caller is told the turn was not applied.
+fn admit_document_write(
+    barrier: Option<&crate::web_canvas_server::WriteBarrier>,
+) -> Result<Option<crate::web_canvas_server::WritePass<'_>>, WebChatStandardError> {
+    let Some(barrier) = barrier else {
+        return Ok(None); // local/managed: no flush to protect
+    };
+    barrier
+        .enter()
+        .map(Some)
+        .ok_or(WebChatStandardError::ShuttingDown)
+}
+
 pub fn stream_standard_turn<W: Write>(
     out: &mut W,
     req: WebStandardTurnRequest,
     state: &Mutex<WebCanvasState>,
     hub: &SseHub,
+    write_barrier: Option<&crate::web_canvas_server::WriteBarrier>,
     cors_origin: Option<&str>,
 ) -> std::io::Result<()> {
     crate::ai_proxy::write_sse_headers(out, cors_origin)?;
 
-    let mut snapshot = match apply_request_snapshot(&req, state, hub) {
+    let mut snapshot = match apply_request_snapshot(&req, state, hub, write_barrier) {
         Ok(snapshot) => snapshot,
         Err(error) => {
             // `write_error_event` feeds `op-ai`'s `ChatDelta::Error(String)`
@@ -196,7 +229,13 @@ pub fn stream_standard_turn<W: Write>(
                     op_editor_core::CollabEditSource::Ai,
                 )
                 .is_ok();
-            if gated && clear_live_starter_frame_for_design(&mut guard).is_some() {
+            // Also a document commit, so it needs the same instant of
+            // admission; a closed barrier simply skips the clear.
+            let starter_clear_pass = admit_document_write(write_barrier).ok();
+            if gated
+                && starter_clear_pass.is_some()
+                && clear_live_starter_frame_for_design(&mut guard).is_some()
+            {
                 snapshot = guard.editor.clone();
                 Some(guard.sse_tick())
             } else {
@@ -250,11 +289,27 @@ pub fn stream_standard_turn<W: Write>(
         }
         crate::chat_intent::DesignIntent::Modify => {
             let plan = modify_plan.expect("route checked has_modify_plan");
-            stream_modify_route(out, plan, design_provider.as_ref(), state, hub)
+            stream_modify_route(
+                out,
+                plan,
+                design_provider.as_ref(),
+                state,
+                hub,
+                write_barrier,
+            )
         }
-        crate::chat_intent::DesignIntent::New => {
-            stream_new_design_route(out, req, snapshot, design_provider, state, hub, model)
-        }
+        crate::chat_intent::DesignIntent::New => stream_new_design_route(
+            out,
+            req,
+            snapshot,
+            design_provider,
+            model,
+            CanvasWriteTarget {
+                state,
+                hub,
+                write_barrier,
+            },
+        ),
     }
 }
 
@@ -262,6 +317,7 @@ fn apply_request_snapshot(
     req: &WebStandardTurnRequest,
     state: &Mutex<WebCanvasState>,
     hub: &SseHub,
+    write_barrier: Option<&crate::web_canvas_server::WriteBarrier>,
 ) -> Result<EditorState, WebChatStandardError> {
     let mut broadcast_tick = None;
     let mut snapshot = {
@@ -291,6 +347,9 @@ fn apply_request_snapshot(
                         op_editor_core::CollabEditSource::Ai,
                     )
                     .map_err(WebChatStandardError::CollabRefused)?;
+                // The one instant this turn touches the document; refused
+                // outright once shutdown has closed the barrier.
+                let _write_pass = admit_document_write(write_barrier)?;
                 guard.replace_document(loaded.value);
                 broadcast_tick = Some(guard.sse_tick());
             }
@@ -418,6 +477,7 @@ fn stream_modify_route<W: Write>(
     provider: &dyn ChatProvider,
     state: &Mutex<WebCanvasState>,
     hub: &SseHub,
+    write_barrier: Option<&crate::web_canvas_server::WriteBarrier>,
 ) -> std::io::Result<()> {
     write_delta_event(out, STANDARD_MODIFY_STEP)?;
     let target_frame_ids = plan.target_frame_ids;
@@ -459,11 +519,18 @@ fn stream_modify_route<W: Write>(
             {
                 (0, None)
             } else {
-                let (count, mutated) = crate::chat_canvas_tools::apply_design_modification(
-                    &mut guard.editor,
-                    &nodes,
-                    &target_frame_ids,
-                );
+                // Shutting down: the reply still streams, the document is left
+                // exactly as the flush will find it.
+                let admitted = admit_document_write(write_barrier).ok();
+                let (count, mutated) = if admitted.is_none() {
+                    (0, false)
+                } else {
+                    crate::chat_canvas_tools::apply_design_modification(
+                        &mut guard.editor,
+                        &nodes,
+                        &target_frame_ids,
+                    )
+                };
                 let tick = if mutated {
                     guard.version += 1;
                     Some(guard.sse_tick())
@@ -507,9 +574,8 @@ fn stream_new_design_route<W: Write>(
     req: WebStandardTurnRequest,
     snapshot: EditorState,
     provider: Box<dyn ChatProvider>,
-    state: &Mutex<WebCanvasState>,
-    hub: &SseHub,
     model: Option<String>,
+    target: CanvasWriteTarget<'_>,
 ) -> std::io::Result<()> {
     let append_context = crate::chat_intent::detect_append_intent(&snapshot, &req.ai.user);
     let request = DesignRequest {
@@ -532,7 +598,7 @@ fn stream_new_design_route<W: Write>(
     // the user picked instead of needing a second key.
     let provider_arc: Arc<dyn ChatProvider> = Arc::from(provider);
     let llm = ChatProviderLlmClient::new(provider_arc.clone()).with_model(model.clone());
-    let mut sink = WebDesignDocSink::new(state, hub, snapshot);
+    let mut sink = WebDesignDocSink::new(target.state, target.hub, target.write_barrier, snapshot);
     let abort = AbortFlag::new();
     let pre_validator = LintPreValidator;
 
@@ -621,12 +687,25 @@ fn stream_new_design_route<W: Write>(
 struct WebDesignDocSink<'a> {
     state: &'a Mutex<WebCanvasState>,
     hub: &'a SseHub,
+    /// Admission for each generated command's commit. `None` for the local
+    /// and managed daemons, which have no flush to protect.
+    write_barrier: Option<&'a crate::web_canvas_server::WriteBarrier>,
     mirror: EditorState,
 }
 
 impl<'a> WebDesignDocSink<'a> {
-    fn new(state: &'a Mutex<WebCanvasState>, hub: &'a SseHub, mirror: EditorState) -> Self {
-        Self { state, hub, mirror }
+    fn new(
+        state: &'a Mutex<WebCanvasState>,
+        hub: &'a SseHub,
+        write_barrier: Option<&'a crate::web_canvas_server::WriteBarrier>,
+        mirror: EditorState,
+    ) -> Self {
+        Self {
+            state,
+            hub,
+            write_barrier,
+            mirror,
+        }
     }
 }
 
@@ -636,6 +715,12 @@ impl DocSink for WebDesignDocSink<'_> {
     }
 
     fn apply(&mut self, cmd: EditorCommand) -> bool {
+        // Each generated command is its own document commit, so each needs its
+        // own instant of admission. A closed barrier acks `false`, which the
+        // generator already treats as "not applied".
+        let Ok(_write_pass) = admit_document_write(self.write_barrier) else {
+            return false;
+        };
         let (applied, tick, snapshot) = {
             let mut guard = self.state.lock().unwrap_or_else(|p| p.into_inner());
             // A refusal and a no-op both ack `false` to the generator, which is

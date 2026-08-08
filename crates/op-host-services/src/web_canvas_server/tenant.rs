@@ -357,6 +357,14 @@ impl WriteBarrier {
         Some(WritePass { barrier: self })
     }
 
+    /// Enter the write path regardless of the closed flag. Tests only — it is
+    /// how a test stands in for a writer that was admitted before the close.
+    #[cfg(test)]
+    pub fn enter_for_test(&self) -> WritePass<'_> {
+        self.active.fetch_add(1, Ordering::AcqRel);
+        WritePass { barrier: self }
+    }
+
     /// Stop admitting writes. Idempotent.
     pub fn close(&self) {
         self.closed.store(true, Ordering::Release);

@@ -47,10 +47,9 @@ const SHUTDOWN_DRAIN_SECS: u64 = 10;
 /// How often the write drain reports the blocked-writer count.
 const WRITE_DRAIN_REPORT_SECS: u64 = 5;
 
-/// The ceiling on waiting for in-flight writes. Flushing over a live writer
-/// loses acked work, so this is deliberately far longer than the connection
-/// drain — and `stop_grace_period` must exceed it.
-const WRITE_DRAIN_HARD_CAP_SECS: u64 = 60;
+/// When a still-blocked write drain escalates from warning to error. Not a
+/// deadline — see [`drain_write_barrier`], which never gives up.
+const WRITE_DRAIN_ERROR_SECS: u64 = 60;
 
 /// Wait for the active-connection count to reach zero, up to the bound.
 ///
@@ -74,34 +73,38 @@ fn drain_connections(conn_count: &Arc<AtomicUsize>) -> bool {
 /// minutes and is safe to flush past, while a write in progress is not —
 /// flushing over one loses work a client was already told had landed.
 ///
-/// So this does NOT give up after the ordinary drain window. It keeps waiting
-/// to a hard ceiling, reporting the blocked-writer count every
-/// [`WRITE_DRAIN_REPORT_SECS`] so an operator can see why the stop is slow.
-/// Reaching the ceiling is an error, not a routine outcome: `stop_grace_period`
-/// must exceed [`WRITE_DRAIN_HARD_CAP_SECS`] or the container is killed
-/// mid-flush regardless of what this does.
-fn drain_write_barrier(barrier: &Arc<super::tenant::WriteBarrier>) -> bool {
+/// This waits WITHOUT an upper bound. Flushing over a live writer loses work a
+/// client was already told had landed, and there is no deadline at which that
+/// stops being true — so the process never chooses to do it. Every writer holds
+/// the pass for one short locked operation, so 60s of blockage is pathological,
+/// and a flush taken in that state would not rescue consistency anyway.
+///
+/// The outer bound is the orchestrator's: `stop_grace_period` expiring into a
+/// SIGKILL. That is the right place for it, because only the operator knows how
+/// long a stop may take. The flush duration is logged for exactly that sizing.
+///
+/// Progress is reported every [`WRITE_DRAIN_REPORT_SECS`] as a warning, and
+/// escalated to an error past [`WRITE_DRAIN_ERROR_SECS`], so a stop that is
+/// being held up says why.
+#[cfg(test)]
+pub(super) fn drain_write_barrier_for_test(barrier: &Arc<super::tenant::WriteBarrier>) {
+    drain_write_barrier(barrier);
+}
+
+fn drain_write_barrier(barrier: &Arc<super::tenant::WriteBarrier>) {
     let started = std::time::Instant::now();
     let mut next_report = std::time::Duration::from_secs(WRITE_DRAIN_REPORT_SECS);
-    loop {
-        if barrier.active() == 0 {
-            return true;
-        }
+    while barrier.active() != 0 {
         let waited = started.elapsed();
-        if waited >= std::time::Duration::from_secs(WRITE_DRAIN_HARD_CAP_SECS) {
-            eprintln!(
-                "openpencil --serve-web --online: ERROR {} write(s) still in flight after {}s; \
-                 flushing anyway — those clients were acked and may not be persisted. Raise \
-                 stop_grace_period above {}s.",
-                barrier.active(),
-                WRITE_DRAIN_HARD_CAP_SECS,
-                WRITE_DRAIN_HARD_CAP_SECS
-            );
-            return false;
-        }
         if waited >= next_report {
+            let level = if waited >= std::time::Duration::from_secs(WRITE_DRAIN_ERROR_SECS) {
+                "ERROR"
+            } else {
+                "warning"
+            };
             eprintln!(
-                "openpencil --serve-web --online: waiting on {} in-flight write(s) ({}s)",
+                "openpencil --serve-web --online: {level} still waiting on {} in-flight \
+                 write(s) after {}s; the flush cannot run until they finish",
                 barrier.active(),
                 waited.as_secs()
             );
@@ -269,8 +272,10 @@ pub fn run_online_web_canvas(options: ServeWebOptions) -> Result<()> {
     // holding a pass would otherwise commit after the flush snapshotted the
     // document, having already answered 200.
     write_barrier.close();
-    // Reports and escalates internally; a `false` means the hard cap was hit.
-    let _writes_settled = drain_write_barrier(&write_barrier);
+    // Returns only once no write is in flight: the process never flushes over
+    // a live writer. If that takes longer than the orchestrator's grace period
+    // it SIGKILLs us, which is the correct outer bound.
+    drain_write_barrier(&write_barrier);
     let drained = drain_connections(&conn_count);
     let flush_started = std::time::Instant::now();
     let flushed = registry.flush_all();

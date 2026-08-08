@@ -757,7 +757,7 @@ use origin_guard::*;
 pub use run_loop::*;
 pub use serve_options::*;
 pub use share_routes::ShareError;
-pub use tenant::{TenantError, TenantLease, TenantLimits, TenantRegistry};
+pub use tenant::{TenantError, TenantLease, TenantLimits, TenantRegistry, WriteBarrier, WritePass};
 pub use tenant_auth::{
     IdentityVerifier, OnlineAuthError, PresentedCredentials, ResolvedIdentity, StaticVerifier,
 };

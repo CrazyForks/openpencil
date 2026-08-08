@@ -29,6 +29,31 @@ fn the_write_barrier_admits_writes_until_shutdown_closes_it() {
 }
 
 #[test]
+fn the_drain_returns_only_when_no_write_is_in_flight() {
+    // The process must never flush over a live writer: there is no deadline at
+    // which losing acked work becomes acceptable, so the wait is unbounded and
+    // the orchestrator's grace period is the outer bound.
+    use crate::web_canvas_server::tenant::WriteBarrier;
+    let barrier = std::sync::Arc::new(WriteBarrier::default());
+    barrier.close();
+
+    let held = barrier.enter_for_test();
+    let waiting = std::sync::Arc::clone(&barrier);
+    let handle = std::thread::spawn(move || {
+        super::super::drain_write_barrier_for_test(&waiting);
+    });
+    // Still blocked while the pass is held.
+    std::thread::sleep(std::time::Duration::from_millis(120));
+    assert!(!handle.is_finished(), "the drain must wait for the writer");
+
+    drop(held);
+    handle
+        .join()
+        .expect("the drain returns once the writer finishes");
+    assert_eq!(barrier.active(), 0);
+}
+
+#[test]
 fn a_held_pass_keeps_the_barrier_busy_so_the_flush_waits() {
     // The window this closes: a worker past the connection drain, about to
     // take the state lock, commits after the flush snapshotted the document —

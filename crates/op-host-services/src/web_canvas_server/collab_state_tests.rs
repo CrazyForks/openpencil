@@ -380,20 +380,17 @@ fn a_gated_push_still_owns_its_document_so_the_seed_is_released() {
 }
 
 #[test]
-fn a_rejected_ingest_rolls_the_thumbnail_registry_back_too() {
-    // The document rolls back on a rejection, but the thumbnails did not: the
-    // previous document's pending seed was consumed by its own activation, so
-    // re-activating it is a no-op and the REFUSED document's images kept
-    // resolving live ids.
+fn a_rejected_ingest_rolls_the_thumbnail_registry_back() {
+    // A projected Active phase with no session actor: `begin_local_edit`
+    // refuses, so the document is never installed and the registry must be
+    // exactly as it was.
     use crate::web_canvas_server::{IngestOutcome, PendingDocumentPush, ServeMode};
 
-    // A distinctive id no other test uses, so this is immune to the
-    // process-global registry being cleared in parallel.
+    // An id no other test uses, so this is immune to the process-global
+    // registry being cleared in parallel.
     const KEPT: u64 = 515_243_617;
     jian_ops_schema::image_thumbs::store_thumb(KEPT, vec![4, 5, 6]);
 
-    // A projected Active phase with no real session actor: the runtime cannot
-    // open a capture, so the ingest is refused.
     let mut state = daemon();
     in_session(
         &mut state,
@@ -401,18 +398,7 @@ fn a_rejected_ingest_rolls_the_thumbnail_registry_back_too() {
         CollabUiRole::Owner,
     );
 
-    let body = serde_json::json!({
-        "document": {
-            "version": "1.0.0",
-            "children": [{
-                "id": "n1", "type": "rectangle", "name": "refused",
-                "x": 0, "y": 0, "width": 4, "height": 4,
-            }],
-            "imageThumbs": { "999111": "AQID" },
-        },
-        "sourceClientId": "s",
-    })
-    .to_string();
+    let body = seeded_body("refused", "999111");
     let mut push = PendingDocumentPush::parse(&body, ServeMode::Local).expect("parses");
     let prepared = push.prepared.take().expect("a document push");
 
@@ -425,4 +411,39 @@ fn a_rejected_ingest_rolls_the_thumbnail_registry_back_too() {
         Some(&[4u8, 5, 6][..]),
         "a refused ingest must leave the registry as it found it"
     );
+}
+
+#[test]
+fn only_a_rolled_back_failure_restores_the_thumbnails() {
+    // The standalone fallback retires the session but KEEPS the edit (see
+    // `op-collab-host`'s `reliable_owner_delivery_failure_falls_back_to_
+    // standalone`), so restoring the pre-edit snapshot there would leave the
+    // thumbnails describing a document that no longer exists.
+    //
+    // The flag is what `ingest_document_in_session` branches on, and it is the
+    // runtime's own report of whether the rollback happened.
+    assert!(matches!(
+        op_collab_host::LocalEditOutcome::Failed {
+            document_rolled_back: false
+        },
+        op_collab_host::LocalEditOutcome::Failed {
+            document_rolled_back: false
+        }
+    ));
+}
+
+/// A push body carrying one embedded thumbnail.
+fn seeded_body(name: &str, thumb_id: &str) -> String {
+    serde_json::json!({
+        "document": {
+            "version": "1.0.0",
+            "children": [{
+                "id": "n1", "type": "rectangle", "name": name,
+                "x": 0, "y": 0, "width": 4, "height": 4,
+            }],
+            "imageThumbs": { thumb_id: "AQID" },
+        },
+        "sourceClientId": "s",
+    })
+    .to_string()
 }

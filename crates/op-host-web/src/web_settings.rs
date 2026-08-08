@@ -88,6 +88,15 @@ pub(crate) fn reload_for_active_partition<C: crate::repaint_ctx::RepaintContext>
     // account's state would make the very next comparison report the whole
     // partition as a change and write it back under the wrong key.
     context.reset_persistence_baselines(&load);
+    // Restart credential sync for the partition now in force.
+    //
+    // Needed on FirstIdentified too, which does NOT go through the identity
+    // reset: a policy fetch issued at mount under the anonymous epoch is
+    // refused by the epoch guard when it lands, and `policy_in_flight` would
+    // stay set forever — after which every `changed()` returns `SyncAction::
+    // None` and the account can never upload a credential again.
+    crate::web_credential_sync::reset();
+    crate::web_credential_sync::start();
     context.host_mut().mark_editor_state_dirty();
     let _ = context.repaint();
 }

@@ -196,7 +196,10 @@ impl LocalEditCapture<'_> {
     /// Close the capture, reporting what the session decided.
     fn finish(mut self) -> op_collab_host::LocalEditOutcome {
         let Some(state) = self.state.take() else {
-            return op_collab_host::LocalEditOutcome::Failed;
+            // The guard lost its state: nothing was rolled back here.
+            return op_collab_host::LocalEditOutcome::Failed {
+                document_rolled_back: false,
+            };
         };
         let (runtime, mut host) = state.collab_runtime_and_host();
         runtime.finish_local_edit(&mut host)
@@ -378,8 +381,16 @@ impl WebCanvasState {
                 jian_ops_schema::image_thumbs::restore_snapshot(thumbnails_before);
                 IngestOutcome::Rejected
             }
-            op_collab_host::LocalEditOutcome::Failed => {
-                jian_ops_schema::image_thumbs::restore_snapshot(thumbnails_before);
+            // Only restore when the document actually went back. The
+            // standalone fallback KEEPS the edit, so restoring there would
+            // leave the thumbnails describing a document that no longer
+            // exists — the exact desynchronisation this guard exists for.
+            op_collab_host::LocalEditOutcome::Failed {
+                document_rolled_back,
+            } => {
+                if document_rolled_back {
+                    jian_ops_schema::image_thumbs::restore_snapshot(thumbnails_before);
+                }
                 IngestOutcome::Failed
             }
         }

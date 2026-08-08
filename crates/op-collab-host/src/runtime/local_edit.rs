@@ -17,8 +17,16 @@ pub enum LocalEditOutcome {
     /// The session refused the edit and rolled it back. The caller's copy is
     /// now behind and must be refetched.
     Rejected,
-    /// The capture could not be opened or closed cleanly.
-    Failed,
+    /// The capture could not be closed cleanly and the session was torn down.
+    ///
+    /// `document_rolled_back` says whether the document went back to its
+    /// pre-edit content. It is NOT always true: the standalone fallback
+    /// (a delivery failure that retires the session) deliberately KEEPS the
+    /// edit, because the user's work is still theirs even though the session
+    /// is gone. A caller that undoes side effects — thumbnails, caches — must
+    /// only undo them when the document was actually rolled back, or it
+    /// desynchronises them from a document that kept its new content.
+    Failed { document_rolled_back: bool },
 }
 
 use op_editor_core::{CollabNoticeKind, CollabRejectUiCode};
@@ -63,10 +71,16 @@ impl CollabRuntime {
 
     pub fn finish_local_edit(&mut self, host: &mut impl CollabHost) -> LocalEditOutcome {
         if !std::mem::take(&mut self.transaction_active) {
-            return LocalEditOutcome::Failed;
+            // Nothing was captured, so whatever the caller installed is still
+            // in place — not rolled back.
+            return LocalEditOutcome::Failed {
+                document_rolled_back: false,
+            };
         }
         let Some(mut actor) = self.actor.take() else {
-            return LocalEditOutcome::Failed;
+            return LocalEditOutcome::Failed {
+                document_rolled_back: false,
+            };
         };
         // Cleared here so a stale resolution from an earlier edit cannot be
         // read as this one's answer.
@@ -96,7 +110,11 @@ impl CollabRuntime {
                 // changed or the sequencer prepared a commit. Continuing to
                 // advertise Active would silently fork owner and guests.
                 self.fail_network(host, error.failure);
-                LocalEditOutcome::Failed
+                // The standalone fallback keeps the edited document — see
+                // `reliable_owner_delivery_failure_falls_back_to_standalone`.
+                LocalEditOutcome::Failed {
+                    document_rolled_back: false,
+                }
             }
         }
     }
