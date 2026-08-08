@@ -5,7 +5,8 @@ use op_auth_bridge::{
 };
 use op_collab::VerifiedAuthMetadata;
 use op_collab_transport::{
-    verify_initial_ticket, AdmissionError, DeviceStaticKey, TicketVerifier, VerifiedTicketClaims,
+    verify_initial_ticket, AdmissionError, DeviceStaticKey, PeerIdentityPolicy, TicketVerifier,
+    VerifiedTicketClaims,
 };
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -125,6 +126,10 @@ pub const fn expected_issuer() -> &'static str {
     TEST_COLLAB_ISSUER
 }
 
-pub const fn expected_subject() -> &'static str {
-    TEST_SUBJECT
+/// The admission identity policy every smoke peer expects: both test devices
+/// are issued under the shared [`TEST_SUBJECT`] account.
+pub const fn expected_identity_policy() -> PeerIdentityPolicy<'static> {
+    PeerIdentityPolicy::SameAccount {
+        subject: TEST_SUBJECT,
+    }
 }

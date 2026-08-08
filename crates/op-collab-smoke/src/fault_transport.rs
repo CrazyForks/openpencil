@@ -1,4 +1,4 @@
-use crate::auth::{expected_issuer, expected_subject, SmokeAuth};
+use crate::auth::{expected_identity_policy, expected_issuer, SmokeAuth};
 use crate::fixtures;
 use anyhow::{bail, Context, Result};
 use op_collab::{CollabMessage, Commit, Epoch, FrameEnvelope, Role};
@@ -53,7 +53,7 @@ pub fn accept_guest(
         &local_hello,
         owner_auth.verifier(),
         expected_issuer(),
-        expected_subject(),
+        expected_identity_policy(),
         owner_auth.now_unix_ms(),
         Instant::now(),
     )?;
@@ -82,7 +82,7 @@ pub fn connect_owner(
         &hello,
         guest_auth.verifier(),
         expected_issuer(),
-        expected_subject(),
+        expected_identity_policy(),
         guest_auth.now_unix_ms(),
         Instant::now(),
     )?;

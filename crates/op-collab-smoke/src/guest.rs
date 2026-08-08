@@ -1,5 +1,5 @@
 use crate::auth::{
-    expected_issuer, expected_subject, SmokeAuth, GUEST_AVATAR_URL, GUEST_DEVICE_ID,
+    expected_identity_policy, expected_issuer, SmokeAuth, GUEST_AVATAR_URL, GUEST_DEVICE_ID,
     GUEST_DISPLAY_NAME, OWNER_AVATAR_URL, OWNER_DISPLAY_NAME,
 };
 use crate::fixtures;
@@ -34,7 +34,7 @@ pub fn run(address: SocketAddr) -> Result<String> {
         &hello,
         auth.verifier(),
         expected_issuer(),
-        expected_subject(),
+        expected_identity_policy(),
         auth.now_unix_ms(),
         Instant::now(),
     )?;
