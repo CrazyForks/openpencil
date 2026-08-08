@@ -11,12 +11,20 @@ use crate::{Point2D, Rect};
 use op_editor_core::agent_settings::{AgentSettings, AgentSettingsTab};
 use op_editor_core::editor_ui_state::EditorUiState;
 
-const DISCONNECT_BTN_W: f32 = 96.0;
+const DISCONNECT_BTN_W: f32 = 88.0;
 /// Inner inset of a provider row (avatar on the left, status pill on the
 /// right sit this far in from the row edges).
-const ROW_INSET: f32 = 16.0;
+const ROW_INSET: f32 = crate::widgets::agent_settings_metrics::ROW_PAD_X;
 /// Gap between the row's action button and the status-pill slot.
 const ROW_ACTION_GAP: f32 = 12.0;
+/// The external-provider list's own section header, between the ACP
+/// section and the first provider row. Paint and the row ladder below
+/// both step over exactly this — they used to disagree by 4 px, which put
+/// every provider row's hit box below the row you could see.
+pub(super) const PROVIDER_SECTION_HEADER_H: f32 =
+    crate::widgets::agent_settings_metrics::SECTION_HEADER_H;
+/// Muted hint under a connected Claude Code row.
+pub(super) const CLAUDE_HINT_H: f32 = 24.0;
 /// Space kept clear at the right of the left-aligned tab strip so a wide
 /// strip can never slide under the close button.
 const TAB_STRIP_SIDE_RESERVE: f32 = 72.0;
@@ -126,23 +134,23 @@ pub(super) fn close_rect(panel: Rect) -> Rect {
     }
 }
 
-/// First y of the Agents tab body — everything below the hero block
-/// (big title + subtitle lines). Single source for paint, hit-test, and
-/// the content-height walk.
+/// First y of the Agents tab body — everything below the tab intro
+/// (section-sized title + one muted line). Single source for paint,
+/// hit-test, and the content-height walk.
 pub(super) fn agents_body_top(content: Rect) -> f32 {
     content.origin.y + AGENTS_HERO_HEIGHT
 }
 
-/// Images / Fonts / Account are settings inventories, so the panel gives
-/// them the compact heading rather than a hero — with one muted line.
+/// Images / Fonts / Account take the same intro every other tab does,
+/// with one muted line.
 pub(super) const SECONDARY_HEADING_HAS_DESC: bool = true;
 
 /// Body rect handed to those tabs: the content viewport pushed down past
-/// the heading the panel paints for them. Keeping the shift here means
+/// the intro the panel paints for them. Keeping the shift here means
 /// their own geometry stays written against "the top of my body", so
-/// adding the heading needed no edits inside them.
+/// adding the intro needed no edits inside them.
 pub(super) fn hero_body_rect(content: Rect) -> Rect {
-    let dy = crate::widgets::agent_settings_rows::tab_heading_height(SECONDARY_HEADING_HAS_DESC);
+    let dy = crate::widgets::agent_settings_rows::tab_intro_height(SECONDARY_HEADING_HAS_DESC);
     Rect {
         origin: Point2D::new(content.origin.x, content.origin.y + dy),
         size: Point2D::new(content.size.x, (content.size.y - dy).max(0.0)),
@@ -164,15 +172,22 @@ pub(super) fn connect_btn_rect_at(card: Rect) -> Rect {
     row_action_rect(card, CONNECT_BTN_W)
 }
 
+/// Y of the first external-provider row: past the built-in and ACP
+/// sections and past the provider list's own header.
+pub(super) fn provider_rows_top(content: Rect, settings: &AgentSettings) -> f32 {
+    acp_section_y(content, settings)
+        + agent_settings_acp::content_height(settings)
+        + SECTION_GAP
+        + PROVIDER_SECTION_HEADER_H
+}
+
 pub(super) fn agent_card_rect_in(panel: Rect, index: usize, settings: &AgentSettings) -> Rect {
     let content = content_rect(panel);
-    let builtin_block = agent_settings_builtin::content_height(settings) + SECTION_GAP;
-    let acp_block = agent_settings_acp::content_height(settings) + SECTION_GAP;
-    let mut y = agents_body_top(content) + builtin_block + acp_block + 32.0;
+    let mut y = provider_rows_top(content, settings);
     for i in 0..index {
         y += CARD_HEIGHT + CARD_GAP;
         if i == 0 && settings.provider_verified_connected_at(0) {
-            y += 28.0;
+            y += CLAUDE_HINT_H;
         }
     }
     agent_card_rect_at(content.origin.x, y, content.size.x)

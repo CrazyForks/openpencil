@@ -87,7 +87,10 @@ fn builtin_draft_card(panel: Rect) -> Rect {
     Rect {
         origin: Point2D::new(
             content_x,
-            content_y + crate::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT + 28.0 + 28.0,
+            content_y
+                + crate::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT
+                + crate::widgets::agent_settings_metrics::SECTION_HEADER_H
+                + crate::widgets::agent_settings_metrics::SECTION_SUBTITLE_H,
         ),
         size: Point2D::new(content_w, 232.0),
     }
@@ -95,14 +98,20 @@ fn builtin_draft_card(panel: Rect) -> Rect {
 
 fn acp_draft_card_after_empty_builtin(panel: Rect) -> Rect {
     let (content_x, content_y, content_w) = content_metrics(panel);
+    use crate::widgets::agent_settings_metrics::{
+        EMPTY_BLOCK_H, SECTION_GAP, SECTION_HEADER_H, SECTION_SUBTITLE_H,
+    };
     let acp_header_y = content_y
         + crate::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT
-        + 28.0
-        + 28.0
-        + 64.0
-        + 28.0;
+        + SECTION_HEADER_H
+        + SECTION_SUBTITLE_H
+        + EMPTY_BLOCK_H
+        + SECTION_GAP;
     Rect {
-        origin: Point2D::new(content_x, acp_header_y + 28.0 + 28.0),
+        origin: Point2D::new(
+            content_x,
+            acp_header_y + SECTION_HEADER_H + SECTION_SUBTITLE_H,
+        ),
         size: Point2D::new(content_w, 370.0),
     }
 }

@@ -19,10 +19,16 @@ use op_editor_core::agent_settings::AgentSettings;
 use op_editor_core::editor_ui_state::EditorUiState;
 use op_editor_core::{AgentSettingsButton, ButtonPressTarget};
 
+use crate::widgets::agent_settings_metrics::{ROW_AVATAR, ROW_H_TWO_LINE, ROW_PAD_X, ROW_TEXT_X};
+use crate::widgets::agent_settings_rows::{paint_row_hairline, paint_row_label_at};
+
 const LABEL_H: f32 = 22.0;
-const ROW_H: f32 = 44.0;
-const ROW_GAP: f32 = 6.0;
-const MONOGRAM: f32 = 28.0;
+/// Quick-add rows are the modal's two-line list row, like every other
+/// entry — they used to be 44 px bordered cards with a 6 px gap, which
+/// made the block read as a second, denser design inside the section.
+const ROW_H: f32 = ROW_H_TWO_LINE;
+const ROW_GAP: f32 = 0.0;
+const MONOGRAM: f32 = ROW_AVATAR;
 const ADD_BTN_W: f32 = 64.0;
 const ADD_BTN_H: f32 = 24.0;
 
@@ -111,26 +117,20 @@ fn paint_row(
 ) {
     let hovered = settings.hover_acp_preset == Some(index);
     let missing = settings.acp_preset_availability(preset.id) == AcpPresetAvailability::Missing;
-    cx.backend
-        .fill_round_rect(row, 8.0, if hovered { theme.accent } else { theme.muted });
-    cx.backend.stroke_round_rect(row, 8.0, theme.border, 1.0);
+    if hovered {
+        cx.backend.fill_round_rect(row, 8.0, theme.button_hover);
+    }
+    let last = index + 1 == settings.visible_acp_presets().len();
+    if !last {
+        paint_row_hairline(cx, theme, row);
+    }
 
     // A missing binary mutes the row's identity but never removes the
     // action. PATH was read once, on this host, at some earlier moment —
     // treating that snapshot as authority would lock the user out of a CLI
     // they installed two minutes ago, and the handshake reports the real
     // answer anyway.
-    let name_color = if missing {
-        theme.muted_foreground
-    } else {
-        theme.foreground
-    };
     paint_monogram(cx, theme, preset.display_name, row, missing);
-
-    let text_x = row.origin.x + 12.0 + MONOGRAM + 10.0;
-    let detail_w = row.origin.x + row.size.x - ADD_BTN_W - 24.0 - text_x;
-    let name = ellipsize(cx, preset.display_name, detail_w.max(40.0), 13.0);
-    draw_text(cx, &name, 13.0, name_color, text_x, row.origin.y + 19.0);
 
     // The install hint replaces the command preview rather than the Add
     // label: the button still works, so labelling it "Not installed"
@@ -144,14 +144,16 @@ fn paint_row(
     } else {
         format!("{} {}", preset.command, preset.args.join(" "))
     };
-    let detail = ellipsize(cx, &detail, detail_w.max(40.0), 10.0);
-    draw_text(
+    let text_x = row.origin.x + ROW_TEXT_X;
+    let reserved = ADD_BTN_W + ROW_PAD_X;
+    paint_row_label_at(
         cx,
-        &detail,
-        10.0,
-        theme.muted_foreground,
+        theme,
+        row,
         text_x,
-        row.origin.y + 33.0,
+        preset.display_name,
+        Some(&detail),
+        reserved,
     );
 
     let btn = add_button_rect(row);
@@ -190,12 +192,12 @@ fn paint_monogram(
 ) {
     let badge = Rect {
         origin: Point2D::new(
-            row.origin.x + 12.0,
+            row.origin.x + ROW_PAD_X,
             row.origin.y + (row.size.y - MONOGRAM) / 2.0,
         ),
         size: Point2D::new(MONOGRAM, MONOGRAM),
     };
-    cx.backend.fill_round_rect(badge, 7.0, theme.card);
+    cx.backend.fill_round_rect(badge, 8.0, theme.background);
     let monogram = super::agent_settings_acp::agent_monogram(display_name);
     let monogram_w = text_metrics::measure_chrome_weighted(cx.backend, &monogram, 13.0, 600);
     let color = if missing {
@@ -225,7 +227,7 @@ fn row_rect(content: Rect, y: f32) -> Rect {
 fn add_button_rect(row: Rect) -> Rect {
     Rect {
         origin: Point2D::new(
-            row.origin.x + row.size.x - 12.0 - ADD_BTN_W,
+            row.origin.x + row.size.x - ROW_PAD_X - ADD_BTN_W,
             row.origin.y + (row.size.y - ADD_BTN_H) / 2.0,
         ),
         size: Point2D::new(ADD_BTN_W, ADD_BTN_H),

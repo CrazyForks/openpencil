@@ -1,7 +1,13 @@
-//! Agents-tab hero block — the headline plus the two muted lines that
-//! open the tab. Only the copy is specific to this tab, so the painting
-//! itself goes through the modal's shared
-//! [`crate::widgets::agent_settings_rows::paint_tab_hero`].
+//! Agents-tab intro — the section-sized title plus the one muted line
+//! that opens the tab. Only the copy is specific to this tab, so the
+//! painting itself goes through the modal's shared
+//! [`crate::widgets::agent_settings_rows::paint_tab_intro`].
+//!
+//! It used to be a 27 pt headline over TWO muted lines (the provider roll
+//! and a blurb). The blurb repeated what the roll already showed, and the
+//! block cost a quarter of the modal before the first setting; the roll —
+//! the concrete "here is what you can connect" — is the line worth
+//! keeping.
 
 use super::*;
 use op_editor_core::agent_settings_builtin_presets::{
@@ -45,11 +51,11 @@ pub(super) fn paint_agents_hero(
     content: Rect,
 ) {
     let roll = provider_roll(ui);
-    crate::widgets::agent_settings_rows::paint_tab_hero(
+    crate::widgets::agent_settings_rows::paint_tab_intro(
         cx,
         theme,
         content,
         t_settings(ui, "settings.agents.heroTitle"),
-        &[&roll, t_settings(ui, "settings.agents.heroSubtitle")],
+        Some(&roll),
     );
 }

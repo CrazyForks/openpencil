@@ -7,10 +7,11 @@
 
 use crate::theme::Theme;
 use crate::widgets::agent_settings_i18n::t as t_settings;
+use crate::widgets::agent_settings_metrics::CONTENT_TAIL_PAD;
 use crate::widgets::agent_settings_rows::{
     fit_text, measure_settings_text, paint_footnote, paint_row_hairline, paint_row_label,
-    paint_row_label_above_status, paint_row_status_line, paint_tab_heading, row_control_rect,
-    row_rect_in, rows_block_height, tab_heading_height, RowLines, SETTINGS_FONT_FAMILY,
+    paint_row_label_above_status, paint_row_status_line, paint_tab_intro, row_control_rect,
+    row_rect_in, rows_block_height, tab_intro_height, RowLines, FOOTNOTE_H, SETTINGS_FONT_FAMILY,
 };
 use crate::widgets::agent_settings_switch::{
     paint_settings_switch, SETTINGS_SWITCH_H, SETTINGS_SWITCH_W,
@@ -21,9 +22,7 @@ use crate::{Color, Point2D, Rect, TextLayout};
 use op_editor_core::agent_settings::AgentSettings;
 use op_editor_core::editor_ui_state::{EditorUiState, ThemeMode, UpdateStatus};
 
-/// System is a settings inventory, not an introduction — it takes the
-/// compact heading rather than a 27 pt hero (see the tier table in
-/// `agent_settings_rows`).
+/// System opens with the shared tab intro: title plus one muted line.
 const HEADING_HAS_DESC: bool = true;
 const SEGMENT_W: f32 = 78.0;
 const SEGMENT_H: f32 = 30.0;
@@ -104,7 +103,7 @@ pub(super) fn row_boxes(content: Rect) -> Vec<(Rect, RowLines)> {
 }
 
 fn body_top(content: Rect) -> f32 {
-    content.origin.y + tab_heading_height(HEADING_HAS_DESC)
+    content.origin.y + tab_intro_height(HEADING_HAS_DESC)
 }
 
 fn rect_for(content: Rect, row: SystemRow) -> Rect {
@@ -116,7 +115,10 @@ fn rect_for(content: Rect, row: SystemRow) -> Rect {
 }
 
 pub(super) fn content_height() -> f32 {
-    tab_heading_height(HEADING_HAS_DESC) + rows_block_height(&row_kinds()) + 32.0 + 24.0
+    tab_intro_height(HEADING_HAS_DESC)
+        + rows_block_height(&row_kinds())
+        + FOOTNOTE_H
+        + CONTENT_TAIL_PAD
 }
 
 /// The two-segment Light / Dark control on the Appearance row.
@@ -189,11 +191,10 @@ pub(super) fn paint_system_tab(
     ui: &EditorUiState,
     content: Rect,
 ) {
-    paint_tab_heading(
+    paint_tab_intro(
         cx,
         theme,
         content,
-        Icon::Settings,
         t_settings(ui, "settings.system.heroTitle"),
         Some(t_settings(ui, "settings.system.heroSubtitle")),
     );

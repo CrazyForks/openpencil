@@ -5,6 +5,10 @@ use op_editor_core::agent_settings::AgentSettingsTab;
 use op_editor_core::editor_ui_state::ThemeMode;
 use op_editor_core::{AgentSettingsButton, ButtonPressTarget, EditorState};
 
+use crate::widgets::agent_settings_metrics::{
+    EMPTY_BLOCK_H, ROW_H_TWO_LINE, ROW_PAD_X, SECTION_GAP, SECTION_HEADER_H, SECTION_SUBTITLE_H,
+};
+
 const ACTION_W: f32 = 24.0;
 const SWITCH_W: f32 = 36.0;
 const CONNECT_BTN_W: f32 = 96.0;
@@ -73,15 +77,18 @@ fn builtin_card_rect(panel: Rect) -> Rect {
     Rect {
         origin: Point2D::new(
             content_x,
-            content_y + crate::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT + 28.0 + 28.0,
+            content_y
+                + crate::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT
+                + SECTION_HEADER_H
+                + SECTION_SUBTITLE_H,
         ),
-        size: Point2D::new(content_w, 60.0),
+        size: Point2D::new(content_w, ROW_H_TWO_LINE),
     }
 }
 
 fn builtin_edit_rect(panel: Rect) -> Rect {
     let card = builtin_card_rect(panel);
-    let switch_x = card.origin.x + card.size.x - 12.0 - SWITCH_W - 8.0 - ACTION_W * 2.0 - 4.0;
+    let switch_x = card.origin.x + card.size.x - ROW_PAD_X - SWITCH_W - 8.0 - ACTION_W * 2.0 - 4.0;
     Rect {
         origin: Point2D::new(
             switch_x + SWITCH_W + 8.0,
@@ -103,19 +110,22 @@ fn acp_card_rect_after_empty_builtin(panel: Rect) -> Rect {
     let (content_x, content_y, content_w) = content_metrics(panel);
     let acp_header_y = content_y
         + crate::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT
-        + 28.0
-        + 28.0
-        + 64.0
-        + 28.0;
+        + SECTION_HEADER_H
+        + SECTION_SUBTITLE_H
+        + EMPTY_BLOCK_H
+        + SECTION_GAP;
     Rect {
-        origin: Point2D::new(content_x, acp_header_y + 28.0 + 28.0),
-        size: Point2D::new(content_w, 60.0),
+        origin: Point2D::new(
+            content_x,
+            acp_header_y + SECTION_HEADER_H + SECTION_SUBTITLE_H,
+        ),
+        size: Point2D::new(content_w, ROW_H_TWO_LINE),
     }
 }
 
 fn acp_edit_rect(panel: Rect) -> Rect {
     let card = acp_card_rect_after_empty_builtin(panel);
-    let connection_x = card.origin.x + card.size.x - 12.0 - CONNECT_BTN_W;
+    let connection_x = card.origin.x + card.size.x - ROW_PAD_X - CONNECT_BTN_W;
     Rect {
         origin: Point2D::new(
             connection_x - 8.0 - ACTION_W * 2.0 - 4.0,
@@ -137,7 +147,7 @@ fn acp_connection_rect(panel: Rect) -> Rect {
     let card = acp_card_rect_after_empty_builtin(panel);
     Rect {
         origin: Point2D::new(
-            card.origin.x + card.size.x - 12.0 - CONNECT_BTN_W,
+            card.origin.x + card.size.x - ROW_PAD_X - CONNECT_BTN_W,
             card.origin.y + (card.size.y - 28.0) / 2.0,
         ),
         size: Point2D::new(CONNECT_BTN_W, 28.0),

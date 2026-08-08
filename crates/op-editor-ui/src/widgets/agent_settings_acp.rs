@@ -13,6 +13,11 @@ use crate::widgets::agent_settings_header_action::{
     fit_header_copy, header_action_rect, header_action_text_baseline_y, header_action_text_x,
 };
 use crate::widgets::agent_settings_i18n::t as t_settings;
+use crate::widgets::agent_settings_metrics::{self as metrics, ROW_AVATAR, ROW_PAD_X, ROW_TEXT_X};
+use crate::widgets::agent_settings_rows::{
+    fit_text, paint_row_hairline, paint_row_label_above_status_at, paint_row_status_line_at_fitted,
+    paint_section_title, row_text_budget, ROW_LABEL_BASELINE, ROW_LABEL_FONT,
+};
 use crate::widgets::button::{paint_ghost_button_feedback, tokens_from_theme};
 use crate::widgets::icons::{draw_icon, Icon};
 use crate::widgets::settings_form::{self, draw_text, ellipsize, paint_action};
@@ -28,11 +33,13 @@ use op_editor_core::agent_settings::{
 use op_editor_core::editor_ui_state::EditorUiState;
 use op_editor_core::{AgentSettingsButton, ButtonPressTarget};
 
-const HEADER_H: f32 = 28.0;
-const SUBTITLE_H: f32 = 28.0;
-const EMPTY_H: f32 = 64.0;
-const COMPACT_CARD_H: f32 = 60.0;
-const CARD_GAP: f32 = 8.0;
+const HEADER_H: f32 = metrics::SECTION_HEADER_H;
+const SUBTITLE_H: f32 = metrics::SECTION_SUBTITLE_H;
+const EMPTY_H: f32 = metrics::EMPTY_BLOCK_H;
+/// A saved agent that is not being edited is a list row, not a card.
+const COMPACT_CARD_H: f32 = metrics::ROW_H_TWO_LINE;
+/// Rows sit flush — the hairline between them IS the gap.
+const CARD_GAP: f32 = 0.0;
 const ACTION_W: f32 = 24.0;
 const CONNECT_BTN_W: f32 = 96.0;
 const CONNECT_BTN_H: f32 = 28.0;
@@ -265,14 +272,7 @@ fn paint_header(
     action_pressed: bool,
 ) -> f32 {
     let copy = fit_header_copy(cx, title, action, content.size.x);
-    draw_text(
-        cx,
-        &copy.title,
-        15.0,
-        theme.foreground,
-        content.origin.x,
-        y + 18.0,
-    );
+    paint_section_title(cx, theme, content.origin.x, y, &copy.title);
     let action_rect = header_action_rect(content, y);
     paint_ghost_button_feedback(cx.backend, theme, action_rect, action_hover, action_pressed);
     draw_text(
@@ -304,6 +304,10 @@ fn paint_acp_card(
     }
 }
 
+/// A saved ACP agent, not being edited: a hairline-separated list row —
+/// monogram, name over its connection detail, Connect on the right. The
+/// tinted, bordered card it used to be spoke a different visual language
+/// from the rest of the modal and stood 60 px tall to do it.
 fn paint_compact_acp_card(
     cx: &mut PaintCx<'_>,
     theme: &Theme,
@@ -313,50 +317,63 @@ fn paint_compact_acp_card(
     index: usize,
     card: Rect,
 ) {
-    let connected = settings.acp_agent_verified_connected(&agent.id);
-    cx.backend.fill_round_rect(
-        card,
-        8.0,
-        if connected { theme.accent } else { theme.muted },
-    );
-    cx.backend.stroke_round_rect(card, 8.0, theme.border, 1.0);
+    let hovered = settings.hover_acp_agent == index;
+    if hovered {
+        cx.backend.fill_round_rect(card, 8.0, theme.button_hover);
+    }
+    let last = index + 1 == settings.acp_agents.len() && settings.acp_agent_draft.is_none();
+    if !last {
+        paint_row_hairline(cx, theme, card);
+    }
     paint_avatar(cx, theme, agent, card);
 
-    let text_x = card.origin.x + 60.0;
-    let name = ellipsize(cx, &agent.display_name, 190.0, 13.0);
-    let name_w = text_metrics::measure_chrome(cx.backend, &name, 13.0);
-    draw_text(
+    let text_x = card.origin.x + ROW_TEXT_X;
+    let reserved = card.origin.x + card.size.x - compact_edit_rect(card).origin.x;
+    // The transport label rides after the name on the same line, so the
+    // name gets whatever the label does not need.
+    let kind_label = connection_type_label(ui, agent.connection_type);
+    let kind_w = text_metrics::measure_chrome(cx.backend, kind_label, 10.0) + 8.0;
+    paint_row_label_above_status_at(
         cx,
-        &name,
-        13.0,
-        theme.foreground,
+        theme,
+        card,
         text_x,
-        card.origin.y + 22.0,
+        &agent.display_name,
+        reserved + kind_w,
     );
+    // Re-fit the name against the SAME budget the label painter used, so
+    // the badge lands right after the ellipsized name rather than after
+    // the name it would have painted under a slightly different rule.
+    let name = fit_text(
+        cx,
+        &agent.display_name,
+        row_text_budget(card, text_x, reserved + kind_w),
+        ROW_LABEL_FONT,
+    );
+    let name_w = text_metrics::measure_chrome(cx.backend, &name, ROW_LABEL_FONT);
     draw_text(
         cx,
-        connection_type_label(ui, agent.connection_type),
+        kind_label,
         10.0,
         theme.muted_foreground,
         text_x + name_w + 8.0,
-        card.origin.y + 22.0,
+        card.origin.y + ROW_LABEL_BASELINE,
     );
-    let detail = ellipsize(cx, &acp_detail(settings, agent), 245.0, 11.0);
     let detail_color = match settings.acp_agent_connection_for(&agent.id).phase {
         AcpAgentConnectPhase::Connected => theme.status_success,
         AcpAgentConnectPhase::Error => theme.destructive,
         _ => theme.muted_foreground,
     };
-    draw_text(
+    paint_row_status_line_at_fitted(
         cx,
-        &detail,
-        11.0,
-        detail_color,
+        card,
         text_x,
-        card.origin.y + 39.0,
+        &acp_detail(settings, agent),
+        detail_color,
+        reserved,
     );
 
-    if settings.hover_acp_agent == index {
+    if hovered {
         paint_action(
             cx,
             theme,
@@ -414,10 +431,13 @@ fn paint_acp_form(
 
 fn paint_avatar(cx: &mut PaintCx<'_>, theme: &Theme, agent: &AcpAgentConfig, card: Rect) {
     let avatar = Rect {
-        origin: Point2D::new(card.origin.x + 12.0, card.origin.y + 12.0),
-        size: Point2D::new(36.0, 36.0),
+        origin: Point2D::new(
+            card.origin.x + ROW_PAD_X,
+            card.origin.y + (card.size.y - ROW_AVATAR) / 2.0,
+        ),
+        size: Point2D::new(ROW_AVATAR, ROW_AVATAR),
     };
-    cx.backend.fill_round_rect(avatar, 8.0, theme.card);
+    cx.backend.fill_round_rect(avatar, 8.0, theme.background);
     let monogram = agent_monogram(&agent.display_name);
     let monogram_w = text_metrics::measure_chrome_weighted(cx.backend, &monogram, 15.0, 600);
     let layout = TextLayout::single_run(
@@ -715,7 +735,7 @@ fn compact_remove_rect(card: Rect) -> Rect {
 fn connection_button_rect(card: Rect) -> Rect {
     Rect {
         origin: Point2D::new(
-            card.origin.x + card.size.x - 12.0 - CONNECT_BTN_W,
+            card.origin.x + card.size.x - ROW_PAD_X - CONNECT_BTN_W,
             card.origin.y + (card.size.y - CONNECT_BTN_H) / 2.0,
         ),
         size: Point2D::new(CONNECT_BTN_W, CONNECT_BTN_H),

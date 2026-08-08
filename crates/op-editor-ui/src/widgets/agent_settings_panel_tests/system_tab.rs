@@ -4,7 +4,8 @@
 //! 800-line cap.
 
 use super::*;
-use crate::widgets::agent_settings_rows::{row_height, tab_heading_height, RowLines};
+use crate::widgets::agent_settings_metrics::CONTENT_TAIL_PAD;
+use crate::widgets::agent_settings_rows::{row_height, tab_intro_height, RowLines, FOOTNOTE_H};
 
 /// Row order and shape on the System tab: Appearance (one line),
 /// Auto-update (two), Experimental (two), Pencil cursor (one).
@@ -14,7 +15,7 @@ const SYSTEM_ROWS: [RowLines; 4] = [RowLines::One, RowLines::Two, RowLines::Two,
 fn system_row_mid_y(rect: Rect, index: usize) -> f32 {
     let content = crate::widgets::agent_settings_panel::content_viewport(rect);
     let top: f32 = content.origin.y
-        + tab_heading_height(true)
+        + tab_intro_height(true)
         + SYSTEM_ROWS[..index]
             .iter()
             .copied()
@@ -50,10 +51,10 @@ fn system_tab_reserves_space_for_update_status() {
 
     assert_eq!(
         panel.content_total_height(),
-        tab_heading_height(true)
+        tab_intro_height(true)
             + SYSTEM_ROWS.iter().copied().map(row_height).sum::<f32>()
-            + 32.0
-            + 24.0,
+            + FOOTNOTE_H
+            + CONTENT_TAIL_PAD,
         "System tab = heading + Appearance/Auto-update/Experimental/Pencil-cursor rows \
          + version footnote + bottom pad"
     );

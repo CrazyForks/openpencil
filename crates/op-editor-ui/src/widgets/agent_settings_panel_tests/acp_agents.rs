@@ -109,7 +109,8 @@ fn long_german_and_spanish_acp_subtitles_are_ellipsized_within_content_width() {
         size: Point2D::new(472.0, 0.0),
     };
     let section_y = 40.0;
-    let subtitle_baseline = section_y + 28.0 + 16.0;
+    let subtitle_baseline =
+        section_y + crate::widgets::agent_settings_metrics::SECTION_HEADER_H + 14.0;
 
     for locale in [op_i18n::Locale::De, op_i18n::Locale::Es] {
         let mut state = EditorState::default();

@@ -14,10 +14,11 @@ use crate::widgets::PaintCx;
 use crate::{Color, Point2D, Rect, TextLayout};
 use op_editor_core::editor_ui_state::EditorUiState;
 
-/// Section subtitle / empty-hint row advances — must stay in sync with
-/// the per-section layout constants (both sections use 28 / 64 today).
-const SUBTITLE_H: f32 = 28.0;
-const EMPTY_H: f32 = 64.0;
+/// Section subtitle / empty-hint row advances. Both come from the
+/// modal's spacing scale — the ACP and built-in sections used to carry
+/// their own copies of these two numbers, so "the same" gap was three
+/// literals that could drift apart.
+use crate::widgets::agent_settings_metrics::{EMPTY_BLOCK_H, SECTION_SUBTITLE_H};
 
 /// Single-run "system-ui" text draw at an absolute baseline position.
 pub(crate) fn draw_text(cx: &mut PaintCx<'_>, text: &str, size: f32, color: Color, x: f32, y: f32) {
@@ -55,8 +56,8 @@ pub(crate) fn paint_subtitle(
     max_w: f32,
 ) -> f32 {
     let shown = ellipsize(cx, text, max_w, 12.0);
-    draw_text(cx, &shown, 12.0, theme.muted_foreground, x, y + 16.0);
-    y + SUBTITLE_H
+    draw_text(cx, &shown, 12.0, theme.muted_foreground, x, y + 14.0);
+    y + SECTION_SUBTITLE_H
 }
 
 /// Centered 13px muted empty-state hint; returns the advanced y.
@@ -76,9 +77,9 @@ pub(crate) fn paint_empty(
         13.0,
         theme.muted_foreground,
         x + (w - text_w) / 2.0,
-        y + 44.0,
+        y + EMPTY_BLOCK_H / 2.0 + 4.0,
     );
-    y + EMPTY_H
+    y + EMPTY_BLOCK_H
 }
 
 /// Hover-revealed 24px icon action (edit / remove) with the shared

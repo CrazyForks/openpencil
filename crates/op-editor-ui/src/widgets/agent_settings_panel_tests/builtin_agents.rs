@@ -33,7 +33,8 @@ fn long_spanish_and_russian_builtin_subtitles_fit_the_shared_single_line_row() {
         size: Point2D::new(472.0, 0.0),
     };
     let section_y = 40.0;
-    let subtitle_baseline = section_y + 28.0 + 16.0;
+    let subtitle_baseline =
+        section_y + crate::widgets::agent_settings_metrics::SECTION_HEADER_H + 14.0;
 
     for locale in [op_i18n::Locale::Es, op_i18n::Locale::Ru] {
         let mut state = EditorState::default();
@@ -225,8 +226,9 @@ fn builtin_agent_cards_use_ts_compact_height_when_not_editing() {
         .add_builtin_agent_with_defaults("DeepSeek", "sk-test", "deepseek-v4-pro");
     let panel = AgentSettingsPanel::for_editor(&state);
 
-    // Header + subtitle + two TS-style compact cards with one gap
-    // after each card. The pre-parity expanded form was >400 px.
+    // Header + subtitle + two compact ROWS, flush against each other —
+    // the hairline between them is the gap. The pre-parity expanded form
+    // was >400 px, and the tinted-card version 192 px.
     assert_eq!(
         panel.settings.builtin_agents.len(),
         2,
@@ -234,7 +236,9 @@ fn builtin_agent_cards_use_ts_compact_height_when_not_editing() {
     );
     assert_eq!(
         crate::widgets::agent_settings_builtin::content_height(&panel.settings),
-        192.0,
+        crate::widgets::agent_settings_metrics::SECTION_HEADER_H
+            + crate::widgets::agent_settings_metrics::SECTION_SUBTITLE_H
+            + 2.0 * crate::widgets::agent_settings_metrics::ROW_H_TWO_LINE,
         "the built-in section should stay compact independently of the CLI provider count"
     );
 }

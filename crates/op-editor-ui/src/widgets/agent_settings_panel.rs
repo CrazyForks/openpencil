@@ -10,7 +10,8 @@ use crate::widgets::agent_settings_panel_card::paint_agent_card;
 use crate::widgets::agent_settings_panel_geometry::{
     acp_section_y, agent_card_rect_at, agent_card_rect_in, agents_body_top, close_rect,
     connect_btn_rect_at, content_paint_clip_rect, content_rect, disconnect_btn_rect_at,
-    full_settings_tabs, hero_body_rect, nav_item_rect, tab_i18n_label,
+    full_settings_tabs, hero_body_rect, nav_item_rect, provider_rows_top, tab_i18n_label,
+    CLAUDE_HINT_H, PROVIDER_SECTION_HEADER_H,
 };
 use crate::widgets::agent_settings_system::{self, SystemHit};
 use crate::widgets::editor_state_ext::theme_for;
@@ -26,11 +27,15 @@ use op_editor_core::BuiltinAgentPresetKey;
 use op_editor_core::EditorState;
 use op_editor_core::{AgentSettingsButton, ButtonPressTarget};
 
-/// Modal size ceiling. The dialog is a wide centred workspace rather
-/// than a fixed small window: [`AgentSettingsPanel::rect`] shrinks it to
-/// fit the viewport, so these are maxima, not fixed dimensions.
-pub const PANEL_WIDTH: f32 = 1100.0;
-pub const PANEL_HEIGHT: f32 = 850.0;
+/// Modal size ceiling. The dialog is a centred workspace rather than a
+/// fixed small window: [`AgentSettingsPanel::rect`] shrinks it to fit the
+/// viewport, so these are maxima, not fixed dimensions.
+///
+/// They came down with the row scale. A 1100×850 shell around 54 px rows
+/// is mostly empty column — the settings read as a poster instead of a
+/// list, which is the "too big" the shipped build showed.
+pub const PANEL_WIDTH: f32 = 960.0;
+pub const PANEL_HEIGHT: f32 = 760.0;
 /// Floor for the shrink-to-fit clamp — below this the tab strip and the
 /// provider rows stop being readable, so the modal overflows a tiny
 /// viewport instead of collapsing.
@@ -40,51 +45,55 @@ const PANEL_MIN_HEIGHT: f32 = 420.0;
 const VIEWPORT_MARGIN_X: f32 = 32.0;
 const VIEWPORT_MARGIN_BOTTOM: f32 = 48.0;
 
-pub(super) const PAD: f32 = 32.0;
-pub(super) const CONTENT_BOTTOM_PAD: f32 = 24.0;
+// The modal's spacing scale lives in `agent_settings_metrics`; the names
+// below are that scale under the spellings this file's callers already
+// use, plus the few control sizes that belong to a specific control.
+use crate::widgets::agent_settings_metrics as metrics;
+
+pub(super) const PAD: f32 = metrics::CONTENT_PAD_X;
+pub(super) const CONTENT_BOTTOM_PAD: f32 = metrics::CONTENT_PAD_BOTTOM;
 /// Horizontal tab strip: inset from the panel top, pill height, and the
 /// per-pill width band. Pills share one width so the hit-test geometry
 /// stays measurement-free (paint centres icon + label inside).
-pub(super) const TAB_BAR_TOP: f32 = 18.0;
-pub(super) const TAB_HEIGHT: f32 = 34.0;
-pub(super) const TAB_GAP: f32 = 6.0;
-pub(super) const TAB_MAX_WIDTH: f32 = 132.0;
-pub(super) const TAB_MIN_WIDTH: f32 = 76.0;
+pub(super) const TAB_BAR_TOP: f32 = metrics::TAB_BAR_TOP;
+pub(super) const TAB_HEIGHT: f32 = metrics::TAB_HEIGHT;
+pub(super) const TAB_GAP: f32 = metrics::TAB_GAP;
+pub(super) const TAB_MAX_WIDTH: f32 = 116.0;
+pub(super) const TAB_MIN_WIDTH: f32 = 72.0;
 /// Fixed header band: `TAB_BAR_TOP` + `TAB_HEIGHT` + the gap down to the
 /// scrollable body.
-pub(super) const HEADER_HEIGHT: f32 = TAB_BAR_TOP + TAB_HEIGHT + 32.0;
+pub(super) const HEADER_HEIGHT: f32 = TAB_BAR_TOP + TAB_HEIGHT + metrics::TAB_TO_CONTENT;
 /// Total vertical inset between the panel rect and its scrollable
 /// content viewport. Hosts subtract this from the panel height to derive
 /// the scroll viewport (`content_rect` height) instead of hardcoding it.
 pub const CONTENT_VERTICAL_INSET: f32 = HEADER_HEIGHT + CONTENT_BOTTOM_PAD;
-pub(super) const SECTION_GAP: f32 = 28.0;
+pub(super) const SECTION_GAP: f32 = metrics::SECTION_GAP;
+pub(super) const CONTENT_TAIL_PAD: f32 = metrics::CONTENT_TAIL_PAD;
 /// Provider rows carry a name over a status subtitle, so they take the
 /// modal's two-line row box — the same one the MCP server row and the
 /// System auto-update row use. Hairline-separated list rows sit flush
 /// against each other: the separator IS the gap.
-pub(super) const CARD_HEIGHT: f32 = crate::widgets::agent_settings_rows::row_height(
-    crate::widgets::agent_settings_rows::RowLines::Two,
-);
+pub(super) const CARD_HEIGHT: f32 = metrics::ROW_H_TWO_LINE;
 pub(super) const CARD_GAP: f32 = 0.0;
 pub(super) const CONNECT_BTN_W: f32 = 84.0;
-pub(super) const CONNECT_BTN_H: f32 = 30.0;
-pub(super) const AVATAR_SIZE: f32 = 34.0;
+pub(super) const CONNECT_BTN_H: f32 = 28.0;
+pub(super) const AVATAR_SIZE: f32 = metrics::ROW_AVATAR;
 pub(super) const AVATAR_ICON: f32 = 20.0;
-pub(super) const NAME_FONT: f32 = 14.0;
-pub(super) const SUB_FONT: f32 = 12.0;
+pub(super) const NAME_FONT: f32 = crate::widgets::agent_settings_rows::ROW_LABEL_FONT;
+pub(super) const SUB_FONT: f32 = crate::widgets::agent_settings_rows::ROW_DESC_FONT;
 /// Width reserved at the right edge of a provider row for the status
 /// pill. The painted pill hugs its label and is right-aligned inside the
 /// slot; the slot itself is fixed so hit-test geometry needs no text
 /// measurement.
-pub(super) const STATUS_PILL_SLOT: f32 = 152.0;
-pub(super) const STATUS_PILL_HEIGHT: f32 = 26.0;
+pub(super) const STATUS_PILL_SLOT: f32 = 140.0;
+pub(super) const STATUS_PILL_HEIGHT: f32 = 24.0;
 pub(super) const STATUS_PILL_FONT: f32 = 12.0;
-/// Agents-tab hero block (title + provider roll + blurb) above the first
+/// Agents-tab intro block (title + provider roll) above the first
 /// section — the vertical offset from the content viewport's top to the
 /// first section header. Public so host tests can anchor to it; it must
-/// stay equal to `agent_settings_rows::tab_hero_height(2)`, which a unit
-/// test asserts.
-pub const AGENTS_HERO_HEIGHT: f32 = 96.0;
+/// stay equal to `agent_settings_rows::tab_intro_height(true)`, which a
+/// unit test asserts.
+pub const AGENTS_HERO_HEIGHT: f32 = crate::widgets::agent_settings_rows::tab_intro_height(true);
 
 /// Scrollable body viewport inside `panel` — everything below the top
 /// tab strip, inset by the modal's content padding. Exported so hosts and

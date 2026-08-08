@@ -10,15 +10,27 @@ use crate::widgets::text_metrics;
 pub(super) fn agents_content_height(settings: &AgentSettings, mode: AgentSettingsPanelMode) -> f32 {
     let builtin = AGENTS_HERO_HEIGHT + agent_settings_builtin::content_height(settings);
     if !mode.shows_external_agents() {
-        return builtin + 24.0;
+        return builtin + CONTENT_TAIL_PAD;
     }
-    builtin
-        + SECTION_GAP
-        + (agent_settings_acp::content_height(settings) + SECTION_GAP)
-        + 32.0
-        + AgentProvider::ALL.len() as f32 * (CARD_HEIGHT + CARD_GAP)
-        + 28.0
-        + 24.0
+    // Walk the same ladder the row geometry does, so the scroll range
+    // always ends one tail pad under the last provider row instead of
+    // flush against it (or, as it once did, four pixels short of it).
+    // `provider_rows_top` reads only its argument's `origin.y`, so a rect
+    // at the origin turns it into a pure offset from the content top.
+    let at_origin = Rect {
+        origin: Point2D::new(0.0, 0.0),
+        size: Point2D::new(0.0, 0.0),
+    };
+    let last = AgentProvider::ALL.len() - 1;
+    provider_rows_top(at_origin, settings)
+        + last as f32 * (CARD_HEIGHT + CARD_GAP)
+        + CARD_HEIGHT
+        + if settings.provider_verified_connected_at(0) {
+            CLAUDE_HINT_H
+        } else {
+            0.0
+        }
+        + CONTENT_TAIL_PAD
 }
 
 impl<'a> Widget for AgentSettingsPanel<'a> {
@@ -116,11 +128,10 @@ fn paint_panel(
     paint_close(cx, theme, settings, _ui, panel);
 }
 
-/// Compact heading for the tabs the panel paints one on behalf of.
-/// `prefix` names
-/// the i18n family (`settings.images` → `settings.images.heroTitle` +
-/// `.heroSubtitle`), so the key pair can't drift from the tab it belongs
-/// to.
+/// Tab intro for the tabs the panel paints one on behalf of. `prefix`
+/// names the i18n family (`settings.images` resolves to
+/// `settings.images.heroTitle` plus `.heroSubtitle`), so the key pair
+/// can't drift from the tab it belongs to.
 fn paint_secondary_hero(
     cx: &mut PaintCx<'_>,
     theme: &Theme,
@@ -136,12 +147,12 @@ fn paint_secondary_hero(
             "settings.account.heroSubtitle",
         ),
     };
-    crate::widgets::agent_settings_rows::paint_tab_hero(
+    crate::widgets::agent_settings_rows::paint_tab_intro(
         cx,
         theme,
         content,
         t_settings(ui, title),
-        &[t_settings(ui, subtitle)],
+        Some(t_settings(ui, subtitle)),
     );
 }
 
@@ -214,8 +225,8 @@ fn paint_agents_tab(
                 Point2D::new(0.0, 0.0),
             );
             cx.backend
-                .draw_text(&hint, Point2D::new(content.origin.x, y + 8.0));
-            y += 28.0;
+                .draw_text(&hint, Point2D::new(content.origin.x, y + 15.0));
+            y += CLAUDE_HINT_H;
         }
     }
 }
@@ -243,14 +254,7 @@ fn paint_section_header_inset(
     w: f32,
     right_inset: f32,
 ) -> f32 {
-    let layout = TextLayout::single_run(
-        title,
-        "system-ui",
-        15.0,
-        (theme.foreground).to_jian(),
-        Point2D::new(0.0, 0.0),
-    );
-    cx.backend.draw_text(&layout, Point2D::new(x, y + 18.0));
+    crate::widgets::agent_settings_rows::paint_section_title(cx, theme, x, y, title);
     if !action.is_empty() {
         let action_w = text_metrics::measure_chrome(cx.backend, action, 12.0);
         let act = TextLayout::single_run(
@@ -263,7 +267,7 @@ fn paint_section_header_inset(
         cx.backend
             .draw_text(&act, Point2D::new(x + w - right_inset - action_w, y + 18.0));
     }
-    y + 28.0
+    y + PROVIDER_SECTION_HEADER_H
 }
 
 pub fn drag_for_hit(

@@ -15,12 +15,17 @@ use crate::widgets::agent_settings_header_action::{
     fit_header_copy, header_action_rect, header_action_text_baseline_y, header_action_text_x,
 };
 use crate::widgets::agent_settings_i18n::t as t_settings;
+use crate::widgets::agent_settings_metrics::{ROW_AVATAR, ROW_PAD_X, ROW_TEXT_X};
 use crate::widgets::agent_settings_panel_geometry::agents_body_top;
+use crate::widgets::agent_settings_rows::{
+    paint_row_hairline, paint_row_label_above_status_at, paint_row_status_line_at_fitted,
+    paint_section_title,
+};
 use crate::widgets::agent_settings_switch::paint_settings_switch;
 use crate::widgets::brand_icons::{paint_brand_logo, BrandLogo};
 use crate::widgets::button::paint_ghost_button_feedback;
 use crate::widgets::button::tokens_from_theme;
-use crate::widgets::icons::{draw_icon, Icon};
+use crate::widgets::icons::Icon;
 use crate::widgets::settings_form::{self, draw_text, ellipsize, paint_action};
 use crate::widgets::PaintCx;
 use crate::{Point2D, Rect, TextLayout};
@@ -365,15 +370,7 @@ fn paint_header(
     action_pressed: bool,
 ) -> f32 {
     let copy = fit_header_copy(cx, title, action, frame.w);
-    let layout = TextLayout::single_run(
-        &copy.title,
-        "system-ui",
-        15.0,
-        (theme.foreground).to_jian(),
-        Point2D::new(0.0, 0.0),
-    );
-    cx.backend
-        .draw_text(&layout, Point2D::new(frame.x, frame.y + 18.0));
+    paint_section_title(cx, theme, frame.x, frame.y, &copy.title);
     let action_rect = header_action_rect(
         Rect {
             origin: Point2D::new(frame.x, frame.y),
@@ -519,6 +516,11 @@ fn paint_builtin_agent_form(
     agent_settings_builtin_parts::paint_preset_menu(cx, theme, settings, agent, index, card);
 }
 
+/// A saved agent, not being edited: a hairline-separated list row in the
+/// modal's shared row language, not a tinted card. Readiness rides the
+/// row's own status line — dot plus text, the same shape the MCP server
+/// row and the System auto-update row use — instead of the third line it
+/// used to add under the detail.
 fn paint_compact_builtin_agent_card(
     cx: &mut PaintCx<'_>,
     theme: &Theme,
@@ -528,68 +530,51 @@ fn paint_compact_builtin_agent_card(
     index: usize,
     card: Rect,
 ) {
-    if agent.enabled {
-        Card {
-            fill: Some(theme.muted),
-            border: Some(theme.border),
-            radius: 8.0,
-        }
-        .paint(cx.backend, card, &tokens_from_theme(theme));
+    let hovered = settings.hover_builtin_agent == index;
+    if hovered {
+        cx.backend.fill_round_rect(card, 8.0, theme.button_hover);
+    }
+    let last = index + 1 == settings.builtin_agents.len() && settings.builtin_agent_draft.is_none();
+    if !last {
+        paint_row_hairline(cx, theme, card);
     }
     let avatar = Rect {
-        origin: Point2D::new(card.origin.x + 12.0, card.origin.y + 12.0),
-        size: Point2D::new(36.0, 36.0),
+        origin: Point2D::new(
+            card.origin.x + ROW_PAD_X,
+            card.origin.y + (card.size.y - ROW_AVATAR) / 2.0,
+        ),
+        size: Point2D::new(ROW_AVATAR, ROW_AVATAR),
     };
-    cx.backend.fill_round_rect(avatar, 8.0, theme.card);
+    cx.backend.fill_round_rect(avatar, 8.0, theme.background);
     agent_settings_builtin_parts::paint_key_glyph(cx, theme, avatar);
 
-    let text_x = card.origin.x + 60.0;
-    let name = ellipsize(cx, &agent.display_name, 250.0, 13.0);
-    draw_text(
-        cx,
-        &name,
-        13.0,
-        theme.foreground,
-        text_x,
-        card.origin.y + 22.0,
-    );
+    let text_x = card.origin.x + ROW_TEXT_X;
+    // Everything to the right of the text column: switch, then the two
+    // hover actions, plus their gaps and the row's own inset.
+    let reserved = card.origin.x + card.size.x - compact_switch_rect(card).origin.x;
+    paint_row_label_above_status_at(cx, theme, card, text_x, &agent.display_name, reserved);
+
+    let ready = agent.ready();
     let api_key = if agent.api_key.trim().is_empty() {
         "api key required".to_string()
     } else {
         mask_key(&agent.api_key)
     };
-    let detail = format!("{}  ·  {}", agent.model, api_key);
-    let detail = ellipsize(cx, &detail, 300.0, 11.0);
-    draw_text(
+    paint_row_status_line_at_fitted(
         cx,
-        &detail,
-        11.0,
-        theme.muted_foreground,
+        card,
         text_x,
-        card.origin.y + 38.0,
+        &format!("{}  ·  {api_key}", agent.model),
+        if ready {
+            theme.status_success
+        } else {
+            theme.muted_foreground
+        },
+        reserved,
     );
-    if agent.ready() {
-        let green = theme.status_success;
-        draw_icon(
-            cx.backend,
-            Icon::Check,
-            Point2D::new(text_x, card.origin.y + 44.0),
-            10.0,
-            green,
-            2.2,
-        );
-        draw_text(
-            cx,
-            op_i18n::translate(ui.locale, "builtin.ready"),
-            11.0,
-            green,
-            text_x + 14.0,
-            card.origin.y + 53.0,
-        );
-    }
 
     paint_settings_switch(cx, theme, compact_switch_rect(card), agent.enabled);
-    if settings.hover_builtin_agent == index {
+    if hovered {
         paint_action(
             cx,
             theme,

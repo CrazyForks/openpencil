@@ -8,7 +8,7 @@ use super::*;
 use crate::widgets::agent_settings_panel_geometry::SECONDARY_HEADING_HAS_DESC;
 
 fn secondary_hero_height() -> f32 {
-    crate::widgets::agent_settings_rows::tab_heading_height(SECONDARY_HEADING_HAS_DESC)
+    crate::widgets::agent_settings_rows::tab_intro_height(SECONDARY_HEADING_HAS_DESC)
 }
 
 impl AgentSettingsPanel<'_> {

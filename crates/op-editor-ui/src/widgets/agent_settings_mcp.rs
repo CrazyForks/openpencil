@@ -1,7 +1,8 @@
 //! MCP tab of the settings modal.
 //!
 //! Layout follows the modal's shared language (`agent_settings_rows`):
-//! a hero block, then borderless full-width rows separated by hairlines.
+//! a compact tab intro, then borderless full-width rows separated by
+//! hairlines.
 //! The server lives on one row, each CLI integration on its own row with
 //! a switch, and the endpoint JSON sits under a "custom configuration"
 //! section header carrying the copy action. None of the write behaviour
@@ -11,11 +12,12 @@
 use crate::theme::Theme;
 use crate::widgets::agent_settings_caret::paint_settings_input_view;
 use crate::widgets::agent_settings_i18n::t as t_settings;
+use crate::widgets::agent_settings_metrics::CONTENT_TAIL_PAD;
 use crate::widgets::agent_settings_rows::{
     fit_text, measure_settings_text, paint_footnote, paint_row_hairline, paint_row_label,
-    paint_row_label_above_status, paint_row_status_line, paint_tab_hero, row_control_rect,
-    row_height, row_rect, tab_hero_height, RowLines, FOOTNOTE_H, ROW_HEIGHT, SECTION_GAP,
-    SECTION_HEADER_H, SECTION_TITLE_FONT, SETTINGS_FONT_FAMILY,
+    paint_row_label_above_status, paint_row_status_line, paint_section_title, paint_tab_intro,
+    row_control_rect, row_height, row_rect, tab_intro_height, RowLines, FOOTNOTE_H, ROW_HEIGHT,
+    SECTION_GAP, SECTION_HEADER_H, SETTINGS_FONT_FAMILY,
 };
 use crate::widgets::agent_settings_switch::{
     paint_settings_switch, SETTINGS_SWITCH_H, SETTINGS_SWITCH_W,
@@ -41,13 +43,13 @@ const CONFIG_BODY_H: f32 = 46.0;
 /// Width the server row reserves on its right for port label + field +
 /// the Start/Stop button.
 const SERVER_CONTROLS_W: f32 = 208.0;
-const SECTION_ICON: f32 = 15.0;
+const SECTION_ICON: f32 = 14.0;
 
-/// Number of muted lines under the MCP hero title.
-const HERO_LINES: usize = 1;
+/// The MCP tab opens with the shared intro: title plus one muted line.
+const INTRO_HAS_DESC: bool = true;
 
 fn body_top(content: Rect) -> f32 {
-    content.origin.y + tab_hero_height(HERO_LINES)
+    content.origin.y + tab_intro_height(INTRO_HAS_DESC)
 }
 
 /// The server row carries a status line under its label, so it takes the
@@ -102,14 +104,14 @@ pub(super) fn custom_config_top(content: Rect) -> f32 {
 }
 
 pub(super) fn content_height(settings: &AgentSettings) -> f32 {
-    let mut h = tab_hero_height(HERO_LINES) + row_height(SERVER_ROW_LINES);
+    let mut h = tab_intro_height(INTRO_HAS_DESC) + row_height(SERVER_ROW_LINES);
     if CLI_INTEGRATIONS_AVAILABLE {
         h += SECTION_GAP + integrations_block_h();
     }
     if has_client_config(settings) {
         h += SECTION_GAP + SECTION_HEADER_H + CONFIG_BODY_H;
     }
-    h + 24.0
+    h + CONTENT_TAIL_PAD
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,7 +133,9 @@ pub(super) fn port_field_rect(content: Rect) -> Rect {
     Rect {
         origin: Point2D::new(
             btn.origin.x - 8.0 - PORT_FIELD_W,
-            row.origin.y + (ROW_HEIGHT - PORT_FIELD_H) / 2.0,
+            // Centre in the row's OWN box. Centring on the one-line stride
+            // left the field riding high in a two-line row.
+            row.origin.y + (row.size.y - PORT_FIELD_H) / 2.0,
         ),
         size: Point2D::new(PORT_FIELD_W, PORT_FIELD_H),
     }
@@ -186,12 +190,12 @@ pub(super) fn paint_mcp_tab(
     content: Rect,
     now_ms: u64,
 ) {
-    paint_tab_hero(
+    paint_tab_intro(
         cx,
         theme,
         content,
         t_settings(ui, "settings.mcp.heroTitle"),
-        &[t_settings(ui, "settings.mcp.heroSubtitle")],
+        Some(t_settings(ui, "settings.mcp.heroSubtitle")),
     );
     paint_server_row(cx, theme, settings, ui, content, now_ms);
 
@@ -247,23 +251,13 @@ fn paint_section_header(
         icon,
         Point2D::new(
             content.origin.x,
-            y + (SECTION_HEADER_H - SECTION_ICON) / 2.0 - 3.0,
+            y + (SECTION_HEADER_H - SECTION_ICON) / 2.0,
         ),
         SECTION_ICON,
-        theme.foreground,
+        theme.muted_foreground,
         1.6,
     );
-    let layout = TextLayout::single_run(
-        title,
-        SETTINGS_FONT_FAMILY,
-        SECTION_TITLE_FONT,
-        (theme.foreground).to_jian(),
-        Point2D::new(0.0, 0.0),
-    );
-    cx.backend.draw_text(
-        &layout,
-        Point2D::new(content.origin.x + SECTION_ICON + 10.0, y + 17.0),
-    );
+    paint_section_title(cx, theme, content.origin.x + SECTION_ICON + 8.0, y, title);
 }
 
 fn paint_server_row(
@@ -312,7 +306,7 @@ fn paint_server_row(
     let port_label_text = fit_text(cx, port_label_text, 80.0, 11.0);
     let port_label_w = measure_settings_text(cx, &port_label_text, 11.0);
     let port_field = port_field_rect(content);
-    let mid_y = row.origin.y + ROW_HEIGHT / 2.0;
+    let mid_y = port_field.origin.y + port_field.size.y / 2.0;
     let port_label = TextLayout::single_run(
         &port_label_text,
         SETTINGS_FONT_FAMILY,

@@ -589,28 +589,22 @@ fn web_mcp_server_button_is_hidden_when_mcp_tab_is_persisted() {
     host.editor_state.editor_ui.agent_settings.tab = AgentSettingsTab::Mcp;
     let panel = AgentSettingsPanel::for_web_editor(&host.editor_state);
     let rect = panel.rect(1200.0, 800.0);
-    let content_x = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
-        .origin
-        .x;
-    let content_y = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
-        .origin
-        .y;
-    let content_w = op_editor_ui::widgets::agent_settings_panel::content_viewport(rect)
-        .size
-        .x;
-    let server_card_top = content_y + 36.0;
-    let button_x = content_x + content_w - 16.0 - 72.0;
+    // The web tab set has no MCP entry, so a persisted `tab = Mcp` falls
+    // back to Agents. Press exactly where the MCP tab would have put its
+    // Start/Stop button: whatever the Agents tab paints there, it must
+    // never be the server toggle. (The old fixture asserted `Inside` at a
+    // hand-copied offset, which only held while the fallback tab happened
+    // to be empty there — an incidental property, not the contract this
+    // test is named for.)
+    let button = op_editor_ui::widgets::agent_settings_panel::mcp_server_button(rect);
+    let x = button.origin.x + button.size.x / 2.0;
+    let y = button.origin.y + button.size.y / 2.0;
 
-    assert_eq!(
-        panel.hit_test(rect, Point2D::new(button_x + 36.0, server_card_top + 26.0)),
-        AgentSettingsHit::Inside
+    assert_ne!(
+        panel.hit_test(rect, Point2D::new(x, y)),
+        AgentSettingsHit::ToggleMcpServer
     );
-    assert!(host.dispatch_agent_settings_press(
-        button_x + 36.0,
-        server_card_top + 26.0,
-        1200.0,
-        800.0
-    ));
+    assert!(host.dispatch_agent_settings_press(x, y, 1200.0, 800.0));
     assert!(
         !host
             .editor_state

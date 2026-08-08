@@ -108,7 +108,7 @@ fn system_row_rect(rect: Rect, index: usize) -> Rect {
     let content = crate::widgets::agent_settings_panel::content_viewport(rect);
     super::agent_settings_rows::row_rect_in(
         content,
-        content.origin.y + super::agent_settings_rows::tab_heading_height(true),
+        content.origin.y + super::agent_settings_rows::tab_intro_height(true),
         &SYSTEM_ROWS,
         index,
     )
@@ -128,20 +128,27 @@ fn ts_switch_knob_rect(track: Rect, enabled: bool) -> Rect {
     }
 }
 
+/// Switch on the first saved built-in agent row. Asks the section for
+/// the row box and the layout module for the control inside it — a
+/// hand-copied ladder here is a second source of truth, and it was
+/// already wrong by the row height when the rows got tighter.
 fn builtin_agent_switch_rect(rect: Rect) -> Rect {
     let (content_x, content_y, content_w) = settings_content_metrics(rect);
-    let card_y = content_y + crate::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT + 28.0 + 28.0;
     let card = Rect {
-        origin: Point2D::new(content_x, card_y),
-        size: Point2D::new(content_w, 60.0),
-    };
-    Rect {
-        origin: Point2D::new(
-            card.origin.x + card.size.x - 12.0 - 36.0 - 8.0 - 24.0 * 2.0 - 4.0,
-            card.origin.y + (card.size.y - 20.0) / 2.0,
+        origin: Point2D::new(content_x, content_y + first_builtin_row_offset()),
+        size: Point2D::new(
+            content_w,
+            crate::widgets::agent_settings_metrics::ROW_H_TWO_LINE,
         ),
-        size: Point2D::new(36.0, 20.0),
-    }
+    };
+    super::agent_settings_builtin_layout::compact_switch_rect(card)
+}
+
+/// Offset from the content top to the first saved built-in agent row.
+fn first_builtin_row_offset() -> f32 {
+    crate::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT
+        + super::agent_settings_metrics::SECTION_HEADER_H
+        + super::agent_settings_metrics::SECTION_SUBTITLE_H
 }
 
 fn mcp_client_config_copy_rect(rect: Rect) -> Rect {
@@ -169,9 +176,13 @@ fn add_provider_button_rect(rect: Rect, _text_w: f32) -> Rect {
 
 fn add_acp_agent_button_rect(rect: Rect, _text_w: f32) -> Rect {
     let (content_x, content_y, content_w) = settings_content_metrics(rect);
-    let builtin_h = 28.0 + 28.0 + 64.0;
-    let acp_y =
-        content_y + crate::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT + builtin_h + 28.0;
+    let builtin_h = super::agent_settings_metrics::SECTION_HEADER_H
+        + super::agent_settings_metrics::SECTION_SUBTITLE_H
+        + super::agent_settings_metrics::EMPTY_BLOCK_H;
+    let acp_y = content_y
+        + crate::widgets::agent_settings_panel::AGENTS_HERO_HEIGHT
+        + builtin_h
+        + super::agent_settings_metrics::SECTION_GAP;
     super::agent_settings_header_action::header_action_rect(
         Rect {
             origin: Point2D::new(content_x, content_y),
