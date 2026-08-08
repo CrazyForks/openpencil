@@ -15,6 +15,7 @@
 
 use crate::hub_auth_client::{HubAuthClient, HubToken, HubUser};
 use crate::hub_auth_error::HubAuthError;
+use crate::mcp_serve::tool_profile::McpScopes;
 
 use super::tenant_auth::{
     IdentityVerifier, IdentityVia, OnlineAuthError, PresentedCredentials, ResolvedIdentity,
@@ -71,27 +72,31 @@ fn identity_from_user(user: HubUser) -> ResolvedIdentity {
         username: user.username,
         display_name,
         via: IdentityVia::SessionCookie,
+        // A browser session IS the account, so it carries the account's own
+        // authority. Scopes exist to narrow an API token below that.
+        scopes: McpScopes::FULL,
     }
 }
 
 /// An API token's account.
 ///
-/// Introspection carries no display name, so the username stands in. Scopes
-/// are deliberately dropped here: M3 enforces them in the MCP dispatch, where
-/// the tool being called is known, and smuggling them through the identity
-/// type would invite a caller of `ResolvedIdentity` to assume they were
-/// already checked.
+/// Introspection carries no display name, so the username stands in. The
+/// hub's scope list is reduced to the MCP capabilities here and enforced in
+/// the MCP dispatch, where the tool being called — and therefore whether it
+/// writes — is known.
 fn identity_from_token(token: HubToken) -> ResolvedIdentity {
     let username = if token.username.trim().is_empty() {
         token.user_id.clone()
     } else {
         token.username
     };
+    let scopes = McpScopes::from_scope_list(&token.scopes);
     ResolvedIdentity {
         user_id: token.user_id,
         display_name: username.clone(),
         username,
         via: IdentityVia::ApiToken,
+        scopes,
     }
 }
 
@@ -143,6 +148,30 @@ mod tests {
         assert_eq!(identity.username, "person_name");
         assert_eq!(identity.display_name, "Person");
         assert_eq!(identity.via, IdentityVia::SessionCookie);
+        assert_eq!(identity.scopes, McpScopes::FULL);
+    }
+
+    #[test]
+    fn a_token_scope_list_narrows_what_it_may_drive() {
+        let read_only = identity_from_token(HubToken {
+            scopes: vec!["mcp:read".into()],
+            ..token()
+        });
+        assert!(!read_only.scopes.can_write());
+
+        let both = identity_from_token(HubToken {
+            scopes: vec!["mcp:read".into(), "mcp:write".into()],
+            ..token()
+        });
+        assert!(both.scopes.can_write());
+
+        // A token that names no mcp scope at all predates scoping and keeps
+        // full authority; see `McpScopes::from_scope_list`.
+        let unscoped = identity_from_token(HubToken {
+            scopes: vec!["billing:read".into()],
+            ..token()
+        });
+        assert!(unscoped.scopes.can_write());
     }
 
     #[test]

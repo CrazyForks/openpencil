@@ -11,7 +11,12 @@ fn tools_list_response_includes_all_registered_tools() {
     // Debug gating is passed explicitly (no process-global env mutation,
     // so this test can't race other tests' env access).
     let state = op_editor_core::EditorState::new();
-    let r = tools_list_response("3", &state, false);
+    let r = tools_list_response(
+        "3",
+        &state,
+        false,
+        tool_profile::McpAccessProfile::UNRESTRICTED,
+    );
     // The production catalog excludes debug tools. Exact-count
     // assertion: any tool added without updating this test trips
     // the count first. Codex stop-gate: previous `contains`-only
@@ -30,7 +35,12 @@ fn tools_list_response_includes_all_registered_tools() {
     );
     #[cfg(not(feature = "mcp-debug-tools"))]
     {
-        let r_forced_debug = tools_list_response("3", &state, true);
+        let r_forced_debug = tools_list_response(
+            "3",
+            &state,
+            true,
+            tool_profile::McpAccessProfile::UNRESTRICTED,
+        );
         for name in [
             "debug_validation_report",
             "debug_logs_tail",
@@ -193,7 +203,12 @@ fn tools_list_response_includes_all_registered_tools() {
 
     // Gate open (debug_enabled = true) — internal debug builds can opt in
     // to the debug tools catalog.
-    let r_debug = tools_list_response("3", &state, true);
+    let r_debug = tools_list_response(
+        "3",
+        &state,
+        true,
+        tool_profile::McpAccessProfile::UNRESTRICTED,
+    );
     #[cfg(feature = "mcp-debug-tools")]
     for name in [
         "debug_validation_report",
@@ -215,9 +230,13 @@ fn tools_list_response_includes_all_registered_tools() {
 #[test]
 fn tools_list_design_content_schema_advertises_ts_layered_args() {
     let state = op_editor_core::EditorState::new();
-    let response: serde_json::Value =
-        serde_json::from_str(&tools_list_response("3", &state, false))
-            .expect("tools/list response should be JSON");
+    let response: serde_json::Value = serde_json::from_str(&tools_list_response(
+        "3",
+        &state,
+        false,
+        tool_profile::McpAccessProfile::UNRESTRICTED,
+    ))
+    .expect("tools/list response should be JSON");
     let tools = response["result"]["tools"]
         .as_array()
         .expect("tools/list result should contain tools");
@@ -255,9 +274,13 @@ fn tools_list_design_content_schema_advertises_ts_layered_args() {
 #[test]
 fn tools_list_schemas_advertise_ts_file_path_args() {
     let state = op_editor_core::EditorState::new();
-    let response: serde_json::Value =
-        serde_json::from_str(&tools_list_response("3", &state, false))
-            .expect("tools/list response should be JSON");
+    let response: serde_json::Value = serde_json::from_str(&tools_list_response(
+        "3",
+        &state,
+        false,
+        tool_profile::McpAccessProfile::UNRESTRICTED,
+    ))
+    .expect("tools/list response should be JSON");
     let tools = response["result"]["tools"]
         .as_array()
         .expect("tools/list result should contain tools");

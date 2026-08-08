@@ -1,6 +1,33 @@
 # Deployment-specific collaboration security boundaries.
 # Sourced by check-collab-security-boundaries.sh after its shared assertions
 # and failure accumulator have been initialized.
+#
+# This file is a FRAGMENT, not a runnable gate. Every assertion below is a
+# function the parent defines, so running this file directly used to print
+# "require_file: command not found" once per assertion and then exit 0 — a
+# green result from a script that checked nothing. Anyone who ran it by hand,
+# or wired it into CI as its own step, got that silent pass.
+#
+# The guard below makes the mistake loud. It also refuses to run when the
+# parent has not initialized the failure accumulator, so a future reordering
+# of the parent cannot reintroduce the same hole.
+
+for _boundary_helper in \
+    require_file \
+    require_executable \
+    require_literal \
+    require_literal_count \
+    record_failure; do
+    if ! command -v "$_boundary_helper" >/dev/null 2>&1; then
+        printf '%s\n' \
+            "check-collab-deployment-boundaries.sh is not a standalone gate." \
+            "It must be sourced by check-collab-security-boundaries.sh, which" \
+            "defines the assertions it uses (missing: $_boundary_helper)." \
+            "Run instead:  bash tools/check-collab-security-boundaries.sh" >&2
+        exit 2
+    fi
+done
+unset _boundary_helper
 
 for required in \
     .dockerignore \

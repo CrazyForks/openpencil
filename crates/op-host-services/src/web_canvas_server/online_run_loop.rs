@@ -294,6 +294,9 @@ pub(super) fn serve_one_online<S: Read + Write>(
             state: lease.state(),
             hub: lease.hub(),
             mode: ServeMode::Online,
+            // The public tool profile, narrowed further by whatever scopes
+            // this particular credential carries.
+            mcp_profile: crate::mcp_serve::tool_profile::McpAccessProfile::online(identity.scopes),
         },
     )
 }

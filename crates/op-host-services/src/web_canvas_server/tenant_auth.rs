@@ -12,6 +12,7 @@
 
 use std::collections::HashMap;
 
+use crate::mcp_serve::tool_profile::McpScopes;
 use crate::mcp_serve::HttpRequest;
 
 /// Development-only token table: `token1=user1,token2=user2`.
@@ -45,6 +46,13 @@ pub struct ResolvedIdentity {
     pub username: String,
     pub display_name: String,
     pub via: IdentityVia,
+    /// What this credential may drive over MCP.
+    ///
+    /// A browser session is the account itself and carries full authority; an
+    /// API token carries whatever the hub issued it. Enforced in the MCP
+    /// dispatch, where the tool being called is known — see
+    /// `crate::mcp_serve::tool_profile`.
+    pub scopes: McpScopes,
 }
 
 /// Why a request could not be attributed to an account.
@@ -149,8 +157,8 @@ pub trait IdentityVerifier: Send + Sync {
 /// with `--online` and no real verifier is a misconfiguration, and the
 /// online run loop says so on stderr at start-up.
 pub struct StaticVerifier {
-    /// token → user id.
-    entries: HashMap<String, String>,
+    /// token → (user id, scopes).
+    entries: HashMap<String, (String, McpScopes)>,
 }
 
 impl StaticVerifier {
@@ -163,7 +171,12 @@ impl StaticVerifier {
         )
     }
 
-    /// Parse a `token=user,token2=user2` table.
+    /// Parse a `token=user[,token2=user2:read]` table.
+    ///
+    /// The optional `:read` suffix on the account mints a read-only
+    /// credential, so the scope path can be exercised without a hub. Any
+    /// other suffix is rejected rather than silently granting write — a typo
+    /// must not widen authority.
     ///
     /// Malformed pairs are skipped rather than failing the whole table: the
     /// failure mode of a dropped entry is "that token does not authenticate",
@@ -172,13 +185,17 @@ impl StaticVerifier {
         let entries = raw
             .split(',')
             .filter_map(|pair| {
-                let (token, user) = pair.split_once('=')?;
+                let (token, account) = pair.split_once('=')?;
                 let token = token.trim();
-                let user = user.trim();
+                let (user, scopes) = match account.trim().rsplit_once(':') {
+                    Some((user, "read")) => (user.trim(), McpScopes::READ_ONLY),
+                    Some((_, _)) => return None,
+                    None => (account.trim(), McpScopes::FULL),
+                };
                 (!token.is_empty()
                     && !user.is_empty()
                     && token.chars().count() <= MAX_CREDENTIAL_CHARS)
-                    .then(|| (token.to_string(), user.to_string()))
+                    .then(|| (token.to_string(), (user.to_string(), scopes)))
             })
             .collect();
         Self { entries }
@@ -211,7 +228,7 @@ impl IdentityVerifier for StaticVerifier {
         if credential.chars().count() > MAX_CREDENTIAL_CHARS {
             return Err(OnlineAuthError::MalformedCredential);
         }
-        let user_id = self
+        let (user_id, scopes) = self
             .entries
             .get(credential.as_str())
             .ok_or(OnlineAuthError::UnknownCredential)?;
@@ -220,6 +237,12 @@ impl IdentityVerifier for StaticVerifier {
             username: user_id.clone(),
             display_name: user_id.clone(),
             via,
+            // A browser session is the account itself, so it carries full
+            // authority however the token table classified the same string.
+            scopes: match via {
+                IdentityVia::SessionCookie => McpScopes::FULL,
+                IdentityVia::ApiToken => *scopes,
+            },
         })
     }
 }

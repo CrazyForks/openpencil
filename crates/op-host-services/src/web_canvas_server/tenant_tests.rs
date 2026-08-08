@@ -11,6 +11,7 @@ fn identity(user_id: &str) -> ResolvedIdentity {
         username: user_id.into(),
         display_name: user_id.into(),
         via: IdentityVia::ApiToken,
+        scopes: crate::mcp_serve::tool_profile::McpScopes::FULL,
     }
 }
 

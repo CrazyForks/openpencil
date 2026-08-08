@@ -137,6 +137,32 @@ fn process_message(
 pub fn process_message_with_applier<F>(
     state: &mut EditorState,
     line: &str,
+    apply: F,
+) -> Result<Option<String>, McpServeError>
+where
+    F: FnMut(&str, &mut EditorState, &EditorCommand) -> bool,
+{
+    // The unrestricted profile is the whole catalog with full authority —
+    // exactly what this function did before capability profiles existed, so
+    // every local and managed caller is unchanged.
+    process_message_with_applier_profiled(
+        state,
+        line,
+        tool_profile::McpAccessProfile::UNRESTRICTED,
+        apply,
+    )
+}
+
+/// [`process_message_with_applier`] under an explicit capability profile.
+///
+/// The profile decides which tools the catalog advertises and which calls are
+/// refused before they run. A refusal is a normal `tools/call` error envelope
+/// carrying the originating request id — never a panic, and never a transport
+/// error, because an MCP client has to be able to keep the session.
+pub fn process_message_with_applier_profiled<F>(
+    state: &mut EditorState,
+    line: &str,
+    profile: tool_profile::McpAccessProfile,
     mut apply: F,
 ) -> Result<Option<String>, McpServeError>
 where
@@ -153,7 +179,7 @@ where
         }
         Some("tools/list") => {
             return Ok(sniff_id_raw(trimmed)
-                .map(|id| tools_list_response(&id, state, debug_tools_enabled())));
+                .map(|id| tools_list_response(&id, state, debug_tools_enabled(), profile)));
         }
         Some("notifications/initialized") | Some("initialized") => {
             return Ok(None); // notification — no response required
@@ -167,7 +193,25 @@ where
     // Fall through: tools/call or legacy direct dispatch. The
     // registry snapshots `state` at build time, so it no longer
     // borrows it once the applier closure mutates it.
-    let requested_tool = op_mcp::parse_tool_call(trimmed).map(|call| call.tool);
+    let call = op_mcp::parse_tool_call(trimmed);
+    // Enforcement, ahead of the registry build and therefore ahead of the
+    // tool's own argument parsing: a denied tool never sees the path it was
+    // asked to open.
+    if let Some(call) = call.as_ref() {
+        if let Some(refusal) = profile.refuse(&call.tool) {
+            // The ordinary tools/call error envelope (`isError:true`) with
+            // the originating id, so a client sees a refusal it can read
+            // rather than a transport failure that would drop the session.
+            return Ok(Some(op_mcp::tool_response_to_json(
+                &op_mcp::ToolResponse::Err {
+                    id: call.id.clone(),
+                    code: op_mcp::ToolErrorCode::ToolFailed,
+                    message: refusal.message(&call.tool),
+                },
+            )));
+        }
+    }
+    let requested_tool = call.map(|call| call.tool);
     let registry = rebuild_registry(state, requested_tool.as_deref());
     process_tool_message_with_registry(&registry, line, |tool_name, cmd| {
         apply(tool_name, state, cmd)
@@ -716,22 +760,10 @@ pub use wire::*;
 mod doc_sync;
 pub use doc_sync::*;
 
-fn tools_list_response(id_raw: &str, state: &EditorState, debug_enabled: bool) -> String {
-    let mut entries: Vec<String> = TOOL_SCHEMAS.iter().map(|s| (*s).to_string()).collect();
-    entries.extend(op_mcp::element_tools::element_tool_schemas(state));
-    #[cfg(not(feature = "mcp-debug-tools"))]
-    let _ = debug_enabled;
-    #[cfg(feature = "mcp-debug-tools")]
-    if debug_enabled {
-        entries.extend(DEBUG_TOOL_SCHEMAS.iter().map(|s| (*s).to_string()));
-    }
-    format!(
-        r#"{{"jsonrpc":"2.0","id":{id_raw},"result":{{"tools":[{}]}}}}"#,
-        entries.join(",")
-    )
-}
-
 pub(crate) mod schemas;
+mod tools_list;
+use tools_list::tools_list_response;
+pub mod tool_profile;
 #[cfg(not(feature = "mcp-debug-tools"))]
 pub use schemas::TOOL_SCHEMAS;
 #[cfg(feature = "mcp-debug-tools")]

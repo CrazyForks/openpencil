@@ -21,6 +21,10 @@ pub(super) struct ConnCtx<'a> {
     pub(super) state: &'a Mutex<WebCanvasState>,
     pub(super) hub: &'a SseHub,
     pub(super) mode: ServeMode,
+    /// Which MCP tools this connection may see and call. `UNRESTRICTED` for
+    /// the local and managed daemons — the whole catalog, full authority,
+    /// exactly as before capability profiles existed.
+    pub(super) mcp_profile: crate::mcp_serve::tool_profile::McpAccessProfile,
 }
 
 /// Handle one connection against the single-user document authority.
@@ -64,7 +68,16 @@ pub(super) fn serve_one_in_mode<S: Read + Write>(
     mode: ServeMode,
 ) -> Result<bool> {
     let req = crate::mcp_serve::read_http_request(stream)?;
-    dispatch(stream, &req, &ConnCtx { state, hub, mode })
+    dispatch(
+        stream,
+        &req,
+        &ConnCtx {
+            state,
+            hub,
+            mode,
+            mcp_profile: crate::mcp_serve::tool_profile::McpAccessProfile::UNRESTRICTED,
+        },
+    )
 }
 
 /// Route one already-parsed request against `ctx`.
@@ -397,9 +410,10 @@ pub(super) fn dispatch<S: Read + Write>(
         // call against a headless `op start` daemon also relays the
         // radar-scan to the browser shell) is tracked as follow-up
         // scope, not part of this pass.
-        let response = crate::mcp_serve::process_message_with_applier(
+        let response = crate::mcp_serve::process_message_with_applier_profiled(
             &mut guard.editor,
             &req.body,
+            ctx.mcp_profile,
             |_tool_name, editor, cmd| {
                 if let Err(reason) =
                     policy.check_command(cmd, op_editor_core::CollabEditSource::Mcp)

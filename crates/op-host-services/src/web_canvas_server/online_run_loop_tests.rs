@@ -743,3 +743,7 @@ fn a_disallowed_origin_gets_no_cors_header_at_all() {
         "omitting the header is what makes the browser withhold the body: {response}"
     );
 }
+
+#[cfg(test)]
+#[path = "online_mcp_tests.rs"]
+mod mcp_profile;
