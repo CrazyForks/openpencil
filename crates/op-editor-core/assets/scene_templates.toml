@@ -335,7 +335,7 @@ summary_fallback = "竖版信息长图：一条贯穿全图的时间轴，年份
 tags = ["信息图", "长图", "时间线", "历程", "复盘", "大事记", "infographic", "timeline", "milestone", "history"]
 frames = 1
 frame_width = 1080
-frame_height = 3110
+frame_height = 3018
 
 [[template]]
 id = "concept-contrast-infographic"
@@ -347,7 +347,7 @@ summary_fallback = "竖版信息长图：先给结论，再给两个概念各自
 tags = ["信息图", "长图", "对比", "概念", "科普", "辨析", "infographic", "contrast", "concept", "explainer"]
 frames = 1
 frame_width = 1080
-frame_height = 3106
+frame_height = 3060
 
 [[template]]
 id = "ranking-board-infographic"
@@ -371,7 +371,7 @@ summary_fallback = "竖版信息长图：六组一问一答，Q 实心 A 描边�
 tags = ["信息图", "长图", "问答", "FAQ", "答疑", "常见问题", "infographic", "faq", "qa", "questions"]
 frames = 1
 frame_width = 1080
-frame_height = 2881
+frame_height = 2789
 
 [[template]]
 id = "data-story-infographic"

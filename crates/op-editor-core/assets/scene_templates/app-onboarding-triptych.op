@@ -549,7 +549,7 @@
                   "type": "text",
                   "id": "t27",
                   "name": "屏说明",
-                  "content": "只留一个按钮，别让人在引导页做选择。",
+                  "content": "只留一个按钮，别让人挑。",
                   "fontFamily": "Noto Sans SC",
                   "fontSize": 21,
                   "fontWeight": 400,

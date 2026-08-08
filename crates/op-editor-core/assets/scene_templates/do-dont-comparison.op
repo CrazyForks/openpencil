@@ -746,7 +746,7 @@
                           "type": "text",
                           "id": "t39",
                           "name": "示例标题",
-                          "content": "AI 工具，我只留了三个",
+                          "content": "AI 工具只留三个",
                           "fontFamily": "Noto Sans SC",
                           "fontSize": 34,
                           "fontWeight": 700,
