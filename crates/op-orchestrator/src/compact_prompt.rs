@@ -39,10 +39,14 @@ pub fn build_compact_planning_prompt(
     pinned: Option<&str>,
 ) -> CompactPlanningPrompt {
     let preset = detect_design_type(prompt);
-    let platform = if preset.type_ == DesignType::MobileScreen {
-        Platform::Mobile
-    } else {
-        Platform::Webapp
+    // The style-guide platform filter is a HARD filter (empty result falls
+    // back to the whole registry), so a card request must ask for the card
+    // shelf by name or it can never reach the card guides — and no other
+    // request can reach them either. `card-system-0808.md` §8.2 P0-3.
+    let platform = match preset.type_ {
+        DesignType::MobileScreen => Platform::Mobile,
+        DesignType::Card => Platform::Card,
+        _ => Platform::Webapp,
     };
     let tags = infer_tags_from_prompt(prompt);
 
@@ -104,6 +108,11 @@ pub fn build_compact_planning_prompt(
              section of a scrolling page."
         }
         DesignType::LandingPage => "Create 4-8 scrollable page sections in top-to-bottom order.",
+        DesignType::Card => {
+            "Create one subtask per CARD, in reading order — a cover card first, then one card \
+             per idea. Each card is a self-contained 3:4 board that must still make sense on its \
+             own in a feed, not a section of a scrolling page."
+        }
     };
 
     let size_rule = if let Some(dimensions) = requested_root_dimensions(prompt) {
@@ -122,6 +131,8 @@ pub fn build_compact_planning_prompt(
             // default below would contradict the 16:9 contract the slides
             // guidance states, and the skeleton is what actually gets built.
             DesignType::Slides => "Use width=1920 and height=1080 on the root frame.".to_string(),
+            // XHS 竖版 3:4 — the card system's primary spec.
+            DesignType::Card => "Use width=1080 and height=1440 on the root frame.".to_string(),
             _ => "Use width=1200 and height=0 on the root frame.".to_string(),
         }
     };

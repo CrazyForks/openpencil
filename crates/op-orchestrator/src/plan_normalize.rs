@@ -116,7 +116,22 @@ pub fn normalize(plan: &mut OrchestratorPlan, req: &DesignRequest) -> NormInfo {
         plan.root_frame.width = preset.width;
         plan.root_frame.height = preset.root_height;
     }
-    let preserve_requested_root_height = preserve_requested_root_height || is_deck;
+    // A card board is fixed for the same reason a slide is: 3:4 is the
+    // contract the whole card system rests on (`card-system-0808.md` §5), and
+    // a model planning 1080x0 hands `adjust_root_height_to_content` a
+    // content-height root with the aspect gone. UNLIKE the deck this never
+    // overrides an explicitly requested size — the system ships four
+    // legitimate specs (3:4 / 1:1 / 公众号封面对 / 9:16) and the request is
+    // how a user picks between them.
+    let is_card = crate::design_type::detect_design_type(&req.prompt).type_
+        == crate::design_type::DesignType::Card;
+    if is_card && !requested_dimensions_applied {
+        let preset = crate::design_type::detect_design_type(&req.prompt);
+        plan.root_frame.layout = Some("vertical".into());
+        plan.root_frame.width = preset.width;
+        plan.root_frame.height = preset.root_height;
+    }
+    let preserve_requested_root_height = preserve_requested_root_height || is_deck || is_card;
 
     let is_mobile = plan.root_frame.width <= MOBILE_MAX_WIDTH;
 

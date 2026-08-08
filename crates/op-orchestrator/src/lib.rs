@@ -26,6 +26,7 @@ pub(crate) mod orchestration_self_check;
 pub mod palette_harmonize;
 pub mod parse;
 pub mod plan;
+mod plan_fallback_card;
 pub mod plan_normalize;
 pub mod plan_repair;
 pub mod program_gen;
@@ -62,7 +63,10 @@ pub mod loop_finalize;
 pub mod nav_issues;
 pub mod prompt;
 pub mod radial_repair;
+pub mod repair_record;
+pub mod repair_scope;
 pub mod repair_summary;
+pub mod repair_tier;
 pub mod retry_subtask;
 pub(crate) mod ring_repair;
 pub mod role_defaults;
@@ -82,6 +86,7 @@ pub(crate) mod spread_screen_roots;
 pub mod stub_repair;
 pub mod subagent;
 pub mod table_repair;
+pub mod template_provenance;
 pub(crate) mod text_contrast_repair;
 pub mod tree_heuristics;
 pub mod unfilled_screens;
@@ -135,13 +140,16 @@ pub use model_profile::{
     resolve_model_profile, ModelProfile, ModelTier, ReasoningWireControl,
 };
 pub use prompt::build_orchestrator_prompt;
+pub use repair_record::RepairRecord;
 pub use repair_summary::{CheckCategory, RepairSummary};
+pub use repair_tier::{RepairTier, RepairTierPolicy, TieredPass};
 pub use run::Orchestrator;
 pub use spawn_concurrent::{run_spawned_agents_concurrent, SpawnAgentResult, SpawnAgentSpec};
 pub use stub_providers::{
     SkippedPreValidator, SkippedScreenshotProvider, SkippedVisionLlmClient,
     SkippedVisualRefProvider,
 };
+pub use template_provenance::{template_provenance, TemplateEvidence, TemplateProvenance};
 pub use types::*;
 pub use validation::{run_post_generation_validation, ValidationSummary};
 
@@ -155,3 +163,7 @@ pub(crate) mod agent_indicator_test_support {
         LOCK.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
+
+#[cfg(test)]
+#[path = "card_routing_tests.rs"]
+mod card_routing_tests;

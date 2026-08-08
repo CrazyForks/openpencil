@@ -7,6 +7,11 @@ pub enum Platform {
     Mobile,
     LandingPage,
     Slides,
+    /// Social card series — fixed portrait boards delivered as a set
+    /// (`card-system-0808.md`). A separate shelf on purpose: the platform
+    /// filter is hard, so card guides must be unreachable from ordinary
+    /// screen/page requests and vice versa.
+    Card,
 }
 
 impl Platform {
@@ -17,6 +22,7 @@ impl Platform {
             Platform::Mobile => "mobile",
             Platform::LandingPage => "landing-page",
             Platform::Slides => "slides",
+            Platform::Card => "card",
         }
     }
 
@@ -28,6 +34,7 @@ impl Platform {
             "mobile" => Platform::Mobile,
             "landing-page" => Platform::LandingPage,
             "slides" => Platform::Slides,
+            "card" => Platform::Card,
             _ => Platform::Webapp,
         }
     }
@@ -78,6 +85,11 @@ pub const STYLE_GUIDE_TAGS: &[&str] = &[
     "pastel",
     "vibrant",
     "warm-tones",
+    "night",
+    // format — fixed-canvas social card series (not a scrolling page)
+    "social-card",
+    "card-series",
+    "vertical-portrait",
     // industry
     "corporate",
     "creative",
@@ -93,6 +105,7 @@ pub const STYLE_GUIDE_TAGS: &[&str] = &[
     "wellness",
     // typography
     "bold-typography",
+    "cjk-type",
     "condensed",
     "display",
     "dual-font",
@@ -135,6 +148,7 @@ pub const STYLE_GUIDE_TAGS: &[&str] = &[
     "soft-corners",
     "soft-shadows",
     "stroke-based",
+    "textured",
 ];
 
 #[cfg(test)]

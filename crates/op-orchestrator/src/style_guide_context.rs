@@ -249,6 +249,33 @@ pub(crate) fn infer_tags_from_prompt(prompt: &str) -> Vec<String> {
     if any(&lower, &["gradient", "渐变"]) {
         push("gradient");
     }
+    // —— social card series ——
+    // Purely ADDITIVE (`card-system-0808.md` §8.2 P0-2): a card prompt has to
+    // reach the card shelf's own tags, and nothing else in this function is
+    // removed or reweighted, so existing routing is untouched. The
+    // design-type rung is the authority on WHETHER this is a card request;
+    // this only supplies the vocabulary once it is.
+    if crate::design_type::is_card_series_prompt(&lower) {
+        push("social-card");
+        push("card-series");
+        push("vertical-portrait");
+        // Every shipped card guide is CJK-first typography — the tag is what
+        // separates them from a latin social template.
+        push("cjk-type");
+    }
+    // Content words the four shipped guides split on. Kept out of the block
+    // above so a non-card prompt that happens to say "手帐" still gets no
+    // card tags — the type rung stays the only gate.
+    if any(
+        &lower,
+        &["手帐", "手賬", "笔记", "筆記", "notebook", "journal"],
+    ) {
+        push("education");
+        push("friendly");
+    }
+    if any(&lower, &["观点", "觀點", "金句", "editorial", "opinion"]) {
+        push("editorial");
+    }
 
     if tags.is_empty() {
         vec!["minimal".to_string(), "light-mode".to_string()]
@@ -564,10 +591,13 @@ pub(crate) fn build_planning_style_guide_context(
 
     // —— catalog 分支 ——
     let preset = detect_design_type(prompt);
-    let platform = if preset.type_ == DesignType::MobileScreen {
-        Platform::Mobile
-    } else {
-        Platform::Webapp
+    // Same shelf routing as the compact path — the card guides live behind a
+    // hard platform filter, so BOTH planning modes have to ask for them by
+    // name or the rich path silently keeps offering webapp guides.
+    let platform = match preset.type_ {
+        DesignType::MobileScreen => Platform::Mobile,
+        DesignType::Card => Platform::Card,
+        _ => Platform::Webapp,
     };
     let tags = infer_tags_from_prompt(prompt);
     let tier = resolve_model_profile(model.unwrap_or("")).tier;

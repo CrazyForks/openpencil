@@ -243,6 +243,9 @@ pub fn build_fallback_plan(req: &DesignRequest) -> OrchestratorPlan {
     if preset.type_ == DesignType::Slides {
         return build_fallback_deck_plan(req, preset);
     }
+    if preset.type_ == DesignType::Card {
+        return crate::plan_fallback_card::build_fallback_card_plan(req, preset);
+    }
     if preset.type_ == DesignType::MobileScreen {
         let (width, height) = explicit_mobile_size(&req.prompt)
             .unwrap_or((preset.width, preset.root_height.max(preset.height)));
