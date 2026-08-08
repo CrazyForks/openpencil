@@ -28,6 +28,10 @@ pub(super) struct OwnerActor {
     pub(super) connections: HashSet<ConnectionKey>,
     local_connection: ConnectionKey,
     share_endpoint: Option<CollabShareEndpoint>,
+    /// The owner's own id namespace. The session core tracks each *guest*'s
+    /// namespace; the owner mints its own at start and nothing else records it,
+    /// so it is kept here for the hosts that have to publish it.
+    namespace: PeerNamespace,
 }
 
 pub(super) struct GuestActor {
@@ -51,6 +55,7 @@ impl OwnerActor {
         let participant_id = ParticipantId::from(random_identifier("participant")?);
         let peer_id = PeerId::from(random_identifier("peer")?);
         let namespace = random_namespace()?;
+        let owner_namespace = namespace.clone();
         let principal =
             ConnectionPrincipal::from_verified(auth, participant_id, peer_id, Role::Owner);
         let owner_connection =
@@ -74,7 +79,13 @@ impl OwnerActor {
             connections: HashSet::new(),
             local_connection: owner_connection,
             share_endpoint: None,
+            namespace: owner_namespace,
         })
+    }
+
+    /// The owner's own id namespace.
+    pub(super) fn peer_namespace(&self) -> &PeerNamespace {
+        &self.namespace
     }
 
     pub(super) fn set_share_endpoint(&mut self, endpoint: Option<SocketAddr>) {

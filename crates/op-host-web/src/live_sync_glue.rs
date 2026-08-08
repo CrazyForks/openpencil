@@ -297,6 +297,7 @@ fn poll_version<C: RepaintContext + 'static>(
         sync.borrow_mut().gate.note_conflict(v); // observer latch reports; user decides again
         return;
     }
+    maybe_auto_resolve_conflict_in_session(inner, sync, pair);
     if !sync.borrow().gate.pull_allowed(pair) {
         return;
     }
@@ -337,6 +338,63 @@ fn poll_version<C: RepaintContext + 'static>(
         }
     });
     let _ = live_sync::get(&format!("{base}/api/mcp/version"), on_version);
+}
+
+/// Auto-resolve a latched push conflict, but only inside a live session.
+///
+/// A conflict closes both the pull and the push gate and is cleared by exactly
+/// two things, neither reachable from this tick: the VS Code host's explicit
+/// `resolve-conflict`, and a successful re-push. A plain browser tab has
+/// neither, so a single 409 wedges live sync for the rest of the page's life.
+///
+/// Auto-accepting the remote is only safe when the *server* is the authority
+/// and the user's dropped work is recoverable — which is exactly what an
+/// `Active` collaboration session provides:
+///
+/// * the daemon's document is the sequenced truth every peer already sees, so
+///   there is nothing for this tab to "win" by holding its copy back;
+/// * the runtime projects a rejected local edit into
+///   `collab.discarded_edit`, and the panel offers to replay it, so accepting
+///   the remote does not silently destroy the edit that lost.
+///
+/// Outside a session neither holds — the daemon is a peer, not an authority,
+/// and nothing preserves the losing edit — so the latch stays and the existing
+/// explicit-resolution semantics are untouched. That is the difference between
+/// recovering automatically and quietly overwriting a user's unpushed work.
+fn maybe_auto_resolve_conflict_in_session<C: RepaintContext + 'static>(
+    inner: &Rc<RefCell<C>>,
+    sync: &SharedSync,
+    pair: (u64, u64),
+) {
+    let has_conflict = sync.borrow().gate.conflict().is_some();
+    let phase = inner
+        .try_borrow()
+        .map(|context| context.host().editor_state().editor_ui.collab.phase)
+        .unwrap_or(op_editor_core::CollabConnectionPhase::Idle);
+    if !auto_resolve_is_safe(has_conflict, phase) {
+        return;
+    }
+    // Re-opens the pull for THIS pair only; the resolving pull's apply calls
+    // `note_synced`, which is what finally clears the baseline and reopens the
+    // push side too.
+    if let Ok(mut sync) = sync.try_borrow_mut() {
+        sync.gate.resolve_accept_remote(pair);
+    }
+}
+
+/// The safety decision behind [`maybe_auto_resolve_conflict_in_session`],
+/// separated so it can be tested without a live shell.
+///
+/// `Active` and nothing else. Every other phase — including `Reconnecting` and
+/// `ReadOnly`, which look session-ish — either has no authoritative server
+/// document to accept or no `discarded_edit` projection to recover the losing
+/// edit from, so auto-accepting there would be the silent data loss this is
+/// specifically avoiding.
+const fn auto_resolve_is_safe(
+    has_conflict: bool,
+    phase: op_editor_core::CollabConnectionPhase,
+) -> bool {
+    has_conflict && matches!(phase, op_editor_core::CollabConnectionPhase::Active)
 }
 
 /// Apply a `GET /api/mcp/document` response to the live shell.
@@ -721,5 +779,51 @@ mod tests {
             !push_reasons(&sync, pair, 1, true).any(),
             "metadata pushes must still honor the conflict latch"
         );
+    }
+}
+
+#[cfg(test)]
+mod auto_resolve_tests {
+    use super::auto_resolve_is_safe;
+    use op_editor_core::CollabConnectionPhase;
+
+    #[test]
+    fn a_conflict_inside_an_active_session_resolves_itself() {
+        assert!(auto_resolve_is_safe(true, CollabConnectionPhase::Active));
+    }
+
+    #[test]
+    fn no_conflict_means_nothing_to_resolve() {
+        for phase in [
+            CollabConnectionPhase::Idle,
+            CollabConnectionPhase::Active,
+            CollabConnectionPhase::ReadOnly,
+        ] {
+            assert!(!auto_resolve_is_safe(false, phase));
+        }
+    }
+
+    #[test]
+    fn every_non_active_phase_keeps_the_latch() {
+        // Outside an Active session there is no authoritative server document
+        // to accept and no `discarded_edit` projection to recover the losing
+        // edit from, so auto-accepting would silently destroy unpushed work.
+        // `Reconnecting` and `ReadOnly` look session-ish and are deliberately
+        // included: neither can sequence an edit.
+        for phase in [
+            CollabConnectionPhase::Idle,
+            CollabConnectionPhase::Starting,
+            CollabConnectionPhase::Discovering,
+            CollabConnectionPhase::Joining,
+            CollabConnectionPhase::Authenticating,
+            CollabConnectionPhase::Reconnecting,
+            CollabConnectionPhase::ReadOnly,
+            CollabConnectionPhase::Ended,
+        ] {
+            assert!(
+                !auto_resolve_is_safe(true, phase),
+                "{phase:?} must keep the existing explicit-resolution semantics"
+            );
+        }
     }
 }

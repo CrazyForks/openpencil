@@ -7,6 +7,7 @@
 
 use op_editor_core::collab_wire::{
     CollabActionWire, CollabActionWireError, CollabLocalPresenceWire, CollabStateWire,
+    CollabWireCommand,
 };
 
 use super::{WebCanvasState, WebReply};
@@ -19,11 +20,16 @@ const MAX_COLLAB_BODY_BYTES: usize = 8 * 1024;
 
 /// `GET /api/collab/state` — the whole projection plus both sequence numbers.
 pub(crate) fn state(state: &mut WebCanvasState) -> WebReply {
+    // The namespace lives in the session actor, not the UI projection, so it
+    // is layered on here. A client that creates nodes needs it to mint ids the
+    // protocol can replay.
+    let namespace = state.collab.runtime.peer_namespace();
     let wire = CollabStateWire::from_ui(
         &state.editor.editor_ui.collab,
         state.collab.seq(),
         state.editor.document_revision(),
-    );
+    )
+    .with_peer_namespace(namespace);
     match serde_json::to_string(&wire) {
         Ok(body) => WebReply {
             status: "200 OK",
@@ -60,9 +66,32 @@ pub(crate) fn action(body: &str, state: &mut WebCanvasState) -> WebReply {
     // a caller-named socket address or enumerate the host's LAN. The local and
     // managed daemons allow them — that is desktop parity, and the operator is
     // the only client.
-    let action = match wire.into_ui_action() {
-        Ok(action) => action,
+    let command = match wire.into_command() {
+        Ok(command) => command,
         Err(error) => return action_error_reply(error),
+    };
+    // Undo is a direct call on the session, not a queued panel action: the
+    // runtime exposes it as a method and the pending slot cannot represent it.
+    // It also runs here rather than on the driver thread because the answer —
+    // whether a session claimed the keystroke — is what the browser needs to
+    // decide between a collaborative undo and a local one.
+    let action = match command {
+        CollabWireCommand::RequestUndo => {
+            let (runtime, mut host) = state.collab_runtime_and_host();
+            let claimed = runtime.request_undo(&mut host);
+            let seq = state.collab.bump_seq();
+            state.collab.wake_driver();
+            return WebReply {
+                status: "200 OK",
+                body: serde_json::json!({
+                    "ok": true,
+                    "claimed": claimed,
+                    "collabSeq": seq,
+                })
+                .to_string(),
+            };
+        }
+        CollabWireCommand::Ui(action) => action,
     };
     // The pending slot holds exactly one action, and the runtime consumes it
     // through `take_pending_action`. Overwriting an undrained action would
@@ -120,6 +149,7 @@ fn action_error_reply(error: CollabActionWireError) -> WebReply {
     let code = match error {
         CollabActionWireError::InvalidRequestKey => "invalid-request-key",
         CollabActionWireError::InvalidAddress => "invalid-address",
+        CollabActionWireError::NotAUiAction => "unsupported-action",
     };
     error_reply("400 Bad Request", code, &error.to_string())
 }

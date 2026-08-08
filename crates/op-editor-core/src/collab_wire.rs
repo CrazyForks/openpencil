@@ -21,7 +21,7 @@
 mod action;
 mod parts;
 
-pub use action::{CollabActionWire, CollabActionWireError};
+pub use action::{CollabActionWire, CollabActionWireError, CollabWireCommand};
 pub use parts::{
     CollabAdmissionWire, CollabAvailabilityWire, CollabConnectErrorWire, CollabConnectionPathWire,
     CollabDiscardedEditWire, CollabDiscoveredWire, CollabLocalPresenceWire, CollabNoticeKindWire,
@@ -64,6 +64,18 @@ pub struct CollabSessionWire {
     pub share_endpoint: Option<String>,
     pub invite: Option<String>,
     pub connection: Option<CollabConnectionPathWire>,
+    /// Owner-assigned id namespace for this peer.
+    ///
+    /// A client that creates nodes MUST mint their ids from this namespace.
+    /// The protocol replays ids verbatim, so two peers minting from a private
+    /// sequential counter would eventually agree on an id for two different
+    /// nodes and silently fork the document.
+    ///
+    /// Additive and optional: a client that finds it absent — an older daemon,
+    /// or a session whose namespace is not yet known — must refuse to create
+    /// nodes rather than fall back to a local counter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peer_namespace: Option<String>,
 }
 
 /// The whole collaboration projection for one poll.
@@ -106,6 +118,10 @@ impl CollabStateWire {
                 connection: public
                     .and_then(|public| public.connection())
                     .map(Into::into),
+                // Not part of the shared UI projection — it lives in the
+                // session actor, so the daemon layers it on with
+                // [`Self::with_peer_namespace`].
+                peer_namespace: None,
             }
         });
         Self {
@@ -152,6 +168,21 @@ impl CollabStateWire {
             pending_edit: ui.pending_edit.into(),
             discarded_edit: ui.discarded_edit.as_ref().map(Into::into),
         }
+    }
+
+    /// Attach the owner-assigned id namespace to an already-built projection.
+    ///
+    /// Separate from [`Self::from_ui`] because the namespace is owned by the
+    /// session actor rather than the UI state the panel paints; only the host
+    /// running the session can supply it. A projection with no session, or a
+    /// session whose namespace is not yet assigned, keeps `None` — and a client
+    /// reading `None` must not create nodes.
+    #[must_use]
+    pub fn with_peer_namespace(mut self, namespace: Option<String>) -> Self {
+        if let Some(session) = self.session.as_mut() {
+            session.peer_namespace = namespace;
+        }
+        self
     }
 
     /// Install this projection into a client's UI state.

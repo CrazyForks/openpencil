@@ -101,6 +101,11 @@ features = [
   "Element",
   "Event",
   "EventTarget",
+  # `EventSource` — the daemon's SSE channel (`GET /api/mcp/events`). It is a
+  # latency accelerator over the existing version poll, never a replacement:
+  # the poll stays armed so a proxy that buffers SSE, or a dropped stream,
+  # degrades to the old cadence instead of going silent.
+  "EventSource",
   "File",
   "FileList",
   "FileReader",

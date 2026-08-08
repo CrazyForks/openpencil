@@ -643,15 +643,22 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
                 // Case-insensitive: with Shift held, `key` is layout/IME
                 // dependent — macOS Chromium can report either "z" or "Z"
                 // for Cmd+Shift+Z, so branch on the shift flag alone.
+                // In a live session history belongs to the session, not this
+                // tab: undo becomes an M1 selective-undo request the daemon
+                // sequences, and redo is refused outright. Both short-circuit
+                // local history exactly as the desktop host does.
                 "z" | "Z" if is_mod && !image_popover_open => {
                     consumed = if shift {
-                        b.host.apply_redo()
+                        crate::collab_sync::reject_redo(b.host.editor_state_mut())
+                            || b.host.apply_redo()
                     } else {
-                        b.host.apply_undo()
+                        crate::collab_sync::request_undo(b.host.editor_state_mut())
+                            || b.host.apply_undo()
                     };
                 }
                 "y" | "Y" if is_mod && !shift && !image_popover_open => {
-                    consumed = b.host.apply_redo()
+                    consumed = crate::collab_sync::reject_redo(b.host.editor_state_mut())
+                        || b.host.apply_redo()
                 }
                 "s" | "S" if is_mod && !shift => {
                     // VS Code embed: the workbench cannot observe keystrokes

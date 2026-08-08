@@ -66,14 +66,32 @@ impl WidgetHost {
         let pre_create = self.editor_state.snapshot_for_history();
         let is_text_tool = matches!(tool, Tool::Text);
         let (init_w, init_h) = initial_size_for_tool(tool);
-        let Some(node_id) = self.editor_state.create_node_for_tool(
-            tool,
-            &mut self.next_node_id,
-            doc_point.x as f64,
-            doc_point.y as f64,
-            init_w,
-            init_h,
-        ) else {
+        let created = if let Some(allocator) = self.collab_id_allocator.as_mut() {
+            self.editor_state.create_node_for_tool_with_allocator(
+                tool,
+                allocator,
+                doc_point.x as f64,
+                doc_point.y as f64,
+                init_w,
+                init_h,
+            )
+        } else {
+            Ok(self.editor_state.create_node_for_tool(
+                tool,
+                &mut self.next_node_id,
+                doc_point.x as f64,
+                doc_point.y as f64,
+                init_w,
+                init_h,
+            ))
+        };
+        let Some(node_id) = (match created {
+            Ok(id) => id,
+            Err(error) => {
+                self.show_collab_id_error(error);
+                return true;
+            }
+        }) else {
             return false;
         };
 

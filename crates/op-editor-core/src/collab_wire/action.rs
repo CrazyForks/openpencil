@@ -26,6 +26,22 @@ pub enum CollabActionWireError {
     InvalidRequestKey,
     /// A discovery id or endpoint was empty or over [`MAX_WIRE_ADDRESS_CHARS`].
     InvalidAddress,
+    /// The action is a direct runtime request, not a queued panel action.
+    NotAUiAction,
+}
+
+/// What a posted action asks the host to do.
+///
+/// Most actions are queued into the panel's pending slot and drained by the
+/// runtime pump; undo is a direct call on the session. Splitting them keeps
+/// the caller from having to special-case a variant the pending slot cannot
+/// represent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CollabWireCommand {
+    /// Queue this into `CollabUiState::pending_action`.
+    Ui(CollabUiAction),
+    /// Call the runtime's selective-undo entry point.
+    RequestUndo,
 }
 
 impl std::fmt::Display for CollabActionWireError {
@@ -33,6 +49,7 @@ impl std::fmt::Display for CollabActionWireError {
         match self {
             Self::InvalidRequestKey => f.write_str("malformed collaboration admission key"),
             Self::InvalidAddress => f.write_str("malformed collaboration address"),
+            Self::NotAUiAction => f.write_str("action is not a queued panel action"),
         }
     }
 }
@@ -69,6 +86,12 @@ pub enum CollabActionWire {
     DiscardPending,
     ReapplyDiscarded,
     SaveAsFork,
+    /// Ask the session for an M1 selective undo of this peer's latest edit.
+    ///
+    /// Additive: a daemon that does not know this variant rejects the body,
+    /// which is the correct answer — the client must then fall back to a local
+    /// undo rather than assume the request landed.
+    RequestUndo,
     #[serde(rename_all = "camelCase")]
     ApproveAdmissionEditor {
         request_key: String,
@@ -109,9 +132,22 @@ impl CollabActionWire {
         )
     }
 
-    /// Validate and convert into the internal action.
+    /// Validate and convert into the internal command.
+    pub fn into_command(self) -> Result<CollabWireCommand, CollabActionWireError> {
+        if matches!(self, Self::RequestUndo) {
+            return Ok(CollabWireCommand::RequestUndo);
+        }
+        Ok(CollabWireCommand::Ui(self.into_ui_action()?))
+    }
+
+    /// Validate and convert into the internal UI action.
+    ///
+    /// `RequestUndo` has no `CollabUiAction` form — the runtime exposes undo as
+    /// a direct call, not a queued panel action — so it is the one variant this
+    /// cannot produce. Use [`Self::into_command`] to handle both.
     pub fn into_ui_action(self) -> Result<CollabUiAction, CollabActionWireError> {
         Ok(match self {
+            Self::RequestUndo => return Err(CollabActionWireError::NotAUiAction),
             Self::OpenCreate => CollabUiAction::OpenCreate,
             Self::Start => CollabUiAction::Start,
             Self::StartLan => CollabUiAction::StartLan,

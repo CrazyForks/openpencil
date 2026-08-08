@@ -62,6 +62,8 @@ thread_local! {
     static STATE_BUSY: Cell<bool> = const { Cell::new(false) };
     /// An action already posted and not yet answered.
     static ACTION_BUSY: Cell<bool> = const { Cell::new(false) };
+    /// A Cmd+Z is waiting to be posted as a `RequestUndo` action.
+    static UNDO_REQUESTED: Cell<bool> = const { Cell::new(false) };
     /// An action the daemon refused with `collab-busy`, kept for the next tick.
     /// Losing it would silently drop something the user clicked.
     static ACTION_RETRY: RefCell<Option<CollabUiAction>> = const { RefCell::new(None) };
@@ -137,6 +139,9 @@ pub(crate) fn start<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) {
     let base = crate::daemon_base::daemon_base();
     let inner = inner.clone();
     let tick: Rc<dyn Fn()> = Rc::new(move || {
+        // Re-armed from the tick so a stream that dropped comes back without a
+        // timer of its own; the backoff inside decides whether to actually try.
+        ensure_event_stream(&base);
         drain_pending_action(&inner, &base);
         maybe_pull_state(&inner, &base);
         maybe_push_presence(&inner, &base);
@@ -180,6 +185,22 @@ thread_local! {
 
 fn drain_pending_action<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, base: &str) {
     if ACTION_BUSY.get() {
+        return;
+    }
+    // Undo jumps the queue: it is a keystroke the user just pressed, while the
+    // pending slot holds panel actions that can wait a tick.
+    if UNDO_REQUESTED.replace(false) {
+        ACTION_BUSY.set(true);
+        let body = serde_json::to_string(&CollabActionWire::RequestUndo)
+            .expect("a unit variant always serializes");
+        let started = live_sync::post_json_with_status(
+            &format!("{base}{}", collab_routes::ACTION),
+            &body,
+            Rc::new(move |_status, _response| ACTION_BUSY.set(false)),
+        );
+        if !started {
+            ACTION_BUSY.set(false);
+        }
         return;
     }
     let action = ACTION_RETRY
@@ -323,8 +344,43 @@ fn apply_state<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, wire: &Colla
     wire.apply_to(&mut state.editor_ui.collab, now_ms);
     APPLIED_SEQ.set(Some(wire.collab_seq));
     SESSION_LIVE.set(state.editor_ui.collab.phase != CollabConnectionPhase::Idle);
+    sync_id_allocation(context.host_mut(), wire);
     context.host_mut().mark_editor_state_dirty();
     let _ = context.repaint();
+}
+
+/// Follow the projection into and out of namespaced id allocation.
+///
+/// Enabled only while a session is `Active` *and* the daemon published a
+/// namespace; anything else restores the standalone counter. A session whose
+/// namespace is absent — an older daemon — therefore keeps the local counter,
+/// and `push_blocked_by_session` is what stops those ids from reaching a peer.
+fn sync_id_allocation(host: &mut crate::widget_host::WidgetHost, wire: &CollabStateWire) {
+    let namespace = (wire.phase == op_editor_core::collab_wire::CollabPhaseWire::Active)
+        .then(|| wire.session.as_ref().and_then(|s| s.peer_namespace.clone()))
+        .flatten();
+    match namespace {
+        Some(namespace) if !host.collaboration_ids_enabled() => {
+            match op_editor_core::PeerNamespace::parse(namespace) {
+                Ok(namespace) => {
+                    if let Err(error) = host.enable_collaboration_ids(namespace) {
+                        // The document already carries ids this namespace
+                        // cannot resume above. Staying on the standalone
+                        // counter keeps the canvas usable; the push gate is
+                        // what keeps those ids off the wire.
+                        let _ = error;
+                    }
+                }
+                Err(_) => host.disable_collaboration_ids(),
+            }
+        }
+        Some(_) => {}
+        None => {
+            if host.collaboration_ids_enabled() {
+                host.disable_collaboration_ids();
+            }
+        }
+    }
 }
 
 fn maybe_push_presence<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, base: &str) {
@@ -506,5 +562,129 @@ mod tests {
             wire.clone().into_ui_action().expect("revalidates"),
             CollabUiAction::RejectAdmission { request_key: key }
         );
+    }
+}
+
+/// Route Cmd/Ctrl+Z into the session, returning whether the session claimed it.
+///
+/// `false` means no session owns the document and the caller should run local
+/// history — the same short-circuit contract the desktop host uses
+/// (`collab_runtime.request_undo(host) || host.apply_undo()`).
+///
+/// The request is queued as a wire action rather than answered here: undo has
+/// to be sequenced against the other peers, and only the daemon can do that.
+pub(crate) fn request_undo(state: &mut op_editor_core::EditorState) -> bool {
+    if state.editor_ui.collab.phase != CollabConnectionPhase::Active {
+        return false;
+    }
+    UNDO_REQUESTED.set(true);
+    true
+}
+
+/// Refuse redo while a session is live.
+///
+/// M1 collaboration sequences a selective undo per peer but has no matching
+/// redo, so the honest answer is a notice rather than a local redo that would
+/// diverge this tab from everyone else.
+pub(crate) fn reject_redo(state: &mut op_editor_core::EditorState) -> bool {
+    if state.editor_ui.collab.phase != CollabConnectionPhase::Active {
+        return false;
+    }
+    state.editor_ui.collab.set_notice(
+        op_editor_core::CollabNoticeKind::Reject(op_editor_core::CollabRejectUiCode::Unsupported),
+        now_ms(),
+    );
+    true
+}
+
+// ---------------------------------------------------------------------------
+// SSE acceleration
+// ---------------------------------------------------------------------------
+
+/// Backoff after a dropped stream, doubling to [`SSE_MAX_RETRY_MS`].
+const SSE_BASE_RETRY_MS: f64 = 2_000.0;
+/// Ceiling for the reconnect backoff. Past this the poll is carrying the load
+/// perfectly well, so retrying harder buys nothing.
+const SSE_MAX_RETRY_MS: f64 = 60_000.0;
+
+thread_local! {
+    /// The live stream, when one is open.
+    static EVENT_STREAM: RefCell<Option<web_sys::EventSource>> = const { RefCell::new(None) };
+    /// Earliest `performance.now()` at which a reconnect may be attempted.
+    static SSE_RETRY_AT_MS: Cell<f64> = const { Cell::new(f64::NEG_INFINITY) };
+    /// Consecutive failures, for the backoff exponent.
+    static SSE_FAILURES: Cell<u32> = const { Cell::new(0) };
+    /// One console warning per degradation, not one per retry.
+    static SSE_WARNED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Open the daemon's SSE channel if it is not already open.
+///
+/// The stream carries the same `{"version":N,"collabSeq":M}` payload the
+/// version poll returns, so it feeds the identical latch and changes only
+/// *when* a change is noticed — push instead of up to one poll interval later.
+/// Everything downstream is unchanged, which is what makes losing the stream a
+/// slowdown rather than a failure.
+fn ensure_event_stream(base: &str) {
+    if EVENT_STREAM.with(|slot| slot.borrow().is_some()) {
+        return;
+    }
+    if now_ms_f64() < SSE_RETRY_AT_MS.get() {
+        return;
+    }
+    let Ok(stream) = web_sys::EventSource::new(&format!("{base}/api/mcp/events")) else {
+        note_stream_failure();
+        return;
+    };
+
+    use wasm_bindgen::closure::Closure;
+    use wasm_bindgen::JsCast;
+
+    let on_message =
+        Closure::<dyn FnMut(web_sys::MessageEvent)>::new(move |event: web_sys::MessageEvent| {
+            if let Some(payload) = event.data().as_string() {
+                // A live stream proves the daemon is reachable, so a past
+                // failure should not keep throttling reconnects.
+                SSE_FAILURES.set(0);
+                SSE_WARNED.set(false);
+                note_version_probe(&payload);
+            }
+        });
+    stream.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
+    on_message.forget();
+
+    let on_error = Closure::<dyn FnMut(web_sys::Event)>::new(move |_event: web_sys::Event| {
+        // `EventSource` reconnects on its own, but it does so forever and
+        // silently against a daemon that has gone away. Closing it and owning
+        // the backoff keeps the failure visible in one place and bounded.
+        close_event_stream();
+        note_stream_failure();
+    });
+    stream.set_onerror(Some(on_error.as_ref().unchecked_ref()));
+    on_error.forget();
+
+    EVENT_STREAM.with(|slot| *slot.borrow_mut() = Some(stream));
+}
+
+fn close_event_stream() {
+    EVENT_STREAM.with(|slot| {
+        if let Some(stream) = slot.borrow_mut().take() {
+            stream.close();
+        }
+    });
+}
+
+/// Record a dropped stream and arm the next reconnect.
+fn note_stream_failure() {
+    let failures = SSE_FAILURES.get().saturating_add(1);
+    SSE_FAILURES.set(failures);
+    let backoff = (SSE_BASE_RETRY_MS * 2f64.powi(failures.min(5) as i32 - 1)).min(SSE_MAX_RETRY_MS);
+    SSE_RETRY_AT_MS.set(now_ms_f64() + backoff);
+    // One warning per degradation. A daemon that is simply gone would
+    // otherwise fill the console with an identical line every backoff.
+    if !SSE_WARNED.replace(true) {
+        web_sys::console::warn_1(&wasm_bindgen::JsValue::from_str(
+            "[op-collab] event stream unavailable; falling back to polling",
+        ));
     }
 }

@@ -254,6 +254,20 @@ impl CollabRuntime {
         true
     }
 
+    /// Owner-assigned id namespace for this peer, once a session assigned one.
+    ///
+    /// A remote client that creates nodes has to mint their ids from this, or
+    /// two peers minting from private counters eventually agree on an id for
+    /// two different nodes. The daemon publishes it in the collaboration
+    /// projection so the browser can allocate correctly.
+    pub fn peer_namespace(&self) -> Option<String> {
+        let actor = self.actor.as_ref()?;
+        Some(match actor {
+            EditorActor::Owner(owner) => owner.peer_namespace().as_str().to_owned(),
+            EditorActor::Guest(guest) => guest.session.core().peer_namespace().as_str().to_owned(),
+        })
+    }
+
     pub fn take_save_as_fork_request(&mut self) -> bool {
         std::mem::take(&mut self.save_as_fork_requested)
     }

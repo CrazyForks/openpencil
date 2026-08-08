@@ -50,6 +50,7 @@ impl WidgetHost {
             node_drag: None,
             option_drag_source_ids: Vec::new(),
             next_node_id: 100,
+            collab_id_allocator: None,
             shift_held: false,
             alt_held: false,
             now_ms: 0,
@@ -233,5 +234,55 @@ impl WidgetHost {
             self.last_cursor_y,
         );
         Some((f64::from(point.x), f64::from(point.y)))
+    }
+}
+
+impl WidgetHost {
+    /// Switch every collaboration-supported creation path to one owner-assigned
+    /// namespace, resuming above the ids already in the document.
+    pub(crate) fn enable_collaboration_ids(
+        &mut self,
+        namespace: op_editor_core::PeerNamespace,
+    ) -> Result<(), op_editor_core::IdAllocError> {
+        self.collab_id_allocator = Some(
+            op_editor_core::DocumentIdAllocator::namespaced_for_document(
+                &self.editor_state.doc,
+                namespace,
+            )?,
+        );
+        Ok(())
+    }
+
+    /// Return to the standalone `n{counter}` allocation policy.
+    pub(crate) fn disable_collaboration_ids(&mut self) {
+        self.collab_id_allocator = None;
+        if let Ok(next) = op_editor_core::next_sequential_counter(&self.editor_state.doc) {
+            self.next_node_id = self.next_node_id.max(next);
+        }
+    }
+
+    /// Whether creation currently mints from an owner-assigned namespace.
+    pub(crate) fn collaboration_ids_enabled(&self) -> bool {
+        self.collab_id_allocator.is_some()
+    }
+
+    /// Surface an exhausted / invalid namespace as a panel notice.
+    ///
+    /// An allocation failure during a session is not something the user can act
+    /// on directly, but silently dropping the gesture would look like a broken
+    /// canvas, so it reports through the same notice channel every other
+    /// collaboration refusal uses.
+    pub(in crate::widget_host) fn show_collab_id_error(
+        &mut self,
+        _error: op_editor_core::IdAllocError,
+    ) {
+        let now = self.now_ms;
+        self.editor_state.editor_ui.collab.set_notice(
+            op_editor_core::CollabNoticeKind::Reject(
+                op_editor_core::CollabRejectUiCode::ResourceLimit,
+            ),
+            now,
+        );
+        self.mark_dirty();
     }
 }

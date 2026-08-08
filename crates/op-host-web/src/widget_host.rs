@@ -329,6 +329,12 @@ pub struct WidgetHost {
     /// nodes never collide on the same key. Matches the native
     /// host's allocator.
     pub(in crate::widget_host) next_node_id: u64,
+    /// Owner-assigned id allocator, set while a collaboration session is live.
+    ///
+    /// The protocol replays node ids verbatim, so a peer minting from the
+    /// private `next_node_id` counter would eventually agree on an id for two
+    /// different nodes. `None` restores the standalone policy.
+    pub(in crate::widget_host) collab_id_allocator: Option<op_editor_core::DocumentIdAllocator>,
     /// Whether the shift key is currently held. The DOM listener
     /// updates this from every keyboard / mouse event so apply_press
     /// can branch on shift+click for multi-select. Matches the
