@@ -57,6 +57,7 @@ mod image_generate_host;
 mod image_panel_host;
 mod image_search_session;
 mod ime_window;
+mod keyboard_chat_tabs;
 mod keyboard_clipboard_payload;
 mod keyboard_input;
 mod keyboard_presenting;
