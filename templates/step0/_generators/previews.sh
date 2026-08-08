@@ -11,7 +11,45 @@ mkdir -p "$OUT"
 for t in screenshot-tutorial knowledge-carousel before-after slide-deck \
          knowledge-card-vertical knowledge-card-square \
          pitch-deck-dark lecture-deck-light \
-         minimal-keynote gradient-tech; do
+         minimal-keynote gradient-tech \
+         saas-landing-orange product-landing-light \
+         punch-quote-card journal-checklist-card \
+         data-report-infographic steps-flow-infographic \
+         pitfall-list-infographic \
+         spine-culture-card metric-single-card quote-frame-card \
+         daily-sign-card price-tier-card notice-board-card \
+         milestone-timeline-infographic concept-contrast-infographic \
+         ranking-board-infographic faq-thread-infographic \
+         data-story-infographic challenge-tracker-infographic \
+         ecosystem-map-infographic \
+         do-dont-comparison \
+         myth-truth-comparison \
+         pricing-tiers-comparison \
+         scenario-guide-comparison \
+         spec-table-comparison \
+         three-way-comparison \
+         time-shift-comparison \
+         tradeoff-scale-comparison \
+         version-diff-comparison \
+         app-onboarding-triptych \
+         diy-blueprint-guide \
+         photo-composition-tutorial \
+         recipe-four-step \
+         skincare-routine-cards \
+         software-step-tutorial \
+         storage-makeover-steps \
+         weekly-report-lesson \
+         workout-breakdown-guide \
+         bookreview-silk-carousel \
+         cityguide-film-carousel \
+         datareport-grid-carousel \
+         opinion-longform-carousel \
+         qa-chalkboard-carousel \
+         story-night-carousel \
+         toolkit-notebook-carousel \
+         tutorial-journal-carousel \
+         yearreview-mineral-carousel \
+         event-poster-deck; do
   # The documents themselves are shipped assets (embedded by the scene
   # template catalogue); this directory keeps only the generators and the
   # full-resolution renders they produce.

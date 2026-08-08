@@ -1069,6 +1069,46 @@
         "geometryIssueCount": 0,
         "cleanupApplied": true
       }
+    },
+    "web-kilnform": {
+      "generationRoute": "scene-template-render",
+      "provider": "openpencil",
+      "model": "openpencil-desktop --render-shots",
+      "sourceLocale": "zh-CN",
+      "status": "accepted",
+      "note": "Not a model sample. This prompt ships alongside the scene template of the same design; the preview is a deterministic render of that template's checked-in document, so the card shows exactly what the repository contains.",
+      "sourceArtifact": "crates/op-editor-core/assets/scene_templates/saas-landing-orange.op",
+      "sourceArtifactSha256": "d67ffc3259711cfb2633c290ed2e052122a9b490ca151d2133ae3edf1b06e90f",
+      "previewSource": "templates/step0/previews/saas-landing-orange.png",
+      "previewSourceSha256": "9be84e58e495e3890424107b065624a41002bf1c3c20315a36c2c7df10a91772",
+      "previewSha256": "243855b054d37fe9780fca359834a164f60b0ad384544962f0993213b15c0ca7",
+      "cropPolicy": "scene-template render at scale 2: crop the first width/1.6 content pixels off the top of the full-page render, resize to 640x400 with Lanczos, JPEG quality 88 optimized",
+      "evidence": {
+        "screenCount": 1,
+        "emojiTextNodeCount": 0,
+        "geometryIssueCount": 0,
+        "canonicalStatusBar": false
+      }
+    },
+    "web-reefwright": {
+      "generationRoute": "scene-template-render",
+      "provider": "openpencil",
+      "model": "openpencil-desktop --render-shots",
+      "sourceLocale": "zh-CN",
+      "status": "accepted",
+      "note": "Not a model sample. This prompt ships alongside the scene template of the same design; the preview is a deterministic render of that template's checked-in document, so the card shows exactly what the repository contains.",
+      "sourceArtifact": "crates/op-editor-core/assets/scene_templates/product-landing-light.op",
+      "sourceArtifactSha256": "f81746330fa75614cd681fc123cf4e53822eed45223eeed1bf9a5d9c53675e9d",
+      "previewSource": "templates/step0/previews/product-landing-light.png",
+      "previewSourceSha256": "03b08235bd6c1ff869307ba712e32476169d86325e26f65e571b65afab18bb4e",
+      "previewSha256": "27d18fc848427dbb8a059f4dfea480356e2fd5f83d2fc72693b6af7aed68c155",
+      "cropPolicy": "scene-template render at scale 2: crop the first width/1.6 content pixels off the top of the full-page render, resize to 640x400 with Lanczos, JPEG quality 88 optimized",
+      "evidence": {
+        "screenCount": 1,
+        "emojiTextNodeCount": 0,
+        "geometryIssueCount": 0,
+        "canonicalStatusBar": false
+      }
     }
   }
 }

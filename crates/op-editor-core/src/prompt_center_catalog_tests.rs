@@ -11,9 +11,9 @@ fn has_tag(prompt: &PromptDefinition, tag: &str) -> bool {
 }
 
 #[test]
-fn embedded_catalogue_has_all_fifty_seven_seed_prompts() {
+fn embedded_catalogue_has_all_fifty_nine_seed_prompts() {
     let prompts = prompt_catalogue();
-    assert_eq!(prompts.len(), 57);
+    assert_eq!(prompts.len(), 59);
 
     let expected = [
         "gallery-wander",
@@ -67,6 +67,8 @@ fn embedded_catalogue_has_all_fifty_seven_seed_prompts() {
         "starter-barbershop",
         "web-orbit",
         "web-atelier",
+        "web-kilnform",
+        "web-reefwright",
         "dashboard-pulse",
         "dashboard-sentinel",
         "component-data-grid",
@@ -99,18 +101,21 @@ fn seed_groups_and_categories_match_the_source_contract() {
             .count(),
         4
     );
-    for category in [
-        PromptCategory::WebPage,
-        PromptCategory::Dashboard,
-        PromptCategory::Component,
-        PromptCategory::Modify,
+    for (category, count) in [
+        // Two seed prompts each, plus the two web pages that ship as scene
+        // templates as well — those carry their own designs, so the group
+        // they belong to is the one place the count is not uniform.
+        (PromptCategory::WebPage, 4),
+        (PromptCategory::Dashboard, 2),
+        (PromptCategory::Component, 2),
+        (PromptCategory::Modify, 2),
     ] {
         assert_eq!(
             prompts
                 .iter()
                 .filter(|prompt| prompt.category == category)
                 .count(),
-            2,
+            count,
             "{category:?}"
         );
     }
@@ -184,7 +189,7 @@ fn paired_galleries_share_twenty_title_keys() {
     }
 
     let unique_title_keys: HashSet<_> = prompts.iter().map(|prompt| &prompt.title_key).collect();
-    assert_eq!(unique_title_keys.len(), 37);
+    assert_eq!(unique_title_keys.len(), 39);
 }
 
 #[test]

@@ -22,6 +22,7 @@
 use op_editor_core::scene_template_catalog::SceneTemplateDefinition;
 use op_editor_core::AssetCenterTab;
 
+use super::panel_control_metrics::{CHIP_H, CHIP_LABEL_SIZE};
 use super::prompt_center_panel::estimated_text_width;
 use super::scene_template_panel::{SceneTemplateHit, SceneTemplatePanel, GENERATE_INPUT_H};
 use crate::{Point2D, Rect};
@@ -41,13 +42,16 @@ pub const SCENE_TEMPLATE_BASIS_CHIP_HOVER: usize = usize::MAX - 128;
 /// stopped being a gallery well before it collided with the next band.
 const CARD_ACTION_BAND: usize = 4096;
 
-pub(super) const ACTION_H: f32 = 30.0;
+/// A card's action buttons are chips — same height, same label size as the
+/// filter row's — cut to the panel's control radius rather than to a pill,
+/// because they sit in a rectangular strip over a rectangular picture.
+pub(super) const ACTION_H: f32 = CHIP_H;
 pub(super) const ACTION_INSET: f32 = 10.0;
 pub(super) const ACTION_GAP: f32 = 8.0;
-pub(super) const ACTION_LABEL_SIZE: f32 = 12.0;
+pub(super) const ACTION_LABEL_SIZE: f32 = CHIP_LABEL_SIZE;
 pub(super) const ACTION_RADIUS: f32 = 7.0;
 
-pub(super) const BASIS_CHIP_H: f32 = 28.0;
+pub(super) const BASIS_CHIP_H: f32 = CHIP_H;
 pub(super) const BASIS_CHIP_LABEL_SIZE: f32 = 11.5;
 /// Room for the label's left padding plus the dismiss glyph and its gutter.
 pub(super) const BASIS_CHIP_PAD_X: f32 = 10.0;

@@ -22,8 +22,16 @@ from __future__ import annotations
 import argparse
 import pathlib
 import sys
+from typing import NamedTuple
 
 from PIL import Image
+
+
+class Top(NamedTuple):
+    """Take the card's aspect off the top of this render, full width."""
+
+    name: str
+
 
 REPO = pathlib.Path(__file__).resolve().parents[3]
 SRC = REPO / "templates" / "step0" / "previews"
@@ -49,7 +57,11 @@ INSET = 20
 # (card id, source). A string names one render; a list is tiled into a grid
 # whose column count is chosen to land near the card's own aspect — a 16:9
 # deck laid out 1x6 is a 10:1 strip that shrinks each slide to ~100px inside
-# the card, which reads as noise rather than as slides.
+# the card, which reads as noise rather than as slides. `Top(name)` takes the
+# card's own aspect off the top of a very tall render instead of fitting the
+# whole thing: a 1:4.5 marketing page contained inside a 16:10 card is a
+# 140px-wide sliver, where its masthead and hero at full width are exactly
+# what makes it recognisable.
 CARDS = [
     ("screenshot-tutorial", "screenshot-tutorial-overview.png"),
     ("knowledge-carousel", "knowledge-carousel-overview.png"),
@@ -62,6 +74,71 @@ CARDS = [
      [f"lecture-deck-light-{i:02d}.png" for i in range(1, 7)]),
     ("minimal-keynote", [f"minimal-keynote-{i:02d}.png" for i in range(1, 10)]),
     ("gradient-tech", [f"gradient-tech-{i:02d}.png" for i in range(1, 7)]),
+    ("saas-landing-orange", Top("saas-landing-orange.png")),
+    ("product-landing-light", Top("product-landing-light.png")),
+    ("punch-quote-card", "punch-quote-card.png"),
+    ("journal-checklist-card", "journal-checklist-card.png"),
+    # The infographics are 1:2.5 and 1:3 — contained in a 16:10 card each
+    # would be a ~250px sliver. `Top` keeps the masthead and the first
+    # section at full width, which is what makes a long-form graphic
+    # recognisable as one.
+    ("data-report-infographic", Top("data-report-infographic.png")),
+    ("steps-flow-infographic", Top("steps-flow-infographic.png")),
+    ("pitfall-list-infographic", Top("pitfall-list-infographic.png")),
+    ("spine-culture-card", "spine-culture-card.png"),
+    ("metric-single-card", "metric-single-card.png"),
+    ("quote-frame-card", "quote-frame-card.png"),
+    ("daily-sign-card", "daily-sign-card.png"),
+    ("price-tier-card", "price-tier-card.png"),
+    ("notice-board-card", "notice-board-card.png"),
+    ("milestone-timeline-infographic", Top("milestone-timeline-infographic.png")),
+    ("concept-contrast-infographic", Top("concept-contrast-infographic.png")),
+    ("ranking-board-infographic", Top("ranking-board-infographic.png")),
+    ("faq-thread-infographic", Top("faq-thread-infographic.png")),
+    ("data-story-infographic", Top("data-story-infographic.png")),
+    ("challenge-tracker-infographic", Top("challenge-tracker-infographic.png")),
+    ("ecosystem-map-infographic", Top("ecosystem-map-infographic.png")),
+    ("do-dont-comparison", "do-dont-comparison.png"),
+    ("myth-truth-comparison", Top("myth-truth-comparison.png")),
+    ("pricing-tiers-comparison", "pricing-tiers-comparison.png"),
+    ("scenario-guide-comparison", Top("scenario-guide-comparison.png")),
+    ("spec-table-comparison", Top("spec-table-comparison.png")),
+    ("three-way-comparison", Top("three-way-comparison.png")),
+    ("time-shift-comparison", "time-shift-comparison.png"),
+    ("tradeoff-scale-comparison", "tradeoff-scale-comparison.png"),
+    ("version-diff-comparison", "version-diff-comparison.png"),
+    ("app-onboarding-triptych", "app-onboarding-triptych.png"),
+    ("diy-blueprint-guide", Top("diy-blueprint-guide.png")),
+    ("photo-composition-tutorial",
+     [f"photo-composition-tutorial-{index:02d}.png" for index in range(1, 6)]),
+    ("recipe-four-step", "recipe-four-step.png"),
+    ("skincare-routine-cards",
+     [f"skincare-routine-cards-{index:02d}.png" for index in range(1, 7)]),
+    ("software-step-tutorial", "software-step-tutorial.png"),
+    ("storage-makeover-steps",
+     [f"storage-makeover-steps-{index:02d}.png" for index in range(1, 7)]),
+    ("weekly-report-lesson", Top("weekly-report-lesson.png")),
+    ("workout-breakdown-guide", Top("workout-breakdown-guide.png")),
+    ("bookreview-silk-carousel",
+     [f"bookreview-silk-carousel-{index:02d}.png" for index in range(1, 6)]),
+    ("cityguide-film-carousel",
+     [f"cityguide-film-carousel-{index:02d}.png" for index in range(1, 8)]),
+    ("datareport-grid-carousel",
+     [f"datareport-grid-carousel-{index:02d}.png" for index in range(1, 7)]),
+    ("opinion-longform-carousel",
+     [f"opinion-longform-carousel-{index:02d}.png" for index in range(1, 7)]),
+    ("qa-chalkboard-carousel",
+     [f"qa-chalkboard-carousel-{index:02d}.png" for index in range(1, 7)]),
+    ("story-night-carousel",
+     [f"story-night-carousel-{index:02d}.png" for index in range(1, 8)]),
+    ("toolkit-notebook-carousel",
+     [f"toolkit-notebook-carousel-{index:02d}.png" for index in range(1, 7)]),
+    ("tutorial-journal-carousel",
+     [f"tutorial-journal-carousel-{index:02d}.png" for index in range(1, 7)]),
+    ("yearreview-mineral-carousel",
+     [f"yearreview-mineral-carousel-{index:02d}.png" for index in range(1, 9)]),
+    ("event-poster-deck",
+     [f"event-poster-deck-{i:02d}.png" for i in range(1, 7)]),
 ]
 
 # Gap between tiles, in source pixels — scaled down with everything else.
@@ -125,8 +202,25 @@ def tile(sources: list[pathlib.Path]) -> Image.Image:
     return canvas
 
 
-def bake(source: pathlib.Path | list[pathlib.Path]) -> Image.Image:
-    image = tile(source) if isinstance(source, list) else Image.open(source)
+def crop_to_card_top(source: pathlib.Path) -> Image.Image:
+    """Full-width band off the top of a render, already at the card's aspect.
+
+    Returned pre-cropped so the shared fit path below only ever scales it —
+    the band is the whole picture, so it fills the card edge to edge with no
+    letterboxing to pad.
+    """
+    image = Image.open(source).convert("RGB")
+    band = min(image.height, round(image.width * CARD_H / CARD_W))
+    return image.crop((0, 0, image.width, band))
+
+
+def bake(source: pathlib.Path | list[pathlib.Path] | Top) -> Image.Image:
+    if isinstance(source, Top):
+        image = crop_to_card_top(SRC / source.name)
+    elif isinstance(source, list):
+        image = tile(source)
+    else:
+        image = Image.open(source)
     canvas = Image.new("RGB", (CARD_W, CARD_H), background_colour(image))
     fitted = image.convert("RGB")
     fitted.thumbnail((CARD_W - 2 * INSET, CARD_H - 2 * INSET), Image.LANCZOS)
@@ -147,7 +241,12 @@ def main() -> int:
 
     failed = False
     for card_id, source_name in CARDS:
-        names = source_name if isinstance(source_name, list) else [source_name]
+        if isinstance(source_name, Top):
+            names = [source_name.name]
+        elif isinstance(source_name, list):
+            names = source_name
+        else:
+            names = [source_name]
         sources = [SRC / name for name in names]
         missing = [path for path in sources if not path.exists()]
         if missing:
@@ -155,7 +254,12 @@ def main() -> int:
                 print(f"missing source: {path}", file=sys.stderr)
             failed = True
             continue
-        source = sources if isinstance(source_name, list) else sources[0]
+        if isinstance(source_name, Top):
+            source = source_name
+        elif isinstance(source_name, list):
+            source = sources
+        else:
+            source = sources[0]
         target = DST / f"{card_id}.jpg"
         if args.check:
             status = "ok" if target.exists() else "MISSING"

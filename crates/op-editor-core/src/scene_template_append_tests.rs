@@ -235,6 +235,12 @@ fn reference_rewriting_takes_the_longest_name_and_ignores_the_rest() {
 }
 
 /// Collect the `$name` tokens a serialized tree references.
+///
+/// A token has to start with a letter to count. `$` is also just a currency
+/// sign, and a pricing table full of `$49` is not a document with three
+/// dangling variables — the production rewriter already draws the same line
+/// (`rewrite_refs_in_text("售价 $99 起", …)` returns `None`), so this keeps
+/// the check and the behaviour it checks in agreement.
 fn variable_references(serialized: &str) -> Vec<String> {
     let mut found = Vec::new();
     let mut rest = serialized;
@@ -243,7 +249,7 @@ fn variable_references(serialized: &str) -> Vec<String> {
         let end = after
             .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'))
             .unwrap_or(after.len());
-        if end > 0 {
+        if after[..end].starts_with(|c: char| c.is_ascii_alphabetic()) {
             found.push(after[..end].to_string());
         }
         rest = &after[end..];

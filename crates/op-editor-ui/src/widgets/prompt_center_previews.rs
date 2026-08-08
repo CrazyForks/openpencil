@@ -124,6 +124,8 @@ pub(crate) fn prompt_center_preview(prompt_id: &str) -> Option<PromptPreview> {
         "starter-dashboard" => preview!(55, "starter-dashboard"),
         "starter-coffee-shop" => preview!(56, "starter-coffee-shop"),
         "starter-barbershop" => preview!(57, "starter-barbershop"),
+        "web-kilnform" => preview!(58, "web-kilnform"),
+        "web-reefwright" => preview!(59, "web-reefwright"),
         _ => None,
     }
 }
@@ -140,7 +142,7 @@ mod tests {
     #[test]
     fn every_accepted_catalogue_preview_has_one_unique_image() {
         let generated = prompt_catalogue();
-        assert_eq!(generated.len(), 57);
+        assert_eq!(generated.len(), 59);
 
         let mut image_ids = HashSet::new();
         for prompt in generated {
@@ -159,7 +161,7 @@ mod tests {
                 prompt.id
             );
         }
-        assert_eq!(image_ids.len(), 57);
+        assert_eq!(image_ids.len(), 59);
     }
 
     #[test]

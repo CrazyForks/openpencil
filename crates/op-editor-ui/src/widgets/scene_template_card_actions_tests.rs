@@ -80,15 +80,17 @@ fn only_templates_the_pipeline_can_build_offer_generation() {
     for template in scene_template_catalogue() {
         if template.generate_style_guide().is_some() {
             offered += 1;
-            assert_eq!(
-                template.scene,
-                TemplateScene::Slides,
+            assert!(
+                matches!(template.scene, TemplateScene::Slides | TemplateScene::Web),
                 "{} offers generation for a scene with no design type",
                 template.id
             );
         }
     }
-    assert_eq!(offered, 5, "the five deck templates carry a style guide");
+    assert_eq!(
+        offered, 8,
+        "the six deck templates plus the two web pages carry a style guide"
+    );
 }
 
 /// The picture, the title, and the primary button all mean the same thing —

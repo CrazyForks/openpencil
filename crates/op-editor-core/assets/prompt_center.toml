@@ -471,6 +471,26 @@ body_en = '''Design a responsive ecommerce homepage for Atelier, a contemporary 
 screens = 1
 
 [[prompt]]
+id = "web-kilnform"
+category = "web-page"
+tags = ["web", "landing", "saas", "design-system", "responsive"]
+title_key = "promptCenter.item.webKilnform.title"
+title_fallback = "Kilnform · 设计基建官网"
+body_zh = '''设计 Kilnform 设计基建产品的桌面落地页，1200 宽单页长滚：细导航（品牌字标、五个栏目、登录、橙色主按钮）、左文右图 Hero（能力徽章、两行超大标题、副文案、双按钮，右侧是一台带标题栏和红黄绿圆点的应用窗口模型，窗口里画真实界面——工具栏、两张状态卡、一条进度条）、客户名单条（一行 uppercase 小标题加五组图标＋字标）、两枚大数字指标、三张能力卡、一段工作流演示（三个编号标签页＋深色画布截图＋右侧属性面板和代码输出）、三条客户证言、末尾订阅 CTA、四栏页脚加订阅框。审美：近白页面（#FAFAFA）上压近黑整块（#18181B），靠明暗分段而不是描边分区；唯一强调色是 #FF5A00，只给主按钮、激活态、进度条和链接箭头；字体 Inter，标题 64px/700 负字距，正文 14px/1.5，每段之前一行 11px uppercase 小标签（字距 +1.5）；圆角 8px 按钮、14px 面板。'''
+body_en = '''Design the desktop landing page for Kilnform, a design-infrastructure product — one 1200-wide scrolling page: a slim nav (wordmark, five links, sign-in, orange primary button); a split hero (capability badge, a two-line oversized headline, sub-copy, two buttons, and on the right a windowed application mock-up with a title bar and traffic-light dots containing real UI — a toolbar, two status cards, a progress bar); a customer strip (one uppercase label above five icon-plus-wordmark pairs); two large metric numerals; three capability cards; a workflow section (three numbered tabs, a dark canvas mock-up, a properties rail and a compiled-code panel); three testimonials; a closing subscribe CTA; and a four-column footer with a newsletter box. Aesthetic: a near-white page (#FAFAFA) interrupted by solid near-black blocks (#18181B) so light and dark bands do the sectioning instead of borders; one accent, #FF5A00, reserved for the primary button, active states, progress fills and link arrows; Inter throughout — 64px/700 headlines with negative tracking, 14px/1.5 body, and an 11px uppercase label (+1.5 tracking) above every section; 8px radii on buttons, 14px on panels.'''
+screens = 1
+
+[[prompt]]
+id = "web-reefwright"
+category = "web-page"
+tags = ["web", "landing", "saas", "pricing", "data"]
+title_key = "promptCenter.item.webReefwright.title"
+title_fallback = "Reefwright · AI 客服知识官网"
+body_zh = '''设计 Reefwright（AI 客服知识引擎）的桌面落地页，1200 宽单页长滚：状态胶囊＋左文右演示的 Hero（右侧是一张会动的"提问—回答"卡片：搜索框里一句真实问题、置信度、引用来源、一段代码端点、三枚追问 chip）、客户名单条、三块指标、能力区（一张宽卡讲持续同步并列出三条同步记录，两张窄卡讲即时索引与可核查引用）、实时分析区（三张指标卡＋七根柱子的周趋势图＋"知识缺口"数据表，每行带一个 Draft 按钮）、新旧方案左右对比（左边传统知识库的三条文章列表，右边一张即时回答卡）、两条带大字指标的客户证言、三档定价（中间一档用黑色描边和一枚亮色徽章强调）、末尾 CTA 和四栏页脚。审美：报刊感的纸白页面，#FFFFFF 与 #FAFAFA 交替，全部用 1px #E5E5E5 细线分隔、不加阴影；正文 Geist，每个标题里挑一个词用 Fraunces 斜体做强调；唯一强调色 #A3E635，只给主按钮、被推荐的定价档和图表里的那一根柱子，且亮色上永远配近黑文字；圆角只用 4px 和 8px，胶囊除外。'''
+body_en = '''Design the desktop landing page for Reefwright, an AI customer-knowledge engine — one 1200-wide scrolling page: a status pill and a split hero whose right side is a live question-and-answer card (a real question in the search field, a confidence score, a cited source, a code endpoint line, three follow-up chips); a customer strip; three headline metrics; a capability block (one wide card on continuous sync listing three sync records, two narrow cards on instant indexing and verifiable citations); a real-time analytics block (three metric cards, a seven-bar weekly chart, and a "knowledge gaps" table whose rows each carry a Draft button); an old-versus-new comparison (three stale article results on the left, one instant answer card on the right); two testimonials each led by a large metric; three pricing tiers with the middle one emphasised by an ink border and a bright badge; a closing CTA; and a four-column footer. Aesthetic: a broadsheet-white page alternating #FFFFFF and #FAFAFA, separated entirely by 1px #E5E5E5 rules with no shadows anywhere; Geist for everything, with exactly one word per headline set in Fraunces italic to carry the emphasis; one accent, #A3E635, spent only on the primary button, the featured pricing tier and a single bar in the chart, always with near-black text on it; radii limited to 4px and 8px apart from full capsules.'''
+screens = 1
+
+[[prompt]]
 id = "dashboard-pulse"
 category = "dashboard"
 tags = ["dashboard", "analytics", "saas", "data"]

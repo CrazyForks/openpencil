@@ -35,6 +35,92 @@ const PITCH_DECK_DARK_OP: &str = include_str!("../assets/scene_templates/pitch-d
 const LECTURE_DECK_LIGHT_OP: &str = include_str!("../assets/scene_templates/lecture-deck-light.op");
 const MINIMAL_KEYNOTE_OP: &str = include_str!("../assets/scene_templates/minimal-keynote.op");
 const GRADIENT_TECH_OP: &str = include_str!("../assets/scene_templates/gradient-tech.op");
+const SAAS_LANDING_ORANGE_OP: &str =
+    include_str!("../assets/scene_templates/saas-landing-orange.op");
+const PRODUCT_LANDING_LIGHT_OP: &str =
+    include_str!("../assets/scene_templates/product-landing-light.op");
+const PUNCH_QUOTE_CARD_OP: &str = include_str!("../assets/scene_templates/punch-quote-card.op");
+const JOURNAL_CHECKLIST_CARD_OP: &str =
+    include_str!("../assets/scene_templates/journal-checklist-card.op");
+const DATA_REPORT_INFOGRAPHIC_OP: &str =
+    include_str!("../assets/scene_templates/data-report-infographic.op");
+const STEPS_FLOW_INFOGRAPHIC_OP: &str =
+    include_str!("../assets/scene_templates/steps-flow-infographic.op");
+const EVENT_POSTER_DECK_OP: &str = include_str!("../assets/scene_templates/event-poster-deck.op");
+const PITFALL_LIST_INFOGRAPHIC_OP: &str =
+    include_str!("../assets/scene_templates/pitfall-list-infographic.op");
+const SPINE_CULTURE_CARD_OP: &str = include_str!("../assets/scene_templates/spine-culture-card.op");
+const METRIC_SINGLE_CARD_OP: &str = include_str!("../assets/scene_templates/metric-single-card.op");
+const QUOTE_FRAME_CARD_OP: &str = include_str!("../assets/scene_templates/quote-frame-card.op");
+const DAILY_SIGN_CARD_OP: &str = include_str!("../assets/scene_templates/daily-sign-card.op");
+const PRICE_TIER_CARD_OP: &str = include_str!("../assets/scene_templates/price-tier-card.op");
+const NOTICE_BOARD_CARD_OP: &str = include_str!("../assets/scene_templates/notice-board-card.op");
+const MILESTONE_TIMELINE_INFOGRAPHIC_OP: &str =
+    include_str!("../assets/scene_templates/milestone-timeline-infographic.op");
+const CONCEPT_CONTRAST_INFOGRAPHIC_OP: &str =
+    include_str!("../assets/scene_templates/concept-contrast-infographic.op");
+const RANKING_BOARD_INFOGRAPHIC_OP: &str =
+    include_str!("../assets/scene_templates/ranking-board-infographic.op");
+const FAQ_THREAD_INFOGRAPHIC_OP: &str =
+    include_str!("../assets/scene_templates/faq-thread-infographic.op");
+const DATA_STORY_INFOGRAPHIC_OP: &str =
+    include_str!("../assets/scene_templates/data-story-infographic.op");
+const CHALLENGE_TRACKER_INFOGRAPHIC_OP: &str =
+    include_str!("../assets/scene_templates/challenge-tracker-infographic.op");
+const ECOSYSTEM_MAP_INFOGRAPHIC_OP: &str =
+    include_str!("../assets/scene_templates/ecosystem-map-infographic.op");
+const DO_DONT_COMPARISON_OP: &str = include_str!("../assets/scene_templates/do-dont-comparison.op");
+const MYTH_TRUTH_COMPARISON_OP: &str =
+    include_str!("../assets/scene_templates/myth-truth-comparison.op");
+const PRICING_TIERS_COMPARISON_OP: &str =
+    include_str!("../assets/scene_templates/pricing-tiers-comparison.op");
+const SCENARIO_GUIDE_COMPARISON_OP: &str =
+    include_str!("../assets/scene_templates/scenario-guide-comparison.op");
+const SPEC_TABLE_COMPARISON_OP: &str =
+    include_str!("../assets/scene_templates/spec-table-comparison.op");
+const THREE_WAY_COMPARISON_OP: &str =
+    include_str!("../assets/scene_templates/three-way-comparison.op");
+const TIME_SHIFT_COMPARISON_OP: &str =
+    include_str!("../assets/scene_templates/time-shift-comparison.op");
+const TRADEOFF_SCALE_COMPARISON_OP: &str =
+    include_str!("../assets/scene_templates/tradeoff-scale-comparison.op");
+const VERSION_DIFF_COMPARISON_OP: &str =
+    include_str!("../assets/scene_templates/version-diff-comparison.op");
+const APP_ONBOARDING_TRIPTYCH_OP: &str =
+    include_str!("../assets/scene_templates/app-onboarding-triptych.op");
+const DIY_BLUEPRINT_GUIDE_OP: &str =
+    include_str!("../assets/scene_templates/diy-blueprint-guide.op");
+const PHOTO_COMPOSITION_TUTORIAL_OP: &str =
+    include_str!("../assets/scene_templates/photo-composition-tutorial.op");
+const RECIPE_FOUR_STEP_OP: &str = include_str!("../assets/scene_templates/recipe-four-step.op");
+const SKINCARE_ROUTINE_CARDS_OP: &str =
+    include_str!("../assets/scene_templates/skincare-routine-cards.op");
+const SOFTWARE_STEP_TUTORIAL_OP: &str =
+    include_str!("../assets/scene_templates/software-step-tutorial.op");
+const STORAGE_MAKEOVER_STEPS_OP: &str =
+    include_str!("../assets/scene_templates/storage-makeover-steps.op");
+const WEEKLY_REPORT_LESSON_OP: &str =
+    include_str!("../assets/scene_templates/weekly-report-lesson.op");
+const WORKOUT_BREAKDOWN_GUIDE_OP: &str =
+    include_str!("../assets/scene_templates/workout-breakdown-guide.op");
+const BOOKREVIEW_SILK_CAROUSEL_OP: &str =
+    include_str!("../assets/scene_templates/bookreview-silk-carousel.op");
+const CITYGUIDE_FILM_CAROUSEL_OP: &str =
+    include_str!("../assets/scene_templates/cityguide-film-carousel.op");
+const DATAREPORT_GRID_CAROUSEL_OP: &str =
+    include_str!("../assets/scene_templates/datareport-grid-carousel.op");
+const OPINION_LONGFORM_CAROUSEL_OP: &str =
+    include_str!("../assets/scene_templates/opinion-longform-carousel.op");
+const QA_CHALKBOARD_CAROUSEL_OP: &str =
+    include_str!("../assets/scene_templates/qa-chalkboard-carousel.op");
+const STORY_NIGHT_CAROUSEL_OP: &str =
+    include_str!("../assets/scene_templates/story-night-carousel.op");
+const TOOLKIT_NOTEBOOK_CAROUSEL_OP: &str =
+    include_str!("../assets/scene_templates/toolkit-notebook-carousel.op");
+const TUTORIAL_JOURNAL_CAROUSEL_OP: &str =
+    include_str!("../assets/scene_templates/tutorial-journal-carousel.op");
+const YEARREVIEW_MINERAL_CAROUSEL_OP: &str =
+    include_str!("../assets/scene_templates/yearreview-mineral-carousel.op");
 
 /// Return the embedded document JSON for a template id.
 ///
@@ -54,6 +140,54 @@ pub fn scene_template_document(template_id: &str) -> Option<&'static str> {
         "lecture-deck-light" => Some(LECTURE_DECK_LIGHT_OP),
         "minimal-keynote" => Some(MINIMAL_KEYNOTE_OP),
         "gradient-tech" => Some(GRADIENT_TECH_OP),
+        "saas-landing-orange" => Some(SAAS_LANDING_ORANGE_OP),
+        "product-landing-light" => Some(PRODUCT_LANDING_LIGHT_OP),
+        "punch-quote-card" => Some(PUNCH_QUOTE_CARD_OP),
+        "journal-checklist-card" => Some(JOURNAL_CHECKLIST_CARD_OP),
+        "data-report-infographic" => Some(DATA_REPORT_INFOGRAPHIC_OP),
+        "steps-flow-infographic" => Some(STEPS_FLOW_INFOGRAPHIC_OP),
+        "event-poster-deck" => Some(EVENT_POSTER_DECK_OP),
+        "pitfall-list-infographic" => Some(PITFALL_LIST_INFOGRAPHIC_OP),
+        "spine-culture-card" => Some(SPINE_CULTURE_CARD_OP),
+        "metric-single-card" => Some(METRIC_SINGLE_CARD_OP),
+        "quote-frame-card" => Some(QUOTE_FRAME_CARD_OP),
+        "daily-sign-card" => Some(DAILY_SIGN_CARD_OP),
+        "price-tier-card" => Some(PRICE_TIER_CARD_OP),
+        "notice-board-card" => Some(NOTICE_BOARD_CARD_OP),
+        "milestone-timeline-infographic" => Some(MILESTONE_TIMELINE_INFOGRAPHIC_OP),
+        "concept-contrast-infographic" => Some(CONCEPT_CONTRAST_INFOGRAPHIC_OP),
+        "ranking-board-infographic" => Some(RANKING_BOARD_INFOGRAPHIC_OP),
+        "faq-thread-infographic" => Some(FAQ_THREAD_INFOGRAPHIC_OP),
+        "data-story-infographic" => Some(DATA_STORY_INFOGRAPHIC_OP),
+        "challenge-tracker-infographic" => Some(CHALLENGE_TRACKER_INFOGRAPHIC_OP),
+        "ecosystem-map-infographic" => Some(ECOSYSTEM_MAP_INFOGRAPHIC_OP),
+        "do-dont-comparison" => Some(DO_DONT_COMPARISON_OP),
+        "myth-truth-comparison" => Some(MYTH_TRUTH_COMPARISON_OP),
+        "pricing-tiers-comparison" => Some(PRICING_TIERS_COMPARISON_OP),
+        "scenario-guide-comparison" => Some(SCENARIO_GUIDE_COMPARISON_OP),
+        "spec-table-comparison" => Some(SPEC_TABLE_COMPARISON_OP),
+        "three-way-comparison" => Some(THREE_WAY_COMPARISON_OP),
+        "time-shift-comparison" => Some(TIME_SHIFT_COMPARISON_OP),
+        "tradeoff-scale-comparison" => Some(TRADEOFF_SCALE_COMPARISON_OP),
+        "version-diff-comparison" => Some(VERSION_DIFF_COMPARISON_OP),
+        "app-onboarding-triptych" => Some(APP_ONBOARDING_TRIPTYCH_OP),
+        "diy-blueprint-guide" => Some(DIY_BLUEPRINT_GUIDE_OP),
+        "photo-composition-tutorial" => Some(PHOTO_COMPOSITION_TUTORIAL_OP),
+        "recipe-four-step" => Some(RECIPE_FOUR_STEP_OP),
+        "skincare-routine-cards" => Some(SKINCARE_ROUTINE_CARDS_OP),
+        "software-step-tutorial" => Some(SOFTWARE_STEP_TUTORIAL_OP),
+        "storage-makeover-steps" => Some(STORAGE_MAKEOVER_STEPS_OP),
+        "weekly-report-lesson" => Some(WEEKLY_REPORT_LESSON_OP),
+        "workout-breakdown-guide" => Some(WORKOUT_BREAKDOWN_GUIDE_OP),
+        "bookreview-silk-carousel" => Some(BOOKREVIEW_SILK_CAROUSEL_OP),
+        "cityguide-film-carousel" => Some(CITYGUIDE_FILM_CAROUSEL_OP),
+        "datareport-grid-carousel" => Some(DATAREPORT_GRID_CAROUSEL_OP),
+        "opinion-longform-carousel" => Some(OPINION_LONGFORM_CAROUSEL_OP),
+        "qa-chalkboard-carousel" => Some(QA_CHALKBOARD_CAROUSEL_OP),
+        "story-night-carousel" => Some(STORY_NIGHT_CAROUSEL_OP),
+        "toolkit-notebook-carousel" => Some(TOOLKIT_NOTEBOOK_CAROUSEL_OP),
+        "tutorial-journal-carousel" => Some(TUTORIAL_JOURNAL_CAROUSEL_OP),
+        "yearreview-mineral-carousel" => Some(YEARREVIEW_MINERAL_CAROUSEL_OP),
         _ => None,
     }
 }
@@ -76,15 +210,39 @@ pub enum TemplateScene {
     /// card is delivered on its own, which is what makes "title + points +
     /// byline" a complete layout rather than a page of one.
     Card,
+    /// Full-width scrolling web pages — marketing sites, product landings.
+    ///
+    /// Distinct from [`Self::Slides`] in the way that matters here: a deck is
+    /// a fixed projector board, a page is one tall surface the reader
+    /// scrolls, so the two crop, preview, and generate differently.
+    Web,
+    /// Long-form vertical graphics — one image read by scrolling.
+    ///
+    /// Distinct from [`Self::Card`] by reading mode, not by aspect: a card is
+    /// taken in at a glance, so its whole argument has to fit one screenful.
+    /// An infographic is 2.5-3x its own width and is read top to bottom, which
+    /// is what lets it carry a chart, a breakdown and a conclusion in sequence.
+    /// Filing both under "卡片" would put a 4:5 social board and a 1:3 scroll
+    /// behind the same chip.
+    Infographic,
 }
 
 impl TemplateScene {
-    pub const ALL: [Self; 5] = [
+    /// The filter row's left-to-right order.
+    ///
+    /// Two positions are pinned by product decision and must not drift:
+    /// **Web is last** and **Slides is second from the right**. Those are the
+    /// two heavyweight, least-frequently-picked scenes, so they sit where the
+    /// eye lands last. Everything else keeps the order it had — the rule is
+    /// "pin those two, leave the rest alone", not "sort by anything".
+    pub const ALL: [Self; 7] = [
         Self::Tutorial,
         Self::Comparison,
         Self::Carousel,
-        Self::Slides,
         Self::Card,
+        Self::Infographic,
+        Self::Slides,
+        Self::Web,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -94,6 +252,8 @@ impl TemplateScene {
             Self::Carousel => "carousel",
             Self::Slides => "slides",
             Self::Card => "card",
+            Self::Web => "web",
+            Self::Infographic => "infographic",
         }
     }
 
@@ -105,19 +265,25 @@ impl TemplateScene {
             Self::Carousel => "sceneTemplate.scene.carousel",
             Self::Slides => "sceneTemplate.scene.slides",
             Self::Card => "sceneTemplate.scene.card",
+            Self::Web => "sceneTemplate.scene.web",
+            Self::Infographic => "sceneTemplate.scene.infographic",
         }
     }
 
     /// Whether the generate row can produce a document of this scene.
     ///
-    /// Only slides today, and the reason is upstream of the panel: the
-    /// pipeline picks a canvas from the request text
-    /// (`op_orchestrator::detect_design_type`), and "PPT" is the only scene
-    /// with a design type behind it. A card request classifies as a 400 px
-    /// Component, so offering generation for the other scenes would hand
-    /// back a widget where the card promised a poster.
+    /// The gate is upstream of the panel: the pipeline picks a canvas from
+    /// the request text (`op_orchestrator::detect_design_type`), so a scene
+    /// may only offer generation when that classifier has a design type
+    /// behind it. Slides qualify because "PPT" triggers one; web pages
+    /// qualify because a multi-section landing page is what the classifier
+    /// *defaults* to. A card request, by contrast, classifies as a 400 px
+    /// Component — offering generation there would hand back a widget where
+    /// the card promised a poster. An infographic request triggers no branch
+    /// at all, so it would come back as that same default landing page at
+    /// 1200 px wide, which is not the 1080-wide scroll the card is showing.
     pub const fn supports_generation(self) -> bool {
-        matches!(self, Self::Slides)
+        matches!(self, Self::Slides | Self::Web)
     }
 
     /// Label shown when the catalogue key is not yet translated.
@@ -133,6 +299,8 @@ impl TemplateScene {
             Self::Carousel => "轮播",
             Self::Slides => "PPT",
             Self::Card => "卡片",
+            Self::Web => "网页",
+            Self::Infographic => "信息图",
         }
     }
 }
@@ -147,6 +315,8 @@ impl FromStr for TemplateScene {
             "carousel" => Ok(Self::Carousel),
             "slides" => Ok(Self::Slides),
             "card" => Ok(Self::Card),
+            "web" => Ok(Self::Web),
+            "infographic" => Ok(Self::Infographic),
             _ => Err(()),
         }
     }

@@ -61,7 +61,7 @@
           "width": "fill_container",
           "height": "fit_content",
           "layout": "vertical",
-          "gap": 32,
+          "gap": 24,
           "alignItems": "start",
           "fill": [],
           "children": [
@@ -93,7 +93,7 @@
                   "name": "标签文字",
                   "content": "学习方法 · 01",
                   "fontFamily": "Noto Sans SC",
-                  "fontSize": 26,
+                  "fontSize": 32,
                   "fontWeight": 600,
                   "fill": [
                     {
@@ -147,7 +147,7 @@
               "name": "副标题",
               "content": "不是记性差，是你少做了这一步。",
               "fontFamily": "Noto Sans SC",
-              "fontSize": 30,
+              "fontSize": 40,
               "fontWeight": 400,
               "fill": [
                 {
@@ -155,7 +155,7 @@
                   "color": "$c-muted"
                 }
               ],
-              "lineHeight": 1.5,
+              "lineHeight": 1.7,
               "letterSpacing": 0,
               "textGrowth": "fixed-width",
               "width": "fill_container"
@@ -169,13 +169,13 @@
           "width": "fill_container",
           "height": "fit_content",
           "layout": "vertical",
-          "gap": 28,
+          "gap": 24,
           "alignItems": "start",
           "fill": [],
           "children": [
             {
               "type": "frame",
-              "id": "f7",
+              "id": "f9",
               "name": "要点 1",
               "width": "fill_container",
               "height": "fit_content",
@@ -186,14 +186,14 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "f8",
+                  "id": "f10",
                   "name": "序号 1",
-                  "width": 56,
-                  "height": 56,
+                  "width": 64,
+                  "height": 64,
                   "layout": "horizontal",
                   "alignItems": "center",
                   "justifyContent": "center",
-                  "cornerRadius": 28,
+                  "cornerRadius": 32,
                   "fill": [
                     {
                       "type": "solid",
@@ -203,11 +203,11 @@
                   "children": [
                     {
                       "type": "text",
-                      "id": "t9",
+                      "id": "t11",
                       "name": "序号数字",
                       "content": "1",
                       "fontFamily": "Inter",
-                      "fontSize": 28,
+                      "fontSize": 32,
                       "fontWeight": 700,
                       "fill": [
                         {
@@ -235,11 +235,11 @@
                   "children": [
                     {
                       "type": "text",
-                      "id": "t10",
+                      "id": "t7",
                       "name": "要点标题",
                       "content": "先提问，再翻开",
                       "fontFamily": "Noto Sans SC",
-                      "fontSize": 36,
+                      "fontSize": 48,
                       "fontWeight": 600,
                       "fill": [
                         {
@@ -254,11 +254,11 @@
                     },
                     {
                       "type": "text",
-                      "id": "t11",
+                      "id": "t8",
                       "name": "要点说明",
-                      "content": "带着「我想解决什么」进去，信息才有地方落。",
+                      "content": "带着问题进去，信息才有地方落。",
                       "fontFamily": "Noto Sans SC",
-                      "fontSize": 27,
+                      "fontSize": 36,
                       "fontWeight": 400,
                       "fill": [
                         {
@@ -266,7 +266,7 @@
                           "color": "$c-muted"
                         }
                       ],
-                      "lineHeight": 1.6,
+                      "lineHeight": 1.7,
                       "letterSpacing": 0,
                       "textGrowth": "fixed-width",
                       "width": "fill_container"
@@ -277,7 +277,7 @@
             },
             {
               "type": "frame",
-              "id": "f13",
+              "id": "f15",
               "name": "要点 2",
               "width": "fill_container",
               "height": "fit_content",
@@ -288,14 +288,14 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "f14",
+                  "id": "f16",
                   "name": "序号 2",
-                  "width": 56,
-                  "height": 56,
+                  "width": 64,
+                  "height": 64,
                   "layout": "horizontal",
                   "alignItems": "center",
                   "justifyContent": "center",
-                  "cornerRadius": 28,
+                  "cornerRadius": 32,
                   "fill": [
                     {
                       "type": "solid",
@@ -305,11 +305,11 @@
                   "children": [
                     {
                       "type": "text",
-                      "id": "t15",
+                      "id": "t17",
                       "name": "序号数字",
                       "content": "2",
                       "fontFamily": "Inter",
-                      "fontSize": 28,
+                      "fontSize": 32,
                       "fontWeight": 700,
                       "fill": [
                         {
@@ -337,11 +337,11 @@
                   "children": [
                     {
                       "type": "text",
-                      "id": "t16",
+                      "id": "t13",
                       "name": "要点标题",
                       "content": "合上书，先复述",
                       "fontFamily": "Noto Sans SC",
-                      "fontSize": 36,
+                      "fontSize": 48,
                       "fontWeight": 600,
                       "fill": [
                         {
@@ -356,11 +356,11 @@
                     },
                     {
                       "type": "text",
-                      "id": "t17",
+                      "id": "t14",
                       "name": "要点说明",
-                      "content": "读完立刻用自己的话讲一遍，卡壳的地方就是没懂的地方。",
+                      "content": "讲不出来的地方，就是没懂的地方。",
                       "fontFamily": "Noto Sans SC",
-                      "fontSize": 27,
+                      "fontSize": 36,
                       "fontWeight": 400,
                       "fill": [
                         {
@@ -368,7 +368,7 @@
                           "color": "$c-muted"
                         }
                       ],
-                      "lineHeight": 1.6,
+                      "lineHeight": 1.7,
                       "letterSpacing": 0,
                       "textGrowth": "fixed-width",
                       "width": "fill_container"
@@ -379,7 +379,7 @@
             },
             {
               "type": "frame",
-              "id": "f19",
+              "id": "f21",
               "name": "要点 3",
               "width": "fill_container",
               "height": "fit_content",
@@ -390,14 +390,14 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "f20",
+                  "id": "f22",
                   "name": "序号 3",
-                  "width": 56,
-                  "height": 56,
+                  "width": 64,
+                  "height": 64,
                   "layout": "horizontal",
                   "alignItems": "center",
                   "justifyContent": "center",
-                  "cornerRadius": 28,
+                  "cornerRadius": 32,
                   "fill": [
                     {
                       "type": "solid",
@@ -407,11 +407,11 @@
                   "children": [
                     {
                       "type": "text",
-                      "id": "t21",
+                      "id": "t23",
                       "name": "序号数字",
                       "content": "3",
                       "fontFamily": "Inter",
-                      "fontSize": 28,
+                      "fontSize": 32,
                       "fontWeight": 700,
                       "fill": [
                         {
@@ -439,11 +439,11 @@
                   "children": [
                     {
                       "type": "text",
-                      "id": "t22",
+                      "id": "t19",
                       "name": "要点标题",
                       "content": "一次只带走三条",
                       "fontFamily": "Noto Sans SC",
-                      "fontSize": 36,
+                      "fontSize": 48,
                       "fontWeight": 600,
                       "fill": [
                         {
@@ -458,11 +458,11 @@
                     },
                     {
                       "type": "text",
-                      "id": "t23",
+                      "id": "t20",
                       "name": "要点说明",
-                      "content": "贪多必忘。记住三个能用的点，比划满一整本有用。",
+                      "content": "记住三个能用的点就够了。",
                       "fontFamily": "Noto Sans SC",
-                      "fontSize": 27,
+                      "fontSize": 36,
                       "fontWeight": 400,
                       "fill": [
                         {
@@ -470,7 +470,7 @@
                           "color": "$c-muted"
                         }
                       ],
-                      "lineHeight": 1.6,
+                      "lineHeight": 1.7,
                       "letterSpacing": 0,
                       "textGrowth": "fixed-width",
                       "width": "fill_container"
@@ -481,7 +481,7 @@
             },
             {
               "type": "frame",
-              "id": "f25",
+              "id": "f27",
               "name": "要点 4",
               "width": "fill_container",
               "height": "fit_content",
@@ -492,14 +492,14 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "f26",
+                  "id": "f28",
                   "name": "序号 4",
-                  "width": 56,
-                  "height": 56,
+                  "width": 64,
+                  "height": 64,
                   "layout": "horizontal",
                   "alignItems": "center",
                   "justifyContent": "center",
-                  "cornerRadius": 28,
+                  "cornerRadius": 32,
                   "fill": [
                     {
                       "type": "solid",
@@ -509,11 +509,11 @@
                   "children": [
                     {
                       "type": "text",
-                      "id": "t27",
+                      "id": "t29",
                       "name": "序号数字",
                       "content": "4",
                       "fontFamily": "Inter",
-                      "fontSize": 28,
+                      "fontSize": 32,
                       "fontWeight": 700,
                       "fill": [
                         {
@@ -541,11 +541,11 @@
                   "children": [
                     {
                       "type": "text",
-                      "id": "t28",
+                      "id": "t25",
                       "name": "要点标题",
                       "content": "两天之内用一次",
                       "fontFamily": "Noto Sans SC",
-                      "fontSize": 36,
+                      "fontSize": 48,
                       "fontWeight": 600,
                       "fill": [
                         {
@@ -560,11 +560,11 @@
                     },
                     {
                       "type": "text",
-                      "id": "t29",
+                      "id": "t26",
                       "name": "要点说明",
-                      "content": "写进笔记、讲给朋友、或者直接做一遍，用过才算学过。",
+                      "content": "用过一次，才算真的学过。",
                       "fontFamily": "Noto Sans SC",
-                      "fontSize": 27,
+                      "fontSize": 36,
                       "fontWeight": 400,
                       "fill": [
                         {
@@ -572,7 +572,7 @@
                           "color": "$c-muted"
                         }
                       ],
-                      "lineHeight": 1.6,
+                      "lineHeight": 1.7,
                       "letterSpacing": 0,
                       "textGrowth": "fixed-width",
                       "width": "fill_container"
@@ -673,7 +673,7 @@
                       "name": "账号名",
                       "content": "@ 你的账号名",
                       "fontFamily": "Noto Sans SC",
-                      "fontSize": 30,
+                      "fontSize": 36,
                       "fontWeight": 600,
                       "fill": [
                         {
@@ -692,7 +692,7 @@
                       "name": "一句话简介",
                       "content": "每周更新一条可落地的学习方法",
                       "fontFamily": "Noto Sans SC",
-                      "fontSize": 24,
+                      "fontSize": 32,
                       "fontWeight": 400,
                       "fill": [
                         {
@@ -700,7 +700,7 @@
                           "color": "$c-muted"
                         }
                       ],
-                      "lineHeight": 1.5,
+                      "lineHeight": 1.7,
                       "letterSpacing": 0,
                       "textGrowth": "fixed-width",
                       "width": "fill_container"
