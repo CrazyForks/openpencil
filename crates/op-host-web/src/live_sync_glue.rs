@@ -233,6 +233,9 @@ fn push_reasons(
 pub(crate) fn start<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, sync: SharedSync) {
     ACTIVE_SYNC.with(|slot| *slot.borrow_mut() = Some(Rc::downgrade(&sync)));
     let base = crate::daemon_base::daemon_base();
+    // One-shot: learn whether this daemon is the document's sole sequencer,
+    // which decides whether a sync conflict may auto-resolve.
+    probe_serve_mode(&base);
     // One document fetch / one push at a time; ticks observing an in-flight
     // request skip (the TS hook queues at most one — same effective shape).
     // `fetch_busy` stays a plain Cell (pull-side, local to this module);
@@ -371,7 +374,7 @@ fn maybe_auto_resolve_conflict_in_session<C: RepaintContext + 'static>(
         .try_borrow()
         .map(|context| context.host().editor_state().editor_ui.collab.phase)
         .unwrap_or(op_editor_core::CollabConnectionPhase::Idle);
-    if !auto_resolve_is_safe(has_conflict, phase) {
+    if !auto_resolve_is_safe(has_conflict, phase, server_is_authoritative()) {
         return;
     }
     // Re-opens the pull for THIS pair only; the resolving pull's apply calls
@@ -380,21 +383,6 @@ fn maybe_auto_resolve_conflict_in_session<C: RepaintContext + 'static>(
     if let Ok(mut sync) = sync.try_borrow_mut() {
         sync.gate.resolve_accept_remote(pair);
     }
-}
-
-/// The safety decision behind [`maybe_auto_resolve_conflict_in_session`],
-/// separated so it can be tested without a live shell.
-///
-/// `Active` and nothing else. Every other phase — including `Reconnecting` and
-/// `ReadOnly`, which look session-ish — either has no authoritative server
-/// document to accept or no `discarded_edit` projection to recover the losing
-/// edit from, so auto-accepting there would be the silent data loss this is
-/// specifically avoiding.
-const fn auto_resolve_is_safe(
-    has_conflict: bool,
-    phase: op_editor_core::CollabConnectionPhase,
-) -> bool {
-    has_conflict && matches!(phase, op_editor_core::CollabConnectionPhase::Active)
 }
 
 /// Apply a `GET /api/mcp/document` response to the live shell.
@@ -782,48 +770,6 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-mod auto_resolve_tests {
-    use super::auto_resolve_is_safe;
-    use op_editor_core::CollabConnectionPhase;
-
-    #[test]
-    fn a_conflict_inside_an_active_session_resolves_itself() {
-        assert!(auto_resolve_is_safe(true, CollabConnectionPhase::Active));
-    }
-
-    #[test]
-    fn no_conflict_means_nothing_to_resolve() {
-        for phase in [
-            CollabConnectionPhase::Idle,
-            CollabConnectionPhase::Active,
-            CollabConnectionPhase::ReadOnly,
-        ] {
-            assert!(!auto_resolve_is_safe(false, phase));
-        }
-    }
-
-    #[test]
-    fn every_non_active_phase_keeps_the_latch() {
-        // Outside an Active session there is no authoritative server document
-        // to accept and no `discarded_edit` projection to recover the losing
-        // edit from, so auto-accepting would silently destroy unpushed work.
-        // `Reconnecting` and `ReadOnly` look session-ish and are deliberately
-        // included: neither can sequence an edit.
-        for phase in [
-            CollabConnectionPhase::Idle,
-            CollabConnectionPhase::Starting,
-            CollabConnectionPhase::Discovering,
-            CollabConnectionPhase::Joining,
-            CollabConnectionPhase::Authenticating,
-            CollabConnectionPhase::Reconnecting,
-            CollabConnectionPhase::ReadOnly,
-            CollabConnectionPhase::Ended,
-        ] {
-            assert!(
-                !auto_resolve_is_safe(true, phase),
-                "{phase:?} must keep the existing explicit-resolution semantics"
-            );
-        }
-    }
-}
+#[path = "live_sync_conflict.rs"]
+mod live_sync_conflict;
+use live_sync_conflict::{auto_resolve_is_safe, probe_serve_mode, server_is_authoritative};

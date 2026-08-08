@@ -107,3 +107,85 @@ mod tests {
         );
     }
 }
+
+/// The tenant this tab is viewing, when the page URL names one.
+///
+/// A visitor opens a shared document with `?tenant=<ownerId>` on the page
+/// URL, and every daemon request this shell makes must carry the same
+/// parameter — otherwise the poll, the push and the event stream would each
+/// address a different document. Read once (the value cannot change without
+/// a navigation, which reloads the shell) and appended by
+/// [`with_tenant_param`], which every request path funnels through.
+///
+/// This is a REQUEST, not a credential: the daemon still resolves the
+/// caller's own identity and checks it against the owner's access list, so a
+/// hand-edited parameter buys nothing.
+pub fn tenant_param() -> Option<String> {
+    thread_local! {
+        static TENANT: std::cell::OnceCell<Option<String>> = const {
+            std::cell::OnceCell::new()
+        };
+    }
+    TENANT.with(|cell| {
+        cell.get_or_init(|| {
+            let search = web_sys::window()?.location().search().ok()?;
+            let query = search.strip_prefix('?').unwrap_or(&search);
+            op_editor_core::share_routes::tenant_from_query(query).map(str::to_string)
+        })
+        .clone()
+    })
+}
+
+/// Append the tab's tenant parameter to `url`, if it has one.
+///
+/// Pure so the query-joining rule is testable without a DOM; the browser
+/// wrapper is [`with_tenant_param`].
+pub fn append_tenant_param(url: &str, tenant: Option<&str>) -> String {
+    let Some(tenant) = tenant.filter(|value| !value.is_empty()) else {
+        return url.to_string();
+    };
+    let separator = if url.contains('?') { '&' } else { '?' };
+    format!(
+        "{url}{separator}{}={tenant}",
+        op_editor_core::share_routes::TENANT_QUERY
+    )
+}
+
+/// Browser wrapper over [`append_tenant_param`].
+///
+/// Applied inside the HTTP helpers rather than at each call site, so a route
+/// added later cannot forget it and silently address the wrong document.
+pub fn with_tenant_param(url: &str) -> String {
+    append_tenant_param(url, tenant_param().as_deref())
+}
+
+#[cfg(test)]
+mod tenant_param_tests {
+    use super::append_tenant_param;
+
+    #[test]
+    fn a_url_without_a_query_gains_one() {
+        assert_eq!(
+            append_tenant_param("http://x/api/mcp/document", Some("userA")),
+            "http://x/api/mcp/document?tenant=userA"
+        );
+    }
+
+    #[test]
+    fn a_url_that_already_has_a_query_is_extended() {
+        assert_eq!(
+            append_tenant_param("http://x/api/mcp/document?v=2", Some("userA")),
+            "http://x/api/mcp/document?v=2&tenant=userA"
+        );
+    }
+
+    #[test]
+    fn no_tenant_leaves_the_url_exactly_as_it_was() {
+        for tenant in [None, Some("")] {
+            assert_eq!(
+                append_tenant_param("http://x/api/mcp/document", tenant),
+                "http://x/api/mcp/document"
+            );
+        }
+    }
+}

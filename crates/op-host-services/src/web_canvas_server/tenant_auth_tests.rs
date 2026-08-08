@@ -13,6 +13,7 @@ fn request_with(authorization: Option<&str>, cookie: Option<&str>) -> HttpReques
         content_type: None,
         authorization: authorization.map(str::to_string),
         cookie: cookie.map(str::to_string),
+        query: None,
     }
 }
 

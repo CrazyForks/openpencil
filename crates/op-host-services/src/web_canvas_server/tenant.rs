@@ -27,13 +27,14 @@
 //! victim, and removes it only after re-checking that the entry in the map is
 //! still the exact `Arc` it decided to evict.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use op_editor_core::EditorState;
 
 use super::tenant_auth::ResolvedIdentity;
+use super::tenant_store::TenantStore;
 use super::{SseHub, WebCanvasState};
 
 /// Global connection ceiling for the online daemon.
@@ -119,6 +120,9 @@ pub enum TenantError {
     /// This account already holds [`TenantLimits::max_conns_per_tenant`]
     /// connections.
     TooManyConnections,
+    /// The caller asked for another account's tenant and is not on its
+    /// access list.
+    NotShared,
 }
 
 impl TenantError {
@@ -126,11 +130,17 @@ impl TenantError {
         match self {
             Self::TooManyTenants => "server-busy",
             Self::TooManyConnections => "too-many-connections",
+            Self::NotShared => "tenant-not-shared",
         }
     }
 
     pub const fn http_status(self) -> &'static str {
-        "503 Service Unavailable"
+        match self {
+            Self::TooManyTenants | Self::TooManyConnections => "503 Service Unavailable",
+            // A forbidden share and a non-existent one answer the same way:
+            // otherwise the difference is an oracle for which accounts exist.
+            Self::NotShared => "403 Forbidden",
+        }
     }
 }
 
@@ -141,6 +151,7 @@ impl std::fmt::Display for TenantError {
             Self::TooManyConnections => {
                 f.write_str("too many concurrent connections for this account")
             }
+            Self::NotShared => f.write_str("this document is not shared with you"),
         }
     }
 }
@@ -155,6 +166,13 @@ pub struct Tenant {
     /// This account's SSE subscribers. Separate per tenant so a version bump
     /// is only ever broadcast to the account that caused it.
     pub(crate) hub: SseHub,
+    /// Accounts this tenant's owner has shared the document with.
+    ///
+    /// A `BTreeSet` rather than a `HashSet` so the persisted list has a
+    /// stable order and two saves of the same ACL produce the same bytes.
+    /// Separate from the state mutex because admission is checked on every
+    /// request while the document lock may be held by a long push.
+    shared_with: Mutex<BTreeSet<String>>,
     /// Live leases. Non-zero means "do not evict".
     leases: AtomicUsize,
     /// Unix seconds of the last lease acquire or release.
@@ -162,17 +180,56 @@ pub struct Tenant {
 }
 
 impl Tenant {
-    fn new(port: u16, allow_origins: &[String], now_unix: u64) -> Self {
-        let mut state = WebCanvasState::new_for_tenant(EditorState::starter(), port);
+    fn new(
+        port: u16,
+        allow_origins: &[String],
+        editor: EditorState,
+        shared_with: BTreeSet<String>,
+        now_unix: u64,
+    ) -> Self {
+        let mut state = WebCanvasState::new_for_tenant(editor, port);
         // Every tenant answers for the same public origin; the allowlist is a
         // deployment property, not an account one.
         state.allow_origins = allow_origins.to_vec();
         Self {
             state: Mutex::new(state),
             hub: SseHub::default(),
+            shared_with: Mutex::new(shared_with),
             leases: AtomicUsize::new(0),
             last_active_unix: AtomicU64::new(now_unix),
         }
+    }
+
+    /// Whether `visitor` may reach this tenant's document.
+    pub fn admits(&self, visitor: &str) -> bool {
+        self.shared_with
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains(visitor)
+    }
+
+    /// Add an account to the access list. Returns whether it was new.
+    pub fn grant(&self, visitor: &str) -> bool {
+        self.shared_with
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(visitor.to_string())
+    }
+
+    /// Remove an account. Returns whether it had been granted.
+    pub fn revoke(&self, visitor: &str) -> bool {
+        self.shared_with
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(visitor)
+    }
+
+    /// A snapshot of the access list.
+    pub fn shared_with(&self) -> BTreeSet<String> {
+        self.shared_with
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
     }
 
     /// Live lease count. Zero is the only evictable value.
@@ -196,6 +253,9 @@ impl Tenant {
 /// of it stay valid.
 pub struct TenantLease {
     tenant: Arc<Tenant>,
+    /// The account this lease resolved to — the OWNER of the document, which
+    /// for a shared visit is not the visitor.
+    user_id: String,
 }
 
 impl std::fmt::Debug for TenantLease {
@@ -210,6 +270,12 @@ impl std::fmt::Debug for TenantLease {
 }
 
 impl TenantLease {
+    /// The owning account id. For a shared visit this is the owner, not the
+    /// visitor — it is the tenant's key, not the caller's identity.
+    pub fn owner_id(&self) -> &str {
+        &self.user_id
+    }
+
     pub fn tenant(&self) -> &Tenant {
         &self.tenant
     }
@@ -241,16 +307,32 @@ pub struct TenantRegistry {
     port: u16,
     /// Public origins this deployment answers for, stamped onto every tenant.
     allow_origins: Vec<String>,
+    /// Where an evicted tenant is written and a returning one is read from.
+    store: TenantStore,
 }
 
 impl TenantRegistry {
     pub fn new(port: u16, limits: TenantLimits, allow_origins: Vec<String>) -> Self {
+        Self::with_store(port, limits, allow_origins, TenantStore::from_env())
+    }
+
+    pub fn with_store(
+        port: u16,
+        limits: TenantLimits,
+        allow_origins: Vec<String>,
+        store: TenantStore,
+    ) -> Self {
         Self {
             tenants: Mutex::new(HashMap::new()),
             limits,
             port,
             allow_origins,
+            store,
         }
+    }
+
+    pub const fn store(&self) -> &TenantStore {
+        &self.store
     }
 
     /// The deployment's public origin allowlist.
@@ -273,21 +355,72 @@ impl TenantRegistry {
     /// on [`super::tenant_auth`] for why no request-supplied value may ever
     /// reach this argument.
     ///
-    /// A brand new tenant starts from [`EditorState::starter`]. M1 does not
-    /// persist, so an evicted tenant's document is gone and a returning
-    /// account gets a fresh starter document; that is the documented M1
-    /// semantic, and M4 replaces it with load-on-create.
+    /// A tenant that is not in memory is restored from disk when the store
+    /// holds one, and starts from [`EditorState::starter`] otherwise — so an
+    /// eviction is invisible to the account beyond the first request's cost.
     pub fn lease_for(&self, identity: &ResolvedIdentity) -> Result<TenantLease, TenantError> {
+        self.lease_tenant(&identity.user_id)
+    }
+
+    /// Take a lease on `owner_id`'s tenant on behalf of `visitor`.
+    ///
+    /// The owner always passes. Anyone else must appear in the owner's access
+    /// list — and note that the list is consulted on EVERY request, so a
+    /// revoke takes effect on the visitor's next call rather than whenever
+    /// some session expires.
+    ///
+    /// A tenant that is not resident is restored first: a visitor must be
+    /// able to open a shared document whose owner is offline, and refusing
+    /// until the owner next signs in would make sharing useless.
+    pub fn lease_for_shared(
+        &self,
+        owner_id: &str,
+        visitor: &ResolvedIdentity,
+    ) -> Result<TenantLease, TenantError> {
+        if owner_id == visitor.user_id {
+            return self.lease_tenant(owner_id);
+        }
+        let lease = self.lease_tenant(owner_id)?;
+        if !lease.tenant().admits(&visitor.user_id) {
+            return Err(TenantError::NotShared);
+        }
+        Ok(lease)
+    }
+
+    /// Who has shared with `visitor`, across every resident tenant.
+    ///
+    /// Resident only, and deliberately: a full answer would mean reading every
+    /// directory in the store on every call. The owners a visitor is actually
+    /// working with are resident by definition, and the visitor can always
+    /// open a share they were told about directly.
+    pub fn shared_with_visitor(&self, visitor: &str) -> Vec<String> {
+        let tenants = self.lock();
+        let mut owners: Vec<String> = tenants
+            .iter()
+            .filter(|(owner, tenant)| owner.as_str() != visitor && tenant.admits(visitor))
+            .map(|(owner, _)| owner.clone())
+            .collect();
+        owners.sort_unstable();
+        owners
+    }
+
+    fn lease_tenant(&self, user_id: &str) -> Result<TenantLease, TenantError> {
         let now = now_unix();
         let mut tenants = self.lock();
-        let tenant = match tenants.get(&identity.user_id) {
+        let tenant = match tenants.get(user_id) {
             Some(existing) => Arc::clone(existing),
             None => {
                 if tenants.len() >= self.limits.max_tenants {
                     return Err(TenantError::TooManyTenants);
                 }
-                let created = Arc::new(Tenant::new(self.port, &self.allow_origins, now));
-                tenants.insert(identity.user_id.clone(), Arc::clone(&created));
+                let created = Arc::new(Tenant::new(
+                    self.port,
+                    &self.allow_origins,
+                    self.restore_editor(user_id),
+                    self.store.load_acl(user_id),
+                    now,
+                ));
+                tenants.insert(user_id.to_string(), Arc::clone(&created));
                 created
             }
         };
@@ -299,7 +432,41 @@ impl TenantRegistry {
         // resolved above and being leased here.
         tenant.leases.fetch_add(1, Ordering::AcqRel);
         tenant.touch(now);
-        Ok(TenantLease { tenant })
+        Ok(TenantLease {
+            tenant,
+            user_id: user_id.to_string(),
+        })
+    }
+
+    /// The document to open a tenant with.
+    ///
+    /// A stored document that will not load has already been moved aside by
+    /// the store, so the account gets a starter rather than a failed request —
+    /// losing a document is bad, but refusing to serve the account at all
+    /// because of it is worse.
+    fn restore_editor(&self, user_id: &str) -> EditorState {
+        match self.store.load_document(user_id) {
+            Ok(state) => state,
+            Err(super::tenant_store::TenantStoreError::Disabled)
+            | Err(super::tenant_store::TenantStoreError::NotStored) => EditorState::starter(),
+            Err(error) => {
+                eprintln!(
+                    "openpencil --serve-web --online: starting a fresh document for an \
+                     account whose stored one could not be loaded ({error})"
+                );
+                EditorState::starter()
+            }
+        }
+    }
+
+    /// Persist a tenant's access list, if persistence is on.
+    pub fn persist_acl(&self, user_id: &str, tenant: &Tenant) {
+        if !self.store.is_enabled() {
+            return;
+        }
+        if let Err(error) = self.store.save_acl_for(user_id, &tenant.shared_with()) {
+            eprintln!("openpencil --serve-web --online: could not persist a share list ({error})");
+        }
     }
 
     /// Reclaim tenants that hold no lease and have been idle past the limit.
@@ -321,10 +488,23 @@ impl TenantRegistry {
             .collect();
         let mut evicted = 0;
         for (id, victim) in victims {
-            // M4 persistence hook: write `victim.state` to
-            // `$OPENPENCIL_ONLINE_DATA_DIR/<id>/current.op` HERE, before the
-            // compare-and-remove below, so a returning account either finds
-            // the old tenant still mapped or a file it can load.
+            // Write BEFORE the compare-and-remove, so at no instant is the
+            // tenant both absent from the map and absent from disk: a request
+            // arriving mid-eviction either finds the resident tenant (the
+            // registry lock is held, so it waits) or, afterwards, the file.
+            if self.store.is_enabled() {
+                let guard = victim.state.lock().unwrap_or_else(|p| p.into_inner());
+                if let Err(error) = self.store.save(&id, &guard.editor, &victim.shared_with()) {
+                    // A tenant that cannot be written is kept resident. Evicting
+                    // it anyway would discard the document to reclaim memory,
+                    // which is the wrong trade for the user whose work it is.
+                    eprintln!(
+                        "openpencil --serve-web --online: keeping a tenant resident because \
+                         it could not be persisted ({error})"
+                    );
+                    continue;
+                }
+            }
             let still_the_same = tenants
                 .get(&id)
                 .is_some_and(|current| Arc::ptr_eq(current, &victim));

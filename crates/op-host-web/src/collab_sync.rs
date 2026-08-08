@@ -632,7 +632,9 @@ fn ensure_event_stream(base: &str) {
     if now_ms_f64() < SSE_RETRY_AT_MS.get() {
         return;
     }
-    let Ok(stream) = web_sys::EventSource::new(&format!("{base}/api/mcp/events")) else {
+    let Ok(stream) = web_sys::EventSource::new(&crate::daemon_base::with_tenant_param(&format!(
+        "{base}/api/mcp/events"
+    ))) else {
         note_stream_failure();
         return;
     };

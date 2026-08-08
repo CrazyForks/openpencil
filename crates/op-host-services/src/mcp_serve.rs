@@ -375,6 +375,13 @@ pub struct HttpRequest {
     /// `Cookie` header value, verbatim, when present. The online daemon
     /// extracts its session cookie from it; every other mode ignores it.
     pub cookie: Option<String>,
+    /// The raw query string (no leading `?`), when the target had one.
+    ///
+    /// `path` keeps its query stripped so exact-path routing is unaffected;
+    /// this is captured alongside so the online daemon can read the tenant
+    /// parameter. `EventSource` cannot set headers, which is why the tenant
+    /// travels in the query at all — see `share_routes::TENANT_QUERY`.
+    pub query: Option<String>,
 }
 
 /// Parse a capped HTTP header and then read exactly its declared body length.
@@ -418,13 +425,16 @@ pub fn read_http_request<S: std::io::Read>(stream: &mut S) -> Result<HttpRequest
         .to_ascii_uppercase();
     // Strip any `?query` from the request target so exact-path routing
     // (`/api/mcp/document`, `/mcp`, …) isn't defeated by `/api/mcp/document?x=1`.
-    let path = request_parts
+    let target = request_parts
         .next()
-        .ok_or_else(|| McpServeError::Protocol("request path missing".into()))?
-        .split('?')
-        .next()
-        .unwrap_or("")
-        .to_string();
+        .ok_or_else(|| McpServeError::Protocol("request path missing".into()))?;
+    let (path, query) = match target.split_once('?') {
+        Some((path, query)) => (
+            path.to_string(),
+            (!query.is_empty()).then(|| query.to_string()),
+        ),
+        None => (target.to_string(), None),
+    };
     // Parse `Content-Length` via `split_once(':')` — byte-slicing a `&str`
     // (e.g. `l[..15]`) would panic if a crafted header puts a multibyte UTF-8
     // boundary mid-slice; that panic would also bypass the live server's
@@ -519,6 +529,7 @@ pub fn read_http_request<S: std::io::Read>(stream: &mut S) -> Result<HttpRequest
         content_type,
         authorization,
         cookie,
+        query,
     })
 }
 

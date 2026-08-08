@@ -166,6 +166,5 @@ STOPSIGNAL SIGTERM
 # reverse proxy for anything beyond a trusted network. The port is taken from
 # the build-time SERVE_PORT (baked into OPENPENCIL_SERVE_PORT); `sh -c` lets the
 # env var expand at container start.
-CMD ["sh", "-c", "set -- --serve-web \"${OPENPENCIL_SERVE_PORT}\" --host 0.0.0.0; \
-if [ \"${OPENPENCIL_SERVE_MODE}\" = online ]; then set -- \"$@\" --online; fi; \
-exec /app/op-host-web-server \"$@\""]
+CMD ["sh", "-c", "if [ \"${OPENPENCIL_SERVE_MODE}\" = online ]; then set -- --online; else set --; fi; \
+exec /app/op-host-web-server --serve-web \"${OPENPENCIL_SERVE_PORT}\" --host 0.0.0.0 \"$@\""]

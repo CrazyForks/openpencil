@@ -28,6 +28,25 @@ pub enum ServeMode {
 }
 
 impl ServeMode {
+    /// Stable name for the wire, read by the browser shell.
+    pub const fn wire_name(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Managed => "managed",
+            Self::Online => "online",
+        }
+    }
+
+    /// Whether the daemon is the SOLE sequencer for the document it serves.
+    ///
+    /// Online it is: every writer reaches the same in-memory document through
+    /// the same version counter, and the SSE stream publishes the result to
+    /// everyone. Locally it is not — the browser and the operator's file are
+    /// two copies and the daemon arbitrates neither.
+    pub const fn is_server_authoritative(self) -> bool {
+        self.is_online()
+    }
+
     pub const fn is_online(self) -> bool {
         matches!(self, Self::Online)
     }

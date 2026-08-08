@@ -495,9 +495,15 @@ pub fn handle_web_canvas_request(
             // `{running,port,localIp}` matches TS `server.get.ts`; the daemon
             // binds 127.0.0.1 (localhost-only) so localIp is loopback. Extra
             // `server`/`mode` fields are additive diagnostics.
+            // `serveMode` is additive: the browser reads it to learn whether
+            // the daemon is the sole sequencer for this document (online) or
+            // merely a peer holding the operator's file (local/managed). That
+            // decides whether a sync conflict may be auto-resolved — see
+            // `op-host-web/src/live_sync_glue.rs::auto_resolve_is_safe`.
             body: format!(
-                r#"{{"running":true,"port":{},"localIp":"127.0.0.1","server":"openpencil-mcp","mode":"web-canvas"}}"#,
-                state.port
+                r#"{{"running":true,"port":{},"localIp":"127.0.0.1","server":"openpencil-mcp","mode":"web-canvas","serveMode":"{}"}}"#,
+                state.port,
+                state.mode.wire_name()
             ),
         },
         ("POST", "/api/mcp/server") => update_mcp_server_settings(body, state),
@@ -733,8 +739,10 @@ mod online_run_loop;
 mod origin_guard;
 mod run_loop;
 mod serve_options;
+mod share_routes;
 pub mod tenant;
 pub mod tenant_auth;
+pub mod tenant_store;
 
 pub use collab_state::DaemonMutationRefusal;
 pub use connect_routes::*;
@@ -747,10 +755,12 @@ pub use online_run_loop::*;
 use origin_guard::*;
 pub use run_loop::*;
 pub use serve_options::*;
-pub use tenant::{TenantError, TenantLimits, TenantRegistry};
+pub use share_routes::ShareError;
+pub use tenant::{TenantError, TenantLease, TenantLimits, TenantRegistry};
 pub use tenant_auth::{
     IdentityVerifier, OnlineAuthError, PresentedCredentials, ResolvedIdentity, StaticVerifier,
 };
+pub use tenant_store::{TenantStore, TenantStoreError};
 
 #[cfg(test)]
 #[path = "web_canvas_server_tests.rs"]

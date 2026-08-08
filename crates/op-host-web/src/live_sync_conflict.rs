@@ -1,0 +1,219 @@
+//! When a sync conflict may resolve itself.
+//!
+//! Split out of `live_sync_glue.rs` at the 800-line cap. It is one decision
+//! plus the deployment probe that feeds it, and it is worth reading as a unit:
+//! getting it wrong either silently discards a user's unpushed work or leaves
+//! a shared document permanently latched.
+
+use op_editor_core::CollabConnectionPhase;
+
+/// The safety decision behind [`maybe_auto_resolve_conflict_in_session`],
+/// separated so it can be tested without a live shell.
+///
+/// Two situations qualify, for the same underlying reason — there is an
+/// authoritative document to accept, so accepting it converges rather than
+/// destroys:
+///
+/// 1. **A live collaboration session** (`Active`). The session core sequences
+///    every edit, and a rejected local edit is projected into
+///    `collab.discarded_edit` for the panel to replay.
+///
+/// 2. **A server-authoritative deployment** (`serveMode: online`). The daemon
+///    owns the one in-memory document every writer reaches, and its version
+///    counter is the total order. A 409 there means only "someone else's push
+///    landed between this tab's read and its write" — and the SSE stream is
+///    already delivering that newer document, so re-reading it is not a
+///    choice between two candidate truths, it is catching up to the one.
+///
+/// Why overwriting is acceptable in case 2: the lost window is a single
+/// push's diff — at most the ~2 s since this tab last synced — and the
+/// alternative is the latch, which in a shared tenant never clears, because
+/// nothing outside a session ever resolves it. A visitor would simply be
+/// frozen out of the document. Demo-grade concurrency (409 → refetch) is the
+/// documented semantic for a shared online tenant; a latch that requires a
+/// session to lift is not a stricter version of that, it is a hang.
+///
+/// Outside both — a local or managed daemon with no session — the daemon is a
+/// peer holding the operator's file, not an authority, and nothing preserves
+/// the losing edit. The latch stays and explicit resolution is untouched.
+pub(super) const fn auto_resolve_is_safe(
+    has_conflict: bool,
+    phase: CollabConnectionPhase,
+    server_authoritative: bool,
+) -> bool {
+    has_conflict && (server_authoritative || matches!(phase, CollabConnectionPhase::Active))
+}
+
+/// Whether the daemon this shell talks to is the sole sequencer for the
+/// document.
+///
+/// Learned once from `GET /api/mcp/server`'s `serveMode` (see
+/// [`probe_serve_mode`]) and cached, because it is a property of the
+/// deployment and cannot change without a reload. Defaults to `false` until
+/// the probe answers, so the conservative behaviour is what runs during
+/// start-up rather than the permissive one.
+pub(super) fn server_is_authoritative() -> bool {
+    SERVER_AUTHORITATIVE.with(|flag| flag.get())
+}
+
+thread_local! {
+    static SERVER_AUTHORITATIVE: std::cell::Cell<bool> = const {
+        std::cell::Cell::new(false)
+    };
+}
+
+/// Record what `GET /api/mcp/server` said about the deployment.
+///
+/// Split from the fetch so the parse is testable without a DOM.
+fn note_serve_mode(body: &str) {
+    if let Some(authoritative) = parse_server_authoritative(body) {
+        SERVER_AUTHORITATIVE.with(|flag| flag.set(authoritative));
+    }
+}
+
+/// Read `serveMode` out of the health response.
+///
+/// `None` when the field is absent — an older daemon, which is by definition
+/// not an online one, so the caller leaves the conservative default in place.
+fn parse_server_authoritative(body: &str) -> Option<bool> {
+    let parsed: serde_json::Value = serde_json::from_str(body).ok()?;
+    let mode = parsed.get("serveMode")?.as_str()?;
+    Some(mode == "online")
+}
+
+/// Ask the daemon once, at start-up, which deployment this is.
+pub(super) fn probe_serve_mode(base: &str) {
+    crate::live_sync::get(
+        &format!("{base}/api/mcp/server"),
+        std::rc::Rc::new(|body: String| note_serve_mode(&body)),
+    );
+}
+
+#[cfg(test)]
+mod auto_resolve_tests {
+    use super::*;
+    use op_editor_core::CollabConnectionPhase;
+
+    #[test]
+    fn a_conflict_inside_an_active_session_resolves_itself() {
+        assert!(auto_resolve_is_safe(
+            true,
+            CollabConnectionPhase::Active,
+            false
+        ));
+    }
+
+    #[test]
+    fn no_conflict_means_nothing_to_resolve() {
+        for phase in [
+            CollabConnectionPhase::Idle,
+            CollabConnectionPhase::Active,
+            CollabConnectionPhase::ReadOnly,
+        ] {
+            assert!(!auto_resolve_is_safe(false, phase, false));
+        }
+    }
+
+    #[test]
+    fn every_non_active_phase_keeps_the_latch() {
+        // Outside an Active session there is no authoritative server document
+        // to accept and no `discarded_edit` projection to recover the losing
+        // edit from, so auto-accepting would silently destroy unpushed work.
+        // `Reconnecting` and `ReadOnly` look session-ish and are deliberately
+        // included: neither can sequence an edit.
+        for phase in [
+            CollabConnectionPhase::Idle,
+            CollabConnectionPhase::Starting,
+            CollabConnectionPhase::Discovering,
+            CollabConnectionPhase::Joining,
+            CollabConnectionPhase::Authenticating,
+            CollabConnectionPhase::Reconnecting,
+            CollabConnectionPhase::ReadOnly,
+            CollabConnectionPhase::Ended,
+        ] {
+            assert!(
+                !auto_resolve_is_safe(true, phase, false),
+                "{phase:?} must keep the existing explicit-resolution semantics"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod server_authority_tests {
+    use super::{auto_resolve_is_safe, parse_server_authoritative};
+    use op_editor_core::CollabConnectionPhase;
+
+    #[test]
+    fn an_online_daemon_is_authoritative() {
+        assert_eq!(
+            parse_server_authoritative(r#"{"running":true,"port":3100,"serveMode":"online"}"#),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn a_local_or_managed_daemon_is_not() {
+        for mode in ["local", "managed"] {
+            assert_eq!(
+                parse_server_authoritative(&format!(r#"{{"serveMode":"{mode}"}}"#)),
+                Some(false),
+                "{mode}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_daemon_that_does_not_report_a_mode_leaves_the_default_alone() {
+        // An older daemon has no `serveMode`; it is by definition not an
+        // online one, so the conservative default must survive the probe.
+        for body in [r#"{"running":true}"#, "not json", "", "{}"] {
+            assert_eq!(parse_server_authoritative(body), None, "{body:?}");
+        }
+    }
+
+    #[test]
+    fn a_server_authoritative_deployment_auto_resolves_outside_a_session() {
+        // This is the M4 case: an online shared tenant has no collaboration
+        // session, so without this the 409 latch would never lift and the
+        // visitor would be frozen out of the document.
+        for phase in [
+            CollabConnectionPhase::Idle,
+            CollabConnectionPhase::Starting,
+            CollabConnectionPhase::Reconnecting,
+            CollabConnectionPhase::ReadOnly,
+        ] {
+            assert!(
+                auto_resolve_is_safe(true, phase, true),
+                "{phase:?} must auto-resolve when the server is the sequencer"
+            );
+        }
+    }
+
+    #[test]
+    fn no_conflict_never_resolves_however_authoritative_the_server_is() {
+        assert!(!auto_resolve_is_safe(
+            false,
+            CollabConnectionPhase::Idle,
+            true
+        ));
+        assert!(!auto_resolve_is_safe(
+            false,
+            CollabConnectionPhase::Active,
+            true
+        ));
+    }
+
+    #[test]
+    fn a_peer_daemon_outside_a_session_still_latches() {
+        // The local daemon holds the operator's file and arbitrates nothing;
+        // auto-accepting there would silently discard unpushed work.
+        for phase in [
+            CollabConnectionPhase::Idle,
+            CollabConnectionPhase::Reconnecting,
+            CollabConnectionPhase::ReadOnly,
+        ] {
+            assert!(!auto_resolve_is_safe(true, phase, false), "{phase:?}");
+        }
+    }
+}

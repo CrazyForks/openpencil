@@ -269,7 +269,19 @@ pub(super) fn serve_one_online<S: Read + Write>(
         )?;
         return Ok(false);
     }
-    let lease = match registry.lease_for(&identity) {
+    // Which tenant is this request addressed to? The query names an OWNER;
+    // whether this caller may reach it is still decided by the owner's access
+    // list, never by the parameter. Absent, it is the caller's own tenant.
+    let requested_owner = req
+        .query
+        .as_deref()
+        .and_then(op_editor_core::share_routes::tenant_from_query)
+        .map(str::to_string);
+    let lease = match requested_owner.as_deref() {
+        Some(owner) => registry.lease_for_shared(owner, &identity),
+        None => registry.lease_for(&identity),
+    };
+    let lease = match lease {
         Ok(lease) => lease,
         Err(error) => {
             crate::mcp_serve::write_mcp_http_response(
@@ -285,6 +297,43 @@ pub(super) fn serve_one_online<S: Read + Write>(
             return Ok(false);
         }
     };
+    // Sharing is administered on the CALLER's own tenant, so it is answered
+    // here rather than in the document tier — a visitor holding a `?tenant=`
+    // lease on someone else's document must not be able to re-share it.
+    if super::share_routes::is_share_route(&req.path) {
+        let own = match registry.lease_for(&identity) {
+            Ok(own) => own,
+            Err(error) => {
+                crate::mcp_serve::write_mcp_http_response_with_origin(
+                    stream,
+                    error.http_status(),
+                    &serde_json::json!({
+                        "ok": false,
+                        "error": error.code(),
+                        "message": error.to_string(),
+                    })
+                    .to_string(),
+                    cors_origin.as_deref(),
+                )?;
+                return Ok(false);
+            }
+        };
+        let reply = super::share_routes::handle(
+            &req.method,
+            &req.path,
+            &req.body,
+            &identity,
+            &own,
+            registry,
+        );
+        crate::mcp_serve::write_mcp_http_response_with_origin(
+            stream,
+            reply.status,
+            &reply.body,
+            cors_origin.as_deref(),
+        )?;
+        return Ok(false);
+    }
     // The lease outlives the dispatch (including a minutes-long SSE stream),
     // so the tenant these borrows point at cannot be evicted underneath them.
     dispatch(

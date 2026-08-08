@@ -41,6 +41,9 @@ struct Request {
     content_type: Option<&'static str>,
     cookie: Option<&'static str>,
     origin: Option<&'static str>,
+    /// Addresses the request at another account's tenant, as the browser does
+    /// with `?tenant=` on the page URL.
+    tenant: Option<&'static str>,
 }
 
 impl Request {
@@ -53,6 +56,7 @@ impl Request {
             content_type: None,
             cookie: None,
             origin: None,
+            tenant: None,
         }
     }
 
@@ -97,11 +101,14 @@ impl Request {
             .origin
             .map(|o| format!("Origin: {o}\r\n"))
             .unwrap_or_default();
+        let target = match self.tenant {
+            Some(tenant) => format!("{}?tenant={tenant}", self.path),
+            None => self.path.to_string(),
+        };
         format!(
-            "{} {} HTTP/1.1\r\nHost: canvas.example\r\n{auth}{cookie}{origin}{content_type}\
+            "{} {target} HTTP/1.1\r\nHost: canvas.example\r\n{auth}{cookie}{origin}{content_type}\
              Content-Length: {}\r\n\r\n{}",
             self.method,
-            self.path,
             self.body.len(),
             self.body
         )
@@ -747,3 +754,7 @@ fn a_disallowed_origin_gets_no_cors_header_at_all() {
 #[cfg(test)]
 #[path = "online_mcp_tests.rs"]
 mod mcp_profile;
+
+#[cfg(test)]
+#[path = "online_share_tests.rs"]
+mod share;
