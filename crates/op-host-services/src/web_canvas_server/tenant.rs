@@ -534,7 +534,11 @@ impl TenantRegistry {
         let mut written = 0;
         for (id, tenant) in tenants.iter() {
             let guard = tenant.state.lock().unwrap_or_else(|p| p.into_inner());
-            match self.store.save(id, &guard.editor, &tenant.shared_with()) {
+            // Held across the write, exactly as `update_acl` does: otherwise a
+            // grant landing mid-flush is written by one path and overwritten
+            // by the other, and the user's share silently disappears.
+            let shared = tenant.shared_with_guard();
+            match self.store.save(id, &guard.editor, &shared) {
                 Ok(()) => written += 1,
                 Err(error) => eprintln!(
                     "openpencil --serve-web --online: could not flush a tenant on shutdown \
@@ -566,6 +570,18 @@ impl TenantRegistry {
         change: AclChange,
     ) -> Result<AclUpdate, TenantStoreError> {
         let mut list = tenant.shared_with_guard();
+        if let AclChange::Grant(account) = &change {
+            // The store writes at most `MAX_SHARED_ACCOUNTS`, so accepting a
+            // grant past the ceiling would report success for a share that
+            // silently vanishes on the next save. Refuse it instead.
+            if !list.contains(account.as_str())
+                && list.len() >= super::tenant_store::MAX_SHARED_ACCOUNTS
+            {
+                return Err(TenantStoreError::ShareLimitReached(
+                    super::tenant_store::MAX_SHARED_ACCOUNTS,
+                ));
+            }
+        }
         let changed = match &change {
             AclChange::Grant(account) => list.insert(account.clone()),
             AclChange::Revoke(account) => list.remove(account.as_str()),
@@ -616,7 +632,8 @@ impl TenantRegistry {
             // registry lock is held, so it waits) or, afterwards, the file.
             if self.store.is_enabled() {
                 let guard = victim.state.lock().unwrap_or_else(|p| p.into_inner());
-                if let Err(error) = self.store.save(&id, &guard.editor, &victim.shared_with()) {
+                let shared = victim.shared_with_guard();
+                if let Err(error) = self.store.save(&id, &guard.editor, &shared) {
                     // A tenant that cannot be written is kept resident. Evicting
                     // it anyway would discard the document to reclaim memory,
                     // which is the wrong trade for the user whose work it is.

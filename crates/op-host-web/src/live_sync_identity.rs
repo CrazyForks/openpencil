@@ -63,5 +63,11 @@ pub(crate) fn reset_for_new_identity<C: RepaintContext + 'static>(inner: &Rc<Ref
         let _ = context.repaint();
     }
     crate::collab_sync::reset_for_new_identity();
+    // The id allocator lives on the host, so it is torn down here where the
+    // borrow is already held. B1's namespace latch alone was not enough: the
+    // allocator itself would keep minting in the previous account's namespace.
+    if let Ok(mut context) = inner.try_borrow_mut() {
+        crate::collab_sync::reset_id_allocation(context.host_mut());
+    }
     clear_auth_invalid();
 }

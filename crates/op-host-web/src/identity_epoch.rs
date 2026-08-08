@@ -56,12 +56,34 @@ pub fn epoch() -> u64 {
     EPOCH.with(std::cell::Cell::get)
 }
 
+/// What an observation means for the tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdentityObservation {
+    /// Same account as before. Nothing to do.
+    Unchanged,
+    /// The tab's FIRST answer, and it named an account. Nothing account-scoped
+    /// has been shown, so the document stands — but the storage partition just
+    /// moved off `anon`, and anything already loaded under `anon` has to be
+    /// reloaded from the account's own partition.
+    FirstIdentified,
+    /// A different account. Everything keyed to the previous one must go.
+    Changed,
+}
+
+impl IdentityObservation {
+    /// Whether account-scoped storage must be re-read.
+    pub const fn requires_storage_reload(self) -> bool {
+        matches!(self, Self::FirstIdentified | Self::Changed)
+    }
+
+    /// Whether the tab's document and sync state must be dropped.
+    pub const fn requires_reset(self) -> bool {
+        matches!(self, Self::Changed)
+    }
+}
+
 /// Record the subject an `/api/auth/status` answer reported.
-///
-/// Returns `true` when the identity CHANGED and the caller must therefore
-/// drop everything keyed to the previous account. The first observation is
-/// not a change: the tab has shown nothing yet.
-pub fn observe_subject(subject: Option<&str>) -> bool {
+pub fn observe_subject(subject: Option<&str>) -> IdentityObservation {
     let next = subject
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -71,20 +93,26 @@ pub fn observe_subject(subject: Option<&str>) -> bool {
         let previous = slot.replace(next.clone());
         match previous {
             // The tab's first status answer. Whatever it says is what this
-            // tab has always been showing, so there is nothing to discard —
-            // but the storage partition is now known, so the epoch moves.
+            // tab has always been showing, so the document stands — but the
+            // shell already loaded settings and credentials under `anon` at
+            // mount, and those belong to a different partition than the one
+            // now in force. They have to be re-read.
             None => {
                 EPOCH.with(|epoch| epoch.set(epoch.get().saturating_add(1)));
-                false
+                if next.is_some() {
+                    IdentityObservation::FirstIdentified
+                } else {
+                    IdentityObservation::Unchanged
+                }
             }
             // A repeat of the same answer: the common case, and it must not
             // churn state or every poll would reset the tab.
-            Some(before) if before == next => false,
+            Some(before) if before == next => IdentityObservation::Unchanged,
             // A genuine change — sign-in, sign-out, or a switch between two
             // accounts. All three must drop the previous account's state.
             Some(_) => {
                 EPOCH.with(|epoch| epoch.set(epoch.get().saturating_add(1)));
-                true
+                IdentityObservation::Changed
             }
         }
     })
@@ -120,15 +148,19 @@ mod tests {
     #[test]
     fn the_first_anonymous_observation_is_not_a_change() {
         reset_for_test();
-        assert!(!observe_subject(None));
+        assert_eq!(observe_subject(None), IdentityObservation::Unchanged);
         assert_eq!(current_subject(), ANONYMOUS_SUBJECT);
     }
 
     #[test]
     fn the_first_answer_of_a_tab_is_never_a_reset() {
         reset_for_test();
-        // Whatever the first answer says is what this tab has always shown.
-        assert!(!observe_subject(Some("alice")));
+        // Whatever the first answer says is what this tab has always shown,
+        // so the document stands — but the storage partition moved off `anon`.
+        let outcome = observe_subject(Some("alice"));
+        assert_eq!(outcome, IdentityObservation::FirstIdentified);
+        assert!(outcome.requires_storage_reload());
+        assert!(!outcome.requires_reset());
         assert_eq!(current_subject(), "alice");
         assert!(epoch() > 0);
     }
@@ -138,8 +170,8 @@ mod tests {
         // Distinct from the case above: the tab HAS shown the anonymous
         // state, so signing in replaces what was on screen.
         reset_for_test();
-        assert!(!observe_subject(None));
-        assert!(observe_subject(Some("alice")));
+        assert_eq!(observe_subject(None), IdentityObservation::Unchanged);
+        assert_eq!(observe_subject(Some("alice")), IdentityObservation::Changed);
         assert_eq!(current_subject(), "alice");
     }
 
@@ -148,8 +180,9 @@ mod tests {
         reset_for_test();
         observe_subject(Some("alice"));
         let before = epoch();
-        assert!(
+        assert_eq!(
             observe_subject(Some("bob")),
+            IdentityObservation::Changed,
             "a different account must reset the tab"
         );
         assert_eq!(current_subject(), "bob");
@@ -160,7 +193,7 @@ mod tests {
     fn signing_out_reports_a_change() {
         reset_for_test();
         observe_subject(Some("alice"));
-        assert!(observe_subject(None));
+        assert_eq!(observe_subject(None), IdentityObservation::Changed);
         assert_eq!(current_subject(), ANONYMOUS_SUBJECT);
     }
 
@@ -169,8 +202,8 @@ mod tests {
         // The leak this exists for: A → anonymous → B in one tab.
         reset_for_test();
         observe_subject(Some("alice"));
-        assert!(observe_subject(None));
-        assert!(observe_subject(Some("bob")));
+        assert_eq!(observe_subject(None), IdentityObservation::Changed);
+        assert_eq!(observe_subject(Some("bob")), IdentityObservation::Changed);
         assert_eq!(current_subject(), "bob");
     }
 
@@ -180,7 +213,10 @@ mod tests {
         observe_subject(Some("alice"));
         let epoch_after_sign_in = epoch();
         for _ in 0..5 {
-            assert!(!observe_subject(Some("alice")));
+            assert_eq!(
+                observe_subject(Some("alice")),
+                IdentityObservation::Unchanged
+            );
         }
         assert_eq!(epoch(), epoch_after_sign_in, "a poll must not churn state");
     }
@@ -210,7 +246,10 @@ mod tests {
     fn whitespace_around_a_subject_does_not_create_a_second_partition() {
         reset_for_test();
         observe_subject(Some("alice"));
-        assert!(!observe_subject(Some("  alice  ")));
+        assert_eq!(
+            observe_subject(Some("  alice  ")),
+            IdentityObservation::Unchanged
+        );
     }
 }
 
@@ -261,5 +300,51 @@ mod partition_tests {
             assert!(crate::web_settings::settings_storage_key().contains("::"));
             assert!(crate::web_settings::credential_storage_key().contains("::"));
         }
+    }
+}
+
+#[cfg(test)]
+mod observation_tests {
+    use super::*;
+
+    #[test]
+    fn the_first_identified_answer_reloads_storage_without_resetting() {
+        // The mount-timing bug: the shell loads settings under `anon` before
+        // any status answer, so the first real subject has to re-read them —
+        // but must NOT throw away the document, which is not account-scoped
+        // until an account has actually been shown.
+        reset_for_test();
+        let outcome = observe_subject(Some("alice"));
+        assert_eq!(outcome, IdentityObservation::FirstIdentified);
+        assert!(outcome.requires_storage_reload());
+        assert!(!outcome.requires_reset());
+    }
+
+    #[test]
+    fn a_switch_both_resets_and_reloads() {
+        reset_for_test();
+        observe_subject(Some("alice"));
+        let outcome = observe_subject(Some("bob"));
+        assert_eq!(outcome, IdentityObservation::Changed);
+        assert!(outcome.requires_reset());
+        assert!(outcome.requires_storage_reload());
+    }
+
+    #[test]
+    fn a_repeat_does_neither() {
+        reset_for_test();
+        observe_subject(Some("alice"));
+        let outcome = observe_subject(Some("alice"));
+        assert!(!outcome.requires_reset());
+        assert!(!outcome.requires_storage_reload());
+    }
+
+    #[test]
+    fn an_anonymous_first_answer_does_neither() {
+        // Nothing moved: the tab was already on the `anon` partition.
+        reset_for_test();
+        let outcome = observe_subject(None);
+        assert_eq!(outcome, IdentityObservation::Unchanged);
+        assert!(!outcome.requires_storage_reload());
     }
 }

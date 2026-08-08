@@ -39,6 +39,27 @@ use super::tenant::{now_unix, TenantLimits, TenantRegistry};
 use super::tenant_auth::{IdentityVerifier, PresentedCredentials, StaticVerifier};
 use super::*;
 
+/// How long a controlled shutdown waits for in-flight requests before it
+/// writes. Long enough for a large document push to finish installing, short
+/// enough that a deploy is not held up by a long-lived SSE stream.
+const SHUTDOWN_DRAIN_SECS: u64 = 10;
+
+/// Wait for the active-connection count to reach zero, up to the bound.
+///
+/// Returns whether it actually drained. SSE streams routinely outlive this,
+/// which is fine: they hold no document lock, so flushing past them is safe —
+/// the wait exists for the writers.
+fn drain_connections(conn_count: &Arc<AtomicUsize>) -> bool {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(SHUTDOWN_DRAIN_SECS);
+    while std::time::Instant::now() < deadline {
+        if conn_count.load(Ordering::Acquire) == 0 {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    conn_count.load(Ordering::Acquire) == 0
+}
+
 /// Longest gap between idle sweeps, however long the idle deadline is.
 const MAX_SWEEP_INTERVAL_SECS: u64 = 300;
 
@@ -67,6 +88,11 @@ pub fn run_online_web_canvas(options: ServeWebOptions) -> Result<()> {
     // gone. That is defensible for a demo and indefensible for a deployment,
     // and the two are indistinguishable from inside the process — so the
     // operator has to say which one this is.
+    // Fail closed on an unwritable data directory: the alternative is an
+    // eviction failing silently half an hour after start.
+    store.check_writable().map_err(|error| {
+        WebCanvasError::Config(format!("--online cannot use its data directory: {error}"))
+    })?;
     check_persistence_configured(
         store.is_enabled(),
         ephemeral_opt_in(),
@@ -127,8 +153,8 @@ pub fn run_online_web_canvas(options: ServeWebOptions) -> Result<()> {
     // process where it stands — losing every resident tenant that had not
     // happened to be evicted. The handler only raises the flag the accept
     // loop already observes, so the existing exit path (which flushes) runs.
-    install_shutdown_signals(&shutdown, local_addr);
-    spawn_sweeper(&registry, &shutdown);
+    install_shutdown_signals(&shutdown, local_addr)?;
+    spawn_sweeper(&registry, &shutdown)?;
 
     for stream in listener.incoming() {
         if shutdown.load(Ordering::Acquire) {
@@ -176,7 +202,21 @@ pub fn run_online_web_canvas(options: ServeWebOptions) -> Result<()> {
     }
     // The sweeper observes the same flag and retires on its next wake.
     shutdown.store(true, Ordering::Release);
+    // Let in-flight requests finish before writing. A push that is mid-install
+    // when the flush runs would otherwise be written in its pre-push state and
+    // the client's work lost — it acked 200 and then vanished. Bounded, because
+    // an SSE stream can hold a connection open indefinitely and a deploy
+    // cannot wait for it.
+    let drained = drain_connections(&conn_count);
     let flushed = registry.flush_all();
+    if !drained {
+        eprintln!(
+            "openpencil --serve-web --online: {} connection(s) still active after {}s; \
+             flushing anyway",
+            conn_count.load(Ordering::Acquire),
+            SHUTDOWN_DRAIN_SECS
+        );
+    }
     eprintln!(
         "openpencil --serve-web --online: shutdown requested; flushed {flushed} account(s); \
          exiting"
@@ -221,7 +261,10 @@ static SIGNAL_RECEIVED: AtomicBool = AtomicBool::new(false);
 /// lifecycle they have always had — a token-authed shutdown request, or
 /// stdin EOF under a supervisor — and adding a handler there would change
 /// what Ctrl-C means for an interactive operator.
-fn install_shutdown_signals(shutdown: &Arc<AtomicBool>, local_addr: std::net::SocketAddr) {
+fn install_shutdown_signals(
+    shutdown: &Arc<AtomicBool>,
+    local_addr: std::net::SocketAddr,
+) -> Result<()> {
     #[cfg(unix)]
     {
         // SAFETY: `handle_shutdown_signal` is async-signal-safe — it performs
@@ -250,16 +293,18 @@ fn install_shutdown_signals(shutdown: &Arc<AtomicBool>, local_addr: std::net::So
                 }
                 std::thread::sleep(std::time::Duration::from_millis(200));
             });
-        if spawned.is_err() {
-            eprintln!(
-                "openpencil --serve-web --online: could not start the signal watcher; a \
-                 container stop will not flush tenants"
-            );
-        }
+        // A container stop that does not flush is data loss on every deploy,
+        // so a watcher that cannot start is a start-up failure.
+        spawned.map(|_| ()).map_err(|error| {
+            WebCanvasError::Config(format!(
+                "could not start the shutdown signal watcher: {error}"
+            ))
+        })
     }
     #[cfg(not(unix))]
     {
         let _ = (shutdown, local_addr);
+        Ok(())
     }
 }
 
@@ -284,7 +329,7 @@ fn ephemeral_opt_in() -> bool {
 /// it never ran in: idle accounts stayed resident indefinitely and were never
 /// written to disk. This thread observes `shutdown` on every wake, so it
 /// retires within one interval of the daemon being asked to stop.
-fn spawn_sweeper(registry: &Arc<TenantRegistry>, shutdown: &Arc<AtomicBool>) {
+fn spawn_sweeper(registry: &Arc<TenantRegistry>, shutdown: &Arc<AtomicBool>) -> Result<()> {
     let registry = Arc::clone(registry);
     let shutdown = Arc::clone(shutdown);
     let interval = sweep_interval_secs(registry.limits().idle_evict_secs);
@@ -304,12 +349,11 @@ fn spawn_sweeper(registry: &Arc<TenantRegistry>, shutdown: &Arc<AtomicBool>) {
                 }
             }
         });
-    if spawned.is_err() {
-        eprintln!(
-            "openpencil --serve-web --online: could not start the idle sweeper; accounts will \
-             stay resident until a connection triggers a sweep"
-        );
-    }
+    spawned.map(|_| ()).map_err(|error| {
+        // Without the sweeper nothing is ever evicted OR persisted, so a
+        // "degraded" daemon here quietly stops saving anyone's work.
+        WebCanvasError::Config(format!("could not start the idle sweeper: {error}"))
+    })
 }
 
 /// How often to sweep, given the idle deadline.
@@ -472,6 +516,27 @@ pub(super) fn serve_one_online<S: Read + Write>(
     // here rather than in the document tier — a visitor holding a `?tenant=`
     // lease on someone else's document must not be able to re-share it.
     if super::share_routes::is_share_route(&req.path) {
+        // Same gate the connection tier applies, because this route is
+        // dispatched before it ever runs: a grant is a write.
+        if let Some(refusal) = super::tool_scopes::check_rest_scope(
+            identity.via,
+            identity.scopes,
+            &req.method,
+            &req.path,
+        ) {
+            crate::mcp_serve::write_mcp_http_response_with_origin(
+                stream,
+                refusal.http_status(),
+                &serde_json::json!({
+                    "ok": false,
+                    "error": refusal.code(),
+                    "message": refusal.to_string(),
+                })
+                .to_string(),
+                cors_origin.as_deref(),
+            )?;
+            return Ok(false);
+        }
         let own = match registry.lease_for(&identity) {
             Ok(own) => own,
             Err(error) => {
@@ -517,7 +582,7 @@ pub(super) fn serve_one_online<S: Read + Write>(
             // The public tool profile, narrowed further by whatever scopes
             // this particular credential carries.
             mcp_profile: crate::mcp_serve::tool_profile::McpAccessProfile::online(identity.scopes),
-            rest_identity: Some((identity.via, identity.scopes)),
+            rest_identity: Some(identity.clone()),
         },
     )
 }

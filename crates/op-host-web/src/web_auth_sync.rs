@@ -177,10 +177,17 @@ fn fetch_status<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>, base: &str)
             };
             // Identity first: everything below paints for an account, so the
             // account has to be settled before any of it runs.
-            if crate::identity_epoch::observe_subject(
+            let observation = crate::identity_epoch::observe_subject(
                 crate::identity_epoch::subject_from_status(&body).as_deref(),
-            ) {
+            );
+            if observation.requires_reset() {
                 crate::live_sync_glue::reset_for_new_identity(&inner);
+            }
+            if observation.requires_storage_reload() {
+                // The shell loaded settings and credentials under `anon` at
+                // mount; the account's own partition is a different key, so
+                // what is in memory belongs to the wrong one until re-read.
+                crate::web_settings::reload_for_active_partition(&inner);
             }
             sync_account_avatar(&inner, parsed["avatar_revision"].as_str());
             let mut b = inner.borrow_mut();

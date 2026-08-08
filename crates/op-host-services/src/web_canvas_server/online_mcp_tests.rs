@@ -307,3 +307,74 @@ fn a_browser_session_is_not_scope_limited_over_rest() {
     );
     assert_eq!(status_line(&response), "HTTP/1.1 200 OK", "{response}");
 }
+
+#[test]
+fn a_read_scope_token_cannot_reach_the_specially_dispatched_write_routes() {
+    // These are dispatched ahead of the `/api/*` branch the gate used to live
+    // in, so a read-only token could drive all of them.
+    let registry = registry();
+    let verifier = scoped_verifier();
+    for (method, path, body) in [
+        (
+            "POST",
+            op_editor_core::share_routes::GRANT,
+            r#"{"userId":"userB"}"#,
+        ),
+        (
+            "POST",
+            op_editor_core::share_routes::REVOKE,
+            r#"{"userId":"userB"}"#,
+        ),
+        ("POST", "/api/ai/standard", "{}"),
+        ("POST", "/api/ai/stream", "{}"),
+        ("POST", "/api/figma/convert", "{}"),
+        (
+            "POST",
+            op_editor_core::collab_routes::ACTION,
+            r#"{"type":"openCreate"}"#,
+        ),
+    ] {
+        let response = serve(
+            &registry,
+            &verifier,
+            Request::json(method, path, body).with_bearer("tokR"),
+        );
+        assert_eq!(
+            status_line(&response),
+            "HTTP/1.1 403 Forbidden",
+            "{method} {path}: {response}"
+        );
+        assert_eq!(body_of(&response)["error"], "scope-insufficient", "{path}");
+    }
+}
+
+#[test]
+fn a_scopeless_token_cannot_even_subscribe_to_the_event_stream() {
+    // SSE is a GET, so it needs `mcp:read` — and a scopeless token has none.
+    let response = serve(
+        &registry(),
+        &StaticVerifier::parse("tokN=userN:none"),
+        Request::new("GET", "/api/mcp/events").with_bearer("tokN"),
+    );
+    assert_eq!(
+        status_line(&response),
+        "HTTP/1.1 403 Forbidden",
+        "{response}"
+    );
+}
+
+#[test]
+fn a_read_scope_token_may_still_subscribe_to_the_event_stream() {
+    // A read token reading is the whole point; only writes are refused.
+    let response = serve(
+        &registry(),
+        &scoped_verifier(),
+        Request::new("GET", op_editor_core::collab_routes::STATE).with_bearer("tokR"),
+    );
+    assert_eq!(status_line(&response), "HTTP/1.1 200 OK", "{response}");
+}
+
+/// The share/AI routes answer with a plain body; reuse the shared decoder.
+fn body_of(response: &str) -> serde_json::Value {
+    body(response)
+}

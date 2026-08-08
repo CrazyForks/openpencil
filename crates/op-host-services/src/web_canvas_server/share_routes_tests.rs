@@ -245,3 +245,63 @@ fn a_forbidden_share_and_an_unknown_one_answer_identically() {
     let forbidden = registry.lease_for_shared("userA", &stranger).unwrap_err();
     assert_eq!(unknown, forbidden);
 }
+
+#[test]
+fn the_grant_past_the_ceiling_is_refused_rather_than_silently_dropped() {
+    // The store writes a bounded list, so accepting the 257th grant would
+    // report a success that vanishes on the next save.
+    let registry = registry();
+    let owner = identity("userA");
+    let lease = registry.lease_for(&owner).expect("lease");
+    for index in 0..super::super::tenant_store::MAX_SHARED_ACCOUNTS {
+        let reply = handle(
+            "POST",
+            share_routes::GRANT,
+            &serde_json::json!({ "userId": format!("guest-{index}") }).to_string(),
+            &owner,
+            &lease,
+            &registry,
+        );
+        assert_eq!(reply.status, "200 OK", "grant {index}");
+    }
+    let overflow = handle(
+        "POST",
+        share_routes::GRANT,
+        r#"{"userId":"one-too-many"}"#,
+        &owner,
+        &lease,
+        &registry,
+    );
+    assert_eq!(overflow.status, "400 Bad Request", "{}", overflow.body);
+    assert_eq!(body_of(&overflow)["error"], "share-limit-reached");
+    // And the refused account really is absent, not quietly present in memory.
+    assert!(!lease.tenant().shared_with().contains("one-too-many"));
+}
+
+#[test]
+fn a_repeat_grant_at_the_ceiling_still_succeeds() {
+    // The ceiling bounds NEW accounts; re-granting one already on the list
+    // changes nothing and must not be refused.
+    let registry = registry();
+    let owner = identity("userA");
+    let lease = registry.lease_for(&owner).expect("lease");
+    for index in 0..super::super::tenant_store::MAX_SHARED_ACCOUNTS {
+        handle(
+            "POST",
+            share_routes::GRANT,
+            &serde_json::json!({ "userId": format!("guest-{index}") }).to_string(),
+            &owner,
+            &lease,
+            &registry,
+        );
+    }
+    let repeat = handle(
+        "POST",
+        share_routes::GRANT,
+        r#"{"userId":"guest-0"}"#,
+        &owner,
+        &lease,
+        &registry,
+    );
+    assert_eq!(repeat.status, "200 OK", "{}", repeat.body);
+}

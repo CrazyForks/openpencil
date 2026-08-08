@@ -47,6 +47,10 @@ fn a_token_with_no_scopes_is_refused_everything_but_the_health_probe() {
     assert!(refused(NONE, "POST", "/api/mcp/document"));
     // …except the probe, so a client can discover the daemon and be told why.
     assert!(!refused(NONE, "GET", "/api/mcp/server"));
+    // …and except JSON-RPC, where the MCP dispatch enforces per-tool scopes
+    // and would otherwise be refused wholesale by the coarse method rule.
+    assert!(!refused(NONE, "POST", "/mcp"));
+    assert!(!refused(READ_ONLY, "POST", "/mcp"));
 }
 
 #[test]

@@ -171,10 +171,10 @@ impl IngestOutcome {
     pub const fn error_code(self) -> Option<&'static str> {
         match self {
             Self::Committed | Self::NoChange => None,
-            Self::Rejected => Some("collab-busy"),
-            // Shares the existing conflict code so the browser's established
-            // refetch path handles it without a new client branch.
-            Self::Failed => Some("version-conflict"),
+            // Both share the existing conflict code so the browser's
+            // established refetch path handles them without a new client
+            // branch — `parse_push_conflict` only recognises this one.
+            Self::Rejected | Self::Failed => Some("version-conflict"),
         }
     }
 }
@@ -193,10 +193,10 @@ impl LocalEditCapture<'_> {
         self.state.as_mut().expect("capture is open")
     }
 
-    /// Close the capture, reporting whether the session committed it.
-    fn finish(mut self) -> bool {
+    /// Close the capture, reporting what the session decided.
+    fn finish(mut self) -> op_collab_host::LocalEditOutcome {
         let Some(state) = self.state.take() else {
-            return false;
+            return op_collab_host::LocalEditOutcome::Failed;
         };
         let (runtime, mut host) = state.collab_runtime_and_host();
         runtime.finish_local_edit(&mut host)
@@ -341,7 +341,6 @@ impl WebCanvasState {
         &mut self,
         prepared: PreparedDocument,
     ) -> IngestOutcome {
-        let revision_before = self.editor.document_revision();
         let (runtime, mut host) = self.collab_runtime_and_host();
         if !runtime.begin_local_edit(&mut host) {
             return IngestOutcome::Rejected;
@@ -355,16 +354,16 @@ impl WebCanvasState {
             .state_mut()
             .editor
             .install_prepared_document(prepared, EditOrigin::Local);
-        let committed = capture.finish();
-        if !committed {
-            return IngestOutcome::Failed;
+        // Straight from the session's own resolution. The previous revision
+        // heuristic could not see a REJECTION: the session rolls the edit back,
+        // so the revision is unchanged and the push read as `NoChange` — a
+        // 200 for a write that had been discarded.
+        match capture.finish() {
+            op_collab_host::LocalEditOutcome::Committed => IngestOutcome::Committed,
+            op_collab_host::LocalEditOutcome::NoChange => IngestOutcome::NoChange,
+            op_collab_host::LocalEditOutcome::Rejected => IngestOutcome::Rejected,
+            op_collab_host::LocalEditOutcome::Failed => IngestOutcome::Failed,
         }
-        if self.editor.document_revision() == revision_before {
-            // The session diffed the document and found nothing to send. The
-            // push succeeded; there is simply no new version to publish.
-            return IngestOutcome::NoChange;
-        }
-        IngestOutcome::Committed
     }
 }
 

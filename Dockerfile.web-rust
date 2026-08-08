@@ -149,6 +149,11 @@ COPY --from=builder --chown=10001:10001 /out/web-bundle /app/web-bundle
 # The daemon writes nothing outside /tmp in online mode (settings persistence
 # is refused there), so it runs unprivileged and the image can be mounted
 # read-only by the orchestrator.
+# The online data directory, created with the runtime owner so a fresh named
+# volume inherits that ownership and mode on its first mount. The daemon probes
+# it at start-up and refuses to run if it is not writable.
+RUN install -d -o 10001 -g 10001 -m 0700 /data
+
 USER 10001:10001
 
 EXPOSE ${SERVE_PORT}

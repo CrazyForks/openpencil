@@ -2,6 +2,25 @@
 //! conflict-discarded edit. Split off the runtime spine at the
 //! 800-line cap; pure code motion.
 
+/// What a session did with a completed local-edit capture.
+///
+/// `finish_local_edit` used to return `bool`, which could not distinguish
+/// "the session sequenced this" from "the session rejected it and rolled it
+/// back" — so a rejected whole-document push was answered 200 with a version
+/// bump and the browser never learned to refetch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalEditOutcome {
+    /// Sequenced and committed.
+    Committed,
+    /// The capture closed with nothing to send — the document did not move.
+    NoChange,
+    /// The session refused the edit and rolled it back. The caller's copy is
+    /// now behind and must be refetched.
+    Rejected,
+    /// The capture could not be opened or closed cleanly.
+    Failed,
+}
+
 use op_editor_core::{CollabNoticeKind, CollabRejectUiCode};
 
 use super::actor::EditorActor;
@@ -42,13 +61,16 @@ impl CollabRuntime {
         }
     }
 
-    pub fn finish_local_edit(&mut self, host: &mut impl CollabHost) -> bool {
+    pub fn finish_local_edit(&mut self, host: &mut impl CollabHost) -> LocalEditOutcome {
         if !std::mem::take(&mut self.transaction_active) {
-            return false;
+            return LocalEditOutcome::Failed;
         }
         let Some(mut actor) = self.actor.take() else {
-            return false;
+            return LocalEditOutcome::Failed;
         };
+        // Cleared here so a stale resolution from an earlier edit cannot be
+        // read as this one's answer.
+        self.last_local_edit = None;
         let result = match &mut actor {
             EditorActor::Owner(owner) => match owner.session.finish_local_edit(host) {
                 Ok(output) => self.route_owner_output(owner, output, host),
@@ -61,13 +83,20 @@ impl CollabRuntime {
         };
         self.actor = Some(actor);
         match result {
-            Ok(()) => true,
+            // The routing layer records what the session actually decided; a
+            // bare `Ok` used to be reported as success even when the session
+            // had REJECTED and rolled the edit back, so the caller answered
+            // 200 for a write that never landed.
+            Ok(()) => self
+                .last_local_edit
+                .take()
+                .unwrap_or(LocalEditOutcome::Committed),
             Err(error) => {
                 // A local editor/core failure can occur after the document
                 // changed or the sequencer prepared a commit. Continuing to
                 // advertise Active would silently fork owner and guests.
                 self.fail_network(host, error.failure);
-                false
+                LocalEditOutcome::Failed
             }
         }
     }

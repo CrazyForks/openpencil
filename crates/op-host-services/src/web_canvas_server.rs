@@ -278,8 +278,12 @@ impl WebCanvasState {
                 });
             }
         }
-        let editor_meta = push.editor_meta;
-        let Some(prepared) = push.prepared else {
+        // Taken rather than moved: `PendingDocumentPush` owns a `Drop` that
+        // releases the thumbnail seed of a push that never installs, and
+        // taking `prepared` here is what tells it this one DID.
+        let mut push = push;
+        let editor_meta = push.take_editor_meta();
+        let Some(prepared) = push.prepared.take() else {
             // Active-page changes do not mutate canonical document content.
             // Apply the scalar pair without replacing the identical document,
             // bumping its generation, or publishing a version that another
@@ -318,16 +322,21 @@ impl WebCanvasState {
                 // is what the old `bool` did for `Failed`) left the browser
                 // believing a write landed that had been discarded, with no
                 // signal to resync.
+                // Both mean "your push did not land, refetch". The browser's
+                // recovery only fires on `version-conflict` WITH a `version`
+                // (see `WebSyncClient::parse_push_conflict`), so both carry
+                // the authoritative version — a bare refusal would leave the
+                // tab latched with no way to resync.
                 collab_state::IngestOutcome::Rejected => {
-                    return Err(WebCanvasError::Collab(
-                        collab_state::DaemonMutationRefusal::Collab(
-                            op_editor_core::CollabGateReason::PendingEdit,
-                        ),
+                    return Err(WebCanvasError::IngestRejected(
+                        collab_state::IngestOutcome::Rejected,
+                        self.version,
                     ));
                 }
                 collab_state::IngestOutcome::Failed => {
                     return Err(WebCanvasError::IngestRejected(
                         collab_state::IngestOutcome::Failed,
+                        self.version,
                     ));
                 }
             }
@@ -360,24 +369,6 @@ impl WebCanvasState {
 /// A collaboration refusal is not a malformed request, so a client needs the
 /// code to decide between retrying, refetching, and telling the user to leave
 /// the session.
-fn collab_aware_error_reply(error: &WebCanvasError) -> WebReply {
-    match error.error_code() {
-        Some(code) => WebReply {
-            status: error.http_status(),
-            body: serde_json::json!({
-                "ok": false,
-                "error": code,
-                "message": error.to_string(),
-            })
-            .to_string(),
-        },
-        None => WebReply {
-            status: error.http_status(),
-            body: crate::mcp_serve::rest_error_body(&error.to_string()),
-        },
-    }
-}
-
 /// Outcome of [`WebCanvasState::reset_document_guarded`].
 pub(crate) struct ResetOutcome {
     pub skipped: bool,
@@ -705,34 +696,6 @@ pub fn handle_web_canvas_request(
     }
 }
 
-/// Render the reply for an already-parsed document push.
-///
-/// Shares its verdict shape with the in-handler route below, so the two paths
-/// cannot answer the same outcome differently.
-pub(crate) fn document_push_reply(
-    parsed: Result<PendingDocumentPush>,
-    state: &mut WebCanvasState,
-) -> WebReply {
-    match parsed.and_then(|push| state.apply_prepared_document_push(push, None)) {
-        Ok(outcome) if outcome.applied => WebReply {
-            status: "200 OK",
-            body: crate::mcp_serve::document_sync_ok(outcome.current_version),
-        },
-        Ok(outcome) => WebReply {
-            // Stale baseVersion: reject without writing, plus the current
-            // version so the caller can decide whether to refetch and retry.
-            status: "409 Conflict",
-            body: serde_json::json!({
-                "ok": false,
-                "error": "version-conflict",
-                "version": outcome.current_version,
-            })
-            .to_string(),
-        },
-        Err(error) => collab_aware_error_reply(&error),
-    }
-}
-
 /// The daemon's canonical unknown-route reply.
 fn not_found_reply() -> WebReply {
     WebReply {
@@ -749,7 +712,11 @@ fn is_device_login_route(path: &str) -> bool {
 
 mod collab_driver;
 mod document_push;
-pub(crate) use document_push::PendingDocumentPush;
+#[cfg(test)]
+pub(crate) use document_push::collab_aware_error_reply_for_test;
+pub(crate) use document_push::{document_push_reply, PendingDocumentPush};
+// Spine-local: the shared coded-error renderer for the document routes.
+use document_push::collab_aware_error_reply;
 mod sse_hub;
 pub use sse_hub::SseHub;
 pub(crate) use sse_hub::SseSlot;

@@ -29,10 +29,7 @@ pub(super) struct ConnCtx<'a> {
     ///
     /// `None` for the local and managed daemons, which have no per-request
     /// identity and are unrestricted — the REST scope gate is skipped whole.
-    pub(super) rest_identity: Option<(
-        super::tenant_auth::IdentityVia,
-        crate::mcp_serve::tool_profile::McpScopes,
-    )>,
+    pub(super) rest_identity: Option<super::tenant_auth::ResolvedIdentity>,
 }
 
 /// Handle one connection against the single-user document authority.
@@ -198,6 +195,47 @@ pub(super) fn dispatch<S: Read + Write>(
         )?;
         return Ok(false);
     }
+    // Scopes apply to every credentialed route, not just the REST tier and
+    // `/mcp`. They used to be checked inside the `/api/*` branch, which sits
+    // BELOW the specially dispatched routes (AI streams, SSE, figma) — so a
+    // read-only token could drive all of those. Checked here, ahead of every
+    // branch, there is no route left to slip past it.
+    if let Some(identity) = ctx.rest_identity.as_ref() {
+        if let Some(refusal) = super::tool_scopes::check_rest_scope(
+            identity.via,
+            identity.scopes,
+            &req.method,
+            &req.path,
+        ) {
+            crate::mcp_serve::write_mcp_http_response_with_origin(
+                stream,
+                refusal.http_status(),
+                &serde_json::json!({
+                    "ok": false,
+                    "error": refusal.code(),
+                    "message": refusal.to_string(),
+                })
+                .to_string(),
+                cors_origin,
+            )?;
+            return Ok(false);
+        }
+    }
+    // Online account projection. The device-login proxy stays 404 (it drives
+    // a process-wide device session), but the shell must be able to learn
+    // which account it is showing — without this the identity epoch never
+    // fires and an account switch leaks the previous account's document.
+    if req.method == "GET" && req.path == op_editor_core::auth_routes::STATUS {
+        if let Some(identity) = ctx.rest_identity.as_ref() {
+            crate::mcp_serve::write_mcp_http_response_with_origin(
+                stream,
+                "200 OK",
+                &identity.auth_status_json(),
+                cors_origin,
+            )?;
+            return Ok(false);
+        }
+    }
     // Current-account avatar proxy: performs bounded public HTTPS I/O on this
     // connection thread, never while holding the editor-state mutex. Part of
     // the device-login proxy, so it is off wherever that is.
@@ -285,27 +323,6 @@ pub(super) fn dispatch<S: Read + Write>(
     // daemon doesn't implement yet, which it answers with 404 rather than
     // mis-routing them into the JSON-RPC dispatch below.
     if req.path.starts_with("/api/") {
-        // Scopes apply to REST exactly as they apply to `/mcp`. Without this
-        // a read-only token could replace the whole document here — strictly
-        // more damage than any tool call it is refused.
-        if let Some((via, scopes)) = ctx.rest_identity {
-            if let Some(refusal) =
-                super::tool_scopes::check_rest_scope(via, scopes, &req.method, &req.path)
-            {
-                crate::mcp_serve::write_mcp_http_response_with_origin(
-                    stream,
-                    refusal.http_status(),
-                    &serde_json::json!({
-                        "ok": false,
-                        "error": refusal.code(),
-                        "message": refusal.to_string(),
-                    })
-                    .to_string(),
-                    cors_origin,
-                )?;
-                return Ok(false);
-            }
-        }
         // Parse the whole-document push BEFORE taking the state lock. A push
         // can carry megabytes of embedded images, and parsing it under the
         // lock stalled every other request to this tenant — including the

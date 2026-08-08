@@ -30,6 +30,24 @@ const CREDENTIAL_PAYLOAD_VERSION: u32 = 2;
 const STORAGE_KEY: &str = "openpencil-rust-web-settings";
 const CREDENTIAL_STORAGE_KEY: &str = "openpencil-rust-web-credentials";
 
+/// Re-read account-scoped storage after the tab's partition changed.
+///
+/// The shell loads settings and credentials at mount, before any
+/// `/api/auth/status` answer has arrived — so it loads them from the `anon`
+/// partition. Once the account is known the partition key changes, and what is
+/// in memory belongs to the wrong one: without this the tab keeps showing (and
+/// re-saving) anonymous settings under the account's key.
+pub(crate) fn reload_for_active_partition<C: crate::repaint_ctx::RepaintContext>(
+    inner: &std::rc::Rc<std::cell::RefCell<C>>,
+) {
+    let Ok(mut context) = inner.try_borrow_mut() else {
+        return;
+    };
+    let _ = storage::load_into(context.host_mut().editor_state_mut());
+    context.host_mut().mark_editor_state_dirty();
+    let _ = context.repaint();
+}
+
 /// Per-account storage keys.
 ///
 /// The base keys above are same-origin and carry no account dimension, so two

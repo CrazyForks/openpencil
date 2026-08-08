@@ -18,7 +18,7 @@ use crate::repaint_ctx::RepaintContext;
 /// Best effort on the borrow: if the shell is mid-render the accept still has
 /// to proceed (the alternative is the latch that never lifts), and the next
 /// conflict will stash again.
-fn preserve_local_document<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) {
+pub(super) fn preserve_local_document<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) {
     let Ok(mut context) = inner.try_borrow_mut() else {
         return;
     };

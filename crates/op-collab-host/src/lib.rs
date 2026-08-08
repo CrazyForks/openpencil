@@ -21,6 +21,7 @@ mod runtime;
 
 pub use blocking::{install_blocking_executor, BlockingExecutor};
 pub use host::{CollabHost, CollabWakeNotifier, HeadlessCollabHost};
+pub use runtime::local_edit::LocalEditOutcome;
 pub use runtime::types::{CollabRuntimeFailure, CollabStatusEvent};
 pub use runtime::CollabRuntime;
 

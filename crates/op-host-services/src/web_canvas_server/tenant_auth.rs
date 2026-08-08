@@ -137,6 +137,36 @@ impl PresentedCredentials {
     }
 }
 
+impl ResolvedIdentity {
+    /// The `/api/auth/status` projection for an online deployment.
+    ///
+    /// The shell's account layer polls this route to learn WHO it is showing;
+    /// online used to 404 it wholesale, which left the identity epoch — and
+    /// therefore the account-switch reset — permanently dormant. So the route
+    /// answers here instead of through the device-login proxy.
+    ///
+    /// Only a verified connection reaches this: the online loop resolves the
+    /// credential before dispatch, so there is no anonymous caller to leak to.
+    /// It is a strictly READ-ONLY projection of the caller's own identity —
+    /// the sign-in and sign-out routes stay 404, because they drive the
+    /// process-wide device session that an online deployment must not expose.
+    pub fn auth_status_json(&self) -> String {
+        serde_json::json!({
+            // The account UI is meaningful: this deployment has accounts.
+            "available": true,
+            "signed_in": true,
+            // `username` is what `identity_epoch` keys the tab's partition on.
+            "username": self.username,
+            "display_name": self.display_name,
+            // Not projected: the hub owns the address, and the shell only uses
+            // it for display. Absent is honest rather than fabricated.
+            "primary_email": serde_json::Value::Null,
+            "avatar_revision": serde_json::Value::Null,
+        })
+        .to_string()
+    }
+}
+
 /// Turns a presented credential into a verified account.
 ///
 /// Implementations must be safe to call from many connection threads at

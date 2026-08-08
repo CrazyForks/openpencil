@@ -78,10 +78,12 @@ impl SseHub {
     /// slot for ticks. Dropping it unregisters.
     pub(crate) fn subscribe(&self) -> Arc<SseSlot> {
         let slot = Arc::new(SseSlot::new());
-        self.subscribers
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .push(Arc::downgrade(&slot));
+        let mut subscribers = self.subscribers.lock().unwrap_or_else(|p| p.into_inner());
+        // Prune here too, not only on broadcast: a tenant whose clients all
+        // disconnected and which then never publishes again would otherwise
+        // accumulate one dead `Weak` per reconnect, forever.
+        subscribers.retain(|slot| slot.strong_count() > 0);
+        subscribers.push(Arc::downgrade(&slot));
         slot
     }
 

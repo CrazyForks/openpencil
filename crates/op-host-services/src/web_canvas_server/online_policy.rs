@@ -199,11 +199,16 @@ pub(super) fn cookie_write_origin_allowed(allow: &[String], origin: Option<&str>
 /// paints nothing.
 pub(super) const EMPTY_INDICATOR_RELAY: &str = r#"{"epoch":0,"active":false,"cursorAgent":null,"nodes":[],"frames":[],"previews":[],"reveals":[]}"#;
 
-/// REST paths an API token may reach without any scope.
+/// Paths the method-based REST scope rule does not decide.
 ///
-/// Only the deployment health probe: a client has to be able to discover the
-/// daemon exists before it can be told its scopes are insufficient.
-const SCOPE_EXEMPT_READS: &[&str] = &["/api/mcp/server"];
+/// - `/api/mcp/server` is the deployment health probe: a client has to be able
+///   to discover the daemon exists before it can be told its scopes are
+///   insufficient.
+/// - `/mcp` and its `/` alias are JSON-RPC, where the MCP dispatch runs a
+///   strictly better check — it knows which TOOL is being called, so a
+///   read-only token can still call read tools. Applying the coarse
+///   "POST means write" rule here would refuse those outright.
+const SCOPE_EXEMPT_PATHS: &[&str] = &["/api/mcp/server", "/mcp", "/"];
 
 /// Which scope a REST request needs, if any.
 ///
@@ -214,7 +219,7 @@ pub(super) fn rest_scope_required(
     method: &str,
     path: &str,
 ) -> Option<super::tool_scopes::RestScope> {
-    if SCOPE_EXEMPT_READS.contains(&path) {
+    if SCOPE_EXEMPT_PATHS.contains(&path) {
         return None;
     }
     match method {

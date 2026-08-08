@@ -348,6 +348,24 @@ fn sync_id_allocation(host: &mut crate::widget_host::WidgetHost, wire: &CollabSt
         .then(|| wire.session.as_ref().and_then(|s| s.peer_namespace.clone()))
         .flatten();
     match namespace {
+        // The installed allocator disagrees with the namespace the daemon now
+        // publishes — a different session (or a different account) owns this
+        // document. Tear the old allocator down so the arm below installs the
+        // new one; leaving it would keep minting ids in a namespace this peer
+        // no longer holds.
+        Some(namespace)
+            if host.collaboration_ids_enabled()
+                && !session_namespace_matches(namespace.as_str()) =>
+        {
+            host.disable_collaboration_ids();
+            set_session_namespace(None);
+            if let Ok(parsed) = op_editor_core::PeerNamespace::parse(namespace.clone()) {
+                let installed = parsed.clone();
+                if host.enable_collaboration_ids(parsed).is_ok() {
+                    set_session_namespace(Some(installed));
+                }
+            }
+        }
         Some(namespace) if !host.collaboration_ids_enabled() => {
             match op_editor_core::PeerNamespace::parse(namespace) {
                 Ok(namespace) => {
@@ -391,6 +409,30 @@ pub(crate) fn reset_for_new_identity() {
     SESSION_NAMESPACE.with(|slot| *slot.borrow_mut() = None);
     APPLIED_SEQ.set(None);
     SESSION_LIVE.set(false);
+    ACTION_RETRY.with(|slot| *slot.borrow_mut() = None);
+    ACTION_BUSY.set(false);
+    UNDO_REQUESTED.set(false);
+}
+
+/// Drop the id allocator the previous account's session installed.
+///
+/// Separate from [`reset_for_new_identity`] because it needs the host, which
+/// the caller holds. Without it a new account keeps minting ids inside the
+/// previous account's namespace — ids the new session never granted it.
+pub(crate) fn reset_id_allocation(host: &mut crate::widget_host::WidgetHost) {
+    if host.collaboration_ids_enabled() {
+        host.disable_collaboration_ids();
+    }
+    set_session_namespace(None);
+}
+
+/// Whether the installed allocator is minting under `namespace`.
+fn session_namespace_matches(namespace: &str) -> bool {
+    SESSION_NAMESPACE.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .is_some_and(|installed| installed.as_str() == namespace)
+    })
 }
 
 /// Record (or clear) the namespace this peer mints under.

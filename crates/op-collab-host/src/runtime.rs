@@ -8,7 +8,7 @@ mod effects_wire;
 mod failure;
 mod guest_confirmation;
 mod guest_routes;
-mod local_edit;
+pub(crate) mod local_edit;
 mod network;
 mod poll;
 mod region_pref;
@@ -63,6 +63,14 @@ const MAX_STATUS_EVENTS: usize = 64;
 /// `refresh_availability` → `drain_ui_action` → `poll`, plus the local-edit
 /// capture pair around every mutating gesture.
 pub struct CollabRuntime {
+    /// What the last completed local-edit capture resolved to, recorded by
+    /// the effect-routing layer and consumed by `finish_local_edit`.
+    ///
+    /// A field rather than a return value because the resolution is decided
+    /// several frames down inside `route_owner_output` / `route_guest_output`,
+    /// which are also reached from `poll` — threading it back through every
+    /// effect signature would touch far more than the one decision.
+    pub(crate) last_local_edit: Option<crate::runtime::local_edit::LocalEditOutcome>,
     events: Receiver<TaggedNetworkEvent>,
     event_sender: SyncSender<TaggedNetworkEvent>,
     terminal_event_sender: TerminalEventLane,
@@ -137,6 +145,7 @@ impl CollabRuntime {
         let (event_sender, events, terminal_event_sender, terminal_events) =
             network::event_channel();
         Self {
+            last_local_edit: None,
             events,
             event_sender,
             terminal_event_sender,

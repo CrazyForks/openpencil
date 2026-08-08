@@ -48,7 +48,7 @@ const CORRUPT_SUFFIX: &str = "corrupt";
 ///
 /// A share list is a handful of accounts; a larger one is a bug or an attempt
 /// to make the daemon allocate on every eviction.
-const MAX_SHARED_ACCOUNTS: usize = 256;
+pub(super) const MAX_SHARED_ACCOUNTS: usize = 256;
 
 /// Why a tenant could not be persisted or restored.
 ///
@@ -66,6 +66,10 @@ pub enum TenantStoreError {
     /// The stored document exists but could not be loaded. It has been moved
     /// aside; the caller should start fresh.
     Unreadable(String),
+    /// The access list is already at its ceiling. A client fault, not an IO
+    /// one — reported so the grant is refused rather than accepted and then
+    /// silently dropped by the bounded write.
+    ShareLimitReached(usize),
 }
 
 impl std::fmt::Display for TenantStoreError {
@@ -76,6 +80,9 @@ impl std::fmt::Display for TenantStoreError {
             Self::Io(detail) => write!(f, "tenant store IO failed: {detail}"),
             Self::Unreadable(detail) => {
                 write!(f, "stored document could not be loaded: {detail}")
+            }
+            Self::ShareLimitReached(limit) => {
+                write!(f, "this document is already shared with {limit} accounts")
             }
         }
     }
@@ -107,6 +114,38 @@ impl TenantStore {
 
     pub const fn is_enabled(&self) -> bool {
         self.root.is_some()
+    }
+
+    /// Prove at start-up that this process can actually write the data
+    /// directory.
+    ///
+    /// A read-only mount, or a volume owned by root while the container runs
+    /// as UID 10001, fails every eviction — silently, half an hour after
+    /// start, one account at a time. Exercising the full create → write →
+    /// rename → delete cycle here turns that into a start-up failure that
+    /// names the likely cause.
+    pub fn check_writable(&self) -> Result<(), TenantStoreError> {
+        let Some(root) = self.root.as_ref() else {
+            return Ok(());
+        };
+        let probe_dir = root.join(".probe");
+        let describe = |error: std::io::Error| {
+            TenantStoreError::Io(format!(
+                "{error} (is {} writable by the user this process runs as? \
+                 the container image runs as UID 10001)",
+                root.display()
+            ))
+        };
+        std::fs::create_dir_all(&probe_dir).map_err(describe)?;
+        let staged = probe_dir.join("write.tmp");
+        let landed = probe_dir.join("write.ok");
+        std::fs::write(&staged, b"probe").map_err(describe)?;
+        // Rename specifically: the atomic publish every save depends on can
+        // fail where a plain write succeeds (some network filesystems).
+        std::fs::rename(&staged, &landed).map_err(describe)?;
+        std::fs::remove_file(&landed).map_err(describe)?;
+        let _ = std::fs::remove_dir(&probe_dir);
+        Ok(())
     }
 
     /// The directory holding `user_id`'s tenant, if persistence is on.

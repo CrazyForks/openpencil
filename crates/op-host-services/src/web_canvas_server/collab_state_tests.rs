@@ -314,8 +314,33 @@ fn a_rejected_ingest_is_distinguishable_from_an_accepted_one() {
     use crate::web_canvas_server::IngestOutcome;
     assert_eq!(IngestOutcome::Committed.error_code(), None);
     assert_eq!(IngestOutcome::NoChange.error_code(), None);
-    assert_eq!(IngestOutcome::Rejected.error_code(), Some("collab-busy"));
-    // Shares the browser's existing conflict code so its established refetch
-    // path handles it with no new client branch.
+    // Both rejections use the code the browser recovers from: its
+    // `parse_push_conflict` only recognises `version-conflict`, so any other
+    // code would leave the tab latched with no way to resync.
+    assert_eq!(
+        IngestOutcome::Rejected.error_code(),
+        Some("version-conflict")
+    );
     assert_eq!(IngestOutcome::Failed.error_code(), Some("version-conflict"));
+}
+
+#[test]
+fn a_rejected_ingest_answers_409_with_the_authoritative_version() {
+    // The browser's recovery only fires on `version-conflict` carrying a
+    // `version` (`WebSyncClient::parse_push_conflict`). A 409 without one
+    // leaves the tab latched with nothing to refetch from.
+    use crate::web_canvas_server::IngestOutcome;
+    for outcome in [IngestOutcome::Rejected, IngestOutcome::Failed] {
+        let error = crate::web_canvas_server_error::WebCanvasError::IngestRejected(outcome, 42);
+        assert_eq!(error.http_status(), "409 Conflict", "{outcome:?}");
+        let reply = crate::web_canvas_server::collab_aware_error_reply_for_test(&error);
+        let body: serde_json::Value = serde_json::from_str(&reply.body).expect("json");
+        assert_eq!(body["ok"], false, "{outcome:?}");
+        assert_eq!(body["error"], "version-conflict", "{outcome:?}");
+        assert_eq!(body["version"], 42, "{outcome:?}");
+        assert!(
+            op_editor_core::web_sync::WebSyncClient::parse_push_conflict(&reply.body).is_some(),
+            "{outcome:?}: the browser must be able to parse its recovery version"
+        );
+    }
 }

@@ -104,3 +104,24 @@ mod tests {
         assert!(take().is_none());
     }
 }
+
+#[cfg(test)]
+mod call_site_tests {
+    /// The stash was previously defined but never called — a dead safety net.
+    /// This pins that the auto-accept path actually references it, so a future
+    /// refactor that drops the call fails here rather than silently.
+    #[test]
+    fn the_auto_accept_path_stashes_before_resolving() {
+        let glue = include_str!("live_sync_glue.rs");
+        let resolve_at = glue
+            .find("resolve_accept_remote")
+            .expect("the auto-accept path exists");
+        let stash_at = glue
+            .find("preserve_local_document")
+            .expect("the auto-accept path must stash the local document first");
+        assert!(
+            stash_at < resolve_at,
+            "the stash must run while the local document is still on screen"
+        );
+    }
+}

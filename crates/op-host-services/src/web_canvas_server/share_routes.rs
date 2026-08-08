@@ -126,6 +126,19 @@ fn mutate(
             })
             .to_string(),
         },
+        // A full access list is the caller's problem, not the server's: the
+        // store writes a bounded list, so accepting the grant would report a
+        // success that vanishes on the next save.
+        Err(super::tenant_store::TenantStoreError::ShareLimitReached(limit)) => WebReply {
+            status: "400 Bad Request",
+            body: serde_json::json!({
+                "ok": false,
+                "error": "share-limit-reached",
+                "limit": limit,
+                "message": format!("this document is already shared with {limit} accounts"),
+            })
+            .to_string(),
+        },
         // The change has been rolled back, so memory and disk agree and a
         // retry starts from a known state. Reporting 200 here — as the
         // previous code did — told the user a share had succeeded that would

@@ -309,6 +309,12 @@ fn maybe_auto_resolve_conflict_in_session<C: RepaintContext + 'static>(
     if !auto_resolve_is_safe(has_conflict, phase, server_is_authoritative()) {
         return;
     }
+    // Accepting the remote overwrites whatever this tab had not yet pushed.
+    // Undo is the primary way back (the apply is undoable); this stash is the
+    // belt-and-braces copy plus the notice that tells the user any of it
+    // happened. It must run BEFORE the resolve, while the local document is
+    // still the one on screen.
+    live_sync_conflict::preserve_local_document(inner);
     // Re-opens the pull for THIS pair only; the resolving pull's apply calls
     // `note_synced`, which is what finally clears the baseline and reopens the
     // push side too.

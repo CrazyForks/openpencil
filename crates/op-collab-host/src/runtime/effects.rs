@@ -1,6 +1,8 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::runtime::local_edit::LocalEditOutcome;
+
 use op_collab::{
     Bye, ByeReason, CollabMessage, ConnectionKey, GuestEffect, OwnerEffect, ParticipantPresence,
     Point, Presence, UndoOutcome, UndoResult, Viewport,
@@ -208,15 +210,20 @@ impl CollabRuntime {
             self.close_failed_owner_peer(owner, connection, host)?;
         }
         if let Some(local) = local_edit {
-            match local {
-                LocalEditResolution::NoChange | LocalEditResolution::Committed(_) => {}
+            // Recorded so `finish_local_edit` can report what actually
+            // happened. Swallowing the rejection here is what let a rolled-back
+            // push be answered 200.
+            self.last_local_edit = Some(match local {
+                LocalEditResolution::NoChange => LocalEditOutcome::NoChange,
+                LocalEditResolution::Committed(_) => LocalEditOutcome::Committed,
                 LocalEditResolution::Rejected(_) => {
                     self.set_notice(
                         host,
                         CollabNoticeKind::Reject(CollabRejectUiCode::Unsupported),
                     );
+                    LocalEditOutcome::Rejected
                 }
-            }
+            });
         }
         for effect in effects {
             self.route_owner_effect(owner, effect, host)?;
@@ -323,19 +330,23 @@ impl CollabRuntime {
         deliver_outbound: bool,
     ) -> Result<(), CollabRuntimeError> {
         if let Some(local) = output.local_edit {
-            match local {
-                GuestLocalEditResolution::NoChange => {}
+            self.last_local_edit = Some(match local {
+                GuestLocalEditResolution::NoChange => LocalEditOutcome::NoChange,
                 GuestLocalEditResolution::Submitted => {
                     host.editor_state_mut().editor_ui.collab.pending_edit =
                         CollabPendingEditUi::Submitting;
+                    // Submitted, not yet acknowledged — but it IS on the wire
+                    // and the local document holds it, so the push landed.
+                    LocalEditOutcome::Committed
                 }
                 GuestLocalEditResolution::Rejected(_) => {
                     self.set_notice(
                         host,
                         CollabNoticeKind::Reject(CollabRejectUiCode::Unsupported),
                     );
+                    LocalEditOutcome::Rejected
                 }
-            }
+            });
         }
         for effect in output.effects {
             match effect {

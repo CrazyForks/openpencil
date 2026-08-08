@@ -313,3 +313,50 @@ fn a_persisted_tenant_carries_no_thumbnail_data() {
         "another tenant's image data must not ride along"
     );
 }
+
+#[test]
+fn a_push_that_never_installs_releases_its_thumbnail_seed() {
+    // `load_canonical` registers the seed in a process-global side table keyed
+    // by the document; only an activation consumes it. A push that is parsed
+    // and then dropped — stale baseVersion, collaboration refusal, client gone
+    // — used to leave it there, where a later document reusing the key could
+    // activate someone else's thumbnails.
+    use crate::web_canvas_server::{PendingDocumentPush, ServeMode};
+
+    let body = serde_json::json!({
+        "document": {
+            "version": "1.0.0",
+            "children": [{
+                "id": "n1", "type": "rectangle", "name": "seeded",
+                "x": 0, "y": 0, "width": 4, "height": 4,
+            }],
+            "imageThumbs": { "5150": "AQID" },
+        },
+        "sourceClientId": "s",
+    })
+    .to_string();
+
+    let push = PendingDocumentPush::parse(&body, ServeMode::Local).expect("parses");
+    let document_version = push
+        .prepared
+        .as_ref()
+        .expect("a document push")
+        .document()
+        .version
+        .clone();
+    // Dropped without installing — the failure paths this exists for.
+    drop(push);
+
+    // The seed is gone: a fresh document carrying the same key activates
+    // nothing rather than inheriting the abandoned push's thumbnails.
+    let mut probe = op_pen_loader::load_canonical(
+        &serde_json::json!({ "version": document_version, "children": [] }).to_string(),
+    )
+    .expect("probe document")
+    .value;
+    probe.version.clone_from(&document_version);
+    assert!(
+        !jian_ops_schema::image_thumbs::activate_for_document(&probe),
+        "an abandoned push must not leave an activatable seed behind"
+    );
+}

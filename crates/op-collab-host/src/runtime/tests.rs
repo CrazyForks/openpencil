@@ -170,7 +170,10 @@ fn reliable_owner_delivery_failure_falls_back_to_standalone() {
     assert!(runtime.begin_local_edit(&mut host));
     host.editor_state_mut().doc = document_named("Changed");
 
-    assert!(!runtime.finish_local_edit(&mut host));
+    assert_eq!(
+        runtime.finish_local_edit(&mut host),
+        crate::runtime::local_edit::LocalEditOutcome::Failed
+    );
     assert!(runtime.actor.is_none());
     assert!(runtime.network.is_none());
     assert_eq!(
@@ -199,7 +202,10 @@ fn commit_broadcast_reuses_one_encoded_allocation_across_peer_commands() {
 
     assert!(runtime.begin_local_edit(&mut host));
     host.editor_state_mut().doc = document_named("Shared encoded commit");
-    assert!(runtime.finish_local_edit(&mut host));
+    assert_ne!(
+        runtime.finish_local_edit(&mut host),
+        crate::runtime::local_edit::LocalEditOutcome::Failed
+    );
 
     let mut queued = Vec::new();
     for _ in 0..2 {
@@ -558,7 +564,10 @@ fn retry_against_new_epoch_ends_without_replaying_pending_edit() {
     let (mut runtime, mut host, commands, original_connection, welcome) = guest_runtime(8);
     assert!(runtime.begin_local_edit(&mut host));
     host.editor_state_mut().doc = document_named("Changed");
-    assert!(runtime.finish_local_edit(&mut host));
+    assert_ne!(
+        runtime.finish_local_edit(&mut host),
+        crate::runtime::local_edit::LocalEditOutcome::Failed
+    );
     assert!(matches!(
         commands.recv_timeout(Duration::from_secs(1)).unwrap(),
         GuestNetworkCommand::Send {
