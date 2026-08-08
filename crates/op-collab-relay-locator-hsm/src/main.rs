@@ -1,8 +1,12 @@
+// The signer only deploys on unix (permission-checked unix socket); other
+// hosts get a stub main so workspace-wide checks still build the target.
+#![cfg_attr(not(unix), allow(dead_code))]
+
 use std::{env, path::PathBuf, process::ExitCode};
 
-use op_collab_relay_locator_hsm::{
-    secure_file, server, KeyStore, SignerConfig, SignerError, SignerResult,
-};
+#[cfg(unix)]
+use op_collab_relay_locator_hsm::{secure_file, server, KeyStore, SignerConfig};
+use op_collab_relay_locator_hsm::{SignerError, SignerResult};
 use tracing_subscriber::EnvFilter;
 
 enum Command {
@@ -18,6 +22,7 @@ struct Arguments {
     config: PathBuf,
 }
 
+#[cfg(unix)]
 fn main() -> ExitCode {
     init_tracing();
     match run() {
@@ -29,6 +34,14 @@ fn main() -> ExitCode {
     }
 }
 
+#[cfg(not(unix))]
+fn main() -> ExitCode {
+    init_tracing();
+    eprintln!("locator HSM signer requires a unix host");
+    ExitCode::FAILURE
+}
+
+#[cfg(unix)]
 fn run() -> SignerResult<()> {
     let arguments = parse_arguments()?;
     let config_bytes = secure_file::read_config(&arguments.config)?;

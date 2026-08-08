@@ -79,9 +79,13 @@ mod heartbeat_idle {
         TransportConfig {
             timeouts: TimeoutConfig {
                 heartbeat: Duration::from_millis(50),
-                idle: Duration::from_millis(400),
-                read_write: Duration::from_millis(400),
-                admission: Duration::from_millis(400),
+                // The transfer-idle deadline is what this module tests; 2s
+                // keeps the run short while leaving the handshake windows
+                // (capped at idle by config validation) wide enough that a
+                // loaded CI runner cannot flake the connect/admission phase.
+                idle: Duration::from_secs(2),
+                read_write: Duration::from_secs(2),
+                admission: Duration::from_secs(2),
                 ..TimeoutConfig::default()
             },
             ..TransportConfig::default()
