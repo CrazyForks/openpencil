@@ -20,14 +20,29 @@ use crate::cli_probe_error::CliProbeError;
 use crate::cli_probe_support::{bounded_cli_output, diagnose_timeout, BoundedProbe};
 use crate::model_discovery::resolve_cli;
 
+/// `agy models` parsing. Split off at the 800-line cap; re-exported below
+/// so `cli_model_discovery::parse_antigravity_models` stays the import path.
+#[path = "cli_model_discovery_antigravity.rs"]
+mod antigravity;
+
+pub use antigravity::{note_antigravity_catalog_version, parse_antigravity_models};
+
+#[cfg(test)]
+use antigravity::{catalog_format_code, catalog_shape_change};
+
 /// Matches `cli_provider_probe::MODELS_PROBE_TIMEOUT`: every query in this
 /// module is a `models` call, and a `models` call is a network round trip.
 /// Ten seconds cut off `agy`'s own error (11.04 s without a proxy) a beat
 /// before it arrived.
 const MODEL_QUERY_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// Query the installed Antigravity catalog. `agy models` may print display
-/// names or kebab-case model IDs; both are accepted verbatim by `--model`.
+/// Query the installed Antigravity catalog. `agy models` has printed three
+/// different shapes across releases — display names, one column of slugs,
+/// and today's `id<TAB>display name` — all of which
+/// [`parse_antigravity_models`] accepts while keeping the id column apart
+/// from the label. Feeding a whole two-column row back as `--model` is
+/// exactly the "model … is not recognized" failure this module exists to
+/// avoid.
 pub fn query_antigravity_models() -> Result<Vec<ModelEntry>, CliProbeError> {
     let exe = resolve_cli("agy").ok_or(CliProbeError::NotFound {
         provider: "Antigravity",
@@ -92,106 +107,8 @@ pub fn antigravity_default_model() -> Vec<ModelEntry> {
     )]
 }
 
-/// Parse `agy models`. Accept display names, kebab-case IDs, and JSON catalogs
-/// so the integration survives CLI output-format changes.
-pub fn parse_antigravity_models(raw: &str) -> Vec<ModelEntry> {
-    let mut names = BTreeSet::new();
-    if let Ok(value) = serde_json::from_str::<serde_json::Value>(raw) {
-        // A catalog is either a top-level array or lives under one of the
-        // documented catalog wrapper fields. Do not mine arbitrary top-level
-        // `name` / `id` diagnostics for model-looking strings.
-        collect_antigravity_names(&value, &mut names, value.is_array());
-    }
-
-    let mut in_catalog = false;
-    let mut catalog_ended = false;
-    let mut saw_catalog_entry = false;
-    for line in raw.lines() {
-        let clean = strip_ansi(line);
-        let clean = clean.trim();
-        if clean.is_empty() {
-            if in_catalog && saw_catalog_entry {
-                in_catalog = false;
-                catalog_ended = true;
-            }
-            continue;
-        }
-        let lower = clean.to_ascii_lowercase();
-        if lower.contains("available models") || lower == "models:" {
-            in_catalog = true;
-            catalog_ended = false;
-            saw_catalog_entry = false;
-            continue;
-        }
-        let (candidate, was_bullet) = trim_catalog_bullet(clean);
-        if candidate.is_empty() || is_catalog_diagnostic(candidate) {
-            if in_catalog && saw_catalog_entry {
-                in_catalog = false;
-                catalog_ended = true;
-            }
-            continue;
-        }
-        let unheaded_bullet = was_bullet && !catalog_ended;
-        let unheaded_model = !catalog_ended && looks_like_antigravity_model(candidate);
-        if (in_catalog || unheaded_bullet || unheaded_model)
-            && looks_like_antigravity_model(candidate)
-        {
-            names.insert(candidate.to_string());
-            if in_catalog || unheaded_bullet {
-                saw_catalog_entry = true;
-            }
-        } else if in_catalog && saw_catalog_entry {
-            in_catalog = false;
-            catalog_ended = true;
-        }
-    }
-
-    names
-        .into_iter()
-        .map(|name| ModelEntry::new(AgentProvider::Antigravity, name.clone(), name))
-        .collect()
-}
-
-fn collect_antigravity_names(
-    value: &serde_json::Value,
-    out: &mut BTreeSet<String>,
-    catalog_context: bool,
-) {
-    match value {
-        serde_json::Value::String(name)
-            if catalog_context && looks_like_antigravity_model(name) =>
-        {
-            out.insert(name.trim().to_string());
-        }
-        serde_json::Value::Array(values) => {
-            for value in values {
-                collect_antigravity_names(value, out, true);
-            }
-        }
-        serde_json::Value::Object(map) => {
-            for (key, value) in map {
-                if catalog_context
-                    && matches!(
-                        key.as_str(),
-                        "id" | "model" | "name" | "displayName" | "display_name"
-                    )
-                {
-                    if let Some(name) = value
-                        .as_str()
-                        .map(str::trim)
-                        .filter(|name| looks_like_antigravity_model(name))
-                    {
-                        out.insert(name.to_string());
-                    }
-                } else if matches!(key.as_str(), "models" | "data" | "result" | "catalog") {
-                    collect_antigravity_names(value, out, true);
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
+/// Shared by both catalogs: a leading list bullet is decoration, not part
+/// of the value behind it.
 fn trim_catalog_bullet(line: &str) -> (&str, bool) {
     let trimmed = line.trim_start();
     for bullet in ["* ", "- ", "• ", "● "] {
@@ -200,54 +117,6 @@ fn trim_catalog_bullet(line: &str) -> (&str, bool) {
         }
     }
     (trimmed.trim(), false)
-}
-
-fn looks_like_antigravity_model(value: &str) -> bool {
-    let lower = value.trim().to_ascii_lowercase();
-    !is_catalog_diagnostic(&lower)
-        && [
-            "gemini ",
-            "gemini-",
-            "claude ",
-            "claude-",
-            "gpt-",
-            "gpt ",
-            "gemma ",
-            "deepseek ",
-            "grok ",
-            "qwen ",
-        ]
-        .iter()
-        .any(|prefix| lower.starts_with(prefix))
-}
-
-fn is_catalog_diagnostic(value: &str) -> bool {
-    let lower = value.trim().to_ascii_lowercase();
-    [
-        "sign in",
-        "signin",
-        "log in",
-        "login",
-        "authenticate",
-        "authentication",
-        "unauthorized",
-        "credential",
-        "api key",
-        "required",
-        "unavailable",
-        "failed",
-        "failure",
-        "error:",
-        "no models",
-        "loading",
-        "checking",
-        "timed out",
-        "troubleshoot",
-        "documentation",
-        "release notes",
-    ]
-    .iter()
-    .any(|marker| lower.contains(marker))
 }
 
 /// Query the real Grok Build model catalog. The command is bounded because
@@ -476,6 +345,14 @@ fn first_grok_catalog_column(row: &str) -> Option<&str> {
             .split('|')
             .map(str::trim)
             .find(|column| !column.is_empty());
+    }
+    // A tab is always a column boundary. `grok models` prints bullet rows
+    // today (verified: `Available models:` / `  * grok-4.5 (default)`), so
+    // this is defensive — but it is the shape that broke the Antigravity
+    // parser, and here the single-whitespace scan below would silently drop
+    // the whole row rather than mis-read it.
+    if let Some(gap) = row.find('\t') {
+        return Some(row[..gap].trim());
     }
 
     let bytes = row.as_bytes();

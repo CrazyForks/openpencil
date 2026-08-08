@@ -84,6 +84,11 @@ pub fn connect_antigravity_localized(locale: Locale) -> ProbeOutcome {
         Ok(models) => models,
         Err(error) => return failed(error.to_string()),
     };
+    // Informational only: pairs the version we just probed with the catalog
+    // layout the parse above saw, and logs it when that pair changes. `agy`
+    // has changed its `models` format three times; without this, dating a
+    // format change means reading the binary's mtime.
+    crate::cli_model_discovery::note_antigravity_catalog_version(&version);
     ProbeOutcome {
         connected: true,
         models,

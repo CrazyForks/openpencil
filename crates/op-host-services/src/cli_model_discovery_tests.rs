@@ -94,6 +94,243 @@ fn parses_antigravity_display_names_without_losing_effort_suffixes() {
     assert!(models.iter().all(|model| model.value == model.display_name));
 }
 
+// ---------------------------------------------------------------------
+// `agy models` output-format archive.
+//
+// Upstream has changed this format three times, and each change silently
+// broke the parser until a user hit it. One version-named test per format,
+// each against a REAL captured fixture:
+//
+//   pre-1.1.5   display names        `parses_antigravity_display_names_…`
+//   1.1.5       one column of slugs  `parses_antigravity_v1_1_5_slug_catalog`
+//   1.1.11      `id<TAB>display`     `parses_antigravity_v1_1_11_two_column_catalog`
+//
+// All three are still live inputs — users run whatever `agy` auto-updated
+// them to. When it changes again: capture the real output, add the next
+// version-named test, and leave the older ones alone.
+// ---------------------------------------------------------------------
+
+/// The real `agy models` stdout, captured 2026-08-07 from `agy` 1.1.11 and
+/// verified byte-for-byte against the live command: one row per model,
+/// `id<TAB>display name`, no heading. The tabs ARE the fixture — the
+/// pre-existing samples in this file were hand-written without them, which
+/// is why every test here passed while the shipped parser handed `agy` a
+/// `--model` value with a tab and a display name embedded in it.
+const AGY_MODELS_TSV: &str = concat!(
+    "gemini-3.6-flash-high\tGemini 3.6 Flash (High)\n",
+    "gemini-3.6-flash-medium\tGemini 3.6 Flash (Medium)\n",
+    "gemini-3.6-flash-low\tGemini 3.6 Flash (Low)\n",
+    "gemini-3.5-flash-high\tGemini 3.5 Flash (High)\n",
+    "gemini-3.5-flash-medium\tGemini 3.5 Flash (Medium)\n",
+    "gemini-3.5-flash-low\tGemini 3.5 Flash (Low)\n",
+    "gemini-3.1-pro-high\tGemini 3.1 Pro (High)\n",
+    "gemini-3.1-pro-low\tGemini 3.1 Pro (Low)\n",
+    "claude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)\n",
+    "claude-opus-4-6-thinking\tClaude Opus 4.6 (Thinking)\n",
+    "gpt-oss-120b-medium\tGPT-OSS 120B (Medium)\n",
+);
+
+/// The block `agy` prints on stderr when it rejects a `--model` value,
+/// captured the same day by running `agy --model definitely-not-a-model`.
+/// It lists DISPLAY NAMES and no id column at all.
+const AGY_REJECTED_MODEL_BLOCK: &str = concat!(
+    "Error: invalid model selection (--model \"definitely-not-a-model\" --effort \"\"): ",
+    "model definitely-not-a-model is not recognized as a known model or custom model in settings\n",
+    "Available models:\n",
+    "  Gemini 3.6 Flash (High)\n",
+    "  Gemini 3.5 Flash (Medium)\n",
+    "  Claude Opus 4.6 (Thinking)\n",
+    "  GPT-OSS 120B (Medium)\n",
+);
+
+/// `agy` 1.1.11 (auto-updated 2026-08-07, ~5 hours before the first user
+/// report): two columns. The 1.1.5 adaptation kept whole rows, so `--model`
+/// received `"gemini-3.6-flash-high\tGemini 3.6 Flash (High)"`.
+#[test]
+fn parses_antigravity_v1_1_11_two_column_catalog() {
+    let models = parse_antigravity_models(AGY_MODELS_TSV);
+    assert_eq!(models.len(), 11, "{models:#?}");
+
+    // The exact defect: a `--model` value that carries its own label.
+    for model in &models {
+        assert!(
+            !model.value.contains('\t') && !model.value.contains(' '),
+            "id absorbed the display column: {:?}",
+            model.value
+        );
+    }
+
+    let pairs: Vec<(&str, &str)> = models
+        .iter()
+        .map(|model| (model.value.as_str(), model.display_name.as_str()))
+        .collect();
+    assert!(
+        pairs.contains(&("gemini-3.6-flash-high", "Gemini 3.6 Flash (High)")),
+        "{pairs:#?}"
+    );
+    assert!(
+        pairs.contains(&("claude-opus-4-6-thinking", "Claude Opus 4.6 (Thinking)")),
+        "{pairs:#?}"
+    );
+    assert!(
+        pairs.contains(&("gpt-oss-120b-medium", "GPT-OSS 120B (Medium)")),
+        "{pairs:#?}"
+    );
+}
+
+/// A rejected `--model` prints its own `Available models:` block. It
+/// describes a run that FAILED, so it is a diagnostic and never a catalog —
+/// even though its rows would parse, and even though those display names
+/// happen to be usable `--model` values (`agy --model "Gemini 3.6 Flash
+/// (High)"` answers normally; measured).
+///
+/// This is why "no id column ⇒ not a model id" would be the wrong rule:
+/// pre-1.1.5 `agy models` legitimately printed display names and nothing
+/// else. The distinction that holds is the SOURCE, not the shape.
+#[test]
+fn model_rejection_block_is_a_diagnostic_not_a_catalog() {
+    assert!(
+        parse_antigravity_models(AGY_REJECTED_MODEL_BLOCK).is_empty(),
+        "an error block must not populate the model picker"
+    );
+    // …and a display-name catalog with no error in it still parses, so the
+    // pre-1.1.5 format is not collateral damage. (Covered in full by
+    // `parses_antigravity_display_names_without_losing_effort_suffixes`.)
+    assert_eq!(
+        parse_antigravity_models("Available models:\n  Gemini 3.6 Flash (High)").len(),
+        1
+    );
+}
+
+/// Reaching this block means `agy models` succeeded but printed something
+/// we could not split, so the honest outcome is the existing
+/// unrecognized-catalog fallback rather than ids that will fail later.
+#[test]
+fn a_rejection_block_on_stdout_reports_an_unrecognized_catalog() {
+    let error = require_antigravity_models(AGY_REJECTED_MODEL_BLOCK, "")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("unrecognized model catalog"), "{error}");
+}
+
+/// The tripwire for the NEXT format change: an id that could not possibly
+/// be a single wire value is dropped instead of being handed to `--model`.
+/// Reachable through the JSON path, which takes its id verbatim.
+#[test]
+fn ids_carrying_a_column_separator_are_dropped_rather_than_handed_to_the_cli() {
+    let models = parse_antigravity_models(
+        r#"{"models":[{"id":"gemini-3.6-flash-high\tGemini 3.6 Flash (High)"},
+                     {"id":"gemini-3.5-flash-low"}]}"#,
+    );
+    assert_eq!(
+        models
+            .iter()
+            .map(|model| model.value.as_str())
+            .collect::<Vec<_>>(),
+        ["gemini-3.5-flash-low"],
+        "a spliced id must never survive to the wire"
+    );
+
+    // Dropping every id degrades to the catalog error the callers already
+    // handle by falling back to the provider default.
+    assert!(parse_antigravity_models(
+        "{\"models\":[{\"id\":\"gemini-3.6-flash-high\\tGemini 3.6 Flash (High)\"}]}"
+    )
+    .is_empty());
+}
+
+#[test]
+fn space_aligned_columns_split_only_when_the_left_cell_is_a_slug() {
+    let models = parse_antigravity_models("gemini-3.1-pro-high   Gemini 3.1 Pro (High)");
+    assert_eq!(models.len(), 1, "{models:#?}");
+    assert_eq!(models[0].value, "gemini-3.1-pro-high");
+    assert_eq!(models[0].display_name, "Gemini 3.1 Pro (High)");
+
+    // A padded display name is one value, not an id plus its effort suffix.
+    let models = parse_antigravity_models("Available models:\n* Gemini 3.5 Flash  (Medium)");
+    assert_eq!(models.len(), 1, "{models:#?}");
+    assert_eq!(models[0].value, "Gemini 3.5 Flash  (Medium)");
+}
+
+#[test]
+fn json_object_carrying_both_columns_is_one_model_not_two() {
+    let models = parse_antigravity_models(
+        r#"{"models":[{"id":"gemini-3.6-flash-high","displayName":"Gemini 3.6 Flash (High)"}]}"#,
+    );
+    assert_eq!(models.len(), 1, "{models:#?}");
+    assert_eq!(models[0].value, "gemini-3.6-flash-high");
+    assert_eq!(models[0].display_name, "Gemini 3.6 Flash (High)");
+}
+
+/// The three live layouts must classify apart, or the version/format
+/// breadcrumb cannot report a change. Pure function, no globals touched.
+#[test]
+fn each_known_catalog_layout_gets_its_own_format_code() {
+    assert_eq!(catalog_format_code(AGY_MODELS_TSV), "two-column-tsv");
+    assert_eq!(
+        catalog_format_code("gemini-3.6-flash-high\ngemini-3.1-pro-low"),
+        "slug-column"
+    );
+    assert_eq!(
+        catalog_format_code("Available models:\n  Gemini 3.6 Flash (High)"),
+        "display-names"
+    );
+    assert_eq!(catalog_format_code(r#"{"models":[]}"#), "json");
+    assert_eq!(catalog_format_code("   \n\n"), "empty");
+}
+
+/// The breadcrumb is a CHANGE log, not a per-startup line: the same
+/// version + layout prints once and then stays quiet.
+///
+/// Driven through `catalog_shape_change`, which RETURNS the line it would
+/// log: asserting on the stored pair instead would not catch a detector
+/// that logs unconditionally, because a redundant write stores the same
+/// value. (Measured — an always-log injection passed that weaker test.)
+/// `LAST_LOGGED_SHAPE` is touched by nothing else in this binary.
+#[test]
+fn the_version_breadcrumb_only_reports_a_change() {
+    let first = catalog_shape_change("1.1.11", "two-column-tsv").expect("first sighting must log");
+    assert!(first.contains("1.1.11"), "{first}");
+    assert!(first.contains("two-column-tsv"), "{first}");
+
+    assert!(
+        catalog_shape_change("1.1.11", "two-column-tsv").is_none(),
+        "an unchanged version + layout must stay silent"
+    );
+
+    let bumped = catalog_shape_change("1.1.12", "two-column-tsv")
+        .expect("a version bump must log even when the layout held");
+    // The line carries both sides, so the log dates the change by itself.
+    assert!(
+        bumped.contains("1.1.12") && bumped.contains("1.1.11"),
+        "{bumped}"
+    );
+
+    let reshaped = catalog_shape_change("1.1.12", "slug-column")
+        .expect("a layout change must log even when the version held");
+    assert!(
+        reshaped.contains("slug-column") && reshaped.contains("two-column-tsv"),
+        "{reshaped}"
+    );
+}
+
+/// `grok models` prints bullet rows today, so this pins the defensive
+/// branch: were it ever to switch to the tab layout `agy` uses, the rows
+/// must yield ids rather than being dropped whole.
+#[test]
+fn grok_tab_separated_rows_keep_only_the_id_column() {
+    let models = parse_grok_models(
+        "Available models:\ngrok-4.5\tGrok 4.5\ngrok-code-fast-1\tGrok Code Fast 1",
+    );
+    assert_eq!(
+        models
+            .iter()
+            .map(|model| model.value.as_str())
+            .collect::<Vec<_>>(),
+        ["grok-4.5", "grok-code-fast-1"]
+    );
+}
+
 #[test]
 fn parses_antigravity_v1_1_5_slug_catalog() {
     let text = "gemini-3.6-flash-high\ngemini-3.6-flash-medium\ngemini-3.6-flash-low\ngemini-3.5-flash-high\ngemini-3.5-flash-medium\ngemini-3.5-flash-low\ngemini-3.1-pro-high\ngemini-3.1-pro-low\nclaude-sonnet-4-6\nclaude-opus-4-6-thinking\ngpt-oss-120b-medium";
