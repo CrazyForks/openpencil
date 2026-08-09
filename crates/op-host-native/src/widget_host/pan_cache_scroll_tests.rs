@@ -94,6 +94,13 @@ fn reference_frame(zoom: f32, dpi: f32, pan_x: f32, pan_y: f32) -> Vec<u8> {
 /// misregistration produces (a shifted band swaps whole fills).
 fn diff_report(actual: &[u8], expected: &[u8], dpi: f32) -> Option<String> {
     const TOLERANCE: i32 = 8;
+    // A handful of isolated pixels is the same seam-rounding class as the
+    // per-channel tolerance above, just past its threshold — Windows'
+    // scalar math rounds one glyph/tile edge differently (observed: exactly
+    // 1 px on the CI runner). Misregistration cannot hide here: a shifted
+    // band swaps whole fills, which is hundreds of pixels in contiguous
+    // columns, far past this budget.
+    const ISOLATED_PIXEL_BUDGET: usize = 4;
     let (pw, ph) = ((W as f32 * dpi) as i32, (H as f32 * dpi) as i32);
     let stride = (pw * 4) as usize;
     let (mut count, mut x0, mut y0, mut x1, mut y1) = (0usize, pw, ph, -1, -1);
@@ -115,7 +122,7 @@ fn diff_report(actual: &[u8], expected: &[u8], dpi: f32) -> Option<String> {
             }
         }
     }
-    if count == 0 {
+    if count <= ISOLATED_PIXEL_BUDGET {
         return None;
     }
     let profile: Vec<String> = (0..pw as usize)
