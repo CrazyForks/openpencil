@@ -131,7 +131,10 @@ pub use design_system::{
     default_design_system, design_system_to_prompt_context, design_system_to_seed_commands,
     generate_design_system, parse_design_system, DesignSystem, Spacing, Typography,
 };
-pub use design_type::{detect_design_type, DesignType, DesignTypePreset};
+pub use design_type::{
+    classify_root_form, classify_root_form_node, classify_root_form_value, detect_design_type,
+    DesignForm, DesignType, DesignTypePreset,
+};
 pub use intent::classify_intent;
 pub use loop_finalize::{apply_loop_finalize, apply_loop_finalize_counted};
 pub use mobile_reflow::repair_mobile_trailing_nav_reflow;

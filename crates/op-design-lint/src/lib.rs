@@ -5,6 +5,7 @@
 //! layer; see `superpowers/specs/2026-05-17-pen-ai-skills-s1-design-lint.md`.
 
 pub mod color;
+pub mod design_form;
 pub mod detectors;
 pub mod fixes;
 pub mod issue;

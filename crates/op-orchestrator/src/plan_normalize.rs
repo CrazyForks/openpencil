@@ -51,7 +51,11 @@ pub struct NormInfo {
 }
 
 /// 移动端宽度上限(含)—— ≤ 此值视为移动端单屏。
-pub(crate) const MOBILE_MAX_WIDTH: f64 = 480.0;
+///
+/// Aliases the band the tree-side classifier uses
+/// ([`crate::design_type::classify_root_form`]) so the plan layer and the
+/// repair layer cannot drift apart on where the phone band ends.
+pub(crate) const MOBILE_MAX_WIDTH: f64 = op_design_lint::design_form::MOBILE_MAX_WIDTH;
 const MOBILE_DEFAULT_HEIGHT: f64 = 812.0;
 pub(crate) const MOBILE_DEFAULT_ROOT_GAP: f64 = 16.0;
 

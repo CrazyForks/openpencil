@@ -273,85 +273,16 @@ pub fn detect_design_type(prompt: &str) -> DesignTypePreset {
 
 // ── Tree-side form classification ────────────────────────────────────────────
 
-/// What kind of SURFACE an assembled root frame is, judged from the artboard
-/// itself rather than from the prompt.
+/// The tree-side judge of what a root frame IS, as opposed to what the prompt
+/// asked for ([`detect_design_type`] above).
 ///
-/// [`detect_design_type`] above answers "what did the user ask for", and only
-/// the prompt / plan layer can call it — repair passes run on an assembled
-/// tree, and on the agentic-loop path there is no plan at all. They need the
-/// same distinction derived from what is actually on the canvas.
-///
-/// **This is that single judge.** A repair pass must not re-derive the form
-/// from a width comparison of its own: the workspace already carries six
-/// separate `480.0` literals (`mobile_reflow`, `mobile_content_rail`,
-/// `geometry_bottom_gap`, `cleanup_mobile_dense`, `cleanup_root_and_nav`,
-/// `role_defaults`), which is exactly the drift this exists to stop.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DesignForm {
-    /// A phone-sized viewport. Chrome contracts (status bar, bottom nav),
-    /// edge-to-edge content and tight rhythm apply here.
-    MobileScreen,
-    /// A scrolling page wide enough for a desktop browser — marketing site,
-    /// landing page, desktop app screen. Sections own a vertical rhythm the
-    /// root's gap cannot express, and content sits inside gutters.
-    Page,
-    /// A fixed 16:9 projector board. Neither a viewport nor a scroll surface.
-    Deck,
-    /// Not enough evidence to classify — an unsized root, a `fill_container`
-    /// width, or a width between the phone and desktop bands. Passes MUST
-    /// treat this as "no type information", never as a default form.
-    Unknown,
-}
-
-impl DesignForm {
-    /// A surface the reader scrolls through, where the root's direct children
-    /// are page sections rather than viewport chrome.
-    pub fn is_scrolling_page(self) -> bool {
-        matches!(self, DesignForm::Page)
-    }
-}
-
-/// Narrowest artboard that reads as a desktop browser page. Between this and
-/// [`crate::plan_normalize::MOBILE_MAX_WIDTH`] sits the tablet band, which is
-/// deliberately [`DesignForm::Unknown`] — neither set of contracts is safe to
-/// assume there.
-const PAGE_MIN_WIDTH: f64 = 1024.0;
-/// Narrowest artboard that can be a projector board (the 1920 preset, minus
-/// room for a model that rounds down).
-const DECK_MIN_WIDTH: f64 = 1600.0;
-/// 16:9 is 0.5625. The band accepts a board a model sized slightly off while
-/// still excluding any page tall enough to scroll.
-const DECK_ASPECT_RANGE: std::ops::RangeInclusive<f64> = 0.50..=0.65;
-
-/// Classify a root frame from its artboard size. `width` / `height` are the
-/// authored numeric values; a non-numeric (`fill_container`, `fit_content`) or
-/// absent size is passed as `None` and yields [`DesignForm::Unknown`].
-pub fn classify_root_form(width: Option<f64>, height: Option<f64>) -> DesignForm {
-    let Some(width) = width.filter(|w| *w > 0.0) else {
-        return DesignForm::Unknown;
-    };
-    if width <= crate::plan_normalize::MOBILE_MAX_WIDTH {
-        return DesignForm::MobileScreen;
-    }
-    if width >= DECK_MIN_WIDTH {
-        if let Some(height) = height.filter(|h| *h > 0.0) {
-            if DECK_ASPECT_RANGE.contains(&(height / width)) {
-                return DesignForm::Deck;
-            }
-        }
-    }
-    if width >= PAGE_MIN_WIDTH {
-        return DesignForm::Page;
-    }
-    DesignForm::Unknown
-}
-
-/// [`classify_root_form`] over a root node's JSON. Sizes that are strings
-/// (`"fill_container"`) read as unknown, matching the numeric contract above.
-pub fn classify_root_form_value(root: &serde_json::Value) -> DesignForm {
-    let number = |key: &str| root.get(key).and_then(serde_json::Value::as_f64);
-    classify_root_form(number("width"), number("height"))
-}
+/// It lives in `op-design-lint` because the detectors there need the same
+/// answer the repair passes here do, and that crate sits below this one — see
+/// [`op_design_lint::design_form`] for the full rationale. Re-exported so
+/// every `crate::design_type::…` import path in the orchestrator is unchanged.
+pub use op_design_lint::design_form::{
+    classify_root_form, classify_root_form_node, classify_root_form_value, DesignForm,
+};
 
 #[cfg(test)]
 mod tests {

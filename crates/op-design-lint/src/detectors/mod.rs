@@ -10,6 +10,7 @@ use std::collections::HashSet;
 use jian_ops_schema::node::PenNode;
 use jian_ops_schema::PenDocument;
 
+use crate::design_form::{classify_root_form_node, DesignForm};
 use crate::issue::Issue;
 
 pub mod siblings;
@@ -40,6 +41,22 @@ pub use widget_a11y::*;
 /// `{node_id}:{property}` string is byte-identical to the TS
 /// `` `${issue.nodeId}:${issue.property}` `` key.
 pub fn detect_all(root: &PenNode, doc: &PenDocument) -> Vec<Issue> {
+    detect_all_for_form(root, doc, classify_root_form_node(root))
+}
+
+/// [`detect_all`] told what kind of surface `root` is, for callers that
+/// already know — the orchestrator holds the planned artboard, and on an
+/// append path the node handed here is not always the artboard itself.
+///
+/// A deck board takes different geometry and typography floors from a
+/// scrolling page (deck-system spec §4.1): a projector is read from the back
+/// row, so its font floor and margins are absolute rather than relative to a
+/// brand's rhythm. **No detector branches on the form yet** — this is the
+/// wiring the deck detectors (spec §4.2) land on, and the point of putting it
+/// in first is that each of them receives the form from the single classifier
+/// instead of re-deriving it from a width comparison of its own.
+pub fn detect_all_for_form(root: &PenNode, doc: &PenDocument, form: DesignForm) -> Vec<Issue> {
+    let _ = form;
     let mut combined = Vec::new();
     combined.extend(detect_invisible_containers(root, doc));
     combined.extend(detect_empty_paths(root));
@@ -127,6 +144,31 @@ mod detect_all_tests {
             .expect("node c flagged");
         assert_eq!(c_issue.category, IssueCategory::SiblingInconsistency);
         assert_eq!(c_issue.severity, IssueSeverity::Warning);
+    }
+
+    /// `detect_all` classifies the root itself so every existing caller
+    /// becomes form-aware the moment a detector starts branching — and, until
+    /// one does, a deck board lints exactly like anything else.
+    #[test]
+    fn detect_all_classifies_the_root_and_reports_the_same_issues_for_now() {
+        let board = node(json!({
+            "type": "frame", "id": "board", "width": 1920, "height": 1080,
+            "fill": [{"type": "solid", "color": "#FFFFFF"}],
+            "children": [
+                {"type": "frame", "id": "tilted", "rotation": 12},
+                {"type": "path", "id": "empty"}
+            ]
+        }));
+        let document = doc(json!({"version": "1.0", "children": []}));
+        assert_eq!(
+            crate::design_form::classify_root_form_node(&board),
+            crate::design_form::DesignForm::Deck
+        );
+        assert_eq!(
+            detect_all(&board, &document),
+            detect_all_for_form(&board, &document, DesignForm::Page),
+            "no detector branches on the form yet — the deck floors land later"
+        );
     }
 
     /// `detect_all` runs the 14 detectors in TS order — assert the combined
