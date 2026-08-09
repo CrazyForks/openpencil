@@ -99,6 +99,16 @@ cfg_test_external_module_files() {
             cfg_test && /^[[:space:]]*(pub(\([^)]*\))?[[:space:]]+)?mod[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]*;[[:space:]]*$/ {
                 if (module_path != "") {
                     print module_path
+                } else {
+                    # No #[path]: a `#[cfg(test)] mod name;` resolves to its
+                    # default sibling file, `name.rs` (or `name/mod.rs`).
+                    # Emit both so either layout is recognized as a test-only
+                    # module rather than scanned as production source.
+                    name = $0
+                    sub(/^[[:space:]]*(pub(\([^)]*\))?[[:space:]]+)?mod[[:space:]]+/, "", name)
+                    sub(/[[:space:]]*;.*$/, "", name)
+                    print name ".rs"
+                    print name "/mod.rs"
                 }
                 reset_attributes()
                 next
