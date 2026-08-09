@@ -58,9 +58,12 @@ impl WidgetHostNative {
             .editor_state
             .viewport
             .to_document(Point2D::new(x - cx0, y - cy0));
+        // The fill variant so an empty placeholder box — which paints nothing
+        // and therefore opts out of the click hit-test — is still offered as a
+        // drop target instead of the image landing as a fresh sibling node.
         let path = self
             .layout_scene
-            .node_path_at_doc_point(doc_point, self.editor_state.viewport.zoom)?;
+            .node_path_at_doc_point_for_fill(doc_point, self.editor_state.viewport.zoom)?;
         self.editor_state.resolve_image_drop_target(&path)
     }
 
