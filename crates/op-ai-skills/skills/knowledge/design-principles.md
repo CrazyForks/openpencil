@@ -10,6 +10,8 @@ category: knowledge
 
 DESIGN CRAFT:
 
+SCOPE — every number below is the SCREEN / PAGE scale (web app, landing page, mobile). A presentation deck overrides them wholesale: its type floors, margins, background policy and container rules come from `slides` / `deck-contract`, where body is 32px and a display title runs 88-168px. Never apply the sizes below to a slide.
+
 - Type scale with real contrast: display 48-64, heading 28-36, body 16. Weight: 700 titles, 500 subtitles, 400 body.
 - Line height: tighter at large sizes (1.05-1.15 for 40px+), looser at small (1.5-1.6 for 16px).
 - Palette: 1 primary action color, 1 accent, neutral scale. Max 2 saturated colors. Page bg slightly tinted (#F8FAFC not #FFFFFF).

@@ -1,4 +1,5 @@
-//! Corpus guards for the deck skills (`slides` + `deck-patterns`).
+//! Corpus guards for the deck skills (`slides`, `deck-patterns`,
+//! `deck-contract`) and the `cjk-typography` rules they depend on.
 //!
 //! Delivery into the assembled system prompt is guarded on the orchestrator
 //! side (`prompt_deck_skill_tests`); this file guards the corpus itself —
@@ -36,6 +37,140 @@ fn deck_patterns_registers_as_a_keyword_gated_generation_domain_skill() {
         }
         other => panic!("deck-patterns must be keyword-gated, got {other:?}"),
     }
+}
+
+#[test]
+fn deck_contract_fills_between_the_skeletons_and_the_tier_selector() {
+    let contract = get_skill_by_name("deck-contract").expect("deck-contract must be registered");
+    assert_eq!(contract.meta.category, SkillCategory::Domain);
+    assert!(contract.meta.phase.contains(&Phase::Generation));
+    assert_eq!(contract.meta.budget, 1700);
+    // The three deck skills are orthogonal and fill in a fixed order:
+    // `deck-patterns` (what to emit) → `deck-contract` (what may go on a page)
+    // → `slides` (which tier). Budget fill walks Domain skills by ascending
+    // priority, so this ordering decides who keeps its tail when a prompt also
+    // drags in `dashboard` / `web-app`.
+    let patterns = get_skill_by_name("deck-patterns").expect("deck-patterns registered");
+    let slides = get_skill_by_name("slides").expect("slides registered");
+    assert!(
+        patterns.meta.priority < contract.meta.priority
+            && contract.meta.priority < slides.meta.priority,
+        "deck-contract ({}) must sit between deck-patterns ({}) and slides ({})",
+        contract.meta.priority,
+        patterns.meta.priority,
+        slides.meta.priority
+    );
+    match &contract.meta.trigger {
+        SkillTrigger::Keywords(keywords) => {
+            for word in ["deck", "ppt", "幻灯片", "课件", "路演"] {
+                assert!(
+                    keywords.iter().any(|k| k == word),
+                    "deck-contract must trigger on {word:?}"
+                );
+            }
+        }
+        other => panic!("deck-contract must be keyword-gated, got {other:?}"),
+    }
+}
+
+#[test]
+fn deck_contract_carries_the_three_laws_and_the_negative_constraints() {
+    let body = &get_skill_by_name("deck-contract")
+        .expect("deck-contract registered")
+        .content;
+    for rule in [
+        // Law 1 — the deck-specific overflow policy, which deliberately
+        // contradicts the web `clipContent` floor.
+        "overflow splits the page, it never shrinks the type",
+        "`clipContent` to crop the excess",
+        // Law 2 — density is a property of the page type, not of the deck.
+        "A slot = one independent text node",
+        "past the cap you SPLIT, not compress",
+        // Law 3 — the lock/vary split that prevents both mechanical and
+        // collage decks.
+        "LOCKED across pages",
+        "MUST change across pages",
+        // Narrative: the one line that separates a deck from a table of
+        // contents, plus the outline-first gate.
+        "An agenda is not a narrative",
+        "Ghost deck test",
+        "Titles state conclusions, not topics",
+        // Routing: the shared negative signal is the point of the table.
+        "never bend the content into it",
+        // The accent rule that occurrences — not hues — decide.
+        "an accent used 11 times is not an accent",
+        // Slop fingerprints the model reproduces most often.
+        "A rule under every title",
+        "Decorative shapes at 4-6% opacity",
+        "Flat hierarchy",
+    ] {
+        assert!(body.contains(rule), "deck-contract must teach {rule:?}");
+    }
+}
+
+/// `cjk-typography` used to contradict both this corpus and the shipped
+/// `minimal-keynote` template in three places: line-height banded by
+/// heading-vs-body (1.3–1.4 tears a 96px CJK display title apart, while the
+/// template ships 1.02–1.12), `letterSpacing: 0, NEVER negative` (correct for
+/// body, wrong for display, and the template already shipped negative
+/// tracking), and `Body: ALWAYS "Inter"` — a render-time fallback written as
+/// though it were a design rule, which collides with the anti-slop ban on
+/// Inter-as-a-choice. A model reading two contradictory rules picks one at
+/// random, so these are locked here.
+#[test]
+fn cjk_typography_bands_by_size_and_separates_fallback_from_choice() {
+    let body = &get_skill_by_name("cjk-typography")
+        .expect("cjk-typography registered")
+        .content;
+    for rule in [
+        "lineHeight bands by FONT SIZE",
+        ">=64px 1.02-1.15",
+        "letterSpacing is absolute px here, not em",
+        "<48px: ALWAYS 0, never negative",
+        "`round(fontSize * -0.02)` is allowed and is the FLOOR",
+        "DESIGN layer",
+        "RENDER layer",
+    ] {
+        assert!(body.contains(rule), "cjk-typography must teach {rule:?}");
+    }
+    for contradiction in [
+        "headings 1.3-1.4",
+        "letterSpacing: 0, NEVER negative",
+        "Body: ALWAYS \"Inter\"",
+    ] {
+        assert!(
+            !body.contains(contradiction),
+            "cjk-typography still carries the retired rule {contradiction:?}"
+        );
+    }
+}
+
+/// `design-principles` is an always-on Knowledge skill whose numbers are the
+/// screen/page scale — display 48-64, body 16, `#F8FAFC` alternating section
+/// backgrounds, hero/nav recipes. Every one of those contradicts the deck
+/// floors (`slides`: body 32, display 88-168, a deck whose largest size is
+/// under 60px has no hierarchy at all). It is budget-evicted on most deck
+/// prompts today, which happens to be the right outcome — but "happens to be"
+/// is not a contract: one budget change puts the conflicting numbers back in
+/// front of the model, which then picks one of the two scales at random. The
+/// scope line is what makes the outcome intentional either way.
+#[test]
+fn design_principles_scopes_its_type_scale_away_from_decks() {
+    let body = &get_skill_by_name("design-principles")
+        .expect("design-principles registered")
+        .content;
+    assert!(
+        body.contains("SCOPE"),
+        "design-principles must declare which scale its numbers belong to"
+    );
+    assert!(
+        body.contains("Never apply the sizes below to a slide"),
+        "the deck carve-out must be explicit"
+    );
+    assert!(
+        body.contains("`slides` / `deck-contract`"),
+        "the carve-out must name where deck numbers actually come from"
+    );
 }
 
 #[test]
@@ -225,7 +360,7 @@ fn decomposition_derives_slide_count_from_the_material_not_the_outline_length() 
 }
 
 #[test]
-fn every_deck_prompt_resolves_both_deck_skills_untruncated() {
+fn every_deck_prompt_resolves_all_three_deck_skills_untruncated() {
     // The generation-phase total is what actually decides this; these prompts
     // are the ones that used to lose `slides` (each pulls a second, larger
     // domain skill: dashboard / web-app / landing-page / mobile-app).
@@ -239,7 +374,7 @@ fn every_deck_prompt_resolves_both_deck_skills_untruncated() {
     ] {
         let ctx =
             crate::resolve_skills(Phase::Generation, prompt, &crate::ResolveOptions::default());
-        for name in ["slides", "deck-patterns"] {
+        for name in ["slides", "deck-patterns", "deck-contract"] {
             let entry = ctx
                 .report
                 .included
@@ -317,5 +452,6 @@ fn the_deck_corpus_is_reachable_from_the_generation_phase_registry() {
         .map(|s| s.meta.name.as_str())
         .collect();
     assert!(names.contains(&"deck-patterns"), "got {names:?}");
+    assert!(names.contains(&"deck-contract"), "got {names:?}");
     assert!(names.contains(&"slides"), "got {names:?}");
 }

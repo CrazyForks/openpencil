@@ -84,7 +84,7 @@
                 }
               ],
               "lineHeight": 1.02,
-              "letterSpacing": -6,
+              "letterSpacing": -3,
               "textGrowth": "fixed-width",
               "width": "fill_container",
               "textAlign": "center"
@@ -643,7 +643,7 @@
             }
           ],
           "lineHeight": 1.12,
-          "letterSpacing": -3,
+          "letterSpacing": -2,
           "textGrowth": "fixed-width",
           "width": "fill_container",
           "textAlign": "center"
@@ -973,7 +973,7 @@
             }
           ],
           "lineHeight": 1.0,
-          "letterSpacing": -8,
+          "letterSpacing": -5,
           "textGrowth": "fixed-width",
           "width": "fill_container",
           "textAlign": "center"
@@ -1052,7 +1052,7 @@
             }
           ],
           "lineHeight": 1.08,
-          "letterSpacing": -4,
+          "letterSpacing": -3,
           "textGrowth": "fixed-width",
           "width": "fill_container",
           "textAlign": "center"

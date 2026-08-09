@@ -58,6 +58,17 @@ impl Phase {
     /// callers (Basic/Standard mobile/desktop) are unaffected: they pass an
     /// explicit `budget_override` and never fall through to this default.
     ///
+    /// Generation moved again 12000 → 13200 (2026-08-09) when `deck-contract`
+    /// joined the deck corpus. A deck prompt now resolves four Domain skills
+    /// totalling ~6200 tokens (`cjk-typography` 602, `deck-patterns` 1821,
+    /// `deck-contract` 1599, `slides` 2176) on top of ~6700 of always-kept
+    /// Base skills. At 12000 that overflowed by ~900 and the Step 3 knapsack
+    /// cut `slides` down to 1274 tokens, so the tier tables and type floors
+    /// silently vanished from every deck prompt. The three deck skills are
+    /// deliberately orthogonal (tier selection, structural skeletons,
+    /// cross-tier contract), so the fix is headroom rather than merging them
+    /// back together.
+    ///
     /// Planning moved 4000 → 6000 for a related reason (2026-07-28). Its
     /// three `Base` skills are budget-EXEMPT but still counted against the
     /// total, and they need ~4500 tokens on their own once
@@ -69,7 +80,7 @@ impl Phase {
     pub fn default_budget(self) -> u32 {
         match self {
             Phase::Planning => 6000,
-            Phase::Generation => 12000,
+            Phase::Generation => 13200,
             Phase::Validation => 3000,
             Phase::Maintenance => 5000,
         }
@@ -79,7 +90,7 @@ impl Phase {
 /// Per-phase default token budgets — the TS `DEFAULT_BUDGETS` record.
 pub const DEFAULT_BUDGETS: [(Phase, u32); 4] = [
     (Phase::Planning, 6000),
-    (Phase::Generation, 12000),
+    (Phase::Generation, 13200),
     (Phase::Validation, 3000),
     (Phase::Maintenance, 5000),
 ];
@@ -332,7 +343,7 @@ mod tests {
     #[test]
     fn default_budget_table() {
         assert_eq!(Phase::Planning.default_budget(), 6000);
-        assert_eq!(Phase::Generation.default_budget(), 12000);
+        assert_eq!(Phase::Generation.default_budget(), 13200);
         assert_eq!(Phase::Validation.default_budget(), 3000);
         assert_eq!(Phase::Maintenance.default_budget(), 5000);
         // The const table agrees with the per-variant method.

@@ -4,7 +4,7 @@ description: Slide-pattern skeletons for presentation decks — board placement,
 phase: [generation]
 trigger:
   keywords: [slide, slides, deck, presentation, pitch deck, keynote, ppt, 幻灯片, 演示, 演示文稿, 路演, 课件, 汇报]
-priority: 23
+priority: 22
 budget: 1900
 category: domain
 ---

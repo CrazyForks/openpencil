@@ -182,7 +182,7 @@ mod tests {
             "design a login form",
             &ResolveOptions::default(),
         );
-        assert_eq!(ctx.budget_max, 12000);
+        assert_eq!(ctx.budget_max, 13200);
         assert!(ctx.budget_used <= ctx.budget_max);
         assert!(
             !ctx.skills.is_empty(),
@@ -198,7 +198,7 @@ mod tests {
     /// Base skills alone (~6000 tokens) left only ~2000 tokens of
     /// headroom under the old 8000-token phase default (landing-page.md
     /// was cut to 275 of its 1203 tokens; design-principles was dropped
-    /// from all three prompts entirely). The phase default is now 12000
+    /// from all three prompts entirely). The phase default is now 13200
     /// (see `Phase::default_budget`'s doc comment); this locks in that no
     /// resolved skill in these representative prompts gets truncated by
     /// either mechanism (own-budget cap or total-budget tail cut).
@@ -221,6 +221,68 @@ mod tests {
                 "prompt {prompt:?} truncated skills: {truncated:?}"
             );
             assert!(ctx.budget_used <= ctx.budget_max);
+        }
+    }
+
+    /// The budget report and the trimmer's internal accounting are the same
+    /// number, and a `BudgetExhausted` drop always means the skill genuinely
+    /// did not fit — never that headroom was left on the table.
+    ///
+    /// This was asked as "the report says 652 tokens free yet a 438-token
+    /// Knowledge skill was dropped, so `used` and `budget_used` must have
+    /// drifted apart" (2026-08-09 deck audit). They have not: `budget_used`
+    /// is summed from the very `token_count`s the knapsack accumulated, and
+    /// both trim steps recompute `remaining` from that same running total, so
+    /// a dropped skill is always strictly larger than the leftover (Step 3
+    /// only skips a candidate when `token_count > remaining`, and `used` only
+    /// grows afterwards). Free headroom next to an evicted skill therefore
+    /// cannot be produced here — it can only come from a consumer that
+    /// removes skills AFTER resolution (the orchestrator's tier filters do
+    /// exactly that), which leaves a hole in a budget that was already spent.
+    /// This test is the standing answer, so the question does not have to be
+    /// re-litigated by hand next time.
+    #[test]
+    fn budget_report_matches_the_knapsack_and_drops_only_what_cannot_fit() {
+        for prompt in [
+            "帮我做一个 8 页的融资路演 PPT，深色科技感",
+            "做一份季度数据汇报 PPT，要有仪表盘和数据表格",
+            "generate a 10-slide deck for our SaaS admin console product with analytics data tables",
+            "design an admin dashboard with a data table, charts, and analytics for a SaaS product",
+        ] {
+            let ctx = resolve_skills(Phase::Generation, prompt, &ResolveOptions::default());
+
+            // The report is the knapsack's own accounting, not a re-estimate.
+            let summed: u32 = ctx.skills.iter().map(|s| s.token_count).sum();
+            assert_eq!(
+                ctx.budget_used, summed,
+                "{prompt:?}: report {} != sum of kept skills {summed}",
+                ctx.budget_used
+            );
+            assert_eq!(ctx.report.budget_used, ctx.budget_used);
+            assert!(ctx.budget_used <= ctx.budget_max);
+
+            let leftover = ctx.budget_max - ctx.budget_used;
+            for drop in ctx
+                .report
+                .dropped
+                .iter()
+                .filter(|d| d.reason == DropReason::BudgetExhausted)
+            {
+                let entry = crate::loader::get_skill_by_name(&drop.name)
+                    .unwrap_or_else(|| panic!("dropped skill {:?} must exist", drop.name));
+                // Skills carrying a `{{placeholder}}` are sized after
+                // injection, which the registry copy cannot reproduce.
+                if entry.content.contains("{{") {
+                    continue;
+                }
+                let size = crate::budget::estimate_tokens(&entry.content).min(entry.meta.budget);
+                assert!(
+                    size > leftover,
+                    "{prompt:?}: {} ({size} tokens) was dropped for budget while \
+                     {leftover} tokens were still free",
+                    drop.name
+                );
+            }
         }
     }
 
