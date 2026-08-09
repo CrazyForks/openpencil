@@ -70,3 +70,7 @@ __pycache__/
 *.pyc
 openpencil-docs
 output
+
+# op-auth provenance signing private key — NEVER commit
+op-auth-provenance.pem
+*.provenance.pem
