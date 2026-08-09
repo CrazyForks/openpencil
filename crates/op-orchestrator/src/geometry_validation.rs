@@ -21,6 +21,7 @@ use jian_scene::layout_scene::SceneNode;
 use op_editor_core::{EditorCommand, EditorState, LayoutPropValue, NodeId};
 use serde_json::Value;
 
+use crate::design_type::DesignForm;
 use crate::types::DocSink;
 
 #[path = "geometry_echo.rs"]
@@ -237,6 +238,36 @@ const MAX_ROUNDS: usize = 3;
 /// `MAX_ROUNDS` is hit. The deterministic analogue of Pencil's per-batch
 /// `snapshot_layout` feedback. Returns the number of rounds that applied a fix.
 pub fn geometry_validate_and_fix(sink: &mut dyn DocSink, root_id: &str) -> usize {
+    let form = root_design_form(sink.state(), root_id);
+    geometry_validate_and_fix_for_form(sink, root_id, form)
+}
+
+/// The root's [`DesignForm`], read through the single classifier.
+///
+/// A root that has been replaced or removed since the caller last looked
+/// classifies as `Unknown` — "no type information", never a default form.
+pub fn root_design_form(state: &EditorState, root_id: &str) -> DesignForm {
+    op_editor_core::walkers::find_node(state.active_children(), &NodeId::new(root_id.to_string()))
+        .map(crate::design_type::classify_root_form_node)
+        .unwrap_or(DesignForm::Unknown)
+}
+
+/// [`geometry_validate_and_fix`] told which surface the root is.
+///
+/// The thresholds every collector below uses are tuned for a screen. A
+/// projector board reads from the back row and takes its own margin, gap, and
+/// line-height floors (deck-system spec §4.1). **No collector branches on
+/// `form` yet** — the deck collectors land in a later batch, and this exists
+/// so each of them takes the form from the single classifier instead of
+/// measuring the root's width itself. The `debug` line makes the classification
+/// visible while that is still true: "the deck floors did not fire" and "the
+/// board was never classified as one" are otherwise the same symptom.
+pub fn geometry_validate_and_fix_for_form(
+    sink: &mut dyn DocSink,
+    root_id: &str,
+    form: DesignForm,
+) -> usize {
+    tracing::debug!(root_id, ?form, "geometry validation form");
     let mut rounds = 0;
     for _ in 0..MAX_ROUNDS {
         let rects = resolved_rects(sink.state());

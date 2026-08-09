@@ -154,6 +154,8 @@ fn is_numbered_corpus_op(name: &str) -> bool {
 // test.
 #[path = "geometry_collapse_card_tests.rs"]
 mod collapse_card_tests;
+#[path = "geometry_design_form_tests.rs"]
+mod design_form_tests;
 #[path = "geometry_echo_spill_tests.rs"]
 mod echo_spill_tests;
 #[path = "geometry_jam_gap_tests.rs"]
