@@ -408,11 +408,20 @@ fn tight_budget_dashboard_keeps_component_composition() {
         report.budget_max, 5200,
         "non-mobile Basic must use the 5200 budget"
     );
+    // The pin only proves something under real budget pressure, and there is
+    // more of it than before: the always-kept Base skills alone now sum PAST
+    // the 5200 ceiling, so by the time the knapsack reaches Domain skills
+    // there is no room at all and an unpinned `component-composition` would be
+    // skipped outright.
+    //
+    // This used to assert "some skill was dropped for BudgetExhausted". That
+    // stopped being true when the sub-agent compaction moved BEFORE the
+    // knapsack (`resolve_generation_skills_after_prompt_filter`): the optional
+    // dashboard/depth skills that used to lose the budget race are now removed
+    // by the Basic allow-set first, and are reported as `TierFiltered`. The
+    // pin is unchanged — its competitors simply never reach the race.
     assert!(
-        report
-            .dropped
-            .iter()
-            .any(|s| matches!(s.reason, op_ai_skills::DropReason::BudgetExhausted)),
+        report.budget_used > report.budget_max,
         "fixture must still exercise budget pressure; report={report:?}"
     );
 
@@ -454,6 +463,27 @@ fn tight_budget_dashboard_keeps_component_composition() {
         sys.contains("comp-0") && sys.contains("comp-4"),
         "manifest must list the concrete component ids"
     );
+    // (5) The budget never paid for a skill the tier filter was about to
+    // delete. Every skill the Basic allow-set removes must be reported as
+    // `TierFiltered`, never as `BudgetExhausted` — the two reasons are the
+    // observable difference between compacting before and after the knapsack.
+    // Measured on this fixture: six skills (product-principles,
+    // jian-components, design-system, dashboard, design-principles,
+    // role-definitions) are allow-set removals, and under the old order they
+    // competed for — and consumed — part of a 5200-token budget first.
+    for name in ["design-system", "dashboard", "role-definitions"] {
+        let reason = report
+            .dropped
+            .iter()
+            .find(|s| s.name == name)
+            .map(|s| s.reason);
+        assert_eq!(
+            reason,
+            Some(op_ai_skills::DropReason::TierFiltered),
+            "{name} must be removed by the tier filter BEFORE the knapsack, \
+             so it never consumes budget; report={report:?}"
+        );
+    }
 }
 
 /// The force-include is gated on a library being present: with NO components, a

@@ -183,6 +183,13 @@ fn compact_subagent_skills<T: SkillNamed>(
             // none of the 16:9 contract — measured 2026-08-04.
             "slides",
             "deck-patterns",
+            // The cross-tier deck laws (overflow → split the page, density
+            // budgets, narrative arc, deck-specific slop bans). Same
+            // keyword gate and the same reason as the two above: without an
+            // entry here the allow-set drops it wholesale on Basic /
+            // Standard, which is the exact 2026-08-04 `slides` failure —
+            // and it is silent, because the file on disk stays correct.
+            "deck-contract",
             "icon-catalog",
             "style-defaults",
             "elements",

@@ -86,7 +86,8 @@ pub(super) fn build_subagent_prompt_core(
     components: &ComponentLibrary,
     screen_routes: &[(String, String)],
 ) -> (CallRequest, SkillLoadReport) {
-    // Resolve the full generation skill set, then apply tier-gated filtering.
+    // Apply tier-gated filtering, then resolve the generation skill set under
+    // the budget — that order, not the reverse; see the resolve call below.
     let model_id = req.model.as_deref().unwrap_or("");
     let tier = resolve_model_profile(model_id).tier;
 
@@ -195,21 +196,35 @@ pub(super) fn build_subagent_prompt_core(
     // compact filter; the `mobile-ui` rules used to be appended to the user prompt
     // (uncounted) and now live in a budgeted skill, so the budget grows by ~its
     // size — the TOTAL prompt is unchanged, the rules just moved user→system.
-    // A deck board gets its own arm for the same reason mobile does: the
-    // `slides` + `deck-patterns` teaching is ~4000 tokens on top of ~6200 of
-    // always-kept Base skills, so under the plain 5200 / 6500 arms both are
-    // dropped for BudgetExhausted and the model designs slides with no slide
-    // guidance. 11500 covers the always-kept Base set (which on this path
-    // includes `style-defaults`, loaded by the `noStyleGuideMatch` flag) plus
-    // `cjk-typography` and both deck skills whole; at 10600 `slides` still lost
-    // its tail, which `prompt_deck_skill_tests` asserts against.
+    // A deck board gets its own arm for the same reason mobile does: the deck
+    // teaching (`slides` + `deck-patterns` + `deck-contract`, ~5600 tokens)
+    // sits on top of ~6000 of always-kept Base skills, so under the plain
+    // 5200 / 6500 arms it is dropped for BudgetExhausted and the model designs
+    // slides with no slide guidance.
+    //
+    // The arm is the Generation phase default rather than a literal, because
+    // the deck path IS the worst case that default was last sized for
+    // (`Phase::Generation` moved 12000 → 13200 when `deck-contract` landed).
+    // Restating it as a number is what let the old 11500 rot when the corpus
+    // grew under it: the deck skills were then silently dropped/tail-cut,
+    // which `prompt_deck_skill_tests` now asserts against.
+    //
+    // Measured 2026-08-09 on that file's fixtures, every resolved skill
+    // untruncated: Basic 11529/13200, Standard and Full both 12548/13200.
+    // Standard lands on Full's exact skill set here — at an unbounded budget
+    // it also carries `design-principles` (12986), and at 13200 the deck
+    // corpus crowds that Knowledge skill out. That is NOT this arm's doing:
+    // Full tier reads the same default and loses it identically, so the deck
+    // load simply fills the phase. Buying it back means raising the phase
+    // default, which belongs to the corpus owner, not to this override.
     let is_deck = is_deck_board(plan);
+    let deck_budget = Phase::Generation.default_budget();
     let budget_override = match tier {
         ModelTier::Basic if is_mobile_layout || is_mobile_screen => Some(9200),
-        ModelTier::Basic if is_deck => Some(11500),
+        ModelTier::Basic if is_deck => Some(deck_budget),
         ModelTier::Basic => Some(5200),
         ModelTier::Standard if is_mobile_layout => Some(9500),
-        ModelTier::Standard if is_deck => Some(11500),
+        ModelTier::Standard if is_deck => Some(deck_budget),
         ModelTier::Standard => Some(6500),
         ModelTier::Full => None,
     };
@@ -235,30 +250,28 @@ pub(super) fn build_subagent_prompt_core(
         ..Default::default()
     };
     let intent = subtask_intent(req, subtask);
+    // Filter BEFORE the budget knapsack, on every path.
+    //
+    // This used to be the Basic-mobile path only; everything else resolved
+    // first and compacted second, which meant the knapsack paid for skills the
+    // compaction was about to delete. `design-system` (554 tokens) is the
+    // standing example: `design_system_covered` is true on essentially every
+    // real request, so the budget bought it, the filter dropped it, and the
+    // 554 tokens were never returned to the skills that had just lost to it —
+    // a deck prompt reported 12548/13200 while `design-principles` (438) sat
+    // in the dropped list as BudgetExhausted, because at knapsack time only 98
+    // tokens were actually free. Ordering, not sizing: raising the ceiling
+    // would have hidden it rather than fixed it.
     let (mut filtered, resolve_report, filter_drops) =
-        if tier == ModelTier::Basic && is_mobile_screen {
-            resolve_generation_skills_after_prompt_filter(
-                &intent,
-                &opts,
-                tier,
-                is_mobile_screen,
-                design_system_covered,
-                minimal_skills,
-                reduced_complexity,
-            )
-        } else {
-            let agent_ctx = resolve_generation_skills(&intent, &opts);
-            let resolved = agent_ctx.skills;
-            let (filtered, filter_drops) = apply_skill_filter(
-                resolved,
-                tier,
-                is_mobile_screen,
-                design_system_covered,
-                minimal_skills,
-                reduced_complexity,
-            );
-            (filtered, agent_ctx.report, filter_drops)
-        };
+        resolve_generation_skills_after_prompt_filter(
+            &intent,
+            &opts,
+            tier,
+            is_mobile_screen,
+            design_system_covered,
+            minimal_skills,
+            reduced_complexity,
+        );
     // Script-gen REPLACES the raw-JSONL output format — carrying a JSONL skill
     // alongside it feeds the model two contradictory output contracts. Keep
     // this guard even though the JSONL skills are no longer mounted by the
@@ -466,15 +479,16 @@ CRITICAL LAYOUT CONSTRAINTS:\n\
     // Assemble the per-subtask skill-load report from the FINAL skill set
     // (post tier/dedup filtering). `budget_max` reflects the tier budget
     // override. Full-tier falls through to `Phase::Generation::default_budget()`
-    // (12000, raised from 8000 in op-ai-skills — see that constant's doc
-    // comment) because image-rich data-list sections (restaurants/products
-    // with ratings/prices) overflowed 8000 tokens and truncated their
-    // scripts to zero generated nodes. This used to be a bare `12000`
-    // literal that only affected this diagnostic number — `resolve_skills`
-    // (called above via `resolve_generation_skills`) independently fell
-    // back to the OLD 8000 default for a `None` override, so Full tier's
-    // real skill trimming silently ran at 8000 while this report claimed
-    // 12000. Deriving both from the same constant keeps them honest.
+    // (13200 today — see that constant's doc comment for both raises: 8000 →
+    // 12000 because image-rich data-list sections overflowed and truncated
+    // their scripts to zero generated nodes, then 12000 → 13200 when
+    // `deck-contract` joined the deck corpus). This used to be a bare literal
+    // that only affected this diagnostic number — `resolve_skills` (called
+    // above via `resolve_generation_skills`) independently fell back to the
+    // OLD default for a `None` override, so Full tier's real skill trimming
+    // silently ran at one number while this report claimed another. Deriving
+    // both from the same constant keeps them honest, and is why the deck arm
+    // above reads the constant instead of restating it.
     let budget_max = budget_override.unwrap_or_else(|| Phase::Generation.default_budget());
     let included: Vec<SkillLoadEntry> = filtered
         .iter()

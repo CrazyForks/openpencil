@@ -3,15 +3,11 @@
 
 use super::*;
 
-/// Resolve the generation-phase skill set against a message, returning the
-/// full AgentContext (skills + load report). The report is held for B3b's
-/// IntentMiss/BudgetExhausted merge.
-pub(super) fn resolve_generation_skills(
-    message: &str,
-    opts: &op_ai_skills::ResolveOptions,
-) -> op_ai_skills::AgentContext {
-    op_ai_skills::resolve_skills(op_ai_skills::Phase::Generation, message, opts)
-}
+// `resolve_generation_skills` (a bare `resolve_skills` wrapper) used to serve
+// every sub-agent path except Basic-mobile. It is gone rather than kept for
+// symmetry: calling it meant budgeting BEFORE the compaction, which is the
+// defect `resolve_generation_skills_after_prompt_filter` below exists to
+// avoid, so leaving it in reach would leave the wrong order one call away.
 
 /// 该 plan 是否代表一整屏移动端页面。
 ///
@@ -44,8 +40,19 @@ pub(super) fn is_mobile_full_screen(plan: &OrchestratorPlan) -> bool {
 /// against ~6200 of always-kept Base skills) BOTH are dropped for
 /// `BudgetExhausted` and a weak model designs a deck with no deck guidance at
 /// all — measured 2026-08-04, before this arm existed.
+/// Routed through the single form classifier rather than comparing widths
+/// here. The hand-rolled `w >= 1600 && h >= 900` this replaces was a fourth
+/// geometric literal alongside the three in `design_form`, and it was LOOSER
+/// in the one way that matters: with no aspect gate, a 1920×2000 long page
+/// claimed the deck budget and spent it on slide teaching it could not use.
+/// Under the classifier that page reads as [`DesignForm::Page`] and keeps the
+/// ordinary page budget — see the test that pins that case.
 pub(super) fn is_deck_board(plan: &OrchestratorPlan) -> bool {
-    plan.root_frame.width >= 1600.0 && plan.root_frame.height >= 900.0
+    crate::design_type::classify_root_form(
+        Some(plan.root_frame.width),
+        Some(plan.root_frame.height),
+    )
+    .is_deck_board()
 }
 
 /// Build the sub-agent style-guide instruction block for the planner-selected
@@ -203,6 +210,22 @@ pub(super) fn push_resolved_string_tokens(
     }
 }
 
+/// Resolve the generation skill set with the sub-agent compaction applied
+/// BEFORE the budget knapsack, so the budget is never spent on a skill the
+/// compaction is about to delete. This is the order every sub-agent prompt
+/// uses; see the call site in `prompt_subagent` for what the other order cost.
+///
+/// Mirrors `op_ai_skills::resolve_skills` step for step (phase filter → intent
+/// / flag match → dynamic-content injection → `trim_by_budget_pinned`) with
+/// the compaction inserted between the third and fourth. **The one thing it
+/// does not mirror is memory**: `resolve_skills` derives `{{recentHistory}}`
+/// from `opts.memory.generation_history`, and this reimplementation falls back
+/// to the empty-history text that derivation produces. That is exact — and
+/// only exact — while the caller passes no memory, which the sub-agent path
+/// does not (`ResolveOptions { .., ..Default::default() }`). A caller that
+/// starts populating `memory` must route through `resolve_skills` or teach
+/// this function the same derivation; the history helpers are private to
+/// `op-ai-skills`, which is why this note exists instead of a call.
 pub(super) fn resolve_generation_skills_after_prompt_filter(
     intent: &str,
     opts: &ResolveOptions,

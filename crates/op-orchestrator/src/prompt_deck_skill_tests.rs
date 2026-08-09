@@ -100,6 +100,18 @@ const DECK_PATTERNS_MARKERS: [&str; 5] = [
     "a rectangle does not render its children",
 ];
 
+/// The third deck skill (2026-08-09). It joined a phase budget that was
+/// already full — `op-ai-skills` raised `Phase::Generation` 12000 → 13200 and
+/// the deck tier arms below moved with it — so it is exactly the kind of skill
+/// that gets silently squeezed out, and exactly why it is guarded here.
+const DECK_CONTRACT_MARKERS: [&str; 5] = [
+    "DECK CONTRACT",
+    "## Law 1 — overflow splits the page, it never shrinks the type",
+    "FORBIDDEN as fixes: a smaller font",
+    "**Ghost deck test**",
+    "## Deck slop — each is a recognisable fingerprint",
+];
+
 /// Full / Standard / Basic all reach the model with the deck corpus whole.
 /// One model id per tier — the tier is what selects the budget arm and the
 /// `compact_skills` allow-set, and each of those dropped the deck skills on
@@ -120,7 +132,11 @@ fn every_tier_receives_the_deck_corpus_intact() {
         );
         let prompt = &call.system_prompt;
 
-        for marker in SLIDES_MARKERS.iter().chain(DECK_PATTERNS_MARKERS.iter()) {
+        for marker in SLIDES_MARKERS
+            .iter()
+            .chain(DECK_PATTERNS_MARKERS.iter())
+            .chain(DECK_CONTRACT_MARKERS.iter())
+        {
             assert!(
                 prompt.contains(marker),
                 "model {model:?}: assembled system prompt is missing {marker:?} — \
@@ -137,7 +153,7 @@ fn every_tier_receives_the_deck_corpus_intact() {
         }
 
         // The tails specifically — the knapsack cuts from the end.
-        for name in ["slides", "deck-patterns"] {
+        for name in ["slides", "deck-patterns", "deck-contract"] {
             assert!(
                 prompt.contains(skill_tail(name)),
                 "model {model:?}: {name} reached the prompt without its last line — \
@@ -162,6 +178,51 @@ fn every_tier_receives_the_deck_corpus_intact() {
     }
 }
 
+/// Nothing may lose the budget race while the budget still has room.
+///
+/// This is the ordering defect, stated as an invariant. The sub-agent
+/// compaction used to run AFTER the knapsack, so the budget was spent on
+/// skills the compaction then deleted and never handed back: this exact deck
+/// fixture reported `design-principles` as `BudgetExhausted` while the report
+/// showed 652 tokens of headroom, because at knapsack time `design-system`
+/// (554, deleted moments later) had been holding most of it. With the
+/// compaction moved in front, the same fixture resolves 13069/13200 with an
+/// empty budget-drop list.
+///
+/// If this fails because the corpus genuinely outgrew the phase budget, that
+/// is the alarm working — the fix is the phase budget, not this assertion.
+#[test]
+fn no_skill_loses_the_budget_race_while_the_budget_has_room() {
+    for model in ["claude-opus-5", "kimi-k2.5", "glm-4.6"] {
+        let (_call, report) = build_subagent_prompt(
+            &deck_subtask(),
+            &deck_plan(),
+            &deck_request(model),
+            AbortFlag::new(),
+            false,
+            false,
+            &op_editor_core::ComponentLibrary::default(),
+        );
+        let budget_dropped: Vec<&str> = report
+            .dropped
+            .iter()
+            .filter(|s| matches!(s.reason, op_ai_skills::DropReason::BudgetExhausted))
+            .map(|s| s.name.as_str())
+            .collect();
+        assert!(
+            report.budget_used <= report.budget_max,
+            "model {model:?}: the deck set must fit its budget; report={report:?}"
+        );
+        assert!(
+            budget_dropped.is_empty(),
+            "model {model:?}: {budget_dropped:?} lost the budget race with \
+             {} tokens still free — the knapsack is paying for skills the \
+             compaction deletes again",
+            report.budget_max - report.budget_used,
+        );
+    }
+}
+
 /// The budget arm must be selected by the deck's ARTBOARD, not by the prompt
 /// wording — a deck plan whose request never says "deck" still needs the room.
 #[test]
@@ -177,6 +238,27 @@ fn the_deck_budget_arm_keys_off_the_projector_artboard() {
     mobile.root_frame.width = 375.0;
     mobile.root_frame.height = 812.0;
     assert!(!is_deck_board(&mobile));
+}
+
+/// A deck-WIDE artboard that is not a deck SHAPE keeps the ordinary page
+/// budget. This is the behaviour change from routing `is_deck_board` through
+/// `classify_root_form` (2026-08-09): the old `w >= 1600 && h >= 900` had no
+/// aspect gate, so a 1920×2000 long-scroll page claimed ~13200 tokens and
+/// spent them on 16:9 slide teaching it can never apply — while the page
+/// skills it actually needed competed for what was left. Losing the override
+/// here is the fix, not a regression.
+#[test]
+fn a_tall_page_at_deck_width_does_not_claim_the_deck_budget() {
+    let mut long_page = deck_plan();
+    long_page.root_frame.height = 2000.0;
+    assert!(
+        !is_deck_board(&long_page),
+        "1920x2000 is a long page (aspect 1.04), not a projector board"
+    );
+    // The band still accepts a board a model sized slightly off 16:9.
+    let mut near_16_9 = deck_plan();
+    near_16_9.root_frame.height = 1000.0;
+    assert!(is_deck_board(&near_16_9), "1920x1000 is still a board");
 }
 
 /// A non-deck plan must be byte-for-byte unaffected: the deck skills are
