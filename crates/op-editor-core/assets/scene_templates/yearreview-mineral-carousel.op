@@ -231,7 +231,7 @@
                             }
                           ],
                           "lineHeight": 1.0,
-                          "letterSpacing": -2,
+                          "letterSpacing": -1.28,
                           "textGrowth": "auto",
                           "width": "fit_content"
                         },
@@ -1592,7 +1592,7 @@
                                 }
                               ],
                               "lineHeight": 1.0,
-                              "letterSpacing": -2,
+                              "letterSpacing": -0.96,
                               "textGrowth": "auto",
                               "width": "fit_content"
                             }
@@ -1676,7 +1676,7 @@
                                 }
                               ],
                               "lineHeight": 1.0,
-                              "letterSpacing": -2,
+                              "letterSpacing": -0.96,
                               "textGrowth": "auto",
                               "width": "fit_content"
                             }

@@ -114,7 +114,7 @@ def hairline():
 def cover():
     lede = col("主张", [
         centered("主标题", "把复杂\n留在里面", 168, 700, "$c-ink",
-                 line_height=1.02, spacing=-6),
+                 line_height=1.02, spacing=-3),
         accent_rule(),
         centered("副标题", "第七代产品，今天发布。", 30, 400, "$c-muted",
                  line_height=1.45),
@@ -180,7 +180,7 @@ def statement():
         rect(ids, "强调点", width=20, height=20, cornerRadius=10,
              fill=solid("$c-accent")),
         centered("论点", "我们删掉了\n三十七个按钮。", 104, 700, "$c-ink",
-                 line_height=1.12, spacing=-3),
+                 line_height=1.12, spacing=-2),
     ]
     return s
 
@@ -226,7 +226,7 @@ def one_number():
     s = slide("08 数据", gap=36)
     s["children"] = [
         centered("大数字", "0.4 秒", 260, 700, "$c-ink", family=NUM,
-                 line_height=1.0, spacing=-8),
+                 line_height=1.0, spacing=-5),
         centered("注解", "从按下到出图的全部时间，上一代是 2.6 秒。",
                  30, 400, "$c-muted", line_height=1.5),
     ]
@@ -239,7 +239,7 @@ def closing():
     s["children"] = [
         accent_rule(),
         centered("结语", "今天开始发货。", 128, 700, "$c-ink",
-                 line_height=1.08, spacing=-4),
+                 line_height=1.08, spacing=-3),
         centered("补充", "全国门店同步开售，官网可预约体验。", 30, 400,
                  "$c-muted", line_height=1.5),
     ]

@@ -221,7 +221,7 @@
                     }
                   ],
                   "lineHeight": 1.3,
-                  "letterSpacing": -0.8,
+                  "letterSpacing": 0,
                   "textGrowth": "fixed-width",
                   "width": "fill_container"
                 },

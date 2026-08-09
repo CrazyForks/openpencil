@@ -102,7 +102,7 @@
                 }
               ],
               "lineHeight": 1.1,
-              "letterSpacing": -2,
+              "letterSpacing": -1.68,
               "textGrowth": "fixed-width",
               "width": "fill_container"
             }

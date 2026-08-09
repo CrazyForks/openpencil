@@ -157,7 +157,7 @@
                     }
                   ],
                   "lineHeight": 1.06,
-                  "letterSpacing": -3,
+                  "letterSpacing": -2.64,
                   "textGrowth": "fixed-width",
                   "width": "fill_container"
                 },
@@ -377,7 +377,7 @@
                     }
                   ],
                   "lineHeight": 1.1,
-                  "letterSpacing": -2,
+                  "letterSpacing": -1.6,
                   "textGrowth": "fixed-width",
                   "width": "fill_container"
                 }
@@ -880,7 +880,7 @@
                     }
                   ],
                   "lineHeight": 1.1,
-                  "letterSpacing": -2,
+                  "letterSpacing": -1.6,
                   "textGrowth": "fixed-width",
                   "width": "fill_container"
                 },
@@ -1311,7 +1311,7 @@
                     }
                   ],
                   "lineHeight": 1.1,
-                  "letterSpacing": -2,
+                  "letterSpacing": -1.6,
                   "textGrowth": "fixed-width",
                   "width": "fill_container"
                 },
@@ -1915,7 +1915,7 @@
                     }
                   ],
                   "lineHeight": 1.1,
-                  "letterSpacing": -2,
+                  "letterSpacing": -1.6,
                   "textGrowth": "fixed-width",
                   "width": "fill_container"
                 },
@@ -2373,7 +2373,7 @@
                     }
                   ],
                   "lineHeight": 1.06,
-                  "letterSpacing": -3,
+                  "letterSpacing": -2.4,
                   "textGrowth": "fixed-width",
                   "width": "fill_container"
                 },

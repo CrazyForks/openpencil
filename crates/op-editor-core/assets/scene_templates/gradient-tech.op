@@ -201,7 +201,7 @@
                     }
                   ],
                   "lineHeight": 1.08,
-                  "letterSpacing": -3,
+                  "letterSpacing": -2.24,
                   "textGrowth": "fixed-width",
                   "width": "fill_container"
                 },
@@ -435,7 +435,7 @@
                     }
                   ],
                   "lineHeight": 1.12,
-                  "letterSpacing": -2,
+                  "letterSpacing": -1.52,
                   "textGrowth": "fixed-width",
                   "width": "fill_container"
                 },
@@ -940,7 +940,7 @@
                     }
                   ],
                   "lineHeight": 1.12,
-                  "letterSpacing": -2,
+                  "letterSpacing": -1.52,
                   "textGrowth": "fixed-width",
                   "width": "fill_container"
                 },
@@ -1484,7 +1484,7 @@
                     }
                   ],
                   "lineHeight": 1.12,
-                  "letterSpacing": -2,
+                  "letterSpacing": -1.52,
                   "textGrowth": "fixed-width",
                   "width": "fill_container"
                 }
@@ -2293,7 +2293,7 @@
                     }
                   ],
                   "lineHeight": 1.12,
-                  "letterSpacing": -2,
+                  "letterSpacing": -1.52,
                   "textGrowth": "fixed-width",
                   "width": "fill_container"
                 },
@@ -3077,7 +3077,7 @@
                     }
                   ],
                   "lineHeight": 1.1,
-                  "letterSpacing": -3,
+                  "letterSpacing": -1.92,
                   "textGrowth": "fixed-width",
                   "width": "fill_container"
                 },

@@ -138,7 +138,7 @@
                     }
                   ],
                   "lineHeight": 1.08,
-                  "letterSpacing": -2,
+                  "letterSpacing": -2.08,
                   "textGrowth": "fixed-width",
                   "width": 1680
                 },
@@ -263,7 +263,7 @@
                 }
               ],
               "lineHeight": 1.12,
-              "letterSpacing": -1,
+              "letterSpacing": -1.28,
               "textGrowth": "fixed-width",
               "width": 1680
             },
@@ -692,7 +692,7 @@
                     }
                   ],
                   "lineHeight": 1.12,
-                  "letterSpacing": -1,
+                  "letterSpacing": -1.28,
                   "textGrowth": "fixed-width",
                   "width": 1680
                 },
@@ -1321,7 +1321,7 @@
                     }
                   ],
                   "lineHeight": 1.12,
-                  "letterSpacing": -1,
+                  "letterSpacing": -1.28,
                   "textGrowth": "fixed-width",
                   "width": 1680
                 },
@@ -2196,7 +2196,7 @@
                     }
                   ],
                   "lineHeight": 1.12,
-                  "letterSpacing": -1,
+                  "letterSpacing": -1.28,
                   "textGrowth": "fixed-width",
                   "width": 1680
                 },
@@ -3359,7 +3359,7 @@
                     }
                   ],
                   "lineHeight": 1.12,
-                  "letterSpacing": -1,
+                  "letterSpacing": -1.28,
                   "textGrowth": "fixed-width",
                   "width": 1680
                 },
@@ -3895,7 +3895,7 @@
                 }
               ],
               "lineHeight": 1.12,
-              "letterSpacing": -1,
+              "letterSpacing": -1.44,
               "textGrowth": "fixed-width",
               "width": 1680
             },
