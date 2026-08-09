@@ -10,6 +10,11 @@ description = "OpenPencil headless web/MCP server binary — links op-host-servi
 name = "op-host-web-server"
 path = "src/main.rs"
 
+[features]
+# Forwarded to op-host-services so a dev daemon can mint collaboration
+# tickets from the locally built ABI-v2 op-auth archive (debug only).
+dev-op-auth-abi-v2 = ["op-host-services/dev-op-auth-abi-v2"]
+
 [dependencies]
 op-host-services = { path = "../op-host-services" }
 
