@@ -110,6 +110,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         }
         "collab.a11y.participant" => "{{name}}, {{role}}",
         "collab.a11y.remoteCursor" => "{{name}} imleci",
+        "icon.catalogLoading" => "Simge kataloğu yükleniyor…",
+        "sceneTemplate.documentUnavailable" => "Bu şablonun belgesi yüklenemedi. Tekrar deneyin.",
         _ => return None,
     })
 }

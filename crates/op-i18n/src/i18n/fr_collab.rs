@@ -110,6 +110,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         }
         "collab.a11y.participant" => "{{name}}, {{role}}",
         "collab.a11y.remoteCursor" => "Curseur de {{name}}",
+        "icon.catalogLoading" => "Chargement du catalogue d'icônes…",
+        "sceneTemplate.documentUnavailable" => "Le document de ce modèle n'a pas pu être chargé. Réessayez.",
         _ => return None,
     })
 }

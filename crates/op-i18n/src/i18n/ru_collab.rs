@@ -140,6 +140,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         }
         "collab.a11y.participant" => "{{name}}, {{role}}",
         "collab.a11y.remoteCursor" => "Курсор пользователя {{name}}",
+        "icon.catalogLoading" => "Загрузка каталога значков…",
+        "sceneTemplate.documentUnavailable" => "Не удалось загрузить документ этого шаблона. Попробуйте снова.",
         _ => return None,
     })
 }

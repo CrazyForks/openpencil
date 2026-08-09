@@ -114,6 +114,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         }
         "collab.a11y.participant" => "{{name}}, {{role}}",
         "collab.a11y.remoteCursor" => "{{name}} का कर्सर",
+        "icon.catalogLoading" => "आइकन कैटलॉग लोड हो रहा है…",
+        "sceneTemplate.documentUnavailable" => "इस टेम्पलेट का दस्तावेज़ लोड नहीं हो सका। फिर से कोशिश करें।",
         _ => return None,
     })
 }

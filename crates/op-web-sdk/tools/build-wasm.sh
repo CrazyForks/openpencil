@@ -16,10 +16,9 @@
 #      document logic; CanvasKit itself is loaded externally by the host page.
 #   4. Assert 0 env.* imports in the raw bindgen wasm (LinkError guard).
 #   5. wasm-opt -Oz (with the rustc-emitted WebAssembly feature flags) then
-#      gzip size <= OP_WEB_SDK_WASM_GZIP_LIMIT_BYTES (default 8 388 608 = 8 MiB).
+#      gzip size <= OP_WEB_SDK_WASM_GZIP_LIMIT_BYTES (default 6 291 456 = 6 MiB).
 #      The SDK is pure logic with no CanvasKit WASM included — the ceiling
-#      is its own tripwire, not op-host-web's — this bundle has never been
-#      measured against a tighter one, so it is left at 8 MiB until it is.
+#      is its own tripwire, not op-host-web's, and is now measured: see below.
 #
 # This approach mirrors tools/check-wasm-bundle.sh (op-host-web gate) exactly:
 # cargo build → wasm-bindgen → wasm-opt, without wasm-pack.  This removes the
@@ -61,14 +60,21 @@ WASM_OPT_CANDIDATE_FEATURES=(
   --enable-nontrapping-float-to-int
 )
 
-# Gzip ceiling. NOT the same number as op-host-web any more: that bundle was
-# re-baselined to 6 MiB once its preview JPEGs moved out behind the runtime
-# `/pkg/assets/` fetch (`tools/check-wasm-bundle.sh`). This viewer bundle has a
-# different feature set and has not been measured against a tighter ceiling, so
-# it keeps 8 MiB until it is. (see
-# tools/check-wasm-bundle.sh for the embedded-asset composition note).
-# Override via env when intentionally re-baselining.
-LIMIT="${OP_WEB_SDK_WASM_GZIP_LIMIT_BYTES:-8388608}"
+# Gzip ceiling. Its own number, NOT op-host-web's — that bundle re-baselined to
+# 6 MiB on its own measurement (`tools/check-wasm-bundle.sh`).
+#
+# Measured 2026-08-09: this bundle gzips to 5 200 519 bytes, having taken the
+# same benefit as op-host-web from moving the preview JPEGs and scene-template
+# `.op` documents out of the binary (7 472 939 -> 5 200 519 across both
+# rounds). The ceiling is that measurement + ~20% headroom, rounded up to a
+# whole MiB: a tripwire 3 MiB above the real number catches nothing, which is
+# why it moves down with the bundle rather than staying where it was set.
+#
+# This viewer keeps the icon catalog EMBEDDED (`op-editor-ui`'s
+# `runtime-icon-catalog` feature is opt-in and only op-host-web opts in): the
+# SDK renders iconFont nodes but has no daemon to fetch a catalog from, so for
+# it "not fetched yet" would mean "never".
+LIMIT="${OP_WEB_SDK_WASM_GZIP_LIMIT_BYTES:-6291456}"
 
 step() { printf '\n[step %d/%d] %s\n' "$1" "$2" "$3"; }
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }

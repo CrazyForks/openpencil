@@ -143,8 +143,11 @@ jobs:
           mkdir -p web-bundle
           cp -R crates/op-host-web/pkg/. web-bundle/
           cp -R crates/op-host-web/assets/canvaskit web-bundle/canvaskit
-          test -d web-bundle/assets/prompt_center_previews \
-            || { echo "::error::web-bundle is missing assets/prompt_center_previews"; exit 1; }
+          for required in assets/prompt_center_previews assets/scene_template_previews \
+                          assets/scene_templates assets/iconify-catalog-core.json; do
+            test -e "web-bundle/$required" \
+              || { echo "::error::web-bundle is missing $required"; exit 1; }
+          done
           echo "web-bundle contents:"
           find web-bundle -maxdepth 2 -type f | sort
           echo "staged runtime assets: $(find web-bundle/assets -type f | wc -l) files"

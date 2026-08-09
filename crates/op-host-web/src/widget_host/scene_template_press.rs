@@ -8,7 +8,9 @@
 //! file path and rewrites the window title.
 
 use op_editor_core::scene_template_append::template_boards;
-use op_editor_core::scene_template_catalog::{scene_template_by_id, scene_template_document};
+use op_editor_core::scene_template_catalog::{
+    scene_template_by_id, scene_template_document, scene_template_document_route,
+};
 use op_editor_ui::widgets::press_flow;
 use op_editor_ui::Point2D;
 
@@ -88,6 +90,32 @@ impl WidgetHost {
         // make the "choose file" button do nothing.
     }
 
+    /// Instantiate a template whose document arrived after the click.
+    ///
+    /// Called once per frame by the CanvasKit mount. On native this is a
+    /// no-op — the document is in the binary, so the press path already
+    /// finished the job and nothing is ever left pending.
+    pub(crate) fn retry_pending_scene_template(&mut self) -> bool {
+        if self
+            .editor_state
+            .editor_ui
+            .scene_template_center
+            .pending_open
+            .is_none()
+        {
+            return false;
+        }
+        let (w, h) = (self.last_viewport_w, self.last_viewport_h);
+        if w <= 0.0 || h <= 0.0 {
+            return false;
+        }
+        let brought_in = self.drain_pending_scene_template(w, h);
+        if brought_in {
+            self.mark_dirty();
+        }
+        brought_in
+    }
+
     /// Bring a chosen template into the document. Returns whether it changed.
     fn drain_pending_scene_template(&mut self, viewport_w: f32, viewport_h: f32) -> bool {
         let Some(template_id) = self
@@ -99,6 +127,35 @@ impl WidgetHost {
             return false;
         };
         let Some(source) = scene_template_document(&template_id) else {
+            // Web only: the ~1.1 MB of template documents are not in the wasm
+            // bundle, so the first use of a template fetches it. Unknown ids
+            // have no route and simply drop, exactly as before.
+            let Some(route) = scene_template_document_route(&template_id) else {
+                return false;
+            };
+            match op_editor_core::web_assets::state(route) {
+                op_editor_core::web_assets::WebAssetState::Failed => {
+                    // Say so instead of leaving a click that did nothing. The
+                    // request stays retryable, so clicking the card again asks
+                    // the daemon again.
+                    self.editor_state.editor_ui.show_toast(
+                        "sceneTemplate.documentUnavailable",
+                        Vec::new(),
+                        op_editor_core::editor_toast::EditorToastLevel::Warn,
+                        self.now_ms,
+                    );
+                }
+                _ => {
+                    // Re-arm the request so the per-frame retry
+                    // (`retry_pending_scene_template`) instantiates it the
+                    // moment the bytes land.
+                    op_editor_core::web_assets::request(route);
+                    self.editor_state
+                        .editor_ui
+                        .scene_template_center
+                        .request_open(template_id);
+                }
+            }
             return false;
         };
         let Some(boards) = template_boards(source, &template_id) else {

@@ -112,6 +112,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         }
         "collab.a11y.participant" => "{{name}}, {{role}}",
         "collab.a11y.remoteCursor" => "เคอร์เซอร์ของ {{name}}",
+        "icon.catalogLoading" => "กำลังโหลดแคตตาล็อกไอคอน…",
+        "sceneTemplate.documentUnavailable" => "โหลดเอกสารของเทมเพลตนี้ไม่สำเร็จ ลองอีกครั้ง",
         _ => return None,
     })
 }

@@ -150,6 +150,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         }
         "collab.a11y.participant" => "{{name}}, {{role}}",
         "collab.a11y.remoteCursor" => "{{name}}'s cursor",
+        "icon.catalogLoading" => "Icon catalog is still loading…",
+        "sceneTemplate.documentUnavailable" => "That template's document could not be loaded. Try again.",
         _ => return None,
     })
 }

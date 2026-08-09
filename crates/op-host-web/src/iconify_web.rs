@@ -93,6 +93,23 @@ const BRAND_CATALOG_PATH: &str = op_editor_ui::ICONIFY_BRANDS_ROUTE;
 /// the icon picker and figma icon substitution can resolve brand logos shortly
 /// after load. Best-effort: a missing daemon / failed fetch just leaves brand
 /// logos unavailable (lookups fall back to the unknown-glyph dot).
+/// Fetch the core (lucide + feather) catalog the first time the icon panel is
+/// opened, and register it.
+///
+/// Unlike the brand catalog this is NOT pulled at mount: it is only needed by
+/// the icon picker and the iconFont resolver, so pulling it on first open
+/// keeps it off the critical path of a session that never opens either. The
+/// route is a `/pkg/assets/` asset (the bundle no longer embeds it), so it
+/// rides the shared `web_assets` single-flight rather than a private latch —
+/// a failed fetch leaves the panel on its "still loading" empty state and the
+/// next open asks again.
+pub(crate) fn ensure_core_catalog() {
+    if op_editor_ui::core_catalog_loaded() {
+        return;
+    }
+    op_editor_core::web_assets::request(op_editor_ui::ICONIFY_CORE_ROUTE);
+}
+
 pub(crate) fn fetch_brand_catalog<C: RepaintContext + 'static>(inner: &Rc<RefCell<C>>) {
     // Crate-root re-exports (not the `widgets` facade) so this stays within the
     // op-host-web widget-boundary rule (`tools/check-widget-boundary.sh` F4).

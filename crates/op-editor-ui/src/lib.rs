@@ -63,7 +63,10 @@ pub use theme::Theme;
 // Brand-logo catalog registration, surfaced at the crate root so non-widget
 // host code (the web brand-catalog fetcher) can install the runtime-loaded
 // catalog without importing the boundary-restricted `widgets` facade.
-pub use widgets::icon_catalog::{brand_catalog_loaded, set_brand_catalog, ICONIFY_BRANDS_ROUTE};
+pub use widgets::icon_catalog::{
+    brand_catalog_loaded, core_catalog_loaded, set_brand_catalog, set_core_catalog,
+    ICONIFY_BRANDS_ROUTE, ICONIFY_CORE_ROUTE,
+};
 
 /// Re-exports of Jian gesture / event types so widget code can use the
 /// canonical Jian types directly via the short `crate::` form.

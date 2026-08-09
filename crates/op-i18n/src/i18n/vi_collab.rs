@@ -122,6 +122,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         }
         "collab.a11y.participant" => "{{name}}, {{role}}",
         "collab.a11y.remoteCursor" => "Con trỏ của {{name}}",
+        "icon.catalogLoading" => "Đang tải danh mục biểu tượng…",
+        "sceneTemplate.documentUnavailable" => "Không tải được tài liệu của mẫu này. Hãy thử lại.",
         _ => return None,
     })
 }

@@ -47,6 +47,10 @@ copy_file() {
 mkdir -p "${DEST}"
 copy_dir "${UI_ASSETS}/prompt_center_previews" "prompt_center_previews"
 copy_dir "${UI_ASSETS}/scene_template_previews" "scene_template_previews"
+# Scene-template `.op` documents — fetched when a template is instantiated.
+copy_dir "${CORE_ASSETS}/scene_templates" "scene_templates"
+# Core (lucide + feather) icon catalog — fetched when the icon panel opens.
+copy_file "${UI_ASSETS}/iconify-catalog-core.json" "iconify-catalog-core.json"
 
 staged="$(du -sk "${DEST}" | cut -f1)"
 printf '  ✓ staged runtime assets into %s (%s KiB)\n' "${DEST}" "${staged}"

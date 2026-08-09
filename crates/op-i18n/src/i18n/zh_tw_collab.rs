@@ -110,6 +110,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.status.localEditPreserved" => "已套用遠端版本。使用「復原」即可還原你的本機變更。",
         "collab.a11y.participant" => "{{name}}，{{role}}",
         "collab.a11y.remoteCursor" => "{{name}} 的游標",
+        "icon.catalogLoading" => "圖示庫正在載入…",
+        "sceneTemplate.documentUnavailable" => "該範本的文件載入失敗，請重試。",
         _ => return None,
     })
 }

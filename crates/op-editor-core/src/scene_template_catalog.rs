@@ -20,174 +20,187 @@ use crate::catalog_toml::{
 
 const SCENE_TEMPLATES_TOML: &str = include_str!("../assets/scene_templates.toml");
 
-/// The shipped documents, embedded so opening a template needs no filesystem
-/// and works identically on the web host.
-const SCREENSHOT_TUTORIAL_OP: &str =
-    include_str!("../assets/scene_templates/screenshot-tutorial.op");
-const KNOWLEDGE_CAROUSEL_OP: &str = include_str!("../assets/scene_templates/knowledge-carousel.op");
-const BEFORE_AFTER_OP: &str = include_str!("../assets/scene_templates/before-after.op");
-const SLIDE_DECK_OP: &str = include_str!("../assets/scene_templates/slide-deck.op");
-const KNOWLEDGE_CARD_VERTICAL_OP: &str =
-    include_str!("../assets/scene_templates/knowledge-card-vertical.op");
-const KNOWLEDGE_CARD_SQUARE_OP: &str =
-    include_str!("../assets/scene_templates/knowledge-card-square.op");
-const PITCH_DECK_DARK_OP: &str = include_str!("../assets/scene_templates/pitch-deck-dark.op");
-const LECTURE_DECK_LIGHT_OP: &str = include_str!("../assets/scene_templates/lecture-deck-light.op");
-const MINIMAL_KEYNOTE_OP: &str = include_str!("../assets/scene_templates/minimal-keynote.op");
-const GRADIENT_TECH_OP: &str = include_str!("../assets/scene_templates/gradient-tech.op");
-const SAAS_LANDING_ORANGE_OP: &str =
-    include_str!("../assets/scene_templates/saas-landing-orange.op");
-const PRODUCT_LANDING_LIGHT_OP: &str =
-    include_str!("../assets/scene_templates/product-landing-light.op");
-const PUNCH_QUOTE_CARD_OP: &str = include_str!("../assets/scene_templates/punch-quote-card.op");
-const JOURNAL_CHECKLIST_CARD_OP: &str =
-    include_str!("../assets/scene_templates/journal-checklist-card.op");
-const DATA_REPORT_INFOGRAPHIC_OP: &str =
-    include_str!("../assets/scene_templates/data-report-infographic.op");
-const STEPS_FLOW_INFOGRAPHIC_OP: &str =
-    include_str!("../assets/scene_templates/steps-flow-infographic.op");
-const EVENT_POSTER_DECK_OP: &str = include_str!("../assets/scene_templates/event-poster-deck.op");
-const PITFALL_LIST_INFOGRAPHIC_OP: &str =
-    include_str!("../assets/scene_templates/pitfall-list-infographic.op");
-const SPINE_CULTURE_CARD_OP: &str = include_str!("../assets/scene_templates/spine-culture-card.op");
-const METRIC_SINGLE_CARD_OP: &str = include_str!("../assets/scene_templates/metric-single-card.op");
-const QUOTE_FRAME_CARD_OP: &str = include_str!("../assets/scene_templates/quote-frame-card.op");
-const DAILY_SIGN_CARD_OP: &str = include_str!("../assets/scene_templates/daily-sign-card.op");
-const PRICE_TIER_CARD_OP: &str = include_str!("../assets/scene_templates/price-tier-card.op");
-const NOTICE_BOARD_CARD_OP: &str = include_str!("../assets/scene_templates/notice-board-card.op");
-const MILESTONE_TIMELINE_INFOGRAPHIC_OP: &str =
-    include_str!("../assets/scene_templates/milestone-timeline-infographic.op");
-const CONCEPT_CONTRAST_INFOGRAPHIC_OP: &str =
-    include_str!("../assets/scene_templates/concept-contrast-infographic.op");
-const RANKING_BOARD_INFOGRAPHIC_OP: &str =
-    include_str!("../assets/scene_templates/ranking-board-infographic.op");
-const FAQ_THREAD_INFOGRAPHIC_OP: &str =
-    include_str!("../assets/scene_templates/faq-thread-infographic.op");
-const DATA_STORY_INFOGRAPHIC_OP: &str =
-    include_str!("../assets/scene_templates/data-story-infographic.op");
-const CHALLENGE_TRACKER_INFOGRAPHIC_OP: &str =
-    include_str!("../assets/scene_templates/challenge-tracker-infographic.op");
-const ECOSYSTEM_MAP_INFOGRAPHIC_OP: &str =
-    include_str!("../assets/scene_templates/ecosystem-map-infographic.op");
-const DO_DONT_COMPARISON_OP: &str = include_str!("../assets/scene_templates/do-dont-comparison.op");
-const MYTH_TRUTH_COMPARISON_OP: &str =
-    include_str!("../assets/scene_templates/myth-truth-comparison.op");
-const PRICING_TIERS_COMPARISON_OP: &str =
-    include_str!("../assets/scene_templates/pricing-tiers-comparison.op");
-const SCENARIO_GUIDE_COMPARISON_OP: &str =
-    include_str!("../assets/scene_templates/scenario-guide-comparison.op");
-const SPEC_TABLE_COMPARISON_OP: &str =
-    include_str!("../assets/scene_templates/spec-table-comparison.op");
-const THREE_WAY_COMPARISON_OP: &str =
-    include_str!("../assets/scene_templates/three-way-comparison.op");
-const TIME_SHIFT_COMPARISON_OP: &str =
-    include_str!("../assets/scene_templates/time-shift-comparison.op");
-const TRADEOFF_SCALE_COMPARISON_OP: &str =
-    include_str!("../assets/scene_templates/tradeoff-scale-comparison.op");
-const VERSION_DIFF_COMPARISON_OP: &str =
-    include_str!("../assets/scene_templates/version-diff-comparison.op");
-const APP_ONBOARDING_TRIPTYCH_OP: &str =
-    include_str!("../assets/scene_templates/app-onboarding-triptych.op");
-const DIY_BLUEPRINT_GUIDE_OP: &str =
-    include_str!("../assets/scene_templates/diy-blueprint-guide.op");
-const PHOTO_COMPOSITION_TUTORIAL_OP: &str =
-    include_str!("../assets/scene_templates/photo-composition-tutorial.op");
-const RECIPE_FOUR_STEP_OP: &str = include_str!("../assets/scene_templates/recipe-four-step.op");
-const SKINCARE_ROUTINE_CARDS_OP: &str =
-    include_str!("../assets/scene_templates/skincare-routine-cards.op");
-const SOFTWARE_STEP_TUTORIAL_OP: &str =
-    include_str!("../assets/scene_templates/software-step-tutorial.op");
-const STORAGE_MAKEOVER_STEPS_OP: &str =
-    include_str!("../assets/scene_templates/storage-makeover-steps.op");
-const WEEKLY_REPORT_LESSON_OP: &str =
-    include_str!("../assets/scene_templates/weekly-report-lesson.op");
-const WORKOUT_BREAKDOWN_GUIDE_OP: &str =
-    include_str!("../assets/scene_templates/workout-breakdown-guide.op");
-const BOOKREVIEW_SILK_CAROUSEL_OP: &str =
-    include_str!("../assets/scene_templates/bookreview-silk-carousel.op");
-const CITYGUIDE_FILM_CAROUSEL_OP: &str =
-    include_str!("../assets/scene_templates/cityguide-film-carousel.op");
-const DATAREPORT_GRID_CAROUSEL_OP: &str =
-    include_str!("../assets/scene_templates/datareport-grid-carousel.op");
-const OPINION_LONGFORM_CAROUSEL_OP: &str =
-    include_str!("../assets/scene_templates/opinion-longform-carousel.op");
-const QA_CHALKBOARD_CAROUSEL_OP: &str =
-    include_str!("../assets/scene_templates/qa-chalkboard-carousel.op");
-const STORY_NIGHT_CAROUSEL_OP: &str =
-    include_str!("../assets/scene_templates/story-night-carousel.op");
-const TOOLKIT_NOTEBOOK_CAROUSEL_OP: &str =
-    include_str!("../assets/scene_templates/toolkit-notebook-carousel.op");
-const TUTORIAL_JOURNAL_CAROUSEL_OP: &str =
-    include_str!("../assets/scene_templates/tutorial-journal-carousel.op");
-const YEARREVIEW_MINERAL_CAROUSEL_OP: &str =
-    include_str!("../assets/scene_templates/yearreview-mineral-carousel.op");
+/// The shipped documents.
+///
+/// Embedded on desktop so opening a template needs no filesystem. NOT embedded
+/// on `wasm32`: the ten documents are ~1.1 MB of JSON that every visitor would
+/// download before the editor painted, to open a panel most sessions never
+/// touch. There the document is fetched from the daemon when a template is
+/// actually instantiated — see [`scene_template_document_route`] and
+/// `op_editor_core::web_assets`.
+macro_rules! template_document {
+    ($file:literal) => {{
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Some(include_str!(concat!(
+                "../assets/scene_templates/",
+                $file,
+                ".op"
+            )))
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            crate::web_assets::installed_str(concat!(
+                "/pkg/assets/",
+                "scene_templates",
+                "/",
+                $file,
+                ".op"
+            ))
+        }
+    }};
+}
 
-/// Return the embedded document JSON for a template id.
+/// Daemon route carrying a template's document.
+///
+/// `None` for an unknown id. Always present for a shipped template on both
+/// platforms — native simply has no use for it, because its bytes are already
+/// in the binary.
+pub fn scene_template_document_route(template_id: &str) -> Option<&'static str> {
+    macro_rules! route {
+        ($file:literal) => {
+            Some(concat!(
+                "/pkg/assets/",
+                "scene_templates",
+                "/",
+                $file,
+                ".op"
+            ))
+        };
+    }
+    match template_id {
+        "screenshot-tutorial" => route!("screenshot-tutorial"),
+        "knowledge-carousel" => route!("knowledge-carousel"),
+        "before-after" => route!("before-after"),
+        "slide-deck" => route!("slide-deck"),
+        "knowledge-card-vertical" => route!("knowledge-card-vertical"),
+        "knowledge-card-square" => route!("knowledge-card-square"),
+        "pitch-deck-dark" => route!("pitch-deck-dark"),
+        "lecture-deck-light" => route!("lecture-deck-light"),
+        "minimal-keynote" => route!("minimal-keynote"),
+        "gradient-tech" => route!("gradient-tech"),
+        "saas-landing-orange" => route!("saas-landing-orange"),
+        "product-landing-light" => route!("product-landing-light"),
+        "punch-quote-card" => route!("punch-quote-card"),
+        "journal-checklist-card" => route!("journal-checklist-card"),
+        "data-report-infographic" => route!("data-report-infographic"),
+        "steps-flow-infographic" => route!("steps-flow-infographic"),
+        "event-poster-deck" => route!("event-poster-deck"),
+        "pitfall-list-infographic" => route!("pitfall-list-infographic"),
+        "spine-culture-card" => route!("spine-culture-card"),
+        "metric-single-card" => route!("metric-single-card"),
+        "quote-frame-card" => route!("quote-frame-card"),
+        "daily-sign-card" => route!("daily-sign-card"),
+        "price-tier-card" => route!("price-tier-card"),
+        "notice-board-card" => route!("notice-board-card"),
+        "milestone-timeline-infographic" => route!("milestone-timeline-infographic"),
+        "concept-contrast-infographic" => route!("concept-contrast-infographic"),
+        "ranking-board-infographic" => route!("ranking-board-infographic"),
+        "faq-thread-infographic" => route!("faq-thread-infographic"),
+        "data-story-infographic" => route!("data-story-infographic"),
+        "challenge-tracker-infographic" => route!("challenge-tracker-infographic"),
+        "ecosystem-map-infographic" => route!("ecosystem-map-infographic"),
+        "do-dont-comparison" => route!("do-dont-comparison"),
+        "myth-truth-comparison" => route!("myth-truth-comparison"),
+        "pricing-tiers-comparison" => route!("pricing-tiers-comparison"),
+        "scenario-guide-comparison" => route!("scenario-guide-comparison"),
+        "spec-table-comparison" => route!("spec-table-comparison"),
+        "three-way-comparison" => route!("three-way-comparison"),
+        "time-shift-comparison" => route!("time-shift-comparison"),
+        "tradeoff-scale-comparison" => route!("tradeoff-scale-comparison"),
+        "version-diff-comparison" => route!("version-diff-comparison"),
+        "app-onboarding-triptych" => route!("app-onboarding-triptych"),
+        "diy-blueprint-guide" => route!("diy-blueprint-guide"),
+        "photo-composition-tutorial" => route!("photo-composition-tutorial"),
+        "recipe-four-step" => route!("recipe-four-step"),
+        "skincare-routine-cards" => route!("skincare-routine-cards"),
+        "software-step-tutorial" => route!("software-step-tutorial"),
+        "storage-makeover-steps" => route!("storage-makeover-steps"),
+        "weekly-report-lesson" => route!("weekly-report-lesson"),
+        "workout-breakdown-guide" => route!("workout-breakdown-guide"),
+        "bookreview-silk-carousel" => route!("bookreview-silk-carousel"),
+        "cityguide-film-carousel" => route!("cityguide-film-carousel"),
+        "datareport-grid-carousel" => route!("datareport-grid-carousel"),
+        "opinion-longform-carousel" => route!("opinion-longform-carousel"),
+        "qa-chalkboard-carousel" => route!("qa-chalkboard-carousel"),
+        "story-night-carousel" => route!("story-night-carousel"),
+        "toolkit-notebook-carousel" => route!("toolkit-notebook-carousel"),
+        "tutorial-journal-carousel" => route!("tutorial-journal-carousel"),
+        "yearreview-mineral-carousel" => route!("yearreview-mineral-carousel"),
+        _ => None,
+    }
+}
+
+/// Return the document JSON for a template id.
 ///
 /// The match is exhaustive over what ships; [`scene_template_catalogue`]
-/// verifies every catalogue entry resolves here, so a template added to the
-/// TOML without its document fails at first use rather than presenting a card
-/// that does nothing when clicked.
+/// verifies every catalogue entry resolves here on native, so a template added
+/// to the TOML without its document fails at first use rather than presenting a
+/// card that does nothing when clicked.
+///
+/// On `wasm32` a `None` for a SHIPPED id means "not fetched yet" rather than
+/// "no such template" — callers there must distinguish the two through
+/// [`scene_template_document_route`], which answers for the id alone.
 pub fn scene_template_document(template_id: &str) -> Option<&'static str> {
     match template_id {
-        "screenshot-tutorial" => Some(SCREENSHOT_TUTORIAL_OP),
-        "knowledge-carousel" => Some(KNOWLEDGE_CAROUSEL_OP),
-        "before-after" => Some(BEFORE_AFTER_OP),
-        "slide-deck" => Some(SLIDE_DECK_OP),
-        "knowledge-card-vertical" => Some(KNOWLEDGE_CARD_VERTICAL_OP),
-        "knowledge-card-square" => Some(KNOWLEDGE_CARD_SQUARE_OP),
-        "pitch-deck-dark" => Some(PITCH_DECK_DARK_OP),
-        "lecture-deck-light" => Some(LECTURE_DECK_LIGHT_OP),
-        "minimal-keynote" => Some(MINIMAL_KEYNOTE_OP),
-        "gradient-tech" => Some(GRADIENT_TECH_OP),
-        "saas-landing-orange" => Some(SAAS_LANDING_ORANGE_OP),
-        "product-landing-light" => Some(PRODUCT_LANDING_LIGHT_OP),
-        "punch-quote-card" => Some(PUNCH_QUOTE_CARD_OP),
-        "journal-checklist-card" => Some(JOURNAL_CHECKLIST_CARD_OP),
-        "data-report-infographic" => Some(DATA_REPORT_INFOGRAPHIC_OP),
-        "steps-flow-infographic" => Some(STEPS_FLOW_INFOGRAPHIC_OP),
-        "event-poster-deck" => Some(EVENT_POSTER_DECK_OP),
-        "pitfall-list-infographic" => Some(PITFALL_LIST_INFOGRAPHIC_OP),
-        "spine-culture-card" => Some(SPINE_CULTURE_CARD_OP),
-        "metric-single-card" => Some(METRIC_SINGLE_CARD_OP),
-        "quote-frame-card" => Some(QUOTE_FRAME_CARD_OP),
-        "daily-sign-card" => Some(DAILY_SIGN_CARD_OP),
-        "price-tier-card" => Some(PRICE_TIER_CARD_OP),
-        "notice-board-card" => Some(NOTICE_BOARD_CARD_OP),
-        "milestone-timeline-infographic" => Some(MILESTONE_TIMELINE_INFOGRAPHIC_OP),
-        "concept-contrast-infographic" => Some(CONCEPT_CONTRAST_INFOGRAPHIC_OP),
-        "ranking-board-infographic" => Some(RANKING_BOARD_INFOGRAPHIC_OP),
-        "faq-thread-infographic" => Some(FAQ_THREAD_INFOGRAPHIC_OP),
-        "data-story-infographic" => Some(DATA_STORY_INFOGRAPHIC_OP),
-        "challenge-tracker-infographic" => Some(CHALLENGE_TRACKER_INFOGRAPHIC_OP),
-        "ecosystem-map-infographic" => Some(ECOSYSTEM_MAP_INFOGRAPHIC_OP),
-        "do-dont-comparison" => Some(DO_DONT_COMPARISON_OP),
-        "myth-truth-comparison" => Some(MYTH_TRUTH_COMPARISON_OP),
-        "pricing-tiers-comparison" => Some(PRICING_TIERS_COMPARISON_OP),
-        "scenario-guide-comparison" => Some(SCENARIO_GUIDE_COMPARISON_OP),
-        "spec-table-comparison" => Some(SPEC_TABLE_COMPARISON_OP),
-        "three-way-comparison" => Some(THREE_WAY_COMPARISON_OP),
-        "time-shift-comparison" => Some(TIME_SHIFT_COMPARISON_OP),
-        "tradeoff-scale-comparison" => Some(TRADEOFF_SCALE_COMPARISON_OP),
-        "version-diff-comparison" => Some(VERSION_DIFF_COMPARISON_OP),
-        "app-onboarding-triptych" => Some(APP_ONBOARDING_TRIPTYCH_OP),
-        "diy-blueprint-guide" => Some(DIY_BLUEPRINT_GUIDE_OP),
-        "photo-composition-tutorial" => Some(PHOTO_COMPOSITION_TUTORIAL_OP),
-        "recipe-four-step" => Some(RECIPE_FOUR_STEP_OP),
-        "skincare-routine-cards" => Some(SKINCARE_ROUTINE_CARDS_OP),
-        "software-step-tutorial" => Some(SOFTWARE_STEP_TUTORIAL_OP),
-        "storage-makeover-steps" => Some(STORAGE_MAKEOVER_STEPS_OP),
-        "weekly-report-lesson" => Some(WEEKLY_REPORT_LESSON_OP),
-        "workout-breakdown-guide" => Some(WORKOUT_BREAKDOWN_GUIDE_OP),
-        "bookreview-silk-carousel" => Some(BOOKREVIEW_SILK_CAROUSEL_OP),
-        "cityguide-film-carousel" => Some(CITYGUIDE_FILM_CAROUSEL_OP),
-        "datareport-grid-carousel" => Some(DATAREPORT_GRID_CAROUSEL_OP),
-        "opinion-longform-carousel" => Some(OPINION_LONGFORM_CAROUSEL_OP),
-        "qa-chalkboard-carousel" => Some(QA_CHALKBOARD_CAROUSEL_OP),
-        "story-night-carousel" => Some(STORY_NIGHT_CAROUSEL_OP),
-        "toolkit-notebook-carousel" => Some(TOOLKIT_NOTEBOOK_CAROUSEL_OP),
-        "tutorial-journal-carousel" => Some(TUTORIAL_JOURNAL_CAROUSEL_OP),
-        "yearreview-mineral-carousel" => Some(YEARREVIEW_MINERAL_CAROUSEL_OP),
+        "screenshot-tutorial" => template_document!("screenshot-tutorial"),
+        "knowledge-carousel" => template_document!("knowledge-carousel"),
+        "before-after" => template_document!("before-after"),
+        "slide-deck" => template_document!("slide-deck"),
+        "knowledge-card-vertical" => template_document!("knowledge-card-vertical"),
+        "knowledge-card-square" => template_document!("knowledge-card-square"),
+        "pitch-deck-dark" => template_document!("pitch-deck-dark"),
+        "lecture-deck-light" => template_document!("lecture-deck-light"),
+        "minimal-keynote" => template_document!("minimal-keynote"),
+        "gradient-tech" => template_document!("gradient-tech"),
+        "saas-landing-orange" => template_document!("saas-landing-orange"),
+        "product-landing-light" => template_document!("product-landing-light"),
+        "punch-quote-card" => template_document!("punch-quote-card"),
+        "journal-checklist-card" => template_document!("journal-checklist-card"),
+        "data-report-infographic" => template_document!("data-report-infographic"),
+        "steps-flow-infographic" => template_document!("steps-flow-infographic"),
+        "event-poster-deck" => template_document!("event-poster-deck"),
+        "pitfall-list-infographic" => template_document!("pitfall-list-infographic"),
+        "spine-culture-card" => template_document!("spine-culture-card"),
+        "metric-single-card" => template_document!("metric-single-card"),
+        "quote-frame-card" => template_document!("quote-frame-card"),
+        "daily-sign-card" => template_document!("daily-sign-card"),
+        "price-tier-card" => template_document!("price-tier-card"),
+        "notice-board-card" => template_document!("notice-board-card"),
+        "milestone-timeline-infographic" => template_document!("milestone-timeline-infographic"),
+        "concept-contrast-infographic" => template_document!("concept-contrast-infographic"),
+        "ranking-board-infographic" => template_document!("ranking-board-infographic"),
+        "faq-thread-infographic" => template_document!("faq-thread-infographic"),
+        "data-story-infographic" => template_document!("data-story-infographic"),
+        "challenge-tracker-infographic" => template_document!("challenge-tracker-infographic"),
+        "ecosystem-map-infographic" => template_document!("ecosystem-map-infographic"),
+        "do-dont-comparison" => template_document!("do-dont-comparison"),
+        "myth-truth-comparison" => template_document!("myth-truth-comparison"),
+        "pricing-tiers-comparison" => template_document!("pricing-tiers-comparison"),
+        "scenario-guide-comparison" => template_document!("scenario-guide-comparison"),
+        "spec-table-comparison" => template_document!("spec-table-comparison"),
+        "three-way-comparison" => template_document!("three-way-comparison"),
+        "time-shift-comparison" => template_document!("time-shift-comparison"),
+        "tradeoff-scale-comparison" => template_document!("tradeoff-scale-comparison"),
+        "version-diff-comparison" => template_document!("version-diff-comparison"),
+        "app-onboarding-triptych" => template_document!("app-onboarding-triptych"),
+        "diy-blueprint-guide" => template_document!("diy-blueprint-guide"),
+        "photo-composition-tutorial" => template_document!("photo-composition-tutorial"),
+        "recipe-four-step" => template_document!("recipe-four-step"),
+        "skincare-routine-cards" => template_document!("skincare-routine-cards"),
+        "software-step-tutorial" => template_document!("software-step-tutorial"),
+        "storage-makeover-steps" => template_document!("storage-makeover-steps"),
+        "weekly-report-lesson" => template_document!("weekly-report-lesson"),
+        "workout-breakdown-guide" => template_document!("workout-breakdown-guide"),
+        "bookreview-silk-carousel" => template_document!("bookreview-silk-carousel"),
+        "cityguide-film-carousel" => template_document!("cityguide-film-carousel"),
+        "datareport-grid-carousel" => template_document!("datareport-grid-carousel"),
+        "opinion-longform-carousel" => template_document!("opinion-longform-carousel"),
+        "qa-chalkboard-carousel" => template_document!("qa-chalkboard-carousel"),
+        "story-night-carousel" => template_document!("story-night-carousel"),
+        "toolkit-notebook-carousel" => template_document!("toolkit-notebook-carousel"),
+        "tutorial-journal-carousel" => template_document!("tutorial-journal-carousel"),
+        "yearreview-mineral-carousel" => template_document!("yearreview-mineral-carousel"),
         _ => None,
     }
 }
@@ -351,6 +364,13 @@ pub struct SceneTemplateDefinition {
 
 impl SceneTemplateDefinition {
     /// The embedded document for this template.
+    ///
+    /// Native only, and deliberately so: it is infallible exactly because the
+    /// bytes are in the binary. On `wasm32` the document may not have been
+    /// fetched yet, which is not a failure this accessor could express without
+    /// becoming an `Option` at every call site for the benefit of a platform
+    /// that must go through the async path anyway.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn document(&self) -> &'static str {
         scene_template_document(&self.id)
             .expect("catalogue load verified every template has a document")
@@ -514,9 +534,14 @@ impl TemplateBuilder {
             ));
         }
         // The load-time guarantee `document()` relies on: a catalogue entry
-        // without an embedded document would compile fine and fail only when
-        // a user clicked the card.
-        if scene_template_document(&id).is_none() {
+        // without a document would compile fine and fail only when a user
+        // clicked the card.
+        //
+        // Checked through the ROUTE, not the bytes: on wasm the bytes are not
+        // in the binary at all, so asking for them here would reject the whole
+        // catalogue at start-up. The route answers the question actually being
+        // asked — "does this id ship a document?" — on both platforms.
+        if scene_template_document_route(&id).is_none() {
             return Err(SceneTemplateCatalogError::new(
                 line,
                 format!("template `{id}` has no embedded document"),

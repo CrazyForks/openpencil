@@ -124,6 +124,10 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         }
         "collab.a11y.participant" => "{{name}}, {{role}}",
         "collab.a11y.remoteCursor" => "{{name}}의 커서",
+        "icon.catalogLoading" => "아이콘 카탈로그를 불러오는 중…",
+        "sceneTemplate.documentUnavailable" => {
+            "이 템플릿의 문서를 불러오지 못했습니다. 다시 시도하세요."
+        }
         _ => return None,
     })
 }

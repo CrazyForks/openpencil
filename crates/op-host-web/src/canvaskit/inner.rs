@@ -33,7 +33,18 @@ impl CkInner {
         // Assets the last paint asked for but the bundle does not carry
         // (preview JPEGs, template documents, the icon catalog). Bounded per
         // call; the installs wake a later frame through `repaint_coalescer`.
+        // Ask for the icon catalog the first time the picker is up. Idempotent
+        // and single-flighted, so a per-frame check is the cheapest place to
+        // notice — the `open` flag is set by shared flows with no single
+        // host-side call site to hang this off.
+        if self.host.editor_state().editor_ui.icon_picker.open {
+            crate::iconify_web::ensure_core_catalog();
+        }
         crate::web_asset_fetch::drain_pending();
+        // A template clicked before its document arrived is instantiated here,
+        // the frame after the fetch lands. No-op on every other frame and on
+        // native, where the document was already in the binary.
+        self.host.retry_pending_scene_template();
         crate::web_chat::reconcile_models(self.host.editor_state_mut());
         // Detect a credential edit and enqueue the daemon sync BEFORE mirroring
         // the sync status below: a corrective edit clears the stale error in

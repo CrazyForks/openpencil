@@ -81,6 +81,14 @@ fn fetch_asset(route: String) {
     fetch_bytes(&url, move |result| match result {
         Ok(bytes) => {
             if op_editor_core::web_assets::install(&route, bytes) {
+                // The icon catalog is not consumed as raw bytes: it has to be
+                // parsed into the shared catalog before any lookup can see it.
+                // Done here, once, on the install edge.
+                if route == op_editor_ui::ICONIFY_CORE_ROUTE {
+                    if let Some(json) = op_editor_core::web_assets::installed_str(&route) {
+                        op_editor_ui::set_core_catalog(json);
+                    }
+                }
                 // Wake the editor so the card showing a placeholder picks the
                 // picture up; the response is not an input event, so nothing
                 // else would.

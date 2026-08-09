@@ -119,13 +119,17 @@ RUN mkdir -p /out/web-bundle && \
       cp -R web-bundle/. /out/web-bundle/ ; \
     fi && \
     echo "assembled web-bundle:" && find /out/web-bundle -maxdepth 2 -type f | sort && \
-    # The browser fetches preview JPEGs from `/pkg/assets/…` at runtime (see
-    # `op_editor_core::web_assets`), so a bundle without them degrades every
-    # card to a placeholder. Catch it here rather than in production — the
-    # `copy` path is the likely offender, fed a pre-split artifact.
-    if [ ! -d /out/web-bundle/assets/prompt_center_previews ]; then \
-      echo "FAIL: web-bundle is missing assets/prompt_center_previews (stale artifact?)" >&2; exit 1; \
-    fi
+    # The browser fetches these from `/pkg/assets/…` at run time (see
+    # `op_editor_core::web_assets`); without them previews fall back to
+    # placeholders, templates refuse to instantiate and the icon panel stays
+    # empty. Catch it here rather than in production — the `copy` path is the
+    # likely offender, fed a pre-split artifact.
+    for required in assets/prompt_center_previews assets/scene_template_previews \
+                    assets/scene_templates assets/iconify-catalog-core.json; do \
+      if [ ! -e "/out/web-bundle/$required" ]; then \
+        echo "FAIL: web-bundle is missing $required (stale artifact?)" >&2; exit 1; \
+      fi; \
+    done
 
 # ── Stage 2: runtime (slim) ───────────────────────────────────────────────────
 # Only the runtime shared libs the daemon dlopens at run time (GL / fontconfig /

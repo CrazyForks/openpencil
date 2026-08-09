@@ -110,6 +110,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         }
         "collab.a11y.participant" => "{{name}}, {{role}}",
         "collab.a11y.remoteCursor" => "Kursor {{name}}",
+        "icon.catalogLoading" => "Katalog ikon sedang dimuat…",
+        "sceneTemplate.documentUnavailable" => "Dokumen templat itu tidak dapat dimuat. Coba lagi.",
         _ => return None,
     })
 }

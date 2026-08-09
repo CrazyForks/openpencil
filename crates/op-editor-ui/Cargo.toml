@@ -58,3 +58,15 @@ resvg = { version = "0.48", default-features = false }
 # Enable jian-scene's find-visit instrumentation so the canvas-viewport
 # paint tests can assert scene-traversal visit counts.
 jian-scene = { path = "../../vendor/jian/crates/jian-scene", features = ["test-support"] }
+
+[features]
+default = []
+# Leave the core (lucide + feather) icon catalog OUT of the binary and resolve
+# it at run time through `set_core_catalog` instead.
+#
+# Opt-in, and only `op-host-web` opts in: it has a daemon to fetch the catalog
+# from (`/pkg/assets/iconify-catalog-core.json`) and a frame pump to install it
+# on. Every other consumer — the desktop hosts, and the `op-web-sdk` viewer,
+# which renders iconFont nodes but has no daemon behind it — keeps the embed,
+# because for them "not fetched yet" would simply mean "never".
+runtime-icon-catalog = []

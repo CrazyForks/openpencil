@@ -110,6 +110,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.status.localEditPreserved" => "已应用远端版本。使用“撤销”即可恢复你的本地更改。",
         "collab.a11y.participant" => "{{name}}，{{role}}",
         "collab.a11y.remoteCursor" => "{{name}} 的光标",
+        "icon.catalogLoading" => "图标库正在加载…",
+        "sceneTemplate.documentUnavailable" => "该模板的文档加载失败，请重试。",
         _ => return None,
     })
 }

@@ -126,6 +126,8 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         }
         "collab.a11y.participant" => "{{name}}、{{role}}",
         "collab.a11y.remoteCursor" => "{{name}} のカーソル",
+        "icon.catalogLoading" => "アイコンカタログを読み込んでいます…",
+        "sceneTemplate.documentUnavailable" => "このテンプレートのドキュメントを読み込めませんでした。もう一度お試しください。",
         _ => return None,
     })
 }
