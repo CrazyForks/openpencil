@@ -189,6 +189,19 @@ def text(ids, name, content, size, weight, color, *, family=None,
     if line_height is None:
         # CJK ladder: display/headings tighter, body loose (cjk-typography.md)
         line_height = 1.25 if size >= 60 else 1.3 if size >= 34 else 1.6
+    # CJK 负字距上限，与 cjk-typography.md / deckkit.py / qa/trackcheck.py 同源：
+    # <48px 一律 0；>=48px 不得比 -0.02em 更负。**判定用比值，不先 round 上限**
+    # ——round(76 × -0.02) = -2 会放行 -2，而 76px 的真实上限是 1.52。
+    # 拉丁/数字节点豁免：页码、序号、Stat Value 这类 display 用 -0.03~-0.05em
+    # 是正常排印，拿 CJK 的上限去卡它们是误伤。
+    # 夹在这个总入口而不是各生成器里：同一个字距字面量常被多个字号复用
+    # （yearreview 一个 -2 同时喂 64px 与 48px），逐处改必漏。
+    if spacing < 0 and any("一" <= ch <= "鿿" for ch in str(content)):
+        cap = 0 if size < 48 else round(size * 0.02, 2)
+        if cap == int(cap):
+            cap = int(cap)
+        if abs(spacing) > cap:
+            spacing = -cap if cap else 0
     node = {
         "type": "text", "id": ids("t"), "name": name,
         "content": content,

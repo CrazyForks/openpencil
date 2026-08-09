@@ -127,7 +127,8 @@ fn cjk_typography_bands_by_size_and_separates_fallback_from_choice() {
         ">=64px 1.02-1.15",
         "letterSpacing is absolute px here, not em",
         "<48px: ALWAYS 0, never negative",
-        "`round(fontSize * -0.02)` is allowed and is the FLOOR",
+        "`|letterSpacing| <= fontSize * 0.02`",
+        "do NOT round the cap first",
         "DESIGN layer",
         "RENDER layer",
     ] {
@@ -137,6 +138,10 @@ fn cjk_typography_bands_by_size_and_separates_fallback_from_choice() {
         "headings 1.3-1.4",
         "letterSpacing: 0, NEVER negative",
         "Body: ALWAYS \"Inter\"",
+        // Rounding the cap let -2 through at 76px (cap 1.52) while wrongly
+        // failing -1.4 at 72px (cap 1.44) — it erred in BOTH directions, so
+        // the ratio comparison replaced it outright (2026-08-09 fleet audit).
+        "is allowed and is the FLOOR",
     ] {
         assert!(
             !body.contains(contradiction),

@@ -77,19 +77,31 @@ def lh(size, *, body=False):
 #
 # §3.8.2：我们的 schema 里 letterSpacing 是 **px 绝对值不是 em**。
 #   <48px  一律 0，绝不为负 —— 负字距在 CJK 正文上直接让字面相撞。
-#   ≥64px  允许 round(fontSize × -0.02)，且不得更负。
+#   ≥48px  允许到 |letterSpacing| <= fontSize × 0.02（即 -0.02em），可带小数。
 # 大写拉丁小标签（不含汉字）允许 +1~+2 的正字距；含汉字的一律 0。
+#
+# 判定用**比值**，不要先把上限 round 掉：72px 的上限是 1.44，-1.4 合法、-2 不合法。
+# 先 round 会把 -1.4 误判成越界（round(-1.44) = -1），那是规则的 bug 不是稿子的。
+# 分界只留 48 一道：比值本身在小字号上就是自限的（48px 只允许 0.96px，不到一个
+# 像素），再加一道 64 的门槛只是多一个阈值，并不多挡住什么。
 DISPLAY_TRACK = -0.02
+TRACK_MIN_SIZE = 48
+TRACK_EPS = 1e-6
 
 
 def track(size):
-    """display 档的负字距。48–63px 落在两条规则之间，取 0（保守侧）。"""
-    return round(size * DISPLAY_TRACK) if size >= 64 else 0
+    """display 档的负字距上限（含小数）。小于 48px 一律 0。"""
+    return round(size * DISPLAY_TRACK, 2) if size >= TRACK_MIN_SIZE else 0
 
 
 def latin_track(content, value=1.0):
     """纯拉丁/数字小标签才给正字距；混了汉字就归零。"""
     return value if all(ch < "⺀" for ch in content) else 0
+
+
+def has_han(content):
+    """文案是否含汉字。负字距上限只约束 CJK，拉丁/数字节点豁免。"""
+    return isinstance(content, str) and any("一" <= ch <= "鿿" for ch in content)
 
 
 # ---------------------------------------------------------------- CJK 行长
@@ -282,9 +294,13 @@ def audit_document(children, *, where, allowed_radii=frozenset()):
             problems.append(f"{name}: width={width!r} 与 growth="
                             f"{node.get('textGrowth')!r} 不成对")
 
-        # —— 字距：<64px 一律 0 且绝不为负；≥64px 不得比 -0.02em 更负
+        # —— 字距：<48px 一律 0 且绝不为负；≥48px 不得比 -0.02em 更负。
+        # 只管含汉字的节点：拉丁/数字的 display 用 -0.03~-0.05em 是正常排印，
+        # 拿 CJK 的上限去卡页码和 Stat Value 是误伤。
         spacing = node.get("letterSpacing", 0)
-        if spacing < 0 and (size < 64 or spacing < round(size * DISPLAY_TRACK)):
+        if spacing < 0 and has_han(content) and (
+            size < TRACK_MIN_SIZE or abs(spacing) > size * -DISPLAY_TRACK + TRACK_EPS
+        ):
             problems.append(f"{name}: {size}px 的负字距 {spacing} 越界")
 
         if not isinstance(content, str) or not isinstance(width, (int, float)):

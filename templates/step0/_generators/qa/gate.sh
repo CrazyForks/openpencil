@@ -33,8 +33,16 @@ for f in "$@"; do
     echo "✗ $name  audit=0  cjk(实测)=$real"
     python3 "$HERE/cjkreal.py" "$f" 2>/dev/null | sed 's/^/    /'
     FAIL=1
+    continue
+  fi
+  # CJK 负字距（audit 与 cjk 两道都看不见的一类）
+  track=$(python3 "$HERE/trackcheck.py" "$f" 2>/dev/null | grep -c "^\s\+字距越界" || true)
+  if [ "$track" != "0" ]; then
+    echo "✗ $name  audit=0  cjk=0  字距=$track"
+    python3 "$HERE/trackcheck.py" "$f" 2>/dev/null | sed 's/^/    /'
+    FAIL=1
   else
-    echo "✓ $name  audit=0  cjk=0"
+    echo "✓ $name  audit=0  cjk=0  字距=0"
   fi
 done
 exit $FAIL
