@@ -637,6 +637,9 @@ impl Orchestrator {
                 CleanupPolicy {
                     preserve_requested_root_height: norm.preserve_requested_root_height,
                     is_deck: norm.is_deck,
+                    // `root_ids` here are the screen-group roots this run just
+                    // inserted — every node under them is this run's own.
+                    roots_are_run_output: true,
                 },
             );
         }

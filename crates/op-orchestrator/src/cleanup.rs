@@ -26,6 +26,8 @@ use op_editor_core::{
 mod cleanup_desktop_dashboard;
 #[path = "cleanup_mobile_chrome.rs"]
 mod cleanup_mobile_chrome;
+#[path = "cleanup_root_patches.rs"]
+mod cleanup_root_patches;
 pub(crate) use cleanup_mobile_chrome::{
     anchor_bottom_nav_last_for_all_roots, repair_mobile_structural_chrome_for_all_roots,
 };
@@ -54,6 +56,7 @@ use cleanup_bottom_nav_repairs::*;
 use cleanup_clip_row_stroke::*;
 use cleanup_container_geometry::*;
 use cleanup_root_and_nav::*;
+use cleanup_root_patches::*;
 use cleanup_root_transform::*;
 use cleanup_section_sizing::*;
 
@@ -257,10 +260,31 @@ fn find_root<'a>(state: &'a EditorState, root_id: &str) -> Option<&'a PenNode> {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct CleanupPolicy {
     pub(crate) preserve_requested_root_height: bool,
-    /// Deck boards are fixed 16:9 surfaces. Their content is centred rather
-    /// than left to stack from the top edge, which on a 1080-tall board reads
-    /// as a half-empty slide.
+    /// The REQUEST asked for a deck (prompt keywords, via
+    /// `plan_normalize::NormInfo`). Deck boards are fixed 16:9 surfaces, so
+    /// their content is centred rather than left to stack from the top edge,
+    /// which on a 1080-tall board reads as a half-empty slide.
+    ///
+    /// This flag is only HALF the judgement — see [`root_is_deck_board`], the
+    /// geometric half, which is unioned in at the point of use and covers
+    /// every path that has no prompt to read.
     pub(crate) is_deck: bool,
+    /// `root_ids` are roots THIS RUN produced, not pre-existing content the
+    /// user may have arranged by hand.
+    ///
+    /// Gates the geometric half of the deck judgement only. Centring a board
+    /// is an intent-tier move: an asymmetric composition can be exactly what
+    /// the author wanted (a 70/30 board is good design, not a top-stacked
+    /// defect), and the "explicit `justifyContent`" guard does not catch an
+    /// author who simply placed their content and never set a distribution.
+    /// The prompt half is deliberately NOT gated on this — a user who typed
+    /// "PPT" stated the intent themselves.
+    ///
+    /// Defaults to `false` so a caller that cannot prove provenance gets the
+    /// safe answer. The orchestrator's fresh and append paths both pass their
+    /// own inserted root ids and set it; `loop_finalize` passes every
+    /// top-level root in the document and cannot, so it leaves it false.
+    pub(crate) roots_are_run_output: bool,
 }
 
 /// 阶段 4 清理 pass —— 在全部 subtask 插入完成后运行。
@@ -371,76 +395,6 @@ pub fn run_cleanup_passes_with_summary(
         summary,
         CleanupPolicy::default(),
     );
-}
-
-/// Centre a deck board's content on its fixed 16:9 surface.
-///
-/// A slide root is 1080 tall no matter how much content it holds, and its
-/// sections hug their own height, so without this they stack from the top and
-/// leave the lower half blank — measured on every generated deck.
-///
-/// Only `justifyContent` is written. Stretching the sections to fill instead
-/// would distort whatever the model composed; centring changes where the block
-/// sits, not what it is.
-fn centre_deck_board_content(sink: &mut dyn DocSink, root_id: &str) {
-    let Some(root) = sink
-        .state()
-        .active_children()
-        .iter()
-        .find(|node| node.id_str() == root_id)
-    else {
-        return;
-    };
-    let value = serde_json::to_value(root).unwrap_or(serde_json::Value::Null);
-    // Respect an explicit distribution: a board that deliberately pushes
-    // content apart (space_between) or pins it low is a composition, not the
-    // default top-stack this repairs.
-    if value
-        .get("justifyContent")
-        .and_then(serde_json::Value::as_str)
-        .is_some_and(|mode| !mode.is_empty())
-    {
-        return;
-    }
-    let node_id = NodeId::new(root.id_str());
-    sink.apply(EditorCommand::PatchNodeData {
-        node_id,
-        patch_json: r#"{"justifyContent":"center"}"#.to_string(),
-        page_id: None,
-    });
-}
-
-/// Write the repaired root gap as a property patch.
-///
-/// Deliberately NOT an `apply_root_transform`: that rebuilds the subtree and
-/// hands the root a fresh id, which is the right shape for passes that
-/// restructure but wrong for setting one number — anything holding the root id
-/// (the caller's `root_ids`, the loop's screen bookkeeping) would be left
-/// pointing at a node that no longer exists.
-fn patch_root_section_gap(sink: &mut dyn DocSink, root_id: &str) {
-    let Some(root) = sink
-        .state()
-        .active_children()
-        .iter()
-        .find(|node| node.id_str() == root_id)
-    else {
-        return;
-    };
-    let node_id = NodeId::new(root.id_str());
-    let Ok(mut value) = serde_json::to_value(root) else {
-        return;
-    };
-    if !crate::root_section_gap::fix_root_section_gap(&mut value) {
-        return;
-    }
-    let Some(gap) = value.get("gap") else {
-        return;
-    };
-    sink.apply(EditorCommand::PatchNodeData {
-        node_id,
-        patch_json: format!(r#"{{"gap":{gap}}}"#),
-        page_id: None,
-    });
 }
 
 /// Test-only alias so policy-dependent passes can be driven directly.
@@ -560,7 +514,7 @@ fn run_cleanup_passes_with_summary_and_policy(
         // reach it in the same state.
         patch_root_section_gap(sink, &rid);
         debug_probe_child_height(sink, &rid, "root_gap");
-        if policy.is_deck {
+        if policy.is_deck || (policy.roots_are_run_output && root_is_deck_board(sink, &rid)) {
             centre_deck_board_content(sink, &rid);
         }
         // Text that resolves to ~1:1 against its own background is not
@@ -825,3 +779,7 @@ mod tests_card_height_equalize;
 #[cfg(test)]
 #[path = "cleanup_desktop_dashboard_tests.rs"]
 mod tests_desktop_dashboard;
+
+#[cfg(test)]
+#[path = "cleanup_deck_geometry_tests.rs"]
+mod tests_deck_geometry;

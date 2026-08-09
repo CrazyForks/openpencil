@@ -494,6 +494,9 @@ fn cleanup_policy_preserves_only_requested_fixed_root_height() {
         CleanupPolicy {
             is_deck: false,
             preserve_requested_root_height: true,
+            // These fixtures stand in for an orchestrator run, whose
+            // root_ids are its own freshly inserted roots.
+            roots_are_run_output: true,
         },
     );
     let preserved_height = preserved_sink
@@ -601,6 +604,9 @@ fn a_deck_board_centres_its_content() {
         CleanupPolicy {
             is_deck: true,
             preserve_requested_root_height: true,
+            // These fixtures stand in for an orchestrator run, whose
+            // root_ids are its own freshly inserted roots.
+            roots_are_run_output: true,
         },
     );
 
@@ -653,6 +659,9 @@ fn a_deck_board_with_an_explicit_distribution_is_left_alone() {
         CleanupPolicy {
             is_deck: true,
             preserve_requested_root_height: true,
+            // These fixtures stand in for an orchestrator run, whose
+            // root_ids are its own freshly inserted roots.
+            roots_are_run_output: true,
         },
     );
 

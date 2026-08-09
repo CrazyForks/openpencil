@@ -47,7 +47,22 @@ pub(crate) fn finalize_appended_design(
     target_roots: &[&str],
     summary: &mut RepairSummary,
 ) {
-    crate::cleanup::finalize_design_with_summary(sink, plan, inserted_roots, summary);
+    // `inserted_roots` are this run's own (the doc comment above says so, and
+    // the empty-slice case is already a no-op), so the intent-tier passes may
+    // key off their geometry. `target_roots` — the user's existing frame —
+    // never reaches this driver: `contract_sweep` below runs a named
+    // contract-tier pair over it instead, which is what keeps an appended-into
+    // board from being re-composed.
+    crate::cleanup::finalize_design_with_summary_and_policy(
+        sink,
+        plan,
+        inserted_roots,
+        summary,
+        crate::cleanup::CleanupPolicy {
+            roots_are_run_output: true,
+            ..Default::default()
+        },
+    );
     let swept = contract_sweep(sink, target_roots, summary);
     if swept {
         summary.note(scope_note(inserted_roots.len(), target_roots.len()));
