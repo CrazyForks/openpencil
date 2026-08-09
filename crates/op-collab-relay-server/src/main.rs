@@ -1,6 +1,8 @@
 use std::ffi::OsStr;
 
-use op_collab_relay_server::{run, run_production, ProductionRelayAuthConfig, RelayConfig};
+use op_collab_relay_server::{
+    check_production, run, run_production, ProductionRelayAuthConfig, RelayConfig,
+};
 use tracing_subscriber::EnvFilter;
 
 const LOG_LEVEL_ENV: &str = "OPENPENCIL_COLLAB_RELAY_LOG_LEVEL";
@@ -26,6 +28,18 @@ async fn main() {
             std::process::exit(2);
         }
     };
+    if launch_mode == LaunchMode::CheckProduction {
+        match check_production() {
+            Ok(()) => {
+                println!("ready");
+                return;
+            }
+            Err(error) => {
+                eprintln!("relay production check failed: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
     let config = match RelayConfig::from_env() {
         Ok(config) => config,
         Err(error) => {
@@ -65,6 +79,7 @@ async fn main() {
                 .await
                 .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)
         }
+        LaunchMode::CheckProduction => unreachable!("handled before listener configuration"),
     };
 
     if let Err(error) = result {
@@ -96,6 +111,7 @@ enum LaunchMode {
     FailClosed,
     UnauthenticatedDev,
     Production { allow_ticket_binding_only: bool },
+    CheckProduction,
 }
 
 fn parse_args() -> Result<LaunchMode, CliError> {
@@ -110,6 +126,7 @@ where
     let mut allow_unauthenticated_dev = false;
     let mut production = false;
     let mut allow_ticket_binding_only = false;
+    let mut check_production = false;
     for arg in args {
         match arg.as_ref() {
             "--allow-unauthenticated-dev" if !allow_unauthenticated_dev => {
@@ -121,15 +138,20 @@ where
             "--allow-ticket-binding-only" if !allow_ticket_binding_only => {
                 allow_ticket_binding_only = true;
             }
+            "--check-production" if !check_production => {
+                check_production = true;
+            }
             "--help" | "-h" => {
                 println!(
                     "Usage: op-collab-relay-server [--production \
-                     [--allow-ticket-binding-only] | --allow-unauthenticated-dev]\n\
+                     [--allow-ticket-binding-only] | --allow-unauthenticated-dev | \
+                     --check-production]\n\
                      \n\
                      --production loads pinned ticket-policy, locator, region, and relay X25519\n\
                      verifier configuration from OPENPENCIL_COLLAB_RELAY_* environment variables.\n\
                      --allow-ticket-binding-only explicitly selects reduced assurance when no\n\
                      challenge-proof key is configured.\n\
+                     --check-production verifies the mounted production trust inputs and exits.\n\
                      The development flag enables capability-only routing without a ticket.\n\
                      With no mode flag the server fails closed."
                 );
@@ -141,10 +163,15 @@ where
     if allow_unauthenticated_dev && production {
         return Err(CliError::ConflictingModes);
     }
+    if check_production && (allow_unauthenticated_dev || production || allow_ticket_binding_only) {
+        return Err(CliError::ConflictingCheckMode);
+    }
     if allow_ticket_binding_only && !production {
         return Err(CliError::BindingOnlyRequiresProduction);
     }
-    Ok(if allow_unauthenticated_dev {
+    Ok(if check_production {
+        LaunchMode::CheckProduction
+    } else if allow_unauthenticated_dev {
         LaunchMode::UnauthenticatedDev
     } else if production {
         LaunchMode::Production {
@@ -163,6 +190,8 @@ enum CliError {
     ConflictingModes,
     #[error("--allow-ticket-binding-only requires --production")]
     BindingOnlyRequiresProduction,
+    #[error("--check-production cannot be combined with a server launch mode")]
+    ConflictingCheckMode,
     #[error("OPENPENCIL_COLLAB_RELAY_LOG_LEVEL must be one of error, warn, info, or debug")]
     InvalidLogLevel,
 }
@@ -203,6 +232,22 @@ mod tests {
         );
         assert_eq!(
             parse_arg_values(["--production", "--production"]),
+            Err(CliError::UnknownOrDuplicateArgument)
+        );
+    }
+
+    #[test]
+    fn production_check_is_a_standalone_mode() {
+        assert_eq!(
+            parse_arg_values(["--check-production"]),
+            Ok(LaunchMode::CheckProduction)
+        );
+        assert_eq!(
+            parse_arg_values(["--check-production", "--production"]),
+            Err(CliError::ConflictingCheckMode)
+        );
+        assert_eq!(
+            parse_arg_values(["--check-production", "--check-production"]),
             Err(CliError::UnknownOrDuplicateArgument)
         );
     }

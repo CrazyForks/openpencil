@@ -3768,10 +3768,16 @@ dependencies = [
 name = "op-collab-policy-file"
 version = "0.8.3"
 dependencies = [
+ "base64",
  "blake3",
+ "ed25519-dalek",
  "libc",
  "op-auth-bridge",
+ "op-collab-relay-protocol",
+ "serde",
+ "serde_json",
  "tempfile",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -3825,6 +3831,7 @@ name = "op-collab-relay-locator-server"
 version = "0.8.3"
 dependencies = [
  "axum",
+ "base64",
  "bytes",
  "ed25519-dalek",
  "hyper",
@@ -3835,6 +3842,8 @@ dependencies = [
  "op-collab-relay-control-plane",
  "op-collab-relay-protocol",
  "reqwest 0.12.28",
+ "serde_json",
+ "sha2",
  "socket2 0.6.3",
  "tempfile",
  "thiserror 1.0.69",
@@ -3874,7 +3883,9 @@ dependencies = [
  "op-collab-relay-protocol",
  "serde",
  "serde_json",
+ "sha2",
  "subtle",
+ "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "tokio-tungstenite",

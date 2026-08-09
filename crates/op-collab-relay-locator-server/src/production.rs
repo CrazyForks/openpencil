@@ -38,6 +38,7 @@ pub const LOCATOR_TICKET_POLICY_FILE_ENV: &str = "OPENPENCIL_COLLAB_LOCATOR_TICK
 pub const LOCATOR_POLICY_MAX_AGE_ENV: &str = "OPENPENCIL_COLLAB_LOCATOR_POLICY_MAX_AGE_SECONDS";
 pub const LOCATOR_HSM_SOCKET_ENV: &str = "OPENPENCIL_COLLAB_LOCATOR_HSM_SOCKET";
 pub const LOCATOR_HSM_KEY_ID_ENV: &str = "OPENPENCIL_COLLAB_LOCATOR_HSM_KEY_ID";
+pub const LOCATOR_PUBLIC_KEYS_FILE_ENV: &str = "OPENPENCIL_COLLAB_LOCATOR_PUBLIC_KEYS_FILE";
 pub const LOCATOR_HSM_PEER_UID_ENV: &str = "OPENPENCIL_COLLAB_LOCATOR_HSM_PEER_UID";
 pub const LOCATOR_HSM_PEER_GID_ENV: &str = "OPENPENCIL_COLLAB_LOCATOR_HSM_PEER_GID";
 pub const LOCATOR_HSM_TIMEOUT_MS_ENV: &str = "OPENPENCIL_COLLAB_LOCATOR_HSM_TIMEOUT_MS";
@@ -51,6 +52,12 @@ const MIN_HSM_TIMEOUT_MS: u64 = 50;
 const MAX_HSM_TIMEOUT_MS: u64 = 5_000;
 const MAX_AUTH_IN_FLIGHT: usize = 256;
 const MAX_RATE_PER_SECOND: u32 = 10_000;
+
+mod production_check;
+pub use production_check::{check_production, ProductionLocatorCheckError};
+
+#[cfg(test)]
+mod production_check_tests;
 
 pub struct ProductionLocatorConfig {
     server: LocatorServerConfig,

@@ -3,9 +3,10 @@ use std::{fmt, path::Path, sync::Arc};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use ed25519_dalek::{Signature, VerifyingKey};
 use op_auth_bridge::CollabJwksFetchError;
-use op_collab_policy_file::read_bounded_regular_file;
 use op_collab_relay_protocol::{LocatorKeyId, RelayLocatorVerifier, MAX_LOCATOR_KEY_ID_BYTES};
 use serde::Deserialize;
+
+use crate::read_bounded_regular_file;
 
 pub const PINNED_VERIFIER_KEY_FILE_VERSION: u32 = 1;
 pub const MAX_PINNED_VERIFIER_KEY_FILE_BYTES: usize = 64 * 1024;

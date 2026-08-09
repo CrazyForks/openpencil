@@ -1,5 +1,5 @@
 use op_collab_relay_locator_server::{
-    build_production_pairing, build_production_publisher, serve_listener_until,
+    build_production_pairing, build_production_publisher, check_production, serve_listener_until,
     LocatorServerConfig, ProductionLocatorConfig,
 };
 use tracing_subscriber::EnvFilter;
@@ -20,9 +20,27 @@ async fn main() {
         .without_time()
         .init();
 
-    if !production_requested() {
-        eprintln!("usage: op-collab-relay-locator-server --production");
-        std::process::exit(2);
+    let command = match parse_arguments(std::env::args().skip(1)) {
+        Ok(value) => value,
+        Err(()) => {
+            eprintln!(
+                "usage: op-collab-relay-locator-server \
+                 <--production|--check-production>"
+            );
+            std::process::exit(2);
+        }
+    };
+    if command == Command::CheckProduction {
+        match check_production() {
+            Ok(()) => {
+                println!("ready");
+                return;
+            }
+            Err(error) => {
+                eprintln!("locator production check failed: {error}");
+                std::process::exit(1);
+            }
+        }
     }
     let production = match ProductionLocatorConfig::from_env() {
         Ok(value) => value,
@@ -62,9 +80,28 @@ async fn run(
     Ok(())
 }
 
-fn production_requested() -> bool {
-    let mut arguments = std::env::args().skip(1);
-    matches!(arguments.next().as_deref(), Some("--production")) && arguments.next().is_none()
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Command {
+    Production,
+    CheckProduction,
+}
+
+fn parse_arguments<I, S>(arguments: I) -> Result<Command, ()>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut arguments = arguments.into_iter();
+    let first = arguments.next().ok_or(())?;
+    let command = match first.as_ref() {
+        "--production" => Command::Production,
+        "--check-production" => Command::CheckProduction,
+        _ => return Err(()),
+    };
+    if arguments.next().is_some() {
+        return Err(());
+    }
+    Ok(command)
 }
 
 fn locator_log_filter() -> Result<EnvFilter, ()> {
@@ -112,7 +149,21 @@ async fn shutdown_signal() {
 mod tests {
     use std::ffi::OsStr;
 
-    use super::locator_log_level;
+    use super::{locator_log_level, parse_arguments, Command};
+
+    #[test]
+    fn production_check_is_a_standalone_mode() {
+        assert_eq!(
+            parse_arguments(["--check-production"]),
+            Ok(Command::CheckProduction)
+        );
+        assert_eq!(parse_arguments(["--production"]), Ok(Command::Production));
+        assert_eq!(
+            parse_arguments(["--check-production", "--production"]),
+            Err(())
+        );
+        assert_eq!(parse_arguments(Vec::<&str>::new()), Err(()));
+    }
 
     #[test]
     fn log_filter_level_is_bounded_and_cannot_enable_dependency_traces() {

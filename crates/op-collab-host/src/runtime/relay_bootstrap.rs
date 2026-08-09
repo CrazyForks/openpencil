@@ -33,14 +33,16 @@ mod bootstrap_cache;
 #[path = "relay_bootstrap_select.rs"]
 mod bootstrap_select;
 
+#[path = "relay_bootstrap_roots.rs"]
+mod bootstrap_roots;
+
 use bootstrap_cache::{endpoint_cache_file, read_cache, write_cache, BootstrapCache};
+use bootstrap_roots::{add_development_roots, builtin_roots, root_authorizes_generation};
 pub(super) use bootstrap_select::bootstrap_provider;
 
 pub(super) const BOOTSTRAP_URL_ENV: &str = "OPENPENCIL_COLLAB_BOOTSTRAP_URL";
 #[cfg(any(test, debug_assertions))]
 const BOOTSTRAP_DEV_HTTP_ENV: &str = "OPENPENCIL_COLLAB_BOOTSTRAP_DEV_HTTP";
-#[cfg(any(test, debug_assertions))]
-const BOOTSTRAP_DEV_ROOT_KEYS_ENV: &str = "OPENPENCIL_COLLAB_BOOTSTRAP_DEV_ROOT_KEYS";
 
 const BOOTSTRAP_PATH: &str = "/api/v1/collaboration/bootstrap";
 const BOOTSTRAP_CONTEXT: &[u8] = b"openpencil/op-hub/collaboration-bootstrap/v1\0";
@@ -49,16 +51,10 @@ const BOOTSTRAP_CONTEXT: &[u8] = b"openpencil/op-hub/collaboration-bootstrap/v1\
 const BOOTSTRAP_CACHE_FILE: &str = "collaboration-bootstrap-v1.json";
 const BOOTSTRAP_CONTENT_TYPE: &str = "application/json";
 const BOOTSTRAP_VERSION: u64 = 1;
-const BUILTIN_ROOT_KID: &str = "openpencil-collab-union-root-v2";
-const BUILTIN_ROOT_X: &str = "5SVj-_jnJbuZlpDoD3M9x1eZAPDFLSq5jRb-c0xUh5A";
 const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 const MAX_PAYLOAD_BYTES: usize = 32 * 1024;
 const MAX_CACHE_BYTES: u64 = (MAX_RESPONSE_BYTES as u64 * 2) + 4_096;
-#[cfg(any(test, debug_assertions))]
-const MAX_ENV_BYTES: usize = 8 * 1024;
 const MAX_ETAG_BYTES: usize = 256;
-#[cfg(any(test, debug_assertions))]
-const MAX_ROOT_KEYS: usize = 8;
 const MAX_REGION_KEYS: usize = 8;
 const MAX_KEY_ID_BYTES: usize = 64;
 const MAX_RELAY_KEY_ID_BYTES: usize = 30;
@@ -372,6 +368,9 @@ fn verify_bootstrap(
         return Err(BootstrapError::InvalidPayload);
     }
     validate_payload(&payload, now, require_current)?;
+    if !root_authorizes_generation(&envelope.kid, payload.generation) {
+        return Err(BootstrapError::InvalidSignature);
+    }
     let mut seen_regions = HashSet::new();
     let mut regions = Vec::with_capacity(payload.regions.len());
     for wire in payload.regions {
@@ -589,39 +588,6 @@ fn reject_rollback(
     Ok(())
 }
 
-fn builtin_roots() -> Result<HashMap<String, VerifyingKey>, BootstrapError> {
-    let bytes = decode_fixed::<32>(BUILTIN_ROOT_X)?;
-    let key = canonical_ed25519_key(bytes, BootstrapError::InvalidRoot)?;
-    Ok(HashMap::from([(BUILTIN_ROOT_KID.to_owned(), key)]))
-}
-
-#[cfg(any(test, debug_assertions))]
-fn add_development_roots(roots: &mut HashMap<String, VerifyingKey>) -> Result<(), BootstrapError> {
-    let Some(raw) = std::env::var(BOOTSTRAP_DEV_ROOT_KEYS_ENV).ok() else {
-        return Ok(());
-    };
-    if raw.is_empty() || raw.len() > MAX_ENV_BYTES {
-        return Err(BootstrapError::InvalidRoot);
-    }
-    for entry in raw.split([',', ';']) {
-        let (kid, encoded) = entry.split_once('=').ok_or(BootstrapError::InvalidRoot)?;
-        if !valid_key_id(kid) || roots.len() >= MAX_ROOT_KEYS {
-            return Err(BootstrapError::InvalidRoot);
-        }
-        let bytes = decode_fixed::<32>(encoded)?;
-        let key = canonical_ed25519_key(bytes, BootstrapError::InvalidRoot)?;
-        if roots.insert(kid.to_owned(), key).is_some() {
-            return Err(BootstrapError::InvalidRoot);
-        }
-    }
-    Ok(())
-}
-
-#[cfg(not(any(test, debug_assertions)))]
-fn add_development_roots(_roots: &mut HashMap<String, VerifyingKey>) -> Result<(), BootstrapError> {
-    Ok(())
-}
-
 fn decode_fixed<const N: usize>(encoded: &str) -> Result<[u8; N], BootstrapError> {
     if encoded.is_empty() || encoded.contains('=') {
         return Err(BootstrapError::InvalidBase64);
@@ -791,3 +757,7 @@ enum BootstrapError {
 #[cfg(test)]
 #[path = "relay_bootstrap_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "relay_bootstrap_root_tests.rs"]
+mod root_tests;

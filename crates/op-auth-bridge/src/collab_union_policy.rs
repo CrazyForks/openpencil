@@ -16,11 +16,42 @@ pub const COLLAB_UNION_POLICY_VERSION: u32 = 2;
 pub const MAX_COLLAB_UNION_POLICY_REGIONS: usize = 8;
 pub const MAX_COLLAB_UNION_POLICY_KEYS: usize = 24;
 pub const MAX_COLLAB_UNION_POLICY_LIFETIME_SECONDS: i64 = 7 * 24 * 60 * 60;
-pub const COLLAB_UNION_POLICY_ROOT_X: &str = "5SVj-_jnJbuZlpDoD3M9x1eZAPDFLSq5jRb-c0xUh5A";
+pub const COLLAB_UNION_POLICY_LEGACY_ROOT_X: &str = "5SVj-_jnJbuZlpDoD3M9x1eZAPDFLSq5jRb-c0xUh5A";
+pub const COLLAB_UNION_POLICY_CURRENT_ROOT_X: &str = "DQJfLM6RZhfcHW52PKmzKNrubWGl0g5p3mBSKNsVOus";
+/// Compatibility alias for the original generation 1-3 policy root.
+pub const COLLAB_UNION_POLICY_ROOT_X: &str = COLLAB_UNION_POLICY_LEGACY_ROOT_X;
 
 const POLICY_DOMAIN: &[u8] = b"openpencil/collab-union-policy/v2\0";
 const MAX_REGION_ID_BYTES: usize = 32;
 const MAX_KEY_ID_BYTES: usize = 128;
+
+const PINNED_POLICY_ROOTS: [PolicyRootSpec; 2] = [
+    PolicyRootSpec {
+        public_key_x: COLLAB_UNION_POLICY_LEGACY_ROOT_X,
+        minimum_generation: 1,
+        maximum_generation: 3,
+    },
+    PolicyRootSpec {
+        public_key_x: COLLAB_UNION_POLICY_CURRENT_ROOT_X,
+        minimum_generation: 4,
+        maximum_generation: 0,
+    },
+];
+
+#[derive(Clone, Copy)]
+struct PolicyRootSpec {
+    public_key_x: &'static str,
+    minimum_generation: u64,
+    /// Zero means no upper bound.
+    maximum_generation: u64,
+}
+
+#[derive(Clone)]
+struct PolicyRoot {
+    key: VerifyingKey,
+    minimum_generation: u64,
+    maximum_generation: u64,
+}
 
 /// A verified public-key union authorized by the pinned offline root.
 #[derive(Clone, PartialEq, Eq)]
@@ -42,23 +73,45 @@ impl CollabUnionPolicy {
         expected_issuer: &str,
         now_unix_seconds: u64,
     ) -> Result<Self, CollabUnionPolicyError> {
-        let root = decode_fixed::<32>(COLLAB_UNION_POLICY_ROOT_X)
-            .ok_or(CollabUnionPolicyError::InvalidSignature)?;
-        Self::from_json_with_root(
+        let roots = pinned_policy_roots()?;
+        Self::from_json_with_roots(
             body,
             maximum_body_bytes,
             expected_issuer,
             now_unix_seconds,
-            root,
+            &roots,
         )
     }
 
+    #[cfg(test)]
     fn from_json_with_root(
         body: &[u8],
         maximum_body_bytes: usize,
         expected_issuer: &str,
         now_unix_seconds: u64,
         root: [u8; 32],
+    ) -> Result<Self, CollabUnionPolicyError> {
+        let root = VerifyingKey::from_bytes(&root)
+            .map_err(|_| CollabUnionPolicyError::InvalidSignature)?;
+        Self::from_json_with_roots(
+            body,
+            maximum_body_bytes,
+            expected_issuer,
+            now_unix_seconds,
+            &[PolicyRoot {
+                key: root,
+                minimum_generation: 1,
+                maximum_generation: 0,
+            }],
+        )
+    }
+
+    fn from_json_with_roots(
+        body: &[u8],
+        maximum_body_bytes: usize,
+        expected_issuer: &str,
+        now_unix_seconds: u64,
+        roots: &[PolicyRoot],
     ) -> Result<Self, CollabUnionPolicyError> {
         let maximum_body_bytes = maximum_body_bytes.min(HARD_MAX_COLLAB_JWKS_BYTES);
         if body.is_empty() || body.len() > maximum_body_bytes {
@@ -75,10 +128,12 @@ impl CollabUnionPolicy {
 
         let signature = decode_fixed::<64>(&canonical.signature)
             .ok_or(CollabUnionPolicyError::InvalidSignature)?;
-        let root = VerifyingKey::from_bytes(&root)
-            .map_err(|_| CollabUnionPolicyError::InvalidSignature)?;
-        root.verify_strict(&message, &Signature::from_bytes(&signature))
-            .map_err(|_| CollabUnionPolicyError::InvalidSignature)?;
+        verify_policy_signature(
+            canonical.unsigned.generation,
+            &message,
+            &Signature::from_bytes(&signature),
+            roots,
+        )?;
 
         let policy = Self {
             generation: canonical.unsigned.generation,
@@ -163,6 +218,54 @@ impl CollabUnionPolicy {
         }
         Ok(())
     }
+}
+
+fn pinned_policy_roots() -> Result<Vec<PolicyRoot>, CollabUnionPolicyError> {
+    PINNED_POLICY_ROOTS
+        .iter()
+        .map(|spec| {
+            let bytes = decode_fixed::<32>(spec.public_key_x)
+                .ok_or(CollabUnionPolicyError::InvalidSignature)?;
+            let key = VerifyingKey::from_bytes(&bytes)
+                .map_err(|_| CollabUnionPolicyError::InvalidSignature)?;
+            if spec.minimum_generation == 0
+                || (spec.maximum_generation != 0
+                    && spec.maximum_generation < spec.minimum_generation)
+            {
+                return Err(CollabUnionPolicyError::InvalidSignature);
+            }
+            Ok(PolicyRoot {
+                key,
+                minimum_generation: spec.minimum_generation,
+                maximum_generation: spec.maximum_generation,
+            })
+        })
+        .collect()
+}
+
+fn verify_policy_signature(
+    generation: u64,
+    message: &[u8],
+    signature: &Signature,
+    roots: &[PolicyRoot],
+) -> Result<(), CollabUnionPolicyError> {
+    let mut matching_roots = 0_u8;
+    let mut authorized_roots = 0_u8;
+    for root in roots {
+        if root.key.verify_strict(message, signature).is_err() {
+            continue;
+        }
+        matching_roots = matching_roots.saturating_add(1);
+        if generation >= root.minimum_generation
+            && (root.maximum_generation == 0 || generation <= root.maximum_generation)
+        {
+            authorized_roots = authorized_roots.saturating_add(1);
+        }
+    }
+    if matching_roots != 1 || authorized_roots != 1 {
+        return Err(CollabUnionPolicyError::InvalidSignature);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

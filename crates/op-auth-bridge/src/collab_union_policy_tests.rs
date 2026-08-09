@@ -10,6 +10,8 @@ use super::*;
 const ISSUER: &str = "https://collab.example.com";
 const NOW: u64 = 1_800_000_000;
 const GO_V2_FIXTURE: &str = include_str!("../tests/fixtures/zseven-sso-go-union-policy-v2.json");
+const GO_V2_GENERATION_4_FIXTURE: &[u8] =
+    include_bytes!("../tests/fixtures/zseven-sso-go-union-policy-v2-generation-4.json");
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -97,6 +99,16 @@ fn parse_test_policy(value: Value, now: u64) -> Result<CollabUnionPolicy, Collab
     )
 }
 
+fn parse_test_policy_with_roots(
+    value: Value,
+    now: u64,
+    signing_key: &SigningKey,
+    roots: &[PolicyRoot],
+) -> Result<CollabUnionPolicy, CollabUnionPolicyError> {
+    let body = sign_value(value, signing_key);
+    CollabUnionPolicy::from_json_with_roots(&body, 64 * 1024, ISSUER, now, roots)
+}
+
 fn parse_test_body(
     body: &[u8],
     maximum_body_bytes: usize,
@@ -176,15 +188,141 @@ fn verifies_the_frozen_go_production_root_fixture() {
 }
 
 #[test]
-fn production_v2_policy_root_is_pinned() {
-    let root = decode_fixed::<32>(COLLAB_UNION_POLICY_ROOT_X).unwrap();
-    let mut spki = vec![
-        0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
-    ];
-    spki.extend_from_slice(&root);
+fn verifies_the_frozen_go_generation_four_current_root_fixture() {
+    let fixture = GO_V2_GENERATION_4_FIXTURE
+        .strip_suffix(b"\n")
+        .unwrap_or(GO_V2_GENERATION_4_FIXTURE);
     assert_eq!(
-        format!("{:x}", Sha256::digest(&spki)),
-        "53700c011a688b8077850f1330567c265f97cd5e34c9b67aa6695a3fe8afb20c"
+        format!("{:x}", Sha256::digest(fixture)),
+        "b02f32f7827b7d7056c97997c0f953f44ad3b18928676e9a46a8192dd059ee93"
+    );
+    let wire: PolicyWire = serde_json::from_slice(fixture).unwrap();
+    assert_eq!(wire.generation, 4);
+    let issuer = wire.issuer.clone();
+    let now = u64::try_from(wire.not_before_unix).unwrap() + 1;
+    let policy = CollabUnionPolicy::from_json(fixture, 64 * 1024, &issuer, now).unwrap();
+    assert_eq!(policy.generation(), 4);
+    assert_eq!(policy.issuer(), "https://sso.zseven.cn");
+    assert_eq!(policy.recovery_epoch("cn"), Some(1));
+    assert_eq!(policy.recovery_epoch("global"), Some(1));
+}
+
+#[test]
+fn production_v2_policy_root_is_pinned() {
+    for (encoded, expected) in [
+        (
+            COLLAB_UNION_POLICY_LEGACY_ROOT_X,
+            "53700c011a688b8077850f1330567c265f97cd5e34c9b67aa6695a3fe8afb20c",
+        ),
+        (
+            COLLAB_UNION_POLICY_CURRENT_ROOT_X,
+            "ee695282bf7120eef385743c59cd9d8c900a182f7c518f0df0ca21891cf1809e",
+        ),
+    ] {
+        let root = decode_fixed::<32>(encoded).unwrap();
+        let mut spki = vec![
+            0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
+        ];
+        spki.extend_from_slice(&root);
+        assert_eq!(format!("{:x}", Sha256::digest(&spki)), expected);
+    }
+    assert_eq!(
+        COLLAB_UNION_POLICY_ROOT_X,
+        COLLAB_UNION_POLICY_LEGACY_ROOT_X
+    );
+    assert_eq!(PINNED_POLICY_ROOTS.len(), 2);
+    assert_eq!(PINNED_POLICY_ROOTS[0].minimum_generation, 1);
+    assert_eq!(PINNED_POLICY_ROOTS[0].maximum_generation, 3);
+    assert_eq!(PINNED_POLICY_ROOTS[1].minimum_generation, 4);
+    assert_eq!(PINNED_POLICY_ROOTS[1].maximum_generation, 0);
+}
+
+#[test]
+fn dual_root_generation_fence_accepts_only_the_authorized_signer() {
+    let legacy = SigningKey::from_bytes(&[0x31; 32]);
+    let current = SigningKey::from_bytes(&[0x32; 32]);
+    let roots = [
+        PolicyRoot {
+            key: legacy.verifying_key(),
+            minimum_generation: 1,
+            maximum_generation: 3,
+        },
+        PolicyRoot {
+            key: current.verifying_key(),
+            minimum_generation: 4,
+            maximum_generation: 0,
+        },
+    ];
+
+    for (signing_key, generation, accepted) in [
+        (&legacy, 3, true),
+        (&legacy, 4, false),
+        (&current, 3, false),
+        (&current, 4, true),
+    ] {
+        let mut value = policy_fixture();
+        value["generation"] = json!(generation);
+        let parsed = parse_test_policy_with_roots(value, NOW, signing_key, &roots);
+        assert_eq!(parsed.is_ok(), accepted, "generation {generation}");
+    }
+}
+
+#[test]
+fn dual_root_verification_rejects_unknown_tampered_and_ambiguous_signatures() {
+    let legacy = SigningKey::from_bytes(&[0x31; 32]);
+    let current = SigningKey::from_bytes(&[0x32; 32]);
+    let unknown = SigningKey::from_bytes(&[0x33; 32]);
+    let roots = [
+        PolicyRoot {
+            key: legacy.verifying_key(),
+            minimum_generation: 1,
+            maximum_generation: 3,
+        },
+        PolicyRoot {
+            key: current.verifying_key(),
+            minimum_generation: 4,
+            maximum_generation: 0,
+        },
+    ];
+
+    let mut generation_four = policy_fixture();
+    generation_four["generation"] = json!(4);
+    assert_eq!(
+        parse_test_policy_with_roots(generation_four.clone(), NOW, &unknown, &roots),
+        Err(CollabUnionPolicyError::InvalidSignature)
+    );
+
+    let signed = sign_value(generation_four, &current);
+    let mut tampered: Value = serde_json::from_slice(&signed).unwrap();
+    tampered["required_regions"][0]["recovery_epoch"] = json!(99);
+    assert_eq!(
+        CollabUnionPolicy::from_json_with_roots(
+            &serde_json::to_vec(&tampered).unwrap(),
+            64 * 1024,
+            ISSUER,
+            NOW,
+            &roots,
+        ),
+        Err(CollabUnionPolicyError::InvalidSignature)
+    );
+
+    let ambiguous = [
+        PolicyRoot {
+            key: legacy.verifying_key(),
+            minimum_generation: 1,
+            maximum_generation: 3,
+        },
+        PolicyRoot {
+            key: legacy.verifying_key(),
+            minimum_generation: 4,
+            maximum_generation: 0,
+        },
+    ];
+    let mut generation_three = policy_fixture();
+    generation_three["generation"] = json!(3);
+    assert_eq!(
+        parse_test_policy_with_roots(generation_three, NOW, &legacy, &ambiguous),
+        Err(CollabUnionPolicyError::InvalidSignature)
     );
 }
 

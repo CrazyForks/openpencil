@@ -21,8 +21,9 @@ pub use http::{
 };
 pub use pairing_store::InMemoryPairingStore;
 pub use production::{
-    build_production_pairing, build_production_publisher, ProductionLocatorConfig,
-    ProductionLocatorConfigError,
+    build_production_pairing, build_production_publisher, check_production,
+    ProductionLocatorCheckError, ProductionLocatorConfig, ProductionLocatorConfigError,
+    LOCATOR_PUBLIC_KEYS_FILE_ENV,
 };
 
 #[cfg(test)]

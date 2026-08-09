@@ -131,7 +131,13 @@ The desktop reads `OPENPENCIL_SSO_URL`,
 `OPENPENCIL_COLLAB_ISSUER`, and
 `OPENPENCIL_COLLAB_POLICY_ENDPOINT` only from trusted process-startup
 configuration. Production fetches `/api/v1/collab/policy`; the envelope must
-verify under the offline Ed25519 root pinned into the open client. Endpoint-only
+verify under an offline Ed25519 root pinned into the open client. The emergency
+root transition is bounded by policy generation: the legacy union-policy root
+is authorized only for generations 1-3, and the replacement union-policy root
+only for generation 4 and later. The
+client verifies every compile-time root and requires exactly one signature
+match and exactly one generation-authorized match. A production environment
+variable cannot add or replace a union-policy root. Endpoint-only
 configuration, conflicting policy/JWKS endpoints, signature or issuer
 mismatch, inactive key metadata, generation rollback, and same-generation
 rewrites fail closed without a raw-JWKS fallback. The old
@@ -160,16 +166,20 @@ store — the open-source tree contains no production endpoint, and a build
 without the injection keeps the relay purely environment-configured. A
 persisted user preference selects which hub serves the signed bootstrap
 document, and — absent an override — which region an owner publishes in. Both
-hubs serve the same signed document verified against the same embedded root,
+hubs serve the same signed document verified against the same embedded root set,
 so the preference is a reachability choice, not a trust choice. `OPENPENCIL_COLLAB_BOOTSTRAP_URL` remains as an
 operator override that wins when set and stays fail-closed on an invalid
 value, and an owner may still pin
 `OPENPENCIL_COLLAB_RELAY_HOME_REGION=cn|global` as a local home selector that
 overrides the preference. A guest obtains its home region only from the
-signed invite or the region-tagged pairing code. The embedded
-`openpencil-collab-root-v1` Ed25519 public key currently has the same bytes as
-the collaboration union-policy root, but the two source constants are not yet
-single-sourced; deployment and tests must not assume source-level coupling.
+signed invite or the region-tagged pairing code. During the emergency
+transition the embedded bootstrap root set contains the legacy
+`openpencil-collab-union-root-v2` key and the independent
+`openpencil-collab-bootstrap-root-v2` key. The envelope `kid` selects exactly
+one of them before signature verification. The legacy root is authorized only
+through bootstrap generation 2, while the successor root is authorized from
+generation 3 onward. An unknown id, a signature made by the other root, or a
+root outside its generation range fails closed.
 
 The bootstrap URL must be HTTPS with the exact
 `/api/v1/collaboration/bootstrap` path and no credentials, query, or fragment.
@@ -500,9 +510,10 @@ regional mirrors as rollback-risk events because the client has no durable
 cross-endpoint global generation ledger without a valid cache. Production
 rollouts must publish one byte-identical envelope to domestic and overseas
 mirrors, advance the op-hub minimum-generation floor, and preserve overlapping
-region keys inside the signed snapshot. Rotating the embedded root requires a
-coordinated client-and-service release; the current production desktop does
-not load additional roots from runtime configuration.
+region keys inside the signed snapshot. Rotating the embedded root still
+requires a coordinated client-and-service release. The bounded dual-root set
+supports that rollout, but the production desktop does not load additional
+roots from runtime configuration.
 
 The invite's signed `home_region` is authoritative. Physical geolocation,
 bootstrap mirror location, DNS answer, and edge ingress do not authorize a

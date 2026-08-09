@@ -21,6 +21,7 @@ op-auth-bridge = { path = "../op-auth-bridge" }
 op-collab-policy-file = { path = "../op-collab-policy-file" }
 op-collab-relay-control-plane = { path = "../op-collab-relay-control-plane" }
 op-collab-relay-protocol = { path = "../op-collab-relay-protocol" }
+sha2 = "0.10"
 socket2 = "0.6"
 thiserror.workspace = true
 tokio = { version = "1", features = [
@@ -41,7 +42,9 @@ zeroize = "1"
 libc = "0.2"
 
 [dev-dependencies]
+base64 = "0.22"
 ed25519-dalek = { version = "2.2", default-features = false, features = ["std"] }
 op-auth-bridge = { path = "../op-auth-bridge", features = ["test-issuer"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+serde_json.workspace = true
 tempfile = "3"

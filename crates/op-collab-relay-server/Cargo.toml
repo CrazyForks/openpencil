@@ -19,6 +19,7 @@ op-collab-policy-file = { path = "../op-collab-policy-file" }
 op-collab-relay-protocol = { path = "../op-collab-relay-protocol" }
 serde.workspace = true
 serde_json.workspace = true
+sha2 = "0.10"
 subtle = "2.6"
 thiserror.workspace = true
 tokio = { version = "1", features = [
@@ -40,3 +41,4 @@ libc = "0.2"
 
 [dev-dependencies]
 op-auth-bridge = { path = "../op-auth-bridge", features = ["test-issuer"] }
+tempfile = "3"

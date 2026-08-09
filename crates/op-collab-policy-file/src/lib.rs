@@ -13,6 +13,13 @@ use op_auth_bridge::{
     CollabVerifierConfig,
 };
 
+mod pinned_locator_keys;
+
+pub use pinned_locator_keys::{
+    PinnedEd25519LocatorVerifier, PinnedVerifierError, MAX_PINNED_VERIFIER_KEYS,
+    MAX_PINNED_VERIFIER_KEY_FILE_BYTES, PINNED_VERIFIER_KEY_FILE_VERSION,
+};
+
 const FILE_ETAG_CONTEXT: &str = "openpencil/op-collab-policy-file/pinned-policy-file-etag/v1";
 
 /// Typed rejection reasons for a policy file used as a trust root.

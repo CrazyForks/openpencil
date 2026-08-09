@@ -5,18 +5,21 @@ use std::{
     num::NonZeroU64,
     path::{Path, PathBuf},
     sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use op_auth_bridge::{
-    CollabJwksCacheLimits, CollabJwksFetchError, CollabTicketVerifier, CollabVerifierConfig,
-    CollabVerifierConfigError, DEFAULT_MAX_COLLAB_JWKS_BYTES,
+    CollabJwksCacheLimits, CollabJwksFetchError, CollabTicketVerifier, CollabUnionPolicy,
+    CollabVerifierConfig, CollabVerifierConfigError, DEFAULT_MAX_COLLAB_JWKS_BYTES,
 };
+use op_collab_policy_file::read_bounded_regular_file;
 use op_collab_relay_protocol::RelayRegion;
+use sha2::{Digest as _, Sha256};
 
 use crate::{
     run_with_authenticator, CollabTicketRelayAuthenticator, PinnedEd25519LocatorVerifier,
     PinnedPolicyFileFetcher, PinnedVerifierError, PinnedX25519KeyError, PinnedX25519ProofBoundary,
-    RelayConfig, RelayServerError,
+    RelayConfig, RelayServerError, RelayServerX25519ProofBoundary,
 };
 
 pub const HOME_REGION_ENV: &str = "OPENPENCIL_COLLAB_RELAY_HOME_REGION";
@@ -24,6 +27,7 @@ pub const TICKET_POLICY_FILE_ENV: &str = "OPENPENCIL_COLLAB_RELAY_TICKET_POLICY_
 pub const LOCATOR_KEYS_FILE_ENV: &str = "OPENPENCIL_COLLAB_RELAY_LOCATOR_KEYS_FILE";
 pub const RELAY_X25519_KEYS_FILE_ENV: &str = "OPENPENCIL_COLLAB_RELAY_X25519_KEYS_FILE";
 pub const POLICY_MAX_AGE_ENV: &str = "OPENPENCIL_COLLAB_RELAY_POLICY_MAX_AGE_SECONDS";
+pub const EXPECTED_POLICY_SHA256_ENV: &str = "OPENPENCIL_COLLAB_EXPECTED_POLICY_SHA256";
 /// Migration switch for the legacy full-collaboration-ticket relay bearer.
 ///
 /// `accept` (the default) dual-accepts the claim-minimized relay token and the
@@ -34,6 +38,91 @@ pub const LEGACY_TICKET_BEARER_ENV: &str = "OPENPENCIL_COLLAB_RELAY_LEGACY_TICKE
 
 const DEFAULT_POLICY_MAX_AGE_SECONDS: u64 = 60;
 const MAX_POLICY_MAX_AGE_SECONDS: u64 = 60 * 60;
+
+/// Verify every production trust input without opening a network listener.
+///
+/// The signed policy is parsed here, rather than merely opened, so the binary's
+/// embedded union roots and generation fence are exercised before promotion.
+pub fn check_production() -> Result<(), ProductionRelayCheckError> {
+    let now_unix_seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_secs())
+        .filter(|now| *now != 0)
+        .ok_or(ProductionRelayCheckError::Clock)?;
+    let config = ProductionRelayAuthConfig::from_env(false)
+        .map_err(|_| ProductionRelayCheckError::Configuration)?;
+    let expected_policy_sha256 = expected_policy_sha256_from_env()?;
+    check_production_config_at(&config, now_unix_seconds, &expected_policy_sha256)
+}
+
+pub(crate) fn check_production_config_at(
+    config: &ProductionRelayAuthConfig,
+    now_unix_seconds: u64,
+    expected_policy_sha256: &str,
+) -> Result<(), ProductionRelayCheckError> {
+    let verifier_config = CollabVerifierConfig::production();
+    let policy_body =
+        read_bounded_regular_file(&config.ticket_policy_file, DEFAULT_MAX_COLLAB_JWKS_BYTES)
+            .map_err(|_| ProductionRelayCheckError::Policy)?;
+    if format!("{:x}", Sha256::digest(&policy_body)) != expected_policy_sha256 {
+        return Err(ProductionRelayCheckError::Policy);
+    }
+    CollabUnionPolicy::from_json(
+        &policy_body,
+        DEFAULT_MAX_COLLAB_JWKS_BYTES,
+        verifier_config.issuer(),
+        now_unix_seconds,
+    )
+    .map_err(|_| ProductionRelayCheckError::Policy)?;
+    PinnedEd25519LocatorVerifier::from_file(&config.locator_keys_file)
+        .map_err(|_| ProductionRelayCheckError::LocatorKeys)?;
+    let x25519_path = config
+        .relay_x25519_keys_file
+        .as_ref()
+        .ok_or(ProductionRelayCheckError::RelayX25519Keys)?;
+    let boundary = PinnedX25519ProofBoundary::from_file(x25519_path)
+        .map_err(|_| ProductionRelayCheckError::RelayX25519Keys)?;
+    boundary
+        .active_key_id()
+        .map_err(|_| ProductionRelayCheckError::RelayX25519Keys)?;
+    Ok(())
+}
+
+fn expected_policy_sha256_from_env() -> Result<String, ProductionRelayCheckError> {
+    parse_expected_policy_sha256(env::var_os(EXPECTED_POLICY_SHA256_ENV))
+}
+
+pub(crate) fn parse_expected_policy_sha256(
+    value: Option<OsString>,
+) -> Result<String, ProductionRelayCheckError> {
+    let value = value
+        .ok_or(ProductionRelayCheckError::Configuration)?
+        .into_string()
+        .map_err(|_| ProductionRelayCheckError::Configuration)?;
+    if value.len() != 64
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(ProductionRelayCheckError::Configuration);
+    }
+    Ok(value)
+}
+
+#[derive(Clone, Copy, Debug, thiserror::Error, PartialEq, Eq)]
+pub enum ProductionRelayCheckError {
+    #[error("configuration")]
+    Configuration,
+    #[error("clock")]
+    Clock,
+    #[error("signed policy")]
+    Policy,
+    #[error("locator verification keys")]
+    LocatorKeys,
+    #[error("relay proof keys")]
+    RelayX25519Keys,
+}
 
 pub struct ProductionRelayAuthConfig {
     home_region: RelayRegion,
