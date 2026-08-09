@@ -95,7 +95,10 @@ jobs:
         if: runner.os == 'Windows'
         env:
           OP_TEST_ESTIMATE_TEXT_MEASURE: "1"
-        run: cargo nextest run --workspace --test-threads=1
+        # --no-fail-fast: the windows runner surfaces latent platform-only
+        # failures one per round when the run cancels on the first one;
+        # enumerating them all in a single run is what ends that loop.
+        run: cargo nextest run --workspace --test-threads=1 --no-fail-fast
       - name: Doctests (Windows)
         if: runner.os == 'Windows'
         run: cargo test --workspace --doc

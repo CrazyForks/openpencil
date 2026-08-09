@@ -223,10 +223,19 @@ fn hash_is_stable_and_baseline_output_alias_is_rejected() {
         sha256_hex(b"fixed baseline"),
         "5264c104ad63e29e86586bb556c24ee3c835440664b4becb22a4e697eb84d307"
     );
+    // The thread name is the full test path ("modify_mode::tests::…"), and
+    // Windows rejects ':' in file names, so it must be sanitized before it
+    // can key a temp file.
+    let thread = std::thread::current();
+    let discriminator: String = thread
+        .name()
+        .unwrap_or("test")
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
     let path = std::env::temp_dir().join(format!(
-        "op-smoke-modify-alias-{}-{}.op",
+        "op-smoke-modify-alias-{}-{discriminator}.op",
         std::process::id(),
-        std::thread::current().name().unwrap_or("test")
     ));
     std::fs::write(&path, br#"{"version":"1.0.0","children":[]}"#).unwrap();
     let error = reject_input_overwrite(&path, &path).unwrap_err();
