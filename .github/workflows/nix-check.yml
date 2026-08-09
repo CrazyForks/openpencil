@@ -43,11 +43,29 @@ jobs:
       - name: Enable Nix cache
         uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d # v14
 
+      # The flake pins its vendor inputs as github revs while the repository
+      # pins the same code as submodules; the two drift the moment a submodule
+      # bump forgets the flake (this broke the whole workflow when jian gained
+      # the widget-style fields). Deriving the overrides from the checked-out
+      # submodule HEADs makes the workflow follow the gitlinks by construction.
+      - name: Derive flake input overrides from the submodule pins
+        run: |
+          {
+            printf 'NIX_VENDOR_OVERRIDES=--no-write-lock-file'
+            printf ' --override-input jian github:ZSeven-W/jian/%s' \
+              "$(git -C vendor/jian rev-parse HEAD)"
+            printf ' --override-input casement github:ZSeven-W/casement/%s' \
+              "$(git -C vendor/casement rev-parse HEAD)"
+            printf ' --override-input agent github:ZSeven-W/agent-rs/%s' \
+              "$(git -C vendor/agent rev-parse HEAD)"
+            printf '\n'
+          } >> "$GITHUB_ENV"
+
       - name: Evaluate flake checks
-        run: nix flake check --no-build --show-trace
+        run: nix flake check --no-build --show-trace $NIX_VENDOR_OVERRIDES
 
       - name: Build prebuilt packages
-        run: nix build .#prebuilt .#prebuilt-cli --no-link
+        run: nix build .#prebuilt .#prebuilt-cli --no-link $NIX_VENDOR_OVERRIDES
 
       - name: Build representative source outputs
         run: |
@@ -58,10 +76,10 @@ jobs:
             .#web-sdk-wasm \
             .#web-sdk-packages \
             .#appimage \
-            --no-link
+            --no-link $NIX_VENDOR_OVERRIDES
 
       - name: Verify generated integration sidecar
-        run: nix build .#checks.x86_64-linux.integration-sidecar --no-link
+        run: nix build .#checks.x86_64-linux.integration-sidecar --no-link $NIX_VENDOR_OVERRIDES
 
       - name: Install headless display server
         run: |
@@ -71,7 +89,7 @@ jobs:
 
       - name: Smoke-test prebuilt CLI
         run: |
-          output="$(nix run .#prebuilt-cli -- --version)"
+          output="$(nix run .#prebuilt-cli $NIX_VENDOR_OVERRIDES -- --version)"
           printf '%s\n' "$output"
           printf '%s\n' "$output" | grep -Eq '^\{"version":"[0-9]+\.[0-9]+\.[0-9]+"\}$'
 
@@ -82,7 +100,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE=1 \
           MESA_LOADER_DRIVER_OVERRIDE=llvmpipe \
           GALLIUM_DRIVER=llvmpipe \
-          timeout 20s xvfb-run -a -s "-screen 0 1280x720x24" nix run .#prebuilt \
+          timeout 20s xvfb-run -a -s "-screen 0 1280x720x24" nix run .#prebuilt $NIX_VENDOR_OVERRIDES \
             >/tmp/openpencil-desktop.log 2>&1
           status=$?
           set -e
@@ -100,4 +118,4 @@ jobs:
           fi
 
       - name: Run the clean NixOS runtime test
-        run: nix build .#checks.x86_64-linux.prebuilt-runtime --no-link
+        run: nix build .#checks.x86_64-linux.prebuilt-runtime --no-link $NIX_VENDOR_OVERRIDES

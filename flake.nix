@@ -39,11 +39,11 @@
       flake = false;
     };
     casement = {
-      url = "github:ZSeven-W/casement/451173eb3353a4166d2d0f241f2e0606051064bd";
+      url = "github:ZSeven-W/casement/ffdd672cbda3abe5cd78d056fb75683f2a74f7fe";
       flake = false;
     };
     jian = {
-      url = "github:ZSeven-W/jian/df2376a018acbd8ec8d9fac58b05dde14a405aca";
+      url = "github:ZSeven-W/jian/453bd70b646417e58f0d5c9a51594e27d399d849";
       flake = false;
     };
   };
