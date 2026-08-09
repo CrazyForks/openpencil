@@ -102,6 +102,13 @@ CJK = "Noto Sans SC"
 NUM = "Inter"
 
 W, H, GAP = 1080, 1440, 120
+
+# 3 板一行 —— 与 deck 体系（deckkit.BOARDS_PER_ROW）同一约定：多板模板在画布上
+# 分行铺开，而不是拖成一长排。行间距比列间距多 240 不是手滑：画布在帧上方以
+# **屏幕空间**固定偏移画帧名，缩到能整屏看时 120 文档像素只剩十几个屏幕像素，
+# 第二行的帧名会压到上一行的板上。
+BOARDS_PER_ROW = 3
+ROW_GAP = GAP + 240
 EDGE = 80
 RING_GUTTER = 56              # 活页孔占掉的左侧宽度
 TEXT_EDGE = EDGE + RING_GUTTER
@@ -265,6 +272,11 @@ def board(page, name, main, tapes):
     jian 的兄弟顺序是 index 0 最上（canvas_viewport_paint_mask 反着遍历）。
     胶带层用 group：group 不是图片投放目标（image_drop.rs 不匹配 Group），
     所以它盖在整板上也不会截走用户拖进来的图。
+
+    两个装饰层都上 `locked`：它们是 fill_container 的满幅壳子，压在正文之
+    上，但自己一寸也不画（真正的墨在里面那几条胶带 / 六个孔上）。locked 让
+    壳子自身不可选，壳内的胶带和孔照常可选（hit_test_walk 的 locked 判定在
+    子节点遍历之后），于是拖动装饰不会拽走整层，框选也不会一网兜住整板。
     """
     content = frame(ids, f"{name} · 内容", width="fill_container",
                     height="fill_container", layout="vertical",
@@ -273,18 +285,20 @@ def board(page, name, main, tapes):
     content["children"] = [header(page), main, footer()]
 
     tape_layer = group(ids, f"{name} · 胶带", width="fill_container",
-                       height="fill_container", layout="none", fill=[])
+                       height="fill_container", layout="none", fill=[],
+                       locked=True)
     tape_layer["children"] = tapes
 
     holes = frame(ids, f"{name} · 活页孔", width="fill_container",
-                  height="fill_container", layout="none", fill=[])
+                  height="fill_container", layout="none", fill=[],
+                  locked=True)
     holes["children"] = ring_holes()
 
     shell = frame(ids, f"{page:02d} {name}", width=W, height=H, layout="none",
                   fill=solid("$c-bg"), clipContent=True)
     shell["children"] = [tape_layer, content, holes]
-    shell["x"] = (page - 1) * (W + GAP)
-    shell["y"] = 0
+    shell["x"] = ((page - 1) % BOARDS_PER_ROW) * (W + GAP)
+    shell["y"] = ((page - 1) // BOARDS_PER_ROW) * (H + ROW_GAP)
     return shell
 
 

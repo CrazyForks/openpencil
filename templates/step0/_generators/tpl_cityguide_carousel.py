@@ -111,6 +111,13 @@ CJK = "Noto Sans SC"
 NUM = "DM Mono"
 
 W, H, GAP = 1080, 1440, 120
+
+# 3 板一行 —— 与 deck 体系（deckkit.BOARDS_PER_ROW）同一约定：多板模板在画布上
+# 分行铺开，而不是拖成一长排。行间距比列间距多 240 不是手滑：画布在帧上方以
+# **屏幕空间**固定偏移画帧名，缩到能整屏看时 120 文档像素只剩十几个屏幕像素，
+# 第二行的帧名会压到上一行的板上。
+BOARDS_PER_ROW = 3
+ROW_GAP = GAP + 240
 BORDER = 24                   # 相纸白边
 EDGE = 80 - BORDER            # 片窗内的左右内边距，合计仍是 80
 TOP, BOT = 96 - BORDER, 128 - BORDER
@@ -241,7 +248,13 @@ def footer(edge_code):
 
 
 def board(page, name, main, edge_code):
-    """一板。外壳是相纸白，白边之内才是片基 —— 白边是本套的第一识别信号。"""
+    """一板。外壳是相纸白，白边之内才是片基 —— 白边是本套的第一识别信号。
+
+    齿孔层与色偏层都上 `locked`：两者都是铺满整板的壳子，自己一寸不画（墨
+    在里面那 24 个孔 / 两条色带上）。齿孔层还压在正文之上，不锁的话它自身
+    就是一块盖住全板的透明板。locked 让壳子不可选而壳内的孔照常可选
+    （hit_test_walk 的 locked 判定在子节点遍历之后）。
+    """
     content = frame(ids, f"{name} · 内容", width="fill_container",
                     height="fill_container", layout="vertical",
                     padding=[TOP, EDGE, BOT, EDGE], gap=0,
@@ -253,19 +266,20 @@ def board(page, name, main, edge_code):
                  fill=solid("$c-bg"), clipContent=True)
     # 装饰（色偏）最后 —— jian 里 index 0 最上，写反了会盖住正文。
     cast = frame(ids, f"{name} · 色偏", width="fill_container",
-                 height="fill_container", layout="none", fill=[])
+                 height="fill_container", layout="none", fill=[],
+                 locked=True)
     cast["children"] = colour_cast()
     gate["children"] = [content, cast]
 
     shell = frame(ids, f"{page:02d} {name}", width=W, height=H, layout="none",
                   fill=solid("$c-print"), padding=BORDER, clipContent=True)
     holes = frame(ids, f"{name} · 齿孔", width=W, height=H, layout="none",
-                  fill=[])
+                  fill=[], locked=True)
     holes["children"] = sprockets()
     holes["x"], holes["y"] = -BORDER, -BORDER
     shell["children"] = [holes, gate]
-    shell["x"] = (page - 1) * (W + GAP)
-    shell["y"] = 0
+    shell["x"] = ((page - 1) % BOARDS_PER_ROW) * (W + GAP)
+    shell["y"] = ((page - 1) // BOARDS_PER_ROW) * (H + ROW_GAP)
     return shell
 
 

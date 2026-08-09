@@ -59,6 +59,7 @@
           "height": "fill_container",
           "layout": "none",
           "fill": [],
+          "locked": true,
           "children": [
             {
               "type": "path",
@@ -480,6 +481,7 @@
           "height": "fill_container",
           "layout": "none",
           "fill": [],
+          "locked": true,
           "children": [
             {
               "type": "ellipse",
@@ -654,6 +656,7 @@
           "height": "fill_container",
           "layout": "none",
           "fill": [],
+          "locked": true,
           "children": [
             {
               "type": "path",
@@ -1310,6 +1313,7 @@
           "height": "fill_container",
           "layout": "none",
           "fill": [],
+          "locked": true,
           "children": [
             {
               "type": "ellipse",
@@ -1484,6 +1488,7 @@
           "height": "fill_container",
           "layout": "none",
           "fill": [],
+          "locked": true,
           "children": [
             {
               "type": "path",
@@ -2019,6 +2024,7 @@
           "height": "fill_container",
           "layout": "none",
           "fill": [],
+          "locked": true,
           "children": [
             {
               "type": "ellipse",
@@ -2193,6 +2199,7 @@
           "height": "fill_container",
           "layout": "none",
           "fill": [],
+          "locked": true,
           "children": [
             {
               "type": "path",
@@ -2874,6 +2881,7 @@
           "height": "fill_container",
           "layout": "none",
           "fill": [],
+          "locked": true,
           "children": [
             {
               "type": "ellipse",
@@ -3022,8 +3030,8 @@
           ]
         }
       ],
-      "x": 3600,
-      "y": 0
+      "x": 0,
+      "y": 1800
     },
     {
       "type": "frame",
@@ -3048,6 +3056,7 @@
           "height": "fill_container",
           "layout": "none",
           "fill": [],
+          "locked": true,
           "children": [
             {
               "type": "path",
@@ -3474,6 +3483,7 @@
           "height": "fill_container",
           "layout": "none",
           "fill": [],
+          "locked": true,
           "children": [
             {
               "type": "ellipse",
@@ -3622,8 +3632,8 @@
           ]
         }
       ],
-      "x": 4800,
-      "y": 0
+      "x": 1200,
+      "y": 1800
     },
     {
       "type": "frame",
@@ -3648,6 +3658,7 @@
           "height": "fill_container",
           "layout": "none",
           "fill": [],
+          "locked": true,
           "children": [
             {
               "type": "path",
@@ -4258,6 +4269,7 @@
           "height": "fill_container",
           "layout": "none",
           "fill": [],
+          "locked": true,
           "children": [
             {
               "type": "ellipse",
@@ -4406,8 +4418,8 @@
           ]
         }
       ],
-      "x": 6000,
-      "y": 0
+      "x": 2400,
+      "y": 1800
     }
   ]
 }
