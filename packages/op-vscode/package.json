@@ -2,15 +2,36 @@
   "name": "openpencil-vscode",
   "displayName": "OpenPencil",
   "description": "OpenPencil design-as-code integration for VS Code: .op file editing, MCP configuration, AI skills, and code generation.",
-  "version": "0.0.1",
+  "version": "0.8.3",
   "publisher": "openpencil",
   "private": true,
   "license": "MIT",
+  "icon": "icon.png",
+  "homepage": "https://github.com/ZSeven-W/openpencil",
+  "bugs": {
+    "url": "https://github.com/ZSeven-W/openpencil/issues"
+  },
+  "galleryBanner": {
+    "color": "#1a1a1a",
+    "theme": "dark"
+  },
   "engines": {
     "vscode": "^1.90.0"
   },
   "categories": [
+    "Visualization",
+    "AI",
     "Other"
+  ],
+  "keywords": [
+    "design",
+    "design-as-code",
+    ".op",
+    "MCP",
+    "AI",
+    "vector",
+    "canvas",
+    "openpencil"
   ],
   "main": "./dist/extension.js",
   "capabilities": {
