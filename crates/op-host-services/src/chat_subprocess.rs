@@ -116,9 +116,15 @@ const STDOUT_TAIL_CAP: usize = 8 * 1024;
 const STDOUT_TAIL_LINES: usize = 256;
 
 /// How long a reaped turn waits for the stderr drain to reach EOF
-/// before formatting its failure message. Normally one scheduler round;
-/// bounded so a wedged reader cannot hang a turn.
-const STDERR_DRAIN_GRACE: Duration = Duration::from_secs(2);
+/// before formatting its failure message. The child is already reaped so
+/// its pipe is at EOF and the drain finishes the instant it is polled —
+/// the wait is really for the drain TASK to be scheduled, not for I/O.
+/// Under a saturated runtime (the orchestrator's parallel turns, or the
+/// concurrent stress test) that scheduling latency occasionally ran past
+/// a two-second bound and the tail read back empty, so this is generous:
+/// it only has to outlast scheduler starvation, while still capping a
+/// genuinely wedged reader (a grandchild holding the pipe open).
+const STDERR_DRAIN_GRACE: Duration = Duration::from_secs(30);
 
 /// `ChatProvider` impl that bridges to a CLI binary via stdio.
 /// Construct via [`SubprocessProvider::for_cli`] or
