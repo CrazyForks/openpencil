@@ -8,6 +8,13 @@ from oplib import (Ids, frame, rect, text, solid, stroke, write_doc,
                    PLACEHOLDER_TITLE, PLACEHOLDER_SPEC)
 
 W, H, GAP = 1080, 1440, 120
+
+# 3 板一行 —— 与 deck 体系（deckkit.BOARDS_PER_ROW）同一约定：多板模板在画布上
+# 分行铺开，而不是拖成一长排。行间距比列间距多 240 不是手滑：画布在帧上方以
+# **屏幕空间**固定偏移画帧名，缩到能整屏看时 120 文档像素只剩十几个屏幕像素，
+# 第二行的帧名会压到上一行的板上。
+BOARDS_PER_ROW = 3
+ROW_GAP = GAP + 240
 PAD_X, PAD_Y = 72, 88
 
 VARS = color_vars({
@@ -236,8 +243,8 @@ def build():
                   "不要把字塞满整张图。",),
              cta_page()]
     for i, p in enumerate(pages):
-        p["x"] = i * (W + GAP)
-        p["y"] = 0
+        p["x"] = (i % BOARDS_PER_ROW) * (W + GAP)
+        p["y"] = (i // BOARDS_PER_ROW) * (H + ROW_GAP)
     dst = sys.argv[1]
     write_doc(dst, VARS, pages, "截图教程卡 · 小红书 3:4 模板")
 

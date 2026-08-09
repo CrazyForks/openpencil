@@ -105,6 +105,13 @@ CJK = "Noto Sans SC"
 NUM = "Inter"
 
 W, H, GAP = 1080, 1440, 120
+
+# 3 板一行 —— 与 deck 体系（deckkit.BOARDS_PER_ROW）同一约定：多板模板在画布上
+# 分行铺开，而不是拖成一长排。行间距比列间距多 240 不是手滑：画布在帧上方以
+# **屏幕空间**固定偏移画帧名，缩到能整屏看时 120 文档像素只剩十几个屏幕像素，
+# 第二行的帧名会压到上一行的板上。
+BOARDS_PER_ROW = 3
+ROW_GAP = GAP + 240
 EDGE = 80
 TOP, BOT = 96, 128
 INNER = W - EDGE * 2
@@ -252,8 +259,8 @@ def board(page, name, main, smudge_at, tag=None):
                   fill=solid("$c-bg"), clipContent=True)
     # 装饰层最后 —— jian 里 index 0 最上，写反了擦痕会糊住板书。
     shell["children"] = [content, decor]
-    shell["x"] = (page - 1) * (W + GAP)
-    shell["y"] = 0
+    shell["x"] = ((page - 1) % BOARDS_PER_ROW) * (W + GAP)
+    shell["y"] = ((page - 1) // BOARDS_PER_ROW) * (H + ROW_GAP)
     return shell
 
 
