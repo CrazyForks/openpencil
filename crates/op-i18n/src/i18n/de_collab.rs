@@ -112,6 +112,18 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.a11y.remoteCursor" => "Cursor von {{name}}",
         "icon.catalogLoading" => "Symbolkatalog wird geladen…",
         "sceneTemplate.documentUnavailable" => "Das Dokument dieser Vorlage konnte nicht geladen werden. Bitte erneut versuchen.",
+        "sceneTemplate.item.soundingNavyDeck.title" => "Seekarte · Strategie-Deck",
+        "sceneTemplate.item.soundingNavyDeck.summary" => "Kartenpapierweiß mit Stahl- und Tintenblau: Jede Seite beginnt mit der Aussage und belegt sie mit genau einem Messwert samt Quelle. Tiefenprofilbalken und ein Kurslinien-Inhaltsverzeichnis tragen sieben Seiten, für Beratungsergebnisse und Strategiereviews.",
+        "sceneTemplate.item.tidemarkSlateDeck.title" => "Tidenschiefer · Daten-Review-Deck",
+        "sceneTemplate.item.tidemarkSlateDeck.summary" => "Auf Schiefergrau: Überblickskacheln, Trendlinie, Detailtabelle, Risikoliste und eine Roadmap in Swimlanes. Sieben Seiten für einen vollständigen Datenreview, für Quartalsrückblicke und Kennzahlenrunden.",
+        "sceneTemplate.item.banxinRuleDeck.title" => "Satzspiegel und Linien · Deck für chinesischen Satz",
+        "sceneTemplate.item.banxinRuleDeck.summary" => "Auf der klassischen chinesischen Seite gebaut: Satzspiegel, Kolumnenlinien, Kopfnoten und Fischschwanz-Kolumnentitel. Textzeilen bleiben unter dreißig Zeichen, mit Gegenspalten und Zitatseite, für Vorlesungen und Seminare.",
+        "sceneTemplate.item.gridpaperGraphiteDeck.title" => "Karogrid Graphit · Deck für die Verteidigung",
+        "sceneTemplate.item.gridpaperGraphiteDeck.summary" => "Graphitschrift auf Karopapier: Problem und Lücke, Methode, zwei Ergebnisseiten, Grenzen, Fazit und Quellen. Acht Seiten in der Reihenfolge einer Verteidigung, für Exposés und Disputationen.",
+        "sceneTemplate.item.dossierLinenDeck.title" => "Leinen-Dossier · Memo-Deck",
+        "sceneTemplate.item.dossierLinenDeck.summary" => "Ein Dossier auf Leinenpapier, vom Deckblatt über Hintergrund, aktuelle Daten, Analyse und Optionsvergleich bis zum Beschluss. Acht Seiten, die sich als eigenständiges Memo lesen, für Entscheidungsvorlagen.",
+        "sceneTemplate.item.ledgerTickDeck.title" => "Kontobuchraster · Wettbewerbsmatrix-Deck",
+        "sceneTemplate.item.ledgerTickDeck.summary" => "Bewertungsmaßstab, Hauptmatrix, Quantilsskalen und die Gegenüberstellung von Lücke und Stärke auf Kontobuchlinien. Sieben Seiten, die einen Wettbewerbsvergleich wie eine prüfbare Rechnung erzählen, für Auswahlentscheidungen und Marktanalysen.",
         _ => return None,
     })
 }

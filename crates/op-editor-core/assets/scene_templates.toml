@@ -735,3 +735,81 @@ tags = ["轮播", "年度", "总结", "复盘", "年终", "carousel", "yearrevie
 frames = 8
 frame_width = 1080
 frame_height = 1440
+
+[[template]]
+id = "sounding-navy-deck"
+scene = "slides"
+title_key = "sceneTemplate.item.soundingNavyDeck.title"
+title_fallback = "测深海图 · 咨询策略档"
+summary_key = "sceneTemplate.item.soundingNavyDeck.summary"
+summary_fallback = "海图暖白配钢蓝墨蓝，结论式标题加一条带来源的读数，深度剖面条与航迹目录贯穿七页，适合咨询交付与策略汇报。"
+tags = ["策略", "咨询", "汇报", "结论", "数据", "PPT", "slides", "deck", "consulting", "strategy"]
+frames = 7
+frame_width = 1920
+frame_height = 1080
+style_guide = "sounding-navy"
+
+[[template]]
+id = "tidemark-slate-deck"
+scene = "slides"
+title_key = "sceneTemplate.item.tidemarkSlateDeck.title"
+title_fallback = "潮痕石板 · 数据评审档"
+summary_key = "sceneTemplate.item.tidemarkSlateDeck.summary"
+summary_fallback = "石板灰底上的全景磁贴、趋势线、明细表、风险清单和泳道路线，七页走完一次数据评审，适合季度复盘与指标例会。"
+tags = ["数据", "评审", "指标", "复盘", "看板", "PPT", "slides", "deck", "review", "metrics"]
+frames = 7
+frame_width = 1920
+frame_height = 1080
+style_guide = "tidemark-slate"
+
+[[template]]
+id = "banxin-rule-deck"
+scene = "slides"
+title_key = "sceneTemplate.item.banxinRuleDeck.title"
+title_fallback = "版心界行 · 中文排版档"
+summary_key = "sceneTemplate.item.banxinRuleDeck.summary"
+summary_fallback = "以版心、界行、天头批注和鱼尾页码立身的中文原生排版，正文每行不超三十字，双栏对读与引文页耐读，适合讲稿与研讨。"
+tags = ["中文", "排版", "版心", "讲稿", "研讨", "PPT", "slides", "deck", "typography", "chinese"]
+frames = 7
+frame_width = 1920
+frame_height = 1080
+style_guide = "banxin-rule"
+
+[[template]]
+id = "gridpaper-graphite-deck"
+scene = "slides"
+title_key = "sceneTemplate.item.gridpaperGraphiteDeck.title"
+title_fallback = "方格石墨 · 学术答辩档"
+summary_key = "sceneTemplate.item.gridpaperGraphiteDeck.summary"
+summary_fallback = "方格纸底配石墨灰字，问题与缺口、方法、图表两页结果、局限、结论到引用，八页照答辩顺序排好，适合开题与论文答辩。"
+tags = ["学术", "答辩", "论文", "研究", "开题", "PPT", "slides", "deck", "academic", "thesis"]
+frames = 8
+frame_width = 1920
+frame_height = 1080
+style_guide = "gridpaper-graphite"
+
+[[template]]
+id = "dossier-linen-deck"
+scene = "slides"
+title_key = "sceneTemplate.item.dossierLinenDeck.title"
+title_fallback = "卷宗亚麻 · 文档备忘档"
+summary_key = "sceneTemplate.item.dossierLinenDeck.summary"
+summary_fallback = "亚麻纸卷宗质感，从文件首页、背景、现状数据到方案对比与决议，八页写成一份能独立读完的备忘录，适合决策评审。"
+tags = ["备忘录", "决策", "评审", "文档", "方案", "PPT", "slides", "deck", "memo", "decision"]
+frames = 8
+frame_width = 1920
+frame_height = 1080
+style_guide = "dossier-linen"
+
+[[template]]
+id = "ledger-tick-deck"
+scene = "slides"
+title_key = "sceneTemplate.item.ledgerTickDeck.title"
+title_fallback = "账簿勾格 · 竞品矩阵档"
+summary_key = "sceneTemplate.item.ledgerTickDeck.summary"
+summary_fallback = "账簿格线上的评估口径、主矩阵、分位刻度与差距优势对照，七页把竞品比较讲成一笔可核对的账，适合选型与市场分析。"
+tags = ["竞品", "矩阵", "对比", "选型", "市场", "PPT", "slides", "deck", "matrix", "competitive"]
+frames = 7
+frame_width = 1920
+frame_height = 1080
+style_guide = "ledger-tick"

@@ -112,6 +112,18 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.a11y.remoteCursor" => "Cursor de {{name}}",
         "icon.catalogLoading" => "Cargando el catálogo de iconos…",
         "sceneTemplate.documentUnavailable" => "No se pudo cargar el documento de esa plantilla. Inténtalo de nuevo.",
+        "sceneTemplate.item.soundingNavyDeck.title" => "Carta de sondeo · deck de estrategia",
+        "sceneTemplate.item.soundingNavyDeck.summary" => "Blanco de carta náutica con azul acero y azul tinta: cada página abre con una conclusión y la sostiene con una sola lectura con fuente. Barras de perfil de profundidad e índice en derrota de sondeo a lo largo de siete páginas, para entregables de consultoría y revisiones de estrategia.",
+        "sceneTemplate.item.tidemarkSlateDeck.title" => "Pizarra de marea · deck de revisión de datos",
+        "sceneTemplate.item.tidemarkSlateDeck.summary" => "Sobre gris pizarra: mosaicos de panorama, línea de tendencia, tabla de detalle, lista de riesgos y hoja de ruta por carriles. Siete páginas que recorren una revisión de datos completa, para retrospectivas trimestrales y comités de métricas.",
+        "sceneTemplate.item.banxinRuleDeck.title" => "Caja y filetes · deck de tipografía china",
+        "sceneTemplate.item.banxinRuleDeck.summary" => "Construido sobre la página china clásica: caja de texto, filetes de columna, notas al margen superior y folio en cola de pez. Las líneas de texto no pasan de treinta caracteres, con columnas enfrentadas y página de cita, para clases y seminarios.",
+        "sceneTemplate.item.gridpaperGraphiteDeck.title" => "Grafito cuadriculado · deck de defensa académica",
+        "sceneTemplate.item.gridpaperGraphiteDeck.summary" => "Tipografía grafito sobre papel cuadriculado: problema y vacío, método, dos páginas de resultados, limitaciones, conclusión y referencias. Ocho páginas en el orden de una defensa, para anteproyectos y defensas de tesis.",
+        "sceneTemplate.item.dossierLinenDeck.title" => "Expediente de lino · deck de memorando",
+        "sceneTemplate.item.dossierLinenDeck.summary" => "Un expediente en papel de lino, de la portada al contexto, los datos actuales, el análisis, la comparación de opciones y la resolución. Ocho páginas que se leen como un memorando autónomo, para comités de decisión.",
+        "sceneTemplate.item.ledgerTickDeck.title" => "Libro mayor · deck de matriz competitiva",
+        "sceneTemplate.item.ledgerTickDeck.summary" => "Criterios de evaluación, matriz principal, escalas por cuantiles y lectura de brechas y fortalezas sobre el rayado de un libro mayor. Siete páginas que cuentan una comparación competitiva como una cuenta verificable, para selección de proveedores y análisis de mercado.",
         _ => return None,
     })
 }

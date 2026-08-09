@@ -112,6 +112,18 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.a11y.remoteCursor" => "Kursor {{name}}",
         "icon.catalogLoading" => "Katalog ikon sedang dimuat…",
         "sceneTemplate.documentUnavailable" => "Dokumen templat itu tidak dapat dimuat. Coba lagi.",
+        "sceneTemplate.item.soundingNavyDeck.title" => "Peta pengukuran kedalaman · deck strategi",
+        "sceneTemplate.item.soundingNavyDeck.summary" => "Putih hangat kertas peta laut berpadu biru baja dan biru tinta: setiap halaman dibuka dengan kesimpulan dan ditopang satu angka bersumber. Batang profil kedalaman dan daftar isi berbentuk jalur pengukuran mengikat tujuh halaman, untuk hasil kerja konsultan dan tinjauan strategi.",
+        "sceneTemplate.item.tidemarkSlateDeck.title" => "Batu tulis jejak pasang · deck tinjauan data",
+        "sceneTemplate.item.tidemarkSlateDeck.summary" => "Di atas abu batu tulis: ubin ringkasan, garis tren, tabel rincian, daftar risiko, dan peta jalan berjalur. Tujuh halaman menuntaskan satu putaran tinjauan data, untuk evaluasi kuartalan dan rapat metrik.",
+        "sceneTemplate.item.banxinRuleDeck.title" => "Bidang cetak dan garis · deck tipografi Tionghoa",
+        "sceneTemplate.item.banxinRuleDeck.summary" => "Dibangun di atas halaman Tionghoa klasik: bidang cetak, garis kolom, catatan tepi atas, dan nomor halaman ekor ikan. Baris isi tetap di bawah tiga puluh aksara, dengan dua kolom berhadapan dan halaman kutipan, untuk kuliah dan seminar.",
+        "sceneTemplate.item.gridpaperGraphiteDeck.title" => "Grafit kertas kotak · deck sidang akademik",
+        "sceneTemplate.item.gridpaperGraphiteDeck.summary" => "Huruf grafit di atas kertas kotak: masalah dan celah, metode, dua halaman hasil, keterbatasan, simpulan, dan daftar pustaka. Delapan halaman tersusun menurut urutan sidang, untuk proposal dan sidang tesis.",
+        "sceneTemplate.item.dossierLinenDeck.title" => "Berkas linen · deck memo",
+        "sceneTemplate.item.dossierLinenDeck.summary" => "Tekstur berkas kertas linen, dari halaman muka, latar, data terkini, analisis, perbandingan opsi, hingga keputusan. Delapan halaman yang terbaca utuh sebagai memo tersendiri, untuk rapat pengambilan keputusan.",
+        "sceneTemplate.item.ledgerTickDeck.title" => "Garis buku besar · deck matriks kompetitor",
+        "sceneTemplate.item.ledgerTickDeck.summary" => "Di atas garis buku besar ada kriteria penilaian, matriks utama, skala kuantil, dan pembacaan selisih berbanding keunggulan. Tujuh halaman menceritakan perbandingan kompetitor seperti pembukuan yang dapat dicocokkan, untuk seleksi vendor dan analisis pasar.",
         _ => return None,
     })
 }

@@ -128,6 +128,18 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.documentUnavailable" => {
             "이 템플릿의 문서를 불러오지 못했습니다. 다시 시도하세요."
         }
+        "sceneTemplate.item.soundingNavyDeck.title" => "수심도 · 전략 제안 덱",
+        "sceneTemplate.item.soundingNavyDeck.summary" => "해도의 따뜻한 백색에 강청색과 먹빛 남색. 각 장은 결론으로 시작하고 출처가 붙은 수치 하나로 뒷받침한다. 수심 단면 막대와 항적 목차가 일곱 장을 관통하는, 컨설팅 산출물과 전략 보고용.",
+        "sceneTemplate.item.tidemarkSlateDeck.title" => "조수 자국 슬레이트 · 데이터 리뷰 덱",
+        "sceneTemplate.item.tidemarkSlateDeck.summary" => "슬레이트 회색 바탕의 전경 타일, 추세선, 명세표, 위험 목록, 스윔레인 로드맵. 일곱 장으로 데이터 리뷰를 한 바퀴 도는, 분기 회고와 지표 정례 회의용.",
+        "sceneTemplate.item.banxinRuleDeck.title" => "판심과 계선 · 중국어 조판 덱",
+        "sceneTemplate.item.banxinRuleDeck.summary" => "판심, 계선, 두주 주석, 어미 쪽번호로 세운 중국어 본문 조판. 본문은 한 줄 서른 자를 넘기지 않고 두 단 대조와 인용 쪽이 읽기 좋은, 강의와 세미나용.",
+        "sceneTemplate.item.gridpaperGraphiteDeck.title" => "모눈 그래파이트 · 학술 발표 덱",
+        "sceneTemplate.item.gridpaperGraphiteDeck.summary" => "모눈종이 바탕에 흑연빛 글자. 문제와 공백, 방법, 그림과 표로 나눈 결과 두 장, 한계, 결론, 참고문헌까지 여덟 장을 심사 순서대로 배치한, 착수 발표와 논문 심사용.",
+        "sceneTemplate.item.dossierLinenDeck.title" => "리넨 도시에 · 문서 메모 덱",
+        "sceneTemplate.item.dossierLinenDeck.summary" => "리넨 종이 서류철의 질감으로 표지, 배경, 현황 데이터, 분석, 안 비교에서 결의까지. 그 자체로 읽히는 메모로 쓴 여덟 장, 의사결정 검토용.",
+        "sceneTemplate.item.ledgerTickDeck.title" => "장부 눈금 · 경쟁 매트릭스 덱",
+        "sceneTemplate.item.ledgerTickDeck.summary" => "장부 괘선 위의 평가 기준, 주 매트릭스, 분위 눈금, 격차와 강점 대조. 일곱 장으로 경쟁 비교를 대조 가능한 장부처럼 풀어내는, 제품 선정과 시장 분석용.",
         _ => return None,
     })
 }

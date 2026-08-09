@@ -152,6 +152,18 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.a11y.remoteCursor" => "{{name}}'s cursor",
         "icon.catalogLoading" => "Icon catalog is still loading…",
         "sceneTemplate.documentUnavailable" => "That template's document could not be loaded. Try again.",
+        "sceneTemplate.item.soundingNavyDeck.title" => "Sounding Chart · Strategy Deck",
+        "sceneTemplate.item.soundingNavyDeck.summary" => "Chart-paper white against steel and ink blue: every slide leads with a conclusion and backs it with one sourced reading. Depth-profile bars and a sounding-track agenda carry all seven pages, for consulting deliverables and strategy reviews.",
+        "sceneTemplate.item.tidemarkSlateDeck.title" => "Tidemark Slate · Data Review Deck",
+        "sceneTemplate.item.tidemarkSlateDeck.summary" => "Overview tiles, a trend line, a detail table, a risk list and a swimlane roadmap on slate grey — seven pages that walk one full data review, for quarterly retrospectives and metric meetings.",
+        "sceneTemplate.item.banxinRuleDeck.title" => "Banxin Rule · Chinese Typography Deck",
+        "sceneTemplate.item.banxinRuleDeck.summary" => "Built on the classical Chinese page: type block, column rules, marginal notes and a fishtail folio. Body lines stay under thirty characters, with facing columns and a quotation page that reward reading, for lectures and seminars.",
+        "sceneTemplate.item.gridpaperGraphiteDeck.title" => "Graphite Grid · Academic Defence Deck",
+        "sceneTemplate.item.gridpaperGraphiteDeck.summary" => "Graphite type on grid paper: problem and gap, method, two pages of results, limitations, conclusion and references — eight pages in defence order, for proposals and thesis defences.",
+        "sceneTemplate.item.dossierLinenDeck.title" => "Linen Dossier · Memo Deck",
+        "sceneTemplate.item.dossierLinenDeck.summary" => "A linen-paper dossier from cover sheet through background, current data, analysis and option comparison to the resolution — eight pages that read as a standalone memo, for decision reviews.",
+        "sceneTemplate.item.ledgerTickDeck.title" => "Ledger Tick · Competitive Matrix Deck",
+        "sceneTemplate.item.ledgerTickDeck.summary" => "Scoring criteria, the main matrix, quantile scales and a gap-versus-strength read-out on ledger ruling — seven pages that tell a competitive comparison like a balanced account, for vendor selection and market analysis.",
         _ => return None,
     })
 }

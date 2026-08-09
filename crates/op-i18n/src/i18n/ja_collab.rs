@@ -128,6 +128,18 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.a11y.remoteCursor" => "{{name}} のカーソル",
         "icon.catalogLoading" => "アイコンカタログを読み込んでいます…",
         "sceneTemplate.documentUnavailable" => "このテンプレートのドキュメントを読み込めませんでした。もう一度お試しください。",
+        "sceneTemplate.item.soundingNavyDeck.title" => "測深海図 · 戦略提案デッキ",
+        "sceneTemplate.item.soundingNavyDeck.summary" => "海図の温白にスチールブルーと墨藍。各ページは結論から始め、出典付きの数値ひとつで裏づける。水深プロファイルの棒と航跡目次が七ページを貫く、コンサル提出物や戦略報告向け。",
+        "sceneTemplate.item.tidemarkSlateDeck.title" => "潮痕スレート · データレビュー デッキ",
+        "sceneTemplate.item.tidemarkSlateDeck.summary" => "スレートグレーの地に全体タイル、トレンド線、明細表、リスク一覧、スイムレーンのロードマップ。七ページでデータレビューを一巡する、四半期の振り返りや指標定例向け。",
+        "sceneTemplate.item.banxinRuleDeck.title" => "版心と界線 · 中国語組版デッキ",
+        "sceneTemplate.item.banxinRuleDeck.summary" => "版心、界線、天の注記、魚尾のノンブルで組み立てた中国語本文のための組版。本文は一行三十字以内に収め、二段の対照や引用ページが読みやすい、講義や研究会向け。",
+        "sceneTemplate.item.gridpaperGraphiteDeck.title" => "方眼グラファイト · 学術発表デッキ",
+        "sceneTemplate.item.gridpaperGraphiteDeck.summary" => "方眼紙の地にグラファイトの文字。課題と空白、手法、図と表の結果二ページ、限界、結論、参考文献まで八ページを審査の順に配置、着手報告や学位審査向け。",
+        "sceneTemplate.item.dossierLinenDeck.title" => "リネン調ドシエ · 文書メモデッキ",
+        "sceneTemplate.item.dossierLinenDeck.summary" => "リネン紙の書類束の質感で、表紙、背景、現状データ、分析、案の比較から決議まで。単体で読み切れるメモとして仕上げた八ページ、意思決定レビュー向け。",
+        "sceneTemplate.item.ledgerTickDeck.title" => "台帳の目盛 · 競合マトリクス デッキ",
+        "sceneTemplate.item.ledgerTickDeck.summary" => "台帳の罫線の上に評価基準、主マトリクス、分位の目盛、差と強みの対照。七ページで競合比較を照合可能な帳簿として語る、製品選定や市場分析向け。",
         _ => return None,
     })
 }

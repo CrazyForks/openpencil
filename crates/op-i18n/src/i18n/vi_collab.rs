@@ -124,6 +124,18 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.a11y.remoteCursor" => "Con trỏ của {{name}}",
         "icon.catalogLoading" => "Đang tải danh mục biểu tượng…",
         "sceneTemplate.documentUnavailable" => "Không tải được tài liệu của mẫu này. Hãy thử lại.",
+        "sceneTemplate.item.soundingNavyDeck.title" => "Hải đồ đo sâu · deck chiến lược",
+        "sceneTemplate.item.soundingNavyDeck.summary" => "Trắng ấm của giấy hải đồ đi cùng xanh thép và xanh mực: mỗi trang mở bằng kết luận và chống đỡ bằng đúng một số đo có nguồn. Thanh mặt cắt độ sâu và mục lục dạng vệt đo chạy suốt bảy trang, hợp cho sản phẩm tư vấn và họp chiến lược.",
+        "sceneTemplate.item.tidemarkSlateDeck.title" => "Đá phiến vệt triều · deck rà soát dữ liệu",
+        "sceneTemplate.item.tidemarkSlateDeck.summary" => "Trên nền xám đá phiến: ô toàn cảnh, đường xu hướng, bảng chi tiết, danh sách rủi ro và lộ trình theo làn. Bảy trang đi hết một vòng rà soát dữ liệu, hợp cho tổng kết quý và họp chỉ số.",
+        "sceneTemplate.item.banxinRuleDeck.title" => "Khuôn chữ và đường kẻ · deck dàn trang tiếng Trung",
+        "sceneTemplate.item.banxinRuleDeck.summary" => "Dựng trên trang sách Trung Hoa cổ điển: khuôn chữ, đường kẻ cột, chú ở lề trên và số trang đuôi cá. Dòng chính văn giữ dưới ba mươi chữ, kèm hai cột đối chiếu và trang trích dẫn, hợp cho bài giảng và hội thảo.",
+        "sceneTemplate.item.gridpaperGraphiteDeck.title" => "Giấy ô ly than chì · deck bảo vệ luận văn",
+        "sceneTemplate.item.gridpaperGraphiteDeck.summary" => "Chữ màu than chì trên giấy ô ly: vấn đề và khoảng trống, phương pháp, hai trang kết quả, hạn chế, kết luận và tài liệu tham khảo. Tám trang xếp đúng thứ tự buổi bảo vệ, hợp cho đề cương và bảo vệ luận văn.",
+        "sceneTemplate.item.dossierLinenDeck.title" => "Hồ sơ vải lanh · deck bản ghi nhớ",
+        "sceneTemplate.item.dossierLinenDeck.summary" => "Chất giấy lanh của một tập hồ sơ, từ trang bìa, bối cảnh, số liệu hiện trạng, phân tích, so sánh phương án đến nghị quyết. Tám trang đọc trọn như một bản ghi nhớ độc lập, hợp cho họp ra quyết định.",
+        "sceneTemplate.item.ledgerTickDeck.title" => "Kẻ ô sổ cái · deck ma trận đối thủ",
+        "sceneTemplate.item.ledgerTickDeck.summary" => "Trên đường kẻ sổ cái là tiêu chí đánh giá, ma trận chính, thang phân vị và đối chiếu khoảng cách với thế mạnh. Bảy trang kể việc so sánh đối thủ như một khoản sổ có thể đối chiếu, hợp cho chọn nhà cung cấp và phân tích thị trường.",
         _ => return None,
     })
 }

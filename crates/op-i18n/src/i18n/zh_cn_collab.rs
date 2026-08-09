@@ -112,6 +112,18 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.a11y.remoteCursor" => "{{name}} 的光标",
         "icon.catalogLoading" => "图标库正在加载…",
         "sceneTemplate.documentUnavailable" => "该模板的文档加载失败，请重试。",
+        "sceneTemplate.item.soundingNavyDeck.title" => "测深海图 · 咨询策略档",
+        "sceneTemplate.item.soundingNavyDeck.summary" => "海图暖白配钢蓝墨蓝，结论式标题加一条带来源的读数，深度剖面条与航迹目录贯穿七页，适合咨询交付与策略汇报。",
+        "sceneTemplate.item.tidemarkSlateDeck.title" => "潮痕石板 · 数据评审档",
+        "sceneTemplate.item.tidemarkSlateDeck.summary" => "石板灰底上的全景磁贴、趋势线、明细表、风险清单和泳道路线，七页走完一次数据评审，适合季度复盘与指标例会。",
+        "sceneTemplate.item.banxinRuleDeck.title" => "版心界行 · 中文排版档",
+        "sceneTemplate.item.banxinRuleDeck.summary" => "以版心、界行、天头批注和鱼尾页码立身的中文原生排版，正文每行不超三十字，双栏对读与引文页耐读，适合讲稿与研讨。",
+        "sceneTemplate.item.gridpaperGraphiteDeck.title" => "方格石墨 · 学术答辩档",
+        "sceneTemplate.item.gridpaperGraphiteDeck.summary" => "方格纸底配石墨灰字，问题与缺口、方法、图表两页结果、局限、结论到引用，八页照答辩顺序排好，适合开题与论文答辩。",
+        "sceneTemplate.item.dossierLinenDeck.title" => "卷宗亚麻 · 文档备忘档",
+        "sceneTemplate.item.dossierLinenDeck.summary" => "亚麻纸卷宗质感，从文件首页、背景、现状数据到方案对比与决议，八页写成一份能独立读完的备忘录，适合决策评审。",
+        "sceneTemplate.item.ledgerTickDeck.title" => "账簿勾格 · 竞品矩阵档",
+        "sceneTemplate.item.ledgerTickDeck.summary" => "账簿格线上的评估口径、主矩阵、分位刻度与差距优势对照，七页把竞品比较讲成一笔可核对的账，适合选型与市场分析。",
         _ => return None,
     })
 }

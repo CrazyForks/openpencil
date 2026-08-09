@@ -112,6 +112,18 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.a11y.remoteCursor" => "{{name}} 的游標",
         "icon.catalogLoading" => "圖示庫正在載入…",
         "sceneTemplate.documentUnavailable" => "該範本的文件載入失敗，請重試。",
+        "sceneTemplate.item.soundingNavyDeck.title" => "測深海圖 · 顧問策略檔",
+        "sceneTemplate.item.soundingNavyDeck.summary" => "海圖暖白配鋼藍墨藍，結論式標題加一條帶來源的讀數，深度剖面條與航跡目錄貫穿七頁，適合顧問交付與策略簡報。",
+        "sceneTemplate.item.tidemarkSlateDeck.title" => "潮痕石板 · 資料審視檔",
+        "sceneTemplate.item.tidemarkSlateDeck.summary" => "石板灰底上的全景磁磚、趨勢線、明細表、風險清單與泳道路線，七頁走完一次資料審視，適合季度覆盤與指標例會。",
+        "sceneTemplate.item.banxinRuleDeck.title" => "版心界行 · 中文排版檔",
+        "sceneTemplate.item.banxinRuleDeck.summary" => "以版心、界行、天頭批註與魚尾頁碼立身的中文原生排版，內文每行不超過三十字，雙欄對讀與引文頁耐讀，適合講稿與研討。",
+        "sceneTemplate.item.gridpaperGraphiteDeck.title" => "方格石墨 · 學術口試檔",
+        "sceneTemplate.item.gridpaperGraphiteDeck.summary" => "方格紙底配石墨灰字，問題與缺口、方法、圖表兩頁結果、限制、結論到引用，八頁照口試順序排好，適合開題與論文口試。",
+        "sceneTemplate.item.dossierLinenDeck.title" => "卷宗亞麻 · 文件備忘檔",
+        "sceneTemplate.item.dossierLinenDeck.summary" => "亞麻紙卷宗質感，從文件首頁、背景、現況資料到方案比較與決議，八頁寫成一份能獨立讀完的備忘錄，適合決策審查。",
+        "sceneTemplate.item.ledgerTickDeck.title" => "帳簿勾格 · 競品矩陣檔",
+        "sceneTemplate.item.ledgerTickDeck.summary" => "帳簿格線上的評估口徑、主矩陣、分位刻度與差距優勢對照，七頁把競品比較講成一筆可核對的帳，適合選型與市場分析。",
         _ => return None,
     })
 }

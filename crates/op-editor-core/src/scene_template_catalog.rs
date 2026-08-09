@@ -23,7 +23,7 @@ const SCENE_TEMPLATES_TOML: &str = include_str!("../assets/scene_templates.toml"
 /// The shipped documents.
 ///
 /// Embedded on desktop so opening a template needs no filesystem. NOT embedded
-/// on `wasm32`: the ten documents are ~1.1 MB of JSON that every visitor would
+/// on `wasm32`: the documents are ~6.2 MiB of JSON that every visitor would
 /// download before the editor painted, to open a panel most sessions never
 /// touch. There the document is fetched from the daemon when a template is
 /// actually instantiated — see [`scene_template_document_route`] and
@@ -127,6 +127,12 @@ pub fn scene_template_document_route(template_id: &str) -> Option<&'static str> 
         "toolkit-notebook-carousel" => route!("toolkit-notebook-carousel"),
         "tutorial-journal-carousel" => route!("tutorial-journal-carousel"),
         "yearreview-mineral-carousel" => route!("yearreview-mineral-carousel"),
+        "sounding-navy-deck" => route!("sounding-navy-deck"),
+        "tidemark-slate-deck" => route!("tidemark-slate-deck"),
+        "banxin-rule-deck" => route!("banxin-rule-deck"),
+        "gridpaper-graphite-deck" => route!("gridpaper-graphite-deck"),
+        "dossier-linen-deck" => route!("dossier-linen-deck"),
+        "ledger-tick-deck" => route!("ledger-tick-deck"),
         _ => None,
     }
 }
@@ -201,6 +207,12 @@ pub fn scene_template_document(template_id: &str) -> Option<&'static str> {
         "toolkit-notebook-carousel" => template_document!("toolkit-notebook-carousel"),
         "tutorial-journal-carousel" => template_document!("tutorial-journal-carousel"),
         "yearreview-mineral-carousel" => template_document!("yearreview-mineral-carousel"),
+        "sounding-navy-deck" => template_document!("sounding-navy-deck"),
+        "tidemark-slate-deck" => template_document!("tidemark-slate-deck"),
+        "banxin-rule-deck" => template_document!("banxin-rule-deck"),
+        "gridpaper-graphite-deck" => template_document!("gridpaper-graphite-deck"),
+        "dossier-linen-deck" => template_document!("dossier-linen-deck"),
+        "ledger-tick-deck" => template_document!("ledger-tick-deck"),
         _ => None,
     }
 }

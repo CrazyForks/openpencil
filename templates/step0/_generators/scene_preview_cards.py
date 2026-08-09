@@ -62,9 +62,16 @@ INSET = 20
 # whole thing: a 1:4.5 marketing page contained inside a 16:10 card is a
 # 140px-wide sliver, where its masthead and hero at full width are exactly
 # what makes it recognisable.
+#
+# 多板模板一律走帧列表，**不要**拿 `<id>-overview.png` 当源：overview 是整画布
+# 导出，板与板之间的间隙和最后一行缺的格子都是画布底色，缩进卡片里就是几道黑
+# 条。帧列表这条路由 `tile()` 自己按文档底色铺画布（`background_colour` 从首帧
+# 四角取），缺的格子跟着一起变成文档底色，所以永远不会露黑。
 CARDS = [
-    ("screenshot-tutorial", "screenshot-tutorial-overview.png"),
-    ("knowledge-carousel", "knowledge-carousel-overview.png"),
+    ("screenshot-tutorial",
+     [f"screenshot-tutorial-{index:02d}.png" for index in range(1, 6)]),
+    ("knowledge-carousel",
+     [f"knowledge-carousel-{index:02d}.png" for index in range(1, 6)]),
     ("before-after", "before-after.png"),
     ("slide-deck", [f"slide-deck-{i:02d}.png" for i in range(1, 7)]),
     ("knowledge-card-vertical", "knowledge-card-vertical.png"),
@@ -139,6 +146,18 @@ CARDS = [
      [f"yearreview-mineral-carousel-{index:02d}.png" for index in range(1, 9)]),
     ("event-poster-deck",
      [f"event-poster-deck-{i:02d}.png" for i in range(1, 7)]),
+    ("sounding-navy-deck",
+     [f"sounding-navy-deck-{i:02d}.png" for i in range(1, 8)]),
+    ("tidemark-slate-deck",
+     [f"tidemark-slate-deck-{i:02d}.png" for i in range(1, 8)]),
+    ("banxin-rule-deck",
+     [f"banxin-rule-deck-{i:02d}.png" for i in range(1, 8)]),
+    ("gridpaper-graphite-deck",
+     [f"gridpaper-graphite-deck-{i:02d}.png" for i in range(1, 9)]),
+    ("dossier-linen-deck",
+     [f"dossier-linen-deck-{i:02d}.png" for i in range(1, 9)]),
+    ("ledger-tick-deck",
+     [f"ledger-tick-deck-{i:02d}.png" for i in range(1, 8)]),
 ]
 
 # Gap between tiles, in source pixels — scaled down with everything else.

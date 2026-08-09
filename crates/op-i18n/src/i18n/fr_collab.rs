@@ -112,6 +112,18 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.a11y.remoteCursor" => "Curseur de {{name}}",
         "icon.catalogLoading" => "Chargement du catalogue d'icônes…",
         "sceneTemplate.documentUnavailable" => "Le document de ce modèle n'a pas pu être chargé. Réessayez.",
+        "sceneTemplate.item.soundingNavyDeck.title" => "Carte de sondage · deck stratégie",
+        "sceneTemplate.item.soundingNavyDeck.summary" => "Blanc de carte marine, bleu acier et bleu encre : chaque page ouvre sur une conclusion et l’appuie sur une seule mesure sourcée. Barres de profil de profondeur et sommaire en route de sondage sur sept pages, pour les livrables de conseil et les revues de stratégie.",
+        "sceneTemplate.item.tidemarkSlateDeck.title" => "Ardoise de marée · deck revue de données",
+        "sceneTemplate.item.tidemarkSlateDeck.summary" => "Sur fond ardoise : tuiles de vue d’ensemble, courbe de tendance, tableau détaillé, liste de risques et feuille de route en couloirs. Sept pages qui déroulent une revue de données complète, pour les bilans trimestriels et les comités d’indicateurs.",
+        "sceneTemplate.item.banxinRuleDeck.title" => "Justification et filets · deck typographie chinoise",
+        "sceneTemplate.item.banxinRuleDeck.summary" => "Construit sur la page chinoise classique : miroir de page, filets de colonne, notes de tête et folio en queue de poisson. Les lignes de texte restent sous trente caractères, avec colonnes en vis-à-vis et page de citation, pour les cours et les séminaires.",
+        "sceneTemplate.item.gridpaperGraphiteDeck.title" => "Graphite quadrillé · deck de soutenance",
+        "sceneTemplate.item.gridpaperGraphiteDeck.summary" => "Caractères graphite sur papier quadrillé : problème et manque, méthode, deux pages de résultats, limites, conclusion et références. Huit pages dans l’ordre de la soutenance, pour les projets de thèse et les défenses.",
+        "sceneTemplate.item.dossierLinenDeck.title" => "Dossier lin · deck note interne",
+        "sceneTemplate.item.dossierLinenDeck.summary" => "Un dossier sur papier lin, de la page de garde au contexte, aux données actuelles, à l’analyse, à la comparaison des options et à la décision. Huit pages qui se lisent comme une note autonome, pour les comités de décision.",
+        "sceneTemplate.item.ledgerTickDeck.title" => "Registre à colonnes · deck matrice concurrentielle",
+        "sceneTemplate.item.ledgerTickDeck.summary" => "Critères d’évaluation, matrice principale, échelles de quantiles et lecture des écarts et des forces sur une réglure de registre. Sept pages qui racontent une comparaison concurrentielle comme un compte vérifiable, pour le choix de fournisseurs et l’analyse de marché.",
         _ => return None,
     })
 }

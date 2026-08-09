@@ -112,6 +112,18 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.a11y.remoteCursor" => "Cursor de {{name}}",
         "icon.catalogLoading" => "Carregando o catálogo de ícones…",
         "sceneTemplate.documentUnavailable" => "Não foi possível carregar o documento desse modelo. Tente novamente.",
+        "sceneTemplate.item.soundingNavyDeck.title" => "Carta de sondagem · deck de estratégia",
+        "sceneTemplate.item.soundingNavyDeck.summary" => "Branco de carta náutica com azul aço e azul tinta: cada página abre com a conclusão e a sustenta com uma única leitura com fonte. Barras de perfil de profundidade e um sumário em rota de sondagem ao longo de sete páginas, para entregas de consultoria e revisões de estratégia.",
+        "sceneTemplate.item.tidemarkSlateDeck.title" => "Ardósia de maré · deck de revisão de dados",
+        "sceneTemplate.item.tidemarkSlateDeck.summary" => "Sobre cinza ardósia: mosaicos de panorama, linha de tendência, tabela de detalhe, lista de riscos e um roteiro em raias. Sete páginas que percorrem uma revisão de dados completa, para retrospectivas trimestrais e reuniões de indicadores.",
+        "sceneTemplate.item.banxinRuleDeck.title" => "Mancha e filetes · deck de tipografia chinesa",
+        "sceneTemplate.item.banxinRuleDeck.summary" => "Construído sobre a página chinesa clássica: mancha de texto, filetes de coluna, notas de cabeça e fólio em cauda de peixe. As linhas de texto ficam abaixo de trinta caracteres, com colunas confrontantes e página de citação, para aulas e seminários.",
+        "sceneTemplate.item.gridpaperGraphiteDeck.title" => "Grafite quadriculado · deck de defesa acadêmica",
+        "sceneTemplate.item.gridpaperGraphiteDeck.summary" => "Tipos em grafite sobre papel quadriculado: problema e lacuna, método, duas páginas de resultados, limitações, conclusão e referências. Oito páginas na ordem de uma defesa, para projetos e defesas de tese.",
+        "sceneTemplate.item.dossierLinenDeck.title" => "Dossiê de linho · deck de memorando",
+        "sceneTemplate.item.dossierLinenDeck.summary" => "Um dossiê em papel de linho, da folha de rosto ao contexto, aos dados atuais, à análise, à comparação de opções e à decisão. Oito páginas que se leem como um memorando autônomo, para comitês de decisão.",
+        "sceneTemplate.item.ledgerTickDeck.title" => "Livro-razão · deck de matriz competitiva",
+        "sceneTemplate.item.ledgerTickDeck.summary" => "Critérios de avaliação, matriz principal, escalas por quantis e a leitura de lacunas e forças sobre o pautado de um livro-razão. Sete páginas que contam uma comparação competitiva como uma conta conferível, para seleção de fornecedores e análise de mercado.",
         _ => return None,
     })
 }

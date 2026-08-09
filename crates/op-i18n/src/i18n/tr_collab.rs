@@ -112,6 +112,18 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "collab.a11y.remoteCursor" => "{{name}} imleci",
         "icon.catalogLoading" => "Simge kataloğu yükleniyor…",
         "sceneTemplate.documentUnavailable" => "Bu şablonun belgesi yüklenemedi. Tekrar deneyin.",
+        "sceneTemplate.item.soundingNavyDeck.title" => "İskandil haritası · strateji sunumu",
+        "sceneTemplate.item.soundingNavyDeck.summary" => "Harita kâğıdının sıcak beyazı, çelik ve mürekkep mavisiyle: her sayfa sonuçla açılır ve kaynaklı tek bir ölçümle desteklenir. Derinlik profili çubukları ve rota biçimli içindekiler yedi sayfa boyunca sürer, danışmanlık çıktıları ve strateji değerlendirmeleri için.",
+        "sceneTemplate.item.tidemarkSlateDeck.title" => "Gelgit arduvazı · veri değerlendirme sunumu",
+        "sceneTemplate.item.tidemarkSlateDeck.summary" => "Arduvaz grisi zeminde genel görünüm kartları, eğilim çizgisi, ayrıntı tablosu, risk listesi ve kulvarlı yol haritası. Yedi sayfa tam bir veri değerlendirmesini baştan sona yürütür, çeyrek dönem değerlendirmeleri ve metrik toplantıları için.",
+        "sceneTemplate.item.banxinRuleDeck.title" => "Dizgi alanı ve çizgiler · Çince tipografi sunumu",
+        "sceneTemplate.item.banxinRuleDeck.summary" => "Klasik Çin sayfası üzerine kurulu: dizgi alanı, sütun çizgileri, üst kenar notları ve balık kuyruğu sayfa numarası. Metin satırları otuz karakterin altında kalır, karşılıklı sütunlar ve alıntı sayfasıyla, ders ve seminerler için.",
+        "sceneTemplate.item.gridpaperGraphiteDeck.title" => "Kareli grafit · akademik savunma sunumu",
+        "sceneTemplate.item.gridpaperGraphiteDeck.summary" => "Kareli kâğıt üzerinde grafit yazı: sorun ve boşluk, yöntem, iki sayfa sonuç, sınırlılıklar, sonuç ve kaynakça. Sekiz sayfa savunma sırasına göre dizilmiş, öneri ve tez savunmaları için.",
+        "sceneTemplate.item.dossierLinenDeck.title" => "Keten dosya · muhtıra sunumu",
+        "sceneTemplate.item.dossierLinenDeck.summary" => "Keten kâğıt dosya dokusuyla kapak sayfasından arka plana, güncel verilere, çözümlemeye, seçenek karşılaştırmasına ve karara. Tek başına okunabilen bir muhtıra olarak yazılmış sekiz sayfa, karar değerlendirmeleri için.",
+        "sceneTemplate.item.ledgerTickDeck.title" => "Defter çizgisi · rekabet matrisi sunumu",
+        "sceneTemplate.item.ledgerTickDeck.summary" => "Defter çizgileri üzerinde değerlendirme ölçütleri, ana matris, dilim ölçekleri ve fark ile güçlü yön karşılaştırması. Yedi sayfa rekabet karşılaştırmasını denetlenebilir bir hesap gibi anlatır, tedarikçi seçimi ve pazar analizi için.",
         _ => return None,
     })
 }

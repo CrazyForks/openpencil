@@ -49,6 +49,12 @@ for t in screenshot-tutorial knowledge-carousel before-after slide-deck \
          toolkit-notebook-carousel \
          tutorial-journal-carousel \
          yearreview-mineral-carousel \
+         sounding-navy-deck \
+         tidemark-slate-deck \
+         banxin-rule-deck \
+         gridpaper-graphite-deck \
+         dossier-linen-deck \
+         ledger-tick-deck \
          event-poster-deck; do
   # The documents themselves are shipped assets (embedded by the scene
   # template catalogue); this directory keeps only the generators and the

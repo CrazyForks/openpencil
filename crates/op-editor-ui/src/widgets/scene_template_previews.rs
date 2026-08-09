@@ -4,7 +4,7 @@
 //! `templates/step0/_generators/scene_preview_cards.py`; see that script for
 //! why a deck is tiled into a grid rather than fitted as a strip.
 //!
-//! ~388 KB of JPEG. Embedded on desktop, fetched from the daemon on `wasm32`
+//! ~2.7 MiB of JPEG. Embedded on desktop, fetched from the daemon on `wasm32`
 //! for the same reason the Prompt Center's are — see
 //! `prompt_center_previews` for the full rationale and
 //! `op_editor_core::web_assets` for the loader.
@@ -129,6 +129,12 @@ pub(crate) fn scene_template_preview(template_id: &str) -> Option<TemplatePrevie
         "toolkit-notebook-carousel" => preview!(56, "toolkit-notebook-carousel"),
         "tutorial-journal-carousel" => preview!(57, "tutorial-journal-carousel"),
         "yearreview-mineral-carousel" => preview!(58, "yearreview-mineral-carousel"),
+        "sounding-navy-deck" => preview!(59, "sounding-navy-deck"),
+        "tidemark-slate-deck" => preview!(60, "tidemark-slate-deck"),
+        "banxin-rule-deck" => preview!(61, "banxin-rule-deck"),
+        "gridpaper-graphite-deck" => preview!(62, "gridpaper-graphite-deck"),
+        "dossier-linen-deck" => preview!(63, "dossier-linen-deck"),
+        "ledger-tick-deck" => preview!(64, "ledger-tick-deck"),
         _ => None,
     }
 }
