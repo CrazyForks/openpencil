@@ -324,7 +324,9 @@ pub(super) fn check_persistence_configured(
 /// Raised by the signal handler. A `static` because that is all a handler may
 /// safely touch: it runs on an arbitrary thread with almost nothing allowed,
 /// so it sets one atomic and returns, and the watcher thread below does the
-/// rest.
+/// rest. Unix-only — the handler and its watcher are the only readers, and
+/// Windows keeps the supervisor-driven shutdown it has always had.
+#[cfg(unix)]
 static SIGNAL_RECEIVED: AtomicBool = AtomicBool::new(false);
 
 /// Route SIGTERM and SIGINT into the daemon's existing shutdown path.

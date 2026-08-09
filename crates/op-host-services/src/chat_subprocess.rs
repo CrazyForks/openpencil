@@ -270,7 +270,10 @@ impl SubprocessProvider {
 
     /// Point a known-CLI provider at a stand-in binary so the exit /
     /// stderr / stdout handling can be exercised without the real CLI.
-    #[cfg(test)]
+    /// Its only callers are the unix-gated exit tests (the stand-ins are
+    /// `/bin/sh` scripts), so it carries the same gate to stay live-code
+    /// on Windows.
+    #[cfg(all(test, unix))]
     pub(crate) fn with_test_binary(mut self, binary: impl Into<String>) -> Self {
         self.binary = binary.into();
         self
