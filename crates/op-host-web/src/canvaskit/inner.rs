@@ -41,6 +41,11 @@ impl CkInner {
             crate::iconify_web::ensure_core_catalog();
         }
         crate::web_asset_fetch::drain_pending();
+        // Collaboration-peer avatars: drain what the roster paint enqueued and
+        // fetch it through the daemon proxy (a wasm page cannot reach the CDN
+        // directly). Bounded per frame; empty and cheap outside a session. The
+        // self-account avatar is NOT handled here — `web_auth_sync` owns it.
+        crate::collab_avatar_fetch::drain_pending();
         // A template clicked before its document arrived is instantiated here,
         // the frame after the fetch lands. No-op on every other frame and on
         // native, where the document was already in the binary.

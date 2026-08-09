@@ -44,6 +44,17 @@ impl CollabAvatarFetchRequest {
         &self.url
     }
 
+    /// The participant this avatar belongs to.
+    ///
+    /// Safe to expose even though `Debug` redacts identity: the value is the
+    /// exact string a host has to put in the daemon proxy request body, and it
+    /// is a `collab:`-namespaced session token, not the account's own key. The
+    /// web host cannot reach `qlogo.cn` directly under CSP, so it posts this to
+    /// `POST /api/collab/avatar` instead of using [`url`](Self::url).
+    pub fn participant_key(&self) -> &str {
+        &self.participant_key
+    }
+
     /// Whether this request belongs to the locally authenticated account.
     ///
     /// Remote collaboration participants always occupy the separate

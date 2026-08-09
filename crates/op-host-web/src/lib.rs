@@ -101,6 +101,9 @@ mod iconify_web;
 // Runtime fetch for the product assets the wasm bundle omits.
 #[cfg(feature = "canvaskit")]
 mod web_asset_fetch;
+// Runtime fetch for collaboration-peer avatars via the daemon proxy.
+#[cfg(feature = "canvaskit")]
+mod collab_avatar_fetch;
 // Web chat session — drains `chat.pending_send` / Stop / New Chat and streams
 // real standard-mode turns through the daemon's `/api/ai/standard` route.
 #[cfg(feature = "canvaskit")]
