@@ -177,13 +177,23 @@ fn relay_token_bound_to_another_device_key_is_refused() {
     ));
 }
 
+/// An absolute path on every host: the config constructor rejects relative
+/// paths, and a bare `/name` is not absolute on Windows (no drive prefix).
+fn absolute_test_path(name: &str) -> PathBuf {
+    if cfg!(windows) {
+        PathBuf::from(format!("C:\\{name}"))
+    } else {
+        PathBuf::from(format!("/{name}"))
+    }
+}
+
 #[test]
 fn legacy_ticket_bearer_policy_is_parsed_strictly_from_configuration() {
     let base = ProductionRelayAuthConfig::new(
         RelayRegion::Cn,
-        PathBuf::from("/policy.json"),
-        PathBuf::from("/locator.json"),
-        Some(PathBuf::from("/x25519.json")),
+        absolute_test_path("policy.json"),
+        absolute_test_path("locator.json"),
+        Some(absolute_test_path("x25519.json")),
         NonZeroU64::new(60).expect("policy max age"),
         false,
     )
