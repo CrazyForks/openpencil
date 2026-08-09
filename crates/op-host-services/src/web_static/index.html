@@ -48,6 +48,11 @@
       const errorPane = document.getElementById('op-error');
       const markSmoke = (state) => {
         document.documentElement.setAttribute('data-op-smoke', state);
+        // Mirrored to the console for the headless browser smoke: the
+        // editor keeps a live SSE stream open, which freezes headless
+        // Chrome's virtual clock, so --dump-dom never flushes — stderr
+        // console logging is the only channel that arrives incrementally.
+        console.log(`op-smoke:${state}`);
       };
       const showError = (msg) => {
         markSmoke('error');

@@ -101,10 +101,22 @@ chrome_dump() {
     --enable-unsafe-swiftshader \
     --window-size=1280,800 \
     --user-data-dir="$profile" \
+    --enable-logging=stderr \
     --virtual-time-budget="${OPENPENCIL_BROWSER_SMOKE_VIRTUAL_TIME_MS:-15000}" \
     --dump-dom "$url" >"$out" 2>"$out.stderr" &
   local chrome_pid=$!
   for _ in $(seq 1 "$timeout"); do
+    # The editor holds a live SSE stream, which pauses headless Chrome's
+    # virtual clock and keeps --dump-dom from ever flushing. The console
+    # mirror on stderr arrives incrementally, so it is the readiness
+    # signal; a successful mount synthesizes the DOM line the assertions
+    # expect.
+    if grep -Fq 'op-smoke:ok' "$out.stderr" 2>/dev/null; then
+      printf '<html data-op-smoke="ok"><!-- synthesized from console marker --></html>\n' >"$out"
+      kill -9 "$chrome_pid" >/dev/null 2>&1 || true
+      wait "$chrome_pid" >/dev/null 2>&1 || true
+      return 0
+    fi
     if grep -Fq 'data-op-smoke="ok"' "$out" 2>/dev/null; then
       kill "$chrome_pid" >/dev/null 2>&1 || true
       wait "$chrome_pid" >/dev/null 2>&1 || true
@@ -116,7 +128,9 @@ chrome_dump() {
     fi
     sleep 1
   done
-  kill "$chrome_pid" >/dev/null 2>&1 || true
+  # SIGKILL, not SIGTERM: a headless Chrome wedged mid-GPU-stall has been
+  # observed ignoring TERM, which turns the wait below into a permanent hang.
+  kill -9 "$chrome_pid" >/dev/null 2>&1 || true
   wait "$chrome_pid" >/dev/null 2>&1 || true
   printf 'headless Chrome timed out for %s after %ss\n' "$url" "$timeout" >&2
   return 124

@@ -59,6 +59,10 @@
       const status = document.getElementById('status');
       const markSmoke = (state) => {
         document.documentElement.setAttribute('data-op-smoke', state);
+        // Console mirror for the headless smoke; see the host page note —
+        // stderr logging arrives incrementally while --dump-dom waits for
+        // a quiescence the live editor never reaches.
+        console.log(`op-smoke:${state}`);
       };
       const log = (cls, msg) => {
         const block = document.createElement('pre');
