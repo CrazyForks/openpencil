@@ -87,7 +87,7 @@ fn horizontal_overflow_reduces_gap_before_expanding_parent() {
             {"type":"frame","width":130,"height":44}
         ]
     });
-    fix_horizontal_overflow(&mut row, 375.0);
+    fix_horizontal_overflow(&mut row, 375.0, DesignForm::Unknown, &mut Vec::new());
     assert_eq!(row["gap"], json!(8.0));
     assert_eq!(row["width"], json!(300));
 }
@@ -101,7 +101,7 @@ fn horizontal_overflow_uses_fill_when_needed_width_nears_canvas() {
             {"type":"frame","width":180,"height":44}
         ]
     });
-    fix_horizontal_overflow(&mut row, 375.0);
+    fix_horizontal_overflow(&mut row, 375.0, DesignForm::Unknown, &mut Vec::new());
     assert_eq!(row["width"], json!("fill_container"));
 }
 
@@ -121,7 +121,7 @@ fn horizontal_overflow_beyond_viewport_clips_instead_of_spilling() {
             {"type":"frame","width":96,"height":34}
         ]
     });
-    fix_horizontal_overflow(&mut row, 375.0);
+    fix_horizontal_overflow(&mut row, 375.0, DesignForm::Unknown, &mut Vec::new());
     assert_eq!(row["width"], json!("fill_container"));
     assert_eq!(
         row["clipContent"],

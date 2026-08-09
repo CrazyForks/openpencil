@@ -1,6 +1,9 @@
 use jian_ops_schema::node::PenNode;
 use serde_json::{json, Value};
 
+use crate::deck_echo::DeckEcho;
+use crate::design_type::DesignForm;
+
 /// Read a width/height as a pixel number (port of TS `toSizeNumber`).
 pub(crate) fn size_number(node: &Value, key: &str) -> f64 {
     match node.get(key) {
@@ -13,6 +16,10 @@ pub(crate) fn size_number(node: &Value, key: &str) -> f64 {
 #[cfg(test)]
 #[path = "role_layout_radial_tests.rs"]
 mod radial_tests;
+
+#[cfg(test)]
+#[path = "role_layout_deck_overflow_tests.rs"]
+mod deck_overflow_tests;
 
 fn gap_number(node: &Value) -> f64 {
     match node.get("gap") {
@@ -44,7 +51,18 @@ fn padding_lr(node: &Value) -> (f64, f64) {
     }
 }
 
-pub(crate) fn fix_horizontal_overflow(node: &mut Value, canvas_width: f64) {
+/// Repair a horizontal row whose children sum wider than it is.
+///
+/// `form` decides what happens when the row cannot be widened enough to fit:
+/// every surface except a deck board takes the `clipContent` floor, while a
+/// board reports the overflow through `echoes` and is left alone (see
+/// [`crate::deck_echo`] and the clip branch below).
+pub(crate) fn fix_horizontal_overflow(
+    node: &mut Value,
+    canvas_width: f64,
+    form: DesignForm,
+    echoes: &mut Vec<DeckEcho>,
+) {
     // Summing child widths as a ROW is only valid for a row layout. A
     // `vertical` column stacks its children (widths don't sum — the max
     // applies) and a `none` container positions them absolutely; running the
@@ -121,8 +139,25 @@ pub(crate) fn fix_horizontal_overflow(node: &mut Value, canvas_width: f64) {
             // models (e.g. glm-5.2) routinely emit a bare horizontal frame without
             // it, so this is the deterministic floor that keeps off-screen children
             // from rendering outside the device frame.
-            node["width"] = json!("fill_container");
-            node["clipContent"] = json!(true);
+            //
+            // …except on a projector board, where the floor is a semantic
+            // error (deck-system spec §4.6): a clipped scroll row on a screen
+            // can be scrolled back into view, a clipped row on a slide is
+            // content the audience never learns existed. The correct deck fix
+            // is to shorten, re-type, or split the page — none of which this
+            // pass can decide — so report the overflow and leave the row
+            // visibly too wide.
+            if form.is_deck_board() {
+                echoes.push(DeckEcho::HorizontalOverflow {
+                    node_id: node.get("id").and_then(Value::as_str).map(str::to_string),
+                    node_name: node.get("name").and_then(Value::as_str).map(str::to_string),
+                    content_width: total_w,
+                    available_width: avail_w,
+                });
+            } else {
+                node["width"] = json!("fill_container");
+                node["clipContent"] = json!(true);
+            }
         }
     }
 }

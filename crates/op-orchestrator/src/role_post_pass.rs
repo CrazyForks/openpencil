@@ -29,6 +29,8 @@
 use jian_ops_schema::node::PenNode;
 use serde_json::{json, Value};
 
+use crate::deck_echo::DeckEcho;
+use crate::design_type::DesignForm;
 use crate::role_layout_post_pass::{fix_horizontal_overflow, fix_text_heights, size_number};
 
 // Sibling modules: this file keeps the public surface (`post_pass_forest` /
@@ -62,6 +64,8 @@ fn post_pass_value(
     parent_fill: Option<Value>,
     canvas_width: f64,
     run_intent: bool,
+    form: DesignForm,
+    echoes: &mut Vec<DeckEcho>,
 ) {
     if node.get("type").and_then(Value::as_str) != Some("frame") {
         return;
@@ -70,7 +74,7 @@ fn post_pass_value(
     // Still deferred: frame-height expansion (needs intrinsic measurement) and
     // placeholder icon repair (needs the icon catalog).
     equalize_card_row(node);
-    fix_horizontal_overflow(node, canvas_width);
+    fix_horizontal_overflow(node, canvas_width, form, echoes);
     normalize_form_input_widths(node);
     normalize_input_trailing_icon_alignment(node);
     normalize_nested_search_shell(node);
@@ -116,7 +120,14 @@ fn post_pass_value(
     let this_fill = Some(node.get("fill").cloned().unwrap_or(Value::Null));
     if let Some(children) = node.get_mut("children").and_then(Value::as_array_mut) {
         for child in children.iter_mut() {
-            post_pass_value(child, this_fill.clone(), canvas_width, run_intent);
+            post_pass_value(
+                child,
+                this_fill.clone(),
+                canvas_width,
+                run_intent,
+                form,
+                echoes,
+            );
         }
     }
 }
@@ -126,32 +137,43 @@ pub fn post_pass_forest(nodes: &mut [PenNode], canvas_width: f64) {
         nodes,
         canvas_width,
         &crate::repair_tier::RepairTierPolicy::all(),
+        DesignForm::Unknown,
     );
 }
 
-/// [`post_pass_forest`] under a repair-tier policy.
+/// [`post_pass_forest`] under a repair-tier policy, for a known surface.
 ///
 /// The walk is overwhelmingly contract-tier (overflow, text heights, contrast),
 /// so it is not gated as a whole — only the one intent-tier fix inside it
 /// (`fix_structural_wrapper_transparency`) answers to `policy`. Production
 /// callers use this form; `post_pass_forest` is the full-tier shorthand for
 /// tests and any caller with no document in hand.
+///
+/// `form` is the ROOT's form, not each section's: the forest handed here is a
+/// list of sections that sit on a board / page / screen, and only the surface
+/// they sit on decides whether clipping an overflowing row is acceptable. The
+/// returned echoes are violations the walk deliberately did not repair (see
+/// [`crate::deck_echo`]); a caller with nowhere to put them may drop them,
+/// which is why they are returned rather than written anywhere here.
 pub fn post_pass_forest_with_tier(
     nodes: &mut [PenNode],
     canvas_width: f64,
     policy: &crate::repair_tier::RepairTierPolicy,
-) {
+    form: DesignForm,
+) -> Vec<DeckEcho> {
     let run_intent =
         policy.runs_pass(crate::repair_tier::TieredPass::StructuralWrapperTransparency);
+    let mut echoes = Vec::new();
     for node in nodes.iter_mut() {
         let Ok(mut v) = serde_json::to_value(&*node) else {
             continue;
         };
-        post_pass_value(&mut v, None, canvas_width, run_intent);
+        post_pass_value(&mut v, None, canvas_width, run_intent, form, &mut echoes);
         if let Ok(new_node) = serde_json::from_value::<PenNode>(v) {
             *node = new_node;
         }
     }
+    echoes
 }
 
 /// Surface-color discipline over the whole forest. MUST run AFTER

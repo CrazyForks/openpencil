@@ -16,7 +16,7 @@ fn horizontal_overflow_preserves_direct_arc_stack_wrapper_width() {
         ]
     });
 
-    fix_horizontal_overflow(&mut ring, 375.0);
+    fix_horizontal_overflow(&mut ring, 375.0, DesignForm::Unknown, &mut Vec::new());
 
     assert_eq!(ring["width"], json!(120));
     assert!(ring.get("clipContent").is_none());
@@ -34,7 +34,7 @@ fn horizontal_overflow_still_expands_row_of_plain_ellipses() {
         ]
     });
 
-    fix_horizontal_overflow(&mut row, 375.0);
+    fix_horizontal_overflow(&mut row, 375.0, DesignForm::Unknown, &mut Vec::new());
 
     assert_eq!(row["width"], json!(240.0));
 }
@@ -50,7 +50,7 @@ fn horizontal_overflow_still_expands_wide_row_of_independent_arcs() {
         ]
     });
 
-    fix_horizontal_overflow(&mut row, 375.0);
+    fix_horizontal_overflow(&mut row, 375.0, DesignForm::Unknown, &mut Vec::new());
 
     assert_eq!(row["width"], json!(136.0));
 }

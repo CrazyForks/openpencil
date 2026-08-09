@@ -221,7 +221,25 @@ pub(crate) async fn run_subtask_with_reveal_at(
     // intent-tier passes below defer to authored template input. Read off the
     // sink's state so this path and the agentic loop reach the same answer.
     let tier = crate::repair_tier::RepairTierPolicy::for_document(sink.state());
-    crate::role_post_pass::post_pass_forest_with_tier(&mut nodes, canvas_width, &tier);
+    // The board/page/screen these sections will sit on — taken from the PLAN's
+    // root frame, which is the artboard; the forest here is its content.
+    let root_form = crate::design_type::classify_root_form(
+        Some(plan.root_frame.width),
+        Some(plan.root_frame.height),
+    );
+    let deck_echoes = crate::role_post_pass::post_pass_forest_with_tier(
+        &mut nodes,
+        canvas_width,
+        &tier,
+        root_form,
+    );
+    // A subtask has no `RepairSummary` to note against (it reports through
+    // `SubtaskOutcome`, which counts nodes, not repairs), so the log is the
+    // channel here. The whole-document finalize path echoes the same
+    // violations into the user-visible summary.
+    for echo in &deck_echoes {
+        tracing::warn!(subtask = %subtask.id, echo = %echo.line(), "deck geometry left unrepaired");
+    }
     // Promote explicitly-marked role frames to first-class widget nodes.
     // Must run AFTER post_pass_forest (which keys on `role` to set defaults)
     // and BEFORE variable binding (which resolves hex refs — widgets produced

@@ -5,12 +5,20 @@
 use super::*;
 use serde_json::json;
 
-/// The walk with every tier enabled. These tests exercise the normalizers
-/// themselves, not the repair-tier gate in front of one of them (see
-/// `crate::repair_tier`), so they call the shape the pass had before the gate
-/// existed and stay readable as normalizer tests.
+/// The walk with every tier enabled, on an unclassified surface. These tests
+/// exercise the normalizers themselves — not the repair-tier gate in front of
+/// one of them (see `crate::repair_tier`), and not the deck gate on the
+/// overflow clip floor (see `crate::deck_echo`) — so they call the shape the
+/// pass had before either gate existed and stay readable as normalizer tests.
 fn post_pass_value(node: &mut Value, parent_fill: Option<Value>, canvas_width: f64) {
-    super::post_pass_value(node, parent_fill, canvas_width, true);
+    super::post_pass_value(
+        node,
+        parent_fill,
+        canvas_width,
+        true,
+        DesignForm::Unknown,
+        &mut Vec::new(),
+    );
 }
 
 // ── fixInputSiblingConsistency ───────────────────────────────────────────

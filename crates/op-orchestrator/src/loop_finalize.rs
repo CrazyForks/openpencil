@@ -52,6 +52,7 @@
 //! anything, and there is no per-subtask retry to drive at loop end, so it is
 //! not part of the finalize.
 
+use crate::design_type::DesignForm;
 use crate::repair_summary::{CheckCategory, RepairCounter, RepairSummary};
 use crate::role_defaults::{detect_theme_from_fill, Theme};
 use jian_ops_schema::node::PenNode;
@@ -131,6 +132,35 @@ fn locate_section_context(forest: &[PenNode]) -> (bool, Option<String>, f64, The
         // section, so there is no "redundant page background" to match against.
         // Theme falls back to Light (matching `detect_theme_from_fill(None)`).
         (false, None, width, Theme::Light)
+    }
+}
+
+/// The form of the surface the section forest sits on.
+///
+/// Two shapes carry an artboard. The page-root wrapper is one, and it
+/// classifies directly. The other is a multi-slide deck, which has no wrapper
+/// at all — every board sits at the top level, so the "forest" walked below is
+/// the boards themselves. That case is admitted only when EVERY top-level node
+/// is a board: a deck is all boards or it is not a deck, and requiring
+/// unanimity is what stops one section that happens to be 16:9 from putting a
+/// whole page under the board contracts.
+///
+/// Anything else is a flat list of sections with no surface around them —
+/// `Unknown`, never a guess taken from the first section's width (which is
+/// what `locate_section_context` uses for `canvas_width`, and is a different
+/// question).
+fn locate_root_form(forest: &[PenNode]) -> DesignForm {
+    if forest.len() == 1 && is_page_root_wrapper(&forest[0]) {
+        return crate::design_type::classify_root_form_node(&forest[0]);
+    }
+    let all_boards = !forest.is_empty()
+        && forest
+            .iter()
+            .all(|node| crate::design_type::classify_root_form_node(node).is_deck_board());
+    if all_boards {
+        DesignForm::Deck
+    } else {
+        DesignForm::Unknown
     }
 }
 
@@ -513,6 +543,11 @@ pub fn apply_loop_finalize_counted(state: &mut EditorState) -> RepairSummary {
     let (has_wrapper, page_bg, canvas_width, theme) =
         locate_section_context(state.active_children());
     let light_theme = theme == Theme::Light;
+    let root_form = locate_root_form(state.active_children());
+    // Violations the section walk below detected and deliberately did not
+    // repair (see `crate::deck_echo`). Filled inside the borrow, noted onto
+    // the summary once the forest borrow ends.
+    let deck_echoes: Vec<crate::deck_echo::DeckEcho>;
 
     // Resolved BEFORE the forest is mutably borrowed below. The loop path has
     // no plan to carry provenance on, which is exactly why the policy is read
@@ -539,7 +574,12 @@ pub fn apply_loop_finalize_counted(state: &mut EditorState) -> RepairSummary {
         let prior_accent = crate::tree_heuristics::dominant_design_accent(forest);
 
         crate::role_infer::resolve_forest_roles(forest, canvas_width, theme);
-        crate::role_post_pass::post_pass_forest_with_tier(forest, canvas_width, &tier);
+        deck_echoes = crate::role_post_pass::post_pass_forest_with_tier(
+            forest,
+            canvas_width,
+            &tier,
+            root_form,
+        );
         jian_ops_schema::promote::promote_forest(forest);
         // The remaining three are intent-tier in full (`crate::repair_tier`):
         // fill/decoration heuristics, hex→token rebinding, and surface-colour
@@ -557,6 +597,11 @@ pub fn apply_loop_finalize_counted(state: &mut EditorState) -> RepairSummary {
             crate::variable_binding::bind_generated_color_variables(forest, &snapshot);
         }
         crate::role_post_pass::enforce_surface_color_discipline_with_tier(forest, &tier);
+    }
+    // A note, not a `RepairRecord`: nothing was applied, and a record would
+    // make the credential claim a repair that never happened.
+    for echo in &deck_echoes {
+        summary.note(echo.line());
     }
 
     // Hoist node-level `state` into the document root, mirroring the
@@ -649,6 +694,10 @@ fn synthesize_plan(forest: &[PenNode], canvas_width: f64) -> crate::plan::Orches
 #[cfg(test)]
 #[path = "loop_finalize_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "loop_finalize_deck_form_tests.rs"]
+mod deck_form_tests;
 
 #[cfg(test)]
 #[path = "loop_finalize_polarity_tests.rs"]

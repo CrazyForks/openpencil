@@ -13,6 +13,7 @@ pub mod agent_identity;
 pub mod compact_prompt;
 pub mod compact_skills;
 pub mod dashboard_columns;
+pub mod deck_echo;
 pub mod design_md_policy;
 // (run_dashboard / scaffold_dashboard removed: dashboards flow through the
 //  generic sequential path; dashboard_columns keeps only normalizer predicates.)
@@ -124,6 +125,7 @@ mod sidebar_archetype_tests;
 mod test_support;
 
 pub use compact_prompt::{build_compact_planning_prompt, CompactPlanningPrompt};
+pub use deck_echo::DeckEcho;
 pub use design_md_policy::{
     build_design_md_style_policy, guess_neutral_background_from_theme, infer_design_md_background,
 };
