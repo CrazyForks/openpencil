@@ -113,3 +113,129 @@ fn rebuilt_baselines_keep_saving_and_keep_failing_closed() {
         .initial_fingerprint(&state)
         .write_disabled_for_test());
 }
+
+// ── Theme is device-level, not account-level ──────────────────────────────
+//
+// Light or dark is a property of the screen you are sitting at. These pin the
+// four things the split has to get right: a switch keeps the theme, the
+// account reset does not touch it, existing data migrates once, and a change
+// still persists.
+
+#[test]
+fn switching_accounts_keeps_the_devices_theme() {
+    // A is on dark; B's blob says light. The screen must stay dark — B signing
+    // in on this laptop does not change what the room looks like.
+    let mut state = EditorState::new();
+    state.editor_ui.theme_mode = ThemeMode::Dark;
+
+    let b_blob = r#"{"version":1,"theme":"light","locale":"en-US"}"#;
+    super::storage::load_into_with(&mut state, Some(b_blob), None, |_, _| true);
+    assert_eq!(
+        state.editor_ui.theme_mode,
+        ThemeMode::Dark,
+        "the incoming account's blob must not be read for theme"
+    );
+
+    // And the device key, when one exists, is what decides.
+    assert_eq!(
+        super::theme::resolve(
+            Some(ThemeMode::Dark),
+            Some(ThemeMode::Light),
+            ThemeMode::Light
+        ),
+        ThemeMode::Dark
+    );
+}
+
+#[test]
+fn the_account_reset_leaves_the_theme_alone() {
+    // Everything else here goes back to default so an empty partition cannot
+    // inherit the previous account's values. Theme is the one exception, and
+    // it has to be, or every switch would flip the screen.
+    let mut state = EditorState::new();
+    state.editor_ui.theme_mode = ThemeMode::Dark;
+    state.editor_ui.locale = Locale::ZhCn;
+
+    super::reset_account_scoped_settings(&mut state);
+
+    assert_eq!(state.editor_ui.theme_mode, ThemeMode::Dark);
+    assert_eq!(
+        state.editor_ui.locale,
+        op_editor_core::EditorUiState::default().locale,
+        "locale IS account-scoped and must still reset"
+    );
+}
+
+#[test]
+fn an_existing_accounts_theme_migrates_to_the_device_once() {
+    // First run after the split: no device key, so the theme already stored in
+    // the account blob is adopted rather than reset to default.
+    let blob = r#"{"version":1,"theme":"dark","locale":"en-US"}"#;
+    assert_eq!(
+        super::payload_theme_of(Some(blob)),
+        Some(ThemeMode::Dark),
+        "the blob's theme is still readable as the migration source"
+    );
+    assert_eq!(
+        super::theme::resolve(None, super::payload_theme_of(Some(blob)), ThemeMode::Light),
+        ThemeMode::Dark
+    );
+
+    // A blob from a future version carries nothing this build should trust.
+    assert_eq!(
+        super::payload_theme_of(Some(r#"{"version":99,"theme":"dark"}"#)),
+        None
+    );
+    assert_eq!(super::payload_theme_of(Some("not json")), None);
+    assert_eq!(super::payload_theme_of(None), None);
+}
+
+#[test]
+fn the_account_blob_still_carries_a_theme_for_older_builds() {
+    // Write-only compatibility: an older bundle reads theme ONLY from here, so
+    // dropping the field would silently reset the theme on a downgrade or in a
+    // second tab still running the old build.
+    let mut state = EditorState::new();
+    state.editor_ui.theme_mode = ThemeMode::Dark;
+    let json = serde_json::to_string(&super::to_payload(&state)).expect("payload serialises");
+    let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid json");
+    assert_eq!(parsed["theme"], serde_json::json!("dark"));
+}
+
+#[test]
+fn a_theme_change_still_persists_after_an_account_switch() {
+    // The B2c shape: a reset that leaves the save path unable to fire again.
+    // The device theme is saved outside the settings fingerprint entirely, so
+    // an unwritable partition blob cannot disable it.
+    super::theme::reset_last_written_for_test();
+    let mut state = EditorState::new();
+    state.editor_ui.theme_mode = ThemeMode::Dark;
+
+    let mut written = Vec::new();
+    let mut record = |_: &str, value: &str| {
+        written.push(value.to_string());
+        true
+    };
+    assert_eq!(
+        super::theme::save_if_changed_with(&state, &mut record),
+        Ok(true)
+    );
+
+    // Switch accounts: reset + load, neither of which may disturb the theme.
+    super::reset_account_scoped_settings(&mut state);
+    super::storage::load_into_with(
+        &mut state,
+        Some(r#"{"version":1,"theme":"light"}"#),
+        None,
+        |_, _| true,
+    );
+    assert_eq!(state.editor_ui.theme_mode, ThemeMode::Dark);
+
+    // The user now picks light. It must still reach storage.
+    state.editor_ui.theme_mode = ThemeMode::Light;
+    assert_eq!(
+        super::theme::save_if_changed_with(&state, &mut record),
+        Ok(true)
+    );
+    assert_eq!(written, vec!["dark".to_string(), "light".to_string()]);
+}

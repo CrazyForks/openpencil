@@ -11,6 +11,12 @@ pub(crate) struct CredentialLoad {
     pub(crate) loaded: bool,
     pub(crate) write_pending: bool,
     pub(super) unsupported_version: bool,
+    /// Theme carried by the account blob that was just read.
+    ///
+    /// Only the device-theme migration consumes it — the first run after the
+    /// split adopts it so a user's existing choice is not reset. Once the
+    /// device key exists this is ignored on every later load.
+    payload_theme: Option<ThemeMode>,
     settings_write_disabled: bool,
     credential_write_disabled: bool,
     pending_credential_json: Option<String>,
@@ -18,6 +24,11 @@ pub(crate) struct CredentialLoad {
 }
 
 impl CredentialLoad {
+    /// See the field docs: the migration source, and nothing else.
+    pub(crate) fn payload_theme(&self) -> Option<ThemeMode> {
+        self.payload_theme
+    }
+
     pub(crate) fn initial_settings_fingerprint(&self, state: &EditorState) -> Option<Fingerprint> {
         (!self.settings_write_disabled).then(|| fingerprint(state))
     }
@@ -61,6 +72,7 @@ pub(super) fn load_into_with<F>(
 where
     F: FnMut(&str, &str) -> bool,
 {
+    let payload_theme = super::payload_theme_of(settings_raw);
     let stored = apply_stored_snapshots(state, settings_raw, credential_raw);
     let unsupported_settings_version = stored.unsupported_settings_version;
     match stored.source {
@@ -70,6 +82,7 @@ where
                 .as_deref()
                 .is_none_or(|json| persist(&super::settings_storage_key(), json));
             CredentialLoad {
+                payload_theme,
                 loaded: true,
                 write_pending: !settings_saved,
                 unsupported_version: unsupported_settings_version,
@@ -92,6 +105,7 @@ where
                     .is_none_or(|json| persist(&super::settings_storage_key(), json));
             let write_pending = !credential_saved || !settings_saved;
             CredentialLoad {
+                payload_theme,
                 loaded: true,
                 write_pending,
                 unsupported_version: unsupported_settings_version,
@@ -108,6 +122,7 @@ where
                     .as_deref()
                     .is_none_or(|json| persist(&super::settings_storage_key(), json));
                 return CredentialLoad {
+                    payload_theme,
                     loaded: false,
                     write_pending: !settings_saved,
                     unsupported_version: true,
@@ -128,6 +143,7 @@ where
                     .is_none_or(|json| persist(&super::settings_storage_key(), json));
             let write_pending = !credential_saved || !settings_saved;
             CredentialLoad {
+                payload_theme,
                 // Both legacy credentials and a healed invalid separate
                 // snapshot are authoritative mount-time snapshots. Queue the
                 // latter's empty replacement too, so an opt-in daemon drops
@@ -153,6 +169,7 @@ where
                     .as_deref()
                     .is_none_or(|json| persist(&super::settings_storage_key(), json));
             CredentialLoad {
+                payload_theme,
                 loaded: false,
                 write_pending: !credential_saved || !settings_saved,
                 unsupported_version: true,
@@ -174,6 +191,7 @@ where
                 .as_deref()
                 .is_none_or(|json| persist(&super::settings_storage_key(), json));
             CredentialLoad {
+                payload_theme,
                 loaded: false,
                 write_pending: !settings_saved,
                 unsupported_version: unsupported_settings_version,

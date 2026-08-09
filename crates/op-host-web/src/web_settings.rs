@@ -41,15 +41,15 @@ const CREDENTIAL_STORAGE_KEY: &str = "openpencil-rust-web-credentials";
 /// The field set is exactly what `apply_payload` writes, so the two cannot
 /// drift into a field that is saved per-account but never reset.
 ///
-/// `theme_mode` is included: it is stored IN the per-account blob, so it is
-/// account-scoped by the same definition as everything else here. (A device
-/// preference that ought to survive an account switch would have to move out
-/// of the settings payload first — a product decision, not one this reset can
-/// make unilaterally.)
+/// `theme_mode` is deliberately NOT included. Theme is a **device**
+/// preference — light or dark is a property of the screen you are sitting at,
+/// not of who is signed in — so it lives in its own unpartitioned key (see
+/// [`theme`]) and must survive an account switch untouched. Resetting it here
+/// would flip the screen every time a different person signed in on the same
+/// laptop, which is the behaviour this split exists to remove.
 pub(super) fn reset_account_scoped_settings(state: &mut EditorState) {
     let defaults = op_editor_core::AgentSettings::default();
     let eui = &mut state.editor_ui;
-    eui.theme_mode = op_editor_core::EditorUiState::default().theme_mode;
     eui.locale = op_editor_core::EditorUiState::default().locale;
     eui.recent_files.clear();
     eui.agent_settings.mcp_server.port = defaults.mcp_server.port;
@@ -83,6 +83,10 @@ pub(crate) fn reload_for_active_partition<C: crate::repaint_ctx::RepaintContext>
     // partition silently inherits the previous account's settings.
     reset_account_scoped_settings(context.host_mut().editor_state_mut());
     let load = storage::load_into(context.host_mut().editor_state_mut());
+    // The device's own theme goes back on top of whatever the new partition
+    // just applied. This is the account-switch half of the split: without it
+    // the screen would follow whoever signed in.
+    theme::apply_after_load(context.host_mut().editor_state_mut(), load.payload_theme());
     // AFTER the load, not before: the baselines must measure against the state
     // this partition just produced. Rebuilding them from the previous
     // account's state would make the very next comparison report the whole
@@ -130,6 +134,8 @@ fn partitioned(base: &str) -> String {
 mod legacy;
 #[path = "web_settings_storage.rs"]
 mod storage;
+#[path = "web_settings_theme.rs"]
+pub(crate) mod theme;
 #[path = "web_settings_validation.rs"]
 mod validation;
 
@@ -325,14 +331,28 @@ fn to_payload(state: &EditorState) -> SettingsPayload {
     }
 }
 
+/// The theme a stored account blob carries, for the one-time device-theme
+/// migration. `None` for an unreadable or version-mismatched blob, which is
+/// the same answer as "carried no theme".
+pub(crate) fn payload_theme_of(raw: Option<&str>) -> Option<ThemeMode> {
+    let payload: SettingsPayload = serde_json::from_str(raw?).ok()?;
+    if payload.version != SETTINGS_VERSION {
+        return None;
+    }
+    payload.theme.as_deref().map(str_to_theme)
+}
+
 fn apply_payload(state: &mut EditorState, payload: SettingsPayload) {
     if payload.version != SETTINGS_VERSION {
         return;
     }
     let eui = &mut state.editor_ui;
-    if let Some(theme) = payload.theme.as_deref() {
-        eui.theme_mode = str_to_theme(theme);
-    }
+    // `payload.theme` is deliberately NOT applied: theme is device-level, and
+    // reading it here would let the incoming account's blob flip the screen.
+    // The field is still WRITTEN (see `to_payload`) so an older build — or an
+    // older tab still running — keeps finding a theme where it expects one.
+    // Its one remaining read is the migration in `theme::apply_after_load`,
+    // which reaches it through `payload_theme_of` rather than through here.
     if let Some(locale) = payload.locale.as_deref().and_then(str_to_locale) {
         eui.locale = locale;
     }

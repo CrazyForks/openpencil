@@ -103,6 +103,11 @@ impl CkInner {
             }
             ime.sync_focus(ime_focus);
         }
+        // Device theme first, and OUTSIDE both gates below. The settings
+        // fingerprint is `None` whenever the partition blob is unwritable, and
+        // a device preference must not be collateral damage of an account blob
+        // this tab refuses to touch. Cheap: a comparison, not a write.
+        let _ = crate::web_settings::theme::save_if_changed(self.host.editor_state());
         if !crate::web_settings::credential_migration_pending(&self.credential_fingerprint) {
             if let Some(settings_fingerprint) = self.settings_fingerprint.as_mut() {
                 let _ = crate::web_settings::save_if_changed(

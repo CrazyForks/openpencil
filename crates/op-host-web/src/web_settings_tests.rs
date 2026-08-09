@@ -2,14 +2,21 @@ use super::*;
 use op_editor_core::{EditorState, Locale, ThemeMode};
 
 #[test]
-fn settings_payload_restores_theme_and_locale() {
+fn settings_payload_restores_locale_but_never_theme() {
+    // Theme moved out of the account-scoped payload semantics: it is a device
+    // preference resolved from its own unpartitioned key, so reading it here
+    // would let an incoming account flip the screen. The field is still
+    // written for older builds — see `partition_tests` — and is still readable
+    // as the one-time migration source through `payload_theme_of`.
     let payload = r#"{"version":1,"theme":"light","locale":"en-US"}"#;
     let mut state = EditorState::new();
+    let before_theme = state.editor_ui.theme_mode;
 
     apply_json(&mut state, payload).expect("settings payload should parse");
 
-    assert_eq!(state.editor_ui.theme_mode, ThemeMode::Light);
     assert_eq!(state.editor_ui.locale, Locale::EnUs);
+    assert_eq!(state.editor_ui.theme_mode, before_theme);
+    assert_eq!(payload_theme_of(Some(payload)), Some(ThemeMode::Light));
 }
 
 #[test]
@@ -47,7 +54,10 @@ fn settings_payload_round_trips_recent_files_and_mcp_preferences() {
 
     apply_json(&mut dst, &json).expect("settings payload parses");
 
-    assert_eq!(dst.editor_ui.theme_mode, ThemeMode::Light);
+    // Theme is written into the blob (older builds read it) but not applied
+    // from it — it is a device preference. `payload_theme_of` is the only
+    // reader, and it is used once, for the migration.
+    assert_eq!(payload_theme_of(Some(&json)), Some(ThemeMode::Light));
     assert_eq!(dst.editor_ui.locale, Locale::Ja);
     assert_eq!(dst.editor_ui.agent_settings.mcp_server.port, 4321);
     assert!(dst.editor_ui.agent_settings.mcp_cli_enabled[1]);
@@ -466,7 +476,9 @@ fn corrupt_separate_snapshot_never_revives_legacy_credentials() {
 
     assert_eq!(loaded.source, StoredCredentialSource::InvalidSeparate);
     assert!(loaded.sanitize_legacy_settings);
-    assert_eq!(state.editor_ui.theme_mode, ThemeMode::Light);
+    // The blob's `"theme": "light"` is NOT applied — theme is device-level.
+    // What this test is really about is the credentials, which must not come
+    // back from the legacy blob.
     assert!(state.editor_ui.agent_settings.builtin_agents.is_empty());
 }
 
@@ -721,7 +733,12 @@ fn pending_legacy_migration_blocks_an_ordinary_settings_write() {
     let load = load_into_with(&mut state, Some(legacy), None, |_, _| false);
     let mut credential_baseline = load.initial_fingerprint(&state);
     let mut settings_baseline = fingerprint(&state);
-    state.editor_ui.theme_mode = ThemeMode::Dark;
+    // Locale, not theme: theme is no longer restored from the blob, so setting
+    // it here would leave the fingerprint unchanged and the test would pass
+    // for the wrong reason. Locale is genuinely account-scoped — and it has to
+    // be a value the default is not, or this is the same no-op trap.
+    assert_ne!(state.editor_ui.locale, Locale::EnUs);
+    state.editor_ui.locale = Locale::EnUs;
 
     assert!(
         save_credentials_if_changed_with(&state, &mut credential_baseline, |_, _| false).is_none()

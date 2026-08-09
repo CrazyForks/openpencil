@@ -54,6 +54,14 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
     let search = window.location().search().unwrap_or_default();
     host.editor_state_mut().editor_ui.embed = op_editor_core::EmbedHost::from_query(&search);
     let credential_load = crate::web_settings::load_into(host.editor_state_mut());
+    // Theme is device-level, so it is resolved from its own unpartitioned key
+    // rather than from the partition blob just loaded. On a browser that has
+    // never run the split build this adopts the blob's theme and writes the
+    // device key, so an existing choice carries over instead of resetting.
+    crate::web_settings::theme::apply_after_load(
+        host.editor_state_mut(),
+        credential_load.payload_theme(),
+    );
     host.mark_editor_state_dirty();
     let settings_fingerprint = credential_load.initial_settings_fingerprint(host.editor_state());
     let credential_fingerprint = credential_load.initial_fingerprint(host.editor_state());
