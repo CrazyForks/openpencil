@@ -75,9 +75,11 @@ cfg_test_external_module_files() {
     local relative_path
     while IFS= read -r source_file; do
         source_dir=${source_file%/*}
+        base=${source_file##*/}
+        base=${base%.rs}
         while IFS= read -r relative_path; do
             printf '%s/%s\n' "$source_dir" "$relative_path"
-        done < <(awk '
+        done < <(awk -v parent_base="$base" '
             function reset_attributes() {
                 cfg_test = 0
                 module_path = ""
@@ -101,14 +103,20 @@ cfg_test_external_module_files() {
                     print module_path
                 } else {
                     # No #[path]: a `#[cfg(test)] mod name;` resolves to its
-                    # default sibling file, `name.rs` (or `name/mod.rs`).
-                    # Emit both so either layout is recognized as a test-only
-                    # module rather than scanned as production source.
+                    # default file. A submodule declared in a non-root module
+                    # file `foo.rs` lives under `foo/` (`foo/name.rs` or
+                    # `foo/name/mod.rs`); only crate roots (lib/main) and
+                    # directory roots (mod) keep it a same-directory sibling.
                     name = $0
                     sub(/^[[:space:]]*(pub(\([^)]*\))?[[:space:]]+)?mod[[:space:]]+/, "", name)
                     sub(/[[:space:]]*;.*$/, "", name)
-                    print name ".rs"
-                    print name "/mod.rs"
+                    prefix = ""
+                    if (parent_base != "lib" && parent_base != "main" \
+                        && parent_base != "mod") {
+                        prefix = parent_base "/"
+                    }
+                    print prefix name ".rs"
+                    print prefix name "/mod.rs"
                 }
                 reset_attributes()
                 next
