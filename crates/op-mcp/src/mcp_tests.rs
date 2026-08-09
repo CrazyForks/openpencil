@@ -172,10 +172,10 @@ fn tool_response_to_json_emits_image_content_block_when_image_is_some() {
         result: BTreeMap::new(),
         command: None,
         json: Some(r#"{"nodeId":"n1","format":"png"}"#.into()),
-        image: Some(ImageContent {
+        image: Some(Box::new(ImageContent {
             data: "iVBORw0KGgo=".into(),
             mime_type: "image/png".into(),
-        }),
+        })),
     };
     let j = tool_response_to_json(&r);
     // Parse the JSON-RPC envelope to verify structure.
@@ -189,8 +189,7 @@ fn tool_response_to_json_emits_image_content_block_when_image_is_some() {
     // Second block must be text with the metadata.
     assert_eq!(content[1]["type"], "text");
     let text_val = content[1]["text"].as_str().expect("text string");
-    let meta: serde_json::Value =
-        serde_json::from_str(text_val).expect("metadata parses as JSON");
+    let meta: serde_json::Value = serde_json::from_str(text_val).expect("metadata parses as JSON");
     assert_eq!(meta["nodeId"], "n1");
     assert_eq!(meta["format"], "png");
     // No isError for successful results.
@@ -207,10 +206,10 @@ fn tool_response_to_json_image_without_text_metadata_still_emits_blocks() {
         result: BTreeMap::new(),
         command: None,
         json: None,
-        image: Some(ImageContent {
+        image: Some(Box::new(ImageContent {
             data: "AAAA".into(),
             mime_type: "image/png".into(),
-        }),
+        })),
     };
     let j = tool_response_to_json(&r);
     assert!(j.contains(r#""type":"image""#), "{j}");

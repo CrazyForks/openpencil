@@ -351,7 +351,7 @@ pub enum ToolResponse {
         /// `result`). Tools like `get_screenshot` use this so MCP clients
         /// (Copilot, Claude Code, …) receive the image as multimodal
         /// content instead of a base64 string buried in JSON text.
-        image: Option<ImageContent>,
+        image: Option<Box<ImageContent>>,
     },
     Err {
         id: RequestId,
@@ -485,10 +485,10 @@ impl ToolRegistry {
                 result: BTreeMap::new(),
                 command: None,
                 json: metadata_json,
-                image: Some(ImageContent {
+                image: Some(Box::new(ImageContent {
                     data: image_base64,
                     mime_type,
-                }),
+                })),
             },
             ToolOutcome::Err(code, message) => ToolResponse::Err {
                 id: call.id,
