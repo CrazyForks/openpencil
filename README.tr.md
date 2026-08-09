@@ -321,6 +321,28 @@ Satır içi metni, `@filepath` ve stdin'i (`-`) destekler. Masaüstü uygulama, 
 - Yerleşik ajan çalışma ortamı (Rust) + Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot ve Google Gemini API sağlayıcıları
 - Çinli LLM sağlayıcıları için Anthropic formatlı geçiş — Kimi, Zhipu, GLM, DouBao, Ark, Bailian/DashScope, ModelScope, Coding Plans
 
+**İş Birliği**
+
+- Genel röle yedeği ve yerleşik bölgesel iş birliği merkezleriyle kimlik doğrulamalı eşler arası (P2P) oturumlar
+- 10 karakterli, bölge etiketli eşleştirme koduyla katılın — LAN oturumları için hesap gerekmez
+- Canlı uzak imleçler, hesaplar arası iş birliği ve düzenleme başına ayrıntı ile atılan düzenlemelerin yeniden oynatımını sunan çakışma paneli
+- `--serve-web` daemon'ı için çevrimiçi çok kiracılı mod — op-hub'a karşı kimlik doğrulanır, hesaplar arası kiracı paylaşımıyla
+- Cihaz girişi — serve-web daemon'ı üzerinden tarayıcıdan oturum açın; editörde profil avatarları ve kullanıcı adları
+
+**Sunum Desteleri**
+
+- Şablon seçici ile altı adet 16:9 deste şablonu, ayrıca projektör boyutunda AI deste planlaması — ekran başına bir slayt
+- Sunucu kontrolleriyle bir desteyi slayt gösterisi olarak sunun
+- Bir desteyi PDF (slayt başına bir sayfa), bağımsız bir slayt gösterisi HTML dosyası, düzenlenebilir bir PowerPoint (`.pptx`) veya hyperframes video kompozisyonu olarak dışa aktarın
+- Slayt rayı gezgini; ajan, prompt'un yanı sıra deste board geometrisini de (en boy oranı, taşma, ortalama) doğrular
+
+**Şablonlar ve Web Yakalama**
+
+- Sahne şablonu merkezi — altı sahnede 58 şablonluk göz atılabilir bir katalog, Dosya ▸ Şablondan Yeni ile açılır
+- Web, gösterge paneli, bileşen ve değiştirme girdileri ile görsel prompt önizlemeleri içeren prompt merkezi
+- Varlık merkezi — çift eylemli şablonlar ve DESIGN.md stil içe aktarımı içeren tam pencere duyarlı galeri
+- [Chrome web yakalama uzantısı](https://chromewebstore.google.com/detail/openpencil/ahfofgelkdaobcmglejmjbpnajhpgcij) — sadık HTML / düzen yakalamayla herhangi bir web sayfasını OpenPencil'a anlık görüntü olarak alın; anlık görüntüler hub'daki hesabınızın gelen kutusuna teslim edilir veya çevrimdışıyken açılmaya hazır bir `.op` dosyası olarak indirilir
+
 **Git Entegrasyonu**
 
 - SSH / HTTPS kimlik doğrulama ve SSH anahtarı yönetimi ile klonlama sihirbazı
@@ -505,7 +527,10 @@ Katkılarınızı bekliyoruz! Mimari ayrıntılar ve kod stili için [CLAUDE.md]
 - [x] Delegasyon ve kanvas göstergeleriyle eşzamanlı Agent Teams
 - [x] Git entegrasyonu (klonlama, dal, push/pull, klasör modu üç yönlü birleştirme)
 - [x] Kanvas dışa aktarma (SVG / PNG / JPEG / WEBP / PDF)
-- [ ] Ortak düzenleme
+- [x] Ortak düzenleme — kimlik doğrulamalı P2P, genel röle ve bölgesel merkezler
+- [x] Sunum desteleri — şablonlar, slayt gösterisi sunucusu ve PDF/HTML/PPTX/video dışa aktarımı
+- [x] Cihaz girişi ve çevrimiçi çok kiracılı web barındırma
+- [x] HTML / tarayıcı anlık görüntüsü içe aktarımlı Chrome web yakalama uzantısı
 - [ ] Eklenti sistemi
 
 ## Katkıda Bulunanlar

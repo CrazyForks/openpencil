@@ -132,6 +132,11 @@ Manage reusable UIKits with style switching and component composition. Import/ex
 
 </td>
 <td width="50%">
+
+### 👥 Real-Time Collaboration
+
+Design together over authenticated peer-to-peer sessions with a public relay and built-in regional hubs. Join with a short pairing code, see live remote cursors, and resolve conflicts with per-edit detail and replay.
+
 </td>
 </tr>
 </table>
@@ -402,6 +407,28 @@ Supports three input methods: inline string, `@filepath` (read from file), or `-
 - Built-in Rust agent runtime + Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot, Google Gemini API providers
 - Anthropic-format passthrough for Chinese LLM providers — Kimi, Zhipu, GLM, DouBao, Ark, Bailian/DashScope, ModelScope, Coding Plans
 
+**Collaboration**
+
+- Authenticated peer-to-peer sessions with a public relay fallback and built-in regional collaboration hubs
+- Join with a 10-character region-tagged pairing code — no account required for LAN sessions
+- Live remote cursors, cross-account collaboration, and a conflict panel with per-edit detail and replay of discarded edits
+- Online multi-tenant mode for the `--serve-web` daemon, authenticated against the op-hub with cross-account tenant sharing
+- Device login — sign in from the browser through the serve-web daemon, with profile avatars and usernames in the editor
+
+**Presentation Decks**
+
+- Six 16:9 deck templates with a template picker, plus AI deck planning at projector size — one slide per screen
+- Present a deck as a slideshow with presenter controls
+- Export a deck as PDF (one page per slide), a self-contained slideshow HTML file, an editable PowerPoint (`.pptx`), or a hyperframes video composition
+- Slides rail navigator; the agent validates deck board geometry (aspect, overflow, centering) as well as the prompt
+
+**Templates & Web Capture**
+
+- Scene template center — a browsable catalogue of 58 templates across six scenes, opened from File ▸ New from template
+- Prompt center with web, dashboard, component, and modify entries and visual prompt previews
+- Asset center — a full-window responsive gallery with dual-action templates and DESIGN.md style import
+- [Chrome web-capture extension](https://chromewebstore.google.com/detail/openpencil/ahfofgelkdaobcmglejmjbpnajhpgcij) — snapshot any webpage into OpenPencil with faithful HTML / layout capture; snapshots are delivered to your account's inbox on the hub, or downloaded as a ready-to-open `.op` file offline
+
 **Git Integration**
 
 - Clone wizard with SSH / HTTPS auth and SSH key management
@@ -620,7 +647,10 @@ Contributions are welcome! See [CLAUDE.md](./CLAUDE.md) for architecture details
 - [x] Concurrent Agent Teams with delegation and canvas indicators
 - [x] Git integration — clone, branch, push/pull, folder-mode three-way merge
 - [x] Canvas export (SVG / PNG / JPEG / WEBP / PDF)
-- [ ] Collaborative editing
+- [x] Collaborative editing — authenticated P2P, public relay, and regional hubs
+- [x] Presentation decks — templates, slideshow presenter, and PDF/HTML/PPTX/video export
+- [x] Device login and online multi-tenant web hosting
+- [x] Chrome web-capture extension with HTML / browser-snapshot import
 - [ ] Plugin system
 
 ## Contributors

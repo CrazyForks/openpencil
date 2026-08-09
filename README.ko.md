@@ -320,6 +320,28 @@ cat design.dsl | op design - # stdin에서 파이프 입력
 - 내장 에이전트 런타임(Rust) + Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot, Google Gemini API 제공자
 - 중국 LLM 제공자를 위한 Anthropic 형식 패스스루 — Kimi, Zhipu, GLM, DouBao, Ark, Bailian/DashScope, ModelScope, Coding Plans
 
+**협업**
+
+- 인증된 피어투피어 세션 — 퍼블릭 릴레이 폴백과 내장 지역별 협업 허브
+- 지역 태그가 붙은 10자 페어링 코드로 참여 — LAN 세션은 계정 불필요
+- 실시간 원격 커서, 계정 간 협업, 편집 단위 상세 정보와 폐기된 편집 리플레이를 갖춘 충돌 패널
+- `--serve-web` 데몬을 위한 온라인 멀티테넌트 모드 — op-hub에 대해 인증하고 계정 간 테넌트 공유
+- 디바이스 로그인 — serve-web 데몬을 통해 브라우저에서 로그인, 에디터에 프로필 아바타와 사용자 이름 표시
+
+**프레젠테이션 덱**
+
+- 템플릿 피커가 있는 6개의 16:9 덱 템플릿, 그리고 프로젝터 크기의 AI 덱 플래닝 — 화면당 슬라이드 하나
+- 프레젠터 컨트롤로 덱을 슬라이드쇼로 발표
+- 덱을 PDF(슬라이드당 한 페이지), 자급자족 슬라이드쇼 HTML 파일, 편집 가능한 PowerPoint(`.pptx`), 또는 hyperframes 비디오 컴포지션으로 내보내기
+- 슬라이드 레일 내비게이터; 에이전트가 프롬프트뿐 아니라 덱 보드 지오메트리(종횡비, 오버플로, 센터링)도 검증
+
+**템플릿 & Web 캡처**
+
+- 씬 템플릿 센터 — 6개 씬에 걸친 58개 템플릿을 둘러볼 수 있는 카탈로그, 파일 ▸ 템플릿에서 새로 만들기로 열기
+- Web, 대시보드, 컴포넌트, 수정 항목과 비주얼 프롬프트 미리보기를 갖춘 프롬프트 센터
+- 에셋 센터 — 듀얼 액션 템플릿과 DESIGN.md 스타일 가져오기를 갖춘 전체 창 반응형 갤러리
+- [Chrome Web 캡처 확장](https://chromewebstore.google.com/detail/openpencil/ahfofgelkdaobcmglejmjbpnajhpgcij) — 어떤 웹페이지든 충실한 HTML / 레이아웃 캡처로 OpenPencil에 스냅샷; 스냅샷은 허브의 계정 받은 편지함으로 전달되거나, 오프라인에서는 바로 열 수 있는 `.op` 파일로 다운로드
+
 **Git 통합**
 
 - SSH / HTTPS 인증과 SSH 키 관리를 지원하는 클론 마법사
@@ -504,7 +526,10 @@ tools/check-version-sync.sh                        # Verify all managed versions
 - [x] 위임 및 캔버스 표시기를 제공하는 Concurrent Agent Teams
 - [x] Git 통합 (클론, 브랜치, 푸시/풀, 폴더 모드 3방향 병합)
 - [x] 캔버스 내보내기 (SVG / PNG / JPEG / WEBP / PDF)
-- [ ] 공동 편집
+- [x] 공동 편집 — 인증된 P2P, 퍼블릭 릴레이, 지역별 허브
+- [x] 프레젠테이션 덱 — 템플릿, 슬라이드쇼 프레젠터, PDF/HTML/PPTX/비디오 내보내기
+- [x] 디바이스 로그인 및 온라인 멀티테넌트 웹 호스팅
+- [x] HTML / 브라우저 스냅샷 가져오기를 갖춘 Chrome Web 캡처 확장
 - [ ] 플러그인 시스템
 
 ## 기여자

@@ -321,6 +321,28 @@ Mendukung string inline, `@filepath`, dan stdin (`-`). Bekerja dengan aplikasi d
 - Runtime agen bawaan (Rust) + penyedia Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot, dan Google Gemini API
 - Passthrough format Anthropic untuk penyedia LLM Tiongkok — Kimi, Zhipu, GLM, DouBao, Ark, Bailian/DashScope, ModelScope, Coding Plans
 
+**Kolaborasi**
+
+- Sesi peer-to-peer terautentikasi dengan relay publik sebagai cadangan dan hub kolaborasi regional bawaan
+- Bergabung dengan kode pemasangan 10 karakter bertag wilayah — tanpa akun untuk sesi LAN
+- Kursor jarak jauh langsung, kolaborasi lintas akun, dan panel konflik dengan detail per suntingan serta pemutaran ulang suntingan yang dibuang
+- Mode multi-tenant online untuk daemon `--serve-web`, terautentikasi terhadap op-hub dengan berbagi tenant lintas akun
+- Login perangkat — masuk dari browser melalui daemon serve-web, dengan avatar profil dan nama pengguna di editor
+
+**Dek Presentasi**
+
+- Enam templat dek 16:9 dengan pemilih templat, ditambah perencanaan dek AI pada ukuran proyektor — satu slide per layar
+- Presentasikan dek sebagai slideshow dengan kontrol presenter
+- Ekspor dek sebagai PDF (satu halaman per slide), file HTML slideshow mandiri, PowerPoint yang dapat diedit (`.pptx`), atau komposisi video hyperframes
+- Navigator rail slide; agen memvalidasi geometri board dek (aspek, luapan, pemusatan) sekaligus prompt
+
+**Templat & Web Capture**
+
+- Pusat templat scene — katalog yang dapat dijelajahi berisi 58 templat di enam scene, dibuka dari File ▸ New from template
+- Pusat prompt dengan entri web, dashboard, component, dan modify serta pratinjau prompt visual
+- Pusat aset — galeri responsif satu jendela penuh dengan templat aksi ganda dan impor gaya DESIGN.md
+- [Ekstensi web-capture Chrome](https://chromewebstore.google.com/detail/openpencil/ahfofgelkdaobcmglejmjbpnajhpgcij) — snapshot halaman web apa pun ke OpenPencil dengan penangkapan HTML / layout yang setia; snapshot dikirim ke kotak masuk akun Anda di hub, atau diunduh sebagai file `.op` yang siap dibuka secara offline
+
 **Integrasi Git**
 
 - Wizard clone dengan autentikasi SSH / HTTPS dan manajemen kunci SSH
@@ -505,7 +527,10 @@ Kontribusi sangat disambut! Lihat [CLAUDE.md](./CLAUDE.md) untuk detail arsitekt
 - [x] Agent Teams serentak dengan delegasi dan indikator kanvas
 - [x] Integrasi Git (clone, branch, push/pull, merge tiga arah mode folder)
 - [x] Ekspor kanvas (SVG / PNG / JPEG / WEBP / PDF)
-- [ ] Pengeditan kolaboratif
+- [x] Pengeditan kolaboratif — P2P terautentikasi, relay publik, dan hub regional
+- [x] Dek presentasi — templat, presenter slideshow, dan ekspor PDF/HTML/PPTX/video
+- [x] Login perangkat dan hosting web multi-tenant online
+- [x] Ekstensi web-capture Chrome dengan impor HTML / browser-snapshot
 - [ ] Sistem plugin
 
 ## Kontributor

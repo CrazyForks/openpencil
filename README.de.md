@@ -322,6 +322,28 @@ Unterstützt Inline-Strings, `@filepath` und stdin (`-`). Funktioniert mit Deskt
 - Integrierte Agent-Laufzeit (Rust) + Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot und Google Gemini API
 - Anthropic-Format-Passthrough für chinesische LLM-Anbieter — Kimi, Zhipu, GLM, DouBao, Ark, Bailian/DashScope, ModelScope, Coding Plans
 
+**Zusammenarbeit**
+
+- Authentifizierte Peer-to-Peer-Sitzungen mit öffentlichem Relay-Fallback und eingebauten regionalen Kollaborations-Hubs
+- Beitritt mit einem 10-stelligen regionsgetaggten Kopplungscode — kein Konto für LAN-Sitzungen erforderlich
+- Live-Remote-Cursor, kontoübergreifende Zusammenarbeit und ein Konfliktpanel mit Detail pro Bearbeitung und Wiedergabe verworfener Bearbeitungen
+- Online-Multi-Tenant-Modus für den `--serve-web`-Daemon, authentifiziert gegen den op-hub mit kontoübergreifender Tenant-Freigabe
+- Geräteanmeldung — vom Browser über den serve-web-Daemon anmelden, mit Profil-Avataren und Benutzernamen im Editor
+
+**Präsentationsdecks**
+
+- Sechs 16:9-Deck-Vorlagen mit Vorlagenauswahl, plus KI-Deck-Planung in Projektorgröße — eine Folie pro Bildschirm
+- Präsentieren Sie ein Deck als Diashow mit Präsentator-Steuerung
+- Exportieren Sie ein Deck als PDF (eine Seite pro Folie), eine eigenständige Diashow-HTML-Datei, eine bearbeitbare PowerPoint (`.pptx`) oder eine hyperframes-Videokomposition
+- Folien-Schienen-Navigator; der Agent validiert die Deck-Board-Geometrie (Seitenverhältnis, Überlauf, Zentrierung) sowie den Prompt
+
+**Vorlagen & Web-Erfassung**
+
+- Szenen-Vorlagenzentrum — ein durchsuchbarer Katalog von 58 Vorlagen über sechs Szenen, geöffnet über Datei ▸ Neu aus Vorlage
+- Prompt-Zentrum mit Einträgen für Web, Dashboard, Komponente und Modifikation sowie visuellen Prompt-Vorschauen
+- Asset-Zentrum — eine fensterfüllende responsive Galerie mit Dual-Action-Vorlagen und DESIGN.md-Stilimport
+- [Chrome-Web-Erfassungs-Erweiterung](https://chromewebstore.google.com/detail/openpencil/ahfofgelkdaobcmglejmjbpnajhpgcij) — jede Webseite mit originalgetreuer HTML-/Layout-Erfassung als Snapshot in OpenPencil übernehmen; Snapshots werden an den Posteingang Ihres Kontos im Hub geliefert oder offline als sofort öffenbare `.op`-Datei heruntergeladen
+
 **Git-Integration**
 
 - Clone-Assistent mit SSH-/HTTPS-Authentifizierung und SSH-Schlüsselverwaltung
@@ -506,7 +528,10 @@ Beiträge sind willkommen! Siehe [CLAUDE.md](./CLAUDE.md) für Architekturdetail
 - [x] Gleichzeitige Agent Teams mit Delegation und Canvas-Indikatoren
 - [x] Git-Integration (Klonen, Branches, Push/Pull, Ordnermodus-Dreiwege-Merge)
 - [x] Canvas-Export (SVG / PNG / JPEG / WEBP / PDF)
-- [ ] Kollaboratives Bearbeiten
+- [x] Kollaboratives Bearbeiten — authentifiziertes P2P, öffentliches Relay und regionale Hubs
+- [x] Präsentationsdecks — Vorlagen, Diashow-Präsentator und PDF/HTML/PPTX/Video-Export
+- [x] Geräteanmeldung und Online-Multi-Tenant-Web-Hosting
+- [x] Chrome-Web-Erfassungs-Erweiterung mit HTML-/Browser-Snapshot-Import
 - [ ] Plugin-System
 
 ## Mitwirkende

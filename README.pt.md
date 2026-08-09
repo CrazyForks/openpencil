@@ -321,6 +321,28 @@ Suporta strings inline, `@filepath` e stdin (`-`). Funciona com o app desktop, s
 - Runtime de agente integrado (Rust) + provedores Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot e Google Gemini API
 - Passthrough no formato Anthropic para provedores de LLMs chineses — Kimi, Zhipu, GLM, DouBao, Ark, Bailian/DashScope, ModelScope, Coding Plans
 
+**Colaboração**
+
+- Sessões peer-to-peer autenticadas com fallback de relay público e hubs de colaboração regionais integrados
+- Entre com um código de pareamento de 10 caracteres com tag de região — sem necessidade de conta para sessões LAN
+- Cursores remotos ao vivo, colaboração entre contas e um painel de conflitos com detalhe por edição e replay de edições descartadas
+- Modo multi-tenant online para o daemon `--serve-web`, autenticado contra o op-hub com compartilhamento de tenant entre contas
+- Login de dispositivo — faça login pelo navegador através do daemon serve-web, com avatares de perfil e nomes de usuário no editor
+
+**Decks de Apresentação**
+
+- Seis modelos de deck 16:9 com um seletor de modelos, além de planejamento de deck com IA em tamanho de projetor — um slide por tela
+- Apresente um deck como slideshow com controles de apresentador
+- Exporte um deck como PDF (uma página por slide), um arquivo HTML de slideshow autocontido, um PowerPoint editável (`.pptx`) ou uma composição de vídeo hyperframes
+- Navegador de trilha de slides; o agente valida a geometria do board do deck (proporção, overflow, centralização) além do prompt
+
+**Modelos e Captura Web**
+
+- Central de modelos de cena — um catálogo navegável de 58 modelos em seis cenas, aberto em Arquivo ▸ Novo a partir de modelo
+- Central de prompts com entradas de web, dashboard, componente e modificação e prévias visuais de prompt
+- Central de assets — uma galeria responsiva de janela cheia com modelos de ação dupla e importação de estilo DESIGN.md
+- [Extensão Chrome de captura web](https://chromewebstore.google.com/detail/openpencil/ahfofgelkdaobcmglejmjbpnajhpgcij) — faça snapshot de qualquer página web para o OpenPencil com captura fiel de HTML / layout; os snapshots são entregues à caixa de entrada da sua conta no hub, ou baixados como um arquivo `.op` pronto para abrir offline
+
 **Integração com Git**
 
 - Assistente de clone com autenticação SSH / HTTPS e gestão de chaves SSH
@@ -505,7 +527,10 @@ Contribuições são bem-vindas! Consulte o [CLAUDE.md](./CLAUDE.md) para detalh
 - [x] Agent Teams concorrentes com delegação e indicadores no canvas
 - [x] Integração com Git (clone, branch, push/pull, merge a três vias em modo pasta)
 - [x] Exportação do canvas (SVG / PNG / JPEG / WEBP / PDF)
-- [ ] Edição colaborativa
+- [x] Edição colaborativa — P2P autenticado, relay público e hubs regionais
+- [x] Decks de apresentação — modelos, apresentador de slideshow e exportação PDF/HTML/PPTX/vídeo
+- [x] Login de dispositivo e hospedagem web multi-tenant online
+- [x] Extensão Chrome de captura web com importação de HTML / snapshot do navegador
 - [ ] Sistema de plugins
 
 ## Contribuidores

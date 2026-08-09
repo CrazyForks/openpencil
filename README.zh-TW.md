@@ -319,6 +319,28 @@ cat design.dsl | op design - # 從 stdin 管道輸入
 - 內建智能體執行環境（Rust）+ Anthropic、Claude Agent SDK、OpenCode、Codex、Copilot、Google Gemini API 提供商
 - 中國大型語言模型 Anthropic 格式透傳 — Kimi、Zhipu、GLM、DouBao、Ark、Bailian/DashScope、ModelScope、Coding Plans
 
+**協作**
+
+- 經過身分驗證的點對點工作階段，支援公共中繼回退與內建的區域協作 Hub
+- 使用 10 位帶區域標籤的配對碼加入 — 區域網路工作階段無需帳號
+- 即時遠端游標、跨帳號協作，以及帶逐條編輯詳情和可重播已捨棄編輯的衝突面板
+- `--serve-web` daemon 的線上多租戶模式，向 op-hub 進行身分驗證並支援跨帳號租戶共享
+- 裝置登入 — 透過 serve-web daemon 從瀏覽器登入，編輯器中顯示頭像與使用者名稱
+
+**簡報**
+
+- 六個 16:9 簡報範本，配備範本選擇器，另有投影機尺寸的 AI 簡報規劃 — 一畫面一張投影片
+- 以投影片放映方式進行簡報，配有簡報者控制
+- 將簡報匯出為 PDF（每張投影片一頁）、自包含的投影片放映 HTML 檔案、可編輯的 PowerPoint（`.pptx`），或 hyperframes 影片合成
+- 投影片軌道導覽器；Agent 會驗證簡報畫板的幾何（長寬比、溢位、置中）以及提示詞
+
+**範本與網頁擷取**
+
+- 場景範本中心 — 一個可瀏覽的目錄，涵蓋六大場景下的 58 個範本，從「檔案 ▸ 從範本新增」開啟
+- 提示詞中心，包含 web、儀表板、元件與修改項目及視覺化提示詞預覽
+- 素材中心 — 全視窗響應式圖庫，配有雙動作範本與 DESIGN.md 風格匯入
+- [Chrome 網頁擷取擴充功能](https://chromewebstore.google.com/detail/openpencil/ahfofgelkdaobcmglejmjbpnajhpgcij) — 將任意網頁快照到 OpenPencil，支援高保真的 HTML / 版面擷取；快照會送達你帳號在 hub 上的收件匣，或在離線時下載為一個可直接開啟的 `.op` 檔案
+
 **Git 整合**
 
 - 複製精靈，支援 SSH / HTTPS 認證與 SSH 金鑰管理
@@ -503,7 +525,10 @@ tools/check-version-sync.sh                        # Verify all managed versions
 - [x] Concurrent Agent Teams，支援任務委派和畫布狀態指示
 - [x] Git 整合（複製、分支、推送/拉取、資料夾模式三路合併）
 - [x] 畫布匯出（SVG / PNG / JPEG / WEBP / PDF）
-- [ ] 協同編輯
+- [x] 協同編輯 — 經過身分驗證的 P2P、公共中繼與區域 Hub
+- [x] 簡報 — 範本、投影片放映簡報者，以及 PDF/HTML/PPTX/影片匯出
+- [x] 裝置登入與線上多租戶 Web 託管
+- [x] Chrome 網頁擷取擴充功能，支援 HTML / 瀏覽器快照匯入
 - [ ] 外掛程式系統
 
 ## 貢獻者

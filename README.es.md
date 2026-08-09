@@ -321,6 +321,28 @@ Admite cadenas inline, `@filepath` y stdin (`-`). Funciona con la app de escrito
 - Runtime de agente integrado (Rust) + proveedores Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot y Google Gemini API
 - Passthrough en formato Anthropic para proveedores de LLM chinos — Kimi, Zhipu, GLM, DouBao, Ark, Bailian/DashScope, ModelScope, Coding Plans
 
+**Colaboración**
+
+- Sesiones peer-to-peer autenticadas con repliegue a un relay público y hubs de colaboración regionales integrados
+- Únete con un código de emparejamiento de 10 caracteres etiquetado por región — sin cuenta para sesiones LAN
+- Cursores remotos en vivo, colaboración entre cuentas y un panel de conflictos con detalle por edición y reproducción de las ediciones descartadas
+- Modo multiinquilino en línea para el daemon `--serve-web`, autenticado contra el op-hub con uso compartido de inquilino entre cuentas
+- Inicio de sesión por dispositivo — accede desde el navegador a través del daemon serve-web, con avatares de perfil y nombres de usuario en el editor
+
+**Presentaciones (Decks)**
+
+- Seis plantillas de deck 16:9 con un selector de plantillas, además de planificación de deck con IA a tamaño de proyector — una diapositiva por pantalla
+- Presenta un deck como pase de diapositivas con controles de presentador
+- Exporta un deck como PDF (una página por diapositiva), un archivo HTML de pase de diapositivas autocontenido, un PowerPoint editable (`.pptx`) o una composición de video hyperframes
+- Navegador de diapositivas en riel; el agente valida la geometría de los tableros del deck (relación de aspecto, desbordamiento, centrado) además del prompt
+
+**Plantillas y captura web**
+
+- Centro de plantillas de escena — un catálogo navegable de 58 plantillas en seis escenas, abierto desde Archivo ▸ Nuevo desde plantilla
+- Centro de prompts con entradas de web, dashboard, componente y modificación, y vistas previas visuales de prompts
+- Centro de assets — una galería responsiva a pantalla completa con plantillas de doble acción e importación de estilo DESIGN.md
+- [Extensión de Chrome de captura web](https://chromewebstore.google.com/detail/openpencil/ahfofgelkdaobcmglejmjbpnajhpgcij) — captura cualquier página web en OpenPencil con una captura fiel del HTML / del diseño; las instantáneas se entregan en la bandeja de entrada de tu cuenta en el hub, o se descargan sin conexión como un archivo `.op` listo para abrir
+
 **Integración con Git**
 
 - Asistente de clonado con autenticación SSH / HTTPS y gestión de claves SSH
@@ -505,7 +527,10 @@ tools/check-version-sync.sh                        # Verify all managed versions
 - [x] Agent Teams concurrentes con delegación e indicadores en el lienzo
 - [x] Integración con Git (clonar, ramas, push/pull, fusión a tres vías en modo carpeta)
 - [x] Exportación del lienzo (SVG / PNG / JPEG / WEBP / PDF)
-- [ ] Edición colaborativa
+- [x] Edición colaborativa — P2P autenticado, relay público y hubs regionales
+- [x] Presentaciones (decks) — plantillas, presentador de pase de diapositivas y exportación PDF/HTML/PPTX/video
+- [x] Inicio de sesión por dispositivo y alojamiento web multiinquilino en línea
+- [x] Extensión de Chrome de captura web con importación de HTML / instantánea del navegador
 - [ ] Sistema de plugins
 
 ## Colaboradores

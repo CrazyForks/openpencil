@@ -320,6 +320,28 @@ Hỗ trợ chuỗi inline, `@filepath` và stdin (`-`). Hoạt động với ứ
 - Runtime tác nhân tích hợp (Rust) + nhà cung cấp Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot và Google Gemini API
 - Chuyển tiếp định dạng Anthropic cho các nhà cung cấp LLM Trung Quốc — Kimi, Zhipu, GLM, DouBao, Ark, Bailian/DashScope, ModelScope, Coding Plans
 
+**Cộng tác**
+
+- Phiên peer-to-peer đã xác thực với relay công khai dự phòng và các hub cộng tác khu vực tích hợp sẵn
+- Tham gia bằng mã ghép nối 10 ký tự gắn thẻ khu vực — không cần tài khoản cho các phiên LAN
+- Con trỏ từ xa trực tiếp, cộng tác xuyên tài khoản, và bảng xung đột với chi tiết theo từng chỉnh sửa cùng phát lại các chỉnh sửa đã loại bỏ
+- Chế độ đa tenant trực tuyến cho daemon `--serve-web`, xác thực với op-hub cùng chia sẻ tenant xuyên tài khoản
+- Đăng nhập thiết bị — đăng nhập từ trình duyệt thông qua daemon serve-web, với avatar hồ sơ và tên người dùng trong editor
+
+**Bộ trình chiếu**
+
+- Sáu mẫu bộ trình chiếu 16:9 với trình chọn mẫu, cùng lập kế hoạch bộ trình chiếu bằng AI ở kích thước máy chiếu — mỗi màn hình một slide
+- Trình chiếu bộ slide dưới dạng slideshow với các điều khiển của người thuyết trình
+- Xuất bộ trình chiếu dưới dạng PDF (mỗi slide một trang), tệp HTML slideshow độc lập, PowerPoint có thể chỉnh sửa (`.pptx`), hoặc bố cục video hyperframes
+- Thanh điều hướng slide; tác nhân kiểm tra hình học board của bộ trình chiếu (tỷ lệ, tràn, căn giữa) cũng như prompt
+
+**Mẫu & Thu thập Web**
+
+- Trung tâm mẫu cảnh — danh mục có thể duyệt gồm 58 mẫu trên sáu cảnh, mở từ File ▸ New from template
+- Trung tâm prompt với các mục web, dashboard, component và modify cùng bản xem trước prompt trực quan
+- Trung tâm tài nguyên — thư viện responsive toàn cửa sổ với mẫu hành động kép và nhập kiểu DESIGN.md
+- [Tiện ích thu thập web Chrome](https://chromewebstore.google.com/detail/openpencil/ahfofgelkdaobcmglejmjbpnajhpgcij) — chụp nhanh bất kỳ trang web nào vào OpenPencil với thu thập HTML / layout trung thực; ảnh chụp nhanh được gửi đến hộp thư đến của tài khoản bạn trên hub, hoặc tải xuống dưới dạng tệp `.op` sẵn sàng để mở khi ngoại tuyến
+
 **Tích hợp Git**
 
 - Wizard clone với xác thực SSH / HTTPS và quản lý khóa SSH
@@ -504,7 +526,10 @@ Chào mừng đóng góp! Xem [CLAUDE.md](./CLAUDE.md) để biết chi tiết v
 - [x] Concurrent Agent Teams với khả năng ủy quyền và chỉ báo trên canvas
 - [x] Tích hợp Git (clone, branch, push/pull, merge ba chiều chế độ thư mục)
 - [x] Xuất canvas (SVG / PNG / JPEG / WEBP / PDF)
-- [ ] Chỉnh sửa cộng tác
+- [x] Chỉnh sửa cộng tác — P2P đã xác thực, relay công khai, và các hub khu vực
+- [x] Bộ trình chiếu — mẫu, người thuyết trình slideshow, và xuất PDF/HTML/PPTX/video
+- [x] Đăng nhập thiết bị và web hosting đa tenant trực tuyến
+- [x] Tiện ích thu thập web Chrome với nhập HTML / browser-snapshot
 - [ ] Hệ thống plugin
 
 ## Người đóng góp

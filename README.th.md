@@ -320,6 +320,28 @@ cat design.dsl | op design - # Pipe จาก stdin
 - Agent runtime ในตัว (Rust) + ผู้ให้บริการ Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot และ Google Gemini API
 - Passthrough รูปแบบ Anthropic สำหรับผู้ให้บริการ LLM จีน — Kimi, Zhipu, GLM, DouBao, Ark, Bailian/DashScope, ModelScope, Coding Plans
 
+**การทำงานร่วมกัน**
+
+- เซสชันแบบ peer-to-peer (P2P) ที่ยืนยันตัวตน พร้อม public relay สำรองและ collaboration hub ประจำภูมิภาคในตัว
+- เข้าร่วมด้วยรหัสจับคู่ 10 อักขระที่ติดแท็กภูมิภาค — ไม่ต้องมีบัญชีสำหรับเซสชัน LAN
+- เคอร์เซอร์ระยะไกลแบบเรียลไทม์ การทำงานร่วมกันข้ามบัญชี และ conflict panel พร้อมรายละเอียดต่อการแก้ไขและการเล่นซ้ำการแก้ไขที่ถูกทิ้ง
+- โหมด multi-tenant ออนไลน์สำหรับ daemon `--serve-web` ยืนยันตัวตนกับ op-hub พร้อมการแชร์ tenant ข้ามบัญชี
+- Device login — ลงชื่อเข้าใช้จากเบราว์เซอร์ผ่าน serve-web daemon พร้อม avatar โปรไฟล์และชื่อผู้ใช้ในตัว editor
+
+**เด็คงานนำเสนอ**
+
+- เทมเพลตเด็ค 16:9 จำนวนหกแบบพร้อมตัวเลือกเทมเพลต และการวางแผนเด็คด้วย AI ที่ขนาดโปรเจกเตอร์ — หนึ่งสไลด์ต่อหนึ่งหน้าจอ
+- นำเสนอเด็คเป็นสไลด์โชว์พร้อมตัวควบคุมสำหรับผู้นำเสนอ
+- ส่งออกเด็คเป็น PDF (หนึ่งหน้าต่อหนึ่งสไลด์), ไฟล์ HTML สไลด์โชว์แบบ self-contained, PowerPoint ที่แก้ไขได้ (`.pptx`) หรือ hyperframes video composition
+- ตัวนำทาง slides rail; agent ตรวจสอบเรขาคณิตของ board เด็ค (aspect, overflow, centering) รวมถึง prompt ด้วย
+
+**เทมเพลตและการจับภาพเว็บ**
+
+- Scene template center — แคตตาล็อกที่เรียกดูได้ของเทมเพลต 58 แบบใน 6 ฉาก เปิดจาก File ▸ New from template
+- Prompt center พร้อมรายการ web, dashboard, component และ modify พร้อมตัวอย่างพรีวิว prompt แบบภาพ
+- Asset center — แกลเลอรีแบบ responsive เต็มหน้าต่างพร้อมเทมเพลตแบบ dual-action และการนำเข้าสไตล์ DESIGN.md
+- [ส่วนขยาย Chrome web-capture](https://chromewebstore.google.com/detail/openpencil/ahfofgelkdaobcmglejmjbpnajhpgcij) — สแนปช็อตหน้าเว็บใดก็ได้เข้าสู่ OpenPencil พร้อมการจับ HTML / layout อย่างเที่ยงตรง; สแนปช็อตจะถูกส่งไปยัง inbox ของบัญชีคุณบน hub หรือดาวน์โหลดเป็นไฟล์ `.op` ที่พร้อมเปิดแบบออฟไลน์
+
 **การเชื่อมต่อ Git**
 
 - ตัวช่วย Clone พร้อมการยืนยันตัวตน SSH / HTTPS และการจัดการ SSH key
@@ -504,7 +526,10 @@ tools/check-version-sync.sh                        # Verify all managed versions
 - [x] Concurrent Agent Teams พร้อมการมอบหมายงานและตัวบ่งชี้บน Canvas
 - [x] การเชื่อมต่อ Git (clone, branch, push/pull, three-way merge โหมดโฟลเดอร์)
 - [x] การส่งออก Canvas (SVG / PNG / JPEG / WEBP / PDF)
-- [ ] การแก้ไขร่วมกัน
+- [x] การแก้ไขร่วมกัน — P2P ที่ยืนยันตัวตน, public relay และ hub ประจำภูมิภาค
+- [x] เด็คงานนำเสนอ — เทมเพลต, ตัวนำเสนอสไลด์โชว์ และการส่งออก PDF/HTML/PPTX/video
+- [x] Device login และการโฮสต์เว็บแบบ multi-tenant ออนไลน์
+- [x] ส่วนขยาย Chrome web-capture พร้อมการนำเข้า HTML / browser-snapshot
 - [ ] ระบบปลั๊กอิน
 
 ## ผู้มีส่วนร่วม

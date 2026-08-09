@@ -319,6 +319,28 @@ cat design.dsl | op design - # 从 stdin 管道输入
 - 内置智能体运行时（Rust）+ Anthropic、Claude Agent SDK、OpenCode、Codex、Copilot、Google Gemini API 提供商
 - 国产大模型 Anthropic 格式透传 — Kimi、Zhipu、GLM、DouBao、Ark、Bailian/DashScope、ModelScope、Coding Plans
 
+**协同**
+
+- 经过身份验证的点对点会话，支持公共中继回退与内置的区域协作 Hub
+- 使用 10 位带区域标签的配对码加入 — 局域网会话无需账户
+- 实时远程光标、跨账户协同，以及带逐条编辑详情和可回放已丢弃编辑的冲突面板
+- `--serve-web` 守护进程的在线多租户模式，向 op-hub 进行身份验证并支持跨账户租户共享
+- 设备登录 — 通过 serve-web 守护进程从浏览器登录，编辑器中显示头像与用户名
+
+**演示文稿**
+
+- 六个 16:9 演示文稿模板，配备模板选择器，另有投影仪尺寸的 AI 演示文稿规划 — 一屏一张幻灯片
+- 以幻灯片放映方式演示演示文稿，配有演讲者控制
+- 将演示文稿导出为 PDF（每张幻灯片一页）、自包含的幻灯片放映 HTML 文件、可编辑的 PowerPoint（`.pptx`），或 hyperframes 视频合成
+- 幻灯片轨道导航器；Agent 会验证演示文稿画板的几何（宽高比、溢出、居中）以及提示词
+
+**模板与网页捕获**
+
+- 场景模板中心 — 一个可浏览的目录，涵盖六大场景下的 58 个模板，从「文件 ▸ 从模板新建」打开
+- 提示词中心，包含 web、仪表盘、组件与修改条目及可视化提示词预览
+- 素材中心 — 全窗口响应式画廊，配有双动作模板与 DESIGN.md 风格导入
+- [Chrome 网页捕获扩展](https://chromewebstore.google.com/detail/openpencil/ahfofgelkdaobcmglejmjbpnajhpgcij) — 将任意网页快照到 OpenPencil，支持高保真的 HTML / 布局捕获；快照会送达你账户在 hub 上的收件箱，或在离线时下载为一个可直接打开的 `.op` 文件
+
 **Git 集成**
 
 - 克隆向导，支持 SSH / HTTPS 认证与 SSH 密钥管理
@@ -503,7 +525,10 @@ tools/check-version-sync.sh                        # Verify all managed versions
 - [x] Concurrent Agent Teams，支持任务委派和画布状态指示
 - [x] Git 集成（克隆、分支、推送/拉取、文件夹模式三路合并）
 - [x] 画布导出（SVG / PNG / JPEG / WEBP / PDF）
-- [ ] 协同编辑
+- [x] 协同编辑 — 经过身份验证的 P2P、公共中继与区域 Hub
+- [x] 演示文稿 — 模板、幻灯片放映演讲者，以及 PDF/HTML/PPTX/视频导出
+- [x] 设备登录与在线多租户 Web 托管
+- [x] Chrome 网页捕获扩展，支持 HTML / 浏览器快照导入
 - [ ] 插件系统
 
 ## 贡献者

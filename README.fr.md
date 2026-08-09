@@ -321,6 +321,28 @@ Prend en charge les chaînes en ligne, `@filepath` et stdin (`-`). Fonctionne av
 - Runtime d'agent intégré (Rust) + fournisseurs Anthropic, Claude Agent SDK, OpenCode, Codex, Copilot et Google Gemini API
 - Passthrough au format Anthropic pour les fournisseurs LLM chinois — Kimi, Zhipu, GLM, DouBao, Ark, Bailian/DashScope, ModelScope, Coding Plans
 
+**Collaboration**
+
+- Sessions pair-à-pair authentifiées avec repli sur un relais public et hubs de collaboration régionaux intégrés
+- Rejoignez avec un code d'appariement de 10 caractères marqué par région — aucun compte requis pour les sessions LAN
+- Curseurs distants en direct, collaboration inter-comptes et un panneau de conflits avec détail par édition et rejeu des éditions écartées
+- Mode multi-locataire en ligne pour le daemon `--serve-web`, authentifié auprès de l'op-hub avec partage de locataire inter-comptes
+- Connexion par appareil — connectez-vous depuis le navigateur via le daemon serve-web, avec avatars de profil et noms d'utilisateur dans l'éditeur
+
+**Présentations (Decks)**
+
+- Six modèles de deck 16:9 avec un sélecteur de modèles, plus la planification IA de deck à la taille projecteur — une diapositive par écran
+- Présentez un deck sous forme de diaporama avec des contrôles de présentateur
+- Exportez un deck en PDF (une page par diapositive), un fichier HTML de diaporama autonome, un PowerPoint éditable (`.pptx`) ou une composition vidéo hyperframes
+- Navigateur de diapositives en rail ; l'agent valide la géométrie des tableaux du deck (ratio, débordement, centrage) ainsi que le prompt
+
+**Modèles et capture web**
+
+- Centre de modèles de scène — un catalogue parcourable de 58 modèles répartis sur six scènes, ouvert depuis Fichier ▸ Nouveau depuis un modèle
+- Centre de prompts avec des entrées web, dashboard, composant et modification, et des aperçus visuels de prompts
+- Centre d'assets — une galerie responsive plein écran avec des modèles à double action et l'import de style DESIGN.md
+- [Extension Chrome de capture web](https://chromewebstore.google.com/detail/openpencil/ahfofgelkdaobcmglejmjbpnajhpgcij) — capturez n'importe quelle page web dans OpenPencil avec une capture fidèle du HTML / de la mise en page ; les instantanés sont livrés dans la boîte de réception de votre compte sur le hub, ou téléchargés hors ligne sous forme de fichier `.op` prêt à ouvrir
+
 **Intégration Git**
 
 - Assistant de clonage avec authentification SSH / HTTPS et gestion des clés SSH
@@ -505,7 +527,10 @@ Les contributions sont les bienvenues ! Consultez [CLAUDE.md](./CLAUDE.md) pour 
 - [x] Agent Teams concurrents avec délégation et indicateurs sur le canevas
 - [x] Intégration Git (clone, branche, push/pull, fusion à trois voies en mode dossier)
 - [x] Export du canevas (SVG / PNG / JPEG / WEBP / PDF)
-- [ ] Édition collaborative
+- [x] Édition collaborative — P2P authentifié, relais public et hubs régionaux
+- [x] Présentations (decks) — modèles, présentateur de diaporama et export PDF/HTML/PPTX/vidéo
+- [x] Connexion par appareil et hébergement web multi-locataire en ligne
+- [x] Extension Chrome de capture web avec import HTML / instantané de navigateur
 - [ ] Système de plugins
 
 ## Contributeurs
