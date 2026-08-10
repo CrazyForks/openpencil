@@ -26,7 +26,10 @@ use super::relay_bootstrap::{
 };
 use super::types::{CollabRuntimeError, CollabRuntimeFailure};
 
+mod control_plane_failure;
 mod guest_runtime;
+
+use control_plane_failure::{control_plane_failure, report_control_plane_failure};
 
 const RELAY_HOME_REGION_ENV: &str = "OPENPENCIL_COLLAB_RELAY_HOME_REGION";
 #[cfg(any(test, debug_assertions))]
@@ -152,7 +155,7 @@ impl RelayLocatorControlPlane for EnvironmentRelayLocatorControlPlane {
         let client = locator_http_client(region)?;
         let published = client
             .publish(draft, ticket)
-            .map_err(|_| CollabRuntimeFailure::RelayUnavailable)?;
+            .map_err(|error| control_plane_failure("publish_route", error))?;
         let now = unix_time_ms().map_err(|_| CollabRuntimeFailure::RelayUnavailable)? / 1_000;
         published
             .invite()
@@ -169,7 +172,7 @@ impl RelayLocatorControlPlane for EnvironmentRelayLocatorControlPlane {
         let client = locator_http_client(region)?;
         client
             .publish_pairing_code(request, ticket)
-            .map_err(|_| CollabRuntimeFailure::RelayUnavailable)
+            .map_err(|error| control_plane_failure("publish_pairing_code", error))
     }
 
     fn claim_pairing_code(
@@ -179,13 +182,17 @@ impl RelayLocatorControlPlane for EnvironmentRelayLocatorControlPlane {
         region: &RelayBootstrapRegion,
     ) -> Result<SealedPairingInvite, CollabRuntimeFailure> {
         let client = locator_http_client(region)?;
-        client
-            .claim_pairing_code(request, ticket)
-            .map_err(|error| match error {
+        client.claim_pairing_code(request, ticket).map_err(|error| {
+            let failure = match error {
                 PairingClaimError::NotFound => CollabRuntimeFailure::RelayInviteUnavailable,
                 PairingClaimError::Rejected => CollabRuntimeFailure::RelayInviteInvalid,
+                PairingClaimError::Unauthorized => CollabRuntimeFailure::TicketRejected,
+                PairingClaimError::RateLimited => CollabRuntimeFailure::RelayRateLimited,
                 PairingClaimError::TransportUnavailable => CollabRuntimeFailure::RelayUnavailable,
-            })
+            };
+            report_control_plane_failure("claim_pairing_code", failure, &error);
+            failure
+        })
     }
 }
 

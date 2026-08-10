@@ -48,6 +48,16 @@ pub enum RelayLocatorIssueError {
     InvalidPublishCredential,
     #[error("relay locator control-plane transport is unavailable")]
     PublishTransportUnavailable,
+    /// The control plane refused the collaboration ticket (401/403). Kept
+    /// apart from the generic rejection so the caller can say "sign in
+    /// again" instead of "the relay is temporarily unavailable" — the
+    /// latter never becomes true by waiting.
+    #[error("relay locator control-plane rejected the collaboration ticket")]
+    PublishUnauthorized,
+    /// The control plane is shedding load (429). Retrying later genuinely
+    /// helps here, which is what separates it from the two above.
+    #[error("relay locator control-plane rate limited the request")]
+    PublishRateLimited,
     #[error("relay locator control-plane response was rejected")]
     PublishResponseRejected,
     #[error("relay locator control-plane response exceeds {maximum} bytes")]

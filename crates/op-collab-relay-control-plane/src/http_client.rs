@@ -80,9 +80,7 @@ impl<V: RelayLocatorVerifier> RelayLocatorHttpClient<V> {
             .body(request_body.to_vec())
             .send()
             .map_err(|_| RelayLocatorIssueError::PublishTransportUnavailable)?;
-        if response.status() != StatusCode::OK {
-            return Err(RelayLocatorIssueError::PublishResponseRejected);
-        }
+        publish_status(response.status())?;
         let content_type_matches = response
             .headers()
             .get(CONTENT_TYPE)
@@ -168,6 +166,23 @@ fn parse_endpoint(endpoint: &str) -> Result<Url, RelayLocatorIssueError> {
         return Err(RelayLocatorIssueError::InvalidControlPlaneEndpoint);
     }
     Ok(endpoint)
+}
+
+/// Classify a control-plane publish status.
+///
+/// Every non-OK status used to collapse into `PublishResponseRejected`, which
+/// left the desktop unable to tell an expired ticket from an overloaded
+/// service — both surfaced as "the public relay is temporarily unavailable",
+/// and only one of them is temporary.
+pub(crate) fn publish_status(status: StatusCode) -> Result<(), RelayLocatorIssueError> {
+    match status {
+        StatusCode::OK => Ok(()),
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+            Err(RelayLocatorIssueError::PublishUnauthorized)
+        }
+        StatusCode::TOO_MANY_REQUESTS => Err(RelayLocatorIssueError::PublishRateLimited),
+        _ => Err(RelayLocatorIssueError::PublishResponseRejected),
+    }
 }
 
 pub(crate) fn authorization_header(ticket: &[u8]) -> Result<HeaderValue, RelayLocatorIssueError> {

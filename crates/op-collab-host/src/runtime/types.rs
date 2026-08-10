@@ -27,6 +27,10 @@ pub enum CollabRuntimeFailure {
     /// not waiting for the service to recover.
     RelayNotConfigured,
     RelayRegionUnavailable,
+    /// The relay control plane is shedding load. Unlike `RelayUnavailable`
+    /// this one really does clear on its own, so the copy may ask the user
+    /// to retry.
+    RelayRateLimited,
     Transport,
     Protocol,
     ResourceLimit,

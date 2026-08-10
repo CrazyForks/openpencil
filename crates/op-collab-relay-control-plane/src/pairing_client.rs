@@ -14,7 +14,7 @@ use reqwest::{
     StatusCode, Url,
 };
 
-use crate::http_client::{authorization_header, RelayLocatorHttpClient};
+use crate::http_client::{authorization_header, publish_status, RelayLocatorHttpClient};
 use crate::pairing_wire::{
     PairingClaimRequest, PairingPublishRequest, PAIRING_CLAIM_CONTENT_TYPE, PAIRING_CLAIM_PATH,
     PAIRING_PUBLISH_CONTENT_TYPE, PAIRING_PUBLISH_PATH, SEALED_INVITE_CONTENT_TYPE,
@@ -28,6 +28,13 @@ pub enum PairingClaimError {
     NotFound,
     #[error("pairing claim was rejected")]
     Rejected,
+    /// The control plane refused the collaboration ticket (401/403) — a
+    /// sign-in problem, not a bad code and not a flaky network.
+    #[error("pairing claim credential was refused")]
+    Unauthorized,
+    /// The control plane is shedding load (429); retrying later helps.
+    #[error("pairing claim was rate limited")]
+    RateLimited,
     #[error("pairing claim transport unavailable")]
     TransportUnavailable,
 }
@@ -55,10 +62,16 @@ impl<V> RelayLocatorHttpClient<V> {
             .body(request.encode_binary())
             .send()
             .map_err(|_| RelayLocatorIssueError::PublishTransportUnavailable)?;
-        if response.status() != StatusCode::NO_CONTENT {
-            return Err(RelayLocatorIssueError::PublishResponseRejected);
+        // Success here is 204, so the shared classifier only gets to see the
+        // failure statuses it exists to separate.
+        match response.status() {
+            StatusCode::NO_CONTENT => Ok(()),
+            // `publish_status` treats 200 as success; here it is not one, so
+            // an Ok from the classifier still means "rejected".
+            status => Err(publish_status(status)
+                .err()
+                .unwrap_or(RelayLocatorIssueError::PublishResponseRejected)),
         }
-        Ok(())
     }
 
     /// Redeem a code id for the sealed blob stored by the owner.
@@ -81,6 +94,10 @@ impl<V> RelayLocatorHttpClient<V> {
         match response.status() {
             StatusCode::OK => {}
             StatusCode::NOT_FOUND => return Err(PairingClaimError::NotFound),
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+                return Err(PairingClaimError::Unauthorized)
+            }
+            StatusCode::TOO_MANY_REQUESTS => return Err(PairingClaimError::RateLimited),
             _ => return Err(PairingClaimError::Rejected),
         }
         let content_type_matches = response
