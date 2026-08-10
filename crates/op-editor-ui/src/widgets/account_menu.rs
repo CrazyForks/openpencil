@@ -6,6 +6,7 @@
 use crate::theme::Theme;
 use crate::widgets::editor_state_ext::theme_for;
 use crate::widgets::icons::{draw_icon, Icon};
+// `Icon::Key` (lucide key.svg) labels the "MCP Tokens" row.
 use crate::widgets::menu_paint;
 use crate::widgets::{LayoutBox, LayoutCx, PaintCx, Widget, WidgetId};
 use crate::{Point2D, Rect, TextLayout};
@@ -30,6 +31,10 @@ pub struct AccountMenu<'a> {
     display_name: String,
     username: String,
     hover: Option<AccountMenuRow>,
+    /// Whether the "MCP Tokens" row is shown (online/hub-served web only,
+    /// gated by `EditorUiState::account_mcp_tokens_entry`). When false the
+    /// row is absent from paint AND hit-test so the two stay in sync.
+    show_mcp_tokens: bool,
 }
 
 impl<'a> AccountMenu<'a> {
@@ -50,6 +55,7 @@ impl<'a> AccountMenu<'a> {
             display_name,
             username,
             hover: ui.account_menu_hover,
+            show_mcp_tokens: ui.account_mcp_tokens_entry,
         })
     }
 
@@ -63,8 +69,19 @@ impl<'a> AccountMenu<'a> {
         }
     }
 
+    fn action_row_count(&self) -> f32 {
+        if self.show_mcp_tokens {
+            3.0
+        } else {
+            2.0
+        }
+    }
+
     fn height(&self) -> f32 {
-        HEADER_HEIGHT + (DIVIDER_GAP * 2.0 + 1.0) + ROW_HEIGHT * 2.0 + DIVIDER_GAP
+        HEADER_HEIGHT
+            + (DIVIDER_GAP * 2.0 + 1.0)
+            + ROW_HEIGHT * self.action_row_count()
+            + DIVIDER_GAP
     }
 
     pub fn row_at(&self, panel: Rect, point: Point2D) -> Option<AccountMenuRow> {
@@ -74,6 +91,12 @@ impl<'a> AccountMenu<'a> {
         let mut y = panel.origin.y + HEADER_HEIGHT + DIVIDER_GAP * 2.0 + 1.0;
         if row_hit(panel.origin.x, y, point) {
             return Some(AccountMenuRow::Settings);
+        }
+        if self.show_mcp_tokens {
+            y += ROW_HEIGHT;
+            if row_hit(panel.origin.x, y, point) {
+                return Some(AccountMenuRow::McpToken);
+            }
         }
         y += ROW_HEIGHT;
         if row_hit(panel.origin.x, y, point) {
@@ -157,6 +180,18 @@ impl<'a> Widget for AccountMenu<'a> {
             t(self.ui.locale, "account.settings"),
             self.hover == Some(AccountMenuRow::Settings),
         );
+        if self.show_mcp_tokens {
+            y += ROW_HEIGHT;
+            paint_action_row(
+                cx,
+                &self.theme,
+                rect.origin.x,
+                y,
+                Icon::Key,
+                t(self.ui.locale, "account.mcpToken"),
+                self.hover == Some(AccountMenuRow::McpToken),
+            );
+        }
         y += ROW_HEIGHT;
         paint_action_row(
             cx,

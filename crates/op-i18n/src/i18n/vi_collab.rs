@@ -136,6 +136,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.item.dossierLinenDeck.summary" => "Chất giấy lanh của một tập hồ sơ, từ trang bìa, bối cảnh, số liệu hiện trạng, phân tích, so sánh phương án đến nghị quyết. Tám trang đọc trọn như một bản ghi nhớ độc lập, hợp cho họp ra quyết định.",
         "sceneTemplate.item.ledgerTickDeck.title" => "Kẻ ô sổ cái · deck ma trận đối thủ",
         "sceneTemplate.item.ledgerTickDeck.summary" => "Trên đường kẻ sổ cái là tiêu chí đánh giá, ma trận chính, thang phân vị và đối chiếu khoảng cách với thế mạnh. Bảy trang kể việc so sánh đối thủ như một khoản sổ có thể đối chiếu, hợp cho chọn nhà cung cấp và phân tích thị trường.",
+        "account.mcpToken" => "Token MCP",
         _ => return None,
     })
 }

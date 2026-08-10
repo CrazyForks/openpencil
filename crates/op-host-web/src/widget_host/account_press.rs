@@ -76,6 +76,15 @@ impl WidgetHost {
             self.now_ms,
         ) {
             AccountMenuPress::Vanished => return,
+            AccountMenuPress::OpenMcpTokens => {
+                // The hub serves this editor at its own origin, so the
+                // portal's per-account MCP-token page lives at
+                // `/mcp-tokens` relative to the current origin. A new tab
+                // opened synchronously inside the click's user-activation
+                // window is not popup-blocked (same pattern as the
+                // sign-in loading popup in `web_auth_sync`).
+                crate::web_mcp_tokens::open_mcp_tokens_page();
+            }
             AccountMenuPress::SignOut => {
                 self.pending_auth_actions.push(PendingAuthAction::SignOut);
             }

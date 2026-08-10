@@ -124,6 +124,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.item.dossierLinenDeck.summary" => "Tekstur berkas kertas linen, dari halaman muka, latar, data terkini, analisis, perbandingan opsi, hingga keputusan. Delapan halaman yang terbaca utuh sebagai memo tersendiri, untuk rapat pengambilan keputusan.",
         "sceneTemplate.item.ledgerTickDeck.title" => "Garis buku besar · deck matriks kompetitor",
         "sceneTemplate.item.ledgerTickDeck.summary" => "Di atas garis buku besar ada kriteria penilaian, matriks utama, skala kuantil, dan pembacaan selisih berbanding keunggulan. Tujuh halaman menceritakan perbandingan kompetitor seperti pembukuan yang dapat dicocokkan, untuk seleksi vendor dan analisis pasar.",
+        "account.mcpToken" => "Token MCP",
         _ => return None,
     })
 }

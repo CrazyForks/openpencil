@@ -124,6 +124,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.item.dossierLinenDeck.summary" => "Ein Dossier auf Leinenpapier, vom Deckblatt über Hintergrund, aktuelle Daten, Analyse und Optionsvergleich bis zum Beschluss. Acht Seiten, die sich als eigenständiges Memo lesen, für Entscheidungsvorlagen.",
         "sceneTemplate.item.ledgerTickDeck.title" => "Kontobuchraster · Wettbewerbsmatrix-Deck",
         "sceneTemplate.item.ledgerTickDeck.summary" => "Bewertungsmaßstab, Hauptmatrix, Quantilsskalen und die Gegenüberstellung von Lücke und Stärke auf Kontobuchlinien. Sieben Seiten, die einen Wettbewerbsvergleich wie eine prüfbare Rechnung erzählen, für Auswahlentscheidungen und Marktanalysen.",
+        "account.mcpToken" => "MCP-Tokens",
         _ => return None,
     })
 }

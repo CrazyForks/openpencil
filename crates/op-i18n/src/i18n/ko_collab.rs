@@ -140,6 +140,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.item.dossierLinenDeck.summary" => "리넨 종이 서류철의 질감으로 표지, 배경, 현황 데이터, 분석, 안 비교에서 결의까지. 그 자체로 읽히는 메모로 쓴 여덟 장, 의사결정 검토용.",
         "sceneTemplate.item.ledgerTickDeck.title" => "장부 눈금 · 경쟁 매트릭스 덱",
         "sceneTemplate.item.ledgerTickDeck.summary" => "장부 괘선 위의 평가 기준, 주 매트릭스, 분위 눈금, 격차와 강점 대조. 일곱 장으로 경쟁 비교를 대조 가능한 장부처럼 풀어내는, 제품 선정과 시장 분석용.",
+        "account.mcpToken" => "MCP 토큰",
         _ => return None,
     })
 }

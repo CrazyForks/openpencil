@@ -79,6 +79,9 @@ pub fn close_login_modal(state: &mut EditorState) {
 pub enum AccountMenuPress {
     /// Row handled entirely in editor state (Settings).
     Handled,
+    /// MCP-tokens row — the menu closed; the host opens the hub portal's
+    /// token page (online web only; other hosts never surface this row).
+    OpenMcpTokens,
     /// Sign-out row — display state is already `Anonymous`; the host
     /// revokes the device session through its platform transport.
     SignOut,
@@ -122,6 +125,10 @@ pub fn press_account_menu(
                 op_editor_core::agent_settings::AgentSettingsTab::Account;
             state.chat.blur_input(now_ms);
             AccountMenuPress::Handled
+        }
+        Some(AccountMenuRow::McpToken) => {
+            close_account_menu(state);
+            AccountMenuPress::OpenMcpTokens
         }
         Some(AccountMenuRow::SignOut) => {
             close_account_menu(state);

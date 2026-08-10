@@ -124,6 +124,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.item.dossierLinenDeck.summary" => "亚麻纸卷宗质感，从文件首页、背景、现状数据到方案对比与决议，八页写成一份能独立读完的备忘录，适合决策评审。",
         "sceneTemplate.item.ledgerTickDeck.title" => "账簿勾格 · 竞品矩阵档",
         "sceneTemplate.item.ledgerTickDeck.summary" => "账簿格线上的评估口径、主矩阵、分位刻度与差距优势对照，七页把竞品比较讲成一笔可核对的账，适合选型与市场分析。",
+        "account.mcpToken" => "MCP 令牌",
         _ => return None,
     })
 }

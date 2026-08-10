@@ -71,6 +71,12 @@ impl WidgetHostNative {
             self.now_ms,
         ) {
             AccountMenuPress::Vanished => return,
+            AccountMenuPress::OpenMcpTokens => {
+                // Desktop never emits this: the "MCP Tokens" row is gated
+                // behind `account_mcp_tokens_entry`, which only the online
+                // web host sets. The local MCP is tokenless and there is no
+                // hub portal to open, so there is nothing to do here.
+            }
             AccountMenuPress::SignOut => {
                 // Revoke the device session (background thread inside
                 // the library; an inert no-op in stub builds).

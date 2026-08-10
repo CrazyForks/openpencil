@@ -283,6 +283,11 @@ pub struct EditorUiState {
     pub account_menu_open: bool,
     /// Which account-dropdown row the cursor is over.
     pub account_menu_hover: Option<crate::account_state::AccountMenuRow>,
+    /// Show the "MCP Tokens" row in the signed-in account dropdown. Set
+    /// true only by the online/hub-served web host (a `?tenant=` page);
+    /// native desktop and self-hosted serve-web leave it false so the row
+    /// — which opens the hub portal's token page — never appears there.
+    pub account_mcp_tokens_entry: bool,
     /// Sign-in modal (signed-out state) open.
     pub login_modal_open: bool,
     /// Which login-modal control the cursor is over.

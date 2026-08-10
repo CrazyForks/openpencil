@@ -124,6 +124,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.item.dossierLinenDeck.summary" => "亞麻紙卷宗質感，從文件首頁、背景、現況資料到方案比較與決議，八頁寫成一份能獨立讀完的備忘錄，適合決策審查。",
         "sceneTemplate.item.ledgerTickDeck.title" => "帳簿勾格 · 競品矩陣檔",
         "sceneTemplate.item.ledgerTickDeck.summary" => "帳簿格線上的評估口徑、主矩陣、分位刻度與差距優勢對照，七頁把競品比較講成一筆可核對的帳，適合選型與市場分析。",
+        "account.mcpToken" => "MCP 權杖",
         _ => return None,
     })
 }

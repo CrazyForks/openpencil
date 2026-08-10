@@ -124,6 +124,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.item.dossierLinenDeck.summary" => "Keten kâğıt dosya dokusuyla kapak sayfasından arka plana, güncel verilere, çözümlemeye, seçenek karşılaştırmasına ve karara. Tek başına okunabilen bir muhtıra olarak yazılmış sekiz sayfa, karar değerlendirmeleri için.",
         "sceneTemplate.item.ledgerTickDeck.title" => "Defter çizgisi · rekabet matrisi sunumu",
         "sceneTemplate.item.ledgerTickDeck.summary" => "Defter çizgileri üzerinde değerlendirme ölçütleri, ana matris, dilim ölçekleri ve fark ile güçlü yön karşılaştırması. Yedi sayfa rekabet karşılaştırmasını denetlenebilir bir hesap gibi anlatır, tedarikçi seçimi ve pazar analizi için.",
+        "account.mcpToken" => "MCP Belirteçleri",
         _ => return None,
     })
 }

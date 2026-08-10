@@ -140,6 +140,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.item.dossierLinenDeck.summary" => "リネン紙の書類束の質感で、表紙、背景、現状データ、分析、案の比較から決議まで。単体で読み切れるメモとして仕上げた八ページ、意思決定レビュー向け。",
         "sceneTemplate.item.ledgerTickDeck.title" => "台帳の目盛 · 競合マトリクス デッキ",
         "sceneTemplate.item.ledgerTickDeck.summary" => "台帳の罫線の上に評価基準、主マトリクス、分位の目盛、差と強みの対照。七ページで競合比較を照合可能な帳簿として語る、製品選定や市場分析向け。",
+        "account.mcpToken" => "MCP トークン",
         _ => return None,
     })
 }

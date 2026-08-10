@@ -124,6 +124,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.item.dossierLinenDeck.summary" => "Un expediente en papel de lino, de la portada al contexto, los datos actuales, el análisis, la comparación de opciones y la resolución. Ocho páginas que se leen como un memorando autónomo, para comités de decisión.",
         "sceneTemplate.item.ledgerTickDeck.title" => "Libro mayor · deck de matriz competitiva",
         "sceneTemplate.item.ledgerTickDeck.summary" => "Criterios de evaluación, matriz principal, escalas por cuantiles y lectura de brechas y fortalezas sobre el rayado de un libro mayor. Siete páginas que cuentan una comparación competitiva como una cuenta verificable, para selección de proveedores y análisis de mercado.",
+        "account.mcpToken" => "Tokens MCP",
         _ => return None,
     })
 }

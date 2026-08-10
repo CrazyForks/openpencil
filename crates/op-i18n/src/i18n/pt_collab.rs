@@ -124,6 +124,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.item.dossierLinenDeck.summary" => "Um dossiê em papel de linho, da folha de rosto ao contexto, aos dados atuais, à análise, à comparação de opções e à decisão. Oito páginas que se leem como um memorando autônomo, para comitês de decisão.",
         "sceneTemplate.item.ledgerTickDeck.title" => "Livro-razão · deck de matriz competitiva",
         "sceneTemplate.item.ledgerTickDeck.summary" => "Critérios de avaliação, matriz principal, escalas por quantis e a leitura de lacunas e forças sobre o pautado de um livro-razão. Sete páginas que contam uma comparação competitiva como uma conta conferível, para seleção de fornecedores e análise de mercado.",
+        "account.mcpToken" => "Tokens MCP",
         _ => return None,
     })
 }

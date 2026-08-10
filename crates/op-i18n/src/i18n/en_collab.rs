@@ -164,6 +164,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.item.dossierLinenDeck.summary" => "A linen-paper dossier from cover sheet through background, current data, analysis and option comparison to the resolution — eight pages that read as a standalone memo, for decision reviews.",
         "sceneTemplate.item.ledgerTickDeck.title" => "Ledger Tick · Competitive Matrix Deck",
         "sceneTemplate.item.ledgerTickDeck.summary" => "Scoring criteria, the main matrix, quantile scales and a gap-versus-strength read-out on ledger ruling — seven pages that tell a competitive comparison like a balanced account, for vendor selection and market analysis.",
+        "account.mcpToken" => "MCP Tokens",
         _ => return None,
     })
 }

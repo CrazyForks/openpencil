@@ -53,6 +53,11 @@ mod live_sync_glue;
 mod live_sync_recovery;
 #[cfg(feature = "canvaskit")]
 mod web_auth_sync;
+// Opens the hub portal's per-account MCP-token page in a new tab from the
+// signed-in account dropdown (online/hub-served web only). Only the
+// canvaskit widget host calls it, so it shares that gate.
+#[cfg(feature = "canvaskit")]
+mod web_mcp_tokens;
 // Daemon collaboration relay (action drain + projection pull + presence).
 #[cfg(feature = "canvaskit")]
 mod collab_sync;

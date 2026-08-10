@@ -124,6 +124,7 @@ pub fn lookup(key: &str) -> Option<&'static str> {
         "sceneTemplate.item.dossierLinenDeck.summary" => "Un dossier sur papier lin, de la page de garde au contexte, aux données actuelles, à l’analyse, à la comparaison des options et à la décision. Huit pages qui se lisent comme une note autonome, pour les comités de décision.",
         "sceneTemplate.item.ledgerTickDeck.title" => "Registre à colonnes · deck matrice concurrentielle",
         "sceneTemplate.item.ledgerTickDeck.summary" => "Critères d’évaluation, matrice principale, échelles de quantiles et lecture des écarts et des forces sur une réglure de registre. Sept pages qui racontent une comparaison concurrentielle comme un compte vérifiable, pour le choix de fournisseurs et l’analyse de marché.",
+        "account.mcpToken" => "Jetons MCP",
         _ => return None,
     })
 }

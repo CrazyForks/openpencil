@@ -107,6 +107,13 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
             .editor_state_mut()
             .editor_ui
             .style_import_file_picker_supported = true;
+        // Online / hub-served mode: a `?tenant=` page URL means the hub is
+        // serving this editor at its own origin, so its `/mcp-tokens`
+        // portal page is reachable. Reveal the "MCP Tokens" row in the
+        // signed-in account dropdown. Self-hosted serve-web (no tenant) and
+        // native desktop leave this false so the row never appears there.
+        b.host.editor_state_mut().editor_ui.account_mcp_tokens_entry =
+            crate::daemon_base::tenant_param().is_some();
         // First frame paints synchronously so the shell is visible immediately
         // (no one-frame blank). Subsequent input-driven repaints coalesce
         // through the rAF installed below.

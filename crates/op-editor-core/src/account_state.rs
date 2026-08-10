@@ -103,12 +103,20 @@ mod tests {
 pub enum AccountMenuRow {
     /// Opens the settings modal on the Account tab.
     Settings,
+    /// Opens the hub portal's MCP-token page in a new tab. Only shown in
+    /// the online/hub-served web editor (gated host-side); native never
+    /// paints it.
+    McpToken,
     /// Clears `AccountState` back to `Anonymous`.
     SignOut,
 }
 
 impl AccountMenuRow {
-    pub const ALL: [AccountMenuRow; 2] = [AccountMenuRow::Settings, AccountMenuRow::SignOut];
+    pub const ALL: [AccountMenuRow; 3] = [
+        AccountMenuRow::Settings,
+        AccountMenuRow::McpToken,
+        AccountMenuRow::SignOut,
+    ];
 }
 
 /// Which control in the sign-in modal the cursor is over / has pressed.

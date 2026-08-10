@@ -66,6 +66,7 @@ impl Default for EditorUiState {
             account: crate::account_state::AccountState::default(),
             account_menu_open: false,
             account_menu_hover: None,
+            account_mcp_tokens_entry: false,
             login_modal_open: false,
             login_modal_hover: None,
             login_modal_stub_hint_shown: false,
