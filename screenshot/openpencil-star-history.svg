@@ -81,8 +81,8 @@ up richer geometric animation that would complicate reduced motion.</hw:tradeoff
     <hw:constraints-applied>self-contained, cim-compliant, wcag-aa</hw:constraints-applied>
     <hw:spatial-notes>1100x660 (1.67), left-to-right</hw:spatial-notes>
   </hw:reasoning>
-  <hw:payload xmlns:hw="https://hyperweave.app/hw/v1.0" schema="chart/1" media-type="application/json"><![CDATA[{"repo":"ZSeven-W/openpencil","current":"4.5K"}]]></hw:payload>
-  <hw:envelope xmlns:hw="https://hyperweave.app/hw/v1.0" format="hwz/1" media-type="application/json"><![CDATA[{"v":"hwz/1","id":"sha256:c35de8f7f484d3da1dbfc9fd97fa3f8b3effa43d66b0eb5bf0f85a86ef4e706d","k":"chart","title":"ZSeven-W/openpencil","intent":"Porcelain-style chart card with a pale surface, thin cobalt/variant\nseries line, subdued grid, and live pill. The chart should compare\ndirectly with the specimen's soft report-card treatment.","state":"active","data":{"current":"4.5K","points_total":13},"frames":[{"t":"chart","l":"ZSeven-W/openpencil"}],"prov":{"by":"hyperweave","ver":"0.4.1","genome":"primer.porcelain","ts":"2026-07-29T03:39:26.265861+00:00"}}]]></hw:envelope>
+  <hw:payload xmlns:hw="https://hyperweave.app/hw/v1.0" schema="chart/1" media-type="application/json"><![CDATA[{"repo":"ZSeven-W/openpencil","current":"4.7K"}]]></hw:payload>
+  <hw:envelope xmlns:hw="https://hyperweave.app/hw/v1.0" format="hwz/1" media-type="application/json"><![CDATA[{"v":"hwz/1","id":"sha256:c35de8f7f484d3da1dbfc9fd97fa3f8b3effa43d66b0eb5bf0f85a86ef4e706d","k":"chart","title":"ZSeven-W/openpencil","intent":"Porcelain-style chart card with a pale surface, thin cobalt/variant\nseries line, subdued grid, and live pill. The chart should compare\ndirectly with the specimen's soft report-card treatment.","state":"active","data":{"current":"4.7K","points_total":13},"frames":[{"t":"chart","l":"ZSeven-W/openpencil"}],"prov":{"by":"hyperweave","ver":"0.4.1","genome":"primer.porcelain","ts":"2026-07-29T03:39:26.265861+00:00"}}]]></hw:envelope>
 </metadata>
   <style>/* hw:css-modules: genome,accessibility,fonts */
 svg, :root {
@@ -305,7 +305,7 @@ svg, :root {
   <text class="hw-8f6b3caf-title" x="132.0" y="90.0">ZSeven-W/openpencil</text>
   <text class="hw-8f6b3caf-subtitle" x="132.0" y="110.0">STARS · Feb 2026 — Jul 2026</text>
   <text class="hw-8f6b3caf-hero-value" x="1000.0" y="90.0"
-        text-anchor="end">4.5K</text>
+        text-anchor="end">4.7K</text>
   <text class="hw-8f6b3caf-hero-label" x="1000.0" y="110.0"
         text-anchor="end"><tspan class="hw-8f6b3caf-live-word">LIVE</tspan> · TOTAL STARS</text>
 
@@ -360,15 +360,15 @@ svg, :root {
   <rect x="151.0" y="211.0"
         width="118.0" height="2.0"
         rx="1.0" fill="white" fill-opacity="0.32"/>
-  <text class="hw-8f6b3caf-callout-value" x="210.0" y="254.0" text-anchor="middle">+4.5K</text>
+  <text class="hw-8f6b3caf-callout-value" x="210.0" y="254.0" text-anchor="middle">+4.7K</text>
   <text class="hw-8f6b3caf-callout-label" x="210.0" y="270.0" text-anchor="middle">GAINED</text>
 
   <line x1="80.0" y1="530.0" x2="1020.0" y2="530.0" stroke="#C7D5EA" stroke-width="0.7" opacity="0.7"/>
   <text class="hw-8f6b3caf-tri-label" x="100.0" y="552.0">CURRENT</text>
   <text class="hw-8f6b3caf-tri-label" x="410.0" y="552.0">DELTA</text>
   <text class="hw-8f6b3caf-tri-label" x="720.0" y="552.0">WINDOW</text>
-  <text class="hw-8f6b3caf-tri-value" x="100.0" y="576.0">4.5K</text>
-  <text class="hw-8f6b3caf-tri-value hw-8f6b3caf-tri-accent" x="410.0" y="576.0">+4.5K</text>
+  <text class="hw-8f6b3caf-tri-value" x="100.0" y="576.0">4.7K</text>
+  <text class="hw-8f6b3caf-tri-value hw-8f6b3caf-tri-accent" x="410.0" y="576.0">+4.7K</text>
   <text class="hw-8f6b3caf-tri-value" x="720.0" y="576.0">5mo</text>
 
   <line x1="80.0" y1="600.0" x2="1020.0" y2="600.0" stroke="#C7D5EA" stroke-width="0.7" opacity="0.5"/>
