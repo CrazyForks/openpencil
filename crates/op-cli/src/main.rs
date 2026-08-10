@@ -18,6 +18,7 @@ mod path_args;
 mod skill_export_cli;
 mod skill_install_cli;
 mod skill_install_error;
+mod template_cli;
 
 use cli_error::CliError;
 
@@ -129,6 +130,15 @@ fn run(args: &[String]) -> Result<String, CliError> {
         Command::ExportDeck { output, format } => {
             export_cli::run_export_deck(target_port, &target_token, &output, &format)?
         }
+        Command::Templates { scene, tag } => template_cli::run_templates(
+            target_port,
+            &target_token,
+            scene.as_deref(),
+            tag.as_deref(),
+        )?,
+        Command::UseTemplate { template_id } => {
+            template_cli::run_use_template(target_port, &target_token, &template_id)?
+        }
         Command::Export {
             item_id,
             selection: _,
@@ -217,6 +227,13 @@ enum Command {
     ExportDeck {
         output: String,
         format: String,
+    },
+    Templates {
+        scene: Option<String>,
+        tag: Option<String>,
+    },
+    UseTemplate {
+        template_id: String,
     },
 }
 
@@ -343,6 +360,8 @@ fn command_from_positionals(positionals: &[String], flags: &Flags) -> Result<Com
         "stop" => Ok(Command::StopMcp),
         "export" => export_cli::map_export(flags),
         "export-deck" => export_cli::map_export_deck(flags),
+        "templates" => template_cli::map_templates(flags),
+        "use-template" => template_cli::map_use_template(flags, positionals),
         "skill:export" => Ok(Command::SkillExport {
             name: required_pos(
                 positionals,

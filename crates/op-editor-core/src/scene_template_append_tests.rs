@@ -256,3 +256,42 @@ fn variable_references(serialized: &str) -> Vec<String> {
     }
     found
 }
+
+#[test]
+fn adopting_a_catalogue_template_by_command_brings_its_boards_and_palette() {
+    // The command exists because boards and palette must land together:
+    // applying it has to leave both, or the frames resolve against a
+    // palette that is not there.
+    let template = crate::scene_template_catalog::scene_template_catalogue()
+        .iter()
+        .find(|template| template.style_guide.is_some())
+        .expect("catalogue ships at least one template carrying a palette");
+
+    let mut state = EditorState::new();
+    let variables_before = state.doc.variables.as_ref().map_or(0, BTreeMap::len);
+    let changed = state.apply(crate::EditorCommand::AdoptSceneTemplate {
+        template_id: template.id.clone(),
+    });
+
+    assert!(changed, "adopting {} changed nothing", template.id);
+    assert!(
+        !state.active_children().is_empty(),
+        "adopting {} left no boards",
+        template.id
+    );
+    assert!(
+        state.doc.variables.as_ref().map_or(0, BTreeMap::len) > variables_before,
+        "adopting {} brought no palette",
+        template.id
+    );
+}
+
+#[test]
+fn adopting_an_unknown_template_id_leaves_the_document_alone() {
+    let mut state = EditorState::new();
+    let changed = state.apply(crate::EditorCommand::AdoptSceneTemplate {
+        template_id: "no-such-template".to_owned(),
+    });
+    assert!(!changed);
+    assert!(state.active_children().is_empty());
+}

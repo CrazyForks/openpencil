@@ -28,6 +28,12 @@ COMMON COMMANDS:
                                           export the active page's boards as a
                                           presentation deck: PowerPoint, self-
                                           contained HTML, or slide-per-page PDF
+  op templates [--scene S] [--tag T]        list shipped scene templates
+                                          (tutorial / comparison / carousel /
+                                          slides / …), including 16:9 decks
+  op use-template <id>                      start from a scene template: takes
+                                          over a blank starter page, otherwise
+                                          appends its boards
   op get [--type T] [--name N] [--id ID] [--depth N] [--parent P]
   op selection                            get current selection
   op insert <json|@file|-> [--parent P] [--page PAGE] [--post-process]

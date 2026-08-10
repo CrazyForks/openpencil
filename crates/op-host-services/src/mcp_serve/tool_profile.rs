@@ -380,6 +380,16 @@ pub const TOOL_PROFILES: &[ToolProfile] = &[
         ToolAccess::Read,
         ToolSurface::LocalFilesystem,
     ),
+    ToolProfile::new(
+        "list_scene_templates",
+        ToolAccess::Read,
+        ToolSurface::InMemory,
+    ),
+    ToolProfile::new(
+        "use_scene_template",
+        ToolAccess::Write,
+        ToolSurface::InMemory,
+    ),
     ToolProfile::new("export_item", ToolAccess::Read, ToolSurface::InMemory),
     ToolProfile::new("export_nodes", ToolAccess::Read, ToolSurface::InMemory),
     ToolProfile::new("find_empty_space", ToolAccess::Read, ToolSurface::InMemory),

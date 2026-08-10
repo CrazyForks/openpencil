@@ -640,6 +640,8 @@ fn rebuild_registry(doc: &EditorState, requested_tool: Option<&str>) -> ToolRegi
     register_tool!("export_item", export_item_snapshot(doc));
     register_tool!("export_nodes", export_nodes_snapshot(doc));
     register_tool!("export_deck", export_deck_snapshot(doc));
+    register_tool!("list_scene_templates", list_scene_templates_snapshot());
+    register_tool!("use_scene_template", use_scene_template_snapshot());
     register_tool!("get_active_theme", get_active_theme_snapshot(doc));
     register_tool!("list_components", list_components_snapshot(doc));
     register_tool!("get_component", get_component_snapshot(doc));
@@ -791,6 +793,8 @@ pub(crate) mod export_item_tool;
 use export_item_tool::export_item_snapshot;
 pub(crate) mod export_deck_tool;
 use export_deck_tool::export_deck_snapshot;
+pub(crate) mod scene_template_tools;
+use scene_template_tools::{list_scene_templates_snapshot, use_scene_template_snapshot};
 
 #[cfg(test)]
 mod codegen_wire_tests;

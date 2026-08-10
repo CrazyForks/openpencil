@@ -195,3 +195,38 @@ fn export_deck_rejects_a_node_export_format() {
     .to_string();
     assert!(error.contains("unsupported deck format"), "{error}");
 }
+
+#[test]
+fn use_template_accepts_a_bare_id_or_a_flag() {
+    for argv in [
+        vec!["use-template", "slide-deck"],
+        vec!["use-template", "--template", "slide-deck"],
+    ] {
+        let parsed = parse_args(&args(&argv)).expect("parse use-template");
+        assert!(matches!(
+            parsed.command,
+            Command::UseTemplate { ref template_id } if template_id == "slide-deck"
+        ));
+    }
+    assert!(parse_args(&args(&["use-template"]))
+        .unwrap_err()
+        .to_string()
+        .contains("template id"));
+}
+
+#[test]
+fn templates_filters_are_optional() {
+    let bare = parse_args(&args(&["templates"])).expect("parse templates");
+    assert!(matches!(
+        bare.command,
+        Command::Templates {
+            scene: None,
+            tag: None
+        }
+    ));
+    let filtered = parse_args(&args(&["templates", "--scene", "slides"])).expect("parse filter");
+    assert!(matches!(
+        filtered.command,
+        Command::Templates { scene: Some(ref scene), .. } if scene == "slides"
+    ));
+}

@@ -270,6 +270,16 @@ pub enum EditorCommand {
         /// or legacy page index.
         page_id: Option<String>,
     },
+    /// Bring a shipped scene template into the document by catalogue id.
+    ///
+    /// The boards and the palette they depend on travel together, which is
+    /// why this is its own command rather than an authored-subtree insert:
+    /// a template's variables have to land in the same transaction as its
+    /// frames, or the boards resolve against a palette that is not there.
+    AdoptSceneTemplate {
+        /// Catalogue id, as listed by `scene_template_catalogue`.
+        template_id: String,
+    },
     /// Run deterministic post-generation cleanup for a layered design
     /// root. Unlike most write commands, a valid root with no needed
     /// edits is still accepted so `design_refine` can be idempotent.

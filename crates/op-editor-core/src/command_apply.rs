@@ -309,6 +309,23 @@ impl EditorState {
                 parent_id,
                 page_id,
             } => apply_authored_subtree_on_page(self, nodes, &parent_id, page_id.as_deref(), true),
+            EditorCommand::AdoptSceneTemplate { template_id } => {
+                // A missing document is a corrupt or renamed asset rather
+                // than a user error, and on wasm it can simply not be
+                // fetched yet; either way there is nothing to apply and the
+                // document is left untouched.
+                let Some(source) =
+                    crate::scene_template_catalog::scene_template_document(&template_id)
+                else {
+                    return Ok(false);
+                };
+                let Some(boards) =
+                    crate::scene_template_append::template_boards(source, &template_id)
+                else {
+                    return Ok(false);
+                };
+                self.adopt_template_boards(boards)
+            }
             EditorCommand::RefineDesign {
                 root_id,
                 canvas_width,
