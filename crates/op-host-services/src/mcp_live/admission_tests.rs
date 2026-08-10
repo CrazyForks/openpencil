@@ -76,22 +76,30 @@ fn authed_headers() -> String {
 }
 
 #[test]
-fn unauthenticated_tool_call_is_refused() {
+fn a_tokenless_tool_call_is_served() {
+    // No X-OpenPencil-Token header: the local endpoint admits every caller
+    // that clears the Host/Origin boundary, so a bare MCP client (only a
+    // URL, no discovered token) reaches the UI thread and is served.
     let (req_tx, req_rx) = mpsc::channel();
+    let responder = thread::spawn(move || match req_rx.recv_timeout(Duration::from_secs(5)) {
+        Ok(UiRequest::ListPages { ack }) => ack
+            .send(op_mcp::ListPages {
+                page_count: 3,
+                active_page_index: 1,
+                pages: vec![("p1".to_string(), "One".to_string())],
+            })
+            .is_ok(),
+        _ => false,
+    });
     let headers = format!("Host: 127.0.0.1:{PORT}\r\n");
     let response = drive(&request("/mcp", &headers, LIST_PAGES_CALL), &req_tx);
 
     assert!(
-        response.starts_with("HTTP/1.1 401 Unauthorized"),
-        "{response}"
+        responder.join().expect("responder thread"),
+        "a tokenless tool call must reach the UI thread"
     );
-    assert!(response.contains(r#""code":-32001"#), "{response}");
-    // The caller's id is echoed so a client fails fast instead of hanging.
-    assert!(response.contains(r#""id":11"#), "{response}");
-    assert!(
-        req_rx.try_recv().is_err(),
-        "a refused tool call must never reach the UI thread"
-    );
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert!(!response.contains("-32001"), "{response}");
 }
 
 #[test]
@@ -204,36 +212,6 @@ fn non_loopback_or_wrong_port_host_is_refused() {
     assert!(!host_allowed(None, PORT), "a missing Host is refused");
 }
 
-#[test]
-fn constant_time_compare_rejects_same_length_wrong_token() {
-    // Same length, differing only in the last byte — the case an
-    // early-exit `==` would answer faster than a first-byte mismatch.
-    assert_eq!(TOKEN.len(), "d34db33f-caff".len());
-    assert!(!constant_time_eq("d34db33f-caff", TOKEN));
-    assert!(!constant_time_eq("e34db33f-cafe", TOKEN));
-    assert!(constant_time_eq(TOKEN, TOKEN));
-    assert!(!constant_time_eq("", TOKEN));
-    assert!(!constant_time_eq(&format!("{TOKEN}x"), TOKEN));
-
-    let admission = LiveAdmission::new(TOKEN.to_string(), PORT);
-    let same_length_guess = format!(
-        "Host: 127.0.0.1:{PORT}\r\nX-OpenPencil-Token: d34db33f-caff\r\nContent-Length: 0\r\n\r\n"
-    );
-    let mut cursor = std::io::Cursor::new(format!("POST /mcp HTTP/1.1\r\n{same_length_guess}"));
-    let req = crate::mcp_serve::read_http_request(&mut cursor).expect("request parses");
-    assert_eq!(
-        check_token(&req, &admission),
-        Err(AdmissionDenial::BadToken)
-    );
-
-    // An instance with no token authenticates nobody.
-    let tokenless = LiveAdmission::new(String::new(), PORT);
-    assert_eq!(
-        check_token(&req, &tokenless),
-        Err(AdmissionDenial::MissingToken)
-    );
-}
-
 /// The identity probes stay tokenless on purpose: `op` discovers this
 /// instance by pinging it and matching the reply's token against the
 /// discovery file. Gating `ping` would break discovery for every CLI.
@@ -258,27 +236,6 @@ fn ping_probe_stays_tokenless_for_cli_discovery() {
     let response = drive(&request("/mcp", &headers, ping), &req_tx);
     assert!(response.starts_with("HTTP/1.1 403 Forbidden"), "{response}");
     assert!(!response.contains(TOKEN), "{response}");
-}
-
-/// Whole-document sync replaces the LIVE (possibly shared) document — the
-/// REST twin of the JSON-RPC write path, and equally unauthenticated
-/// before this gate.
-#[test]
-fn document_sync_route_requires_the_instance_token() {
-    let (req_tx, req_rx) = mpsc::channel();
-    let headers = format!("Host: 127.0.0.1:{PORT}\r\n");
-    let body = r#"{"document":{"version":"1.0","children":[],"pages":[]}}"#;
-    let response = drive(&request("/api/mcp/document", &headers, body), &req_tx);
-
-    assert!(
-        response.starts_with("HTTP/1.1 401 Unauthorized"),
-        "{response}"
-    );
-    assert!(response.contains(r#""ok":false"#), "{response}");
-    assert!(
-        req_rx.try_recv().is_err(),
-        "an unauthenticated whole-document sync must never reach the UI thread"
-    );
 }
 
 // --- browser-extension snapshot ingress (`snapshot_ingest.rs`) ---

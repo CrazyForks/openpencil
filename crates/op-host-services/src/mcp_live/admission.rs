@@ -1,44 +1,34 @@
 //! Admission control for the live-GUI MCP endpoint (`127.0.0.1:<port>/mcp`).
 //!
 //! The live endpoint drives the on-screen document, and during a
-//! collaboration session that document is the SHARED one. Before this
-//! module existed the per-instance token authenticated exactly two
-//! messages — the `ping` identity probe's reply and `openpencil/shutdown`
-//! — so every read and every write tool call was reachable by any local
-//! process, and (with no `Origin` / `Host` screening) by any web page on
-//! the machine via DNS rebinding. That is a straight bypass of the
-//! collaboration admission model: `CollabGatePolicy` can refuse an MCP
-//! *mutation* mid-session, but it never saw reads, and it is not a
-//! boundary — it is the last line behind one.
+//! collaboration session that document is the SHARED one. The gate here is
+//! browser screening — it closes the DNS-rebinding path that would let any
+//! web page on the machine reach this endpoint.
 //!
-//! Two independent gates, in this order:
+//! [`check_boundary`] — a `Host` that is not a numeric loopback literal on
+//! the bound port, or ANY `Origin` other than this instance's own loopback
+//! origin, is refused. Both headers are browser-controlled but not
+//! page-forgeable, which is what actually closes DNS rebinding: a rebound
+//! `evil.com` page still sends `Host: evil.com:<port>` and
+//! `Origin: http://evil.com`. Requests with no `Origin` at all are normal
+//! non-browser clients (the `op` CLI, the VS Code MCP proxy, a local agent
+//! runner) and pass.
 //!
-//! 1. [`check_boundary`] — browser screening. A `Host` that is not a
-//!    numeric loopback literal on the bound port, or ANY `Origin` other
-//!    than this instance's own loopback origin, is refused. Both headers
-//!    are browser-controlled but not page-forgeable, which is what
-//!    actually closes DNS rebinding: a rebound `evil.com` page still
-//!    sends `Host: evil.com:<port>` and `Origin: http://evil.com`.
-//!    Requests with no `Origin` at all are normal non-browser clients
-//!    (the `op` CLI, the VS Code MCP proxy) and pass.
-//! 2. [`check_token`] — the per-instance token from the
-//!    `X-OpenPencil-Token` header, compared in constant time. This is the
-//!    same credential the server already published to its clients (the
-//!    discovery file `~/.openpencil/.op-mcp-port` and the `ping` reply)
-//!    and the same header the managed web daemon uses
-//!    (`web_canvas_server::RequestAuth`) — no new credential system.
+//! No per-instance `X-OpenPencil-Token` is demanded: the local desktop and
+//! a self-hosted serve-web daemon trust every local process that clears the
+//! boundary — the token it published in `~/.openpencil/.op-mcp-port` and the
+//! `ping` reply was readable by any such process anyway, so it only added
+//! friction for a caller that had only the URL (a bare MCP client). The
+//! online multi-tenant daemon is a SEPARATE request loop that authenticates
+//! per account (`web_canvas_server::RequestAuth`, a `Bearer` token the hub
+//! introspects), so relaxing this endpoint does not touch online auth.
+//! `CollabGatePolicy` still runs on the UI thread for each apply and decides
+//! what a session permits. `openpencil/shutdown` keeps its own body-carried
+//! token check (`mcp_serve::shutdown_request_id`), unchanged.
 //!
-//! Deliberately still tokenless: `OPTIONS` preflight, and the stateless
+//! Deliberately still tokenless too: `OPTIONS` preflight, and the stateless
 //! `initialize` / `notifications/initialized` / `ping` probes, which carry
-//! no document data and are how a client discovers this instance in the
-//! first place. `openpencil/shutdown` keeps its own body-carried token
-//! check (`mcp_serve::shutdown_request_id`), unchanged.
-//!
-//! KNOWN RESIDUAL (documented, not introduced here): the `ping` reply
-//! hands the token to any local caller, so this gate raises the bar for a
-//! local process rather than closing it outright. Closing that needs a
-//! change to the `op` CLI's discovery handshake, which lives in another
-//! crate.
+//! no document data and are how a client discovers this instance.
 //!
 //! # Browser-extension pinning (`OPENPENCIL_EXTENSION_ALLOWED_IDS`)
 //!
@@ -113,10 +103,6 @@ pub(super) enum AdmissionDenial {
     ForeignHost,
     /// An `Origin` header that is not this instance's own loopback origin.
     ForeignOrigin,
-    /// No `X-OpenPencil-Token` header (or an empty one).
-    MissingToken,
-    /// A token that is not this instance's token.
-    BadToken,
 }
 
 impl AdmissionDenial {
@@ -126,7 +112,6 @@ impl AdmissionDenial {
     pub(super) fn http_status(self) -> &'static str {
         match self {
             AdmissionDenial::ForeignHost | AdmissionDenial::ForeignOrigin => "403 Forbidden",
-            AdmissionDenial::MissingToken | AdmissionDenial::BadToken => "401 Unauthorized",
         }
     }
 
@@ -140,10 +125,6 @@ impl AdmissionDenial {
             AdmissionDenial::ForeignOrigin => {
                 "live MCP endpoint refuses cross-origin requests (bad Origin header)"
             }
-            AdmissionDenial::MissingToken => {
-                "live MCP endpoint requires the X-OpenPencil-Token header"
-            }
-            AdmissionDenial::BadToken => "live MCP endpoint token mismatch",
         }
     }
 }
@@ -178,50 +159,6 @@ pub(super) fn check_boundary(
     Ok(())
 }
 
-/// Gate 2 — per-instance token, required by every request that can
-/// observe or mutate the live document.
-pub(super) fn check_token(
-    req: &crate::mcp_serve::HttpRequest,
-    admission: &LiveAdmission,
-) -> Result<(), AdmissionDenial> {
-    if admission.token().is_empty() {
-        // A server with no token can authenticate nobody. Refusing is the
-        // only safe reading — the alternative ("empty means open") is the
-        // bug this module exists to remove.
-        return Err(AdmissionDenial::MissingToken);
-    }
-    match req.token.as_deref() {
-        // No header at all, or a present-but-blank one: the same "brought
-        // no credential" case, reported as such rather than as a mismatch.
-        None | Some("") => Err(AdmissionDenial::MissingToken),
-        Some(presented) if constant_time_eq(presented, admission.token()) => Ok(()),
-        Some(_) => Err(AdmissionDenial::BadToken),
-    }
-}
-
-/// Non-early-exit byte compare.
-///
-/// `subtle` is NOT a dependency of `op-host-services` (only
-/// `op-host-desktop` and the two relay crates carry it), and adding one
-/// would mean editing a manifest a concurrent session owns — so this is
-/// the hand-rolled equivalent: fold every byte difference into a single
-/// accumulator, no `return` inside the loop, no data-dependent branch, one
-/// comparison at the end. Length is compared up front on purpose: the
-/// token's shape is public (`{pid:x}-{nanos:x}`, see `make_live_token`),
-/// so its length is not a secret; what must not leak is HOW MANY leading
-/// bytes of a same-length guess were right.
-pub(super) fn constant_time_eq(presented: &str, expected: &str) -> bool {
-    let (presented, expected) = (presented.as_bytes(), expected.as_bytes());
-    if presented.len() != expected.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (a, b) in presented.iter().zip(expected.iter()) {
-        diff |= a ^ b;
-    }
-    diff == 0
-}
-
 /// JSON-RPC error body for a refused `/mcp` request, echoing the caller's
 /// request id so a client correlates the refusal with its call instead of
 /// hanging (same discipline as `op_mcp::parser`'s parse-failure path).
@@ -231,12 +168,6 @@ pub(super) fn denial_json_rpc(request_body: &str, denial: AdmissionDenial) -> St
         crate::mcp_serve::json_escape(denial.message()),
         request_id_raw(request_body)
     )
-}
-
-/// REST-shaped denial body for the `POST /api/mcp/document` route, which
-/// speaks `{ok,error}` rather than JSON-RPC.
-pub(super) fn denial_rest(denial: AdmissionDenial) -> String {
-    crate::mcp_serve::rest_error_body(denial.message())
 }
 
 /// The caller's top-level JSON-RPC `id`, verbatim (so a string id stays a

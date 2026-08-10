@@ -162,18 +162,12 @@ pub(super) fn serve_connection<S: std::io::Read + std::io::Write>(
     // client (`setSyncDocument` → POST `{document}`) drive THIS editor's
     // on-screen canvas, mirroring `apps/web/server/api/mcp/document.post.ts`.
     if crate::mcp_serve::is_document_sync_route(&req.method, &req.path) {
-        // Whole-document replacement of the live (possibly SHARED) document
-        // — the single most destructive thing this endpoint can do, so it
-        // takes the token gate before the body is even parsed. The REST
-        // route answers `{ok,error}`, not JSON-RPC.
-        if let Err(denial) = admission::check_token(&req, admission) {
-            return write_http_with_origin(
-                stream,
-                denial.http_status(),
-                &admission::denial_rest(denial),
-                cors_origin,
-            );
-        }
+        // Whole-document replacement of the live (possibly SHARED) document.
+        // The local desktop and a self-hosted serve-web daemon trust every
+        // caller that clears the `Host`/`Origin` boundary above — the online
+        // multi-tenant daemon is a separate request loop with its own
+        // per-account auth — so no per-instance token is demanded here. The
+        // REST route answers `{ok,error}`, not JSON-RPC.
         return serve_document_sync(stream, req_tx, wake_ui, stateful_lock, &req.body);
     }
     // Insert-only browser-extension ingress (`POST /api/import/web-snapshot`).
@@ -235,20 +229,12 @@ pub(super) fn serve_connection<S: std::io::Read + std::io::Write>(
         crate::mcp_serve::Stateless::NeedsState => {}
     }
     // Gate 2 (see `admission.rs`): everything from here down reads or writes
-    // the live document — every `tools/call`, not just the write ones — so it
-    // requires the per-instance token. This sits IN FRONT of
-    // `CollabGatePolicy` (which still runs on the UI thread for each apply)
-    // and does not replace it: the policy decides what a session permits, this
-    // decides who is allowed to ask at all. Refusals are a JSON-RPC error
-    // carrying the caller's id, never a silent pass.
-    if let Err(denial) = admission::check_token(&req, admission) {
-        return write_http_with_origin(
-            stream,
-            denial.http_status(),
-            &admission::denial_json_rpc(&req.body, denial),
-            cors_origin,
-        );
-    }
+    // the live document — every `tools/call`, not just the write ones. The
+    // `Host`/`Origin` boundary above is the only gate the local desktop and a
+    // self-hosted serve-web daemon apply; `CollabGatePolicy` (which still runs
+    // on the UI thread for each apply) decides what a session permits. The
+    // online multi-tenant daemon authenticates per account in its own request
+    // loop, not here.
     // Everything below observes or mutates shared state — the live
     // `EditorState` OR a `--file` document on disk (a read-modify-write).
     // Serialize it under one lock so snapshots stay coherent, concurrent live
