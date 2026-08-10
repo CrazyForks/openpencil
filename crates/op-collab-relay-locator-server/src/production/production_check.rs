@@ -1,17 +1,29 @@
-use std::{ffi::OsString, num::NonZeroU64, path::Path, time::SystemTime};
+use std::{ffi::OsString, path::Path, time::SystemTime};
 
+// The real check runs a HSM signing round trip that only exists on unix
+// (see the cfg(not(unix)) stub below), so everything it pulls in is
+// unix-only — matching the existing UnixHsmRelayLocatorSigner import.
+#[cfg(unix)]
+use std::num::NonZeroU64;
+
+#[cfg(unix)]
 use op_auth_bridge::{CollabUnionPolicy, CollabVerifierConfig, DEFAULT_MAX_COLLAB_JWKS_BYTES};
+#[cfg(unix)]
 use op_collab_policy_file::{read_bounded_regular_file, PinnedEd25519LocatorVerifier};
+#[cfg(unix)]
 use op_collab_relay_control_plane::RelayLocatorSigner;
+#[cfg(unix)]
 use op_collab_relay_protocol::{
     ExpectedDiscoveryId, OwnerNoiseStatic, RelayLocatorVerifier, RouteId, UnsignedRelayLocatorV1,
 };
+#[cfg(unix)]
 use sha2::{Digest as _, Sha256};
 
 use super::{required_absolute_path, ProductionLocatorConfig, LOCATOR_PUBLIC_KEYS_FILE_ENV};
 #[cfg(unix)]
 use crate::UnixHsmRelayLocatorSigner;
 
+#[cfg(unix)]
 const EXPIRED_NOT_BEFORE_UNIX: u64 = 1;
 const EXPIRED_AT_UNIX: u64 = 2;
 const EXPECTED_POLICY_SHA256_ENV: &str = "OPENPENCIL_COLLAB_EXPECTED_POLICY_SHA256";
@@ -120,6 +132,7 @@ pub(crate) fn parse_expected_policy_sha256(
     Ok(value)
 }
 
+#[cfg(unix)]
 fn fixed_expired_claims(
     config: &ProductionLocatorConfig,
 ) -> Result<UnsignedRelayLocatorV1, ProductionLocatorCheckError> {
