@@ -16,19 +16,22 @@ source_revision=
 build_id=
 signing_key=
 output_root=
+profile=hardened
+abi=2
 
 usage() {
     cat >&2 <<'EOF'
 usage: package-op-auth-prebuilt.sh \
   --artifact PATH --target TARGET --version VERSION \
   --source-revision FULL_HEX_REVISION --build-id ID \
-  --signing-key ED25519_PRIVATE_KEY.pem --output-root NEW_DIRECTORY
+  --signing-key ED25519_PRIVATE_KEY.pem --output-root NEW_DIRECTORY \
+  [--profile hardened|unobfuscated] [--abi 2|3]
 EOF
 }
 
 while [[ "$#" -gt 0 ]]; do
     case "$1" in
-        --artifact|--target|--version|--source-revision|--build-id|--signing-key|--output-root)
+        --artifact|--target|--version|--source-revision|--build-id|--signing-key|--output-root|--profile|--abi)
             [[ "$#" -ge 2 ]] || {
                 usage
                 exit 2
@@ -58,6 +61,22 @@ case "$target" in
         ;;
     *)
         printf 'error: unsupported target: %s\n' "$target" >&2
+        exit 2
+        ;;
+esac
+
+case "$profile" in
+    hardened) hardening_profile=op-auth-hardened-v1 ;;
+    unobfuscated) hardening_profile=op-auth-signed-unobfuscated-v1 ;;
+    *)
+        printf 'error: --profile must be hardened or unobfuscated\n' >&2
+        exit 2
+        ;;
+esac
+case "$abi" in
+    2|3) ;;
+    *)
+        printf 'error: --abi must be 2 or 3\n' >&2
         exit 2
         ;;
 esac
@@ -106,7 +125,7 @@ target_dir=$output_root/$target
 mkdir -p "$target_dir"
 cp "$artifact" "$target_dir/$artifact_name"
 printf '%s\n' "$version" > "$target_dir/VERSION"
-printf '2\n' > "$target_dir/ABI_VERSION"
+printf '%s\n' "$abi" > "$target_dir/ABI_VERSION"
 
 if command -v sha256sum >/dev/null 2>&1; then
     sha256=$(sha256sum "$target_dir/$artifact_name" | awk '{ print $1 }')
@@ -120,9 +139,9 @@ format=1
 target=$target
 artifact=$artifact_name
 version=$version
-abi=2
+abi=$abi
 sha256=$sha256
-hardening=op-auth-hardened-v1
+hardening=$hardening_profile
 source_revision=$source_revision
 build_id=$build_id
 EOF

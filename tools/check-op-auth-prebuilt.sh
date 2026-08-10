@@ -64,6 +64,10 @@ expected_symbols() {
             op_auth_collab_ticket_cancel \
             op_auth_collab_ticket_poll
     fi
+    if [[ "$1" -ge 3 ]]; then
+        printf '%s\n' \
+            op_auth_collab_relay_token_begin
+    fi
 }
 
 metadata_leak_count() {
@@ -131,8 +135,8 @@ while IFS= read -r artifact; do
     if [[ -f "$target_dir/ABI_VERSION" ]]; then
         abi_version=$(tr -d '[:space:]' < "$target_dir/ABI_VERSION")
     fi
-    if [[ ! "$abi_version" =~ ^[12]$ ]]; then
-        record_failure "$target: ABI_VERSION must be 1 or 2"
+    if [[ ! "$abi_version" =~ ^[123]$ ]]; then
+        record_failure "$target: ABI_VERSION must be 1, 2, or 3"
         abi_version=1
     fi
 
@@ -155,6 +159,11 @@ while IFS= read -r artifact; do
     debug_markers=$(debug_marker_count "$artifact")
     private_symbols=$(private_symbol_count "$artifact")
     hardened=$require_hardened
+    # Obfuscated profiles must additionally scrub private Rust symbol strings,
+    # source paths, and debug markers. The signed-unobfuscated profile is an
+    # explicit, signature-bound opt-out of those scrubs; signature presence and
+    # the C ABI surface are still enforced.
+    obfuscated=1
     if [[ "$abi_version" -ge 2 ]]; then
         hardened=1
         for signed_file in PROVENANCE PROVENANCE.sig; do
@@ -165,19 +174,29 @@ while IFS= read -r artifact; do
         if [[ ! -s "$prebuilt_root/PROVENANCE_PUBKEY" ]]; then
             record_failure "$target: release provenance public key is missing"
         fi
-        if [[ -f "$target_dir/PROVENANCE" ]] \
-            && ! grep -Fxq 'hardening=op-auth-hardened-v1' "$target_dir/PROVENANCE"; then
-            record_failure "$target: signed hardening profile is missing"
+        if [[ -f "$target_dir/PROVENANCE" ]]; then
+            if grep -Fxq 'hardening=op-auth-hardened-v1' "$target_dir/PROVENANCE"; then
+                obfuscated=1
+            elif grep -Fxq 'hardening=op-auth-signed-unobfuscated-v1' \
+                "$target_dir/PROVENANCE"; then
+                obfuscated=0
+            else
+                record_failure "$target: signed hardening profile is missing or unrecognized"
+            fi
         fi
     fi
 
-    if [[ "$hardened" -eq 1 ]]; then
+    if [[ "$hardened" -eq 1 && "$obfuscated" -eq 1 ]]; then
         [[ "$path_leaks" -eq 0 ]] \
             || record_failure "$target: archive leaks $path_leaks source/build path strings"
         [[ "$debug_markers" -eq 0 ]] \
             || record_failure "$target: archive contains $debug_markers debug metadata markers"
         [[ "$private_symbols" -eq 0 ]] \
             || record_failure "$target: archive exposes $private_symbols private Rust symbol/module strings"
+    elif [[ "$hardened" -eq 1 && "$obfuscated" -eq 0 ]]; then
+        printf \
+            'warning: %s is signed-unobfuscated (%s path strings, %s debug markers, %s private Rust symbol/module strings retained by design)\n' \
+            "$target" "$path_leaks" "$debug_markers" "$private_symbols" >&2
     elif [[ "$path_leaks" -gt 0 || "$debug_markers" -gt 0 || "$private_symbols" -gt 0 ]]; then
         printf \
             'warning: %s is legacy ABI-v1 (%s path strings, %s debug markers, %s private Rust symbol/module strings); rebuild in private CI before production ABI-v2 use\n' \

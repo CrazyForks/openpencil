@@ -1,0 +1,9 @@
+format=1
+target=x86_64-pc-windows-msvc
+artifact=op_auth.lib
+version=0.8.3
+abi=3
+sha256=c0bcdf5b71f2efb357631f43aaca41b13b98c7142bceffa6f524d0fc43851a20
+hardening=op-auth-signed-unobfuscated-v1
+source_revision=f1d5cedef57d6bacddd12f722c8829977844ae0e
+build_id=op-auth-collab-v3-f1d5ced

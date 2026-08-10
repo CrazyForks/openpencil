@@ -14,6 +14,15 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
 
 pub const HARDENING_PROFILE_V1: &str = "op-auth-hardened-v1";
+/// Signed but deliberately un-obfuscated (and un-hardened) release profile. The
+/// archive is Ed25519-signed and ABI-pinned, but its private Rust symbol name
+/// strings, source/build paths, and debug sections are NOT scrubbed. It is an
+/// explicit, signature-bound declaration of a lower anti-reversing bar.
+pub const SIGNED_UNOBFUSCATED_PROFILE_V1: &str = "op-auth-signed-unobfuscated-v1";
+
+fn is_accepted_hardening_profile(value: &str) -> bool {
+    matches!(value, HARDENING_PROFILE_V1 | SIGNED_UNOBFUSCATED_PROFILE_V1)
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ValidatedPrebuilt {
@@ -77,7 +86,11 @@ pub fn validate_prebuilt(
     require_field(&manifest, "version", package_version)?;
     require_field(&manifest, "abi", &abi_version.to_string())?;
     require_field(&manifest, "sha256", &actual_sha256.to_ascii_lowercase())?;
-    require_field(&manifest, "hardening", HARDENING_PROFILE_V1)?;
+    if !is_accepted_hardening_profile(field(&manifest, "hardening")?) {
+        return Err(ProvenanceError(
+            "provenance manifest declares an unrecognized hardening profile",
+        ));
+    }
     validate_source_revision(field(&manifest, "source_revision")?)?;
     validate_build_id(field(&manifest, "build_id")?)?;
 
@@ -112,7 +125,7 @@ fn read_optional_abi(path: &Path) -> Result<u32, ProvenanceError> {
     }
     let value = read_trimmed(path, "ABI_VERSION is unreadable")?;
     match value.parse::<u32>() {
-        Ok(version @ (1 | 2)) => Ok(version),
+        Ok(version @ 1..=3) => Ok(version),
         _ => Err(ProvenanceError("ABI_VERSION is unsupported")),
     }
 }
