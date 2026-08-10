@@ -785,20 +785,16 @@ pub struct EditorUiState {
     /// Whether the kit-filter dropdown popover is open (the TS panel
     /// uses a native `<select>`; the Rust panel paints a popover).
     pub component_browser_kit_picker_open: bool,
-    /// Imported-kit id awaiting delete confirmation — the TS panel's
-    /// `confirmDeleteKitId` (Trash press arms it; Delete / Cancel
-    /// resolve it). Transient: never serialized.
+    /// Imported-kit id awaiting delete confirmation — the TS panel's `confirmDeleteKitId`
+    /// (Trash press arms it; Delete / Cancel resolve it). Transient: never serialized.
     pub component_browser_confirm_delete_kit: Option<String>,
-    /// A queued kit Import / Export request — set by a header-button
-    /// press, drained by the desktop host (which owns the native file
-    /// dialogs). Transient: never serialized.
+    /// A queued kit Import / Export request — set by a header-button press, drained by the
+    /// desktop host (which owns the native file dialogs). Transient: never serialized.
     pub component_browser_kit_request: Option<crate::uikit_io::KitIoRequest>,
-    /// Persistence-dirty flag: raised by `import_kit` / `remove_kit`,
-    /// drained by the desktop host into `uikits.json` (the TS
-    /// `uikit-store.persist()` counterpart).
+    /// Persistence-dirty flag: raised by `import_kit` / `remove_kit`, drained by the desktop
+    /// host into `uikits.json` (the TS `uikit-store.persist()` counterpart).
     pub ui_kits_changed: bool,
-    /// A queued component-instantiate request — `(kit_id, comp_id)`,
-    /// set by a card click, drained by the desktop host so it can
-    /// run the instantiate against the viewport's centre.
+    /// A queued component-instantiate request — `(kit_id, comp_id)`, set by a card click,
+    /// drained by the desktop host so it can run the instantiate against the viewport's centre.
     pub component_browser_pending_insert: Option<(String, String)>,
 }
