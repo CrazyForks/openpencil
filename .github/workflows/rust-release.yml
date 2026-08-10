@@ -1039,6 +1039,11 @@ jobs:
           fi
 
           git switch --force-create "$target_branch" "origin/${target_branch}"
+          # Release branches share their name with the release tag. Remove the
+          # runner-local tag so create-pull-request's `symbolic-ref --short`
+          # resolves vX.Y.Z instead of heads/vX.Y.Z (and then tries the
+          # nonexistent origin/heads/vX.Y.Z remote-tracking branch).
+          git update-ref -d "refs/tags/${target_branch}"
           printf '%s\n' "$manifest" > nix/release-manifest.json
           echo "target-branch=$target_branch" >> "$GITHUB_OUTPUT"
 
