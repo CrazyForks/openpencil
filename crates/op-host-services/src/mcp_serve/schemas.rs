@@ -138,9 +138,9 @@ pub const DEBUG_TOOL_SCHEMAS: &[&str] = &[
 
 #[cfg(test)]
 mod tests {
-    use super::TOOL_SCHEMAS;
     #[cfg(feature = "mcp-debug-tools")]
     use super::DEBUG_TOOL_SCHEMAS;
+    use super::TOOL_SCHEMAS;
 
     #[test]
     fn all_array_properties_declare_items() {
@@ -159,7 +159,9 @@ mod tests {
                     serde_json::from_str(raw).expect("tool schema must be valid JSON");
                 let properties = value["inputSchema"]["properties"]
                     .as_object()
-                    .unwrap_or_else(|| panic!("tool {} must declare inputSchema.properties", value["name"]));
+                    .unwrap_or_else(|| {
+                        panic!("tool {} must declare inputSchema.properties", value["name"])
+                    });
                 for (key, prop) in properties {
                     if prop.get("type").and_then(|t| t.as_str()) == Some("array") {
                         assert!(
