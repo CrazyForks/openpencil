@@ -40,6 +40,20 @@ fn latest_release_api() -> String {
     format!("https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases?per_page=20")
 }
 
+/// Releases Atom feed — the fallback when the JSON API is unavailable.
+///
+/// The anonymous API allows 60 requests per hour *per source IP*, so every
+/// user behind a shared egress (corporate NAT, a VPN, most China-region
+/// proxies) can find it already exhausted by strangers and see the probe fail
+/// with "check the network" while the network is perfectly fine. The Atom
+/// feed is served by github.com rather than api.github.com and is not on that
+/// quota, so it answers when the API will not. Drafts never appear in it,
+/// which is the same rule `select_latest_release_tag` applies to the API
+/// response.
+fn latest_release_atom() -> String {
+    format!("https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases.atom")
+}
+
 /// Background release-API probe. One request per `spawn`; the
 /// runner re-spawns to re-check (e.g. from the "Check for Updates"
 /// menu item).
@@ -133,18 +147,58 @@ fn fetch_latest_tag() -> Option<String> {
             .user_agent(concat!("openpencil-desktop/", env!("CARGO_PKG_VERSION")))
             .build()
             .ok()?;
-        let resp = client
-            .get(latest_release_api())
-            .header("Accept", "application/vnd.github+json")
-            .send()
-            .await
-            .ok()?;
-        if !resp.status().is_success() {
-            return None;
+        // The API carries the richer response, so it stays the first choice;
+        // the feed only has to cover the case where the API refuses to answer
+        // at all. A rate-limited probe must not read as "you are offline".
+        if let Some(tag) = fetch_tag_from_api(&client).await {
+            return Some(tag);
         }
-        let json: serde_json::Value = resp.json().await.ok()?;
-        select_latest_release_tag(&json)
+        fetch_tag_from_atom(&client).await
     })
+}
+
+async fn fetch_tag_from_api(client: &reqwest::Client) -> Option<String> {
+    let resp = client
+        .get(latest_release_api())
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let json: serde_json::Value = resp.json().await.ok()?;
+    select_latest_release_tag(&json)
+}
+
+async fn fetch_tag_from_atom(client: &reqwest::Client) -> Option<String> {
+    let resp = client
+        .get(latest_release_atom())
+        .header("Accept", "application/atom+xml")
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    select_latest_release_tag_from_atom(&resp.text().await.ok()?)
+}
+
+/// Pull the newest release tag out of the releases Atom feed.
+///
+/// Entries are newest-first and each carries
+/// `<id>tag:github.com,2008:Repository/<repo-id>/<tag></id>`, so the tag is
+/// the last path segment of the first entry id. Only that one field is read —
+/// this is deliberately a targeted extraction rather than an XML parse, so a
+/// feed that grows unrelated markup cannot change the result.
+fn select_latest_release_tag_from_atom(feed: &str) -> Option<String> {
+    // The feed itself opens with an `<id>` for the repository, which has no
+    // `Repository/<id>/<tag>` shape; requiring the entry marker skips it.
+    const ENTRY_ID_MARKER: &str = "tag:github.com,2008:Repository/";
+    let rest = feed.split_once(ENTRY_ID_MARKER)?.1;
+    let id_body = rest.split_once("</id>")?.0;
+    let tag = id_body.rsplit_once('/')?.1.trim();
+    (!tag.is_empty() && !tag.contains('<')).then(|| tag.to_string())
 }
 
 /// Select the newest published release tag from GitHub's releases list.
@@ -334,6 +388,44 @@ pub fn open_url(url: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Shaped like the live feed: a repository-level `<id>` comes first and
+    /// must not be mistaken for a release.
+    const ATOM_FEED: &str = concat!(
+        "<feed><id>tag:github.com,2008:https://github.com/ZSeven-W/openpencil/releases</id>",
+        "<entry><id>tag:github.com,2008:Repository/1159938129/v0.8.3</id></entry>",
+        "<entry><id>tag:github.com,2008:Repository/1159938129/v0.8.2</id></entry></feed>",
+    );
+
+    #[test]
+    fn atom_fallback_reads_the_newest_release_tag() {
+        assert_eq!(
+            select_latest_release_tag_from_atom(ATOM_FEED).as_deref(),
+            Some("v0.8.3")
+        );
+    }
+
+    #[test]
+    fn atom_fallback_yields_nothing_without_a_release_entry() {
+        // A repo with no releases still serves a feed, and its only `<id>` is
+        // the repository one. Returning its trailing path segment there would
+        // invent a version out of the URL.
+        for feed in [
+            "<feed><id>tag:github.com,2008:https://github.com/o/r/releases</id></feed>",
+            "<feed></feed>",
+            "",
+            // Truncated mid-entry: no closing tag to bound the id.
+            "<feed><entry><id>tag:github.com,2008:Repository/1/v0.8.3",
+            // Present but empty tag segment.
+            "<feed><entry><id>tag:github.com,2008:Repository/1/</id></entry></feed>",
+        ] {
+            assert_eq!(
+                select_latest_release_tag_from_atom(feed),
+                None,
+                "{feed:?} must not yield a version"
+            );
+        }
+    }
 
     #[test]
     fn windows_start_args_quotes_urls_with_query_params() {
