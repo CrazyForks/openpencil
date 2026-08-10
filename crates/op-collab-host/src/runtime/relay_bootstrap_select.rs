@@ -7,8 +7,7 @@ use op_collab_relay_protocol::RelayRegion;
 
 use super::super::types::{CollabRuntimeError, CollabRuntimeFailure};
 use super::{
-    relay_runtime_error, EnvironmentRelayBootstrapProvider, RelayBootstrapProvider,
-    BOOTSTRAP_URL_ENV, MAX_URL_BYTES,
+    EnvironmentRelayBootstrapProvider, RelayBootstrapProvider, BOOTSTRAP_URL_ENV, MAX_URL_BYTES,
 };
 
 /// Built-in production hubs, injected at **build time** by the release
@@ -51,8 +50,13 @@ pub(in crate::runtime) fn bootstrap_provider(
         }
         None => {
             let url = builtin_bootstrap_url(preferred_region).ok_or_else(misconfigured)?;
+            // An injected hub that fails the endpoint policy is a broken
+            // build, not an outage: the value cannot become valid by waiting,
+            // so it reports as unconfigured rather than temporarily
+            // unavailable. `build.rs` refuses such a value at compile time;
+            // this keeps the runtime copy honest if one ever reaches here.
             let provider =
-                EnvironmentRelayBootstrapProvider::new(url).map_err(|_| relay_runtime_error())?;
+                EnvironmentRelayBootstrapProvider::new(url).map_err(|_| misconfigured())?;
             Ok(Arc::new(provider))
         }
     }

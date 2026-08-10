@@ -22,7 +22,7 @@ use reqwest::{StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
-use super::types::{CollabRuntimeError, CollabRuntimeFailure};
+use super::types::CollabRuntimeFailure;
 
 #[path = "relay_bootstrap_url.rs"]
 mod bootstrap_url;
@@ -731,10 +731,6 @@ struct BootstrapRegion {
 struct BootstrapKey {
     kid: String,
     x: String,
-}
-
-fn relay_runtime_error() -> CollabRuntimeError {
-    CollabRuntimeError::new(CollabRuntimeFailure::RelayUnavailable)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
