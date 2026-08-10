@@ -139,3 +139,14 @@ Reuse ONE contract across same-purpose slides in a deck; do not invent a fresh l
 - Text-only slides: let typography do the emotional work — oversized type, intentional asymmetry. Unusual ≠ unreadable.
 
 Apply these silently through node structure; never emit the contract IDs as text.
+
+## Delivering the deck
+
+Built boards are not a delivered deck. Export it:
+
+- MCP: `export_deck { format: "pptx" | "html" | "pdf", outputPath }`
+- CLI: `op export-deck --output PATH [--format pptx|html|pdf]`
+
+`pptx` is editable PowerPoint and the default; `html` is self-contained; `pdf`
+is one page per slide. The path argument is `outputPath` — `filePath` means
+the target `.op` document everywhere in this API.

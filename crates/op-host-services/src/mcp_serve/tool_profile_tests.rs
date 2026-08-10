@@ -63,6 +63,9 @@ fn the_denied_set_is_exactly_the_reviewed_list() {
             "debug_logs_tail",
             "debug_screenshot",
             "debug_validation_report",
+            // Writes a deck file at a caller-chosen path — denied online for the
+            // same reason save_document is.
+            "export_deck",
             "import_html",
             "import_html_url",
             "import_svg",

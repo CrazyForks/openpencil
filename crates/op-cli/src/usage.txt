@@ -24,6 +24,10 @@ COMMON COMMANDS:
                                           export a page, arbitrary node, or the
                                           current Live Canvas selection; omitting
                                           --item is equivalent to --selection
+  op export-deck --output PATH [--format pptx|html|pdf]
+                                          export the active page's boards as a
+                                          presentation deck: PowerPoint, self-
+                                          contained HTML, or slide-per-page PDF
   op get [--type T] [--name N] [--id ID] [--depth N] [--parent P]
   op selection                            get current selection
   op insert <json|@file|-> [--parent P] [--page PAGE] [--post-process]

@@ -147,3 +147,51 @@ fn write_export_response_rejects_invalid_payloads() {
     )
     .is_err());
 }
+
+#[test]
+fn export_deck_defaults_to_pptx_and_requires_an_output() {
+    let parsed = parse_args(&args(&["export-deck", "--output", "/tmp/deck.pptx"]))
+        .expect("parse export-deck");
+    assert!(matches!(
+        parsed.command,
+        Command::ExportDeck { ref format, .. } if format == "pptx"
+    ));
+
+    // PowerPoint is the format users reach for by name, so it is the default;
+    // the other two must still be selectable.
+    for format in ["html", "pdf"] {
+        let parsed = parse_args(&args(&[
+            "export-deck",
+            "--output",
+            "/tmp/deck.out",
+            "--format",
+            format,
+        ]))
+        .expect("parse deck format");
+        assert!(matches!(
+            parsed.command,
+            Command::ExportDeck { format: ref parsed_format, .. } if parsed_format == format
+        ));
+    }
+
+    assert!(parse_args(&args(&["export-deck"]))
+        .unwrap_err()
+        .to_string()
+        .contains("--output"));
+}
+
+#[test]
+fn export_deck_rejects_a_node_export_format() {
+    // png is valid for `op export` and meaningless for a deck; accepting it
+    // would reach the daemon and fail there instead of at the typo.
+    let error = parse_args(&args(&[
+        "export-deck",
+        "--output",
+        "/tmp/deck.pptx",
+        "--format",
+        "png",
+    ]))
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("unsupported deck format"), "{error}");
+}

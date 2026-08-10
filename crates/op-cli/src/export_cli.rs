@@ -75,6 +75,51 @@ pub(crate) fn run_export(
     write_export_response(&response, Path::new(output))
 }
 
+pub(crate) fn map_export_deck(flags: &Flags) -> Result<Command, CliError> {
+    let format = flag_value(flags, "format").unwrap_or_else(|| "pptx".into());
+    if !matches!(format.as_str(), "pptx" | "html" | "pdf") {
+        return Err(CliError::Usage(format!(
+            "unsupported deck format {format:?}: must be one of pptx, html, pdf"
+        )));
+    }
+    let output =
+        flag_value(flags, "output").ok_or_else(|| CliError::usage("--output is required"))?;
+    Ok(Command::ExportDeck { output, format })
+}
+
+/// Export the active page's boards as a deck.
+///
+/// Unlike `run_export`, the bytes never travel: the daemon writes the deck
+/// itself. That makes the path the daemon's to resolve, and its working
+/// directory is not the caller's — so a relative `--output` is made absolute
+/// here, against the shell the user actually typed in.
+pub(crate) fn run_export_deck(
+    port: u16,
+    token: &str,
+    output: &str,
+    format: &str,
+) -> Result<String, CliError> {
+    let output_path = Path::new(output);
+    let absolute = if output_path.is_absolute() {
+        output_path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| CliError::Usage(format!("cannot resolve --output: {error}")))?
+            .join(output_path)
+    };
+    let mut arguments = serde_json::Map::new();
+    arguments.insert("format".into(), Value::String(format.into()));
+    arguments.insert(
+        "outputPath".into(),
+        Value::String(absolute.display().to_string()),
+    );
+    post(
+        port,
+        token,
+        &tool_call_body("export_deck", &Value::Object(arguments).to_string()),
+    )
+}
+
 pub(crate) fn write_export_response(response: &str, output: &Path) -> Result<String, CliError> {
     let value: Value = serde_json::from_str(response).map_err(|error| {
         CliError::Payload(format!("export_item returned invalid JSON: {error}"))

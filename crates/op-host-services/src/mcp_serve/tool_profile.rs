@@ -372,6 +372,14 @@ pub const TOOL_PROFILES: &[ToolProfile] = &[
         ToolSurface::InMemory,
     ),
     ToolProfile::new("export_design_md", ToolAccess::Read, ToolSurface::InMemory),
+    // Writes a deck file at a caller-chosen path, so it is a local-filesystem
+    // surface rather than an in-memory one: a hosted tenant must not be able
+    // to place bytes anywhere on the daemon host.
+    ToolProfile::new(
+        "export_deck",
+        ToolAccess::Read,
+        ToolSurface::LocalFilesystem,
+    ),
     ToolProfile::new("export_item", ToolAccess::Read, ToolSurface::InMemory),
     ToolProfile::new("export_nodes", ToolAccess::Read, ToolSurface::InMemory),
     ToolProfile::new("find_empty_space", ToolAccess::Read, ToolSurface::InMemory),

@@ -126,6 +126,9 @@ fn run(args: &[String]) -> Result<String, CliError> {
             &target_token,
             &tool_call_body(&tool, &args_json),
         )?,
+        Command::ExportDeck { output, format } => {
+            export_cli::run_export_deck(target_port, &target_token, &output, &format)?
+        }
         Command::Export {
             item_id,
             selection: _,
@@ -210,6 +213,10 @@ enum Command {
         output: String,
         format: String,
         scale: Option<String>,
+    },
+    ExportDeck {
+        output: String,
+        format: String,
     },
 }
 
@@ -335,6 +342,7 @@ fn command_from_positionals(positionals: &[String], flags: &Flags) -> Result<Com
         }
         "stop" => Ok(Command::StopMcp),
         "export" => export_cli::map_export(flags),
+        "export-deck" => export_cli::map_export_deck(flags),
         "skill:export" => Ok(Command::SkillExport {
             name: required_pos(
                 positionals,
