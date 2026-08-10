@@ -68,7 +68,25 @@ fn stub_cli(body: &str) -> (std::path::PathBuf, std::path::PathBuf) {
 
 /// Run one generation turn against a stand-in and return the error text
 /// the user would see.
+///
+/// Retries a spawn that races on `ETXTBSY`. Writing a stub and exec'ing
+/// it from many threads at once means one thread's still-open write fd
+/// can be inherited across another thread's `fork()` and briefly hold
+/// the freshly-written stub open for write, so `execve` reports "Text
+/// file busy". That is an artifact of the parallel write-then-exec
+/// harness, not the stderr-drain behaviour under test, and the window is
+/// microseconds — a retry clears it.
 fn turn_error(body: &str) -> String {
+    for _ in 0..16 {
+        let message = turn_error_once(body);
+        if !message.contains("Text file busy") && !message.contains("os error 26") {
+            return message;
+        }
+    }
+    turn_error_once(body)
+}
+
+fn turn_error_once(body: &str) -> String {
     let (dir, binary) = stub_cli(body);
     let provider = SubprocessProvider::for_cli_generation(CliName::Antigravity)
         .expect("antigravity has a subprocess template")
