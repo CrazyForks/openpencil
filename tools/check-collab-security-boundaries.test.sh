@@ -54,8 +54,8 @@ new_fixture() {
         "$fixture_root/crates/op-editor-host-core/src/collab" \
         "$fixture_root/crates/op-editor-ui/src" \
         "$fixture_root/crates/op-host-native/src" \
-        "$fixture_root/crates/op-host-desktop/src/collab_runtime" \
-        "$fixture_root/crates/op-host-desktop/src/collab_runtime/network" \
+        "$fixture_root/crates/op-host-desktop/src" \
+        "$fixture_root/crates/op-collab-host/src/runtime/network" \
         "$fixture_root/crates/op-host-services/src" \
         "$fixture_root/crates/op-i18n/src" \
         "$fixture_root/deploy/collab-relay" \
@@ -235,6 +235,24 @@ location = /v1/locator {
     client_max_body_size 191;
     proxy_set_header Authorization $http_authorization;
 }
+location = /v1/pairing-code {
+    if ($request_uri != "/v1/pairing-code") { return 404; }
+    limit_except POST { deny all; }
+    client_max_body_size 624; client_body_buffer_size 624;
+    if ($http_content_type != "application/vnd.openpencil.relay-pairing-publish-v1") { return 415; }
+    proxy_pass_request_headers off;
+    proxy_pass http://locator:8092/v1/pairing-code;
+}
+location = /v1/pairing-code/claim {
+    if ($request_uri != "/v1/pairing-code/claim") { return 404; }
+    limit_except POST { deny all; }
+    client_max_body_size 49; client_body_buffer_size 49;
+    if ($content_length != "49") { return 400; }
+    if ($http_content_type != "application/vnd.openpencil.relay-pairing-claim-v1") { return 415; }
+    if ($http_accept != "application/vnd.openpencil.relay-sealed-invite-v1") { return 406; }
+    proxy_pass_request_headers off;
+    proxy_pass http://locator:8092/v1/pairing-code/claim;
+}
 location / {
     return 404;
 }
@@ -332,11 +350,33 @@ server {
         if ($request_uri != "/v1/locator") {
             return 404;
         }
+        limit_except POST {
+            deny all;
+        }
         proxy_pass_request_headers off;
         proxy_set_header Authorization $http_authorization;
         proxy_set_header Transfer-Encoding "";
         proxy_set_header Content-Encoding "";
     }
+    location = /v1/pairing-code {
+        if ($request_uri != "/v1/pairing-code") { return 404; }
+        limit_except POST { deny all; }
+        client_max_body_size 624; client_body_buffer_size 624;
+        if ($http_content_type != "application/vnd.openpencil.relay-pairing-publish-v1") { return 415; }
+        proxy_pass_request_headers off;
+        proxy_pass http://openpencil_locator/v1/pairing-code;
+    }
+    location = /v1/pairing-code/claim {
+        if ($request_uri != "/v1/pairing-code/claim") { return 404; }
+        limit_except POST { deny all; }
+        client_max_body_size 49; client_body_buffer_size 49;
+        if ($content_length != "49") { return 400; }
+        if ($http_content_type != "application/vnd.openpencil.relay-pairing-claim-v1") { return 415; }
+        if ($http_accept != "application/vnd.openpencil.relay-sealed-invite-v1") { return 406; }
+        proxy_pass_request_headers off;
+        proxy_pass http://openpencil_locator/v1/pairing-code/claim;
+    }
+    location / { return 404; }
 }
 EOF
     for locator_edge_file in \
@@ -731,14 +771,14 @@ EOF
 pub const MAX_AVATAR_SOURCE_PIXELS: u64 = 1_048_576;
 EOF
 
-    cat > "$fixture_root/crates/op-host-desktop/src/collab_runtime/types.rs" <<'EOF'
+    cat > "$fixture_root/crates/op-collab-host/src/runtime/types.rs" <<'EOF'
 assert_not_impl_any!(OwnerNetworkCommand: Clone);
 assert_not_impl_any!(GuestNetworkCommand: Clone);
 assert_not_impl_any!(PeerNetworkCommand: Clone);
 fn verification_commands_move_the_original_ticket_allocation() {}
 EOF
 
-    cat > "$fixture_root/crates/op-host-desktop/src/collab_runtime/relay_bootstrap_tests.rs" <<'EOF'
+    cat > "$fixture_root/crates/op-collab-host/src/runtime/relay_bootstrap_tests.rs" <<'EOF'
 #[test]
 fn payload_rejects_exact_cross_region_key_reuse() {}
 
@@ -749,7 +789,7 @@ fn an_unpinned_join_without_confirmation_still_requires_this_account() {}
 fn an_unpinned_join_admits_a_foreign_account_only_behind_the_confirmation_gate() {}
 EOF
 
-    cat > "$fixture_root/crates/op-host-desktop/src/collab_runtime/network/owner.rs" <<'EOF'
+    cat > "$fixture_root/crates/op-collab-host/src/runtime/network/owner.rs" <<'EOF'
 fn owner_policy() {
     let _ = PeerIdentityPolicy::AnyIssuedAccount;
 }
