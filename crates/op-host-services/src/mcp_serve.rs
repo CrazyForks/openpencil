@@ -37,27 +37,27 @@ use op_mcp::{
     get_style_guide_tags_snapshot, get_variables_snapshot, get_viewport_snapshot,
     group_selected_snapshot, import_svg_snapshot, insert_node_snapshot,
     instantiate_component_snapshot, lint_document_snapshot, list_components_snapshot,
-    list_node_kinds_snapshot, list_pages_snapshot, list_theme_presets_snapshot,
-    list_variables_snapshot, load_theme_preset_snapshot, move_node_snapshot,
-    nudge_selected_snapshot, open_document_snapshot, paste_clipboard_snapshot, read_nodes_snapshot,
-    redo_snapshot, remove_node_effect_snapshot, remove_page_snapshot, rename_component_snapshot,
-    rename_page_snapshot, rename_variable_snapshot, reorder_page_snapshot,
-    reorder_selected_snapshot, replace_all_matching_properties_snapshot, replace_node_snapshot,
-    run_stdio_with_applier, save_document_snapshot, save_theme_preset_snapshot,
-    search_all_unique_properties_snapshot, selection_snapshot, set_active_axis_value_snapshot,
-    set_active_page_snapshot, set_active_tool_snapshot, set_design_md_snapshot,
-    set_ellipse_arc_snapshot, set_node_collapsed_snapshot, set_node_corner_radius_snapshot,
-    set_node_fill_hex_snapshot, set_node_flip_snapshot, set_node_font_size_snapshot,
-    set_node_font_weight_snapshot, set_node_hidden_snapshot, set_node_locked_snapshot,
-    set_node_name_snapshot, set_node_rotation_snapshot, set_node_stroke_hex_snapshot,
-    set_node_stroke_side_width_snapshot, set_node_stroke_width_snapshot, set_node_text_snapshot,
-    set_selection_set_snapshot, set_selection_snapshot, set_themes_snapshot,
-    set_variable_boolean_snapshot, set_variable_color_snapshot, set_variable_number_snapshot,
-    set_variable_string_snapshot, set_variables_snapshot, set_viewport_snapshot,
-    snapshot_layout_snapshot, spawn_agents_snapshot, toggle_node_selection_snapshot,
-    tool_search_snapshot, undo_snapshot, ungroup_selected_snapshot, update_node_snapshot,
-    upsert_component_snapshot, upsert_screen_snapshot, upsert_variables_snapshot, McpTool,
-    ToolRegistry,
+    list_node_kinds_snapshot, list_pages_snapshot, list_style_guides_snapshot,
+    list_theme_presets_snapshot, list_variables_snapshot, load_theme_preset_snapshot,
+    move_node_snapshot, nudge_selected_snapshot, open_document_snapshot, paste_clipboard_snapshot,
+    read_nodes_snapshot, redo_snapshot, remove_node_effect_snapshot, remove_page_snapshot,
+    rename_component_snapshot, rename_page_snapshot, rename_variable_snapshot,
+    reorder_page_snapshot, reorder_selected_snapshot, replace_all_matching_properties_snapshot,
+    replace_node_snapshot, run_stdio_with_applier, save_document_snapshot,
+    save_theme_preset_snapshot, search_all_unique_properties_snapshot, selection_snapshot,
+    set_active_axis_value_snapshot, set_active_page_snapshot, set_active_tool_snapshot,
+    set_design_md_snapshot, set_ellipse_arc_snapshot, set_node_collapsed_snapshot,
+    set_node_corner_radius_snapshot, set_node_fill_hex_snapshot, set_node_flip_snapshot,
+    set_node_font_size_snapshot, set_node_font_weight_snapshot, set_node_hidden_snapshot,
+    set_node_locked_snapshot, set_node_name_snapshot, set_node_rotation_snapshot,
+    set_node_stroke_hex_snapshot, set_node_stroke_side_width_snapshot,
+    set_node_stroke_width_snapshot, set_node_text_snapshot, set_selection_set_snapshot,
+    set_selection_snapshot, set_themes_snapshot, set_variable_boolean_snapshot,
+    set_variable_color_snapshot, set_variable_number_snapshot, set_variable_string_snapshot,
+    set_variables_snapshot, set_viewport_snapshot, snapshot_layout_snapshot, spawn_agents_snapshot,
+    toggle_node_selection_snapshot, tool_search_snapshot, undo_snapshot, ungroup_selected_snapshot,
+    update_node_snapshot, upsert_component_snapshot, upsert_screen_snapshot,
+    upsert_variables_snapshot, McpTool, ToolRegistry,
 };
 #[cfg(feature = "mcp-debug-tools")]
 use op_mcp::{
@@ -631,6 +631,7 @@ fn rebuild_registry(doc: &EditorState, requested_tool: Option<&str>) -> ToolRegi
     register_tool!("export_design_md", export_design_md_snapshot(doc));
     register_tool!("get_style_guide_tags", get_style_guide_tags_snapshot());
     register_tool!("get_style_guide", get_style_guide_snapshot());
+    register_tool!("list_style_guides", list_style_guides_snapshot());
     register_tool!("get_guidelines", get_guidelines_snapshot());
     // Phase 0: always register spawn_agents (validates + returns request result).
     // Actual parallel execution is deferred to Phase 3 (Task 3.1).

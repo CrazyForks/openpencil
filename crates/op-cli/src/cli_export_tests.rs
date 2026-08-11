@@ -230,3 +230,29 @@ fn templates_filters_are_optional() {
         Command::Templates { scene: Some(ref scene), .. } if scene == "slides"
     ));
 }
+
+#[test]
+fn styles_takes_a_bare_id_or_filters() {
+    let listing = parse_args(&args(&["styles"])).expect("parse styles");
+    assert!(matches!(
+        listing.command,
+        Command::Styles {
+            id: None,
+            tag: None,
+            platform: None
+        }
+    ));
+
+    let one = parse_args(&args(&["styles", "user:my-brand"])).expect("parse styles id");
+    assert!(matches!(
+        one.command,
+        Command::Styles { id: Some(ref id), .. } if id == "user:my-brand"
+    ));
+
+    let filtered =
+        parse_args(&args(&["styles", "--platform", "slides"])).expect("parse styles filter");
+    assert!(matches!(
+        filtered.command,
+        Command::Styles { platform: Some(ref platform), .. } if platform == "slides"
+    ));
+}

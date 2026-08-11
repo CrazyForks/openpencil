@@ -70,6 +70,9 @@ fn the_denied_set_is_exactly_the_reviewed_list() {
             "import_html_url",
             "import_svg",
             "import_web_snapshot",
+            // Reads the host's imported DESIGN.md files, which carry no tenant
+            // dimension — denied online for the same reason list_theme_presets is.
+            "list_style_guides",
             "list_theme_presets",
             "load_theme_preset",
             "open_document",

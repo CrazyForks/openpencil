@@ -268,7 +268,8 @@ pub use spawn_agents_tool::{spawn_agents_snapshot, SpawnAgents, SpawnSpec};
 pub mod tool_search;
 pub use editor_state_tool::{get_editor_state_snapshot, GetEditorState};
 pub use style_guide_tools::{
-    get_style_guide_snapshot, get_style_guide_tags_snapshot, GetStyleGuide, GetStyleGuideTags,
+    get_style_guide_snapshot, get_style_guide_tags_snapshot, list_style_guides_snapshot,
+    GetStyleGuide, GetStyleGuideTags, ListStyleGuides,
 };
 pub use style_ops_tools::{
     replace_all_matching_properties_snapshot, search_all_unique_properties_snapshot,

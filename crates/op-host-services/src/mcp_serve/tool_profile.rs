@@ -380,6 +380,13 @@ pub const TOOL_PROFILES: &[ToolProfile] = &[
         ToolAccess::Read,
         ToolSurface::LocalFilesystem,
     ),
+    // Reads the user's imported DESIGN.md files off the daemon host, not
+    // just the embedded corpus, so it is not an in-memory surface.
+    ToolProfile::new(
+        "list_style_guides",
+        ToolAccess::Read,
+        ToolSurface::LocalFilesystem,
+    ),
     ToolProfile::new(
         "list_scene_templates",
         ToolAccess::Read,

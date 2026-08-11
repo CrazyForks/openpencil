@@ -34,6 +34,9 @@ COMMON COMMANDS:
   op use-template <id>                      start from a scene template: takes
                                           over a blank starter page, otherwise
                                           appends its boards
+  op styles [<id>] [--tag T] [--platform P] list style guides: the shipped
+                                          corpus plus your imported DESIGN.md
+                                          files; a bare id prints its markdown
   op get [--type T] [--name N] [--id ID] [--depth N] [--parent P]
   op selection                            get current selection
   op insert <json|@file|-> [--parent P] [--page PAGE] [--post-process]
