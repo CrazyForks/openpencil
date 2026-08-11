@@ -43,6 +43,8 @@ new_fixture() {
         "$fixture_root/crates/op-collab-relay-server/src" \
         "$fixture_root/crates/op-collab-relay-control-plane/src" \
         "$fixture_root/crates/op-collab-policy-file/src" \
+        "$fixture_root/crates/op-collab-relay-locator-hsm/src" \
+        "$fixture_root/crates/op-collab-relay-locator-hsm/tests" \
         "$fixture_root/crates/op-collab-relay-locator-server/src" \
         "$fixture_root/crates/op-collab-smoke/src" \
         "$fixture_root/crates/op-auth-bridge/src" \
@@ -52,19 +54,21 @@ new_fixture() {
         "$fixture_root/crates/op-editor-host-core/src/collab" \
         "$fixture_root/crates/op-editor-ui/src" \
         "$fixture_root/crates/op-host-native/src" \
-        "$fixture_root/crates/op-host-desktop/src" \
-        "$fixture_root/crates/op-collab-host/src/runtime/network" \
+        "$fixture_root/crates/op-host-desktop/src/collab_runtime" \
+        "$fixture_root/crates/op-host-desktop/src/collab_runtime/network" \
         "$fixture_root/crates/op-host-services/src" \
         "$fixture_root/crates/op-i18n/src" \
         "$fixture_root/deploy/collab-relay" \
         "$fixture_root/deploy/collab-relay-edge" \
         "$fixture_root/deploy/collab-relay-locator" \
+        "$fixture_root/deploy/collab-relay-locator-hsm" \
         "$fixture_root/deploy/collab-relay-locator-edge"
 
     cp "$gate_source" "$fixture_root/tools/check-collab-security-boundaries.sh"
+    cp "$script_dir/check-collab-security-boundaries-cases.sh" \
+        "$fixture_root/tools/check-collab-security-boundaries-cases.sh"
     cp "$script_dir/check-collab-deployment-boundaries.sh" \
         "$fixture_root/tools/check-collab-deployment-boundaries.sh"
-    cp "$script_dir/check-collab-security-boundaries-cases.sh" "$fixture_root/tools/"
     cp "$script_dir/check-op-auth-prebuilt.sh" "$fixture_root/tools/check-op-auth-prebuilt.sh"
     cp "$script_dir/check-op-auth-prebuilt.test.sh" "$fixture_root/tools/check-op-auth-prebuilt.test.sh"
     cp "$script_dir/package-op-auth-prebuilt.sh" "$fixture_root/tools/package-op-auth-prebuilt.sh"
@@ -94,8 +98,7 @@ EOF
 This file exists so the executable boundary gate can verify its public contract.
 EOF
 
-    cp "$script_dir/../.github/workflows/collab-security.yml" \
-        "$fixture_root/.github/workflows/collab-security.yml"
+    write_collab_security_workflow_fixture
 
     cat > "$fixture_root/deploy/collab-relay-edge/global-nginx.conf" <<'EOF'
 stream {
@@ -232,24 +235,6 @@ location = /v1/locator {
     client_max_body_size 191;
     proxy_set_header Authorization $http_authorization;
 }
-location = /v1/pairing-code {
-    if ($request_uri != "/v1/pairing-code") { return 404; }
-    limit_except POST { deny all; }
-    client_max_body_size 624; client_body_buffer_size 624;
-    if ($http_content_type != "application/vnd.openpencil.relay-pairing-publish-v1") { return 415; }
-    proxy_pass_request_headers off;
-    proxy_pass http://locator:8092/v1/pairing-code;
-}
-location = /v1/pairing-code/claim {
-    if ($request_uri != "/v1/pairing-code/claim") { return 404; }
-    limit_except POST { deny all; }
-    client_max_body_size 49; client_body_buffer_size 49;
-    if ($content_length != "49") { return 400; }
-    if ($http_content_type != "application/vnd.openpencil.relay-pairing-claim-v1") { return 415; }
-    if ($http_accept != "application/vnd.openpencil.relay-sealed-invite-v1") { return 406; }
-    proxy_pass_request_headers off;
-    proxy_pass http://locator:8092/v1/pairing-code/claim;
-}
 location / {
     return 404;
 }
@@ -281,6 +266,22 @@ EOF
 #!/bin/sh
 set -eu
 EOF
+
+    cat > "$fixture_root/deploy/collab-relay-locator-hsm/Dockerfile" <<'EOF'
+FROM rust:1.94-bookworm@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa AS build
+FROM build AS test
+RUN apt-get update && apt-get install -y --no-install-recommends softhsm2
+RUN cargo test --locked -p op-collab-relay-locator-hsm --test softhsm -- --nocapture
+FROM debian:bookworm-slim@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+EOF
+    for locator_hsm_file in \
+        README.md \
+        compose.yaml \
+        config.example.json \
+        openpencil-locator-hsm.conf \
+        softhsm2.conf; do
+        : > "$fixture_root/deploy/collab-relay-locator-hsm/$locator_hsm_file"
+    done
 
     cat > "$fixture_root/deploy/collab-relay-locator-edge/global-nginx.conf" <<'EOF'
 stream {
@@ -331,33 +332,11 @@ server {
         if ($request_uri != "/v1/locator") {
             return 404;
         }
-        limit_except POST {
-            deny all;
-        }
         proxy_pass_request_headers off;
         proxy_set_header Authorization $http_authorization;
         proxy_set_header Transfer-Encoding "";
         proxy_set_header Content-Encoding "";
     }
-    location = /v1/pairing-code {
-        if ($request_uri != "/v1/pairing-code") { return 404; }
-        limit_except POST { deny all; }
-        client_max_body_size 624; client_body_buffer_size 624;
-        if ($http_content_type != "application/vnd.openpencil.relay-pairing-publish-v1") { return 415; }
-        proxy_pass_request_headers off;
-        proxy_pass http://openpencil_locator/v1/pairing-code;
-    }
-    location = /v1/pairing-code/claim {
-        if ($request_uri != "/v1/pairing-code/claim") { return 404; }
-        limit_except POST { deny all; }
-        client_max_body_size 49; client_body_buffer_size 49;
-        if ($content_length != "49") { return 400; }
-        if ($http_content_type != "application/vnd.openpencil.relay-pairing-claim-v1") { return 415; }
-        if ($http_accept != "application/vnd.openpencil.relay-sealed-invite-v1") { return 406; }
-        proxy_pass_request_headers off;
-        proxy_pass http://openpencil_locator/v1/pairing-code/claim;
-    }
-    location / { return 404; }
 }
 EOF
     for locator_edge_file in \
@@ -434,6 +413,7 @@ EOF
         op-collab-relay-server \
         op-collab-relay-control-plane \
         op-collab-policy-file \
+        op-collab-relay-locator-hsm \
         op-collab-relay-locator-server; do
         cat > "$fixture_root/crates/$relay_crate/Cargo.toml" <<EOF
 [package]
@@ -443,6 +423,7 @@ license.workspace = true
 EOF
         : > "$fixture_root/crates/$relay_crate/LICENSE"
     done
+    : > "$fixture_root/crates/op-collab-relay-locator-hsm/tests/softhsm.rs"
     : > "$fixture_root/crates/op-collab-smoke/LICENSE"
 
     cat > "$fixture_root/crates/op-auth-bridge/Cargo.toml" <<'EOF'
@@ -564,29 +545,6 @@ fn presence_payload_limit_applies_to_encode_and_decode() {}
 fn oversized_snapshot_kind_cannot_raise_the_owner_inbound_ceiling() {}
 EOF
 
-    cat > "$fixture_root/crates/op-collab-transport/src/admission.rs" <<'EOF'
-pub enum PeerIdentityPolicy {
-    ThisAccount,
-    AnyIssuedAccount,
-}
-#[cfg(test)]
-#[path = "admission_tests.rs"]
-mod admission_tests;
-EOF
-
-    cat > "$fixture_root/crates/op-collab-transport/src/admission_tests.rs" <<'EOF'
-#[test]
-fn any_issued_account_admits_a_foreign_subject_but_keeps_every_other_check() {}
-#[test]
-fn an_unpinned_join_without_confirmation_still_requires_this_account() {}
-#[test]
-fn an_unpinned_join_admits_a_foreign_account_only_behind_the_confirmation_gate() {}
-EOF
-
-    cat > "$fixture_root/crates/op-auth-bridge/src/collab_relay_token.rs" <<'EOF'
-pub struct VerifiedRelayTokenClaims;
-EOF
-
     cat > "$fixture_root/crates/op-collab-transport/src/config.rs" <<'EOF'
 pub const MAX_CONTROL_TRANSFER_BYTES: usize = 1024;
 pub const MAX_TICKET_BYTES: usize = 1024;
@@ -643,6 +601,18 @@ pub struct SharedQueueBudget;
 pub struct TokenBucket;
 EOF
 
+    cat > "$fixture_root/crates/op-collab-transport/src/admission.rs" <<'EOF'
+pub enum PeerIdentityPolicy {
+    ThisAccount,
+    AnyIssuedAccount,
+}
+EOF
+
+    cat > "$fixture_root/crates/op-collab-transport/src/admission_tests.rs" <<'EOF'
+#[test]
+fn any_issued_account_admits_a_foreign_subject_but_keeps_every_other_check() {}
+EOF
+
     cat > "$fixture_root/crates/op-auth-bridge/src/collab_jwks_cache.rs" <<'EOF'
 pub struct CollabJwksCacheLimits;
 #[cfg(test)]
@@ -665,6 +635,10 @@ EOF
 
     cat > "$fixture_root/crates/op-auth-bridge/src/collab_ticket.rs" <<'EOF'
 pub const MAX_COLLAB_TICKET_BYTES: usize = 1024;
+EOF
+
+    cat > "$fixture_root/crates/op-auth-bridge/src/collab_relay_token.rs" <<'EOF'
+pub struct VerifiedRelayTokenClaims;
 EOF
 
     cat > "$fixture_root/crates/op-auth-bridge/build.rs" <<'EOF'
@@ -757,20 +731,28 @@ EOF
 pub const MAX_AVATAR_SOURCE_PIXELS: u64 = 1_048_576;
 EOF
 
-    cat > "$fixture_root/crates/op-collab-host/src/runtime/types.rs" <<'EOF'
+    cat > "$fixture_root/crates/op-host-desktop/src/collab_runtime/types.rs" <<'EOF'
 assert_not_impl_any!(OwnerNetworkCommand: Clone);
 assert_not_impl_any!(GuestNetworkCommand: Clone);
 assert_not_impl_any!(PeerNetworkCommand: Clone);
 fn verification_commands_move_the_original_ticket_allocation() {}
 EOF
 
-    cat > "$fixture_root/crates/op-collab-host/src/runtime/relay_bootstrap_tests.rs" <<'EOF'
+    cat > "$fixture_root/crates/op-host-desktop/src/collab_runtime/relay_bootstrap_tests.rs" <<'EOF'
 #[test]
 fn payload_rejects_exact_cross_region_key_reuse() {}
+
+#[cfg(test)]
+fn an_unpinned_join_without_confirmation_still_requires_this_account() {}
+
+#[cfg(test)]
+fn an_unpinned_join_admits_a_foreign_account_only_behind_the_confirmation_gate() {}
 EOF
 
-    cat > "$fixture_root/crates/op-collab-host/src/runtime/network/owner.rs" <<'EOF'
-fn admission_policy() { let _ = PeerIdentityPolicy::AnyIssuedAccount; }
+    cat > "$fixture_root/crates/op-host-desktop/src/collab_runtime/network/owner.rs" <<'EOF'
+fn owner_policy() {
+    let _ = PeerIdentityPolicy::AnyIssuedAccount;
+}
 EOF
 
     ln -s "$script_dir/check-collab-security-boundaries.test.sh" \

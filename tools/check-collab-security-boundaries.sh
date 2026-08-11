@@ -24,6 +24,7 @@ collab_scan_roots=(
     crates/op-collab-relay-server
     crates/op-collab-relay-control-plane
     crates/op-collab-policy-file
+    crates/op-collab-relay-locator-hsm
     crates/op-collab-relay-locator-server
     crates/op-collab-smoke
     crates/op-auth-bridge
@@ -42,6 +43,7 @@ collab_scan_roots=(
     deploy/collab-relay
     deploy/collab-relay-edge
     deploy/collab-relay-locator
+    deploy/collab-relay-locator-hsm
     deploy/collab-relay-locator-edge
 )
 
@@ -602,6 +604,7 @@ untyped_errors=$(grep -RInE \
     crates/op-collab-relay-server/src \
     crates/op-collab-relay-control-plane/src \
     crates/op-collab-policy-file/src \
+    crates/op-collab-relay-locator-hsm/src \
     crates/op-collab-relay-locator-server/src \
     crates/op-auth-bridge/src 2>/dev/null || true)
 if [[ -n "$untyped_errors" ]]; then

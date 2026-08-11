@@ -6,7 +6,6 @@ services:
     restart: unless-stopped
     environment:
       OPENPENCIL_COLLAB_LOCATOR_LISTEN: 0.0.0.0:8092
-      OPENPENCIL_COLLAB_LOCATOR_HOME_REGION: ${OPENPENCIL_COLLAB_LOCATOR_HOME_REGION:?set cn or global}
       OPENPENCIL_COLLAB_LOCATOR_TICKET_POLICY_FILE: /run/secrets/collab-policy.json
       OPENPENCIL_COLLAB_LOCATOR_HSM_SOCKET: /run/openpencil-hsm/signer.sock
       OPENPENCIL_COLLAB_LOCATOR_HSM_KEY_ID: ${OPENPENCIL_COLLAB_LOCATOR_HSM_KEY_ID:?set public HSM key id}

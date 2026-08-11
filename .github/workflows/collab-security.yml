@@ -16,6 +16,7 @@ on:
       - 'crates/op-collab-relay-server/**'
       - 'crates/op-collab-relay-control-plane/**'
       - 'crates/op-collab-policy-file/**'
+      - 'crates/op-collab-relay-locator-hsm/**'
       - 'crates/op-collab-relay-locator-server/**'
       - 'crates/op-auth-bridge/**'
       - 'crates/op-util/**'
@@ -29,6 +30,7 @@ on:
       - 'deploy/collab-relay/**'
       - 'deploy/collab-relay-edge/**'
       - 'deploy/collab-relay-locator/**'
+      - 'deploy/collab-relay-locator-hsm/**'
       - 'deploy/collab-relay-locator-edge/**'
       - 'docs/security/p2p-collaboration-threat-model.md'
       - 'docs/testing/p2p-collaboration-platform-acceptance.md'
@@ -57,6 +59,7 @@ on:
       - 'crates/op-collab-relay-server/**'
       - 'crates/op-collab-relay-control-plane/**'
       - 'crates/op-collab-policy-file/**'
+      - 'crates/op-collab-relay-locator-hsm/**'
       - 'crates/op-collab-relay-locator-server/**'
       - 'crates/op-auth-bridge/**'
       - 'crates/op-util/**'
@@ -70,6 +73,7 @@ on:
       - 'deploy/collab-relay/**'
       - 'deploy/collab-relay-edge/**'
       - 'deploy/collab-relay-locator/**'
+      - 'deploy/collab-relay-locator-hsm/**'
       - 'deploy/collab-relay-locator-edge/**'
       - 'docs/security/p2p-collaboration-threat-model.md'
       - 'docs/testing/p2p-collaboration-platform-acceptance.md'
@@ -146,7 +150,13 @@ jobs:
           cargo test --locked -p op-collab-relay-server
           cargo test --locked -p op-collab-relay-control-plane
           cargo test --locked -p op-collab-policy-file
+          cargo test --locked -p op-collab-relay-locator-hsm
           cargo test --locked -p op-collab-relay-locator-server
+
+      - name: Test the locator signer against SoftHSM
+        run: |
+          docker build --target test \
+            -f deploy/collab-relay-locator-hsm/Dockerfile .
 
       - name: Test production/test trust-root isolation
         run: |

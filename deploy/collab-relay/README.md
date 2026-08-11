@@ -108,6 +108,12 @@ Private encodings, shared secrets, and derived keys are zeroized.
 
 ## Deployment
 
+On Unix, the public signed-policy file may be owned either by the relay's
+effective UID or by root. It must be a regular non-symlink file and must not be
+group- or world-writable. Because the policy contains public verification
+material, root-owned mode `0440` (when the container identity has group read)
+or `0444` is accepted; writable modes fail closed.
+
 Run full challenge-bound production mode:
 
 ```sh
@@ -119,8 +125,12 @@ sudo chmod 0400 "$OPENPENCIL_RELAY_X25519_KEYS_HOST_FILE"
 docker compose \
   -f deploy/collab-relay/compose.yaml \
   -f deploy/collab-relay/compose.production.yaml \
+  -f deploy/collab-relay/compose.production.global.yaml \
   up --build
 ```
+
+That command is for Global. On CN, replace only the final overlay with
+`compose.production.cn.yaml`. Never combine the two regional overlays.
 
 The secret is mounted read-only under `/run/secrets`. The packaged image runs
 as UID/GID `65532`, so the host file must actually be owner-readable by that
@@ -167,9 +177,86 @@ docker compose \
 
 Never expose that development mode to the Internet.
 
-## China relay for overseas peers
+## Direct regional public paths
 
-For a locator with `home_region=cn`, domestic clients connect to the normal CN
+The default two-region deployment uses one public application host per region,
+with both collaboration paths on that host:
+
+```text
+CN       https://<cn-public-host>/v1/locator
+         wss://<cn-public-host>/v1/tunnel
+Global   https://<global-public-host>/v1/locator
+         wss://<global-public-host>/v1/tunnel
+```
+
+Keep the concrete public hosts in the private deployment inventory and signed
+desktop bootstrap, not in this public repository. The two Compose projects use
+separate networks, so host Nginx must never use Docker service names such as
+`relay` or `locator` as upstreams. The common Compose files publish no host
+ports. Immutable regional overlays bind both the home region and the only
+permitted host address; there is no host-bind variable or wildcard default.
+They also fix `OPENPENCIL_COLLAB_RELAY_MAX_PENDING_PER_SOURCE=1024`, equal to
+the process-wide pending ceiling. The common Compose files do not set this
+production override.
+
+That equality is intentional. A connection crossing a Docker-published host
+port reaches the relay with a Docker NAT peer address, so independent Internet
+clients can collapse into one application-visible source. The relay must not
+apply its normal per-source bucket to that shared address. Host Nginx is the
+trusted real-source boundary: its handshake-rate and connection zones enforce
+per-client limits before proxying, while the relay still enforces the global
+1024-pending ceiling. If another load balancer precedes Nginx, restore the
+client address only from its fixed trusted addresses; never trust arbitrary
+forwarded-address headers.
+
+On the Global application host, use only:
+
+```text
+deploy/collab-relay/compose.production.global.yaml
+deploy/collab-relay-locator/compose.production.global.yaml
+```
+
+They hard-code `home_region=global` and loopback ports `127.0.0.1:8091` and
+`127.0.0.1:8092`. At Global Nginx `http` scope include
+`../collab-relay-locator/nginx-http-limits.conf`,
+`nginx-http-direct.conf`, and
+`../collab-relay-locator/nginx-http-direct.conf` exactly once.
+
+On the CN application service host, use only:
+
+```text
+deploy/collab-relay/compose.production.cn.yaml
+deploy/collab-relay-locator/compose.production.cn.yaml
+```
+
+They hard-code `home_region=cn` and private ports `10.0.0.10:8091` and
+`10.0.0.10:8092`. The CN front gateway includes the same locator limits plus
+`nginx-http-direct-cn-gateway.conf` and
+`../collab-relay-locator/nginx-http-direct-cn-gateway.conf` at `http` scope.
+Those upstreams are explicitly `10.0.0.10:8091` and `10.0.0.10:8092`.
+Restrict both ports on the service-host firewall to the configured front
+gateway source addresses. Never bind either port to `0.0.0.0` or expose it on
+a public interface. Do not copy a regional overlay to the other region, combine
+the two overlays, or add a Compose `ports` override.
+
+Inside each regional application TLS virtual host include
+`../collab-relay-locator/nginx-location-direct.conf` and
+`nginx-location.conf`. These files intentionally define only the two exact
+collaboration paths, so they do not replace the application's normal routes.
+The standalone relay `nginx.conf` and dedicated-host locator
+`nginx-location.conf` must not be combined with the direct-host snippets.
+
+A Global user who explicitly selects CN uses the CN application host directly
+for both paths. The signed locator remains `home_region=cn`; the Global relay
+is not a fallback and does not proxy that session. This topology does not
+require an L4 federation edge. Confirm the two externally published URL pairs
+and their certificates from the private inventory before rollout.
+
+## Optional China relay for overseas peers
+
+This optional topology is not part of the direct regional deployment above.
+Use it only after separately deploying and reviewing the L4 edge. For a
+locator with `home_region=cn`, domestic clients connect to the normal CN
 WSS endpoint. Overseas clients may instead resolve a Global ingress that is
 only an L4 passthrough:
 

@@ -1,0 +1,10 @@
+services:
+  relay:
+    environment:
+      OPENPENCIL_COLLAB_RELAY_HOME_REGION: cn
+      OPENPENCIL_COLLAB_RELAY_MAX_PENDING_PER_SOURCE: "1024"
+    ports:
+      - target: 8091
+        published: "8091"
+        host_ip: 10.0.0.10
+        protocol: tcp

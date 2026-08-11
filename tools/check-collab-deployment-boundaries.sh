@@ -49,6 +49,9 @@ for required in \
     crates/op-collab-relay-control-plane/LICENSE \
     crates/op-collab-policy-file/Cargo.toml \
     crates/op-collab-policy-file/LICENSE \
+    crates/op-collab-relay-locator-hsm/Cargo.toml \
+    crates/op-collab-relay-locator-hsm/LICENSE \
+    crates/op-collab-relay-locator-hsm/tests/softhsm.rs \
     crates/op-collab-relay-locator-server/Cargo.toml \
     crates/op-collab-relay-locator-server/LICENSE \
     crates/op-collab-smoke/LICENSE \
@@ -80,6 +83,12 @@ for required in \
     deploy/collab-relay-locator/nginx-http-limits.conf \
     deploy/collab-relay-locator/nginx-location.conf \
     deploy/collab-relay-locator/validate.sh \
+    deploy/collab-relay-locator-hsm/Dockerfile \
+    deploy/collab-relay-locator-hsm/README.md \
+    deploy/collab-relay-locator-hsm/compose.yaml \
+    deploy/collab-relay-locator-hsm/config.example.json \
+    deploy/collab-relay-locator-hsm/openpencil-locator-hsm.conf \
+    deploy/collab-relay-locator-hsm/softhsm2.conf \
     deploy/collab-relay-locator-edge/README.md \
     deploy/collab-relay-locator-edge/global-nginx.conf \
     deploy/collab-relay-locator-edge/cn-federation-nginx.conf \
@@ -134,6 +143,7 @@ for workflow_path in \
     "crates/op-collab-relay-server/**" \
     "crates/op-collab-relay-control-plane/**" \
     "crates/op-collab-policy-file/**" \
+    "crates/op-collab-relay-locator-hsm/**" \
     "crates/op-collab-relay-locator-server/**" \
     "crates/op-util/**" \
     "crates/op-editor-core/**" \
@@ -146,7 +156,10 @@ for workflow_path in \
     "deploy/collab-relay/**" \
     "deploy/collab-relay-edge/**" \
     "deploy/collab-relay-locator/**" \
-    "deploy/collab-relay-locator-edge/**"; do
+    "deploy/collab-relay-locator-hsm/**" \
+    "deploy/collab-relay-locator-edge/**" \
+    "tools/check-collab-security-boundaries-cases.sh" \
+    "tools/check-collab-deployment-boundaries.sh"; do
     require_literal_count .github/workflows/collab-security.yml \
         "$workflow_path" 2 "collaboration security workflow path trigger"
 done
@@ -337,6 +350,22 @@ done
 require_literal .github/workflows/collab-security.yml \
     "bash deploy/collab-relay-locator/validate.sh" \
     "locator deployment workflow validation"
+require_literal .github/workflows/collab-security.yml \
+    "cargo test --locked -p op-collab-relay-locator-hsm" \
+    "locator HSM crate workflow test"
+require_literal .github/workflows/collab-security.yml \
+    "docker build --target test" \
+    "real SoftHSM workflow test target"
+require_literal .github/workflows/collab-security.yml \
+    "-f deploy/collab-relay-locator-hsm/Dockerfile ." \
+    "real SoftHSM workflow test target"
+for locator_hsm_test_anchor in \
+    "FROM build AS test" \
+    "apt-get install -y --no-install-recommends softhsm2" \
+    "cargo test --locked -p op-collab-relay-locator-hsm --test softhsm -- --nocapture"; do
+    require_literal deploy/collab-relay-locator-hsm/Dockerfile \
+        "$locator_hsm_test_anchor" "real SoftHSM image test boundary"
+done
 
 for locator_edge_global_anchor in \
     "listen 8443;" \

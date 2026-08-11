@@ -3,7 +3,6 @@ services:
     command:
       - --production
     environment:
-      OPENPENCIL_COLLAB_RELAY_HOME_REGION: cn
       OPENPENCIL_COLLAB_RELAY_TICKET_POLICY_FILE: /run/secrets/openpencil-collab-policy.json
       OPENPENCIL_COLLAB_RELAY_LOCATOR_KEYS_FILE: /run/secrets/openpencil-relay-locator-keys.json
       OPENPENCIL_COLLAB_RELAY_X25519_KEYS_FILE: /run/secrets/openpencil-relay-x25519-keys.json

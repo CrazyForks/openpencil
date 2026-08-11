@@ -1,6 +1,86 @@
 # Mutation cases for check-collab-security-boundaries.test.sh.
 # Sourced after the fixture and assertion helpers have been initialized.
 
+write_collab_security_workflow_fixture() {
+    cat > "$fixture_root/.github/workflows/collab-security.yml" <<'EOF'
+pull_request:
+  paths:
+    - '.dockerignore'
+    - '.gitignore'
+    - 'crates/op-collab-smoke/**'
+    - 'crates/op-collab-relay-protocol/**'
+    - 'crates/op-collab-relay-client/**'
+    - 'crates/op-collab-relay-server/**'
+    - 'crates/op-collab-relay-control-plane/**'
+    - 'crates/op-collab-policy-file/**'
+    - 'crates/op-collab-relay-locator-hsm/**'
+    - 'crates/op-collab-relay-locator-server/**'
+    - 'crates/op-util/**'
+    - 'crates/op-editor-core/**'
+    - 'crates/op-editor-host-core/**'
+    - 'crates/op-editor-ui/**'
+    - 'crates/op-host-native/**'
+    - 'crates/op-host-desktop/**'
+    - 'crates/op-host-services/**'
+    - 'crates/op-i18n/**'
+    - 'deploy/collab-relay/**'
+    - 'deploy/collab-relay-edge/**'
+    - 'deploy/collab-relay-locator/**'
+    - 'deploy/collab-relay-locator-hsm/**'
+    - 'deploy/collab-relay-locator-edge/**'
+    - 'tools/check-collab-security-boundaries-cases.sh'
+    - 'tools/check-collab-deployment-boundaries.sh'
+    - 'tools/check-op-auth-prebuilt.sh'
+    - 'tools/check-op-auth-prebuilt.test.sh'
+    - 'tools/package-op-auth-prebuilt.sh'
+push:
+  paths:
+    - '.dockerignore'
+    - '.gitignore'
+    - 'crates/op-collab-smoke/**'
+    - 'crates/op-collab-relay-protocol/**'
+    - 'crates/op-collab-relay-client/**'
+    - 'crates/op-collab-relay-server/**'
+    - 'crates/op-collab-relay-control-plane/**'
+    - 'crates/op-collab-policy-file/**'
+    - 'crates/op-collab-relay-locator-hsm/**'
+    - 'crates/op-collab-relay-locator-server/**'
+    - 'crates/op-util/**'
+    - 'crates/op-editor-core/**'
+    - 'crates/op-editor-host-core/**'
+    - 'crates/op-editor-ui/**'
+    - 'crates/op-host-native/**'
+    - 'crates/op-host-desktop/**'
+    - 'crates/op-host-services/**'
+    - 'crates/op-i18n/**'
+    - 'deploy/collab-relay/**'
+    - 'deploy/collab-relay-edge/**'
+    - 'deploy/collab-relay-locator/**'
+    - 'deploy/collab-relay-locator-hsm/**'
+    - 'deploy/collab-relay-locator-edge/**'
+    - 'tools/check-collab-security-boundaries-cases.sh'
+    - 'tools/check-collab-deployment-boundaries.sh'
+    - 'tools/check-op-auth-prebuilt.sh'
+    - 'tools/check-op-auth-prebuilt.test.sh'
+    - 'tools/package-op-auth-prebuilt.sh'
+steps:
+  - run: bash tools/check-op-auth-prebuilt.sh
+  - run: bash tools/check-op-auth-prebuilt.test.sh
+  - run: bash -n tools/package-op-auth-prebuilt.sh
+  - run: cargo test --locked -p op-auth-bridge --test prebuilt_provenance
+  - run: cargo test --locked -p op-collab-transport
+  - run: cargo test --locked -p op-collab-transport config::tests
+  - run: cargo test --locked -p op-collab-transport frame::tests
+  - run: cargo test --locked -p op-collab-relay-locator-hsm
+  - run: |
+      docker build --target test \
+        -f deploy/collab-relay-locator-hsm/Dockerfile .
+  - run: bash deploy/collab-relay-edge/validate.sh
+  - run: bash deploy/collab-relay-locator/validate.sh
+  - run: bash deploy/collab-relay-locator-edge/validate.sh
+EOF
+}
+
 new_fixture baseline
 expect_pass "accepts the minimal safe collaboration boundary"
 
@@ -133,6 +213,45 @@ mv \
     "$fixture_root/.github/workflows/collab-security.yml"
 expect_failure "requires the credential transport codec workflow test" \
     "credential transport codec workflow test"
+
+new_fixture complete-transport-workflow-test-removed
+sed '/cargo test --locked -p op-collab-transport$/d' \
+    "$fixture_root/.github/workflows/collab-security.yml" \
+    > "$fixture_root/.github/workflows/collab-security.yml.next"
+mv \
+    "$fixture_root/.github/workflows/collab-security.yml.next" \
+    "$fixture_root/.github/workflows/collab-security.yml"
+expect_failure "requires the complete transport resource-limit test suite" \
+    "complete transport resource-limit workflow test"
+
+new_fixture locator-hsm-workflow-tests-removed
+sed \
+    -e '/cargo test --locked -p op-collab-relay-locator-hsm/d' \
+    -e '/docker build --target test/d' \
+    "$fixture_root/.github/workflows/collab-security.yml" \
+    > "$fixture_root/.github/workflows/collab-security.yml.next"
+mv \
+    "$fixture_root/.github/workflows/collab-security.yml.next" \
+    "$fixture_root/.github/workflows/collab-security.yml"
+expect_failure "requires locator HSM unit and real SoftHSM workflow tests" \
+    "locator HSM crate workflow test"
+
+new_fixture locator-hsm-soft-token-target-removed
+sed 's/docker build --target test/docker build/' \
+    "$fixture_root/.github/workflows/collab-security.yml" \
+    > "$fixture_root/.github/workflows/collab-security.yml.next"
+mv \
+    "$fixture_root/.github/workflows/collab-security.yml.next" \
+    "$fixture_root/.github/workflows/collab-security.yml"
+expect_failure "requires the real SoftHSM Docker test stage" \
+    "real SoftHSM workflow test target"
+
+new_fixture locator-hsm-production-seed
+printf '%s\n' \
+    'const PRODUCTION_SIGNING_SEED: [u8; 32] = [9; 32];' \
+    >> "$fixture_root/crates/op-collab-relay-locator-hsm/src/lib.rs"
+expect_failure "scans the locator HSM crate for deterministic production keys" \
+    "deterministic signing/key seed leaked"
 
 new_fixture desktop-renewal-vec-copy
 printf '%s\n' \
