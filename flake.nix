@@ -43,7 +43,7 @@
       flake = false;
     };
     jian = {
-      url = "github:ZSeven-W/jian/453bd70b646417e58f0d5c9a51594e27d399d849";
+      url = "github:ZSeven-W/jian/2edfc361cff3f6f33174746c048002607d691d1c";
       flake = false;
     };
   };

@@ -43,17 +43,17 @@
     "casement": {
       "flake": false,
       "locked": {
-        "lastModified": 1780160489,
-        "narHash": "sha256-kRfgBHG8XLIbfLUV+6mFF1eWfrlp4NlDCa3Ql99lkc4=",
+        "lastModified": 1786038644,
+        "narHash": "sha256-UpKrhfc7/UnIl+cX3nGyEOUsSA554H79MnNxrpilINI=",
         "owner": "ZSeven-W",
         "repo": "casement",
-        "rev": "451173eb3353a4166d2d0f241f2e0606051064bd",
+        "rev": "ffdd672cbda3abe5cd78d056fb75683f2a74f7fe",
         "type": "github"
       },
       "original": {
         "owner": "ZSeven-W",
         "repo": "casement",
-        "rev": "451173eb3353a4166d2d0f241f2e0606051064bd",
+        "rev": "ffdd672cbda3abe5cd78d056fb75683f2a74f7fe",
         "type": "github"
       }
     },
@@ -353,17 +353,17 @@
     "jian": {
       "flake": false,
       "locked": {
-        "lastModified": 1784811987,
-        "narHash": "sha256-9SPcztfg1WvPSKH7SHu3rYZa5X9ifpm3LJzMRAFiTJU=",
+        "lastModified": 1786287246,
+        "narHash": "sha256-oBXn3aKTmjbX1rQ/BMhibDtQWQVhRYepuq3CrhSTX1A=",
         "owner": "ZSeven-W",
         "repo": "jian",
-        "rev": "df2376a018acbd8ec8d9fac58b05dde14a405aca",
+        "rev": "2edfc361cff3f6f33174746c048002607d691d1c",
         "type": "github"
       },
       "original": {
         "owner": "ZSeven-W",
         "repo": "jian",
-        "rev": "df2376a018acbd8ec8d9fac58b05dde14a405aca",
+        "rev": "2edfc361cff3f6f33174746c048002607d691d1c",
         "type": "github"
       }
     },
