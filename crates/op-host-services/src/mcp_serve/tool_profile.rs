@@ -375,6 +375,13 @@ pub const TOOL_PROFILES: &[ToolProfile] = &[
     // Writes a deck file at a caller-chosen path, so it is a local-filesystem
     // surface rather than an in-memory one: a hosted tenant must not be able
     // to place bytes anywhere on the daemon host.
+    // Writes a directory of images at a caller-chosen path.
+    ToolProfile::new(
+        "export_frames",
+        ToolAccess::Read,
+        ToolSurface::LocalFilesystem,
+    ),
+    ToolProfile::new("get_deck_boards", ToolAccess::Read, ToolSurface::InMemory),
     ToolProfile::new(
         "export_deck",
         ToolAccess::Read,

@@ -256,3 +256,30 @@ fn styles_takes_a_bare_id_or_filters() {
         Command::Styles { platform: Some(ref platform), .. } if platform == "slides"
     ));
 }
+
+#[test]
+fn export_frames_requires_a_directory_and_rejects_pdf() {
+    let parsed = parse_args(&args(&["export-frames", "--output-dir", "/tmp/frames"]))
+        .expect("parse export-frames");
+    assert!(matches!(
+        parsed.command,
+        Command::ExportFrames { ref format, .. } if format == "png"
+    ));
+
+    assert!(parse_args(&args(&["export-frames"]))
+        .unwrap_err()
+        .to_string()
+        .contains("--output-dir"));
+
+    // A frame batch is images; pdf belongs to `op export` / `op export-deck`.
+    assert!(parse_args(&args(&[
+        "export-frames",
+        "--output-dir",
+        "/tmp/frames",
+        "--format",
+        "pdf",
+    ]))
+    .unwrap_err()
+    .to_string()
+    .contains("unsupported frame format"));
+}

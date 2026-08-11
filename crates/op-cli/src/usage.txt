@@ -28,6 +28,9 @@ COMMON COMMANDS:
                                           export the active page's boards as a
                                           presentation deck: PowerPoint, self-
                                           contained HTML, or slide-per-page PDF
+  op export-frames --output-dir DIR [--format png|jpeg|webp]
+                                          export every top-level frame on the
+                                          active page, one image per frame
   op templates [--scene S] [--tag T]        list shipped scene templates
                                           (tutorial / comparison / carousel /
                                           slides / …), including 16:9 decks

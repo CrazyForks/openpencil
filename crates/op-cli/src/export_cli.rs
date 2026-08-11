@@ -148,3 +148,46 @@ pub(crate) fn write_export_response(response: &str, output: &Path) -> Result<Str
     })
     .to_string())
 }
+
+pub(crate) fn map_export_frames(flags: &Flags) -> Result<Command, CliError> {
+    let format = flag_value(flags, "format").unwrap_or_else(|| "png".into());
+    if !matches!(format.as_str(), "png" | "jpeg" | "jpg" | "webp") {
+        return Err(CliError::Usage(format!(
+            "unsupported frame format {format:?}: must be one of png, jpeg, webp"
+        )));
+    }
+    let output_dir = flag_value(flags, "output-dir")
+        .or_else(|| flag_value(flags, "output"))
+        .ok_or_else(|| CliError::usage("--output-dir is required"))?;
+    Ok(Command::ExportFrames { output_dir, format })
+}
+
+/// Batch-export every top-level frame. Like `run_export_deck`, the daemon
+/// does the writing, so a relative directory is resolved against the caller's
+/// shell rather than the daemon's working directory.
+pub(crate) fn run_export_frames(
+    port: u16,
+    token: &str,
+    output_dir: &str,
+    format: &str,
+) -> Result<String, CliError> {
+    let directory = Path::new(output_dir);
+    let absolute = if directory.is_absolute() {
+        directory.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| CliError::Usage(format!("cannot resolve --output-dir: {error}")))?
+            .join(directory)
+    };
+    let mut arguments = serde_json::Map::new();
+    arguments.insert("format".into(), Value::String(format.into()));
+    arguments.insert(
+        "outputDir".into(),
+        Value::String(absolute.display().to_string()),
+    );
+    post(
+        port,
+        token,
+        &tool_call_body("export_frames", &Value::Object(arguments).to_string()),
+    )
+}

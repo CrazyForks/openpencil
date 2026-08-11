@@ -139,6 +139,9 @@ fn run(args: &[String]) -> Result<String, CliError> {
         Command::UseTemplate { template_id } => {
             template_cli::run_use_template(target_port, &target_token, &template_id)?
         }
+        Command::ExportFrames { output_dir, format } => {
+            export_cli::run_export_frames(target_port, &target_token, &output_dir, &format)?
+        }
         Command::Styles { id, tag, platform } => template_cli::run_styles(
             target_port,
             &target_token,
@@ -246,6 +249,10 @@ enum Command {
         id: Option<String>,
         tag: Option<String>,
         platform: Option<String>,
+    },
+    ExportFrames {
+        output_dir: String,
+        format: String,
     },
 }
 
@@ -375,6 +382,7 @@ fn command_from_positionals(positionals: &[String], flags: &Flags) -> Result<Com
         "templates" => template_cli::map_templates(flags),
         "use-template" => template_cli::map_use_template(flags, positionals),
         "styles" => template_cli::map_styles(flags, positionals),
+        "export-frames" => export_cli::map_export_frames(flags),
         "skill:export" => Ok(Command::SkillExport {
             name: required_pos(
                 positionals,

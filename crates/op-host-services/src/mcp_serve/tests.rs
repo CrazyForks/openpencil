@@ -24,7 +24,7 @@ fn tools_list_response_includes_all_registered_tools() {
     // TOOL_SCHEMAS without being added to the list below.
     assert_eq!(
         TOOL_SCHEMAS.len(),
-        127,
+        129,
         "tools/list catalog count must match the registered tools — add the new tool to this test"
     );
     // Production catalog excludes debug tools (we removed the
@@ -523,3 +523,56 @@ fn set_themes_accepts_structured_mcp_arguments_and_mutates_state() {
 
 #[path = "tests_transport.rs"]
 mod transport;
+
+#[test]
+fn export_frames_writes_one_image_per_top_level_frame() {
+    use op_mcp::{McpTool as _, ToolOutcome};
+    use std::collections::BTreeMap;
+
+    let mut state = op_editor_core::EditorState::new();
+    for (index, name) in ["Cover", "Agenda"].iter().enumerate() {
+        state.apply(op_editor_core::EditorCommand::InsertNode {
+            kind: "frame".into(),
+            name: (*name).into(),
+            x: (index as i32) * 400,
+            y: 0,
+            width: 320,
+            height: 180,
+            // A frame with no fill paints nothing and the exporter refuses
+            // it, which is the behaviour the failure branch below covers.
+            fill_hex: Some("#ffffff".into()),
+            target_parent: op_editor_core::NodeId::NONE,
+            page_id: None,
+        });
+    }
+
+    let directory = std::env::temp_dir().join("op-mcp-export-frames-test");
+    let _ = std::fs::remove_dir_all(&directory);
+    let mut args = BTreeMap::new();
+    args.insert("outputDir".to_string(), directory.display().to_string());
+
+    let outcome = super::export_frames_tool::export_frames_snapshot(&state).call(&args);
+    let ToolOutcome::OkJson(json) = outcome else {
+        panic!("unexpected outcome: {outcome:?}");
+    };
+    let report: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+    assert_eq!(report["attempted"].as_u64(), Some(2), "{json}");
+    assert!(
+        report["failed"].as_array().is_some_and(Vec::is_empty),
+        "{json}"
+    );
+
+    // The report is only a claim until the files are on disk.
+    let written = report["written"].as_array().expect("written array");
+    assert_eq!(written.len(), 2);
+    for entry in written {
+        let path = directory.join(entry.as_str().expect("file name"));
+        assert!(
+            path.is_file(),
+            "{} was reported but not written",
+            path.display()
+        );
+        assert!(std::fs::metadata(&path).expect("stat").len() > 0);
+    }
+    let _ = std::fs::remove_dir_all(&directory);
+}
