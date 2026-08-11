@@ -69,6 +69,13 @@ impl Phase {
     /// cross-tier contract), so the fix is headroom rather than merging them
     /// back together.
     ///
+    /// Generation moved again 13200 → 13500 (2026-08-11): nine new style guides
+    /// and the projector-board corpus additions grew the deck set, so a deck
+    /// prompt now resolves 13293 tokens with `design-principles` (438) included.
+    /// At 13200 the Step 3 knapsack dropped `design-principles` while the report
+    /// still showed headroom; 13500 keeps ~200 tokens of margin over the
+    /// measured 13293.
+    ///
     /// Planning moved 4000 → 6000 for a related reason (2026-07-28). Its
     /// three `Base` skills are budget-EXEMPT but still counted against the
     /// total, and they need ~4500 tokens on their own once
@@ -80,7 +87,7 @@ impl Phase {
     pub fn default_budget(self) -> u32 {
         match self {
             Phase::Planning => 6000,
-            Phase::Generation => 13200,
+            Phase::Generation => 13500,
             Phase::Validation => 3000,
             Phase::Maintenance => 5000,
         }
@@ -90,7 +97,7 @@ impl Phase {
 /// Per-phase default token budgets — the TS `DEFAULT_BUDGETS` record.
 pub const DEFAULT_BUDGETS: [(Phase, u32); 4] = [
     (Phase::Planning, 6000),
-    (Phase::Generation, 13200),
+    (Phase::Generation, 13500),
     (Phase::Validation, 3000),
     (Phase::Maintenance, 5000),
 ];
@@ -343,7 +350,7 @@ mod tests {
     #[test]
     fn default_budget_table() {
         assert_eq!(Phase::Planning.default_budget(), 6000);
-        assert_eq!(Phase::Generation.default_budget(), 13200);
+        assert_eq!(Phase::Generation.default_budget(), 13500);
         assert_eq!(Phase::Validation.default_budget(), 3000);
         assert_eq!(Phase::Maintenance.default_budget(), 5000);
         // The const table agrees with the per-variant method.
