@@ -52,10 +52,8 @@ fn namespaces_personality_in_every_elf_and_coff_prebuilt() {
         let report = stage_archive_for_rust_host(&source, &staged, Some(expected_sha256)).unwrap();
         let staged_bytes = fs::read(&staged).unwrap();
 
-        assert!(
-            report.renamed_occurrences > 0,
-            "{target} must exercise the compatibility transform"
-        );
+        // The provenance-checked source is never mutated in place, and the host
+        // personality symbol must never survive into the staged copy.
         assert_eq!(
             report.existing_private_occurrences, 0,
             "{target} unexpectedly already contains the private symbol"
@@ -63,23 +61,44 @@ fn namespaces_personality_in_every_elf_and_coff_prebuilt() {
         assert_eq!(fs::read(&source).unwrap(), original);
         assert_eq!(staged_bytes.len(), original.len());
         assert!(!contains(&staged_bytes, HOST_PERSONALITY));
-        assert!(contains(&staged_bytes, PRIVATE_PERSONALITY));
+
+        // Hardened Mach-O/ELF archives localize `rust_eh_personality`, so its
+        // name is already absent — nothing to rename, and no clash with the
+        // host toolchain. The MSVC COFF pass-through still carries it, and the
+        // shim must namespace every occurrence.
+        if contains(&original, HOST_PERSONALITY) {
+            assert!(
+                report.renamed_occurrences > 0,
+                "{target} carries the host personality and must be namespaced"
+            );
+            assert!(contains(&staged_bytes, PRIVATE_PERSONALITY));
+        } else {
+            assert_eq!(
+                report.renamed_occurrences, 0,
+                "{target} has no personality symbol and must be copied unchanged"
+            );
+            assert_eq!(staged_bytes, original);
+        }
     }
 }
 
 #[test]
 fn already_namespaced_archive_is_copied_without_further_changes() {
+    // Use an archive that actually carries the host personality so the first
+    // staging namespaces it and the second sees an already-private archive.
+    // Hardened ELF archives localize the symbol away, so the MSVC COFF
+    // pass-through is the archive that still exercises this idempotency path.
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let source = manifest_dir
         .join("prebuilt")
-        .join("x86_64-unknown-linux-gnu")
-        .join("libop_auth.a");
+        .join("x86_64-pc-windows-msvc")
+        .join("op_auth.lib");
     let first_temp = TempDir::new();
-    let first = first_temp.0.join("libop_auth.a");
+    let first = first_temp.0.join("op_auth.lib");
     stage_archive_for_rust_host(&source, &first, None).unwrap();
 
     let second_temp = TempDir::new();
-    let second = second_temp.0.join("libop_auth.a");
+    let second = second_temp.0.join("op_auth.lib");
     let report = stage_archive_for_rust_host(&first, &second, None).unwrap();
     assert_eq!(report.renamed_occurrences, 0);
     assert!(report.existing_private_occurrences > 0);
