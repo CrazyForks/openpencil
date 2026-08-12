@@ -125,7 +125,7 @@ fn add_builtin_agent_prefills_ts_provider_presets_first() {
             (
                 "OpenAI",
                 BuiltinAgentKind::OpenAiCompat,
-                "gpt-5.4",
+                "gpt-5.6",
                 "https://api.openai.com/v1",
                 "",
             ),
@@ -202,7 +202,7 @@ fn pure_builtin_presets_do_not_toggle_api_format() {
         display_name: "OpenAI".into(),
         kind: BuiltinAgentKind::OpenAiCompat,
         api_key: String::new(),
-        model: "gpt-5.4".into(),
+        model: "gpt-5.6".into(),
         base_url: "https://api.openai.com/v1".into(),
         enabled: true,
     };

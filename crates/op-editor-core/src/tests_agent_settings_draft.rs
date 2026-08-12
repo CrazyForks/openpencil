@@ -71,6 +71,22 @@ fn builtin_agent_draft_does_not_persist_until_save() {
 }
 
 #[test]
+fn builtin_agent_draft_can_save_before_a_model_is_selected() {
+    let mut s = AgentSettings::default();
+    s.begin_builtin_agent_draft();
+    let draft = s.builtin_agent_draft.as_mut().expect("draft exists");
+    draft.api_key = "sk-test".into();
+    draft.model.clear();
+
+    let id = s.save_builtin_agent_draft();
+
+    assert_eq!(id.as_deref(), Some("builtin-1"));
+    assert!(s.builtin_agents[0].model.is_empty());
+    assert!(s.builtin_agents[0].discovery_ready());
+    assert!(!s.builtin_agents[0].ready());
+}
+
+#[test]
 fn builtin_agent_draft_starts_from_anthropic_preset() {
     let mut s = AgentSettings::default();
 

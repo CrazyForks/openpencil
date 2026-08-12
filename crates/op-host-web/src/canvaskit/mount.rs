@@ -348,6 +348,7 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
                 drop(b);
                 crate::web_chat::drain_chat_flags(&inner);
                 crate::web_image_panel::drain_image_jobs(&inner);
+                crate::web_builtin_model_discovery::drain_pending_builtin_model_discovery(&inner);
                 crate::iconify_web::drain_iconify_request(&inner);
                 crate::codegen_web::drain_codegen_flags(&inner);
                 crate::web_design_md::drain_design_md_action(&inner);
@@ -744,6 +745,7 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
             drop(b);
             crate::web_chat::drain_chat_flags(&inner);
             crate::web_image_panel::drain_image_jobs(&inner);
+            crate::web_builtin_model_discovery::drain_pending_builtin_model_discovery(&inner);
         })?;
     }
 

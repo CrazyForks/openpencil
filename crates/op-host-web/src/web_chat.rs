@@ -153,6 +153,7 @@ fn close_chat_tab(state: &mut EditorState, idx: usize) {
         None => {}
     }
     state.chat.close_tab(idx);
+    state.rebuild_chat_models();
 }
 
 /// Launch one streaming turn: abort any in-flight one (a send fired mid-turn

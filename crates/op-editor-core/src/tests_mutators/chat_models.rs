@@ -140,6 +140,236 @@ fn rebuild_chat_models_retains_builtin_agent_display_name_as_group_label() {
 }
 
 #[test]
+fn rebuild_chat_models_pins_configured_builtin_then_merges_live_options() {
+    let mut state = sample();
+    let id = state.editor_ui.agent_settings.add_builtin_agent_config(
+        "Provider",
+        "sk-test",
+        "configured",
+        crate::BuiltinAgentKind::OpenAiCompat,
+        "https://example.test/v1",
+    );
+    let target = crate::BuiltinModelCatalogTarget::Agent(id.clone());
+    let request = state
+        .editor_ui
+        .agent_settings
+        .begin_builtin_model_catalog_refresh(target, 1)
+        .expect("request");
+    state
+        .editor_ui
+        .agent_settings
+        .take_pending_builtin_model_catalog_refresh();
+    let expected = state
+        .editor_ui
+        .agent_settings
+        .builtin_model_catalog_config_for_request(&request)
+        .expect("snapshot");
+    assert!(state
+        .editor_ui
+        .agent_settings
+        .apply_builtin_model_catalog_refresh_outcome_if_current(
+            &expected,
+            &request,
+            crate::BuiltinModelCatalogRefreshOutcome::Success {
+                models: vec![
+                    crate::BuiltinModelOption::new("live-b", "Live B"),
+                    crate::BuiltinModelOption::new("configured", "duplicate configured"),
+                    crate::BuiltinModelOption::new("live-c", "Live C"),
+                ],
+            },
+        ));
+
+    state.rebuild_chat_models();
+
+    let entries = state
+        .chat
+        .available_models
+        .iter()
+        .filter(|entry| entry.builtin_provider_id.as_deref() == Some(id.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        entries
+            .iter()
+            .filter_map(|entry| entry.builtin_model_id())
+            .collect::<Vec<_>>(),
+        vec!["configured", "live-b", "live-c"]
+    );
+    assert_eq!(entries[1].display_name, "Live B");
+    assert!(entries
+        .iter()
+        .all(|entry| { entry.builtin_provider_display_name.as_deref() == Some("Provider") }));
+}
+
+#[test]
+fn discovered_model_can_be_the_first_model_for_a_builtin_provider() {
+    let mut state = sample();
+    let id = state.editor_ui.agent_settings.add_builtin_agent_config(
+        "Provider",
+        "sk-test",
+        "",
+        crate::BuiltinAgentKind::OpenAiCompat,
+        "https://example.test/v1",
+    );
+    let request = state
+        .editor_ui
+        .agent_settings
+        .begin_builtin_model_catalog_refresh(crate::BuiltinModelCatalogTarget::Agent(id.clone()), 1)
+        .expect("discovery request");
+    state
+        .editor_ui
+        .agent_settings
+        .take_pending_builtin_model_catalog_refresh();
+    let expected = state
+        .editor_ui
+        .agent_settings
+        .builtin_model_catalog_config_for_request(&request)
+        .expect("snapshot");
+    assert!(state
+        .editor_ui
+        .agent_settings
+        .apply_builtin_model_catalog_refresh_outcome_if_current(
+            &expected,
+            &request,
+            crate::BuiltinModelCatalogRefreshOutcome::Success {
+                models: vec![crate::BuiltinModelOption::new("first-live", "First Live")],
+            },
+        ));
+
+    state.rebuild_chat_models();
+
+    let entry = state
+        .chat
+        .available_models
+        .iter()
+        .find(|entry| entry.builtin_provider_id.as_deref() == Some(id.as_str()))
+        .expect("live row enters picker without a static model");
+    assert_eq!(entry.builtin_model_id(), Some("first-live"));
+}
+
+#[test]
+fn selecting_dynamic_builtin_updates_only_its_config_and_survives_rebuild() {
+    let mut state = sample();
+    let first = state.editor_ui.agent_settings.add_builtin_agent_config(
+        "First",
+        "sk-first",
+        "first-default",
+        crate::BuiltinAgentKind::OpenAiCompat,
+        "https://first.example/v1",
+    );
+    let second = state.editor_ui.agent_settings.add_builtin_agent_config(
+        "Second",
+        "sk-second",
+        "second-default",
+        crate::BuiltinAgentKind::OpenAiCompat,
+        "https://second.example/v1",
+    );
+    let request = state
+        .editor_ui
+        .agent_settings
+        .begin_builtin_model_catalog_refresh(
+            crate::BuiltinModelCatalogTarget::Agent(first.clone()),
+            1,
+        )
+        .expect("request");
+    state
+        .editor_ui
+        .agent_settings
+        .take_pending_builtin_model_catalog_refresh();
+    let expected = state
+        .editor_ui
+        .agent_settings
+        .builtin_model_catalog_config_for_request(&request)
+        .expect("snapshot");
+    assert!(state
+        .editor_ui
+        .agent_settings
+        .apply_builtin_model_catalog_refresh_outcome_if_current(
+            &expected,
+            &request,
+            crate::BuiltinModelCatalogRefreshOutcome::Success {
+                models: vec![crate::BuiltinModelOption::new("dynamic:model", "Dynamic")],
+            },
+        ));
+    state.rebuild_chat_models();
+    let dynamic = state
+        .chat
+        .available_models
+        .iter()
+        .position(|entry| {
+            entry.builtin_provider_id.as_deref() == Some(first.as_str())
+                && entry.builtin_model_id() == Some("dynamic:model")
+        })
+        .expect("dynamic row");
+
+    state.select_chat_model(dynamic);
+
+    assert_eq!(
+        state
+            .editor_ui
+            .agent_settings
+            .builtin_agents
+            .iter()
+            .find(|agent| agent.id == first)
+            .map(|agent| agent.model.as_str()),
+        Some("dynamic:model")
+    );
+    assert_eq!(
+        state
+            .editor_ui
+            .agent_settings
+            .builtin_agents
+            .iter()
+            .find(|agent| agent.id == second)
+            .map(|agent| agent.model.as_str()),
+        Some("second-default")
+    );
+    state.rebuild_chat_models();
+    assert_eq!(
+        state
+            .chat
+            .selected_model_entry()
+            .and_then(|entry| entry.builtin_model_id()),
+        Some("dynamic:model")
+    );
+}
+
+#[test]
+fn identical_model_ids_from_distinct_builtins_keep_distinct_identity() {
+    let mut state = sample();
+    let first = state.editor_ui.agent_settings.add_builtin_agent_config(
+        "First",
+        "sk-first",
+        "shared",
+        crate::BuiltinAgentKind::OpenAiCompat,
+        "https://first.example/v1",
+    );
+    let second = state.editor_ui.agent_settings.add_builtin_agent_config(
+        "Second",
+        "sk-second",
+        "shared",
+        crate::BuiltinAgentKind::OpenAiCompat,
+        "https://second.example/v1",
+    );
+
+    state.rebuild_chat_models();
+
+    let shared = state
+        .chat
+        .available_models
+        .iter()
+        .filter(|entry| entry.builtin_model_id() == Some("shared"))
+        .collect::<Vec<_>>();
+    assert_eq!(shared.len(), 2);
+    assert_eq!(
+        shared
+            .iter()
+            .filter_map(|entry| entry.builtin_provider_id.as_deref())
+            .collect::<std::collections::BTreeSet<_>>(),
+        std::collections::BTreeSet::from([first.as_str(), second.as_str()])
+    );
+}
+
+#[test]
 fn rebuild_chat_models_includes_connected_acp_agents() {
     let mut s = sample();
     let id = s.editor_ui.agent_settings.add_acp_agent_config(

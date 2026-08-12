@@ -8,7 +8,7 @@ use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 
 use op_ai::chat_provider::{ChatProvider, CliName};
-use op_editor_core::EditorState;
+use op_editor_core::{BuiltinAgentConfig, EditorState, ModelEntry};
 use op_host_native::WidgetHostNative;
 
 use crate::chat_acp::AcpProvider;
@@ -87,8 +87,8 @@ fn provider_for_selected_model_impl(
     chat_session: bool,
 ) -> Option<Box<dyn ChatProvider>> {
     if let Some(entry) = host.editor_state().chat.selected_model_entry() {
-        if let Some(id) = entry.builtin_provider_id.as_deref() {
-            return provider_for_builtin(host.editor_state(), id);
+        if entry.builtin_provider_id.is_some() {
+            return provider_for_builtin(host.editor_state(), entry);
         }
         if let Some(id) = entry.acp_agent_id() {
             return provider_for_acp(host.editor_state(), id);
@@ -109,14 +109,8 @@ pub(crate) fn builtin_provider_with_tools(
 ) -> Option<(Box<dyn ChatProvider>, Receiver<ChatToolRequest>)> {
     let state = host.editor_state();
     let entry = state.chat.selected_model_entry()?;
-    let id = entry.builtin_provider_id.as_deref()?;
-    let config = state
-        .editor_ui
-        .agent_settings
-        .builtin_agents
-        .iter()
-        .find(|agent| agent.id == id && agent.ready())?;
-    let provider = ConfiguredBuiltinProvider::from_builtin_agent(config)?;
+    let config = selected_builtin_agent_config(state, entry)?;
+    let provider = ConfiguredBuiltinProvider::from_builtin_agent(&config)?;
     let (executor, tool_rx) = chat_tool_channel();
     let has_frame_scope = op_host_services::chat_intent::has_selected_frame_target(state);
     let provider = provider.with_canvas_tools(
@@ -130,9 +124,9 @@ pub(crate) fn builtin_provider_with_tools(
 /// panel's selected model entry (`chat.available_models[selected_model]`).
 ///
 /// Only CLI-backed entries qualify:
-/// - built-in entries (`builtin_provider_id`) carry their model inside
-///   `ConfiguredBuiltinProvider`'s own config (`entry.value` is the
-///   composite `builtin:<id>:<model>`, not a wire id);
+/// - built-in entries (`builtin_provider_id`) carry their model in the
+///   selected entry (`entry.value` is the composite
+///   `builtin:<id>:<model>`, not a CLI wire id);
 /// - ACP entries (`acp:<id>`) address an agent, not a model;
 /// - an entry whose provider differs from the agent actually routed by
 ///   [`provider_for_agent`] must not leak its id to a different CLI
@@ -158,14 +152,36 @@ pub(crate) fn selected_cli_model_id(host: &WidgetHostNative) -> Option<String> {
     Some(value.to_string())
 }
 
-fn provider_for_builtin(state: &EditorState, id: &str) -> Option<Box<dyn ChatProvider>> {
-    let config = state
+pub(super) fn selected_builtin_agent_config(
+    state: &EditorState,
+    entry: &ModelEntry,
+) -> Option<BuiltinAgentConfig> {
+    let id = entry.builtin_provider_id.as_deref()?;
+    let selected_model = entry.builtin_model_id()?;
+    let mut config = state
         .editor_ui
         .agent_settings
         .builtin_agents
         .iter()
-        .find(|agent| agent.id == id && agent.ready())?;
-    let provider = ConfiguredBuiltinProvider::from_builtin_agent(config)?;
+        .find(|agent| agent.id == id && agent.ready())?
+        .clone();
+    let model_is_current = config.model.trim() == selected_model
+        || state
+            .editor_ui
+            .agent_settings
+            .builtin_model_catalog_options(id)
+            .iter()
+            .any(|option| option.id.trim() == selected_model);
+    if !model_is_current {
+        return None;
+    }
+    config.model = selected_model.to_string();
+    config.ready().then_some(config)
+}
+
+fn provider_for_builtin(state: &EditorState, entry: &ModelEntry) -> Option<Box<dyn ChatProvider>> {
+    let config = selected_builtin_agent_config(state, entry)?;
+    let provider = ConfiguredBuiltinProvider::from_builtin_agent(&config)?;
     Some(Box::new(provider))
 }
 

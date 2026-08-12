@@ -25,7 +25,7 @@ pub(crate) fn apply_entry_hit(
     now_ms: u64,
 ) -> SettingsPressOutcome {
     let commit = |state: &mut EditorState| {
-        commit_settings_focus(state, scope);
+        commit_settings_focus(state, scope, now_ms);
     };
     let take_over = matches!(scope, SettingsCommitScope::Operator);
     match hit {
@@ -129,6 +129,7 @@ pub(crate) fn apply_entry_hit(
                 agent.toggle_kind_for_preset();
                 state.rebuild_chat_models();
             }
+            queue_builtin_discovery(state, index, now_ms);
             SettingsPressOutcome::handled()
         }
         AgentSettingsHit::ToggleBuiltinAgentDraftKind => {
@@ -166,6 +167,7 @@ pub(crate) fn apply_entry_hit(
                         .agent_settings
                         .set_builtin_agent_preset(index, preset);
                     state.rebuild_chat_models();
+                    queue_builtin_discovery(state, index, now_ms);
                 }
                 None => state
                     .editor_ui
@@ -190,6 +192,7 @@ pub(crate) fn apply_entry_hit(
                 agent.enabled = !agent.enabled;
                 state.rebuild_chat_models();
             }
+            queue_builtin_discovery(state, index, now_ms);
             SettingsPressOutcome::handled()
         }
         AgentSettingsHit::EditBuiltinAgent(index) => {
@@ -215,12 +218,14 @@ pub(crate) fn apply_entry_hit(
         }
         AgentSettingsHit::SaveBuiltinAgentDraft => {
             commit(state);
-            if state
-                .editor_ui
-                .agent_settings
-                .save_builtin_agent_draft()
-                .is_some()
-            {
+            if let Some(id) = state.editor_ui.agent_settings.save_builtin_agent_draft() {
+                let _ = state
+                    .editor_ui
+                    .agent_settings
+                    .begin_builtin_model_catalog_refresh(
+                        op_editor_core::BuiltinModelCatalogTarget::Agent(id),
+                        now_ms,
+                    );
                 clear_focus(state);
                 state.rebuild_chat_models();
             } else {
@@ -389,5 +394,104 @@ pub(crate) fn apply_entry_hit(
             debug_assert!(false, "handled by apply_agent_settings_hit");
             SettingsPressOutcome::handled()
         }
+    }
+}
+
+fn queue_builtin_discovery(state: &mut EditorState, index: usize, now_ms: u64) {
+    let target = state
+        .editor_ui
+        .agent_settings
+        .builtin_agents
+        .get(index)
+        .map(|agent| op_editor_core::BuiltinModelCatalogTarget::Agent(agent.id.clone()));
+    if let Some(target) = target {
+        let _ = state
+            .editor_ui
+            .agent_settings
+            .begin_builtin_model_catalog_refresh(target, now_ms);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saving_a_ready_builtin_draft_queues_its_first_model_discovery() {
+        let mut state = EditorState::new();
+        state.editor_ui.agent_settings.begin_builtin_agent_draft();
+        state
+            .editor_ui
+            .agent_settings
+            .builtin_agent_draft
+            .as_mut()
+            .expect("draft")
+            .api_key = "sk-new".into();
+
+        let outcome = apply_entry_hit(
+            &mut state,
+            AgentSettingsHit::SaveBuiltinAgentDraft,
+            SettingsCommitScope::Browser,
+            55,
+        );
+
+        assert_eq!(outcome, SettingsPressOutcome::handled());
+        let saved_id = state
+            .editor_ui
+            .agent_settings
+            .builtin_agents
+            .first()
+            .expect("saved provider")
+            .id
+            .clone();
+        let request = state
+            .editor_ui
+            .agent_settings
+            .take_pending_builtin_model_catalog_refresh()
+            .expect("save queues discovery");
+        assert_eq!(
+            request.target,
+            op_editor_core::BuiltinModelCatalogTarget::Agent(saved_id)
+        );
+    }
+
+    #[test]
+    fn key_commit_followed_by_kind_toggle_requeues_for_the_new_endpoint() {
+        let mut state = EditorState::new();
+        let id = state.editor_ui.agent_settings.add_builtin_agent_config(
+            "MiniMax",
+            "",
+            "MiniMax-M3",
+            op_editor_core::BuiltinAgentKind::Anthropic,
+            "https://api.minimaxi.com/anthropic",
+        );
+        state.editor_ui.agent_settings.focus = Some(SettingsFocus::BuiltinAgent {
+            index: 0,
+            field: BuiltinAgentField::ApiKey,
+        });
+        state.editor_ui.settings_input.set_text("sk-new");
+
+        apply_entry_hit(
+            &mut state,
+            AgentSettingsHit::ToggleBuiltinAgentKind(0),
+            SettingsCommitScope::Browser,
+            77,
+        );
+
+        let request = state
+            .editor_ui
+            .agent_settings
+            .take_pending_builtin_model_catalog_refresh()
+            .expect("new kind must retain an immediate discovery request");
+        assert_eq!(
+            request.target,
+            op_editor_core::BuiltinModelCatalogTarget::Agent(id)
+        );
+        let config = state
+            .editor_ui
+            .agent_settings
+            .builtin_model_catalog_config_for_request(&request)
+            .expect("request matches the post-toggle configuration");
+        assert_eq!(config.kind, op_editor_core::BuiltinAgentKind::OpenAiCompat);
     }
 }

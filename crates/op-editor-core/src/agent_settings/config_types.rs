@@ -12,7 +12,7 @@ use crate::agent_settings_builtin_presets::{builtin_agent_preset, BuiltinAgentPr
 use crate::chat::AgentProvider;
 
 /// Built-in provider backend configured directly in OpenPencil.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BuiltinAgentKind {
     Anthropic,
     OpenAiCompat,
@@ -35,7 +35,7 @@ impl BuiltinAgentKind {
 }
 
 /// One configured built-in Agent/API-key provider.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct BuiltinAgentConfig {
     pub id: String,
     pub preset: BuiltinAgentPresetKey,
@@ -45,6 +45,29 @@ pub struct BuiltinAgentConfig {
     pub model: String,
     pub base_url: String,
     pub enabled: bool,
+}
+
+impl std::fmt::Debug for BuiltinAgentConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("BuiltinAgentConfig")
+            .field("id", &self.id)
+            .field("preset", &self.preset)
+            .field("display_name", &self.display_name)
+            .field("kind", &self.kind)
+            .field(
+                "api_key",
+                &if self.api_key.is_empty() {
+                    ""
+                } else {
+                    "[redacted]"
+                },
+            )
+            .field("model", &self.model)
+            .field("base_url", &self.base_url)
+            .field("enabled", &self.enabled)
+            .finish()
+    }
 }
 
 impl BuiltinAgentConfig {
@@ -57,6 +80,13 @@ impl BuiltinAgentConfig {
 
     pub fn ready(&self) -> bool {
         self.enabled && !self.api_key.trim().is_empty() && !self.model.trim().is_empty()
+    }
+
+    /// Model discovery needs credentials and an endpoint, but deliberately
+    /// does not require a preselected model. A discovered row can become the
+    /// first persisted model choice.
+    pub fn discovery_ready(&self) -> bool {
+        self.enabled && !self.api_key.trim().is_empty() && !self.base_url.trim().is_empty()
     }
 
     pub fn matches_config(
@@ -115,7 +145,7 @@ impl BuiltinAgentConfig {
             self.base_url = kind.default_base_url().into();
         }
         if kind == BuiltinAgentKind::OpenAiCompat && self.model.starts_with("claude-") {
-            self.model = "gpt-5.4".into();
+            self.model = "gpt-5.6".into();
         } else if kind == BuiltinAgentKind::Anthropic && self.model.starts_with("gpt-") {
             self.model = crate::agent_settings_builtin_presets::DEFAULT_ANTHROPIC_MODEL.into();
         }

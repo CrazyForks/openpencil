@@ -20,7 +20,7 @@
 //! | `agent_settings/config_types.rs`| built-in / ACP / image-gen value types |
 //! | `agent_settings/mutators.rs`    | `impl AgentSettings` mutators        |
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::agent_settings_builtin_presets::BuiltinAgentPresetKey;
 pub use crate::chat::AgentProvider;
@@ -129,6 +129,10 @@ impl McpCli {
 pub use crate::agent_settings_acp_connection::{
     AcpAgentConnectOutcome, AcpAgentConnectPhase, AcpAgentConnectRequest, AcpAgentConnection,
 };
+pub use crate::agent_settings_builtin_models::{
+    BuiltinModelCatalog, BuiltinModelCatalogPhase, BuiltinModelCatalogRefreshOutcome,
+    BuiltinModelCatalogRefreshRequest, BuiltinModelCatalogTarget, BuiltinModelOption,
+};
 pub use crate::agent_settings_connection::{
     McpServer, ProviderConnectOutcome, ProviderConnectPhase, ProviderConnection,
 };
@@ -224,6 +228,11 @@ pub struct AgentSettings {
     pub builtin_preset_menu_scroll: jian_core::scroll::ScrollState,
     pub builtin_preset_menu_hover: Option<BuiltinAgentPresetKey>,
     pub next_builtin_agent_id: u64,
+    /// Runtime-only provider model catalogs. Persisted settings retain only the
+    /// explicitly selected `BuiltinAgentConfig::model`.
+    pub builtin_model_catalogs: BTreeMap<BuiltinModelCatalogTarget, BuiltinModelCatalog>,
+    pub pending_builtin_model_catalog_refreshes: VecDeque<BuiltinModelCatalogRefreshRequest>,
+    pub builtin_model_catalog_generation: u64,
     /// Ids of `builtin_agents` that were auto-imported from an external
     /// CLI config (e.g. Zode's `~/.zode/config.json`). Runtime-only —
     /// NOT persisted. These agents are re-derived from their source file
@@ -311,6 +320,9 @@ impl Default for AgentSettings {
             builtin_preset_menu_scroll: Default::default(),
             builtin_preset_menu_hover: None,
             next_builtin_agent_id: 1,
+            builtin_model_catalogs: BTreeMap::new(),
+            pending_builtin_model_catalog_refreshes: VecDeque::new(),
+            builtin_model_catalog_generation: 0,
             imported_agent_ids: BTreeSet::new(),
             acp_agents: Vec::new(),
             acp_agent_draft: None,

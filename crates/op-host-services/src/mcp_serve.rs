@@ -475,12 +475,17 @@ pub fn read_http_request<S: std::io::Read>(stream: &mut S) -> Result<HttpRequest
             Some(_) => {}
         }
     }
-    if path == "/api/settings/credentials"
-        && content_length > crate::web_credentials::MAX_CREDENTIAL_BODY_BYTES
+    let credential_body_label = match path.as_str() {
+        "/api/settings/credentials" => Some("credential settings"),
+        "/api/ai/models/discover" => Some("model discovery"),
+        _ => None,
+    };
+    if let Some(label) = credential_body_label
+        .filter(|_| content_length > crate::web_credentials::MAX_CREDENTIAL_BODY_BYTES)
     {
-        return Err(McpServeError::Protocol(
-            "credential settings body exceeds 256 KiB".into(),
-        ));
+        return Err(McpServeError::Protocol(format!(
+            "{label} body exceeds 256 KiB"
+        )));
     }
     let header_value = |wanted: &str| {
         headers.lines().skip(1).find_map(|line| {

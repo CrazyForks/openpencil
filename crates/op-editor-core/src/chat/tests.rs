@@ -593,3 +593,24 @@ fn rebuild_available_models_preserves_selection_by_identity() {
     assert!(chat.available_models.is_empty());
     assert_eq!(chat.selected_model, 0);
 }
+
+#[test]
+fn builtin_model_id_strips_the_exact_structured_provider_prefix() {
+    let entry = ModelEntry::builtin_with_display_name(
+        AgentProvider::CodexCli,
+        "web-credential:builtin:account:7",
+        "Provider",
+        "builtin:web-credential:builtin:account:7:deployment:blue",
+        "Blue",
+    );
+
+    assert_eq!(entry.builtin_model_id(), Some("deployment:blue"));
+
+    let malformed = ModelEntry::builtin(
+        AgentProvider::CodexCli,
+        "expected:id",
+        "builtin:different:id:model",
+        "Model",
+    );
+    assert_eq!(malformed.builtin_model_id(), None);
+}

@@ -110,6 +110,18 @@ pub(crate) fn parse_transient_builtin(value: &serde_json::Value) -> Option<Built
     Some(agent)
 }
 
+/// Discovery variant of [`parse_transient_builtin`]. Listing models is what
+/// lets a user make the first model choice, so this path intentionally accepts
+/// an empty model while retaining the same identity/key/endpoint checks.
+pub(crate) fn parse_transient_builtin_for_discovery(
+    value: &serde_json::Value,
+) -> Option<BuiltinAgentConfig> {
+    let payload: BuiltinAgentPayload = serde_json::from_value(value.clone()).ok()?;
+    validate_required_id(&payload.id, "built-in agent id").ok()?;
+    let agent = parse_builtin_agent(payload).ok()?;
+    agent.discovery_ready().then_some(agent)
+}
+
 /// Whether a browser-supplied provider endpoint may be dialed. Any public
 /// HTTPS origin passes; private/loopback/metadata targets need an explicit
 /// `OPENPENCIL_WEB_AI_ENDPOINT_ALLOWLIST` entry. Connect-time DNS pinning

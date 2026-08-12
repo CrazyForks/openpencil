@@ -28,6 +28,7 @@ impl<'a> AIChatPlaceholder<'a> {
             picker,
             point,
             self.model_picker_input.text(),
+            self.model_refresh_available,
         ) {
             return Some(AIChatHit::ClearModelSearch);
         }
@@ -37,7 +38,11 @@ impl<'a> AIChatPlaceholder<'a> {
             point,
             &self.state.available_models,
             self.model_picker_input.text(),
+            self.model_refresh_available,
         ) {
+            jian_widgets::components::select::SelectHit::Row(
+                crate::widgets::ai_chat_model_picker::MODEL_REFRESH_TARGET,
+            ) => Some(AIChatHit::RefreshModelCatalogs),
             jian_widgets::components::select::SelectHit::Row(idx) => {
                 Some(AIChatHit::SelectModel(idx))
             }
@@ -229,7 +234,7 @@ impl<'a> AIChatPlaceholder<'a> {
                 let footer = self.footer_layout(rect, input_rect, toolbar_top);
                 let streaming = self.is_streaming();
                 if (footer.model).contains(point) {
-                    return Some(if can_use_model {
+                    return Some(if can_use_model || self.model_refresh_available {
                         AIChatHit::ToggleModelPicker
                     } else {
                         AIChatHit::FocusInput

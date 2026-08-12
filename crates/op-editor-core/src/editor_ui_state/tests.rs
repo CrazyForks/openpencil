@@ -139,6 +139,16 @@ fn builtin_agent_draft_ready_reads_focused_settings_input() {
     ui.settings_input.set_text("sk-test");
 
     assert!(ui.builtin_agent_draft_ready());
+
+    ui.agent_settings.focus = None;
+    let draft = ui
+        .agent_settings
+        .builtin_agent_draft
+        .as_mut()
+        .expect("draft exists");
+    draft.api_key = "sk-test".into();
+    draft.model.clear();
+    assert!(ui.builtin_agent_draft_ready());
 }
 
 #[test]

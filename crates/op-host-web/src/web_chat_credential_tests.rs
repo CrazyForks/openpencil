@@ -47,6 +47,56 @@ fn prepare_turn_attaches_only_the_selected_builtin_credential() {
 }
 
 #[test]
+fn prepare_turn_uses_the_selected_runtime_model_not_the_config_fallback() {
+    let mut state = state_with_queued_send("hello");
+    let id = state.editor_ui.agent_settings.add_builtin_agent_config(
+        "Private",
+        "sk-selected",
+        "fallback-b",
+        op_editor_core::BuiltinAgentKind::OpenAiCompat,
+        "https://example.test/v1",
+    );
+    let settings = &mut state.editor_ui.agent_settings;
+    settings.request_ready_builtin_model_catalog_refreshes(1);
+    let request = settings
+        .take_pending_builtin_model_catalog_refresh()
+        .expect("catalog request");
+    let expected = settings
+        .builtin_model_catalog_config_for_request(&request)
+        .expect("provider snapshot");
+    assert!(
+        settings.apply_builtin_model_catalog_refresh_outcome_if_current(
+            &expected,
+            &request,
+            op_editor_core::BuiltinModelCatalogRefreshOutcome::Success {
+                models: vec![op_editor_core::BuiltinModelOption::new(
+                    "runtime-a",
+                    "Runtime A",
+                )],
+            },
+        )
+    );
+    reconcile_models(&mut state);
+    state.chat.selected_model = state
+        .chat
+        .available_models
+        .iter()
+        .position(|entry| entry.value == format!("builtin:{id}:runtime-a"))
+        .expect("runtime model is selectable");
+
+    let body: serde_json::Value = serde_json::from_str(
+        &prepare_turn(&mut state)
+            .expect("send was pending")
+            .body_json,
+    )
+    .expect("body is JSON");
+
+    assert_eq!(body["model"], "runtime-a");
+    assert_eq!(body["credential"]["model"], "runtime-a");
+    assert_ne!(body["model"], "fallback-b");
+}
+
+#[test]
 fn prepare_turn_uses_null_credential_for_a_daemon_builtin_model() {
     let mut state = state_with_queued_send("hello");
     state.chat.available_models = vec![ModelEntry::builtin_with_display_name(

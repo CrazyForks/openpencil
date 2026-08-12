@@ -17,6 +17,7 @@ mod app_handler;
 mod app_poll;
 mod app_state;
 mod asset_fetch_error;
+mod builtin_model_refresh_host;
 mod bundled_fonts;
 mod chat_acp;
 mod chat_attachment;
@@ -310,6 +311,10 @@ struct DesktopApp {
     /// (`editor_ui.pending_model_catalog_refresh`) and drained by
     /// `drain_model_catalog_refresh`.
     model_catalog_refresh: op_host_services::model_catalog_refresh::ModelCatalogRefresh,
+    /// Per-agent HTTP model catalogs requested by the built-in model picker.
+    /// Jobs stay host-side because discovery uses native networking; only
+    /// successful, current results are installed into editor-core runtime state.
+    builtin_model_refresh: builtin_model_refresh_host::BuiltinModelRefreshHost,
     /// Background auto-search jobs that replace generated empty image
     /// nodes with freely licensed remote images.
     image_search: image_search_session::ImageSearchSession,

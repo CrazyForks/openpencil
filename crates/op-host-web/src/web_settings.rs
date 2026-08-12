@@ -60,6 +60,7 @@ pub(crate) fn host_locale_from_query(search: &str) -> Option<Locale> {
 pub(super) fn reset_account_scoped_settings(state: &mut EditorState) {
     let defaults = op_editor_core::AgentSettings::default();
     let eui = &mut state.editor_ui;
+    eui.agent_settings.clear_builtin_model_catalogs();
     eui.locale = op_editor_core::EditorUiState::default().locale;
     eui.recent_files.clear();
     eui.agent_settings.mcp_server.port = defaults.mcp_server.port;
@@ -386,6 +387,7 @@ fn apply_payload(state: &mut EditorState, payload: SettingsPayload) {
         eui.agent_settings.experimental_features_enabled = enabled;
     }
     if let Some(agents) = payload.builtin_agents {
+        eui.agent_settings.clear_builtin_model_catalogs();
         let agents = agents
             .into_iter()
             .filter_map(builtin_agent_from_payload)
@@ -440,6 +442,7 @@ fn apply_payload(state: &mut EditorState, payload: SettingsPayload) {
 
 fn apply_credential_payload(state: &mut EditorState, payload: CredentialPayload) {
     let settings = &mut state.editor_ui.agent_settings;
+    settings.clear_builtin_model_catalogs();
     settings.builtin_agents = dedupe_builtin_agents(
         payload
             .builtin_agents

@@ -15,6 +15,7 @@ mod agent_provider_wire;
 pub mod agent_reveals;
 pub mod agent_settings;
 pub mod agent_settings_acp_connection;
+pub mod agent_settings_builtin_models;
 pub mod agent_settings_builtin_presets;
 pub mod agent_settings_button_state;
 pub mod agent_settings_connection;
@@ -29,6 +30,7 @@ pub mod chat;
 pub mod chat_activity;
 pub mod chat_button_state;
 mod chat_design_apply;
+mod chat_model_mutators;
 pub mod chat_sessions;
 mod chat_title;
 pub mod clipboard;
@@ -244,6 +246,8 @@ mod tests_agent_settings;
 #[cfg(test)]
 mod tests_agent_settings_draft;
 #[cfg(test)]
+mod tests_agent_settings_model_catalog;
+#[cfg(test)]
 mod tests_drag_mutators;
 #[cfg(test)]
 mod tests_geometry;
@@ -264,9 +268,11 @@ pub use acp_agent_presets::{
 pub use agent_settings::{
     AcpAgentConfig, AcpAgentConnectOutcome, AcpAgentConnectPhase, AcpAgentConnectRequest,
     AcpAgentConnection, AcpAgentField, AcpConnectionType, AgentSettings, AgentSettingsDrag,
-    AgentSettingsTab, BuiltinAgentConfig, BuiltinAgentField, BuiltinAgentKind, ImageGenField,
-    ImageGenProfile, ImageGenProvider, ImageSearchField, ImageTestStatus, McpCli, McpServer,
-    ProviderConnectOutcome, ProviderConnectPhase, ProviderConnection, SettingsFocus,
+    AgentSettingsTab, BuiltinAgentConfig, BuiltinAgentField, BuiltinAgentKind, BuiltinModelCatalog,
+    BuiltinModelCatalogPhase, BuiltinModelCatalogRefreshOutcome, BuiltinModelCatalogRefreshRequest,
+    BuiltinModelCatalogTarget, BuiltinModelOption, ImageGenField, ImageGenProfile,
+    ImageGenProvider, ImageSearchField, ImageTestStatus, McpCli, McpServer, ProviderConnectOutcome,
+    ProviderConnectPhase, ProviderConnection, SettingsFocus,
 };
 pub use agent_settings_builtin_presets::{
     builtin_agent_preset, infer_builtin_agent_preset, normalize_builtin_agent_preset,

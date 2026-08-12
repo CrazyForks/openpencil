@@ -96,7 +96,7 @@ pub fn apply_agent_settings_hit(
 ) -> SettingsPressOutcome {
     record_pressed_button(state, hit);
     let commit = |state: &mut EditorState| {
-        commit_settings_focus(state, scope);
+        commit_settings_focus(state, scope, now_ms);
     };
     match hit {
         AgentSettingsHit::Close | AgentSettingsHit::Outside => {

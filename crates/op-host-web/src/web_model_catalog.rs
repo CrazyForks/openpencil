@@ -161,11 +161,20 @@ pub(crate) fn reconcile_models(state: &mut EditorState) {
         .agent_settings
         .builtin_agents
         .iter()
-        .filter(|agent| agent.ready())
+        .filter(|agent| agent.discovery_ready())
         .collect::<Vec<_>>();
     let local_model_ids = local_agents
         .iter()
-        .map(|agent| agent.model.trim())
+        .flat_map(|agent| {
+            std::iter::once(agent.model.trim()).chain(
+                state
+                    .editor_ui
+                    .agent_settings
+                    .builtin_model_catalog_options(&agent.id)
+                    .iter()
+                    .map(|option| option.id.trim()),
+            )
+        })
         .collect::<std::collections::HashSet<_>>();
     let mut available_models = state
         .chat
@@ -184,15 +193,31 @@ pub(crate) fn reconcile_models(state: &mut EditorState) {
         })
         .cloned()
         .collect::<Vec<_>>();
-    available_models.extend(local_agents.into_iter().map(|agent| {
-        ModelEntry::builtin_with_display_name(
-            agent.kind.model_provider(),
-            agent.id.clone(),
-            agent.display_name.clone(),
-            format!("builtin:{}:{}", agent.id, agent.model),
-            agent.model.clone(),
-        )
-    }));
+    for agent in local_agents {
+        let mut seen = std::collections::HashSet::new();
+        for (model, display_name) in std::iter::once((agent.model.as_str(), agent.model.as_str()))
+            .chain(
+                state
+                    .editor_ui
+                    .agent_settings
+                    .builtin_model_catalog_options(&agent.id)
+                    .iter()
+                    .map(|option| (option.id.as_str(), option.display_name.as_str())),
+            )
+        {
+            let model = model.trim();
+            if model.is_empty() || !seen.insert(model) {
+                continue;
+            }
+            available_models.push(ModelEntry::builtin_with_display_name(
+                agent.kind.model_provider(),
+                agent.id.clone(),
+                agent.display_name.clone(),
+                format!("builtin:{}:{model}", agent.id),
+                display_name,
+            ));
+        }
+    }
     if state.chat.available_models == available_models {
         return;
     }

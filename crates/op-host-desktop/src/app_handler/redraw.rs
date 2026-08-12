@@ -375,6 +375,11 @@ impl DesktopApp {
         if self.drain_model_catalog_refresh() {
             self.redraw_dirty = true;
         }
+        // Drain picker-open built-in HTTP catalogs. Core rejects results whose
+        // target generation or credential fingerprint changed in flight.
+        if self.drain_builtin_model_refresh() {
+            self.redraw_dirty = true;
+        }
         // Drain the background auto-update probe.
         if self.poll_update_probe() {
             self.redraw_dirty = true;

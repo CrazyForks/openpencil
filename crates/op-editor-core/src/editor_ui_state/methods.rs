@@ -443,10 +443,8 @@ impl EditorUiState {
         self.close_chat_model_picker();
         if opening {
             self.chat_model_picker.open = true;
-            // Raised here rather than in the click flow so every path
-            // that opens the picker asks for a fresh catalog — the
-            // request is only a request, and the host that drains it
-            // decides (via TTL) whether a probe actually runs.
+            // Raised here rather than in the click flow so every path that
+            // opens the picker can ask its host to refresh CLI catalogs.
             self.pending_model_catalog_refresh = true;
         }
         opening
@@ -511,10 +509,10 @@ impl EditorUiState {
         let Some(api_key) = self.builtin_agent_draft_field_text(BuiltinAgentField::ApiKey) else {
             return false;
         };
-        let Some(model) = self.builtin_agent_draft_field_text(BuiltinAgentField::Model) else {
+        let Some(base_url) = self.builtin_agent_draft_field_text(BuiltinAgentField::BaseUrl) else {
             return false;
         };
-        !name.trim().is_empty() && !api_key.trim().is_empty() && !model.trim().is_empty()
+        !name.trim().is_empty() && !api_key.trim().is_empty() && !base_url.trim().is_empty()
     }
 
     pub fn acp_agent_draft_ready(&self) -> bool {

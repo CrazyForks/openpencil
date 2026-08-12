@@ -126,4 +126,16 @@ impl ModelEntry {
     pub fn acp_agent_id(&self) -> Option<&str> {
         self.value.strip_prefix("acp:")
     }
+
+    /// Concrete wire model carried by a built-in catalog row.
+    ///
+    /// The provider id and model may both contain `:`, so parsing must strip
+    /// the exact prefix built from the already-structured provider identity.
+    pub fn builtin_model_id(&self) -> Option<&str> {
+        let id = self.builtin_provider_id.as_deref()?;
+        let prefix = format!("builtin:{id}:");
+        self.value
+            .strip_prefix(&prefix)
+            .filter(|model| !model.trim().is_empty())
+    }
 }

@@ -326,6 +326,30 @@ fn cross_origin_browser_cannot_write_server_credentials() {
 }
 
 #[test]
+fn cross_origin_browser_cannot_discover_models_with_a_credential() {
+    let state = Mutex::new(fresh_state());
+    let body = r#"{"id":"builtin-1","generation":1,"credential":{
+        "id":"builtin-1","preset":"openai","display_name":"Private",
+        "kind":"openai-compat","api_key":"sk-must-not-leak",
+        "model":"fallback","base_url":"https://api.openai.com/v1",
+        "enabled":true}}"#;
+    let request = format!(
+        "POST /api/ai/models/discover HTTP/1.1\r\nHost: 127.0.0.1:3100\r\nOrigin: https://evil.example\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+        body.len(),
+        body,
+    );
+    let request_len = request.len();
+    let mut stream = std::io::Cursor::new(request.into_bytes());
+
+    serve_one(&mut stream, &state, &SseHub::default()).expect("request handled");
+
+    let response = String::from_utf8_lossy(&stream.get_ref()[request_len..]);
+    assert!(response.contains("403 Forbidden"), "{response}");
+    assert!(response.contains("cross-origin"), "{response}");
+    assert!(!response.contains("sk-must-not-leak"), "{response}");
+}
+
+#[test]
 fn cross_origin_browser_cannot_read_account_avatar() {
     let state = Mutex::new(fresh_state());
     let request = format!(

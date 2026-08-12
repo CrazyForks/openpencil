@@ -35,6 +35,7 @@ impl AgentSettings {
             "builtin-",
             self.builtin_agents.iter().map(|agent| agent.id.as_str()),
         );
+        self.invalidate_builtin_model_catalog_for_agent(&old_id);
         self.builtin_agents[index].id = format!("builtin-{next}");
         self.next_builtin_agent_id = next.saturating_add(1);
         debug_assert_ne!(self.builtin_agents[index].id, old_id);
@@ -96,6 +97,9 @@ impl AgentSettings {
         if self.builtin_agent_draft.is_some() {
             return;
         }
+        self.invalidate_builtin_model_catalog(
+            &crate::agent_settings_builtin_models::BuiltinModelCatalogTarget::Draft,
+        );
         let preset = builtin_agent_preset(BuiltinAgentPresetKey::Anthropic);
         self.builtin_agent_draft = Some(BuiltinAgentConfig {
             id: String::new(),
@@ -110,12 +114,16 @@ impl AgentSettings {
     }
 
     pub fn set_builtin_agent_preset(&mut self, index: usize, preset: BuiltinAgentPresetKey) {
+        let id = self.builtin_agents.get(index).map(|agent| agent.id.clone());
         if let Some(agent) = self.builtin_agents.get_mut(index) {
             let api_key = agent.api_key.clone();
             let enabled = agent.enabled;
             agent.apply_preset(preset);
             agent.api_key = api_key;
             agent.enabled = enabled;
+        }
+        if let Some(id) = id {
+            self.invalidate_builtin_model_catalog_for_agent(&id);
         }
     }
 
@@ -125,17 +133,23 @@ impl AgentSettings {
             agent.apply_preset(preset);
             agent.api_key = api_key;
         }
+        self.invalidate_builtin_model_catalog(
+            &crate::agent_settings_builtin_models::BuiltinModelCatalogTarget::Draft,
+        );
     }
 
     pub fn save_builtin_agent_draft(&mut self) -> Option<String> {
         if !self
             .builtin_agent_draft
             .as_ref()
-            .is_some_and(|draft| draft.ready())
+            .is_some_and(|draft| draft.discovery_ready())
         {
             return None;
         }
         let draft = self.builtin_agent_draft.take()?;
+        self.invalidate_builtin_model_catalog(
+            &crate::agent_settings_builtin_models::BuiltinModelCatalogTarget::Draft,
+        );
         Some(self.add_builtin_agent_config(
             draft.display_name,
             draft.api_key,
@@ -147,9 +161,19 @@ impl AgentSettings {
 
     pub fn cancel_builtin_agent_draft(&mut self) {
         self.builtin_agent_draft = None;
+        self.invalidate_builtin_model_catalog(
+            &crate::agent_settings_builtin_models::BuiltinModelCatalogTarget::Draft,
+        );
         self.builtin_preset_menu_open = None;
         self.builtin_preset_menu_scroll.offset = 0.0;
         self.builtin_preset_menu_hover = None;
+    }
+
+    pub fn remove_builtin_agent(&mut self, index: usize) -> Option<BuiltinAgentConfig> {
+        let removed =
+            (index < self.builtin_agents.len()).then(|| self.builtin_agents.remove(index))?;
+        self.invalidate_builtin_model_catalog_for_agent(&removed.id);
+        Some(removed)
     }
 
     pub fn add_builtin_agent_with_defaults(

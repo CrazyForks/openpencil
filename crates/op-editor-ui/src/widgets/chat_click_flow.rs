@@ -64,6 +64,9 @@ pub fn chat_button_press_target(hit: &AIChatHit) -> Option<ButtonPressTarget> {
     if let AIChatHit::Example { index, .. } = hit {
         return Some(ButtonPressTarget::ChatExample(*index));
     }
+    if matches!(hit, AIChatHit::RefreshModelCatalogs) {
+        return Some(ButtonPressTarget::ChatModelRefresh);
+    }
     let footer = match hit {
         AIChatHit::OpenPromptCenter => ChatFooterButton::PromptCenter,
         AIChatHit::ToggleModelPicker => ChatFooterButton::ModelPicker,
@@ -160,6 +163,15 @@ pub fn apply_chat_hit(state: &mut EditorState, hit: AIChatHit, now_ms: u64) -> C
         AIChatHit::ToggleModelPicker => {
             let opening = state.editor_ui.toggle_chat_model_picker();
             if opening {
+                // Runtime built-in catalogs are app-level while model rows are
+                // stored per chat tab. Reconcile the active tab even when TTL
+                // suppresses network I/O (for example after switching tabs or
+                // replacing credentials while another tab was inactive).
+                state.rebuild_chat_models();
+                state
+                    .editor_ui
+                    .agent_settings
+                    .request_ready_builtin_model_catalog_refreshes(now_ms);
                 // Close the parallel-agents picker when model picker opens.
                 state.editor_ui.close_parallel_agents_picker();
                 state.editor_ui.chat_model_picker_input.touch(now_ms);
@@ -176,6 +188,13 @@ pub fn apply_chat_hit(state: &mut EditorState, hit: AIChatHit, now_ms: u64) -> C
             state.editor_ui.chat_model_picker.hover = None;
             state.editor_ui.chat_model_picker.pressed = None;
             state.editor_ui.chat_model_picker_input.touch(now_ms);
+            ChatClickStep::Dirty
+        }
+        AIChatHit::RefreshModelCatalogs => {
+            state
+                .editor_ui
+                .agent_settings
+                .force_ready_builtin_model_catalog_refreshes(now_ms);
             ChatClickStep::Dirty
         }
         AIChatHit::SelectModel(idx) => {
@@ -292,6 +311,7 @@ pub fn apply_chat_hit(state: &mut EditorState, hit: AIChatHit, now_ms: u64) -> C
             // Pure editor-state change — a switch does NOT touch the run
             // binding (a run keeps streaming into its own bound tab).
             state.chat.switch_to(idx);
+            state.rebuild_chat_models();
             state.editor_ui.close_chat_model_picker();
             // Active session changed: the host rotates the transcript-cache
             // owner synchronously so a pointer move arriving before the next
@@ -332,4 +352,182 @@ pub fn begin_chat_transcript_selection(
     });
     state.codegen.code_selection = None;
     state.chat.focused = false;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opening_model_picker_queues_builtin_catalog_refresh_once() {
+        let mut state = EditorState::new();
+        state.editor_ui.agent_settings.add_builtin_agent_config(
+            "Provider",
+            "sk-test",
+            "fallback",
+            op_editor_core::BuiltinAgentKind::OpenAiCompat,
+            "https://example.test/v1",
+        );
+
+        assert_eq!(
+            apply_chat_hit(&mut state, AIChatHit::ToggleModelPicker, 42),
+            ChatClickStep::ModelPickerToggled { opening: true }
+        );
+        assert_eq!(
+            state
+                .editor_ui
+                .agent_settings
+                .pending_builtin_model_catalog_refreshes
+                .len(),
+            1
+        );
+
+        apply_chat_hit(&mut state, AIChatHit::ToggleModelPicker, 43);
+        apply_chat_hit(&mut state, AIChatHit::ToggleModelPicker, 44);
+        assert_eq!(
+            state
+                .editor_ui
+                .agent_settings
+                .pending_builtin_model_catalog_refreshes
+                .len(),
+            1,
+            "an in-flight provider refresh must not be duplicated"
+        );
+    }
+
+    #[test]
+    fn manual_model_refresh_bypasses_ttl_and_preserves_picker_state() {
+        let mut state = EditorState::new();
+        state.editor_ui.agent_settings.add_builtin_agent_config(
+            "Provider",
+            "sk-test",
+            "fallback",
+            op_editor_core::BuiltinAgentKind::OpenAiCompat,
+            "https://example.test/v1",
+        );
+        let settings = &mut state.editor_ui.agent_settings;
+        assert_eq!(settings.request_ready_builtin_model_catalog_refreshes(1), 1);
+        let initial = settings
+            .take_pending_builtin_model_catalog_refresh()
+            .expect("initial catalog request");
+        let expected = settings
+            .builtin_model_catalog_config_for_request(&initial)
+            .expect("provider snapshot");
+        assert!(
+            settings.apply_builtin_model_catalog_refresh_outcome_if_current(
+                &expected,
+                &initial,
+                op_editor_core::BuiltinModelCatalogRefreshOutcome::Success {
+                    models: vec![op_editor_core::BuiltinModelOption::new("live", "Live")],
+                },
+            )
+        );
+        assert_eq!(settings.request_ready_builtin_model_catalog_refreshes(2), 0);
+
+        state.editor_ui.chat_model_picker.open = true;
+        state.editor_ui.chat_model_picker_input.set_text("live");
+        state.editor_ui.chat_model_picker.scroll.offset = 17.0;
+        assert_eq!(
+            apply_chat_hit(&mut state, AIChatHit::RefreshModelCatalogs, 2),
+            ChatClickStep::Dirty
+        );
+        assert_eq!(
+            state.editor_ui.pressed_button,
+            Some(op_editor_core::ButtonPressTarget::ChatModelRefresh)
+        );
+        assert!(state.editor_ui.chat_model_picker.open);
+        assert_eq!(state.editor_ui.chat_model_picker_input.text(), "live");
+        assert_eq!(state.editor_ui.chat_model_picker.scroll.offset, 17.0);
+        assert_eq!(
+            state
+                .editor_ui
+                .agent_settings
+                .pending_builtin_model_catalog_refreshes
+                .len(),
+            1
+        );
+        let generation = state
+            .editor_ui
+            .agent_settings
+            .builtin_model_catalog_generation;
+        apply_chat_hit(&mut state, AIChatHit::RefreshModelCatalogs, 3);
+        assert_eq!(
+            state
+                .editor_ui
+                .agent_settings
+                .pending_builtin_model_catalog_refreshes
+                .len(),
+            1,
+            "repeated presses must not duplicate an in-flight refresh"
+        );
+        assert_eq!(
+            state
+                .editor_ui
+                .agent_settings
+                .builtin_model_catalog_generation,
+            generation
+        );
+    }
+
+    #[test]
+    fn switching_tabs_reconciles_app_level_builtin_catalogs() {
+        let mut state = EditorState::new();
+        let id = state.editor_ui.agent_settings.add_builtin_agent_config(
+            "Provider",
+            "sk-test",
+            "fallback",
+            op_editor_core::BuiltinAgentKind::OpenAiCompat,
+            "https://example.test/v1",
+        );
+        state.chat.new_tab();
+        state.chat.switch_to(0);
+        let request = state
+            .editor_ui
+            .agent_settings
+            .begin_builtin_model_catalog_refresh(
+                op_editor_core::BuiltinModelCatalogTarget::Agent(id.clone()),
+                1,
+            )
+            .expect("catalog request");
+        state
+            .editor_ui
+            .agent_settings
+            .take_pending_builtin_model_catalog_refresh();
+        let expected = state
+            .editor_ui
+            .agent_settings
+            .builtin_model_catalog_config_for_request(&request)
+            .expect("provider snapshot");
+        assert!(state
+            .editor_ui
+            .agent_settings
+            .apply_builtin_model_catalog_refresh_outcome_if_current(
+                &expected,
+                &request,
+                op_editor_core::BuiltinModelCatalogRefreshOutcome::Success {
+                    models: vec![op_editor_core::BuiltinModelOption::new(
+                        "dynamic", "Dynamic",
+                    )],
+                },
+            ));
+        state.rebuild_chat_models();
+        assert!(state.chat.tabs()[0]
+            .available_models
+            .iter()
+            .any(|entry| entry.builtin_model_id() == Some("dynamic")));
+        assert!(!state.chat.tabs()[1]
+            .available_models
+            .iter()
+            .any(|entry| entry.builtin_model_id() == Some("dynamic")));
+
+        assert_eq!(
+            apply_chat_hit(&mut state, AIChatHit::SwitchTab(1), 2),
+            ChatClickStep::RotateChatOwner
+        );
+        assert!(state
+            .chat
+            .available_models
+            .iter()
+            .any(|entry| entry.builtin_model_id() == Some("dynamic")));
+    }
 }

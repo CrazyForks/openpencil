@@ -1,4 +1,7 @@
-use super::{apply_json, validate_web_provider_base_url_with_allowlist, MAX_CREDENTIAL_BODY_BYTES};
+use super::{
+    apply_json, parse_transient_builtin, parse_transient_builtin_for_discovery,
+    validate_web_provider_base_url_with_allowlist, MAX_CREDENTIAL_BODY_BYTES,
+};
 use op_editor_core::{BuiltinAgentConfig, BuiltinAgentKind, BuiltinAgentPresetKey, EditorState};
 
 struct EnvVarGuard {
@@ -55,6 +58,23 @@ fn state_with_operator_agent() -> EditorState {
             enabled: true,
         });
     state
+}
+
+#[test]
+fn discovery_accepts_a_credential_before_its_first_model_is_selected() {
+    let credential = serde_json::json!({
+        "id": "builtin-web-1",
+        "preset": "custom",
+        "display_name": "Private Model",
+        "kind": "openai-compat",
+        "api_key": "sk-browser-only",
+        "model": "",
+        "base_url": "https://api.openai.com/v1",
+        "enabled": true,
+    });
+
+    assert!(parse_transient_builtin(&credential).is_none());
+    assert!(parse_transient_builtin_for_discovery(&credential).is_some());
 }
 
 #[test]
