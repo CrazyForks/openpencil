@@ -97,11 +97,30 @@ impl WidgetHost {
     }
 
     /// Wheel zoom centered on the cursor when over the canvas.
+    #[cfg(test)]
     pub fn apply_wheel(
         &mut self,
         x: f32,
         y: f32,
         delta_y: f32,
+        viewport_width: f32,
+        viewport_height: f32,
+    ) -> bool {
+        self.apply_wheel_with_canvas_delta(x, y, delta_y, delta_y, viewport_width, viewport_height)
+    }
+
+    /// Browser wheel routing with separate panel-scroll and canvas-zoom deltas.
+    ///
+    /// DOM line/page units are normalized before this call. Panels retain that
+    /// physical scroll distance while canvas zoom receives device-sensitive
+    /// acceleration, so making pinch responsive does not make property and
+    /// layer panels jump.
+    pub(crate) fn apply_wheel_with_canvas_delta(
+        &mut self,
+        x: f32,
+        y: f32,
+        delta_y: f32,
+        canvas_delta_y: f32,
         viewport_width: f32,
         viewport_height: f32,
     ) -> bool {
@@ -189,7 +208,7 @@ impl WidgetHost {
         // canvas-region offset (sidebar collapse aware).
         let (cx0, cy0, _cw, _ch) = self.canvas_region(viewport_width, viewport_height);
         let cursor = Point2D::new(x - cx0, y - cy0);
-        self.editor_state.viewport.zoom_at(cursor, delta_y);
+        self.editor_state.viewport.zoom_at(cursor, canvas_delta_y);
         // A wheel zoom only changes the viewport (camera); the document-space
         // layout scene is unchanged, so keep the layout cache intact — no
         // `mark_dirty()` (matches native `scroll.rs`). The wheel listener

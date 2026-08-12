@@ -55,6 +55,25 @@ fn horizontal_trackpad_pan_moves_canvas_viewport() {
     assert_eq!(host.editor_state.viewport.pan_y, 0.0);
 }
 
+#[test]
+fn browser_zoom_uses_accelerated_delta_and_keeps_pointer_anchor() {
+    let mut host = WidgetHost::new();
+    let point = canvas_point(&host, 420.0, 260.0);
+    let (cx0, cy0, _, _) = host.canvas_region(VIEWPORT_W, VIEWPORT_H);
+    let local = Point2D::new(point.x - cx0, point.y - cy0);
+    let before = host.editor_state.viewport.to_document(local);
+
+    assert!(
+        host.apply_wheel_with_canvas_delta(point.x, point.y, -10.0, -40.0, VIEWPORT_W, VIEWPORT_H,)
+    );
+
+    let expected_zoom = (-40.0_f32 * 0.0015).exp();
+    assert!((host.editor_state.viewport.zoom - expected_zoom).abs() < 1e-6);
+    let after = host.editor_state.viewport.to_document(local);
+    assert!((before.x - after.x).abs() < 1e-4);
+    assert!((before.y - after.y).abs() < 1e-4);
+}
+
 fn nested_frame_doc(depth: usize) -> String {
     let mut src = String::from(r#"{"version":"1.0.0","children":["#);
     for i in 0..depth {

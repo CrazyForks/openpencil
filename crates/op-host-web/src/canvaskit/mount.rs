@@ -443,15 +443,26 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
             };
             let (w, h) = b.backend.logical_size();
             let (x, y) = b.event_offset_to_logical(evt.offset_x() as f32, evt.offset_y() as f32);
+            let mut modifiers = op_editor_ui::Modifiers::empty();
+            modifiers.set(op_editor_ui::Modifiers::SHIFT, evt.shift_key());
+            modifiers.set(op_editor_ui::Modifiers::CTRL, evt.ctrl_key());
+            modifiers.set(op_editor_ui::Modifiers::CMD, evt.meta_key());
+            modifiers.set(op_editor_ui::Modifiers::ALT, evt.alt_key());
             let consumed = match classify_wheel_intent(
                 evt.delta_x() as f32,
                 evt.delta_y() as f32,
-                evt.shift_key(),
-                evt.ctrl_key(),
-                evt.meta_key(),
-                evt.alt_key(),
+                evt.delta_mode(),
+                w,
+                h,
+                modifiers,
             ) {
-                WheelIntent::Zoom { delta_y } => b.host.apply_wheel(x, y, delta_y, w, h),
+                WheelIntent::Zoom {
+                    scroll_delta_y,
+                    canvas_delta_y,
+                } => {
+                    b.host
+                        .apply_wheel_with_canvas_delta(x, y, scroll_delta_y, canvas_delta_y, w, h)
+                }
                 WheelIntent::Pan { dx, dy } => b.host.apply_pan_gesture(x, y, dx, dy, w, h),
             };
             if consumed {
