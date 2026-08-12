@@ -164,11 +164,34 @@ impl SceneTemplatePanel<'_> {
         if viewport.contains(point) {
             match self.tab() {
                 AssetCenterTab::Templates => {
+                    let user_cards = self.user_cards();
                     let cards = self.filtered();
-                    for (index, rect) in self.card_rects_for_count(panel, cards.len()) {
-                        if rect.contains(point) {
-                            return Some(self.template_card_hit(cards[index], index, rect, point));
+                    let total = user_cards.len() + cards.len();
+                    for (index, rect) in self.card_rects_for_count(panel, total) {
+                        if !rect.contains(point) {
+                            continue;
                         }
+                        if index < user_cards.len() {
+                            // The ✕ sits on the card, so it has to be tested
+                            // before the card itself — otherwise deleting a
+                            // saved template would open it instead.
+                            if self.template_delete_visible(index)
+                                && Self::template_delete_rect(rect).contains(point)
+                            {
+                                return Some(SceneTemplateHit::DeleteTemplate(
+                                    user_cards[index].id.clone(),
+                                ));
+                            }
+                            return Some(SceneTemplateHit::AddTemplateToCanvas(
+                                user_cards[index].id.clone(),
+                            ));
+                        }
+                        return Some(self.template_card_hit(
+                            cards[index - user_cards.len()],
+                            index,
+                            rect,
+                            point,
+                        ));
                     }
                 }
                 AssetCenterTab::Styles => {

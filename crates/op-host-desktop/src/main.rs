@@ -104,6 +104,8 @@ mod theme_preset_host;
 mod ui_prefs;
 mod update_check;
 mod user_style_store;
+mod user_template_save;
+mod user_template_store;
 mod window_resize;
 mod window_state;
 

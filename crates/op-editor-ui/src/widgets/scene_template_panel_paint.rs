@@ -3,6 +3,7 @@
 
 use op_editor_core::SceneTemplateFocus;
 
+use super::asset_center_style_layout::STYLE_SECTION_HEADER_H;
 use super::panel_controls::{
     paint_accent_button, paint_panel_chip, paint_segmented_control, ButtonSpec, SegmentState,
 };
@@ -24,6 +25,10 @@ use crate::{Color, Point2D, Rect, TextLayout};
 /// Corner radius of the gallery frame itself. Larger than a dropdown's
 /// because the shape is read at canvas scale, not at menu scale.
 const PANEL_RADIUS: f32 = 16.0;
+
+/// Section-heading text size — the same size the Styles tab uses, so the two
+/// tabs' "mine / built-in" bands read as one visual language.
+const SECTION_SIZE: f32 = 11.5;
 
 impl SceneTemplatePanel<'_> {
     /// Paint the complete gallery.
@@ -251,8 +256,9 @@ impl SceneTemplatePanel<'_> {
 
     fn paint_cards(&self, cx: &mut PaintCx<'_>, panel: Rect) {
         let viewport = self.cards_viewport(panel);
+        let user_cards = self.user_cards();
         let templates = self.filtered();
-        if templates.is_empty() {
+        if user_cards.is_empty() && templates.is_empty() {
             self.paint_text(
                 cx,
                 self.t("sceneTemplate.empty", "没有匹配的模板"),
@@ -265,17 +271,44 @@ impl SceneTemplatePanel<'_> {
 
         cx.backend.save();
         cx.backend.clip_rect(viewport);
-        for (index, rect) in self.card_rects_for_count(panel, templates.len()) {
-            // Cheap reject for rows scrolled out of view: their rects are
-            // still computed so hover and paint agree on indices.
-            if rect.origin.y > viewport.origin.y + viewport.size.y
-                || rect.origin.y + rect.size.y < viewport.origin.y
-            {
+        let layout = self.template_layout(panel);
+        for header in &layout.headers {
+            if !Self::row_visible(header.rect, viewport) {
                 continue;
             }
-            self.paint_card(cx, rect, templates[index], index);
+            self.paint_text(
+                cx,
+                if header.is_user {
+                    self.t("assetCenter.template.mine", "我的模板")
+                } else {
+                    self.t("assetCenter.template.builtIn", "内置模板")
+                },
+                Point2D::new(
+                    header.rect.origin.x,
+                    header.rect.origin.y + STYLE_SECTION_HEADER_H - 12.0,
+                ),
+                SECTION_SIZE,
+                self.theme.muted_foreground,
+            );
+        }
+        for (index, rect) in layout.cards {
+            // Cheap reject for rows scrolled out of view: their rects are
+            // still computed so hover and paint agree on indices.
+            if !Self::row_visible(rect, viewport) {
+                continue;
+            }
+            if index < user_cards.len() {
+                self.paint_user_card(cx, rect, &user_cards[index], index);
+            } else {
+                self.paint_card(cx, rect, templates[index - user_cards.len()], index);
+            }
         }
         cx.backend.restore();
+    }
+
+    fn row_visible(rect: Rect, viewport: Rect) -> bool {
+        rect.origin.y <= viewport.origin.y + viewport.size.y
+            && rect.origin.y + rect.size.y >= viewport.origin.y
     }
 
     /// "基于：极简 Keynote ×" — the standing answer to "in what style?".

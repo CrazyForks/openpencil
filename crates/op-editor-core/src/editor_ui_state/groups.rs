@@ -356,12 +356,16 @@ impl AssetCenterTab {
 
 /// Grouped state for the non-modal Scene Template Center panel.
 ///
-/// Deliberately smaller than [`PromptCenterState`]: a template is opened,
-/// never authored, so there is no save form and no user-owned entries to
-/// persist. Adding those later means adding fields here, not reshaping the
-/// panel.
+/// Deliberately smaller than [`PromptCenterState`]: the panel opens existing
+/// templates and delegates host-owned persistence through one-shot requests.
+/// There is no template authoring form in this state.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SceneTemplateCenterState {
+    /// Whether this host can persist the open document into the user's local
+    /// template library. Unsupported hosts omit the File-menu action.
+    pub save_current_supported: bool,
+    /// Raised by File ▸ Save As Template and drained by the owning host.
+    pub pending_save_current: bool,
     /// Whether the floating panel is visible.
     pub open: bool,
     /// Search text, caret, selection, and IME state.
@@ -400,6 +404,11 @@ pub struct SceneTemplateCenterState {
     pub generate_basis: Option<String>,
     /// The Styles tab's `DESIGN.md` import.
     pub import: StyleImportState,
+    /// Ids of saved templates removed from memory whose directories a host
+    /// with a disk should delete. Mirrors `import.pending_delete`; kept on
+    /// the centre state because a template delete is a Templates-tab action,
+    /// not a style-import one.
+    pub pending_template_delete: Vec<String>,
 }
 
 /// Importing a user's own `DESIGN.md` into the Styles tab.
@@ -433,6 +442,8 @@ pub struct StyleImportState {
 impl Default for SceneTemplateCenterState {
     fn default() -> Self {
         Self {
+            save_current_supported: false,
+            pending_save_current: false,
             open: false,
             search: Default::default(),
             generate: Default::default(),
@@ -445,11 +456,24 @@ impl Default for SceneTemplateCenterState {
             pending_generate: None,
             generate_basis: None,
             import: StyleImportState::default(),
+            pending_template_delete: Vec::new(),
         }
     }
 }
 
 impl SceneTemplateCenterState {
+    pub fn request_save_current(&mut self) -> bool {
+        if !self.save_current_supported || self.pending_save_current {
+            return false;
+        }
+        self.pending_save_current = true;
+        true
+    }
+
+    pub fn take_pending_save_current(&mut self) -> bool {
+        std::mem::take(&mut self.pending_save_current)
+    }
+
     /// Open the panel with search focused and no stale hover/scroll.
     pub fn open(&mut self, now_ms: u64) {
         self.open = true;
@@ -558,6 +582,16 @@ impl SceneTemplateCenterState {
     /// Drain ids awaiting a delete.
     pub fn take_pending_style_delete(&mut self) -> Vec<String> {
         std::mem::take(&mut self.import.pending_delete)
+    }
+
+    /// Note that `id` is gone from memory and its directory should follow.
+    pub fn queue_template_delete(&mut self, id: impl Into<String>) {
+        self.pending_template_delete.push(id.into());
+    }
+
+    /// Drain ids awaiting a directory delete.
+    pub fn take_pending_template_delete(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.pending_template_delete)
     }
 
     /// Request that the host generate a document for the typed topic.

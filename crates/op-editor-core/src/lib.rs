@@ -146,6 +146,7 @@ pub mod svg_import;
 pub mod svg_path_bounds;
 mod svg_path_data;
 pub mod sync_gate;
+pub mod user_scene_templates;
 pub mod web_assets;
 
 /// Tight source-coordinate bounds for an SVG path-data string.

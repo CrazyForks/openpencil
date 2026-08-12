@@ -58,6 +58,7 @@ mod asset_center_style_import_tests;
 mod asset_center_style_layout;
 #[cfg(test)]
 mod asset_center_tab_tests;
+mod asset_center_template_cards;
 mod panel_control_metrics;
 mod panel_controls;
 #[cfg(test)]
@@ -146,6 +147,7 @@ pub(crate) mod scene_template_previews;
 mod scene_template_style_geometry;
 mod scene_template_style_import;
 mod scene_template_style_paint;
+mod scene_template_user_layout;
 pub mod text_input;
 pub(crate) mod text_input_backend;
 pub mod text_metrics;

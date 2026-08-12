@@ -240,6 +240,9 @@ pub enum SceneTemplateHit {
     /// Forget an imported style guide, by id. Only ever an import: the
     /// shipped corpus is not the user's to delete.
     DeleteStyleGuide(String),
+    /// Forget a saved template, by id. Only ever a save: the shipped
+    /// catalogue is not the user's to delete.
+    DeleteTemplate(String),
     /// Somewhere on the import paste box that is not one of its controls.
     InsideStyleImport,
     /// Put the caret in the import paste box.
@@ -303,7 +306,12 @@ impl<'a> SceneTemplatePanel<'a> {
         filtered_style_guide_cards(self.state.editor_ui.scene_template_center.search.text())
     }
 
-    /// Templates surviving the scene filter and the search query.
+    /// The SHIPPED templates surviving the scene filter and the search query.
+    ///
+    /// The scene filter narrows this half only: a saved template carries no
+    /// scene, and its "My templates" section is unaffected by which shipped
+    /// scene the filter row is on. The saved half lives in
+    /// [`super::scene_template_user_layout`].
     pub fn filtered(&self) -> Vec<&'static SceneTemplateDefinition> {
         let center = &self.state.editor_ui.scene_template_center;
         let query = center.search.text().trim();
@@ -609,6 +617,12 @@ impl<'a> SceneTemplatePanel<'a> {
         if self.tab() == AssetCenterTab::Styles {
             return self.style_layout(panel).content_height;
         }
+        // The Templates grid gains the same heading structure the moment the
+        // user has saved templates: "My templates" is a section, not a pile
+        // glued onto the shipped grid.
+        if self.user_card_count() > 0 {
+            return self.template_layout(panel).content_height;
+        }
         let (columns, _, card_h) = self.grid_metrics(panel);
         let rows = count.div_ceil(columns);
         if rows == 0 {
@@ -621,7 +635,7 @@ impl<'a> SceneTemplatePanel<'a> {
     /// How many cards the active tab is showing.
     fn visible_card_count(&self) -> usize {
         match self.tab() {
-            AssetCenterTab::Templates => self.filtered().len(),
+            AssetCenterTab::Templates => self.user_card_count() + self.filtered().len(),
             AssetCenterTab::Styles => self.style_cards().len(),
         }
     }
@@ -636,9 +650,18 @@ impl<'a> SceneTemplatePanel<'a> {
         (self.content_height_for_count(panel, count) - viewport.size.y).max(0.0)
     }
 
+    /// The Templates grid: saved-first, with a section heading when both
+    /// halves are present — see [`super::scene_template_user_layout`].
     pub(super) fn card_rects_for_count(&self, panel: Rect, count: usize) -> Vec<(usize, Rect)> {
         if self.tab() == AssetCenterTab::Styles {
             return self.style_layout(panel).cards;
+        }
+        // Sectioned grid whenever saved templates are showing; `count` is the
+        // caller's total, which the walker recomputes from the same lists —
+        // a mismatch (synthetic counts in tests) falls back to the flat walk.
+        let user_count = self.user_card_count();
+        if user_count > 0 && count == user_count + self.filtered().len() {
+            return self.template_layout(panel).cards;
         }
         let viewport = self.cards_viewport(panel);
         let (columns, card_w, card_h) = self.grid_metrics(panel);

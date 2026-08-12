@@ -134,6 +134,7 @@ pub fn press_scene_template_center(
             true
         }
         SceneTemplateHit::DeleteStyleGuide(id) => delete_user_style_guide(state, &id),
+        SceneTemplateHit::DeleteTemplate(id) => delete_user_scene_template(state, &id),
         SceneTemplateHit::FocusStyleImport(offset) => {
             let center = &mut state.editor_ui.scene_template_center;
             let changed =
@@ -233,6 +234,25 @@ pub fn delete_user_style_guide(state: &mut EditorState, id: &str) -> bool {
     if state.editor_ui.pinned_style_guide.as_deref() == Some(id) {
         state.editor_ui.clear_pinned_style_guide();
     }
+    true
+}
+
+/// Forget a saved scene template.
+///
+/// Memory first, disk after, mirroring the style-guide delete: the runtime
+/// registry removal makes the card vanish from "My templates" this instant,
+/// and the queued id is what a host with a disk drains to remove the
+/// directory. A host without a disk (the browser) drops the queue — its
+/// registry is always empty anyway.
+pub fn delete_user_scene_template(state: &mut EditorState, id: &str) -> bool {
+    if op_editor_core::user_scene_templates::remove_user_scene_template(id).is_none() {
+        return false;
+    }
+    let center = &mut state.editor_ui.scene_template_center;
+    center.queue_template_delete(id);
+    // The grid just got shorter; a retained hover token points at whatever
+    // card slid up into that slot.
+    center.hover = None;
     true
 }
 

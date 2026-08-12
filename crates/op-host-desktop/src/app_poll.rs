@@ -200,10 +200,12 @@ impl DesktopApp {
         // document here rather than inside the press handler: loading is a
         // host capability, and the panel deliberately only records the
         // request.
+        let now_ms = self.clock_start.elapsed().as_millis() as u64;
         should_paint |= crate::scene_template_open::drain_pending_scene_template(
             &mut self.host,
             &mut self.current_path,
             self.window.as_ref(),
+            now_ms,
         );
         // A topic typed into the same panel's generate row replaces the
         // document too, then queues a chat turn on it. The launch has to
@@ -214,6 +216,10 @@ impl DesktopApp {
         // of adding or removing a guide the panel has already put in (or taken
         // out of) the runtime catalogue.
         should_paint |= crate::style_import_host::drain_pending_style_import(self);
+        // The Templates tab's saved-template delete: the disk half of removing
+        // a template the panel has already taken out of the runtime registry.
+        should_paint |=
+            crate::user_template_store::drain_pending_template_delete(&mut self.host, now_ms);
         if crate::scene_template_generate::drain_pending_scene_template_generate(
             &mut self.host,
             &mut self.current_path,

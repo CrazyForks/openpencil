@@ -94,6 +94,7 @@ pub mod public_https_client;
 pub mod quality_credential;
 pub mod settings_io;
 pub mod settings_io_error;
+pub mod user_scene_template_store;
 pub mod validation_providers;
 pub(crate) mod web_auth;
 pub mod web_canvas_server;

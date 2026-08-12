@@ -111,6 +111,8 @@ mod figma_import_scroll;
 #[cfg(test)]
 mod figma_import_tests;
 #[cfg(test)]
+mod file_menu_press_tests;
+#[cfg(test)]
 mod font_generation_scene_tests;
 mod font_picker_dispatch;
 #[cfg(test)]

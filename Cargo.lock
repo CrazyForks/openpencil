@@ -3953,6 +3953,7 @@ dependencies = [
 name = "op-editor-core"
 version = "0.8.4"
 dependencies = [
+ "base64",
  "glam",
  "jian-core",
  "jian-ops-schema",
