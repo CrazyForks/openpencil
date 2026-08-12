@@ -76,6 +76,15 @@ impl Phase {
     /// still showed headroom; 13500 keeps ~200 tokens of margin over the
     /// measured 13293.
     ///
+    /// Generation moved again 13500 → 15700 (2026-08-13) when the LOGO review
+    /// contract landed. A mixed brand-review + deck request legitimately needs
+    /// the logo acceptance predicates and all three orthogonal deck contracts
+    /// in one assembly; the measured CJK stress set is just under 15500 tokens.
+    /// At 13500
+    /// the knapsack cut the tail of `slides`, recreating the silent contract-loss
+    /// bug this budget is meant to prevent. The new ceiling keeps the combined
+    /// production prompt byte-complete with a small drift margin.
+    ///
     /// Planning moved 4000 → 6000 for a related reason (2026-07-28). Its
     /// three `Base` skills are budget-EXEMPT but still counted against the
     /// total, and they need ~4500 tokens on their own once
@@ -87,7 +96,7 @@ impl Phase {
     pub fn default_budget(self) -> u32 {
         match self {
             Phase::Planning => 6000,
-            Phase::Generation => 13500,
+            Phase::Generation => 15700,
             Phase::Validation => 3000,
             Phase::Maintenance => 5000,
         }
@@ -97,7 +106,7 @@ impl Phase {
 /// Per-phase default token budgets — the TS `DEFAULT_BUDGETS` record.
 pub const DEFAULT_BUDGETS: [(Phase, u32); 4] = [
     (Phase::Planning, 6000),
-    (Phase::Generation, 13500),
+    (Phase::Generation, 15700),
     (Phase::Validation, 3000),
     (Phase::Maintenance, 5000),
 ];
@@ -350,7 +359,7 @@ mod tests {
     #[test]
     fn default_budget_table() {
         assert_eq!(Phase::Planning.default_budget(), 6000);
-        assert_eq!(Phase::Generation.default_budget(), 13500);
+        assert_eq!(Phase::Generation.default_budget(), 15700);
         assert_eq!(Phase::Validation.default_budget(), 3000);
         assert_eq!(Phase::Maintenance.default_budget(), 5000);
         // The const table agrees with the per-variant method.
