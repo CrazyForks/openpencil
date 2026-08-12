@@ -509,14 +509,18 @@ impl WidgetHostNative {
         use op_editor_ui::widgets::LayerPanelHit;
         let sidebar_open = self.editor_state.editor_ui.sidebar_open;
         let panel_w = self.editor_state.editor_ui.layer_panel_width;
-        // A top-most floating panel covers the layer rail when dragged
-        // over it — no row highlights underneath it.
+        let point = Point2D::new(x, y);
+        // A top-most overlay covers the layer rail when dragged over it — no
+        // row highlights underneath it.
         let blocked_by_overlay = self
             .chat_model_picker_rect(viewport_w, viewport_h)
             .is_some()
             || self.chat_panel_surface_contains(x, y, viewport_w, viewport_h)
             || self.over_topmost_panel(x, y, viewport_w, viewport_h)
-            || self.over_dropdown_overlay(x, y, viewport_w, viewport_h);
+            || self.over_dropdown_overlay(x, y, viewport_w, viewport_h)
+            || self
+                .layer_context_menu_rect()
+                .is_some_and(|rect| rect.contains(point));
         let (new_layer, new_page) = if sidebar_open
             && !blocked_by_overlay
             && y >= TOP_BAR_HEIGHT
@@ -525,7 +529,7 @@ impl WidgetHostNative {
         {
             let layer_rect = self.layers_content_rect(viewport_h);
             let panel = self.layer_panel();
-            match panel.hit_test(layer_rect, Point2D::new(x, y)) {
+            match panel.hit_test(layer_rect, point) {
                 Some(LayerPanelHit::Layer(id))
                 | Some(LayerPanelHit::ToggleHidden(id))
                 | Some(LayerPanelHit::ToggleLocked(id))
