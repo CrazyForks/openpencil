@@ -272,7 +272,7 @@ impl<'a> SceneTemplatePanel<'a> {
         state.editor_ui.scene_template_center.open.then(|| Self {
             state,
             theme: theme_for(&state.editor_ui),
-            locale: state.editor_ui.locale,
+            locale: state.editor_ui.effective_locale(),
             now_ms,
         })
     }

@@ -41,7 +41,7 @@ fn t(ui: &EditorUiState, key: &str) -> &'static str {
         "clearHistory" => "fileMenu.clearHistory",
         _ => return "",
     };
-    let translated = op_i18n::translate(ui.locale, full);
+    let translated = op_i18n::translate(ui.effective_locale(), full);
     if translated == full {
         // A key that is not in the catalogue yet must not surface as
         // "fileMenu.newFromTemplate" in the menu.
@@ -196,7 +196,7 @@ impl<'a> FileMenu<'a> {
     /// the selection would narrow the scope, else "all frames".
     fn export_all_label(&self) -> String {
         if self.selected_frames >= 2 {
-            op_i18n::translate(self.ui.locale, "fileMenu.exportSelectedFrames")
+            op_i18n::translate(self.ui.effective_locale(), "fileMenu.exportSelectedFrames")
                 .replace("{{count}}", &self.selected_frames.to_string())
                 .trim_end_matches(['.', '…'])
                 .to_string()
@@ -386,7 +386,7 @@ fn file_name(path: &str) -> String {
 }
 
 fn format_age(ui: &EditorUiState, elapsed_secs: u64) -> String {
-    let locale = ui.locale;
+    let locale = ui.effective_locale();
     if elapsed_secs < 60 {
         op_i18n::translate(locale, "fileMenu.justNow").to_string()
     } else if elapsed_secs < 3600 {

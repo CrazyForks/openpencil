@@ -266,6 +266,19 @@ fn for_editor_ui_picks_up_button_hover() {
 }
 
 #[test]
+fn for_editor_ui_uses_transient_host_theme_for_paint() {
+    let ui = EditorUiState {
+        theme_mode: op_editor_core::ThemeMode::Light,
+        host_theme_override: Some(op_editor_core::ThemeMode::Dark),
+        ..Default::default()
+    };
+    let bar = TopBar::for_editor_ui(&ui);
+    assert_eq!(bar.theme_mode, op_editor_core::ThemeMode::Dark);
+    assert!(bar.theme.background.r < 0.1);
+    assert_eq!(ui.theme_mode, op_editor_core::ThemeMode::Light);
+}
+
+#[test]
 fn for_editor_ui_picks_up_button_press() {
     let ui = EditorUiState {
         pressed_button: Some(op_editor_core::ButtonPressTarget::TopBar(

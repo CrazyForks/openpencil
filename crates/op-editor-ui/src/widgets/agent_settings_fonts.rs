@@ -199,7 +199,7 @@ pub(super) fn paint_picker(
         trigger,
         300.0,
         panel,
-        ui.locale,
+        ui.effective_locale(),
         &entries,
         ui.font_import_supported,
         false,

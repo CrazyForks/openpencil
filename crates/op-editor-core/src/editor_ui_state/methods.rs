@@ -5,14 +5,36 @@
 //! Split out of the `editor_ui_state` spine (800-line file ceiling).
 
 use super::{
-    EditorUiState, FontPickerPurpose, MissingFontSurface, RecentFile, SceneTemplateFocus,
-    RECENT_FILE_CAP,
+    EditorUiState, FontPickerPurpose, Locale, MissingFontSurface, RecentFile, SceneTemplateFocus,
+    ThemeMode, RECENT_FILE_CAP,
 };
 
 impl EditorUiState {
     /// A fresh UI state — sidebar open, dark theme, no menus open.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Theme currently painted by the editor. An embedding host may override
+    /// the user's stored preference for this page without mutating it.
+    pub fn effective_theme_mode(&self) -> ThemeMode {
+        self.host_theme_override.unwrap_or(self.theme_mode)
+    }
+
+    /// Set or clear a page-lifetime embedding-host theme override.
+    pub fn set_host_theme_override(&mut self, theme: Option<ThemeMode>) {
+        self.host_theme_override = theme;
+    }
+
+    /// Locale currently presented by the editor. An embedding host may
+    /// override the user's stored preference for this page without mutating it.
+    pub fn effective_locale(&self) -> Locale {
+        self.host_locale_override.unwrap_or(self.locale)
+    }
+
+    /// Set or clear a page-lifetime embedding-host locale override.
+    pub fn set_host_locale_override(&mut self, locale: Option<Locale>) {
+        self.host_locale_override = locale;
     }
 
     pub fn clear_button_press_target(&mut self) {

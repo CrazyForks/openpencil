@@ -1,8 +1,6 @@
 //! Body of the `mount_ck` entry point.
-//!
-//! Split out of `canvaskit.rs`: builds the `CkInner` shell, runs the daemon
-//! bootstrap sequence, and installs every DOM listener the web editor needs.
-//! The `#[wasm_bindgen]` export itself stays in the `canvaskit` spine.
+//! Builds the `CkInner` shell and installs the web editor's DOM listeners.
+//! The `#[wasm_bindgen]` export stays in the `canvaskit` spine.
 
 use wasm_bindgen::prelude::*;
 
@@ -62,6 +60,18 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
         host.editor_state_mut(),
         credential_load.payload_theme(),
     );
+    // A managed embedding host may impose its current color scheme. Apply it
+    // after the user's stored theme but still before the synchronous first
+    // paint, so the iframe never flashes the wrong theme. The theme module
+    // retains the underlying user preference for every persistence path.
+    if let Some(theme) = crate::web_settings::theme::host_theme_from_query(&search) {
+        crate::web_settings::theme::set_host_override(host.editor_state_mut(), theme);
+    }
+    if let Some(locale) = crate::web_settings::host_locale_from_query(&search) {
+        host.editor_state_mut()
+            .editor_ui
+            .set_host_locale_override(Some(locale));
+    }
     host.mark_editor_state_dirty();
     let settings_fingerprint = credential_load.initial_settings_fingerprint(host.editor_state());
     let credential_fingerprint = credential_load.initial_fingerprint(host.editor_state());

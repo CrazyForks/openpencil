@@ -244,7 +244,7 @@ pub fn code_panel_hover(
                 property_rect,
                 &state.codegen,
                 point,
-                state.editor_ui.locale,
+                state.editor_ui.effective_locale(),
             )
         } else {
             (None, None)

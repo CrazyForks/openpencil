@@ -130,7 +130,7 @@ fn paint_signed_out(cx: &mut PaintCx<'_>, theme: &Theme, ui: &EditorUiState, car
         Point2D::new(text_x, card.origin.y + card.size.y / 2.0 - 4.0),
     );
     let hint = TextLayout::single_run(
-        signed_out_hint(ui.locale),
+        signed_out_hint(ui.effective_locale()),
         "system-ui",
         11.0,
         theme.muted_foreground.to_jian(),

@@ -657,7 +657,7 @@ impl super::WidgetHostNative {
     }
 
     fn preview_switcher_labels(&self) -> [&'static str; 3] {
-        let locale = self.editor_state.editor_ui.locale;
+        let locale = self.editor_state.editor_ui.effective_locale();
         [
             op_i18n::translate(locale, "preview.device.phone"),
             op_i18n::translate(locale, "preview.device.desktop"),

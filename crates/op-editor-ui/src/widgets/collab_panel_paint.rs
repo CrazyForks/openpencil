@@ -134,7 +134,7 @@ impl CollabPanel<'_> {
     ) {
         paint_text(
             cx,
-            op_i18n::translate(self.ui.locale, key),
+            op_i18n::translate(self.ui.effective_locale(), key),
             12.0,
             self.theme.muted_foreground,
             Point2D::new(rect.origin.x + PAD, body_top + 29.0),

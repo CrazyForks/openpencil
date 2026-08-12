@@ -64,7 +64,7 @@ impl LoginModal {
         Self {
             id: WidgetId::new(5500),
             theme: theme_for(&state.editor_ui),
-            locale: state.editor_ui.locale,
+            locale: state.editor_ui.effective_locale(),
             stub_hint_shown: state.editor_ui.login_modal_stub_hint_shown,
             flow_status: state.editor_ui.login_modal_status,
             hover: state.editor_ui.login_modal_hover,

@@ -341,3 +341,35 @@ fn embed_host_defaults_to_none_for_unknown_or_absent() {
     assert_eq!(EmbedHost::from_query("?embedded=vscode"), EmbedHost::None);
     assert_eq!(EditorUiState::default().embed, EmbedHost::None);
 }
+
+#[test]
+fn host_theme_override_changes_only_the_effective_theme() {
+    let mut ui = EditorUiState {
+        theme_mode: ThemeMode::Dark,
+        ..EditorUiState::default()
+    };
+    assert_eq!(ui.effective_theme_mode(), ThemeMode::Dark);
+
+    ui.set_host_theme_override(Some(ThemeMode::Light));
+    assert_eq!(ui.effective_theme_mode(), ThemeMode::Light);
+    assert_eq!(ui.theme_mode, ThemeMode::Dark);
+
+    ui.set_host_theme_override(None);
+    assert_eq!(ui.effective_theme_mode(), ThemeMode::Dark);
+}
+
+#[test]
+fn host_locale_override_changes_only_the_effective_locale() {
+    let mut ui = EditorUiState {
+        locale: Locale::ZhCn,
+        ..EditorUiState::default()
+    };
+    assert_eq!(ui.effective_locale(), Locale::ZhCn);
+
+    ui.set_host_locale_override(Some(Locale::EnUs));
+    assert_eq!(ui.effective_locale(), Locale::EnUs);
+    assert_eq!(ui.locale, Locale::ZhCn);
+
+    ui.set_host_locale_override(None);
+    assert_eq!(ui.effective_locale(), Locale::ZhCn);
+}

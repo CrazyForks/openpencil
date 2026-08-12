@@ -746,7 +746,7 @@ impl WidgetHostNative {
             op_editor_ui::widgets::file_drop_overlay::paint_file_drop_overlay(
                 &mut *frame,
                 &self.theme,
-                self.editor_state.editor_ui.locale,
+                self.editor_state.editor_ui.effective_locale(),
                 drop_rect,
                 target,
             );

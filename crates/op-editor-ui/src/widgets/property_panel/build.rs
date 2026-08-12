@@ -398,7 +398,7 @@ impl PropertyPanel {
             export_picker_hover: ui.export_picker_hover,
             effect_add_menu_hover: ui.effect_add_menu_hover,
             scroll: ui.property_panel_scroll.offset.max(0.0),
-            locale: ui.locale,
+            locale: ui.effective_locale(),
             // Inert in the multi-select aggregate view.
             effect_param_focus: if is_multi {
                 None

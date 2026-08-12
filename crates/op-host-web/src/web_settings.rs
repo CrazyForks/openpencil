@@ -30,6 +30,16 @@ const CREDENTIAL_PAYLOAD_VERSION: u32 = 2;
 const STORAGE_KEY: &str = "openpencil-rust-web-settings";
 const CREDENTIAL_STORAGE_KEY: &str = "openpencil-rust-web-credentials";
 
+/// Parse a managed embedding host's locale bootstrap hint. URL decoding uses
+/// the browser-compatible form codec; the accepted values remain the strict
+/// `zh-CN | en-US` bridge contract.
+pub(crate) fn host_locale_from_query(search: &str) -> Option<Locale> {
+    let query = search.strip_prefix('?').unwrap_or(search);
+    url::form_urlencoded::parse(query.as_bytes())
+        .find(|(key, _)| key == "locale")
+        .and_then(|(_, value)| op_editor_core::bridge_protocol::locale_from_wire(value.as_ref()))
+}
+
 /// Restore every setting the partition snapshot owns to its default.
 ///
 /// `apply_payload` only writes fields the stored blob actually carries, so an

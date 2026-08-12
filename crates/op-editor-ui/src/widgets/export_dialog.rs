@@ -99,7 +99,7 @@ impl ExportDialog {
     }
 
     pub fn paint(&self, backend: &mut dyn RenderBackend, theme: &Theme, ui: &EditorUiState) {
-        let tr = |key: &'static str| op_i18n::translate(ui.locale, key);
+        let tr = |key: &'static str| op_i18n::translate(ui.effective_locale(), key);
         backend.fill_round_rect(self.rect, CORNER, theme.popover);
         backend.stroke_round_rect(self.rect, CORNER, theme.border, 1.0);
 

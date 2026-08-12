@@ -250,7 +250,7 @@ impl TopBar {
             traffic_hover: ui.topbar_traffic_hover,
             show_traffic_controls: true,
             fullscreen: ui.window_fullscreen,
-            theme_mode: ui.theme_mode,
+            theme_mode: ui.effective_theme_mode(),
             git_branch: ui.git_panel.branch.clone(),
             preview_active: ui.preview.mode,
             hover: ui.topbar_button_hover,

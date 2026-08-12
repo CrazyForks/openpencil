@@ -13,13 +13,8 @@
 //!   - the property-panel tab + flex-layout + size toggles
 //!   - export scale + format, recent files, pending file action
 //!
-//! ### Move STATE, not RENDER code
-//!
-//! Many of these types are *declared* under shell-core's `widgets/`
-//! module — for example `ExportFormat` in `widgets/export_dialog.rs`.
-//! They are data/state enums, not rendering code, so their type
-//! definitions belong in the state layer. The widget *painting /
-//! hit-test* code stays in shell-core untouched.
+//! This module owns data/state enums only. Widget painting and hit-testing
+//! stay in the UI layer.
 //!
 //! All types here are plain data (enums + structs of primitives /
 //! strings / ids), so `op-editor-core` stays wasm32-clean.
@@ -32,13 +27,10 @@
 //! here, so every existing `editor_ui_state::*` import path still
 //! resolves:
 //!
-//! - [`chrome`] — theme / embed host / file actions / recent files /
-//!   theme-preset IO / update status / Design-MD request / pencil cursor
-//! - [`pickers`] — picker purposes, canvas overlay geometry, layer
-//!   context menu + page rename, variable-row / effect-param focus
+//! - [`chrome`] — chrome actions, preferences, status, and host embedding
+//! - [`pickers`] — picker purposes, overlay geometry, and focus state
 //! - [`git_panel`] — the whole in-app Git panel data model
-//! - [`groups`] — grouped sub-states (preview / size toggles /
-//!   Design-MD panel) carved out of the flat field list
+//! - [`groups`] — grouped panel and preview sub-states
 //! - `defaults` — `impl Default for EditorUiState`
 //! - `methods` — `impl EditorUiState`
 
@@ -77,7 +69,6 @@ pub use slides_panel_state::{LeftPanelTab, SlidesDrag, SlidesPanelState, SlidesP
 use crate::node_id::NodeId;
 use crate::tool::Tool;
 use std::collections::HashSet;
-
 // `Locale` is the i18n locale enum — dependency-free + wasm-clean, so
 // it lives in `op-i18n` and re-exports cleanly into the state layer.
 pub use op_i18n::Locale;
@@ -110,10 +101,19 @@ pub struct EditorUiState {
     pub property_panel_width: f32,
 
     // --- Theme + locale --------------------------------------------
-    /// Active UI theme — TopBar Sun icon flips it.
+    /// User's OpenPencil theme preference — TopBar Sun icon flips it and
+    /// hosts may persist it.
     pub theme_mode: ThemeMode,
+    /// Page-lifetime color scheme imposed by an embedding host. This affects
+    /// paint only: it is deliberately separate from `theme_mode`, so VS Code
+    /// or DSH theme changes never become the user's OpenPencil preference.
+    pub host_theme_override: Option<ThemeMode>,
     /// UI locale — TopBar Globe cycles.
     pub locale: Locale,
+    /// Page-lifetime locale imposed by an embedding host. Like the host theme,
+    /// this affects presentation only and is never persisted as the user's
+    /// OpenPencil locale preference.
+    pub host_locale_override: Option<Locale>,
     /// TopBar Globe dropdown state.
     pub locale_picker: jian_widgets::components::select::SelectState,
     /// User's last-set ⚡Nx parallel-agents team size — an app-level

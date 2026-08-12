@@ -208,7 +208,10 @@ impl<'a> Widget for FileMenu<'a> {
 
     fn access_node(&self) -> accesskit::Node {
         let mut node = accesskit::Node::new(accesskit::Role::Menu);
-        node.set_label(op_i18n::translate(self.ui.locale, "a11y.fileMenu"));
+        node.set_label(op_i18n::translate(
+            self.ui.effective_locale(),
+            "a11y.fileMenu",
+        ));
         node
     }
 }
