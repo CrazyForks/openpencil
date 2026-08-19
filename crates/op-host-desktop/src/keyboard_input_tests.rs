@@ -51,7 +51,18 @@ fn focus_settings_input(app: &mut DesktopApp) {
 fn canvas_image_paste_preserves_size_selects_and_beats_internal_nodes() {
     let mut app = DesktopApp::new(None);
     seed_internal_clipboard(&mut app);
-    app.host.editor_state_mut().viewport = op_editor_core::Viewport::IDENTITY;
+    let state = app.host.editor_state_mut();
+    state.set_single_selection(op_editor_core::NodeId::new("n10"));
+    state.viewport = op_editor_core::Viewport {
+        pan_x: 180.0,
+        pan_y: -90.0,
+        zoom: 1.25,
+    };
+    let expected_centre = op_editor_ui::widgets::host_canvas_geometry::canvas_centre_doc_point(
+        app.host.editor_state(),
+        app.viewport_width,
+        app.viewport_height,
+    );
 
     assert!(app.handle_paste_payload(payload(None, None, Some(image(400, 200)))));
 
@@ -65,8 +76,14 @@ fn canvas_image_paste_preserves_size_selects_and_beats_internal_nodes() {
     };
     assert_eq!(node.width, Some(SizingBehavior::Number(300.0)));
     assert_eq!(node.height, Some(SizingBehavior::Number(150.0)));
-    assert_eq!(node.base.x, Some(-150.0));
-    assert_eq!(node.base.y, Some(-75.0));
+    assert_eq!(
+        node.base.x.map(|x| x + 150.0),
+        Some(expected_centre.x as f64)
+    );
+    assert_eq!(
+        node.base.y.map(|y| y + 75.0),
+        Some(expected_centre.y as f64)
+    );
     assert_eq!(node.src, "data:image/png;base64,AQID");
     assert!(state.history.can_undo());
 

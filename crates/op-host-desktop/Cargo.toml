@@ -344,6 +344,10 @@ accesskit_windows = "0.33"
 # handle). Scaffolded + compiled here; on-device Orca verification is pending.
 [target.'cfg(target_os = "linux")'.dependencies]
 accesskit_unix = "0.22"
+# Keep native Wayland image/png bytes intact during paste. `arboard`'s
+# image API decodes PNG to RGBA, which would force the editor to encode
+# the same screenshot back to PNG before it can build the image data URL.
+wl-clipboard-rs = "0.9"
 
 [dev-dependencies]
 static_assertions = "1"

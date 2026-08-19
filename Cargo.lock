@@ -4272,6 +4272,7 @@ dependencies = [
  "toml_edit",
  "tracing",
  "tracing-subscriber",
+ "wl-clipboard-rs",
  "zeroize",
  "zip",
 ]
