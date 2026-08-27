@@ -7,6 +7,8 @@ use std::time::{Duration, Instant};
 
 use super::*;
 
+// Only read by the `#[cfg(unix)]` socket test below; dead on Windows.
+#[cfg(unix)]
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 fn test_client() -> reqwest::Client {

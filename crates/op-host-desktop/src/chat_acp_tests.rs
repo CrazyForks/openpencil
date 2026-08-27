@@ -1,9 +1,11 @@
 use super::*;
 use op_acp::ConnectionType;
-use std::sync::{
-    atomic::{AtomicBool, AtomicU64, Ordering},
-    Arc,
-};
+// Every consumer of these atomics sits behind `#[cfg(unix)]` (the local-socket
+// ACP tests), so on Windows the import is dead and `-D warnings` rejects it.
+#[cfg(unix)]
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+#[cfg(unix)]
+use std::sync::Arc;
 
 fn config() -> AcpAgentConfig {
     AcpAgentConfig {
