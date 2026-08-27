@@ -15,6 +15,7 @@ use crate::design_form::{classify_root_form_node, DesignForm};
 use crate::issue::Issue;
 
 pub mod empty_filled_panel;
+pub mod shader_budget;
 pub mod siblings;
 pub mod spacing;
 pub mod structural_quality;
@@ -30,6 +31,7 @@ mod siblings_tests;
 mod spacing_edge_tests;
 
 pub use empty_filled_panel::*;
+pub use shader_budget::*;
 pub use siblings::*;
 pub use spacing::*;
 pub use structural_quality::*;
@@ -63,7 +65,6 @@ pub fn detect_all(root: &PenNode, doc: &PenDocument) -> Vec<Issue> {
 /// in first is that each of them receives the form from the single classifier
 /// instead of re-deriving it from a width comparison of its own.
 pub fn detect_all_for_form(root: &PenNode, doc: &PenDocument, form: DesignForm) -> Vec<Issue> {
-    let _ = form;
     let mut combined = Vec::new();
     combined.extend(detect_invisible_containers(root, doc));
     combined.extend(detect_empty_paths(root));
@@ -85,6 +86,10 @@ pub fn detect_all_for_form(root: &PenNode, doc: &PenDocument, form: DesignForm) 
     combined.extend(detect_redundant_wrappers(root));
     combined.extend(detect_excessive_nesting_depth(root));
     combined.extend(detect_absolute_positioning_share(root));
+    // GPU budget for shader fills — the only detector that branches on the
+    // form today, because a phone and a desktop page genuinely have different
+    // fragment-pass headroom.
+    combined.extend(detect_shader_budget(root, form));
     // Phase E5 — widget a11y. No TS counterpart; runs last so it never
     // shadows an earlier detector under the `{node_id}:{property}` dedup.
     combined.extend(detect_unlabeled_inputs(root));

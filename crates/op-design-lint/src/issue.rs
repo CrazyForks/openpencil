@@ -41,6 +41,9 @@ pub enum IssueCategory {
     RedundantWrapper,
     ExcessiveNestingDepth,
     AbsolutePositioningShare,
+    /// GPU cost of SkSL shader fills — source size, uniform sanity, and how
+    /// many full-bleed fragment passes one screen carries.
+    ShaderBudget,
 }
 
 /// The node property a fix targets. `Remove` is the `"__remove"` sentinel;
