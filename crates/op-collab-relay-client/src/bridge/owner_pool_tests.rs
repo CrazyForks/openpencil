@@ -410,13 +410,44 @@ async fn the_pool_never_exceeds_its_lane_count_in_the_relays_waiting_queue() {
     .await
     .unwrap();
 
-    // Let the refused dial retry, the slow upgrade land, and the pair settle.
-    let deadline = StdInstant::now() + Duration::from_secs(5);
-    while watch.open.load(Ordering::SeqCst) < LANE_COUNT && StdInstant::now() < deadline {
+    // Wait for the refused dial to retry, the slow upgrade to land, and the
+    // pair to settle — by POLLING for the settled state, not by sleeping a
+    // fixed span and hoping it was enough. The previous shape waited only for
+    // the lower bound (`open >= LANE_COUNT`), slept 500ms, then asserted
+    // EXACT equality; on a loaded runner the replacement dial had not always
+    // landed inside that window, which is how this test failed on CI while
+    // passing locally.
+    //
+    // The peak bound is an INVARIANT, not an end-state, so it is checked on
+    // every poll rather than once at the end: exceeding the lane count for a
+    // single instant is the bug, and a check that only looks after the fact
+    // can miss it entirely.
+    let deadline = StdInstant::now() + Duration::from_secs(10);
+    loop {
+        let peak = watch.peak.load(Ordering::SeqCst);
+        assert!(
+            peak <= LANE_COUNT,
+            "the pool held {peak} unpaired registrations at once, above its lane count of              {LANE_COUNT}"
+        );
+        // The settled state is BOTH counts at rest: `lane_count` lanes waiting
+        // AND the guest's tunnel up. Polling only the queue would let the
+        // assertion run while the pair was still completing.
+        if watch.open.load(Ordering::SeqCst) == LANE_COUNT && bridge.status().active_tunnels == 1 {
+            break;
+        }
+        assert!(
+            StdInstant::now() < deadline,
+            "the pool never settled: {} waiting lanes (want {LANE_COUNT}), {} active tunnels \
+             (want 1)",
+            watch.open.load(Ordering::SeqCst),
+            bridge.status().active_tunnels
+        );
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    tokio::time::sleep(Duration::from_millis(500)).await;
 
+    // Settled — now confirm it STAYS settled rather than having been passed
+    // through on the way somewhere else.
+    tokio::time::sleep(Duration::from_millis(500)).await;
     assert!(
         watch.peak.load(Ordering::SeqCst) <= LANE_COUNT,
         "the pool held {} unpaired registrations at once, above its lane count of {LANE_COUNT}",
