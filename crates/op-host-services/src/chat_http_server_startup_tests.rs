@@ -1,6 +1,9 @@
 use std::io::{BufRead, BufReader};
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
+// Only `TEMP_ID` below needs this, and that static is unix-gated.
+#[cfg(unix)]
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
