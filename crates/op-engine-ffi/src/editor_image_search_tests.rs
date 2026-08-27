@@ -4,6 +4,7 @@
 //! shared dashed placeholder instead of an eternally-grey slot.
 
 use super::*;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 const TINY_PNG_DATA_URL: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
@@ -67,6 +68,30 @@ fn ok_fetcher(
     Some(TINY_PNG_DATA_URL.to_string())
 }
 
+/// Release latch for [`gated_fetcher`]. A `fn` pointer cannot capture state,
+/// so the handshake goes through a static.
+static GATE_OPEN: AtomicBool = AtomicBool::new(false);
+
+/// `ok_fetcher` that parks until the test opens the gate.
+///
+/// `pump` enqueues a job and then immediately polls it, returning `None` when
+/// the queue drained in that same call. `ok_fetcher` is pure in-memory work on
+/// a spawned thread, so it could finish before the enqueueing thread reached
+/// `poll_into` — and then "a job is in flight" failed. That is a scheduling
+/// race, not a product defect, and it is exactly what made this test fail on
+/// CI while passing locally. Blocking the fetcher makes the in-flight window
+/// a fact instead of a hope.
+fn gated_fetcher(
+    target: &ImageSearchTarget,
+    credentials: Option<&WebOpenverseCredentials>,
+    used_urls: &Mutex<HashSet<String>>,
+) -> Option<String> {
+    while !GATE_OPEN.load(Ordering::SeqCst) {
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    ok_fetcher(target, credentials, used_urls)
+}
+
 fn failing_fetcher(
     _target: &ImageSearchTarget,
     _credentials: Option<&WebOpenverseCredentials>,
@@ -108,7 +133,10 @@ fn resolved_slot_is_not_searched_again() {
 #[test]
 fn stale_result_for_a_regenerated_node_is_discarded() {
     let mut host = host_with_search_slot("pasta plate");
-    let mut search = MobileImageSearch::with_fetcher(ok_fetcher);
+    // Hold the fetch open so the job is provably in flight while the node's
+    // intent changes underneath it — that overlap IS the scenario.
+    GATE_OPEN.store(false, Ordering::SeqCst);
+    let mut search = MobileImageSearch::with_fetcher(gated_fetcher);
     // Enqueue the job…
     let wake = search.pump(&mut host, 10);
     assert!(wake.is_some(), "a job is in flight");
@@ -125,6 +153,8 @@ fn stale_result_for_a_regenerated_node_is_discarded() {
         }
         state.mark_document_changed();
     }
+    // Now let the stale result land.
+    GATE_OPEN.store(true, Ordering::SeqCst);
     pump_until_settled(&mut search, &mut host);
     // The stale "pasta plate" result must not have been applied over the
     // new intent (src still empty or re-resolved for the new query —
