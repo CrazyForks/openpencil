@@ -717,8 +717,9 @@ impl SubprocessProvider {
                 let _ = tokio::time::timeout(crate::chat_subprocess_exit::STDERR_DRAIN_GRACE, drain).await;
             }
             if !emitted_done && !terminal_error {
-                let nonzero = status.as_ref().map(|s| !s.success()).unwrap_or(false);
-                if nonzero {
+                // Unknown status counts as failure here — see
+                // `unfinished_child_is_failure` for why.
+                if crate::chat_subprocess_exit::unfinished_child_is_failure(status.as_ref()) {
                     // A live-streamed Error already explained the
                     // failure — don't stack a second message on it
                     // (TS surfaces exactly one error per turn).

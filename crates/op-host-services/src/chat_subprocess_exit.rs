@@ -55,6 +55,19 @@ pub(crate) const STDERR_DRAIN_GRACE: std::time::Duration = std::time::Duration::
 /// present, but subordinate.
 const CLASSIFIED_TAIL_MAX_CHARS: usize = 300;
 
+/// Whether a child that finished WITHOUT a terminal event and WITHOUT a
+/// streamed error should be reported as a failure.
+///
+/// The subtlety is the unknown case. Reaching this decision at all means the
+/// child did not finish cleanly, so an exit status we could not read is the
+/// least explicable outcome available — not a quiet success. Treating unknown
+/// as success is what let a Windows `cmd /c <missing-binary>` reach the user
+/// as a silent `Done { EndTurn }`: the agent appearing to say nothing and
+/// stop, with no error anywhere to explain it.
+pub(crate) fn unfinished_child_is_failure(status: Option<&ExitStatus>) -> bool {
+    status.map(|s| !s.success()).unwrap_or(true)
+}
+
 /// The `ChatDelta::Error` text for a child that exited non-zero without
 /// having streamed an error of its own.
 ///

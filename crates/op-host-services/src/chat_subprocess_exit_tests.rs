@@ -440,3 +440,46 @@ wait "$descendant"
     assert_process_tree_reaped(&pids, "post-EOF cleanup left processes alive");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// The unknown-status rule, kept as a test because the platform that exposed
+/// it (Windows `cmd /c <missing-binary>`) is not the platform most of this is
+/// developed on — a regression here would otherwise only surface on CI, as a
+/// silent `Done` rather than an error.
+#[test]
+fn an_unfinished_child_with_no_readable_status_is_a_failure() {
+    assert!(
+        crate::chat_subprocess_exit::unfinished_child_is_failure(None),
+        "a child that neither finished cleanly nor left a readable status must \
+         be reported, never passed off as success"
+    );
+}
+
+#[test]
+fn a_clean_exit_on_the_unfinished_path_is_not_a_failure() {
+    let ok = std::process::Command::new(if cfg!(windows) { "cmd" } else { "true" })
+        .args(if cfg!(windows) {
+            vec!["/c", "exit 0"]
+        } else {
+            vec![]
+        })
+        .status()
+        .expect("spawn a trivially successful process");
+    assert!(!crate::chat_subprocess_exit::unfinished_child_is_failure(
+        Some(&ok)
+    ));
+}
+
+#[test]
+fn a_nonzero_exit_on_the_unfinished_path_is_a_failure() {
+    let bad = std::process::Command::new(if cfg!(windows) { "cmd" } else { "false" })
+        .args(if cfg!(windows) {
+            vec!["/c", "exit 1"]
+        } else {
+            vec![]
+        })
+        .status()
+        .expect("spawn a trivially failing process");
+    assert!(crate::chat_subprocess_exit::unfinished_child_is_failure(
+        Some(&bad)
+    ));
+}
