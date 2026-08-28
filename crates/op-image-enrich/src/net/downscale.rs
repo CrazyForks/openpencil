@@ -105,6 +105,80 @@ pub fn make_blur_thumbnail_from_image(src: &Image) -> Option<Vec<u8>> {
     })
 }
 
+/// Transcode a web-fetched image into a payload the scene renderer can
+/// actually draw. The exact PNG exporter ships only PNG + JPEG codecs, so
+/// a WebP (the common Openverse thumbnail container) embedded verbatim
+/// renders as an empty placeholder. Animated sources are refused rather
+/// than flattened, and an undecodable payload returns `None` so the
+/// caller can move on to the next candidate URL instead of committing
+/// bytes that will never draw.
+pub fn reencode_for_renderer(bytes: &[u8]) -> Option<(&'static str, Vec<u8>)> {
+    reencode_for_renderer_inner(bytes, true)
+}
+
+/// Pure-Rust decode for containers this skia build ships no codec for
+/// (WebP in practice). Emits PNG bytes so the skia path owns sizing and
+/// the final JPEG/PNG choice.
+fn decode_via_image_crate(bytes: &[u8]) -> Option<Vec<u8>> {
+    let decoded = image::load_from_memory(bytes).ok()?;
+    let mut png: Vec<u8> = Vec::new();
+    decoded
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .ok()?;
+    Some(png)
+}
+
+fn reencode_for_renderer_inner(
+    bytes: &[u8],
+    allow_fallback_decode: bool,
+) -> Option<(&'static str, Vec<u8>)> {
+    if is_gif(bytes) || is_animated_webp(bytes) {
+        return None;
+    }
+    let src = match Image::from_encoded(Data::new_copy(bytes)) {
+        Some(src) => src,
+        None if allow_fallback_decode => {
+            let png = decode_via_image_crate(bytes)?;
+            return reencode_for_renderer_inner(&png, false);
+        }
+        None => return None,
+    };
+    let (w, h) = (src.width(), src.height());
+    if w <= 0 || h <= 0 {
+        return None;
+    }
+    let longest = w.max(h);
+    let scale = (MAX_EDGE as f32 / longest as f32).min(1.0);
+    let nw = ((w as f32 * scale).round() as i32).max(1);
+    let nh = ((h as f32 * scale).round() as i32).max(1);
+    let mut surface = surfaces::raster_n32_premul((nw, nh))?;
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true);
+    surface.canvas().draw_image_rect_with_sampling_options(
+        &src,
+        None,
+        Rect::from_xywh(0.0, 0.0, nw as f32, nh as f32),
+        CubicResampler::mitchell(),
+        &paint,
+    );
+    let scaled = surface.image_snapshot();
+    let (mime, encoded) = if src.is_opaque() || raster_is_fully_opaque(&scaled) {
+        match scaled.encode(None, EncodedImageFormat::JPEG, JPEG_QUALITY) {
+            Some(data) => ("image/jpeg", data),
+            None => (
+                "image/png",
+                scaled.encode(None, EncodedImageFormat::PNG, 100)?,
+            ),
+        }
+    } else {
+        (
+            "image/png",
+            scaled.encode(None, EncodedImageFormat::PNG, 100)?,
+        )
+    };
+    Some((mime, encoded.as_bytes().to_vec()))
+}
+
 fn maybe_downscale_decoded(bytes: &[u8], src: &Image) -> Option<(&'static str, Vec<u8>)> {
     let oversized_bytes = bytes.len() > BYTE_BUDGET;
     let (w, h) = (src.width(), src.height());
@@ -315,6 +389,53 @@ mod tests {
         assert!(
             maybe_downscale(b"this is not an image").is_none(),
             "undecodable bytes keep the original"
+        );
+    }
+
+    #[test]
+    fn reencode_for_renderer_only_emits_renderer_codecs() {
+        // A decodable raster always comes back as PNG or JPEG.
+        let png = solid(64, 64, EncodedImageFormat::PNG);
+        let (mime, out) = reencode_for_renderer(&png).expect("decodable raster re-encodes");
+        assert!(
+            mime == "image/png" || mime == "image/jpeg",
+            "renderer-safe mime, got {mime}"
+        );
+        assert!(
+            Image::from_encoded(Data::new_copy(&out)).is_some(),
+            "re-encoded payload decodes"
+        );
+        // Animated / undecodable payloads are refused, never embedded.
+        let mut gif = b"GIF89a".to_vec();
+        gif.resize(128, 0);
+        assert!(
+            reencode_for_renderer(&gif).is_none(),
+            "GIF is refused rather than flattened"
+        );
+        assert!(
+            reencode_for_renderer(b"RIFF\0\0\0\0WEBPVP8 not-really-webp").is_none(),
+            "undecodable WebP is refused"
+        );
+    }
+
+    #[test]
+    fn webp_payload_transcodes_via_pure_rust_fallback() {
+        // Real (lossless) WebP bytes from the image crate. Whether skia's
+        // codec set covers WebP or the pure-Rust fallback kicks in, the
+        // result must be a renderer codec the exporter can draw.
+        let mut webp = Vec::new();
+        let raster = image::RgbaImage::from_pixel(20, 20, image::Rgba([200, 30, 30, 255]));
+        image::DynamicImage::ImageRgba8(raster)
+            .write_to(&mut std::io::Cursor::new(&mut webp), image::ImageFormat::WebP)
+            .expect("encode webp fixture");
+        let (mime, out) = reencode_for_renderer(&webp).expect("webp transcodes");
+        assert!(
+            mime == "image/jpeg" || mime == "image/png",
+            "renderer-safe mime, got {mime}"
+        );
+        assert!(
+            Image::from_encoded(Data::new_copy(&out)).is_some(),
+            "skia decodes the transcoded payload"
         );
     }
 

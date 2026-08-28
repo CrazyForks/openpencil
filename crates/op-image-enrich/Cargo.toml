@@ -24,6 +24,14 @@ op-pen-loader = { path = "../op-pen-loader" }
 # skia down-scale. Kept optional so slot detection / write-back consumers
 # stay transport-free.
 base64 = { version = "0.22", optional = true }
+# Pure-Rust decode fallback for containers the skia build ships no codec
+# for (WebP in practice — Openverse thumbnails), so a fetched WebP can be
+# transcoded to a renderer codec instead of being rejected outright.
+image = { version = "0.25", default-features = false, features = [
+  "webp",
+  "png",
+  "jpeg",
+], optional = true }
 reqwest = { version = "0.12", default-features = false, features = [
   "rustls-tls",
   "json",
@@ -40,4 +48,4 @@ tokio = { version = "1", default-features = false, features = [
 
 [features]
 default = []
-net = ["dep:base64", "dep:reqwest", "dep:skia-safe", "dep:tokio"]
+net = ["dep:base64", "dep:image", "dep:reqwest", "dep:skia-safe", "dep:tokio"]

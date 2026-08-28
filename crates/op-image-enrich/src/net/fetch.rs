@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use crate::net::providers::{
     fetch_openverse_token, normalize_image_mime_header, simplify_search_query,
-    WebOpenverseCredentials, MAX_EMBEDDED_IMAGE_BYTES,
+    wikimedia_info_is_image, WebOpenverseCredentials, MAX_EMBEDDED_IMAGE_BYTES,
 };
 use crate::ImageAspectRatio;
 
@@ -289,6 +289,9 @@ pub fn wikimedia_image_candidates(page: &serde_json::Value) -> Vec<String> {
         .and_then(serde_json::Value::as_array)
         .and_then(|items| items.first())
     {
+        if !wikimedia_info_is_image(page, info) {
+            return candidates;
+        }
         push_candidate_url(
             &mut candidates,
             info.get("thumburl").and_then(serde_json::Value::as_str),
@@ -375,7 +378,32 @@ pub fn claim_unused_image_src(used_urls: &Mutex<HashSet<String>>, src: &str) -> 
 pub async fn fetch_image_data_url(client: &reqwest::Client, url: &str) -> Option<String> {
     let (mime, bytes) =
         crate::net::providers::fetch_image_bytes(client, url, MAX_EMBEDDED_IMAGE_BYTES).await?;
-    image_bytes_to_data_url(&mime, &bytes)
+    renderable_image_data_url(&mime, &bytes)
+}
+
+/// Data URL for a web-fetched image, restricted to payloads the exact
+/// renderer can decode. PNG / JPEG embed as-is (down-scaled when
+/// oversized); every other container (WebP thumbnails, GIF, …) must
+/// transcode through [`crate::net::downscale::reencode_for_renderer`]
+/// or the candidate is rejected with `None` so the caller falls through
+/// to the next URL. Unlike [`image_bytes_to_data_url`] (the permissive
+/// user-import path), this never embeds bytes that draw as a blank
+/// placeholder in the committed document.
+pub fn renderable_image_data_url(mime: &str, bytes: &[u8]) -> Option<String> {
+    if bytes.is_empty() {
+        return None;
+    }
+    let mime = normalize_image_mime_header(mime)?;
+    use base64::engine::general_purpose::STANDARD as B64;
+    use base64::Engine as _;
+    if mime == "image/png" || mime == "image/jpeg" {
+        if let Some((scaled_mime, scaled)) = crate::net::downscale::maybe_downscale(bytes) {
+            return Some(format!("data:{scaled_mime};base64,{}", B64.encode(&scaled)));
+        }
+        return Some(format!("data:{mime};base64,{}", B64.encode(bytes)));
+    }
+    let (out_mime, out) = crate::net::downscale::reencode_for_renderer(bytes)?;
+    Some(format!("data:{out_mime};base64,{}", B64.encode(&out)))
 }
 
 pub fn image_bytes_to_data_url(mime: &str, bytes: &[u8]) -> Option<String> {

@@ -50,6 +50,9 @@ impl Drop for ImageJobSlot {
 
 /// TS popover requests `count: 5` (desktop parity).
 const SEARCH_RESULT_COUNT: usize = 5;
+/// Fetch a wider catalogue window before relevance ranking. The public route
+/// still materializes at most [`SEARCH_RESULT_COUNT`] thumbnails.
+const SEARCH_CANDIDATE_COUNT: usize = 20;
 pub const MAX_EMBEDDED_IMAGE_BYTES: usize = 4 * 1024 * 1024;
 
 /// Design-artifact words that are pure noise against a photo corpus (see
@@ -162,6 +165,72 @@ const IMAGE_SEARCH_STOP_WORDS: &[&str] = &[
     "inspired",
     "based",
 ];
+
+/// Presentation adjectives and staging words that make a zero-result retry
+/// less searchable. They stay in the primary query; only the shortened retry
+/// removes them so the provider receives the concrete subject phrase.
+const IMAGE_SEARCH_DESCRIPTORS: &[&str] = &[
+    "minimal",
+    "minimalist",
+    "warm",
+    "modern",
+    "neutral",
+    "tone",
+    "surface",
+    "beige",
+    "background",
+    "shelf",
+    "product",
+    "photo",
+    "photography",
+    "isolated",
+    "studio",
+];
+
+/// Metadata markers that make a catalogue hit an explicitly non-photographic
+/// result. They are only a fence when the authored query itself asks for a
+/// photo/studio result; illustration searches must keep working unchanged.
+const NON_PHOTO_RESULT_WORDS: &[&str] = &[
+    "illustration",
+    "illustrated",
+    "drawing",
+    "engraving",
+    "painting",
+    "diagram",
+    "sketch",
+    "poster",
+    "catalog",
+    "catalogue",
+];
+
+/// Result themes that are usually adjacent catalogue noise rather than the
+/// requested product. They remain valid when the authored query explicitly
+/// asks for that theme (for example "plush toy studio photo").
+const OFF_SUBJECT_RESULT_GROUPS: &[&[&str]] = &[
+    &["toy", "plush", "teddy", "doll", "figurine", "stuffed"],
+    &["collage", "montage", "puzzle", "pattern"],
+];
+
+/// Metadata that usually describes a staged room rather than an isolated
+/// catalogue subject. Product-photo prompts reject these results unless the
+/// authored query explicitly asks for a room/interior scene.
+const SCENE_HEAVY_RESULT_WORDS: &[&str] = &[
+    "room", "house", "interior", "hotel", "bedroom", "kitchen", "dining", "hallway", "lounge",
+];
+
+/// Query words that explicitly opt into a staged scene. `lounge` is omitted:
+/// it is also a product descriptor in phrases such as "lounge chair". A
+/// genuine scene request still opts in through `room`, `interior`, or the
+/// explicit `hotel lounge` phrase handled by [`query_requests_scene`].
+const SCENE_QUERY_OPT_IN_WORDS: &[&str] = &[
+    "room", "house", "interior", "bedroom", "kitchen", "dining", "hallway",
+];
+
+/// Positive catalogue evidence that a result is presented independently from
+/// a room scene. An authored `isolated` query is stricter than a generic
+/// `studio photo` query and requires one of these signals (or an equivalent
+/// white/plain/transparent-background phrase).
+const ISOLATION_RESULT_WORDS: &[&str] = &["isolated", "isolate", "isolation", "cutout"];
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct WebOpenverseCredentials {
@@ -295,6 +364,38 @@ pub fn run_search_blocking(
     crate::net::block_on_image_runtime(run_search(query, credentials))
 }
 
+/// Run the provider ladder for a single usable thumbnail, bounding the whole
+/// async ladder (catalog requests, retries, and thumbnail download together)
+/// by `remaining`. This is the MCP enrichment path: unlike the Web UI search,
+/// it needs only one image and must return before its outer transport timeout.
+pub fn run_first_search_blocking_with_timeout(
+    query: &str,
+    credentials: Option<&WebOpenverseCredentials>,
+    remaining: Duration,
+) -> WebImageSearchOutcome {
+    run_with_timeout(remaining, run_first_search(query, credentials))
+        .unwrap_or_else(empty_search_outcome)
+}
+
+fn run_with_timeout<F>(remaining: Duration, future: F) -> Option<F::Output>
+where
+    F: std::future::Future,
+{
+    if remaining.is_zero() {
+        return None;
+    }
+    crate::net::block_on_image_runtime(
+        async move { tokio::time::timeout(remaining, future).await.ok() },
+    )
+}
+
+fn empty_search_outcome() -> WebImageSearchOutcome {
+    WebImageSearchOutcome {
+        results: Vec::new(),
+        source: None,
+    }
+}
+
 async fn run_search(
     query: &str,
     credentials: Option<&WebOpenverseCredentials>,
@@ -311,6 +412,28 @@ async fn run_search(
         };
     };
     run_search_with_fetcher(&client, query, credentials, |url: String| {
+        let client = client.clone();
+        async move { fetch_image_data_url(&client, &url).await }
+    })
+    .await
+}
+
+/// Single-result variant of [`run_search`]. Provider list lookup keeps the
+/// same Openverse → retry → Wikimedia order, but thumbnail materialization
+/// stops after the first successful download instead of fetching the whole
+/// five-result Web UI page.
+async fn run_first_search(
+    query: &str,
+    credentials: Option<&WebOpenverseCredentials>,
+) -> WebImageSearchOutcome {
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(Duration::from_secs(8))
+        .user_agent(concat!("openpencil-web-daemon/", env!("CARGO_PKG_VERSION")))
+        .build()
+    else {
+        return empty_search_outcome();
+    };
+    run_first_search_with_fetcher(&client, query, credentials, |url: String| {
         let client = client.clone();
         async move { fetch_image_data_url(&client, &url).await }
     })
@@ -336,18 +459,10 @@ where
     // Simplify verbose prompts into keywords (TS simplifySearchQuery).
     let query = simplify_search_query(query);
 
-    // Openverse first; a zero-result answer retries with the first two
-    // keywords before falling through to Wikimedia.
-    let mut hits = fetch_openverse_list(client, &query, credentials).await;
-    if hits.as_ref().is_some_and(Vec::is_empty) {
-        if let Some(truncated) = two_keyword_retry(&query) {
-            if let Some(retry) = fetch_openverse_list(client, &truncated, credentials).await {
-                if !retry.is_empty() {
-                    hits = Some(retry);
-                }
-            }
-        }
-    }
+    // Openverse first; either a zero-result answer or an answer fully removed
+    // by the relevance/photo fence retries once with a short concrete subject
+    // phrase before falling through to Wikimedia.
+    let hits = fetch_relevant_openverse_list(client, &query, credentials).await;
     if let Some(urls) = hits.filter(|h| !h.is_empty()) {
         let results = materialize_thumbs(urls, &fetch_data_url).await;
         if !results.is_empty() {
@@ -357,26 +472,342 @@ where
             };
         }
     }
-    let mut wiki = fetch_wikimedia_list(client, &query).await;
-    if wiki.is_empty() {
-        if let Some(truncated) = two_keyword_retry(&query) {
-            wiki = fetch_wikimedia_list(client, &truncated).await;
-        }
-    }
+    let wiki = fetch_relevant_wikimedia_list(client, &query).await;
     let results = materialize_thumbs(wiki, &fetch_data_url).await;
     let source = (!results.is_empty()).then_some("wikimedia");
     WebImageSearchOutcome { results, source }
 }
 
-fn two_keyword_retry(query: &str) -> Option<String> {
-    let words: Vec<&str> = query.split_whitespace().filter(|w| !w.is_empty()).collect();
-    (words.len() > 2).then(|| words[..2].join(" "))
+async fn run_first_search_with_fetcher<F, Fut>(
+    client: &reqwest::Client,
+    query: &str,
+    credentials: Option<&WebOpenverseCredentials>,
+    fetch_data_url: F,
+) -> WebImageSearchOutcome
+where
+    F: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = Option<String>>,
+{
+    let query = simplify_search_query(query);
+
+    let hits = fetch_relevant_openverse_list(client, &query, credentials).await;
+    if let Some(urls) = hits.filter(|h| !h.is_empty()) {
+        if let Some(result) = materialize_first_thumb(urls, &fetch_data_url).await {
+            return WebImageSearchOutcome {
+                results: vec![result],
+                source: Some("openverse"),
+            };
+        }
+    }
+
+    let wiki = fetch_relevant_wikimedia_list(client, &query).await;
+    let Some(result) = materialize_first_thumb(wiki, &fetch_data_url).await else {
+        return empty_search_outcome();
+    };
+    WebImageSearchOutcome {
+        results: vec![result],
+        source: Some("wikimedia"),
+    }
 }
 
+/// Fetch and relevance-filter the Openverse catalogue, retrying at most once
+/// with the concrete subject phrase. `None` remains a request-level failure:
+/// it falls through to Wikimedia without turning a network error into another
+/// Openverse request. `Some([])` and non-empty-but-fully-filtered replies share
+/// the same single retry, so the two conditions can never trigger duplicate
+/// catalogue requests.
+async fn fetch_relevant_openverse_list(
+    client: &reqwest::Client,
+    query: &str,
+    credentials: Option<&WebOpenverseCredentials>,
+) -> Option<Vec<RawHit>> {
+    fetch_relevant_openverse_list_with(query, |candidate| {
+        let client = client.clone();
+        let credentials = credentials.cloned();
+        async move { fetch_openverse_list(&client, &candidate, credentials.as_ref()).await }
+    })
+    .await
+}
+
+async fn fetch_relevant_openverse_list_with<F, Fut>(
+    query: &str,
+    mut fetch_list: F,
+) -> Option<Vec<RawHit>>
+where
+    F: FnMut(String) -> Fut,
+    Fut: std::future::Future<Output = Option<Vec<RawHit>>>,
+{
+    let hits = fetch_list(query.to_string()).await?;
+    let relevant = retain_relevant_hits(hits, query);
+    if !relevant.is_empty() {
+        return Some(relevant);
+    }
+
+    let Some(retry_query) = two_keyword_retry(query) else {
+        return Some(relevant);
+    };
+    let retry = fetch_list(retry_query).await?;
+    // The provider receives a shorter concrete query, but relevance still
+    // follows the authored query so photo/studio/isolated intent is not lost.
+    Some(retain_relevant_hits(retry, query))
+}
+
+fn two_keyword_retry(query: &str) -> Option<String> {
+    let core = concrete_query_words(query);
+    // Product prompts commonly put the searchable subject noun near the end
+    // (for example "... table lamp terracotta"). Keeping the concrete tail
+    // avoids truncating that noun while preserving the existing behavior for
+    // short two- and three-word subject phrases.
+    let core_tail = &core[core.len().saturating_sub(3)..];
+    let retry = core_tail.join(" ");
+    let primary = lexical_words(query).join(" ");
+    (!retry.is_empty() && retry != primary).then_some(retry)
+}
+
+fn core_query_words(query: &str) -> Vec<String> {
+    concrete_query_words(query)
+        .into_iter()
+        .map(|word| canonicalize_word(&word))
+        .collect()
+}
+
+fn concrete_query_words(query: &str) -> Vec<String> {
+    lexical_words(query)
+        .into_iter()
+        .filter(|word| {
+            let canonical = canonicalize_word(word);
+            !IMAGE_SEARCH_DESCRIPTORS.contains(&canonical.as_str())
+        })
+        .collect()
+}
+
+fn lexical_words(value: &str) -> Vec<String> {
+    let mut normalized = String::with_capacity(value.len());
+    for ch in value.to_lowercase().chars() {
+        if ch.is_ascii_alphanumeric() {
+            normalized.push(ch);
+        } else {
+            normalized.push(' ');
+        }
+    }
+    normalized.split_whitespace().map(str::to_string).collect()
+}
+
+fn normalized_words(value: &str) -> Vec<String> {
+    lexical_words(value)
+        .into_iter()
+        .map(|word| canonicalize_word(&word))
+        .collect()
+}
+
+fn canonicalize_word(word: &str) -> String {
+    match word {
+        "knit" | "knitted" | "knitting" => return "knit".to_string(),
+        "wood" | "wooden" => return "wood".to_string(),
+        _ => {}
+    }
+
+    if word.len() > 4 && word.ends_with("ies") {
+        return format!("{}y", &word[..word.len() - 3]);
+    }
+    if word.len() > 4
+        && ["ches", "shes", "xes", "zes"]
+            .iter()
+            .any(|suffix| word.ends_with(suffix))
+    {
+        return word[..word.len() - 2].to_string();
+    }
+    if word.len() > 3
+        && word.ends_with('s')
+        && !word.ends_with("ss")
+        && !word.ends_with("us")
+        && !word.ends_with("is")
+    {
+        return word[..word.len() - 1].to_string();
+    }
+    word.to_string()
+}
+
+/// Keep only provider hits whose title/tags mention at least one concrete
+/// subject word. When a query contains no concrete words (for example an
+/// all-descriptor prompt), preserve the provider response rather than making
+/// an unprovable relevance decision.
+fn retain_relevant_hits(hits: Vec<RawHit>, query: &str) -> Vec<RawHit> {
+    let strict = retain_relevant_hits_enforcing(hits.clone(), query, true);
+    if !strict.is_empty() {
+        return strict;
+    }
+    // Isolation evidence ("isolated", "white background", …) is sparse in
+    // provider metadata, and treating it as a hard fence empties the result
+    // set for perfectly good product queries — the slot then publishes as a
+    // gray placeholder. When the strict pass keeps nothing, degrade the
+    // isolation requirement to a preference and keep the subject fence.
+    retain_relevant_hits_enforcing(hits, query, false)
+}
+
+fn retain_relevant_hits_enforcing(
+    hits: Vec<RawHit>,
+    query: &str,
+    enforce_isolation: bool,
+) -> Vec<RawHit> {
+    let core = core_query_words(query);
+    let requires_photo = query_requests_photo(query);
+    let requires_isolation = enforce_isolation && query_requests_isolation(query);
+    if core.is_empty() {
+        return hits
+            .into_iter()
+            .filter(|hit| {
+                !metadata_is_off_subject(&hit.relevance_metadata, query)
+                    && (!requires_photo
+                        || !metadata_is_explicitly_non_photo(&hit.relevance_metadata))
+                    && (!requires_isolation
+                        || metadata_has_isolation_evidence(&hit.relevance_metadata))
+            })
+            .collect();
+    }
+    // Multi-word product subjects need more than one token of evidence. A
+    // single generic overlap such as "lamp" previously accepted
+    // "Photography lamp setup" for "ceramic table lamp studio photo", which
+    // is technically an image but visibly the wrong product. Single-word
+    // subjects still use one match so common queries such as "armchair" keep
+    // their useful recall.
+    let minimum_overlap = if core.len() >= 2 { 2 } else { 1 };
+    let mut ranked: Vec<(usize, usize, usize, usize, RawHit)> = hits
+        .into_iter()
+        .filter_map(|hit| {
+            if metadata_is_off_subject(&hit.relevance_metadata, query)
+                || (requires_photo && metadata_is_explicitly_non_photo(&hit.relevance_metadata))
+                || (requires_isolation && !metadata_has_isolation_evidence(&hit.relevance_metadata))
+                || (requires_photo
+                    && metadata_is_scene_heavy(&hit.relevance_metadata)
+                    && !query_requests_scene(query))
+            {
+                return None;
+            }
+            let title = normalized_words(&hit.title);
+            let metadata = normalized_words(&hit.relevance_metadata);
+            let title_overlap = overlap_count(&core, &title);
+            if requires_photo && title_overlap == 0 {
+                return None;
+            }
+            let total_overlap = overlap_count(&core, &metadata);
+            if total_overlap < minimum_overlap {
+                return None;
+            }
+            let title_extra_tokens = title
+                .iter()
+                .filter(|word| {
+                    !core.contains(word)
+                        && !IMAGE_SEARCH_STOP_WORDS.contains(&word.as_str())
+                        && !IMAGE_SEARCH_DESCRIPTORS.contains(&word.as_str())
+                })
+                .count();
+            let title_subject_tokens = title_overlap + title_extra_tokens;
+            Some((
+                title_overlap,
+                title_subject_tokens,
+                title_extra_tokens,
+                total_overlap,
+                hit,
+            ))
+        })
+        .collect();
+    // Prefer a subject-dense title before raw overlap: a concise "Ceramic
+    // vase" is a safer product match than a long archaeological title that
+    // happens to contain both words. Then prefer title evidence, concision,
+    // and finally title + tag evidence. `sort_by` is stable, so exact ties
+    // retain provider order.
+    ranked.sort_by(|left, right| {
+        let density = (right.0 * left.1).cmp(&(left.0 * right.1));
+        density
+            .then_with(|| right.0.cmp(&left.0))
+            .then_with(|| left.2.cmp(&right.2))
+            .then_with(|| right.3.cmp(&left.3))
+    });
+    ranked.into_iter().map(|(_, _, _, _, hit)| hit).collect()
+}
+
+fn overlap_count(core: &[String], candidate: &[String]) -> usize {
+    core.iter().filter(|word| candidate.contains(word)).count()
+}
+
+fn query_requests_photo(query: &str) -> bool {
+    normalized_words(query).iter().any(|word| {
+        matches!(
+            word.as_str(),
+            "photo" | "photograph" | "photography" | "studio" | "isolated"
+        )
+    })
+}
+
+fn metadata_is_explicitly_non_photo(metadata: &str) -> bool {
+    normalized_words(metadata)
+        .iter()
+        .any(|word| NON_PHOTO_RESULT_WORDS.contains(&word.as_str()))
+}
+
+fn metadata_is_off_subject(metadata: &str, query: &str) -> bool {
+    let metadata = normalized_words(metadata);
+    let query = normalized_words(query);
+    OFF_SUBJECT_RESULT_GROUPS.iter().any(|group| {
+        let query_requests_group = query.iter().any(|word| group.contains(&word.as_str()));
+        !query_requests_group && metadata.iter().any(|word| group.contains(&word.as_str()))
+    })
+}
+
+fn query_requests_scene(query: &str) -> bool {
+    let words = normalized_words(query);
+    words
+        .iter()
+        .any(|word| SCENE_QUERY_OPT_IN_WORDS.contains(&word.as_str()))
+        || contains_adjacent_words(&words, "hotel", "lounge")
+}
+
+fn metadata_is_scene_heavy(metadata: &str) -> bool {
+    let words = normalized_words(metadata);
+    words
+        .iter()
+        .any(|word| word != "lounge" && SCENE_HEAVY_RESULT_WORDS.contains(&word.as_str()))
+        || words.iter().enumerate().any(|(index, word)| {
+            word == "lounge" && words.get(index + 1).is_none_or(|next| next != "chair")
+        })
+}
+
+fn query_requests_isolation(query: &str) -> bool {
+    normalized_words(query).iter().any(|word| {
+        matches!(
+            word.as_str(),
+            "isolated" | "isolate" | "isolation" | "cutout"
+        )
+    })
+}
+
+fn metadata_has_isolation_evidence(metadata: &str) -> bool {
+    let words = normalized_words(metadata);
+    words
+        .iter()
+        .any(|word| ISOLATION_RESULT_WORDS.contains(&word.as_str()))
+        || contains_adjacent_words(&words, "cut", "out")
+        || contains_adjacent_words(&words, "white", "background")
+        || contains_adjacent_words(&words, "white", "backdrop")
+        || contains_adjacent_words(&words, "plain", "background")
+        || contains_adjacent_words(&words, "transparent", "background")
+        || contains_adjacent_words(&words, "on", "white")
+}
+
+fn contains_adjacent_words(words: &[String], first: &str, second: &str) -> bool {
+    words
+        .windows(2)
+        .any(|pair| pair[0] == first && pair[1] == second)
+}
+
+#[derive(Clone)]
 pub struct RawHit {
     id: String,
     thumb_url: String,
     attribution: String,
+    title: String,
+    relevance_metadata: String,
 }
 
 /// `None` = request-level failure (429 / network), `Some([])` = the
@@ -390,7 +821,7 @@ async fn fetch_openverse_list(
         "https://api.openverse.org/v1/images/",
         &[
             ("q", query),
-            ("page_size", &SEARCH_RESULT_COUNT.to_string()),
+            ("page_size", &SEARCH_CANDIDATE_COUNT.to_string()),
         ],
     )
     .ok()?;
@@ -446,10 +877,40 @@ pub fn parse_openverse_results(json: &serde_json::Value) -> Vec<RawHit> {
                     .and_then(serde_json::Value::as_str)
                     .map(str::to_string)
                     .unwrap_or_else(|| license.trim().to_string()),
+                title: r
+                    .get("title")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                relevance_metadata: openverse_relevance_metadata(r),
             })
         })
-        .take(SEARCH_RESULT_COUNT)
+        .take(SEARCH_CANDIDATE_COUNT)
         .collect()
+}
+
+fn openverse_relevance_metadata(result: &serde_json::Value) -> String {
+    let mut parts = Vec::new();
+    if let Some(title) = result.get("title").and_then(serde_json::Value::as_str) {
+        parts.push(title.to_string());
+    }
+    if let Some(tags) = result.get("tags") {
+        match tags {
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    if let Some(tag) = item
+                        .as_str()
+                        .or_else(|| item.get("name").and_then(serde_json::Value::as_str))
+                    {
+                        parts.push(tag.to_string());
+                    }
+                }
+            }
+            serde_json::Value::String(tags) => parts.push(tags.clone()),
+            _ => {}
+        }
+    }
+    parts.join(" ")
 }
 
 async fn fetch_wikimedia_list(client: &reqwest::Client, query: &str) -> Vec<RawHit> {
@@ -460,7 +921,7 @@ async fn fetch_wikimedia_list(client: &reqwest::Client, query: &str) -> Vec<RawH
             ("generator", "search"),
             ("gsrsearch", query),
             ("gsrnamespace", "6"),
-            ("gsrlimit", &SEARCH_RESULT_COUNT.to_string()),
+            ("gsrlimit", &SEARCH_CANDIDATE_COUNT.to_string()),
             ("prop", "imageinfo"),
             ("iiprop", "url|size|mime|extmetadata"),
             ("iiurlwidth", "800"),
@@ -482,6 +943,33 @@ async fn fetch_wikimedia_list(client: &reqwest::Client, query: &str) -> Vec<RawH
     parse_wikimedia_results(&json)
 }
 
+async fn fetch_relevant_wikimedia_list(client: &reqwest::Client, query: &str) -> Vec<RawHit> {
+    fetch_relevant_wikimedia_list_with(query, |candidate| {
+        let client = client.clone();
+        async move { fetch_wikimedia_list(&client, &candidate).await }
+    })
+    .await
+}
+
+async fn fetch_relevant_wikimedia_list_with<F, Fut>(query: &str, mut fetch_list: F) -> Vec<RawHit>
+where
+    F: FnMut(String) -> Fut,
+    Fut: std::future::Future<Output = Vec<RawHit>>,
+{
+    let hits = fetch_list(query.to_string()).await;
+    let relevant = retain_relevant_hits(hits, query);
+    if !relevant.is_empty() {
+        return relevant;
+    }
+
+    let Some(retry_query) = two_keyword_retry(query) else {
+        return relevant;
+    };
+    let retry = fetch_list(retry_query).await;
+    // Keep the original photo/studio/isolated contract for concrete retries.
+    retain_relevant_hits(retry, query)
+}
+
 pub fn parse_wikimedia_results(json: &serde_json::Value) -> Vec<RawHit> {
     let Some(pages) = json
         .get("query")
@@ -494,6 +982,9 @@ pub fn parse_wikimedia_results(json: &serde_json::Value) -> Vec<RawHit> {
         .values()
         .filter_map(|page| {
             let info = page.get("imageinfo")?.as_array()?.first()?;
+            if !wikimedia_info_is_image(page, info) {
+                return None;
+            }
             let thumb = info
                 .get("thumburl")
                 .and_then(serde_json::Value::as_str)
@@ -511,10 +1002,41 @@ pub fn parse_wikimedia_results(json: &serde_json::Value) -> Vec<RawHit> {
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("")
                     .to_string(),
+                title: page
+                    .get("title")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+                relevance_metadata: page
+                    .get("title")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
             })
         })
-        .take(SEARCH_RESULT_COUNT)
+        .take(SEARCH_CANDIDATE_COUNT)
         .collect()
+}
+
+/// Wikimedia can return page-one JPEG thumbnails for PDFs, audio, and video
+/// files. Those thumbnails are renderable bytes but are not image-search
+/// results, so accepting them turns an archival cover page into a product
+/// photo. Trust the source MIME when it is present and retain a title-extension
+/// fence for older/test payloads that omit `mime`.
+pub(crate) fn wikimedia_info_is_image(page: &serde_json::Value, info: &serde_json::Value) -> bool {
+    if let Some(mime) = info.get("mime").and_then(serde_json::Value::as_str) {
+        return mime.trim().to_ascii_lowercase().starts_with("image/");
+    }
+
+    let title = page
+        .get("title")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    ![".pdf", ".ogg", ".oga", ".ogv", ".webm", ".mp3", ".mp4"]
+        .iter()
+        .any(|extension| title.ends_with(extension))
 }
 
 /// Download each hit's thumbnail into a `data:` URL through the caller's
@@ -524,7 +1046,7 @@ where
     F: Fn(String) -> Fut,
     Fut: std::future::Future<Output = Option<String>>,
 {
-    let mut out = Vec::with_capacity(hits.len());
+    let mut out = Vec::with_capacity(hits.len().min(SEARCH_RESULT_COUNT));
     for hit in hits {
         if let Some(data_url) = fetch_data_url(hit.thumb_url.clone()).await {
             out.push(WebImageSearchHit {
@@ -532,9 +1054,34 @@ where
                 thumb_data_url: data_url,
                 attribution: hit.attribution,
             });
+            if out.len() == SEARCH_RESULT_COUNT {
+                break;
+            }
         }
     }
     out
+}
+
+/// Materialize only the first usable thumbnail. Failed downloads advance to
+/// the next provider hit, while the first success ends the loop immediately.
+async fn materialize_first_thumb<F, Fut>(
+    hits: Vec<RawHit>,
+    fetch_data_url: &F,
+) -> Option<WebImageSearchHit>
+where
+    F: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = Option<String>>,
+{
+    for hit in hits {
+        if let Some(data_url) = fetch_data_url(hit.thumb_url).await {
+            return Some(WebImageSearchHit {
+                id: hit.id,
+                thumb_data_url: data_url,
+                attribution: hit.attribution,
+            });
+        }
+    }
+    None
 }
 
 /// Simplify a verbose prompt into provider keywords. Shared by the desktop
@@ -601,11 +1148,12 @@ pub async fn fetch_openverse_token(
 }
 
 /// Download `url` and embed it as a `data:` URL, subject to the 4 MiB cap.
+/// Embeds only payloads the exact renderer can decode: PNG/JPEG go in as-is
+/// (down-scaled when oversized), everything else must transcode or the
+/// candidate is rejected — see `fetch::renderable_image_data_url`.
 pub async fn fetch_image_data_url(client: &reqwest::Client, url: &str) -> Option<String> {
     let (mime, bytes) = fetch_image_bytes(client, url, MAX_EMBEDDED_IMAGE_BYTES).await?;
-    use base64::engine::general_purpose::STANDARD as B64;
-    use base64::Engine as _;
-    Some(format!("data:{mime};base64,{}", B64.encode(&bytes)))
+    crate::net::fetch::renderable_image_data_url(&mime, &bytes)
 }
 
 /// Download `url` and return its normalized image mime + raw bytes, subject
