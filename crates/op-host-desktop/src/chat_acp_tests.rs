@@ -212,12 +212,18 @@ done
             ..Default::default()
         })
         .collect();
-    assert!(matches!(
-        deltas.last(),
-        Some(ChatDelta::Done {
-            stop_reason: StopReason::EndTurn
-        })
-    ));
+    assert!(
+        matches!(
+            deltas.last(),
+            Some(ChatDelta::Done {
+                stop_reason: StopReason::EndTurn
+            })
+        ),
+        // This failed once on the linux-aarch64 CI leg (2026-08-28) and the
+        // bare matches! left no evidence of WHAT the turn ended with. Print
+        // the transcript so the next occurrence is attributable.
+        "turn must end with Done/EndTurn, got: {deltas:?}"
+    );
     let deadline = Instant::now() + Duration::from_secs(5);
     while !cleanup_order.is_file() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(10));
