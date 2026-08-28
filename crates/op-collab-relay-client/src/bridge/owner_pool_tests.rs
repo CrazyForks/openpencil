@@ -5,6 +5,35 @@
 
 use super::*;
 
+/// Poll `probe` until it reads `want`, or fail saying what was awaited and
+/// what was last seen.
+///
+/// Replaces the "loop while != want OR deadline, then assert_eq!(want)" shape
+/// this file used in six places. That shape has two exits and only one of them
+/// is checked: on a loaded runner it leaves on the DEADLINE and the assertion
+/// then reports a bare `0 vs 1`, which reads as a product defect rather than
+/// as "it had not settled yet". Measured 2026-08-28 on the macos-aarch64 CI
+/// leg, where `a_finished_tunnel_does_not_leave_the_pool_over_provisioned`
+/// failed exactly that way.
+///
+/// The budget is deliberately generous: these are convergence waits, not
+/// latency assertions, so a slow runner should make the test slower, never
+/// red. Anything genuinely stuck still fails, with a message that says so.
+async fn settles_to(label: &str, want: usize, mut probe: impl FnMut() -> usize) {
+    let deadline = StdInstant::now() + Duration::from_secs(10);
+    loop {
+        let seen = probe();
+        if seen == want {
+            return;
+        }
+        assert!(
+            StdInstant::now() < deadline,
+            "{label}: waited for {want}, last saw {seen}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_finished_tunnel_does_not_leave_the_pool_over_provisioned() {
     let owner_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -60,29 +89,18 @@ async fn a_finished_tunnel_does_not_leave_the_pool_over_provisioned() {
             .unwrap();
 
     // Wait for the tunnel to come up and then finish.
-    let deadline = StdInstant::now() + Duration::from_secs(3);
-    while bridge.status().active_tunnels == 0 && StdInstant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert_eq!(bridge.status().active_tunnels, 1);
-    let deadline = StdInstant::now() + Duration::from_secs(3);
-    while bridge.status().active_tunnels > 0 && StdInstant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert_eq!(bridge.status().active_tunnels, 0);
+    settles_to("tunnel comes up", 1, || bridge.status().active_tunnels).await;
+    settles_to("tunnel finishes", 0, || bridge.status().active_tunnels).await;
 
     // The pool settles back to exactly one waiting lane: the tunnel's slot was
     // already replaced when it paired, so its end owes nothing further.
-    let deadline = StdInstant::now() + Duration::from_secs(2);
-    while open.load(Ordering::SeqCst) != 1 && StdInstant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert_eq!(
-        open.load(Ordering::SeqCst),
+    settles_to(
+        "the pool holds exactly `lane_count` unpaired lanes once the tunnel ends",
         1,
-        "the pool must hold exactly `lane_count` unpaired lanes once the tunnel ends"
-    );
-    assert_eq!(bridge.status().waiting_lanes, 1);
+        || open.load(Ordering::SeqCst),
+    )
+    .await;
+    settles_to("waiting lanes", 1, || bridge.status().waiting_lanes).await;
 
     bridge.stop().await.unwrap();
     server.abort();
