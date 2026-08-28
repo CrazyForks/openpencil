@@ -47,6 +47,14 @@ on:
 permissions:
   contents: read
 
+env:
+  # Keep these byte-for-byte aligned with tools/stage-pinned-vcredist.ps1.
+  # The versioned URL avoids the mutable aka.ms payload changing underneath
+  # the reviewed hash used by NSIS and the generated Scoop manifests.
+  VC_REDIST_URL: 'https://download.visualstudio.microsoft.com/download/pr/ebdab8e5-1d7b-4d9f-a11b-cbb1720c3b12/843068991DAAA1F73AD9F6239BCE4D0F6A07A51F18C37EA2A867E9BECA71295C/VC_redist.x64.exe'
+  VC_REDIST_SHA256: '843068991daaa1f73ad9f6239bce4d0f6a07a51f18c37ea2a867e9beca71295c'
+  VC_REDIST_VERSION: '14.51.36247.0'
+
 jobs:
   version:
     name: Validate release version and production auth matrix
@@ -290,6 +298,10 @@ jobs:
         run: >-
           tools/pinned-release-tools.sh skia desktop '${{ matrix.target }}'
           "$RUNNER_TEMP/openpencil-skia-${{ matrix.target }}"
+      - name: Validate pinned VC++ Runtime covers Windows build toolset
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: '& tools/stage-pinned-vcredist.ps1 -ValidateBuildToolset'
       - name: Build (host)
         shell: bash
         env:
@@ -490,6 +502,14 @@ jobs:
           & tools/stage-pinned-angle.ps1 -SelfTest
           & tools/stage-pinned-angle.ps1 \
             -Architecture '${{ matrix.arch }}' -Target '${{ matrix.target }}'
+      - name: Stage pinned Microsoft Visual C++ Redistributable (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & tools/stage-pinned-vcredist.ps1 -SelfTest
+          $vcRedist = Join-Path $env:RUNNER_TEMP 'VC_redist.x64.exe'
+          & tools/stage-pinned-vcredist.ps1 -Destination $vcRedist
+          "VC_REDIST_FILE=$vcRedist" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Package NSIS installer (windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -502,6 +522,7 @@ jobs:
             "/DBIN_DIR=$env:GITHUB_WORKSPACE\target\${{ matrix.target }}\release" `
             "/DICON_FILE=$env:GITHUB_WORKSPACE\crates\op-host-desktop\assets\icon.ico" `
             "/DOUT_FILE=$env:GITHUB_WORKSPACE\OpenPencil-$env:OP_VERSION-${{ matrix.arch }}-win-setup.exe" `
+            "/DVC_REDIST_FILE=$env:VC_REDIST_FILE" `
             scripts\package-windows.nsi
       # Authenticode signing scaffolding (NO-OP until WINDOWS_CERT_BASE64
       # exists — see the secrets comment block in the macOS section above).
@@ -1247,72 +1268,136 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p scoop-bucket/bucket
-          cat > scoop-bucket/bucket/openpencil.json <<EOF
+          # Scoop invokes this installer hook on both a fresh install and an
+          # upgrade. Check the native registry view before downloading or
+          # elevating, so a compatible machine does not depend on Microsoft's
+          # CDN for an ordinary OpenPencil update.
+          vc_redist_installer="$(
+            jq -cn \
+              --arg required_version "$VC_REDIST_VERSION" \
+              --arg redist_url "$VC_REDIST_URL" \
+              --arg redist_sha256 "$VC_REDIST_SHA256" \
+              -f /dev/stdin <<'JQ'
           {
-            "version": "${OP_VERSION}",
-            "description": "Open-source AI-native vector design tool",
-            "homepage": "https://github.com/zseven-w/openpencil",
-            "license": "MIT",
-            "architecture": {
-              "64bit": {
-                "url": "https://github.com/zseven-w/openpencil/releases/download/v${OP_VERSION}/openpencil-desktop-windows-x86_64.zip",
-                "hash": "${DESKTOP_WIN_X64_SHA}"
-              },
-              "arm64": {
-                "url": "https://github.com/zseven-w/openpencil/releases/download/v${OP_VERSION}/openpencil-desktop-windows-aarch64.zip",
-                "hash": "${DESKTOP_WIN_ARM_SHA}"
-              }
-            },
-            "bin": "openpencil-desktop.exe",
-            "shortcuts": [["openpencil-desktop.exe", "OpenPencil"]],
-            "checkver": {
-              "github": "https://github.com/zseven-w/openpencil"
-            },
-            "autoupdate": {
-              "architecture": {
-                "64bit": {
-                  "url": "https://github.com/zseven-w/openpencil/releases/download/v\$version/openpencil-desktop-windows-x86_64.zip"
-                },
-                "arm64": {
-                  "url": "https://github.com/zseven-w/openpencil/releases/download/v\$version/openpencil-desktop-windows-aarch64.zip"
-                }
-              }
-            }
+            script: [
+              "$runtimeArchitecture = if ($architecture -eq 'arm64') { 'arm64' } else { 'x64' }",
+              ("$requiredVersion = [version]'" + $required_version + "'"),
+              ("$redistUrl = '" + $redist_url + "'"),
+              ("$expectedSha256 = '" + $redist_sha256 + "'"),
+              "function Get-InstalledVcRuntimeVersion {",
+              "  $baseKey = $null",
+              "  $runtimeKey = $null",
+              "  try {",
+              "    $baseKey = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, [Microsoft.Win32.RegistryView]::Registry64)",
+              "    $runtimeKey = $baseKey.OpenSubKey(\"SOFTWARE\\Microsoft\\VisualStudio\\14.0\\VC\\Runtimes\\$runtimeArchitecture\")",
+              "    if ($null -eq $runtimeKey -or [int]$runtimeKey.GetValue('Installed', 0) -ne 1) { return $null }",
+              "    $versionValue = [string]$runtimeKey.GetValue('Version', '')",
+              "    try { return [version]($versionValue.TrimStart('v')) } catch { return $null }",
+              "  } finally {",
+              "    if ($null -ne $runtimeKey) { $runtimeKey.Dispose() }",
+              "    if ($null -ne $baseKey) { $baseKey.Dispose() }",
+              "  }",
+              "}",
+              "$installedVersion = Get-InstalledVcRuntimeVersion",
+              "if ($null -eq $installedVersion -or $installedVersion -lt $requiredVersion) {",
+              "  $redist = Join-Path $dir 'VC_redist.x64.exe'",
+              "  $log = Join-Path $env:TEMP ('openpencil-vcredist-' + [Guid]::NewGuid().ToString('N') + '.log')",
+              "  [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12",
+              "  Invoke-WebRequest -Uri $redistUrl -OutFile $redist -UseBasicParsing",
+              "  $redistItem = Get-Item -LiteralPath $redist -Force -ErrorAction Stop",
+              "  if ($redistItem.PSIsContainer -or ($redistItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $redistItem.Length -le 0) { throw 'Visual C++ Redistributable download is not a regular file.' }",
+              "  $actualSha256 = (Get-FileHash -LiteralPath $redist -Algorithm SHA256).Hash.ToLowerInvariant()",
+              "  if ($actualSha256 -cne $expectedSha256) { throw 'Visual C++ Redistributable checksum mismatch.' }",
+              "  $versionInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo($redist)",
+              "  $downloadedFileVersion = [version]$versionInfo.FileVersion",
+              "  $downloadedProductVersion = [version]$versionInfo.ProductVersion",
+              "  if ($downloadedFileVersion -ne $requiredVersion -or $downloadedProductVersion -ne $requiredVersion) { throw \"Unexpected Visual C++ Redistributable versions file=$downloadedFileVersion product=$downloadedProductVersion.\" }",
+              "  $signature = Get-AuthenticodeSignature -LiteralPath $redist",
+              "  $signerName = if ($null -ne $signature.SignerCertificate) { $signature.SignerCertificate.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) } else { '' }",
+              "  if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or $signerName -cne 'Microsoft Corporation' -or $signature.SignerCertificate.Subject -notmatch '(^|,\\s*)O=Microsoft Corporation(,|$)') { throw 'Visual C++ Redistributable does not have a valid Microsoft signature.' }",
+              "  $arguments = @('/install', '/passive', '/norestart', '/log', ('\"' + $log + '\"'))",
+              "  $process = Start-Process -FilePath $redist -ArgumentList $arguments -Verb RunAs -Wait -PassThru",
+              "  if ($process.ExitCode -notin @(0, 1638, 3010)) { throw \"Microsoft Visual C++ Redistributable exited with code $($process.ExitCode). See $log.\" }",
+              "  $installedVersion = Get-InstalledVcRuntimeVersion",
+              "  if ($null -eq $installedVersion -or $installedVersion -lt $requiredVersion) { throw \"Microsoft Visual C++ Redistributable $requiredVersion or newer is required.\" }",
+              "  if ($process.ExitCode -eq 3010) { Write-Warning 'Restart Windows before running OpenPencil.' }",
+              "}",
+              "Remove-Item -LiteralPath (Join-Path $dir 'VC_redist.x64.exe') -Force -ErrorAction SilentlyContinue"
+            ]
           }
-          EOF
+          JQ
+          )"
 
-          cat > scoop-bucket/bucket/op.json <<EOF
+          write_scoop_manifest() {
+            local output=$1 description=$2 executable=$3
+            local x64_url=$4 x64_hash=$5 arm64_url=$6 arm64_hash=$7
+            local x64_autoupdate=$8 arm64_autoupdate=$9 shortcuts=${10}
+            jq -n \
+              --arg version "$OP_VERSION" \
+              --arg description "$description" \
+              --arg executable "$executable" \
+              --arg x64_url "$x64_url" \
+              --arg x64_hash "$x64_hash" \
+              --arg arm64_url "$arm64_url" \
+              --arg arm64_hash "$arm64_hash" \
+              --arg x64_autoupdate "$x64_autoupdate" \
+              --arg arm64_autoupdate "$arm64_autoupdate" \
+              --argjson shortcuts "$shortcuts" \
+              --argjson installer "$vc_redist_installer" \
+              -f /dev/stdin > "$output" <<'JQ'
           {
-            "version": "${OP_VERSION}",
-            "description": "OpenPencil command-line tool",
-            "homepage": "https://github.com/zseven-w/openpencil",
-            "license": "MIT",
-            "architecture": {
+            version: $version,
+            description: $description,
+            homepage: "https://github.com/zseven-w/openpencil",
+            license: "MIT",
+            architecture: {
               "64bit": {
-                "url": "https://github.com/zseven-w/openpencil/releases/download/v${OP_VERSION}/op-cli-windows-x86_64.zip",
-                "hash": "${CLI_WIN_X64_SHA}"
+                url: $x64_url,
+                hash: $x64_hash
               },
-              "arm64": {
-                "url": "https://github.com/zseven-w/openpencil/releases/download/v${OP_VERSION}/op-cli-windows-aarch64.zip",
-                "hash": "${CLI_WIN_ARM_SHA}"
+              arm64: {
+                url: $arm64_url,
+                hash: $arm64_hash
               }
             },
-            "bin": "op.exe",
-            "checkver": {
-              "github": "https://github.com/zseven-w/openpencil"
+            bin: $executable,
+            installer: $installer,
+            checkver: {
+              github: "https://github.com/zseven-w/openpencil"
             },
-            "autoupdate": {
-              "architecture": {
-                "64bit": {
-                  "url": "https://github.com/zseven-w/openpencil/releases/download/v\$version/op-cli-windows-x86_64.zip"
-                },
-                "arm64": {
-                  "url": "https://github.com/zseven-w/openpencil/releases/download/v\$version/op-cli-windows-aarch64.zip"
-                }
+            autoupdate: {
+              architecture: {
+                "64bit": {url: $x64_autoupdate},
+                arm64: {url: $arm64_autoupdate}
               }
             }
+          } + if $shortcuts == null then {} else {shortcuts: $shortcuts} end
+          JQ
           }
-          EOF
+
+          write_scoop_manifest \
+            scoop-bucket/bucket/openpencil.json \
+            'Open-source AI-native vector design tool' \
+            openpencil-desktop.exe \
+            "https://github.com/zseven-w/openpencil/releases/download/v${OP_VERSION}/openpencil-desktop-windows-x86_64.zip" \
+            "$DESKTOP_WIN_X64_SHA" \
+            "https://github.com/zseven-w/openpencil/releases/download/v${OP_VERSION}/openpencil-desktop-windows-aarch64.zip" \
+            "$DESKTOP_WIN_ARM_SHA" \
+            'https://github.com/zseven-w/openpencil/releases/download/v$version/openpencil-desktop-windows-x86_64.zip' \
+            'https://github.com/zseven-w/openpencil/releases/download/v$version/openpencil-desktop-windows-aarch64.zip' \
+            '[["openpencil-desktop.exe", "OpenPencil"]]'
+
+          write_scoop_manifest \
+            scoop-bucket/bucket/op.json \
+            'OpenPencil command-line tool' \
+            op.exe \
+            "https://github.com/zseven-w/openpencil/releases/download/v${OP_VERSION}/op-cli-windows-x86_64.zip" \
+            "$CLI_WIN_X64_SHA" \
+            "https://github.com/zseven-w/openpencil/releases/download/v${OP_VERSION}/op-cli-windows-aarch64.zip" \
+            "$CLI_WIN_ARM_SHA" \
+            'https://github.com/zseven-w/openpencil/releases/download/v$version/op-cli-windows-x86_64.zip' \
+            'https://github.com/zseven-w/openpencil/releases/download/v$version/op-cli-windows-aarch64.zip' \
+            null
 
           jq empty scoop-bucket/bucket/openpencil.json scoop-bucket/bucket/op.json
 

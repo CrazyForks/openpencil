@@ -243,6 +243,221 @@ fn release_workflow_installs_nsis_on_windows_runner() {
 }
 
 #[test]
+fn release_workflow_services_pinned_vc_runtime_for_nsis_and_scoop() {
+    let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let workflow = std::fs::read_to_string(repo.join(".github/workflows/rust-release.yml"))
+        .expect("rust-release workflow is readable");
+    assert!(
+        workflow
+            .find("& tools/stage-pinned-vcredist.ps1 -ValidateBuildToolset")
+            .expect("release workflow should run the MSVC compatibility gate")
+            < workflow
+                .find("- name: Build (host)")
+                .expect("release workflow should build the host"),
+        "the Windows MSVC compatibility gate must run before the host build"
+    );
+    let stage_start = workflow
+        .find("- name: Stage pinned Microsoft Visual C++ Redistributable (windows)")
+        .expect("release workflow should stage the pinned VC++ Redistributable");
+    let package_start = workflow
+        .find("- name: Package NSIS installer (windows)")
+        .expect("release workflow should package the NSIS installer");
+    assert!(
+        stage_start < package_start,
+        "the verified VC++ Redistributable must be staged before makensis runs"
+    );
+    let stage_step = &workflow[stage_start..package_start];
+    assert!(
+        stage_step.contains("& tools/stage-pinned-vcredist.ps1 -SelfTest")
+            && stage_step.contains("& tools/stage-pinned-vcredist.ps1 -Destination $vcRedist"),
+        "the Windows release must run the network-free stager self-test before staging its payload"
+    );
+    assert!(
+        stage_step.contains("VC_REDIST_FILE=$vcRedist") && stage_step.contains("$env:GITHUB_ENV"),
+        "the staged VC++ Redistributable path must cross the PowerShell step boundary explicitly"
+    );
+    let package_end = workflow[package_start..]
+        .find("- name: Sign NSIS installer (windows)")
+        .map(|offset| package_start + offset)
+        .expect("NSIS packaging should be followed by its signing step");
+    let package_step = &workflow[package_start..package_end];
+    assert!(
+        package_step.contains("makensis")
+            && package_step.contains(r#"/DVC_REDIST_FILE=$env:VC_REDIST_FILE"#),
+        "makensis must receive the staged VC++ Redistributable as a mandatory input"
+    );
+    let scoop_start = workflow
+        .find("- name: Update Scoop manifests")
+        .expect("release workflow should update Scoop manifests");
+    let scoop_end = workflow[scoop_start..]
+        .find("- name: Commit Scoop updates")
+        .map(|offset| scoop_start + offset)
+        .expect("Scoop manifest generation should precede its commit step");
+    let scoop_step = &workflow[scoop_start..scoop_end];
+    assert!(
+        scoop_step.matches("write_scoop_manifest \\").count() == 2,
+        "desktop and CLI Scoop manifests must both use the reviewed shared generator"
+    );
+    assert!(
+        !scoop_step.contains("url: [$x64_url")
+            && !scoop_step.contains("hash: [$x64_hash")
+            && scoop_step.contains("--arg redist_url \"$VC_REDIST_URL\"")
+            && scoop_step.contains("--arg redist_sha256 \"$VC_REDIST_SHA256\"")
+            && scoop_step.contains("installer: $installer"),
+        "desktop and CLI Scoop manifests must retain app-only assets plus the conditional Runtime hook"
+    );
+    let runtime_precheck = scoop_step
+        .find("$installedVersion = Get-InstalledVcRuntimeVersion")
+        .expect("Scoop should check the installed Runtime");
+    let runtime_download = scoop_step
+        .find("Invoke-WebRequest -Uri $redistUrl")
+        .expect("Scoop should conditionally download the Runtime");
+    assert!(
+        runtime_precheck < runtime_download
+            && scoop_step.contains("ReparsePoint")
+            && scoop_step.contains("Get-FileHash")
+            && scoop_step.contains("$downloadedFileVersion")
+            && scoop_step.contains("$downloadedProductVersion")
+            && scoop_step.contains("Get-AuthenticodeSignature")
+            && scoop_step.contains("X509NameType]::SimpleName")
+            && scoop_step.matches("Get-InstalledVcRuntimeVersion").count() == 3,
+        "Scoop must verify the Runtime before elevated servicing and post-check it afterward"
+    );
+}
+
+#[test]
+fn windows_nsis_installer_services_vc_runtime_fail_closed() {
+    let installer = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../scripts/package-windows.nsi"
+    ))
+    .expect("Windows NSIS installer is readable");
+    assert!(
+        installer.contains("!ifndef VC_REDIST_FILE")
+            && installer.contains(r#"File "/oname=${VC_REDIST_EXE}" "${VC_REDIST_FILE}""#)
+            && !installer.contains(r#"File /nonfatal "/oname=${VC_REDIST_EXE}""#),
+        "the VC++ Redistributable must be a required, embedded NSIS input"
+    );
+    assert!(
+        installer.contains(
+            "!getdllversion /packed /productversion \"${VC_REDIST_FILE}\" VC_REDIST_VERSION_",
+        ) && !installer.contains("!getdllversion /noerrors")
+            && installer.contains("StrCpy $VCRuntimeRequiredHigh \"${VC_REDIST_VERSION_HIGH}\"")
+            && installer.contains("StrCpy $VCRuntimeRequiredLow \"${VC_REDIST_VERSION_LOW}\"")
+            && installer.contains("SetRegView 64")
+            && installer.contains(r#"SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\${ARCH}"#)
+            && installer.contains("Installed"),
+        "NSIS must compare the embedded Runtime version with the installed machine Runtime"
+    );
+    assert!(
+        installer.contains("ExecWait")
+            && installer.contains("/install /passive /norestart")
+            && installer.contains("OpenPencil-vc-redist-${ARCH}.log"),
+        "NSIS must invoke the Microsoft Runtime installer non-interactively and retain its log"
+    );
+    assert!(
+        installer.contains("SetRebootFlag true")
+            && installer.contains("Function .onInstSuccess")
+            && installer.contains("SetErrorLevel 3010"),
+        "NSIS must preserve reboot-required state and re-check already-installed status"
+    );
+    assert!(
+        installer.contains("MB_ICONSTOP")
+            && installer
+                .matches("Abort \"Microsoft Visual C++ Redistributable")
+                .count()
+                == 3,
+        "a failed Runtime install or post-install version check must abort OpenPencil installation"
+    );
+}
+
+#[test]
+fn windows_cli_installer_services_vc_runtime_fail_closed() {
+    let installer = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../scripts/install-op.ps1"
+    ))
+    .expect("Windows CLI installer is readable");
+    assert!(
+        installer.contains("14.51.36247.0")
+            && installer.contains("https://aka.ms/vs/18/release/14.51.36247/VC_redist.x64.exe")
+            && installer
+                .contains("843068991daaa1f73ad9f6239bce4d0f6a07a51f18c37ea2a867e9beca71295c"),
+        "the CLI installer must bind the reviewed VC++ Runtime version, URL, and digest"
+    );
+    assert!(
+        installer.contains("function Get-InstalledVcRedistVersion")
+            && installer.contains("[Microsoft.Win32.RegistryView]::Registry64")
+            && installer.contains(
+                r#"SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\$RuntimeArch"#,
+            )
+            && installer.contains("$env:PROCESSOR_ARCHITEW6432")
+            && installer.contains("$env:PROCESSOR_ARCHITECTURE")
+            && installer.contains(r#"$VcRuntimeArch = "arm64""#)
+            && installer.contains(r#"$VcRuntimeArch = "x64""#),
+        "the CLI installer must query the native-architecture Runtime key through the 64-bit registry view"
+    );
+    let service_start = installer
+        .find("function Install-VcRedistIfRequired")
+        .expect("CLI installer should define Runtime servicing");
+    let service_end = installer[service_start..]
+        .find("function Resolve-Version")
+        .map(|offset| service_start + offset)
+        .expect("Runtime servicing should be isolated before release resolution");
+    let service = &installer[service_start..service_end];
+    assert_eq!(
+        service.matches("Get-InstalledVcRedistVersion").count(),
+        2,
+        "Runtime servicing must check the installed version both before and after installation"
+    );
+    assert!(
+        service.contains("$InstallerItem.PSIsContainer")
+            && service.contains("[System.IO.FileAttributes]::ReparsePoint")
+            && service.contains("$InstallerItem.Length -le 0")
+            && service.contains("Get-AuthenticodeSignature")
+            && service.contains("[System.Management.Automation.SignatureStatus]::Valid")
+            && service.contains("GetNameInfo")
+            && service.contains("X509NameType]::SimpleName")
+            && service.contains("$SignerName -cne \"Microsoft Corporation\"")
+            && service.contains("O=Microsoft Corporation"),
+        "the downloaded Runtime must be a regular file with a valid Microsoft Authenticode signer"
+    );
+    assert!(
+        service.contains("Start-Process")
+            && service.contains("-Verb RunAs -Wait -PassThru")
+            && service.contains("/install /passive /norestart /log")
+            && service.contains("@(0, 3010, 1638)"),
+        "the Runtime installer must run elevated/passively and accept only reviewed success statuses"
+    );
+    assert!(
+        service.contains("$null -eq $InstalledVersion -or $InstalledVersion -lt $VcRedistVersion")
+            && service.contains("throw \"install-op: Visual C++ runtime"),
+        "the CLI install must fail closed when the post-install Runtime version is insufficient"
+    );
+    let service_call = installer
+        .find("$VcRedistRebootRequired = Install-VcRedistIfRequired")
+        .expect("CLI install should service the Runtime");
+    let archive_download = installer
+        .find("Invoke-WebRequest -Uri $Url -OutFile $Archive")
+        .expect("CLI install should download its release archive");
+    assert!(
+        service_call < archive_download,
+        "the VC++ Runtime prerequisite must be ready before installing the CLI archive"
+    );
+    let reboot_branch = installer
+        .rfind("if ($VcRedistRebootRequired)")
+        .expect("CLI installer should branch on Runtime reboot status");
+    let reboot_branch = &installer[reboot_branch..];
+    assert!(
+        reboot_branch
+            .find("} else {")
+            .zip(reboot_branch.find("& $Target --version"))
+            .is_some_and(|(otherwise, verify)| otherwise < verify),
+        "a 3010 Runtime result must not execute op before Windows restarts"
+    );
+}
+
+#[test]
 fn release_workflow_distinguishes_published_npm_packages_from_check_failures() {
     let workflow = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),

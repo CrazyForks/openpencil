@@ -165,6 +165,14 @@ scoop install openpencil
 
 **Linux / Windows direct download:** [GitHub Releases](https://github.com/ZSeven-W/openpencil/releases) — `.exe` (Windows), `.AppImage` / `.deb` (Linux)
 
+The Windows `.exe` installer, both Scoop packages, and the `install-op.ps1`
+CLI installer check and, when needed, service the pinned, Microsoft-signed
+Visual C++ v14 runtime during every install or upgrade. The portable Windows
+`.zip` archives and Windows VSIX packages do not run an elevated system
+installer; install Microsoft's
+[latest supported Visual C++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170)
+before using those artifacts directly.
+
 > Antivirus flagged the Windows installer? That's a known heuristic false positive on new, low-prevalence releases — see [how to verify your download](docs/security/antivirus-false-positives.md).
 
 **Nix (Linux x86_64):**

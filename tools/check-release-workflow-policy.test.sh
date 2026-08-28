@@ -98,6 +98,38 @@ elif str(mode) == "ios-only-release-bypass":
     text = text[:start] + section.replace(old, new, 1) + text[end:]
     destination.write_text(text)
     raise SystemExit(0)
+elif str(mode) == "vcredist-workflow-define":
+    old = '"/DVC_REDIST_FILE=$env:VC_REDIST_FILE"'
+    new = '"/DOPTIONAL_VC_REDIST_FILE=$env:VC_REDIST_FILE"'
+elif str(mode) == "vcredist-toolset-gate":
+    old = "& tools/stage-pinned-vcredist.ps1 -ValidateBuildToolset"
+    new = "& tools/stage-pinned-vcredist.ps1 -SkipBuildToolsetValidation"
+elif str(mode) == "vcredist-scoop-cli-bypass":
+    marker = "scoop-bucket/bucket/op.json"
+    marker_index = text.index(marker)
+    call_index = text.rindex("write_scoop_manifest \\", 0, marker_index)
+    text = text[:call_index] + text[call_index:].replace(
+        "write_scoop_manifest \\", "write_scoop_manifest_without_runtime \\", 1
+    )
+    destination.write_text(text)
+    raise SystemExit(0)
+elif str(mode) == "vcredist-scoop-skip-postcheck":
+    old = '  if ($null -eq $installedVersion -or $installedVersion -lt $requiredVersion) { throw \\"Microsoft Visual C++ Redistributable $requiredVersion or newer is required.\\" }'
+    new = '  if ($false) { throw \\"Microsoft Visual C++ Redistributable $requiredVersion or newer is required.\\" }'
+elif str(mode) == "vcredist-stager-digest":
+    old = "843068991daaa1f73ad9f6239bce4d0f6a07a51f18c37ea2a867e9beca71295c"
+    new = "0" * 64
+elif str(mode) == "vcredist-nsis-soft-fail":
+    old = 'Abort "Microsoft Visual C++ Redistributable verification failed."'
+    new = 'DetailPrint "Microsoft Visual C++ Redistributable verification failed."'
+elif str(mode) == "vcredist-cli-skip-postcheck":
+    old = "  $InstalledVersion = Get-InstalledVcRedistVersion $RuntimeArch"
+    replacement_index = text.rindex(old)
+    text = text[:replacement_index] + text[replacement_index:].replace(
+        old, "  $InstalledVersion = $VcRedistVersion", 1
+    )
+    destination.write_text(text)
+    raise SystemExit(0)
 else:
     raise SystemExit(f"unknown mutation: {mode}")
 if old not in text:
@@ -119,7 +151,9 @@ case ${1-} in
         for mutation in \
             mutable-action broad-permission job-secret mutable-package-assets \
             mutable-apt-source direct-cargo-cli ios-only-input-default \
-            ios-only-ios-gate ios-only-build-bypass ios-only-release-bypass; do
+            ios-only-ios-gate ios-only-build-bypass ios-only-release-bypass \
+            vcredist-workflow-define vcredist-toolset-gate \
+            vcredist-scoop-cli-bypass vcredist-scoop-skip-postcheck; do
             fixture=$temporary/rust-$mutation.yml
             mutate "$repo_root/.github/workflows/rust-release.yml" "$fixture" "$mutation"
             expect_rejected "$mutation" OPENPENCIL_RUST_RELEASE_WORKFLOW \
@@ -145,6 +179,21 @@ case ${1-} in
         fixture=$temporary/Dockerfile.web-rust
         mutate "$repo_root/Dockerfile.web-rust" "$fixture" docker-direct-cargo-cli
         expect_rejected docker-direct-cargo-cli OPENPENCIL_WEB_DOCKERFILE \
+            "$repo_root/tools/check-rust-release-auth-workflow.sh" "$fixture"
+        fixture=$temporary/stage-pinned-vcredist.ps1
+        mutate "$repo_root/tools/stage-pinned-vcredist.ps1" "$fixture" \
+            vcredist-stager-digest
+        expect_rejected vcredist-stager-digest OPENPENCIL_VC_REDIST_STAGER \
+            "$repo_root/tools/check-rust-release-auth-workflow.sh" "$fixture"
+        fixture=$temporary/package-windows.nsi
+        mutate "$repo_root/scripts/package-windows.nsi" "$fixture" \
+            vcredist-nsis-soft-fail
+        expect_rejected vcredist-nsis-soft-fail OPENPENCIL_WINDOWS_NSIS_INSTALLER \
+            "$repo_root/tools/check-rust-release-auth-workflow.sh" "$fixture"
+        fixture=$temporary/install-op.ps1
+        mutate "$repo_root/scripts/install-op.ps1" "$fixture" \
+            vcredist-cli-skip-postcheck
+        expect_rejected vcredist-cli-skip-postcheck OPENPENCIL_WINDOWS_CLI_INSTALLER \
             "$repo_root/tools/check-rust-release-auth-workflow.sh" "$fixture"
         ;;
     ios)

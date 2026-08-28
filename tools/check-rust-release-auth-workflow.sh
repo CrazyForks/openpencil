@@ -14,7 +14,11 @@ pinned_tools=${OPENPENCIL_PINNED_RELEASE_TOOLS:-$repo_root/tools/pinned-release-
 pinned_tools_test=$repo_root/tools/pinned-release-tools.test.sh
 angle_stager=$repo_root/tools/stage-pinned-angle.ps1
 nsis_installer=$repo_root/tools/install-pinned-nsis.ps1
+vcredist_stager=${OPENPENCIL_VC_REDIST_STAGER:-$repo_root/tools/stage-pinned-vcredist.ps1}
+vcredist_checker=$repo_root/tools/check-windows-vcredist-release.sh
 windows_signer=$repo_root/tools/sign-windows-release.ps1
+windows_installer=${OPENPENCIL_WINDOWS_NSIS_INSTALLER:-$repo_root/scripts/package-windows.nsi}
+cli_installer=${OPENPENCIL_WINDOWS_CLI_INSTALLER:-$repo_root/scripts/install-op.ps1}
 package_handoff=$repo_root/tools/package-manager-handoff.sh
 release_flattener=$repo_root/tools/flatten-release-artifacts.sh
 release_flattener_test=$repo_root/tools/flatten-release-artifacts.test.sh
@@ -33,7 +37,8 @@ android_workflow_checker=$repo_root/tools/check-android-release-workflow.sh
 
 for file in \
     "$workflow" "$matrix_verifier" "$prebuilt_verifier" "$release_builder" "$pinned_tools" \
-    "$pinned_tools_test" "$angle_stager" "$nsis_installer" "$windows_signer" "$package_handoff" \
+    "$pinned_tools_test" "$angle_stager" "$nsis_installer" "$vcredist_stager" "$vcredist_checker" "$windows_signer" \
+    "$windows_installer" "$cli_installer" "$package_handoff" \
     "$release_flattener" "$release_flattener_test" \
     "$appimage_packager" "$macos_bundler" "$wasm_builder" "$sdk_wasm_builder" \
     "$dockerfile" "$vscode_package" "$bun_lock" "$version_sync_workflow"; do
@@ -51,7 +56,7 @@ for file in \
     }
 done
 bash -n \
-    "$matrix_verifier" "$prebuilt_verifier" "$release_builder" "$pinned_tools" "$pinned_tools_test" "$package_handoff" \
+    "$matrix_verifier" "$prebuilt_verifier" "$release_builder" "$pinned_tools" "$pinned_tools_test" "$vcredist_checker" "$package_handoff" \
     "$release_flattener" "$release_flattener_test" \
     "$appimage_packager" "$macos_bundler" "$wasm_builder" "$sdk_wasm_builder"
 "$release_flattener_test"
@@ -74,6 +79,14 @@ unless manual == {
   raise "manual release must expose only the default-off iOS App Store lane selector"
 end
 raise "workflow permissions must default to contents:read" unless document.fetch("permissions") == {"contents" => "read"}
+expected_vcredist = {
+  "VC_REDIST_URL" => "https://download.visualstudio.microsoft.com/download/pr/ebdab8e5-1d7b-4d9f-a11b-cbb1720c3b12/843068991DAAA1F73AD9F6239BCE4D0F6A07A51F18C37EA2A867E9BECA71295C/VC_redist.x64.exe",
+  "VC_REDIST_SHA256" => "843068991daaa1f73ad9f6239bce4d0f6a07a51f18c37ea2a867e9beca71295c",
+  "VC_REDIST_VERSION" => "14.51.36247.0",
+}
+unless document.fetch("env", {}).slice(*expected_vcredist.keys) == expected_vcredist
+  raise "release and Scoop packaging must use the reviewed VC++ Redistributable identity"
+end
 
 jobs = document.fetch("jobs")
 version = jobs.fetch("version")
@@ -185,6 +198,37 @@ unless cargo_bundle.fetch("run").include?("tools/pinned-release-tools.sh cargo-c
 end
 unless build_steps.index(cargo_bundle) < build_steps.index(certificate_import)
   raise "cargo-bundle must be installed before signing credentials are imported"
+end
+
+vcredist = build_steps.find do |step|
+  step["name"] == "Stage pinned Microsoft Visual C++ Redistributable (windows)"
+end
+nsis_package = build_steps.find { |step| step["name"] == "Package NSIS installer (windows)" }
+raise "missing pinned VC++ Redistributable staging" unless vcredist && nsis_package
+unless vcredist.fetch("if") == "runner.os == 'Windows'" && vcredist.fetch("shell") == "pwsh"
+  raise "VC++ Redistributable staging must remain Windows-only PowerShell"
+end
+vcredist_run = vcredist.fetch("run")
+self_test = vcredist_run.index("& tools/stage-pinned-vcredist.ps1 -SelfTest")
+stage = vcredist_run.index("& tools/stage-pinned-vcredist.ps1 -Destination $vcRedist")
+unless self_test && stage && self_test < stage &&
+    vcredist_run.include?('VC_REDIST_FILE=$vcRedist') &&
+    vcredist_run.include?('$env:GITHUB_ENV')
+  raise "VC++ Redistributable must pass its self-test, stage, and export its exact path"
+end
+unless build_steps.index(vcredist) < build_steps.index(nsis_package) &&
+    nsis_package.fetch("run").include?('"/DVC_REDIST_FILE=$env:VC_REDIST_FILE"')
+  raise "makensis must receive the verified VC++ Redistributable as a mandatory define"
+end
+toolset_gate = build_steps.find do |step|
+  step["name"] == "Validate pinned VC++ Runtime covers Windows build toolset"
+end
+host_build = build_steps.find { |step| step["name"] == "Build (host)" }
+unless toolset_gate && host_build && toolset_gate.fetch("if") == "runner.os == 'Windows'" &&
+    toolset_gate.fetch("shell") == "pwsh" &&
+    toolset_gate.fetch("run") == "& tools/stage-pinned-vcredist.ps1 -ValidateBuildToolset" &&
+    build_steps.index(toolset_gate) < build_steps.index(host_build)
+  raise "Windows builds must pass the pinned Runtime/MSVC toolset compatibility gate"
 end
 
 %w[sdk-packages vsix].each do |job_name|
@@ -388,6 +432,70 @@ unless handoff_verify.fetch("run") ==
   raise "package-manager handoff verification must use the reviewed repository helper"
 end
 
+scoop_update = package_steps.find { |step| step["name"] == "Update Scoop manifests" }
+raise "missing Scoop manifest generation" unless scoop_update
+scoop_source = scoop_update.fetch("run")
+unless scoop_source.scan(/^write_scoop_manifest \\$/).length == 2 &&
+    scoop_source.include?("scoop-bucket/bucket/openpencil.json") &&
+    scoop_source.include?("scoop-bucket/bucket/op.json") &&
+    scoop_source.include?("openpencil-desktop.exe") && scoop_source.include?("op.exe")
+  raise "Scoop desktop and CLI must both use the reviewed shared manifest generator"
+end
+[
+  'url: $x64_url',
+  'url: $arm64_url',
+  'hash: $x64_hash',
+  'hash: $arm64_hash',
+  'url: $x64_autoupdate',
+  'url: $arm64_autoupdate',
+  'installer: $installer',
+  '--arg redist_url "$VC_REDIST_URL"',
+  '--arg redist_sha256 "$VC_REDIST_SHA256"',
+].each do |fragment|
+  raise "Scoop manifest generator lacks #{fragment}" unless scoop_source.include?(fragment)
+end
+if scoop_source.include?("url: [$x64_url") || scoop_source.include?("hash: [$x64_hash")
+  raise "Scoop must not fetch the VC++ Runtime before the native registry precheck"
+end
+precheck = scoop_source.index('$installedVersion = Get-InstalledVcRuntimeVersion')
+download = scoop_source.index('Invoke-WebRequest -Uri $redistUrl')
+launch = scoop_source.index('Start-Process -FilePath $redist', download)
+postcheck = scoop_source.index('$installedVersion = Get-InstalledVcRuntimeVersion', launch)
+postcondition = scoop_source.index('if ($null -eq $installedVersion -or $installedVersion -lt $requiredVersion)', postcheck)
+unless precheck && download && launch && postcheck && postcondition &&
+    precheck < download && download < launch && launch < postcheck && postcheck < postcondition &&
+    scoop_source.scan("Get-InstalledVcRuntimeVersion").length == 3
+  raise "Scoop Runtime servicing must precheck before download and post-check after installation"
+end
+[
+  "[Microsoft.Win32.RegistryView]::Registry64",
+  '$redistItem.PSIsContainer',
+  "[IO.FileAttributes]::ReparsePoint",
+  '$redistItem.Length -le 0',
+  "Get-FileHash",
+  '$actualSha256 -cne $expectedSha256',
+  '$versionInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo($redist)',
+  '$downloadedFileVersion = [version]$versionInfo.FileVersion',
+  '$downloadedProductVersion = [version]$versionInfo.ProductVersion',
+  '$downloadedFileVersion -ne $requiredVersion',
+  '$downloadedProductVersion -ne $requiredVersion',
+  "Get-AuthenticodeSignature",
+  "[System.Management.Automation.SignatureStatus]::Valid",
+  "X509NameType]::SimpleName",
+  "$signerName -cne 'Microsoft Corporation'",
+  "O=Microsoft Corporation",
+  "Start-Process",
+  "-Verb RunAs -Wait -PassThru",
+  "@(0, 1638, 3010)",
+  '$installedVersion -lt $requiredVersion',
+  "Dispose()",
+].each do |fragment|
+  raise "Scoop VC++ Runtime installer lacks #{fragment}" unless scoop_source.include?(fragment)
+end
+unless scoop_source.include?("Remove-Item -LiteralPath (Join-Path $dir 'VC_redist.x64.exe') -Force -ErrorAction SilentlyContinue")
+  raise "Scoop must remove the bundled VC++ Runtime after a successful install or compatible skip"
+end
+
 build = jobs.fetch("build")
 unless build.fetch("if") == "(github.event_name == 'workflow_dispatch' && inputs.ios_app_store_only == false) || (startsWith(github.ref, 'refs/tags/v') && github.event_name != 'workflow_dispatch')"
   raise "desktop builds must be disabled when manual iOS-only publication is selected"
@@ -471,6 +579,11 @@ require_literal 'tools/package-manager-handoff.sh download' "$workflow"
 reject_literal 'gh release download' "$workflow"
 require_literal '& tools/install-pinned-nsis.ps1 -SelfTest' "$workflow"
 require_literal '& tools/stage-pinned-angle.ps1 -SelfTest' "$workflow"
+require_count 1 '& tools/stage-pinned-vcredist.ps1 -SelfTest' "$workflow"
+require_count 1 '& tools/stage-pinned-vcredist.ps1 -Destination $vcRedist' "$workflow"
+require_count 1 '& tools/stage-pinned-vcredist.ps1 -ValidateBuildToolset' "$workflow"
+require_count 1 'VC_REDIST_FILE=$vcRedist' "$workflow"
+require_count 1 '"/DVC_REDIST_FILE=$env:VC_REDIST_FILE"' "$workflow"
 reject_literal 'choco install' "$workflow"
 reject_literal 'bunx ' "$workflow"
 reject_literal 'npx ' "$workflow"
@@ -547,6 +660,7 @@ require_literal '4a1bbf9987e5b9b6bda4c2433af62bb79f2d9d3bd67b392f29a069ecda8c5f6
 require_literal '3bc2b06253a7e4957111be152ac6a536e0c7478a706e19da814038db5d706495' "$nsis_installer"
 require_literal 'Assert-Sha256 $installerPath $installerSha256' "$nsis_installer"
 require_literal "\$packageVersion = '3.12.0'" "$nsis_installer"
+bash "$vcredist_checker"
 require_literal '--runtime-file "$RUNTIME_FILE"' "$appimage_packager"
 require_literal 'CARGO_BUNDLE_VERSION=0.10.0' "$macos_bundler"
 require_literal 'CARGO_BUNDLE_HOME/bin/cargo-bundle' "$macos_bundler"
@@ -565,7 +679,10 @@ require_literal 'ExpectedPfxSha256' "$windows_signer"
 require_literal 'ExpectedCertificateSha1' "$windows_signer"
 require_literal '/tr https://timestamp.digicert.com' "$windows_signer"
 require_literal 'Get-AuthenticodeSignature' "$windows_signer"
-reject_literal 'Invoke-WebRequest' "$workflow"
+# The reviewed Scoop hook conditionally downloads the pinned VC++ Runtime and
+# verifies its hash, versions, and Microsoft signer before elevation. Keep all
+# other release-workflow downloads delegated to pinned helper scripts.
+require_count 1 'Invoke-WebRequest -Uri $redistUrl -OutFile $redist -UseBasicParsing' "$workflow"
 reject_literal '/tr http://' "$workflow"
 
 require_literal '# syntax=docker/dockerfile:1.26.0@sha256:ecfaec9ed6d810b56388c508f4121597bfbba70d41a6dfeee4d8cad5f295fc32' "$dockerfile"
@@ -599,11 +716,11 @@ require_literal 'sha512-XSxMosEEDO6vLxELAHVkwmhC0qe0ijZni2jB9Rcs8kQsW4lhTDQ/wMzm
 require_literal '"ovsx": ["ovsx@1.1.1"' "$bun_lock"
 require_literal 'sha512-tklsCzvGVWKlM91Vc9U8tNnaQ+XacPJ12SWHjDaHGUJB49oMhoAULsJGeefhHebPvvckbcWbKqKIXODMZah5SA==' "$bun_lock"
 
-# Baseline 1332: raised from 1331 for the Copilot SDK/OpenSSL Linux
-# prerequisite; bump deliberately, never to absorb new logic.
+# Baseline 1417: raised from the current 1332-line workflow for pinned VC++
+# Redistributable staging, toolset gating, and conditional Scoop servicing.
 line_count=$(wc -l < "$workflow" | tr -d '[:space:]')
-[[ "$line_count" -le 1332 ]] || {
-    printf 'error: Rust release workflow exceeds its 1332-line baseline\n' >&2
+[[ "$line_count" -le 1417 ]] || {
+    printf 'error: Rust release workflow exceeds its 1417-line baseline\n' >&2
     exit 1
 }
 
