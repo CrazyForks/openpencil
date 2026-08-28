@@ -399,6 +399,10 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
         requestFrame()
     }
 
+    private fun refreshDensityFromResources(): Boolean {
+        return viewportInputState.stageDensity(resources.displayMetrics.density)
+    }
+
     private fun markViewportInputPending() {
         if (!viewportInputState.beginGeometryUpdate() || engine == 0L) return
         if (editorMode) {
