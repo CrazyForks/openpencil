@@ -74,19 +74,41 @@ pub fn paint_nodes(canvas: &Canvas, nodes: &[SceneNode]) {
     });
 }
 
+/// Serializes concurrent exports through the decode pump. The pending-decode
+/// queue is process-global, and `take_pending_decodes` moves entries into a
+/// global in-flight set: a concurrent consumer can TAKE an id this export's
+/// discovery pass just recorded, install the raster into ITS backend, and
+/// leave this export's thread-local backend without the bitmap while the
+/// queue reads empty. Two parallel `export_node_raster` calls did exactly
+/// that on the macos-aarch64 CI leg (2026-08-28): the export shipped the
+/// placeholder glyph where the decoded bitmap belonged. Exports are rare and
+/// short; serializing them is free.
+static DECODE_PUMP: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Headless paints have no event loop to pump the async image-decode
 /// seam, so a single pass would export the editor's placeholder art for
 /// every not-yet-rasterized image. Run discovery passes on a throwaway
 /// 1×1 surface (paint records pending decode ids + fills the byte
 /// cache), decode them synchronously into the backend's raster cache,
-/// and repeat until a pass records nothing new.
+/// and repeat until the scene stops producing work.
+///
+/// Exit discipline: an empty take alone does NOT mean the scene is fully
+/// decoded. An id taken by an external pump (an editor frame loop in the
+/// same process) sits in the global in-flight set, where it suppresses
+/// re-recording, until that pump marks it done — only then does the next
+/// discovery pass re-record the miss so this export can decode it into its
+/// own backend. So: keep passing while anything is in flight, and return
+/// only from a pass that recorded nothing with nothing in flight.
 fn ensure_images_decoded(backend: &mut NativeBackend, nodes: &[SceneNode]) {
     use op_editor_ui::widgets::canvas_viewport_image::{
-        cached_bytes_for, mark_decode_done, take_pending_decodes,
+        cached_bytes_for, has_in_flight_decodes, mark_decode_done, take_pending_decodes,
     };
-    // Nested subtrees can reveal new images once parents decode is not a
-    // thing (the scene is static), but the pending queue is bounded, so
-    // one discovery pass may not capture every miss — iterate.
+    let _pump = DECODE_PUMP
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // The scene is static, but the pending queue is bounded (one discovery
+    // pass may not capture every miss) and an external consumer can hold an
+    // id in flight across passes — iterate, with a bounded budget.
     for _ in 0..64 {
         let Some(mut surface) = skia_safe::surfaces::raster_n32_premul((1, 1)) else {
             return;
@@ -102,7 +124,13 @@ fn ensure_images_decoded(backend: &mut NativeBackend, nodes: &[SceneNode]) {
         }
         let pending = take_pending_decodes(usize::MAX);
         if pending.is_empty() {
-            return;
+            if !has_in_flight_decodes() {
+                return;
+            }
+            // Someone else is decoding an id this scene may need; give them
+            // a moment to mark it done so the next pass can re-record it.
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            continue;
         }
         for entry in pending {
             if let Some(bytes) = cached_bytes_for(entry.id) {

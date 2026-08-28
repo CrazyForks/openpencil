@@ -555,6 +555,64 @@ fn export_renders_data_url_image_bitmaps() {
     let _ = std::fs::remove_file(&tmp);
 }
 
+/// Thief regression: the pending-decode queue is process-global, so a
+/// concurrent decode pump can TAKE the id this export's discovery pass just
+/// recorded and hold it in flight — during which paint will not re-record
+/// the miss, and the old exit-on-empty-take shipped the placeholder glyph
+/// where the bitmap belonged (macos-aarch64 CI, 2026-08-28). The test plays
+/// the thief itself so the in-flight window is a fact, not a race: it
+/// queues + takes the id up front, releases it from another thread, and the
+/// export must wait it out and still deliver the bitmap.
+#[test]
+fn export_recovers_an_image_stolen_by_a_concurrent_decode_pump() {
+    use op_editor_ui::layout_scene::stable_image_source_id;
+    use op_editor_ui::widgets::canvas_viewport_image::{
+        mark_decode_done, note_pending_decode, take_pending_decodes,
+    };
+
+    let src = solid_png_data_url(4, 4, skia_safe::Color::BLUE);
+    let id = stable_image_source_id(&src);
+
+    // Become the thief: make the id in flight BEFORE the export starts.
+    note_pending_decode(id, 64);
+    for entry in take_pending_decodes(usize::MAX) {
+        // Anything swept up from concurrently running tests goes straight
+        // back to done so their own pumps can re-record it; only OUR id
+        // stays held in flight.
+        if entry.id != id {
+            mark_decode_done(entry.id);
+        }
+    }
+    // Release the id from another thread, the way a real pump would after
+    // installing into ITS OWN raster cache (never the exporter's).
+    let thief = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        mark_decode_done(id);
+    });
+
+    let mut node = SceneNode::leaf("img", NodeKind::Rect);
+    node.bounds = Rect::xywh(0.0, 0.0, 20.0, 20.0);
+    node.image_src = Some(src.into());
+    node.fill = Some(Color {
+        r: 0.85,
+        g: 0.86,
+        b: 0.88,
+        a: 1.0,
+    });
+    let scene = scene_with(vec![node]);
+    let tmp = std::env::temp_dir().join(format!("op-export-stolen-{}.png", std::process::id()));
+    let res = export_node_raster(&scene, "img", &tmp, RasterFormat::Png, 1.0);
+    thief.join().unwrap();
+    assert!(res.is_ok(), "image export failed: {res:?}");
+    let decoded = decode_rgba(&std::fs::read(&tmp).unwrap());
+    let c = pixel_at(&decoded, 10, 10);
+    assert!(
+        c[2] > 200 && c[0] < 60 && c[1] < 60 && c[3] > 200,
+        "expected the blue bitmap despite the stolen decode, got {c:?}"
+    );
+    let _ = std::fs::remove_file(&tmp);
+}
+
 /// A remote (`https`) source whose bytes were never fetched paints
 /// the SAME placeholder the canvas shows (grey fill + dashed border +
 /// picture glyph) instead of a bare rect.
