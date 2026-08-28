@@ -330,6 +330,54 @@ fn cli_version_reports_stderr_from_a_nonzero_exit() {
 
 #[cfg(unix)]
 #[test]
+fn cli_version_surfaces_node_optional_dependency_root_cause() {
+    // Codex 0.149.x on Node 24 reports the actionable cause first, then
+    // enough loader frames that the old last-200-character snippet showed
+    // only ModuleJob.run / tracePromise. Keep the first error line, redact
+    // credentials in it, and still enforce the shared UI diagnostic cap.
+    let secret = "sk-proj-issue-228-secret-value";
+    let root = format!(
+        "Error: Missing optional dependency @openai/codex-darwin-arm64. \
+         Reinstall @openai/codex. OPENAI_API_KEY={secret} {}",
+        "context".repeat(120)
+    );
+    let body = format!(
+        "printf '%s\\n' '{root}' \
+         '    at file:///opt/homebrew/lib/node_modules/@openai/codex/bin/codex.js:401:17' \
+         '    at ModuleJob.run (node:internal/modules/esm/module_job:413:25)' \
+         '    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:654:26)' >&2\n\
+         exit 1\n"
+    );
+    let (dir, exe) = fake_cli("broken-codex", &body);
+
+    let failure = cli_version_retry(&exe, std::time::Duration::from_secs(10))
+        .expect_err("a missing platform package must fail the version gate");
+    let message = cli_version_failure_message("Codex", &failure);
+
+    assert!(
+        message.contains("Missing optional dependency @openai/codex-darwin-arm64"),
+        "the provider card must retain the actionable first line, got {message:?}"
+    );
+    assert!(
+        !message.contains("ModuleJob.run") && !message.contains("tracePromise"),
+        "loader stack frames must not replace the root cause, got {message:?}"
+    );
+    assert!(
+        !message.contains(secret) && message.contains("OPENAI_API_KEY=<redacted>"),
+        "the surfaced diagnostic must redact credentials, got {message:?}"
+    );
+    assert!(
+        message.chars().count()
+            <= "Codex CLI failed: ".chars().count() + op_util::cli_output::TAIL_MAX_CHARS,
+        "the provider card diagnostic must stay bounded, got {} characters",
+        message.chars().count()
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
+#[test]
 fn cli_version_does_not_wait_for_a_descendant_holding_its_pipes() {
     // The wrapper has already delivered a valid version and exited, but its
     // background helper inherits stdout/stderr. A blocking reader join would

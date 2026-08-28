@@ -25,7 +25,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
 
 use crate::chat_runtime::{prompt_with_system_prompt, shared_runtime, BlockingRecvIter};
-use crate::chat_spawn::{build_command, find_binary};
+use crate::chat_spawn::{build_command, find_binary, runtime_path_for_binary};
 use crate::chat_subprocess_lifecycle::{child_env_for_cli, wait_for_terminal_exit};
 use crate::chat_subprocess_quirks as quirks;
 use crate::chat_subprocess_quirks::codex_reasoning_effort;
@@ -436,6 +436,14 @@ impl SubprocessProvider {
             // otherwise inherits the parent env verbatim.
             cmd.env_clear();
             cmd.envs(env_pairs);
+            // Reapply PATH after `env_clear`, pinned to the resolved wrapper's
+            // directory. Codex's npm launcher uses `#!/usr/bin/env node`; a
+            // different Node earlier in the GUI process PATH can select the
+            // wrong architecture-specific optional package.
+            cmd.env(
+                "PATH",
+                runtime_path_for_binary(std::path::Path::new(&binary)),
+            );
             let mut child = match LineStreamChild::spawn_command(cmd) {
                 Ok(c) => c,
                 Err(e) => {

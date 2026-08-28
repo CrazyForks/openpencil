@@ -18,8 +18,8 @@
 //! through `dirs::home_dir`.
 
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -88,94 +88,12 @@ fn discovery_provider_order() -> [AgentProvider; 7] {
     AgentProvider::ALL
 }
 
-/// Resolve `name` to an executable on `PATH`. On Windows this also
-/// tries the `.exe` / `.cmd` / `.bat` suffixes so npm-installed CLI
-/// shims resolve. Returns `None` when the CLI is not installed.
-///
-/// When the `PATH` walk misses (a Finder/dock launch inherits a
-/// minimal PATH), the standard user-local install directories are
-/// scanned next — the TS resolvers' `posixUserBinDirs()` candidate
-/// list (`cli-resolver-helpers.ts:29-72`). The TS login-shell probe
-/// (`probeViaLoginShell`) is intentionally NOT ported: spawning the
-/// user's interactive shell from the GUI process is slow and
-/// side-effectful.
+/// Resolve `name` through the same executable search used by live chat:
+/// the current/login-shell PATH merge first, then standard package-manager
+/// install directories. Keeping one resolver prevents Settings from checking
+/// a different CLI than the transport later starts.
 pub fn resolve_cli(name: &str) -> Option<PathBuf> {
-    let exts: &[&str] = if cfg!(windows) {
-        &[".exe", ".cmd", ".bat", ""]
-    } else {
-        &[""]
-    };
-    if let Some(path) = std::env::var_os("PATH") {
-        for dir in std::env::split_paths(&path) {
-            for ext in exts {
-                let candidate = dir.join(format!("{name}{ext}"));
-                if candidate.is_file() {
-                    return Some(candidate);
-                }
-            }
-        }
-    }
-    for dir in user_bin_dirs() {
-        for ext in exts {
-            let candidate = dir.join(format!("{name}{ext}"));
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    None
-}
-
-/// Standard user-local / package-manager bin directories — the TS
-/// `posixUserBinDirs()` list plus the opencode/npm-global extras the
-/// per-CLI TS resolvers add, applied uniformly (a superset never
-/// hides an install). Windows also covers npm-global plus the official
-/// Antigravity and Grok Build installer directories.
-fn user_bin_dirs() -> Vec<PathBuf> {
-    let mut dirs = Vec::new();
-    if cfg!(windows) {
-        return crate::cli_resolver_windows::user_bin_dirs();
-    }
-    let Some(home) = dirs::home_dir() else {
-        return dirs;
-    };
-    // Antigravity's official Unix installer (`curl -fsSL
-    // https://antigravity.google/cli/install.sh | bash`) writes `agy` to
-    // `$HOME/.local/bin` by default (`TARGET_DIR="$HOME/.local/bin"` in
-    // that script), mirroring the explicit `%LOCALAPPDATA%\agy\bin` entry
-    // the Windows resolver carries (`cli_resolver_windows.rs`). Listed
-    // first and by name — not left to coincidentally match the generic
-    // dev-tool list below — so this candidate keeps resolving even if
-    // that list's contents change. `.local/bin` is intentionally absent
-    // from the loop below to avoid probing it twice.
-    dirs.push(home.join(".local/bin"));
-    for rel in [
-        ".bun/bin",
-        ".volta/bin",
-        ".local/share/mise/shims",
-        ".asdf/shims",
-        "Library/pnpm",
-        ".pnpm-global/bin",
-        ".cargo/bin",
-        ".opencode/bin",
-        ".npm-global/bin",
-    ] {
-        dirs.push(home.join(rel));
-    }
-    dirs.push(PathBuf::from("/usr/local/bin"));
-    dirs.push(PathBuf::from("/opt/homebrew/bin"));
-    // nvm / fnm: enumerate installed node versions best-effort.
-    if let Ok(rd) = std::fs::read_dir(home.join(".nvm/versions/node")) {
-        for entry in rd.flatten() {
-            dirs.push(entry.path().join("bin"));
-        }
-    }
-    if let Ok(rd) = std::fs::read_dir(home.join(".fnm/node-versions")) {
-        for entry in rd.flatten() {
-            dirs.push(entry.path().join("installation/bin"));
-        }
-    }
-    dirs
+    crate::chat_spawn::resolve_binary(name)
 }
 
 /// Claude Code — live `initialize` control-request query over the
@@ -243,8 +161,17 @@ fn discover_codex() -> Vec<ModelEntry> {
 /// falls back to the on-disk cache.
 pub fn codex_models_from_app_server() -> Option<Vec<ModelEntry>> {
     let exe = resolve_cli("codex")?;
-    let mut cmd = Command::new(exe);
-    cmd.arg("app-server")
+    codex_models_from_app_server_with_exe(&exe)
+}
+
+/// App-server discovery pinned to a previously resolved Codex executable.
+/// The Settings connection gate uses this so its version check and model
+/// handshake cannot silently select different installations.
+pub(crate) fn codex_models_from_app_server_with_exe(exe: &Path) -> Option<Vec<ModelEntry>> {
+    let mut cmd = crate::chat_spawn::build_blocking_command(exe, &["app-server"]);
+    cmd.env_clear()
+        .envs(crate::chat_subprocess_quirks::codex_child_env())
+        .env("PATH", crate::chat_spawn::runtime_path_for_binary(exe))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -664,28 +591,5 @@ mod tests {
         // Whatever is or isn't installed on the test machine, the
         // probe must return cleanly.
         let _ = discover_models();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn posix_candidates_list_antigravity_dir_exactly_once() {
-        // `.local/bin` is both the generic dev-tool candidate and
-        // Antigravity's official installer target; it must appear once,
-        // not be probed twice.
-        let dirs = user_bin_dirs();
-        let Some(home) = dirs::home_dir() else {
-            return;
-        };
-        let antigravity_dir = home.join(".local/bin");
-        assert_eq!(
-            dirs.iter().filter(|d| **d == antigravity_dir).count(),
-            1,
-            "expected exactly one .local/bin candidate, got {dirs:?}"
-        );
-        assert_eq!(
-            dirs.first(),
-            Some(&antigravity_dir),
-            "Antigravity's official dir should be checked first"
-        );
     }
 }

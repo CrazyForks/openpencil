@@ -63,7 +63,11 @@ pub(crate) fn bounded_cli_output(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .env_clear()
-        .envs(env);
+        .envs(env)
+        // `env_clear` removes the PATH installed by the shared command
+        // builder. Restore the binary-aware value last so an npm wrapper's
+        // `#!/usr/bin/env node` uses the Node beside the resolved CLI.
+        .env("PATH", crate::chat_spawn::runtime_path_for_binary(exe));
     // The shared tree cleanup can cover descendants only when the child leads
     // its own Unix process group. Without this, killing an npm/shell wrapper
     // leaves its grandchild holding the capture pipes open past the deadline.

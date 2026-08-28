@@ -14,12 +14,15 @@ pub(crate) fn build_blocking_command(binary: &Path, args: &[&str]) -> Command {
             .arg("-NonInteractive")
             .arg("-File")
             .arg(binary)
-            .args(args);
+            .args(args)
+            .env("PATH", super::runtime_path_for_binary(binary));
         return command;
     }
 
     let mut command = Command::new(binary);
-    command.args(args);
+    command
+        .args(args)
+        .env("PATH", super::runtime_path_for_binary(binary));
     command
 }
 

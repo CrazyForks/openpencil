@@ -21,7 +21,8 @@ use op_ai::chat_models::ModelEntry;
 use op_i18n::Locale;
 
 use crate::model_discovery::{
-    codex_models_from_app_server, codex_models_from_cache, query_opencode_models, resolve_cli,
+    codex_models_from_app_server_with_exe, codex_models_from_cache, query_opencode_models,
+    resolve_cli,
 };
 use crate::provider_probe_models::{
     claude_initialize_query, codex_home, codex_models_from_latest_md, ClaudeAccount,
@@ -258,6 +259,19 @@ pub(crate) fn cli_version_failure_message(provider: &str, failure: &CliVersionFa
     }
 }
 
+/// Pick the actionable part of a failed Codex version probe before
+/// bounding and redacting it for the provider card. Codex's Node
+/// launcher states the cause first and follows it with a long stack,
+/// so keeping only the final bytes hides failures such as a missing
+/// platform-specific optional dependency.
+fn cli_version_exit_diagnostic(stdout: &str, stderr: &str) -> String {
+    crate::chat_subprocess_quirks::extract_codex_cli_error(stderr)
+        .and_then(|message| op_util::cli_output::diagnostic_tail(&message))
+        .or_else(|| op_util::cli_output::diagnostic_tail(stderr))
+        .or_else(|| op_util::cli_output::diagnostic_tail(stdout))
+        .unwrap_or_default()
+}
+
 /// Run `exe --version`, capturing stdout+stderr (the TS gates run
 /// with `2>&1`). Both streams are drained on background threads so a
 /// chatty or hung CLI can neither fill a pipe nor cost us its output
@@ -301,7 +315,7 @@ fn cli_version(exe: &Path, timeout: Duration) -> Result<String, CliVersionFailur
                 if !status.success() {
                     return Err(CliVersionFailure::Exited {
                         status: crate::chat_spawn::exit_status_label(&status),
-                        tail: crate::cli_probe_support::tail_snippet(&out, &err),
+                        tail: cli_version_exit_diagnostic(&out, &err),
                     });
                 }
                 // A CLI that prints its version to stderr is still a
@@ -510,7 +524,7 @@ fn connect_codex_cli(locale: Locale) -> ProbeOutcome {
     // Model list: app-server protocol (the approved no-hardcoded-
     // lists design; a superset of TS, which reads only the cache),
     // then the on-disk cache, then latest-model.md (both TS paths).
-    let mut models = codex_models_from_app_server().unwrap_or_default();
+    let mut models = codex_models_from_app_server_with_exe(&exe).unwrap_or_default();
     if models.is_empty() {
         models = codex_models_from_cache().unwrap_or_default();
     }

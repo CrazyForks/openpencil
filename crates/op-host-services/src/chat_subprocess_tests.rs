@@ -105,9 +105,17 @@ impl CodexHelpStub {
             SEQ.fetch_add(1, Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&dir).expect("create Codex help stub dir");
+        // Model the real npm launcher: Codex is an `env node` wrapper, and
+        // the matching Node runtime lives beside it. If the subprocess PATH
+        // stops leading with this directory, the host machine's Node will try
+        // to parse the shell fixture below as JavaScript and the probe fails.
+        let node = dir.join("node");
+        std::fs::write(&node, "#!/bin/sh\nexec /bin/sh \"$@\"\n").expect("write sibling Node stub");
+        std::fs::set_permissions(&node, std::fs::Permissions::from_mode(0o755))
+            .expect("make sibling Node stub executable");
         let binary = dir.join("codex");
         let script = format!(
-            "#!/bin/sh\n\
+            "#!/usr/bin/env node\n\
              if [ \"$1\" != 'exec' ] || [ \"$2\" != '--help' ]; then exit 64; fi\n\
              printf '%s\\n' '{}'\n",
             help_line
