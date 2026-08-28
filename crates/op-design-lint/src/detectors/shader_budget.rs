@@ -11,11 +11,19 @@
 //! budget is gone, and nothing upstream objects. These detectors are that
 //! missing objection.
 //!
-//! **Detect-only, deliberately.** Every issue here is `Info` with no
-//! `suggested_value`: the safe "fix" for an over-budget shader is to drop a
-//! visual effect, which is a design decision, not a repair. The point is to
-//! make the cost visible to the model in the audit loop (and to a human in
-//! the report), not to silently strip what someone asked for.
+//! **Two kinds of finding, deliberately separated.**
+//!
+//! - `ShaderInvalid` (Warning): the renderer cannot honour this fill — a
+//!   uniform arity SkSL does not have, or source past the size bound. It
+//!   degrades to a flat colour at paint time, so what ships is not the design
+//!   that was authored. That is a generation defect, and callers that gate on
+//!   severity should see it.
+//! - `ShaderBudget` (Info): the fill renders, it is just expensive. Dropping a
+//!   visual effect is a design decision, not a repair, so this stays advisory
+//!   and carries no `suggested_value`.
+//!
+//! Neither offers an auto-fix: there is no safe machine edit for "this shader
+//! costs too much" or "this uniform is the wrong shape".
 //!
 //! Thresholds are intentionally loose — they exist to catch the pathological
 //! case (a pasted shader-toy, a screen tiled with full-bleed passes), not to
@@ -106,10 +114,11 @@ fn walk(node: &PenNode, root_area: f32, issues: &mut Vec<Issue>, full_bleed: &mu
 /// Per-shader checks that do not depend on the rest of the document.
 fn shader_issues(node_id: &str, shader: &ShaderFillBody) -> Vec<Issue> {
     let mut issues = Vec::new();
+    // These are faults, not costs: the fill will not render as authored.
     let info = |reason: String, current: Value| Issue {
         node_id: node_id.to_string(),
-        category: IssueCategory::ShaderBudget,
-        severity: IssueSeverity::Info,
+        category: IssueCategory::ShaderInvalid,
+        severity: IssueSeverity::Warning,
         property: FixProperty::Fill,
         current_value: current,
         suggested_value: Value::Null,

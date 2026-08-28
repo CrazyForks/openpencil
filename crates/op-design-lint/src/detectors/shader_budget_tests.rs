@@ -214,3 +214,70 @@ fn a_document_with_no_shaders_costs_nothing() {
     let root = doc.children.into_iter().next().expect("root");
     assert!(detect_shader_budget(&root, DesignForm::MobileScreen).is_empty());
 }
+
+/// The split between "cannot render as authored" and "renders but costs a lot"
+/// is the whole point of this detector having two categories, and callers gate
+/// on severity — `detect_and_plan` drops `Info` outright. Without this test the
+/// distinction is invisible to the suite and would be lost in a refactor.
+#[test]
+fn a_fault_is_a_warning_while_a_cost_stays_advisory() {
+    // Bad uniform arity: the fill degrades to a flat colour, so what ships is
+    // not the authored design.
+    let faulty = doc_with_shaders(
+        390.0,
+        844.0,
+        &[(
+            "hero",
+            100.0,
+            100.0,
+            120,
+            serde_json::json!({"tint": [1.0, 0.0, 0.0, 1.0, 0.5]}),
+        )],
+    );
+    let issues = detect_shader_budget(&faulty, DesignForm::MobileScreen);
+    assert_eq!(issues.len(), 1);
+    assert_eq!(issues[0].category, IssueCategory::ShaderInvalid);
+    assert_eq!(
+        issues[0].severity,
+        IssueSeverity::Warning,
+        "a fill that cannot render as authored is a defect, not a suggestion"
+    );
+
+    // Too many full-bleed passes: expensive, but it renders exactly as asked.
+    let costly: Vec<_> = (0..5)
+        .map(|i| {
+            (
+                ["a", "b", "c", "d", "e"][i],
+                390.0,
+                700.0,
+                200,
+                serde_json::Value::Null,
+            )
+        })
+        .collect();
+    let costly = doc_with_shaders(390.0, 844.0, &costly);
+    let issues = detect_shader_budget(&costly, DesignForm::MobileScreen);
+    assert!(!issues.is_empty());
+    assert!(
+        issues
+            .iter()
+            .all(|i| i.category == IssueCategory::ShaderBudget
+                && i.severity == IssueSeverity::Info),
+        "dropping a visual effect is a design decision — cost stays advisory"
+    );
+}
+
+/// Neither kind offers an auto-fix. `apply_fixes` would otherwise try to write
+/// `suggested_value` onto the node, and there is no safe machine edit for
+/// either "too expensive" or "wrong uniform shape".
+#[test]
+fn neither_kind_proposes_an_automatic_fix() {
+    let faulty = doc_with_shaders(
+        390.0,
+        844.0,
+        &[("hero", 100.0, 100.0, 9_000, serde_json::Value::Null)],
+    );
+    for issue in detect_shader_budget(&faulty, DesignForm::MobileScreen) {
+        assert!(issue.suggested_value.is_null(), "{issue:?}");
+    }
+}

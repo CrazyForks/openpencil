@@ -41,9 +41,14 @@ pub enum IssueCategory {
     RedundantWrapper,
     ExcessiveNestingDepth,
     AbsolutePositioningShare,
-    /// GPU cost of SkSL shader fills — source size, uniform sanity, and how
-    /// many full-bleed fragment passes one screen carries.
+    /// GPU cost of SkSL shader fills — how many full-bleed fragment passes
+    /// one screen carries. Advisory: expensive, but it renders.
     ShaderBudget,
+    /// A shader fill the renderer cannot honour — bad uniform arity, or source
+    /// past the size bound. Distinct from `ShaderBudget` because the outcome is
+    /// different in kind: the fill degrades to a flat colour at paint time, so
+    /// what ships is not the design that was authored.
+    ShaderInvalid,
 }
 
 /// The node property a fix targets. `Remove` is the `"__remove"` sentinel;
