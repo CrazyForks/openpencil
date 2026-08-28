@@ -578,3 +578,153 @@ fn finalize_reports_no_format_drift_for_a_regular_card_board() {
         "a regular 3:4 card must produce no format-drift advisory: {json}"
     );
 }
+
+// ── Shader fill findings ─────────────────────────────────────────────────────
+
+/// A mobile frame (390x844) with one shader fill that has a 5-element uniform —
+/// invalid arity, so the shader will degrade to a flat colour at paint time.
+const SHADER_INVALID_FIXTURE: &str = r##"{
+  "version": "1.0",
+  "children": [
+    {
+      "type": "frame",
+      "id": "root",
+      "name": "App Screen",
+      "width": 390,
+      "height": 844,
+      "layout": "vertical",
+      "children": [
+        { "type": "rectangle", "id": "hero", "name": "Hero", "width": 390, "height": 400,
+          "fill": [{ "type": "shader", "sksl": "float f;", "uniforms": { "bad": [1.0, 2.0, 3.0, 4.0, 5.0] } }] }
+      ]
+    }
+  ]
+}"##;
+
+#[test]
+fn finalize_reports_invalid_shader_as_a_blocking_advisory() {
+    let live = load_fixture(SHADER_INVALID_FIXTURE);
+    let tool = finalize_design_snapshot(&live);
+    let outcome = tool.call(&BTreeMap::new());
+    let json = match outcome {
+        ToolOutcome::OkJsonWithCommand(json, _) | ToolOutcome::OkJson(json) => json,
+        other => panic!("unexpected finalize outcome: {other:?}"),
+    };
+
+    let advisories = advisories_of(&json);
+    let invalid: Vec<&serde_json::Value> = advisories
+        .iter()
+        .filter(|advisory| advisory["code"].as_str() == Some("shader-invalid"))
+        .collect();
+    assert_eq!(
+        invalid.len(),
+        1,
+        "exactly one shader-invalid advisory: {json}"
+    );
+    let advisory = invalid[0];
+    assert_eq!(
+        advisory["nodeIds"]
+            .as_array()
+            .and_then(|ids| ids.first())
+            .and_then(|v| v.as_str()),
+        Some("hero"),
+        "the advisory names the node with the invalid shader: {json}"
+    );
+    assert!(
+        advisory["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("components") && m.contains("degrade")),
+        "the message describes why the fill is invalid: {json}"
+    );
+    assert!(
+        !complete_of(&json),
+        "invalid shaders must block completion: {json}"
+    );
+}
+
+/// A mobile screen (390x844) carrying three STACKED full-bleed shader layers —
+/// each the exact size of the root, so their area share stays at 100% no matter
+/// what the cleanup passes do to the root. The mobile full-bleed budget is 2,
+/// so the third layer is over the line. Stacking (no auto-layout on the root)
+/// is the real-world shape of this smell: gradient + noise + vignette overlays.
+const SHADER_BUDGET_FIXTURE: &str = r##"{
+  "version": "1.0",
+  "children": [
+    {
+      "type": "frame",
+      "id": "root",
+      "name": "App Screen",
+      "width": 390,
+      "height": 844,
+      "layout": "none",
+      "children": [
+        { "type": "rectangle", "id": "s1", "name": "Base", "width": 390, "height": 844,
+          "fill": [{ "type": "shader", "sksl": "float f;" }] },
+        { "type": "rectangle", "id": "s2", "name": "Noise", "width": 390, "height": 844,
+          "fill": [{ "type": "shader", "sksl": "float f;" }] },
+        { "type": "rectangle", "id": "s3", "name": "Vignette", "width": 390, "height": 844,
+          "fill": [{ "type": "shader", "sksl": "float f;" }] }
+      ]
+    }
+  ]
+}"##;
+
+#[test]
+fn finalize_reports_shader_budget_as_informational() {
+    let live = load_fixture(SHADER_BUDGET_FIXTURE);
+    let tool = finalize_design_snapshot(&live);
+    let outcome = tool.call(&BTreeMap::new());
+    let json = match outcome {
+        ToolOutcome::OkJsonWithCommand(json, _) | ToolOutcome::OkJson(json) => json,
+        other => panic!("unexpected finalize outcome: {other:?}"),
+    };
+
+    let value: serde_json::Value = serde_json::from_str(&json).expect("summary json");
+    let budget_hits: Vec<&serde_json::Value> = value["informational"]
+        .as_array()
+        .expect("informational array must be present")
+        .iter()
+        .filter(|entry| entry["code"].as_str() == Some("shader-budget"))
+        .collect();
+    assert!(
+        !budget_hits.is_empty(),
+        "three stacked full-bleed shaders on a mobile screen (budget 2) must \
+         produce a shader-budget informational entry: {json}"
+    );
+    // The cost finding is advisory: it must not gate completion, must not
+    // count as blocking, and must not appear among the blocking advisories.
+    assert!(
+        complete_of(&json),
+        "informational items must not block completion: {json}"
+    );
+    let advisories = advisories_of(&json);
+    assert_eq!(
+        value["blockingAdvisoryCount"].as_u64().unwrap_or(0) as usize,
+        advisories.len(),
+        "blockingAdvisoryCount must match advisories.len(): {json}"
+    );
+    assert!(
+        advisories
+            .iter()
+            .all(|advisory| advisory["code"].as_str() != Some("shader-budget")),
+        "shader-budget must never appear as a blocking advisory: {json}"
+    );
+}
+
+#[test]
+fn finalize_includes_empty_informational_array_for_clean_document() {
+    let live = load();
+    let tool = finalize_design_snapshot(&live);
+    let outcome = tool.call(&BTreeMap::new());
+    let json = match outcome {
+        ToolOutcome::OkJsonWithCommand(json, _) | ToolOutcome::OkJson(json) => json,
+        other => panic!("unexpected finalize outcome: {other:?}"),
+    };
+    let value: serde_json::Value = serde_json::from_str(&json).expect("summary json");
+    assert!(
+        value["informational"]
+            .as_array()
+            .is_some_and(|a| a.is_empty()),
+        "informational array must be present and empty for a clean document: {json}"
+    );
+}

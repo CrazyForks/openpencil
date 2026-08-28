@@ -25,10 +25,20 @@
 //!
 //! The passes are idempotent; running the tool twice over an already-finalized
 //! document lands (near) zero repairs on the second call.
+//!
+//! ## Echo-only advisories
+//!
+//! - `section-structure-drift`: sibling nodes have inconsistent structure.
+//! - `board-trailing-void`: a card/deck board has significant empty space.
+//! - `board-format-drift`: a card board's aspect ratio drifted from 3:4/1:1.
+//! - `shader-invalid`: a shader fill is invalid and will degrade to flat colour.
+//! - `shader-budget`: a shader fill is expensive (exceeds GPU budget for the design form).
 
 use std::collections::BTreeMap;
 
 use jian_ops_schema::node::PenNode;
+use op_design_lint::design_form::classify_root_form_node;
+use op_design_lint::detectors::detect_shader_budget;
 use op_editor_core::{EditorCommand, EditorState, NodeId, PenNodeExt};
 use op_mcp::{McpTool, ToolErrorCode, ToolOutcome};
 use op_orchestrator::repair_summary::RepairSummary;
@@ -114,12 +124,31 @@ impl McpTool for FinalizeDesignTool {
         // a product decision, so the advisory names the ratio and both
         // directions and repairs nothing.
         let format_drift = op_orchestrator::board_trailing_void::collect_board_format_drift(&state);
+        // Shader-budget findings: GPU cost of shader fills (blocking if the
+        // shader is invalid and degrades to a flat colour; informational if
+        // just expensive). Each root form is classified once to determine the
+        // budget tier, then all issues are partitioned by severity.
+        let mut shader_blocking = Vec::new();
+        let mut shader_informational = Vec::new();
+        for root in state.active_children() {
+            let form = classify_root_form_node(root);
+            let issues = detect_shader_budget(root, form);
+            for issue in issues {
+                if issue.severity == op_design_lint::IssueSeverity::Warning {
+                    shader_blocking.push(issue);
+                } else {
+                    shader_informational.push(issue);
+                }
+            }
+        }
         let json = finalize_result_json(
             &summary,
             root_ids.len(),
             &advisories,
             &void_advisories,
             &format_drift,
+            &shader_blocking,
+            &shader_informational,
         );
         if commands.is_empty() {
             ToolOutcome::OkJson(json)
@@ -236,16 +265,21 @@ fn default_root_ids(state: &EditorState) -> Vec<String> {
 /// the structured per-category tally so an MCP client can reason about it.
 ///
 /// `advisories` (DS P2-a item ③) are the echo-only structure-drift findings,
-/// `void_advisories` (DS P2-b item C) the board-trailing-void ones and
-/// `format_drift` (DS P2-d item ②) the card format-drift ones. They are not
-/// edits and therefore never inflate the repair tally, but they keep
-/// `complete=false` until the caller fixes them and finalizes again.
+/// `void_advisories` (DS P2-b item C) the board-trailing-void ones,
+/// `format_drift` (DS P2-d item ②) the card format-drift ones, and
+/// `shader_blocking` / `shader_informational` are shader fill diagnostics:
+/// the blocking ones (shader-invalid) are added to advisories and keep
+/// `complete=false`; the informational ones (shader-budget) ride a separate
+/// echo-only `informational` array that never affects `complete`. None are
+/// edits and therefore never inflate the repair tally.
 fn finalize_result_json(
     summary: &RepairSummary,
     roots: usize,
     advisories: &[op_orchestrator::orchestration_self_check::SectionStructureDriftAdvisory],
     void_advisories: &[op_orchestrator::board_trailing_void::BoardTrailingVoidAdvisory],
     format_drift: &[op_orchestrator::board_trailing_void::BoardFormatDriftAdvisory],
+    shader_blocking: &[op_design_lint::Issue],
+    shader_informational: &[op_design_lint::Issue],
 ) -> String {
     let quality = crate::quality_credential::quality_summary_from_repairs(summary);
     let credential =
@@ -299,8 +333,29 @@ fn finalize_result_json(
             .iter()
             .map(|advisory| render(advisory.code, &advisory.node_ids, &advisory.message)),
     );
+    // Shader-invalid (blocking) advisories are appended BEFORE complete/count are
+    // computed so they gate completion like other blocking advisories.
+    advisories_json.extend(shader_blocking.iter().map(|issue| {
+        render(
+            "shader-invalid",
+            std::slice::from_ref(&issue.node_id),
+            &issue.reason,
+        )
+    }));
     let complete = advisories_json.is_empty();
     let blocking_advisory_count = advisories_json.len();
+    // Shader-budget (informational) advisories ride a separate always-present
+    // array that never affects complete or blockingAdvisoryCount.
+    let informational_json: Vec<serde_json::Value> = shader_informational
+        .iter()
+        .map(|issue| {
+            render(
+                "shader-budget",
+                std::slice::from_ref(&issue.node_id),
+                &issue.reason,
+            )
+        })
+        .collect();
     serde_json::json!({
         "roots": roots,
         "complete": complete,
@@ -309,6 +364,7 @@ fn finalize_result_json(
         "repairs": summary.total_repairs(),
         "repairRecords": records,
         "advisories": advisories_json,
+        "informational": informational_json,
         "notes": summary.notes(),
         "summary": credential.trim().to_string(),
     })
