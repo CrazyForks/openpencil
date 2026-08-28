@@ -190,7 +190,7 @@ pub(crate) async fn send_binary(
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn pump(
     mut socket: RelaySocket,
-    mut local: TcpStream,
+    local: &mut TcpStream,
     reauth: ClientReauthContext<'_>,
     reauth_budget: &mut ReauthBudget,
     cancel: &mut watch::Receiver<bool>,
@@ -198,19 +198,48 @@ pub(crate) async fn pump(
     limits: RelayLimits,
 ) -> Result<(), TunnelError> {
     let lifetime_deadline = started_at + limits.lifetime;
-    let mut idle_deadline = Instant::now() + limits.idle;
+    let now = Instant::now();
+    let mut idle_deadline = now + limits.idle;
+    let mut keepalive_deadline = now + limits.keepalive;
+    // A successful Ping write proves only that the local socket still accepts
+    // bytes. Keep one fixed response deadline until any peer frame arrives, so
+    // repeatedly writable buffers cannot mask a dead relay path forever.
+    let mut pong_deadline = None;
     let mut buffer = vec![0_u8; limits.max_binary_bytes];
     let mut transferred = 0_u64;
 
     loop {
+        if *cancel.borrow() {
+            return Err(TunnelError::Cancelled);
+        }
+        let now = Instant::now();
+        if now >= lifetime_deadline {
+            return Err(TunnelError::Failure(RelayFailureKind::LifetimeExceeded));
+        }
+        if now >= idle_deadline || pong_deadline.is_some_and(|deadline| now >= deadline) {
+            return Err(TunnelError::Failure(RelayFailureKind::IdleTimeout));
+        }
+        if pong_deadline.is_none() && now >= keepalive_deadline {
+            send_before_deadlines(
+                &mut socket,
+                Message::Ping(Vec::new()),
+                cancel,
+                idle_deadline,
+                lifetime_deadline,
+            )
+            .await?;
+            let now = Instant::now();
+            idle_deadline = now + limits.idle;
+            keepalive_deadline = now + limits.keepalive;
+            pong_deadline = Some(now + limits.idle);
+            continue;
+        }
+        let next_deadline = lifetime_deadline
+            .min(idle_deadline)
+            .min(pong_deadline.unwrap_or(keepalive_deadline));
         tokio::select! {
             _ = cancelled(cancel) => return Err(TunnelError::Cancelled),
-            _ = tokio::time::sleep_until(lifetime_deadline) => {
-                return Err(TunnelError::Failure(RelayFailureKind::LifetimeExceeded));
-            }
-            _ = tokio::time::sleep_until(idle_deadline) => {
-                return Err(TunnelError::Failure(RelayFailureKind::IdleTimeout));
-            }
+            _ = tokio::time::sleep_until(next_deadline) => {}
             read = local.read(&mut buffer) => {
                 let read = read.map_err(|_| TunnelError::Failure(RelayFailureKind::LocalIo))?;
                 if read == 0 {
@@ -225,7 +254,8 @@ pub(crate) async fn pump(
                     idle_deadline,
                     lifetime_deadline,
                 ).await?;
-                idle_deadline = Instant::now() + limits.idle;
+                let now = Instant::now();
+                idle_deadline = now + limits.idle;
             }
             message = socket.next() => {
                 match message {
@@ -242,13 +272,18 @@ pub(crate) async fn pump(
                             limits.max_connection_bytes,
                         )?;
                         write_before_deadlines(
-                            &mut local,
+                            local,
                             &bytes,
                             cancel,
                             idle_deadline,
                             lifetime_deadline,
                         ).await?;
-                        idle_deadline = Instant::now() + limits.idle;
+                        note_peer_activity(
+                            &mut idle_deadline,
+                            &mut keepalive_deadline,
+                            &mut pong_deadline,
+                            limits,
+                        );
                     }
                     Some(Ok(Message::Ping(bytes))) => {
                         send_before_deadlines(
@@ -258,10 +293,20 @@ pub(crate) async fn pump(
                             idle_deadline,
                             lifetime_deadline,
                         ).await?;
-                        idle_deadline = Instant::now() + limits.idle;
+                        note_peer_activity(
+                            &mut idle_deadline,
+                            &mut keepalive_deadline,
+                            &mut pong_deadline,
+                            limits,
+                        );
                     }
                     Some(Ok(Message::Pong(_))) => {
-                        idle_deadline = Instant::now() + limits.idle;
+                        note_peer_activity(
+                            &mut idle_deadline,
+                            &mut keepalive_deadline,
+                            &mut pong_deadline,
+                            limits,
+                        );
                     }
                     Some(Ok(Message::Close(_))) | None => return Ok(()),
                     Some(Ok(Message::Text(text))) => {
@@ -274,7 +319,12 @@ pub(crate) async fn pump(
                             idle_deadline,
                             lifetime_deadline,
                         ).await?;
-                        idle_deadline = Instant::now() + limits.idle;
+                        note_peer_activity(
+                            &mut idle_deadline,
+                            &mut keepalive_deadline,
+                            &mut pong_deadline,
+                            limits,
+                        );
                     }
                     Some(Ok(Message::Frame(_))) => {
                         return Err(TunnelError::Failure(RelayFailureKind::Protocol));
@@ -284,6 +334,18 @@ pub(crate) async fn pump(
             }
         }
     }
+}
+
+fn note_peer_activity(
+    idle_deadline: &mut Instant,
+    keepalive_deadline: &mut Instant,
+    pong_deadline: &mut Option<Instant>,
+    limits: RelayLimits,
+) {
+    let now = Instant::now();
+    *idle_deadline = now + limits.idle;
+    *keepalive_deadline = now + limits.keepalive;
+    *pong_deadline = None;
 }
 
 #[allow(clippy::too_many_arguments)]

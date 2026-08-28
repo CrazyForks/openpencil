@@ -7,9 +7,9 @@ import java.lang.ref.WeakReference
 private const val TAG = "OpenPencilPlayer"
 
 /**
- * Engine → shell upcalls. UI methods run on the engine thread and post view /
- * Choreographer work to the main thread. Credential methods may run on
- * collaboration workers and touch only the thread-safe platform store.
+ * Engine → shell upcalls. Most UI methods run on the engine thread and post
+ * View / Choreographer work to the main thread. Collaboration redraw wakes
+ * and credential methods may run on workers; both paths are thread-safe.
  */
 class OpCallbacksImpl(context: android.content.Context) : OpCallbacks {
     private val credentialStore =
@@ -40,9 +40,8 @@ class OpCallbacksImpl(context: android.content.Context) : OpCallbacks {
     fun engineHandle(): Long = engine
 
     override fun onNeedsRedraw(hasNextWake: Boolean, nextWakeMs: Long) {
-        // The viewer engine only fires this from mutations (pointer /
-        // resize / attach / resume) — draw promptly. `hasNextWake` is
-        // reserved for future animation deadlines.
+        // Mutations and collaboration workers draw promptly. Timed wakes
+        // carry caret/collaboration deadlines without keeping a hot loop.
         if (!hasNextWake) {
             viewRef.get()?.requestFrame()
             return

@@ -32,6 +32,12 @@ pub(crate) struct RelayLimits {
     /// waiting window below [`MIN_RELAY_WAITING_TIMEOUT_SECS`], so neither side
     /// can drift without the other failing.
     pub owner_pair: Duration,
+    /// WebSocket-level liveness-probe cadence for an active paired tunnel.
+    ///
+    /// The inner Noise/TCP stream may be intentionally quiet while an editor is
+    /// merely open in the foreground. Keeping this comfortably below both idle
+    /// windows proves the authenticated relay path is still alive anyway.
+    pub keepalive: Duration,
     pub idle: Duration,
     pub lifetime: Duration,
     pub retry: Duration,
@@ -47,6 +53,7 @@ impl Default for RelayLimits {
             hello: Duration::from_secs(10),
             pair: Duration::from_secs(5 * 60),
             owner_pair: Duration::from_secs(RELAY_OWNER_LANE_RECYCLE_SECS),
+            keepalive: Duration::from_secs(30),
             idle: Duration::from_secs(2 * 60),
             lifetime: Duration::from_secs(24 * 60 * 60),
             retry: Duration::from_secs(1),
@@ -64,6 +71,7 @@ impl std::fmt::Debug for RelayLimits {
             .field("hello", &self.hello)
             .field("pair", &self.pair)
             .field("owner_pair", &self.owner_pair)
+            .field("keepalive", &self.keepalive)
             .field("idle", &self.idle)
             .field("lifetime", &self.lifetime)
             .field("retry", &self.retry)

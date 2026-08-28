@@ -16,9 +16,10 @@
  *
  * Threading: an engine is owned by exactly one thread — the thread that
  * called op_create. Every other call must run on that thread or
- * OpStatus_WrongThread is returned. Callbacks fire synchronously inside
- * the call that caused them; the shell copies the payload and reacts
- * asynchronously, and must not re-enter the engine synchronously.
+ * OpStatus_WrongThread is returned. Most callbacks fire synchronously inside
+ * the call that caused them; collaboration workers may also invoke
+ * needs_redraw and the secure-store callbacks. The shell copies callback
+ * payloads, reacts asynchronously, and must not re-enter the engine.
  *
  * Rendering: the engine paints the document's active page with the exact
  * painter the desktop editor canvas uses. op_attach_surface hands the
@@ -76,12 +77,15 @@ typedef struct OpRuntimeError {
     size_t source_len;
 } OpRuntimeError;
 
+/* Collaboration workers may invoke needs_redraw to restart a paused frame
+ * pump. The shell must make this callback thread-safe, must not re-enter the
+ * engine from it, and must keep user_data alive until op_destroy returns. */
 typedef void (*OpNeedsRedraw)(void *user_data, bool has_next_wake, uint64_t next_wake_ms);
 typedef void (*OpRuntimeErrorCallback)(void *user_data, const OpRuntimeError *error);
 typedef void (*OpInputFocusChanged)(void *user_data, bool focused, int32_t input_kind, int32_t return_key_hint);
 typedef void (*OpRemoteImageRequest)(void *user_data, uint64_t request_id, const uint8_t *url_ptr, size_t url_len);
-/* Platform secure-store callbacks may run on a collaboration worker thread.
- * The shell must make them thread-safe and keep user_data alive until
+/* Platform secure-store callbacks may also run on a collaboration worker
+ * thread. The shell must make them thread-safe and keep user_data alive until
  * op_destroy returns. Credentials are exactly 32 bytes. Load: 0=found,
  * 1=missing, negative=failure. */
 typedef int32_t (*OpCredentialLoad)(void *user_data, uint8_t *out, size_t capacity, size_t *out_len);

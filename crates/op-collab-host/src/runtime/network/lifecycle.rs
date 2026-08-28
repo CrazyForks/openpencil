@@ -39,6 +39,14 @@ pub(in crate::runtime) enum Retirement {
     Local { handles: Vec<JoinHandle<()>> },
 }
 
+struct RetirementCompletion(Arc<AtomicBool>);
+
+impl Drop for RetirementCompletion {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
 impl Retirement {
     pub(in crate::runtime) fn start(
         handles: Vec<JoinHandle<()>>,
@@ -52,6 +60,7 @@ impl Retirement {
         let spawn = std::thread::Builder::new()
             .name("op-collab-network-reaper".to_string())
             .spawn(move || {
+                let _completion = RetirementCompletion(worker_complete);
                 let handles = worker_pending
                     .lock()
                     .expect("lifecycle handle lock")
@@ -60,8 +69,10 @@ impl Retirement {
                 for handle in handles {
                     let _ = handle.join();
                 }
-                worker_complete.store(true, Ordering::Release);
-                wake();
+                // Platform callbacks are foreign-code boundaries: one must not
+                // kill the reaper and strand `shutdown` forever. The completion
+                // guard publishes only after this callback returns or unwinds.
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| wake()));
             });
         match spawn {
             Ok(_reaper) => Self::Background { complete },
@@ -97,6 +108,7 @@ impl CollabRuntime {
             || self.discovery.is_some()
             || self.retirement.is_some()
             || self.pending_network_launch.is_some()
+            || self.next_reconnect_deadline().is_some()
     }
 
     /// Leave the session and synchronously join every network worker.
@@ -406,5 +418,55 @@ mod tests {
             host.editor_state().editor_ui.collab.phase,
             op_editor_core::CollabConnectionPhase::Idle
         );
+    }
+
+    #[test]
+    fn shutdown_cannot_finish_before_the_reapers_final_wake_returns() {
+        let worker = std::thread::spawn(|| {});
+        let (wake_started, started) = mpsc::sync_channel(1);
+        let (release_wake, released) = mpsc::sync_channel(1);
+        let released = Arc::new(Mutex::new(released));
+        let wake = {
+            let released = Arc::clone(&released);
+            Arc::new(move || {
+                wake_started.send(()).unwrap();
+                released.lock().unwrap().recv().unwrap();
+            })
+        };
+        let mut runtime = CollabRuntime::new();
+        runtime.retirement = Some(Retirement::start(vec![worker], wake));
+        let mut host = crate::HeadlessCollabHost::new();
+
+        std::thread::scope(|scope| {
+            let shutdown = scope.spawn(|| runtime.shutdown(&mut host));
+            started.recv_timeout(Duration::from_secs(1)).unwrap();
+            assert!(
+                !shutdown.is_finished(),
+                "Acquire completion must remain false while wake is in flight"
+            );
+            release_wake.send(()).unwrap();
+            shutdown.join().unwrap();
+        });
+        assert!(!runtime.needs_poll());
+    }
+
+    #[test]
+    fn panicking_final_wake_cannot_strand_shutdown() {
+        let worker = std::thread::spawn(|| {});
+        let mut runtime = CollabRuntime::new();
+        runtime.retirement = Some(Retirement::start(
+            vec![worker],
+            Arc::new(|| panic!("simulated platform notifier panic")),
+        ));
+        let (finished, completion) = mpsc::sync_channel(1);
+
+        let shutdown = std::thread::spawn(move || {
+            let mut host = crate::HeadlessCollabHost::new();
+            runtime.shutdown(&mut host);
+            finished.send(runtime.needs_poll()).unwrap();
+        });
+
+        assert!(!completion.recv_timeout(Duration::from_secs(2)).unwrap());
+        shutdown.join().unwrap();
     }
 }

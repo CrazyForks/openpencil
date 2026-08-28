@@ -41,11 +41,15 @@ pub unsafe extern "C" fn op_editor_hover(engine: *mut crate::OpEngine, x: f32, y
     unsafe {
         call_session(engine, |session| {
             if !session.safe_area_contains_surface_point(x, y) {
+                if session.clear_editor_presence_pointer() {
+                    session.request_redraw();
+                }
                 return Ok(());
             }
             let (x, y) = session.editor_point(x, y);
+            let presence_changed = session.set_editor_presence_pointer(x, y);
             let changed = session.editor_mut()?.apply_cursor_move(x, y);
-            if changed {
+            if changed || presence_changed {
                 session.request_redraw();
             }
             Ok(())

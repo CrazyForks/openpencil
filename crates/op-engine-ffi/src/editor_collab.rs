@@ -4,7 +4,7 @@ use crate::desc::Callbacks;
 use crate::error::{FfiError, FfiResult};
 use crate::lifecycle::Session;
 use crate::OpStatus;
-use op_collab_host::{BlockingExecutor, CollabRuntime, LocalEditOutcome};
+use op_collab_host::{BlockingExecutor, CollabRuntime, CollabWakeNotifier, LocalEditOutcome};
 use op_collab_transport::{
     CredentialStore, CredentialStoreKeyStore, DeviceStaticKey, KeyStoreError, StaticKeyStore,
 };
@@ -25,6 +25,7 @@ pub(crate) struct EditorCollabState {
     wake_pending: Arc<AtomicBool>,
     suppressed_pointer: Option<u32>,
     pointer_edit_open: bool,
+    pub(crate) presence_pointer: Option<crate::editor_collab_presence::EditorPresencePointer>,
 }
 
 impl EditorCollabState {
@@ -33,20 +34,38 @@ impl EditorCollabState {
         let mut runtime = runtime_for_callbacks(callbacks);
         runtime.set_transport_capabilities(CollabTransportCapabilities::RELAY_AND_MANUAL_JOIN);
         let wake_pending = Arc::new(AtomicBool::new(false));
-        let worker_wake = Arc::clone(&wake_pending);
-        // The wake notifier touches only this atomic. Credential callbacks
-        // use their separate worker-safe JNI path; no ordinary platform UI
-        // callback is invoked from a collaboration worker.
-        runtime.set_wake_notifier(Arc::new(move || {
-            worker_wake.store(true, Ordering::Release);
-        }));
+        runtime.set_wake_notifier(mobile_wake_notifier(Arc::clone(&wake_pending), callbacks));
         Ok(Self {
             runtime,
             wake_pending,
             suppressed_pointer: None,
             pointer_edit_open: false,
+            presence_pointer: None,
         })
     }
+}
+
+pub(crate) fn mobile_wake_notifier(
+    wake_pending: Arc<AtomicBool>,
+    callbacks: Callbacks,
+) -> CollabWakeNotifier {
+    let user_data = callbacks.user_data as usize;
+    let needs_redraw = callbacks.needs_redraw;
+    Arc::new(move || {
+        // Coalesce a burst of worker events until the owner thread pumps and
+        // clears the flag. The first edge must also wake the platform: merely
+        // setting an atomic cannot restart a paused mobile frame chain.
+        if wake_pending.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        if let Some(callback) = needs_redraw {
+            // SAFETY: Session owns this notifier and joins collaboration
+            // workers before the shell callback context is released. iOS
+            // marshals the callback to its main queue; Android attaches this
+            // worker for the short JNI upcall and posts onto the View.
+            unsafe { callback(user_data as *mut std::ffi::c_void, false, 0) };
+        }
+    })
 }
 
 struct MobileBlockingExecutor;
@@ -169,11 +188,20 @@ fn runtime_for_callbacks(callbacks: Callbacks) -> CollabRuntime {
 }
 
 impl Session {
+    #[cfg(test)]
+    pub(crate) fn install_editor_collab_runtime_for_test(&mut self, runtime: CollabRuntime) {
+        self.editor_collab
+            .as_mut()
+            .expect("editor collaboration state")
+            .runtime = runtime;
+    }
+
     /// Runtime order mirrors desktop: availability, one queued action when no
     /// local capture is open, inbound events, then lossy presence.
     pub(crate) fn pump_editor_collab(&mut self) -> Option<u64> {
         let now_ms = self.now_ms;
-        let (_changed, should_poll, save_as_fork) = {
+        let presence_cursor = self.editor_presence_cursor();
+        let (changed, should_poll, save_as_fork) = {
             let (Some(collab), Some(host)) = (self.editor_collab.as_mut(), self.editor.as_mut())
             else {
                 return None;
@@ -191,7 +219,7 @@ impl Session {
             for status in runtime.drain_status_events() {
                 eprintln!("[collab] {status:?}");
             }
-            changed |= runtime.publish_local_presence(host, None);
+            changed |= runtime.publish_local_presence(host, presence_cursor);
             let worker_woke = collab.wake_pending.swap(false, Ordering::AcqRel);
             (
                 changed,
@@ -199,12 +227,20 @@ impl Session {
                 save_as_fork,
             )
         };
-        if save_as_fork {
+        let changed = if save_as_fork {
             if let Some(host) = self.editor.as_mut() {
                 host.editor_state_mut().editor_ui.pending_file_action =
                     Some(op_editor_core::FileAction::SaveAs);
                 host.mark_editor_state_dirty();
             }
+            true
+        } else {
+            changed
+        };
+        // A presence/participant projection can be the only visible change in
+        // this pump. Keep it on the same redraw path as document/UI changes.
+        if changed {
+            self.request_redraw();
         }
         should_poll.then_some(now_ms.saturating_add(COLLAB_POLL_INTERVAL_MS))
     }
@@ -358,13 +394,9 @@ impl Session {
         self.cancel_editor_collab_gesture_at(None)
     }
 
-    /// [`Self::cancel_editor_collab_gesture`] with an optional factual
-    /// event timestamp: `Some(t_ms)` scopes the timestamped host cancel
-    /// path so the live-preview `Cancel` dispatch carries the platform
-    /// cancel's own time, while the global clocks are advanced
-    /// independently (monotonically) by the caller. `None` is the
-    /// legacy synthetic path (suspend / no event timestamp), which
-    /// dispatches with the host's global clock.
+    /// Cancel with an optional factual timestamp. `Some(t_ms)` reaches the
+    /// timestamped host path while global clocks remain caller-controlled;
+    /// `None` uses the host's current clock for synthetic cancellation.
     pub(crate) fn cancel_editor_collab_gesture_at(
         &mut self,
         event_time_ms: Option<u64>,
@@ -372,6 +404,7 @@ impl Session {
         if let Some(collab) = self.editor_collab.as_mut() {
             collab.suppressed_pointer = None;
         }
+        let presence_changed = self.clear_editor_presence_pointer();
         let cancelled = {
             let host = self.editor_mut()?;
             match event_time_ms {
@@ -379,10 +412,23 @@ impl Session {
                 None => host.cancel_native_touch_gestures(),
             }
         };
-        Ok(cancelled | self.finish_collab_pointer_edit())
+        Ok(presence_changed | cancelled | self.finish_collab_pointer_edit())
+    }
+
+    /// Enqueue the terminal cursor state before a mobile surface is suspended.
+    /// This bypasses the ordinary 33 ms paint throttle because no later
+    /// foreground frame is guaranteed to flush a pending `None`.
+    pub(crate) fn publish_terminal_editor_presence(&mut self) -> bool {
+        let (Some(collab), Some(host)) = (self.editor_collab.as_mut(), self.editor.as_mut()) else {
+            return false;
+        };
+        collab
+            .runtime
+            .publish_local_presence_immediately(host, None)
     }
 
     pub(crate) fn shutdown_editor_collab(&mut self) {
+        self.clear_editor_presence_pointer();
         if self.editor_collab.is_none() || self.editor.is_none() {
             return;
         }

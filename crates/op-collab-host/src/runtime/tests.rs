@@ -170,7 +170,7 @@ fn owner_runtime(
     (runtime, host, commands, peer)
 }
 
-fn guest_runtime(
+pub(super) fn guest_runtime(
     capacity: usize,
 ) -> (
     CollabRuntime,
@@ -323,6 +323,7 @@ fn owner_local_auth_failure_survives_following_stopped_event() {
         host.editor_state().editor_ui.collab.notice.unwrap().kind,
         CollabNoticeKind::TicketExpired
     );
+    assert!(runtime.next_reconnect_deadline().is_none());
 }
 
 #[test]
@@ -350,6 +351,7 @@ fn guest_local_auth_failure_survives_following_stopped_event() {
         host.editor_state().editor_ui.collab.notice.unwrap().kind,
         CollabNoticeKind::TicketExpired
     );
+    assert!(runtime.next_reconnect_deadline().is_none());
 }
 
 #[test]

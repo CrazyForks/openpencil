@@ -250,8 +250,9 @@ pub unsafe extern "C" fn op_editor_right_press(
             // pointer gate here, including safe-area misses and host errors,
             // so the runtime cannot remain busy forever.
             let collab_changed = session.finish_collab_pointer_edit();
+            let presence_changed = session.clear_editor_presence_pointer();
             session.reset_editor_pointer_capture();
-            if right_press? | collab_changed {
+            if right_press? | collab_changed | presence_changed {
                 session.request_redraw();
             }
             Ok(())

@@ -538,7 +538,7 @@ async fn run_lane(spawn: LaneSpawn) -> LaneReport {
             },
         )
         .await?;
-        let local = connect_local(local_owner_socket, &mut cancel, limits).await?;
+        let mut local = connect_local(local_owner_socket, &mut cancel, limits).await?;
         let (acknowledge, acknowledged) = oneshot::channel();
         tokio::select! {
             _ = cancelled(&mut cancel) => return Err(TunnelError::Cancelled),
@@ -559,7 +559,7 @@ async fn run_lane(spawn: LaneSpawn) -> LaneReport {
         became_active = true;
         pump(
             socket,
-            local,
+            &mut local,
             ClientReauthContext {
                 auth: &auth,
                 role: op_collab_relay_protocol::RelayRole::Owner,

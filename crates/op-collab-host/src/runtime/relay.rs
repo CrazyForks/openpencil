@@ -93,7 +93,21 @@ impl GuestConnectionRoute {
 #[derive(Clone)]
 pub(super) enum RelayJoinSecret {
     Invite(Box<RelayInviteV1>),
-    Pairing(PairingCode),
+    Pairing {
+        code: PairingCode,
+        /// Shared by every retry clone so a redeemed one-time code is never
+        /// spent again merely because the transport dropped.
+        claimed: Arc<std::sync::Mutex<Option<RelayInviteV1>>>,
+    },
+}
+
+impl RelayJoinSecret {
+    fn pairing(code: PairingCode) -> Self {
+        Self::Pairing {
+            code,
+            claimed: Arc::new(std::sync::Mutex::new(None)),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -431,7 +445,7 @@ pub(super) fn guest_route_from_pairing_code(
         .ok_or_else(|| runtime_error(CollabRuntimeFailure::RelayInviteInvalid))?;
     let provider = bootstrap_provider(preferred_region)?;
     Ok(GuestConnectionRoute::Relay(Box::new(RelayGuestRequest {
-        secret: RelayJoinSecret::Pairing(code),
+        secret: RelayJoinSecret::pairing(code),
         home_region,
         provider,
         control_plane,

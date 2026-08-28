@@ -12,10 +12,10 @@
 //!
 //! An engine is owned by exactly one thread (the thread that called
 //! [`op_create`]). Every other call must happen on that thread;
-//! [`OpStatus::WrongThread`] is returned otherwise. Callbacks fire
-//! synchronously inside the call that caused them; shells copy the
-//! payload and react asynchronously, and callbacks must never re-enter
-//! the engine synchronously.
+//! [`OpStatus::WrongThread`] is returned otherwise. Most callbacks fire
+//! synchronously inside the call that caused them; collaboration workers may
+//! also invoke redraw and secure-store callbacks. Shells copy payloads and
+//! react asynchronously, and callbacks must never re-enter the engine.
 //!
 //! ## Coordinates
 //!
@@ -53,6 +53,8 @@ mod editor_codegen;
 #[cfg(feature = "editor")]
 mod editor_collab;
 #[cfg(feature = "editor")]
+mod editor_collab_presence;
+#[cfg(feature = "editor")]
 mod editor_document;
 #[cfg(all(feature = "editor", test))]
 mod editor_document_save_tests;
@@ -76,6 +78,8 @@ mod editor_pointer;
 mod editor_pointer_clock_tests;
 #[cfg(feature = "editor")]
 mod editor_pointer_release;
+#[cfg(all(test, feature = "editor"))]
+mod editor_presence_tests;
 #[cfg(all(feature = "editor", test))]
 mod editor_settings_input_tests;
 #[cfg(feature = "editor")]
@@ -446,17 +450,21 @@ pub unsafe extern "C" fn op_pointer(
             #[cfg(feature = "editor")]
             if session.editor.is_some() {
                 let (w, h) = session.editor_viewport();
+                let presence_changed = session.update_editor_presence_pointer(id, phase, x, y);
                 if phase != OpPointerPhase::Down
                     && session.take_suppressed_collab_pointer(
                         id,
                         matches!(phase, OpPointerPhase::Up | OpPointerPhase::Cancel),
                     )
                 {
+                    if presence_changed {
+                        session.request_redraw();
+                    }
                     return Ok(());
                 }
                 if phase == OpPointerPhase::Down {
                     if let Some(action) = session.collab_history_at(x, y, w, h) {
-                        if session.request_collab_history(action)? {
+                        if session.request_collab_history(action)? || presence_changed {
                             session.request_redraw();
                         }
                         session.suppress_collab_pointer(id);
@@ -499,7 +507,7 @@ pub unsafe extern "C" fn op_pointer(
                 } else {
                     crate::editor_template::drain_pending_scene_template(session)?
                 };
-                if changed || template_changed {
+                if changed || template_changed || presence_changed {
                     session.request_redraw();
                 }
                 return Ok(());

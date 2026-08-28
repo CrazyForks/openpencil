@@ -59,7 +59,7 @@ pub enum RelayFailureKind {
     ConnectTimeout,
     HelloTimeout,
     PairTimeout,
-    Rejected,
+    Rejected(RelayRejectCode),
     /// The relay retired this lane with its own pairing timeout.
     ///
     /// Distinct from [`RelayFailureKind::Rejected`] so a relay that closed an
@@ -96,6 +96,12 @@ pub enum RelayClientError {
     ReadyTimeout,
     #[error("relay owner bridge stopped before a lane became ready")]
     StoppedBeforeReady,
+    #[error("relay guest bridge did not pair before the readiness deadline")]
+    PairedTimeout,
+    #[error("relay guest bridge stopped before its tunnel paired")]
+    StoppedBeforePaired,
+    #[error("relay guest bridge failed before pairing: {kind:?}")]
+    GuestPairingFailed { kind: RelayFailureKind },
     #[error("failed to bind the guest loopback bridge")]
     BindLoopback { kind: io::ErrorKind },
     #[error("failed to read the guest loopback bridge address")]
@@ -116,7 +122,7 @@ impl RelayFailureKind {
     pub(crate) const fn from_reject(code: RelayRejectCode) -> Self {
         match code {
             RelayRejectCode::PairingTimeout => Self::RejectedPairingTimeout,
-            _ => Self::Rejected,
+            _ => Self::Rejected(code),
         }
     }
 }

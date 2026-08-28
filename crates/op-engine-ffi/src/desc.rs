@@ -11,6 +11,9 @@ use std::ffi::c_void;
 use std::mem::{offset_of, size_of};
 use std::ptr;
 
+/// May run on a collaboration worker so a paused mobile frame pump can be
+/// restarted. The shell must marshal UI work and keep `user_data` alive until
+/// `op_destroy` returns; the callback must not re-enter the engine.
 pub type OpNeedsRedraw =
     Option<unsafe extern "C" fn(user_data: *mut c_void, has_next_wake: bool, next_wake_ms: u64)>;
 
@@ -42,6 +45,7 @@ pub type OpRemoteImageRequest = Option<
 >;
 
 /// Load the platform-protected collaboration credential into `out`.
+/// This callback may also run on a collaboration worker.
 /// Returns 0 when found, 1 when absent, and a negative value on failure.
 pub type OpCredentialLoad = Option<
     unsafe extern "C" fn(

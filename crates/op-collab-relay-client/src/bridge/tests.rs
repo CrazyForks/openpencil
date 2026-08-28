@@ -95,6 +95,7 @@ fn test_limits() -> RelayLimits {
         hello: Duration::from_secs(1),
         pair: Duration::from_secs(1),
         owner_pair: Duration::from_secs(1),
+        keepalive: Duration::from_millis(250),
         idle: Duration::from_secs(2),
         lifetime: Duration::from_secs(5),
         retry: Duration::from_millis(10),
@@ -715,3 +716,6 @@ async fn wait_for_phase(
 
 #[path = "owner_pool_tests.rs"]
 mod owner_pool;
+
+#[path = "guest_recovery_tests.rs"]
+mod guest_recovery;

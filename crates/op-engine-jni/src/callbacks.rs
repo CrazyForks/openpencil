@@ -1,9 +1,11 @@
 //! Engine → Java upcall trampolines.
 //!
 //! Ordinary UI callbacks run synchronously on the engine thread (inside
-//! `op_pointer`, `op_attach_surface`, …). Credential callbacks are the sole
-//! worker-thread exception and attach only for their call. Every trampoline
-//! uses a JNI local frame and clears pending Java exceptions before returning.
+//! `op_pointer`, `op_attach_surface`, …). Credential callbacks and redraw wakes
+//! are worker-thread exceptions: collaboration workers may need to restart a
+//! paused frame pump, so those callbacks attach only for their call. Every
+//! trampoline uses a JNI local frame and clears pending Java exceptions before
+//! returning.
 //!
 //! `user_data` for the C callback table is a `*const EngineCtx` owned by the
 //! engine record; it outlives every callback and is freed only in the
@@ -122,6 +124,28 @@ fn upcall(ctx: &EngineCtx, capacity: i32, body: impl FnOnce(&mut JNIEnv, &JObjec
     }
 }
 
+/// Worker-safe variant used only for callbacks whose contract permits an
+/// off-engine-thread wake. `attach_current_thread` is also safe when the caller
+/// is already the permanently attached engine thread, while a collaboration
+/// worker is detached again when the guard leaves scope.
+fn attached_upcall(ctx: &EngineCtx, capacity: i32, body: impl FnOnce(&mut JNIEnv, &JObject)) {
+    let Ok(mut env) = ctx.vm.attach_current_thread() else {
+        return;
+    };
+    let receiver = ctx.receiver.clone();
+    let _frame = CallbackFrame::enter();
+    let _framed = env.with_local_frame(capacity, |env| -> Result<(), jni::errors::Error> {
+        if let Err(payload) = catch_unwind(AssertUnwindSafe(|| body(env, receiver.as_obj()))) {
+            crate::engine_thread::drop_guarded(payload);
+        }
+        Ok(())
+    });
+    if let Ok(true) = env.exception_check() {
+        let _ = env.exception_describe();
+        let _ = env.exception_clear();
+    }
+}
+
 /// RAII bracket for a C callback frame (drives `close_deferred` routing on
 /// callback-origin destroy). Restores the depth on drop, panic or not.
 struct CallbackFrame;
@@ -158,7 +182,7 @@ fn run_trampoline(user_data: *mut c_void, body: impl FnOnce(&EngineCtx)) {
 
 extern "C" fn needs_redraw(user_data: *mut c_void, has_next_wake: bool, next_wake_ms: u64) {
     run_trampoline(user_data, |ctx| {
-        upcall(ctx, 2, |env, receiver| {
+        attached_upcall(ctx, 2, |env, receiver| {
             let _ = env.call_method(
                 receiver,
                 "onNeedsRedraw",
@@ -256,9 +280,9 @@ extern "C" fn remote_image_request(
     });
 }
 
-/// Secure-store callbacks are the only upcalls allowed off the engine thread.
-/// Collaboration workers attach for the duration of the call; ordinary UI
-/// callbacks intentionally keep using `get_env` above.
+/// Secure-store callbacks may run off the engine thread, like collaboration
+/// redraw wakes. Workers attach for the duration of the call; callbacks whose
+/// contracts remain owner-thread-only keep using `get_env` above.
 extern "C" fn credential_load(
     user_data: *mut c_void,
     out: *mut u8,

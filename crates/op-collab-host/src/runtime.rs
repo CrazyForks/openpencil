@@ -7,6 +7,7 @@ mod effects;
 mod effects_wire;
 mod failure;
 mod guest_confirmation;
+mod guest_reconnect;
 mod guest_routes;
 pub(crate) mod local_edit;
 mod network;
@@ -69,13 +70,7 @@ const MAX_STATUS_EVENTS: usize = 64;
 /// `refresh_availability` → `drain_ui_action` → `poll`, plus the local-edit
 /// capture pair around every mutating gesture.
 pub struct CollabRuntime {
-    /// What the last completed local-edit capture resolved to, recorded by
-    /// the effect-routing layer and consumed by `finish_local_edit`.
-    ///
-    /// A field rather than a return value because the resolution is decided
-    /// several frames down inside `route_owner_output` / `route_guest_output`,
-    /// which are also reached from `poll` — threading it back through every
-    /// effect signature would touch far more than the one decision.
+    /// Result recorded by effect routing and consumed by `finish_local_edit`.
     pub(crate) last_local_edit: Option<crate::runtime::local_edit::LocalEditOutcome>,
     events: Receiver<TaggedNetworkEvent>,
     event_sender: SyncSender<TaggedNetworkEvent>,
@@ -93,6 +88,7 @@ pub struct CollabRuntime {
     discovered: HashMap<String, DiscoveredEndpoint>,
     last_join: Option<GuestConnectionRoute>,
     pinned_owner_static: Option<[u8; 32]>,
+    guest_reconnect: guest_reconnect::GuestReconnectState,
     transaction_active: bool,
     save_as_fork_requested: bool,
     /// Runtime-owned service-region preference (lazily loaded from disk);
@@ -169,6 +165,7 @@ impl CollabRuntime {
             discovered: HashMap::new(),
             last_join: None,
             pinned_owner_static: None,
+            guest_reconnect: guest_reconnect::GuestReconnectState::default(),
             transaction_active: false,
             save_as_fork_requested: false,
             relay_region_pref: None,
@@ -387,6 +384,7 @@ impl CollabRuntime {
         self.discovered.clear();
         self.last_join = None;
         self.pinned_owner_static = None;
+        self.reset_guest_reconnect();
         self.transaction_active = false;
         self.clear_discarded_stash(host);
         self.last_presence_sent = None;
@@ -685,6 +683,7 @@ impl CollabRuntime {
                     self.actor = Some(EditorActor::Guest(guest));
                     self.retire_workers();
                     self.transaction_active = false;
+                    self.reset_guest_reconnect();
                     self.clear_discarded_stash(host);
                     self.set_notice(host, CollabNoticeKind::EpochChanged);
                     self.push_status(CollabStatusEvent::SessionEnded);

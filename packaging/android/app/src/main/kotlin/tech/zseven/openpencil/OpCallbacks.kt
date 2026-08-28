@@ -1,10 +1,10 @@
 package tech.zseven.openpencil
 
-/** Native upcalls. Credential methods may run on collaboration workers. */
+/** Native upcalls. Redraw and credential methods may run on collaboration workers. */
 interface OpCallbacks {
-    /** A mutation (pointer / resize / attach / resume / text edit / caret
-     *  blink) requested a redraw. `hasNextWake` schedules a timed frame
-     *  (the caret blink). */
+    /** A mutation or collaboration worker requested a redraw. This method
+     *  must be thread-safe and marshal View work to the main thread.
+     *  `hasNextWake` schedules a timed frame (the caret blink). */
     fun onNeedsRedraw(hasNextWake: Boolean, nextWakeMs: Long)
 
     /** A runtime diagnostic (document load / layout / GPU failures). */

@@ -363,6 +363,7 @@ impl Session {
         #[cfg(feature = "editor")]
         if self.editor.is_some() {
             let _ = self.cancel_editor_collab_gesture();
+            let _ = self.publish_terminal_editor_presence();
         }
         // Backgrounding is the last reliable moment before the OS may kill
         // the process without `op_destroy` — persist settings now (mirrors

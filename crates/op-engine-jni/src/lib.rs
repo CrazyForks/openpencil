@@ -285,8 +285,11 @@ mod binding_contract_tests {
     #[test]
     fn credential_callbacks_attach_workers_bound_lengths_and_wipe_arrays() {
         let source = include_str!("callbacks.rs");
+        let redraw = &source[source.find("extern \"C\" fn needs_redraw").unwrap()
+            ..source.find("extern \"C\" fn runtime_error").unwrap()];
         let secure = &source[source.find("extern \"C\" fn credential_load").unwrap()
             ..source.find("fn clear_pending_exception").unwrap()];
+        assert_eq!(redraw.matches("attached_upcall(ctx").count(), 1);
         assert!(source.contains("ctx.vm.attach_current_thread()"));
         assert!(source.contains("length == COLLAB_CREDENTIAL_BYTES"));
         assert!(source.contains("value_len != COLLAB_CREDENTIAL_BYTES"));

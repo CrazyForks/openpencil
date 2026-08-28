@@ -70,24 +70,31 @@ fn editor_press(session: &mut Session, x: f32, y: f32, time_ms: u64) -> FfiResul
     // session/host/preview clocks monotonically to the event's timestamp.
     session.advance_global_clock(time_ms);
     if !session.safe_area_contains_surface_point(x, y) {
+        if session.clear_editor_presence_pointer() {
+            session.request_redraw();
+        }
         return Ok(());
     }
     let (w, h) = session.editor_viewport();
     let (editor_x, editor_y) = session.editor_point(x, y);
+    let presence_changed = session.set_editor_presence_pointer(editor_x, editor_y);
     if let Some(action) = session.collab_history_at(editor_x, editor_y, w, h) {
-        if session.request_collab_history(action)? {
+        if session.request_collab_history(action)? || presence_changed {
             session.request_redraw();
         }
         return Ok(());
     }
     if !session.begin_editor_pointer_capture(x, y) {
+        if presence_changed {
+            session.request_redraw();
+        }
         return Ok(());
     }
     session.begin_collab_pointer_edit();
     let changed = session
         .editor_mut()?
         .apply_press_at(editor_x, editor_y, w, h, time_ms);
-    if changed {
+    if changed || presence_changed {
         session.request_redraw();
     }
     crate::editor_template::drain_pending_scene_template(session)?;
@@ -128,6 +135,7 @@ fn editor_move(session: &mut Session, x: f32, y: f32, time_ms: u64) -> FfiResult
         return Ok(());
     }
     let (x, y) = session.editor_point(x, y);
+    let presence_changed = session.set_editor_presence_pointer(x, y);
     let (changed, camera_changed) = {
         let host = session.editor_mut()?;
         let before = host.editor_state().viewport;
@@ -137,7 +145,7 @@ fn editor_move(session: &mut Session, x: f32, y: f32, time_ms: u64) -> FfiResult
     if camera_changed {
         session.user_interacted = true;
     }
-    if changed {
+    if changed || presence_changed {
         session.request_redraw();
     }
     Ok(())
@@ -182,7 +190,11 @@ pub unsafe extern "C" fn op_editor_release_at(
 
 fn editor_release(session: &mut Session, x: f32, y: f32, time_ms: u64) -> FfiResult<()> {
     session.advance_global_clock(time_ms);
+    let presence_changed = session.clear_editor_presence_pointer();
     if !session.end_editor_pointer_capture() {
+        if presence_changed {
+            session.request_redraw();
+        }
         return Ok(());
     }
     let (x, y) = session.editor_point(x, y);
@@ -193,7 +205,7 @@ fn editor_release(session: &mut Session, x: f32, y: f32, time_ms: u64) -> FfiRes
         Ok(false)
     };
     let collab_changed = session.finish_collab_pointer_edit();
-    let changed = release? | template? | collab_changed;
+    let changed = release? | template? | collab_changed | presence_changed;
     if changed {
         session.request_redraw();
     }
