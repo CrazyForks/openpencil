@@ -591,6 +591,10 @@ pub use root_seed::*;
 mod tests;
 
 #[cfg(test)]
+#[path = "design_agent_tools_seed_tests.rs"]
+mod seed_tests;
+
+#[cfg(test)]
 #[path = "design_agent_tools_scan_tests.rs"]
 mod scan_tests;
 

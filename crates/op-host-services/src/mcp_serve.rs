@@ -716,6 +716,8 @@ mod design_agent_run_tool_tests;
 #[cfg(test)]
 mod enrich_images_tool_tests;
 #[cfg(test)]
+mod finalize_tool_advisory_tests;
+#[cfg(test)]
 mod finalize_tool_tests;
 #[cfg(test)]
 mod tests;
