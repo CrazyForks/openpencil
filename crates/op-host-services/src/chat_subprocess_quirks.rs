@@ -128,7 +128,15 @@ pub fn codex_child_env() -> Vec<(String, String)> {
         .collect()
 }
 
-const CODEX_EXEC_HELP_TIMEOUT: Duration = Duration::from_secs(2);
+/// Budget for the one-shot `codex exec --help` capability probe. Generous
+/// on purpose: the result is cached per binary path for the process
+/// lifetime — including a TimedOut-as-unsupported verdict — so a single
+/// slow probe on a loaded machine would otherwise permanently disable
+/// `--ephemeral` for the session. Measured on loaded CI (macOS runners)
+/// and under local contention: the npm-wrapper spawn chain
+/// (`env node` → launcher script) alone can exceed the previous 2s
+/// budget, misreporting a supporting Codex as unsupported.
+const CODEX_EXEC_HELP_TIMEOUT: Duration = Duration::from_secs(10);
 static CODEX_EPHEMERAL_SUPPORT: OnceLock<Mutex<HashMap<PathBuf, bool>>> = OnceLock::new();
 
 /// Add the non-persisting exec flag only when the installed Codex advertises
