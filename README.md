@@ -682,6 +682,19 @@ Contributions are welcome! See [CLAUDE.md](./CLAUDE.md) for architecture details
 
 OpenPencil is free and open-source. Development is funded by people who find it useful — thank you for keeping the canvas open.
 
+<a href="https://www.infistar.cc/register?aff=LLZC3RLG&amp;ref_source=link" title="Infistar.cc 无限星河">
+  <img src="./screenshot/infistar-sponsor-banner.png" alt="Infistar.cc 无限星河 — 一站式全球大模型 API 服务平台" width="100%" />
+</a>
+
+### [OpenPencil × Infistar.cc 无限星河｜全模型 API · 驱动 AI 原生设计创作](https://www.infistar.cc/register?aff=LLZC3RLG&ref_source=link)
+
+感谢 [Infistar.cc 无限星河](https://www.infistar.cc/register?aff=LLZC3RLG&ref_source=link) 赞助并为 OpenPencil 提供模型服务支持！
+
+- ⚡ **稳定承载复杂设计任务：** 提供企业级高并发通道与多节点冗余，价格低至官方渠道 1 折，稳定支持长任务、流式响应与连续工具调用。
+- 🧠 **一个 API Key 接入主流模型：** 全面支持 ChatGPT、Claude、Gemini、Kimi、GLM、DeepSeek 等模型，兼容 OpenAI、Anthropic 等主流接口，可在 OpenPencil 中灵活配置模型服务。
+- 🎨 **赋能 AI 原生矢量设计：** 适用于提示词生成设计、画布内容修改、多模型协同、图片生成及设计方案迭代，让 AI Agent 更高效地完成从创意到成稿的全过程。
+- 🎁 **OpenPencil 用户专属福利：** 通过 [专属推广链接](https://www.infistar.cc/register?aff=LLZC3RLG&ref_source=link) 注册并完成首次调用，即可领取 **5 美元等值测试额度 / 首充专属优惠**！
+
 <a href="https://github.com/mrqyun" title="MrQyun">
   <img src="https://wsrv.nl/?url=github.com/mrqyun.png&w=128&h=128&mask=circle&maxage=7d" width="64" height="64" alt="MrQyun" />
 </a>
