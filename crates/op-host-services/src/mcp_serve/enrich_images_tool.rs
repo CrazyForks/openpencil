@@ -109,6 +109,10 @@ pub(crate) fn search_parallel_before(
             break;
         }
         let results = std::thread::scope(|scope| {
+            // Keep the owned-clone spawn shape: rewriting it to borrow the
+            // chunk items changes the capture set and measurably broke the
+            // bounded-parallelism behavior under test (workers resolved 0/6).
+            #[allow(clippy::redundant_iter_cloned)]
             let handles: Vec<_> = chunk
                 .iter()
                 .map(|target| scope.spawn(move || backend.search_before(target, deadline)))
@@ -230,8 +234,8 @@ impl McpTool for EnrichImagesTool {
             Some(injected) => injected,
             None => &WebSearchBackend::from_state(&state),
         };
-        let deadline = Instant::now() + Duration::from_secs(timeout_seconds);
-        let run = run_enrich_sync(&mut state, scope.as_deref(), deadline, backend);
+        let budget = Duration::from_secs(timeout_seconds);
+        let run = run_enrich_sync(&mut state, scope.as_deref(), budget, backend);
         let json = serde_json::json!({
             "targets": run.summary.targets,
             "resolved": run.summary.resolved,
@@ -335,6 +339,8 @@ pub(crate) struct EnrichRun {
 /// never reach a search. The deadline gates STARTING a new batch; production
 /// also bounds every started provider ladder by the same remaining overall
 /// budget. Unstarted targets stay untouched and count as `unresolved`.
+/// The budget clock starts at the search phase, after target collection:
+/// local scene/collection work never consumes provider wall-clock.
 ///
 /// End-state accounting mirrors the CLI (`image_enrich_cli/retry.rs`):
 /// `unresolved` = targets still empty afterwards, `failed` = targets whose
@@ -342,7 +348,7 @@ pub(crate) struct EnrichRun {
 pub(crate) fn run_enrich_sync(
     state: &mut EditorState,
     scope: Option<&[String]>,
-    deadline: Instant,
+    budget: Duration,
     backend: &dyn ImageSearchBackend,
 ) -> EnrichRun {
     let mut run = EnrichRun::default();
@@ -358,14 +364,9 @@ pub(crate) fn run_enrich_sync(
         }
     };
     run.summary.targets = targets.len();
-    if Instant::now() >= deadline {
-        run.summary.unresolved = run.summary.targets;
-        return run;
-    }
 
-    // Explicit Generate slots fail immediately, independent of the time
-    // spent after this run starts. A deadline already expired on entry leaves
-    // every target untouched, matching the existing timeout contract above.
+    // Explicit Generate slots fail immediately: they are a local write-back,
+    // not provider work, so the wall-clock budget never gates them.
     // `acted` tracks exactly which targets this run touched so the end-state
     // accounting below can judge them against the mutated tree.
     let mut acted: Vec<NodeId> = Vec::new();
@@ -384,6 +385,11 @@ pub(crate) fn run_enrich_sync(
         searchable.push(target);
     }
 
+    // The budget clock starts HERE, at the search phase. Target collection
+    // resolves the page layout scene (a cold text-measure/font init can cost
+    // ~1s in a fresh process); charging that local work against the provider
+    // budget silently starved short-budget runs before any search began.
+    let deadline = Instant::now() + budget;
     let attempts = backend.search_many_before(&searchable, deadline);
     for (target, attempt) in searchable.into_iter().zip(attempts) {
         if let ImageSearchAttempt::Completed(url) = attempt {

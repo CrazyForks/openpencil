@@ -41,8 +41,11 @@ impl ImageSearchBackend for StubBackend {
 }
 
 /// A backend that sleeps before answering, to drive the deadline path.
+/// Sleeps PAST whatever deadline the loop hands it before answering, so the
+/// first target deterministically lands late and every later target is
+/// deterministically gated to NotStarted — no dependence on a fixed sleep
+/// racing the real clock.
 struct SleepingBackend {
-    delay: Duration,
     url: String,
 }
 
@@ -71,7 +74,12 @@ impl ImageSearchBackend for ParallelProbeBackend {
 
 impl ImageSearchBackend for SleepingBackend {
     fn search(&self, _target: &ImageSearchTarget) -> Option<String> {
-        std::thread::sleep(self.delay);
+        Some(self.url.clone())
+    }
+
+    fn search_before(&self, _target: &ImageSearchTarget, deadline: Instant) -> Option<String> {
+        // Overshoot the deadline by a margin regardless of the budget size.
+        std::thread::sleep(deadline.saturating_duration_since(Instant::now()) + Duration::from_millis(150));
         Some(self.url.clone())
     }
 }
@@ -217,9 +225,11 @@ fn enrich_lands_url_on_empty_image_fill_slot() {
 
 #[test]
 fn enrich_timeout_leaves_unstarted_targets_unresolved() {
-    // Two targets, one backend slower than the budget: the first target's
-    // search started before the deadline and may land; the second is never
-    // started and counts unresolved.
+    // Two targets, a backend that always finishes after the deadline it is
+    // given: the first target's search starts before the deadline and its
+    // late result still lands; the second is never started and counts
+    // unresolved. The budget clock starts at the search phase, so local
+    // target collection can never starve the run before the first search.
     let source = r##"{
       "version": "1.0",
       "children": [
@@ -229,7 +239,6 @@ fn enrich_timeout_leaves_unstarted_targets_unresolved() {
     }"##;
     let live = load(source);
     let backend = Arc::new(SleepingBackend {
-        delay: Duration::from_millis(1200),
         url: "data:image/jpeg;base64,AQ==".to_string(),
     });
     let tool = EnrichImagesTool::for_test(&live, backend);
@@ -274,7 +283,7 @@ fn production_parallel_search_is_bounded_to_three_workers() {
     let run = run_enrich_sync(
         &mut state,
         None,
-        Instant::now() + Duration::from_secs(2),
+        Duration::from_secs(2),
         &backend,
     );
     assert_eq!(run.summary.resolved, 6);
@@ -283,23 +292,20 @@ fn production_parallel_search_is_bounded_to_three_workers() {
 
 #[test]
 fn enrich_expired_deadline_marks_every_target_unresolved() {
-    // Drive the core loop directly with a deadline already in the past: no
-    // search may start, every target stays empty and counts unresolved.
+    // Drive the core loop directly with a zero budget: the search-phase
+    // deadline is already due, so no search may start and the Search slot
+    // counts unresolved. The Generate slot is a local write-back the budget
+    // never gates, so it still lands its failed-search sentinel.
     let mut state = load(MIXED_FIXTURE);
     let backend = StubBackend::default();
-    let run = run_enrich_sync(
-        &mut state,
-        None,
-        Instant::now() - Duration::from_secs(1),
-        &backend,
-    );
+    let run = run_enrich_sync(&mut state, None, Duration::ZERO, &backend);
     assert_eq!(
         run.summary,
         EnrichSummary {
             targets: 2,
             resolved: 0,
-            failed: 0,
-            unresolved: 2,
+            failed: 1,
+            unresolved: 1,
         }
     );
     assert!(

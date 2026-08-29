@@ -73,6 +73,10 @@ pub struct ConfiguredBuiltinProvider {
     /// credentials get `PublicOnly` (connect-time DNS screening + pinning);
     /// operator-owned daemon settings stay `Trusted`.
     dial_policy: crate::provider_dial::EndpointDialPolicy,
+    /// Optional agent-loop turn-cap override. `None` keeps the standard
+    /// caps (`DESIGN_LOOP_MAX_TURNS` when `finalize_on_exit`, else
+    /// `MAX_TOOL_TURNS`); the headless `run_design_agent` tool sets it.
+    max_turns_override: Option<usize>,
 }
 
 impl ConfiguredBuiltinProvider {
@@ -137,6 +141,7 @@ impl ConfiguredBuiltinProvider {
             max_retries: BUILTIN_HTTP_MAX_RETRIES,
             min_gap: builtin_http_min_gap(),
             dial_policy: crate::provider_dial::EndpointDialPolicy::Trusted,
+            max_turns_override: None,
         })
     }
 
@@ -195,6 +200,13 @@ impl ConfiguredBuiltinProvider {
     /// (the plain streaming path never reaches `run_loop_finalize`).
     pub fn with_loop_finalize(mut self) -> Self {
         self.finalize_on_exit = true;
+        self
+    }
+
+    /// Override the agent-loop turn cap for this provider's turns. Used by
+    /// the headless `run_design_agent` MCP tool; no-op for plain streaming.
+    pub fn with_max_turns(mut self, max_turns: usize) -> Self {
+        self.max_turns_override = Some(max_turns.max(1));
         self
     }
 
@@ -337,11 +349,13 @@ impl ConfiguredBuiltinProvider {
                     max_output_tokens,
                     tools: provider.tools.clone(),
                     executor,
-                    max_turns: if provider.finalize_on_exit {
-                        DESIGN_LOOP_MAX_TURNS
-                    } else {
-                        MAX_TOOL_TURNS
-                    },
+                    max_turns: provider.max_turns_override.unwrap_or(
+                        if provider.finalize_on_exit {
+                            DESIGN_LOOP_MAX_TURNS
+                        } else {
+                            MAX_TOOL_TURNS
+                        },
+                    ),
                     finalize_on_exit: provider.finalize_on_exit,
                     disable_thinking,
                     dial_policy: provider.dial_policy,

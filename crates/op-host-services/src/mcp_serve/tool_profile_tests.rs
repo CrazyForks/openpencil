@@ -81,6 +81,7 @@ fn the_denied_set_is_exactly_the_reviewed_list() {
             "list_theme_presets",
             "load_theme_preset",
             "open_document",
+            "run_design_agent",
             "save_document",
             "save_theme_preset",
             "spawn_agents",

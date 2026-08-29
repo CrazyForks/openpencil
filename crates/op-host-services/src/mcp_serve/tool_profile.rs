@@ -413,6 +413,13 @@ pub const TOOL_PROFILES: &[ToolProfile] = &[
         ToolSurface::OutboundNetwork,
     ),
     ToolProfile::new("finalize_design", ToolAccess::Write, ToolSurface::InMemory),
+    ToolProfile::new(
+        "run_design_agent",
+        ToolAccess::Write,
+        // The design loop dials the operator-configured LLM endpoint from
+        // the daemon — outbound network, like enrich_images.
+        ToolSurface::OutboundNetwork,
+    ),
     ToolProfile::new("duplicate_page", ToolAccess::Write, ToolSurface::InMemory),
     ToolProfile::new(
         "duplicate_selected",

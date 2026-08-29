@@ -703,11 +703,16 @@ pub(crate) mod design_quality_tool;
 use design_quality_tool::get_design_quality_snapshot;
 pub(crate) mod enrich_images_tool;
 use enrich_images_tool::enrich_images_snapshot;
+pub(crate) mod design_agent_run_error;
+pub(crate) mod design_agent_run_tool;
+use design_agent_run_tool::run_design_agent_snapshot;
 
 #[cfg(test)]
 mod codegen_wire_tests;
 #[cfg(test)]
 mod conversion_flow_tests;
+#[cfg(test)]
+mod design_agent_run_tool_tests;
 #[cfg(test)]
 mod enrich_images_tool_tests;
 #[cfg(test)]
