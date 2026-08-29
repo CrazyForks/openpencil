@@ -29,6 +29,13 @@ internal class OpSurfaceViewImeCoordinator(private val view: OpSurfaceView) {
 
     fun sync() {
         if (!view.editorMode() || view.editorEngine() == 0L) return
+        // An Android-view overlay (login / registration / account center)
+        // owns the IME while visible: its EditTexts show the keyboard, and
+        // the engine reports no focused text. Without this gate the very
+        // insets dispatch that reports the overlay's keyboard as visible
+        // schedules the frame whose sync() hides it again (and requestFocus
+        // below would steal view focus from the overlay's fields).
+        if (view.imeOwnedByOverlay()) return
         val focused = OpNative.nativeEditorImeFocused(view.editorEngine())
         if (focused && !imeWasFocused) {
             imeShowNeeded = true

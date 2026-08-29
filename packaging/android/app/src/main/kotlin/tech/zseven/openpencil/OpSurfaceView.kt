@@ -117,6 +117,9 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
     private var keyboardHeight = 0f
     private var backgroundWorkActivationHandler: (() -> Unit)? = null
     private var backgroundPermissionPromptPending = false
+    /** While an Activity overlay (login / registration / account center) is
+     *  visible its EditTexts own the IME; editor IME sync stands down. */
+    private var imeOwnedByOverlay = false
 
     init {
         holder.addCallback(this)
@@ -705,6 +708,24 @@ class OpSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Call
     /** Editor-mode IME sync kept in sync with the engine's focus each frame. */
     fun syncIme() {
         ime.sync()
+    }
+
+    internal fun imeOwnedByOverlay(): Boolean = imeOwnedByOverlay
+
+    /**
+     * Overlay visibility gate for [OpSurfaceViewImeCoordinator]: while an
+     * Activity overlay with its own EditTexts is up, per-frame IME sync must
+     * neither hide the overlay's keyboard nor pull focus back to this view.
+     * On release, re-latch and reconcile with the engine's focus on the next
+     * frame (show canvas IME again, or hide a keyboard the overlay left up).
+     */
+    fun setImeOwnedByOverlay(owned: Boolean) {
+        if (imeOwnedByOverlay == owned) return
+        imeOwnedByOverlay = owned
+        if (!owned) {
+            ime.retryAfterConfiguration()
+            requestFrame()
+        }
     }
 
     fun destroy() {

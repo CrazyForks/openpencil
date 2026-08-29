@@ -175,7 +175,12 @@ class MainActivity : ComponentActivity() {
         }
         onBackPressedDispatcher.addCallback(this, loginBackCallback)
         val syncBackCallback = {
-            loginBackCallback.isEnabled = nativeLogin.isVisible || accountCenter.isVisible
+            val overlayVisible = nativeLogin.isVisible || accountCenter.isVisible
+            loginBackCallback.isEnabled = overlayVisible
+            // While either overlay is up, its EditTexts own the IME; stop the
+            // editor's per-frame IME sync from hiding their keyboard or
+            // stealing focus back to the SurfaceView.
+            surfaceView.setImeOwnedByOverlay(overlayVisible)
         }
         nativeLogin = NativeLoginOverlay(
             activity = this,
