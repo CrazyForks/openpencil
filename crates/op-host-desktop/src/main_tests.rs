@@ -227,6 +227,49 @@ fn layer_context_menu_hover_owns_cursor_over_left_rail() {
 }
 
 #[test]
+fn import_menu_hover_clears_when_cursor_leaves_into_the_layer_panel() {
+    use op_editor_ui::widgets::{ImportMenu, TopBar, TOP_BAR_HEIGHT};
+
+    let mut app = DesktopApp::new(None);
+    let top_bar = op_editor_ui::Rect::xywh(0.0, 0.0, app.viewport_width, TOP_BAR_HEIGHT);
+    let button =
+        TopBar::for_editor_ui(&app.host.editor_state().editor_ui).import_button_rect(top_bar);
+    assert!(app.host.apply_press(
+        button.origin.x + button.size.x / 2.0,
+        button.origin.y + button.size.y / 2.0,
+        app.viewport_width,
+        app.viewport_height,
+    ));
+    assert!(app.host.editor_state().editor_ui.import_menu_open);
+
+    let rect = op_editor_ui::widgets::host_overlay_geometry::import_menu_rect(
+        app.host.editor_state(),
+        app.viewport_width,
+        app.viewport_height,
+    );
+    let menu = ImportMenu::for_editor_ui(&app.host.editor_state().editor_ui);
+    let point = op_editor_ui::Point2D::new(
+        rect.origin.x + 20.0,
+        rect.origin.y + menu.row_height() / 2.0,
+    );
+    assert!(
+        point.x < app.host.editor_state().editor_ui.layer_panel_width,
+        "fixture must exercise the popup area painted over the layer panel"
+    );
+
+    app.pending_cursor_move = Some((point.x, point.y));
+    assert!(app.drain_pending_cursor_move());
+    assert_eq!(app.host.editor_state().editor_ui.import_menu.hover, Some(0));
+
+    let outside = op_editor_ui::Point2D::new(8.0, rect.origin.y + rect.size.y + 20.0);
+    assert!(outside.x < app.host.editor_state().editor_ui.layer_panel_width);
+    assert!(!rect.contains(outside));
+    app.pending_cursor_move = Some((outside.x, outside.y));
+    assert!(app.drain_pending_cursor_move());
+    assert_eq!(app.host.editor_state().editor_ui.import_menu.hover, None);
+}
+
+#[test]
 fn panel_resize_drag_continues_inside_left_layer_panel() {
     let mut app = DesktopApp::new(None);
     let start_width = app.host.editor_state().editor_ui.layer_panel_width;
