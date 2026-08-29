@@ -104,10 +104,14 @@ export function opCkParseFontFamilyStack(family) {
 }
 
 // Resolve registered families in authored CSS order. For one candidate an
-// explicit browser import wins over the system face with the same name. A
-// generic family is already available through the browser canvas path, so it
-// terminates named-face lookup instead of skipping ahead in the stack.
-export function opCkResolveRegisteredTypeface(family, importedTypefaces, systemTypefacesByFamily) {
+// explicit browser import wins over the system face with the same name, and an
+// app-bundled design font is the fallback below both — the same imported >
+// system > bundled order the native resolver applies. A generic family is
+// already available through the browser canvas path, so it terminates
+// named-face lookup instead of skipping ahead in the stack.
+// `bundledTypefaces` is optional so a caller that predates the bundled registry
+// still resolves imported + system.
+export function opCkResolveRegisteredTypeface(family, importedTypefaces, systemTypefacesByFamily, bundledTypefaces) {
   for (const candidate of opCkParseFontFamilyStack(family)) {
     const familyKey = opCkNormalizeFontFamilyName(candidate);
     if (!familyKey) continue;
@@ -119,6 +123,10 @@ export function opCkResolveRegisteredTypeface(family, importedTypefaces, systemT
     const system = systemTypefacesByFamily.get(familyKey);
     if (system) {
       return { key: `system:${familyKey}`, familyKey, source: 'system', tf: system.tf };
+    }
+    const bundled = bundledTypefaces && bundledTypefaces.get(familyKey);
+    if (bundled) {
+      return { key: `bundled:${familyKey}`, familyKey, source: 'bundled', tf: bundled.tf };
     }
   }
   return null;
@@ -198,6 +206,10 @@ export async function opCkInit(canvasId) {
   // imported text shapes the WHOLE run with one typeface instead of
   // re-segmenting by script.
   const importedTypefaces = new Map();
+  // App-bundled OFL design faces, same shape as `importedTypefaces` but ranked
+  // below system fonts: the browser has no bundled fonts of its own, so these
+  // are fetched from the daemon at mount and registered here.
+  const bundledTypefaces = new Map();
   const coverageCache = new Map();
   // Per-CHARACTER coverage segments for explicitly selected family text,
   // keyed on `(registry + family key, size, text)`. This used to
@@ -704,7 +716,7 @@ export async function opCkInit(canvasId) {
   // Resolve an explicit imported/system face in authored stack order. Generic
   // candidates intentionally return null and continue through browser text.
   const familyTypefaceEntry = (family) => {
-    return opCkResolveRegisteredTypeface(family, importedTypefaces, systemTypefacesByFamily);
+    return opCkResolveRegisteredTypeface(family, importedTypefaces, systemTypefacesByFamily, bundledTypefaces);
   };
   // Shared "typeface + font for (family, sz)" so the family-aware draw and
   // measure paths build the SAME CK.Font and agree to sub-pixel. Cached per
@@ -1585,6 +1597,21 @@ export async function opCkInit(canvasId) {
       const prev = importedTypefaces.get(key);
       if (prev && prev.tf && prev.tf.delete) prev.tf.delete();
       importedTypefaces.set(key, { tf, family: String(family || '') });
+      coverageCache.clear();
+      clearRegisteredFontCaches();
+      return true;
+    },
+    // Register an app-bundled design face. Same replace-on-same-key discipline
+    // as `registerImportedFont`; only the registry (and therefore the lookup
+    // rank) differs.
+    registerBundledFont(family, bytes) {
+      const key = primaryFamilyKey(family);
+      if (!key) return false;
+      const tf = CK.Typeface.MakeFreeTypeFaceFromData(copyBytes(bytes));
+      if (!tf) return false;
+      const prev = bundledTypefaces.get(key);
+      if (prev && prev.tf && prev.tf.delete) prev.tf.delete();
+      bundledTypefaces.set(key, { tf, family: String(family || '') });
       coverageCache.clear();
       clearRegisteredFontCaches();
       return true;

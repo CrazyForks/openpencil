@@ -10,10 +10,11 @@
 #
 # The layout under the destination MUST match the route literals in
 # `prompt_center_previews.rs`, `scene_template_previews.rs`,
-# `scene_template_catalog.rs` and `icon_catalog.rs` — those are `concat!`ed at
-# compile time, so a mismatch is a silent 404 per asset rather than a build
-# error. The Rust side pins its half with route tests; this script is the other
-# half.
+# `scene_template_catalog.rs`, `icon_catalog.rs` and `bundled_fonts_web.rs` —
+# those are `concat!`ed / formatted at compile time, so a mismatch is a silent
+# 404 per asset rather than a build error. The Rust side pins its half with
+# route tests (the font manifest additionally asserts every listed file exists
+# in the source directories staged below); this script is the other half.
 #
 # Usage: tools/stage-web-assets.sh <dest-assets-dir>
 # Exit: 0 staged, 1 a source directory is missing.
@@ -23,6 +24,8 @@ set -euo pipefail
 DEST="${1:?usage: stage-web-assets.sh <dest-assets-dir>}"
 UI_ASSETS="crates/op-editor-ui/assets"
 CORE_ASSETS="crates/op-editor-core/assets"
+DESKTOP_FONTS="crates/op-host-desktop/assets/fonts"
+NATIVE_ASSETS="crates/op-host-native/assets"
 
 copy_dir() {
   local src="$1" name="$2"
@@ -40,7 +43,9 @@ copy_dir() {
 copy_file() {
   local src="$1" name="$2"
   [ -f "${src}" ] || { printf 'FAIL: missing asset source %s\n' "${src}" >&2; exit 1; }
-  mkdir -p "${DEST}"
+  # `name` may carry a subdirectory (e.g. `fonts/Roboto-Regular.ttf`), so mkdir
+  # the destination's parent rather than only `${DEST}`.
+  mkdir -p "$(dirname "${DEST}/${name}")"
   cp "${src}" "${DEST}/${name}"
 }
 
@@ -51,6 +56,14 @@ copy_dir "${UI_ASSETS}/scene_template_previews" "scene_template_previews"
 copy_dir "${CORE_ASSETS}/scene_templates" "scene_templates"
 # Core (lucide + feather) icon catalog — fetched when the icon panel opens.
 copy_file "${UI_ASSETS}/iconify-catalog-core.json" "iconify-catalog-core.json"
+# The OFL design fonts the desktop binary embeds with `include_bytes!`. The
+# browser has no bundled fonts of its own, so without these a document using
+# e.g. Inter pops the missing-fonts modal and renders a fallback face; the web
+# host fetches them all at mount (`op-host-web/src/bundled_fonts_web.rs`).
+copy_dir "${DESKTOP_FONTS}" "fonts"
+# Roboto lives with the native host (it is also that backend's last-resort
+# face), not in the desktop font directory, so it is staged separately.
+copy_file "${NATIVE_ASSETS}/Roboto-Regular.ttf" "fonts/Roboto-Regular.ttf"
 
 staged="$(du -sk "${DEST}" | cut -f1)"
 printf '  ✓ staged runtime assets into %s (%s KiB)\n' "${DEST}" "${staged}"

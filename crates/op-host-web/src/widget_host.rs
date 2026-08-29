@@ -448,6 +448,13 @@ pub struct WidgetHost {
     /// Pointer-down position for slideshow board press, used to distinguish
     /// clicks from swipes on release.
     pub(in crate::widget_host) slideshow_press_screen: Option<(f32, f32)>,
+    /// The app-bundled design fonts are still being fetched from the daemon.
+    ///
+    /// Unlike the desktop host, which registers them synchronously before the
+    /// first frame, the browser fetches them over the network at mount. Missing
+    /// -font detection is a one-shot modal, so completing it while these are in
+    /// flight would accuse every bundled family of being missing.
+    pub(in crate::widget_host) bundled_fonts_pending: bool,
 }
 
 impl WidgetHost {

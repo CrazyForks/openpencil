@@ -493,6 +493,11 @@ extern "C" {
     /// failure.
     #[wasm_bindgen(method, js_name = registerImportedFont)]
     pub(super) fn register_imported_font(this: &OpCk, family: &str, bytes: &[u8]) -> bool;
+    /// Register an app-bundled design face. Ranked below imported and system
+    /// faces of the same name; otherwise identical to
+    /// `registerImportedFont`. Returns `false` on parse failure.
+    #[wasm_bindgen(method, js_name = registerBundledFont)]
+    pub(super) fn register_bundled_font(this: &OpCk, family: &str, bytes: &[u8]) -> bool;
     /// Display names of every registered imported family — mirrors the JS
     /// registry into the Rust snapshot after add / remove and at mount.
     #[wasm_bindgen(method, js_name = importedFamilyList)]

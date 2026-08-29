@@ -164,6 +164,7 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
                 b.repaint();
                 drop(b);
                 crate::web_fonts::drain_font_requests(&inner_for_paint);
+                crate::bundled_fonts_web::drain_pending_apply(&inner_for_paint);
                 crate::web_fonts::drain_missing_fonts_detection(&inner_for_paint);
             } else {
                 crate::repaint_coalescer::request();
@@ -173,8 +174,17 @@ pub(super) async fn mount_ck(canvas_id: String) -> Result<(), JsValue> {
     if op_editor_ui::image_runtime::has_pending_decodes() {
         crate::repaint_coalescer::request();
     }
+    // Arm the bundled-font gate BEFORE the first drain: the system-font query
+    // below routinely completes before the network fetch, and detection is a
+    // one-shot modal that would otherwise report every bundled family missing.
+    if let Ok(mut b) = inner.try_borrow_mut() {
+        b.host.begin_bundled_font_loading();
+    }
     crate::web_fonts::drain_font_requests(&inner);
     crate::web_fonts::drain_missing_fonts_detection(&inner);
+    // Fetch the app-shipped design fonts the wasm bundle omits (async; releases
+    // the gate above and repaints once every request has settled).
+    crate::bundled_fonts_web::load_bundled_fonts_at_mount(&inner);
     // Re-register any user-imported fonts persisted in IndexedDB (async; repaints
     // when the read lands so their text re-shapes with the imported typeface).
     crate::web_fonts::load_imported_fonts_at_mount(&inner);

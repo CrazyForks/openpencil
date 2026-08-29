@@ -81,6 +81,7 @@ impl WidgetHost {
             preview_mode_transition: None,
             slideshow_cursor: None,
             slideshow_press_screen: None,
+            bundled_fonts_pending: false,
         }
     }
 

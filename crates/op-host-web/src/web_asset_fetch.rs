@@ -112,7 +112,10 @@ type DoneFn = Box<dyn FnOnce(Result<Vec<u8>, WebAssetFetchError>)>;
 /// The callback is slot-wrapped so the synchronous failure paths still resolve
 /// it — a dropped callback would strand its route in `Pending`, which is the
 /// one state the registry cannot recover from on its own.
-fn fetch_bytes(url: &str, on_done: impl FnOnce(Result<Vec<u8>, WebAssetFetchError>) + 'static) {
+pub(crate) fn fetch_bytes(
+    url: &str,
+    on_done: impl FnOnce(Result<Vec<u8>, WebAssetFetchError>) + 'static,
+) {
     let slot: Rc<RefCell<Option<DoneFn>>> = Rc::new(RefCell::new(Some(Box::new(on_done))));
     let resolve = |slot: &Rc<RefCell<Option<DoneFn>>>, result| {
         if let Some(done) = slot.borrow_mut().take() {

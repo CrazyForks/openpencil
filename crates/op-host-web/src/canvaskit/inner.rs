@@ -223,6 +223,9 @@ impl crate::repaint_ctx::RepaintContext for CkInner {
     fn register_imported_font_from_bytes(&mut self, bytes: &[u8]) -> Option<String> {
         self.backend.register_imported_font_from_bytes(bytes)
     }
+    fn register_bundled_font(&mut self, family: &str, bytes: &[u8]) -> bool {
+        self.backend.register_bundled_font(family, bytes)
+    }
     fn imported_family_list(&self) -> Vec<String> {
         self.backend.imported_family_list()
     }

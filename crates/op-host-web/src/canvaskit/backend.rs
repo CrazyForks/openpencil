@@ -58,19 +58,35 @@ impl CanvasKitBackend {
     /// Register a user-imported font face (mirrors `register_system_font` but
     /// for the family-selectable imported registry). Returns `true` when the
     /// face parsed and is now selectable by `family`.
+    ///
+    /// This is the single place the imported paths normalize a thin variable
+    /// default (see `vf_normalize`) — the fresh-import and IndexedDB-reload
+    /// paths both funnel through here, so neither patches again. The bundled
+    /// path patches at its own call site instead, since it never comes through
+    /// this method.
     pub fn register_imported_font(&mut self, family: &str, bytes: &[u8]) -> bool {
-        self.ck.register_imported_font(family, bytes)
+        match crate::vf_normalize::with_default_wght_400(bytes) {
+            Some(patched) => self.ck.register_imported_font(family, &patched),
+            None => self.ck.register_imported_font(family, bytes),
+        }
     }
     /// Register a font whose family is unknown (a fresh browser import). Returns
     /// the extracted family display name, or `None` on parse failure / no
     /// family name (the CanvasKit side returns an empty string).
     pub fn register_imported_font_from_bytes(&mut self, bytes: &[u8]) -> Option<String> {
         // The vendored CanvasKit build can't report a typeface's family name,
-        // so parse it in Rust, then register through the family-known FFI.
+        // so parse it in Rust, then register through the family-known path
+        // above (which also applies the variable-default normalization).
         let family = crate::font_meta::parse_family(bytes)?;
-        self.ck
-            .register_imported_font(&family, bytes)
+        self.register_imported_font(&family, bytes)
             .then_some(family)
+    }
+    /// Register an app-bundled design face, ranked below imported and system
+    /// fonts of the same name. The caller supplies already-normalized bytes
+    /// (`bundled_fonts_web` patches the variable default once, right after the
+    /// fetch), so nothing is patched here.
+    pub fn register_bundled_font(&mut self, family: &str, bytes: &[u8]) -> bool {
+        self.ck.register_bundled_font(family, bytes)
     }
     /// Display names of every registered imported family.
     pub fn imported_family_list(&self) -> Vec<String> {
