@@ -426,7 +426,10 @@ mod tests {
         let mut webp = Vec::new();
         let raster = image::RgbaImage::from_pixel(20, 20, image::Rgba([200, 30, 30, 255]));
         image::DynamicImage::ImageRgba8(raster)
-            .write_to(&mut std::io::Cursor::new(&mut webp), image::ImageFormat::WebP)
+            .write_to(
+                &mut std::io::Cursor::new(&mut webp),
+                image::ImageFormat::WebP,
+            )
             .expect("encode webp fixture");
         let (mime, out) = reencode_for_renderer(&webp).expect("webp transcodes");
         assert!(
