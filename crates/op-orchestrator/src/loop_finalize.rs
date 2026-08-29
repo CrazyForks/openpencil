@@ -828,10 +828,9 @@ fn apply_loop_finalize_app_state_hoist(state: &mut EditorState) -> Option<Editor
     if matches!(
         &hoist_cmd,
         EditorCommand::MergeAppState { state: hoisted, .. } if !hoisted.is_empty()
-    ) {
-        if state.apply(hoist_cmd.clone()) {
-            return Some(hoist_cmd);
-        }
+    ) && state.apply(hoist_cmd.clone())
+    {
+        return Some(hoist_cmd);
     }
     None
 }

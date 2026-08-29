@@ -1134,14 +1134,13 @@ fn renderable_image_data_url_is_restricted_to_renderer_codecs() {
     // the next candidate URL. (The encoder may be absent from this skia
     // build; the invariant holds either way.)
     if let Some(webp) = snapshot.encode(None, EncodedImageFormat::WEBP, 100) {
-        match renderable_image_data_url("image/webp", webp.as_bytes()) {
-            Some(url) => assert!(
+        if let Some(url) = renderable_image_data_url("image/webp", webp.as_bytes()) {
+            assert!(
                 url.starts_with("data:image/png;base64,")
                     || url.starts_with("data:image/jpeg;base64,"),
                 "webp transcodes to a renderer codec, got {}",
                 &url[..40.min(url.len())]
-            ),
-            None => {}
+            );
         }
     }
     assert!(

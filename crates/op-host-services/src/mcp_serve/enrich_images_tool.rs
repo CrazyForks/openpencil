@@ -111,8 +111,7 @@ pub(crate) fn search_parallel_before(
         let results = std::thread::scope(|scope| {
             let handles: Vec<_> = chunk
                 .iter()
-                .cloned()
-                .map(|target| scope.spawn(move || backend.search_before(&target, deadline)))
+                .map(|target| scope.spawn(move || backend.search_before(target, deadline)))
                 .collect();
             handles
                 .into_iter()

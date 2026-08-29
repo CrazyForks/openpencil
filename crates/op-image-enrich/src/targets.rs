@@ -368,10 +368,10 @@ fn is_unfilled_explicit_image_query_frame(node: &PenNode) -> bool {
     let PenNode::Frame(frame) = node else {
         return false;
     };
-    if !frame
+    if frame
         .image_search_query
         .as_deref()
-        .is_some_and(|query| !query.trim().is_empty())
+        .is_none_or(|query| query.trim().is_empty())
     {
         return false;
     }
