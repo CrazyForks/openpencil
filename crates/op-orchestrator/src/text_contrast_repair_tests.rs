@@ -86,6 +86,23 @@ fn the_chosen_token_always_clears_the_threshold() {
 }
 
 #[test]
+fn token_choice_honours_the_offenders_exact_threshold() {
+    let variables = palette();
+    let theme = light_theme();
+
+    assert_eq!(
+        best_token_above("#64748B", &variables, &theme, 2.5).as_deref(),
+        Some("color-text-primary"),
+        "the preferred ink token clears only the old loose bar"
+    );
+    assert_eq!(
+        best_token_above("#64748B", &variables, &theme, 4.5).as_deref(),
+        Some("color-surface"),
+        "the strict offender must skip the preferred-but-insufficient token"
+    );
+}
+
+#[test]
 fn a_palette_with_nothing_readable_repairs_nothing() {
     // Never invent a colour: if the document's own palette offers no
     // readable token, leave the fill alone rather than fabricating one.
@@ -194,6 +211,69 @@ fn invisible_text_in_a_document_is_actually_repaired() {
     let ink = token_hex("color-text-primary", &palette(), &light_theme()).expect("ink");
     let bg = token_hex("color-surface-2", &palette(), &light_theme()).expect("bg");
     assert!(op_design_lint::color::color_contrast(&ink, &bg) >= TARGET_RATIO);
+}
+
+#[test]
+fn finalizer_repairs_text_that_passes_loose_lint_but_fails_the_quality_gate() {
+    let mut sink = VecDocSink::new();
+    sink.state.doc.variables = Some(palette());
+    sink.state.doc.themes = Some(
+        [(
+            "Mode".to_string(),
+            vec!["Light".to_string(), "Dark".to_string()],
+        )]
+        .into_iter()
+        .collect(),
+    );
+    let tree: jian_ops_schema::node::PenNode = serde_json::from_value(json!({
+        "type": "frame", "id": "board", "name": "Panel",
+        "width": 390, "height": 844,
+        "fill": [{"type": "solid", "color": "#64748B"}],
+        "children": [{
+            "type": "text", "id": "body", "name": "Body", "content": "Readable",
+            "fontSize": 16,
+            "fill": [{"type": "solid", "color": "$color-text-primary"}]
+        }]
+    }))
+    .expect("tree");
+    sink.state.apply(EditorCommand::InsertSubtree {
+        nodes: vec![tree],
+        parent_id: NodeId::NONE,
+        page_id: None,
+    });
+    let root_id = sink.state.active_children()[0].id_str().to_string();
+    let doc = document_for_lint(&sink.state);
+    let root = &sink.state.active_children()[0];
+
+    assert!(
+        op_design_lint::detectors::typography::detect_text_bg_contrast(root, &doc).is_empty(),
+        "~3.75:1 remains outside the calibrated 2.5 lint signal"
+    );
+    let strict =
+        op_design_lint::detectors::typography::low_contrast_text_below(root, &doc, TARGET_RATIO);
+    assert_eq!(strict.len(), 1, "the strict collector must select the body");
+    let variables = doc.variables.as_ref().expect("variables");
+    let theme = op_design_lint::node_util::default_theme(doc.themes.as_ref());
+    assert_eq!(
+        best_token_above(&strict[0].bg_color, variables, &theme, strict[0].threshold,).as_deref(),
+        Some("color-surface")
+    );
+    assert_eq!(repair_text_contrast(&mut sink, &root_id), 1);
+    assert_eq!(
+        serde_json::to_value(&sink.state.active_children()[0]).expect("serialize")["children"][0]
+            ["fill"][0]["color"],
+        "$color-surface"
+    );
+    let repaired = token_hex("color-surface", &palette(), &light_theme()).expect("surface");
+    assert!(
+        op_design_lint::color::color_contrast(&repaired, "#64748B") >= TARGET_RATIO,
+        "the finalizer result must satisfy the same 4.5 quality gate"
+    );
+    assert_eq!(
+        repair_text_contrast(&mut sink, &root_id),
+        0,
+        "a converged repair must be idempotent"
+    );
 }
 
 #[test]

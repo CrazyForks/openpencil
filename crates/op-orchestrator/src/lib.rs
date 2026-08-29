@@ -144,7 +144,10 @@ pub use design_type::{
     DesignForm, DesignType, DesignTypePreset,
 };
 pub use intent::classify_intent;
-pub use loop_finalize::{apply_loop_finalize, apply_loop_finalize_counted};
+pub use loop_finalize::{
+    apply_loop_finalize, apply_loop_finalize_counted, record_loop_finalize_counted,
+    RecordLoopFinalizeError, RecordedLoopFinalize,
+};
 pub use mobile_reflow::repair_mobile_trailing_nav_reflow;
 pub use model_profile::{
     accepts_thinking_body_field, is_acp_capability_marker, reasoning_wire_control,

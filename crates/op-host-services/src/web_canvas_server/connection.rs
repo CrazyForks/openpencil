@@ -61,10 +61,11 @@ pub(super) fn serve_one<S: Read + Write>(
 /// Managed mode is a single-document, single-operator daemon. Its supervisor
 /// already owns the process through the stdin lease, so ordinary HTTP requests
 /// do not carry a per-request token. Browser requests are still constrained by
-/// the explicit origin allowlist: an `Origin` that was not passed via
-/// `--allow-origin` is rejected before route dispatch, while native clients
-/// without an `Origin` remain usable. The existing sensitive-POST Host/Origin
-/// and JSON-content checks below remain in force in every single-user mode.
+/// the explicit supervisor origin allowlist plus the daemon's own exact
+/// loopback origin: an unrelated `Origin` is rejected before route dispatch,
+/// while native clients without an `Origin` remain usable. The existing
+/// sensitive-POST Host/Origin and JSON-content checks below remain in force in
+/// every single-user mode.
 ///
 /// Returns `Ok(true)` when the client requested a token-authenticated graceful
 /// shutdown (same `openpencil/shutdown` body contract as `--mcp-http`) — the
@@ -115,13 +116,17 @@ pub(super) fn dispatch<S: Read + Write>(
     let cors_origin: Option<String> = if ctx.mode.is_online() {
         online_policy::online_cors_origin(&allow_origins, req.origin.as_deref())
     } else if matches!(ctx.mode, ServeMode::Managed) {
-        cors_origin_for(&allow_origins, req.origin.as_deref())
+        cors_origin_for(&allow_origins, req.origin.as_deref(), req.host.as_deref())
     } else {
         Some("*".to_string())
     };
     let cors_origin = cors_origin.as_deref();
     if matches!(ctx.mode, ServeMode::Managed)
-        && !managed_request_origin_allowed(&allow_origins, req.origin.as_deref())
+        && !managed_request_origin_allowed(
+            &allow_origins,
+            req.origin.as_deref(),
+            req.host.as_deref(),
+        )
     {
         crate::mcp_serve::write_mcp_http_response_with_origin(
             stream,

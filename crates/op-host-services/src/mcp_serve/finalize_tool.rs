@@ -4,22 +4,18 @@
 //! External models that drive the editor through the bare MCP `batch_design`
 //! surface never get the deterministic cleanup/repair backstop the built-in
 //! design agent applies after a generation. This tool closes that gap: it runs
-//! the exact whole-root cleanup family (`op_orchestrator::cleanup::
-//! run_cleanup_passes_with_summary` — the same driver the orchestrator and the
-//! agentic loop's `apply_loop_finalize` route through) and reports the
-//! `RepairSummary` those paths surface as their quality credential.
+//! the exact App whole-document finalizer (`op_orchestrator::
+//! record_loop_finalize_counted`) and reports the `RepairSummary` that path
+//! surfaces as its quality credential.
 //!
 //! ## How the mutation reaches the host
 //!
 //! MCP tools are snapshots: they cannot mutate the live `EditorState`, they
 //! return `EditorCommand`s the host applies (and, in file-backed mode, saves).
-//! The cleanup passes speak `DocSink`, so the tool drives them over a
-//! [`RecordingDocSink`] — a borrowed-state sink modelled on
-//! `op_orchestrator::loop_finalize::StateDocSink` that records every accepted
-//! apply — and returns the recorded commands as ONE `EditorCommand::Batch`.
-//! Replay is deterministic because the commands were generated against a
-//! clone of the exact state the host will apply them to, so the repair count
-//! the summary reports is precisely the edit count the batch lands.
+//! The orchestrator records sink-driven repairs and converts direct semantic
+//! passes to same-id shallow patches in App order. It atomically replays and
+//! compares the canonical document before this tool returns the proven command
+//! sequence as ONE `EditorCommand::Batch`.
 //!
 //! ## Idempotence
 //!
@@ -34,18 +30,13 @@
 //! - `shader-invalid`: a shader fill is invalid and will degrade to flat colour.
 //! - `shader-budget`: a shader fill is expensive (exceeds GPU budget for the design form).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use jian_ops_schema::node::PenNode;
 use op_design_lint::design_form::classify_root_form_node;
 use op_design_lint::detectors::detect_shader_budget;
-use op_editor_core::{EditorCommand, EditorState, NodeId, PenNodeExt};
+use op_editor_core::{EditorCommand, EditorState, PenNodeExt};
 use op_mcp::{McpTool, ToolErrorCode, ToolOutcome};
 use op_orchestrator::repair_summary::RepairSummary;
-
-/// Default canvas width when the document has no measurable top-level frame.
-/// Mirrors the desktop/web default design width.
-const DEFAULT_CANVAS_WIDTH: f64 = 1200.0;
 
 /// The `finalize_design` tool: a snapshot of the document at registration
 /// time plus nothing else — the cleanup runs against a clone inside `call`.
@@ -68,37 +59,20 @@ impl McpTool for FinalizeDesignTool {
             Ok(ids) => ids,
             Err(message) => return ToolOutcome::Err(ToolErrorCode::InvalidArgument, message),
         };
-        let canvas_width = self
-            .state
-            .active_children()
-            .first()
-            .and_then(PenNodeExt::width_px)
-            .filter(|w| *w > 0.0)
-            .unwrap_or(DEFAULT_CANVAS_WIDTH);
-        // Minimal plan from the document itself — the same helper the agentic
-        // loop uses (only root name + width/fill are read by the passes; see
-        // `synthesize_plan` for the field contract).
-        let plan = op_orchestrator::loop_finalize::synthesize_plan(
-            self.state.active_children(),
-            canvas_width,
-        );
-
-        let mut state = self.state.clone();
-        let root_id_refs: Vec<&str> = root_ids.iter().map(String::as_str).collect();
-        let mut summary = RepairSummary::default();
-        let mut sink = RecordingDocSink {
-            state: &mut state,
-            commands: Vec::new(),
+        let recorded = match op_orchestrator::record_loop_finalize_counted(&self.state) {
+            Ok(recorded) => recorded,
+            Err(error) => {
+                return ToolOutcome::Err(
+                    ToolErrorCode::Internal,
+                    format!("finalize_design could not prove command replay parity: {error}"),
+                )
+            }
         };
-        op_orchestrator::cleanup::run_cleanup_passes_with_summary(
-            &mut sink,
-            &plan,
-            &root_id_refs,
-            &mut summary,
-        );
-        // Take the recorded commands first so the sink's `&mut state` borrow
-        // ends, then run the read-only advisory scan over the final document.
-        let commands = sink.commands;
+        let op_orchestrator::RecordedLoopFinalize {
+            state,
+            summary,
+            commands,
+        } = recorded;
         // Post-cleanup echo-only structural advisories (DS P2-a item ③):
         // every parent node of the FINAL document runs the same
         // sibling-structure-drift detector the pre-insertion self-check
@@ -158,61 +132,10 @@ impl McpTool for FinalizeDesignTool {
     }
 }
 
-/// Minimal borrowed-state [`op_orchestrator::types::DocSink`] that records
-/// every ACCEPTED apply so the whole cleanup run can be replayed by the host
-/// as one atomic `Batch`. Modelled on `loop_finalize::StateDocSink` (which
-/// applies straight through) and the orchestrator tests' `VecDocSink` (which
-/// records); recording only accepted commands keeps the replay from ever
-/// tripping the batch rollback on a deterministic clone-vs-live mismatch.
-struct RecordingDocSink<'a> {
-    state: &'a mut EditorState,
-    commands: Vec<EditorCommand>,
-}
-
-impl op_orchestrator::types::DocSink for RecordingDocSink<'_> {
-    fn state(&self) -> &EditorState {
-        self.state
-    }
-
-    fn apply(&mut self, cmd: EditorCommand) -> bool {
-        if self.state.apply(cmd.clone()) {
-            self.commands.push(cmd);
-            true
-        } else {
-            false
-        }
-    }
-
-    fn insert_subtree_returning_root_ids(
-        &mut self,
-        nodes: Vec<PenNode>,
-        parent_id: &NodeId,
-    ) -> Option<Vec<String>> {
-        // Record the command before the live apply (VecDocSink's order), but
-        // keep it only when the insert was accepted.
-        if let Some(ids) = self
-            .state
-            .insert_subtree_returning_root_ids(nodes.clone(), parent_id)
-        {
-            self.commands.push(EditorCommand::InsertSubtree {
-                nodes,
-                parent_id: parent_id.clone(),
-                page_id: None,
-            });
-            Some(ids)
-        } else {
-            None
-        }
-    }
-
-    fn begin_undo_batch(&mut self) {}
-
-    fn end_undo_batch(&mut self) {}
-}
-
 /// `root_ids`: optional JSON array string, comma-separated string, or omitted
-/// for the default ("every top-level frame on the active page"). Blank input
-/// is treated as omitted.
+/// for the required whole-document scope (every top-level root on the active
+/// page). Blank input is treated as omitted. An explicit subset is rejected:
+/// the App-equivalent finalizer is intentionally not a per-root transform.
 fn parse_root_ids(
     args: &BTreeMap<String, String>,
     state: &EditorState,
@@ -247,15 +170,26 @@ fn parse_root_ids(
     if ids.is_empty() {
         return Err("root_ids must name at least one node".to_string());
     }
-    Ok(ids)
+    let requested: BTreeSet<String> = ids.into_iter().collect();
+    let all_roots = default_root_ids(state);
+    let all_root_set: BTreeSet<String> = all_roots.iter().cloned().collect();
+    if requested.len() != all_roots.len() || requested != all_root_set {
+        return Err(
+            "root_ids must include every top-level root on the active page; the whole-document finalizer requires every active root"
+                .to_string(),
+        );
+    }
+    // Preserve active-page document order for reporting and deterministic
+    // diagnostics. Duplicate explicit ids have already been harmlessly
+    // collapsed by the set equality check above.
+    Ok(all_roots)
 }
 
-/// Every top-level frame on the active page — the tool's default scope.
+/// Every top-level root on the active page — the tool's required scope.
 fn default_root_ids(state: &EditorState) -> Vec<String> {
     state
         .active_children()
         .iter()
-        .filter(|node| matches!(node, PenNode::Frame(_)))
         .map(|node| node.id_str().to_string())
         .collect()
 }

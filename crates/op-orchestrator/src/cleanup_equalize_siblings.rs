@@ -242,9 +242,17 @@ fn plan_family_repairs(
                 continue;
             };
             for (i, member_edges) in edges.iter().enumerate() {
-                if member_edges[edge] != majority {
-                    let target = corrected[i].get_or_insert(*member_edges);
-                    target[edge] = majority;
+                // Scalar family alignment is lower priority than clipping
+                // safety. `pad_clipping_horizontal_row_for_stroke` runs
+                // earlier in finalize; never vote one of its protected edges
+                // back below the child-stroke floor, or the two passes undo
+                // each other forever and every finalize looks like a repair.
+                let desired = clip_row_stroke_padding_floors(family[i].node)
+                    .and_then(|floors| floors[edge])
+                    .map_or(majority, |floor| majority.max(floor));
+                if member_edges[edge] != desired {
+                    let corrected_edges = corrected[i].get_or_insert(*member_edges);
+                    corrected_edges[edge] = desired;
                 }
             }
         }

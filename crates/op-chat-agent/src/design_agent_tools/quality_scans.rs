@@ -56,7 +56,7 @@ pub fn scan_duplicate_root_issues(nodes: &[PenNode]) -> Vec<String> {
 }
 
 /// Contract echo for broken icons: an `icon_font` whose `iconFontName` is
-/// missing, empty, or a FONT FAMILY name ("lucide" / "feather" /
+/// missing, empty, or a FONT FAMILY name ("lucide" /
 /// "material symbols …") renders as the fallback dot — the model wrote the
 /// family into the glyph field (measured: test0711-1.op shipped every icon
 /// as `iconFontName:"lucide"` with no glyph anywhere). The intended glyph
@@ -78,6 +78,38 @@ pub fn scan_duplicate_root_issues(nodes: &[PenNode]) -> Vec<String> {
 /// test0711-22). Which text belongs in the row is intent, so this echoes.
 pub fn scan_header_icon_row_issues(nodes: &[PenNode]) -> Vec<String> {
     let mut out = Vec::new();
+    fn is_standard_brand_actions_header(parent: &PenNode, children: &[PenNode]) -> bool {
+        let PenNode::Frame(frame) = parent else {
+            return false;
+        };
+        let parent_name = frame.base.name.as_deref().unwrap_or("");
+        if !parent_name.to_ascii_lowercase().contains("header")
+            || !matches!(frame.container.layout, Some(LayoutMode::Horizontal))
+            || !matches!(
+                frame.container.justify_content,
+                Some(jian_ops_schema::node::JustifyContent::SpaceBetween)
+            )
+            || children.len() != 2
+        {
+            return false;
+        }
+        let title_count = children
+            .iter()
+            .filter(|child| matches!(child, PenNode::Text(_)))
+            .count();
+        let icon_row_count = children
+            .iter()
+            .filter(|child| {
+                child.children().is_some_and(|row_children| {
+                    !row_children.is_empty()
+                        && row_children
+                            .iter()
+                            .all(|row_child| matches!(row_child, PenNode::IconFont(_)))
+                })
+            })
+            .count();
+        title_count == 1 && icon_row_count == 1
+    }
     fn walk(nodes: &[PenNode], out: &mut Vec<String>) {
         for node in nodes {
             if out.len() >= 4 {
@@ -87,6 +119,7 @@ pub fn scan_header_icon_row_issues(nodes: &[PenNode]) -> Vec<String> {
                 continue;
             };
             let has_text_sibling_ctx = children.iter().any(|c| matches!(c, PenNode::Text(_)));
+            let is_standard_header = is_standard_brand_actions_header(node, children);
             for child in children {
                 let name = child.base().name.as_deref().unwrap_or("");
                 if !name.to_ascii_lowercase().contains("header") {
@@ -99,7 +132,7 @@ pub fn scan_header_icon_row_issues(nodes: &[PenNode]) -> Vec<String> {
                     && row_children
                         .iter()
                         .all(|c| matches!(c, PenNode::IconFont(_)));
-                if icons_only && has_text_sibling_ctx {
+                if icons_only && has_text_sibling_ctx && !is_standard_header {
                     out.push(format!(
                         "{} ({}): contains ONLY icons while the title text sits outside as a                          sibling - M() the title INTO this row (layout horizontal,                          justifyContent space_between) so the greeting and the icons share                          one line",
                         name,
@@ -287,7 +320,10 @@ pub fn scan_ring_issues(nodes: &[PenNode]) -> Vec<String> {
 }
 
 pub(super) fn scan_icon_issues(nodes: &[PenNode]) -> Vec<String> {
-    const FAMILY_NAMES: [&str; 3] = ["lucide", "feather", "material symbols"];
+    // `feather` is itself a real Lucide glyph. Treating it as a family name
+    // made a valid icon look like a fallback dot, so only unambiguous family
+    // placeholders stay in this denylist.
+    const FAMILY_NAMES: [&str; 2] = ["lucide", "material symbols"];
     let mut out = Vec::new();
     fn walk(nodes: &[PenNode], out: &mut Vec<String>) {
         for node in nodes {

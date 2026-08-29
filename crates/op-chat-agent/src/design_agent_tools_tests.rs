@@ -327,6 +327,36 @@ fn contrast_scanner_accounts_for_fill_and_node_opacity() {
 }
 
 #[test]
+fn design_quality_returns_more_than_twelve_contrast_issues_but_stays_bounded() {
+    let labels = (0..70)
+        .map(|index| {
+            serde_json::json!({
+                "type": "text",
+                "id": format!("label-{index}"),
+                "name": format!("Label {index}"),
+                "content": "Low contrast",
+                "fill": [{"type": "solid", "color": "#AAAAAA"}]
+            })
+        })
+        .collect::<Vec<_>>();
+    let document: jian_ops_schema::PenDocument = serde_json::from_value(serde_json::json!({
+        "version": "1.0",
+        "children": [{
+            "type": "frame", "id": "root", "width": 390, "height": 844,
+            "fill": [{"type": "solid", "color": "#FFFFFF"}],
+            "children": labels
+        }]
+    }))
+    .expect("document");
+    let state = EditorState::from_document(document);
+
+    let report = collect_design_quality(&state);
+    assert_eq!(report.contrast_issues.len(), MAX_CONTRAST_ISSUES);
+    assert_eq!(report.contrast_issues[0].node_id, "label-0");
+    assert_eq!(report.contrast_issues[63].node_id, "label-63");
+}
+
+#[test]
 fn batch_design_image_slot_feedback_requires_the_exact_slot_id() {
     let mut state = EditorState::new();
     let (result, mutated) = execute_design_tool(

@@ -65,6 +65,10 @@ pub struct DesignQualityDiagnostics {
     pub nav_issues: Vec<String>,
 }
 
+/// One quality response carries the full actionable contrast inventory for a
+/// normal design while remaining bounded for adversarial documents.
+const MAX_CONTRAST_ISSUES: usize = 64;
+
 /// Collect the exact detect-only diagnostics used after a design-agent batch.
 ///
 /// Deliberately excludes the two repair calls in the post-batch path
@@ -81,7 +85,7 @@ pub fn collect_design_quality(state: &EditorState) -> DesignQualityDiagnostics {
         state.doc.variables.as_ref(),
         &effective_theme,
     );
-    contrast_issues.truncate(12);
+    contrast_issues.truncate(MAX_CONTRAST_ISSUES);
     let icon_issues = scan_icon_issues(state.active_children());
     let mut structure_issues = scan_duplicate_root_issues(state.active_children());
     structure_issues.extend(scan_ring_issues(state.active_children()));
@@ -230,11 +234,12 @@ pub fn execute_design_tool_with_root_seed_guard(
             &state.doc,
             &state.ui.variables.active_theme,
         );
-        let contrast_issues = scan_contrast_issues(
+        let mut contrast_issues = scan_contrast_issues(
             state.active_children(),
             state.doc.variables.as_ref(),
             &effective_theme,
         );
+        contrast_issues.truncate(MAX_CONTRAST_ISSUES);
         let icon_issues = scan_icon_issues(state.active_children());
         let mut dup_root_issues = scan_duplicate_root_issues(state.active_children());
         dup_root_issues.extend(scan_ring_issues(state.active_children()));

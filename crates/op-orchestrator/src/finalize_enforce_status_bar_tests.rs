@@ -57,6 +57,10 @@ fn deepseek_shape_inserts_missing_status_bar() {
             .is_some(),
         "status bar should have Levels child"
     );
+    assert!(
+        op_design_lint::detect_text_explicit_heights(first_child).is_empty(),
+        "finalize-injected canonical status bar must not introduce text-explicit-height"
+    );
 
     let second_child = &children[1];
     assert_eq!(

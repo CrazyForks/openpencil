@@ -2,9 +2,10 @@
 //!
 //! One implementation for BOTH callers: the orchestrator's script-gen
 //! subagent path and external `batch_design(script)` calls. The script may
-//! only cause effects through the bound `I(parent, obj)` recorder; the
-//! result is a `batch_design` operations program executed by the existing
-//! `batch_program` executor. Hard limits guard externally-supplied scripts:
+//! only cause effects through the bound `I(parent, obj)`, `K(...)`, and
+//! `U(nodeId, patch)` recorders; the result is a `batch_design` operations
+//! program executed by the existing `batch_program` executor. Hard limits
+//! guard externally-supplied scripts:
 //! memory, wall-clock interrupt, recorded-line cap, and source-size cap.
 
 use std::cell::{Cell, RefCell};
@@ -33,27 +34,194 @@ pub const MAX_RECORDED_BYTES: usize = 8 * 1024 * 1024;
 const MEMORY_LIMIT_BYTES: usize = 64 * 1024 * 1024;
 const EVAL_BUDGET: Duration = Duration::from_secs(2);
 
-const PRELUDE: &str = r#"
+const PRELUDE: &str = r##"
+var __cjkText = /(?:\p{Script=Han}|\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Hangul})/u;
+function __hasCjkContent(content) {
+  if (typeof content === "string") return __cjkText.test(content);
+  if (!Array.isArray(content)) return false;
+  var text = "";
+  for (var i = 0; i < content.length; i++) {
+    var segment = content[i];
+    if (segment == null || typeof segment !== "object" || typeof segment.text !== "string") return false;
+    text += segment.text;
+  }
+  return __cjkText.test(text);
+}
+var __insertBindings = Object.create(null);
+function __hasOwn(obj, key) {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+function __parseOpaqueHex(value) {
+  if (typeof value !== "string") return null;
+  var hex = value.trim();
+  var digits;
+  if (/^#[0-9a-fA-F]{3}$/.test(hex)) {
+    digits = hex.slice(1).replace(/./g, function (ch) { return ch + ch; });
+  } else if (/^#[0-9a-fA-F]{6}$/.test(hex)) {
+    digits = hex.slice(1);
+  } else if (/^#[0-9a-fA-F]{8}$/.test(hex) && hex.slice(7).toLowerCase() === "ff") {
+    digits = hex.slice(1, 7);
+  } else {
+    return null;
+  }
+  return {
+    color: hex,
+    rgb: [
+      parseInt(digits.slice(0, 2), 16),
+      parseInt(digits.slice(2, 4), 16),
+      parseInt(digits.slice(4, 6), 16)
+    ]
+  };
+}
+function __opaqueSolidFill(fill, nodeOpacity) {
+  if (typeof nodeOpacity === "number" && nodeOpacity !== 1) return null;
+  var paint = fill;
+  var shape = "object";
+  if (typeof fill === "string") {
+    var direct = __parseOpaqueHex(fill);
+    return direct == null ? null : { color: direct.color, rgb: direct.rgb, shape: "string" };
+  }
+  if (Array.isArray(fill)) {
+    if (fill.length !== 1) return null;
+    paint = fill[0];
+    shape = "array";
+  }
+  if (paint == null || typeof paint !== "object" || Array.isArray(paint)) return null;
+  if (typeof paint.type !== "string" || paint.type.toLowerCase() !== "solid") return null;
+  if (paint.visible === false || paint.enabled === false) return null;
+  if (typeof paint.opacity === "number" && paint.opacity !== 1) return null;
+  var parsed = __parseOpaqueHex(paint.color);
+  return parsed == null ? null : { color: parsed.color, rgb: parsed.rgb, shape: shape };
+}
+function __relativeLuminance(rgb) {
+  function channel(value) {
+    var s = value / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  }
+  return 0.2126 * channel(rgb[0]) + 0.7152 * channel(rgb[1]) + 0.0722 * channel(rgb[2]);
+}
+function __contrastRatio(a, b) {
+  var left = __parseOpaqueHex(a);
+  var right = __parseOpaqueHex(b);
+  if (left == null || right == null) return null;
+  var l1 = __relativeLuminance(left.rgb);
+  var l2 = __relativeLuminance(right.rgb);
+  return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+}
+function __replaceSolidFill(fill, color) {
+  if (typeof fill === "string") return color;
+  if (Array.isArray(fill)) {
+    var items = fill.slice();
+    items[0] = Object.assign({}, items[0], {color: color});
+    return items;
+  }
+  return Object.assign({}, fill, {color: color});
+}
+function __normalizeForegroundContrast(obj, background) {
+  if (background == null || obj == null || typeof obj !== "object") return obj;
+  var threshold = obj.type === "text" ? 4.5 : (obj.type === "icon_font" ? 3.0 : null);
+  if (threshold == null || !__hasOwn(obj, "fill")) return obj;
+  var foreground = __opaqueSolidFill(obj.fill, obj.opacity);
+  if (foreground == null) return obj;
+  var current = __contrastRatio(foreground.color, background);
+  if (current == null || current >= threshold) return obj;
+  var dark = __contrastRatio("#17191D", background);
+  var light = __contrastRatio("#FAF8F3", background);
+  var replacement = dark >= light ? "#17191D" : "#FAF8F3";
+  return Object.assign({}, obj, {fill: __replaceSolidFill(obj.fill, replacement)});
+}
+function __isDivider(obj) {
+  if (obj == null || typeof obj !== "object" || typeof obj.name !== "string") return false;
+  var name = obj.name.toLowerCase();
+  var explicitName = name.indexOf("divider") !== -1
+    || name.indexOf("separator") !== -1
+    || name.indexOf("分隔") !== -1
+    || /rule(?:$|[^a-z])/.test(name);
+  return explicitName
+    && obj.width === "fill_container"
+    && typeof obj.height === "number"
+    && obj.height >= 0
+    && obj.height <= 2;
+}
+function __canonicalIconFontName(name) {
+  switch (name) {
+    case "magnifying-glass": return "search";
+    case "snow": return "snowflake";
+    case "drop": return "droplet";
+    case "cup": return "coffee";
+    case "table-lamp": return "lamp-desk";
+    default: return name;
+  }
+}
 globalThis.I = function (parent, obj) {
-  return __record(parent == null ? "null" : String(parent), JSON.stringify(obj));
+  var recorded = obj;
+  if (obj != null && typeof obj === "object" && obj.type === "frame" && obj.layout === "center") {
+    var centeredFrame = {layout: "vertical"};
+    if (!__hasOwn(obj, "alignItems")) centeredFrame.alignItems = "center";
+    if (!__hasOwn(obj, "justifyContent")) centeredFrame.justifyContent = "center";
+    recorded = Object.assign({}, obj, centeredFrame);
+  } else if (obj != null && typeof obj === "object" && obj.type === "text") {
+    var defaults = {};
+    if (!Object.prototype.hasOwnProperty.call(obj, "fontFamily")) defaults.fontFamily = "Inter";
+    if (!Object.prototype.hasOwnProperty.call(obj, "fontSize")) defaults.fontSize = 16;
+    if (!Object.prototype.hasOwnProperty.call(obj, "lineHeight")) {
+      defaults.lineHeight = 1.5;
+    } else if (typeof obj.lineHeight === "number" && obj.lineHeight < 1.3 && __hasCjkContent(obj.content)) {
+      defaults.lineHeight = 1.5;
+    }
+    if (typeof obj.height === "number" && obj.textGrowth !== "fixed-width-height") {
+      defaults.height = "fit_content";
+    }
+    if (Object.keys(defaults).length > 0) recorded = Object.assign({}, obj, defaults);
+  } else if (obj != null && typeof obj === "object" && obj.type === "icon_font" && typeof obj.iconFontName === "string") {
+    var canonicalIconFontName = __canonicalIconFontName(obj.iconFontName);
+    if (canonicalIconFontName !== obj.iconFontName) {
+      recorded = Object.assign({}, obj, {iconFontName: canonicalIconFontName});
+    }
+  }
+  var effectiveParent = parent == null ? "null" : String(parent);
+  var directParent = __insertBindings[effectiveParent];
+  if (__isDivider(recorded) && directParent != null && directParent.layout === "horizontal") {
+    effectiveParent = directParent.parent;
+  }
+  var effectiveParentMeta = __insertBindings[effectiveParent];
+  var inheritedBackground = effectiveParentMeta == null ? null : effectiveParentMeta.background;
+  recorded = __normalizeForegroundContrast(recorded, inheritedBackground);
+  var binding = __record(effectiveParent, JSON.stringify(recorded));
+  var background = inheritedBackground;
+  var isForegroundNode = recorded != null
+    && typeof recorded === "object"
+    && (recorded.type === "text" || recorded.type === "icon_font");
+  if (!isForegroundNode && recorded != null && typeof recorded === "object" && __hasOwn(recorded, "fill")) {
+    var ownBackground = __opaqueSolidFill(recorded.fill, recorded.opacity);
+    background = ownBackground == null ? null : ownBackground.color;
+  }
+  var layout = recorded != null && typeof recorded === "object" && typeof recorded.layout === "string"
+    ? recorded.layout.toLowerCase()
+    : null;
+  __insertBindings[binding] = {parent: effectiveParent, background: background, layout: layout};
+  return binding;
 };
 globalThis.K = function (kitComponentId, parent, overrides) {
   return __recordK(JSON.stringify(String(kitComponentId)), parent == null ? "null" : String(parent), JSON.stringify(overrides == null ? {} : overrides));
 };
+globalThis.U = function (nodeId, patch) {
+  __recordU(JSON.stringify(String(nodeId)), JSON.stringify(patch));
+  return nodeId;
+};
 function __unsupported(op) {
   return function () {
-    throw new Error("OP_SCRIPT_MODE_UNSUPPORTED: " + op + "() has no effect in script mode; use batch_design operations mode");
+    throw new Error("OP_SCRIPT_MODE_UNSUPPORTED: " + op + "() is unavailable in direct QuickJS; use only I(), K(), and authorized U() calls");
   };
 }
 globalThis.C = __unsupported("C");
-globalThis.U = __unsupported("U");
 globalThis.D = __unsupported("D");
 globalThis.M = __unsupported("M");
 globalThis.R = __unsupported("R");
 globalThis.G = __unsupported("G");
 var __noop = function () {};
 globalThis.console = { log: __noop, warn: __noop, error: __noop, info: __noop, debug: __noop };
-"#;
+"##;
 
 /// Strip fences, enforce caps, eval, and return the recorded program.
 /// Retries once with `repair_truncated_script` when the first eval fails,
@@ -127,6 +295,20 @@ fn eval_after_initial_failure(script: &str, first_err: ScriptError) -> Result<St
         },
         None => script.to_string(),
     };
+    let script = match escape_raw_newlines_in_quoted_strings(&script) {
+        Some(repaired) => match eval_to_program(&repaired) {
+            Ok(p) => {
+                tracing::warn!(
+                    original_len = script.len(),
+                    repaired_len = repaired.len(),
+                    "script failed as-is; raw newline repair recovered a quoted string"
+                );
+                return Ok(p);
+            }
+            Err(_) => repaired,
+        },
+        None => script,
+    };
     let script = script.as_str();
 
     // GLM-5.2 commonly drops the outer `}` when `stroke:{...}` is the final
@@ -175,9 +357,104 @@ fn eval_after_initial_failure(script: &str, first_err: ScriptError) -> Result<St
     }
 }
 
-/// Eval in a fresh limited QuickJS context. Ok(program) on success OR on a
-/// mid-run throw with a non-empty recording (partial salvage); Err only when
-/// nothing was recorded.
+/// A normal JavaScript string cannot contain a literal line break. This shape
+/// appears when an outer `run_code` template evaluates `\\n` before passing the
+/// inner QuickJS source. Escape only line breaks found inside single/double
+/// quoted strings; template literals and comments keep their original bytes.
+fn escape_raw_newlines_in_quoted_strings(src: &str) -> Option<String> {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum State {
+        Normal,
+        Single,
+        Double,
+        Template,
+        LineComment,
+        BlockComment,
+    }
+
+    let mut out = String::with_capacity(src.len());
+    let mut chars = src.chars().peekable();
+    let mut state = State::Normal;
+    let mut escaped = false;
+    let mut changed = false;
+
+    while let Some(ch) = chars.next() {
+        match state {
+            State::Normal => {
+                out.push(ch);
+                match ch {
+                    '\'' => state = State::Single,
+                    '"' => state = State::Double,
+                    '`' => state = State::Template,
+                    '/' if chars.peek() == Some(&'/') => {
+                        out.push(chars.next().expect("peeked slash"));
+                        state = State::LineComment;
+                    }
+                    '/' if chars.peek() == Some(&'*') => {
+                        out.push(chars.next().expect("peeked star"));
+                        state = State::BlockComment;
+                    }
+                    _ => {}
+                }
+            }
+            State::Single | State::Double => {
+                let quote = if state == State::Single { '\'' } else { '"' };
+                if escaped {
+                    out.push(ch);
+                    escaped = false;
+                } else if ch == '\\' {
+                    out.push(ch);
+                    escaped = true;
+                } else if ch == quote {
+                    out.push(ch);
+                    state = State::Normal;
+                } else if ch == '\n' {
+                    out.push_str("\\n");
+                    changed = true;
+                } else if ch == '\r' {
+                    if chars.peek() == Some(&'\n') {
+                        chars.next();
+                    }
+                    out.push_str("\\n");
+                    changed = true;
+                } else {
+                    out.push(ch);
+                }
+            }
+            State::Template => {
+                out.push(ch);
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == '`' {
+                    state = State::Normal;
+                }
+            }
+            State::LineComment => {
+                out.push(ch);
+                if ch == '\n' || ch == '\r' {
+                    state = State::Normal;
+                }
+            }
+            State::BlockComment => {
+                out.push(ch);
+                if ch == '*' && chars.peek() == Some(&'/') {
+                    out.push(chars.next().expect("peeked slash"));
+                    state = State::Normal;
+                }
+            }
+        }
+    }
+
+    changed.then_some(out)
+}
+
+/// Eval in a fresh limited QuickJS context. A runtime throw is always an
+/// error, even when earlier I/K/U calls were recorded. The caller executes
+/// the returned program transactionally, so returning a prefix here would
+/// turn an incomplete JavaScript transaction into a misleading success.
+/// Syntax-level truncation recovery remains in `eval_after_initial_failure`.
 fn eval_to_program(script: &str) -> Result<String, ScriptError> {
     let rt = Runtime::new().map_err(|e| ScriptError::RuntimeInit(e.to_string()))?;
     rt.set_memory_limit(MEMORY_LIMIT_BYTES);
@@ -194,6 +471,8 @@ fn eval_to_program(script: &str) -> Result<String, ScriptError> {
     let lines_rec_k = lines.clone();
     let counter_rec_k = counter.clone();
     let bytes_rec_k = bytes_used.clone();
+    let lines_rec_u = lines.clone();
+    let bytes_rec_u = bytes_used.clone();
 
     let outcome: Result<(), ScriptError> = ctx.with(|ctx| {
         let record = Function::new(ctx.clone(), move |parent: String, json: String| -> String {
@@ -217,6 +496,21 @@ fn eval_to_program(script: &str) -> Result<String, ScriptError> {
             name: "__recordK",
             detail: e.to_string(),
         })?;
+        let record_u = Function::new(
+            ctx.clone(),
+            move |node_id: String, json: String| -> String {
+                push_recorded_operation(
+                    &lines_rec_u,
+                    &bytes_rec_u,
+                    format!("U({node_id}, {json})"),
+                );
+                node_id
+            },
+        )
+        .map_err(|e| ScriptError::BindHostFn {
+            name: "__recordU",
+            detail: e.to_string(),
+        })?;
         ctx.globals()
             .set("__record", record)
             .map_err(|e| ScriptError::SetGlobal {
@@ -227,6 +521,12 @@ fn eval_to_program(script: &str) -> Result<String, ScriptError> {
             .set("__recordK", record_k)
             .map_err(|e| ScriptError::SetGlobal {
                 name: "__recordK",
+                detail: e.to_string(),
+            })?;
+        ctx.globals()
+            .set("__recordU", record_u)
+            .map_err(|e| ScriptError::SetGlobal {
+                name: "__recordU",
                 detail: e.to_string(),
             })?;
         ctx.eval::<(), _>(PRELUDE)
@@ -249,14 +549,13 @@ fn eval_to_program(script: &str) -> Result<String, ScriptError> {
         // raised by the prelude's `__unsupported` thrower, so it can only
         // ever arrive inside a script-throw payload.
         Err(e) if e.to_string().contains("OP_SCRIPT_MODE_UNSUPPORTED") => Err(e),
-        Err(e) if program.trim().is_empty() => Err(e),
         Err(e) => {
             tracing::warn!(
                 error = %e,
                 recorded_ops = lines.borrow().len(),
-                "script threw mid-run; salvaging the nodes recorded before the throw"
+                "script threw mid-run; discarding the recorded prefix"
             );
-            Ok(program)
+            Err(e)
         }
     }
 }
@@ -270,23 +569,28 @@ fn push_recorded_line(
     let n = counter.get();
     counter.set(n + 1);
     let bind = format!("b{n}");
-    // Mirrors the line-count cap: bindings keep incrementing so later
-    // calls still resolve, but once either cap is met the line stops
-    // accumulating. The byte cap is enforced on the WHOLE line BEFORE
-    // pushing (check-then-add would let one arbitrarily large line
-    // overshoot the advertised cap by its own size), and it latches:
-    // a refused line ends recording so the program stays a clean
-    // prefix — no holes referencing bindings whose insert was dropped.
-    if n < MAX_RECORDED_LINES && bytes_used.get() < MAX_RECORDED_BYTES {
-        let line = build(&bind);
-        if bytes_used.get() + line.len() <= MAX_RECORDED_BYTES {
-            bytes_used.set(bytes_used.get() + line.len());
-            lines.borrow_mut().push(line);
-        } else {
-            bytes_used.set(MAX_RECORDED_BYTES);
-        }
-    }
+    push_recorded_operation(lines, bytes_used, build(&bind));
     bind
+}
+
+fn push_recorded_operation(
+    lines: &Rc<RefCell<Vec<String>>>,
+    bytes_used: &Rc<Cell<usize>>,
+    line: String,
+) {
+    // Bindings keep incrementing independently of unbound U() calls, while
+    // the cap applies to every recorded operation. The byte cap is enforced
+    // on the WHOLE line BEFORE pushing and latches after an oversized line,
+    // keeping the returned program a clean prefix.
+    if lines.borrow().len() >= MAX_RECORDED_LINES || bytes_used.get() >= MAX_RECORDED_BYTES {
+        return;
+    }
+    if bytes_used.get() + line.len() <= MAX_RECORDED_BYTES {
+        bytes_used.set(bytes_used.get() + line.len());
+        lines.borrow_mut().push(line);
+    } else {
+        bytes_used.set(MAX_RECORDED_BYTES);
+    }
 }
 
 fn balance_brackets(src: &str) -> String {

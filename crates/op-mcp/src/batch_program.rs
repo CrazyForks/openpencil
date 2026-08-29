@@ -502,7 +502,7 @@ fn execute_insert(binding: &str, args: &str, ctx: &mut ProgramCtx) -> Result<()>
         .ok_or_else(|| ProgramError::Syntax("Insert requires parent and node data".into()))?;
     let parent_raw = args[..comma].trim();
     let parent = resolve_parent_ref(parent_raw, &ctx.bindings);
-    let mut node = parse_node_json(&args[comma + 1..], ctx.post_process)?;
+    let mut node = parse_node_json(&args[comma + 1..], ctx.post_process, parent.is_none())?;
     delete_superseded_draft(binding, parent.as_deref(), &node, ctx);
 
     // TS auto-replace: a root-level frame insert replaces the first EMPTY

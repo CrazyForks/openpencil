@@ -18,9 +18,10 @@
 //! ## Blocking + timeout
 //!
 //! The tool blocks until every target is resolved, the `timeout_seconds`
-//! budget is spent, or no targets remain. The budget gates STARTING a new
-//! search; a search already running when the deadline passes is allowed to
-//! land. Targets never started are reported as `unresolved`.
+//! budget is spent, or no targets remain. Production provider ladders receive
+//! the remaining overall budget, so one slow Openverse/Wikimedia search cannot
+//! outlive the MCP deadline. Targets never started are reported as
+//! `unresolved`.
 //!
 //! ## Mutations ride the applier
 //!
@@ -49,6 +50,9 @@ const DEFAULT_TIMEOUT_SECONDS: u64 = 120;
 /// Upper bound on `timeout_seconds`, matching the task contract. Values above
 /// it are clamped rather than rejected.
 const MAX_TIMEOUT_SECONDS: u64 = 600;
+/// Keep small commerce grids inside one overall deadline without turning a
+/// page with many inferred slots into an unbounded request burst.
+const MAX_PARALLEL_SEARCHES: usize = 3;
 
 /// Injectable stock-search backend — the seam tests use to run the loop
 /// without touching the network. The production implementation wraps the
@@ -58,6 +62,70 @@ pub(crate) trait ImageSearchBackend: Send + Sync {
     /// avenue failed. The caller decides what `None` means (the failed-search
     /// sentinel, per the enrichment contract).
     fn search(&self, target: &ImageSearchTarget) -> Option<String>;
+
+    /// Deadline-aware entry point used by the enrichment loop. Injected test
+    /// backends retain the original synchronous seam through this default;
+    /// production overrides it to bound the complete async provider ladder.
+    fn search_before(&self, target: &ImageSearchTarget, _deadline: Instant) -> Option<String> {
+        self.search(target)
+    }
+
+    /// Resolve a target list under one absolute deadline. Test backends keep
+    /// the original serial seam by default; production overrides this with a
+    /// bounded parallel implementation.
+    fn search_many_before(
+        &self,
+        targets: &[ImageSearchTarget],
+        deadline: Instant,
+    ) -> Vec<ImageSearchAttempt> {
+        targets
+            .iter()
+            .map(|target| {
+                if Instant::now() >= deadline {
+                    ImageSearchAttempt::NotStarted
+                } else {
+                    ImageSearchAttempt::Completed(self.search_before(target, deadline))
+                }
+            })
+            .collect()
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ImageSearchAttempt {
+    NotStarted,
+    Completed(Option<String>),
+}
+
+pub(crate) fn search_parallel_before(
+    backend: &dyn ImageSearchBackend,
+    targets: &[ImageSearchTarget],
+    deadline: Instant,
+) -> Vec<ImageSearchAttempt> {
+    let mut attempts = Vec::with_capacity(targets.len());
+    for chunk in targets.chunks(MAX_PARALLEL_SEARCHES) {
+        if Instant::now() >= deadline {
+            attempts.resize_with(targets.len(), || ImageSearchAttempt::NotStarted);
+            break;
+        }
+        let results = std::thread::scope(|scope| {
+            let handles: Vec<_> = chunk
+                .iter()
+                .cloned()
+                .map(|target| scope.spawn(move || backend.search_before(&target, deadline)))
+                .collect();
+            handles
+                .into_iter()
+                .map(|handle| {
+                    ImageSearchAttempt::Completed(
+                        handle.join().expect("image search worker panicked"),
+                    )
+                })
+                .collect::<Vec<_>>()
+        });
+        attempts.extend(results);
+    }
+    attempts
 }
 
 /// Production backend: the daemon's Openverse → two-keyword retry →
@@ -87,6 +155,30 @@ impl ImageSearchBackend for WebSearchBackend {
             .into_iter()
             .next()
             .map(|hit| hit.thumb_data_url)
+    }
+
+    fn search_before(&self, target: &ImageSearchTarget, deadline: Instant) -> Option<String> {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return None;
+        }
+        crate::web_image_search::run_first_search_blocking_with_timeout(
+            &target.query,
+            self.credentials.as_ref(),
+            remaining,
+        )
+        .results
+        .into_iter()
+        .next()
+        .map(|hit| hit.thumb_data_url)
+    }
+
+    fn search_many_before(
+        &self,
+        targets: &[ImageSearchTarget],
+        deadline: Instant,
+    ) -> Vec<ImageSearchAttempt> {
+        search_parallel_before(self, targets, deadline)
     }
 }
 
@@ -238,10 +330,12 @@ pub(crate) struct EnrichRun {
 }
 
 /// The synchronous enrich loop: collect targets on the active page (optionally
-/// scoped to `root_ids` subtrees), then one search + one write-back per
-/// searchable target. Explicit `Generate` targets land the failed-search
-/// sentinel up front and never reach a search. The deadline gates STARTING a
-/// new search; unstarted targets stay untouched and count as `unresolved`.
+/// scoped to `root_ids` subtrees), then search in deterministic batches of at
+/// most [`MAX_PARALLEL_SEARCHES`] and write results back in target order.
+/// Explicit `Generate` targets land the failed-search sentinel up front and
+/// never reach a search. The deadline gates STARTING a new batch; production
+/// also bounds every started provider ladder by the same remaining overall
+/// budget. Unstarted targets stay untouched and count as `unresolved`.
 ///
 /// End-state accounting mirrors the CLI (`image_enrich_cli/retry.rs`):
 /// `unresolved` = targets still empty afterwards, `failed` = targets whose
@@ -265,12 +359,18 @@ pub(crate) fn run_enrich_sync(
         }
     };
     run.summary.targets = targets.len();
+    if Instant::now() >= deadline {
+        run.summary.unresolved = run.summary.targets;
+        return run;
+    }
 
     // Explicit Generate slots fail immediately, independent of the time
-    // budget — the search-only contract must hold even at zero time left.
+    // spent after this run starts. A deadline already expired on entry leaves
+    // every target untouched, matching the existing timeout contract above.
     // `acted` tracks exactly which targets this run touched so the end-state
     // accounting below can judge them against the mutated tree.
     let mut acted: Vec<NodeId> = Vec::new();
+    let mut searchable = Vec::new();
     for target in targets {
         if target.mode == ImageRequestMode::Generate {
             record_apply(
@@ -282,15 +382,16 @@ pub(crate) fn run_enrich_sync(
             acted.push(target.node_id);
             continue;
         }
-        if Instant::now() >= deadline {
-            // Everything not yet started stays untouched → unresolved below.
-            break;
+        searchable.push(target);
+    }
+
+    let attempts = backend.search_many_before(&searchable, deadline);
+    for (target, attempt) in searchable.into_iter().zip(attempts) {
+        if let ImageSearchAttempt::Completed(url) = attempt {
+            let url = url.unwrap_or_else(|| SEARCH_FAILED_PLACEHOLDER_SRC.to_string());
+            record_apply(state, &target.node_id, &url, &mut run.commands);
+            acted.push(target.node_id);
         }
-        let url = backend
-            .search(&target)
-            .unwrap_or_else(|| SEARCH_FAILED_PLACEHOLDER_SRC.to_string());
-        record_apply(state, &target.node_id, &url, &mut run.commands);
-        acted.push(target.node_id);
     }
 
     // End-state accounting, mirroring the CLI's `enrich_state_with_session`:

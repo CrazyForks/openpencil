@@ -61,8 +61,13 @@ pub(crate) fn execute_copy(binding: &str, args: &str, ctx: &mut ProgramCtx) -> R
     let mut node: PenNode = serde_json::from_value(cloned_value).map_err(|e| {
         ProgramError::InvalidNode(format!("C() overrides produce an invalid node: {e}"))
     })?;
+    let parent = resolve_parent_ref(parent_raw, &ctx.bindings);
     if ctx.post_process {
-        let _ = op_editor_core::command_refine::refine_subtree(&mut node);
+        if parent.is_none() {
+            let _ = op_editor_core::command_refine::refine_subtree(&mut node);
+        } else {
+            let _ = op_editor_core::command_refine::refine_child_subtree(&mut node);
+        }
     }
 
     let mut nodes = vec![node];
@@ -76,7 +81,6 @@ pub(crate) fn execute_copy(binding: &str, args: &str, ctx: &mut ProgramCtx) -> R
         .first()
         .map(|(_, new)| new.clone())
         .ok_or(ProgramError::ProducedNoNode("Copy"))?;
-    let parent = resolve_parent_ref(parent_raw, &ctx.bindings);
     ctx.emit(
         EditorCommand::InsertAuthoredSubtree {
             nodes,
@@ -167,7 +171,12 @@ pub(crate) fn execute_replace(binding: &str, args: &str, ctx: &mut ProgramCtx) -
         )));
     };
     let old_id = old.id_str().to_string();
-    let mut node = parse_node_json(&args[comma + 1..], ctx.post_process)?;
+    let replaces_document_root = ctx
+        .sim
+        .active_children()
+        .iter()
+        .any(|root| root.id_str() == old_id);
+    let mut node = parse_node_json(&args[comma + 1..], ctx.post_process, replaces_document_root)?;
     // Drain node-level `state` BEFORE the probe clone; hold the merge
     // and emit it only after the replace below succeeds (emit applies
     // immediately — emitting the merge first would leak an orphan

@@ -313,13 +313,17 @@ fn the_collab_routes_are_gated_as_sensitive_browser_posts() {
 #[test]
 fn managed_collaboration_routes_use_the_origin_boundary_not_a_token() {
     let allow = vec!["http://127.0.0.1:3100".to_string()];
-    assert!(super::super::managed_request_origin_allowed(&allow, None));
+    assert!(super::super::managed_request_origin_allowed(
+        &allow, None, None
+    ));
     assert!(super::super::managed_request_origin_allowed(
         &allow,
-        Some("http://127.0.0.1:3100")
+        Some("http://127.0.0.1:3100"),
+        Some("127.0.0.1:3100")
     ));
     assert!(!super::super::managed_request_origin_allowed(
         &allow,
-        Some("https://evil.example")
+        Some("https://evil.example"),
+        Some("127.0.0.1:3100")
     ));
 }

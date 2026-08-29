@@ -1,6 +1,7 @@
 //! `enrich_images` tool tests — injected stub search backends, no network.
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -11,7 +12,8 @@ use op_image_enrich::{ImageSearchTarget, SEARCH_FAILED_PLACEHOLDER_SRC as SENTIN
 use op_mcp::{McpTool, ToolOutcome};
 
 use super::enrich_images_tool::{
-    run_enrich_sync, EnrichImagesTool, EnrichSummary, ImageSearchBackend,
+    run_enrich_sync, search_parallel_before, EnrichImagesTool, EnrichSummary, ImageSearchAttempt,
+    ImageSearchBackend,
 };
 
 /// A scripted backend: `query -> url`, with a call log so tests can prove a
@@ -42,6 +44,29 @@ impl ImageSearchBackend for StubBackend {
 struct SleepingBackend {
     delay: Duration,
     url: String,
+}
+
+struct ParallelProbeBackend {
+    active: AtomicUsize,
+    peak: AtomicUsize,
+}
+
+impl ImageSearchBackend for ParallelProbeBackend {
+    fn search(&self, _target: &ImageSearchTarget) -> Option<String> {
+        let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+        self.peak.fetch_max(active, Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(30));
+        self.active.fetch_sub(1, Ordering::SeqCst);
+        Some("data:image/jpeg;base64,AQ==".to_string())
+    }
+
+    fn search_many_before(
+        &self,
+        targets: &[ImageSearchTarget],
+        deadline: Instant,
+    ) -> Vec<ImageSearchAttempt> {
+        search_parallel_before(self, targets, deadline)
+    }
 }
 
 impl ImageSearchBackend for SleepingBackend {
@@ -225,6 +250,35 @@ fn enrich_timeout_leaves_unstarted_targets_unresolved() {
             unresolved: 1,
         }
     );
+}
+
+#[test]
+fn production_parallel_search_is_bounded_to_three_workers() {
+    let source = serde_json::json!({
+        "version": "1.0",
+        "children": (0..6).map(|index| serde_json::json!({
+            "type": "image",
+            "id": format!("image-{index}"),
+            "src": "",
+            "imageSearchQuery": format!("product {index}"),
+            "width": 120,
+            "height": 80,
+        })).collect::<Vec<_>>(),
+    })
+    .to_string();
+    let mut state = load(&source);
+    let backend = ParallelProbeBackend {
+        active: AtomicUsize::new(0),
+        peak: AtomicUsize::new(0),
+    };
+    let run = run_enrich_sync(
+        &mut state,
+        None,
+        Instant::now() + Duration::from_secs(2),
+        &backend,
+    );
+    assert_eq!(run.summary.resolved, 6);
+    assert_eq!(backend.peak.load(Ordering::SeqCst), 3);
 }
 
 #[test]

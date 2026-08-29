@@ -155,6 +155,7 @@ fn collect_from_children(
         }
 
         if is_image_placeholder_frame(node)
+            || is_unfilled_explicit_image_query_frame(node)
             || is_image_area_frame_by_heuristic(node)
             || is_image_area_rectangle_by_heuristic(node)
         {
@@ -337,7 +338,9 @@ fn is_image_placeholder_frame(node: &PenNode) -> bool {
 }
 
 pub fn is_frame_placeholder_still_unfilled(node: &PenNode) -> bool {
-    is_unfilled_image_placeholder_frame(node) || is_image_area_frame_by_heuristic(node)
+    is_unfilled_image_placeholder_frame(node)
+        || is_unfilled_explicit_image_query_frame(node)
+        || is_image_area_frame_by_heuristic(node)
 }
 
 fn is_unfilled_image_placeholder_frame(node: &PenNode) -> bool {
@@ -353,6 +356,28 @@ fn is_unfilled_image_placeholder_frame(node: &PenNode) -> bool {
         // slot was never actually filled — only a landed url counts as done.
         Some([PenFill::Image(body), ..]) => is_placeholder_src(&body.url),
         Some(_) => true,
+    }
+}
+
+/// A frame-level `imageSearchQuery` is explicit image intent and therefore
+/// overrides the conservative name/child heuristic below. Keep a frame with a
+/// landed image fill out of subsequent collection passes so synchronous
+/// enrichment does not report a successfully resolved explicit slot as still
+/// unresolved.
+fn is_unfilled_explicit_image_query_frame(node: &PenNode) -> bool {
+    let PenNode::Frame(frame) = node else {
+        return false;
+    };
+    if !frame
+        .image_search_query
+        .as_deref()
+        .is_some_and(|query| !query.trim().is_empty())
+    {
+        return false;
+    }
+    match frame.container.fill.as_deref() {
+        Some([PenFill::Image(body), ..]) => is_placeholder_src(&body.url),
+        _ => true,
     }
 }
 
@@ -380,8 +405,20 @@ fn is_image_area_frame_by_heuristic(node: &PenNode) -> bool {
     let Some(children) = frame.children.as_ref() else {
         return true;
     };
+    // A real, visible glyph means this solid surface is already authored
+    // content (for example a category icon tile), not an empty photo slot.
+    // Explicit role/query intent is handled before this heuristic and still
+    // wins when an author intentionally uses an icon as placeholder chrome.
+    if children.iter().any(is_visible_icon_font) {
+        return false;
+    }
     matches!(children.as_slice(), [] | [PenNode::IconFont(_)])
         || matches!(children.as_slice(), [only] if is_empty_unfilled_frame(only))
+}
+
+fn is_visible_icon_font(node: &PenNode) -> bool {
+    matches!(node, PenNode::IconFont(icon)
+        if icon.base.visible.unwrap_or(true) && !icon.icon_font_name.trim().is_empty())
 }
 
 /// A bare structural stub inside a media slot (an empty fill×fill frame the
@@ -525,6 +562,9 @@ pub fn is_image_area_rectangle_by_heuristic(node: &PenNode) -> bool {
     let Some(children) = rect.children.as_ref() else {
         return true;
     };
+    if children.iter().any(is_visible_icon_font) {
+        return false;
+    }
     matches!(children.as_slice(), [] | [PenNode::IconFont(_)])
 }
 

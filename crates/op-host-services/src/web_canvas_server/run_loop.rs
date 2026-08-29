@@ -221,20 +221,67 @@ where
 }
 
 /// Managed-mode browser request boundary. Native clients do not send Origin
-/// and remain usable without credentials. A browser Origin must exactly match
-/// one of the supervisor-provided `--allow-origin` values; this is an active
-/// dispatch gate, not merely a CORS response hint, so a hostile page cannot
-/// perform a write and ignore the unreadable response.
-pub(crate) fn managed_request_origin_allowed(allow: &[String], origin: Option<&str>) -> bool {
-    origin.is_none_or(|origin| allow.iter().any(|allowed| allowed == origin))
+/// and remain usable without credentials. A browser Origin is admitted when
+/// it either exactly matches one of the supervisor-provided `--allow-origin`
+/// values or is the daemon's own loopback HTTP origin (the Origin authority
+/// exactly matches the request Host authority). The latter is required by the
+/// iframe's module loader: `/pkg/*` requests originate at the managed daemon,
+/// not at the supervisor page that embedded it.
+///
+/// This is an active dispatch gate, not merely a CORS response hint, so a
+/// hostile page cannot perform a write and ignore the unreadable response.
+pub(crate) fn managed_request_origin_allowed(
+    allow: &[String],
+    origin: Option<&str>,
+    host: Option<&str>,
+) -> bool {
+    origin.is_none_or(|origin| {
+        allow
+            .iter()
+            .any(|allowed| allowed != "*" && allowed == origin)
+            || managed_same_loopback_origin(origin, host)
+    })
+}
+
+/// Whether `origin` is exactly the HTTP origin named by `Host`, with that host
+/// constrained to loopback. Both hostname and effective port must match; an
+/// HTTPS origin cannot be same-origin with this plain-HTTP daemon.
+fn managed_same_loopback_origin(origin: &str, host: Option<&str>) -> bool {
+    let Some(host) = host else {
+        return false;
+    };
+    let Some(origin) = parse_http_origin(origin) else {
+        return false;
+    };
+    if origin.scheme() != "http" {
+        return false;
+    }
+    let Ok(request_origin) = reqwest::Url::parse(&format!("http://{host}/")) else {
+        return false;
+    };
+    if !request_origin.username().is_empty()
+        || request_origin.password().is_some()
+        || request_origin.path() != "/"
+        || request_origin.query().is_some()
+        || request_origin.fragment().is_some()
+        || !request_origin.host_str().is_some_and(is_loopback_web_host)
+    {
+        return false;
+    }
+    same_url_origin(&origin, &request_origin)
 }
 
 /// Managed-mode CORS allowlist check: echoes `origin` back only when it
-/// exactly matches an entry in `allow`, otherwise omits the header
-/// (`None`). Unmanaged mode never calls this — it keeps the permissive
+/// is accepted by the managed request boundary (an explicit supervisor
+/// allowlist entry or the daemon's own loopback origin), otherwise omits the
+/// header (`None`). Unmanaged mode never calls this — it keeps the permissive
 /// `*` inline at each call site instead.
-pub(crate) fn cors_origin_for(allow: &[String], origin: Option<&str>) -> Option<String> {
+pub(crate) fn cors_origin_for(
+    allow: &[String],
+    origin: Option<&str>,
+    host: Option<&str>,
+) -> Option<String> {
     origin
-        .filter(|o| allow.iter().any(|a| a == o))
+        .filter(|origin| managed_request_origin_allowed(allow, Some(origin), host))
         .map(str::to_string)
 }

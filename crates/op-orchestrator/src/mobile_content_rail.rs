@@ -22,6 +22,7 @@ const MIN_MOBILE_WIDTH: f64 = 320.0;
 const MAX_MOBILE_WIDTH: f64 = 480.0;
 const MIN_CONTENT_RAIL: f64 = 16.0;
 const MAX_CONTENT_RAIL: f64 = 28.0;
+const MAX_HEADER_NEIGHBOR_SIBLINGS: usize = 4;
 
 pub(crate) fn repair_mobile_content_rails_for_all_roots(sink: &mut dyn DocSink) {
     let root_ids: Vec<String> = sink
@@ -36,6 +37,12 @@ pub(crate) fn repair_mobile_content_rails_for_all_roots(sink: &mut dyn DocSink) 
 }
 
 pub(crate) fn repair_mobile_content_rails(sink: &mut dyn DocSink, root_id: &str) {
+    // A two-script fresh generation can append a second, byte-equivalent
+    // page-content shell under the same mobile page. Merge that narrow shape
+    // before rail/header collection so every later repair sees one coherent
+    // ownership tree. The merge itself is one atomic editor command.
+    merge_duplicate_page_shells(sink, root_id);
+
     // `root_id` is a top-level active root in the common case (fresh-document
     // generation), but the classic selected-frame append path nests the
     // inserted subtree root under an existing top-level mobile screen instead
@@ -111,8 +118,218 @@ pub(crate) fn repair_mobile_content_rails(sink: &mut dyn DocSink, root_id: &str)
                     index: Some(original_index),
                 });
             }
+            RailRepair::WrapLooseNode {
+                node_id,
+                wrapper,
+                original_index,
+            } => {
+                let wrapper_id = NodeId::new(wrapper.id_str().to_string());
+                if !sink.apply(EditorCommand::InsertAuthoredSubtree {
+                    nodes: vec![*wrapper],
+                    parent_id: NodeId::new(apply_root_id.clone()),
+                    page_id: None,
+                }) {
+                    continue;
+                }
+                if !sink.apply(EditorCommand::MoveNode {
+                    node_id: NodeId::new(node_id),
+                    target_parent: wrapper_id.clone(),
+                    page_id: None,
+                    index: None,
+                }) {
+                    sink.apply(EditorCommand::DeleteNode {
+                        node_id: wrapper_id,
+                        page_id: None,
+                    });
+                    continue;
+                }
+                sink.apply(EditorCommand::MoveNode {
+                    node_id: wrapper_id,
+                    target_parent: NodeId::new(apply_root_id.clone()),
+                    page_id: None,
+                    index: Some(original_index),
+                });
+            }
+            RailRepair::MoveIntoHeader {
+                header_id,
+                children,
+            } => {
+                let mut moved = Vec::new();
+                for (node_id, original_index) in children {
+                    if sink.apply(EditorCommand::MoveNode {
+                        node_id: NodeId::new(node_id.clone()),
+                        target_parent: NodeId::new(header_id.clone()),
+                        page_id: None,
+                        index: None,
+                    }) {
+                        moved.push((node_id, original_index));
+                        continue;
+                    }
+
+                    // The repair is an atomic ownership decision: if one of
+                    // the validated siblings cannot move, put the earlier
+                    // siblings back instead of leaving a half-filled header.
+                    for (moved_id, moved_index) in moved.into_iter().rev() {
+                        sink.apply(EditorCommand::MoveNode {
+                            node_id: NodeId::new(moved_id),
+                            target_parent: NodeId::new(apply_root_id.clone()),
+                            page_id: None,
+                            index: Some(moved_index),
+                        });
+                    }
+                    break;
+                }
+            }
         }
     }
+}
+
+/// Merge repeated root-direct page-content shells created by independent
+/// fresh-generation scripts. This is intentionally a whole-document repair:
+/// selected-frame append and multi-screen documents stay out of scope.
+fn merge_duplicate_page_shells(sink: &mut dyn DocSink, root_id: &str) {
+    let commands = {
+        let roots = sink.state().active_children();
+        let [root] = roots else {
+            return;
+        };
+        if root.id_str() != root_id || !looks_like_mobile_screen(root) {
+            return;
+        }
+        collect_page_shell_merge_commands(root)
+    };
+
+    if let Some(commands) = commands {
+        // `EditorCommand::Batch` snapshots and rolls back the whole document
+        // when any move/delete is rejected. No partially merged shell can
+        // escape on a concurrent-edit or stale-state failure.
+        sink.apply(EditorCommand::Batch { commands });
+    }
+}
+
+fn collect_page_shell_merge_commands(root: &PenNode) -> Option<Vec<EditorCommand>> {
+    let mut groups: BTreeMap<String, Vec<&PenNode>> = BTreeMap::new();
+    for child in root.children()? {
+        if let Some(name) = page_shell_name(child) {
+            groups.entry(name).or_default().push(child);
+        }
+    }
+
+    let mut duplicate_groups = groups.into_values().filter(|shells| shells.len() >= 2);
+    let shells = duplicate_groups.next()?;
+    // Two independently duplicated shell families under one page are not a
+    // high-confidence two-script shape. Decline instead of merging either.
+    if duplicate_groups.next().is_some() {
+        return None;
+    }
+
+    let first_fingerprint = page_shell_fingerprint(shells[0])?;
+    if shells.iter().skip(1).any(|shell| {
+        page_shell_fingerprint(shell).as_ref() != Some(&first_fingerprint)
+            || !page_shell_heights_are_mergeable(shells[0], shell)
+    }) {
+        return None;
+    }
+
+    let target_id = NodeId::new(shells[0].id_str().to_string());
+    let mut commands = Vec::new();
+    for shell in shells.iter().skip(1) {
+        for child in shell.children()? {
+            commands.push(EditorCommand::MoveNode {
+                node_id: NodeId::new(child.id_str().to_string()),
+                target_parent: target_id.clone(),
+                page_id: None,
+                index: None,
+            });
+        }
+    }
+    for shell in shells.iter().skip(1) {
+        commands.push(EditorCommand::DeleteNode {
+            node_id: NodeId::new(shell.id_str().to_string()),
+            page_id: None,
+        });
+    }
+    Some(commands)
+}
+
+fn page_shell_name(node: &PenNode) -> Option<String> {
+    let PenNode::Frame(frame) = node else {
+        return None;
+    };
+    if frame.container.layout != Some(LayoutMode::Vertical)
+        || !matches!(
+            frame.container.width.as_ref(),
+            Some(SizingBehavior::Keyword(SizingKeyword::FillContainer))
+        )
+        || frame.screen.is_some()
+        || frame.route.is_some()
+        || frame.breakpoint.is_some()
+        || !frame.children.as_ref().is_some_and(|children| {
+            children
+                .iter()
+                .any(op_design_lint::node_util::is_node_visible)
+        })
+    {
+        return None;
+    }
+
+    let normalized = frame
+        .base
+        .name
+        .as_deref()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase()
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    matches!(
+        normalized.as_str(),
+        "app content" | "page content" | "main content" | "content root"
+    )
+    .then_some(normalized)
+}
+
+/// Canonical shell attributes. Height is deliberately excluded: the measured
+/// two-script lesion is `fit_content` followed by a stale numeric flow height.
+/// Padding encodings are normalized so `[v,h]` and `[v,h,v,h]` compare by
+/// meaning; every other authored property remains an exact equality gate.
+fn page_shell_fingerprint(node: &PenNode) -> Option<serde_json::Value> {
+    let mut value = serde_json::to_value(node).ok()?;
+    let object = value.as_object_mut()?;
+    object.remove("id");
+    object.remove("name");
+    object.remove("height");
+    object.remove("children");
+    if let Some(padding) = container_props(node)?.padding.as_ref() {
+        let canonical = match padding {
+            Padding::Uniform(value) => serde_json::json!([value, value, value, value]),
+            Padding::XY([vertical, horizontal]) => {
+                serde_json::json!([vertical, horizontal, vertical, horizontal])
+            }
+            Padding::LtrB(values) => serde_json::json!(values),
+            Padding::Expression(expression) => serde_json::json!(expression),
+        };
+        object.insert("padding".to_string(), canonical);
+    }
+    Some(value)
+}
+
+fn page_shell_heights_are_mergeable(first: &PenNode, later: &PenNode) -> bool {
+    let first_height = container_props(first).and_then(|props| props.height.as_ref());
+    let later_height = container_props(later).and_then(|props| props.height.as_ref());
+    first_height == later_height
+        || page_shell_height_is_hug(first_height)
+        || page_shell_height_is_hug(later_height)
+}
+
+fn page_shell_height_is_hug(height: Option<&SizingBehavior>) -> bool {
+    height.is_none()
+        || matches!(
+            height,
+            Some(SizingBehavior::Keyword(SizingKeyword::FitContent))
+        )
 }
 
 /// Finds the top-level active root whose subtree contains `target_id`,
@@ -146,6 +363,13 @@ fn repair_touches_scope(repair: &RailRepair, scope: &HashSet<String>) -> bool {
     match repair {
         RailRepair::SetPadding { node_id, .. } => scope.contains(node_id),
         RailRepair::WrapSurface { surface_id, .. } => scope.contains(surface_id),
+        RailRepair::WrapLooseNode { node_id, .. } => scope.contains(node_id),
+        RailRepair::MoveIntoHeader {
+            header_id,
+            children,
+        } => {
+            scope.contains(header_id) && children.iter().all(|(node_id, _)| scope.contains(node_id))
+        }
     }
 }
 
@@ -159,7 +383,9 @@ fn drop_unpaired_repairs(repairs: Vec<RailRepair>) -> Vec<RailRepair> {
         .iter()
         .filter_map(|repair| match repair {
             RailRepair::SetPadding { node_id, .. } => Some(node_id.clone()),
-            RailRepair::WrapSurface { .. } => None,
+            RailRepair::WrapSurface { .. }
+            | RailRepair::WrapLooseNode { .. }
+            | RailRepair::MoveIntoHeader { .. } => None,
         })
         .collect();
     repairs
@@ -190,6 +416,15 @@ enum RailRepair {
         wrapper: Box<PenNode>,
         original_index: usize,
     },
+    WrapLooseNode {
+        node_id: String,
+        wrapper: Box<PenNode>,
+        original_index: usize,
+    },
+    MoveIntoHeader {
+        header_id: String,
+        children: Vec<(String, usize)>,
+    },
 }
 
 fn collect_repairs(root: &PenNode) -> Vec<RailRepair> {
@@ -207,11 +442,42 @@ fn collect_repairs(root: &PenNode) -> Vec<RailRepair> {
     let mut repairs = Vec::new();
     let mut known_ids = HashSet::new();
     collect_node_ids(root, &mut known_ids);
+    let header_adoption = collect_header_adoption(sections);
+    let adopted_ids: HashSet<&str> = header_adoption
+        .as_ref()
+        .into_iter()
+        .flat_map(|adoption| {
+            adoption
+                .children
+                .iter()
+                .map(|(node_id, _)| node_id.as_str())
+        })
+        .collect();
 
     for (index, section) in sections.iter().enumerate() {
+        if adopted_ids.contains(section.id_str()) {
+            continue;
+        }
+
+        if is_ordinary_root_leaf(section) {
+            let wrapper_id = unique_wrapper_id(section.id_str(), &mut known_ids);
+            repairs.push(RailRepair::WrapLooseNode {
+                node_id: section.id_str().to_string(),
+                wrapper: Box::new(content_rail_wrapper(
+                    &wrapper_id,
+                    section,
+                    DEFAULT_MOBILE_RAIL,
+                )),
+                original_index: index,
+            });
+            continue;
+        }
+
         if !section.is_container()
             || is_mobile_chrome(section)
             || is_intentional_full_bleed_role(section)
+            || is_empty_header_shell(section)
+            || is_compact_header_action(section)
             || has_expression_padding(section)
         {
             continue;
@@ -295,7 +561,248 @@ fn collect_repairs(root: &PenNode) -> Vec<RailRepair> {
         }
     }
 
+    // Structural wrapping above replaces nodes one-for-one at their original
+    // indices. Reparent header children last so those precomputed indices stay
+    // stable while wrappers are inserted and moved into place.
+    if let Some(adoption) = header_adoption {
+        repairs.push(RailRepair::MoveIntoHeader {
+            header_id: adoption.header_id,
+            children: adoption.children,
+        });
+    }
+
     repairs
+}
+
+#[derive(Debug)]
+struct HeaderAdoption {
+    header_id: String,
+    children: Vec<(String, usize)>,
+}
+
+/// Finds the narrow, generated failure shape where an empty authored header
+/// shell is immediately followed by the content that clearly belongs to it.
+/// Both a brand title and a compact semantic action are required, and only a
+/// search rail may sit between them. This deliberately declines plausible but
+/// ambiguous reconstruction instead of guessing at document ownership.
+fn collect_header_adoption(sections: &[PenNode]) -> Option<HeaderAdoption> {
+    let candidates: Vec<(usize, &PenNode)> = sections
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| is_empty_header_shell(node))
+        .collect();
+    let [(header_index, header)] = candidates.as_slice() else {
+        return None;
+    };
+
+    let mut brands = Vec::new();
+    let mut actions = Vec::new();
+    for (index, node) in sections
+        .iter()
+        .enumerate()
+        .skip(*header_index + 1)
+        .take(MAX_HEADER_NEIGHBOR_SIBLINGS)
+    {
+        if is_brand_title(node) {
+            brands.push((node.id_str().to_string(), index));
+        } else if is_compact_header_action(node) {
+            actions.push((node.id_str().to_string(), index));
+        } else if !is_search_rail(node) {
+            break;
+        }
+    }
+
+    let ([brand], [action]) = (brands.as_slice(), actions.as_slice()) else {
+        return None;
+    };
+    if brand.1 >= action.1 {
+        return None;
+    }
+
+    Some(HeaderAdoption {
+        header_id: header.id_str().to_string(),
+        children: vec![brand.clone(), action.clone()],
+    })
+}
+
+fn is_empty_header_shell(node: &PenNode) -> bool {
+    if is_mobile_chrome(node)
+        || !is_transparent_surface(node)
+        || has_authored_position(node)
+        || node.children().is_none_or(|children| !children.is_empty())
+    {
+        return false;
+    }
+    let Some(props) = container_props(node) else {
+        return false;
+    };
+    if props.layout != Some(LayoutMode::Horizontal)
+        || !matches!(
+            props.width.as_ref(),
+            Some(SizingBehavior::Keyword(SizingKeyword::FillContainer))
+        )
+        || node.height_px().is_some_and(|height| height > 96.0)
+    {
+        return false;
+    }
+
+    let semantic = semantic_label(node);
+    semantic_has_any(&semantic, &["header", "navbar", "nav", "navigation"])
+}
+
+fn is_brand_title(node: &PenNode) -> bool {
+    let PenNode::Text(text) = node else {
+        return false;
+    };
+    if has_authored_position(node) || !(18.0..=40.0).contains(&text.font_size.unwrap_or(16.0)) {
+        return false;
+    }
+    semantic_has_any(&semantic_label(node), &["brand", "logo", "wordmark"])
+}
+
+fn is_compact_header_action(node: &PenNode) -> bool {
+    if has_authored_position(node) {
+        return false;
+    }
+    let semantic = match node {
+        PenNode::IconFont(icon) => format!(
+            "{} {}",
+            semantic_label(node),
+            icon.icon_font_name.to_ascii_lowercase()
+        ),
+        _ => semantic_label(node),
+    };
+    if !semantic_has_any(
+        &semantic,
+        &[
+            "action",
+            "button",
+            "cart",
+            "bag",
+            "menu",
+            "profile",
+            "account",
+            "avatar",
+            "notification",
+            "bell",
+            "favorite",
+            "wishlist",
+            "search",
+        ],
+    ) {
+        return false;
+    }
+
+    match node {
+        PenNode::IconFont(icon) => {
+            let icon_semantic = icon.icon_font_name.to_ascii_lowercase();
+            semantic_has_any(
+                &format!("{semantic} {icon_semantic}"),
+                &[
+                    "cart",
+                    "bag",
+                    "menu",
+                    "profile",
+                    "account",
+                    "avatar",
+                    "notification",
+                    "bell",
+                    "favorite",
+                    "wishlist",
+                    "search",
+                ],
+            ) && node.width_px().is_some_and(|width| width <= 48.0)
+                && node.height_px().is_some_and(|height| height <= 48.0)
+        }
+        _ if node.is_container() => {
+            node.width_px()
+                .is_some_and(|width| width > 0.0 && width <= 64.0)
+                && node
+                    .height_px()
+                    .is_some_and(|height| height > 0.0 && height <= 64.0)
+                && node
+                    .children()
+                    .is_some_and(|children| !children.is_empty() && children.len() <= 2)
+                && has_icon_descendant(node)
+                && !has_text_descendant(node)
+        }
+        _ => false,
+    }
+}
+
+fn is_search_rail(node: &PenNode) -> bool {
+    node.is_container()
+        && semantic_has_any(&semantic_label(node), &["search"])
+        && container_props(node).is_some_and(|props| {
+            matches!(
+                props.width.as_ref(),
+                Some(SizingBehavior::Keyword(SizingKeyword::FillContainer))
+            )
+        })
+}
+
+fn is_ordinary_root_leaf(node: &PenNode) -> bool {
+    if !matches!(node, PenNode::Text(_) | PenNode::IconFont(_))
+        || has_authored_position(node)
+        || is_mobile_chrome(node)
+        || is_intentional_full_bleed_role(node)
+    {
+        return false;
+    }
+    let semantic = semantic_label(node);
+    !has_system_chrome_semantics(&semantic)
+        && !semantic_has_any(
+            &semantic,
+            &[
+                "header", "navbar", "brand", "logo", "wordmark", "hero", "banner", "cover",
+            ],
+        )
+        && !is_compact_header_action(node)
+}
+
+fn has_system_chrome_semantics(semantic: &str) -> bool {
+    matches!(
+        semantic.trim(),
+        "time"
+            | "wifi"
+            | "wi-fi"
+            | "cellular"
+            | "cellular connection"
+            | "battery"
+            | "battery capacity"
+            | "system status"
+            | "status icon"
+    )
+}
+
+fn has_icon_descendant(node: &PenNode) -> bool {
+    matches!(node, PenNode::IconFont(_))
+        || node
+            .children()
+            .is_some_and(|children| children.iter().any(has_icon_descendant))
+}
+
+fn has_text_descendant(node: &PenNode) -> bool {
+    matches!(node, PenNode::Text(_))
+        || node
+            .children()
+            .is_some_and(|children| children.iter().any(has_text_descendant))
+}
+
+fn semantic_label(node: &PenNode) -> String {
+    format!(
+        "{} {}",
+        node.base().role.as_deref().unwrap_or(""),
+        node.base().name.as_deref().unwrap_or("")
+    )
+    .trim()
+    .to_ascii_lowercase()
+}
+
+fn semantic_has_any(semantic: &str, candidates: &[&str]) -> bool {
+    semantic
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(|word| candidates.contains(&word))
 }
 
 fn looks_like_mobile_screen(root: &PenNode) -> bool {
@@ -313,10 +820,15 @@ fn looks_like_mobile_screen(root: &PenNode) -> bool {
     let Some(children) = root.children() else {
         return false;
     };
-    let tall_or_screen_structured = match props.height {
-        Some(SizingBehavior::Number(height)) => height >= 568.0,
-        _ => children.len() >= 4 || children.iter().any(is_mobile_chrome),
-    };
+    let numeric_min_height_is_mobile = props
+        .limits
+        .min_height
+        .is_some_and(|height| height.is_finite() && height >= 568.0);
+    let tall_or_screen_structured = numeric_min_height_is_mobile
+        || match props.height {
+            Some(SizingBehavior::Number(height)) => height >= 568.0,
+            _ => children.len() >= 4 || children.iter().any(is_mobile_chrome),
+        };
     tall_or_screen_structured && children.len() >= 2
 }
 

@@ -28,7 +28,7 @@ use crate::types::DocSink;
 
 use std::collections::HashMap;
 
-use jian_ops_schema::node::{FontWeight, PenNode, TextNode};
+use jian_ops_schema::node::PenNode;
 use jian_ops_schema::style::PenFill;
 use jian_scene::layout_scene::SceneNode;
 use op_design_lint::node_util::{is_node_visible, node_fills, node_id, opacity, resolve_color_ref};
@@ -53,12 +53,10 @@ const CANDIDATE_TOKENS: &[&str] = &[
     "color-bg-deep",
 ];
 
-/// Contrast a repair must reach before it is worth making. Matches the
-/// detector's own normal-text threshold rather than WCAG AA — raising the bar
-/// is a separate decision with measured noise implications (see the contrast
-/// threshold note), and this pass exists to fix invisible text, not to
-/// relitigate the threshold.
-const TARGET_RATIO: f64 = 2.0;
+/// Publication contrast target for every text repair. This matches the
+/// design-agent quality gate, while the public lint detector deliberately
+/// keeps its separately calibrated 2.5/2.0 informational thresholds.
+const TARGET_RATIO: f64 = 4.5;
 
 // ── chip/badge contrast branch (DS P1-a, pass 2) ────────────────────────────
 //
@@ -71,13 +69,6 @@ const TARGET_RATIO: f64 = 2.0;
 // only fires where the chip-shape AND its solid background are provable from
 // the tree, and leaves every other text to the generic pass.
 
-/// Detection thresholds replicated from
-/// `op_design_lint::detectors::typography` (`DEFAULT_NORMAL_THRESHOLD` /
-/// `DEFAULT_LARGE_THRESHOLD`) — the thresholds the existing contrast repair
-/// path (`repair_text_contrast` via `low_contrast_text`) already applies.
-/// Deliberately NOT changed: moving them needs an ab replay first.
-const CHIP_NORMAL_THRESHOLD: f64 = 2.5;
-const CHIP_LARGE_THRESHOLD: f64 = 2.0;
 /// Above this height a filled container is not a chip/badge.
 const CHIP_MAX_HEIGHT: f64 = 48.0;
 /// A chip may be at most this fraction of its parent's width.
@@ -87,7 +78,7 @@ const CHIP_MAX_WIDTH_RATIO: f64 = 0.6;
 struct ChipOffender {
     node_id: String,
     bg_color: String,
-    /// The size-dependent threshold the text was measured against; the
+    /// The quality-gate threshold the text was measured against; the
     /// replacement must clear it so the generic pass cannot re-flag it.
     threshold: f64,
 }
@@ -98,9 +89,10 @@ struct ChipOffender {
 /// ancestor with a usable SOLID fill is chip-shaped (<= 48px tall, rounded or
 /// clipped, not the root, <= 60% of its parent's width), the chip fill is
 /// solid (gradient/image chips are skipped), and the measured ratio is below
-/// the same size-dependent threshold the generic detector uses. The
+/// the publication quality gate's text target. The
 /// replacement colour comes from the document's own palette through the same
-/// preference order as [`best_token`]. Returns how many fills were re-pointed.
+/// preference order as [`best_token_above`]. Returns how many fills were
+/// re-pointed.
 pub(crate) fn repair_chip_text_contrast(sink: &mut dyn DocSink, root_id: &str) -> usize {
     let Some(root) = sink
         .state()
@@ -164,19 +156,12 @@ fn collect_chip_offenders(
                     nearest_chip_background(ancestors, variables, theme, rects, root_id)
                 {
                     let ratio = op_design_lint::color::color_contrast(&text_color, &bg);
-                    if ratio.is_finite() {
-                        let threshold = if is_large_text(text) {
-                            CHIP_LARGE_THRESHOLD
-                        } else {
-                            CHIP_NORMAL_THRESHOLD
-                        };
-                        if ratio < threshold {
-                            out.push(ChipOffender {
-                                node_id: node_id(node).to_string(),
-                                bg_color: bg,
-                                threshold,
-                            });
-                        }
+                    if ratio.is_finite() && ratio < TARGET_RATIO {
+                        out.push(ChipOffender {
+                            node_id: node_id(node).to_string(),
+                            bg_color: bg,
+                            threshold: TARGET_RATIO,
+                        });
                     }
                 }
             }
@@ -352,22 +337,6 @@ fn is_chip_shape(
     width <= parent_width * CHIP_MAX_WIDTH_RATIO
 }
 
-/// Port of the detector's `is_large_text`: `fontSize >= 24`, or `>= 19` with
-/// a numeric weight `>= 700`.
-fn is_large_text(text: &TextNode) -> bool {
-    let Some(font_size) = text.font_size else {
-        return false;
-    };
-    if font_size >= 24.0 {
-        return true;
-    }
-    let weight = match &text.font_weight {
-        Some(FontWeight::Number(weight)) => Some(*weight),
-        Some(FontWeight::Keyword(_)) | None => None,
-    };
-    font_size >= 19.0 && weight.is_some_and(|weight| weight >= 700)
-}
-
 /// Resolved `(width, height)` per node id through the SAME jian layout pass
 /// the geometry validation loop uses.
 fn resolved_sizes(state: &EditorState) -> HashMap<String, (f64, f64)> {
@@ -402,7 +371,8 @@ pub(crate) fn repair_text_contrast(sink: &mut dyn DocSink, root_id: &str) -> usi
         return 0;
     };
     let doc = document_for_lint(sink.state());
-    let offenders = op_design_lint::detectors::typography::low_contrast_text(root, &doc);
+    let offenders =
+        op_design_lint::detectors::typography::low_contrast_text_below(root, &doc, TARGET_RATIO);
     if offenders.is_empty() {
         return 0;
     }
@@ -411,7 +381,9 @@ pub(crate) fn repair_text_contrast(sink: &mut dyn DocSink, root_id: &str) -> usi
 
     let mut patches: Vec<(String, String)> = Vec::new();
     for offender in offenders {
-        let Some(token) = best_token(&offender.bg_color, &variables, &theme) else {
+        let Some(token) =
+            best_token_above(&offender.bg_color, &variables, &theme, offender.threshold)
+        else {
             continue;
         };
         // Leave it alone when the palette has nothing better than what is
@@ -437,6 +409,7 @@ pub(crate) fn repair_text_contrast(sink: &mut dyn DocSink, root_id: &str) -> usi
 /// token used as ink. Preference order encodes what the token MEANS, and the
 /// ratio only decides whether it is usable — so ink wins on light boards and
 /// the light tokens take over once ink stops being readable.
+#[cfg(test)]
 fn best_token(
     bg: &str,
     variables: &op_design_lint::node_util::Variables,
@@ -445,10 +418,10 @@ fn best_token(
     best_token_above(bg, variables, theme, TARGET_RATIO)
 }
 
-/// [`best_token`] with a caller-chosen bar. The chip branch passes its
-/// size-dependent DETECTION threshold so a repaired chip text also stays
-/// below the generic detector's radar — same token list, same preference
-/// order, one stricter acceptance bar.
+/// [`best_token`] with a caller-chosen bar. Both finalizer branches pass the
+/// offender's own threshold so a repair cannot remain below the gate that
+/// selected it — same token list, same preference order, exact acceptance
+/// bar.
 fn best_token_above(
     bg: &str,
     variables: &op_design_lint::node_util::Variables,

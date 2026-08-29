@@ -58,6 +58,15 @@ fn build_scaffold_mobile_injects_status_bar() {
             assert_eq!(status_children.len(), 2);
             assert_eq!(status_children[0]["name"], "Time");
             assert_eq!(status_children[0]["children"][0]["content"], "9:41");
+            assert_eq!(
+                status_children[0]["children"][0]["height"],
+                "fit_content",
+                "the fixed 54x22 Time frame owns status-bar geometry; its text must hug content so lint cannot report clipping"
+            );
+            assert!(
+                op_design_lint::detect_text_explicit_heights(&children[0]).is_empty(),
+                "canonical mobile status-bar chrome must not emit text-explicit-height"
+            );
             assert_eq!(status_children[1]["name"], "Levels");
             assert_eq!(status_children[1]["children"].as_array().unwrap().len(), 3);
         }

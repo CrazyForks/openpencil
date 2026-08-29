@@ -446,9 +446,8 @@ impl Icon {
     /// the canonical `.op` loader: `IconFontNode.iconFontName` carries
     /// strings like `pen-tool` / `mail` / `eye-off`; the renderer
     /// looks them up here so authored icons paint as lucide glyphs.
-    /// Returns `None` for names the chrome doesn't carry — the
-    /// renderer falls back to an honest placeholder rather than
-    /// silently dropping the node.
+    /// Returns `None` for names the chrome doesn't carry; unresolved
+    /// `icon_font` nodes are intentionally left unpainted.
     pub fn from_name(name: &str) -> Option<Icon> {
         Some(match name {
             "pen-tool" => Icon::PenTool,
@@ -715,8 +714,8 @@ pub fn draw_icon_catalog_entry(
 }
 
 /// Paint a canonical `icon_font` node by Iconify collection + name,
-/// scaled into `rect` with aspect preserved. Unknown names stroke a
-/// small dot at the centre so the user sees an honest fallback mark.
+/// scaled into `rect` with aspect preserved. Unknown names are left
+/// unpainted instead of rendering a misleading fallback glyph.
 pub fn paint_icon_font_node(
     backend: &mut dyn RenderBackend,
     family: &str,
@@ -749,18 +748,9 @@ pub fn paint_icon_font_node(
     } else if family == "lucide" {
         if let Some(icon) = Icon::from_name(name) {
             draw_icon(backend, icon, top_left, size, color, stroke_width);
-        } else {
-            backend.stroke_svg_path(FALLBACK_ICON_D, top_left, size, color, stroke_width);
         }
-    } else {
-        backend.stroke_svg_path(FALLBACK_ICON_D, top_left, size, color, stroke_width);
     }
 }
-
-/// Lucide-style dot glyph — small filled circle at viewBox centre.
-/// Used as the unknown-icon fallback (TS parity with
-/// `FALLBACK_ICON_D` in `node-renderer.ts`).
-const FALLBACK_ICON_D: &str = "M12 12m-3 0a3 3 0 1 0 6 0a3 3 0 1 0 -6 0";
 
 /// Lucide `palette.svg` — artist color-palette shape with paint-dot holes.
 /// Used in the AI chat bottom toolbar as a style/palette affordance.

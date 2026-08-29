@@ -230,14 +230,54 @@ fn indicators_endpoint_serves_parseable_relay_json() {
 #[test]
 fn managed_request_origin_gate_is_tokenless_and_exact() {
     let allow = vec!["vscode-webview://abc".to_string()];
-    assert!(managed_request_origin_allowed(&allow, None));
+    assert!(managed_request_origin_allowed(&allow, None, None));
     assert!(managed_request_origin_allowed(
         &allow,
-        Some("vscode-webview://abc")
+        Some("vscode-webview://abc"),
+        Some("127.0.0.1:60615")
     ));
     assert!(!managed_request_origin_allowed(
         &allow,
-        Some("vscode-webview://evil")
+        Some("vscode-webview://evil"),
+        Some("127.0.0.1:60615")
+    ));
+    assert!(!managed_request_origin_allowed(
+        &["*".into()],
+        Some("*"),
+        Some("127.0.0.1:60615")
+    ));
+}
+
+#[test]
+fn managed_request_origin_gate_accepts_only_the_exact_loopback_http_origin() {
+    let allow = Vec::new();
+    for (origin, host) in [
+        ("http://127.0.0.1:60615", "127.0.0.1:60615"),
+        ("http://localhost:60615", "localhost:60615"),
+        ("http://[::1]:60615", "[::1]:60615"),
+    ] {
+        assert!(
+            managed_request_origin_allowed(&allow, Some(origin), Some(host)),
+            "{origin} must be accepted for its own loopback Host {host}"
+        );
+    }
+
+    for (origin, host) in [
+        ("http://127.0.0.1:60616", "127.0.0.1:60615"),
+        ("http://localhost:60615", "127.0.0.1:60615"),
+        ("https://127.0.0.1:60615", "127.0.0.1:60615"),
+        ("http://canvas.example:60615", "canvas.example:60615"),
+        ("http://127.0.0.1:60615", "canvas.example:60615"),
+    ] {
+        assert!(
+            !managed_request_origin_allowed(&allow, Some(origin), Some(host)),
+            "{origin} must be rejected for Host {host}"
+        );
+    }
+    assert!(!managed_request_origin_allowed(
+        &allow,
+        Some("http://127.0.0.1:60615"),
+        None
     ));
 }
 
@@ -283,14 +323,91 @@ fn managed_daemon_rejects_a_browser_origin_outside_its_allowlist() {
 }
 
 #[test]
-fn cors_echoes_only_allowlisted_origin() {
+fn managed_daemon_serves_pkg_to_its_own_loopback_origin() {
+    let request = "GET /pkg/op_host_web.js HTTP/1.1\r\nHost: 127.0.0.1:60615\r\nOrigin: http://127.0.0.1:60615\r\nContent-Length: 0\r\n\r\n";
+    let mut stream = mock_stream(request);
+    let mut managed = fresh_state();
+    managed.mode = ServeMode::Managed;
+    managed.managed_token = Some("lifecycle-only".into());
+    // The supervisor is served on a different port. Its allowlist entry must
+    // not prevent the daemon iframe from loading its own module graph.
+    managed.allow_origins = vec!["http://127.0.0.1:57401".into()];
+    let state = Mutex::new(managed);
+
+    serve_one_in_mode(&mut stream, &state, &SseHub::default(), ServeMode::Managed)
+        .expect("serve_one");
+
+    let response = String::from_utf8_lossy(&stream.output);
+    assert!(!response.contains("403 Forbidden"), "{response}");
+    assert!(
+        response.contains("Access-Control-Allow-Origin: http://127.0.0.1:60615"),
+        "{response}"
+    );
+}
+
+#[test]
+fn managed_daemon_rejects_pkg_from_a_hostile_or_wrong_port_origin() {
+    for origin in ["https://evil.example", "http://127.0.0.1:60616"] {
+        let request = format!(
+            "GET /pkg/op_host_web.js HTTP/1.1\r\nHost: 127.0.0.1:60615\r\nOrigin: {origin}\r\nContent-Length: 0\r\n\r\n"
+        );
+        let mut stream = mock_stream(&request);
+        let mut managed = fresh_state();
+        managed.mode = ServeMode::Managed;
+        managed.managed_token = Some("lifecycle-only".into());
+        managed.allow_origins = vec!["http://127.0.0.1:57401".into()];
+        let state = Mutex::new(managed);
+
+        serve_one_in_mode(&mut stream, &state, &SseHub::default(), ServeMode::Managed)
+            .expect("serve_one");
+
+        let response = String::from_utf8_lossy(&stream.output);
+        assert!(response.contains("403 Forbidden"), "{response}");
+        assert!(
+            !response.contains("Access-Control-Allow-Origin"),
+            "a rejected origin must not receive a CORS echo: {response}"
+        );
+    }
+}
+
+#[test]
+fn cors_echoes_only_a_managed_allowed_origin() {
     let allow = vec!["vscode-webview://abc".to_string()];
     assert_eq!(
-        cors_origin_for(&allow, Some("vscode-webview://abc")).as_deref(),
+        cors_origin_for(
+            &allow,
+            Some("vscode-webview://abc"),
+            Some("127.0.0.1:60615")
+        )
+        .as_deref(),
         Some("vscode-webview://abc")
     );
-    assert_eq!(cors_origin_for(&allow, Some("http://evil.local")), None);
-    assert_eq!(cors_origin_for(&allow, None), None);
+    assert_eq!(
+        cors_origin_for(
+            &allow,
+            Some("http://127.0.0.1:60615"),
+            Some("127.0.0.1:60615")
+        )
+        .as_deref(),
+        Some("http://127.0.0.1:60615")
+    );
+    assert_eq!(
+        cors_origin_for(
+            &allow,
+            Some("http://127.0.0.1:60616"),
+            Some("127.0.0.1:60615")
+        ),
+        None
+    );
+    assert_eq!(
+        cors_origin_for(&allow, Some("http://evil.local"), Some("evil.local")),
+        None
+    );
+    assert_eq!(
+        cors_origin_for(&["*".into()], Some("*"), Some("127.0.0.1:60615")),
+        None
+    );
+    assert_eq!(cors_origin_for(&allow, None, None), None);
 }
 
 #[path = "web_canvas_server_sse_tests.rs"]

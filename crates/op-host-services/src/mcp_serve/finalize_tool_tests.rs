@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use jian_ops_schema::node::PenNode;
 use op_editor_core::{EditorCommand, EditorState};
-use op_mcp::{McpTool, ToolOutcome};
+use op_mcp::{McpTool, ToolErrorCode, ToolOutcome};
 
 use super::finalize_tool::finalize_design_snapshot;
 
@@ -82,29 +82,26 @@ fn finalize_materializes_empty_image_fill_slot_and_is_idempotent() {
         "the empty image-fill rectangle must be materialized into an image node"
     );
 
-    // Second call over the already-finalized document: repairs must not
-    // increase (the passes are idempotent), and the batch (if any) must
-    // still apply.
+    // Second call over the already-finalized document must be a true no-op:
+    // no command-bearing outcome means the MCP host cannot bump the daemon's
+    // document version for an unchanged tree.
+    let revision_before_second = live.document_revision();
     let tool = finalize_design_snapshot(&live);
     let outcome = tool.call(&BTreeMap::new());
-    let (second_json, second_commands) = match outcome {
-        ToolOutcome::OkJsonWithCommand(json, EditorCommand::Batch { commands }) => {
-            (json, Some(commands))
-        }
-        ToolOutcome::OkJson(json) => (json, None),
-        other => panic!("unexpected second-call outcome: {other:?}"),
+    let second_json = match outcome {
+        ToolOutcome::OkJson(json) => json,
+        other => panic!("second finalize must be plain OkJson, got {other:?}"),
     };
     let second_repairs = repairs_of(&second_json);
-    assert!(
-        second_repairs <= first_repairs,
-        "second call must not repair more than the first ({second_repairs} > {first_repairs})"
+    assert_eq!(
+        second_repairs, 0,
+        "second finalize must report zero repairs: {second_json}"
     );
-    if let Some(commands) = second_commands {
-        assert!(
-            live.apply(EditorCommand::Batch { commands }),
-            "the second (idempotent) batch must apply cleanly"
-        );
-    }
+    assert_eq!(
+        live.document_revision(),
+        revision_before_second,
+        "a no-op second finalize must not advance the live document revision"
+    );
     assert!(
         matches!(
             find(live.active_children(), "photo"),
@@ -136,6 +133,46 @@ fn finalize_accepts_root_ids_as_json_array_and_comma_list() {
 }
 
 #[test]
+fn finalize_rejects_an_explicit_root_subset_but_accepts_the_full_deduped_set() {
+    let live = load_fixture(
+        r##"{
+          "version":"1.1","children":[
+            {"type":"frame","id":"left","name":"Left","width":600,"height":800,
+             "layout":"vertical","children":[]},
+            {"type":"frame","id":"right","name":"Right","width":600,"height":800,
+             "layout":"vertical","children":[]}
+          ]
+        }"##,
+    );
+    let tool = finalize_design_snapshot(&live);
+
+    for raw in [r#"["left"]"#, r#"["left","unknown"]"#] {
+        let mut args = BTreeMap::new();
+        args.insert("root_ids".to_string(), raw.to_string());
+        match tool.call(&args) {
+            ToolOutcome::Err(ToolErrorCode::InvalidArgument, message) => assert!(
+                message.contains("whole-document finalizer requires every active root"),
+                "subset error must explain the whole-document contract: {message}"
+            ),
+            other => panic!("explicit subset {raw} must be rejected, got {other:?}"),
+        }
+    }
+
+    let mut args = BTreeMap::new();
+    args.insert(
+        "root_ids".to_string(),
+        r#"["right","left","left"]"#.to_string(),
+    );
+    assert!(
+        matches!(
+            tool.call(&args),
+            ToolOutcome::OkJson(_) | ToolOutcome::OkJsonWithCommand(_, _)
+        ),
+        "the complete set is accepted after duplicate ids are collapsed"
+    );
+}
+
+#[test]
 fn finalize_summary_carries_checkpoints_records_and_credential() {
     let live = load();
     let tool = finalize_design_snapshot(&live);
@@ -163,6 +200,84 @@ fn finalize_summary_carries_checkpoints_records_and_credential() {
             .is_some_and(|s| !s.trim().is_empty()),
         "human-readable credential must be present: {json}"
     );
+}
+
+#[test]
+fn finalize_tool_replays_app_semantics_promotion_and_state_hoist() {
+    let mut live = load_fixture(
+        r##"{
+          "version":"1.1","formatVersion":"1.1","children":[{
+            "type":"frame","id":"root","name":"Login","width":390,"height":844,
+            "layout":"vertical","children":[{
+              "type":"frame","id":"email","name":"Email input","role":"input",
+              "width":342,"height":48,"layout":"horizontal",
+              "state":{"email":{"type":"string","default":""}},
+              "bindings":{"value":"$app.email"},
+              "children":[
+                {"type":"icon_font","id":"mail","iconFontName":"mail","width":20,"height":20},
+                {"type":"text","id":"hint","content":"name@example.com",
+                 "fill":[{"type":"solid","color":"#9CA3AF"}]}
+              ]
+            }]
+          }]
+        }"##,
+    );
+    let tool = finalize_design_snapshot(&live);
+    let outcome = tool.call(&BTreeMap::new());
+    let (json, commands) = match outcome {
+        ToolOutcome::OkJsonWithCommand(json, EditorCommand::Batch { commands }) => (json, commands),
+        other => panic!("whole App finalizer must return a replay batch, got {other:?}"),
+    };
+    assert!(
+        serde_json::from_str::<serde_json::Value>(&json).unwrap()["checkedCategories"]
+            .as_array()
+            .is_some_and(|categories| !categories.is_empty()),
+        "full finalizer carries its deterministic quality credential: {json}"
+    );
+    assert!(live.apply(EditorCommand::Batch { commands }));
+    assert!(matches!(
+        find(live.active_children(), "email"),
+        Some(PenNode::TextInput(_))
+    ));
+    assert!(
+        find(live.active_children(), "hint").is_none(),
+        "promotion consumes old visual children"
+    );
+    let document = serde_json::to_value(&live.doc).unwrap();
+    assert_eq!(document["state"]["email"]["default"], "");
+}
+
+#[test]
+fn finalize_tool_replays_same_id_section_action_leaf_conversion() {
+    let mut live = load_fixture(
+        r##"{
+          "version":"1.1","formatVersion":"1.1","children":[{
+            "type":"frame","id":"root","name":"Shop Home","width":390,"height":844,
+            "layout":"vertical","children":[{
+              "type":"frame","id":"section-header","name":"Featured Header",
+              "width":"fill_container","height":40,"layout":"horizontal",
+              "children":[
+                {"type":"text","id":"heading","name":"Section title","content":"Featured",
+                 "fontSize":20,"fontWeight":700},
+                {"type":"text","id":"see-all","name":"See all","content":"View all >",
+                 "fontSize":14}
+              ]
+            }]
+          }]
+        }"##,
+    );
+
+    let tool = finalize_design_snapshot(&live);
+    let outcome = tool.call(&BTreeMap::new());
+    let commands = match outcome {
+        ToolOutcome::OkJsonWithCommand(_, EditorCommand::Batch { commands }) => commands,
+        other => panic!("same-id semantic leaf rewrite must be replayable, got {other:?}"),
+    };
+    assert!(live.apply(EditorCommand::Batch { commands }));
+    let Some(PenNode::IconFont(icon)) = find(live.active_children(), "see-all") else {
+        panic!("section-header action should become an icon_font leaf");
+    };
+    assert_eq!(icon.icon_font_name, "chevron-right");
 }
 
 // ── DS P2-a item ③: structure-drift advisories ──────────────────────────────

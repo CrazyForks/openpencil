@@ -17,16 +17,93 @@ fn family_name_as_glyph_and_missing_glyph_are_echoed() {
               "width": 20, "height": 20 },
             { "type": "icon_font", "id": "bad2", "iconFontName": "",
               "width": 20, "height": 20 },
+            { "type": "icon_font", "id": "bad3", "iconFontName": "material symbols rounded",
+              "width": 20, "height": 20 },
             { "type": "icon_font", "id": "ok", "iconFontName": "compass",
+              "width": 20, "height": 20 },
+            { "type": "icon_font", "id": "feather-glyph", "iconFontFamily": "lucide",
+              "iconFontName": "feather",
               "width": 20, "height": 20 }
           ] }
     ]))
     .expect("nodes");
     let issues = scan_icon_issues(&nodes);
-    assert_eq!(issues.len(), 2, "{issues:?}");
+    assert_eq!(issues.len(), 3, "{issues:?}");
     assert!(issues[0].contains("bad1") && issues[0].contains("lucide"));
     assert!(issues[1].contains("bad2") && issues[1].contains("missing"));
+    assert!(
+        issues[2].contains("bad3") && issues[2].contains("material symbols rounded"),
+        "{issues:?}"
+    );
     assert!(!issues.iter().any(|i| i.contains("\"ok\"")), "{issues:?}");
+    assert!(
+        !issues.iter().any(|i| i.contains("feather-glyph")),
+        "real Lucide feather glyph must remain valid: {issues:?}"
+    );
+}
+
+#[test]
+fn standard_brand_and_icon_actions_header_is_not_reported() {
+    let nodes: Vec<PenNode> = serde_json::from_value(serde_json::json!([
+        { "type": "frame", "id": "root", "name": "Home", "layout": "vertical",
+          "width": 390, "height": 844, "children": [
+            { "type": "frame", "id": "header", "name": "Header",
+              "layout": "horizontal", "justifyContent": "space_between",
+              "width": "fill_container", "height": 64, "children": [
+                { "type": "text", "id": "brand", "name": "Brand Title",
+                  "content": "NOVA", "width": 100, "height": 28 },
+                { "type": "frame", "id": "actions", "name": "Header Actions",
+                  "layout": "horizontal", "width": 72, "height": 24, "children": [
+                    { "type": "icon_font", "id": "search", "iconFontName": "search",
+                      "width": 20, "height": 20 },
+                    { "type": "icon_font", "id": "cart", "iconFontName": "shopping-cart",
+                      "width": 20, "height": 20 }
+                  ] }
+              ] }
+          ] }
+    ]))
+    .expect("nodes");
+
+    let issues = scan_header_icon_row_issues(&nodes);
+
+    assert!(
+        issues.is_empty(),
+        "standard [brand, actions] header: {issues:?}"
+    );
+}
+
+#[test]
+fn title_outside_a_nonstandard_header_icon_row_is_still_reported() {
+    let nodes: Vec<PenNode> = serde_json::from_value(serde_json::json!([
+        { "type": "frame", "id": "root", "name": "Home", "layout": "vertical",
+          "width": 390, "height": 844, "children": [
+            { "type": "frame", "id": "header", "name": "Header",
+              "layout": "vertical", "justifyContent": "space_between",
+              "width": "fill_container", "height": 88, "children": [
+                { "type": "text", "id": "title", "name": "Greeting",
+                  "content": "Good evening", "width": 180, "height": 28 },
+                { "type": "frame", "id": "icons", "name": "Header Icon Row",
+                  "layout": "horizontal", "width": 72, "height": 24, "children": [
+                    { "type": "icon_font", "id": "bell", "iconFontName": "bell",
+                      "width": 20, "height": 20 }
+                  ] }
+              ] }
+          ] }
+    ]))
+    .expect("nodes");
+
+    let issues = scan_header_icon_row_issues(&nodes);
+
+    assert_eq!(
+        issues.len(),
+        1,
+        "nonstandard header remains actionable: {issues:?}"
+    );
+    assert!(issues[0].contains("Header Icon Row"), "{issues:?}");
+    assert!(
+        issues[0].contains("M() the title INTO this row"),
+        "{issues:?}"
+    );
 }
 
 #[test]
