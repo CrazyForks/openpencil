@@ -319,12 +319,10 @@ impl NativeBackend {
     /// a solid `Paint`.
     #[tracing::instrument(skip(self, canvas))]
     pub fn fill_rect(&mut self, canvas: &skia_safe::Canvas, rect: Rect, color: Color) {
-        // `Paint::solid` hardcodes `opacity: 1.0`, so the colour's
-        // alpha was dropped — a translucent fill (e.g. the 12 %
-        // marquee-selection band) painted fully opaque. Carry the
-        // alpha through `Paint.opacity` the way `stroke_rect` does.
-        let mut paint = jian_core::render::Paint::solid((color).to_jian());
-        paint.opacity = color.a.clamp(0.0, 1.0);
+        // jian-skia multiplies authored colour alpha by `Paint.opacity`.
+        // This bridge has no separate opacity, so leave the paint at 1.0;
+        // copying `color.a` there would square every translucent fill.
+        let paint = jian_core::render::Paint::solid((color).to_jian());
         let op = jian_core::render::DrawOp::Rect {
             rect: to_jian_rect(rect),
             paint,
@@ -347,7 +345,8 @@ impl NativeBackend {
                 color: (color).to_jian(),
                 width,
             }),
-            opacity: color.a.clamp(0.0, 1.0),
+            // The stroke colour already carries its authored alpha.
+            opacity: 1.0,
         };
         let op = jian_core::render::DrawOp::Rect {
             rect: to_jian_rect(rect),
